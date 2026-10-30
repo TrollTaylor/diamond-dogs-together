@@ -343,7 +343,8 @@ Conflict rules:
 All new traffic rides the existing world bundle (`W` magic, ops with `u8 op | u8 len | u16 epoch | body`; an unknown op
 is skipped by its length; `docs/world-sync-protocol.md` section 3) [O]. Used codes today: 1-28, 32-47 and the local
 112-120; 29-31 are reserved [O, `lua/coop/world_sync.lua:4-10`, `native/world_wire.cpp`] (at design time; built
-since and integrated on `dev/oct7-continue`: 48, 49, 51, 52, 56 and 57; 50 and 53-55 stay reserved). New codes start at 48. Every
+since and integrated on `dev/oct7-continue`: 48, 49, 51, 52, 56 and 57; on `wp/vehicle-fixes2` 58, VEHICLE_DAMAGE;
+50 and 53-55 stay reserved). New codes start at 48. Every
 new op gets a schema row in `native/world_wire.cpp` and a Lua handler in a new module (a world Lua chunk may be at
 most 32000 bytes, `docs/STATUS.md:2017`) [O]. Both PCs must run the same version (`README.md` Troubleshooting) [O], so
 a field change is a new op, never a resized old one.
@@ -362,6 +363,7 @@ a field change is a new op, never a resized old one.
 | 54 | SEAT | both | R | per event | seq, target (vehicle id, or horse slot with a horse flag), seat, role, action (claim, grant, deny, release) | New; host arbitrates |
 | 55 | COMPANION_CMD | G->H | R | per press | kind, order id | Only if decision D1 is "forwarded" |
 | 56 | CHARACTER | G->H | R | at pairing, and on change | the guest's resolved character (story resolved locally), Quiet flag | New, unless HELLO can carry it (HELLO's spare fields [U]); must arrive before the host's `sendSeeds` (F1.4) |
+| 58 | VEHICLE_DAMAGE | G->H | R | per drop, at most one per vehicle per 500 ms and 8 per second | as built (section 8.14): seq, id, locator hash, type, flags (1 the guest rides it, 2 sent before a VEHICLE_STATE write), the guest copy's life after the drop (1..65534), the drop, xyz mm | New (the vehicle fixes of 2026-10-29): the guest's own damage reaches the host's copy; a partner without it skips it by its length |
 | 46/47 | VEHICLE_GONE / REQ | as today | R | per event | unchanged | Turned on by default after E5; index 0 per E17. With `world_relief` on, REQ_VEHICLE_GONE for 25600 is the relief module's (a guest-side loss of the host's sortie vehicle, sent whatever `world_vehicle_gone` says; section 8.7, the review) |
 
 **Ids.** Vehicle ids are per-copy pool slots and are not assigned in spawn-list order (3.6) [O]. VEHICLE_STATE
@@ -1884,6 +1886,177 @@ line on either copy. Link: RTT 175-189 ms, loss up to 14.2 %. Slices (cut at the
 Not in this smoke: D12 (its play rehearsals are `f729d7f4` and `33a7fa6e`), any death of a dog copy, the guard under
 the key, a mission end, D15. No defect found.
 
+### 8.14 Results: the vehicle fixes of 2026-10-29 (D12 crew, the guest's vehicle damage report, D11 before PAIRED; branch `wp/vehicle-fixes2`)
+
+The user approved three fixes on 2026-10-29 after the 0.14.4 pre-release review: D12's open question (section 10: a
+soldier-crewed vehicle the guest destroys is wrecked on the host's PC at once), the review finding
+`game-d11-prepair-gap` and the finding `game-vstate-heals-guest-damage`. Built on `wp/vehicle-fixes2` (from
+`dev/oct7-continue` `01fd055`), tests first (each fixture failed before its code); wire and keys in
+`docs/world-sync-protocol.md` section 20.
+
+**What was built.**
+- **D12 crew** (key `world_vehicle_crew`, CFG `r[15]` bit 64, `world_vehicle_rules.lua`): a guest destruction request
+  that VEHICLE_GONE would hold as `occupied` is checked seat by seat; when every filled seat is an NPC soldier (world
+  sync's roster, or a TppSoldier2 type index) and the partner does not ride it, the host judges it at once and wrecks
+  its copy through the normal path (`break_judge`, `break_crew;crew=<seats>`, `applied;via=wreck`); held (`crew_near`)
+  while a player stands within 15 m of the host's copy (a Despawn under seated soldiers is untested). D-Dog, a buddy, an
+  unknown rider, the partner's ride and the host's own player keep the old hold or refusal. Before: held 120 s, then
+  REJECT 9 and a split (`0f3f00f1`).
+- **The guest's vehicle damage report** (key `world_vehicle_damage`, bit 128, new chunk `world_vehicle_damage.lua`, new
+  op VEHICLE_DAMAGE 0x3A): the guest reports body-life drops of its own copy that come within 3 s of its own fire
+  (PlayerStatus GUN_FIRE or GUN_FIRE_SUPPRESSOR; in the lab the lever `vehicle_life` stands in) within 300 m of its
+  player, never for the host's ride, index 0, an LRRP truck or a wreck; the host applies `max(life, here - drop, 1)`
+  (the lower life wins, never more than the guest's drop, never 0) and its VEHICLE_STATE then carries that life, so the
+  guest's damage stays on both copies. VEHICLE_STATE no longer raises the guest's copy over a report in flight (3 s).
+- **D11 before PAIRED** (no key: part of `world_loadout_block`): the guest's follow arrival marks the mission co-op at
+  once, so its LOADOUT and VEHICLES items are inactive before PAIRED (also `world_relief_sync.lua`'s VEHICLES guard).
+- Worker: `waitmission <role> <mission> <timeoutSec> only` resumes only that role's loading screen (the other stays on
+  its tips screen), which holds the pair off for the D11 proof.
+
+Hidden runs (research build, native gun stage, copied saves, `africa-jeep` seed, low graphics; each Closed,
+BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; `Forced=True` at shutdown as in
+the earlier runs). Slices in the session scratch `next2/vehicles/slice-<run8>`, runs archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\<id>`, frames as JPEG in `complete/frames/next2-vehicles/`
+(`<run8>-<role>-<label>.jpg`; sheets `next2/vehicles/g-*.jpg`), looked at for every frame claim below.
+
+| Run | Scenario, mode | Result |
+|---|---|---|
+| `846c1147` | `vehicle-fixes2-lab.txt`, lab, every key named, build `20a7120` | The report path worked; the guards' rounds on both copies were counted twice and broke the jeep (below), which led to the fire gate (`d8497c5`). Stopped at A2 (`goto_vehicle` picked a jeep 600 m away) |
+| **`ac0f7656`** | **the same at `d8497c5`** | **The lab FRAME run.** Every expectation met but the D11 refusal: the damage report (A, A2, A3), D12 crew (B, the burning armoured vehicle on both screens), D11's guard 29 s before PAIRED (C); the guest was still riding the helicopter in, where its iDroid did not open |
+| `247a4eed` | `vehicle-fixes2-play.txt`, **play, `-WanSim bad`**, the two new keys named, build `d8497c5` | Parts 1 (D11 at the session's follow arrival: refused, toast drawn) and 2 (the guest's real round reported and kept on both copies) passed; the host's own rounds missed; part 3 failed outside the rule: the armoured vehicle, alerted by the guest placing charges in front of its driver, drove apart on the two copies (50 m) and VEHICLE_GONE refused the request as far |
+| `d3f5ca56` | `vehicle-fixes2-d11.txt`, lab, `world_loadout_block` named, build `9538f86` | The guard held 104 s before PAIRED with the guest on foot at the LZ and the host on its tips screen; the guest's first Tab came during the arrival popups, so the iDroid opened only after the last step and no refusal was logged |
+| **`8995e351`** | **`vehicle-fixes2-play.txt` at `da2043d`, play, `-WanSim bad`, `world_vehicle_crew` named, the damage report at its play default (on since `9538f86`)** | **The crew's play rehearsal passed** (the guest's real C4 from behind, frames on both screens) and D11 again; the damage part found no jeep: the Masa Village guards had broken 25608 on the host's copy (its VEHICLE_GONE removed the guest's copy) before the part cleared them. `Forced=False`, link 175-185 ms, loss up to 13.3 % |
+| (none) | `vehicle-fixes2-d11.txt` at `f6823b9` (with an uncommitted failing-first test) | Never launched: the worker's audited CTest snapshot held `lab_config_tests` written before its code (check 1275), so the checks refused the run; not counted as a game run |
+| **`251adcb6`** | **`vehicle-fixes2-d11.txt` at `f6823b9`, lab, `world_loadout_block` named, the HUD on** | **The D11 FRAME before PAIRED. Every expectation met**, `Forced=False`: both items inactive and refused with both toasts on the guest's screen while the host waited on its tips screen; the pair formed 96 s after the guest's arrival |
+| **`34d5744d`** | **`vehicle-fixes2-play.txt` at `f6823b9`, play, `-WanSim bad`, no vehicle key named (the shipped defaults: both fixes on in play)** | **The play rehearsal at the shipped defaults. Every expectation met**, `Forced=False`, link 175-186 ms, loss up to 13.3 %: D11 (refused, toast), the guest's round reported and kept on both copies, the host's round synced and never reported back, the crew wrecked at once with the guest's real C4 (frames on both screens) |
+
+**The guest's vehicle damage report.**
+- *`846c1147`: the path, and why the fire gate* [O, logs of both copies]. The seed's jeep 25608 read life 2140 on both
+  copies (the guards' rounds of the boot). The guest's lever `vehicle_life 25608 1500` (its copy only) -> guest
+  `event=vehicle_damage;step=tx;id=25608;life=1500;drop=640;f=0;seq=1` -> host `step=applied;id=25608;from=25608;
+  life=1500;was=2140;drop=640;d_mm=1566` 17 ms later -> host `vehicle_state;step=tx;id=25608;why=life;life=1500` 152 ms
+  after that. The guards around Masa Village were not cleared and shot at both players beside the jeep: the host's own
+  copy dropped (1460 -> 1340, 1295 -> 1215) and the drops the guest's own guards caused on its copy (40, 45, 49, 60)
+  were reported and applied on top (`life=1460;was=1500;drop=40` ... `life=1106;was=1166;drop=60`) until the host's
+  copy broke at 1106 (VehicleBroken; VEHICLE_GONE cause 2 to the guest). Each copy's guards hit vehicles on that copy, so
+  without attribution the guest's AI damage adds to the host's: the module now reports only drops within 3 s of the
+  guest's own fire (`d8497c5`).
+- *`ac0f7656`, lab, the guards cleared first* [O, logs of both copies; frames `ac0f7656-*-dmg-*`, `-shots-*`,
+  `-host-damage`, sheet `g-ac0-dmg`: the jeep on both screens, with no visible damage at these lives, as `d407f115`
+  found for body life alone]. A: the guest's lever 2260 -> 1500 (`step=lever_hit`) -> `tx;life=1500;drop=760` -> host
+  `applied;life=1500;was=2260;drop=760;d_mm=1512` 19 ms later -> its `vehicle_state;tx;why=life;life=1500`; both copies
+  read 1500 two seconds later and again 14 s later, past the host's 10 s refresh (before the fix the refresh put a
+  guest-only drop back: `3585869d`, `4bbbfde4`). A2: the guest's real rounds from its boot spot (five, one hit):
+  `tx;life=1470;drop=30` -> host `applied;life=1470;was=1500;d_mm=2022` 32 ms later. A3: the host's own lever drop to
+  1000 -> its `tx;why=life;life=1000` -> guest `vehicle_state;step=applied;...;life=1000;was=1470` 32 ms later, and no
+  guest `vehicle_damage;step=tx` after it (never reported back).
+- *`247a4eed`, play, `-WanSim bad`* [O, logs of both copies; frames `247a4eed-*-dmg-*`]: the guest's real round 2020 ->
+  1990 -> `tx;life=1990;drop=30` -> host `applied;life=1990;was=2020;d_mm=2023` 117 ms later -> `vehicle_state;tx;
+  why=life;life=1990` 17 ms after that; both copies read 1990 right after and 14 s later. Link RTT 176-186 ms, loss up
+  to 12.1 %. The host's own rounds from its boot spot missed (no host `tx`); the host's damage reaching the guest is the
+  unchanged M4 path (`4bbbfde4`, `e235bda6`, `d9b48fcb` in play; `ac0f7656` A3 with this module on).
+- *`34d5744d`, play, `-WanSim bad`, the shipped defaults (no key named)* [O, logs of both copies; frames
+  `34d5744d-*-dmg-*`, `-host-damage`, sheet `g-34d-play`: the jeep on the guest's screen and at the host's door]: both
+  copies `vehicle_damage;step=on` from the play default; the guest's real round 2300 -> 2270 -> `tx;life=2270;drop=30`
+  -> host `applied;life=2270;was=2300;d_mm=2022` 122 ms later -> `vehicle_state;tx;why=life;life=2270` 32 ms after
+  that; both copies 2270 right after and 14 s later. The host's own round 2270 -> 2240 -> its `tx;why=life;life=2240`
+  -> guest `vehicle_state;step=applied;life=2240;was=2270` 114 ms later, and no guest `vehicle_damage;step=tx` after it
+  (the host's damage is never reported back).
+- A wreck's life word reads near 65535 and still falls (the guest's copy of 25623 read 65488 -> 65484 after its
+  destruction in `247a4eed`), so the guest now reports only a live vehicle (`9538f86`, `step=skip;reason=not_alive`).
+- Not covered [I/U]: who hit the vehicle is still not known: a guard's round in the 3 s after the guest fired is
+  reported too [I]; explosives short of a destruction (a grenade, a C4 that does not break it) are not GUN_FIRE and are
+  not reported [I]; the guest's collisions while it drives are not reported [I]; parts and wheels are not synced (only
+  body life, as M4); two copies hit by the same round within one report window count once (the lower life wins), so
+  simultaneous damage by both players can be undercounted by the smaller share [I]; a two-PC session.
+
+**D12 crew.**
+- *`ac0f7656`, lab* [O, logs of both copies; frames `ac0f7656-*-crew-*`, sheet `g-ac0-crew`]. 25623 is the side-op
+  armoured vehicle of "Eliminate the Armored Vehicle Unit 04" (unnamed, life 2800) with one soldier aboard, the quest
+  soldier `sol_quest_0000` (ent 1856151639); VEHICLE_STATE skips it as `occupied` on both copies. The host 30 m away,
+  the guest 25 m (the host first asked `enemy ignore nearest` from 12 m, applied on both copies). The guest's lever
+  breaks its copy (`vehicle_life 25623 0`) -> `break_seen` -> `req;cause=4` -> host `rx_req` -> `break_judge;id=25623;
+  ok=1;why=near;d_mm=23694;life=2800;peak=2800` -> `break_crew;crew=1` -> `tx;cause=2;actor=1` -> `applied;via=wreck;
+  src=req;ok=1;ms=166` -> guest `req_done;result=gone` 66 ms after its request; no `hold` line, no REJECT. Host status
+  afterwards `alive=0`. Frames: before, the vehicle beside the road on both screens; then fire and smoke at it on both;
+  the host's screen shows it burning for the rest of the run; on the guest's its own copy's blast knocked the guest
+  down 24 m away (godmode on).
+- *The crew's fate* [O]: on each copy the wreck's later explosion (about 8 s after the break, as `7762536a` measured)
+  killed the driver: host `obs;m=Dead;ent=1856151639;att=none` (and `Neutralize`) 7.9 s after its wreck -> one
+  `commit;ent=1856151639;state=5;ver=2;actor=host;cause=2`; guest `obs;m=Dead` 8.0 s after its own break ->
+  `divergence;why=not_attributed` (nothing forwarded) -> the host's outcome `apply;state=5;ver=2;src=outcome;
+  result=terminal_local;readback=5` 17 ms after the host's commit. One commit, one apply that found him dead already:
+  the death counts once on each copy, and nobody gets the kill (both deaths are unattributed, the guest's lever is no
+  player hit).
+- *`247a4eed`, play* [O]: the rule was never reached. The guest teleported 3 m east of the vehicle (in front of its
+  driver) to place three charges; the soldier entered combat on both copies (`place_combat`) and the vehicle drove off
+  and fired, separately on each copy (the host's copy 36 m west, then back; the guest's 5 m east); the guest's charges
+  broke its copy where it stood, the request reached the host 50 m from the host's copy, and VEHICLE_GONE refused it
+  (`refused;reason=far;d_mm=50384`, REJECT 8) before any seat check. Frames `247a4eed-*-crew-*`: the vehicle exploding
+  on the guest's screen, an empty road on the host's. An AI-driven vehicle in combat moves separately on each PC (M8);
+  the crew rule cannot help there.
+- *`8995e351`, play, `-WanSim bad`* [O, logs of both copies; frames `8995e351-*-crew-*`, sheet `g-899-crew`]. The host
+  asked the ignore from 9 m behind the vehicle (west; its hull lies east-west, front east), then stood 30 m away; the
+  guest placed three charges from 5 m behind it and detonated them from 25 m. The vehicle did not drive off (the host's
+  readbacks before and after stay within 0.11 m). Guest: `VehicleBroken` -> its driver died at once in its copy's blast (`obs;m=Dead;
+  att=none` -> `divergence;why=not_attributed`) -> `break_seen` -> `req;cause=4` -> host `rx_req` 149 ms later ->
+  `break_judge;ok=1;why=near;d_mm=25079;life=2800;peak=2800` -> `break_crew;crew=1` -> `applied;via=wreck;ms=166` ->
+  guest `req_done` 266 ms after its request. The host's wreck exploded 8.0 s later and killed the driver there: one
+  `commit;state=5;ver=2;cause=2`, applied on the guest 101 ms later as `terminal_local` (already dead there). Host
+  readback `alive=0;life=0;sv=1013` (the wreck), guest `alive=0`. Frames: the vehicle at the road on both screens,
+  then the guest's blast and smoke on the guest's screen, the host's own explosion 8 s later and the burning wreck on
+  the host's.
+- *`34d5744d`, play, the shipped defaults* [O, logs of both copies; frames `34d5744d-*-crew-*`]: the same approach and
+  the same chain with no key named: guest `break_seen` -> `req;cause=4` -> host `rx_req` 118 ms later -> `break_judge;
+  ok=1;why=near;d_mm=25080` -> `break_crew;crew=1` -> `applied;via=wreck;ms=183` -> guest `req_done` 233 ms after its
+  request; the driver died at once in the guest's blast (`divergence;why=not_attributed`) and 8.0 s after the wreck
+  in the host's (one `commit;state=5`, applied on the guest as `terminal_local` 101 ms later). Host readback `alive=0;
+  life=0;sv=1013`, guest `alive=0`. Frames: the vehicle at the road on both screens, the host's explosion, the
+  burning wreck on both; the guest was thrown down 25 m away by its own copy's blast (godmode on).
+
+**D11 before PAIRED.**
+- *`ac0f7656`, lab* [O, logs; frames `ac0f7656-*-d11p-*`, sheet `g-ac0-d11`]: the host's lab goto to 30010 with only the
+  guest's loading resumed (`waitmission guest 30010 240 only`): guest `follow;step=arrived;mission=30010` -> both
+  `vehicle_rules;step=guard;...;mission=30010` 1 ms later -> PAIRED 29.1 s later, after the host's loading was resumed;
+  `world_paired` read false twice in between. The host's frames show its tips screen ("[HINT] Direct Contracts ... Space
+  Resume Game") the whole time; the guest rode the helicopter in, and its Tab there opened nothing (frames
+  `d11p-guest-loadout` / `-refused`: the helicopter's cabin).
+- *`d3f5ca56`, lab, on foot* [O, logs; frames `d3f5ca56-*-d11f-*`]: the guest got out at the LZ (position 800.4,
+  339.3, 1637.5); the guard held from the arrival to PAIRED 104 s later with no `unguard` between; the first Tab came
+  during the checkpoint and Materials Processing popups (frame `d11f-guest-onfoot`), so the iDroid opened only after
+  the scenario's last key (its MAP tab in `d11f-paired`), and no refusal was logged.
+- *`251adcb6`, lab, on foot, the popups waited out* [O, logs; frames `251adcb6-*-d11f-*`, sheet `g-251-d11`]: guest
+  `follow;step=arrived;mission=30010` -> both guard lines 1 ms later (`world=pair_wait;reason=remote_loading`) -> the
+  guest got out at the LZ (position 800.3, 339.3, 1636.6), waited 12 s, opened its iDroid (frame `d11f-guest-idroid`,
+  the MAP tab) -> MISSIONS, SUPPLY DROP: LOADOUT and VEHICLES both marked inactive; LOADOUT selected -> `step=refused;
+  path=idroid_drop_loadout` and `hud=toast;code=13;a=5;partner=0;on=1` 74.9 s after the arrival (frame
+  `d11f-guest-loadout-refused`: "Only the host can order a loadout drop in co-op: it can carry a vehicle.");
+  VEHICLES selected 12.6 s later -> `refused;path=idroid_drop_vehicle` and the toast `a=4` (frame
+  `d11f-guest-vehicles-refused`: "Only the host can bring or request a vehicle in co-op."); `world_paired` read false
+  four times; the host's screen showed its tips screen throughout (`d11f-host-waiting`, `-still-waiting`); after the
+  host's loading was resumed, PAIRED came 95.9 s after the guest's arrival and 8.3 s after the second refusal.
+  Before the fix the guard waited for PAIRED (finding `game-d11-prepair-gap`), so both items were active for those
+  96 s.
+- *`247a4eed`, play* [O]: the session's own follow (title -> ACC -> 30020): the guest's `arrived` then PAIRED 1.3 s
+  later (the host was first, as in every play run), the guard at PAIRED; the guest's real iDroid path: LOADOUT refused,
+  `hud=toast;code=13;a=5;on=1` (frame `247a4eed-guest-d11-guest-refused`: LOADOUT selected, the toast at the top).
+  The pre-pair window itself does not occur in the play worker (the host always pairs first there).
+
+**Play defaults.** Both new keys are on in play unless named and off in the lab unless named, like the other vehicle
+modules. `world_vehicle_damage` (`9538f86`): FRAME on both copies `ac0f7656` (lab) and the play rehearsal `247a4eed`
+(keys named); `world_vehicle_crew` (`f6823b9`): FRAME `ac0f7656` (lab) and `8995e351` (play, frames on both) and the
+play rehearsal `8995e351` (crew named). Both again at the shipped defaults with no key named in `34d5744d` (every
+expectation met). The D11 fix rides on `world_loadout_block` (on): its FRAME before PAIRED is `251adcb6` (lab, the
+host held on its tips screen by `waitmission ... only`); in play the fix runs at every follow arrival (`247a4eed`,
+`8995e351`, `34d5744d`: refused with its toast) but the pre-pair window does not occur in the worker, where the host
+always pairs first [I for play].
+
+**Open.** An enemy vehicle that drives off in a fight moves separately on each PC (M8), so a guest's destruction of it
+can be refused as far and stay split (`247a4eed`); `crew_near` and a crewed vehicle with a player within 15 m [U]; the
+guest's explosives short of a destruction, its collisions and the guards' rounds inside its 3 s window are not (or
+wrongly) attributed [I]; a D-Dog or buddy rider together with soldiers keeps the old hold [fixture]; the pre-pair
+window in play and every case on two PCs.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -2250,6 +2423,12 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     play smoke of the merged head (8.13, `a1d7aaa1`, `-Mode play -WanSim bad`, the shipped defaults) met every
     expectation: the D11 refusals with both toasts, a jeep the guest drove with the host in a back seat and then parked
     where the guest left it on both screens, and the host's hand Fulton credited on both copies (D14). D12 was not in it.
+  - **The vehicle fixes of 2026-10-29 (section 8.14, branch `wp/vehicle-fixes2`; unreleased, not two-PC tested).** The
+    guest's own gunfire damage now reaches the host's copy (VEHICLE_DAMAGE, key `world_vehicle_damage`, on in play
+    where VEHICLE_STATE runs: lab FRAME `ac0f7656`, play `247a4eed`), so it is no longer undone at the host's next
+    state; a soldier-crewed vehicle the guest destroys is wrecked on the host's copy at once (`world_vehicle_crew`, on in
+    play: lab FRAME `ac0f7656`, play `8995e351`); D11's items are inactive before PAIRED after a host-led follow (lab
+    `ac0f7656`, `d3f5ca56`; FRAME of both refusals before PAIRED `251adcb6`).
 
 ### M5. Quiet synced
 
@@ -2415,7 +2594,10 @@ The original questions:
   VEHICLES drop is blocked too in co-op, whatever `world_relief` says** (it was blocked only with `world_relief` on, its
   default off, so a guest could still order a vehicle that only its own copy had). Same key, same guard, NOTE 13 a 4;
   `world_relief_sync.lua` leaves that item to the rules module (section 8.12). The guest's sortie-prep vehicle with
-  `world_relief` off is still the guest's own (M3, README "Sortie vehicles"): not part of this decision.
+  `world_relief` off is still the guest's own (M3, README "Sortie vehicles"): not part of this decision. **Fix of
+  2026-10-29 (the 0.14.4 review finding `game-d11-prepair-gap`, approved by the user):** after a host-led follow the
+  guest's copy could reach gameplay before PAIRED with both items still active (the last mission's final stop carried
+  over); the follow arrival now marks the mission co-op at the guest's start (section 8.14).
 
 - **D12 (new, M4). A vehicle the guest destroys.** The game posts no `Damage` message for a vehicle hit (`35ba7929`),
   so the guest's request never starts: a jeep the guest destroys stays a wreck on the guest's PC only and intact on
@@ -2436,6 +2618,12 @@ The original questions:
   crew's deaths on the guest's copy are unattributed, so the host's crew may stay seated and the hold then ends in a
   refusal after 120 s (the jeep stays only on the host's PC). Keep that, or wreck a crewed host copy at once (the
   engine's blast then kills or ejects the crew there too)? See section 8.12 for what the hidden run showed.
+  **Decided 2026-10-29 (the user approved the fix): wreck a crewed host copy at once.** Built behind
+  `world_vehicle_crew` (section 8.14): a hold whose only reason is an NPC crew is judged at once and applied as the
+  host's wreck (held only while a player stands within 15 m of the host's copy); the engine's blast killed the driver on
+  the host's copy too, and its death counted once on each copy (`ac0f7656`, `8995e351`). On in play. An enemy vehicle
+  that drives off in a fight moves separately on each PC, so the host's copy may be too far from where the guest's
+  broke: VEHICLE_GONE then refuses it and the split stays (`247a4eed`; M8).
 - **D13 (new, M4). The M4 play defaults.** VEHICLE_GONE (Fulton, and a destruction shown as a disappearance) and
   VEHICLE_STATE (pose and body life) are on by default in play in Afghanistan and Africa (`482eb74`, narrowed by
   `c423b53`); the project rule is met for those paths (section 9 M4). The wreck parity and Mother Base stay lab only.
@@ -2460,9 +2648,10 @@ here.
 | Decision | Built | Play default | Proven | Unproven or for the two-PC session |
 |---|---|---|---|---|
 | D7 (D-Dog on the guest's PC) | Native guard `dog_guard` (two exact vtable slots: the dog's `ProcessDamages` and its life update) plus `lua/coop/world_companion_guard.lua`: the guest's copy drops every hit while armed, follows the host dog's state byte (hurt, asleep, down), is brought back from the host's live state after a death the guard cannot see (about 2.6 s), holds drop-only through a link loss, waits when the host's state is unknown. No new op (the byte rides COMPANION / COMPANION_POSE). Installed only under `companion_host_owned`, on both roles | **Off** (the guard follows `companion_host_owned`, off in lab and play; a default session installs nothing: `19e438fe`, and the combined smoke `a1d7aaa1` [O]) | Lab [O]: E19 passes (`3922cc80`: 50 hits dropped in about 85 s; `7fe2845e`, `cc2e15d2`), the restore (`3922cc80`, `3f69e3b7`, `606048af`, FRAME `606048af` and `cc2e15d2`), the follow (down: "D-Dog Near Death" and the extraction on both screens, `3f69e3b7`, `606048af`; asleep: the STN marker on both, `3f69e3b7`) and the re-call (FRAME `606048af`, `cc2e15d2`), the hold under a simulated link loss (`9fa48400`). Play rehearsals with the key named: `1713b0a1` (passed), `f7033e2e` (no guard fired at the dog) | The guard's drops, the follow, the restore and the re-call in play (play refuses their levers; no guard ever fired at the dog in play); a real link loss [I]; the host-side pass-through [I]; falls, drowning, out of bounds; the 30 heroism the guest's PC loses at each copy death (open question); M1's own gaps keep the key off; two-PC |
-| D11 (the guest's LOADOUT drop) | `world_vehicle_rules.lua`, key `world_loadout_block` (CFG `r[15]` bit 32): the guest's iDroid LOADOUT item is inactive in co-op and refused with a toast (NOTE 13 a 5); by the reviewer's pick the VEHICLES item too (NOTE 13 a 4), whatever `world_relief` says; the host's items are untouched | **On** | FRAME `c0203fdd` (lab, LOADOUT; the toast is logged, the lab HUD is off), `70146170` and `47b95ae7` (play, LOADOUT toast drawn), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: both items refused with both toasts drawn, the host's VEHICLES list opens), again in the combined smoke `a1d7aaa1` | The guest's sortie-prep vehicle with `world_relief` off is still the guest's own (M3, not part of D11); two-PC |
-| D12 (a vehicle the guest destroys) | Key `world_vehicle_break` (bit 8): the guest's unattributed break goes to the host as REQ_VEHICLE_GONE cause 4; the host judges it (the guest within 300 m of the wreck at arrival or now, or the host's copy already badly damaged), refuses it (REJECT 8) when the guest was too far, or at once while the host's own player rides it, holds while D-Dog or a soldier is seated or the position or rate is not clear (REJECT 9 after 120 s), and a host without the key answers REJECT 11. The host wrecks its copy, or removes it with a Despawn while either player is within 15 m (the blast rule, added after the review) | **On** where VEHICLE_GONE runs (30010, 30020) | FRAME `c0203fdd` (lab lever; the host's screen shows the fire and smoke behind the host's body, not the burning jeep), `09333f05` (the ridden refusal), `7762536a` (a seated D-Dog held, then the wreck; a far refusal; the blast measured at 3500 of 7800 life), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: the guest's real C4 with the host 8 m away -> Despawn, host life unchanged; with nobody within 15 m -> the wreck, seen intact, burning and burnt on the host's screen). Earlier play `70146170`, `47b95ae7` (the host's frames show the smoke column, not the jeep). 120 m judged near (`0f3f00f1`, logs only) | A soldier-crewed vehicle stays split after the hold (open question for the user); a real launcher or rifle kill at 60-300 m; the 15 m margin is not a measured radius [I]; D-Dog or a buddy near the host's copy at the wreck [U]; multi-hit kills spread over more than about 10 s [I]; two-PC |
+| D11 (the guest's LOADOUT drop) | `world_vehicle_rules.lua`, key `world_loadout_block` (CFG `r[15]` bit 32): the guest's iDroid LOADOUT item is inactive in co-op and refused with a toast (NOTE 13 a 5); by the reviewer's pick the VEHICLES item too (NOTE 13 a 4), whatever `world_relief` says; the host's items are untouched. Since the fix of 2026-10-29 (8.14) also before PAIRED after a host-led follow | **On** | FRAME `c0203fdd` (lab, LOADOUT; the toast is logged, the lab HUD is off), `70146170` and `47b95ae7` (play, LOADOUT toast drawn), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: both items refused with both toasts drawn, the host's VEHICLES list opens), again in the combined smoke `a1d7aaa1`. Before PAIRED: lab `ac0f7656`, `d3f5ca56` (the guard 29 s and 104 s before PAIRED, the host held on its tips screen, frames); FRAME `251adcb6` (both items refused with both toasts before PAIRED, 96 s window) | The guest's sortie-prep vehicle with `world_relief` off is still the guest's own (M3, not part of D11); the pre-pair window in play (the play worker always pairs first); two-PC |
+| D12 (a vehicle the guest destroys) | Key `world_vehicle_break` (bit 8): the guest's unattributed break goes to the host as REQ_VEHICLE_GONE cause 4; the host judges it (the guest within 300 m of the wreck at arrival or now, or the host's copy already badly damaged), refuses it (REJECT 8) when the guest was too far, or at once while the host's own player rides it, holds while D-Dog or a soldier is seated or the position or rate is not clear (REJECT 9 after 120 s), and a host without the key answers REJECT 11. The host wrecks its copy, or removes it with a Despawn while either player is within 15 m (the blast rule, added after the review) | **On** where VEHICLE_GONE runs (30010, 30020) | FRAME `c0203fdd` (lab lever; the host's screen shows the fire and smoke behind the host's body, not the burning jeep), `09333f05` (the ridden refusal), `7762536a` (a seated D-Dog held, then the wreck; a far refusal; the blast measured at 3500 of 7800 life), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: the guest's real C4 with the host 8 m away -> Despawn, host life unchanged; with nobody within 15 m -> the wreck, seen intact, burning and burnt on the host's screen). Earlier play `70146170`, `47b95ae7` (the host's frames show the smoke column, not the jeep). 120 m judged near (`0f3f00f1`, logs only). **Crew (2026-10-29, `world_vehicle_crew`, on in play):** a soldier-crewed armoured vehicle wrecked at once, FRAME lab `ac0f7656`, play `8995e351` (the guest's real C4), again at the shipped defaults `34d5744d` | An enemy vehicle that drives off in a fight moves separately on each PC and is then refused as far (`247a4eed`, M8); `crew_near` [U]; a real launcher or rifle kill at 60-300 m; the 15 m margin is not a measured radius [I]; D-Dog or a buddy near the host's copy at the wreck [U]; multi-hit kills by the guest's explosives spread over more than about 10 s [I] (its gunfire now accumulates on both copies, 8.14); two-PC |
 | D13 (the M4 play defaults) | Nothing changed: VEHICLE_GONE and VEHICLE_STATE stay on in play in Afghanistan and Africa; Mother Base and the wreck parity (`world_vehicle_wreck`) stay lab only | **On** (30010, 30020) | The M4 proofs (section 9 M4: `4bbbfde4`, `b31a1b65`, `e44516d7`); in the combined smoke `a1d7aaa1` a jeep the guest drove with the host in a back seat stayed parked where the guest left it, FRAME | Mother Base in play; two-PC |
+| The guest's vehicle damage (fix of 2026-10-29, the 0.14.4 review finding `game-vstate-heals-guest-damage`) | Key `world_vehicle_damage` (bit 128), `world_vehicle_damage.lua`, op VEHICLE_DAMAGE 0x3A: drops of the guest's copy within 3 s of its own gunfire and 300 m are reported; the host applies the lower life (at most the guest's drop, never 0); VEHICLE_STATE carries it back and no longer heals a report in flight | **On** where VEHICLE_STATE runs (30010, 30020) | FRAME lab `ac0f7656` (the jeep on both screens at the shared life; no visible damage at these lives), play `247a4eed` (the guest's real round kept on both copies past the refresh), again at the shipped defaults `34d5744d` (and the host's round never reported back) | The guest's explosives short of a destruction and its collisions are not reported [I]; a guard's round within the guest's 3 s window is [I]; two-PC |
 | D14 (Fulton rewards for world vehicles) | Key `world_vehicle_credit` (bit 16): the receiver removes its copy with `Seize {"Instant"}`, so its own engine credits the vehicle too (`OnFultonVehicle`); once per copy, never index 0; the sortie vehicle keeps M3's rule (one credit, the host's) | **On** where VEHICLE_GONE runs | FRAME `c0203fdd` (lab, both directions; `4wdW` 1 -> 3 on both copies after the mission end; the GMP fee only on the player who Fultoned), play `-WanSim bad` `70146170` and `47b95ae7` (both directions, frames on both screens); the host's Fulton again in the combined smoke `a1d7aaa1` | APCs, tanks and trucks; a far or unrealized receiver; the commit in play rests on the lab mission end [I]; two-PC |
 | D15 (the guest bailing out of a rolling jeep) | Nothing changed: the guest's copy snaps back to where the host's stopped once the guest stands 3.5 m clear [I] | (VEHICLE_STATE, on) | Not run | Check in the two-PC session |
 
