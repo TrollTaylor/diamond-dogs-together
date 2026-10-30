@@ -3129,8 +3129,9 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
   refused the guest before admission (`required_hooks_or_private_desktop` 0.2 s after `configured`; supervisor
   `desktop_ownership_violation=true`; the admitted runs before had false): this track's `37bfbe8e` (13:50:59),
   `37c5eb3f`, `2a69a71c`, `aab7c606` (14:04:04), companion-host's `1b597e17`, `62af662d` (14:06), `cf8111c4` (14:08),
-  `f3fbeefd` (14:16), and launcher-setup's `eb4d3a3e` (14:18), whose runs at 13:41 and 13:45 had been admitted. A
-  second RDP session was active (qwinsta 14:05, 14:14 and 14:22); whether it causes this is [U].
+  `f3fbeefd` (14:16), launcher-setup's `eb4d3a3e` (14:18), whose runs at 13:41 and 13:45 had been admitted, and
+  this track's rerun with the review fixes `e181f40e` (14:26, key named). A second RDP session was active (qwinsta
+  14:05, 14:14, 14:22 and 14:27); whether it causes this is [U]. Full CTest 336/336 at `cc8cac5`.
 
 ## 9. Milestones
 

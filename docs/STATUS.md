@@ -7,9 +7,10 @@ itself outside too (its remap skip), hence `err_mm` 0-2. **Built** (lab key `par
 named, lab and play): any copy drawing the peer in seat 1 of a light vehicle (category 1/2) anchors on seat 0's matrix;
 the truck cab and an unknown category keep seat 1's (review, design 8.34). Line: `partner_ride_seat_patch=applied;
 seat=1; sites=..; seat_dword=0x00b04130; anchor=0; cat=1` (the 0.14.4 prefix kept); the key is read before every Arm
-(`partner_ride_seat1_anchor=configured; on=1`). Tests failing first (`2bf2b51` -> `9f2ef8b`, `f0580fd` -> `5a6a443`).
+(`partner_ride_seat1_anchor=configured; on=1`). Tests failing first (`2bf2b51` -> `9f2ef8b`, `f0580fd` -> `5a6a443`);
+full CTest 336/336.
 **Play defaults:** unchanged; nothing changes for players. **Not proven:** no frame, no play rehearsal: every
-two-copy hidden run since 13:50 (three worktrees, three builds, through 14:19) refused the guest before admission
+two-copy hidden run since 13:50 (three worktrees, three builds, through `e181f40e` at 14:26) refused the guest before admission
 (`required_hooks_or_private_desktop`, `desktop_ownership_violation=true`) while a second RDP session was active [O];
 the cause is [U]. Before a flip: frames on both copies, the rehearsal, and the passenger's own copy (8.34).
 
