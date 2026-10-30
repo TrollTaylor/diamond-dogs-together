@@ -1,3 +1,28 @@
+## 2026-10-30: seats on, aim camera fixed, faster tests (`dev/oct7-continue`, local only)
+
+Merged (nothing pushed, tagged or released; not two-PC tested): `ff10600` `wp/test-speed` (`d620838`), `9c2b5a8`
+`wp/seats-on` (`71ee68c`), `cdefa1b` the aim camera fix of `wp/seat-shoot2` (`69db316`; its design sections are now
+8.27 / 8.28). Partner contract regenerated (822 code sites, 209 slots, no change); the five contract `--check` scripts
+pass. Full CTest 336/336 (`tools/build.ps1`): 123 s wall with the build, CTest 104.6 s (the quiet best on the branch
+was 51 s; why this run was slower is [U]). Marks: [O] observed, [I] inferred, [U] unknown.
+
+| What | Play default | Smoke (`-Mode play -WanSim bad`, shipped defaults, design 8.29) |
+|---|---|---|
+| Jeep front seat 1 (`partner_ride_front`) | **ON** | Boards and rides in both roles [O]; **but** the driver's screen draws the passenger pushed out past the jeep's right side, and from seat 1 the aim view shows the passenger's own leg and the gun does not fire [O] |
+| Driver's-seat race and the Fulton guard (`partner_ride_race`) | **ON** | [O] `host_first`, the host drove, the guest on foot |
+| Truck cab (`partner_ride_cab`) | lab only | not run (lab `0f145a4e` only) |
+| Back-seat aim camera (`partner_pass_camera=aim`) | **ON** | [O] seat 2: three shots each run, no sky swing, normal view after; the view still shows the wheel arch |
+| Tests: shards, preflight reuse | - | full CTest 111-115 s -> 51 s quiet; preflight 102 s -> 29 s, reused 1 s (run `83defaeb` started from a reused receipt) |
+
+Runs `1f81de654be042b498746135bb7747b2` (`m6m7b-smoke-play.txt`: D11 refusals with both toasts, the race, seat 1, seat
+2 with shots, both get-offs, the jeep parked at one pose on both copies; 2 expect misses: no seat-1 guard window, and
+the host's resend said `why=life` not `why=moved`) and `83defaeb24f44ddfa466594058ffe1c3` (`m6m7b-smoke-play-b.txt`,
+roles swapped; every expectation met). Both Closed, BaselineRestored, RealSavesUnchanged, Forced=True.
+Not fixed / not proven: the two seat-1 defects above; seat 2's aim view (the panel) and the 90 deg range; seated hits;
+the jeep lost 702 life in `1f81de65` while the host fired from seat 2 and the jeep was pushed against a building (three
+shots standing still in `83defaeb` cost none) [U]; the camera after a get-off faces the driver; the dog jumping in
+after the passenger; the truck cab in play; a 0.14.4 partner; two-PC.
+
 ## 2026-10-30: developer test loop, faster (`wp/test-speed`; tests and tooling only, no product code changed)
 
 **Built [O]:** long fixtures run as parallel CTest shards (`cmake/test_shards.cmake`): `ddt_core_tests_1..5` (cases with

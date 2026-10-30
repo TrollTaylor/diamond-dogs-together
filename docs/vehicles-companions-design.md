@@ -2953,6 +2953,28 @@ Corrections of 8.27: the view was held at pulls of up to ~7 deg written back eac
 camera after the release kept the climbed pitch (-114 against 9 mrad, `7e79996f`); defect 1's cause is the seated aim
 camera's low pivot, our handle only picks which broken view (the 8.27 "off" run still held the handle).
 
+### 8.29 Results: seats on, the aim camera and faster tests merged; the combined play smoke (2026-10-30, `dev/oct7-continue`)
+
+Merged locally: `ff10600` (`wp/test-speed`), `9c2b5a8` (`wp/seats-on`, 8.25 / 8.26), `cdefa1b` (the aim camera fix
+`69db316` of `wp/seat-shoot2`, 8.27 / 8.28, renumbered from 8.25 / 8.26). Full CTest 336/336. Two hidden runs at the
+shipped play defaults (`-Mode play -WanSim bad`, host `afgh-quiet`, guest `afgh-horse`, the Wakh Sind jeep 25608; frames
+looked at, session scratch `complete/frames/m6m7b-integrate1/`):
+
+- `1f81de65` (`m6m7b-smoke-play.txt`). [O] D11: the guest's LOADOUT and VEHICLES refused, both toasts drawn. The race:
+  the guest's hold, then `why=host_first` +126 ms; the host drove, the guest stayed on foot. The guest in seat 1 while
+  the host drove forward (frames on both copies), both stock get-offs. The host in back seat 2: three shots (8 -> 5),
+  guard windows `end=aim_end` (`look_ticks=1` for the mouse turn) and `end=hold; settle=1`, no sky; the jeep parked at
+  one pose on both copies (`vstate` equal). Misses: no guard window in seat 1; the host's resend after the ride said
+  `why=life` (life 2295 -> 1593 while the host fired from seat 2 and the guest held W against a building) [U].
+- `83defaeb` (`m6m7b-smoke-play-b.txt`, roles swapped, every expectation met; its preflight reused the receipt). [O]
+  Three seat-2 shots with the jeep standing still: life 2300 before and after on both copies.
+- **Seat-1 defects [O], both runs, both roles:** (1) from seat 1 the aim view shows the passenger's own leg and the
+  jeep's side (reticle on the door) and the gun does not fire (magazine unchanged, `aim_dir=refused; reason=ride`, no
+  guard window); (2) the driver's copy draws the seat-1 passenger pushed out past the jeep's right side, at rest too
+  (`1f81de65` host `s1-stopped`, `s1-aim-drv`; `83defaeb` guest `a-seated-2`, `a-stopped-2`; also `1be0769e` host
+  `s1-b-stopped`) while `err_mm` reads 0-2, so the seat-1 target itself is off [I]. Known, seen again: seat 2's aim
+  view shows the wheel arch; the camera after a seat-1 or seat-2 get-off faces the driver.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3396,6 +3418,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - **Review (8.26):** the cab is lab-only again in play (no play rehearsal at the shipped defaults); the front seat
     and the race stay on in play, re-run after the fixes (`1be0769e`, the guest's seat-1 view driving forward). The
     passenger camera's clip while reversing and its framing after a seat-1 get-off are camera defects.
+  - **Merged (8.29, `9c2b5a8`):** the play smoke (`1f81de65`, `83defaeb`) rode seat 1 in both roles, but the driver's
+    screen draws the seat-1 passenger pushed out past the jeep's right side, at rest too [O]: seat 1 is not frame-clean.
 
 ### M7. Shooting as a passenger
 
@@ -3427,6 +3451,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   both copies, seats 2 and 3). Since 8.28 the player's own mouse / stick turns and aims inside a shot window, the
   pull is held up and sideways, nothing climbs from shot to shot (lab `d60dbb48`, play `d946a420`). Seat 2's aim view
   through the side panel, the 90 deg range and seated hits remain.
+  **Merged (8.29, `cdefa1b`):** seat 2 held in the play smoke; from seat 1 the gun does not fire and the aim view
+  shows the passenger's own leg [O].
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 
