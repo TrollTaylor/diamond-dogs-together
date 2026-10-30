@@ -422,14 +422,20 @@ end
 -- ANSWER_MS (0.14.4, key off): the guest goes stock. Once the winner drives, the peer-driver policy decides.
 local SEAT = 54
 W.OP.SEAT = SEAT
-local S = {seq = 0, next = 0, claimAt = {}, granted = {}, gotGrant = {}, toastAt = 0, off = nil,
-    n = {claim = 0, grant = 0, deny = 0, yield = 0}}
+local S = {seq = 0, next = 0, claimAt = {}, granted = {}, gotGrant = {}, toastAt = 0, off = nil, n = {}, at = {}}
 R.seat = S
 local SEAT_TICK, CLAIM_MS, WANT_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, TOAST_MS, OFF_MS = 200, 500, 600, 1000, 3000, 3000, 3000, 10000
 local HOLD_MS, ANSWER_MS = 2000, 1500
 S.CLAIM_MS, S.HOST_WANT_MS, S.GRANT_MS, S.DENY_MS, S.HOLD_MS, S.ANSWER_MS = CLAIM_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, HOLD_MS, ANSWER_MS
 local CLAIM, GRANT, DENY = 1, 2, 3
-local function seatLog(text) if type(W.log) == "function" then pcall(W.log, "event=seat;" .. text) end end
+-- k: a capped kind, 50 lines per pairing (8.26); with now, at most one a second.
+local function seatLog(text, k, now)
+    if k then
+        if (S.n[k] or 0) >= 50 or now and now - (S.at[k] or -1000) < 1000 then return end
+        S.n[k], S.at[k] = (S.n[k] or 0) + 1, now
+    end
+    if type(W.log) == "function" then pcall(W.log, "event=seat;" .. text) end
+end
 function S.board(cmd)
     if type(W.receipt) ~= "function" then return nil end
     local ok, r = pcall(W.receipt, "return 'MGS_COOP_BOARD_SEAT_V1' -- " .. cmd)
@@ -450,8 +456,9 @@ end
 local function wants(r, vehicle, ms)
     return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
 end
--- Seats on (8.21 R6): FULTON is withheld while site C marked a refused ride icon or a door of the peer's vehicle
--- within GUARD_MS (receipt ref / rage, every tick); only a bit added here is removed (revive's rule).
+-- Seats on (8.21 R6): FULTON is withheld while site C marked a refused ride icon or the peer's vehicle within GUARD_MS
+-- (receipt ref / rage); only a bit added here is removed (revive's rule; a mission lock set meanwhile goes with it).
+-- r: the seat step's receipt, else a poll: every tick only while hot (withheld, or a mark under 1 s old; 8.26).
 local GUARD_MS = 400
 local function fultonFlag(on)
     local ok, f, b = pcall(function() return vars.playerDisableActionFlag, PlayerDisableAction.FULTON end)
@@ -461,20 +468,22 @@ local function fultonFlag(on)
     if not on then S.fAdded = nil end
     if v and pcall(function() vars.playerDisableActionFlag = v end) and on then S.fAdded = true end
 end
-function S.guard()
-    local r = not S.off and S.board("poll")
-    local id = r and r.on == 1 and seatVehicle(r.ref) and integer(r.rage, 0, GUARD_MS) and r.ref or nil
+function S.guard(now, r)
+    if r == nil then r = not S.off and S.board("poll") end
+    local on = r and r.on == 1 and seatVehicle(r.ref)
+    local id = on and integer(r.rage, 0, GUARD_MS) and r.ref or nil
     fultonFlag(id ~= nil)
+    S.hot = id or on and integer(r.rage, 0, 1000)
     if id == S.fulton then return end
-    S.n.fLog = (S.n.fLog or 0) + 1
-    if S.n.fLog <= 20 then seatLog(string.format("action=fulton;on=%d;vehicle=%d", id and 1 or 0, id or S.fulton)) end
+    seatLog(string.format("action=fulton;on=%d;vehicle=%d", id and 1 or 0, id or S.fulton), "f")
     S.fulton = id
 end
--- Unpaired, or the link below level 3: no hold (it would keep the guest from any driver's seat), no guard.
+-- Unpaired, the link below level 3, or the world stopped (W.fail, LEVEL 0, the end): no hold (it would keep the guest
+-- from any driver's seat), no guard.
 function S.reset()
     if S.held then S.board("hold 0") end
     if S.fulton or S.fAdded then S.off = true; S.guard() end
-    S.off, S.granted, S.gotGrant, S.next, S.held, S.ask, S.silent, S.hitsSeen = nil, {}, {}, 0, nil, nil, nil, nil
+    S.hot, S.off, S.granted, S.gotGrant, S.next, S.held, S.ask, S.silent, S.hitsSeen = nil, nil, {}, {}, 0, nil, nil, nil, nil
 end
 -- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
 function S.step(now)
@@ -483,6 +492,7 @@ function S.step(now)
     local guest = not W.host
     local hold = guest and not S.silent
     local r = S.board(hold and string.format("hold %d", HOLD_MS) or "poll")
+    S.guard(now, r or false)
     if not r or r.on ~= 1 then
         S.next = now + OFF_MS
         if not S.off then S.off = true; seatLog("state=off") end
@@ -502,12 +512,11 @@ function S.step(now)
         return
     end
     -- Guest: the native hold refused the ride icon (site C / B): logged with the live deny and grant, so a run
-    -- shows a refusal before any answer existed (at most once a second, 20 lines per pairing).
+    -- shows a refusal before any answer existed.
     local holds = tonumber(r.holds) or 0
-    if S.holdsSeen and holds > S.holdsSeen and now - (S.holdLogAt or -1000) >= 1000 and (S.n.holdLog or 0) < 20 then
-        S.holdLogAt, S.n.holdLog = now, (S.n.holdLog or 0) + 1
+    if S.holdsSeen and holds > S.holdsSeen then
         seatLog(string.format("action=hold;vehicle=%d;holds=%d;deny=%d;grant=%d", tonumber(r.want) or 65535, holds,
-            tonumber(r.deny) or 65535, tonumber(r.grant) or 65535))
+            tonumber(r.deny) or 65535, tonumber(r.grant) or 65535), "h", now)
     end
     S.holdsSeen = holds
     -- Guest: a claim the host left unanswered for ANSWER_MS: stock until an answer comes.
@@ -522,8 +531,7 @@ function S.step(now)
     if seatVehicle(id) and integer(r.age, 0, WANT_MS) and now - (S.claimAt[id] or -CLAIM_MS) >= CLAIM_MS and S.tx(id, 2, CLAIM) then
         S.claimAt[id] = now
         if not S.ask then S.ask = {id = id, at = now} end
-        S.n.claim = S.n.claim + 1
-        if S.n.claim <= 20 then seatLog(string.format("action=claim;vehicle=%d;role=guest;age=%d", id, r.age)) end
+        seatLog(string.format("action=claim;vehicle=%d;role=guest;age=%d", id, r.age), "c", now)
     end
 end
 W.handlers[SEAT] = function(v)
@@ -541,7 +549,6 @@ W.handlers[SEAT] = function(v)
         if why then
             S.tx(id, 1, DENY)
             S.granted[id] = nil
-            S.n.deny = S.n.deny + 1
             seatLog(string.format("action=deny;vehicle=%d;role=host;why=%s", id, why))
         else
             -- Grant, and yield at once: this copy's own deny for the vehicle, refreshed by every claim.
@@ -550,10 +557,8 @@ W.handlers[SEAT] = function(v)
             if not live then
                 seatLog(string.format("action=grant;vehicle=%d;role=host", id))
                 seatLog(string.format("action=yield;vehicle=%d;role=host", id))
-                S.n.yield = S.n.yield + 1
             end
             S.granted[id] = now
-            S.n.grant = S.n.grant + 1
         end
         return
     end
@@ -564,18 +569,18 @@ W.handlers[SEAT] = function(v)
     if action == DENY then
         local r = S.board(string.format("deny %d %d", id, DENY_MS))
         S.gotGrant[id] = nil
-        S.n.deny = S.n.deny + 1
         seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d", id, r and r.deny == id and 1 or 0))
         toast(6, now)
     else
         local r = S.board(string.format("grant %d %d", id, GRANT_MS))
-        S.n.grant = S.n.grant + 1
         if not S.gotGrant[id] or now - S.gotGrant[id] > GRANT_MS then
             seatLog(string.format("action=grant;vehicle=%d;role=guest;set=%d", id, r and r.grant == id and 1 or 0))
         end
         S.gotGrant[id] = now
     end
 end
+W.stopHooks[#W.stopHooks + 1] = function(final) if final then S.reset() end end
+W.pairedHooks[#W.pairedHooks + 1] = function(changed) if changed then S.n, S.at = {}, {} end end
 local tick = W.tick
 function W.tick(...)
     local now = W.now and W.now() or 0
@@ -585,7 +590,11 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
-    if W.paired and W.eff and W.eff >= 3 then S.step(now); S.guard(now) else S.reset() end
+    if W.active ~= false and W.paired and W.eff and W.eff >= 3 then
+        local at = S.next
+        S.step(now)
+        if S.hot and S.next == at then S.guard(now) end
+    else S.reset() end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)
