@@ -378,6 +378,10 @@ function W.tick(...)
 end
 W.startHooks[#W.startHooks + 1] = function()
   VR.reset()
+  -- D11 pre-pair gap (0.14.4 review): a host-led follow into this mission (world_follow.lua's arrival) makes it co-op at
+  -- once, so the guest's items are inactive before PAIRED; the last mission's final stop no longer carries over.
+  local F = W.follow
+  if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then VR.coop, VR.stopped = W.mission, nil end
   local s = type(W.api) == "table" and W.api.str32
   if type(s) == "function" then
     local ok, ids = pcall(function()

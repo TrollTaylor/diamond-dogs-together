@@ -578,6 +578,9 @@ W.follow.installHooks[#W.follow.installHooks + 1] = function(cfg)
 end
 W.startHooks[#W.startHooks + 1] = function()
  readKey(W.cfg(W.mission, 0))
+ -- D11 pre-pair gap (0.14.4 review): a host-led follow into this mission (world_follow.lua) is co-op before PAIRED.
+ local F = W.follow
+ if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then RS.coop, RS.stopped = W.mission, nil end
  RS.hostState, RS.diffAt, RS.fixAt, RS.fixes, RS.places, RS.gaveUp, RS.txAt, RS.txAlive, RS.txLogged = nil, nil, nil, 0, 0, nil, nil, nil, nil
  RS.nextTick, RS.greyAt, RS.greyed, RS.skipLogged, RS.busyLogged, RS.quiet, RS.seen, RS.arrive, RS.reload = nil, nil, nil, nil, nil, nil, nil, nil, nil
  RS.lostReq, RS.removedAt, RS.last = nil, nil, nil

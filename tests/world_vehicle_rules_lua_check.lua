@@ -579,6 +579,38 @@ g = Fixture('guest', {loadout = true})
 g.inGame = false
 g:polls(10)
 check(#g.menus == 0, 'not in game: untouched')
+-- D11 pre-pair gap (0.14.4 review, finding game-d11-prepair-gap): after the last mission's final stop (VR.stopped) a
+-- host-led follow can put the guest in game before PAIRED. world_follow.lua's arrival (W.follow.arrivedMission) marks the
+-- new mission co-op, so both items are inactive before PAIRED; a solo load leaves them active.
+local function nextMission(x, mission, arrived)
+    for _, f in ipairs(x.W.pairedHooks) do f(false) end
+    x:poll()
+    for _, f in ipairs(x.W.stopHooks) do f(true) end
+    x.W.paired, x.W.mission, x.env.vars.missionCode = false, mission, mission
+    x.W.follow = {arrivedMission = arrived}
+    x.menus = {}
+    for _, f in ipairs(x.W.startHooks) do f() end
+    x:polls(4)
+end
+g = Fixture('guest', {loadout = true})
+nextMission(g, 30010, 30010)
+check(g:menu('MSN_DROP_LOADOUT') == false and g:menu('MSN_DROP_VEHICLE') == false and
+    g:has('event=vehicle_rules;step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=30010') and
+    g:has('event=vehicle_rules;step=guard;path=idroid_drop_vehicle;via=menu_inactive;mission=30010') and not g.W.paired,
+    'after a follow arrival, unpaired and in game: both items inactive before PAIRED')
+g = Fixture('guest', {loadout = true})
+nextMission(g, 30010, nil)
+check(#g.menus == 0 and not g:has('step=guard;path=idroid_drop_loadout;via=menu_inactive;mission=30010'), 'a solo load after the final stop: untouched (active, as TppTerminal.SetUp left them)')
+g = Fixture('guest', {loadout = true})
+nextMission(g, 30010, 30020)
+check(#g.menus == 0, 'an arrival recorded for another mission is not this one')
+h = Fixture('host', {loadout = true})
+nextMission(h, 30010, 30010)
+check(#h.menus == 0, 'the host: never')
+g = Fixture('guest', {loadout = true})
+nextMission(g, 30010, 30010)
+for _, f in ipairs(g.W.stopHooks) do f(true) end
+check(g:menu('MSN_DROP_LOADOUT') == true and g:menu('MSN_DROP_VEHICLE') == true, 'its final stop activates them again')
 -- The host's iDroid is never touched (its loadout drop works), whatever the key.
 h = Fixture('host', {loadout = true})
 h:polls(20)
