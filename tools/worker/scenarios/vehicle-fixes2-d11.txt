@@ -5,7 +5,9 @@
 # helicopter at the LZ (waitgameplay presses E for the verified helicopter state), opens its iDroid (Tab, 3 MISSIONS,
 # Enter SUPPLY DROP, S S LOADOUT, Enter; S VEHICLES, Enter): both items inactive, each refused with its toast, while
 # unpaired. Then the host's loading is resumed and the pair forms.
-# History: ac0f7656 (vehicle-fixes2-lab.txt part C) logged both guard lines 29 s before PAIRED with the host on its tips
+# History: d3f5ca56: the guest was on foot at the LZ and the guard held 104 s before PAIRED, but the first Tab came during
+#   the arrival popups and the iDroid opened only after the last step, so no refusal was logged; now 12 s wait first.
+#   ac0f7656 (vehicle-fixes2-lab.txt part C) logged both guard lines 29 s before PAIRED with the host on its tips
 #   screen, but the guest was still riding the helicopter in and its iDroid did not open there.
 # Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
@@ -33,8 +35,13 @@ waitgameplay guest 150
 expectstate guest world_paired ^(False|false|0)$
 guest run position
 guest capture d11f-guest-onfoot
+# The arrival shows its checkpoint and Materials Processing popups first: d3f5ca56's first Tab came during them and
+# the iDroid opened only after the last step (its MAP tab in the d11f-paired frame). Wait them out.
+wait 12000
+expectstate guest world_paired ^(False|false|0)$
 guest press tab
-wait 2500
+wait 3000
+guest capture d11f-guest-idroid
 guest press 3
 wait 2500
 guest press enter
