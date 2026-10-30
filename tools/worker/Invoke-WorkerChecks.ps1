@@ -16,6 +16,9 @@ this build (artifacts.loader_sha256 / launcher_sha256), so the player zip's two
 programs come from one checked build of one source snapshot.
 The audited tests run with ctest -j -TestJobs (default half the logical
 processors, at most 16); cmake/test_labels.cmake keeps -j safe.
+-Reuse (what Invoke-WorkerScenario.ps1 asks for): when the profile's newest receipt passed for the identical
+source snapshot, flags, tests and built programs (Get-WorkerReuseRefusal), print that receipt and stop: nothing
+is configured, built or run. Never for -Profile Release (tools/package.ps1 -CheckReceipt needs a fresh receipt).
 #>
 [CmdletBinding()]
 param(
@@ -29,7 +32,8 @@ param(
     [ValidateRange(1, 600)][int]$TestTimeoutSec = 120,
     [ValidateRange(1, 64)][int]$BuildJobs = 8,
     [ValidateRange(1, 64)][int]$TestJobs = [Math]::Max(1, [Math]::Min(16, [int][Math]::Floor([Environment]::ProcessorCount / 2))),
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+    [switch]$Reuse
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -419,6 +423,60 @@ function Assert-WorkerCoverage {
         }
     }
 }
+# Preflight reuse (-Reuse; tools/worker/Invoke-WorkerScenario.ps1 asks for it): the built programs a receipt vouches for.
+# The loader and the launcher always; the hidden worker's supervisor and probe when the profile builds them.
+function Get-WorkerBuildArtifacts([string]$Directory) {
+    $artifacts = [ordered]@{}
+    foreach ($pair in @(@('loader_sha256', 'dinput8.dll'), @('launcher_sha256', 'DiamondDogsTogether.exe'),
+            @('supervisor_sha256', 'worker_supervisor.exe'), @('probe_sha256', 'worker_probe.exe'))) {
+        $path = Join-Path $Directory $pair[1]
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $artifacts[$pair[0]] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+        elseif ($pair[0] -cin @('loader_sha256', 'launcher_sha256')) { return $null }
+    }
+    return $artifacts
+}
+# Why a receipt cannot stand for this preflight, or $null when it can: it passed, for the same profile, flags,
+# configuration, build directory, audited and excluded tests, the identical source snapshot (every file, none added or
+# removed, the same MinHook target) and the same built programs. A Release receipt is never reused: tools/package.ps1
+# -CheckReceipt needs a fresh one.
+function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts) {
+    if ($Plan.profile -ceq 'Release') { return 'release' }
+    if (!$Artifacts) { return 'no_artifacts' }
+    if ($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or !$Receipt.plan) { return 'not_passed' }
+    $old = $Receipt.plan
+    foreach ($key in @('profile', 'configuration', 'profile_key')) { if ([string]$old.$key -cne [string]$Plan.$key) { return 'plan_' + $key } }
+    if ([string]$old.project -ine [string]$Plan.project -or [string]$old.build_directory -ine [string]$Plan.build_directory) { return 'plan_directory' }
+    if (!$old.flags -or @($old.flags.Keys).Count -ne @($Plan.flags.Keys).Count) { return 'plan_flags' }
+    foreach ($name in @($Plan.flags.Keys)) { if (!$old.flags.Contains($name) -or [string]$old.flags[$name] -cne [string]$Plan.flags[$name]) { return 'plan_flags' } }
+    if ((@($old.tests) -join "`n") -cne (@($Plan.tests) -join "`n")) { return 'plan_tests' }
+    if ((@($old.excluded) -join "`n") -cne (@($Plan.excluded) -join "`n")) { return 'plan_excluded' }
+    if ($Receipt.source_hashes -isnot [Collections.IDictionary] -or $Receipt.source_dependencies -isnot [Collections.IDictionary]) { return 'source' }
+    try { Assert-WorkerSourceUnchanged ([pscustomobject]@{ hashes = $Receipt.source_hashes; dependencies = $Receipt.source_dependencies }) $Snapshot }
+    catch { return 'source' }
+    if ($Receipt.artifacts -isnot [Collections.IDictionary]) { return 'artifacts' }
+    foreach ($name in @($Artifacts.Keys)) {
+        if (!$Receipt.artifacts.Contains($name) -or [string]$Receipt.artifacts[$name] -cne [string]$Artifacts[$name]) { return 'artifact_' + $name }
+    }
+    return $null
+}
+# The receipt this preflight may reuse, or $null: only the newest receipt of the plan's profile counts (a newer failed
+# or changed run never lets an older pass stand in).
+function Find-WorkerReusableReceipt([string]$RunRoot, $Plan, $Snapshot, $Artifacts) {
+    if (!(Test-Path -LiteralPath $RunRoot -PathType Container)) { return $null }
+    $pattern = '"profile_key"\s*:\s*"' + [regex]::Escape([string]$Plan.profile_key) + '"'
+    foreach ($directory in @(Get-ChildItem -LiteralPath $RunRoot -Directory | Sort-Object Name -Descending)) {
+        $path = Join-Path $directory.FullName 'receipt.json'
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $text = [IO.File]::ReadAllText($path)
+        if ($text -cnotmatch $pattern) { continue }
+        $receipt = $null
+        try { $receipt = $text | ConvertFrom-Json -AsHashtable } catch { return $null }
+        $refusal = Get-WorkerReuseRefusal $receipt $Plan $Snapshot $Artifacts
+        if ($refusal) { Write-Host "Worker check reuse refused ($refusal): $path"; return $null }
+        return $path
+    }
+    return $null
+}
 function Write-WorkerJson([string]$Path, $Value) {
     $tmp = $Path + '.tmp'
     [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 16) + "`n", [Text.UTF8Encoding]::new($false))
@@ -476,12 +534,39 @@ function New-WorkerCmakeOverride($Context) {
 
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 $plan = Get-WorkerPlan $projectRoot $Profile $Configuration $EnableExperiment $EnableBackgroundWorker.IsPresent $BuildDirectory
+if ($Reuse -and $plan.profile -ceq 'Release') { throw 'A Release receipt is never reused: tools/package.ps1 -CheckReceipt needs a fresh one (run without -Reuse).' }
 if ($PlanOnly) { $plan | ConvertTo-Json -Depth 8; return }
 Assert-WorkerOptions $projectRoot
 $cmakePath = (Get-Command cmake -CommandType Application -ErrorAction Stop).Source
 $ctestPath = (Get-Command ctest -CommandType Application -ErrorAction Stop).Source
 $pwshPath = (Get-Process -Id $PID).Path
 $runRoot = Join-Path $projectRoot 'build\worker-runs'
+if ($Reuse) {
+    # Under the coordinator lock, so no other check of this checkout builds into the cache meanwhile.
+    $reuseMutex = [Threading.Mutex]::new($false, $plan.coordinator_lock)
+    $reuseOwned = $false
+    try {
+        try { $reuseOwned = $reuseMutex.WaitOne([TimeSpan]::FromSeconds($LockTimeoutSec)) }
+        catch [Threading.AbandonedMutexException] { $reuseMutex.ReleaseMutex(); throw 'Previous coordinator abandoned its lock; audit leftover build processes before retrying' }
+        if (!$reuseOwned) { throw 'Worker check coordinator lock timed out' }
+        $reused = $null
+        if (Test-Path -LiteralPath (Join-Path $plan.build_directory 'CMakeCache.txt') -PathType Leaf) {
+            $cacheMatches = $true
+            try { Assert-WorkerCache $plan.build_directory $plan.flags } catch { $cacheMatches = $false }
+            if ($cacheMatches) {
+                $reused = Find-WorkerReusableReceipt $runRoot $plan (Get-WorkerSourceHashes $projectRoot) (Get-WorkerBuildArtifacts $plan.build_directory)
+            }
+        }
+    } finally {
+        if ($reuseOwned) { $reuseMutex.ReleaseMutex() }
+        $reuseMutex.Dispose()
+    }
+    if ($reused) {
+        Write-Host "Worker check reuse: the source, flags, tests and built programs are unchanged since $reused"
+        Write-Output "Worker check receipt: $reused"
+        return
+    }
+}
 $runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
 $runDirectory = Join-Path $runRoot $runId
 Assert-WorkerPath $runDirectory (Join-Path $projectRoot 'build')
@@ -551,6 +636,11 @@ try {
     # The launcher of the same build (tools/package.ps1 -Friend ships both).
     $launcher = Join-Path $plan.build_directory 'DiamondDogsTogether.exe'
     $receipt.artifacts.launcher_sha256 = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash
+    # The hidden worker's programs of this build (a later -Reuse needs the same ones; Get-WorkerBuildArtifacts).
+    foreach ($pair in @(@('supervisor_sha256', 'worker_supervisor.exe'), @('probe_sha256', 'worker_probe.exe'))) {
+        $program = Join-Path $plan.build_directory $pair[1]
+        if (Test-Path -LiteralPath $program -PathType Leaf) { $receipt.artifacts[$pair[0]] = (Get-FileHash -LiteralPath $program -Algorithm SHA256).Hash }
+    }
     [IO.File]::Copy($launcher, (Join-Path $runDirectory 'DiamondDogsTogether.exe'), $false)
     [IO.File]::Copy((Join-Path $plan.build_directory 'CMakeCache.txt'), (Join-Path $runDirectory 'CMakeCache.txt'), $false)
     $receipt.status = 'passed'

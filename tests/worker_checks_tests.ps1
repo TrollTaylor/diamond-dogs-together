@@ -13,7 +13,8 @@ if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
 $pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerExcludedShardedTests','Get-WorkerShardNames','Get-WorkerShard','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
-    'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride')
+    'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride',
+    'Get-WorkerBuildArtifacts','Get-WorkerReuseRefusal','Find-WorkerReusableReceipt')
 foreach ($name in $pure) {
     $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
     if ($definitions.Count -ne 1) { throw "Missing or duplicate pure boundary: $name" }
@@ -468,6 +469,69 @@ if($LASTEXITCODE -ne 0) { throw 'nested native exit was not preserved' }
     [MgsCoopWorkerProcessFixture]::Mode='nonzero'
     Refuses { & $child } 'exit 17'
     Check ($commandContext.receipt.commands.Count -eq 8 -and $commandContext.receipt.commands[-1].exit_code -eq 17 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 8) 'nested failure retains native exit and stops before second command'
+    # Preflight reuse (Invoke-WorkerChecks -Reuse, which Invoke-WorkerScenario asks for): only the profile's newest receipt,
+    # only when it passed for the identical source snapshot, flags, tests and built programs; never a Release receipt.
+    $reuseRoot = Join-Path $fixture 'reuse'
+    $reuseSource = Join-Path $reuseRoot 'source'
+    $null = New-Item -ItemType Directory -Path (Join-Path $reuseSource 'native'), (Join-Path $reuseSource 'third_party\minhook') -Force
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'CMakeLists.txt'), '# inert reuse fixture')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'third_party\minhook\CMakeLists.txt'), '# inert dependency')
+    $reuseBuild = Join-Path $reuseRoot 'build'
+    $null = New-Item -ItemType Directory -Path $reuseBuild
+    Check ($null -eq (Get-WorkerBuildArtifacts $reuseBuild)) 'no loader and launcher: nothing to reuse'
+    foreach ($program in 'dinput8.dll', 'DiamondDogsTogether.exe', 'worker_supervisor.exe', 'worker_probe.exe') { [IO.File]::WriteAllText((Join-Path $reuseBuild $program), "inert $program") }
+    $reuseArtifacts = Get-WorkerBuildArtifacts $reuseBuild
+    Check ((@($reuseArtifacts.Keys) -join ',') -ceq 'loader_sha256,launcher_sha256,supervisor_sha256,probe_sha256') 'the loader, launcher and worker programs are vouched for'
+    $reusePlan = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST') $true ''
+    $reuseSnapshot = Get-WorkerSourceHashes $reuseSource
+    function New-ReuseReceipt([string]$Status = 'passed', $Plan = $reusePlan, $Snapshot = $reuseSnapshot, $Artifacts = $reuseArtifacts) {
+        $receipt = [ordered]@{ schema = 1; run_id = 'fixture'; plan = $Plan; status = $Status; commands = @(); source_hashes = $Snapshot.hashes;
+            source_dependencies = $Snapshot.dependencies; artifacts = $Artifacts }
+        return ($receipt | ConvertTo-Json -Depth 16) | ConvertFrom-Json -AsHashtable
+    }
+    Check ($null -eq (Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $reuseSnapshot $reuseArtifacts)) 'an unchanged passed Research receipt is reusable'
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'failed') $reusePlan $reuseSnapshot $reuseArtifacts) -ceq 'not_passed') 'a failed receipt is never reused'
+    $releasePlan = Get-WorkerPlan $fixture 'Release' 'Release' @() $false ''
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'passed' $releasePlan) $releasePlan $reuseSnapshot $reuseArtifacts) -ceq 'release') 'a Release receipt is never reused'
+    $otherPlan = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $true ''
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'passed' $otherPlan) $reusePlan $reuseSnapshot $reuseArtifacts) -clike 'plan_*') 'another experiment set is never reused'
+    $flagged = New-ReuseReceipt; $flagged.plan.flags['MGS_LOCAL_ACTION_EVENTS'] = 'ON'
+    Check ((Get-WorkerReuseRefusal $flagged $reusePlan $reuseSnapshot $reuseArtifacts) -ceq 'plan_flags') 'a changed flag is never reused'
+    $fewer = New-ReuseReceipt; $fewer.plan.tests = @($fewer.plan.tests | Select-Object -Skip 1)
+    Check ((Get-WorkerReuseRefusal $fewer $reusePlan $reuseSnapshot $reuseArtifacts) -ceq 'plan_tests') 'a changed audited test list is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// changed after the checks')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts) -ceq 'source') 'a changed source file is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\b.hpp'), '// added after the checks')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts) -ceq 'source') 'an added source file is never reused'
+    Remove-Item -LiteralPath (Join-Path $reuseSource 'native\b.hpp')
+    Remove-Item -LiteralPath (Join-Path $reuseSource 'native\a.cpp')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts) -ceq 'source') 'a removed source file is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    Check ($null -eq (Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts)) 'the same bytes again are reusable'
+    foreach ($program in @(@('dinput8.dll', 'loader_sha256'), @('DiamondDogsTogether.exe', 'launcher_sha256'), @('worker_supervisor.exe', 'supervisor_sha256'), @('worker_probe.exe', 'probe_sha256'))) {
+        [IO.File]::WriteAllText((Join-Path $reuseBuild $program[0]), 'rebuilt')
+        Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $reuseSnapshot (Get-WorkerBuildArtifacts $reuseBuild)) -ceq ('artifact_' + $program[1])) "a rebuilt $($program[0]) is never reused"
+        [IO.File]::WriteAllText((Join-Path $reuseBuild $program[0]), "inert $($program[0])")
+    }
+    $older = New-ReuseReceipt; $older.artifacts.Remove('supervisor_sha256')
+    Check ((Get-WorkerReuseRefusal $older $reusePlan $reuseSnapshot $reuseArtifacts) -ceq 'artifact_supervisor_sha256') 'a receipt that never vouched for the worker programs is not reused'
+    # Find: the newest receipt of the profile decides; other profiles' receipts are skipped.
+    $reuseRuns = Join-Path $reuseRoot 'worker-runs'
+    function Write-ReuseRun([string]$Name, $Receipt) {
+        $null = New-Item -ItemType Directory -Path (Join-Path $reuseRuns $Name) -Force
+        Write-WorkerJson (Join-Path $reuseRuns "$Name\receipt.json") $Receipt
+        return (Join-Path $reuseRuns "$Name\receipt.json")
+    }
+    Check ($null -eq (Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts)) 'no run folder: no reuse'
+    $passedPath = Write-ReuseRun '20261030-100000-a' (New-ReuseReceipt)
+    $null = Write-ReuseRun '20261030-110000-b' (New-ReuseReceipt 'passed' $otherPlan)
+    Check ((Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts) -ceq $passedPath) 'the newest receipt of this profile is reused; another profile is skipped'
+    $null = Write-ReuseRun '20261030-120000-c' (New-ReuseReceipt 'failed')
+    Check ($null -eq (Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts)) 'a newer failed run of the profile is never covered by an older pass'
+    # The runner itself: -Reuse never applies to the Release profile (refused before anything is planned or built).
+    Refuses { & $scriptPath -Profile Release -Reuse -PlanOnly } 'never reused'
     Write-Output "Worker policy checks passed: $checks. No process launch, build, game, installation or system input ran."
 } finally {
     foreach($link in $ownedLinks) {

@@ -396,6 +396,10 @@ foreach($bad in @('partner_native_net=wan','partner_native_stall=keep','partner_
     Assert-True ($bad -cnotmatch $labSettingPatterns[0]) ('not allow-listed: '+$bad)
 }
 $scenarioSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+# Preflight reuse: both preflight calls ask Invoke-WorkerChecks to -Reuse an unchanged receipt unless -FreshChecks.
+$reuseCalls=[regex]::Matches($scenarioSource,[regex]::Escape("'Invoke-WorkerChecks.ps1')")+'[^\r\n]*-Reuse:\$reuse 2>&1').Count
+Assert-True ($scenarioSource.Contains('$reuse=!$FreshChecks') -and $reuseCalls -eq 2 -and
+    $scenarioSource -cmatch '(?m)^\s*\[switch\]\$FreshChecks,') 'the scenario preflight reuses an unchanged receipt unless -FreshChecks'
 $scenarioLine=[regex]::Match($scenarioSource,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)").Groups[1].Value
 Assert-True ([bool]$scenarioLine) 'the scenario labsetting line regex'
 foreach($ok in @('labsetting partner_native_net=online','labsetting host partner_native_stall=hold','labsetting guest partner_input_edge_repeats=5','labsetting partner_native_hold=net')){

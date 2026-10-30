@@ -179,6 +179,11 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    M3: world_relief=0|1, the host's sortie vehicle on both copies (lab and play,
                                    default 0; docs/vehicles-companions-design.md 6.3)
 
+Preflight: without -CheckReceipt the run first runs tools/worker/Invoke-WorkerChecks.ps1 for its profile with -Reuse:
+when the profile's newest receipt passed for the identical source snapshot, flags, tests and built programs, that
+receipt is used again and nothing is rebuilt or rerun (seconds instead of about 1.5 min). -FreshChecks always runs
+the full checks.
+
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
 save handoff restart proof, scenarios/handoff-after-restart.txt). -GuestSaveSeed real-remote: the
@@ -195,6 +200,7 @@ param(
     [string]$ScenarioPath,
     [string[]]$Step=@(),
     [string]$CheckReceipt,
+    [switch]$FreshChecks,
     [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$BaselineLoaderSha256,
     [ValidateRange(60,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=180,
@@ -382,8 +388,9 @@ if(!$BaselineLoaderSha256){
     $BaselineLoaderSha256=[string](Get-WorkerOwnedBaseline 'D:\Games\steamapps\common\MGS_TPP' (Get-WorkerRuntimePins)).Sha256
 }
 if(!$CheckReceipt){
-    $out=if($BuildProfile -cin @('research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
-        else{@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker 2>&1)}
+    $reuse=!$FreshChecks
+    $out=if($BuildProfile -cin @('research','buddy-capacity','mgo-sleep-rest','mgo-unique-rest','mgo-standing-cycle')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker -Reuse:$reuse 2>&1)}
+        else{@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker -Reuse:$reuse 2>&1)}
     $CheckReceipt=@($out|ForEach-Object{[string]$_}|Select-String -Pattern 'Worker check receipt: (.+receipt\.json)'|ForEach-Object{$_.Matches[0].Groups[1].Value})[-1]
     if(!$CheckReceipt){throw "Worker checks produced no receipt:`n$($out -join "`n")"}
 }
