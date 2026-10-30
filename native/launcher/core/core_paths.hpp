@@ -33,6 +33,8 @@ std::string GamePathProblem(const std::wstring& game_root, const std::vector<std
 // Local\mgs-coop-play-<first 16 hex of SHA-256(upper-case game root)>, the same
 // name the PowerShell tooling used.
 std::wstring PlayMutexName(const std::wstring& game_root);
+// Local\mgs-coop-setup-<the same 16 hex>: held while a setup runs in the folder.
+std::wstring SetupMutexName(const std::wstring& game_root);
 
 // Steam's MGSV folders (read-only): registry Steam roots, the uninstall key's
 // InstallLocation, libraryfolders.vdf libraries and appmanifest_287700.acf

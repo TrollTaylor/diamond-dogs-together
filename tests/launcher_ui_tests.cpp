@@ -460,14 +460,22 @@ void TestCommandLine() {
     // folders over; a window opened meanwhile would find a half-made test and put its files back).
     LocalTestView local;
     info.status = UpdateStatus::available;
-    Check(!ui::HoldFolderWhileClosing(info, local), "a normal close frees the folder at once");
+    Check(!ui::HoldFolderWhileClosing(info, local, Phase::ready), "a normal close frees the folder at once");
     info.status = UpdateStatus::downloading;
-    Check(ui::HoldFolderWhileClosing(info, local), "an update in progress holds it");
+    Check(ui::HoldFolderWhileClosing(info, local, Phase::ready), "an update in progress holds it");
     info.status = UpdateStatus::idle;
     local.active = local.starting = true;
-    Check(ui::HoldFolderWhileClosing(info, local), "a local test still starting holds it");
+    Check(ui::HoldFolderWhileClosing(info, local, Phase::ready), "a local test still starting holds it");
     local.starting = false;
-    Check(!ui::HoldFolderWhileClosing(info, local), "a running local test does not (its helper takes over)");
+    Check(!ui::HoldFolderWhileClosing(info, local, Phase::ready), "a running local test does not (its helper takes over)");
+    // 0.14.4 review: a window closed while co-op gets ready released the folder before its setup had ended (the model
+    // waited for a pending update check first), so a window opened again at once ran a second setup next to it. The
+    // folder is now held until the model has ended the process with its setup; an update check alone never holds it.
+    local = LocalTestView{};
+    info.status = UpdateStatus::checking;
+    Check(ui::HoldFolderWhileClosing(info, local, Phase::setting_up), "co-op getting ready holds the folder until the setup has ended");
+    for (Phase p : {Phase::not_in_game_folder, Phase::needs_setup, Phase::ready, Phase::launching, Phase::in_game, Phase::after_game, Phase::error})
+        Check(!ui::HoldFolderWhileClosing(info, local, p), "no setup running: an update check never holds the folder");
 
     // The update card on Play.
     UpdateInfo u;

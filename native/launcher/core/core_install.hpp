@@ -112,6 +112,10 @@ using SetupCallback = std::function<void(const StepReport&)>;
 // friend-install.json "pending", and the next run finishes the job).
 bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character, const std::string& hud, const SetupCallback& report,
               const std::atomic<bool>* cancel, std::string& error);
+// One setup at a time per game folder (0.14.4 review): RunSetup holds the
+// folder's setup lock (SetupMutexName) while it runs. True while another thread
+// or process holds it: a window then waits instead of starting its own setup.
+bool SetupRunningElsewhere(const std::wstring& game_root);
 
 // ---- Uninstall and Collect logs -------------------------------------------------------
 bool Uninstall(Env& env, const InstancePaths& paths, std::string& report, std::string& error);

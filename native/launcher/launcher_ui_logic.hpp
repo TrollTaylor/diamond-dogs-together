@@ -214,9 +214,12 @@ bool CloseForUpdate(const UpdateInfo& info);
 // (otherwise at once, so a slow update check never blocks the next start).
 bool UpdateInProgress(const UpdateInfo& info);
 // A closing window keeps the folder until its model has ended its threads: while
-// an update is in progress, or while the local test is still starting (that
-// thread is switching both folders over). Otherwise the folder is free at once.
-bool HoldFolderWhileClosing(const UpdateInfo& info, const LocalTestView& local);
+// an update is in progress, while the local test is still starting (that
+// thread is switching both folders over), or while co-op gets ready (the model
+// ends the process and its setup at once, before the folder is free: a window
+// opened again meanwhile never runs a second setup next to it). Otherwise the
+// folder is free at once.
+bool HoldFolderWhileClosing(const UpdateInfo& info, const LocalTestView& local, Phase phase);
 
 // ---- Update notes on the pages ----------------------------------------------
 // The update card on Play: nothing, an update to install, one that did not go

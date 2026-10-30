@@ -686,11 +686,14 @@ int RunWindow(const Options& o) {
     }
     // While an update downloads, installs or hands over, or the local test is
     // still starting, that thread finishes before the folder is released (a new
-    // window must not tidy files it is replacing or switching over). Otherwise
-    // the folder is free as soon as the window is gone, and the model ends its
-    // threads afterwards: an update check that waits for the network must never
-    // make the next start close silently.
-    const bool hold = ddt::ui::HoldFolderWhileClosing(app.model->update_info(), app.model->local_test());
+    // window must not tidy files it is replacing or switching over). While co-op
+    // gets ready, the model ends the process with its setup right there, before
+    // it waits for anything else, so the folder is free only once that setup has
+    // stopped (0.14.4 review: a window opened again at once ran a second setup
+    // next to it). Otherwise the folder is free as soon as the window is gone,
+    // and the model ends its threads afterwards: an update check that waits for
+    // the network must never make the next start close silently.
+    const bool hold = ddt::ui::HoldFolderWhileClosing(app.model->update_info(), app.model->local_test(), app.model->phase());
     Shutdown(app);
     if (hold) app.model.reset();
     g_app = nullptr;

@@ -129,6 +129,7 @@ public:
     bool clip_set = false;
     std::wstring desktop, temp;
     std::function<void()> on_sleep;
+    std::function<void()> on_registry;   // called before each registry read (outside the lock)
 
     static std::wstring Key(bool hklm, const std::wstring& k, const std::wstring& n) { return std::wstring(hklm ? L"M:" : L"U:") + k + L"|" + n; }
     void SetDword(const std::wstring& k, const std::wstring& n, std::uint32_t v) {
@@ -171,7 +172,16 @@ public:
         if (hook) hook();
     }
     Civil LocalTime(std::int64_t utc_ms) override { return CivilFromMs(utc_ms); }
+    void RegistryHook() {
+        std::function<void()> hook;
+        {
+            std::lock_guard<std::recursive_mutex> l(m);
+            hook = on_registry;
+        }
+        if (hook) hook();
+    }
     bool RegDword(bool hklm, const std::wstring& key, const std::wstring& name, std::uint32_t& out) override {
+        RegistryHook();
         std::lock_guard<std::recursive_mutex> l(m);
         auto it = dwords.find(Key(hklm, key, name));
         if (it == dwords.end()) return false;
@@ -179,6 +189,7 @@ public:
         return true;
     }
     bool RegString(bool hklm, const std::wstring& key, const std::wstring& name, std::wstring& out) override {
+        RegistryHook();
         std::lock_guard<std::recursive_mutex> l(m);
         auto it = strings.find(Key(hklm, key, name));
         if (it == strings.end()) return false;
@@ -1814,6 +1825,147 @@ void TestUpdateDuringSetup() {
     Hooks() = saved;
     GetUpdateHooks() = saved_update;
     CHECK(f.RealSavesUntouched());
+}
+
+std::size_t CountOf(const std::string& text, const std::string& part) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(part); at != std::string::npos; at = text.find(part, at + part.size())) ++n;
+    return n;
+}
+
+// 0.14.4 review (launcher-concurrent-auto-setup-after-close): a window closed while co-op got ready ended its setup
+// only after a pending update check had returned (the model joined that thread first; its WinHTTP waits last up to
+// about a minute), so the setup ran on with the window gone while a window opened again started its own. The model
+// now stops its setup before it waits for anything else; the real window ends the process right there, while it
+// still holds the folder (launcher_ui_logic HoldFolderWhileClosing).
+void TestCloseDuringSetup() {
+    Fixture f(L"close-during-setup");
+    const UpdateHooks saved_update = GetUpdateHooks();
+    std::atomic<bool> check_waiting{false}, release_check{false};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        check_waiting = true;   // the network does not answer
+        while (!release_check) Sleep(5);
+        body = "[]";
+        status = 200;
+        return true;
+    };
+    const DWORD window_thread = GetCurrentThreadId();
+    std::atomic<bool> setup_waiting{false}, release_setup{false};
+    f.env->on_registry = [&]() {   // the setup reads the Steam account: it waits there
+        if (GetCurrentThreadId() == window_thread) return;
+        setup_waiting = true;
+        while (!release_setup) Sleep(5);
+    };
+    std::unique_ptr<LauncherModel> m = MakeRealModelWithEnv(f.game, f.env);
+    for (int i = 0; i < 1000 && !check_waiting; ++i) Sleep(5);
+    CHECK(check_waiting && m->update_info().status == UpdateStatus::checking);
+    m->tick();   // co-op gets ready by itself
+    CHECK(m->phase() == Phase::setting_up);
+    for (int i = 0; i < 1000 && !setup_waiting; ++i) Sleep(5);
+    CHECK(setup_waiting);
+    std::atomic<bool> closed{false};
+    std::thread window_closes([&]() {
+        m.reset();
+        closed = true;
+    });
+    Sleep(100);
+    release_setup = true;   // the setup could go on now: it stops instead
+    std::string log;
+    for (int i = 0; i < 400; ++i) {
+        log = ReadText(f.paths.launcher_log);
+        if (Has(log, "setup=failed") || Has(log, "setup=done")) break;
+        Sleep(5);
+    }
+    CHECK(Has(log, "setup=failed; step=0") && !Has(log, "setup=done"));
+    CHECK(!PathExists(f.paths.friend_install) && !IsDir(f.paths.backups_root) && !IsDir(f.paths.coop_saves));
+    CHECK(!closed);   // the update check is still waiting (the real window's process has ended by now)
+    release_check = true;
+    window_closes.join();
+    CHECK(closed);
+    f.env->on_registry = nullptr;
+    GetUpdateHooks() = saved_update;
+    CHECK(f.RealSavesUntouched());
+}
+
+// The other end: a window that opens while another setup still runs in the folder (a closing window's, or the
+// developer --write-session's) waits for it instead of starting a second setup next to it, then looks at the folder
+// again; a setup that finds the folder's setup lock taken anyway stops with a sentence and changes nothing.
+void TestSetupElsewhere() {
+    {
+        Fixture f(L"setup-elsewhere");
+        const InstallHooks saved = Hooks();
+        std::atomic<int> builds{0};
+        std::atomic<bool> release{false};
+        Hooks().build_runtime = [&](const std::wstring& game, const std::wstring& out, const std::function<void(float, const std::string&)>& progress,
+                                    std::string& build_error) {
+            ++builds;
+            while (!release) Sleep(5);
+            return saved.build_runtime(game, out, progress, build_error);
+        };
+        // The other window's setup, on its own thread (as another process would run it).
+        std::atomic<bool> other_ok{false};
+        std::thread other([&]() {
+            std::string error;
+            other_ok = RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error);
+        });
+        for (int i = 0; i < 1000 && builds == 0; ++i) Sleep(5);
+        CHECK(builds == 1 && SetupRunningElsewhere(f.game));
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        for (int i = 0; i < 10; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        std::string log = ReadText(f.paths.launcher_log);
+        CHECK(m->phase() == Phase::needs_setup && builds == 1);
+        CHECK(CountOf(log, "setup=waiting; reason=other_setup") == 1 && CountOf(log, "setup=start") == 1 && !Has(log, "setup=auto"));
+        release = true;
+        other.join();
+        CHECK(other_ok && !SetupRunningElsewhere(f.game));
+        m->tick();   // the folder is free again: the other setup made co-op ready, so there is nothing left to do
+        log = ReadText(f.paths.launcher_log);
+        CHECK(m->phase() == Phase::ready && builds == 1 && CountOf(log, "setup=start") == 1 && !Has(log, "setup=auto"));
+        Hooks() = saved;
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // The other setup was ended half way (its process was closed): this window does the setup once it is free.
+        Fixture f(L"setup-elsewhere-ended");
+        std::atomic<bool> held{false}, release{false};
+        std::thread other([&]() {
+            HANDLE h = CreateMutexW(nullptr, TRUE, SetupMutexName(f.game).c_str());
+            held = h != nullptr;
+            while (!release) Sleep(5);
+            if (h) {
+                ReleaseMutex(h);
+                CloseHandle(h);
+            }
+        });
+        for (int i = 0; i < 1000 && !held; ++i) Sleep(5);
+        CHECK(held && SetupRunningElsewhere(f.game));
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        for (int i = 0; i < 5; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && !PathExists(f.paths.friend_install));
+        // A setup started anyway (Try again, or a race past that wait) finds the lock taken: it stops with a sentence.
+        std::string error;
+        CHECK(!RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error));
+        CHECK(Has(error, "another Diamond Dogs Together window") && !PathExists(f.paths.friend_install) && !IsDir(f.paths.backups_root));
+        release = true;
+        other.join();
+        CHECK(!SetupRunningElsewhere(f.game));
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=auto"));
+        CHECK(f.RealSavesUntouched());
+    }
+    // Two folders never share the lock name; one folder's name ignores case and a trailing backslash.
+    CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") == SetupMutexName(L"c:\\games\\mgs_tpp\\"));
+    CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") != SetupMutexName(L"D:\\Games\\MGS_TPP"));
+    CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") != PlayMutexName(L"C:\\Games\\MGS_TPP"));
 }
 
 void StageForModel(Fixture& f, const std::string& xfer, std::uint32_t pid) {
@@ -4362,6 +4514,8 @@ int main(int argc, char** argv) {
     TestModel();
     TestAutoSetup();
     TestUpdateDuringSetup();
+    TestCloseDuringSetup();
+    TestSetupElsewhere();
     TestLocalText();
     TestGraphicsConfig();
     TestLocalLayout();
