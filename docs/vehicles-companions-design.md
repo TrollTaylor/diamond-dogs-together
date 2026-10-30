@@ -2849,6 +2849,7 @@ All closed with the baseline restored and the real saves unchanged; frames in th
 - **Seen, not new.** [O] While moving, the driver's copy can draw the partner beside its seat (`err_mm` up to 1866 in
   the truck, 3021 in the jeep; back to 0-5 mm at rest), as in 8.24.
 - **Speed.** 5 hidden runs (one refused before gameplay, one lost part D to the scenario); preflights ran in parallel.
+  Full CTest 321/321 (`tools/build.ps1`) at `e191414`.
 
 ## 9. Milestones
 

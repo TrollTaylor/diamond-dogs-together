@@ -17,7 +17,7 @@ afterwards. Details: `docs/vehicles-companions-design.md` 8.25. [O] observed, [I
 Not proven: the dog jumping in after the passenger sat down, live (the dog was always first; driver test only) [I];
 two-PC. Seen in every moving frame set: the partner's body can lag beside its seat on the driver's screen while
 moving (up to 1.8-3.0 m, back in the seat at rest), as before. Runs `f9d2482d` (seed attempt refused in the ACC) and
-`b68844fc` (lab, made seed `afgh-relief-trc`). Fast CTest green after every change; full CTest: see 8.25.
+`b68844fc` (lab, made seed `afgh-relief-trc`). Fast CTest green after every change; full CTest 321/321 (`tools/build.ps1`) at `e191414`.
 
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
