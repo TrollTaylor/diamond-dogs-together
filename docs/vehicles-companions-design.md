@@ -3121,9 +3121,15 @@ Runs `89cfa402` and `5c8ce1ba` (`m6m7c-aim-view.txt`, lab, Wakh Sind jeep 25608;
 seat 3 guest in `5c8ce1ba`; frames `complete/frames/m6m7d-aim`).
 - **The get-off turn works [O]:** every seat-1/2 get-off logs `state=turn; event=request; reason=made` after the stock
   release (`ms=1684..3085`, `stock_seen=1`, `yaw_mrad=107..108`) and `event=check; yaw_err_mrad=0; up_mrad=-120;
-  cam_body_cm=524`, on both roles: the request's yaw is world yaw after a seated aim (8.34's [U] closed). Frames
-  `s1-exited`, `k2-exited`, `h1-exited` (both runs): the player from behind, the jeep to the left, looking along the
-  jeep; before (`37b94432-guest-s1-exited`) the camera faced the driver. Seat 3: no turn, the stock camera behind.
+  cam_body_cm=524`, on both roles: the camera reaches the world yaw asked for after a seated aim (8.34's [U]; at one
+  jeep heading, ~6 deg, so the vehicle-to-camera yaw convention at other headings stays [U]). Frames `s1-exited`,
+  `k2-exited`, `h1-exited` (both runs, ~10 s after the get-off): the camera along the jeep's heading, the player beside
+  the jeep, side-on (seat 1) or from the rear quarter with the jeep on their right (seat 2); before
+  (`37b94432-guest-s1-exited`, play, 3.8 s) the camera faced the driver. Corrected by the review: the get-off itself
+  (`exit-01..03`, both roles) still shows the driver up close until the request (1.7 s seat 1, 3.1 s seat 2 after the
+  report ends); the swing was not captured (8.36). Seat 3: no turn; the stock camera stays behind the jeep, facing the
+  player (`5c8ce1ba-guest-k3-exited`), seen only on the lift build `99f41fe` ([I] the same at `1715b82`: the lift was
+  gated to seats 1-2).
 - **The raise does nothing [O]:** `state=view; event=apply; variant=0; index=0; ok=1` (the variant is listed), but on
   every seated aim tick the trace reads `f204=0x63110` (CAM+0x204 bit 2 clear: 0x12BD4D4 never calls FUN_1412BBFE0),
   `off=0,0,0,0` (CAM+0x140), the camera ~1.2 m behind and 0.0-0.1 m above the body root; the frames show the leg (seat 1)
@@ -3137,7 +3143,8 @@ seat 3 guest in `5c8ce1ba`; frames `complete/frames/m6m7d-aim`).
   went with it. Next: raise the record the seated aim loads (find it through the parameter manager CAM+0x4B0, set
   0xB8A0BF169F98, variant 0; [U] whether the on-foot aim shares it), or move the eye after 0x111AAA0.
 - Shots: fired from seats 1-3 in mode view (magazine 8 -> 7 -> 6, `state=guard` windows); the jeep's life was not read
-  (`vehicle_state_status`: `life_refused; reason=off`), so whether the shots hit the own jeep is [U] here.
+  (`vehicle_state_status`: `life_refused; reason=off`; godmode 1 on both copies; no shot aimed at the jeep), so whether
+  the shots hit the own jeep is [U] here.
 - Not flipped: `partner_pass_camera=view` does not meet its proof (seats 1 and 2 still look at the leg / the panel).
   The get-off turn alone is proven; shipping it alone is a decision for the user (`view` still writes the inert entry).
 

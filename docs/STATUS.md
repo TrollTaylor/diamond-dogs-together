@@ -2,17 +2,20 @@
 
 Two hidden lab runs of `m6m7c-aim-view.txt` (`-PartnerProfile native -NativeStage gun -BuildProfile research`, host
 seed `afgh-quiet`, guest seed `afgh-horse`; both copies admitted, closed and restored):
-- **Problem (4) fixed in game:** `89cfa402` and `5c8ce1ba`: after every get-off from seat 1 (guest and host roles) and
-  seat 2 (host) the turn request is made after the stock release (`yaw_err_mrad=0`, the camera 5.24 m from the body) and
-  the frames show the player from behind, looking along the jeep, instead of the driver up close. Seat 3 gets no turn
-  and its stock camera stays behind the player (`5c8ce1ba-guest-k3-exited`).
+- **Problem (4) partly fixed in game** (corrected by the review): `89cfa402` and `5c8ce1ba`: after every get-off from
+  seat 1 (guest and host roles) and seat 2 (host) the turn request is made after the stock release (`yaw_err_mrad=0`,
+  the camera 5.24 m from the body); the settled frames show the camera along the jeep's heading with the player beside
+  the jeep (side-on or from the rear quarter; in `k2-exited` the jeep is on the player's right), not the driver up close.
+  Through the get-off itself the stock camera still shows the driver up close (the `exit-01..03` frames) until the
+  request, 1.7 s (seat 1) / 3.1 s (seat 2) after the report ends; the 0.4 s swing was not captured. Seat 3 gets no turn;
+  its stock camera stays behind the jeep, facing the player, the driver in view (`5c8ce1ba-guest-k3-exited`).
 - **Problem (2) not fixed:** the module entry is applied (variant 0 is listed) but the frames still show the leg (seat 1)
   and the panel (seat 2): in the seated aim CAM+0x204 bit 2 stays clear (`f204=0x63110` on every aim tick), so the aim
   module's update never calls FUN_1412BBFE0 and CAM+0x140 stays 0. A direct write of the target CAM+0x154 (`10aa42b`,
   `99f41fe`, run `5c8ce1ba`) is written back to 0 between every two ticks (30 rewrites in ~0.4 s; [I] by the
   parameter-record apply 0x111AAA0); reverted (`b890a69`, code back to `1715b82`). Seat 3's aim view is clear and unchanged.
 - Shots fire from seats 1-3 in mode view (magazine 8 -> 6, guard windows open and close); the jeep's life was not read
-  (`vehicle_state_status`: `life_refused; reason=off`).
+  (`vehicle_state_status`: `life_refused; reason=off`; godmode on): problem (3) is [U] in these runs.
 - Scenario (`a9251e0`, `b890a69`): seat 1 in both roles, seat 2, seat 3 (a teleport to the right rear door).
 Full CTest 336/336; contract `--check` 829 / 209. **Players see no change** (default `aim`; not flipped this round).
 Design 8.35.
