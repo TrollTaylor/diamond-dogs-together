@@ -13,7 +13,7 @@ player's own view. Hidden lab run `91618e86` (`m6m7d-aim-reprove.txt`, both copi
 - Seat 3 at this code [O]: no view or turn line; aim over the shoulder; the get-off camera stays behind the jeep,
   facing the player. The raise's boarding-end restore ran on all three non-aiming seat-1 boardings (`event=restore;
   reason=end; ok=1`). No faults on either copy.
-Frames `complete/frames/m6m7d-aim/best-sheet-91618e86.jpg`. Full CTest and contract below. **Players see no change**
+Frames `complete/frames/m6m7d-aim/best-sheet-91618e86.jpg`. Full CTest 336/336; contract `--check` 829 / 209. **Players see no change**
 (default `aim`; not flipped). Open: the turn after an on-foot aim ends, other jeep headings, problem (3), the raise.
 
 ## 2026-10-30: aim view in game (branch `wp/aim-view`; the get-off camera proven, the seated raise does not work)
