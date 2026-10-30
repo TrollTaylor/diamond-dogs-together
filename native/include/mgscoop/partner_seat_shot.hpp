@@ -112,6 +112,10 @@ inline void ToLocal(float yaw, const float w[3], float out[3]) noexcept {
 
 // The slab test: the line o + t d (box-centred local coordinates) against half extents h. True when the line meets
 // the box at some t > 0; t_in may be <= 0 (the start is inside).
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4723)  // /O2 inlines a constant 0 direction component into the guarded division
+#endif
 inline bool RayBox(const float o[3], const float d[3], const float h[3], float& t_in, float& t_out) noexcept {
     float lo = -std::numeric_limits<float>::infinity(), hi = std::numeric_limits<float>::infinity();
     for (int i = 0; i < 3; ++i) {
@@ -130,6 +134,9 @@ inline bool RayBox(const float o[3], const float d[3], const float h[3], float& 
     t_out = hi;
     return true;
 }
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 // One bullet: start and direction from the record, the publication. Never reads anything else.
 inline Plan PlanShot(const Pub& p, const float start[3], const float dir[3]) noexcept {
