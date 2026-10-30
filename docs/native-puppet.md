@@ -683,7 +683,7 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   checks the blocks (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`); `VerifyImage` accepts
   only 1 / 2 at the immediates. The local passenger report, the receiver's `local_vehicle` gate and the passenger
   camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`, `board_seat1_blocks`; `vehicle_door`
-  accepts the remap's `jmp`. With `partner_ride_seat1_anchor=1` (8.33-8.35; off unless named, lab and play;
+  accepts the remap's `jmp`. With `partner_ride_seat1_anchor=1` (8.33-8.36; on with the gun profile in lab and play since 8.43, a named 0 opts out;
   frame-proven in play: `f58eebf7`, `086d8043`, `b4c10e6b`) any copy that draws the peer in seat 1 of a light vehicle (category 1/2; not the truck cab, design
   8.34) anchors body 1's seat-1 DM on seat 0's matrix (`partner_ride_seat::AnchorSeat`, the anchor immediate 0; the
   applied line ends `anchor=0; cat=1`): the
@@ -967,9 +967,9 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 ### Seat shot (S1)
 
 M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31, on since 8.37). Key
-`partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab, off in play unless named** since
-`wp/self-hit` (8.37: a stock seated shot cost the shooter's copy of the jeep 702 life, S1 shots on the same line none;
-the play default waits for a play run on lines that hit the jeep in stock); a named 0 opts out. Lab lever
+`partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab and play** (lab since `wp/self-hit`, 8.37:
+a stock seated shot cost the shooter's copy of the jeep 702 life, S1 shots on the same line none; play since the
+seat-fixes merge, 8.43); a named 0 opts out. Lab lever
 `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
 **What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a
