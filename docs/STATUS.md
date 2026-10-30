@@ -1,3 +1,71 @@
+## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
+
+The three tracks that followed the 0.14.4 release are merged into `dev/oct7-continue` (from `01fd055`): `f1e80be`
+merges `wp/vehicle-fixes2` (`8e8e455`, review verdict `ship_behind_lab_key`, its fix round done), `101d925` merges
+`wp/dog-heroism` (`e67982a`, verdict `ship_behind_lab_key`, no fix round) and `416b2fa` merges `wp/launcher-fixes2`
+(`d76e7f6`, verdict `fix_first`, its fix round done); `8cb81f8` adds the combined smoke scenario. Local only: nothing
+pushed, tagged or released. The track sections below keep their own details. Marks: [O] observed in a run or test
+named here, [I] inferred, [U] unproven.
+
+**Merge notes.** Conflicts only in docs. `docs/STATUS.md`: every top section kept. `docs/vehicles-companions-design.md`:
+each track wrote a section 8.14; the vehicle fixes keep 8.14 / 8.15, the dog's section is now 8.16 and the launcher's
+are 8.17 / 8.18 (every reference the branches added renumbered with them); section 10's table takes the dog's D7 row and
+the vehicle fixes' D11 / D12 rows; section 11 keeps both review-log tables. Wire and configuration: the only new op is
+VEHICLE_DAMAGE `0x3A` and the only new CFG bits are `r[15]` bits 64 / 128 (`world_vehicle_crew`,
+`world_vehicle_damage`), both from the vehicle fixes; the dog and launcher tracks add no op, CFG index or lab key, so op
+codes and indices stay unique (`world_wire_tests`, `lab_config_tests`). A 0.14.4 partner skips `0x3A` by its length
+(`unknown_op`) and play pairing refuses mismatched builds anyway (protocol section 20); no mixed-build run [U].
+`Get-WorkerTests` carries both tracks' additions: the Release receipt list is now 312 tests (311 +
+`world_vehicle_damage_lua_check`), Normal and Research 310.
+
+| Fix | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| D12 crew: a vehicle the guest destroys with only soldiers aboard is wrecked on the host's copy at once | `world_vehicle_rules.lua`, key `world_vehicle_crew` (`r[15]` bit 64); held while a player stands within the blast distance by type (15 m light vehicles, 50 m every other or unknown type, also for `break_safe`; `blast_near` holds an unnamed copy instead of a Despawn) | **On** (off in the lab unless named) | [O] lab FRAME `ac0f7656`, `c0a385a5` (the hold at 33 m, the wreck once clear); play `-WanSim bad` `8995e351`, `c6db67b8`; at the shipped defaults `34d5744d`, `98d84a21` (frames on both copies) | [U] the armoured blast's damage at 25-50 m (godmode in every run); [fixture] `blast_near` and `crew_near` with the host's own player; [U] a Despawn under seated soldiers; an alerted enemy vehicle that drives off stays split (M8, `247a4eed`); two-PC |
+| The guest's vehicle damage short of destruction reported to the host | `world_vehicle_damage.lua`, op VEHICLE_DAMAGE `0x3A`, key `world_vehicle_damage` (bit 128); host bounds (half the copy's life per report, 3 per vehicle and 16 in all per second); D12's heavy rule counts own damage only | **Off** (lab key; named in play to use it) | [O] lab `ac0f7656`, the host bounds `c0a385a5`; with the key named in play `247a4eed`, `34d5744d` (before the review turned it off) | [U] live AI fire: each PC's guards hit the vehicle and their rounds add up (`846c1147`); no shot attribution; the frames cannot show a shared life at these values. So in a default session the guest's damage is still put back at the host's next state |
+| D11 before PAIRED: the guest's LOADOUT and VEHICLES items inactive from its arrival after a host-led follow | `world_vehicle_rules.lua`, `world_relief_sync.lua`; rides on `world_loadout_block`; the mark lapses 300 s after the arrival without PAIRED | **On** (with `world_loadout_block`) | [O] lab FRAME `251adcb6` (both refusals with their toasts before PAIRED); play `-WanSim bad` `c6db67b8` (LOADOUT), `98d84a21` (both items, frames on both copies, the host held on its tips screen); the paired refusal again in `32c3893a` (below) | [fixture] the 300 s lapse; two-PC |
+| The heroism and bond of a dog copy's death given back on the guest | `world_companion_guard.lua` (guest only); `world_sync.lua` hands on the attacker id; no key of its own | **Off** (under `companion_host_owned`, off in lab and play) | [O] lab `c7fdfdbf` (lab kill, mirrored down, guard fire: readbacks equal before and after, the stock notice on the guest's screen); control `2243bbc6`; a default play session logs no `dog_hero` line (`32c3893a`) | The first control `a7f00043` **failed** (the C4 missed the dog); no play rehearsal; the by-player branch (fixture only); persistence in the save [I]; the stock notice still shows. The review's four minor findings are open (no fix round ran): no lab key of its own, the scenario's expectations do not encode the give-back, the pre-death sample's age and the `unknown` attacker's caps, no co-op note after the give-back |
+| Launcher and package findings of the 0.14.4 review, rounds 1 and 2 | `native/launcher/**` (setup lock, close during setup, the closing-gap wait), `tools/package.ps1` (untracked files refused, fail-closed), `Invoke-WorkerChecks.ps1` (coverage, Release-only launcher checks), the tag, source zip and network wording | No game behaviour | [O] failing-first unit tests; hidden end-to-end `r4`, `r5` (outside `tools/worker`, recorded as a deviation); Release receipts `20261030-014929-6188027e...` and `20261030-031742-378e13be...` (311 tests); local packages audited 54/54 and 26/26 (not uploaded); a Research preflight with the new list, this smoke's `20261030-044444-8a250766d8ad4dcb83e01318f42dc345`: 310 tests passed with the background worker on | [U] a Normal-profile preflight; the closing-gap wait and an abandoned setup lock end to end with the real exe (unit tests only); two-PC |
+
+**Combined hidden test of the merged head** (`wp/next2-smoke` = `dev/oct7-continue` `8cb81f8`, built incrementally in
+`D:/mgs-coop-wt/relief`, research worker build, native gun stage; `tools/worker/scenarios/next2-smoke-play.txt`,
+`-Mode play -WanSim bad`, seed `africa-jeep`, **the shipped play defaults**: no labsetting line and no lab lever). Run
+`32c3893a301e4d579d76894397047bde`: **every expectation met** (ExpectFailures empty), Closed, BaselineRestored,
+RealSavesUnchanged, `Forced=False`; CPU 18 % before the run. Link RTT 174-189 ms, loss up to 13.3 %. No `step=error`,
+`event=error`, `viewer_changed`, non-zero `faults=`, `via=wreck`, `event=vehicle_damage` or `event=dog_hero` line on
+either copy. Slices `next2/integrate/slice-32c3893a` and frames `complete/frames/next2-integrate/32c3893a-*` in the
+session scratch, looked at for every line below; run and probe folders archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\` (`32c3893a...`, `df567698...`). One run of the two allowed.
+- [O] Both reached gameplay (host 53.0 s, guest 51.0 s after launch) and paired (`remote_build=0.14.4+8cb81f8` on
+  both; PAIRED epoch 3 in 30020 with 265 soldiers matched). `vehicle_rules; step=on; ...; break=1; credit=1;
+  loadout=1; gone=1; crew=1` on both copies, and no `vehicle_damage` on-line (off in play).
+  `dog_guard=off;reason=key_off;slots=0` and `dog_state ... installed=0` on both. Frame `smoke-start` on both screens:
+  the jeep with the partner beside it.
+- [O] D11: the guest's LOADOUT and VEHICLES items inactive and refused with both toasts (`step=refused` for
+  `idroid_drop_loadout` and `idroid_drop_vehicle`, NOTE 13 a 5 and a 4; frames `d11-guest-loadout-refused`,
+  `d11-guest-vehicles-refused`); the host's VEHICLES list opened (`d11-host-vehicles-open`).
+- [O] A drive with a passenger: the guest drove 25608 with the host in a back seat (`board_passenger ... seat=2` on the
+  host, `partner_ride_seat=confirmed ... seat=2` on the guest; frames `drv-seated` on both, `drv-pass-NN` from the
+  host's seat, `drv-driver-NN`) and stopped in the grass under a tree (`drv-stopped` on both). Parked: the host's
+  VEHICLE_STATE skipped 25608 while ridden, resumed (`was=partner_ride`) and sent it moved 23.7 m (`d_mm=23664`); the
+  guest's copy already stood there (`step=same; d_mm=1`; no guest `step=applied` in the whole run); `drv-parked-both`
+  shows the jeep under the same tree on both screens.
+- [O] D14: the host's hand Fulton of 25610: host `credit; via=own; res=14`, guest `credit_seize`, then `credit;
+  via=receiver; res=14` and `applied; via=seize; ok=1; ms=133`; one credit line per copy. Frames: the lift on the host's
+  screen (`fult-lift-03`); the jeep beside the partner on the guest's screen before (`fult-before`) and gone on both
+  after (`fult-after`).
+- Not in this smoke: a vehicle damaged by the guest staying damaged (the report is off in play, so it does not; not
+  tested), D12 (its rehearsals are in the table), the D11 window before PAIRED (here the guest paired 1.1 s after its
+  arrival), a dog death, the launcher.
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 302/302 after each merge; full `pwsh -File tools/build.ps1` (Debug)
+318/318 at `416b2fa`; `worker_session_tests` with the new scenario; the five contract checks
+(`generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
+`generate_nametag_contract.py`, `generate_downed_damage_contract.py`, each with `--check`) pass.
+
+**Open, for the user.** The dog track's two questions (should the guest share the stock penalty when the host's dog
+really fell; is the control with the key on the guest only acceptable as the key-off control) and the launcher track's
+one (may a launcher end-to-end use its own private-desktop harness outside `tools/worker`).
+
 ## 2026-10-30: the review of the vehicle fixes (`wp/vehicle-fixes2`, unreleased, not two-PC tested)
 
 Branch `wp/vehicle-fixes2` in `D:/mgs-coop-wt/vehicle-state`, new commits after `116847e`; local, nothing merged,
@@ -95,7 +163,8 @@ mismatched builds anyway. No other op or field changed. 0x35-0x37 stay reserved;
 **Integration note.** `wp/launcher-fixes2` (`bc56c0d`) adds `Assert-WorkerCoverage` / `Assert-WorkerInventory` to
 `tools/worker/Invoke-WorkerChecks.ps1`: the new `world_vehicle_damage_lua_check` (four Lua arguments) is in
 `Get-WorkerTests` here and must stay admitted there at the merge.
-## 2026-10-29: the heroism of a dog copy's death given back on the guest (`wp/dog-heroism`, unmerged, lab only)
+
+## 2026-10-29: the heroism of a dog copy's death given back on the guest (`wp/dog-heroism`, lab only; merged on `dev/oct7-continue` 2026-10-30, see the top section)
 
 The user approved it on 2026-10-29: when the guest's copy of the host's D-Dog dies on the guest's PC, the stock game
 took 30 heroism and 2 bond points on the guest's PC ("D-Dog Near Death [Heroism -30]", run `9fa48400`) for
@@ -133,6 +202,7 @@ pushed, tagged or released). Details: `docs/vehicles-companions-design.md` 8.16.
   guest's dog dying (fixture and code only [I]), Mother Base, two-PC.
 - **Checks:** `pwsh -File tools/build.ps1 -Fast` 301/301 after each change; full `pwsh -File tools/build.ps1` (Debug)
   317/317 before the last commit.
+
 ## October 29, 2026: the review of those launcher and package fixes, round 2 (`wp/launcher-fixes2`, unreleased)
 
 Same branch and worktree as the section below; still not merged, pushed, tagged or released. An independent review of that section (verdict: fix first) found one major and seven minor issues. Each was checked against the code before it was changed, and all eight are handled here. None changes play, the wire, a CFG index or a lab key, and no play default changed. Marks: [O] observed in a run or test named here, [I] inferred from code, [U] not run.
