@@ -653,6 +653,8 @@ struct RaiseView {
     float entry[6]{};           // obj+0x50 + 0x20 index: offset x, y, z, w, distance, scale
     bool target_ok = false;     // CAM+0x150..0x15C (the target offset the entry is added to) was read
     float target[4]{};
+    bool flags_ok = false;      // CAM+0x204 was read (design 8.35: bit 2 gates the aim module's parameter apply)
+    std::uint32_t flags = 0;
 };
 inline bool EntryStock(const float* e) noexcept {
     return e && e[0] == 0.0f && e[1] == 0.0f && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
@@ -746,6 +748,50 @@ inline void RaiseForget(Raise& r, bool ok) noexcept {
     r.index = -1;
     r.retries = 0;
     if (ok) ++r.restores; else ++r.abandoned;
+}
+
+// --- The seated aim lift (mode view; design 8.35) ------------------------------------------------------------------
+// [O 89cfa402] In the seated aim CAM+0x204 bit 2 stays clear (f204=0x63110 on every aim tick, seats 1 and 2, both roles),
+// so the aim module's update never calls FUN_1412BBFE0 (0x12BD4D4, pinned) and the entry above is never added: the
+// frames show the leg (seat 1) and the panel (seat 2) unchanged, and the target offset CAM+0x150 is (0, 0, 0, 0) through
+// the aim (the trace's off= CAM+0x140 blends to 0 within ~200 ms of the aim start). The blend (0x1121704, pinned):
+// CAM+0x140 = src + (CAM+0x150 - src) * w, unless CAM+0x40C & 0x10. Mode view therefore writes the raise into
+// CAM+0x154 (the target's y, camera up) itself while the local passenger aims seated (seat 1 or 2) in the aim module
+// with bit 2 clear and the target at the stock 0: the add the stock would have made. It writes 0 back when the aim ends
+// (only while the value is still ours; the next module sets its own target anyway, [O] off back at (-0.3, 0.7)), and
+// at MissionEnd / Stop / MissionStart (RaiseRevert). The target back at 0 while ours (a rewrite by the game) is lifted
+// again up to kLiftRewriteMax times per boarding; another value is someone else's: refused for the boarding.
+inline constexpr std::uint32_t kCamParamsBit = 0x4;   // CAM+0x204 bit 2: the aim module applies its parameters
+inline constexpr float kLiftZeroM = 0.05f;            // |CAM+0x154| under this: the stock seated aim target (0)
+inline constexpr std::uint32_t kLiftRewriteMax = 30;  // lifts again after the game wrote the target back to 0
+enum class LiftWrite : std::uint8_t { none, lift, drop };
+struct Lift {
+    bool active = false;            // CAM+0x154 holds our raise
+    const char* refused = nullptr;  // latched for the boarding (other, rewritten)
+    std::uint32_t lifts = 0, drops = 0, rewrites = 0;
+};
+struct LiftIn {
+    bool want = false;        // mode view, an armed boarding, seat 1 or 2
+    bool aiming = false;      // the local gun aims
+    bool aim_module = false;  // the active camera module is the aim module (kAimModuleVtableRva)
+    bool flags_ok = false;    // CAM+0x204
+    std::uint32_t flags = 0;
+    bool target_ok = false;   // CAM+0x154
+    float target_y = 0.0f;
+    float raise = kRaiseM;
+};
+// One tick. Reasons (static): none, lift, rewrite, held, drop, gone, camera, params, target, other, rewritten.
+inline LiftWrite LiftPlan(Lift& l, const LiftIn& in, const char*& reason) noexcept {
+    (void)l;
+    (void)in;
+    reason = "none";
+    return LiftWrite::none;
+}
+// The driver's bookkeeping after the write (ok: the native write succeeded).
+inline void LiftDone(Lift& l, LiftWrite w, bool ok) noexcept {
+    (void)l;
+    (void)w;
+    (void)ok;
 }
 
 // --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------

@@ -283,6 +283,14 @@ bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float ra
     return true;
 }
 
+bool WriteLift(const void* base, std::uintptr_t P, bool on, float raise) noexcept {
+    (void)base;
+    (void)P;
+    (void)on;
+    (void)raise;
+    return false;
+}
+
 const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
     const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
     std::uint32_t d38 = 0, f204 = 0;

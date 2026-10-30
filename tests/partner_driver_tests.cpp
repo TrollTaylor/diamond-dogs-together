@@ -7519,6 +7519,7 @@ struct PassRaiseFake {
     std::vector<W> writes;
     bool write_ok = true;
     std::vector<float> turns;
+    std::vector<bool> lifts;  // design 8.35: the lift writes (on / off)
 } g_raise;
 bool HookRaiseRead(void*, const pp::State&, mgscoop::partner_pass_camera::RaiseView& out) noexcept {
     out = g_raise.view;
@@ -7532,6 +7533,18 @@ bool HookRaiseWrite(void*, const pp::State&, int index, bool on, float raise) no
     for (float& e : v.entry) e = 0.0f;
     v.entry[1] = on ? raise : 0.0f;
     v.entry[5] = 1.0f;
+    return true;
+}
+bool HookRaiseLift(void*, const pp::State&, bool on, float raise) noexcept {
+    g_raise.lifts.push_back(on);
+    float& y = g_raise.view.target[1];
+    if (on) {
+        if (!(y < 0.05f && y > -0.05f)) return false;
+        y = raise;
+    } else {
+        if (y != raise) return false;
+        y = 0.0f;
+    }
     return true;
 }
 const char* HookRaiseTurn(void*, const pp::State&, float, float yaw, float) noexcept {
@@ -7549,6 +7562,7 @@ void ViewSetup(Session& s) {
     s.hooks.pass_camera_raise_read = HookRaiseRead;
     s.hooks.pass_camera_raise_write = HookRaiseWrite;
     s.hooks.pass_camera_turn = HookRaiseTurn;
+    s.hooks.pass_camera_lift = HookRaiseLift;
     s.hooks.vehicle_read = HookVehicleRead;
     auto jeep = VehicleRead(25608, 0x20);
     jeep.unit.pos[3] = 0.5f;
@@ -7673,6 +7687,55 @@ void TestPassCameraViewDriver() {
         Check(s.Tick(0) && !s.driver.mission.pass_camera.turn.pending && g_raise.turns.empty() &&
                   s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=2; reason=mode;") == 1,
               "cancel: the mode left view, no request");
+    }
+    {
+        // Design 8.35 [O 89cfa402]: the seated aim lift. CAM+0x154 = the raise while the local passenger aims seated
+        // (seat 1 or 2) in the aim module with CAM+0x204 bit 2 clear, 0 again at the aim end; seat 3, bit 2 set or mode
+        // aim: never written.
+        namespace pc = mgscoop::partner_pass_camera;
+        for (int which = 0; which < 4; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            s.driver.settings.ride_front = true;
+            if (which == 3) s.driver.settings.pass_camera = mgscoop::PartnerPassCamera::aim;
+            g_board.lp = BoardPassenger(25608, which == 1 ? 3 : which == 2 ? 2 : 1);
+            g_raise.view.flags_ok = g_raise.view.target_ok = true;
+            g_raise.view.flags = which == 2 ? 0x63114u : 0x63110u;
+            Check(s.Tick(0), "lift: seated");
+            g_guard.mvt = pc::kAimModuleVtableRva;
+            GuardGun(s, 7);
+            Check(s.Tick(0) && s.Tick(0), "lift: aiming");
+            const bool want = which == 0;
+            Check((g_raise.lifts.size() == 1 && g_raise.lifts[0]) == want && g_raise.view.target[1] == (want ? pc::kRaiseM : 0.0f),
+                  "lift: CAM+0x154 raised only for a view seat with bit 2 clear");
+            GuardGun(s, 0);
+            g_guard.mvt = 0x23B2AB0;  // the ride camera module
+            Check(s.Tick(0), "lift: the aim ends");
+            Check((g_raise.lifts.size() == 2 && !g_raise.lifts[1]) == want && g_raise.view.target[1] == 0.0f, "lift: dropped at the aim end");
+            if (want)
+                Check(s.fake.Containing("partner_ride=pass_camera; state=lift; event=lift; vehicle=25608; seat=1; reason=lift; ok=1;") == 1 &&
+                          s.fake.Containing("partner_ride=pass_camera; state=lift; event=drop; vehicle=25608; seat=1; reason=drop; ok=1;") == 1,
+                      "lift: the lift and drop lines");
+            if (which == 2)
+                Check(s.fake.Containing("partner_ride=pass_camera; state=lift; event=refused; vehicle=25608; seat=2; reason=params;") == 1,
+                      "lift: bit 2 set is named");
+        }
+    }
+    {
+        // MissionEnd while lifted: the lift is dropped (the ticks stop before TickPassCamera while the mission ends).
+        namespace pc = mgscoop::partner_pass_camera;
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        g_raise.view.flags_ok = g_raise.view.target_ok = true;
+        g_raise.view.flags = 0x63110u;
+        g_guard.mvt = pc::kAimModuleVtableRva;
+        GuardGun(s, 7);
+        Check(s.Tick(0) && s.Tick(0) && g_raise.view.target[1] == pc::kRaiseM, "lift teardown: lifted");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_raise.view.target[1] == 0.0f && !s.driver.mission.pass_camera.lift.active &&
+                  s.fake.Containing("partner_ride=pass_camera; state=lift; event=drop; reason=mission_end; ok=1") == 1,
+              "lift teardown: dropped at MissionEnd");
     }
     {
         // Mode aim: the raise and turn hooks are never called.
