@@ -51,7 +51,8 @@ const Site& SiteFor(SiteId id) noexcept;
 std::uint32_t SeatDword(std::uint8_t seat) noexcept;
 // The seat whose matrix the anchor reads for a seated `seat`: with `seat1_driver_matrix` (lab.ini
 // partner_ride_seat1_anchor) seat 1 -> 0, the others unchanged.
-std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix) noexcept;
+inline constexpr std::uint8_t kCategoryUnknown = 0xFF;
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t category) noexcept;
 // The process-wide choice Arm applies (the observer sets it from lab.ini; default off).
 void SetSeatOneAnchor(bool on) noexcept;
 bool SeatOneAnchor() noexcept;
@@ -74,7 +75,7 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept;
 // Re-arming an armed module with another seat rewrites only the seat dword.
 // Revert restores every site it finds patched (logs
 // partner_ride_seat=reverted; reason=..). Both are idempotent.
-bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
+bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t category = kCategoryUnknown) noexcept;
 void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcept;
 bool Armed() noexcept;
 std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed

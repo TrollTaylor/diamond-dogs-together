@@ -920,7 +920,7 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     return mgscoop::partner_dm_patch::Patched();
 }
 // The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
-bool PartnerRideSeatArm(void*, std::uint8_t seat) noexcept {
+bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t) noexcept {
     return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
 }
 void PartnerRideSeatRevert(void*, const char* reason) noexcept {

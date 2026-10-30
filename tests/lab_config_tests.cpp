@@ -598,11 +598,15 @@ int main() {
             const auto off = Lab(gun + mode + "partner_ride_seat1_anchor=0\n");
             Check(!off.partner_ride_seat1_anchor && off.partner_ride_seat1_anchor_given, "a named seat-1 anchor 0 stays off");
         }
+        // Review (8.34): as partner_ride_front / _cab / _race, an invalid value is named and off, also after a valid 1.
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=") + value + "\n");
-            Check(!invalid.partner_ride_seat1_anchor && !invalid.partner_ride_seat1_anchor_given && invalid.invalid_values == 1 &&
+            Check(!invalid.partner_ride_seat1_anchor && invalid.partner_ride_seat1_anchor_given && invalid.invalid_values == 1 &&
                       invalid.unknown_keys == 0,
-                  "an invalid seat-1 anchor value refuses");
+                  "an invalid seat-1 anchor value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=1\npartner_ride_seat1_anchor=") + value + "\n");
+            Check(!late.partner_ride_seat1_anchor && late.partner_ride_seat1_anchor_given && late.invalid_values == 1,
+                  "an invalid seat-1 anchor value after a valid 1 turns it off");
         }
     }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play

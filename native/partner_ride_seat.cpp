@@ -86,7 +86,7 @@ std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base |
 // 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
 // in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
 // jeep (design 8.33). Behind lab.ini partner_ride_seat1_anchor (off unless named) until its frame proof.
-std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix) noexcept { return seat1_driver_matrix && seat == 1 ? 0 : seat; }
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t) noexcept { return seat1_driver_matrix && seat == 1 ? 0 : seat; }
 namespace {
 #ifdef _WIN32
 volatile LONG g_seat1_anchor = 0;
@@ -135,7 +135,7 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept {
 }
 
 #ifdef _WIN32
-bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
+bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t) noexcept {
     auto* image = static_cast<unsigned char*>(base);
     if (!image || seat > 3) { Emit(log, "partner_ride_seat_patch=refused; reason=args\r\n"); return false; }
     if (const char* why = VerifyImage(image, span)) {
@@ -152,7 +152,7 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     // part way puts back exactly what this call wrote.
     std::uint32_t written_from[kSites]{};
     bool written[kSites]{};
-    const std::uint8_t anchor = AnchorSeat(seat, SeatOneAnchor());
+    const std::uint8_t anchor = AnchorSeat(seat, SeatOneAnchor(), kCategoryUnknown);
     for (unsigned i = 0; i < kSites; ++i) {
         const Site& s = kSiteTable[i];
         const std::uint32_t current = ReadDword(image, s.rva);
