@@ -1,3 +1,24 @@
+## 2026-10-30: seats on in play (branch `wp/seats-on`, local, unreleased, not two-PC tested)
+
+The jeep's front seat, the truck cab and the driver's-seat race are **on in play** (`partner_ride_front`, `_cab`,
+`_race` follow the native gun profile in lab and play; each named 0 is an off switch). Before the flip: no Fulton while
+a race refuses the ride icon or at a door of the vehicle the partner drives (the Fulton action is withheld, only the
+bit the mod added is removed); the driver's copy draws a seat-1 partner in a free back seat if its own D-Dog takes seat 1
+afterwards. Details: `docs/vehicles-companions-design.md` 8.25. [O] observed, [I] inferred.
+
+| Path | Proof (`-Mode play -WanSim bad`, shipped seat defaults, RTT 172-188 ms) |
+|---|---|
+| Fulton guard | [O] `92f2d2f9`: denied at the door, E held about 3 s: no Fulton prompt, jeep still there; at the partner's jeep only the ride icon |
+| Race inside one round trip | [O] `92f2d2f9`: the guest's hold refused its icon before any answer, the host drove, the guest stayed on foot, no `two_drivers` |
+| Jeep seat 1, both roles | [O] `92f2d2f9` (guest in seat 1), `d55e5159` (host in seat 1): frames on both copies while the driver holds the throttle |
+| Truck cab | [O] `8d61a33a` (seed `afgh-relief-trc`, `world_relief=1` named as the truck source): guest in the cab, frames on both copies while moving, stock get-off. The host-in-cab role: lab `0f145a4e` only |
+| D-Dog in seat 1 | [O] `8d61a33a`: the dog in front, the guest steered to the back right seat, frames on both copies while moving |
+
+Not proven: the dog jumping in after the passenger sat down, live (the dog was always first; driver test only) [I];
+two-PC. Seen in every moving frame set: the partner's body can lag beside its seat on the driver's screen while
+moving (up to 1.8-3.0 m, back in the seat at rest), as before. Runs `f9d2482d` (seed attempt refused in the ACC) and
+`b68844fc` (lab, made seed `afgh-relief-trc`). Fast CTest green after every change; full CTest: see 8.25.
+
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
 Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):
