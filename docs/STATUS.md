@@ -1,4 +1,49 @@
-## 2026-10-30: M6 seats, the review fixes (branch `wp/seats`, lab keys, unreleased, not two-PC tested)
+## 2026-10-30: M6 seats and M7 passenger shooting
+
+Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):
+`c616d8b` merges `wp/seats` (`892620a`, review verdict `ship_behind_lab_key`, its fix round done) and `5a18d3b` merges
+`wp/seat-shoot` (`e558854`, verdict `fix_first`, its fix round done). **No play default flipped**: every new key is
+off in play, so a default session behaves as before for seats and shooting. Details:
+`docs/vehicles-companions-design.md` 8.20 / 8.21 (M6), 8.22 / 8.23 (M7, renumbered from 8.20 / 8.21 at the merge, its
+decision D16 now D18), 8.24 (the merge and the combined smoke), section 9 M6 / M7. Marks: [O] observed in a run or test
+named here, [I] inferred, [U] unproven.
+
+| Seat / behaviour | Built | Play default | Proven (runs) | Unproven |
+|---|---|---|---|---|
+| Jeep back seats (2, 3) as a passenger | (0.14.x, unchanged) | **On** | [O] combined smoke `a6830b7c` (play, `-WanSim bad`, shipped defaults): seat 2, frames on both copies while moving, the stock get-off and camera release | Two-PC |
+| Jeep front seat (1) | Lab key `partner_ride_front`; offered only when the driver's copy reports seat 1 free (v4 seat addendum); the seat-1 remap skipped only while seat 1 may be in use | **Off** (D16) | [O] lab `f49c167d`, `3c748d46` (both roles, frames on both copies while moving); the handshake with the driver's dog in seat 1: lab `43473119`, `f115a2b3`, play `56322b36` (passenger in the back seat, frames on both copies) | The seat-1 path itself in play with the fixed code; a dog that jumps in after the passenger sat down [I]; two-PC |
+| Truck cab (1) | Lab key `partner_ride_cab` (trucks: seat 1 only) | **Off** | [O] lab `0f145a4e` (both roles, moving frames on both copies, both stock get-offs); earlier `b66c7031`, `73af7206` | A play rehearsal (the test truck needs the lab-only sortie lever); two-PC |
+| Seat race (driver's seat of an empty vehicle) | Lab key `partner_ride_race`; world op SEAT `0x36` (54; a 0.14.4 partner skips it by length); the guest holds until the host's grant; site C (the pre-query's final answer) | **Off** (D17) | [O] lab `43473119`, `f115a2b3`, play `56322b36`: the race inside one round trip, the host drives, no `two_drivers`, frames on both copies | The 1.5 s silence fallback in a run (Lua test only); Fulton prompt during a hold [I]; two-PC |
+| Truck bed (E7), APC / tank crew | Not built (E7 static reads only) | - | - | Everything |
+| Passenger aim and fire (stock) | Nothing to patch; the aim self-check is skipped while riding | **On** (stock) | [O] M7 lab runs (8.22); combined smoke `a6830b7c` in play: `aim_dir=refused; reason=ride; checks=0`, magazine 8 -> 5, the camera inside the jeep's body and pitched up after the shots (frames `pass-aim-01`, `pass-fire-1/2`, `drv-stopped`) | Whether a seated shot lands: none landed in six lab runs (8.22) [O], cause [U]; the smoke aimed at no target |
+| Partner's raised gun on the driver's screen (design A) | Lab key `partner_seat_gun`: graph-2 GunHoldStart through the gesture hook, body 1's aim rates, the seated v6 direction (unchecked) | **Off** (D18) | [O] 30 holds ran on both copies (lab), but no frame shows a raised gun | The visible pose (design B, D18); the GunHold chain live; get-off during a hold; a mixed-build run [I] |
+| Back-seat aim census | Lab key `partner_seat_aim` (read-only) | Lab only (play forces it off) | [O] `6fc3098b` | - |
+
+**The merge:** conflicts in the two worker lab-key patterns (union), `lua/coop/debug_player.lua` `goto_vehicle` (both
+levers kept; the M7 lever test now expects `goto_vehicle_args` for `jeep left`) and the docs (both sides kept, M7
+renumbered). Op codes stay unique (SEAT `0x36` is the only new one); no CFG index added. The partner contract was
+regenerated once after both merges (819 code sites, 206 vtable slots) and `generate_partner_contract.py`,
+`generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`, `generate_nametag_contract.py` and
+`generate_downed_damage_contract.py --check` all pass. Fast CTest 304/304 at `5a18d3b`; full CTest 321/321
+(`tools/build.ps1`) at `5a18d3b`.
+
+**Combined hidden smoke** (one run, design 8.24): `a6830b7cd9714aecb4c8ecef7ba0df52` (probe `848b1b832b3f40f5844dcca1d01ee73c`),
+`tools/worker/scenarios/m6m7-smoke-play.txt` at `57d2cd7` (`wp/m6m7-smoke` in `D:/mgs-coop-wt/relief`, research build),
+`-Mode play -WanSim bad`, seed `africa-jeep`, shipped defaults. Every expectation met; Closed, BaselineRestored,
+RealSavesUnchanged, `Forced=False`; preflight receipt `20261030-120918-69670c53388b43c0b5e5bd9f964b4cf7` (313 tests
+passed). Covered: the guest's SUPPLY DROP refusal (LOADOUT and VEHICLES, toasts drawn), a jeep drive with the host in
+back seat 2 (`seat1=none`), the passenger aiming and firing while the jeep moved, both stock get-offs, and the jeep
+parked at the same spot on both copies (1 mm apart). No `step=error`, `viewer_changed`, `board_uncertain`, non-zero
+`faults=` or new-key line (`partner_board=race`, `board_remap`, `seat_ext_tx`, `partner_seat_gun`). Frames looked at on
+both copies (`complete/frames/m6m7-integrate/a6830b7c-*`); archived under `%USERPROFILE%\mgs-coop-run-archive\m6m7\`.
+
+**Docs:** README Known limits: the vehicle-shooting limit moved from Mounts to Seats and now says the camera can stay
+tilted up after aiming (seen in the smoke); the roadmap lines for M6 / M7 name the merges. CAMPAIGN-ROADMAP keeps M6 at
+[~] and M7 at [ ] (nothing new is on in play).
+
+**Waiting for the user:** D16 (the jeep front seat in play), D17 (the seat race in play), D18 (how to continue M7).
+
+## 2026-10-30: M6 seats, the review fixes (branch `wp/seats`, lab keys; merged in `c616d8b`, unreleased, not two-PC tested)
 
 An independent review of `wp/seats` (`e2a7451`) raised three major and five minor findings; all eight were real and
 are fixed or documented on `wp/seats` (local only: nothing pushed, tagged, merged or released). Results and evidence:
@@ -22,7 +67,7 @@ Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archive
 `0f145a4e19094fc4a0b0ecd2fcb0b755` (lab), `56322b362f96467194ad08b765e3dd9b` (`-Mode play -WanSim bad`). No play default
 flipped (D16, D17 wait for the user). Fast CTest after each change; the full CTest passed 318 of 318 with these docs (`tools/build.ps1`).
 
-## 2026-10-30: M6 more passenger seats (branch `wp/seats`, lab keys, unreleased, not two-PC tested)
+## 2026-10-30: M6 more passenger seats (branch `wp/seats`, lab keys; merged in `c616d8b`, unreleased, not two-PC tested)
 
 Branch `wp/seats` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/vehicle-state`; local only (nothing pushed,
 tagged, merged or released). Results, the E6 / E7 static reads and the evidence: `docs/vehicles-companions-design.md`
@@ -44,7 +89,7 @@ Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archive
 An earlier start of the first run stopped inside the worker checks (the tree was edited while they ran; no game).
 Fast CTest after each change; the full CTest passed 318 of 318 at `c0387d6` with these docs (`tools/build.ps1`).
 
-## 2026-10-30: M7, shooting as a passenger (`wp/seat-shoot`, local only, not merged, not two-PC tested)
+## 2026-10-30: M7, shooting as a passenger (`wp/seat-shoot`; merged in `5a18d3b`, unreleased, not two-PC tested)
 
 Branch `wp/seat-shoot` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/companion-host`. The 0.13.5 seat-aim census
 (the uncommitted tree of `D:/mgs-coop-wt/seat-aim`) is committed on `wp/seat-aim` as `c87b270` and merged with a merge

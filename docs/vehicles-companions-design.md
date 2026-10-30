@@ -2747,6 +2747,49 @@ play).
 Full CTest after the round: 321/321 (`tools/build.ps1`, including `worker_coverage_tests`); fast CTest 304/304 after
 each step.
 
+### 8.24 Results: M6 and M7 merged, and their combined play smoke (2026-10-30, `dev/oct7-continue`)
+
+M6 (`wp/seats` at `892620a`, review verdict `ship_behind_lab_key`, its fix round done; merge `c616d8b`) and M7
+(`wp/seat-shoot` at `e558854`, verdict `fix_first`, its fix round done; merge `5a18d3b`) are merged into
+`dev/oct7-continue` from `60e0d13`; unreleased, nothing pushed, not two-PC tested. Both tracks wrote sections 8.20 / 8.21
+and a decision D16, so M7's results became 8.22 / 8.23 and its decision D18 (M6 keeps 8.20 / 8.21, D16 and D17). Other
+conflicts: the two worker lab-key patterns (the union of `partner_ride_front` / `_cab` / `_race` and
+`partner_seat_aim` / `_gun`) and the `goto_vehicle` lever (M6's `sortie|jeep driver|passenger [cm]` and M7's
+`jeep right` both kept; any other jeep argument now refuses at the door check, `goto_vehicle_args`, and M7's lever test
+expects that for `jeep left`). No op code or CFG index clashed: SEAT `0x36` is M6's only new op and M7 adds none; the
+new lab keys are separate `LabConfig` fields. The partner contract was regenerated once after both merges (819 code
+sites, 206 vtable slots: M6's site C, the pre-query start and the seat-1 sites, M7's seat-aim and seat-gun sites) and
+all five contract checks pass. Full CTest 321/321 (`tools/build.ps1`) at `5a18d3b`.
+
+**Play defaults after the merge (unchanged by either track):** `partner_ride_front`, `partner_ride_cab`,
+`partner_ride_race` and `partner_seat_gun` are off in play (lab keys, off unless named); `partner_seat_aim` is lab only.
+So a default session offers the jeep's back seats only, has no seat race (both players can still each drive their own
+copy of one empty vehicle), and the passenger's aim is the stock one (no partner gun on the driver's screen).
+
+One hidden run of the merged head (`wp/m6m7-smoke` = `57d2cd7`, built incrementally in `D:/mgs-coop-wt/relief`,
+research worker build, native gun stage). Scenario `tools/worker/scenarios/m6m7-smoke-play.txt`, `-Mode play -WanSim
+bad`, seed `africa-jeep` (30020), **the shipped play defaults**: no labsetting line. Run
+`a6830b7cd9714aecb4c8ecef7ba0df52` (probe folder `848b1b83...`): **every expectation met** (ExpectFailures empty),
+Closed, BaselineRestored, RealSavesUnchanged, `Forced=False`, `IsolationFailed=False`. Its preflight
+(`20261030-120918-69670c53...`, Research profile) ran 313 audited tests, all passed. Link: RTT 174-190 ms, loss up to
+12.9 %. Slices in the session scratch `m6m7/integrate/slice-a6830b7c`; frames
+`complete/frames/m6m7-integrate/a6830b7c-<role>-<label>.jpg`, looked at for every claim below. Archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\a6830b7c...`.
+
+| Part | Result |
+|---|---|
+| Pairing and defaults | [O] Both reached gameplay (52.7 s / 50.7 s after launch) and paired (`remote_build=0.14.4+57d2cd7`); `vehicle_gone; step=on; ...; wreck=0` and `vehicle_rules; step=on; ...; crew=1` on both; frame `smoke-start` on both. With the keys off: `partner_board=installed; ...; blocks=20` and no `partner_board=race`, `seat_one`, `board_remap` or `seat_ext_tx` line on either copy; the Lua SEAT module logged only `event=seat; state=off`. |
+| The guest's supply drop refusal (D11) | [O] LOADOUT and VEHICLES inactive and refused with both toasts drawn on the guest's iDroid (frames `d11-guest-loadout-refused`, `d11-guest-vehicles-refused`; `step=refused; path=idroid_drop_loadout` / `idroid_drop_vehicle`). |
+| A drive with a back-seat passenger | [O] The guest boarded 25608 as the driver at once (no hold; its D-Dog in seat 1 on its copy: `riders=0,9728,...`); the host's policy `board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x00` (seat 1 never offered), `board_passenger; seat=2; site=phase1`, `local_passenger; seat=2; state=on`, `pass_camera; state=connect`, the guest `partner_ride_seat=confirmed; seat=2`. Frames `drv-seated` on both; on the driver's screen the host sits in the back right seat, gun on its back, while the jeep moves (`drv-fire-move-01..03`, `drv-driver-01..04`: dust and changing scenery). The seat error on the driver's copy rose to 4.6 m while moving and fell back to 2-3 mm when stopped (as in `32c3893a`: 2.8 m). |
+| The passenger aims and fires (stock, `partner_seat_gun` off) | [O] `aim_dir=refused; reason=ride; checks=0; misses=0` for each aim (no `reason=convention`, no `partner_seat_gun` line); the host's magazine went 8 -> 7 -> 6 -> 5 over four trigger presses (`pass-fire-1`, `-2`, `pass-fire-move-NN`). [O] The known M7 camera defects, at the shipped defaults: from seat 2 the aim camera sits inside the jeep's body (the spare wheel and the panel fill the view: `pass-aim-01`, `pass-fire-1`), after the shots it points at the sky past the panel (`pass-fire-2`), and it stays pitched up into the panel after the aim ends (`drv-stopped` on the host). No shot was aimed at a target (the area was cleared), so whether one lands is still [U] (8.22). The driver's screen shows no raised gun (expected with the key off: `pass-aim-driver-01/02`). |
+| The get-off | [O] The host's stock get-off: `local_passenger; seat=2; state=off; reason=act`, `pass_camera; state=release; ...; reason=stock; ok=1` (frame `drv-host-off-04`: the host beside the jeep, the guest still at the wheel); the guest's copy `exit_request; ... via=getoff` -> `exit; ...; via=getoff; confirmed=1`. Then the guest's own get-off (`vehicle_not_riding`). |
+| The parked jeep | [O] The host's VEHICLE_STATE skipped 25608 while ridden, then `resume` -> `tx; why=moved` -> the guest `step=same|applied; from=25608`; `vehicle_state_status 25608` gives `pos=-634934,-965,822670` on the host and `-634933,-965,822670` on the guest; frame `drv-parked-both` on both screens: the jeep under the same tree. |
+
+No `step=error`, `event=error`, `viewer_changed`, non-zero `faults=`, `board_uncertain`, `event=vehicle_damage` or
+`event=dog_hero` line on either copy. Not in this smoke (nothing new of theirs is on in play): the front seat, the
+truck cab, the seat race, the seat gun; a seated shot at a target; D14's Fulton; two-PC. No defect found beyond the
+known M7 camera behaviour.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3180,6 +3223,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   - Scenarios: `coop-vehicle-passenger-m6.txt` (jeep), `coop-vehicle-passenger-m6-truck.txt` (cab, race, census),
     `coop-vehicle-passenger-m6-play.txt` (the first play rehearsal), `coop-vehicle-passenger-m6-review.txt`,
     `-review-truck.txt`, `-review-play.txt` (the review fixes, 8.21).
+  - **Merged** into `dev/oct7-continue` (`c616d8b`, 2026-10-30; 8.24), unreleased; all three keys still off in play.
+    The combined play smoke at the shipped defaults (`a6830b7c`) offered the back seats only (`seat1=none`) and no race.
 
 ### M7. Shooting as a passenger
 
@@ -3202,6 +3247,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   screen), the play rehearsal (the hidden-run budget was spent; nothing flips). The shooter's own `m7-seat-aim`
   frames show the reticle over its head (red on the guard in `a3f7c4e1`) but not the gun itself. The front seat and
   the truck bed wait for M6. Next: D18.
+  **Merged** into `dev/oct7-continue` (`5a18d3b`, 2026-10-30; 8.24), unreleased, `partner_seat_gun` off in play. The
+  combined play smoke `a6830b7c` (shipped defaults) saw the stock passenger aim and fire in play (`checks=0`, the
+  magazine down) with the camera inside the jeep's body and pitched up after the shots; it aimed at no target.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 
@@ -3439,6 +3487,8 @@ here.
   its shots do not land, and the passenger camera's part in the camera defects, then design B (body 1's own gun plugin while seated) with a new run budget; (b) park M7 and move on (M8, M9-M11),
   keeping the lab key and the census; (c) a smaller goal: the passenger may aim and fire on its own screen (as today),
   with no partner gun on the driver's screen and no promise that it hits. **Recommended: (a).**
+
+After the M6 / M7 integration (2026-10-30, 8.24): D16, D17 and D18 are still open; nothing flipped in play.
 
 Open after the integration (2026-10-29; behaviour to confirm, not new decisions): with `companion_host_owned` on, the
 guest's PC shows no host D-Horse, D-Walker or Quiet until M10, M9 and M5 add their holds (M1 had drawn a horse, in the
