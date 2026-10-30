@@ -24,6 +24,12 @@
 --       explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). Refused: REJECT 8; the
 --       guest's copy keeps its wreck (no engine command undoes one: SetBodyLife writes the life word only, IsAlive
 --       reads rec+0x70 bits nothing clears), logged break_refused.
+--       D12 crew (world_vehicle_crew, bit 64; the user's pick of 2026-10-29: wreck at once): a hold whose only reason is
+--       an NPC crew (every filled seat a soldier: world sync's roster or a TppSoldier2 id; never a player, D-Dog, a
+--       buddy or the partner's ride) is judged at once and applied as the wreck, so both copies end with one; the
+--       engine's blast decides the crew on the host's copy (their deaths are host outcomes, synced as usual; on the
+--       guest's copy they died unattributed already, so nothing counts twice). Held (crew_near) while a player stands
+--       within BLAST_MM of the host's copy: a Despawn under seated soldiers is untested. Logged break_crew.
 --   D14 world_vehicle_credit (bit 16; with VEHICLE_GONE): the receiver of a Fulton loss (cause 1) removes its copy with
 --       the stock Seize {"Instant"} instead of a Despawn, so its own engine runs TppTerminal.OnFulton ->
 --       OnFultonVehicle -> AddTempResource (E17: no GMP charged, the temporary resource commits at the mission end) and
@@ -52,6 +58,7 @@ function VR.breakOn() return W.vehicleBreakOn == true and G.on() end
 G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
 function VR.loadoutOn() return W.vehicleLoadoutOn == true and W.active == true and not W.host end
+function VR.crewOn() return W.vehicleCrewOn == true and VR.breakOn() end
 -- The guest's VEHICLES drop item is this module's while its key runs (world_relief_sync.lua asks).
 function VR.ownsVehicleDrop() return W.vehicleLoadoutOn == true and not W.host end
 function VR.reset()
@@ -163,6 +170,33 @@ local function held(q, why, extra)
   q.vrHold = why
   L("step=break_hold;id=%d;rid=%d;why=%s%s", q.id, q.rid or 0, why, extra or "")
 end
+-- D12 crew: a rider id is an NPC soldier when world sync's roster names it (W.byId) or its type index is TppSoldier2.
+function VR.soldier(v)
+  if type(W.byId) == "table" and W.byId[v] ~= nil then return true end
+  local f, want = W.get(W.get(_G, "GameObject"), "GetTypeIndex"), W.get(W.get(_G, "TppGameObject"), "GAME_OBJECT_TYPE_SOLDIER2")
+  if type(f) ~= "function" or type(want) ~= "number" then return false end
+  local ok, t = pcall(f, v)
+  return ok and t == want
+end
+-- The number of filled seats of this copy's id when every one is an NPC soldier and the partner does not ride it, else
+-- nil (an empty, unreadable or other rider keeps VEHICLE_GONE's hold).
+function VR.crew(id)
+  local a = W.api
+  local ok, r = pcall(a.send, id, {id = "GetRiderId"})
+  if not ok or type(r) ~= "table" then return nil end
+  local n = 0
+  for _, v in pairs(r) do
+    if type(v) ~= "number" then return nil end
+    if v ~= 65535 then
+      if not VR.soldier(v) then return nil end
+      n = n + 1
+    end
+  end
+  local rp = W.ridePose
+  local tracks = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if n == 0 or type(tracks) == "table" and tracks[id] ~= nil or G.rides[id] and now() - G.rides[id] < G.RIDE_MS then return nil end
+  return n
+end
 local baseDecide = G.decide
 G.decide = function(q, ...)
   local verdict, why = baseDecide(q, ...)
@@ -173,6 +207,15 @@ G.decide = function(q, ...)
     VR.st.refused = VR.st.refused + 1
     L("step=break_judge;id=%d;rid=%d;ok=0;why=ridden;by=%s", q.id, q.rid or 0, why)
     return "refuse", "ridden"
+  end
+  -- D12 crew: an NPC crew alone no longer holds; a player within the blast distance of the host's copy does.
+  if verdict == "hold" and why == "occupied" and VR.crewOn() then
+    local n = VR.crew(q.id)
+    if n then
+      local who, d = VR.nearBlast(q.id, now())
+      if who then held(q, "crew_near", fmt(";near=%s;d_mm=%d;crew=%d", who, d or -1, n)); return "hold", "crew_near" end
+      q.crew, verdict = n, "apply"
+    end
   end
   if verdict ~= "apply" then return verdict, why end
   local t = now()
@@ -187,6 +230,7 @@ G.decide = function(q, ...)
   if #VR.applied >= RATE_N then held(q, "rate", fmt(";n=%d", #VR.applied)); return "hold", "rate" end
   VR.applied[#VR.applied + 1], VR.st.applied = t, VR.st.applied + 1
   judged(q, true)
+  if q.crew then L("step=break_crew;id=%d;rid=%d;crew=%d", q.id, q.rid or 0, q.crew) end
   return "apply"
 end
 
@@ -394,8 +438,8 @@ W.startHooks[#W.startHooks + 1] = function()
   if VR.creditOn() then pcall(VR.install) end
   local on = W.vehicleBreakOn == true or W.vehicleCreditOn == true or W.vehicleLoadoutOn == true
   if on then
-    L("step=on;mission=%d;role=%s;break=%d;credit=%d;loadout=%d;gone=%d", W.mission or 0, role(), VR.breakOn() and 1 or 0,
-      VR.creditOn() and 1 or 0, W.vehicleLoadoutOn == true and 1 or 0, G.on() and 1 or 0)
+    L("step=on;mission=%d;role=%s;break=%d;credit=%d;loadout=%d;gone=%d%s", W.mission or 0, role(), VR.breakOn() and 1 or 0,
+      VR.creditOn() and 1 or 0, W.vehicleLoadoutOn == true and 1 or 0, G.on() and 1 or 0, W.vehicleCrewOn == true and ";crew=1" or "")
   end
 end
 W.pairedHooks[#W.pairedHooks + 1] = function() VR.coop, VR.stopped = W.mission, nil end

@@ -1512,6 +1512,30 @@ int main() {
                       !vehiclePlayDefault.world_loadout_block_given && vehiclePlayDefault.play_refused == 0,
                   "D11 / D12 / D14 keys default on in play");
         }
+        // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md 8.14): world_vehicle_crew (D12, a crewed
+        // vehicle wrecked at once, r[15] bit 64) and world_vehicle_damage (the guest's vehicle damage report, bit 128). Lab
+        // and play (no refusal bit), off in lab and play unless named until each has its FRAME proof and play rehearsal.
+        {
+            struct Key { const char* name; bool mgscoop::LabConfig::*on; bool mgscoop::LabConfig::*given; };
+            const Key keys[] = {{"world_vehicle_crew", &mgscoop::LabConfig::world_vehicle_crew, &mgscoop::LabConfig::world_vehicle_crew_given},
+                                {"world_vehicle_damage", &mgscoop::LabConfig::world_vehicle_damage, &mgscoop::LabConfig::world_vehicle_damage_given}};
+            const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+            for (const auto& k : keys) {
+                const std::string n = k.name;
+                const auto vfOn = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=1\n");
+                const auto vfOff = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=0\n");
+                const auto vfBad = Lab("enabled=1\nrole=host\n" + n + "=2\n");
+                const auto playOn = Lab(play + n + "=1\n");
+                Check(!(def.*k.on) && !(def.*k.given) && !(vehicleGun.*k.on), (n + " defaults off in the lab (plain, gun profile)").c_str());
+                Check(vfOn.*k.on && vfOn.*k.given && vfOn.invalid_values == 0 && vfOn.unknown_keys == 0, (n + "=1 parses in the lab").c_str());
+                Check(!(vfOff.*k.on) && vfOff.*k.given && vfOff.invalid_values == 0, (n + "=0 is named and off").c_str());
+                Check(!(vfBad.*k.on) && vfBad.invalid_values == 1 && vfBad.unknown_keys == 0, ("an invalid " + n + " keeps it off").c_str());
+                Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
+                      (n + "=1 parses in play with no refusal bit").c_str());
+                Check(!(vehiclePlayDefault.*k.on) && !(vehiclePlayDefault.*k.given), (n + " stays off in play unless named").c_str());
+            }
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

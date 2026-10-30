@@ -443,6 +443,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world_vehicle_break'; Json = 'world_vehicle_break'; Kind = 'bool' },
     @{ Key = 'world_vehicle_credit'; Json = 'world_vehicle_credit'; Kind = 'bool' },
     @{ Key = 'world_loadout_block'; Json = 'world_loadout_block'; Kind = 'bool' },
+    # The vehicle fixes of 2026-10-29 (lab and play, off unless named until proven): D12 a crewed vehicle wrecked at once,
+    # the guest's vehicle damage reported to the host (VEHICLE_DAMAGE).
+    @{ Key = 'world_vehicle_crew'; Json = 'world_vehicle_crew'; Kind = 'bool' },
+    @{ Key = 'world_vehicle_damage'; Json = 'world_vehicle_damage'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

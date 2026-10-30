@@ -266,6 +266,18 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_loadout_block_given = true;
         if (!ok) result.world_loadout_block = false;
     }
+    // The vehicle fixes of 2026-10-29 (lab and play, off in both unless named until their FRAME proof and
+    // play rehearsal): D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
+    else if (Equals(key, "world_vehicle_crew")) {
+        ok = ParseBool(value, result.world_vehicle_crew);
+        result.world_vehicle_crew_given = true;
+        if (!ok) result.world_vehicle_crew = false;
+    }
+    else if (Equals(key, "world_vehicle_damage")) {
+        ok = ParseBool(value, result.world_vehicle_damage);
+        result.world_vehicle_damage_given = true;
+        if (!ok) result.world_vehicle_damage = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);

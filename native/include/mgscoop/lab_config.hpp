@@ -742,6 +742,19 @@ struct LabConfig {
     // untouched.
     bool world_loadout_block = false;
     bool world_loadout_block_given = false;
+    // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md section 8.14), lab and play
+    // (no refusal bit), off in lab and play unless named until their FRAME proof and play rehearsal:
+    // world_vehicle_crew=0|1 (D12, bit 64; lua/coop/world_vehicle_rules.lua): a guest destruction the
+    // host judged plausible whose only hold is an NPC crew (soldiers, not a player, D-Dog or a buddy)
+    // is applied at once (the host's copy wrecked: the engine's blast decides the crew), held only
+    // while a player stands within the blast distance.
+    bool world_vehicle_crew = false;
+    bool world_vehicle_crew_given = false;
+    // world_vehicle_damage=0|1 (bit 128; lua/coop/world_vehicle_damage.lua): the guest reports the
+    // body-life drops of its own copy (VEHICLE_DAMAGE, op 0x3A) and the host applies them (the lower
+    // life, at most the guest's drop), so VEHICLE_STATE keeps the guest's damage on both copies.
+    bool world_vehicle_damage = false;
+    bool world_vehicle_damage_given = false;
     // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's
     // buddy is the session's one companion. The follow seeds carry the host's buddy vars
     // and the guest loads them (its own are kept for its saves); guest buddy calls, the

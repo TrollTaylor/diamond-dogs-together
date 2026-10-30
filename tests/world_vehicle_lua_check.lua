@@ -759,10 +759,25 @@ if arg[2] then
     W = Composed(63, 1)
     check(W.vehicleGoneOn and W.vehicleStateOn and W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and W.vehicleLoadoutOn,
         'CFG r[15] = 63: every vehicle key')
+    -- The vehicle fixes of 2026-10-29: bit 64 D12 world_vehicle_crew (world_vehicle_rules.lua), bit 128 world_vehicle_damage
+    -- (world_vehicle_damage.lua); the older bits keep their meaning.
     W = Composed(64, 1)
+    check(W.vehicleCrewOn and not W.vehicleDamageOn and not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn and
+        not W.vehicleBreakOn and not W.vehicleCreditOn and not W.vehicleLoadoutOn, 'CFG r[15] = 64: the crew key alone')
+    W = Composed(128, 1)
+    check(W.vehicleDamageOn and not W.vehicleCrewOn and not W.vehicleGoneOn and not W.vehicleStateOn and not W.vehicleLoadoutOn,
+        'CFG r[15] = 128: the damage key alone')
+    W = Composed(203, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and not W.vehicleWreckOn and W.vehicleBreakOn and not W.vehicleCreditOn and
+        not W.vehicleLoadoutOn and W.vehicleCrewOn and W.vehicleDamageOn, 'CFG r[15] = 203: gone, state, break, crew, damage')
+    W = Composed(255, 1)
+    check(W.vehicleGoneOn and W.vehicleStateOn and W.vehicleWreckOn and W.vehicleBreakOn and W.vehicleCreditOn and W.vehicleLoadoutOn and
+        W.vehicleCrewOn and W.vehicleDamageOn, 'CFG r[15] = 255: every vehicle key')
+    W = Composed(256, 1)
     check(not W.vehicleWreckOn and not W.vehicleGoneOn and not W.vehicleStateOn and not W.vehicleBreakOn and not W.vehicleCreditOn and
-        not W.vehicleLoadoutOn, 'an out-of-range r[15] (64) is off')
+        not W.vehicleLoadoutOn and not W.vehicleCrewOn and not W.vehicleDamageOn, 'an out-of-range r[15] (256) is off')
     W = Composed(nil, 1)
-    check(W.vehicleBreakOn == false and W.vehicleCreditOn == false and W.vehicleLoadoutOn == false, 'a missing r[15]: the new keys off too')
+    check(W.vehicleBreakOn == false and W.vehicleCreditOn == false and W.vehicleLoadoutOn == false and W.vehicleCrewOn == false and
+        W.vehicleDamageOn == false, 'a missing r[15]: the new keys off too')
 end
 print('world_vehicle_lua_check: ' .. checks .. ' checks PASS')

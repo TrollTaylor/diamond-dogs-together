@@ -47,6 +47,12 @@ Wait-ScenarioMission 'host' 30020 5
 Check ($c.commands.Count -eq 2) 'waitmission resumes both owned loading roles'
 Check ($c.commands[0].role -ceq 'host' -and $c.commands[1].role -ceq 'guest') 'each role dispatches explicitly'
 Check (@($c.commands|Where-Object{$_.operation -cne 'resume_loading' -or $_.args.ContainsKey('Keys')}).Count -eq 0) 'no generic Space press in waitmission'
+# waitmission <role> ... only (the D11 pre-pair proof): only that role's loading screen is resumed.
+$c.now=15000;$c.readyAt=15500;$c.commands.Clear();$loadingAttempts=@{};$c.loading=@{host=@{generation=7};guest=@{generation=8}}
+Wait-ScenarioMission 'guest' 30020 5 -Only
+Check ($c.commands.Count -eq 1 -and $c.commands[0].role -ceq 'guest' -and $c.commands[0].operation -ceq 'resume_loading') 'waitmission only resumes that role alone'
+$c.readyAt=900000;$c.commands.Clear();$loadingAttempts=@{};Resume-TripLoading 'host'
+Check ($c.commands.Count -eq 1 -and $c.commands[0].role -ceq 'host') 'Resume-TripLoading with a role resumes only it'
 $c.now=20000;$c.readyAt=20000;$c.commands.Clear();Wait-ScenarioMission 'guest' 30020 5
 Check ($c.commands.Count -eq 0) 'fresh arrived gameplay never requests resume'
 $c.now=30000;$c.readyAt=200000;$c.commands.Clear();$loadingAttempts=@{};$c.loading=@{host=@{generation=5};guest=@{generation=6}}

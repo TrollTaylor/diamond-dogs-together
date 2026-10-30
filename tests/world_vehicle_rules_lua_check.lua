@@ -47,7 +47,11 @@ local function Fixture(role, opts)
         unpairedHooks = {}, stopHooks = {}, active = true, paired = opts.paired ~= false, eff = 3, mission = c.mission, epoch = 7,
         host = role == 'host', role = role == 'host' and 1 or 2, mode = opts.mode or 1, vehicleGoneOn = opts.gone ~= false,
         vehicleStateOn = opts.state == true, vehicleWreckOn = opts.wreck == true, vehicleBreakOn = opts.brk == true,
-        vehicleCreditOn = opts.credit == true, vehicleLoadoutOn = opts.loadout == true}
+        vehicleCreditOn = opts.credit == true, vehicleLoadoutOn = opts.loadout == true, vehicleCrewOn = opts.crew == true}
+    -- World sync's soldier roster (world_sync.lua W.byId: GameObject id -> entity hash) and the type index fallback.
+    W.byId = {[4321] = 1856151639, [4322] = 1856151640}
+    env.TppGameObject = {GAME_OBJECT_TYPE_SOLDIER2 = 2}
+    env.GameObject = {GetTypeIndex = function(id) return (id == 1500 or id == 4321 or id == 4322) and 2 or 19 end}
     W.now = function() return c.clock end
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.get = function(t, k)
@@ -150,6 +154,7 @@ end
 -- Module surface and the start line.
 local c = Fixture('guest')
 check(type(c.R) == 'table' and type(c.V.unattributed) == 'function', 'W.vehicleRules and the V.unattributed hook')
+check(type(c.R.crew) == 'function' and type(c.R.crewOn) == 'function', 'the crew helpers (D12 crew)')
 check(c.R.BREAK_MM == 300000 and c.R.FRESH_MS == 3000 and c.R.RATE_N == 4 and c.R.RATE_MS == 20000 and c.R.CREDIT_MS == 10000 and
     c.R.ASK_N == 6 and c.R.QUEUE_N == 32 and c.R.UNATTRIBUTED == 4 and c.R.BLAST_MM == 15000,
     'rules: 300 m, a guest position at most 3 s old, 4 applied per 20 s (more wait), 6 asked per 60 s (more queue), cause 4, ' ..
@@ -406,6 +411,75 @@ for _ = 1, 401 do h:poll(300) end
 local r9b = h:sent(4)
 check(#r9b == 1 and r9b[1][4] == 9 and h.pool[25608].alive and h:has('step=hold_timeout;id=25608;src=req;reason=occupied'),
     'a soldier who stays seated: REJECT 9 after 120 s (VEHICLE_GONE\'s hold cap)')
+-- D12 crew (the user's pick of 2026-10-29, key world_vehicle_crew): a hold whose only reason is an NPC crew is judged
+-- and applied at once (the host's copy wrecked: the engine's blast decides the crew there); D-Dog, a buddy, an unknown
+-- rider, the partner's ride and the host's own player keep today's hold or refusal.
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h:guestAt(-375, 514)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h:has('event=vehicle_rules;step=break_judge;id=25623;rid=9;ok=1;why=near;d_mm=25000') and
+    h:has('event=vehicle_rules;step=break_crew;id=25623;rid=9;crew=1') and #h.lifeSet == 1 and h.lifeSet[1].life == 0 and
+    not h.pool[25623].alive and h.V.held[25623] == nil and not h:has('step=hold;id=25623') and #h:sent(4) == 0,
+    'a soldier-crewed copy (the crew key on): judged and wrecked at once, never held')
+check(h:has('event=vehicle_gone;step=applied;id=25623;via=wreck;src=req;ok=1') and #h:sent(46) == 1 and h:sent(46)[1][4] == 2 and
+    not h:has('break_safe'), 'read back as a wreck and answered gone (cause 2)')
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321, 1500, 65535, 4322}})
+h:guestAt(-375, 514)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h:has('step=break_crew;id=25623;rid=9;crew=3') and not h.pool[25623].alive,
+    'three soldiers (two on the roster, one by its TppSoldier2 type index): crew=3, wrecked')
+for _, riders in ipairs({{9728}, {4321, 9728}, {7777}}) do
+    h = Fixture('host', {brk = true, crew = true})
+    h:add(25623, -375, 489, 1, nil, {riders = riders})
+    h:guestAt(-375, 514)
+    hostReq(h, 25623, 9, 4, -375, 489)
+    check(h.V.held[25623] and h:has('step=hold;id=25623;src=req;reason=occupied') and h.pool[25623].alive and #h.lifeSet == 0 and
+        not h:has('break_crew'), 'D-Dog, a soldier with D-Dog, or an unknown rider: held as before')
+end
+h = Fixture('host', {brk = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h:guestAt(-375, 514)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h.V.held[25623] and h:has('step=hold;id=25623;src=req;reason=occupied') and h.pool[25623].alive and not h:has('break_crew'),
+    'the crew key off: a soldier crew holds as in 0.14.4')
+-- The partner's ride on the host's copy with a soldier aboard: held (never the crew rule).
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h.W.ridePose.fast.tracks[25623] = {}
+h:guestAt(-375, 514)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h.V.held[25623] and h.pool[25623].alive and not h:has('break_crew'), "the partner's ride with a soldier aboard: held")
+-- The host's own player in the crewed copy: refused at once (ridden), as before.
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h.riding, h.env.vars.playerVehicleGameObjectId = true, 25623
+h:guestAt(-375, 514)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h:has('step=break_judge;id=25623;rid=9;ok=0;why=ridden;by=local_rider') and h.pool[25623].alive and h:sent(4)[1][4] == 8,
+    'the host seated with the crew: REJECT 8 (ridden)')
+-- A player within the blast distance of the host's crewed copy: held (crew_near; a Despawn under seated soldiers is
+-- untested), applied as the wreck once they stand clear.
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h:guestAt(-375, 499)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h.V.held[25623] and h:has('event=vehicle_rules;step=break_hold;id=25623;rid=9;why=crew_near;near=partner;d_mm=10000;crew=1') and
+    h.pool[25623].alive and #h.lifeSet == 0 and #h.despawns == 0 and not h:has('break_judge'), 'the partner 10 m away: held (crew_near)')
+h:polls(4)
+check(h:count('step=break_hold;id=25623') == 1, 'logged once')
+h:guestAt(-375, 529)
+h:poll()
+check(h:has('step=break_judge;id=25623;rid=9;ok=1;why=near') and h:has('step=break_crew;id=25623') and not h.pool[25623].alive and
+    #h.lifeSet == 1 and #h.despawns == 0 and h.V.held[25623] == nil, 'the partner 40 m away now: judged near, wrecked')
+-- The judge still decides: a guest far away is refused (REJECT 8), the crew untouched.
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 1, nil, {riders = {4321}})
+h:guestAt(-675, 889)
+hostReq(h, 25623, 9, 4, -375, 489)
+check(h:has('step=break_judge;id=25623;rid=9;ok=0;why=guest_far') and h.pool[25623].alive and h:sent(4)[1][4] == 8 and
+    not h:has('break_crew'), 'the guest 500 m away: refused (guest_far), never wrecked')
 -- ... and a copy that broke on the host too is answered as gone.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {riders = {4321}})
