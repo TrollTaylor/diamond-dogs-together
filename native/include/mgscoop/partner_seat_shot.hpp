@@ -43,8 +43,10 @@ inline const char* ClassName(Class c) noexcept {
 // [O for 25603 cat 1 / type 1 and 25608 cat 2 / type 2; I for the trucks]. A truck seats a passenger only in its cab
 // (seat 1); a light vehicle in 1 (front, M6) and the back seats 2 / 3. Anything else: none (no shift).
 inline Class ClassFor(std::uint8_t category, std::uint8_t seat) noexcept {
-    (void)category; (void)seat;
-    return Class::none;  // stub
+    if (seat < 1 || seat > 3) return Class::none;
+    if (category == 1 || category == 2) return Class::light;
+    if ((category == 3 || category == 4) && seat == 1) return Class::truck;
+    return Class::none;
 }
 
 // The box in the vehicle frame: its centre (forward, up offsets from the record) and half extents (forward, side, up).
@@ -101,31 +103,92 @@ inline void Axes(float yaw, float f[3], float r[3]) noexcept {
 }
 // A world vector in the vehicle frame (forward, right, up).
 inline void ToLocal(float yaw, const float w[3], float out[3]) noexcept {
-    (void)yaw; (void)w;
-    out[0] = out[1] = out[2] = 0.0f;  // stub
+    float f[3], r[3];
+    Axes(yaw, f, r);
+    out[0] = w[0] * f[0] + w[2] * f[2];
+    out[1] = w[0] * r[0] + w[2] * r[2];
+    out[2] = w[1];
 }
 
 // The slab test: the line o + t d (box-centred local coordinates) against half extents h. True when the line meets
 // the box at some t > 0; t_in may be <= 0 (the start is inside).
 inline bool RayBox(const float o[3], const float d[3], const float h[3], float& t_in, float& t_out) noexcept {
-    (void)o; (void)d; (void)h; t_in = t_out = 0.0f;
-    return false;  // stub
+    float lo = -std::numeric_limits<float>::infinity(), hi = std::numeric_limits<float>::infinity();
+    for (int i = 0; i < 3; ++i) {
+        if (std::fabs(d[i]) < 1e-6f) {
+            if (o[i] < -h[i] || o[i] > h[i]) return false;
+            continue;
+        }
+        float a = (-h[i] - o[i]) / d[i], b = (h[i] - o[i]) / d[i];
+        if (a > b) { const float x = a; a = b; b = x; }
+        if (a > lo) lo = a;
+        if (b < hi) hi = b;
+        if (lo > hi) return false;
+    }
+    if (!(hi > 0.0f)) return false;
+    t_in = lo;
+    t_out = hi;
+    return true;
 }
 
 // One bullet: start and direction from the record, the publication. Never reads anything else.
 inline Plan PlanShot(const Pub& p, const float start[3], const float dir[3]) noexcept {
-    (void)p; (void)start; (void)dir;
-    return Plan{};  // stub
+    Plan out{};
+    const BoxSpec* spec = SpecFor(p.cls);
+    if (!spec) { out.result = "class"; return out; }
+    if (!Finite3(start) || !Finite3(dir) || !Finite3(p.pos) || !std::isfinite(p.yaw)) { out.result = "nonfinite"; return out; }
+    const float len = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    if (!(len > 1e-3f)) { out.result = "dir"; return out; }
+    const float d[3] = {dir[0] / len, dir[1] / len, dir[2] / len};
+    const float rel[3] = {start[0] - p.pos[0], start[1] - p.pos[1], start[2] - p.pos[2]};
+    ToLocal(p.yaw, rel, out.o_local);
+    ToLocal(p.yaw, d, out.d_local);
+    if (p.target_ok && Finite3(p.target)) {
+        const float g[3] = {p.target[0] - start[0], p.target[1] - start[1], p.target[2] - start[2]};
+        out.dist = std::sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
+    }
+    const float o[3] = {out.o_local[0] - spec->fwd, out.o_local[1], out.o_local[2] - spec->up};
+    const float h[3] = {spec->half_fwd, spec->half_side, spec->half_up};
+    float t_in = 0, t_out = 0;
+    if (!RayBox(o, out.d_local, h, t_in, t_out)) { out.result = "miss"; return out; }
+    out.inside = t_in <= 0.0f;
+    out.exit = t_out;
+    if (t_out > kMaxShiftM) { out.result = "far"; return out; }
+    if (out.dist < 0.0f) { out.result = "target"; return out; }
+    if (t_in > 0.0f && t_in >= out.dist - kTargetGapM) { out.result = "clear"; return out; }
+    float t = t_out + kExitPadM;
+    if (t > out.dist - kTargetGapM) t = out.dist - kTargetGapM;
+    if (!(t > 0.01f)) { out.result = "near"; return out; }
+    out.t = t;
+    for (int i = 0; i < 3; ++i) out.pos[i] = start[i] + d[i] * t;
+    out.move = p.apply;
+    out.result = p.apply ? "shift" : "census";
+    return out;
 }
 
 // The lab lever "seatshot on|off|lab|status" (lab only): this copy's override of the key (-1 none, 0 off, 1 on).
 // False for any other text; for a seatshot command it fills result (ok false on a refusal) and the new override.
 inline bool HandleCommand(const char* text, bool lab, int current, int& next, char* result, std::size_t capacity,
                           bool& ok) noexcept {
-    (void)text; (void)lab; (void)result; (void)capacity;
     next = current;
     ok = false;
-    return false;  // stub
+    if (!text || std::strncmp(text, "seatshot", 8) != 0 || (text[8] != '\0' && text[8] != ' ')) return false;
+    const char* arg = text[8] ? text + 9 : "";
+    const char* refusal = nullptr;
+    if (!lab) refusal = "lab_only";
+    else if (std::strcmp(arg, "on") == 0) next = 1;
+    else if (std::strcmp(arg, "off") == 0) next = 0;
+    else if (std::strcmp(arg, "lab") == 0) next = -1;
+    else if (std::strcmp(arg, "status") != 0) refusal = "args";
+    if (refusal) {
+        if (result && capacity) std::snprintf(result, capacity, "seatshot=refused; reason=%s; use=on|off|lab|status", refusal);
+        next = current;
+        return true;
+    }
+    ok = true;
+    if (result && capacity)
+        std::snprintf(result, capacity, "seatshot=%s; override=%s", next < 0 ? "lab" : next ? "on" : "off", next < 0 ? "none" : "set");
+    return true;
 }
 
 } // namespace mgscoop::partner_seat_shot

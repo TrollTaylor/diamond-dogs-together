@@ -1016,6 +1016,25 @@ SEAT_GUN_SITES = [
      'the other GunHold entry: 0x1059E80(.., GunHold 0xAA0EA22A5E0E, ..), then gunRec+0x3C4 &= 0x7FFFFFFF'),
 ]
 SITES += SEAT_GUN_SITES
+# --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot"): the RequestBullet hook forwards a copy
+# of a seated passenger's record with its start moved past the ridden vehicle. The record layout the copy relies on, the
+# pellet loop that re-uses the caller's record, why the jeep is hit (the hit loop skips only the shooter's own
+# character), and where the shot's target and origin come from (the static study m6m7b/shoot2).
+SEAT_SHOT_SITES = [
+    (0xD32690, '0f28024c8bc10f29010f284a100f2949108b42208941208b42248941240fb74228668941280fb7422a6689412a0fb7422c6689412c'
+     '0fb7422e6689412e0fb642308841300fb64231884131',
+     'the bullet slot copy: start +0x00 and direction +0x10 (movaps), then +0x20..+0x31 field by field (S1 copies 0x34)'),
+    (0x130342E, '0f294f10', 'the pellet loop: each pellet direction stored into the same record +0x10 before the slot call'),
+    (0xD2DC60, '48c1e83b83e00f488945e883f80375648bc383e01f3c090f94c08844244484c07452e8c913edff488d542470448bc3488b8898000000'
+     '488b89e8010000488b01ff5018410fb747246639442470',
+     'the bullet hit loop: only the shooter\'s own character is skipped (type 3, sub 9, id == bullet+0x24); a vehicle hits'),
+    (0x108B0FC, '498b442410498bcf4803c90f2804c8410f298040010000', 'the shot target: gunRec+0x140 = Q+0x10[id]'),
+    (0x11192C5, '488b4110', 'the PlayerCamera update: rax = the Q+0x10 array (for the store at 0x111931C)'),
+    (0x1119314, 'f30f118e240300000f291cd0488b9ec0090000',
+     'the PlayerCamera update: Q+0x10[local] = the look ray hit CAM+0x9D0 (0x111931C; not in Q10_CENSUS\'s window)'),
+    (0x1041214, 'e8d73d0000', 'shoot: the bullet origin and direction from GunShotOriginDir 0x1044FF0 (the muzzle on the body)'),
+]
+SITES += SEAT_SHOT_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -2681,6 +2700,20 @@ REC240_X_CALLS = [
 ]
 
 
+def seat_shot_assertions():
+    """M7 S1: the shoot call reaches GunShotOriginDir, the pellet store is right before the pinned pellet-loop slot call,
+    and RequestBullet hands the caller's record to the pinned copy."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    need(0x1041219 + struct.unpack('<i', rd(0x1041215, 4))[0] == 0x1044FF0, 'shoot calls GunShotOriginDir 0x1044FF0 at 0x1041214')
+    need(0x1303432 == 0x130342E + 4, 'the pellet direction store sits right before the pellet-loop slot call 0x1303432')
+    need(0xD32CC1 + struct.unpack('<i', rd(0xD32CBD, 4))[0] == 0xD32690, 'RequestBullet copies the record with 0xD32690')
+    return out
+
+
 def handle_call_assertions():
     """WS1: the facts B/C rely on (docs/anim-round2-throws.md "Handle call resolved")."""
     import re
@@ -3093,6 +3126,7 @@ failures += gesture_assertions()
 failures += gesture_lever_assertions()
 failures += seat_aim_assertions()
 failures += seat_gun_assertions()
+failures += seat_shot_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -3573,6 +3607,9 @@ w('// rate_rec_vtable_rva); the gun-hold enter stores the gun record\'s hold typ
 w('inline constexpr std::uint64_t seat_gun_node_start=0x50130ae2e584, seat_gun_node_hold=0xaa0ea22a5e0e;')
 w('inline constexpr std::size_t rate_hold_type=0x58, gun_hold_type=0x268;')
 w('inline constexpr std::uintptr_t seat_gun_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_GUN_SITES) + '};')
+w('// --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot"): the bullet record copy, the pellet')
+w('// loop, the hit loop\'s owner skip, the shot target and the camera\'s aim-target writer, the shot origin call.')
+w('inline constexpr std::uintptr_t seat_shot_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_SHOT_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')

@@ -382,6 +382,11 @@ int main() {
         // The record layout the hook relies on (RequestBullet's slot copy 0xD32690; the pellet loop 0x130342E).
         Check(ss::kPos == 0x00 && ss::kDir == 0x10 && ss::kRecordBytes == 0x34 && c::shot_owner == 0x2a,
               "S1 record: start +0x00, direction +0x10, owner +0x2A, 0x34 bytes copied");
+        // The contract pins the copy, the pellet store, the hit loop's owner skip, the target, the camera's writer and the
+        // origin call (SEAT_SHOT_SITES; the code gate checks the same bytes in the running image).
+        Check(sizeof(c::seat_shot_blocks) / sizeof(c::seat_shot_blocks[0]) == 7 && c::seat_shot_blocks[0] == 0xd32690 &&
+                  c::seat_shot_blocks[1] == 0x130342e && c::seat_shot_blocks[2] == 0xd2dc60 && c::seat_shot_blocks[5] == 0x1119314,
+              "S1 record: the contract's seat shot blocks");
     }
     std::printf("partner_seat_gun_tests: %u checks passed\n", checks);
     return 0;

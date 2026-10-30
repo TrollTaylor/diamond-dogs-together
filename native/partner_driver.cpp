@@ -3433,7 +3433,7 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
     auto& s = m.seat_shot;
-    if (!h.seat_shot_publish || !h.seat_shot_withdraw || !h.seat_shot_stats || true) return;  // stub
+    if (!h.seat_shot_publish || !h.seat_shot_withdraw || !h.seat_shot_stats) return;
     bool apply = d.settings.seat_shot;
     bool lever = false;
     const int override_value = !d.settings.play_mode && h.seat_shot_override ? h.seat_shot_override(h.context) : -1;

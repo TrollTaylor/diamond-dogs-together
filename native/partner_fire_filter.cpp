@@ -196,7 +196,7 @@ void* Hook(void* iface, const void* record) noexcept {
     // which the shot handler re-uses for every pellet).
     alignas(16) unsigned char copy[0x40]{};
     const void* forward = record;
-    if (g_ss_on && record && owner != 0xFFFFu && (owner & c::shot_owner_type_mask) == 0 && false && SeatShotStep(record, owner, copy)) forward = copy;  // stub
+    if (g_ss_on && record && owner != 0xFFFFu && (owner & c::shot_owner_type_mask) == 0 && SeatShotStep(record, owner, copy)) forward = copy;
     return original ? original(iface, forward) : nullptr;
 }
 

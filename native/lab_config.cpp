@@ -333,7 +333,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.partner_seat_gun);
         if (ok) result.partner_seat_gun_given = true;
     }
-    else if (false && Equals(key, "partner_seat_shot")) {  // stub
+    else if (Equals(key, "partner_seat_shot")) {
         // M7 S1: the seated passenger's bullets start past the ridden vehicle (lab and play); a named value records _given.
         ok = ParseBool(value, result.partner_seat_shot);
         if (ok) result.partner_seat_shot_given = true;
