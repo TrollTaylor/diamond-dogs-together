@@ -437,13 +437,13 @@ struct Hooks {
     // M6 review R4: the seat-1 remap skip (partner_board::SetRemapSkip), from this tick only. May be null
     // (seat 1 is then never offered).
     bool (*board_remap)(void* context, bool skip) noexcept = nullptr;
-    // Design 8.25: the passenger camera's lab trace (partner_pass_camera::ReadView; reads only) and the lab lever's
+    // Design 8.27: the passenger camera's lab trace (partner_pass_camera::ReadView; reads only) and the lab lever's
     // mode override (partner_pass_camera::Override: -1 none). Either may be null (no trace; no override).
     bool (*pass_camera_view)(void* context, const partner_player::State& state, partner_pass_camera::View& out) noexcept = nullptr;
     int (*pass_camera_override)(void* context) noexcept = nullptr;
     // The shot guard's write of the local camera's look pitch (partner_pass_camera::WritePitch; a fault counts in the
     // stats and latches the mission) and the current module's vtable rva (ModeVtable: the guard writes only under the aim
-    // module, design 8.26; the trace's mvt). May be null (no guard; mvt=0).
+    // module, design 8.28; the trace's mvt). May be null (no guard; mvt=0).
     bool (*pass_camera_pitch)(void* context, const partner_player::State& state, float pitch) noexcept = nullptr;
     std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
     // The shot guard's rotation write (partner_pass_camera::WriteRotation). May be null (the pitch only).
@@ -503,7 +503,7 @@ inline constexpr unsigned kRideCensusCap = 400;
 // other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
-// Design 8.25: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
+// Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
@@ -600,7 +600,7 @@ struct Settings {
     // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
     // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
     bool ride_front = false, ride_cab = false;
-    // The passenger camera's mode (lab.ini partner_pass_camera, design 8.25; the lab lever passcam overrides it on a
+    // The passenger camera's mode (lab.ini partner_pass_camera, design 8.27; the lab lever passcam overrides it on a
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
     PartnerPassCamera pass_camera = PartnerPassCamera::aim;
     bool pass_camera_trace = false;
@@ -777,7 +777,7 @@ struct Mission {
         bool seen_have;
         const char* uncertain;
         bool uncertain_logged;
-        // Design 8.25: the aim drop (mode aim), its lines (aim_cap) and the lab trace (trace_cap, its last line).
+        // Design 8.27: the aim drop (mode aim), its lines (aim_cap) and the lab trace (trace_cap, its last line).
         partner_pass_camera::AimDrop aim;
         partner_pass_camera::Guard guard;
         LogCap aim_cap, trace_cap;
@@ -1502,6 +1502,18 @@ struct Driver {
     std::uint16_t seat_rider_vehicle, seat_rider_value;
     bool seat_rider_read;
     std::uint64_t seat_rider_ms;
+    // Seats on (docs/vehicles-companions-design.md 8.25, D16's residual): the seat this copy draws the peer's seat-1
+    // ride in while its own D-Dog took seat 1 of the vehicle its player drives (partner_board::DrawSeat), latched per
+    // ride, and the rider[1..3] read behind it (every kSeatRiderMs while that ride lasts).
+    struct SeatDraw {
+        std::uint16_t vehicle = 0xFFFF;  // the latched ride's vehicle (0xFFFF: the peer's own seat is drawn)
+        std::uint8_t seat = 0xFF;        // the latched back seat
+        std::uint16_t read_vehicle = 0xFFFF;
+        std::uint64_t read_ms = 0;
+        bool riders_ok = false;
+        std::uint16_t rider[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        bool logged = false;             // a seat_draw line is out for the latch (one release line follows)
+    } seat_draw;
     std::uint16_t local_vehicle;
     // F1 vehicles: the local player as a stock back-seat passenger (the native
     // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the

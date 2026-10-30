@@ -1,4 +1,4 @@
-# Design 8.25 (docs/vehicles-companions-design.md; docs/native-puppet.md "Passenger camera"): the back-seat
+# Design 8.27 (docs/vehicles-companions-design.md; docs/native-puppet.md "Passenger camera"): the back-seat
 # passenger's aim camera at the default mode aim (partner_pass_camera unnamed: the jeep's ignore-collision handle kept,
 # and the shot guard holding the camera's look angles and rotation through each shot). africa-jeep (veh_lv_0000 =
 # 25608). The host drives and stays still; the guest rides back seat 3 (goto_vehicle jeep right), then back seat 2

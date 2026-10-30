@@ -7227,7 +7227,93 @@ void TestPassCameraDriver() {
     }
 }
 
-// Design 8.25 / 8.26 (review fixes): the shot guard's driver wiring in TickPassCamera. The guard writes only for the
+// Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the
+// handshake said free). The copy that drives the vehicle draws the peer's seat-1 ride in a free back seat (3, then
+// 2) while its rider[1] is its D-Dog, latched for that ride, so two bodies are never drawn in one seat.
+struct RidersFake {
+    bool ok = true;
+    std::uint16_t vehicle = 25603;
+    std::uint16_t rider[4]{0, 0xFFFF, 0xFFFF, 0xFFFF};
+    unsigned reads = 0;
+} g_riders;
+bool HookSeatRiders(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    ++g_riders.reads;
+    out = 0xFFFF;
+    if (!g_riders.ok || id != g_riders.vehicle || seat > 3) return false;
+    out = g_riders.rider[seat];
+    return true;
+}
+void TestSeatDraw() {
+    namespace rw = mgscoop::partner_ride_wire;
+    using mgscoop::PartnerRideBoard;
+    const auto mb = [](SeatSession& s, std::uint8_t seat) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.hooks.seat_rider = HookSeatRiders;
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        s.driver.settings.ride_front = true;
+        s.Show();
+        s.ride_suffix = " ride=2 veh=25603 seat=0";  // the viewer drives the jeep
+        s.Ride(rw::Kind::vehicle, seat, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, seat, 1, 900));
+        s.fake.sample.act = 110;
+    };
+    {
+        // The dog sits in seat 1 of this copy: the peer's seat 1 is drawn in the back right seat.
+        g_riders = RidersFake{};
+        g_riders.rider[1] = 9728;
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 1);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 3 && s.reply.seat_vehicle == 25603 &&
+                  s.driver.mission.seat.seat == 3 &&
+                  s.fake.Containing("partner_ride=seat_draw; vehicle=25603; from=1; to=3; reason=dog; rider1=9728; rider2=65535; rider3=65535") == 1 &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=3; offer=1; reason=none;") == 1,
+              "the driver's dog in seat 1: the peer's seat 1 is drawn in seat 3 (offered by id, one draw line)");
+        g_riders.rider[1] = 0xFFFF;
+        for (unsigned i = 0; i < 20; ++i) Check(s.Step(100), "seated ticks");
+        Check(s.driver.mission.seat.seat == 3 && s.driver.mission.seat.phase != pd::SeatPhase::exit &&
+                  s.fake.Containing("partner_ride=seat_draw;") == 1 && s.fake.Containing("partner_ride_seat=exit") == 0,
+              "the dog left seat 1: latched for the ride (no hop back, no exit)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        for (unsigned i = 0; i < 10; ++i) s.Step(100);
+        Check(s.fake.Containing("partner_ride=seat_draw; vehicle=65535; from=255; to=255; reason=none;") == 1,
+              "the ride ended: the draw latch is released (logged)");
+    }
+    {
+        // Seat 1 free on this copy: drawn in seat 1.
+        g_riders = RidersFake{};
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 1);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 1 && s.fake.Containing("partner_ride=seat_draw;") == 0,
+              "seat 1 free: the peer's own seat, no draw line");
+        // The dog jumps in after the peer sat down: the seat-1 episode ends and the next one draws seat 3.
+        g_riders.rider[1] = 9728;
+        bool moved = false;
+        for (unsigned i = 0; i < 80 && !moved; ++i) {
+            s.Ended();
+            Check(s.Step(100), "ticks after the dog jumped in");
+            moved = (s.reply.op & op::ride_seat) && s.reply.seat == 3;
+        }
+        Check(moved && s.fake.Containing("partner_ride=seat_draw; vehicle=25603; from=1; to=3; reason=dog;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=1; reason=vehicle_change;") == 1,
+              "the dog jumped into seat 1: the seat-1 drawing ends (vehicle_change) and the peer is drawn in seat 3");
+    }
+    {
+        // Not the driver of that vehicle (another vehicle, or on foot): never moved.
+        g_riders = RidersFake{};
+        g_riders.rider[1] = 9728;
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 2);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 2 && s.fake.Containing("partner_ride=seat_draw;") == 0,
+              "a back seat is drawn where the peer sits");
+    }
+}
+
+// Design 8.27 / 8.28 (review fixes): the shot guard's driver wiring in TickPassCamera. The guard writes only for the
 // armed local back-seat passenger (never on foot, never seat 1 unless named, never in mode connect), only while the
 // aim camera module is active; in play the lab lever's override is ignored; mode off releases our handle only for a
 // seated passenger; a write fault latches the mission.
@@ -9615,6 +9701,7 @@ int main() {
     TestPassCameraGuardDriver();
     TestSeatShotDriver();
     TestBoardSeatGates();
+    TestSeatDraw();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();

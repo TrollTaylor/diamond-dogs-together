@@ -218,7 +218,7 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // passenger with the native gun profile in lab and play (ResolveWeaponDefaults),
 // off without it.
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
-// The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.25 / 8.26), with
+// The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.27 / 8.28), with
 // partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
 // vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard; the default),
 // drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
@@ -610,7 +610,7 @@ struct LabConfig {
     bool partner_ride_board_given = false;
     // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (aim unless
     // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
-    // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.25) is lab only, default 0.
+    // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.27) is lab only, default 0.
     PartnerPassCamera partner_pass_camera = PartnerPassCamera::aim;
     bool partner_pass_camera_given = false;
     bool partner_pass_camera_trace = false;

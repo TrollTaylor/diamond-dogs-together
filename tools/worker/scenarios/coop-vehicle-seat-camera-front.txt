@@ -1,4 +1,4 @@
-# Design 8.25: the passenger aim camera in mode aim (named here; now the default) in the jeep's front
+# Design 8.27: the passenger aim camera in mode aim (named here; now the default) in the jeep's front
 # seat 1 (lab key partner_ride_front=1, the M6 seat-1 board; afgh-ledge, the Wakh Sind jeep, no dog in seat 1) and,
 # roles reversed, the host as the back-seat passenger (seat 2) with the guest driving. Each passenger aims the way a
 # player does right after boarding (RMB, the camera where boarding left it), fires three single shots, releases.

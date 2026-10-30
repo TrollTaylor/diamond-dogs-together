@@ -79,6 +79,7 @@ if(GIT_FOUND)
   endif()
 endif()
 message(STATUS "mgs-coop build id ${MGS_COOP_BUILD_ID}")
+include(cmake/test_shards.cmake) # mgs_add_test_shards: one long fixture as parallel CTest entries
 include(cmake/characters.cmake) # character selection; its target part is deferred to the end of this file
 add_executable(native_pose_vehicle_core_tests tests/native_pose_vehicle_core_tests.cpp)
 target_include_directories(native_pose_vehicle_core_tests PRIVATE native native/include)
@@ -434,7 +435,8 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   configure_file(native/partner_sync_source.hpp.in generated/partner_sync_source.hpp @ONLY)
   # World sync (docs/world-sync-protocol.md): each chunk at most 32000 bytes
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
-  # split at a line break, so each literal stays under the MSVC literal limit.
+  # split at the last line break in its first 16000 bytes, so each stays at most
+  # 16000 bytes, under the MSVC literal limit (16380).
   foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
@@ -446,10 +448,10 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
       message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua is ${_mgs_world_length} bytes; the limit is 32000")
     endif()
     if(_mgs_world_length GREATER 16000)
-      string(SUBSTRING "${_mgs_world_text}" 0 15000 _mgs_world_head)
+      string(SUBSTRING "${_mgs_world_text}" 0 16000 _mgs_world_head)
       string(FIND "${_mgs_world_head}" "\n" _mgs_world_split REVERSE)
       if(_mgs_world_split LESS 1)
-        message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua has no line break in its first 15000 bytes")
+        message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua has no line break in its first 16000 bytes")
       endif()
       math(EXPR _mgs_world_split "${_mgs_world_split} + 1")
       string(SUBSTRING "${_mgs_world_text}" 0 ${_mgs_world_split} _mgs_world_a)
@@ -544,7 +546,8 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   if(MGS_BACKGROUND_WORKER)
     target_compile_definitions(link_udp_tests PRIVATE MGS_BACKGROUND_WORKER=1)
   endif()
-  add_test(NAME link_udp_tests COMMAND link_udp_tests)
+  # Two shards (tests/test_cases.hpp): PartnerNetV2 alone, and the session, wrong-secret and impairment cases.
+  mgs_add_test_shards(link_udp_tests 2 COMMAND link_udp_tests)
   # Automatic save handoff glue (join-fix phase 2): file actions against fake
   # save trees in a temporary folder under the build directory.
   add_executable(save_handoff_io_tests tests/save_handoff_io_tests.cpp)
@@ -1185,7 +1188,10 @@ if(WIN32)
   find_program(MGS_PWSH7 NAMES pwsh)
   if(MGS_PWSH7)
     add_test(NAME build_profile_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_profile_tests.ps1")
-    add_test(NAME worker_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_session_tests.ps1")
+    # Two shards (tests/TestShards.psm1): the pure checks run in both, the fixture part and the tail part split.
+    mgs_add_test_shards(worker_session_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_session_tests.ps1")
+    # The shard helper itself (tests/TestShards.psm1).
+    add_test(NAME test_shards_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shards_tests.ps1")
     add_test(NAME mgo_unique_rest_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_unique_rest_session_tests.ps1")
     add_test(NAME mgo_standing_cycle_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_standing_cycle_session_tests.ps1")
     add_test(NAME mgo_standing_frame_policy_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_standing_frame_policy_tests.ps1")
@@ -1193,25 +1199,28 @@ if(WIN32)
     # The Release receipt's coverage against this build's real test list (ctest-test-names.txt, cmake/test_labels.cmake).
     add_test(NAME worker_coverage_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_coverage_tests.ps1")
     add_test(NAME local_coop_windows_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_windows_tests.ps1")
-    add_test(NAME local_coop_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_session_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check>)
-    add_test(NAME lab_scripts_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    mgs_add_test_shards(local_coop_session_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_session_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check>)
+    # Seven shards (tests/TestShards.psm1): the pure parts, the partner fixture runs, the installs, the simulated end to
+    # end and the dry run's four parts.
+    mgs_add_test_shards(lab_scripts_tests 7 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
     # The Diamond Dogs Together package (tools/package.ps1 -Friend, the drop-in
     # zip) and the developer tools that remain (tools/CoopPlay.psm1, tools/dev:
     # FriendCommon.psm1 and the local two-window test). The test needs
     # PowerShell 7; it runs the developer scripts under Windows PowerShell 5.1
     # (what Play-Offline-Coop.bat uses) when available.
-    add_test(NAME friend_package_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    # Two shards: the package part (with the local two-window test, which copies its package), and the rest. The local
+    # test on its own shard (building that package again) was slower: its installs wait for the shared install turn.
+    mgs_add_test_shards(friend_package_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
     message(WARNING "PowerShell 7 (pwsh) not found: lab_scripts_tests (tools/lab scripts, guest install path) and friend_package_tests will be reported as SKIPPED, not run.")
-    add_test(NAME lab_scripts_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(lab_scripts_tests PROPERTIES SKIP_RETURN_CODE 1)
-    add_test(NAME friend_package_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(friend_package_tests PROPERTIES SKIP_RETURN_CODE 1)
+    mgs_add_test_shards(lab_scripts_tests 7 SKIPPED)
+    mgs_add_test_shards(friend_package_tests 2 SKIPPED)
     add_test(NAME build_profile_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(build_profile_tests PROPERTIES SKIP_RETURN_CODE 1)
-    add_test(NAME worker_session_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(worker_session_tests PROPERTIES SKIP_RETURN_CODE 1)
+    mgs_add_test_shards(worker_session_tests 2 SKIPPED)
+    add_test(NAME test_shards_tests COMMAND "${CMAKE_COMMAND}" -E false)
+    set_tests_properties(test_shards_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME mgo_unique_rest_session_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(mgo_unique_rest_session_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME worker_loading_tests COMMAND "${CMAKE_COMMAND}" -E false)
@@ -1220,8 +1229,7 @@ if(WIN32)
     set_tests_properties(worker_coverage_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME local_coop_windows_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(local_coop_windows_tests PROPERTIES SKIP_RETURN_CODE 1)
-    add_test(NAME local_coop_session_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(local_coop_session_tests PROPERTIES SKIP_RETURN_CODE 1)
+    mgs_add_test_shards(local_coop_session_tests 2 SKIPPED)
   endif()
 endif()
 include(cmake/lua_checks.cmake)

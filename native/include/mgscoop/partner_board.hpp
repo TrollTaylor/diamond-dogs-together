@@ -80,6 +80,12 @@ struct RaceState {
     std::uint16_t grant;          // the granted vehicle while live (0xFFFF none)
     std::uint32_t grant_left_ms;
     std::uint32_t holds;          // answers refused by the hold (process lifetime)
+    // Seats on (design 8.21 R6): the Fulton guard's vehicle and how long ago site C last marked it (0xFFFF /
+    // 0xFFFFFFFF none): a ride icon it refused (a deny or a hold: only that vehicle's stock Fulton prompt is left on
+    // E), or a door of the vehicle the peer drives on this copy (the passenger ride icon shows beside the stock Fulton
+    // prompt of the vehicle the partner sits in). While it is fresh Lua withholds the Fulton action (S.guard).
+    std::uint16_t guard;
+    std::uint32_t guard_age_ms;
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;

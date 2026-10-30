@@ -12,7 +12,7 @@
 # contacts the network. The developer scripts run as child processes under
 # Windows PowerShell 5.1 (what Play-Offline-Coop.bat starts).
 [CmdletBinding()]
-param([string]$IniCheck, [string]$FakeProcess)
+param([string]$IniCheck, [string]$FakeProcess, [string]$Shard = '', [string]$Part = '')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -189,7 +189,13 @@ $null = New-Item -ItemType Directory -Path $fixture
 $steamRunningFile = Join-Path $fixture 'steam-running.txt'
 [IO.File]::WriteAllText($steamRunningFile, "0`n")
 $env:MGS_COOP_TEST_STEAM_RUNNING_FILE = $steamRunningFile
+# CTest runs this suite as friend_package_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# parts dealt to it by their cost (ms, measured alone). The installed-game fixtures the later parts share stay outside
+# the parts; the local two-window test copies the package the package part builds, so both are one part. -Part pure.
+Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ pure = 4800; package = 30700; handoff = 12700 })
 try {
+    if (Test-TestPart 'pure') {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
     $steamKeys = $false
@@ -261,7 +267,9 @@ try {
         Assert-Equal "$($r.Status)|$($r.HostName)|$($r.Port)" "$($v[1])|$($v[2])|$($v[3])" "join code vector $($v[0])"
         if ($v[1] -eq 'ok') { Assert-Equal $r.Secret $(if ($v[0].Contains('C00PC')) { 'C00PC00PC00PC00PC00P' } else { '7K3QZ9M2XWD4HT8RVN6B' }) "secret of $($v[0])" }
     }
+    }
     $s7 = '7K3QZ9M2XWD4HT8RVN6B'
+    if (Test-TestPart 'pure') {
     Assert-Equal (Get-CoopCodeCheck -Secret '7K3QZ9M2XWD4HT8RVN6C' -HostName '203.0.113.7' -Port 47830) 'PY' 'check of the altered secret (PY)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '203.0.113.8' -Port 47830) '2Q' 'check of 203.0.113.8 (2Q)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '192.168.1.20' -Port 47831) 'BB' 'check of port 47831 (BB)'
@@ -564,7 +572,17 @@ try {
             $file = Join-Path $fixture 'play-seat-gun-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_gun=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_gun'])|$($m['partner_seat_gun_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1|1|0x0|0/0' 'native: a named seat gun runs in play'
-            # Design 8.25 passenger camera: Play-Coop never names the key and play defaults it to aim (the handle and the
+            # Seats on (docs/vehicles-companions-design.md 8.25, 8.26): Play-Coop never names the seat keys; play defaults the
+            # jeep's front seat and the seat race on with the gun profile, the truck cab off (lab only until its play
+            # rehearsal); a named 0 is each one's off switch.
+            Assert-True (!$hostIni.Contains('partner_ride_front') -and !$guestIni.Contains('partner_ride_cab') -and
+                !$clipsIni.Contains('partner_ride_race')) 'Play-Coop lab.ini never names the seat keys'
+            $n = Invoke-IniCheck lab (Join-Path $fixture 'play-host-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])|$($n['partner_ride_front_given'])|$($n['partner_ride_cab_given'])|$($n['partner_ride_race_given'])" '1|0|1|0|0|0' 'native: play defaults the front seat and the seat race on, the truck cab off'
+            $file = Join-Path $fixture 'play-seats-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_front=0`npartner_ride_cab=0`npartner_ride_race=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_front'])|$($m['partner_ride_cab'])|$($m['partner_ride_race'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0|0x0|0/0' 'native: each seat key named 0 turns it off in play'
+            # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to aim (the handle and the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
                 !$clipsIni.Contains('partner_pass_camera')) 'Play-Coop lab.ini never names partner_pass_camera'
@@ -573,6 +591,7 @@ try {
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_pass_camera'])|$($m['partner_pass_camera_given'])|$($m['partner_pass_camera_trace'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'connect|1|0|0x0|0/0' 'native: a named connect runs in play, the trace is forced off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])" '1|0|1' 'native: play guest defaults the front seat and the race on, the cab off'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'
             Assert-Equal "$($n['partner_ride_census'])|$($n['partner_ride_seat_id'])|$($n['partner_ride_tilt'])" '0|1|1' 'native: play guest admits the seat by id and RIDE_TILT by default, no census'
@@ -1069,6 +1088,8 @@ try {
     Assert-True ($friendCommonText.Contains("'-EncodedCommand', (ConvertTo-CoopEncodedCommand -Script `$Script)") -and $friendCommonText.Contains('-Verb RunAs')) 'Invoke-CoopElevated uses RunAs with -EncodedCommand'
     Assert-True ($friendCommonText.Contains('Start-Job') -and $friendCommonText.Contains('Wait-Job -Job $job -Timeout $TimeoutSec') -and $friendCommonText.Contains("if (`$null -eq `$maps) { return 'unavailable|' }")) 'UPnP runs in a job with a timeout and handles a missing mapping collection'
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the Diamond Dogs Together package (tools/package.ps1 -Friend)
     # The drop-in zip: its root is what goes into the game folder. Inert loader and
     # launcher bytes with a synthetic passing Release receipt; nothing is built,
@@ -1515,6 +1536,7 @@ try {
     Assert-True ($offlineBatText.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev\Start-LocalCoop.ps1" %*') -and $offlineBatText.Contains('set "PSModulePath="') -and
         $offlineBatText.Contains("`r`n") -and $offlineBatText.Contains('pause')) 'Play-Offline-Coop.bat: the developer local test in tools\dev with Windows PowerShell and all arguments'
 
+    }
     # ------------------------------------------------------------ installed-game fixtures (in process)
     # Steam fixture: account 7 with saves (only ever compared, never written);
     # a lab-staged package with fixture hashes for the owned installer.
@@ -1559,6 +1581,7 @@ try {
         return $gp
     }
 
+    if (Test-TestPart 'handoff') {
     # ------------------------------------------------------------ the import core with a save handoff stage (Import-CoopProgressFiles, P2-18)
     $kp = New-InstalledGame 'handoff-core'
     $coreGame = $kp.Game
@@ -1934,6 +1957,8 @@ try {
         if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
     }
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the developer's local two-window test (tools/dev; never shipped)
     # A drop-in package as tools/package.ps1 -Friend stages it, with fixture game
     # hashes and a newer inert loader; dedicated inert copies; MGS_COOP_TEST_NO_LAUNCH
@@ -2083,7 +2108,9 @@ try {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
     }
-    Write-Output "friend package tests passed: $script:checks checks (the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
+    }
+    Assert-TestPartsAsked
+    Write-Output "friend package tests passed: $script:checks checks (parts: $((Get-TestPartsSelected) -join ', '); the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
 } finally {
     Start-Sleep -Milliseconds 300
     Remove-Item Env:MGS_COOP_TEST_STEAM_RUNNING_FILE -ErrorAction SilentlyContinue

@@ -449,10 +449,10 @@ inline constexpr std::uintptr_t board_seat1_blocks[]={0x1251822,0x125188e,0xb79a
 // (the previous one at +0x33c); the module + 8 is its CAM and CAM+0x348 is P (the act index is u32 P+0x218).
 inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam_module_vtable_rva=0x23d67f0, pass_cam_module_base_vtable_rva=0x23d6720;
 inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;
-// Design 8.25: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot
+// Design 8.27: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot
 // guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.
 inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;
-// Design 8.26: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.
+// Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.
 inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;
 // The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).
 inline constexpr std::uintptr_t pass_camera_blocks[]={0x12d0f60,0x12d1eb0,0x12d1f7e,0x12d1fca,0x12d20a9,0x12d0f02,0x11194b6,0x1119503,0x124cd38,0x1121d8f,0x111fcb1,0x109705c,0x112106e};

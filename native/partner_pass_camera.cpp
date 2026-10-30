@@ -26,8 +26,8 @@ static_assert(c::pass_cam_mode == kCamMode && c::pass_cam_prev_mode == kCamPrevM
 static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c::pass_cam_pitch_prev == kCamPitchPrev &&
                   c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev &&
                   c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
-              "the look angles and the eye (design 8.25)");
-static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.26)");
+              "the look angles and the eye (design 8.27)");
+static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.28)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;

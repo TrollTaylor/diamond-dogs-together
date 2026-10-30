@@ -17,7 +17,7 @@ function Import-OnlyFunctions([string]$Path,[string[]]$Names){
  }
 }
 Import-OnlyFunctions (Join-Path $stage 'tools/worker/WorkerSessionCommon.psm1') @('Get-WorkerMgoStandingCycleExperiments')
-Import-OnlyFunctions (Join-Path $stage 'tools/worker/Invoke-WorkerChecks.ps1') @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath','Get-WorkerPlan','Get-WorkerTests')
+Import-OnlyFunctions (Join-Path $stage 'tools/worker/Invoke-WorkerChecks.ps1') @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath','Get-WorkerPlan','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerExcludedShardedTests','Get-WorkerShardNames')
 $flag='MGS_LOCAL_MGO_STANDING_FRAME_OBSERVER'
 $base=@(Get-WorkerMgoStandingCycleExperiments)
 Check 'default exact four flags' ($base.Count -eq 4 -and $flag -cnotin $base)

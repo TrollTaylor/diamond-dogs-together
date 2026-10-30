@@ -2,7 +2,7 @@
 # Detached pure protocol/policy/INI/AST fixtures. Never invokes a controller,
 # native worker, installer, process enumeration or window/input API.
 [CmdletBinding()]
-param([string]$SourceDirectory,[string]$RepoRoot)
+param([string]$SourceDirectory,[string]$RepoRoot,[string]$Shard='',[string]$Part='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if(!$RepoRoot){$RepoRoot=if((Split-Path -Leaf $PSScriptRoot) -ceq 'tests'){Split-Path -Parent $PSScriptRoot}else{[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))}}
@@ -12,6 +12,10 @@ Import-Module (Join-Path $SourceDirectory 'WorkerSessionCommon.psm1') -Force -Di
 $script:checks=0
 function Assert-True([bool]$Value,[string]$Name){++$script:checks;if(!$Value){throw "Fixture failed: $Name"}}
 function Assert-Throws([scriptblock]$Action,[string]$Name){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Assert-True $threw $Name}
+# CTest runs this suite as worker_session_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs
+# the pure checks (about 3 s) and the parts dealt to it by their cost (ms, measured alone); -Part tail runs only that one.
+Import-Module (Join-Path $RepoRoot 'tests\TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ fixtures = 10000; tail = 6000 })
 # Exact candidate policy is exercised separately from file rollback mocks.
 $pinned=Get-WorkerRuntimePins;$capacityPins=Get-WorkerBuddyCapacityPins
 Assert-True ($pinned.Archive -ceq '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') 'production runtime pin unchanged'
@@ -185,7 +189,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
     # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
     'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
-    # Design 8.25: the passenger camera's mode (lab and play) and its lab trace
+    # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
     'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
@@ -404,6 +408,10 @@ foreach($bad in @('partner_native_net=wan','partner_native_stall=keep','partner_
     Assert-True ($bad -cnotmatch $labSettingPatterns[0]) ('not allow-listed: '+$bad)
 }
 $scenarioSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+# Preflight reuse: both preflight calls ask Invoke-WorkerChecks to -Reuse an unchanged receipt unless -FreshChecks.
+$reuseCalls=[regex]::Matches($scenarioSource,[regex]::Escape("'Invoke-WorkerChecks.ps1')")+'[^\r\n]*-Reuse:\$reuse 2>&1').Count
+Assert-True ($scenarioSource.Contains('$reuse=!$FreshChecks') -and $reuseCalls -eq 2 -and
+    $scenarioSource -cmatch '(?m)^\s*\[switch\]\$FreshChecks,') 'the scenario preflight reuses an unchanged receipt unless -FreshChecks'
 $scenarioLine=[regex]::Match($scenarioSource,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)").Groups[1].Value
 Assert-True ([bool]$scenarioLine) 'the scenario labsetting line regex'
 foreach($ok in @('labsetting partner_native_net=online','labsetting host partner_native_stall=hold','labsetting guest partner_input_edge_repeats=5','labsetting partner_native_hold=net')){
@@ -1289,6 +1297,7 @@ function New-WorkerCleanupFixture([string]$Name,[hashtable]$RecordState=@{}) {
     $session.baseline_sha256=$baselineHash;$session.candidate_sha256=$candidateHash
     return [pscustomobject]@{run=$run;session=$session;pins=$pins;report=[ordered]@{roles=[ordered]@{}}}
 }
+if (Test-TestPart 'fixtures') {
 try {
     $null=New-Item -ItemType Directory -Path $fixture
     [IO.File]::WriteAllText($marker,$nonce)
@@ -1933,6 +1942,8 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+}
+if (Test-TestPart 'tail') {
 # Worker-only graphics preset: pure retail text and recorded actual controller blocks.
 & {
  function Graphics-Tag([string]$text){
@@ -2157,4 +2168,6 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     }
 }
 
-Write-Output ("worker_session_tests: $script:checks detached checks passed; no worker/game/process/window operations")
+}
+Assert-TestPartsAsked
+Write-Output ("worker_session_tests: $script:checks detached checks passed (parts: $((Get-TestPartsSelected) -join ', ')); no worker/game/process/window operations")

@@ -1072,7 +1072,7 @@ bool PartnerPassCameraRead(void*, const pp::State& state, mgscoop::partner_pass_
     if (!game_base || !partner_gate_ok) return false;
     return mgscoop::partner_pass_camera::ReadCamera(game_base, state.P, out);
 }
-// Design 8.25: the lab trace's camera read (reads only) and the passcam lever's override.
+// Design 8.27: the lab trace's camera read (reads only) and the passcam lever's override.
 bool PartnerPassCameraView(void*, const pp::State& state, mgscoop::partner_pass_camera::View& out) noexcept {
     out = mgscoop::partner_pass_camera::View{};
     if (!game_base || !partner_gate_ok) return false;
@@ -2731,7 +2731,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 return true;
             }
             // "passcam off|connect|aim|lab|status" (the passenger camera's live A/B switch, lab only;
-            // docs/native-puppet.md "Passenger camera", design 8.25) is handled natively too.
+            // docs/native-puppet.md "Passenger camera", design 8.27) is handled natively too.
             if (mgscoop::partner_pass_camera::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,
                                                             tag_result, sizeof(tag_result), tag_ok)) {
                 debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
@@ -4572,7 +4572,8 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
 //     (partner_board::ParseSeatRequest: vehicle 25600..26111, deny / grant ms 1..5000, hold ms 0..5000; review R8)
 //   -> return {ok=true,on=0}                                   (the key off or site C not installed)
 //   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
-//              grant=<id|65535>,gleft=<ms>,holds=<n>}
+//              grant=<id|65535>,gleft=<ms>,holds=<n>,ref=<id|65535>,rage=<ms|-1>}
+//      (ref / rage: the Fulton guard's vehicle and its age: a refused ride icon or the peer's vehicle; seats on)
 //   -> return {ok=false,reason='request'}
 // Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
 bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -4596,10 +4597,11 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     pb::RaceState rs{};
     pb::ReadRace(rs);
     const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
+    const long long rage = rs.guard == pb::kVehicleUnknown || rs.guard_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.guard_age_ms);
     if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
-                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u}",
+                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld}",
                                 unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
-                                rs.grant_left_ms, rs.holds)))
+                                rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage)))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }

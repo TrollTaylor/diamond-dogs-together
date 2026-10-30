@@ -291,6 +291,54 @@ inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
     return RaceVerdict::pass;
 }
 
+// Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the v4
+// handshake said free when the peer boarded). The peer is drawn on this copy by the DM seat chain, never in rider[],
+// so rider[1] holds the dog and both bodies would be drawn in seat 1. The copy that drives the vehicle draws the peer's
+// seat-1 ride in a free back seat instead (3, the back right, then 2), latched for that ride (no hop back when the dog
+// leaves); the peer's own copy keeps it in seat 1 (its dog is not in that seat). Only the D-Dog moves the drawing: a
+// soldier or anything else in seat 1 was already there when the peer boarded (the handshake's OneTaken kept it out).
+inline constexpr std::uint16_t kBuddyDogType = 19;  // TppBuddyDog2: id 0x2600 | index
+inline constexpr std::uint16_t kRiderEmpty = 0xFFFF;
+struct DrawSeatIn {
+    bool vehicle_ride = false;               // the peer's live ride is a vehicle ride
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;        // the peer's seat on its own copy
+    bool local_drives = false;               // this copy's player drives that vehicle (seat 0)
+    bool riders_ok = false;                  // rider[1..3] of this copy's vehicle were read
+    std::uint16_t rider[4] = {kRiderEmpty, kRiderEmpty, kRiderEmpty, kRiderEmpty};
+    std::uint16_t latched_vehicle = kVehicleUnknown;  // the last back seat drawn for this ride (DrawSeatOut)
+    std::uint8_t latched_seat = kSeatUnknown;
+};
+struct DrawSeatOut {
+    std::uint8_t seat = kSeatUnknown;  // the seat this copy draws the peer's ride in
+    bool moved = false;                // a back seat instead of the peer's seat 1 (latch it)
+    const char* reason = "none";       // none, latched, unread, free, other, dog, full
+};
+inline DrawSeatOut DrawSeat(const DrawSeatIn& in) noexcept {
+    DrawSeatOut out{};
+    out.seat = in.seat;
+    if (!in.vehicle_ride || in.seat != kFrontSeat || in.vehicle == kVehicleUnknown || !in.local_drives) return out;
+    const bool latched = in.latched_vehicle == in.vehicle && in.latched_seat >= kBackFirst && in.latched_seat <= kBackLast;
+    if (latched && (!in.riders_ok || in.rider[in.latched_seat] == kRiderEmpty)) {
+        out.seat = in.latched_seat;
+        out.moved = true;
+        out.reason = "latched";
+        return out;
+    }
+    if (!in.riders_ok) { out.reason = "unread"; return out; }
+    if (in.rider[kFrontSeat] == kRiderEmpty) { out.reason = "free"; return out; }
+    if ((in.rider[kFrontSeat] >> 9) != kBuddyDogType) { out.reason = "other"; return out; }
+    for (std::uint8_t s = kBackLast; s >= kBackFirst; --s) {
+        if (in.rider[s] != kRiderEmpty) continue;
+        out.seat = s;
+        out.moved = true;
+        out.reason = "dog";
+        return out;
+    }
+    out.reason = "full";
+    return out;
+}
+
 // The MGS_COOP_BOARD_SEAT_V1 request (game_script_observer.cpp SelectBoardSeatReceipt; review R8: a pure,
 // tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>,
 // single spaces, decimal digits only, nothing after the last number. vehicle 25600..26111 (a TppVehicle2

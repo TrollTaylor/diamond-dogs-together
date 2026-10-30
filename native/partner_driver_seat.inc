@@ -111,7 +111,7 @@ bool SeatBlocked(const Mission::Seat& s, const partner_ride_wire::Packet& ride) 
 const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noexcept {
     namespace rw = partner_ride_wire;
     const Mission& m = d.mission;
-    const rw::Packet& p = d.ride_rx.packet;
+    const rw::Packet p = DrawnRide(d);
     if (d.settings.nride != PartnerNativeRide::seat || !ride_live || p.kind != rw::Kind::vehicle) return nullptr;
     if (!rw::SeatUsable(p.seat, p.vehicle)) return "seat_unknown";
     if (!SeatCapableMission(m.mission_code, d.settings.seat_id)) return "mission";
@@ -125,7 +125,7 @@ const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noe
 // seat) while it holds (a latched refusal logged its episode's exit first).
 void SeatLogUnavailable(Driver& d, const Hooks& h, const char* why) noexcept {
     Mission& m = d.mission;
-    const partner_ride_wire::Packet& p = d.ride_rx.packet;
+    const partner_ride_wire::Packet p = DrawnRide(d);
     if (!why) {
         m.seat_unavailable = nullptr;
         return;
@@ -403,7 +403,7 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     s.remote_category = s.local_category = rw::kCategoryUnknown;
     if (!h.vehicle_read || !h.seat_target) return "unavailable";
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
-    if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || d.ride_rx.packet.seat != s.seat)
+    if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || DrawnRide(d).seat != s.seat)
         return "vehicle_change";
     partner_vehicle::Read r{};
     h.vehicle_read(h.context, s.vehicle, r);

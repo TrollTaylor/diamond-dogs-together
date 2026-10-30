@@ -5,7 +5,7 @@ local function check(value, why)
     assert(value, checks .. ': ' .. why)
 end
 local env = setmetatable({e = {MgsCoopWorld = {
-    OP = {}, handlers = {}, paired = true, eff = 3, mission = 30050, epoch = 7,
+    OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, paired = true, eff = 3, mission = 30050, epoch = 7,
     now = function() return 1000 end,
     tx = function() return true end,
     tick = function() end
@@ -423,10 +423,10 @@ end
 -- live grant sticks while the guest keeps claiming; a host that never answers lets the guest go stock.
 local function seatEnv(host)
     local c = {tx = {}, notes = {}, logs = {}, cmds = {}, deny = {}, grant = {}, now = 1000, want = 65535, age = -1, on = 1, hits = 0}
-    local W = {OP = {}, handlers = {}, paired = true, eff = 3, mission = 30010, epoch = 7, host = host,
+    local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, paired = true, eff = 3, mission = 30010, epoch = 7, host = host,
         now = function() return c.now end,
         tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return true end,
-        tick = function() end,
+        tick = function() if c.inner then c.inner() end end,
         log = function(s) c.logs[#c.logs + 1] = s end,
         note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end}
     W.receipt = function(src)
@@ -441,7 +441,7 @@ local function seatEnv(host)
         if h then c.hold = tonumber(h) end
         if c.on ~= 1 then return {ok = true, on = 0} end
         return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
-            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0}
+            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0, ref = c.ref or 65535, rage = c.rage or -1}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -451,7 +451,7 @@ local function seatEnv(host)
     local f = assert(loadfile(arg[1]))
     setfenv(f, env)
     f()
-    c.W, c.R, c.S = W, W.ridePose, W.ridePose.seat
+    c.W, c.R, c.S, c.env = W, W.ridePose, W.ridePose.seat, env
     function c.drive(id) c.driving = id; env.vars.playerVehicleGameObjectId = id or 65535 end
     function c.has(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
     function c.count(p) local n = 0 for _, l in ipairs(c.cmds) do if l == p then n = n + 1 end end return n end
@@ -567,4 +567,132 @@ hoff.on = 0
 hoff.W.handlers[54]({1, 25608, 0, 2, 1})
 check(#hoff.tx == 0, 'a host with the key off never answers (the guest goes stock after its timeout)')
 
+-- Seats on (design 8.21 R6): while the native board refused this copy's ride icon for an empty vehicle (a live deny,
+-- or the guest's hold before the host's grant) within GUARD_MS, only that vehicle's stock Fulton prompt is left on E and
+-- holding E would Fulton it: the Fulton action is withheld (PlayerDisableAction.FULTON), polled every tick. Only a bit
+-- this module added is removed again (world_revive_input.lua's rule), so a mission's own Fulton lock is kept.
+local fg = seatEnv(false)
+fg.env.vars.playerDisableActionFlag = 4
+fg.env.PlayerDisableAction = {FULTON = 8}
+fg.S.step(1000)
+fg.S.guard(1000)
+check(fg.env.vars.playerDisableActionFlag == 4 and not fg.has('action=fulton'), 'no refusal: the Fulton action stays available')
+fg.ref, fg.rage = 25608, 0
+fg.S.guard(1010)
+check(fg.env.vars.playerDisableActionFlag == 12 and fg.has('event=seat;action=fulton;on=1;vehicle=25608'),
+    'a refused ride icon withholds the Fulton action (other bits kept), logged')
+fg.S.guard(1020)
+local fultonLines = 0
+for _, l in ipairs(fg.logs) do if l:find('action=fulton', 1, true) then fultonLines = fultonLines + 1 end end
+check(fg.env.vars.playerDisableActionFlag == 12 and fultonLines == 1, 'withholding is idempotent and logged once')
+fg.rage = 350
+fg.S.guard(1360)
+check(fg.env.vars.playerDisableActionFlag == 12, 'inside 400 ms of the last refusal: still withheld')
+fg.rage = 450
+fg.S.guard(1460)
+check(fg.env.vars.playerDisableActionFlag == 4 and fg.has('event=seat;action=fulton;on=0;vehicle=25608'),
+    'no refusal for 400 ms (the grant came, or the player walked off): the Fulton action is back')
+fg.env.vars.playerDisableActionFlag = 8
+fg.rage = 0
+fg.S.guard(1600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is not doubled')
+fg.rage = 900
+fg.S.guard(2500)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is never removed')
+fg.env.vars.playerDisableActionFlag = 0
+fg.rage = 0
+fg.S.guard(2600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'refused again: withheld')
+fg.env.vars.playerDisableActionFlag = 0
+fg.S.guard(2610)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission overwrite while refused is withheld again')
+local polls = fg.count('poll')
+local noop = function() end
+fg.R.refresh, fg.R.send, fg.R.fastSend, fg.R.fastApply = noop, noop, noop, noop
+fg.W.tick()
+check(fg.count('poll') > polls, 'withheld (hot): the world tick polls the guard every tick, not only at the 200 ms seat step')
+fg.W.paired = false
+fg.W.tick()
+check(fg.env.vars.playerDisableActionFlag == 0, 'unpaired: the withheld Fulton action comes back at once')
+local fo = seatEnv(false)
+fo.on = 0
+fo.env.vars.playerDisableActionFlag = 4
+fo.env.PlayerDisableAction = {FULTON = 8}
+fo.ref, fo.rage = 25608, 0
+fo.S.guard(1000)
+check(fo.env.vars.playerDisableActionFlag == 4, 'the board off (key off): never withheld')
+local fh = seatEnv(true)
+fh.env.vars.playerDisableActionFlag = 0
+fh.env.PlayerDisableAction = {FULTON = 8}
+fh.ref, fh.rage = 25608, 10
+fh.S.guard(1000)
+check(fh.env.vars.playerDisableActionFlag == 8, "the host's own refusal (a yielded vehicle) withholds it too")
+local fn = seatEnv(false)
+fn.env.vars.playerDisableActionFlag = 0
+fn.env.PlayerDisableAction = nil
+fn.ref, fn.rage = 25608, 0
+fn.S.guard(1000)
+check(fn.env.vars.playerDisableActionFlag == 0, 'no PlayerDisableAction table: nothing written')
+-- Review fixes (seats-on, 8.26): the guard polls every tick only while hot (withheld, or a mark under 1 s old); else
+-- the 200 ms seat step's own receipt feeds it, so it engages at most one seat step after the first mark.
+local cg = seatEnv(false)
+cg.env.vars.playerDisableActionFlag = 0
+cg.env.PlayerDisableAction = {FULTON = 8}
+cg.R.refresh, cg.R.send, cg.R.fastSend, cg.R.fastApply = noop, noop, noop, noop
+cg.W.tick()
+local n0 = #cg.cmds
+cg.now = 1050
+cg.W.tick()
+check(#cg.cmds == n0 and n0 >= 1, 'cold (no mark, nothing withheld): no receipt between the 200 ms seat steps')
+cg.ref, cg.rage = 25608, 0
+cg.now = 1200
+cg.W.tick()
+check(cg.env.vars.playerDisableActionFlag == 8 and #cg.cmds == n0 + 1, "the seat step's own receipt engages the guard (one receipt)")
+cg.now = 1250
+cg.W.tick()
+check(#cg.cmds == n0 + 2 and cg.cmds[#cg.cmds] == 'poll', 'hot: the guard polls every tick')
+cg.ref, cg.rage = 65535, -1
+cg.now = 1260
+cg.W.tick()
+check(cg.env.vars.playerDisableActionFlag == 0, 'the mark gone: given back on the next tick')
+cg.now = 1270
+local n1 = #cg.cmds
+cg.W.tick()
+check(#cg.cmds == n1, 'cold again: no receipt until the next seat step')
+-- Review fixes: the guard's bit never outlives the world tick. W.fail and a LEVEL 0 W.stop run the stop hooks and the
+-- ticks end; a LEVEL 0 inside the drain is followed by the rest of that tick, which must not withhold it again.
+local sh = seatEnv(false)
+sh.env.vars.playerDisableActionFlag = 4
+sh.env.PlayerDisableAction = {FULTON = 8}
+sh.R.refresh, sh.R.send, sh.R.fastSend, sh.R.fastApply = noop, noop, noop, noop
+sh.ref, sh.rage = 25608, 0
+sh.S.step(1000)
+sh.S.guard(1000)
+check(sh.env.vars.playerDisableActionFlag == 12 and #sh.W.stopHooks >= 1, 'withheld, with a stop hook registered')
+for _, f in ipairs(sh.W.stopHooks) do f(true) end
+check(sh.env.vars.playerDisableActionFlag == 4 and sh.has('action=fulton;on=0;vehicle=25608') and sh.hold == 0,
+    'W.fail / W.stop: the stop hook gives the Fulton action back and ends the native hold')
+sh.S.guard(1010)
+check(sh.env.vars.playerDisableActionFlag == 12, 'withheld again')
+sh.W.active = true
+sh.inner = function() sh.W.active = false; for _, f in ipairs(sh.W.stopHooks) do f(true) end end
+sh.now = 1020
+sh.W.tick()
+check(sh.env.vars.playerDisableActionFlag == 4, 'a LEVEL 0 stop inside the drain: the rest of the tick does not withhold it again')
+-- Review fixes: claim, hold and guard lines are capped per pairing (a new epoch starts again), and the claim and hold
+-- lines come at most once a second.
+local lc = seatEnv(false)
+lc.want, lc.age = 25608, 10
+local function claims() local n = 0 for _, l in ipairs(lc.logs) do if l:find('action=claim', 1, true) then n = n + 1 end end return n end
+lc.S.step(1000)
+lc.S.step(1500)
+check(#lc.tx == 2 and claims() == 1, 'two claims in one second: one claim line')
+for i = 1, 70 do lc.S.step(1500 + i * 1000) end
+check(claims() == 50, 'at most 50 claim lines per pairing')
+for _, f in ipairs(lc.W.pairedHooks) do f(false) end
+lc.S.step(80000)
+check(claims() == 50, 'the same pairing again (no new epoch): still capped')
+for _, f in ipairs(lc.W.pairedHooks) do f(true) end
+lc.S.step(81000)
+check(claims() == 51, 'a new pairing logs again')
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

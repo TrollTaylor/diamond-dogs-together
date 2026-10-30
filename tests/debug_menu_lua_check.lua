@@ -296,7 +296,7 @@ do
     local saved = c.env.Player.RequestToSetCameraRotation
     c.env.Player.RequestToSetCameraRotation = nil
     check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')
-    -- Design 8.25 lever: the camera to the player's own facing (playerRotY -60) plus the degrees given, pitch 0 or given.
+    -- Design 8.27 lever: the camera to the player's own facing (playerRotY -60) plus the degrees given, pitch 0 or given.
     check(c:send('enemy_cam_turn 180')[3] == 'camera_unavailable', 'cam turn: no camera API, no fake success')
     c.env.Player.RequestToSetCameraRotation = saved
     r = c:send('enemy_cam_turn 180')

@@ -1,6 +1,73 @@
+## 2026-10-30: seats on, aim camera fixed, faster tests (`dev/oct7-continue`, local only)
+
+Merged (nothing pushed, tagged or released; not two-PC tested): `ff10600` `wp/test-speed` (`d620838`), `9c2b5a8`
+`wp/seats-on` (`71ee68c`), `cdefa1b` the aim camera fix of `wp/seat-shoot2` (`69db316`; its design sections are now
+8.27 / 8.28). Partner contract regenerated (822 code sites, 209 slots, no change); the five contract `--check` scripts
+pass. Full CTest 336/336 (`tools/build.ps1`): 123 s wall with the build, CTest 104.6 s (the quiet best on the branch
+was 51 s; why this run was slower is [U]). Marks: [O] observed, [I] inferred, [U] unknown.
+
+| What | Play default | Smoke (`-Mode play -WanSim bad`, shipped defaults, design 8.29) |
+|---|---|---|
+| Jeep front seat 1 (`partner_ride_front`) | **ON** | Boards and rides in both roles [O]; **but** the driver's screen draws the passenger pushed out past the jeep's right side, and from seat 1 the aim view shows the passenger's own leg and the gun does not fire [O] |
+| Driver's-seat race and the Fulton guard (`partner_ride_race`) | **ON** | [O] `host_first`, the host drove, the guest on foot |
+| Truck cab (`partner_ride_cab`) | lab only | not run (lab `0f145a4e` only) |
+| Back-seat aim camera (`partner_pass_camera=aim`) | **ON** | [O] seat 2: three shots each run, no sky swing, normal view after; the view still shows the wheel arch |
+| Tests: shards, preflight reuse | - | full CTest 111-115 s -> 51 s quiet; preflight 102 s -> 29 s, reused 1 s (run `83defaeb` started from a reused receipt) |
+
+Runs `1f81de654be042b498746135bb7747b2` (`m6m7b-smoke-play.txt`: D11 refusals with both toasts, the race, seat 1, seat
+2 with shots, both get-offs, the jeep parked at one pose on both copies; 2 expect misses: no seat-1 guard window, and
+the host's resend said `why=life` not `why=moved`) and `83defaeb24f44ddfa466594058ffe1c3` (`m6m7b-smoke-play-b.txt`,
+roles swapped; every expectation met). Both Closed, BaselineRestored, RealSavesUnchanged, Forced=True.
+Not fixed / not proven: the two seat-1 defects above; seat 2's aim view (the panel) and the 90 deg range; seated hits;
+the jeep lost 702 life in `1f81de65` while the host fired from seat 2 and the jeep was pushed against a building (three
+shots standing still in `83defaeb` cost none) [U]; the camera after a get-off faces the driver; the dog jumping in
+after the passenger; the truck cab in play; a 0.14.4 partner; two-PC.
+
+## 2026-10-30: developer test loop, faster (`wp/test-speed`; tests and tooling only, no product code changed)
+
+**Built [O]:** long fixtures run as parallel CTest shards (`cmake/test_shards.cmake`): `ddt_core_tests_1..5` (cases with
+costs, `tests/test_cases.hpp`), `link_udp_tests_1..2` (a port lock per case that also passes through the old whole-range
+lock, so a branch still on the old code is never overlapped), `worker_session_tests_1..2`, `local_coop_session_tests_1..2`,
+`lab_scripts_tests_1..7`, `friend_package_tests_1..2` (parts with costs, `tests/TestShards.psm1`; plain runs keep their
+counts). `tests/test_timer_resolution.hpp`: Windows 11 drops a windowless process's 1 ms timer after ~2.5 s (`Sleep(2)` =
+15.4 ms). The preflight's bootstrap only configures (`tools/build.ps1 -ConfigureOnly`). A hidden run's preflight reuses
+the profile's newest passed receipt when the source snapshot, the test inputs (`reuse_inputs`: every file under `cmake/`,
+`native/`, `lua/`, `tests/`, `tools/`, JSON fixtures and scenarios included), flags, cache options and built programs are
+unchanged (`-FreshChecks` opts out; never Release: the release gate always runs in full).
+**Measured [O]** (`-j 16`): full CTest 111-115 s -> 51 s (59-62 s while another checkout's suite runs); fast 12.4 s ->
+9.0 s; Research preflight 102 s -> 29 s fresh (38-57 s after a change), 1.0 s reused (receipt `20261030-153053`; an
+added `tests/fixtures` file refused live). Hidden run `13d9ff4d1af14149a3e3da2b1bc600ab` (`boot-30020.txt`) started from
+that reused receipt: both copies at gameplay in 30020, frames on both, saves and baseline restored.
+**Rules (AGENTS.md):** iterate with the affected tests (`ctest -R`, `--case`, `-Part`, `-Fast`), the full suite once
+before merging; a lab-script change also runs the plain `tests/lab_scripts_tests.ps1` once (only it chains the dry parts
+through a real Start/Stop; at the current costs install and e2e share shard 7). **Not reached:** the full suite under
+45 s: the lab and friend shards take 28 turns (~46 s) of the machine-wide test install mutex; lower needs a per-fixture
+installer mutex (`tools/package-install.ps1`, not changed). Merging the ~250 test executables was measured, not done.
+
+## 2026-10-30: seats on in play: the jeep front seat and the seat race (branch `wp/seats-on`, local, unreleased, not two-PC tested)
+
+The jeep's front seat and the driver's-seat race are **on in play** (`partner_ride_front`, `partner_ride_race` follow
+the native gun profile in lab and play; a named 0 is the off switch). The truck cab (`partner_ride_cab`) is **on in lab
+only** after the review: its play rehearsal named `world_relief=1` for the truck and the host-in-cab role ran only in
+the lab (a named 1 runs it in play). No Fulton while a race refuses the ride icon or at a vehicle the partner drives
+(since the review also where it offers no seat); the guard's bit is given back when the world stops. Details:
+`docs/vehicles-companions-design.md` 8.25 and the review fixes 8.26. [O] observed, [I] inferred.
+
+| Path | Proof (`-Mode play -WanSim bad`, shipped seat defaults, RTT 172-188 ms) |
+|---|---|
+| Fulton guard | [O] `92f2d2f9`, again `1be0769e` after the fixes: denied at the door, two 1500 ms E holds, no Fulton prompt, the jeep stays; at the partner's jeep only the ride icon. At the host-driven truck where the guest gets no seat (the cab off: `board_block`): `289615b8`, `on=1`, no ride icon and no Fulton prompt through two E holds, the truck still there (the pre-fix run `84e3db0e` showed the Fulton prompt there) |
+| Race inside one round trip | [O] `92f2d2f9`, `1be0769e`: the guest's hold refused its icon before any answer, the host drove, the guest stayed on foot |
+| Jeep seat 1, both roles | [O] guest `1be0769e` (the host drives forward: the guest's own view follows the moving jeep down the street, frames on both copies); host `d55e5159` |
+| D-Dog in seat 1 | [O] `8d61a33a`: the dog in front, the guest in the back right seat, moving |
+
+Camera defects seen, not fixed here (for the camera work): in seat 1 the guest's own camera ended inside a water tank
+while the host reversed onto it (`92f2d2f9`), and after each seat-1 get-off it faces the driver up close with the
+player out of view (`92f2d2f9`, `d55e5159`, `1be0769e`). Not proven: the dog jumping in after the passenger sat down,
+live (driver test only) [I]; two-PC. While moving, the driver's screen can draw the passenger up to 2.6 m beside its
+seat (`1be0769e`), back in the seat at rest, as before. Full CTest 321/321 (`tools/build.ps1`) at `43534d9` with these docs.
 ## 2026-10-30: the aim camera's review fixes (branch `wp/seat-shoot2`)
 
-Built (`docs/vehicles-companions-design.md` 8.26, `docs/native-puppet.md` "Passenger camera"): the shot guard of
+Built (`docs/vehicles-companions-design.md` 8.28, `docs/native-puppet.md` "Passenger camera"): the shot guard of
 `partner_pass_camera=aim` now holds a seated shot's pull up and sideways only while the player gives no look input;
 the mouse / right stick moves its own axis freely inside a shot window; it writes only while aiming in the aim camera
 (an aim end closes the window without a write); each window settles a remaining climb (no climb from shot to shot);
@@ -12,7 +79,7 @@ turned 0.93 rad sideways), `049aa5ed` (both axes followed 150 ms after a mouse t
 `d60dbb48` (per-axis input: every aim frame level on both copies, no climb, a no-input burst 26 mrad sideways, but a
 60 ms input latch let the pull take back each mouse step). Tests failing first (`10ed98a`, `31e5a8a`, `fdadbb7`,
 `fb662ad`), driver wiring tests each caught a mutation; contract 822 sites / 209 slots; full CTest 321/321.
-Corrections of 8.25: the view was held at pulls up to ~7 deg written back each tick, not "within ~3 deg"; seat 2's
+Corrections of 8.27: the view was held at pulls up to ~7 deg written back each tick, not "within ~3 deg"; seat 2's
 frames show only that the sky swing is gone (they look at the wheel arch); defect 1's cause is the seated aim
 camera's low pivot, our handle only picks which broken view.
 Not fixed / not proven: seat 2's view through the side panel; the 90 deg range; aiming down into the jeep's body
@@ -22,7 +89,7 @@ held-trigger automatic burst; seat 1; two-PC.
 
 ## 2026-10-30: the passenger aim camera (branch `wp/seat-shoot2`)
 
-Built (`docs/vehicles-companions-design.md` 8.25, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
+Built (`docs/vehicles-companions-design.md` 8.27, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
 off|connect|aim|drop` (lab and play) with a shot guard that writes the back-seat passenger's camera (look angles and
 rotation CAM+0x90) back toward the aim each tick through each shot (pulls up to ~7 deg; see the review fixes above); lab lever `passcam`, lab trace
 `partner_pass_camera_trace`, Lua lever `enemy_cam_turn`. **Play default: `aim` (ON)**: fixes the view swinging to
@@ -1636,7 +1703,8 @@ Branch `wp/fast-tests` from `dev/oct7-continue` `ba7bb62`. Tests and tooling onl
   worktrees run at the same time. Hidden-worker runs, worker checks, packaging and installs keep taking the lock; after
   taking it, `Wait-CtestReaders` waits for suites that were already running (`tools/worker/README.md`).
   `tools/build.ps1 -NoWorkerWait` skips the wait (the `build_profile_tests` fixture). `Invoke-WorkerChecks.ps1` is
-  unchanged (`-j 1`).
+  unchanged (`-j 1`). (Superseded 2026-10-30: parallel preflight tests, sharded suites and preflight reuse; see the
+  top section "developer test loop, faster".)
 
 ## October 23, 2026: developer test boot (`lab_fast_boot`, `lab_boot`, save-seed library, low graphics preset)
 

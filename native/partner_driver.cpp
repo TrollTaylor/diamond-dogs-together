@@ -2858,6 +2858,65 @@ void SendSeatExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     d.ride_seat_ext_tx_ms = now;
 }
 
+// Seats on (docs/vehicles-companions-design.md 8.25, D16's residual): the D-Dog of this copy's player can jump into
+// seat 1 after the peer sat there (the v4 handshake said free when it boarded). The peer is drawn here by the DM seat
+// chain, never in rider[], so both bodies would be drawn in seat 1: while the peer's live ride is seat 1 of the vehicle
+// this copy's player drives and its rider[1] is the D-Dog, the peer is drawn in a free back seat (DrawSeat), latched
+// for that ride. rider[1..3] are read every kSeatRiderMs while that ride lasts; one line per latch and release.
+void UpdateSeatDraw(Driver& d, const Hooks& h, bool ride_live, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    namespace pb = partner_board;
+    auto& w = d.seat_draw;
+    const rw::Packet& p = d.ride_rx.packet;
+    pb::DrawSeatIn in{};
+    in.vehicle_ride = ride_live && p.kind == rw::Kind::vehicle;
+    in.vehicle = p.vehicle;
+    in.seat = p.seat;
+    in.local_drives = d.local_vehicle != rw::kVehicleUnknown && d.local_vehicle == p.vehicle;
+    const bool candidate = in.vehicle_ride && in.seat == pb::kFrontSeat && in.local_drives && h.seat_rider &&
+                           (d.settings.ride_front || d.settings.ride_cab);
+    if (candidate) {
+        if (w.read_vehicle != p.vehicle || !w.read_ms || now < w.read_ms || now - w.read_ms >= kSeatRiderMs) {
+            w.riders_ok = true;
+            for (std::uint8_t s = 1; s <= 3; ++s) {
+                std::uint16_t r = pb::kRiderEmpty;
+                if (!h.seat_rider(h.context, p.vehicle, s, r)) w.riders_ok = false;
+                w.rider[s] = r;
+            }
+            w.read_vehicle = p.vehicle;
+            w.read_ms = now ? now : 1;
+        }
+        in.riders_ok = w.riders_ok;
+        for (unsigned s = 0; s < 4; ++s) in.rider[s] = w.rider[s];
+        in.latched_vehicle = w.vehicle;
+        in.latched_seat = w.seat;
+    } else {
+        w.read_vehicle = rw::kVehicleUnknown;
+        w.read_ms = 0;
+    }
+    const pb::DrawSeatOut out = candidate ? pb::DrawSeat(in) : pb::DrawSeatOut{};
+    const std::uint16_t vehicle = out.moved ? p.vehicle : rw::kVehicleUnknown;
+    const std::uint8_t seat = out.moved ? out.seat : rw::kSeatUnknown;
+    if (vehicle == w.vehicle && seat == w.seat) return;
+    w.vehicle = vehicle;
+    w.seat = seat;
+    if (!out.moved && !w.logged) return;
+    w.logged = out.moved;
+    EmitCapped(d.mission.ride_cap, h, "partner_ride",
+               "partner_ride=seat_draw; vehicle=%u; from=%u; to=%u; reason=%s; rider1=%u; rider2=%u; rider3=%u\r\n", unsigned(vehicle),
+               out.moved ? 1u : unsigned(rw::kSeatUnknown), unsigned(seat), out.moved ? out.reason : "none", unsigned(w.rider[1]),
+               unsigned(w.rider[2]), unsigned(w.rider[3]));
+}
+// The peer's ride as this copy draws it: the seat-1 ride the D-Dog took moves to the latched back seat.
+partner_ride_wire::Packet DrawnRide(const Driver& d) noexcept {
+    partner_ride_wire::Packet p = d.ride_rx.packet;
+    const auto& w = d.seat_draw;
+    if (w.vehicle != partner_ride_wire::kVehicleUnknown && p.kind == partner_ride_wire::Kind::vehicle && p.vehicle == w.vehicle &&
+        p.seat == partner_board::kFrontSeat)
+        p.seat = w.seat;
+    return p;
+}
+
 // WS3 step 0 (partner_ride_census=1, lab only): one read-only census line per
 // ridden vehicle every kRideCensusMs: the local player's vehicle (who=local:
 // the driver's own record) and the remote's (who=remote: this copy of the
@@ -3128,7 +3187,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         EmitBoard(m, h, "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; latch=mission; faults=%u\r\n",
                   unsigned(lp.vehicle), unsigned(lp.seat), c.uncertain, stats.faults - c.seen.faults);
     }
-    // Design 8.25: the effective mode (the key; on a lab copy the passcam lever's override wins).
+    // Design 8.27: the effective mode (the key; on a lab copy the passcam lever's override wins).
     pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
     bool lever = false;
     const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
@@ -3174,7 +3233,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
                     static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
-    // The shot guard (modes aim and drop; design 8.25, review fixes 8.26): the pull UP of a seated shot written back from
+    // The shot guard (modes aim and drop; design 8.27, review fixes 8.28): the pull UP of a seated shot written back from
     // the first firing tick until kGuardHoldMs after the last one; the yaw and the aim down pass; writes only while the
     // local passenger aims in the aim camera module (partner_pass_camera_policy GuardStep).
     const bool guard_on = armed && pc::Guards(mode) && h.pass_camera_view && h.pass_camera_pitch && h.pass_camera_mvt;
@@ -6275,7 +6334,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
     // lab and play; with it the passenger camera).
     d.settings.ride_board = lab.partner_ride_board;
-    // Design 8.25: the passenger camera's mode (lab and play) and its trace (lab only).
+    // Design 8.27: the passenger camera's mode (lab and play) and its trace (lab only).
     d.settings.pass_camera = lab.partner_pass_camera;
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.ride_front = lab.partner_ride_front;
@@ -6362,6 +6421,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
     BoardWithdraw(d, h);
     d.mission = Mission{};
+    // Seats on: a draw latch never outlives its mission.
+    d.seat_draw = Driver::SeatDraw{};
     // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
     d.mission.realize_gen = 1;
     d.mission.body_gun_mode = 0xFF;
@@ -6947,7 +7008,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                               SeatHooks(h) && !(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
     const std::uint32_t ride_epoch = h.link_session ? h.link_session(h.context) : 0;
     const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == ride_epoch && partner_ride_wire::Live(d.ride_rx, ride_epoch, now);
-    SeatObserveRide(m.seat, ride_live, d.ride_rx.packet, now);
+    // Seats on: the seat this copy draws the peer's ride in (a seat-1 ride the D-Dog took moves to a back seat).
+    UpdateSeatDraw(d, h, ride_live, now);
+    const partner_ride_wire::Packet drawn_ride = DrawnRide(d);
+    SeatObserveRide(m.seat, ride_live, drawn_ride, now);
     if (ride_guard) {
         namespace rw = partner_ride_wire;
         if (m.recon_have_out && (m.recon_out.events & partner_recon::Event::placed_ok) &&
@@ -6969,10 +7033,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.ride_have = d.ride_rx.have && d.ride_rx.epoch == epoch;
         vi.ride_live = rw::Live(d.ride_rx, epoch, now);
         vi.kind = d.ride_rx.packet.kind;
-        vi.seat_mode = seat_capable && !SeatBlocked(m.seat, d.ride_rx.packet);
+        vi.seat_mode = seat_capable && !SeatBlocked(m.seat, drawn_ride);
         const char* const seat_unavailable = SeatUnavailable(d, h, vi.ride_live);
         SeatLogUnavailable(d, h, seat_unavailable);
-        vi.seat = d.ride_rx.packet.seat;
+        vi.seat = drawn_ride.seat;
         vi.vehicle = d.ride_rx.packet.vehicle;
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
         vi.rearmed = m.bits_set;
@@ -7059,7 +7123,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             sin.seated = m.visibility.seated;
             sin.ride_live = ride_live;
             sin.kind = d.ride_rx.packet.kind;
-            sin.ride_seat = d.ride_rx.packet.seat;
+            sin.ride_seat = drawn_ride.seat;
             sin.ride_vehicle = d.ride_rx.packet.vehicle;
             sin.lease_live = ride_epoch && h.link_live && h.link_live(h.context);
             sin.remote_anim_valid = visibility_sample.valid && visibility_sample.anim_valid;

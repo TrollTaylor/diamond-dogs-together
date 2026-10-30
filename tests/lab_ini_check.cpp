@@ -160,6 +160,10 @@ int main(int argc, char** argv) {
         // F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key (passenger with the gun profile) and whether it was named.
         std::printf("partner_ride_board=%s\npartner_ride_board_given=%d\n", mgscoop::PartnerRideBoardName(c.partner_ride_board),
                     c.partner_ride_board_given ? 1 : 0);
+        std::printf("partner_ride_front=%d\npartner_ride_front_given=%d\npartner_ride_cab=%d\npartner_ride_cab_given=%d\n"
+                    "partner_ride_race=%d\npartner_ride_race_given=%d\n",
+                    c.partner_ride_front ? 1 : 0, c.partner_ride_front_given ? 1 : 0, c.partner_ride_cab ? 1 : 0,
+                    c.partner_ride_cab_given ? 1 : 0, c.partner_ride_race ? 1 : 0, c.partner_ride_race_given ? 1 : 0);
         // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.
         std::printf("partner_native_support=%d\npartner_native_support_given=%d\n", c.partner_native_support ? 1 : 0,
                     c.partner_native_support_given ? 1 : 0);
@@ -202,7 +206,7 @@ int main(int argc, char** argv) {
         // M7: the seat gun (lab and play, default 0; a named 1 runs in play too) and whether it was named.
         std::printf("partner_seat_gun=%d\npartner_seat_gun_given=%d\n", c.partner_seat_gun ? 1 : 0, c.partner_seat_gun_given ? 1 : 0);
         std::printf("partner_seat_shot=%d\npartner_seat_shot_given=%d\n", c.partner_seat_shot ? 1 : 0, c.partner_seat_shot_given ? 1 : 0);
-        // Design 8.25: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
+        // Design 8.27: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
         std::printf("partner_pass_camera=%s\npartner_pass_camera_given=%d\npartner_pass_camera_trace=%d\n",
                     mgscoop::PartnerPassCameraName(c.partner_pass_camera), c.partner_pass_camera_given ? 1 : 0,
                     c.partner_pass_camera_trace ? 1 : 0);

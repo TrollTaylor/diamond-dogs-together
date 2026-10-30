@@ -301,7 +301,7 @@ void TestReadCamera() {
     Check(!pc::ReadCamera(k.Base(), 0x10, cam) && !cam.ok, "an unreadable P: unread");
 }
 
-// --- Design 8.25: the aim camera ----------------------------------------------------
+// --- Design 8.27: the aim camera ----------------------------------------------------
 void TestModeAndAim() {
     pc::Mode m{};
     Check(pc::ParseMode("off", 3, m) && m == pc::Mode::off && pc::ParseMode("connect", 7, m) && m == pc::Mode::connect &&
@@ -430,7 +430,7 @@ void TestGuardMath() {
 }
 
 // The shot guard (run 4f1a072f: a seated shot pulls the camera from the aimed pitch to 70 deg up within 0.5 s; run
-// a64c40d4: with the pitch held the pull turns the view sideways, 0.93 rad in a four-shot burst). Review fixes 8.26:
+// a64c40d4: with the pitch held the pull turns the view sideways, 0.93 rad in a four-shot burst). Review fixes 8.28:
 // the player's own look input passes (everything follows it), the pull up and sideways without input is held.
 void TestGuard() {
     pc::Guard g{};
@@ -720,7 +720,7 @@ void TestWritePitchAndModeVtable() {
     Chain::Put<float>(k.cam, pc::kCamYawPrev, 1.5f);
     Check(pc::WritePitch(k.Base(), k.P(), -0.05f) && k.Get<float>(pc::kCamPitch) == -0.05f && k.Get<float>(pc::kCamPitchPrev) == -0.05f &&
               k.Get<float>(pc::kCamYaw) == 1.6f && k.Get<float>(pc::kCamYawPrev) == 1.5f,
-          "the guard writes the pitch to +0x270 / +0x268 and never the yaw (+0x274 / +0x26C, design 8.26)");
+          "the guard writes the pitch to +0x270 / +0x268 and never the yaw (+0x274 / +0x26C, design 8.28)");
     Check(pc::kCamPitch == 0x270 && pc::kCamYaw == 0x274 && pc::kCamPitchPrev == 0x268 && pc::kCamYawPrev == 0x26C &&
               c::pass_cam_pitch == pc::kCamPitch && c::pass_cam_yaw == pc::kCamYaw && c::pass_cam_eye == pc::kCamPos,
           "the look-angle offsets match the contract");
@@ -788,7 +788,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 13, "thirteen passenger camera blocks are pinned (8.25: the look angles, the eye, the rotation)");
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 13, "thirteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;

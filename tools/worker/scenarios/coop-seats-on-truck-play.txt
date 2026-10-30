@@ -1,0 +1,106 @@
+# Seats on (docs/vehicles-companions-design.md 8.25): the truck cab in play at the shipped seat defaults. -Mode play
+# -WanSim bad, seed afgh-relief-trc for both roles (run b68844fc: the host's 30010 enemyBase_S checkpoint holds relief
+# type 4, the east truck 25600, which the LZ drop point places at -348.0,763.5; the guest's holds none). world_relief=1
+# is named only so the guest's copy gets the host's sortie truck (M3 stays off in play by default): it is the vehicle
+# source, not the seat path. Door spots (the lab door lever, run b68844fc): the right (seat 1) door
+# -346.147,317.008,764.219 facing -128 (the ride icon shows there; the left door spot on this slope showed none). Stock
+# phase 1 makes a player entering by the right door of an empty truck its driver.
+#   T1 the host drives (in by the right door; the guest kept 12 m away), the guest boards the cab seat 1 beside it;
+#      frames while the host holds the throttle, on both copies; the guest's stock get-off.
+#   J  at the Wakh Sind jeep (25608, spawn pose; door spots of run 3c748d46): the host drives with its D-Dog, the guest
+#      boards at the right door right after. Either the dog took seat 1 first (seat_ext_tx flags=0x07; rider1=9728):
+#      no seat 1 is offered and the guest gets a back seat; or the guest sat in seat 1 first and the dog jumped in after:
+#      the host's copy draws the guest in a back seat (partner_ride=seat_draw; ...; reason=dog). Frames while the host
+#      holds the throttle, on both copies: never two bodies in one seat. (The cab's other role is lab-proven, 0f145a4e;
+#      after T1 the truck is displaced, so absolute door spots no longer fit: run d55e5159 part D.)
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-seats-on-truck-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed afgh-relief-trc
+labsetting world_relief=1
+title 200
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=4;' 120
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=4;' 150
+host debug clear_enemies 100
+guest run vehicle_census 0 2
+guest expect vehicle_census;first=0;n=2;found=1;25600:4:2
+# --- T1: the guest in the cab beside the host's driving -------------------------------------------------------------
+logmark both
+placebehind guest host 12 0
+wait 2000
+host debug teleport -346.147 317.008 764.219 -128
+wait 2500
+host capture s3-t1-door-h
+host press e 150
+wait 4000
+host run vehicle_seats
+host require vehicle;id=25600
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x03; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+guest debug teleport -346.147 317.008 764.219 -128
+wait 2500
+guest capture s3-t1-door-g
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture s3-t1-seated
+host hold s 1500 nowait
+host burst s3-t1-drive-h 6 150
+host release
+host hold w 1500 nowait
+guest burst s3-t1-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+guest burst s3-t1-exit 4 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture s3-t1-exited
+# --- J: the host's D-Dog and the jeep's seat 1 (the Wakh Sind jeep 25608 at its spawn pose) ------------------------
+logmark both
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4000
+host debug clear_enemies 100
+host debug teleport 577.20 320.2 1157.19 -84
+wait 1500
+host press e 150
+wait 1500
+guest debug teleport 574.36 320.2 1157.5 96
+wait 2500
+host run vehicle_seats
+host expect vehicle;id=25608
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=' 10
+guest capture s3-j-door
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=[123]; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[123]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[123];' 10
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x07; rider1=9728; read=1;' 20
+wait 2000
+host run vehicle_seats
+both capture s3-j-seated
+host hold w 1500 nowait
+host burst s3-j-drive-h 6 150
+host release
+host hold w 1500 nowait
+guest burst s3-j-drive-g 6 150
+host release
+wait 1500
+both capture s3-j-stopped
+state

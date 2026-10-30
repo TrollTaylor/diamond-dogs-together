@@ -243,7 +243,7 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
     return out;
 }
 
-// --- The aim camera (docs/vehicles-companions-design.md 8.25) ------------------
+// --- The aim camera (docs/vehicles-companions-design.md 8.27) ------------------
 // partner_pass_camera=off|connect|aim|drop (lab and play): off never connects (and clears our handle: the stock
 // collision for the whole ride); connect keeps the handle for the whole ride (0.14.4); aim keeps it and adds the shot
 // guard below (the default); drop adds the guard too but drops the handle while the local passenger aims and
@@ -311,7 +311,7 @@ inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint6
     return o;
 }
 
-// --- The lab trace (partner_pass_camera_trace=1, lab only; design 8.25) -------
+// --- The lab trace (partner_pass_camera_trace=1, lab only; design 8.27) -------
 // Read only: the local camera's position CAM+0xE0 (the eye GunAimPointRelAngles 0x1042F80 and the aim-point solve
 // 0x1097710 measure from), its rotation CAM+0x90 (that solve's fallback forward), the look angles CAM+0x268..0x274
 // (written by the look updates, e.g. vt+0xF0 0x111F830 adds to +0x270 / +0x274 and copies them to +0x268 / +0x26C),
@@ -326,7 +326,7 @@ struct View {
     float off[4]{}, piv[4]{}, sc[2]{};
     std::uint32_t flags = 0, requests = 0;
 };
-// --- The shot guard (modes aim and drop; design 8.25, review fixes 8.26) ----------------------
+// --- The shot guard (modes aim and drop; design 8.27, review fixes 8.28) ----------------------
 // [O] run 4f1a072f (trace, seats 3 and 2, the handle held or dropped alike): a seated passenger's shot (gun mode 9 / 10)
 // drives the camera from the aimed pitch to the top of its range (-1.221 rad, 70 deg up) in about 0.5 s, and nothing
 // brings it back: the view goes to the sky and stays pitched up after the aim. Its source is not found [U] (not the

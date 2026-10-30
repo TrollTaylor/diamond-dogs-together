@@ -48,17 +48,17 @@ struct Stats {
     std::uint32_t writes;   // handle writes (set)
     std::uint32_t clears;   // our handle cleared
     std::uint32_t faults;   // SEH-caught writes
-    std::uint32_t angles;   // shot-guard angle writes (design 8.25)
+    std::uint32_t angles;   // shot-guard angle writes (design 8.27)
 };
 void ReadStats(Stats& out) noexcept;
 
-// Design 8.25: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
+// Design 8.27: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
 // +0x268..0x274, +0x204, +0xD38). Reads only, under SEH; false when the camera is not the PlayerCamera.
 bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
 // The current mode's module vtable rva (CAM+0xBD0[CAM+0x340]; 0 when unread): the trace's mvt.
 std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
 
-// Design 8.25 / 8.26, the shot guard (modes aim and drop): writes the local camera's look pitch to CAM+0x270 and its
+// Design 8.27 / 8.28, the shot guard (modes aim and drop): writes the local camera's look pitch to CAM+0x270 and its
 // copy +0x268 (the stock look update's order; the yaw is never written). Only to the PlayerCamera (vtable checked), under
 // SEH; false on a fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in
 // Stats::angles.

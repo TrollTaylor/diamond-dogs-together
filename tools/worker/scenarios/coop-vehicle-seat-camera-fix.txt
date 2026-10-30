@@ -1,4 +1,4 @@
-# Design 8.26 (docs/vehicles-companions-design.md): the review fixes of the passenger aim camera at the default mode
+# Design 8.28 (docs/vehicles-companions-design.md): the review fixes of the passenger aim camera at the default mode
 # aim (partner_pass_camera unnamed). africa-jeep (veh_lv_0000 = 25608). The host drives, the guest rides back seat 3:
 # a shot with a mouse turn inside its window (the player's input passes), a five-shot burst with slow mouse steps
 # (tracking), six spaced shots without input (the pull held, each window settles: no climb), a shot with a small mouse
@@ -6,7 +6,7 @@
 # the roles reverse: the guest drives, the host rides seat 3 and fires with a mouse turn and a four-shot burst WITHOUT
 # input (run a64c40d4, v2: the burst's pull turned the view 0.93 rad sideways; v3 holds the yaw).
 # v1 of this file ran as a64c40d4 (a mouse pull down of 250 aimed the gun into the jeep: gun mode 15 for ~20 s).
-# This version ran as 049aa5ed (guard v3) and d60dbb48 (guard v4); design 8.26.
+# This version ran as 049aa5ed (guard v3) and d60dbb48 (guard v4); design 8.28.
 # partner_pass_camera_trace=1 logs the camera every 100 ms while aiming (rot_mrad: the world up-pitch / yaw of CAM+0x90;
 # look: the right stick that carries the mouse).
 # Expected (lab): each passenger's state=guard; event=close; ...; end=hold|aim_end; ...; settle=..; yaw_mrad=..;

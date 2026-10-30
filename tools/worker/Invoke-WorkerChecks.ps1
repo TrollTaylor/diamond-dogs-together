@@ -16,6 +16,12 @@ this build (artifacts.loader_sha256 / launcher_sha256), so the player zip's two
 programs come from one checked build of one source snapshot.
 The audited tests run with ctest -j -TestJobs (default half the logical
 processors, at most 16); cmake/test_labels.cmake keeps -j safe.
+-Reuse (what Invoke-WorkerScenario.ps1 asks for): when the profile's newest receipt passed for the identical
+source snapshot, test inputs (every file under cmake, native, lua, tests and tools: fixtures and scenarios too),
+flags, tests, cache options and built programs (Get-WorkerReusableReceipt), print that receipt and stop: nothing
+is configured, built or run. Never for -Profile Release: the release gate always runs in full (tools/package.ps1
+-Friend runs it without -Reuse; -CheckReceipt takes an existing passing Release receipt whose source and programs
+still match).
 #>
 [CmdletBinding()]
 param(
@@ -29,7 +35,8 @@ param(
     [ValidateRange(1, 600)][int]$TestTimeoutSec = 120,
     [ValidateRange(1, 64)][int]$BuildJobs = 8,
     [ValidateRange(1, 64)][int]$TestJobs = [Math]::Max(1, [Math]::Min(16, [int][Math]::Floor([Environment]::ProcessorCount / 2))),
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+    [switch]$Reuse
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -65,7 +72,7 @@ function Get-WorkerTests {
         'steam_getter_tests', 'typed_payload_tests', 'player_sync_tests', 'input_receiver_tests',
         'steam_packet_tests', 'four_player_lab', 'peer_router_tests', 'allocation_bridge_tests',
         'session_allocation_reuse_tests', 'script_load_bridge_tests', 'player_ghost_tests',
-        'link_udp_tests', 'steam_loopback_tests', 'steam_shim_patches_tests', 'steam_identity_tests', 'steam_transport_tests',
+        'steam_loopback_tests', 'steam_shim_patches_tests', 'steam_identity_tests', 'steam_transport_tests',
         'partner_upper_end_off_tests', 'partner_upper_end_on_tests',
         'partner_upper_phase_off_tests', 'partner_upper_phase_on_tests', 'partner_upper_phase_combined_tests',
         'partner_upper_manual_idle_off_tests', 'partner_upper_manual_idle_on_tests',
@@ -79,7 +86,7 @@ function Get-WorkerTests {
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests', 'worker_coverage_tests',
+        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests', 'test_shards_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
@@ -96,7 +103,7 @@ function Get-WorkerTests {
         # Diamond Dogs Together (DiamondDogsTogether.exe): archive utilities, the
         # core on temp folders with a fake environment, the UI logic, and the
         # exe's own --selftest (read-only for its folder; a throwaway model in %TEMP%).
-        'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
+        'ddt_archive_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
         # 0.14.4 review: the fixtures of shipped code the receipt had left out. dinput8.dll: the dog guard, the act
         # census, the ammo-leak block, the overlay catalogue (read against partner_sync.lua) and the seated-rider patch
         # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks.
@@ -104,7 +111,32 @@ function Get-WorkerTests {
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
         'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check'
-    )
+    ) + @(Get-WorkerShardNames)
+}
+# Fixtures CTest runs as parallel shards (cmake/test_shards.cmake): <name>_1 .. <name>_N, each the fixture's own command
+# plus --shard K/N (C++, tests/test_cases.hpp) or -Shard K/N (PowerShell, tests/TestShards.psm1). The counts are the
+# ones CMake registers: a missing shard fails the inventory audit, an extra one the Release coverage (worker_coverage_tests).
+function Get-WorkerShardedTests {
+    return [ordered]@{ ddt_core_tests = 5; link_udp_tests = 2; worker_session_tests = 2; local_coop_session_tests = 2 }
+}
+# The sharded suites the receipt never runs (Get-WorkerPlan's excluded list): the unsafe default flows of the lab scripts
+# and the friend package's full flows.
+function Get-WorkerExcludedShardedTests {
+    return [ordered]@{ lab_scripts_tests = 7; friend_package_tests = 2 }
+}
+function Get-WorkerShardNames($Sharded = (Get-WorkerShardedTests)) {
+    $sharded = $Sharded
+    return @(foreach ($base in $sharded.Keys) { foreach ($k in 1..$sharded[$base]) { $base + '_' + $k } })
+}
+# The shard a test name stands for ([pscustomobject] base, index, count), or $null.
+function Get-WorkerShard([string]$Name) {
+    $sharded = Get-WorkerShardedTests
+    foreach ($base in $sharded.Keys) {
+        if ($Name -cmatch ('^' + [regex]::Escape($base) + '_([1-9][0-9]?)$') -and [int]$Matches[1] -le $sharded[$base]) {
+            return [pscustomobject]@{ base = $base; index = [int]$Matches[1]; count = $sharded[$base] }
+        }
+    }
+    return $null
 }
 # Only the Release receipt (the build tools/package.ps1 -Friend packages) runs these: DiamondDogsTogether.exe's embedded
 # icon, and the local test's --local-watch helper as real hidden processes on temp folders (no game, no window, no
@@ -210,7 +242,7 @@ function Get-WorkerPlan {
         # unsafe default flows; the runtime .dat build from the game folder's archives; the launcher's mock pages
         # rendered in a DX11 window; the Python check that the committed icon files are what the generator makes
         # (launcher_icon_tests checks the icon the exe embeds).
-        excluded = @('lab_scripts_tests', 'friend_package_tests', 'probe_install_recovery',
+        excluded = @(Get-WorkerShardNames (Get-WorkerExcludedShardedTests)) + @('probe_install_recovery',
             'ddt_runtime_dat_integration', 'ddt_launcher_screens', 'launcher_assets_current')
         pure_input_script = 'tests\lab_scripts_tests.ps1 -InputOnly'
         retail_game_launch = $false; system_input = $false; installation = $false
@@ -270,27 +302,38 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests')) {
+        # A shard runs its base fixture's audited command plus exactly its own shard argument (cmake/test_shards.cmake).
+        $audit = $name
+        $shard = Get-WorkerShard $name
+        if ($shard) {
+            $flag = if ([IO.Path]::GetFileName($command[0]) -ceq 'pwsh.exe') { '-Shard' } else { '--shard' }
+            if ($command.Count -lt 3 -or $command[-2] -cne $flag -or $command[-1] -cne "$($shard.index)/$($shard.count)") {
+                throw "Unaudited shard arguments: $name"
+            }
+            $command = @($command[0..($command.Count - 3)])
+            $audit = $shard.base
+        }
+        if ($audit -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests', 'test_shards_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
-                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {
+                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $audit + '.ps1'))) {
                 throw "Unaudited PowerShell command: $name"
             }
-        } elseif ($name -ceq 'local_coop_session_tests') {
+        } elseif ($audit -ceq 'local_coop_session_tests') {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 8 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root 'tests\local_coop_session_tests.ps1') -or
                 $command[6] -cne '-IniCheck' -or [IO.Path]::GetFullPath($command[7]) -ine (Join-Path $Directory 'lab_ini_check.exe')) {
                 throw "Unaudited local-session fixture command: $name"
             }
-        } elseif ($name -like '*_lua_check') {
+        } elseif ($audit -like '*_lua_check') {
             $scriptName = if ($luaAliases.ContainsKey($name)) { $luaAliases[$name] } else { $name }
             if ($command.Count -lt 2 -or [IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory 'lua-fixture\lua51.exe') -or
                 [IO.Path]::GetFullPath($command[1]) -ine (Join-Path $Root ('tests\' + $scriptName + '.lua'))) {
                 throw "Unaudited Lua command: $name"
             }
         } else {
-            $binaryName = if ($exeAliases.ContainsKey($name)) { $exeAliases[$name] } else { $name }
+            $binaryName = if ($exeAliases.ContainsKey($audit)) { $exeAliases[$audit] } else { $audit }
             if ([IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory ($binaryName + '.exe'))) {
                 throw "Unaudited fixture executable: $name"
             }
@@ -383,6 +426,102 @@ function Assert-WorkerCoverage {
         }
     }
 }
+# Preflight reuse (-Reuse; tools/worker/Invoke-WorkerScenario.ps1 asks for it): the built programs a receipt vouches for.
+# The loader and the launcher always; the hidden worker's supervisor and probe when the profile builds them.
+function Get-WorkerBuildArtifacts([string]$Directory) {
+    $artifacts = [ordered]@{}
+    foreach ($pair in @(@('loader_sha256', 'dinput8.dll'), @('launcher_sha256', 'DiamondDogsTogether.exe'),
+            @('supervisor_sha256', 'worker_supervisor.exe'), @('probe_sha256', 'worker_probe.exe'))) {
+        $path = Join-Path $Directory $pair[1]
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $artifacts[$pair[0]] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+        elseif ($pair[0] -cin @('loader_sha256', 'launcher_sha256')) { return $null }
+    }
+    return $artifacts
+}
+# What the audited tests read beyond the compiled source snapshot (test-speed review): every file, whatever its extension,
+# under cmake, native, lua, tests and tools, plus CMakeLists.txt. That takes in tests/fixtures/*.json (save_handoff_*,
+# steam_transport_tests, ddt_core_tests), the worker scenarios (worker_session_tests pins each one) and the generators.
+# Python caches are left out. One digest, so a receipt stays small; $null when a file cannot be read.
+function Get-WorkerReuseInputs([string]$Root) {
+    $files = [Collections.Generic.List[string]]::new()
+    $top = Join-Path $Root 'CMakeLists.txt'
+    if (Test-Path -LiteralPath $top -PathType Leaf) { $files.Add($top) }
+    foreach ($folder in @('cmake', 'native', 'lua', 'tests', 'tools')) {
+        $path = Join-Path $Root $folder
+        if (!(Test-Path -LiteralPath $path -PathType Container)) { continue }
+        foreach ($file in Get-ChildItem -LiteralPath $path -Recurse -File -Force) {
+            if ($file.Extension -ieq '.pyc' -or $file.FullName -match '[\\/]__pycache__[\\/]') { continue }
+            $files.Add($file.FullName)
+        }
+    }
+    $lines = [Collections.Generic.List[string]]::new()
+    try {
+        foreach ($file in $files) {
+            $lines.Add([IO.Path]::GetRelativePath($Root, $file) + "`t" + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($file))))
+        }
+    } catch { return $null }
+    $lines.Sort([StringComparer]::Ordinal)
+    return [ordered]@{ sha256 = Get-WorkerHash ($lines -join "`n"); files = $lines.Count }
+}
+# Why a receipt cannot stand for this preflight, or $null when it can: it passed, for the same profile, flags,
+# configuration, build directory, audited and excluded tests, the identical source snapshot (every file, none added or
+# removed, the same MinHook target), the same test inputs (Get-WorkerReuseInputs) and the same built programs. A Release
+# receipt is never reused: the release gate always runs in full.
+function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts, $Inputs) {
+    if ($Plan.profile -ceq 'Release') { return 'release' }
+    if (!$Artifacts) { return 'no_artifacts' }
+    if ($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or !$Receipt.plan) { return 'not_passed' }
+    $old = $Receipt.plan
+    foreach ($key in @('profile', 'configuration', 'profile_key')) { if ([string]$old.$key -cne [string]$Plan.$key) { return 'plan_' + $key } }
+    if ([string]$old.project -ine [string]$Plan.project -or [string]$old.build_directory -ine [string]$Plan.build_directory) { return 'plan_directory' }
+    if (!$old.flags -or @($old.flags.Keys).Count -ne @($Plan.flags.Keys).Count) { return 'plan_flags' }
+    foreach ($name in @($Plan.flags.Keys)) { if (!$old.flags.Contains($name) -or [string]$old.flags[$name] -cne [string]$Plan.flags[$name]) { return 'plan_flags' } }
+    if ((@($old.tests) -join "`n") -cne (@($Plan.tests) -join "`n")) { return 'plan_tests' }
+    if ((@($old.excluded) -join "`n") -cne (@($Plan.excluded) -join "`n")) { return 'plan_excluded' }
+    if ($Receipt.source_hashes -isnot [Collections.IDictionary] -or $Receipt.source_dependencies -isnot [Collections.IDictionary]) { return 'source' }
+    try { Assert-WorkerSourceUnchanged ([pscustomobject]@{ hashes = $Receipt.source_hashes; dependencies = $Receipt.source_dependencies }) $Snapshot }
+    catch { return 'source' }
+    if (!$Receipt.Contains('reuse_inputs') -or $Receipt.reuse_inputs -isnot [Collections.IDictionary] -or !$Inputs -or
+        [string]$Receipt.reuse_inputs.sha256 -cne [string]$Inputs.sha256 -or [int]$Receipt.reuse_inputs.files -ne [int]$Inputs.files) { return 'reuse_inputs' }
+    if ($Receipt.artifacts -isnot [Collections.IDictionary]) { return 'artifacts' }
+    foreach ($name in @($Artifacts.Keys)) {
+        if (!$Receipt.artifacts.Contains($name) -or [string]$Receipt.artifacts[$name] -cne [string]$Artifacts[$name]) { return 'artifact_' + $name }
+    }
+    return $null
+}
+# The receipt this preflight may reuse, or $null: only the newest receipt of the plan's profile counts (a newer failed
+# or changed run never lets an older pass stand in).
+function Find-WorkerReusableReceipt([string]$RunRoot, $Plan, $Snapshot, $Artifacts, $Inputs) {
+    if (!(Test-Path -LiteralPath $RunRoot -PathType Container)) { return $null }
+    $pattern = '"profile_key"\s*:\s*"' + [regex]::Escape([string]$Plan.profile_key) + '"'
+    foreach ($directory in @(Get-ChildItem -LiteralPath $RunRoot -Directory | Sort-Object Name -Descending)) {
+        $path = Join-Path $directory.FullName 'receipt.json'
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $text = [IO.File]::ReadAllText($path)
+        if ($text -cnotmatch $pattern) { continue }
+        $receipt = $null
+        try { $receipt = $text | ConvertFrom-Json -AsHashtable } catch { return $null }
+        $refusal = Get-WorkerReuseRefusal $receipt $Plan $Snapshot $Artifacts $Inputs
+        if ($refusal) { Write-Host "Worker check reuse refused ($refusal): $path"; return $null }
+        return $path
+    }
+    return $null
+}
+# The -Reuse entry point (the caller holds the coordinator lock): the receipt that stands for this preflight, or $null
+# (the full checks run). The cache must still carry the plan's options (a reconfigure that was not rebuilt changes the
+# next build) and belong to this profile; then the profile's newest receipt must pass Get-WorkerReuseRefusal against
+# the current source snapshot, test inputs and built programs.
+function Get-WorkerReusableReceipt($Plan, [string]$ProjectRoot, [string]$RunRoot) {
+    if ($Plan.profile -ceq 'Release') { return $null }
+    if (!(Test-Path -LiteralPath (Join-Path $Plan.build_directory 'CMakeCache.txt') -PathType Leaf)) { return $null }
+    try {
+        Assert-WorkerCache $Plan.build_directory $Plan.flags
+        $owner = [IO.File]::ReadAllText((Join-Path $Plan.build_directory '.worker-check-profile.json')) | ConvertFrom-Json
+        if ([string]$owner.project -ine [string]$Plan.project -or [string]$owner.profile_key -cne [string]$Plan.profile_key -or
+            [string]$owner.configuration -cne [string]$Plan.configuration) { throw 'the cache belongs to another profile or checkout' }
+    } catch { Write-Host "Worker check reuse refused (cache): $($_.Exception.Message)"; return $null }
+    return Find-WorkerReusableReceipt $RunRoot $Plan (Get-WorkerSourceHashes $ProjectRoot) (Get-WorkerBuildArtifacts $Plan.build_directory) (Get-WorkerReuseInputs $ProjectRoot)
+}
 function Write-WorkerJson([string]$Path, $Value) {
     $tmp = $Path + '.tmp'
     [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 16) + "`n", [Text.UTF8Encoding]::new($false))
@@ -440,12 +579,32 @@ function New-WorkerCmakeOverride($Context) {
 
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 $plan = Get-WorkerPlan $projectRoot $Profile $Configuration $EnableExperiment $EnableBackgroundWorker.IsPresent $BuildDirectory
+if ($Reuse -and $plan.profile -ceq 'Release') { throw 'A Release receipt is never reused: the release gate always runs in full (run without -Reuse).' }
 if ($PlanOnly) { $plan | ConvertTo-Json -Depth 8; return }
 Assert-WorkerOptions $projectRoot
 $cmakePath = (Get-Command cmake -CommandType Application -ErrorAction Stop).Source
 $ctestPath = (Get-Command ctest -CommandType Application -ErrorAction Stop).Source
 $pwshPath = (Get-Process -Id $PID).Path
 $runRoot = Join-Path $projectRoot 'build\worker-runs'
+if ($Reuse) {
+    # Under the coordinator lock, so no other check of this checkout builds into the cache meanwhile.
+    $reuseMutex = [Threading.Mutex]::new($false, $plan.coordinator_lock)
+    $reuseOwned = $false
+    try {
+        try { $reuseOwned = $reuseMutex.WaitOne([TimeSpan]::FromSeconds($LockTimeoutSec)) }
+        catch [Threading.AbandonedMutexException] { $reuseMutex.ReleaseMutex(); throw 'Previous coordinator abandoned its lock; audit leftover build processes before retrying' }
+        if (!$reuseOwned) { throw 'Worker check coordinator lock timed out' }
+        $reused = Get-WorkerReusableReceipt $plan $projectRoot $runRoot
+    } finally {
+        if ($reuseOwned) { $reuseMutex.ReleaseMutex() }
+        $reuseMutex.Dispose()
+    }
+    if ($reused) {
+        Write-Host "Worker check reuse: the source, test inputs, flags, tests and built programs are unchanged since $reused"
+        Write-Output "Worker check receipt: $reused"
+        return
+    }
+}
 $runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
 $runDirectory = Join-Path $runRoot $runId
 Assert-WorkerPath $runDirectory (Join-Path $projectRoot 'build')
@@ -453,7 +612,7 @@ $null = New-Item -ItemType Directory -Path $runDirectory
 $receiptPath = Join-Path $runDirectory 'receipt.json'
 $receipt = [ordered]@{ schema=1; run_id=$runId; plan=$plan; status='waiting_for_coordinator';
     started_utc=[DateTime]::UtcNow.ToString('o'); finished_utc=$null; failure=$null;
-    commands=[Collections.Generic.List[object]]::new(); source_hashes=[ordered]@{}; artifacts=[ordered]@{} }
+    commands=[Collections.Generic.List[object]]::new(); source_hashes=[ordered]@{}; reuse_inputs=$null; artifacts=[ordered]@{} }
 [IO.File]::WriteAllText((Join-Path $runDirectory '.worker-owner'), $runId, [Text.UTF8Encoding]::new($false))
 Write-WorkerJson $receiptPath $receipt
 $workerCommandContext = [pscustomobject]@{
@@ -477,9 +636,14 @@ try {
     $sourceSnapshot = Get-WorkerSourceHashes $projectRoot
     $receipt.source_hashes = $sourceSnapshot.hashes
     $receipt.source_dependencies = $sourceSnapshot.dependencies
+    # What a later -Reuse compares besides the snapshot (Get-WorkerReuseInputs); checked again at the end.
+    $reuseInputs = Get-WorkerReuseInputs $projectRoot
+    $receipt.reuse_inputs = $reuseInputs
     Write-WorkerJson $receiptPath $receipt
     Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $workerCommandContext)
-    & (Join-Path $projectRoot 'tools\build.ps1') -Configuration $Configuration -BuildOnly -DisableLocalExperiments -BuildDirectory $plan.build_directory
+    # The toolset and a configure only (-ConfigureOnly): a loader build here compiled every object twice per run, all
+    # OFF and then again with the profile's flags, even when nothing had changed.
+    & (Join-Path $projectRoot 'tools\build.ps1') -Configuration $Configuration -ConfigureOnly -DisableLocalExperiments -BuildDirectory $plan.build_directory
     # Configure every option explicitly; research/worker ON cannot leak from a
     # previous run and compilation below uses only this final profile.
     $flagArguments = @('-S', $projectRoot, '-B', $plan.build_directory) + @($plan.flags.Keys | ForEach-Object { '-D' + $_ + '=' + $plan.flags[$_] })
@@ -507,12 +671,24 @@ try {
     Assert-WorkerCache $plan.build_directory $plan.flags
     $finalSnapshot = Get-WorkerSourceHashes $projectRoot
     Assert-WorkerSourceUnchanged $sourceSnapshot $finalSnapshot
+    # A test input that changed while the tests ran (a scenario edited meanwhile): the receipt still passed, but it can
+    # never stand for a later preflight.
+    $finalInputs = Get-WorkerReuseInputs $projectRoot
+    if (!$reuseInputs -or !$finalInputs -or [string]$finalInputs.sha256 -cne [string]$reuseInputs.sha256) {
+        $receipt.reuse_inputs = $null
+        Write-Host 'Worker check: the test inputs changed during the checks; this receipt is never reused.'
+    }
     $loader = Join-Path $plan.build_directory 'dinput8.dll'
     $receipt.artifacts.loader_sha256 = (Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash
     [IO.File]::Copy($loader, (Join-Path $runDirectory 'dinput8.dll'), $false)
     # The launcher of the same build (tools/package.ps1 -Friend ships both).
     $launcher = Join-Path $plan.build_directory 'DiamondDogsTogether.exe'
     $receipt.artifacts.launcher_sha256 = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash
+    # The hidden worker's programs of this build (a later -Reuse needs the same ones; Get-WorkerBuildArtifacts).
+    foreach ($pair in @(@('supervisor_sha256', 'worker_supervisor.exe'), @('probe_sha256', 'worker_probe.exe'))) {
+        $program = Join-Path $plan.build_directory $pair[1]
+        if (Test-Path -LiteralPath $program -PathType Leaf) { $receipt.artifacts[$pair[0]] = (Get-FileHash -LiteralPath $program -Algorithm SHA256).Hash }
+    }
     [IO.File]::Copy($launcher, (Join-Path $runDirectory 'DiamondDogsTogether.exe'), $false)
     [IO.File]::Copy((Join-Path $plan.build_directory 'CMakeCache.txt'), (Join-Path $runDirectory 'CMakeCache.txt'), $false)
     $receipt.status = 'passed'
