@@ -1,3 +1,21 @@
+## 2026-10-30: aim view review closed (branch `wp/aim-view`; the get-off turn yields to the player)
+
+**Fixed** (design 8.36; red `195ddf4`, fix `325391a`): a look (stick or mouse) or an on-foot aim while the get-off turn
+is pending drops it (`state=turn; event=expire; reason=look|aiming`), so the turn never pulls the camera off the
+player's own view. Hidden lab run `91618e86` (`m6m7d-aim-reprove.txt`, both copies admitted, closed and restored):
+- Seat-1 get-off in a dense burst [O]: the stock get-off view (driver up close) lasts until the request (`ms=1675`
+  after the report end); the next frame (`a-exit-06`, ~0.4 s later) already looks along the jeep with the player beside
+  it. The control with the lever at `aim`, same steps and delays (`c-exit-06..14`, `c-exited`): the camera stays on the
+  driver up close, as players see it today.
+- A mouse look during the get-off: `reason=look` at `ms=849`, no request; the camera stays where the player turned it.
+  RMB held: `reason=aiming` at `ms=585`; the aim view is stock, but after the release the stock camera goes back to the
+  driver-facing view (`h-after`): for a player who aims out of the jeep, problem (4) remains.
+- Seat 3 at this code [O]: no view or turn line; aim over the shoulder; the get-off camera stays behind the jeep,
+  facing the player. The raise's boarding-end restore ran on all three non-aiming seat-1 boardings (`event=restore;
+  reason=end; ok=1`). No faults on either copy.
+Frames `complete/frames/m6m7d-aim/best-sheet-91618e86.jpg`. Full CTest and contract below. **Players see no change**
+(default `aim`; not flipped). Open: the turn after an on-foot aim ends, other jeep headings, problem (3), the raise.
+
 ## 2026-10-30: aim view in game (branch `wp/aim-view`; the get-off camera proven, the seated raise does not work)
 
 Two hidden lab runs of `m6m7c-aim-view.txt` (`-PartnerProfile native -NativeStage gun -BuildProfile research`, host

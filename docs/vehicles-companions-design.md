@@ -3148,6 +3148,33 @@ seat 3 guest in `5c8ce1ba`; frames `complete/frames/m6m7d-aim`).
 - Not flipped: `partner_pass_camera=view` does not meet its proof (seats 1 and 2 still look at the leg / the panel).
   The get-off turn alone is proven; shipping it alone is a decision for the user (`view` still writes the inert entry).
 
+### 8.36 The aim view's review closed (2026-10-30, branch `wp/aim-view`; the turn yields to the player)
+
+The two reviews of 8.35 held: (4) was only partly fixed, the turn had no input gate, the seat-2 / seat-3 frame
+descriptions were wrong, seat 3 was not seen at the final code, the raise's write-back paths never ran (8.35 corrected).
+- **Input gate** (red `195ddf4`, fix `325391a`): `TurnStep` takes the player's look (the effective right stick or mouse
+  above kLookInput, read as the shot guard reads it) and the local gun's aim (`GunAims` on foot); either one while the
+  turn is pending, under the stock get-off or after it, drops it (`event=expire; reason=look|aiming; gun=`). No new site.
+- **Run `91618e86`** (`m6m7d-aim-reprove.txt`, lab, afgh-quiet / afgh-horse, guest seat 1 four times, seat 3 once):
+  - A (view, no input): request `ms=1675`, check `yaw_err_mrad=0`, `cam_body_cm=524`. Burst every ~0.36 s from the
+    press: `a-exit-01..05` the stock view (the driver up close, the passenger climbing out); `a-exit-06` (exit-01 +1.8 s,
+    after the request) and on: the camera along the jeep, the player beside it. Only one frame falls in the 0.4 s swing;
+    no frame shows the camera inside the jeep or the wall [O].
+  - A2 (control, `passcam aim`, the same steps and delays): no turn line; `c-exit-06..14` and `c-exited` stay on the
+    driver up close (the reported problem). This is the like-for-like before/after [O].
+  - B (three mouse steps of 150 during the get-off): `reason=look; ms=849; stock_seen=1`, no request; `b-exited` keeps
+    the player's turned view [O].
+  - C (RMB held from ~0.5 s after the press): `reason=aiming; ms=585; gun=0` (the aim bit, mode 0), no request; `h-aim-*` show the stock
+    over-the-shoulder aim; after the release the stock camera returns to the driver-facing view (`h-after`) [O]. Next:
+    keep the turn pending through the aim and request it when the aim ends without a look (not done).
+  - D (seat 3): no view or turn line; `k3-exited` the camera behind the jeep, facing the player [O].
+  - The raise's boarding-end restore ran in game on the three seat-1 view boardings without a seated aim (`event=restore;
+    reason=end; ok=1; restores=1..3`; the variant read 18 then, index 0) [O]; MissionEnd / Stop / grow / abandon still
+    unseen. No faults, `board_uncertain` or `step=error` on either copy.
+- Still [U]: the turn at other jeep headings (one heading, ~6 deg, in all runs), a moving jeep, play / WAN, problem (3)
+  (godmode, the jeep's life unread), seat 2 in the guest role. Not flipped; before any flip of `view`: strip the inert
+  raise (or prove its write-back), the turn after an aim, a play rehearsal with the play clamp lifted.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
