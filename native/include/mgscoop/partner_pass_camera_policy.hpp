@@ -798,8 +798,12 @@ inline bool TurnCancel(Turn& t) noexcept {
     if (was) ++t.expired;
     return was;
 }
-// One tick. Reasons (static): check, seated, timeout, wait, stock, request.
-inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason) noexcept {
+// One tick. Reasons (static): check, seated, timeout, look, aiming, wait, stock, request. look / aiming: the player's own
+// camera input this tick (the effective right stick or mouse above kLookInput; the local gun aiming on foot).
+inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason, bool look = false,
+                        bool aiming = false) noexcept {
+    (void)look;
+    (void)aiming;
     reason = "none";
     if (t.check_ms && now_ms >= t.check_ms) {
         t.check_ms = 0;

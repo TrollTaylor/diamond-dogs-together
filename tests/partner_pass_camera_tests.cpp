@@ -947,6 +947,29 @@ void TestTurnStep() {
     cam.mode = 5;
     // The mode left view: cancelled.
     Check(pc::TurnCancel(w) && !w.pending && w.expired == 3 && !pc::TurnCancel(w), "cancelled once");
+    // Design 8.36: the player's own camera input while the turn is pending (a look, an aim on foot), under the stock
+    // get-off or after it: the player has the camera; the turn is dropped and never requested later.
+    for (int which = 0; which < 4; ++which) {
+        pc::Turn p{};
+        pc::TurnArm(p, 25608, 1, 100);
+        cam.mode = which < 2 ? 3 : 5;  // under the VehicleCamera (the get-off), or after it let go
+        if (which >= 2) pc::TurnStockClear(p);
+        const bool look = which % 2 == 0, aim = !look;
+        Check(pc::TurnStep(p, false, cam, 200, why, look, aim) == pc::TurnAct::expire && Same(why, look ? "look" : "aiming") && !p.pending &&
+                  p.expired == 1 && p.requests == 0,
+              "player input: the turn dropped");
+        cam.mode = 5;
+        Check(pc::TurnStep(p, false, cam, 300, why) == pc::TurnAct::none && !p.pending, "player input: no request later");
+    }
+    {
+        pc::Turn q{};
+        pc::TurnArm(q, 25608, 2, 100);
+        pc::TurnStockClear(q);
+        cam.mode = 5;
+        Check(pc::TurnStep(q, false, cam, 200, why, false, false) == pc::TurnAct::request, "no input: the request as before");
+        pc::TurnArm(q, 25608, 2, 100);
+        Check(pc::TurnStep(q, true, cam, 200, why, true, true) == pc::TurnAct::expire && Same(why, "seated"), "seated again comes first");
+    }
     // Seated again, or never let go: expired.
     pc::Turn s{};
     pc::TurnArm(s, 25608, 3, 100);

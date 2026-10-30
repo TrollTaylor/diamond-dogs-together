@@ -7675,6 +7675,42 @@ void TestPassCameraViewDriver() {
               "cancel: the mode left view, no request");
     }
     {
+        // Design 8.36: the player's own input while the turn is pending (a look, an aim on foot): dropped, no request.
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            g_board.lp = BoardPassenger(25608, 1);
+            s.driver.settings.ride_front = true;
+            Check(s.Tick(0), "input: seated");
+            g_pass.cam = PassCam(pc_handle(25608), 1, 3);
+            g_board.lp = pb::LocalPassenger{};
+            g_board.lp.reason = "act";
+            g_board.lp.act = 0x70;
+            Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending, "input: armed");
+            if (which == 0) {
+                s.fake.pad.kb_flags = 2;
+                s.fake.pad.kb_f[1] = 0.6f;  // the mouse look (PP+0x474 with PP+0x488 bit 1)
+            } else if (which == 1) {
+                GuardGun(s, 6);  // the gun aims on foot
+            }
+            Check(s.Tick(0, 100), "input: the get-off tick");
+            s.fake.pad = mgscoop::partner_input::PadRaw{};
+            GuardGun(s, 0);
+            g_pass.cam = PassCam(0, 0);
+            for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100), "input: on foot");
+            if (which == 2) {
+                Check(g_raise.turns.size() == 1 &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1,
+                      "input: none, the request as before");
+            } else {
+                Check(g_raise.turns.empty() && !s.driver.mission.pass_camera.turn.pending, "input: no request");
+                Check(s.fake.Containing(which == 0 ? "partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;"
+                                                   : "partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=aiming;") == 1,
+                      "input: the expire line names the input");
+            }
+        }
+    }
+    {
         // Mode aim: the raise and turn hooks are never called.
         Session s(0);
         ViewSetup(s);
