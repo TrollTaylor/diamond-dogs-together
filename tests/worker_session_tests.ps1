@@ -2,7 +2,7 @@
 # Detached pure protocol/policy/INI/AST fixtures. Never invokes a controller,
 # native worker, installer, process enumeration or window/input API.
 [CmdletBinding()]
-param([string]$SourceDirectory,[string]$RepoRoot)
+param([string]$SourceDirectory,[string]$RepoRoot,[string]$Shard='',[string]$Part='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if(!$RepoRoot){$RepoRoot=if((Split-Path -Leaf $PSScriptRoot) -ceq 'tests'){Split-Path -Parent $PSScriptRoot}else{[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))}}
@@ -12,6 +12,10 @@ Import-Module (Join-Path $SourceDirectory 'WorkerSessionCommon.psm1') -Force -Di
 $script:checks=0
 function Assert-True([bool]$Value,[string]$Name){++$script:checks;if(!$Value){throw "Fixture failed: $Name"}}
 function Assert-Throws([scriptblock]$Action,[string]$Name){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Assert-True $threw $Name}
+# CTest runs this suite as worker_session_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs
+# the pure checks (about 3 s) and the parts dealt to it by their cost (ms, measured alone); -Part tail runs only that one.
+Import-Module (Join-Path $RepoRoot 'tests\TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ fixtures = 10000; tail = 6000 })
 # Exact candidate policy is exercised separately from file rollback mocks.
 $pinned=Get-WorkerRuntimePins;$capacityPins=Get-WorkerBuddyCapacityPins
 Assert-True ($pinned.Archive -ceq '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') 'production runtime pin unchanged'
@@ -1277,6 +1281,7 @@ function New-WorkerCleanupFixture([string]$Name,[hashtable]$RecordState=@{}) {
     $session.baseline_sha256=$baselineHash;$session.candidate_sha256=$candidateHash
     return [pscustomobject]@{run=$run;session=$session;pins=$pins;report=[ordered]@{roles=[ordered]@{}}}
 }
+if (Test-TestPart 'fixtures') {
 try {
     $null=New-Item -ItemType Directory -Path $fixture
     [IO.File]::WriteAllText($marker,$nonce)
@@ -1921,6 +1926,8 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+}
+if (Test-TestPart 'tail') {
 # Worker-only graphics preset: pure retail text and recorded actual controller blocks.
 & {
  function Graphics-Tag([string]$text){
@@ -2145,4 +2152,6 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     }
 }
 
-Write-Output ("worker_session_tests: $script:checks detached checks passed; no worker/game/process/window operations")
+}
+Assert-TestPartsAsked
+Write-Output ("worker_session_tests: $script:checks detached checks passed (parts: $((Get-TestPartsSelected) -join ', ')); no worker/game/process/window operations")

@@ -79,7 +79,7 @@ function Get-WorkerTests {
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests', 'worker_coverage_tests',
+        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests', 'test_shards_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
@@ -110,7 +110,7 @@ function Get-WorkerTests {
 # plus --shard K/N (C++, tests/test_cases.hpp) or -Shard K/N (PowerShell, tests/TestShards.psm1). The counts are the
 # ones CMake registers: a missing shard fails the inventory audit, an extra one the Release coverage (worker_coverage_tests).
 function Get-WorkerShardedTests {
-    return [ordered]@{ ddt_core_tests = 5; link_udp_tests = 2 }
+    return [ordered]@{ ddt_core_tests = 5; link_udp_tests = 2; worker_session_tests = 2; local_coop_session_tests = 2 }
 }
 function Get-WorkerShardNames {
     $sharded = Get-WorkerShardedTests
@@ -301,7 +301,7 @@ function Assert-WorkerInventory {
             $command = @($command[0..($command.Count - 3)])
             $audit = $shard.base
         }
-        if ($audit -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests')) {
+        if ($audit -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests', 'test_shards_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $audit + '.ps1'))) {

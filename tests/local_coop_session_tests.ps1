@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 # Inert owned fixtures only: no game, Steam, network or visible windows.
 [CmdletBinding()]
-param([string]$IniCheck)
+param([string]$IniCheck, [string]$Shard = '', [string]$Part = '')
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -47,7 +47,12 @@ function Invoke-NativeCheck([string]$Path) {
 }
 $null = New-Item -ItemType Directory -Path $fixture
 [IO.File]::WriteAllText((Join-Path $fixture '.fixture-owner'), $token, [Text.Encoding]::ASCII)
+# CTest runs this suite as local_coop_session_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard
+# runs the parts dealt to it by their cost (ms, measured alone); -Part locks runs only that one.
+Import-Module (Join-Path $repo 'tests\TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ normal = 6900; recovery = 10900; locks = 3400 })
 try {
+    if (Test-TestPart 'normal') {
     $saveDir = 'D:\inert\local-saves'
     $early = 'early=start; version=fixture; lab=1; role=host' + [char]10 + 'saves=redirected; dir=' + $saveDir + [char]10
     $steam = 'master_server=redirected; reason=fixture; url=http://127.0.0.1:47899/tppstm/gate' + [char]10
@@ -146,6 +151,8 @@ try {
     Assert-Equal (Restore-LocalCoopSession -Session $loaded).State 'off' 'restore is idempotent'
     Assert-Equal (@($savePaths | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName).Hash }) -join ',') $saveBefore 'co-op, lab and local save fixture bytes unchanged'
 
+    }
+    if (Test-TestPart 'recovery') {
     $pair = New-FixturePair 'crash'
     $session = New-FixtureSession $pair
     $path = Join-Path $pair.host 'mgs-coop\lab.ini'
@@ -234,6 +241,8 @@ try {
     Assert-Throws { Set-LocalCoopSessionFile -Session $session -Role host -Name lab.ini -Bytes ([byte[]]@(7)) } 'both game' 'activation refuses a running game before mutation'
     & $module { Remove-Item -LiteralPath Function:Get-GameProcessInDirectory }
     Assert-Equal (Restore-LocalCoopSession $session).State 'off' 'normal helper restored after running-game fixture'
+    }
+    if (Test-TestPart 'locks') {
     # Actual Win32 replacement locks, inert files only. The wait hook makes race boundaries
     # deterministic; native File.Replace still produces the first real failure.
     $atomicRoot = Join-Path $fixture 'atomic'
@@ -437,7 +446,9 @@ try {
     Assert-Equal ([IO.File]::ReadAllBytes($path)[0]) 8 'RequireAbsent still creates a genuinely absent file'
     Write-Host "Atomic lock evidence: actual Win32 error=$observedAtomicLockError, release attempts=2, persistent attempts=$observedAtomicExhaustAttempts;1175/1176/1177 cases are explicit fault fixtures."
 
-    Write-Host "PASS $script:checks local co-op session checks (PowerShell $($PSVersionTable.PSVersion), inert fixtures only)."
+    }
+    Assert-TestPartsAsked
+    Write-Host "PASS $script:checks local co-op session checks (parts: $((Get-TestPartsSelected) -join ', '); PowerShell $($PSVersionTable.PSVersion), inert fixtures only)."
 } finally {
     $resolvedFixture = [IO.Path]::GetFullPath($fixture)
     $buildRoot = [IO.Path]::GetFullPath((Join-Path $repo 'build'))

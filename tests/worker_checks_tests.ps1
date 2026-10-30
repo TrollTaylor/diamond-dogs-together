@@ -81,7 +81,7 @@ try {
         Check ($normal.tests -cnotcontains $excluded -and $normal.excluded -ccontains $excluded) "unsafe default flow excluded: $excluded"
     }
     Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
-    Check ($normal.tests -ccontains 'worker_session_tests') 'audited detached controller fixture is explicitly included'
+    Check ($normal.tests -ccontains 'worker_session_tests_1' -and $normal.tests -ccontains 'worker_session_tests_2' -and $normal.tests -cnotcontains 'worker_session_tests') 'audited detached controller fixture is explicitly included (as its two CTest shards)'
     Check ($normal.tests -ccontains 'steam_transport_tests') 'the Steam online fixture (fake Steam interfaces, no Steam call) is audited'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
     Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @() $false '' } 'requires explicit'
@@ -185,6 +185,26 @@ try {
         $bad=Copy-PsInventory;$bad.tests[$index].command[1]='-NonInteractive'
         Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
     }
+    # PowerShell shards (cmake/test_shards.cmake): the base suite's audited command plus exactly -Shard K/N.
+    $shardNames=@('worker_session_tests_1','worker_session_tests_2','local_coop_session_tests_1','local_coop_session_tests_2')
+    $shardInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='worker_session_tests_1';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\worker_session_tests.ps1'),'-Shard','1/2');properties=@()},
+        [pscustomobject]@{name='worker_session_tests_2';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\worker_session_tests.ps1'),'-Shard','2/2');properties=@()},
+        [pscustomobject]@{name='local_coop_session_tests_1';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_session_tests.ps1'),'-IniCheck',(Join-Path $directory 'lab_ini_check.exe'),'-Shard','1/2');properties=@()},
+        [pscustomobject]@{name='local_coop_session_tests_2';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_session_tests.ps1'),'-IniCheck',(Join-Path $directory 'lab_ini_check.exe'),'-Shard','2/2');properties=@()}
+    )}
+    Assert-WorkerInventory $shardInventory $fixture $directory $shardNames
+    Check $true 'PowerShell suite shards are accepted with their base command and -Shard K/N'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[6]='--shard'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited shard arguments'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[7]='1/2'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited shard arguments'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[5]=Join-Path $fixture 'tests\local_coop_session_tests.ps1'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited PowerShell command'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[2].command=@($bad.tests[2].command[0..5])+@('-Shard','1/2')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited local-session fixture command'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[3].command=@($bad.tests[3].command[0..5])+@('-Part','locks','-Shard','2/2')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited local-session fixture command'
     $bad=Copy-PsInventory;$bad.tests[1].properties=@([pscustomobject]@{name='DEPENDS';value=@('build_profile_tests')})
     Assert-WorkerInventory $bad $fixture $directory $psNames
     Check $true 'controller fixture ordered dependencies remain audited'
@@ -279,7 +299,7 @@ try {
     # Local session fixtures additionally require the one parser in this exact
     # owned build directory. No fixture can introduce runtime flags or a foreign tool.
     Check ($release.tests -ccontains 'local_coop_windows_tests') 'release inventory admits the inert window geometry fixture'
-    Check ($release.tests -ccontains 'local_coop_session_tests') 'release inventory admits the inert activation journal fixture'
+    Check ($release.tests -ccontains 'local_coop_session_tests_1' -and $release.tests -ccontains 'local_coop_session_tests_2') 'release inventory admits the inert activation journal fixture (as its two CTest shards)'
     $localNames=@('local_coop_windows_tests','local_coop_session_tests')
     $localInventory=[pscustomobject]@{tests=@(
         [pscustomobject]@{name='local_coop_windows_tests';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_windows_tests.ps1'));properties=@()},
