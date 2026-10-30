@@ -515,6 +515,20 @@ pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin
         m.dir_riding);
     if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming) && riding) {
         why = pam::DirReason::ride;
+        // M7 seat gun: a back-seat passenger (the native passenger report) sends its seated aim direction, so the
+        // viewer can turn the partner's raised gun; unchecked (CheckStep never runs while riding: no latch).
+        if (d.settings.seat_gun && d.local_passenger.valid) {
+            pp::AimRead r{};
+            pam::GunDirIn gi{};
+            if (h.read_aim && h.read_aim(h.context, st, r)) gi = GunDirectionInput(r, 0);
+            const pam::GunDirOut dir = pam::GunDirSeated(gi);
+            if (dir.ok) {
+                why = pam::DirReason::seat;
+                v.aim_valid = true;
+                v.aim_pitch_cdeg = pam::PitchCdeg(dir.pitch);
+                v.aim_yaw_cdeg = pam::YawCdeg(dir.yaw);
+            }
+        }
     } else if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming)) {
         pp::AimRead r{};
         pam::GunDirIn gi{};
@@ -5482,8 +5496,103 @@ void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
     DrainGesture(d.mission, h, status);
 }
 
+// --- M7 seat gun (partner_seat_gun.hpp; docs/native-puppet.md "Seat gun") ------------------------------------------
+// While the seat flow holds body 1 seated and the remote rides a passenger seat and aims (its live pose flags or its
+// v5 input frame), the gesture hook holds body 1's graph 2 on GunHoldStart -> GunHold (hold_seq) and writes body 1's
+// aim rates from the remote's v6 direction against body 1's seated yaw. Lines (own cap): configured, hold, release,
+// refused (once per refusal change while the remote aims), hook_ended, rates (1 Hz while held).
+namespace psg = mgscoop::partner_seat_gun;
+constexpr unsigned kSeatGunLogCap = 200;
+void TickSeatGun(Driver& d, const Hooks& h, const Clock& clock, bool realized, bool parts_loaded, bool installed, const pp::State& st,
+                 std::uint32_t remote_flags, bool pose_live, psg::RatesOut& rates) noexcept {
+    Mission& m = d.mission;
+    rates = psg::RatesOut{};
+    if (!m.seat_gun_configured_logged) {
+        m.seat_gun_configured_logged = true;
+        EmitFormat(h, "partner_seat_gun=configured; key=1; gesture=%u; installed=%u\r\n", d.settings.ngesture ? 1u : 0u, installed ? 1u : 0u);
+    }
+    pin::Sample latest{};
+    const bool latest_ok = h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    psg::AimIn ai{};
+    ai.pose_live = pose_live;
+    ai.pose_aiming = (remote_flags & sync::ActionFlag::Aiming) != 0;
+    ai.input = latest_ok;
+    ai.input_age_ms = latest_ok ? latest.age_ms : 0;
+    ai.input_aiming = latest_ok && latest.packet.version >= 5 && (latest.packet.gun_flags & pin::GunFlag::Valid) &&
+                      (latest.packet.gun_flags & pin::GunFlag::Aiming);
+    const bool aiming = psg::RemoteAiming(ai);
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool ride_live = partner_ride_wire::Live(d.ride_rx, epoch, clock.now_ms);
+    const partner_ride_wire::Packet& rp = d.ride_rx.packet;
+    psg::GateIn g{};
+    g.enabled = d.settings.ngesture;
+    g.installed = installed;
+    g.uncertain = m.gesture_uncertain;
+    g.seated = m.ride_seated && m.seat.phase == SeatPhase::seated;
+    g.passenger = ride_live && rp.kind == partner_ride_wire::Kind::vehicle && rp.seat >= 1 && rp.seat <= 3;
+    g.realized = realized && parts_loaded;
+    g.block = m.carry_hold                                     ? "carry"
+            : mgscoop::partner_dm_overlay::Active(m.overlay)  ? "overlay"
+            : RemoteDowned(clock.tick_ms)                      ? "downed"
+                                                               : nullptr;
+    g.other_gesture = (m.gesture_active && m.gesture_active_seq != m.seat_gun_seq) ||
+                      (m.gesture_request.seq && m.gesture_request.seq != m.seat_gun_seq);
+    const char* refusal = psg::Gate(g);
+    const psg::StepOut so = psg::Step(m.seat_gun, refusal, aiming, clock.tick_ms);
+    if (so.edge == psg::Edge::start) {
+        if (!++d.gesture_seq) d.gesture_seq = 1;
+        m.seat_gun_seq = d.gesture_seq;
+        m.seat_gun_since_ms = clock.tick_ms;
+        m.seat_gun_rates_ms = 0;
+        m.gesture_request = pges::Request{m.seat_gun_seq, gpol::Kind::gun_start, psg::kGunHoldStart, gpol::Method::set_current, psg::kStartBlend,
+                                          clock.tick_ms};
+        ++m.gesture_requests;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=hold; seq=%u; vehicle=%u; seat=%u; pose_aim=%u; input_aim=%u; flags=0x%x; starts=%u\r\n", m.seat_gun_seq,
+                    unsigned(rp.vehicle), unsigned(rp.seat), ai.pose_live && ai.pose_aiming ? 1u : 0u, ai.input_aiming ? 1u : 0u,
+                    unsigned(remote_flags), m.seat_gun.starts);
+    } else if (so.edge == psg::Edge::release) {
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=release; seq=%u; cause=%s; refusal=%s; ms=%llu; releases=%u\r\n", m.seat_gun_seq, so.cause,
+                    refusal ? refusal : "-",
+                    static_cast<unsigned long long>(clock.tick_ms >= m.seat_gun_since_ms ? clock.tick_ms - m.seat_gun_since_ms : 0),
+                    m.seat_gun.releases);
+    }
+    // A refusal while the remote aims: once per change.
+    if (aiming && refusal && refusal != m.seat_gun_refusal_logged) {
+        m.seat_gun_refusal_logged = refusal;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=refused; reason=%s; seat_phase=%s; ride_seated=%u; ride_live=%u; ride_kind=%u; ride_seat=%u\r\n", refusal,
+                    SeatPhaseName(m.seat.phase), m.ride_seated ? 1u : 0u, ride_live ? 1u : 0u, unsigned(rp.kind), unsigned(rp.seat));
+    } else if (!refusal) {
+        m.seat_gun_refusal_logged = nullptr;
+    }
+    if (!m.seat_gun.want) return;
+    // Body 1's aim pose: the remote's v6 direction against body 1's seated yaw.
+    pp::AimRead ar{};
+    const bool ar_ok = h.read_aim && h.read_aim(h.context, st, ar);
+    psg::RatesIn ri{};
+    ri.dir_ok = latest_ok && latest.age_ms <= psg::kDirStaleMs && latest.packet.version >= 6 && (latest.packet.gun_flags & pin::GunFlag::AimDir);
+    ri.pitch = latest.packet.aim_pitch_cdeg * pam::kCdegToRad;
+    ri.yaw = latest.packet.aim_yaw_cdeg * pam::kCdegToRad;
+    ri.body_ok = ar_ok && ar.body_ok[1];
+    ri.body_yaw = ar_ok ? ar.body_yaw[1] : 0.0f;
+    rates = psg::Rates(ri);
+    if (!m.seat_gun_rates_ms || clock.tick_ms < m.seat_gun_rates_ms || clock.tick_ms - m.seat_gun_rates_ms >= 1000) {
+        m.seat_gun_rates_ms = clock.tick_ms ? clock.tick_ms : 1;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=rates; seq=%u; ok=%u; r5c=%.3f; r60=%.3f; clamped=%u; dir=%u; remote_pitch_cdeg=%d; remote_yaw_cdeg=%d; "
+                    "body_yaw_cdeg=%d; body_r5c=%.3f; body_r60=%.3f\r\n",
+                    m.seat_gun_seq, rates.ok ? 1u : 0u, rates.r5c, rates.r60, rates.clamped ? 1u : 0u, ri.dir_ok ? 1u : 0u,
+                    ri.dir_ok ? int(latest.packet.aim_pitch_cdeg) : 0, ri.dir_ok ? int(latest.packet.aim_yaw_cdeg) : 0,
+                    ri.body_ok ? int(pam::YawCdeg(ri.body_yaw)) : 0, ar_ok && ar.rate_ok[1] ? ar.r5c[1] : -1.0f,
+                    ar_ok && ar.rate_ok[1] ? ar.r60[1] : -1.0f);
+    }
+}
+
 void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool realized, bool parts_loaded, bool anim_ok,
-                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live) noexcept {
+                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live,
+                 const pp::State& st, std::uint32_t remote_flags) noexcept {
     Mission& m = d.mission;
     if (!set.ngesture) {
         m.gesture_pending = false;
@@ -5518,8 +5627,11 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
                     gpol::KindName(q.kind), q.seq, static_cast<unsigned long long>(q.node),
                     static_cast<unsigned long long>(clock.tick_ms >= q.issued_ms ? clock.tick_ms - q.issued_ms : 0), m.gesture_hook_body_calls,
                     m.gesture_hook_resolve ? m.gesture_hook_resolve : "ok");
+        if (q.seq == m.seat_gun_seq && m.seat_gun.want) psg::HookEnded(m.seat_gun, clock.tick_ms);
         m.gesture_request = pges::Request{};
     }
+    psg::RatesOut seat_rates{};
+    if (set.seat_gun) TickSeatGun(d, h, clock, realized, parts_loaded, installed, st, remote_flags, remote_live, seat_rates);
     if (m.gesture_pending) {
         m.gesture_pending = false;
         const gpol::Packet& p = m.gesture_rx_packet;
@@ -5561,15 +5673,41 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     }
     if (!installed) return;
     pges::Command command{};
-    command.enabled = set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain;
+    // M7: a held (or still running) seat gun keeps the command live while the seat owns body 1 (native drive blocked).
+    const bool seat_gun_live = set.seat_gun && m.seat_gun_seq &&
+                               (m.seat_gun.want || (m.gesture_active && m.gesture_active_seq == m.seat_gun_seq));
+    command.enabled = (set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain) ||
+                      (seat_gun_live && realized && parts_loaded && !m.gesture_uncertain);
     command.epoch = d.gesture_epoch;
     command.now_ms = clock.tick_ms;
     command.request = m.gesture_request;
     command.remote_known = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     command.remote_speed = remote_anim.speed;
+    command.hold_seq = set.seat_gun && m.seat_gun.want ? m.seat_gun_seq : 0;
+    command.rates_valid = seat_rates.ok;
+    command.r5c = seat_rates.r5c;
+    command.r60 = seat_rates.r60;
     pges::Status status{};
     h.gesture_step(h.context, command, status);
     DrainGesture(m, h, status);
+    // M7: the hook ended or refused the hold while the driver still holds it (node override, a refusal): retry later.
+    if (set.seat_gun && m.seat_gun_seq && m.seat_gun.want) {
+        for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
+            const pges::Receipt& r = status.receipts[i];
+            if (r.seq != m.seat_gun_seq || (r.stage != pges::Stage::ended && r.stage != pges::Stage::refused && r.stage != pges::Stage::uncertain &&
+                                            r.stage != pges::Stage::fault))
+                continue;
+            if (r.stage == pges::Stage::refused && r.kind == gpol::Kind::gun_hold) continue;  // the chain's refusal ends it next
+            psg::HookEnded(m.seat_gun, clock.tick_ms);
+            EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                        "partner_seat_gun=hook_ended; seq=%u; stage=%s; why=%s; retry_ms=%llu; rate_writes=%u; rate_restores=%u; rate_refusal=%s\r\n",
+                        r.seq, pges::StageName(r.stage), r.stage == pges::Stage::ended ? (r.cause ? r.cause : "-") : (r.reason ? r.reason : "-"),
+                        static_cast<unsigned long long>(psg::kRetryMs), status.rate_writes, status.rate_restores,
+                        status.rate_refusal ? status.rate_refusal : "-");
+            break;
+        }
+    }
+    m.gesture_active_seq = status.active ? status.active_seq : 0;
     m.gesture_active = status.active;
     m.gesture_hook_resolve = status.resolve;
     m.gesture_hook_body_calls = status.body_calls;
@@ -5829,6 +5967,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.traverse = lab.partner_native_traverse;
     d.settings.cbox = lab.partner_native_cbox;
     d.settings.ngesture = lab.partner_native_gesture;
+    // M7 seat gun (lab and play, off unless named until its proof).
+    d.settings.seat_gun = lab.partner_seat_gun;
     // G1 partner HUD hints (lab only, default 0; play forces it off in the loader).
     d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
@@ -7364,7 +7504,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
               extra_ops, itick);
     // Gestures: the received edge's gate, the request and the body-1 hook's receipts.
     TickGesture(d, h, set_levers, clock, realized, parts_loaded, anim_ok, anim, looks_ok, looks, remote_anim,
-                set.source == PartnerSource::net && sample_status == pose::Status::live);
+                set.source == PartnerSource::net && sample_status == pose::Status::live, st, remote_flags);
     // Round-1 actions: the DM overlay lever owns the DM while it runs; dm=map
     // stands down (TickDm with dm=off only to release a clip it still owns).
     // A seat episode blocks the overlay (OverlayBlocked: seat), so one already

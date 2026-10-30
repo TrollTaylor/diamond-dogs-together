@@ -614,6 +614,13 @@ struct LabConfig {
     // Lab only (play forces it off), default off; a named value records _given.
     bool partner_seat_aim = false;
     bool partner_seat_aim_given = false;
+    // M7 seat gun (docs/native-puppet.md "Seat gun"; partner_seat_gun.hpp): the remote back-seat passenger's raised
+    // gun on the seated body 1 (graph-2 GunHoldStart / GunHold through the gesture hook, body 1's aim rates) and this
+    // copy's own seated aim direction on the v6 input frame (unchecked: the self-check never runs while riding). Off
+    // unless named, in lab and play (a named 1 runs in play too, no refusal bit), until a FRAME proof on both copies and
+    // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
+    bool partner_seat_gun = false;
+    bool partner_seat_gun_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

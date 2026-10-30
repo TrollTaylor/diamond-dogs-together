@@ -5,6 +5,7 @@
 // stock gun-hold state uses, and the gesture policy's two local kinds (never on the wire; their body gate and end).
 #include "mgscoop/partner_seat_gun.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
+#include "mgscoop/partner_aim.hpp"
 #include "partner_player_contract.hpp"
 #include <cmath>
 #include <cstdio>
@@ -198,6 +199,30 @@ int main() {
         p.kind = gp::Kind::pickup; p.lease = p.identity = p.ours = true; p.elapsed_ms = gp::kEndDeadlineMs;
         o = gp::End(p);
         Check(o.via == gp::Via::timeout && !o.chain, "end: a pickup still has its deadline (held is ignored)");
+    }
+    // --- The passenger's seated aim direction (partner_aim::GunDirSeated): GunDir with standing in place of the seated
+    // stance byte, never the self-check (RideGate); a refusal keeps its own reason.
+    {
+        namespace pa = mgscoop::partner_aim;
+        pa::GunDirIn in{};
+        in.gun_ok = in.rate_ok = in.body_ok = true;
+        in.gun_class = 0; in.stance = 0; in.b3d5 = 0; in.gun3c0 = 0;
+        in.r5c = 0.5f; in.r60 = 0.25f; in.body_yaw = 1.0f;
+        Check(pa::GunDir(in).reason == pa::DirReason::stance, "seated dir: the on-foot GunDir refuses the seated stance byte");
+        pa::GunDirOut d = pa::GunDirSeated(in);
+        Check(d.ok && d.reason == pa::DirReason::seat && Near(d.yaw, 1.0 + kPi / 4) && Near(d.pitch, 0.0), "seated dir: 45 deg left of the seat");
+        // Round trip through the receiver's rates.
+        const sg::RatesOut back = sg::Rates({true, d.pitch, d.yaw, true, 1.0});
+        Check(back.ok && Near(back.r5c, 0.5) && Near(back.r60, 0.25), "seated dir: the receiver's rates invert it");
+        in.stance = 3;
+        Check(pa::GunDirSeated(in).ok, "seated dir: a prone-looking stance byte is still the standing set");
+        in.gun3c0 = c::gun3c0_camera_rel;
+        Check(!pa::GunDirSeated(in).ok && pa::GunDirSeated(in).reason == pa::DirReason::camera, "seated dir: camera-relative refuses");
+        in.gun3c0 = 0; in.r60 = 1.5f;
+        Check(pa::GunDirSeated(in).reason == pa::DirReason::range, "seated dir: out of range refuses");
+        in.r60 = 0.5f; in.body_ok = false;
+        Check(pa::GunDirSeated(in).reason == pa::DirReason::body, "seated dir: no body yaw refuses");
+        Check(std::strcmp(pa::DirReasonName(pa::DirReason::seat), "seat") == 0, "seated dir: the reason name");
     }
     std::printf("partner_seat_gun_tests: %u checks passed\n", checks);
     return 0;

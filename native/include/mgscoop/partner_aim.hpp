@@ -128,7 +128,8 @@ std::int32_t RelYawCdeg(float r60) noexcept;
 //   convention  the runtime self-check latched (CheckStep)
 //   prone_frame the separate prone orientation is not qualified
 //   ride        the local player rides (RideGate): no check, no direction
-enum class DirReason : std::uint8_t { none, idle, unread, camera, sight, gun_class, stance, range, body, convention, prone_frame, ride };
+//   seat        M7 seat gun: a back-seat passenger's direction (GunDirSeated), sent unchecked
+enum class DirReason : std::uint8_t { none, idle, unread, camera, sight, gun_class, stance, range, body, convention, prone_frame, ride, seat };
 const char* DirReasonName(DirReason reason) noexcept;
 struct GunDirIn {
     bool gun_ok;                 // the gun record (class, stance, flags) was read
@@ -148,6 +149,11 @@ struct GunDirOut {
     double pitch, yaw;           // radians, world (yaw wrapped to (-pi, pi])
 };
 GunDirOut GunDir(const GunDirIn& in) noexcept;
+// M7 seat gun: a back-seat passenger's direction. The stock passenger aims with the standing upper-body set (posture
+// 0 over the seated legs; UpdateAttackType has no posture for act 0x6E; run 6fc3098b: posture=0, mode 6/7/9), so its
+// stance byte is not an on-foot stance: GunDir with standing in its place. ok gives reason seat. It is sent unchecked:
+// CheckStep never runs while the local player rides (RideGate), so a seated aim never latches the self-check.
+GunDirOut GunDirSeated(const GunDirIn& in) noexcept;
 // The wire's centidegrees: pitch clamped to [-kMaxPitchCdeg, kMaxPitchCdeg],
 // yaw normalized to [-18000, 17999] (0 for a non-finite angle).
 inline constexpr std::int16_t kMaxPitchCdeg = 9000;
