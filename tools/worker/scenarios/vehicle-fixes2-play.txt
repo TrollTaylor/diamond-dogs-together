@@ -1,0 +1,184 @@
+# The play rehearsal of the vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md section 8.14) in mode=play
+# over -WanSim bad, no lab lever (play refuses them). The two new keys are named (off in play by default until this
+# rehearsal and the lab FRAME pass); every other vehicle key at its play default (VEHICLE_GONE, VEHICLE_STATE,
+# world_vehicle_break, world_vehicle_credit, world_loadout_block on in 30020). Africa, africa-jeep seed.
+#   1. D11 with the pre-pair fix in: the guest arrives in 30020 by the host's follow (step=arrived marks the mission
+#      co-op); both drop items inactive; the guest's real iDroid path to LOADOUT refused with its toast.
+#   2. The guest's vehicle damage report: the guest's real rifle rounds at 25608 from its boot spot -> VEHICLE_DAMAGE ->
+#      the host applies it -> both copies keep the guest's damage past the 10 s refresh. Then the host's own rounds:
+#      VEHICLE_STATE to the guest as before, never reported back.
+#   3. D12 crew: the guest's real C4 on the soldier-crewed patrol jeep 25623 (the soldier set to ignore the players on
+#      both copies first), the guest 25 m away and the host 30 m away when it goes off -> REQ cause 4 -> the host judges
+#      it near and wrecks its copy at once (break_crew) -> req_done; the wreck on both screens; the crew's fate in the
+#      logs of both copies.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-fixes2-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# NEVER: step=error, viewer_changed, faults; event=vehicle_damage step=tx after part 2's host logmark; a step=hold or
+#        hold_timeout for 25623.
+labsetting world_vehicle_crew=1
+labsetting world_vehicle_damage=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitlog host 'event=vehicle_damage; step=on; mission=30020; role=host' 30
+waitlog guest 'event=vehicle_damage; step=on; mission=30020; role=guest' 30
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+# 1. D11: the guest's LOADOUT item.
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11-guest-loadout
+guest press enter
+wait 500
+guest capture d11-guest-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 1500
+guest press tab
+wait 2500
+# 2. The guest's real rounds at 25608 from its boot spot (the jeep 1.5 m in front; the lab run 846c1147 showed that the
+# guards' rounds on both copies must be cleared first, and goto_vehicle picks a jeep 600 m away); the host 10 m behind.
+host debug clear_enemies 100
+wait 1500
+guest debug teleport -652.93 1.20 879.33 -117
+wait 2500
+placebehind host guest 10 0
+wait 2500
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-before
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+guest release
+guest run vehicle_state_status 25608
+waitlog guest 'event=vehicle_damage; step=tx; id=25608; life=[0-9]+; drop=[0-9]+; f=[0-9]; seq=[0-9]+' 10
+waitlog host 'event=vehicle_damage; step=applied; id=25608; from=25608;' 10
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=life;' 10
+wait 1500
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-applied
+# Past the host's 10 s refresh: the guest's damage stays on both copies.
+wait 14000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-later
+# The host's own rounds from its boot spot (facing the jeep): VEHICLE_STATE to the guest as before, never reported back
+# (the guest has not fired since part 2's rounds, more than 3 s ago).
+host debug teleport -656.01 1.20 877.73 62
+wait 2500
+placebehind guest host 10 0
+wait 2500
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 250
+host press lmb 120
+wait 250
+host press lmb 120
+wait 250
+host press lmb 120
+host release
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=(life|state|parts);' 10
+waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608; moved=0; .*life=' 10
+wait 3000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture host-damage
+# 3. D12 crew: the guest's real C4 on the crewed patrol jeep 25623 (-374.85, -2.76, 489.18).
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+host debug teleport -374.85 0.50 494.18 180
+wait 3000
+host run enemy info nearest
+host run enemy ignore nearest
+wait 1500
+guest debug teleport -372.85 0.50 489.18 -90
+wait 3000
+guest run position
+guest run vehicle_state_status 25623
+guest debug slot support 2
+wait 2000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest debug teleport -349.85 0.50 489.18 -90
+host debug teleport -374.85 0.50 519.18 180
+wait 3000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+both capture crew-placed
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press e
+guest release
+both burst crew-blast 5 600
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25623' 15
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25623; cause=4; sent=1' 15
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25623; cause=4' 15
+waitlog host 'event=vehicle_rules; step=break_judge; id=25623; rid=[0-9]+; ok=1; why=near;' 15
+waitlog host 'event=vehicle_rules; step=break_crew; id=25623; rid=[0-9]+; crew=[1-4]' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25623; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25623; result=gone' 15
+both burst crew-wreck 4 1000
+wait 6000
+both burst crew-after 3 1000
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=0;
+guest run vehicle_state_status 25623
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run enemy_list 60
+guest run enemy_list 60
+state
