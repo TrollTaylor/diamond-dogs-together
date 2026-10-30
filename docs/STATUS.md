@@ -1,3 +1,25 @@
+## 2026-10-30: developer test loop, faster (`wp/test-speed`; tests and tooling only, no product code changed)
+
+**Built [O]:** long fixtures run as parallel CTest shards (`cmake/test_shards.cmake`): `ddt_core_tests_1..5` (cases with
+costs, `tests/test_cases.hpp`), `link_udp_tests_1..2` (a port lock per case), `worker_session_tests_1..2`,
+`local_coop_session_tests_1..2`, `lab_scripts_tests_1..7`, `friend_package_tests_1..2` (parts with costs,
+`tests/TestShards.psm1`; a part run without its predecessors replays their setup; the plain runs keep their counts:
+1692 / 1269 / 2115). `tests/test_timer_resolution.hpp`: Windows 11 drops a windowless process's 1 ms timer after ~2.5 s
+(`Sleep(2)` = 15.4 ms; `ddt_core_tests` 64 s -> 46 s in one process). The preflight's bootstrap only configures
+(`tools/build.ps1 -ConfigureOnly`: it had compiled every object twice per run), and a hidden run's preflight reuses the
+profile's newest passed receipt when source snapshot, flags, tests and built programs are unchanged
+(`Invoke-WorkerChecks -Reuse` from `Invoke-WorkerScenario`; `-FreshChecks` opts out; never `-Profile Release`).
+**Measured [O]** (32 threads, `-j 16`): full CTest 111-115 s -> 51 s (49-62 s while another checkout's suite runs);
+fast 12.4 s -> 9.0 s; Research preflight 102 s (tests 60 s) -> 29 s on an unchanged tree (tests 20 s, build 0.3 s),
+38 s after a change, 0.8 s reused (receipts in `D:/mgs-coop-wt/launcher-setup/build/worker-runs`:
+`20261030-143537-bf6b3ad673c54ff197f5f4ec7bada347`, `20261030-144417-d3905f6e9493454a84e481e2c8f2d8b9`); Release
+preflight passes (`20261030-144325-4e0247f81bce4d5ea900c70c86cb160c`, 38 s).
+**Not reached [O]:** the full suite under 45 s: the lab and friend shards take 28 turns of the machine-wide test install
+mutex (`tools/package-install.ps1` refuses a second installer) holding it ~46 s
+in all; lower needs a per-fixture installer mutex (an installer change, not made). **Not done:** merging the ~250 test
+executables (a core `.cpp` change relinks 88: 200 s CPU, 8 s wall at `-j 32`). Rule (AGENTS.md): iterate with the
+affected tests (`ctest -R`, `--case`, `-Part`, `-Fast`), the full suite once before merging.
+
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
 Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):
