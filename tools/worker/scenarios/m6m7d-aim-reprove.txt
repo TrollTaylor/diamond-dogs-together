@@ -1,0 +1,148 @@
+# m6m7d aim re-prove (design 8.36, lab): the get-off turn of partner_pass_camera=view seen frame by frame, against a
+# mode-aim control at the same delays, and its input gate (8.36: a look or an on-foot aim while the turn is pending drops
+# it). Wakh Sind jeep 25608, host seed afgh-quiet (the host drives), guest seed afgh-horse.
+#   A.  Guest seat 1, view, no input: the get-off in a dense burst (the stock get-off view, the request, the swing).
+#   A2. Guest seat 1, the lever at aim (the control): the same steps and delays, no turn.
+#   B.  Guest seat 1, view, mouse looks during the get-off: state=turn; event=expire; reason=look, no request.
+#   C.  Guest seat 1, view, RMB held through the get-off: state=turn; event=expire; reason=aiming (or the request first
+#       when the aim only starts after the stock let go: the line order says which).
+#   D.  Guest seat 3 (right rear) at this code: no view / turn line; the aim and the get-off as stock.
+# NEVER: pass_camera; state=refused; faults.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7d-aim-reprove.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+labsetting partner_pass_camera=view
+labsetting partner_pass_camera_trace=1
+boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=1' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=1' 30
+host run enemy sleep 1084844745
+host run enemy sleep 1927090184
+host run enemy sleep 1791272719
+host run enemy sleep 2112392286
+host run enemy sleep 347113222
+host run enemy sleep 1113151945
+host run enemy sleep 1004648379
+host run enemy sleep 1856151639
+host run enemy sleep 2507222959
+host run enemy sleep 1626377522
+host run enemy sleep 2077341861
+host run enemy sleep 3439362210
+host run enemy sleep 2035351939
+host run enemy sleep 208831908
+host run cp_phase nearest sneak
+stance host stand
+stance guest stand
+wait 2000
+both capture start
+# --- The host drives -------------------------------------------------------------------------------------------------
+host debug teleport 577.20 320.2 1157.19 -84
+wait 2500
+host press e 150
+wait 4500
+host run vehicle_seats
+host require vehicle;id=25608
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front' 10
+# --- A. Guest seat 1, view, no input ---------------------------------------------------------------------------------
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+guest capture a-seated
+guest press e 150
+guest burst a-exit 14 100
+wait 1500
+both capture a-exited
+waitlog guest 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;' 5
+waitlog guest 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=1;' 5
+wait 1000
+# --- A2. The control: the lever at aim, the same steps and delays ----------------------------------------------------
+guest debug passcam aim
+wait 1000
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+guest capture c-seated
+guest press e 150
+guest burst c-exit 14 100
+wait 1500
+both capture c-exited
+wait 1000
+guest debug passcam view
+wait 1000
+# --- B. Guest seat 1, view, mouse looks during the get-off ------------------------------------------------------------
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+guest press e 150
+guest burst b-exit 2 100
+guest mouse 150 0
+guest burst b-look 2 100
+guest mouse 150 0
+guest burst b-look2 2 100
+guest mouse 150 0
+guest burst b-look3 4 100
+wait 1500
+guest capture b-exited
+waitlog guest 'partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;' 5
+wait 1000
+# --- C. Guest seat 1, view, RMB held through the get-off -------------------------------------------------------------
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+guest press e 150
+wait 300
+guest hold rmb 1500 nowait
+guest burst h-exit 6 100
+guest hold rmb 1500 nowait
+guest burst h-aim 6 100
+guest release
+wait 1500
+guest capture h-after
+waitlog guest 'partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=aiming;' 5
+wait 1000
+# --- D. Guest seat 3 (right rear) at this code ------------------------------------------------------------------------
+logmark both
+guest debug teleport 574.25 320.2 1156.51 96
+wait 3000
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+wait 1000
+host run enemy sleep nearest
+guest run enemy_aim_nearest 1.6
+wait 600
+guest hold rmb 1500 nowait
+wait 700
+guest capture k3-aim
+host capture k3-drv
+guest release
+wait 1000
+guest press e 150
+guest burst k3-exit 6 150
+wait 1500
+guest capture k3-exited
+host press e 150
+wait 3500
+state

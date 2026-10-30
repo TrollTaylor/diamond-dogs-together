@@ -424,6 +424,7 @@ struct LocalPassenger {
     std::uint8_t via = 0;
     std::uint8_t category = kCategoryUnread;  // this copy's unit+0x6C >> 4 of the vehicle (design 8.35)
     const char* reason = "unread";
+    std::uint16_t act = 0;  // the body's act as read (0: unread); with reason act, the act that ended the passenger act
 };
 // Design 8.35 (lab.ini partner_ride_seat1_anchor): the local player seated in seat 1 of a light vehicle (this copy's
 // category 1, 2) keeps the stock seat-1 remap (0xB79A3F: seat 1 -> seat 0's matrix while a player sits in rider[1]):
@@ -454,6 +455,7 @@ LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, s
     std::uintptr_t acts = 0;
     std::uint16_t act = 0;
     if (!Get(r, Q + kQAct, acts) || !Get(r, acts + 2u * local, act)) { out.reason = "act_read"; return out; }
+    out.act = act;
     if (act != kActPassenger) { out.reason = "act"; return out; }
     std::uint16_t id = kVehicleUnknown;
     std::uintptr_t rec = 0;

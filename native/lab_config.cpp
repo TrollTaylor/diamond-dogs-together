@@ -299,7 +299,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (ok) result.partner_ride_board_given = true;
     }
     else if (Equals(key, "partner_pass_camera")) {
-        // The passenger camera's mode off|connect|drop|aim (lab and play; design 8.27); an invalid value refuses (named,
+        // The passenger camera's mode off|connect|drop|aim|view (lab and play; design 8.27, 8.33); an invalid value refuses (named,
         // the default kept).
         PartnerPassCamera mode{};
         ok = ParsePartnerPassCamera(value.data, value.size, mode);
@@ -1707,10 +1707,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
-    // The passenger camera (design 8.27 / 8.28): aim (the handle and the shot guard) unless named, in lab and play: the
-    // view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6; the review fixes: see STATUS). A named
-    // connect is 0.14.4.
-    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::aim;
+    // The passenger camera (design 8.27 / 8.28 / 8.37): view (the handle, the shot guard and the get-off turn) unless named,
+    // in lab and play: the view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6) and the camera turned
+    // behind the player after a seat-1 / seat-2 get-off (design 8.37). A named aim drops the turn; connect is 0.14.4.
+    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::view;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat) and the seat races (SEAT op 54) follow the gun
     // profile since the seats-on round (docs/vehicles-companions-design.md 8.25: the lab FRAME proofs of 8.20 / 8.21 and
     // the play rehearsals of 8.25 / 8.26 at these defaults); the truck cab in lab only (play forces it off below unless
@@ -1812,7 +1812,7 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // stock; the discriminating play run m6m7c-self-hit-play2.txt has not run); a named 1 runs in play.
         if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
         // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
-        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28).
+        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28). View runs in play (8.37).
         c.partner_pass_camera_trace = false;
         if (c.partner_pass_camera == PartnerPassCamera::drop) c.partner_pass_camera = PartnerPassCamera::aim;
     }
@@ -1930,7 +1930,7 @@ bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard&
 }
 
 const char* PartnerPassCameraName(PartnerPassCamera value) noexcept {
-    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : value == PartnerPassCamera::drop ? "drop" : "connect";
+    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : value == PartnerPassCamera::drop ? "drop" : value == PartnerPassCamera::view ? "view" : "connect";
 }
 
 bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept {
@@ -1940,6 +1940,7 @@ bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamer
     else if (Equals(s, "connect")) out = PartnerPassCamera::connect;
     else if (Equals(s, "drop")) out = PartnerPassCamera::drop;
     else if (Equals(s, "aim")) out = PartnerPassCamera::aim;
+    else if (Equals(s, "view")) out = PartnerPassCamera::view;
     else return false;
     return true;
 }

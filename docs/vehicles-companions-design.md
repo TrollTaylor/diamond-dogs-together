@@ -3288,6 +3288,131 @@ fired on the riders [I]. Still needed for the play flip: seat 1 (the play front 
 stock-hit line, a mission end while seated, a point-blank target. Lab scenarios that need stock seated shots name
 `partner_seat_shot=0` (S1 is on in lab with the gun profile).
 
+### 8.38 The seated aim view and the camera after a get-off (2026-10-30, branch `wp/aim-view`; built, not proven)
+
+Problems (2) and (4) of 8.32's frames: from seat 1 the aim view is the passenger's own leg, from seat 2 the jeep's
+panel (the seated aim camera sits ~1.19 m behind and ~0.10 m above the body root [O 4f1a072f]); after the stock get-off
+from seat 1 (`37b94432`, `83defaeb`) and seat 2 (`1f81de65`) the camera faces the driver up close. [O frames] the
+seat-1 get-off camera jumps to the driver's side looking across the jeep at the exiting passenger (`s1-exit-01`; the
+body's act is the get-off 0x70; that the active module then is the VehicleCamera is [I]: the module was not logged at
+that moment and the release line reads mode=5) and stays there once the fallback camera takes over, so with the handle cleared its collision
+holds it inside the jeep's left side, at the driver; the exit itself goes out of the right door (the driver's copy,
+`37b94432-host-s1-exited`), so seat 1's exit is not wrong. After seat 3 the camera stays behind, looking forward.
+Built (`bd6f0cf`; `native/partner_pass_camera.cpp`, `partner_pass_camera_policy.hpp` RaisePlan / TurnStep,
+`TickPassCamera`): mode `partner_pass_camera=view` = aim + (1) the stock aim module's variant offset (obj+0x50 +
+0x20 k, flag obj+0x174; FUN_1412BBFE0, called by the aim module's update while CAM+0x204 bit 2 is set, adds it to
+CAM+0x150 after its parameter load; [I] that the load rewrites CAM+0x150 each call) set to 0.60 m up while the local
+passenger is seated, restored at the end; (2) one stock rotation request (the fields of PlayerCamera vt+0xE0
+0x111A920) toward the jeep's forward yaw after the get-off. Five pinned sites, the variant ids generator-checked;
+310 unit checks (four mutants of the new rules each fail a check); no wire change. **Not proven:** all four hidden
+runs (`1b597e17`, `62af662d`, `cf8111c4`, `f3fbeefd`, scenario `m6m7c-aim-view.txt`) ended `IsolationFailed`
+(`child_exited_before_admission`: the guest's worker refused `required_hooks_or_private_desktop`), like every other
+hidden run on the machine from 13:51 to 14:16. The default stays `aim`; `view` is behind the key. Next: the lab run, then
+`m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`) after the default flips. Corrections (8.39): the "restored at the
+mission terminate" claim was false (the restore branch was unreachable), and a named `view` ran in play.
+
+### 8.39 Review fixes for the aim view (2026-10-30, branch `wp/aim-view`; built, not proven)
+
+Two reviews of 8.38 (code, evidence). Fixed (failing-first commit `f4f080e`, then `c58b065`): (1) the raise is written
+back by `MissionEnd`, `Stop` and `MissionStart` (`RaiseRevert`, through the P it was applied with), because `Tick`
+returns before `TickPassCamera` while a mission terminates; the dead terminating branch is gone. (2) A failed restore
+keeps the ownership and is retried each tick (up to 600), and `WriteRaise` writes a restore only while the flag and
+the entry are still ours. (3) Seats 1 and 2 only: seat 3's view was clear ([O] `37b94432-guest-k3-aim`). (4) The
+get-off turn arms only on an observed get-off (the act 0x70 when the report ends, seat 1 or 2; a death, a lost report
+or a latch logs `state=turn; event=skip`), requests only after the stock clear of the handle or the VehicleCamera let
+go (no 1.5 s fallback), and is dropped when the mode leaves `view`. (5) The request's six fields are written before its
+bit. (6) [I] guard: while ours, |CAM+0x150 y| > 2.5 m restores and refuses the boarding (`reason=grow`), in case the
+parameter load does not rewrite the offset. (7) `view` runs as `aim` in play until proven (lab key only). Scenarios now
+wait for the apply/restore and turn lines; the play rehearsal (africa jeep) cannot cover seat 1 (D-Dog sits there).
+Open [U]: whether the seated variant is listed, whether the request's yaw is world yaw after a seated aim (8.27 saw the
+look angles turn vehicle-relative while seated), the frames on both copies: both hidden lab runs (`79aee3fc`,
+`6395316d`) failed isolation before admission like every run on the machine since 13:51.
+
+### 8.40 The aim view in game (2026-10-30, branch `wp/aim-view`; the get-off turn proven, the raise not working)
+
+Runs `89cfa402` and `5c8ce1ba` (`m6m7c-aim-view.txt`, lab, Wakh Sind jeep 25608; seat 1 guest and host, seat 2 host,
+seat 3 guest in `5c8ce1ba`; frames `complete/frames/m6m7d-aim`).
+- **The get-off turn works [O]:** every seat-1/2 get-off logs `state=turn; event=request; reason=made` after the stock
+  release (`ms=1684..3085`, `stock_seen=1`, `yaw_mrad=107..108`) and `event=check; yaw_err_mrad=0; up_mrad=-120;
+  cam_body_cm=524`, on both roles: the camera reaches the world yaw asked for after a seated aim (8.39's [U]; at one
+  jeep heading, ~6 deg, so the vehicle-to-camera yaw convention at other headings stays [U]). Frames `s1-exited`,
+  `k2-exited`, `h1-exited` (both runs, ~10 s after the get-off): the camera along the jeep's heading, the player beside
+  the jeep, side-on (seat 1) or from the rear quarter with the jeep on their right (seat 2); before
+  (`37b94432-guest-s1-exited`, play, 3.8 s) the camera faced the driver. Corrected by the review: the get-off itself
+  (`exit-01..03`, both roles) still shows the driver up close until the request (1.7 s seat 1, 3.1 s seat 2 after the
+  report ends); the swing was not captured (8.41). Seat 3: no turn; the stock camera stays behind the jeep, facing the
+  player (`5c8ce1ba-guest-k3-exited`), seen only on the lift build `99f41fe` ([I] the same at `1715b82`: the lift was
+  gated to seats 1-2).
+- **The raise does nothing [O]:** `state=view; event=apply; variant=0; index=0; ok=1` (the variant is listed), but on
+  every seated aim tick the trace reads `f204=0x63110` (CAM+0x204 bit 2 clear: 0x12BD4D4 never calls FUN_1412BBFE0),
+  `off=0,0,0,0` (CAM+0x140), the camera ~1.2 m behind and 0.0-0.1 m above the body root; the frames show the leg (seat 1)
+  and the panel (seat 2) as before. After the aim the game resets the entry (`event=refused; reason=lost; flag=0`; the
+  next boarding's apply finds the stock entry), so nothing is left behind.
+- **A direct target write does not hold [O]:** the lift (`10aa42b` red, `99f41fe`) wrote CAM+0x154 = 0.60 over the
+  stock 0 while aiming seated; the next ticks read 0 again (30 rewrites in ~0.4 s, then `reason=rewritten`), off stayed
+  0, the frames unchanged. [O static] 0x111AAA0 (PlayerCamera vt data 0x23B80C0 / 0x23B83C0) copies a parameter record
+  into the camera ([I] every frame, the writer of the 0): CAM+0x150..0x15C from record+0x10, +0x234 from +0x24, +0x2DC from +0x48, CAM+0x204 bits
+  0x100 / 0x100000 / 0x40000000. Reverted (`b890a69`); a latch bug in it (a `rewritten` refusal outlived the boarding)
+  went with it. Next: raise the record the seated aim loads (find it through the parameter manager CAM+0x4B0, set
+  0xB8A0BF169F98, variant 0; [U] whether the on-foot aim shares it), or move the eye after 0x111AAA0.
+- Shots: fired from seats 1-3 in mode view (magazine 8 -> 7 -> 6, `state=guard` windows); the jeep's life was not read
+  (`vehicle_state_status`: `life_refused; reason=off`; godmode 1 on both copies; no shot aimed at the jeep), so whether
+  the shots hit the own jeep is [U] here.
+- Not flipped: `partner_pass_camera=view` does not meet its proof (seats 1 and 2 still look at the leg / the panel).
+  The get-off turn alone is proven; shipping it alone is a decision for the user (`view` still writes the inert entry).
+
+### 8.41 The aim view's review closed (2026-10-30, branch `wp/aim-view`; the turn yields to the player)
+
+The two reviews of 8.40 held: (4) was only partly fixed, the turn had no input gate, the seat-2 / seat-3 frame
+descriptions were wrong, seat 3 was not seen at the final code, the raise's write-back paths never ran (8.40 corrected).
+- **Input gate** (red `195ddf4`, fix `325391a`): `TurnStep` takes the player's look (the effective right stick or mouse
+  above kLookInput, read as the shot guard reads it) and the local gun's aim (`GunAims` on foot); either one while the
+  turn is pending, under the stock get-off or after it, drops it (`event=expire; reason=look|aiming; gun=`). No new site.
+- **Run `91618e86`** (`m6m7d-aim-reprove.txt`, lab, afgh-quiet / afgh-horse, guest seat 1 four times, seat 3 once):
+  - A (view, no input): request `ms=1675`, check `yaw_err_mrad=0`, `cam_body_cm=524`. Burst every ~0.36 s from the
+    press: `a-exit-01..05` the stock view (the driver up close, the passenger climbing out); `a-exit-06` (exit-01 +1.8 s,
+    after the request) and on: the camera along the jeep, the player beside it. Only one frame falls in the 0.4 s swing;
+    no frame shows the camera inside the jeep or the wall [O].
+  - A2 (control, `passcam aim`, the same steps and delays): no turn line; `c-exit-06..14` and `c-exited` stay on the
+    driver up close (the reported problem). This is the like-for-like before/after [O].
+  - B (three mouse steps of 150 during the get-off): `reason=look; ms=849; stock_seen=1`, no request; `b-exited` keeps
+    the player's turned view [O].
+  - C (RMB held from ~0.5 s after the press): `reason=aiming; ms=585; gun=0` (the aim bit, mode 0), no request; `h-aim-*` show the stock
+    over-the-shoulder aim; after the release the stock camera returns to the driver-facing view (`h-after`) [O]. Next:
+    keep the turn pending through the aim and request it when the aim ends without a look (not done).
+  - D (seat 3): no view or turn line; `k3-exited` the camera behind the jeep, facing the player [O].
+  - The raise's boarding-end restore ran in game on the three seat-1 view boardings without a seated aim (`event=restore;
+    reason=end; ok=1; restores=1..3`; the variant read 18 then, index 0) [O]; MissionEnd / Stop / grow / abandon still
+    unseen. No faults, `board_uncertain` or `step=error` on either copy.
+- Still [U]: the turn at other jeep headings (one heading, ~6 deg, in all runs), a moving jeep, play / WAN, problem (3)
+  (godmode, the jeep's life unread), seat 2 in the guest role. Not flipped; before any flip of `view`: strip the inert
+  raise (or prove its write-back), the turn after an aim, a play rehearsal with the play clamp lifted.
+
+### 8.42 The get-off turn finished and on (2026-10-30, branch `wp/aim-view`; default `view` in lab and play)
+
+- **Raise removed** (`2284282`): the seated aim raise of 8.38 never acted in game (8.40) and its write-back paths were
+  unproven (8.41 review). Gone: `ReadRaise` / `WriteRaise`, `RaisePlan` / `RaiseDone` / `RaiseForget`, `RaiseRevert` at
+  MissionEnd / Stop / MissionStart, the two hooks, the pins 0x12BD4D4 / 0x12BC015 / 0x12BC049 and the variant-id check
+  (826 sites / 209 slots, 15 pass camera blocks). Mode `view` = the aim mode's handle and shot guard plus the turn.
+- **Turn through an aim** (red `e4ec26d`, fix `a4db8b9`): an on-foot aim while the turn is pending holds it (`event=hold;
+  reason=aiming`, once); after the aim the request waits kTurnSettleMs = 300 ms and while the aim camera module is the
+  mode, with the stock get-off's own conditions, within kTurnAfterAimMs = 3 s of the aim's end (past kTurnMs if need
+  be); an aim still held kTurnAimMaxMs = 20 s after the get-off drops it; a look (also while aiming) and a re-boarding
+  drop it; seat 3 never arms. The request line names `aimed=`.
+- **Default** `partner_pass_camera=view` in lab and play (struct and ResolveWeaponDefaults); the play clamp maps only
+  `drop` to `aim`.
+- **Earlier request: not done.** FUN_14111CBA0 latches the request (CAM+0xD38 bit 2 -> 0x2000) on every camera update
+  and clears bits 0-2; no CAM+0xD38 access exists in 0x12B0000..0x12E0000 (the VehicleCamera) [I, byte scan], so a
+  request under the VehicleCamera would be consumed unseen. The stock close-up stays 1.7 s (seat 1) / 3.1 s (seat 2).
+- **Play rehearsal `ae6283d3`** (`m6m7e-getoff-camera-play.txt`, `-Mode play -WanSim bad`, shipped defaults; STATUS has
+  the lines and frames) [O]: guest seat 1 no input (request 1693 ms), guest seat 1 RMB through the get-off (hold 575 ms,
+  request 5436 ms after the release, `aimed=1`; ~0.4-0.7 s of the stock driver view between the aim's end and the swing),
+  guest mouse look (`reason=look`, view kept), host seat 2 (3086 ms), host seat 1 RMB (the aim only began after the
+  stock get-off: request first, the aim from the turned view), host seat 1 at a heading ~78 deg away (`yaw_mrad=1462`
+  vs 108, `yaw_err_mrad=0`). Both copies clean.
+- Still [U]: the host-role hold path (the host's RMB did not register during the get-off in this run), a moving jeep
+  at the get-off, seat 2 in the guest role, problem (3).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3786,6 +3911,10 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   jeep, the truck cab, two-PC.
   **S1 on in lab only (8.37, `wp/self-hit`)**: the lab A/B `8a920ec8` on one line (702 life lost with S1 off, none with
   S1); play waits for the discriminating run `m6m7c-self-hit-play2.txt` (`41dcbf22` fired on no stock-hit line).
+  **8.38 / 8.39 (`wp/aim-view`, built, not proven):** `partner_pass_camera=view` raises the seated aim camera 0.60 m
+  from seats 1 and 2 (the stock aim module's variant offset; written back at the get-off and at mission end / stop /
+  start) and turns the camera behind the player after an observed get-off; a lab key (play runs `aim`), not proven in
+  game (the hidden runs failed isolation).
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

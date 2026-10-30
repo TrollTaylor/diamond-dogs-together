@@ -3166,6 +3166,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     Mission& m = d.mission;
     auto& c = m.pass_camera;
     if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    // A terminating mission writes nothing here (Tick returns before this call anyway).
     if (terminating) return;
     if (!d.pass_camera_install_tried) {
         d.pass_camera_install_tried = true;
@@ -3194,7 +3195,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
     bool lever = false;
     const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
-    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::drop)) {
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::view)) {
         mode = static_cast<pc::Mode>(override_mode);
         lever = true;
     }
@@ -3228,7 +3229,10 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, aim_out.want, cam);
     else if (d.pass_camera_installed && ai.off && lp.valid && !ai.uncertain)
         plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
-    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing || c.turn.pending))
+        h.pass_camera_read(h.context, st, cam);
+    // Design 8.33 / 8.37 (mode view): the get-off camera turn below.
+    const bool view = pc::Views(mode);
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                     "partner_ride=pass_camera; state=aim; event=%s; vehicle=%u; seat=%u; mode=%s; gun=%u; f3c0=0x%x; plan=%s; cam1f0=0x%llx; "
@@ -3321,7 +3325,28 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     in.cam = cam;
     in.writes = stats.writes;
     in.now_ms = now;
+    const bool episode_was_active = c.episode.active;
+    const std::uint16_t episode_vehicle = c.episode.vehicle;
+    const std::uint8_t episode_seat = c.episode.seat;
     pc::StepOut out = pc::Step(c.episode, in);
+    // Design 8.33 / 8.34 (mode view): an observed get-off from seat 1 or 2 (the report ended on the get-off act 0x70; never
+    // a death, a lost report or a latch): the camera is turned behind the player once the stock get-off let go
+    // (partner_pass_camera_policy TurnStep). Another end of the boarding is logged and not armed.
+    if (episode_was_active && !c.episode.active && view && h.pass_camera_turn && d.pass_camera_installed && !c.uncertain &&
+        !ai.uncertain && pc::ViewSeat(episode_seat)) {
+        const bool get_off = !lp.valid && lp.reason && std::strcmp(lp.reason, "act") == 0 && lp.act == pc::kActGetOff;
+        if (get_off) pc::TurnArm(c.turn, episode_vehicle, episode_seat, now);
+        else
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=skip; vehicle=%u; seat=%u; reason=%s; act=0x%x\r\n",
+                        unsigned(episode_vehicle), unsigned(episode_seat), lp.valid ? "seated" : lp.reason ? lp.reason : "none",
+                        unsigned(lp.act));
+    }
+    // The mode left view (the lab lever) or the mission latched: a pending turn is dropped.
+    if ((!view || c.uncertain || ai.uncertain) && pc::TurnCancel(c.turn))
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=0; stock_seen=%u\r\n",
+                    unsigned(c.turn.vehicle), unsigned(c.turn.seat), !view ? "mode" : "uncertain", c.turn.seen_stock ? 1u : 0u);
     // The lines count this boarding's writes including this tick's (the counters read again).
     pc::Stats after = stats;
     if (d.pass_camera_installed) h.pass_camera_stats(h.context, after);
@@ -3342,6 +3367,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                   cam.vehicle_mode, writes);
         break;
     case pc::Event::release:
+        // The stock get-off cleared the handle: a pending get-off turn may follow (design 8.34).
+        if (out.reason && std::strcmp(out.reason, "stock") == 0) pc::TurnStockClear(c.turn);
         if (out.clear) {
             // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
             const char* why = h.pass_camera_connect(h.context, st, out.vehicle, false, cam);
@@ -3355,6 +3382,72 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     case pc::Event::none:
         break;
+    }
+    if (c.turn.pending || c.turn.check_ms) {
+        // Design 8.36 / 8.37: the player's own camera input while the turn is pending (on foot): the effective right stick
+        // or mouse above kLookInput (as the shot guard reads it) drops the turn; the local gun aiming holds it, and after
+        // the aim the request waits while the aim camera module is still the mode.
+        bool turn_look = false, turn_aim = false, turn_aim_cam = false;
+        unsigned turn_gun = 0;
+        if (c.turn.pending && !lp.valid) {
+            partner_input::PadRaw turn_raw{};
+            if (h.read_pad && h.read_pad(h.context, st, turn_raw)) {
+                const partner_input::PadSnapshot tp = partner_input::Effective(turn_raw);
+                turn_look = (std::isfinite(tp.rx) && std::fabs(tp.rx) > pc::kLookInput) || (std::isfinite(tp.ry) && std::fabs(tp.ry) > pc::kLookInput);
+            }
+            pp::AimRead turn_ar{};
+            if (h.read_aim && h.read_aim(h.context, st, turn_ar)) {
+                turn_aim = pc::GunAims(turn_ar.gun_ok[0], turn_ar.gun_state[0], turn_ar.gun_flags[0]);
+                turn_gun = turn_ar.gun_ok[0] ? turn_ar.gun_state[0] : 0xFFu;
+            }
+            if (c.turn.aimed && !turn_aim && h.pass_camera_mvt)
+                turn_aim_cam = h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva;
+        }
+        const char* why = "none";
+        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim, turn_aim_cam);
+        const unsigned age = static_cast<unsigned>(pc::ClampMs(now >= c.turn.since_ms ? now - c.turn.since_ms : 0));
+        if (ta == pc::TurnAct::request) {
+            partner_vehicle::Read vr{};
+            if (h.vehicle_read) h.vehicle_read(h.context, c.turn.vehicle, vr);
+            const bool vok = h.vehicle_read && !vr.refusal && vr.unit.id == c.turn.vehicle && std::isfinite(vr.unit.pos[3]);
+            const float yaw = vok ? pc::WrapPi(vr.unit.pos[3]) : 0.0f;
+            const char* refusal = !vok ? "vehicle" : h.pass_camera_turn(h.context, st, pc::kTurnPitch, yaw, pc::kTurnInterp);
+            pc::TurnDone(c.turn, refusal == nullptr, yaw, now);
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=%s; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; yaw_mrad=%d; "
+                        "pitch_mrad=%d; cmode=%d; requests=%u; aimed=%u\r\n",
+                        refusal ? "refused" : "request", unsigned(c.turn.vehicle), unsigned(c.turn.seat), refusal ? refusal : "made", age,
+                        c.turn.seen_stock ? 1u : 0u, static_cast<int>(std::lround(yaw * 1000.0f)),
+                        static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests, c.turn.aimed ? 1u : 0u);
+        } else if (ta == pc::TurnAct::hold) {
+            // Design 8.37: the player aims on foot: the turn waits for the aim's end (once per pending turn).
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=hold; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::expire) {
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::check) {
+            // About kTurnCheckMs after the request: the camera's world yaw against the one asked for, and its distance to
+            // the body (the frame shows the rest).
+            pc::View v{};
+            const bool vok = h.pass_camera_view && h.pass_camera_view(h.context, st, v) && v.ok && pc::QuatOk(v.rot);
+            pp::AimRead ar{};
+            const bool bok = h.read_aim && h.read_aim(h.context, st, ar) && ar.body_ok[0];
+            float dist = 0.0f;
+            if (vok && bok) {
+                const float dx = v.pos[0] - ar.body[0][0], dy = v.pos[1] - ar.body[0][1], dz = v.pos[2] - ar.body[0][2];
+                dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=check; vehicle=%u; seat=%u; view=%u; yaw_err_mrad=%d; up_mrad=%d; "
+                        "cam_body_cm=%d; cmode=%d\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), vok ? 1u : 0u,
+                        vok ? static_cast<int>(std::lround(pc::WrapPi(pc::WorldYaw(v.rot) - c.turn.yaw) * 1000.0f)) : INT32_MIN,
+                        vok ? static_cast<int>(std::lround(pc::UpPitch(v.rot) * 1000.0f)) : INT32_MIN,
+                        vok && bok ? static_cast<int>(std::lround(dist * 100.0f)) : INT32_MIN, cam.mode);
+        }
     }
 }
 

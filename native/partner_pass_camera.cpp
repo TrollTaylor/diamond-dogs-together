@@ -28,13 +28,16 @@ static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c:
                   c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
               "the look angles and the eye (design 8.27)");
 static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.28)");
+static_assert(c::pass_cam_request_flags == kCamRequestFlags && c::pass_cam_request == kCamRequest && c::pass_cam_lock_bit == kCamLockBit &&
+                  c::pass_cam_request_busy == kRequestBusy && c::pass_cam_request_flags_value == kTurnFlags,
+              "the get-off camera request (design 8.33)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;
 volatile LONG g_installed = 0;
 const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
-std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0};
+std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0}, g_turns{0};
 volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
 
 void LogFormat(const char* format, ...) noexcept {
@@ -115,6 +118,7 @@ void ResetForTest() noexcept {
     g_clears.store(0);
     g_faults.store(0);
     g_angles.store(0);
+    g_turns.store(0);
     g_override = -1;
 }
 } // namespace detail
@@ -191,6 +195,32 @@ void ReadStats(Stats& out) noexcept {
     out.clears = g_clears.load(std::memory_order_relaxed);
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.angles = g_angles.load(std::memory_order_relaxed);
+    out.turns = g_turns.load(std::memory_order_relaxed);
+}
+
+const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    std::uint32_t d38 = 0, f204 = 0;
+    if (!cam || !ReadValue(cam + kCamRequestFlags, d38) || !ReadValue(cam + kCamFlags, f204)) return "camera";
+    if (const char* why = RequestGate(d38, f204)) return why;
+    __try {
+        // The same fields as 0x111A920 (which writes the flag word first): here the six request fields first, then the
+        // request bit, so a camera update on another thread [U] never takes the bit with an older request's fields.
+        auto* r = reinterpret_cast<volatile float*>(cam + kCamRequest);
+        r[0] = interp;
+        r[1] = kTurnSpeed;
+        r[2] = kTurnBlend;
+        *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequest + 0xC) = kTurnFlags;
+        r[4] = pitch;
+        r[5] = yaw;
+        auto* flags = reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequestFlags);
+        *flags = *flags | kRequestBit;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return "fault";
+    }
+    g_turns.fetch_add(1, std::memory_order_relaxed);
+    return nullptr;
 }
 
 std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept {
@@ -266,7 +296,7 @@ bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacit
     const int value = Override();
     if (result && capacity) {
         if (refusal)
-            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|lab|status", refusal);
+            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|view|lab|status", refusal);
         else
             StringCchPrintfA(result, capacity, "passcam=%s; override=%s; writes=%u; clears=%u; faults=%u",
                              value < 0 ? "lab" : ModeName(static_cast<Mode>(value)), value < 0 ? "none" : "set",

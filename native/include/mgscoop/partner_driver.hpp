@@ -459,6 +459,9 @@ struct Hooks {
     // The seated rider's confirmed GetOff (review of design 8.35; partner_ride_seat::ArmGetOff): the armed seat goes
     // back to its own anchor, as the passenger's own copy plays it. May be null (the anchor stays until the revert).
     void (*ride_seat_getoff)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // Design 8.33 / 8.37 (partner_pass_camera=view): the get-off camera request (partner_pass_camera::RequestTurn: nullptr
+    // when made, else its refusal). Null: mode view runs as aim (no turn).
+    const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -790,6 +793,8 @@ struct Mission {
         LogCap aim_cap, trace_cap;
         std::uint64_t trace_ms, trace_aim_ms;
         std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
+        // Design 8.33 / 8.37 (mode view): the get-off camera turn (lines under aim_cap).
+        partner_pass_camera::Turn turn;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).

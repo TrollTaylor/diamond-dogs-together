@@ -517,8 +517,8 @@ too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
 
-**The aim camera (design 8.27, review fixes 8.28).** Key `partner_pass_camera=off|connect|aim|drop`
-(lab and play; **default aim**): connect is the behaviour above (0.14.4); aim
+**The aim camera (design 8.27, review fixes 8.28).** Key `partner_pass_camera=off|connect|aim|drop|view`
+(lab and play; **default view** since design 8.42, aim before): connect is the behaviour above (0.14.4); aim
 keeps it and adds the shot guard; drop adds the guard but drops the handle
 while aiming (+600 ms; a lab option, it blocks the seat-2 gun: play runs it as
 aim); off never connects. Lab lever `debug passcam
@@ -556,6 +556,29 @@ Aiming down into the jeep's body also refuses the gun (gun mode 15, stock).
 Pins: the look-at update's angle writes 0x111FCB1, vt+0x88's angle and
 rotation writes 0x112106E, the aim-point solve's eye 0x109705C, slot vt+0xF0,
 the aim module's slots +0x18 / +0x20 (13 pass camera blocks).
+
+**The camera after a get-off (design 8.38 / 8.41 / 8.42; default view in lab
+and play).** Mode `partner_pass_camera=view` (lever `debug passcam view`) is
+aim plus one stock rotation request after an observed get-off (act 0x70) from
+seat 1 or 2 (seat 3 leaves the camera behind the player): once the stock
+get-off let go (the stock clear of the handle, or the VehicleCamera seen and
+gone; no time fallback), `RequestTurn` writes the fields and gate of
+PlayerCamera vt+0xE0 0x111A920 (RequestToSetCameraRotation) toward the
+vehicle's forward yaw, 0.12 rad down, fields before the bit (`state=turn;
+event=request|refused|expire|check|skip|hold`, the request line names
+`aimed=`). A look (stick or mouse above kLookInput) while it is pending drops
+it (`reason=look`); an on-foot aim holds it (`event=hold; reason=aiming`) and
+the request follows 300 ms after the aim ends, once the aim camera module let
+go, within 3 s of the aim's end (an aim past 20 s after the get-off drops it);
+a re-boarding drops it (play rehearsal `ae6283d3`, design 8.42). No game function is called. Pins: 0x111A920,
+0x111A948 (15 pass camera blocks). The camera update FUN_14111CBA0 latches
+the request (CAM+0xD38 bit 2 -> 0x2000) every update; the VehicleCamera never
+reads CAM+0xD38 [I, byte scan], so the request waits for the stock release
+(1.7 s after a seat-1 get-off, 3.1 s seat 2). The seated aim raise of 8.38 (the
+aim module's variant entry, three pins) did nothing in game (8.40: CAM+0x204
+bit 2 stays clear in the seated aim; CAM+0x150..0x15C is rewritten every tick)
+and was removed in 8.42: from seat 1 the aim view still shows the own leg,
+from seat 2 the jeep's panel.
 
 ### Truck test levers
 

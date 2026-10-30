@@ -17,6 +17,7 @@
 #include <vector>
 #include "mgscoop/partner_pass_camera.hpp"
 #include "mgscoop/partner_pass_camera_policy.hpp"
+#include "mgscoop/lab_config.hpp"
 #include "partner_player_contract.hpp"
 
 namespace {
@@ -766,6 +767,239 @@ void TestWritePitchAndModeVtable() {
     pc::detail::ResetForTest();
 }
 
+// --- Design 8.33 (mode view): the seated aim view and the camera after a get-off -----------------------------------
+void TestViewMode() {
+    pc::Mode m{};
+    Check(pc::ParseMode("view", 4, m) && m == pc::Mode::view && Same(pc::ModeName(pc::Mode::view), "view") &&
+              static_cast<int>(pc::Mode::view) == 4 && static_cast<int>(mgscoop::PartnerPassCamera::view) == 4,
+          "view parses, is named and equals the lab_config value");
+    Check(pc::Guards(pc::Mode::view) && pc::Views(pc::Mode::view) && !pc::Views(pc::Mode::aim) && !pc::Views(pc::Mode::drop) &&
+              !pc::DropsWhileAiming(pc::Mode::view),
+          "view keeps the shot guard and the handle; only view turns");
+    char r[160]{};
+    bool ok = false;
+    pc::detail::ResetForTest();
+    Check(pc::HandleCommand("passcam view", true, r, sizeof(r), ok) && ok && pc::Override() == 4 && std::strstr(r, "passcam=view"),
+          "the lab lever takes view");
+    pc::detail::ResetForTest();
+    Check(pc::kCamRequest == 0xD80 && pc::kCamRequestFlags == 0xD38, "the offsets of the pinned request sites");
+}
+
+void TestViewSeat() {
+    // Seats 1 and 2 turn the camera after a get-off; seat 3 (the camera stays behind) and the driver never.
+    Check(pc::ViewSeat(1) && pc::ViewSeat(2) && !pc::ViewSeat(3) && !pc::ViewSeat(0) && !pc::ViewSeat(0xFF), "the view seats");
+}
+
+void TestTurnStep() {
+    pc::Turn t{};
+    pc::Camera cam{};
+    cam.ok = true;
+    cam.mode = 5;
+    cam.vehicle_mode = 3;
+    const char* why = nullptr;
+    Check(pc::TurnStep(t, false, cam, 1000, why) == pc::TurnAct::none, "nothing pending");
+    pc::TurnArm(t, 25608, 1, 1000);
+    Check(t.pending && t.vehicle == 25608 && t.seat == 1, "armed at the end of the boarding");
+    Check(pc::TurnStep(t, false, cam, 1100, why) == pc::TurnAct::none && Same(why, "wait"), "waits for the stock get-off camera");
+    cam.mode = 3;
+    Check(pc::TurnStep(t, false, cam, 1200, why) == pc::TurnAct::none && Same(why, "stock") && t.seen_stock,
+          "never under the VehicleCamera (the get-off)");
+    cam.mode = 5;
+    Check(pc::TurnStep(t, false, cam, 1300, why) == pc::TurnAct::request && Same(why, "request"), "the stock camera let go: request");
+    pc::TurnDone(t, true, 1.0f, 1300);
+    Check(!t.pending && t.requests == 1 && t.check_ms == 1300 + pc::kTurnCheckMs, "spent; a check is due");
+    Check(pc::TurnStep(t, false, cam, 1300 + pc::kTurnCheckMs, why) == pc::TurnAct::check && t.check_ms == 0, "the check line once");
+    Check(pc::TurnStep(t, false, cam, 5000, why) == pc::TurnAct::none, "then nothing");
+    // Design 8.34: no VehicleCamera seen and no stock clear: no time fallback, it waits and then expires.
+    pc::Turn w{};
+    pc::TurnArm(w, 25608, 2, 2000);
+    Check(pc::TurnStep(w, false, cam, 3600, why) == pc::TurnAct::none && Same(why, "wait"), "no stock get-off seen: waits");
+    Check(pc::TurnStep(w, false, cam, 2000 + pc::kTurnMs, why) == pc::TurnAct::expire && Same(why, "timeout"), "and expires");
+    // The stock clear of the handle (the release line's reason=stock): the request follows.
+    pc::TurnArm(w, 25608, 2, 2000);
+    pc::TurnStockClear(w);
+    Check(w.stock_clear && pc::TurnStep(w, false, cam, 2100, why) == pc::TurnAct::request, "the stock clear: request");
+    pc::TurnDone(w, false, 0.0f, 2100);
+    Check(!w.pending && w.expired == 2 && w.check_ms == 0, "a refused request is spent without a check");
+    pc::TurnStockClear(w);
+    Check(pc::TurnStep(w, false, cam, 2200, why) == pc::TurnAct::none, "a stock clear without a pending turn requests nothing");
+    pc::TurnArm(w, 25608, 2, 2000);
+    Check(!w.stock_clear, "a new arm forgets the stock clear");
+    pc::TurnStockClear(w);
+    cam.mode = 3;
+    Check(pc::TurnStep(w, false, cam, 2100, why) == pc::TurnAct::none && Same(why, "stock"), "the stock clear still waits for the VehicleCamera");
+    cam.mode = 5;
+    // The mode left view: cancelled.
+    Check(pc::TurnCancel(w) && !w.pending && w.expired == 3 && !pc::TurnCancel(w), "cancelled once");
+    // Design 8.36: a look while the turn is pending (alone or while aiming), under the stock get-off or after it: the
+    // player has the camera; the turn is dropped and never requested later.
+    for (int which = 0; which < 4; ++which) {
+        pc::Turn p{};
+        pc::TurnArm(p, 25608, 1, 100);
+        cam.mode = which < 2 ? 3 : 5;  // under the VehicleCamera (the get-off), or after it let go
+        if (which >= 2) pc::TurnStockClear(p);
+        const bool aim = which % 2 == 1;
+        Check(pc::TurnStep(p, false, cam, 200, why, true, aim) == pc::TurnAct::expire && Same(why, "look") && !p.pending &&
+                  p.expired == 1 && p.requests == 0,
+              "a look: the turn dropped");
+        cam.mode = 5;
+        Check(pc::TurnStep(p, false, cam, 300, why) == pc::TurnAct::none && !p.pending, "a look: no request later");
+    }
+    {
+        pc::Turn q{};
+        pc::TurnArm(q, 25608, 2, 100);
+        pc::TurnStockClear(q);
+        cam.mode = 5;
+        Check(pc::TurnStep(q, false, cam, 200, why, false, false) == pc::TurnAct::request, "no input: the request as before");
+        pc::TurnArm(q, 25608, 2, 100);
+        Check(pc::TurnStep(q, true, cam, 200, why, true, true) == pc::TurnAct::expire && Same(why, "seated"), "seated again comes first");
+    }
+    // Seated again, or never let go: expired.
+    pc::Turn s{};
+    pc::TurnArm(s, 25608, 3, 100);
+    Check(pc::TurnStep(s, true, cam, 200, why) == pc::TurnAct::expire && Same(why, "seated") && !s.pending, "boarded again: expired");
+    pc::Turn o{};
+    pc::TurnArm(o, 25608, 3, 100);
+    cam.mode = 3;
+    Check(pc::TurnStep(o, false, cam, 100 + pc::kTurnMs, why) == pc::TurnAct::expire && Same(why, "timeout"), "never let go: timeout");
+    Check(Same(pc::RequestGate(0x1, 0), "busy") && Same(pc::RequestGate(0x1000, 0), "busy") && Same(pc::RequestGate(0, 0x200), "locked") &&
+              pc::RequestGate(0x2, 0x4) == nullptr,
+          "the request's own gate (0x111A920)");
+}
+
+// The native write on a synthetic camera: the request fields.
+// Design 8.37: an aim on foot while the turn is pending holds it (never requested during the aim); when the aim ends
+// without a look, the request follows kTurnSettleMs later, once the aim camera module let go, within kTurnAfterAimMs of
+// the aim's end (the window grows past kTurnMs); never after a re-boarding, never past kTurnAimMaxMs of aiming.
+void TestTurnThroughAim() {
+    pc::Camera cam{};
+    cam.ok = true;
+    cam.vehicle_mode = 3;
+    const char* why = nullptr;
+    {
+        // RMB held through the get-off (under the VehicleCamera), the stock lets go during the aim, released later.
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 1, 1000);
+        cam.mode = 3;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold && Same(why, "aiming") && t.pending && t.aimed,
+              "aim: held (the first aiming tick)");
+        Check(pc::TurnStep(t, false, cam, 1200, why, false, true) == pc::TurnAct::none && Same(why, "aiming") && t.pending && t.seen_stock,
+              "aim: still held, the VehicleCamera seen");
+        cam.mode = 2;  // the aim module
+        pc::TurnStockClear(t);
+        Check(pc::TurnStep(t, false, cam, 2800, why, false, true) == pc::TurnAct::none && Same(why, "aiming") && t.pending,
+              "aim: the stock let go during the aim: no request while aiming");
+        Check(pc::TurnStep(t, false, cam, 2900, why, false, false, true) == pc::TurnAct::none && Same(why, "settle") && t.pending &&
+                  t.aim_end_ms == 2900,
+              "aim end: settles (the aim camera module still active)");
+        cam.mode = 5;
+        Check(pc::TurnStep(t, false, cam, 2900 + pc::kTurnSettleMs - 1, why, false, false, false) == pc::TurnAct::none && Same(why, "settle"),
+              "aim end: settles for kTurnSettleMs");
+        Check(pc::TurnStep(t, false, cam, 2900 + pc::kTurnSettleMs, why, false, false, true) == pc::TurnAct::none && Same(why, "settle"),
+              "aim end: waits while the aim camera module is active");
+        Check(pc::TurnStep(t, false, cam, 2950 + pc::kTurnSettleMs, why, false, false, false) == pc::TurnAct::request && Same(why, "request"),
+              "aim end: the request after the aim");
+    }
+    {
+        // A long aim: the window grows past kTurnMs; the request still follows the aim's end.
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 2, 1000);
+        pc::TurnStockClear(t);
+        cam.mode = 2;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold, "long aim: held");
+        Check(pc::TurnStep(t, false, cam, 1000 + pc::kTurnMs + 2000, why, false, true) == pc::TurnAct::none && t.pending,
+              "long aim: no timeout while aiming");
+        const std::uint64_t end = 1000 + pc::kTurnMs + 2100;
+        cam.mode = 5;
+        Check(pc::TurnStep(t, false, cam, end, why, false, false) == pc::TurnAct::none && Same(why, "settle") && t.pending,
+              "long aim: released past kTurnMs, settling");
+        Check(pc::TurnStep(t, false, cam, end + pc::kTurnSettleMs, why, false, false) == pc::TurnAct::request, "long aim: the request");
+    }
+    {
+        // After the aim the stock never let go: the window ends kTurnAfterAimMs after the aim's end.
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 1, 1000);
+        cam.mode = 5;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold, "no stock: held");
+        Check(pc::TurnStep(t, false, cam, 1000 + pc::kTurnMs, why, false, false) == pc::TurnAct::none && Same(why, "settle") && t.pending,
+              "no stock: the aim ended at kTurnMs, the window grows");
+        Check(pc::TurnStep(t, false, cam, 1000 + pc::kTurnMs + pc::kTurnSettleMs, why, false, false) == pc::TurnAct::none && Same(why, "wait"),
+              "no stock: waits for the stock get-off");
+        Check(pc::TurnStep(t, false, cam, 1000 + pc::kTurnMs + pc::kTurnAfterAimMs, why, false, false) == pc::TurnAct::expire &&
+                  Same(why, "timeout") && !t.pending,
+              "no stock: expires kTurnAfterAimMs after the aim");
+    }
+    {
+        // An aim held past kTurnAimMaxMs since the get-off: dropped.
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 1, 1000);
+        pc::TurnStockClear(t);
+        cam.mode = 2;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold, "max: held");
+        Check(pc::TurnStep(t, false, cam, 1000 + pc::kTurnAimMaxMs, why, false, true) == pc::TurnAct::expire && Same(why, "timeout") && !t.pending,
+              "max: an endless aim drops the turn");
+    }
+    {
+        // Re-boarding during or after the aim: dropped (seated comes first).
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 1, 1000);
+        pc::TurnStockClear(t);
+        cam.mode = 2;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold, "re-board: held");
+        Check(pc::TurnStep(t, true, cam, 1200, why, false, true) == pc::TurnAct::expire && Same(why, "seated") && !t.pending,
+              "re-board while aiming: dropped");
+        pc::TurnArm(t, 25608, 1, 1000);
+        pc::TurnStockClear(t);
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold && !t.aim_end_ms, "a new arm: held again");
+        cam.mode = 5;
+        Check(pc::TurnStep(t, false, cam, 1200, why, false, false) == pc::TurnAct::none && Same(why, "settle"), "re-board: settling");
+        Check(pc::TurnStep(t, true, cam, 1300, why, false, false) == pc::TurnAct::expire && Same(why, "seated"), "re-board after the aim: dropped");
+    }
+    {
+        // A second aim during the settle holds again (no second hold line); the settle restarts at its end.
+        pc::Turn t{};
+        pc::TurnArm(t, 25608, 1, 1000);
+        pc::TurnStockClear(t);
+        cam.mode = 5;
+        Check(pc::TurnStep(t, false, cam, 1100, why, false, true) == pc::TurnAct::hold, "again: held");
+        Check(pc::TurnStep(t, false, cam, 1200, why, false, false) == pc::TurnAct::none && Same(why, "settle"), "again: settling");
+        Check(pc::TurnStep(t, false, cam, 1300, why, false, true) == pc::TurnAct::none && Same(why, "aiming") && !t.aim_end_ms, "again: aiming");
+        Check(pc::TurnStep(t, false, cam, 1400, why, false, false) == pc::TurnAct::none && Same(why, "settle") && t.aim_end_ms == 1400,
+              "again: the settle restarts");
+        Check(pc::TurnStep(t, false, cam, 1400 + pc::kTurnSettleMs, why, false, false) == pc::TurnAct::request, "again: the request");
+        Check(pc::kTurnSettleMs >= 200 && pc::kTurnSettleMs <= 600 && pc::kTurnAfterAimMs >= 2000 && pc::kTurnAimMaxMs >= 15000,
+              "the aim windows");
+    }
+}
+
+void TestTurnWrites() {
+    pc::detail::ResetForTest();
+    Chain k;
+    pc::Stats st{};
+    // The rotation request: the stock fields and gate.
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamRequestFlags, 0x40);
+    Check(pc::RequestTurn(k.Base(), k.P(), 0.12f, -1.5f, 0.4f) == nullptr, "the request is made");
+    Check(k.Get<std::uint32_t>(pc::kCamRequestFlags) == 0x42 && k.Get<float>(pc::kCamRequest) == 0.4f && k.Get<float>(pc::kCamRequest + 4) == 0.4f &&
+              k.Get<float>(pc::kCamRequest + 8) == 0.8f && k.Get<std::uint32_t>(pc::kCamRequest + 0xC) == 0x400126 &&
+              k.Get<float>(pc::kCamRequest + 0x10) == 0.12f && k.Get<float>(pc::kCamRequest + 0x14) == -1.5f,
+          "CAM+0xD38 |= 2, CAM+0xD80.. = {interp, 0.4, 0.8, 0x400126, pitch, yaw}");
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamRequestFlags, 0x1000);
+    Chain::Put<float>(k.cam, pc::kCamRequest + 0x14, 9.0f);
+    Check(Same(pc::RequestTurn(k.Base(), k.P(), 0.1f, 0.2f, 0.4f), "busy") && k.Get<float>(pc::kCamRequest + 0x14) == 9.0f &&
+              k.Get<std::uint32_t>(pc::kCamRequestFlags) == 0x1000,
+          "busy: nothing written");
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamRequestFlags, 0);
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamFlags, 0x200);
+    Check(Same(pc::RequestTurn(k.Base(), k.P(), 0.1f, 0.2f, 0.4f), "locked") && k.Get<std::uint32_t>(pc::kCamRequestFlags) == 0,
+          "locked (CAM+0x204 bit 9): nothing written");
+    pc::ReadStats(st);
+    Check(st.turns == 1, "one request counted");
+    Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
+    Check(Same(pc::RequestTurn(k.Base(), k.P(), 0.1f, 0.2f, 0.4f), "camera"),
+          "not a PlayerCamera: refused");
+    pc::detail::ResetForTest();
+}
+
 // --- The pinned blocks and the install on a synthetic image -----------------------
 struct Image {
     unsigned char* base = nullptr;
@@ -788,7 +1022,9 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 13, "thirteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation)");
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 15,
+          "fifteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.33: the rotation "
+          "request; 8.37: the aim module's variant entry is no longer pinned)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;
@@ -819,7 +1055,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=13"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=15"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }
@@ -857,6 +1093,11 @@ int main() {
     TestTraceDue();
     TestReadViewAndLever();
     TestWritePitchAndModeVtable();
+    TestViewMode();
+    TestViewSeat();
+    TestTurnStep();
+    TestTurnThroughAim();
+    TestTurnWrites();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

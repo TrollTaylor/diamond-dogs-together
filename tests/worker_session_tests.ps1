@@ -190,7 +190,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
     'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
     # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
-    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','guest:partner_pass_camera=aim',
+    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','partner_pass_camera=view','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
@@ -248,7 +248,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
         'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
         'labsetting partner_seat_shot=1','labsetting guest partner_seat_shot=0',
-        'labsetting partner_pass_camera=aim','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
+        'labsetting partner_pass_camera=aim','labsetting partner_pass_camera=view','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
