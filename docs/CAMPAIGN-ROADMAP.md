@@ -137,6 +137,7 @@ Companions:
 - [ ] **A full campaign playthrough in co-op,** prologue to ending.
 - [x] **One-exe launcher:** setup, backup of the real save, co-op save copy, Host/Join, Share save, Collect logs, Uninstall, and the update checker.
 - [x] **Developer testing:** the hidden background worker, fast test boot, save seeds and parallel tests.
+- [x] **Release checks cover what ships** (2026-10-29, `wp/launcher-fixes2`, unreleased): the Release receipt runs the fixture of every shipped module (311 tests; a test it neither runs nor excludes by name is refused), and the source zip refuses files git does not track. Also fixed from the 0.14.4 review: two automatic launcher setups could run at once after a window closed during setup (hidden end-to-end runs `r4`, `r5`), and the tag and network wording in the README and notices.
 
 ## Suggested order
 1. **Two-PC check of 0.14.3:** ship it to both PCs and run the next two-PC test (the 2026-10-23 bugs are fixed but not tested on two PCs). Step 2 runs in parallel with it.

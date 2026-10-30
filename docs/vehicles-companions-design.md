@@ -1884,6 +1884,18 @@ line on either copy. Link: RTT 175-189 ms, loss up to 14.2 %. Slices (cut at the
 Not in this smoke: D12 (its play rehearsals are `f729d7f4` and `33a7fa6e`), any death of a dog copy, the guard under
 the key, a mission end, D15. No defect found.
 
+### 8.14 The 0.14.4 review's launcher and package findings (2026-10-29, branch `wp/launcher-fixes2`)
+
+Release tooling and the launcher only. No vehicle or companion behaviour, play default, op code, CFG index or lab key
+changes, so the milestones (section 9) and the decisions (section 10) stand as they are. What touches this design:
+the Release receipt (the check run a player package is built from) now also runs the fixtures of this design's shipped
+code. Before, it left out `dog_guard_tests` (D7's native guard), the companion, buddy companion, dog guard, relief
+and relief sync Lua checks (M1-M3, D7) and the outcome attribution check (F12); only the full CTest covered them.
+Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` runs 311 tests, all passed [O], and refuses any registered
+test it neither runs nor excludes by name. The other four findings (two automatic launcher setups at once after a
+close during setup, the tag and network wording, untracked files in the source zip) are in docs/STATUS.md, section
+"the 0.14.4 review's launcher and package findings fixed", with their failing-first tests and hidden end-to-end runs.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -2596,3 +2608,16 @@ finding was checked against the code and the archived slices before the fix (sec
 | Minor: nits (G.remove before its type check, two judge lines for a rate refusal, stale comments, status cut) | Accepted | All four fixed in `8b00f80` (type check first; one judge line at the outcome; the Invoke-WorkerScenario help, LabCommon and `world_sync_source.hpp.in` comments; the counters kept when the gone list is long), fixture checks for the first, second and fourth |
 | Refuted: 8.11 "the burning front of the jeep" on the host's screen (`c0203fdd`) | Accepted | Corrected in 8.11 (`157d73d`): smoke and fire behind the host's body, the jeep's visible rear unchanged |
 | Refuted: 8.11 and STATUS "hidden behind the guest's body" (`70146170`, `47b95ae7`) | Accepted | Corrected in 8.11 (`157d73d`) and in the STATUS section of the decisions (`f60d6ce`): the host's own body; the jeep is never in view on the host's screen in those frames. New host frames of the wreck itself: `7762536a` (`occ-after`, `blast-later`, at the door) and `f729d7f4` / `33a7fa6e` (`d12b`: the jeep 27 m away, then burning, then the burnt wreck) |
+
+### The 0.14.4 pre-release review: launcher and package findings (2026-10-29, branch `wp/launcher-fixes2`)
+
+All five were confirmed, non-blocking and outside this design's behaviour (release tooling and the launcher); fixed with
+failing-first tests. Details and runs: docs/STATUS.md, section "the 0.14.4 review's launcher and package findings fixed".
+
+| Finding | Verdict | Change |
+|---|---|---|
+| Two automatic launcher setups can run at once after a window closes during setup | Accepted, both ends | `8c7a0da`: the closing window ends its setup before any join and holds the folder until then; a per-folder setup lock makes the next window wait. Hidden end-to-end runs `r4`, `r5` [O] |
+| The Release receipt omits new shipped tests | Accepted, widened | `bc56c0d`: 13 fixtures added (298 -> 311), four of them missing since before 0.14.4; a registered test that is neither run nor excluded by name is refused. Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` [O] |
+| "The tag holds the same source" is inexact | Accepted | `d6da17f`: the tag holds the same code, apart from the package record in docs/STATUS.md; `build.source_commit` names the commit |
+| The notices say the exe downloads nothing | Accepted | `d6da17f`: its only network access is the update check and, on Update now, the download from this repository's releases |
+| Untracked files could be published in the source zip | Accepted | `c78ed3b`: package.ps1 refuses them by name before writing anything; `source_dirty` counts them |

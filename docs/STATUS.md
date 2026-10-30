@@ -1,3 +1,54 @@
+## October 29, 2026: the 0.14.4 review's launcher and package findings fixed (`wp/launcher-fixes2`, unreleased)
+
+Branch `wp/launcher-fixes2` from `dev/oct7-continue` `01fd055`, in the worktree `D:/mgs-coop-wt/launcher-setup`; not merged, pushed, tagged or released. It fixes the five non-blocking launcher and package findings of the 0.14.4 pre-release review. None changes play, the wire or a lab key. Marks: [O] observed in a run or test named here, [I] inferred from code, [U] not run.
+
+1. **Two automatic setups could run at once after a window closed during setup** (`8c7a0da`). The closing window released the folder (its single-instance mutex) before its model was destroyed. The model then waited for a pending update check (WinHTTP waits up to about a minute on a stalled network) before it ended the setup, so a window opened again at once started a second automatic setup next to the first. Both ends are closed now:
+   - The closing end. `~RealModel` ends the setup first: the real window calls ExitProcess before any join, also for a setup that has just finished but was not yet picked up. `HoldFolderWhileClosing` holds the folder while the phase is `setting_up`, so the process ends while it still owns the mutex.
+   - The next window. `RunSetup` holds a per-folder setup lock (`Local\mgs-coop-setup-<16 hex>`, the play mutex's folder hash). A window whose automatic setup finds it taken waits (`setup=waiting; reason=other_setup`), then looks at the folder again, since the other setup may have finished it. A setup started anyway (Try again, `--write-session`) stops with a sentence (`setup=refused; reason=other_setup`) and changes nothing. This lock goes beyond the review's suggested fix, so the guarantee does not depend on timing or on which program runs the setup.
+   - Failing first [O]: `launcher_ui_tests` 1 failure ("co-op getting ready holds the folder until the setup has ended"), `ddt_core_tests` 12 failures (`TestCloseDuringSetup`: the closed model's setup ran on to `setup=done` and wrote `friend-install.json` while the model waited for a stalled update check; `TestSetupElsewhere`: a second setup started). After the fix: 377 checks / 0 and 1284 / 0.
+   - End to end [O], hidden: the Release receipt's own exe (`0.14.4+c78ed3b`) on a private, never-displayed desktop (CreateDesktop + `lpDesktop`, SW_HIDE, a kill-on-close job with UI limits; the input desktop stayed `Default`). It ran in a fake game folder in the session scratch: a 16 GiB sparse dummy `mgsvtpp.exe` (0 bytes allocated), a copy of `steam_api64.dll`, a dummy loader and `package.json`. The update feed was on 127.0.0.1 and accepted every connection without answering. The setup never passes its game check (the dummy is not the retail exe), so it never looks up Steam or reads a save; afterwards the folder held only those files and the log. Runs `r4` and `r5` (harness `next2/launcher/e2e/e2e-setup.ps1` in the session scratch; evidence `next2/launcher/e2e/runs/<run>`):
+     - While the harness held the folder's setup lock, the window waited 5 s and started no setup (`setup=waiting`). Once the lock was released, it logged `setup=auto` and `setup=start`.
+     - The window was closed 1.5 s into that setup, while it was still hashing and its update check still waited on the stalled feed. The window was gone after 5 ms and the process ended 52-54 ms after WM_CLOSE (`window=closed_during_setup`, no `update=check_failed`). When the window was gone, the process was still alive and still held the folder's single-instance mutex and its setup lock.
+     - A window started 12-13 ms after the close opened only after that end (its `window=open` follows `window=closed_during_setup`). In `r1`, such a window started while the old process was still ending found the folder held and exited without a window.
+     - A window closed outside setup frees the folder at once (the mutex was gone 0.33 s after the close), while its process stays about 27 s until its update check times out (`update=check_failed ... 12002`), as before.
+   - [U] The 0.14.4 exe was not run through the same harness: making its setup run long enough would let it read the real Steam saves. The failing-first tests show the old behaviour. No visible-desktop or two-PC run.
+2. **The Release receipt left out shipped tests** (`bc56c0d`). `Get-WorkerTests` (the receipt's list) grows from 298 to 311:
+   - New: `dog_guard_tests`; the outcome attribution, companion, buddy companion, dog guard, relief and relief sync Lua checks; `launcher_icon_tests`; `ddt_local_watch_process` (the exe's real `--local-watch` helper, hidden, on temp folders).
+   - Missing since 0.13.x / 0.14.3, not only since 0.14.4: `partner_act_log_tests`, `partner_ammo_leak_tests`, `partner_dm_overlay_tests`, `partner_ride_seat_tests`.
+   - `Assert-WorkerInventory` admits the exact arguments of the three that take any.
+   - The new `Assert-WorkerCoverage` refuses a Release inventory test that is neither audited nor excluded by name. The excluded list now also names `ddt_runtime_dat_integration` (reads the game folder), `ddt_launcher_screens` (mock pages in a DX11 window) and `launcher_assets_current` (Python asset check; `launcher_icon_tests` checks the icon the exe embeds).
+   - Failing first [O]: `tests/worker_checks_tests.ps1` stopped at the shipped-module check; it now passes 147 checks.
+   - Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` passed with 311 audited tests (`ctest-results.xml` 311 / 0 failures) [O].
+3. **"The tag holds the same source" was inexact** (`d6da17f`). `tools/package-readme-player.txt`, `THIRD_PARTY_NOTICES.md` and `README.md` now say:
+   - The source zip is the complete source of the two programs.
+   - The tag `v<version>` holds the same code and differs only by the package's record in `docs/STATUS.md`, written after the build.
+   - `package.json` `build.source_commit` names the exact commit.
+   - README.md: the source zip exists from 0.14.4 on; older packages carry `mgs-coop/source.zip`.
+4. **The notices said the exe downloads nothing** (`d6da17f`). `THIRD_PARTY_NOTICES.md` now gives the exe's only network access: the update check against this repository's GitHub release feed and, on Update now, the download of that release's zip (WinHTTP). The setup downloads nothing. The player README has a short NETWORK section with the same facts, and README.md says the same [I: `core_update.cpp` is the only WinHTTP user; the local test's port probe only binds a local socket].
+5. **Untracked files could reach the public source zip** (`c78ed3b`). `tools/package.ps1` lists what git neither tracks nor ignores in the published folders (`git ls-files --others --exclude-standard`, read as UTF-8; the MinHook dependency is left to the receipt; nothing is listed outside a git checkout).
+   - It refuses such a file by name before it creates the dist folder: "Untracked file would be published in the source zip: ...".
+   - `build.source_dirty` counts those files too.
+   - Failing first [O]: `friend_package_tests` (a git fixture of its own) packaged an untracked `tools/notes.txt`. Now it is refused, and untracked code is refused even when the receipt hashed it. A clean tree, a tracked uncommitted file and an untracked `.log` record `source_dirty` false, true and true.
+   - Side effect: `friend_package_tests` (full CTest) now fails while the checkout has an untracked file with a published extension under `native`, `lua`, `tools`, `tests`, `third_party`, `cmake` or `docs`. `git add` it or move it out; the message names it.
+
+**Local package** (a check of the tooling, built and audited only; nothing uploaded; it still says 0.14.4 and must not be released as such). `tools/package.ps1 -Friend -CheckReceipt` with the receipt above, from the clean tree at `c78ed3b`, into the session scratch `next2/launcher/dist/DiamondDogsTogether-0.14.4-20261030T015332Z-d51849d1`:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.4.zip` | 3,080,276 | `75068AEA56D47739D8ADC54604E803BBFFF9CF18A52A2816951EE62FC3EC6732` |
+| `DDT-source-0.14.4.zip` (1,410 source files plus `source-files.json`) | 8,329,914 | `8FB527E3787A7396E073D801C69187A22D28BD07DB869421D6E5917F93776194` |
+| `DiamondDogsTogether.exe` | 2,369,536 | `A0796E3ABE4FD34B10EEC730638D9883A3212B4A8F7F09B65101FCE8C07C9BE9` |
+| `dinput8.dll` | 7,060,992 | `6390E3F31122D5A643C540B45928066A368EC065EC023129EB125607D8CDF32F` |
+
+- **Package audit 54/54** [O]. It covers the 34 checks of the 0.14.4 audit plus:
+  - the corrected README and notice texts;
+  - `build.audited_tests` = 311, with each of the 13 added tests in the receipt;
+  - `source_commit` `c78ed3b`, `source_dirty` false;
+  - every source-zip file tracked by git or the MinHook submodule.
+- **Extras** [O]: build id `0.14.4+c78ed3b` in both programs, and no personal path or e-mail in either zip.
+
+**Checks** [O]: at `c78ed3b`, `pwsh -File tools/build.ps1` (Debug) 317/317, `tests/worker_checks_tests.ps1` 147 checks and `friend_package_tests` passed; `pwsh -File tools/build.ps1 -Fast` 301/301 after the launcher fix (`8c7a0da`).
+
 ## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
 
 **Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T004356Z-a5bd9d1b` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
