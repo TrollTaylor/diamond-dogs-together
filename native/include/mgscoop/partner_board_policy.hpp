@@ -66,6 +66,8 @@ inline constexpr std::uint8_t kBackFirst = 2, kBackLast = 3;
 // Record and player offsets (pinned in tools/generate_partner_contract.py).
 inline constexpr std::size_t kUnitRiders = 0x30;   // u16 rider[seat], 0xFFFF empty
 inline constexpr std::size_t kUnitIndex = 0x78;    // u16 index (id & 0x1FF)
+inline constexpr std::size_t kUnitCategory = 0x6C; // u8: category << 4 | attachment (design 8.34, 8.35)
+inline constexpr std::uint8_t kCategoryUnread = 0xFF;
 inline constexpr std::size_t kQAct = 0x18;         // u16 (*(Q+0x18))[body]
 inline constexpr std::size_t kQVehicle = 0xE0;     // u16 (*(Q+0xE0))[body] (vars.playerVehicleGameObjectId)
 inline constexpr std::size_t kPUnits = 0x120;      // (*(P+0x120))[body] = the ridden unit (0x125AD78)
@@ -236,6 +238,7 @@ struct RemapIn {
     bool policy_one = false;       // the policy about to be published offers seat 1 (front_ok or cab_ok)
     bool local_seat_one = false;   // the local passenger report says seat 1
     bool steer_pending_one = false;
+    bool own_seat_one_stock = false;  // OwnSeatOneStock (design 8.35)
     std::uint64_t last_seat_one_ms = 0, now_ms = 0;
 };
 inline bool RemapWanted(const RemapIn& in) noexcept {
@@ -418,8 +421,11 @@ struct LocalPassenger {
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
     std::uint8_t via = 0;
+    std::uint8_t category = kCategoryUnread;  // this copy's unit+0x6C >> 4 of the vehicle (design 8.35)
     const char* reason = "unread";
 };
+// STUB (red)
+inline bool OwnSeatOneStock(bool, const LocalPassenger&) noexcept { return false; }
 inline bool SameReport(const LocalPassenger& a, const LocalPassenger& b) noexcept {
     return a.valid == b.valid && (!a.valid || (a.vehicle == b.vehicle && a.seat == b.seat));
 }
