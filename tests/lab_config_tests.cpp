@@ -269,10 +269,12 @@ int main() {
                   "the shipped camera mode in lab and play, no trace");
             for (const char* value : {"off", "connect", "drop", "aim"}) {
                 const auto named = Lab(gun + mode + "partner_pass_camera=" + value + "\npartner_pass_camera_trace=1\n");
-                Check(std::strcmp(mgscoop::PartnerPassCameraName(named.partner_pass_camera), value) == 0 && named.partner_pass_camera_given &&
+                // Design 8.26: drop is a lab option (it blocks the seat-2 gun: runs 17fce0b7, 43e5b981); play runs aim.
+                const char* want = !lab && std::strcmp(value, "drop") == 0 ? "aim" : value;
+                Check(std::strcmp(mgscoop::PartnerPassCameraName(named.partner_pass_camera), want) == 0 && named.partner_pass_camera_given &&
                           named.partner_pass_camera_trace == lab && named.invalid_values == 0 && named.unknown_keys == 0 &&
                           named.play_refused == 0,
-                      "a named camera mode runs in lab and play; the trace in the lab only");
+                      "a named camera mode runs in lab and play (drop runs as aim in play); the trace in the lab only");
             }
         }
         for (const char* value : {"", "on", "1", "Aim", "connected"}) {

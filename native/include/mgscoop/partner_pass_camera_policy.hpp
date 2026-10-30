@@ -326,19 +326,34 @@ struct View {
     float off[4]{}, piv[4]{}, sc[2]{};
     std::uint32_t flags = 0, requests = 0;
 };
-// --- The shot guard (modes aim and drop; design 8.25) ----------------------------
+// --- The shot guard (modes aim and drop; design 8.25, review fixes 8.26) ----------------------
 // [O] run 4f1a072f (trace, seats 3 and 2, the handle held or dropped alike): a seated passenger's shot (gun mode 9 / 10)
-// drives the camera's look pitch CAM+0x270 from the aimed value to the top of its range (-1.221 rad, 70 deg up) in
-// about 0.5 s (an exponential approach, also pulling the yaw CAM+0x274 by up to 0.3 rad per shot), and nothing brings
-// it back: the view goes to the sky and stays pitched up after the aim. Its source is not found [U] (not the recoil
-// request vt+0xF8, a random shake; not our handle). The guard keeps the player's own aim: while the passenger aims and
-// does not fire, the look angles are its reference; from the first firing tick until kGuardHoldMs after the last one,
-// a pitch more than kKickUp above (or kKickDown below) the reference, or a yaw more than kKickYaw beside it, is written
-// back to that bound (CAM+0x268 / +0x270 the pitch, +0x26C / +0x274 the yaw, the stock look update's order:
-// 0x111FCB1). Pitch: negative looks up.
+// drives the camera from the aimed pitch to the top of its range (-1.221 rad, 70 deg up) in about 0.5 s, and nothing
+// brings it back: the view goes to the sky and stays pitched up after the aim. Its source is not found [U] (not the
+// recoil request vt+0xF8, a random shake; not our handle). [O] runs 17fce0b7 / 43e5b981: the state the shot moves is the
+// rotation CAM+0x90 (PlayerCamera vt+0x88 0x1120B00 writes it with the look angles; the aim-point solve reads it), a
+// Hamilton quaternion (x, y, z, w): forward = q (0, 0, 1) q*, world yaw = atan2(fx, fz), up-pitch = atan2(fy, |fxz|)
+// (4f1a072f: within 0.2 deg of the aim target ray). While aiming, the look angles CAM+0x270 (pitch, negative looks up)
+// and +0x274 (yaw) are vehicle-relative and follow CAM+0x90 about a tick later (7e79996f). The pull goes up; the yaw
+// moved less than 1 deg per window while the pitch was held (7e79996f).
+// The guard holds only the pull UP, so the player's own yaw, the player's aim down and the vehicle's turn pass:
+//  - reference: while aiming (in the aim module) and not firing, the angle pitch and the world up-pitch of CAM+0x90;
+//  - window: from the first firing tick until kGuardHoldMs after the last one. The angle pitch going down moves its
+//    reference down (the player's aim), and the world reference by as much as the world also went down (a bump of the
+//    vehicle alone moves neither). An angle pitch more than kKickUp above its reference is written back to it
+//    (CAM+0x270 / +0x268); a world up-pitch more than kKickUp above its reference turns CAM+0x90 down about its own
+//    right axis by the excess (q * qx(excess): its yaw and roll stay);
+//  - a window that ends with the hold settles a remaining climb above kSettleUp (no climb from shot to shot);
+//  - nothing is written outside the aim module (vtable kAimModuleVtableRva, CAM+0x340 index 2) or after the aim ends:
+//    an open window closes at once (end=aim_end).
+// [U] The player's own aim UP inside a window cannot be told from the pull without the input path: it is held too.
 inline constexpr std::size_t kCamPitch = 0x270, kCamYaw = 0x274, kCamPitchPrev = 0x268, kCamYawPrev = 0x26C;
-inline constexpr float kKickUp = 0.05f, kKickDown = 0.03f, kKickYaw = 0.035f;
+inline constexpr std::size_t kCamRotation = 0x90;
+inline constexpr float kKickUp = 0.05f, kSettleUp = 0.01f;
 inline constexpr std::uint64_t kGuardHoldMs = 350;
+// The aim camera module (CAM+0xBD0[2] while RMB is held: runs 4f1a072f..06aa3fc6 mvt=0x23d4d20; its CanActivate
+// 0x12BBAE0 reads the gun record's aim bit and the pad's aim button). Pinned in the contract (slots).
+inline constexpr std::uintptr_t kAimModuleVtableRva = 0x23D4D20;
 inline constexpr float kPi = 3.14159265f;
 inline float WrapPi(float a) noexcept {
     while (a > kPi) a -= 2.0f * kPi;
@@ -346,12 +361,6 @@ inline float WrapPi(float a) noexcept {
     return a;
 }
 inline bool GunFires(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 9 || mode == 10); }
-// Run 17fce0b7: with the look angles held the view still swung (the aim target ray went 72 deg up), so the angles are
-// not the state the shot moves. CAM+0x90, the rotation the look update writes with the angles (0x112106E..0x112109C,
-// PlayerCamera vt+0x88) and the aim-point solve reads (0x10970C1), tracked the view in 4f1a072f: the guard also keeps
-// it. Its reference is CAM+0x90 at the last aimed tick; in a window a rotation more than kKickRot from it is written back.
-inline constexpr std::size_t kCamRotation = 0x90;
-inline constexpr float kKickRot = 0.06f;
 inline bool QuatOk(const float* q) noexcept {
     if (!q) return false;
     float n = 0.0f;
@@ -361,100 +370,81 @@ inline bool QuatOk(const float* q) noexcept {
     }
     return n > 0.9f && n < 1.1f;
 }
-// The angle between two rotations (rad, 0..pi; normalized first).
-inline float QuatAngle(const float* a, const float* b) noexcept {
-    const float na = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2] + a[3] * a[3]);
-    const float nb = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]);
-    if (!(na > 0.0f) || !(nb > 0.0f)) return kPi;
-    float d = std::fabs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) / (na * nb);
-    if (d > 1.0f) d = 1.0f;
-    return 2.0f * std::acos(d);
+// The world up-pitch of a camera rotation (rad, positive looks up): forward = q (0, 0, 1) q*.
+inline float UpPitch(const float*) noexcept { return 0.0f; }  // STUB
+// The world yaw of a camera rotation (rad; the body yaw's convention atan2(fx, fz)).
+inline float WorldYaw(const float* q) noexcept {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    return std::atan2(2.0f * (x * z + w * y), 1.0f - 2.0f * (x * x + y * y));
 }
+// q turned down by `down` rad about its own right axis (q * qx(down), normalized): the up-pitch drops by `down`, the yaw
+// and roll stay (exact without roll).
+inline void PitchDown(const float* q, float, float* out) noexcept { for (unsigned i = 0; i < 4; ++i) out[i] = q[i]; }  // STUB
+struct GuardIn {
+    bool on = false;          // mode aim / drop and an armed boarding (the local back-seat passenger)
+    bool aiming = false;      // GunAims
+    bool firing = false;      // GunFires
+    bool aim_module = false;  // the active camera module is the aim camera (kAimModuleVtableRva)
+    bool ang_ok = false;      // the look angles were read
+    float pitch = 0.0f, yaw = 0.0f;  // CAM+0x270 / +0x274
+    const float* rot = nullptr;      // CAM+0x90 (null: unread)
+    std::uint64_t now_ms = 0;
+};
 struct Guard {
     bool ref_ok = false;
-    float ref_pitch = 0.0f, ref_yaw = 0.0f;
-    bool rot_ok = false;
-    float ref_rot[4]{};
-    std::uint32_t rot_writes = 0;
+    float ref_pitch = 0.0f;   // the angle pitch reference (vehicle-relative while aiming)
+    bool up_ok = false;
+    float ref_up = 0.0f;      // the world up-pitch reference of CAM+0x90
+    float open_yaw = 0.0f, last_yaw = 0.0f;  // the angle yaw at the window's open and its last tick
     std::uint64_t last_fire_ms = 0;
-    bool active = false;             // a shot window is open
-    std::uint32_t window_writes = 0;  // writes in the open window
-    float window_max = 0.0f;          // the largest pull away from the reference seen in it (rad)
-    std::uint32_t windows = 0, writes = 0;
+    bool active = false;              // a shot window is open
+    std::uint32_t window_writes = 0;  // ticks with a write in the open window (its settle included)
+    float window_max = 0.0f;          // the largest pull up seen in it (rad)
+    std::uint32_t windows = 0, writes = 0, rot_writes = 0, settles = 0;
 };
 enum class GuardEvent : std::uint8_t { none, open, close };
+enum class GuardEnd : std::uint8_t { none, hold, aim_end };
+inline const char* GuardEndName(GuardEnd e) noexcept { return e == GuardEnd::hold ? "hold" : e == GuardEnd::aim_end ? "aim_end" : "none"; }
 struct GuardOut {
     bool write = false;
-    float pitch = 0.0f, yaw = 0.0f;  // the values to write (write only)
+    float pitch = 0.0f;              // the angle pitch for CAM+0x270 / +0x268 (write only; the yaw is never written)
     bool write_rot = false;
-    float rot[4]{};                  // the rotation to write (write_rot only)
+    float rot[4]{};                  // the rotation for CAM+0x90 (write_rot only)
     GuardEvent event = GuardEvent::none;
+    GuardEnd end = GuardEnd::none;   // close only
+    bool settle = false;             // close only: the hold's close wrote a remaining climb back
 };
-// One tick. `on`: mode aim, an armed boarding, the angles read (ang_ok). Not on: the state resets (a window closes
-// without a line; the counters stay).
-inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_ok, float pitch, float yaw,
-                          std::uint64_t now_ms, const float* rot = nullptr) noexcept {
-    GuardOut o{};
-    const bool rot_now = QuatOk(rot);
-    if (!on || !ang_ok || !std::isfinite(pitch) || !std::isfinite(yaw)) {
-        g.ref_ok = false;
-        g.rot_ok = false;
-        g.last_fire_ms = 0;
-        g.active = false;
-        return o;
+namespace detail {
+// One correction: follows the player's aim down, then writes back a pull up above `bound`. Returns the pull (rad).
+inline float GuardCorrect(Guard& g, const GuardIn& in, bool rot_now, float up_now, float bound, GuardOut& o) noexcept {
+    const float down = in.pitch - g.ref_pitch;  // > 0: the angle went below its reference (pitch negative looks up)
+    if (down > 0.0f) {
+        g.ref_pitch = in.pitch;
+        const float world_down = g.ref_up - up_now;
+        if (g.up_ok && rot_now && world_down > 0.0f) g.ref_up -= world_down < down ? world_down : down;
     }
-    if (firing) g.last_fire_ms = now_ms ? now_ms : 1;
-    const bool window = g.last_fire_ms != 0 && (firing || now_ms < g.last_fire_ms || now_ms - g.last_fire_ms < kGuardHoldMs);
-    if (!window) {
-        if (g.active) {
-            g.active = false;
-            o.event = GuardEvent::close;
-        }
-        g.last_fire_ms = 0;
-        g.ref_ok = aiming;
-        g.rot_ok = aiming && rot_now;
-        if (aiming) { g.ref_pitch = pitch; g.ref_yaw = yaw; }
-        if (g.rot_ok) for (unsigned i = 0; i < 4; ++i) g.ref_rot[i] = rot[i];
-        return o;
-    }
-    if (!g.ref_ok) {
-        // A shot with no aimed tick before it: its first tick is the reference.
-        g.ref_ok = true;
-        g.ref_pitch = pitch;
-        g.ref_yaw = yaw;
-        g.rot_ok = rot_now;
-        if (g.rot_ok) for (unsigned i = 0; i < 4; ++i) g.ref_rot[i] = rot[i];
-    }
-    if (!g.active) {
-        g.active = true;
-        g.window_writes = 0;
-        g.window_max = 0.0f;
-        ++g.windows;
-        o.event = GuardEvent::open;
-    }
-    const float dp = pitch - g.ref_pitch, dy = WrapPi(yaw - g.ref_yaw);
-    const float pull = std::fabs(dp) > std::fabs(dy) ? std::fabs(dp) : std::fabs(dy);
-    if (pull > g.window_max) g.window_max = pull;
-    const float p = dp < -kKickUp ? g.ref_pitch - kKickUp : dp > kKickDown ? g.ref_pitch + kKickDown : pitch;
-    const float y = dy > kKickYaw ? WrapPi(g.ref_yaw + kKickYaw) : dy < -kKickYaw ? WrapPi(g.ref_yaw - kKickYaw) : yaw;
-    if (p != pitch || y != yaw) {
+    // Each state against its own reference: the angles follow CAM+0x90 a tick late, so a rotation turned by the angles'
+    // (late) excess would overshoot down.
+    const float u_ang = g.ref_pitch - in.pitch;
+    const float u_rot = g.up_ok && rot_now ? up_now - g.ref_up : 0.0f;
+    if (u_ang > bound) {
         o.write = true;
-        o.pitch = p;
-        o.yaw = y;
-        ++g.window_writes;
-        ++g.writes;
+        o.pitch = g.ref_pitch;
     }
-    if (g.rot_ok && rot_now) {
-        const float pull_rot = QuatAngle(rot, g.ref_rot);
-        if (pull_rot > g.window_max) g.window_max = pull_rot;
-        if (pull_rot > kKickRot) {
-            o.write_rot = true;
-            for (unsigned i = 0; i < 4; ++i) o.rot[i] = g.ref_rot[i];
-            ++g.rot_writes;
-        }
+    if (g.up_ok && rot_now && u_rot > bound) {
+        o.write_rot = true;
+        PitchDown(in.rot, u_rot, o.rot);
+        ++g.rot_writes;
     }
-    return o;
+    if (o.write || o.write_rot) ++g.writes;
+    return u_ang > u_rot ? u_ang : u_rot;
 }
+} // namespace detail
+// One tick. Not on (another mode, not armed, the angles unread or not finite): the state resets (a window closes without
+// a line; the counters stay).
+inline GuardOut GuardStep(Guard&, const GuardIn&) noexcept { return GuardOut{}; }  // STUB (failing-first)
+// The yaw the open (or last) window moved (rad, wrapped): the player's turn and the vehicle's, which pass.
+inline float WindowYaw(const Guard& g) noexcept { return WrapPi(g.last_yaw - g.open_yaw); }
 
 inline constexpr std::uint64_t kTraceAimMs = 100, kTraceIdleMs = 1000, kTraceAfterMs = 4000;
 inline constexpr unsigned kTraceCap = 1500;

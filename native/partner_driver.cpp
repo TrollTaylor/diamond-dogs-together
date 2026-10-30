@@ -3171,29 +3171,43 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
                     static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
-    // The shot guard (modes aim and drop): the look angles held near the aimed reference from the first firing tick until
-    // kGuardHoldMs after the last one (partner_pass_camera_policy GuardStep).
-    const bool guard_on = armed && pc::Guards(mode) && h.pass_camera_view && h.pass_camera_angles;
+    // The shot guard (modes aim and drop; design 8.25, review fixes 8.26): the pull UP of a seated shot written back from
+    // the first firing tick until kGuardHoldMs after the last one; the yaw and the aim down pass; writes only while the
+    // local passenger aims in the aim camera module (partner_pass_camera_policy GuardStep).
+    const bool guard_on = armed && pc::Guards(mode) && h.pass_camera_view && h.pass_camera_pitch && h.pass_camera_mvt;
     pc::View gv{};
     const bool gv_need = guard_on && (aiming || firing || c.guard.active || c.guard.last_fire_ms != 0);
     const bool gv_ok = gv_need && h.pass_camera_view(h.context, st, gv) && gv.ok;
-    const pc::GuardOut go = pc::GuardStep(c.guard, guard_on && (gv_ok || !gv_need), aiming, firing, gv_ok || !gv_need,
-                                          gv_ok ? gv.ang[2] : 0.0f, gv_ok ? gv.ang[3] : 0.0f, now, gv_ok ? gv.rot : nullptr);
+    const std::uintptr_t guard_mvt = gv_need ? h.pass_camera_mvt(h.context, st) : 0;
+    pc::GuardIn gi{};
+    gi.on = guard_on && (gv_ok || !gv_need);
+    gi.aiming = aiming;
+    gi.firing = firing;
+    gi.aim_module = guard_mvt == pc::kAimModuleVtableRva;
+    gi.ang_ok = gv_ok || !gv_need;
+    gi.pitch = gv_ok ? gv.ang[2] : 0.0f;
+    gi.yaw = gv_ok ? gv.ang[3] : 0.0f;
+    gi.rot = gv_ok ? gv.rot : nullptr;
+    gi.now_ms = now;
+    const pc::GuardOut go = pc::GuardStep(c.guard, gi);
     bool guard_written = false;
-    if (go.write) guard_written = h.pass_camera_angles(h.context, st, go.pitch, go.yaw);
+    if (go.write) guard_written = h.pass_camera_pitch(h.context, st, go.pitch);
     if (go.write_rot && h.pass_camera_rotation) guard_written = h.pass_camera_rotation(h.context, st, go.rot) || guard_written;
+    const auto mrad = [](float a) noexcept {
+        return std::isfinite(a) && a > -2.0e6f && a < 2.0e6f ? static_cast<int>(std::lround(a * 1000.0f)) : INT32_MIN;
+    };
     if (go.event == pc::GuardEvent::open)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                    "partner_ride=pass_camera; state=guard; event=open; vehicle=%u; seat=%u; gun=%u; ref_mrad=%d,%d; now_mrad=%d,%d; windows=%u\r\n",
-                    unsigned(arm.vehicle), unsigned(arm.seat), unsigned(aim_read.gun_state[0]), static_cast<int>(c.guard.ref_pitch * 1000.0f),
-                    static_cast<int>(c.guard.ref_yaw * 1000.0f), gv_ok ? static_cast<int>(gv.ang[2] * 1000.0f) : 0,
-                    gv_ok ? static_cast<int>(gv.ang[3] * 1000.0f) : 0, c.guard.windows);
+                    "partner_ride=pass_camera; state=guard; event=open; vehicle=%u; seat=%u; gun=%u; ref_mrad=%d; up_mrad=%d; now_mrad=%d,%d; "
+                    "windows=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), unsigned(aim_read.gun_state[0]), mrad(c.guard.ref_pitch),
+                    c.guard.up_ok ? mrad(c.guard.ref_up) : INT32_MIN, gv_ok ? mrad(gv.ang[2]) : 0, gv_ok ? mrad(gv.ang[3]) : 0, c.guard.windows);
     else if (go.event == pc::GuardEvent::close)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; writes=%u; max_pull_mrad=%d; total_writes=%u; "
-                    "rot_writes=%u\r\n",
-                    unsigned(arm.vehicle), unsigned(arm.seat), c.guard.window_writes, static_cast<int>(c.guard.window_max * 1000.0f),
-                    c.guard.writes, c.guard.rot_writes);
+                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; end=%s; writes=%u; max_pull_mrad=%d; settle=%u; "
+                    "yaw_mrad=%d; total_writes=%u; rot_writes=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), pc::GuardEndName(go.end), c.guard.window_writes, mrad(c.guard.window_max),
+                    go.settle ? 1u : 0u, mrad(pc::WindowYaw(c.guard)), c.guard.writes, c.guard.rot_writes);
     if (aiming) c.trace_aim_ms = now ? now : 1;
     if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
         c.trace_ms = now ? now : 1;
@@ -3207,14 +3221,15 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         const unsigned long long mvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
         EmitNativeN(h, c.trace_cap, pc::kTraceCap, "partner_pass_camera_trace",
                     "partner_ride=pass_camera; state=trace; ms=%llu; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
-                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
+                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; rot_mrad=%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
                     "f204=0x%x; d38=0x%x; cmode=%d; mvt=0x%llx; gw=%u; off=%d,%d,%d,%d; piv=%d,%d,%d,%d; sc=%d,%d\r\n",
                     static_cast<unsigned long long>(now), unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u,
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
                     cam.ok && cam.connect != 0 ? 1u : 0u, view_ok ? 1u : 0u, cm(v.pos[0] - body[0]), cm(v.pos[1] - body[1]),
                     cm(v.pos[2] - body[2]), cm(body[0]), cm(body[1]), cm(body[2]),
                     aim_read.body_ok[0] ? static_cast<int>(aim_read.body_yaw[0] * 5729.578f) : INT32_MIN, milli(v.ang[0]), milli(v.ang[1]),
-                    milli(v.ang[2]), milli(v.ang[3]), cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
+                    milli(v.ang[2]), milli(v.ang[3]), view_ok && pc::QuatOk(v.rot) ? milli(pc::UpPitch(v.rot)) : INT32_MIN,
+                    view_ok && pc::QuatOk(v.rot) ? milli(pc::WorldYaw(v.rot)) : INT32_MIN, cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
                     cm(apt[2] - v.pos[2]), aim_read.rate_ok[0] ? milli(aim_read.r5c[0]) : INT32_MIN,
                     aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode, mvt, guard_written ? 1u : 0u,
                     milli(v.off[0]), milli(v.off[1]), milli(v.off[2]), milli(v.off[3]), milli(v.piv[0]), milli(v.piv[1]), milli(v.piv[2]),

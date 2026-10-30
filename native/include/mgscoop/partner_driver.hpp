@@ -441,12 +441,12 @@ struct Hooks {
     // mode override (partner_pass_camera::Override: -1 none). Either may be null (no trace; no override).
     bool (*pass_camera_view)(void* context, const partner_player::State& state, partner_pass_camera::View& out) noexcept = nullptr;
     int (*pass_camera_override)(void* context) noexcept = nullptr;
-    // The shot guard's write of the local camera's look pitch / yaw (partner_pass_camera::WriteAngles; a fault counts in
-    // the stats and latches the mission) and the trace's current module vtable rva (ModeVtable). May be null (no guard;
-    // mvt=0).
-    bool (*pass_camera_angles)(void* context, const partner_player::State& state, float pitch, float yaw) noexcept = nullptr;
+    // The shot guard's write of the local camera's look pitch (partner_pass_camera::WritePitch; a fault counts in the
+    // stats and latches the mission) and the current module's vtable rva (ModeVtable: the guard writes only under the aim
+    // module, design 8.26; the trace's mvt). May be null (no guard; mvt=0).
+    bool (*pass_camera_pitch)(void* context, const partner_player::State& state, float pitch) noexcept = nullptr;
     std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
-    // The shot guard's rotation hold (partner_pass_camera::WriteRotation). May be null (the angles only).
+    // The shot guard's rotation write (partner_pass_camera::WriteRotation). May be null (the pitch only).
     bool (*pass_camera_rotation)(void* context, const partner_player::State& state, const float (&rot)[4]) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe

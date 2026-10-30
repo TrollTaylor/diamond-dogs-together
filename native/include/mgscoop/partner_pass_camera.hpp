@@ -58,11 +58,12 @@ bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
 // The current mode's module vtable rva (CAM+0xBD0[CAM+0x340]; 0 when unread): the trace's mvt.
 std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
 
-// Design 8.25, the shot guard (mode aim): writes the local camera's look pitch to CAM+0x268 / +0x270 and its yaw to
-// CAM+0x26C / +0x274 (the stock look update's order). Only to the PlayerCamera (vtable checked), under SEH; false on a
-// fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in Stats::angles.
-bool WriteAngles(const void* base, std::uintptr_t P, float pitch, float yaw) noexcept;
-// The shot guard's rotation hold: writes CAM+0x90..0x9C (x, y, z, w). Same checks and counters as WriteAngles.
+// Design 8.25 / 8.26, the shot guard (modes aim and drop): writes the local camera's look pitch to CAM+0x270 and its
+// copy +0x268 (the stock look update's order; the yaw is never written). Only to the PlayerCamera (vtable checked), under
+// SEH; false on a fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in
+// Stats::angles.
+bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept;
+// The shot guard's rotation write: CAM+0x90..0x9C (x, y, z, w). Same checks and counters as WritePitch.
 bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept;
 
 // The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode

@@ -378,91 +378,203 @@ void TestAimStep() {
     Check(o.want && o.event == pc::AimEvent::none && !ka.dropped, "aim: the handle stays while aiming");
 }
 
-// The shot guard (run 4f1a072f: a seated shot pulls the look pitch from 0.087 to -1.221 rad within 0.5 s).
+// The camera rotation for a world yaw and up-pitch (no roll): qy(yaw) * qx(-up), the convention CAM+0x90 follows
+// (4f1a072f: forward = q (0, 0, 1) q*, yaw = atan2(fx, fz), up = atan2(fy, |fxz|)).
+struct Rot {
+    float q[4];
+};
+Rot Look(float yaw, float up) {
+    const float sy = std::sin(0.5f * yaw), cy = std::cos(0.5f * yaw), sx = std::sin(-0.5f * up), cx = std::cos(-0.5f * up);
+    return Rot{{cy * sx, sy * cx, -sy * sx, cy * cx}};
+}
+bool Near(float a, float b, float eps = 1e-3f) { return std::fabs(a - b) < eps; }
+pc::GuardIn Tick(bool aiming, bool firing, float pitch, float yaw, const Rot* r, std::uint64_t now, bool module = true) {
+    pc::GuardIn in{};
+    in.on = true;
+    in.aiming = aiming;
+    in.firing = firing;
+    in.aim_module = module;
+    in.ang_ok = true;
+    in.pitch = pitch;
+    in.yaw = yaw;
+    in.rot = r ? r->q : nullptr;
+    in.now_ms = now;
+    return in;
+}
+
+// The rotation math against run 4f1a072f's trace (CAM+0x90 next to the aim target ray and the body yaw).
+void TestGuardMath() {
+    const float seated[4] = {0.003f, -0.854f, 0.004f, 0.519f};    // seat 3 seated, the body yaw -117.36 deg
+    const float aimed[4] = {-0.018f, 0.851f, -0.040f, -0.521f};   // seat 3 aiming, the target ray -117.0 deg, 5.0 deg down
+    Check(Near(pc::WorldYaw(seated), -2.0484f, 0.01f) && Near(pc::UpPitch(seated), 0.0f, 0.02f), "4f1a072f seated: yaw -117.4 deg, level");
+    Check(Near(pc::WorldYaw(aimed), -2.0423f, 0.01f) && Near(pc::UpPitch(aimed), -0.0873f, 0.01f), "4f1a072f aiming: yaw -117.0 deg, 5 deg down");
+    const Rot l = Look(1.2f, 0.3f);
+    Check(pc::QuatOk(l.q) && Near(pc::WorldYaw(l.q), 1.2f) && Near(pc::UpPitch(l.q), 0.3f), "Look(): yaw and up-pitch round trip");
+    float out[4]{};
+    pc::PitchDown(l.q, 0.25f, out);
+    Check(pc::QuatOk(out) && Near(pc::UpPitch(out), 0.05f) && Near(pc::WorldYaw(out), 1.2f), "PitchDown: the pitch drops, the yaw stays");
+    pc::PitchDown(l.q, -0.2f, out);
+    Check(Near(pc::UpPitch(out), 0.5f) && Near(pc::WorldYaw(out), 1.2f), "a negative turn raises it");
+    pc::PitchDown(aimed, 0.1f, out);
+    Check(Near(pc::UpPitch(out), -0.1873f, 0.01f) && Near(pc::WorldYaw(out), pc::WorldYaw(aimed), 0.01f), "the measured rotation with its small roll");
+    const float zero[4] = {0, 0, 0, 0}, nanq[4] = {std::nanf(""), 0, 0, 1};
+    Check(!pc::QuatOk(zero) && !pc::QuatOk(nanq) && !pc::QuatOk(nullptr), "a zero, NaN or missing rotation is not one");
+}
+
+// The shot guard (run 4f1a072f: a seated shot pulls the camera from the aimed pitch to 70 deg up within 0.5 s; review
+// fixes 8.26: only the pull up is held, the yaw and the aim down pass, nothing outside the aim, no climb).
 void TestGuard() {
     pc::Guard g{};
-    // Aiming, not firing: the reference follows the player's own aim; nothing is written.
-    pc::GuardOut o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1000);
-    Check(!o.write && o.event == pc::GuardEvent::none && g.ref_ok && g.ref_pitch == 0.087f && g.ref_yaw == 1.576f, "aimed: the reference");
-    o = pc::GuardStep(g, true, true, false, true, 0.10f, 1.60f, 1050);
-    Check(!o.write && g.ref_pitch == 0.10f && g.ref_yaw == 1.60f, "the player's own turn moves the reference");
-    // The shot: a window opens; a small kick stays, the pull up is written back to the bound.
-    o = pc::GuardStep(g, true, true, true, true, 0.08f, 1.61f, 1100);
-    Check(!o.write && o.event == pc::GuardEvent::open && g.active && g.windows == 1, "the shot opens a window; a 1 deg kick stays");
-    o = pc::GuardStep(g, true, true, true, true, -0.331f, 1.62f, 1200);
-    Check(o.write && std::fabs(o.pitch - (0.10f - pc::kKickUp)) < 1e-6f && o.yaw == 1.62f, "the pull up is held at kKickUp");
-    o = pc::GuardStep(g, true, true, true, true, 0.20f, 1.70f, 1250);
-    Check(o.write && std::fabs(o.pitch - (0.10f + pc::kKickDown)) < 1e-6f && std::fabs(o.yaw - (1.60f + pc::kKickYaw)) < 1e-6f,
-          "a pull down and sideways are held too");
-    o = pc::GuardStep(g, true, true, true, true, 0.10f, 1.40f, 1260);
-    Check(o.write && std::fabs(o.yaw - (1.60f - pc::kKickYaw)) < 1e-6f && g.ref_pitch == 0.10f, "the reference stays during the window");
-    // Between shots (aiming, not firing) inside the hold: still held, the reference unchanged.
-    o = pc::GuardStep(g, true, true, false, true, -0.9f, 1.60f, 1260 + pc::kGuardHoldMs - 1);
-    Check(o.write && g.active && g.ref_pitch == 0.10f, "within kGuardHoldMs after the last shot: still held");
-    // The hold over: the window closes, the reference follows again.
-    o = pc::GuardStep(g, true, true, false, true, 0.05f, 1.60f, 1260 + pc::kGuardHoldMs);
-    Check(!o.write && o.event == pc::GuardEvent::close && !g.active && g.ref_pitch == 0.05f && g.window_writes == 4 &&
-              std::fabs(g.window_max - 1.0f) < 1e-5f && g.writes == 4,
-          "the window closes with its writes and largest pull");
-    // A shot with no aimed tick before it: its first tick is the reference.
-    pc::Guard f{};
-    o = pc::GuardStep(f, true, false, true, true, 0.3f, -2.0f, 5000);
-    Check(!o.write && o.event == pc::GuardEvent::open && f.ref_pitch == 0.3f && f.ref_yaw == -2.0f, "a first-tick reference");
-    // The yaw wraps at +-pi.
-    o = pc::GuardStep(f, true, true, true, true, 0.3f, 3.0f, 5050);
-    Check(o.write && std::fabs(o.yaw - (-2.0f - pc::kKickYaw)) < 1e-5f, "-2.0 to 3.0 rad is 1.28 rad the short way round: held");
-    pc::Guard w{};
-    pc::GuardStep(w, true, true, false, true, 0.0f, 3.12f, 6000);
-    o = pc::GuardStep(w, true, true, true, true, 0.0f, -3.13f, 6050);
-    Check(!o.write, "3.12 to -3.13 rad is 0.03 rad across the wrap: a kick");
-    o = pc::GuardStep(w, true, true, true, true, 0.0f, -3.0f, 6100);
-    Check(o.write && std::fabs(o.yaw - pc::WrapPi(3.12f + pc::kKickYaw)) < 1e-5f, "past the wrap: held at the bound, wrapped");
-    // Off (another mode, the get-off, an unread camera): the state resets, nothing is written.
-    o = pc::GuardStep(w, false, true, true, true, 1.0f, 1.0f, 6200);
-    Check(!o.write && !w.active && !w.ref_ok && w.last_fire_ms == 0, "off: reset");
-    o = pc::GuardStep(w, true, true, true, false, 1.0f, 1.0f, 6300);
-    Check(!o.write && !w.ref_ok, "unread angles: nothing");
-    o = pc::GuardStep(w, true, true, true, true, std::nanf(""), 1.0f, 6400);
-    Check(!o.write && !w.ref_ok, "a NaN angle: nothing");
+    Rot r = Look(1.0f, -0.05f);
+    // Aiming, not firing: the references follow the player's own aim; nothing is written.
+    pc::GuardOut o = pc::GuardStep(g, Tick(true, false, 0.05f, 1.57f, &r, 1000));
+    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::none && g.ref_ok && g.ref_pitch == 0.05f && g.up_ok &&
+              Near(g.ref_up, -0.05f),
+          "aimed: the references (angle pitch, world up-pitch)");
+    r = Look(1.1f, -0.10f);
+    o = pc::GuardStep(g, Tick(true, false, 0.10f, 1.67f, &r, 1050));
+    Check(!o.write && g.ref_pitch == 0.10f && Near(g.ref_up, -0.10f), "the player's own aim moves the references");
+    // The shot: a window opens; a small kick stays.
+    r = Look(1.1f, -0.08f);
+    o = pc::GuardStep(g, Tick(true, true, 0.08f, 1.67f, &r, 1100));
+    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::open && g.active && g.windows == 1, "the shot opens a window; a 1 deg kick stays");
+    // The pull up (the angle and the rotation): both written back, the rotation keeps its yaw.
+    r = Look(1.12f, 0.25f);
+    o = pc::GuardStep(g, Tick(true, true, -0.25f, 1.69f, &r, 1150));
+    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.12f),
+          "the pull up: the angle pitch to its reference, CAM+0x90 turned down to its reference, its yaw kept");
+    Check(g.window_writes == 1 && g.rot_writes == 1 && Near(g.window_max, 0.35f), "counted, the pull measured");
+    // F1: the player's own yaw passes inside the window (no yaw is ever written).
+    r = Look(1.6f, -0.10f);
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1200));
+    Check(!o.write && !o.write_rot, "a mouse turn of 0.5 rad inside the window: nothing written");
+    // F2: the vehicle turns while the pull goes up: the written rotation has the current yaw, not the window's first.
+    r = Look(1.9f, 0.20f);
+    o = pc::GuardStep(g, Tick(true, true, -0.20f, 2.17f, &r, 1250));
+    Check(o.write_rot && Near(pc::WorldYaw(o.rot), 1.9f) && Near(pc::UpPitch(o.rot), -0.10f), "a turning vehicle: the yaw follows, the pitch is held");
+    // F1: the player's aim down passes and moves both references down; the pull up from there is held at the new aim.
+    r = Look(1.9f, -0.30f);
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1300));
+    Check(!o.write && !o.write_rot && g.ref_pitch == 0.30f && Near(g.ref_up, -0.30f), "aim down: passes, the references follow");
+    r = Look(1.9f, -0.10f);
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1350));
+    Check(o.write && o.pitch == 0.30f && o.write_rot && Near(pc::UpPitch(o.rot), -0.30f), "the pull up from the lower aim is held there");
+    // A bump of the vehicle alone (the world pitch down, the angle unchanged) moves no reference: no ratchet.
+    r = Look(1.9f, -0.40f);
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1400));
+    Check(!o.write && !o.write_rot && g.ref_pitch == 0.30f && Near(g.ref_up, -0.30f), "a bump down: the references stay");
+    r = Look(1.9f, -0.30f);
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1450));
+    Check(!o.write && !o.write_rot, "back from the bump: nothing written");
+    // The vehicle noses up (the world pitch up, the angle unchanged): CAM+0x90 turned down once; the angle then reads
+    // the drop (followed), the world stays at its reference: no runaway.
+    r = Look(1.9f, -0.20f);
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1500));
+    Check(o.write_rot && !o.write && Near(pc::UpPitch(o.rot), -0.30f), "nose up: the world pitch held");
+    const std::uint32_t rot_before = g.rot_writes;
+    for (std::uint64_t t = 1550; t <= 1700; t += 50) {
+        r = Look(1.9f, -0.30f);
+        o = pc::GuardStep(g, Tick(true, true, 0.40f, 2.17f, &r, t));
+        Check(!o.write && !o.write_rot, "nose up, the next ticks: nothing more");
+    }
+    Check(g.rot_writes == rot_before && g.ref_pitch == 0.40f && Near(g.ref_up, -0.30f), "no runaway: the world reference stayed");
+    // Between shots (aiming, not firing) inside the hold: still held. The window's last tick sits 0.03 rad above
+    // (under kKickUp): the hold's close settles it back (F4: no climb from shot to shot).
+    r = Look(1.9f, -0.27f);
+    o = pc::GuardStep(g, Tick(true, false, 0.37f, 2.20f, &r, 1700 + pc::kGuardHoldMs - 1));
+    Check(!o.write && !o.write_rot && g.active, "within kGuardHoldMs after the last shot: the window is open, 0.03 rad stays");
+    o = pc::GuardStep(g, Tick(true, false, 0.37f, 2.20f, &r, 1700 + pc::kGuardHoldMs));
+    Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::hold && o.settle && o.write && o.pitch == 0.40f && o.write_rot &&
+              Near(pc::UpPitch(o.rot), -0.30f) && !g.active && g.settles == 1,
+          "the hold's close settles the remaining climb");
+    Check(Near(pc::WindowYaw(g), 0.53f) && g.ref_pitch == 0.40f && Near(g.ref_up, -0.30f), "the close's yaw moved, the settled references");
+    // The next aimed tick: the references follow the player again.
+    r = Look(1.9f, -0.31f);
+    o = pc::GuardStep(g, Tick(true, false, 0.41f, 2.20f, &r, 2200));
+    Check(!o.write && g.ref_pitch == 0.41f && Near(g.ref_up, -0.31f) && o.event == pc::GuardEvent::none, "after the window: follows again");
     Check(pc::GunFires(true, 9) && pc::GunFires(true, 10) && !pc::GunFires(true, 7) && !pc::GunFires(false, 9), "firing is gun mode 9 / 10");
-    Check(pc::kKickUp <= 0.06f && pc::kKickYaw <= 0.04f && pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600,
+    Check(pc::kKickUp <= 0.06f && pc::kSettleUp < pc::kKickUp && pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600,
           "at most about 3 deg of kick, a hold shorter than a shot cycle");
 }
 
-// The rotation hold (run 17fce0b7: the angles held, the view still swung; CAM+0x90 tracks the view).
-void TestGuardRotation() {
-    const float aimed[4] = {0.0f, 0.852f, 0.0f, -0.5235f};   // ~unit
-    const float up[4] = {0.296f, 0.708f, 0.459f, -0.445f};   // the swung view of 4f1a072f (~unit)
-    const float kick[4] = {0.01f, 0.852f, 0.01f, -0.5235f};  // ~1.6 deg away
-    Check(pc::QuatOk(aimed) && pc::QuatOk(up) && !pc::QuatOk(nullptr), "unit rotations");
-    const float zero[4] = {0, 0, 0, 0}, nanq[4] = {std::nanf(""), 0, 0, 1};
-    Check(!pc::QuatOk(zero) && !pc::QuatOk(nanq), "a zero or NaN rotation is not one");
-    Check(pc::QuatAngle(aimed, aimed) < 1e-3f && pc::QuatAngle(aimed, up) > 1.0f && pc::QuatAngle(aimed, kick) < pc::kKickRot,
-          "rotation distances");
+// F4: shot after shot, each window ending a little above the aim: no climb.
+void TestGuardNoClimb() {
     pc::Guard g{};
-    pc::GuardOut o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1000, aimed);
-    Check(!o.write && !o.write_rot && g.rot_ok && g.ref_rot[1] == aimed[1], "aimed: the rotation reference");
-    o = pc::GuardStep(g, true, true, true, true, 0.087f, 1.576f, 1100, kick);
-    Check(o.event == pc::GuardEvent::open && !o.write_rot, "a small kick of the rotation stays");
-    o = pc::GuardStep(g, true, true, true, true, 0.087f, 1.576f, 1200, up);
-    Check(!o.write && o.write_rot && o.rot[1] == aimed[1] && o.rot[3] == aimed[3] && g.rot_writes == 1,
-          "the swung rotation is written back to the reference while the angles stay");
-    Check(g.window_max > 1.0f, "the pull counts the rotation");
-    o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1200 + pc::kGuardHoldMs, up);
-    Check(o.event == pc::GuardEvent::close && !o.write_rot && g.ref_rot[0] == up[0], "after the window the reference follows again");
-    // No rotation read: the angles alone, as before.
-    pc::Guard n{};
-    pc::GuardStep(n, true, true, false, true, 0.0f, 0.0f, 1000);
-    o = pc::GuardStep(n, true, true, true, true, -1.0f, 0.0f, 1100);
-    Check(o.write && !o.write_rot && !n.rot_ok, "without the rotation: the angles only");
-    // A shot with no aimed tick: its first rotation is the reference.
+    Rot r = Look(0.5f, -0.05f);
+    pc::GuardStep(g, Tick(true, false, 0.05f, 1.57f, &r, 1000));
+    std::uint64_t t = 1000;
+    for (int shot = 0; shot < 10; ++shot) {
+        t += 100;
+        Rot up = Look(0.5f, 0.20f);
+        pc::GuardOut o = pc::GuardStep(g, Tick(true, true, -0.20f, 1.57f, &up, t));
+        Check(o.write && o.pitch == 0.05f && o.write_rot && Near(pc::UpPitch(o.rot), -0.05f), "each shot's pull held at the first aim");
+        // The window ends 0.04 rad above the aim (under kKickUp, over kSettleUp).
+        Rot left = Look(0.5f, -0.01f);
+        o = pc::GuardStep(g, Tick(true, false, 0.01f, 1.57f, &left, t + 50));
+        Check(!o.write && !o.write_rot, "0.04 rad inside the hold stays");
+        t += 50 + pc::kGuardHoldMs;
+        o = pc::GuardStep(g, Tick(true, false, 0.01f, 1.57f, &left, t));
+        Check(o.event == pc::GuardEvent::close && o.settle && o.pitch == 0.05f && Near(pc::UpPitch(o.rot), -0.05f), "settled at the close");
+        // The game now shows the settled values.
+        Rot settled = Look(0.5f, -0.05f);
+        t += 100;
+        o = pc::GuardStep(g, Tick(true, false, 0.05f, 1.57f, &settled, t));
+    }
+    Check(g.windows == 10 && g.settles == 10 && g.ref_pitch == 0.05f && Near(g.ref_up, -0.05f), "ten shots: the reference never climbed");
+}
+
+// F3: nothing outside the aim camera; an aim end closes the window at once, without a write.
+void TestGuardAimGate() {
+    pc::Guard g{};
+    Rot r = Look(0.0f, 0.0f), up = Look(0.0f, 0.5f);
+    pc::GuardOut o = pc::GuardStep(g, Tick(true, true, -0.5f, 0.0f, &up, 1000, false));
+    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::none && !g.active && g.windows == 0, "firing outside the aim module: nothing");
+    o = pc::GuardStep(g, Tick(false, true, -0.5f, 0.0f, &up, 1050));
+    Check(!o.write && !o.write_rot && !g.active, "firing but not aiming: nothing");
+    pc::GuardStep(g, Tick(true, false, 0.0f, 0.0f, &r, 1100));
+    o = pc::GuardStep(g, Tick(true, true, 0.0f, 0.0f, &r, 1150));
+    Check(o.event == pc::GuardEvent::open && g.active, "a window opens in the aim module");
+    // The aim ends (RMB released, the gun out of the fire modes) with the view pulled: closed now, nothing written.
+    o = pc::GuardStep(g, Tick(false, false, -0.5f, 0.0f, &up, 1200));
+    Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::aim_end && !o.write && !o.write_rot && !o.settle && !g.active &&
+              !g.ref_ok && g.last_fire_ms == 0,
+          "the aim end closes the window without a write");
+    // The module leaves the aim camera inside a window (the seated fallback, the stock VehicleCamera): the same.
+    pc::GuardStep(g, Tick(true, false, 0.0f, 0.0f, &r, 1300));
+    pc::GuardStep(g, Tick(true, true, 0.0f, 0.0f, &r, 1350));
+    o = pc::GuardStep(g, Tick(true, true, -0.5f, 0.0f, &up, 1400, false));
+    Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::aim_end && !o.write && !o.write_rot, "the module left the aim camera: closed");
+    o = pc::GuardStep(g, Tick(true, true, -0.5f, 0.0f, &up, 1450, false));
+    Check(o.event == pc::GuardEvent::none && !o.write && !o.write_rot, "and nothing after it");
+    Check(Same(pc::GuardEndName(pc::GuardEnd::hold), "hold") && Same(pc::GuardEndName(pc::GuardEnd::aim_end), "aim_end"), "end names");
+}
+
+// The rest: the first-tick reference, an unread rotation, off / unread / NaN.
+void TestGuardEdges() {
     pc::Guard f{};
-    o = pc::GuardStep(f, true, false, true, true, 0.0f, 0.0f, 5000, up);
-    Check(f.rot_ok && f.ref_rot[0] == up[0] && !o.write_rot, "a first-tick rotation reference");
-    // Off resets the rotation reference.
-    pc::GuardStep(f, false, true, true, true, 0.0f, 0.0f, 5100, up);
-    Check(!f.rot_ok, "off: the rotation reference reset");
-    Check(pc::kCamRotation == 0x90 && c::pass_cam_rotation == pc::kCamRotation && pc::kKickRot <= 0.07f, "the rotation offset and kick");
+    Rot r = Look(-2.0f, 0.1f);
+    pc::GuardOut o = pc::GuardStep(f, Tick(true, true, -0.1f, -2.0f, &r, 5000));
+    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::open && f.ref_pitch == -0.1f && Near(f.ref_up, 0.1f),
+          "a shot with no aimed tick: its first tick is the reference");
+    pc::Guard n{};
+    pc::GuardStep(n, Tick(true, false, 0.0f, 0.0f, nullptr, 1000));
+    o = pc::GuardStep(n, Tick(true, true, -1.0f, 0.0f, nullptr, 1100));
+    Check(o.write && o.pitch == 0.0f && !o.write_rot && !n.up_ok, "without the rotation: the angle pitch only");
+    o = pc::GuardStep(n, Tick(true, true, -1.0f, 0.0f, &r, 1150));
+    Check(o.write && !o.write_rot, "a rotation read only later in the window: no world reference for it");
+    pc::GuardIn off = Tick(true, true, 1.0f, 1.0f, &r, 6200);
+    off.on = false;
+    o = pc::GuardStep(n, off);
+    Check(!o.write && !o.write_rot && !n.active && !n.ref_ok && n.last_fire_ms == 0 && o.event == pc::GuardEvent::none, "off: reset, no line");
+    pc::GuardIn unread = Tick(true, true, 1.0f, 1.0f, &r, 6300);
+    unread.ang_ok = false;
+    o = pc::GuardStep(n, unread);
+    Check(!o.write && !n.ref_ok, "unread angles: nothing");
+    o = pc::GuardStep(n, Tick(true, true, std::nanf(""), 1.0f, &r, 6400));
+    Check(!o.write && !n.ref_ok, "a NaN angle: nothing");
+    Check(pc::kCamRotation == 0x90 && c::pass_cam_rotation == pc::kCamRotation && pc::kAimModuleVtableRva == 0x23D4D20 &&
+              c::pass_cam_aim_module_vtable_rva == pc::kAimModuleVtableRva,
+          "the rotation offset and the aim module's vtable match the contract");
 }
 
 void TestTraceDue() {
@@ -524,12 +636,14 @@ void TestReadViewAndLever() {
     pc::detail::ResetForTest();
 }
 
-void TestWriteAnglesAndModeVtable() {
+void TestWritePitchAndModeVtable() {
     pc::detail::ResetForTest();
     Chain k;
-    Check(pc::WriteAngles(k.Base(), k.P(), -0.05f, 1.6f) && k.Get<float>(pc::kCamPitch) == -0.05f && k.Get<float>(pc::kCamPitchPrev) == -0.05f &&
-              k.Get<float>(pc::kCamYaw) == 1.6f && k.Get<float>(pc::kCamYawPrev) == 1.6f,
-          "the guard writes the pitch to +0x270 / +0x268 and the yaw to +0x274 / +0x26C");
+    Chain::Put<float>(k.cam, pc::kCamYaw, 1.6f);
+    Chain::Put<float>(k.cam, pc::kCamYawPrev, 1.5f);
+    Check(pc::WritePitch(k.Base(), k.P(), -0.05f) && k.Get<float>(pc::kCamPitch) == -0.05f && k.Get<float>(pc::kCamPitchPrev) == -0.05f &&
+              k.Get<float>(pc::kCamYaw) == 1.6f && k.Get<float>(pc::kCamYawPrev) == 1.5f,
+          "the guard writes the pitch to +0x270 / +0x268 and never the yaw (+0x274 / +0x26C, design 8.26)");
     Check(pc::kCamPitch == 0x270 && pc::kCamYaw == 0x274 && pc::kCamPitchPrev == 0x268 && pc::kCamYawPrev == 0x26C &&
               c::pass_cam_pitch == pc::kCamPitch && c::pass_cam_yaw == pc::kCamYaw && c::pass_cam_eye == pc::kCamPos,
           "the look-angle offsets match the contract");
@@ -550,7 +664,7 @@ void TestWriteAnglesAndModeVtable() {
     // Not a PlayerCamera: nothing written.
     Chain::Put<float>(k.cam, pc::kCamPitch, 0.5f);
     Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
-    Check(!pc::WriteAngles(k.Base(), k.P(), 0.0f, 0.0f) && k.Get<float>(pc::kCamPitch) == 0.5f, "not a PlayerCamera: nothing written");
+    Check(!pc::WritePitch(k.Base(), k.P(), 0.0f) && k.Get<float>(pc::kCamPitch) == 0.5f, "not a PlayerCamera: nothing written");
     {
         // A camera page that faults on write: counted as a fault (the driver latches the mission).
         SYSTEM_INFO si{};
@@ -562,7 +676,7 @@ void TestWriteAnglesAndModeVtable() {
         Chain::Put<std::uintptr_t>(page, 0, Chain::kBase + c::cam_vtable_rva);
         DWORD old = 0;
         Check(VirtualProtect(page, si.dwPageSize, PAGE_READONLY, &old) != 0, "read-only camera page");
-        Check(!pc::WriteAngles(reinterpret_cast<const void*>(Chain::kBase), reinterpret_cast<std::uintptr_t>(player), 0.0f, 0.0f),
+        Check(!pc::WritePitch(reinterpret_cast<const void*>(Chain::kBase), reinterpret_cast<std::uintptr_t>(player), 0.0f),
               "a faulting angle write reports false");
         pc::ReadStats(st);
         Check(st.faults == 1 && st.angles == 2, "the fault is counted");
@@ -656,11 +770,14 @@ int main() {
     TestReadCamera();
     TestModeAndAim();
     TestAimStep();
+    TestGuardMath();
     TestGuard();
-    TestGuardRotation();
+    TestGuardNoClimb();
+    TestGuardAimGate();
+    TestGuardEdges();
     TestTraceDue();
     TestReadViewAndLever();
-    TestWriteAnglesAndModeVtable();
+    TestWritePitchAndModeVtable();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

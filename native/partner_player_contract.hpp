@@ -452,6 +452,8 @@ inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_c
 // Design 8.25: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot
 // guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.
 inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;
+// Design 8.26: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.
+inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;
 // The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).
 inline constexpr std::uintptr_t pass_camera_blocks[]={0x12d0f60,0x12d1eb0,0x12d1f7e,0x12d1fca,0x12d20a9,0x12d0f02,0x11194b6,0x1119503,0x124cd38,0x1121d8f,0x111fcb1,0x109705c,0x112106e};
 // --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------
@@ -1522,6 +1524,8 @@ inline constexpr Slot vtable_slots[]={
     {0x23b8250,0x50,0x1111c50}, // PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])
     {0x23b8250,0xa8,0x1121d30}, // PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)
     {0x23b8250,0xf0,0x111f830}, // PlayerCamera vt+0xF0 = the look-at update (writes the look angles CAM+0x268..0x274)
+    {0x23d4d20,0x18,0x12bbae0}, // aim camera module vt+0x18 = CanActivate (the gun record aim bit, the pad aim button)
+    {0x23d4d20,0x20,0x12bd4d0}, // aim camera module vt+0x20 = update
     {0x22e8f00,0x18,0xafcce0}, // padop vt+0x18 = the icon builder (local id only)
     {0x22e8f00,0x28,0xafd870}, // padop vt+0x28 = IsCompletedActionIcon (the copy forwards every non-body-1 query here)
     {0x22e8f00,0x50,0xb02480}, // padop vt+0x50 = force-complete (the copy forwards outside the drain scope)

@@ -1635,6 +1635,9 @@ SLOTS += [
     (0x23B8250, 0x50, 0x1111C50, 'PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])'),
     (0x23B8250, 0xA8, 0x1121D30, 'PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)'),
     (0x23B8250, 0xF0, 0x111F830, 'PlayerCamera vt+0xF0 = the look-at update (writes the look angles CAM+0x268..0x274)'),
+    # Design 8.26: the shot guard writes only while this module (the aim camera, CAM+0x340 index 2) is active.
+    (0x23D4D20, 0x18, 0x12BBAE0, 'aim camera module vt+0x18 = CanActivate (the gun record aim bit, the pad aim button)'),
+    (0x23D4D20, 0x20, 0x12BD4D0, 'aim camera module vt+0x20 = update'),
 ]
 # F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
 # per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
@@ -3538,6 +3541,8 @@ w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pas
 w('// Design 8.25: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot')
 w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.')
 w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
+w('// Design 8.26: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.')
+w('inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')

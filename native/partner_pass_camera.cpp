@@ -27,6 +27,7 @@ static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c:
                   c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev &&
                   c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
               "the look angles and the eye (design 8.25)");
+static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.26)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;
@@ -203,14 +204,12 @@ std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept {
     return vt - b;
 }
 
-bool WriteAngles(const void* base, std::uintptr_t P, float pitch, float yaw) noexcept {
+bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept {
     const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
     if (!cam) return false;
     __try {
         *reinterpret_cast<volatile float*>(cam + kCamPitch) = pitch;
-        *reinterpret_cast<volatile float*>(cam + kCamYaw) = yaw;
         *reinterpret_cast<volatile float*>(cam + kCamPitchPrev) = pitch;
-        *reinterpret_cast<volatile float*>(cam + kCamYawPrev) = yaw;
     } __except (ReadFilter(GetExceptionCode())) {
         g_faults.fetch_add(1, std::memory_order_relaxed);
         return false;

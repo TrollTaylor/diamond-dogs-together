@@ -1079,9 +1079,9 @@ bool PartnerPassCameraView(void*, const pp::State& state, mgscoop::partner_pass_
     return mgscoop::partner_pass_camera::ReadView(game_base, state.P, out);
 }
 int PartnerPassCameraOverride(void*) noexcept { return mgscoop::partner_pass_camera::Override(); }
-bool PartnerPassCameraAngles(void*, const pp::State& state, float pitch, float yaw) noexcept {
+bool PartnerPassCameraPitch(void*, const pp::State& state, float pitch) noexcept {
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
-    return mgscoop::partner_pass_camera::WriteAngles(game_base, state.P, pitch, yaw);
+    return mgscoop::partner_pass_camera::WritePitch(game_base, state.P, pitch);
 }
 bool PartnerPassCameraRotation(void*, const pp::State& state, const float (&rot)[4]) noexcept {
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
@@ -1187,7 +1187,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
-    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraAngles,
+    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
