@@ -1,3 +1,22 @@
+## 2026-10-30: aim view in game (branch `wp/aim-view`; the get-off camera proven, the seated raise does not work)
+
+Two hidden lab runs of `m6m7c-aim-view.txt` (`-PartnerProfile native -NativeStage gun -BuildProfile research`, host
+seed `afgh-quiet`, guest seed `afgh-horse`; both copies admitted, closed and restored):
+- **Problem (4) fixed in game:** `89cfa402` and `5c8ce1ba`: after every get-off from seat 1 (guest and host roles) and
+  seat 2 (host) the turn request is made after the stock release (`yaw_err_mrad=0`, the camera 5.24 m from the body) and
+  the frames show the player from behind, looking along the jeep, instead of the driver up close. Seat 3 gets no turn
+  and its stock camera stays behind the player (`5c8ce1ba-guest-k3-exited`).
+- **Problem (2) not fixed:** the module entry is applied (variant 0 is listed) but the frames still show the leg (seat 1)
+  and the panel (seat 2): in the seated aim CAM+0x204 bit 2 stays clear (`f204=0x63110` on every aim tick), so the aim
+  module's update never calls FUN_1412BBFE0 and CAM+0x140 stays 0. A direct write of the target CAM+0x154 (`10aa42b`,
+  `99f41fe`, run `5c8ce1ba`) is written back to 0 between every two ticks (30 rewrites in ~0.4 s; [I] by the
+  parameter-record apply 0x111AAA0); reverted (`b890a69`, code back to `1715b82`). Seat 3's aim view is clear and unchanged.
+- Shots fire from seats 1-3 in mode view (magazine 8 -> 6, guard windows open and close); the jeep's life was not read
+  (`vehicle_state_status`: `life_refused; reason=off`).
+- Scenario (`a9251e0`, `b890a69`): seat 1 in both roles, seat 2, seat 3 (a teleport to the right rear door).
+Full CTest 336/336; contract `--check` 829 / 209. **Players see no change** (default `aim`; not flipped this round).
+Design 8.35.
+
 ## 2026-10-30: aim view review fixes (branch `wp/aim-view`; built, not proven)
 
 **Fixed** (design 8.34; red `f4f080e`, fix `c58b065`): the raise is written back by MissionEnd / Stop / MissionStart

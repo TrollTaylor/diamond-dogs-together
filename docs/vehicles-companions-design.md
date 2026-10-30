@@ -3115,6 +3115,32 @@ Open [U]: whether the seated variant is listed, whether the request's yaw is wor
 look angles turn vehicle-relative while seated), the frames on both copies: both hidden lab runs (`79aee3fc`,
 `6395316d`) failed isolation before admission like every run on the machine since 13:51.
 
+### 8.35 The aim view in game (2026-10-30, branch `wp/aim-view`; the get-off turn proven, the raise not working)
+
+Runs `89cfa402` and `5c8ce1ba` (`m6m7c-aim-view.txt`, lab, Wakh Sind jeep 25608; seat 1 guest and host, seat 2 host,
+seat 3 guest in `5c8ce1ba`; frames `complete/frames/m6m7d-aim`).
+- **The get-off turn works [O]:** every seat-1/2 get-off logs `state=turn; event=request; reason=made` after the stock
+  release (`ms=1684..3085`, `stock_seen=1`, `yaw_mrad=107..108`) and `event=check; yaw_err_mrad=0; up_mrad=-120;
+  cam_body_cm=524`, on both roles: the request's yaw is world yaw after a seated aim (8.34's [U] closed). Frames
+  `s1-exited`, `k2-exited`, `h1-exited` (both runs): the player from behind, the jeep to the left, looking along the
+  jeep; before (`37b94432-guest-s1-exited`) the camera faced the driver. Seat 3: no turn, the stock camera behind.
+- **The raise does nothing [O]:** `state=view; event=apply; variant=0; index=0; ok=1` (the variant is listed), but on
+  every seated aim tick the trace reads `f204=0x63110` (CAM+0x204 bit 2 clear: 0x12BD4D4 never calls FUN_1412BBFE0),
+  `off=0,0,0,0` (CAM+0x140), the camera ~1.2 m behind and 0.0-0.1 m above the body root; the frames show the leg (seat 1)
+  and the panel (seat 2) as before. After the aim the game resets the entry (`event=refused; reason=lost; flag=0`; the
+  next boarding's apply finds the stock entry), so nothing is left behind.
+- **A direct target write does not hold [O]:** the lift (`10aa42b` red, `99f41fe`) wrote CAM+0x154 = 0.60 over the
+  stock 0 while aiming seated; the next ticks read 0 again (30 rewrites in ~0.4 s, then `reason=rewritten`), off stayed
+  0, the frames unchanged. [O static] 0x111AAA0 (PlayerCamera vt data 0x23B80C0 / 0x23B83C0) copies a parameter record
+  into the camera ([I] every frame, the writer of the 0): CAM+0x150..0x15C from record+0x10, +0x234 from +0x24, +0x2DC from +0x48, CAM+0x204 bits
+  0x100 / 0x100000 / 0x40000000. Reverted (`b890a69`); a latch bug in it (a `rewritten` refusal outlived the boarding)
+  went with it. Next: raise the record the seated aim loads (find it through the parameter manager CAM+0x4B0, set
+  0xB8A0BF169F98, variant 0; [U] whether the on-foot aim shares it), or move the eye after 0x111AAA0.
+- Shots: fired from seats 1-3 in mode view (magazine 8 -> 7 -> 6, `state=guard` windows); the jeep's life was not read
+  (`vehicle_state_status`: `life_refused; reason=off`), so whether the shots hit the own jeep is [U] here.
+- Not flipped: `partner_pass_camera=view` does not meet its proof (seats 1 and 2 still look at the leg / the panel).
+  The get-off turn alone is proven; shipping it alone is a decision for the user (`view` still writes the inert entry).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

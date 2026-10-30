@@ -581,9 +581,12 @@ event=apply|restore|refused|abandon` lines). (2) After an observed get-off
 RequestToSetCameraRotation calls) toward the vehicle's forward yaw, 0.12 rad
 down (`state=turn; event=request|refused|expire|check|skip`); the request's
 fields are written before its bit. No game function is called. Pins: 0x12BD4D4, 0x12BC015, 0x12BC049, 0x111A920, 0x111A948 (18
-blocks) and the variant ids (generator-checked). [U] whether the seated
-variant is in the list, whether +y is up in the solve's frame, and the frames:
-the hidden runs of 8.33 never started (worker isolation failures).
+blocks) and the variant ids (generator-checked). In game (design 8.35, runs
+`89cfa402`, `5c8ce1ba`): the turn works on both roles (the player framed from
+behind after a seat-1/2 get-off); the raise does nothing: the seated variant
+(0) is listed, but CAM+0x204 bit 2 stays clear in the seated aim, so the
+entry is never added, and a direct CAM+0x154 write is overwritten between
+ticks ([I] by the parameter-record apply 0x111AAA0; reverted).
 
 ### Truck test levers
 
