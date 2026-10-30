@@ -1,21 +1,20 @@
-# m6m7c problem 3, the DISCRIMINATING play rehearsal of S1 at the shipped defaults (review of 8.33: 41dcbf22 fired only
-# on lines not shown to hit the jeep in stock). Africa jeep (30020, veh_lv_0000 = 25608), NO labsetting line, -WanSim bad.
-# Both parts fire FOUR shots on a line that hit the jeep in stock, each seat aiming ONCE (no re-aim):
+# m6m7d problem 3, the discriminating PLAY rehearsal of S1 with a NAMED partner_seat_shot=1 (play defaults it off since
+# fbf6328) on the lines the lab A/B m6m7d-self-hit-ab.txt fires in both arms. Africa jeep (30020, veh_lv_0000 = 25608),
+# -Mode play -WanSim bad. Both parts fire FOUR shots, each seat aiming ONCE (no re-aim), the jeep's life read on both
+# copies after every shot:
 #   B (first). The guest drives (stopped), the HOST in back seat 2 (left rear) aims at the nearest guard (4158955462,
-#      8 m right of the jeep): every shot crosses the jeep to its right side (stock: 37b94432's seat 2 shots at guards
-#      right / rear-right holed the jeep's own panel and the jeep broke on both copies; 299de3e1 B's seat 2 shots across
-#      the jeep cost the host's copy 1404 = 2 x 702).
+#      8 m right of the jeep, about 11 deg down): every shot crosses the jeep to its right side.
 #   A. The host drives, the GUEST in back seat 3 aims at the next nearest guard (2552560298, 21 m front-right): the
-#      8a920ec8 stock line (one stock shot cost 702 and the round went through the jeep; 299de3e1's three shots at him
-#      cost 2106 = 3 x 702). Four stock shots there would cost 2808 > 2300: the jeep would break. If the host's D-Dog
-#      does not board this time the guest gets the front seat (seat 1, ON in play): the lines accept seat 1 or 3.
+#      8a920ec8 stock line (one stock shot cost the guest's copy 702; 299de3e1's re-aimed seat-3 shots cost 2106). If the
+#      host's D-Dog does not board this time the guest gets the front seat (seat 1, ON in play): the lines accept 1 or 3.
 # Expected: S1 configured key=1 play=1, published (apply=1; source=key) on the seated shooter's copy, a shift line per
-# shot (age_ms, max_ms on it), a kill in each part and the jeep's life 2300 on BOTH copies after each part and parked.
+# shot (age_ms, max_ms on it), a kill in each part and the jeep's life 2300 on BOTH copies after every shot and parked.
 # NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; two_drivers; pass_camera
 #   state=refused; result=stale; two Dead (state 5) commits for one guard.
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7c-self-hit-play2.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+labsetting partner_seat_shot=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
@@ -72,6 +71,11 @@ wait 300
 host capture b-shot-1
 guest capture b-drv-shot-1
 host release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 host hold rmb 1500 nowait
 wait 700
@@ -79,6 +83,11 @@ host press lmb 120
 wait 300
 host capture b-shot-2
 host release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 host hold rmb 1500 nowait
 wait 700
@@ -86,6 +95,11 @@ host press lmb 120
 wait 300
 host capture b-shot-3
 host release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 host hold rmb 1500 nowait
 wait 700
@@ -94,6 +108,11 @@ wait 300
 host capture b-shot-4
 guest capture b-drv-shot-4
 host release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1000
 waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 5
 waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=2; end=' 3
@@ -153,6 +172,11 @@ wait 300
 guest capture a-shot-1
 host capture a-drv-shot-1
 guest release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 guest hold rmb 1500 nowait
 wait 700
@@ -160,6 +184,11 @@ guest press lmb 120
 wait 300
 guest capture a-shot-2
 guest release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 guest hold rmb 1500 nowait
 wait 700
@@ -167,6 +196,11 @@ guest press lmb 120
 wait 300
 guest capture a-shot-3
 guest release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1200
 guest hold rmb 1500 nowait
 wait 700
@@ -175,6 +209,11 @@ wait 300
 guest capture a-shot-4
 host capture a-drv-shot-4
 guest release
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
 wait 1000
 waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=[13]; apply=1;' 5
 waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=[13]; end=' 3
