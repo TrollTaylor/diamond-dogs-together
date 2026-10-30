@@ -1,0 +1,119 @@
+# M6 review fixes, part D alone (docs/vehicles-companions-design.md 8.21; coop-vehicle-passenger-m6-review.txt has
+# A-C): the sortie truck cab with the seat-1 handshake (no dog rides in a truck: the driver's seat addendum
+# flags=0x03, the passenger's policy seat1=front,cab), the seat-1 remap skipped by the tick only while seat 1 is in use
+# (board_remap; state=skip; why=policy, then state=stock; why=idle), both roles while the truck reverses, and the
+# host's stock get-off from the cab (run 73af7206 lost its input desktop at that press). Lab, 30010, afgh-ledge.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-review-truck.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=1
+labsetting partner_ride_cab=1
+labsetting partner_ride_race=1
+labsetting nametag=1
+labsetting debug_vehicle_door=1
+labsetting world_relief=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+# --- D: the truck cab with the handshake, both roles, the host's get-off ---------------------------------------------
+logmark both
+guest debug teleport 594.0 320.5 1157.5 -90
+wait 2000
+host debug clear_enemies 100
+host run relief_load 4 580.57 321.32 1177.24 1.309
+waitlog host 'event=relief; step=load; m=30010; write=1; call=1;' 10
+waitlog guest 'event=relief; role=guest; step=load; why=host_has; type=4;' 40
+wait 10000
+host run goto_vehicle sortie driver 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host debug clear_enemies 100
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25600
+host hold s 1500
+host release
+wait 2500
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x03; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+waitlog guest 'partner_ride=board_remap; state=skip; why=policy; ok=1' 10
+guest run goto_partner_vehicle passenger 60
+guest require warp_(position_readback|readback_timeout)
+wait 3000
+guest press e 150
+wait 4000
+waitlog guest 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6r-truck-1-seated
+guest run vehicle_seats
+host hold s 1500 nowait
+host burst m6r-truck-1-drive-h 6 150
+host release
+host hold s+a 1500 nowait
+guest burst m6r-truck-1-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+guest burst m6r-truck-1-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+host press e 150
+wait 3000
+waitlog guest 'partner_ride=board_remap; state=stock; why=idle; ok=1' 15
+state
+both debug heal
+guest run goto_vehicle sortie driver 60
+guest require warp_(position_readback|readback_timeout)
+wait 1500
+placebehind host guest 12 0
+wait 4000
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=25600
+guest hold s 1500
+guest release
+wait 2500
+waitlog host 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab;' 10
+host run goto_partner_vehicle passenger 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host press e 150
+wait 4000
+waitlog host 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6r-truck-1r-seated
+guest hold s 1500 nowait
+guest burst m6r-truck-1r-drive-g 6 150
+guest release
+guest hold s+d 1500 nowait
+host burst m6r-truck-1r-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst m6r-truck-1r-exit 6 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+both capture m6r-truck-1r-exited
+guest press e 150
+wait 3000
+state

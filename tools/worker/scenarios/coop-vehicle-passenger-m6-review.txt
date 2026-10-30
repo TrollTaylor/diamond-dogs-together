@@ -15,6 +15,8 @@
 #   D  the truck cab with the handshake (no dog rides in a truck: flags=0x03, seat1=front,cab), the seat-1 remap
 #      skipped by the tick only while seat 1 is in use (board_remap; state=skip; why=policy, then state=stock; why=idle),
 #      both roles, and the host's stock get-off from the cab (run 73af7206 lost its input desktop at that press).
+# Runs: 43473119 (A passed; B's host spot was the driver's door: fixed), f115a2b3 (A, B, C passed; C's forward drive
+# left the jeep on the truck spot and D stopped: both drives reverse now). D alone: coop-vehicle-passenger-m6-review-truck.txt.
 # Run (lab):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-review.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
@@ -109,7 +111,7 @@ guest run vehicle_seats
 guest hold s 1500 nowait
 guest burst m6r-jeep-drive-g 6 150
 guest release
-guest hold w 1500 nowait
+guest hold s 1500 nowait
 host burst m6r-jeep-drive-h 6 150
 guest release
 wait 1500
