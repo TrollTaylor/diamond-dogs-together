@@ -417,10 +417,12 @@ do
     check(#sends == 2 and sends[2].id == 4000 and sends[2].cmd == 'SetPosition', 'a vehicle RIDE_BODY pose still places the vehicle')
     W.api, W.log = api, nil
 end
--- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT op 54): the guest claims its pre-query's
--- driver's seat, the host denies one it wants or drives (ties to the host) and grants the rest, then yields.
+-- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT op 54; review R1/R2): the guest holds the
+-- driver's seat of an empty vehicle until the host grants it (its claim goes out when its pre-query offers that
+-- seat); the host denies one it wants or drives (ties to the host) and grants the rest, yielding at once; a
+-- live grant sticks while the guest keeps claiming; a host that never answers lets the guest go stock.
 local function seatEnv(host)
-    local c = {tx = {}, notes = {}, logs = {}, deny = {}, now = 1000, want = 65535, age = -1, on = 1}
+    local c = {tx = {}, notes = {}, logs = {}, cmds = {}, deny = {}, grant = {}, now = 1000, want = 65535, age = -1, on = 1, hits = 0}
     local W = {OP = {}, handlers = {}, paired = true, eff = 3, mission = 30010, epoch = 7, host = host,
         now = function() return c.now end,
         tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return true end,
@@ -430,10 +432,16 @@ local function seatEnv(host)
     W.receipt = function(src)
         local cmd = src:match("^return 'MGS_COOP_BOARD_SEAT_V1' %-%- (.+)$")
         assert(cmd, 'the board seat receipt only: ' .. src)
+        c.cmds[#c.cmds + 1] = cmd
         local v, ms = cmd:match('^deny (%d+) (%d+)$')
-        if v then c.deny[#c.deny + 1] = {tonumber(v), tonumber(ms)}; c.denied = tonumber(v) end
+        if v then c.deny[#c.deny + 1] = {tonumber(v), tonumber(ms)}; c.denied = tonumber(v); c.granted = nil end
+        local gv, gms = cmd:match('^grant (%d+) (%d+)$')
+        if gv then c.grant[#c.grant + 1] = {tonumber(gv), tonumber(gms)}; c.granted = tonumber(gv); if c.denied == c.granted then c.denied = nil end end
+        local h = cmd:match('^hold (%d+)$')
+        if h then c.hold = tonumber(h) end
         if c.on ~= 1 then return {ok = true, on = 0} end
-        return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = 0}
+        return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
+            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = 0}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -446,35 +454,62 @@ local function seatEnv(host)
     c.W, c.R, c.S = W, W.ridePose, W.ridePose.seat
     function c.drive(id) c.driving = id; env.vars.playerVehicleGameObjectId = id or 65535 end
     function c.has(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
+    function c.count(p) local n = 0 for _, l in ipairs(c.cmds) do if l == p then n = n + 1 end end return n end
     return c
 end
+-- Guest.
 local gs = seatEnv(false)
 check(gs.W.OP.SEAT == 54 and type(gs.W.handlers[54]) == 'function' and type(gs.S) == 'table', 'SEAT is op 54 with a handler')
-gs.want, gs.age = 25608, 100
 gs.S.step(1000)
+check(gs.cmds[1] == 'hold 2000' and gs.hold == 2000 and #gs.tx == 0, 'the guest holds every driver seat it has no grant for (a 2 s lease)')
+gs.want, gs.age = 25608, 100
+gs.S.step(1200)
 check(#gs.tx == 1 and gs.tx[1][1] == 54 and gs.tx[1][2] == 1 and gs.tx[1][3] == 25608 and gs.tx[1][4] == 0 and gs.tx[1][5] == 2 and
     gs.tx[1][6] == 1, 'the guest claims the driver seat its pre-query offers: seq 1, id, seat 0, role guest, claim')
 check(gs.has('event=seat;action=claim;vehicle=25608;role=guest;age=100'), 'the claim line')
-gs.S.step(1100)
 gs.S.step(1300)
+gs.S.step(1500)
 check(#gs.tx == 1, 'one claim per 500 ms (and one step per 200 ms)')
-gs.S.step(1600)
+check(gs.count('hold 2000') >= 3, 'the hold lease is refreshed every step')
+gs.S.step(1700)
 check(#gs.tx == 2 and gs.tx[2][2] == 2, 'the claim repeats while the want lasts')
+gs.W.handlers[54]({5, 25608, 0, 1, 2})
+check(gs.grant[1] and gs.grant[1][1] == 25608 and gs.grant[1][2] == 3000 and gs.has('event=seat;action=grant;vehicle=25608;role=guest;set=1'),
+    "the host's grant: 3 s of native grant for that vehicle (its ride icon)")
+gs.W.handlers[54]({6, 25608, 0, 1, 2})
+check(#gs.grant == 2, 'each grant refreshes it')
 gs.age = 700
-gs.S.step(2200)
+gs.S.step(2400)
 check(#gs.tx == 2, 'a stale want (over 600 ms) is not claimed')
-gs.W.handlers[54]({5, 25608, 0, 1, 3})
+gs.W.handlers[54]({7, 25608, 0, 1, 3})
 check(gs.deny[1][1] == 25608 and gs.deny[1][2] == 3000 and gs.has('event=seat;action=deny;vehicle=25608;role=guest;set=1'),
     "the host's deny: 3 s of native deny on the guest")
 check(#gs.notes == 1 and gs.notes[1][1] == 13 and gs.notes[1][2] == 6, 'the guest gets the seat-race toast (NOTE 13 a=6)')
-gs.W.handlers[54]({6, 25608, 0, 1, 3})
+gs.W.handlers[54]({8, 25608, 0, 1, 3})
 check(#gs.notes == 1 and #gs.deny == 2, 'the deny is refreshed; one toast per 3 s')
-for _, bad in ipairs({{7, 25608, 0, 2, 3}, {7, 25608, 1, 1, 3}, {7, 25599, 0, 1, 3}, {7, 25608, 0, 1}}) do
+for _, bad in ipairs({{9, 25608, 0, 2, 3}, {9, 25608, 1, 1, 3}, {9, 25599, 0, 1, 3}, {9, 25608, 0, 1}, {9, 25608, 0, 1, 1}}) do
     gs.W.handlers[54](bad)
 end
-check(#gs.deny == 2, "the guest ignores a guest-role op, another seat, a non-vehicle id, a short op")
-gs.W.handlers[54]({8, 25609, 0, 1, 2})
-check(gs.has('event=seat;action=grant;vehicle=25609;role=guest') and #gs.deny == 2, 'a grant changes nothing on the guest')
+check(#gs.deny == 2 and #gs.grant == 2, "the guest ignores a guest-role op, another seat, a non-vehicle id, a short op, a host claim")
+-- A host that never answers (0.14.4, or its key off): the guest goes stock after 1.5 s, until an answer comes.
+local sl = seatEnv(false)
+sl.want, sl.age = 25608, 50
+sl.S.step(1000)
+check(#sl.tx == 1 and sl.hold == 2000, 'claimed, held')
+sl.S.step(1600)
+sl.S.step(2200)
+check(not sl.has('state=silent'), 'unanswered for 1.2 s: still held')
+sl.S.step(2600)
+check(sl.has('event=seat;state=silent;vehicle=25608') and sl.hold == 0, 'unanswered for 1.5 s: hold 0 (the guest boards stock)')
+local held = sl.count('hold 2000')
+sl.S.step(3000)
+sl.S.step(3600)
+check(sl.count('hold 2000') == held and sl.cmds[#sl.cmds] == 'poll', 'silent: polled, never held again')
+sl.W.handlers[54]({1, 25608, 0, 1, 2})
+check(sl.has('event=seat;state=answered') and sl.grant[1][1] == 25608, 'an answer ends the silence')
+sl.S.step(4000)
+check(sl.cmds[#sl.cmds] == 'hold 2000', 'held again')
+-- The board answers off (key off on this copy, or not installed yet).
 local off = seatEnv(false)
 off.on, off.want, off.age = 0, 25608, 10
 off.S.step(1000)
@@ -485,8 +520,14 @@ off.S.step(2000)
 check(#off.tx == 0 and #off.logs == 1, 'off is read again only after 10 s')
 off.S.step(11100)
 check(off.has('event=seat;state=on') and #off.tx == 1 and off.tx[1][3] == 25608, 'the board installed later: on, and the claim goes out')
+-- Unpaired: the hold is dropped at once.
+off.W.paired = false
+off.W.tick()
+check(off.cmds[#off.cmds] == 'hold 0', 'unpaired: hold 0')
 -- Host.
 local hs = seatEnv(true)
+hs.S.step(1000)
+check(hs.cmds[1] == 'poll' and hs.hold == nil, 'the host never holds')
 hs.want, hs.age = 25608, 300
 hs.W.handlers[54]({1, 25608, 0, 2, 1})
 check(#hs.tx == 1 and hs.tx[1][3] == 25608 and hs.tx[1][5] == 1 and hs.tx[1][6] == 3 and
@@ -499,15 +540,28 @@ local hg = seatEnv(true)
 hg.W.handlers[54]({1, 25608, 0, 2, 1})
 check(#hg.tx == 1 and hg.tx[1][6] == 2 and hg.has('event=seat;action=grant;vehicle=25608;role=host') and hg.S.granted[25608] == 1000,
     'nobody else wants it: grant')
-hg.want, hg.age = 25608, 50
-hg.S.step(1200)
 check(hg.deny[1] and hg.deny[1][1] == 25608 and hg.deny[1][2] == 3000 and hg.has('event=seat;action=yield;vehicle=25608;role=host'),
-    'the host reaching for a vehicle it granted yields it (its own native deny)')
-check(#hg.notes == 1 and hg.notes[1][1] == 13 and hg.notes[1][2] == 7, 'the yield toast (NOTE 13 a=7)')
-hg.S.step(4600)
+    'the host yields the granted vehicle at once (its own native deny)')
+hg.want, hg.age, hg.now = 25608, 50, 1400
+hg.W.handlers[54]({2, 25608, 0, 2, 1})
+check(#hg.tx == 2 and hg.tx[2][6] == 2 and #hg.deny == 2 and hg.S.granted[25608] == 1400,
+    'a live grant sticks while the guest keeps claiming, even with the host now at a door (the yield is refreshed)')
+hg.hits = 3
+hg.S.step(1500)
+check(#hg.notes == 1 and hg.notes[1][1] == 13 and hg.notes[1][2] == 7, 'the host tried the yielded vehicle: the yield toast (NOTE 13 a=7)')
+hg.hits = 4
+hg.S.step(1800)
+check(#hg.notes == 1, 'one yield toast per 3 s')
+hg.S.step(4500)
 check(hg.S.granted[25608] == nil, 'a grant lapses after 3 s without a new claim')
-hg.W.handlers[54]({2, 25608, 0, 1, 1})
-hg.W.handlers[54]({3, 25608, 0, 2, 2})
-check(#hg.tx == 1, 'the host answers only guest claims')
+hg.W.handlers[54]({3, 25608, 0, 2, 1})
+check(#hg.tx == 3 and hg.tx[3][6] == 3 and hg.has('why=host_first'), 'after the lapse the host at the door wins the next claim')
+hg.W.handlers[54]({4, 25608, 0, 1, 1})
+hg.W.handlers[54]({5, 25608, 0, 2, 2})
+check(#hg.tx == 3, 'the host answers only guest claims')
+local hoff = seatEnv(true)
+hoff.on = 0
+hoff.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hoff.tx == 0, 'a host with the key off never answers (the guest goes stock after its timeout)')
 
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

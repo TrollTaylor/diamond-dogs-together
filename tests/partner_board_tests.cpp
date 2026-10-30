@@ -249,7 +249,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::board_blocks) / sizeof(c::board_blocks[0]) == 19, "19 board blocks are pinned");
+    Check(sizeof(c::board_blocks) / sizeof(c::board_blocks[0]) == 20, "20 board blocks are pinned");
     Check(c::board_a_site == 0x12458ac && c::board_a_next_ip == 0x12458b1 && c::board_a_rel32_orig == 0x00005aefu &&
               c::board_b_site == 0x1251479 && c::board_b_next_ip == 0x125147e && c::board_b_rel32_orig == 0xffff9ee2u,
           "the two sites and their original rel32");
@@ -644,7 +644,23 @@ void TestSeatOneInstall() {
     }
 }
 
-// M6 seat races (partner_ride_race): the pre-query's want and the SEAT deny, stock verdict only.
+// M6 seat races (partner_ride_race; review R1/R2): site C (the pre-query's final answer) records the want and
+// answers false for a denied vehicle or, on a holding guest, for an ungranted one; site B is the backstop;
+// site A no longer races. Stock verdict only (a peer-driver policy for the vehicle decides as before).
+struct PreFake {
+    unsigned calls = 0;
+    bool ok = true;
+    std::uint8_t seat = 0;
+    DWORD error_seen = 0;
+} pf;
+bool FakePrequery(void*, std::uint32_t body, void*, std::uint16_t id, char* seat) noexcept {
+    ++pf.calls;
+    pf.error_seen = GetLastError();
+    Check(body == 0 && id == 7, "site C passes the caller's body and id through");
+    if (seat) *seat = static_cast<char>(pf.seat);
+    SetLastError(55);
+    return pf.ok;
+}
 void TestRace() {
     unsigned char unit[0x80]{};
     const std::uint16_t index = 8;  // 25608
@@ -653,57 +669,168 @@ void TestRace() {
     const std::uint16_t index9 = 9;
     std::memcpy(other + pb::kUnitIndex, &index9, 2);
     const float pos[4]{1, 2, 3, 0};
-    Check(pb::RaceWantSeat(pb::Verdict::stock, 0) && pb::RaceWantSeat(pb::Verdict::stock, 1) && !pb::RaceWantSeat(pb::Verdict::stock, 2) &&
-              !pb::RaceWantSeat(pb::Verdict::stock, pb::kNoSeat) && !pb::RaceWantSeat(pb::Verdict::seats, 0),
-          "a want is a stock driver's seat (0, or 1 which phase 1 makes the driver)");
+    char seat = 4;
+    const auto C = [&](void* u) { seat = 4; return pb::detail::SiteCForTest(nullptr, 0, u, 7, &seat); };
     Check(pb::RaceDenied(25608, 4000, 1000, 25608) && !pb::RaceDenied(25608, 4000, 1000, 25609) && !pb::RaceDenied(25608, 999, 1000, 25608) &&
               !pb::RaceDenied(pb::kVehicleUnknown, 4000, 1000, 0xFFFF) && !pb::RaceDenied(25608, 7000, 1000, 25608),
           "a deny is that vehicle, inside its window (at most 5 s ahead)");
+    // The pure verdict: deny first, then a hold unless that vehicle is granted.
+    pb::RaceIn ri{};
+    ri.vehicle = 25608; ri.now_ms = 1000;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::pass, "nothing live: pass");
+    ri.hold_on = true; ri.hold_until = 2000;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::hold, "a live hold without a grant: hold");
+    ri.grant_vehicle = 25609; ri.grant_until = 3000;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::hold, "a grant for another vehicle: still hold");
+    ri.grant_vehicle = 25608;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::pass, "the vehicle granted: pass");
+    ri.deny_vehicle = 25608; ri.deny_until = 2500;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::deny, "a deny wins over a grant");
+    ri.deny_vehicle = pb::kVehicleUnknown; ri.grant_vehicle = pb::kVehicleUnknown; ri.hold_until = 999;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::pass, "an expired hold: pass");
+    ri.hold_until = 1000 + pb::kRaceDenyMaxMs + 1;
+    Check(pb::RaceDecide(ri) == pb::RaceVerdict::pass, "a hold further than 5 s ahead (a foreign clock): pass");
     Bind();
+    pf = PreFake{};
+    pb::detail::BindPrequeryForTest(&FakePrequery);
     pb::RaceState rs{};
     pb::ReadRace(rs);
-    Check(!rs.on && rs.want == pb::kVehicleUnknown && rs.want_age_ms == 0xFFFFFFFFu && rs.deny == pb::kVehicleUnknown, "off, nothing wanted");
-    g.nearest_result = 0;
-    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "race off: stock");
+    Check(!rs.on && rs.want == pb::kVehicleUnknown && rs.want_age_ms == 0xFFFFFFFFu && rs.deny == pb::kVehicleUnknown && !rs.hold &&
+              rs.grant == pb::kVehicleUnknown, "off, nothing wanted, held or granted");
+    Check(C(unit) && seat == 0 && pf.calls == 1, "race off: site C is the stock pre-query");
     pb::ReadRace(rs);
     Check(rs.want == pb::kVehicleUnknown, "race off: no want recorded");
     pb::SetRace(true);
-    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "race on, no deny: stock");
+    SetLastError(0x2222);
+    Check(C(unit) && seat == 0, "race on, nothing live: the stock answer");
+    Check(pf.error_seen == 0x2222 && GetLastError() == 55, "the original sees the caller's last error and sets its own");
     pb::ReadRace(rs);
-    Check(rs.on && rs.want == 25608 && rs.want_age_ms == 0, "the pre-query records the driver's seat it offers");
+    Check(rs.on && rs.want == 25608 && rs.want_age_ms == 0, "the pre-query's final answer (true, seat 0) is the want");
     g.now = 1300;
     pb::ReadRace(rs);
     Check(rs.want_age_ms == 300, "the want ages");
-    const float away[4]{20, 2, 20, 0};
-    Check(pb::detail::SiteAForTest(unit, away, 0, 1) == 0, "a stock seat 28 m away");
+    pf.ok = false;
+    Check(!C(other), "the pre-query refused (no usable door, the line check)");
     pb::ReadRace(rs);
-    Check(rs.want == 25608 && rs.want_age_ms == 300, "is no want (the 4.5 m near gate)");
+    Check(rs.want == 25608 && rs.want_age_ms == 300, "a refused pre-query is no want (review R2)");
+    pf.ok = true; pf.seat = 2;
+    Check(C(other) && seat == 2, "a back seat answer");
+    pb::ReadRace(rs);
+    Check(rs.want == 25608, "is no want");
+    pf.seat = 1;
+    Check(C(other), "seat 1 from the stock search (phase 1 makes it the driver)");
+    pb::ReadRace(rs);
+    Check(rs.want == 25609 && rs.want_age_ms == 0, "is a want");
+    pf.seat = 0;
+    // Site A no longer takes part in the race.
     pb::RaceDeny(25608, 3000);
+    g.nearest_result = 0;
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "site A: the stock nearest search even while denied");
     pb::ReadRace(rs);
-    Check(rs.deny == 25608 && rs.deny_left_ms == 3000, "the deny is live for 3 s");
-    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == pb::kNoSeat, "denied: no ride icon");
+    Check(rs.deny == 25608 && rs.deny_left_ms == 3000 && rs.hits == 0, "the deny is live for 3 s");
+    Check(!C(unit), "denied: site C answers false (no ride icon)");
+    pb::ReadRace(rs);
+    Check(rs.hits == 1 && rs.want == 25608, "counted; the denied player still wants it (host_first stays true for the host)");
     g.driver_result = 1;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: phase 1 takes the no-seat exit");
-    Check(pb::detail::SiteAForTest(other, pos, 0, 1) == 0, "another vehicle is not denied");
+    Check(C(other), "another vehicle is not denied");
     pb::ReadRace(rs);
-    Check(rs.hits == 2 && rs.want == 25609, "two searches answered 4; the want follows the last offer");
-    Policy(pb::Mode::passenger, 25608);
-    g.type_value = 2; g.count_value = 4; g.nearest_result = 2;
-    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 2 && g.first == 2, "the winner drives: the passenger policy decides, no deny");
+    Check(rs.hits == 2, "site B's deny counted");
+    // The guest's hold (review R1): no driver's seat of an empty vehicle without the host's grant.
+    pb::RaceDeny(pb::kVehicleUnknown, 0);
+    pb::RaceHold(2000);
+    pb::ReadRace(rs);
+    Check(rs.hold && rs.hold_left_ms == 2000, "the hold lease");
+    Check(!C(unit), "held: no ride icon for an ungranted vehicle");
+    pb::ReadRace(rs);
+    Check(rs.holds == 1 && rs.want == 25608 && rs.hits == 2, "a hold is counted apart from the deny; the want is recorded");
+    g.driver_result = 0;
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "held: phase 1 never seats the guest as the driver of the wanted vehicle");
+    Check(pb::detail::SiteBForTest(other, pos) == 0, "site B holds only the vehicle site C saw (no want for it: stock)");
+    pb::RaceGrant(25608, 3000);
+    pb::ReadRace(rs);
+    Check(rs.grant == 25608 && rs.grant_left_ms == 3000, "the host's grant");
+    Check(C(unit) && seat == 0, "granted: the ride icon");
+    Check(pb::detail::SiteBForTest(unit, pos) == 0, "granted: phase 1 seats the driver");
+    pb::RaceDeny(25608, 3000);
+    pb::ReadRace(rs);
+    Check(rs.grant == pb::kVehicleUnknown && rs.deny == 25608, "a deny for the granted vehicle withdraws the grant");
+    pb::RaceDeny(pb::kVehicleUnknown, 0);
+    Check(!C(unit), "held again");
+    g.now = 3301;
+    Check(C(unit), "the hold lease ran out: stock (a silent copy never holds the guest for good)");
+    pb::RaceHold(2000);
+    pb::RaceHold(0);
+    pb::ReadRace(rs);
+    Check(!rs.hold && C(unit), "hold 0 clears");
+    // A peer-driver policy for the vehicle: no race at all (the passenger policy decides; no want, no hold).
+    pb::RaceHold(2000);
+    Policy(pb::Mode::passenger, 25608, 0, 6000);
+    pb::ReadRace(rs);
+    const std::uint32_t holds = rs.holds;
+    g.now = 3400;
+    pf.seat = 1;
+    Check(C(unit) && seat == 1, "the peer drives it: a steered seat-1 passenger answer passes");
+    pb::ReadRace(rs);
+    Check(rs.holds == holds && rs.want_age_ms > 0, "and is neither held nor a want");
     Policy(pb::Mode::off);
-    g.nearest_result = 0;
-    g.now = 4301;
-    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "the deny expired");
+    pb::RaceHold(0);
+    pf.seat = 0;
     pb::RaceDeny(25608, 60000);
     pb::ReadRace(rs);
     Check(rs.deny == 25608 && rs.deny_left_ms == pb::kRaceDenyMaxMs, "a deny is capped at 5 s");
+    pb::RaceGrant(25608, 60000);
+    pb::ReadRace(rs);
+    Check(rs.grant == 25608 && rs.grant_left_ms == pb::kRaceDenyMaxMs && rs.deny == pb::kVehicleUnknown,
+          "a grant is capped at 5 s and withdraws the deny for that vehicle");
+    pb::RaceGrant(pb::kVehicleUnknown, 0);
     pb::RaceDeny(pb::kVehicleUnknown, 0);
     pb::ReadRace(rs);
-    Check(rs.deny == pb::kVehicleUnknown, "cleared");
+    Check(rs.deny == pb::kVehicleUnknown && rs.grant == pb::kVehicleUnknown, "cleared");
     pb::RaceDeny(0x2003, 1000);
+    pb::RaceGrant(0x2003, 1000);
     pb::ReadRace(rs);
-    Check(rs.deny == pb::kVehicleUnknown, "a non-vehicle id is never denied");
+    Check(rs.deny == pb::kVehicleUnknown && rs.grant == pb::kVehicleUnknown, "a non-vehicle id is never denied or granted");
     pb::detail::ResetForTest();
+}
+
+// Review R1/R2: site C is installed only with the race key, after A and B; its operand is masked like theirs.
+void TestRaceInstall() {
+    Check(c::board_c_site == 0x1246a4f && c::board_c_next_ip == 0x1246a54 && c::board_c_rel32_orig == 0xffffedccu &&
+              static_cast<std::uint32_t>(c::board_c_next_ip + c::board_c_rel32_orig) == c::board_prequery_rva &&
+              c::board_c_block_rva == 0x1246a3f, "site C: the CanExec call of the pre-query 0x1245820");
+    {
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        std::uintptr_t mismatch = 0;
+        img.base[c::board_c_site + 3] ^= 0x10;
+        Check(pb::detail::VerifyImage(img.base, img.span, mismatch) == nullptr, "the site C rel32 operand is masked");
+        img.base[c::board_c_site + 3] ^= 0x10;
+        Check(Same(pb::InstallRace(), "board"), "no race before the board is installed");
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log) == nullptr && img.Rel(c::board_c_site) == c::board_c_rel32_orig,
+              "the board alone leaves site C stock");
+        Check(pb::InstallRace() == nullptr && pb::LiveRace() && img.Rel(c::board_c_site) != c::board_c_rel32_orig &&
+                  img.base[c::board_c_site] == 0xE8 && pb::PatchLive(img.base), "the race retargets site C, live");
+        Check(Logged("partner_board=race; result=ok; c=0x1246a4f;"), "the race line");
+        Check(pb::InstallRace() == nullptr, "a second race install is a no-op");
+        const std::uint32_t saved = img.Rel(c::board_c_site);
+        img.base[c::board_c_site + 1] ^= 1;
+        Check(!pb::PatchLive(img.base), "a changed site C is not live");
+        std::memcpy(img.base + c::board_c_site + 1, &saved, 4);
+        pb::detail::ResetForTest();
+    }
+    {
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        const std::uint32_t foreign = c::board_c_rel32_orig + 0x10;
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log) == nullptr, "installed");
+        std::memcpy(img.base + c::board_c_site + 1, &foreign, 4);
+        Check(Same(pb::InstallRace(), "c_bytes") && !pb::LiveRace() && pb::PatchLive(img.base) &&
+                  Logged("partner_board=race; result=refused; reason=c_bytes;"), "a foreign site C: no race, the board stays");
+        pb::detail::ResetForTest();
+    }
 }
 
 // Review R8: the MGS_COOP_BOARD_SEAT_V1 request parser (game_script_observer.cpp SelectBoardSeatReceipt).
@@ -787,6 +914,7 @@ int main() {
     TestSeatOneInstall();
     TestSeatOneLocalPassenger();
     TestRace();
+    TestRaceInstall();
     TestSeatRequest();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);

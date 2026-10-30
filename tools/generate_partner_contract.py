@@ -874,6 +874,8 @@ BOARD_SITES = [
      '0x125AD00: (*(P+0x120))[body] = the ridden unit (the local passenger report)'),
     (0x12CF42F, '498b85e00000000fb70c706641898c2410010000',
      'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
+    (0x1245847, '4c8ba424400100004d8bf04c8be941c6042404',
+     'the pre-query 0x1245820: r12 = its 5th argument (the seat pointer, [rsp+0x140]); *seat = 4 first (the refusal site C returns)'),
 ]
 SITES += BOARD_SITES
 # --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
@@ -2479,6 +2481,24 @@ def board_assertions():
         local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
         inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
         need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    # M6 review R1/R2 (seat races): site C 0x1246A4F, RideVehicle CanExec's call of the pre-query 0x1245820(action rcx,
+    # body edx, unit r8, id r9w, char* seat [rsp+0x20]) -> bool, retargeted only with partner_ride_race. Its final answer
+    # (true and *seat 0/1 after the door bits and the line check) is the race's want; a hold or deny returns false with
+    # *seat = 4 (the stock 'no seat' it starts from), so CanExec returns false (no ride icon) through 0x1246A56.
+    need(rd(0x1246A4F, 1) == b'\xe8' and call_target(0x1246A4F) == 0x1245820 and
+         struct.unpack('<I', rd(0x1246A50, 4))[0] == 0xFFFFEDCC, 'board site C: E8 rel32 0xFFFFEDCC -> 0x1245820')
+    need(rd(0x1246A3F, 16) == bytes.fromhex('488d442440418bd7488bce4889442420'),
+         'site C: lea rax,[rsp+0x40]; mov edx,r15d; mov rcx,rsi; mov [rsp+0x20],rax (the seat out pointer)')
+    need(rd(0x1246A54, 8) == bytes.fromhex('84c00f8417040000'), 'site C: test al,al; je 0x1246E73 (false: CanExec false)')
+    need(rd(0x1245820, 6) == bytes.fromhex('6644894c2420') and
+         rd(0x1245847, 19) == bytes.fromhex('4c8ba424400100004d8bf04c8be941c6042404'),
+         'the pre-query 0x1245820: the 5th argument (r12 = [rsp+0x140], the seat pointer) starts at 4 (0x1245855)')
+    need((0x1246A50 & 63) + 4 <= 64, 'board site C dword 0x1246a50 inside one cache line')
+    owner = [f for f in funcs if f[0] <= 0x1246A4F < f[1]]
+    need(len(owner) == 1, f'one runtime function covers 0x1246a4f: {owner}')
+    local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+    inside = branch_refs(0x1246A50, 0x1246A54) + [t for t in local if 0x1246A50 <= t < 0x1246A54]
+    need(inside == [], f'no branch into 0x1246a50..0x1246a54: {[hex(x) for x in inside]}')
     return out
 
 
@@ -3357,6 +3377,10 @@ w('inline constexpr std::uint32_t board_a_rel32_orig=0x00005aef;  // -> 0x124b3a
 w('inline constexpr std::uintptr_t board_b_site=0x1251479, board_b_next_ip=0x125147e, board_b_block_rva=0x125145c;')
 w('inline constexpr std::uint32_t board_b_rel32_orig=0xffff9ee2;  // -> 0x124b360')
 w('inline constexpr std::uintptr_t board_nearest_rva=0x124b3a0, board_driver_rva=0x124b360, board_type_rva=0x55e7f0, board_count_rva=0xa27cc0;')
+w('// M6 review R1/R2 (seat races, partner_ride_race only): site C, RideVehicle CanExec 0x1246650 calls the pre-query')
+w('// 0x1245820(action, body, unit, id, char* seat) -> bool at 0x1246a4f; false: CanExec false (no ride icon).')
+w('inline constexpr std::uintptr_t board_c_site=0x1246a4f, board_c_next_ip=0x1246a54, board_c_block_rva=0x1246a3f, board_prequery_rva=0x1245820;')
+w('inline constexpr std::uint32_t board_c_rel32_orig=0xffffedcc;  // -> 0x1245820')
 w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
 w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
 w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')

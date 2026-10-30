@@ -416,20 +416,25 @@ end
 -- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT; lab.ini partner_ride_race=1 on both
 -- copies, lab and play, off unless named): SEAT (op 54: seq, TppVehicle2 id, seat 0, role 1 host / 2 guest,
 -- action 1 claim / 2 grant / 3 deny) keeps two players from both taking the driver's seat of one empty vehicle.
--- The native board (MGS_COOP_BOARD_SEAT_V1) records the empty vehicle the local pre-query offers as the
--- driver's (want) and answers 4 for a denied one (no ride icon, phase 1's no-seat exit). The guest claims its
--- want every CLAIM_MS; the host denies a claim for a vehicle it drives or wants itself (its want within
--- HOST_WANT_MS: ties go to the host) and grants the rest, then yields the granted vehicle for GRANT_MS (its own
--- deny). A denied guest gets DENY_MS of deny and a toast (NOTE 13 a=6); the host yielding gets NOTE 13 a=7.
--- A want needs the player within 4.5 m of the vehicle (the native board's near gate).
--- Once the winner drives, the peer-driver policy decides (the loser may take a passenger seat). A partner
--- without op 54 (0.14.4 and older) skips it by its length; the guest's claims then go unanswered (stock).
+-- The native board (MGS_COOP_BOARD_SEAT_V1, site C) records the empty vehicle whose driver's seat the local
+-- pre-query's final answer offers (want: a usable door, review R2) and refuses the ride icon for a denied one
+-- or, on the guest, for one without a live grant (the hold: review R1, no window of one round trip). The guest
+-- refreshes its hold lease every step (HOLD_MS) and claims its want every CLAIM_MS; the host denies a claim
+-- for a vehicle it drives or wants itself (its want within HOST_WANT_MS: ties go to the host), unless it
+-- granted that vehicle within GRANT_MS (a live grant sticks while the guest keeps claiming), and grants the
+-- rest, yielding the granted vehicle at once for GRANT_MS (its own native deny). A granted guest gets GRANT_MS
+-- of native grant (its ride icon); a denied guest DENY_MS of deny and a toast (NOTE 13 a=6); a host that
+-- tries a yielded vehicle NOTE 13 a=7. A host that never answers (0.14.4 skips op 54 by its length, or its key
+-- is off) leaves a claim unanswered: after ANSWER_MS the guest drops its hold (stock) until an answer comes.
+-- Once the winner drives, the peer-driver policy decides (the loser may take a passenger seat).
 local SEAT = 54
 W.OP.SEAT = SEAT
-local S = {seq = 0, next = 0, claimAt = {}, granted = {}, toastAt = 0, off = nil, n = {claim = 0, grant = 0, deny = 0, yield = 0}}
+local S = {seq = 0, next = 0, claimAt = {}, granted = {}, gotGrant = {}, toastAt = 0, off = nil,
+    n = {claim = 0, grant = 0, deny = 0, yield = 0}}
 R.seat = S
 local SEAT_TICK, CLAIM_MS, WANT_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, TOAST_MS, OFF_MS = 200, 500, 600, 1000, 3000, 3000, 3000, 10000
-S.CLAIM_MS, S.HOST_WANT_MS, S.GRANT_MS, S.DENY_MS = CLAIM_MS, HOST_WANT_MS, GRANT_MS, DENY_MS
+local HOLD_MS, ANSWER_MS = 2000, 1500
+S.CLAIM_MS, S.HOST_WANT_MS, S.GRANT_MS, S.DENY_MS, S.HOLD_MS, S.ANSWER_MS = CLAIM_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, HOLD_MS, ANSWER_MS
 local CLAIM, GRANT, DENY = 1, 2, 3
 local function seatLog(text) if type(W.log) == "function" then pcall(W.log, "event=seat;" .. text) end end
 function S.board(cmd)
@@ -452,11 +457,18 @@ end
 local function wants(r, vehicle, ms)
     return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
 end
+-- Unpaired, or the world link below level 3: no hold survives (it would keep the guest from any driver's seat).
+function S.reset()
+    if S.held then S.board("hold 0") end
+    S.off, S.granted, S.gotGrant, S.next, S.held, S.ask, S.silent, S.hitsSeen = nil, {}, {}, 0, nil, nil, nil, nil
+end
 -- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
 function S.step(now)
     if now < S.next then return end
     S.next = now + SEAT_TICK
-    local r = S.board("poll")
+    local guest = not W.host
+    local hold = guest and not S.silent
+    local r = S.board(hold and string.format("hold %d", HOLD_MS) or "poll")
     if not r or r.on ~= 1 then
         S.next = now + OFF_MS
         if not S.off then S.off = true; seatLog("state=off") end
@@ -464,23 +476,29 @@ function S.step(now)
     end
     if S.off then S.off = nil; seatLog("state=on") end
     S.on = true
+    if hold then S.held = true end
     if W.host then
-        -- A vehicle granted to the guest stays yielded while the guest keeps claiming it.
         for id, at in pairs(S.granted) do
-            if now - at > GRANT_MS then S.granted[id] = nil
-            elseif wants(r, id, HOST_WANT_MS) and r.deny ~= id then
-                S.board(string.format("deny %d %d", id, GRANT_MS))
-                S.n.yield = S.n.yield + 1
-                seatLog(string.format("action=yield;vehicle=%d;role=host", id))
-                toast(7, now)
-            end
+            if now - at > GRANT_MS then S.granted[id] = nil end
         end
+        -- The host tried a vehicle it yielded (its own deny refused it): NOTE 13 a=7.
+        local hits = tonumber(r.hits) or 0
+        if S.hitsSeen and hits > S.hitsSeen and S.granted[r.deny] then toast(7, now) end
+        S.hitsSeen = hits
         return
     end
-    -- Guest: claim the vehicle its pre-query offers as the driver's.
+    -- Guest: a claim the host left unanswered for ANSWER_MS: stock until an answer comes.
+    if not S.silent and S.ask and now - S.ask.at >= ANSWER_MS then
+        S.silent = true
+        seatLog(string.format("state=silent;vehicle=%d", S.ask.id))
+        S.board("hold 0")
+        S.ask = nil
+    end
+    -- Claim the vehicle its pre-query offers as the driver's.
     local id = r.want
     if seatVehicle(id) and integer(r.age, 0, WANT_MS) and now - (S.claimAt[id] or -CLAIM_MS) >= CLAIM_MS and S.tx(id, 2, CLAIM) then
         S.claimAt[id] = now
+        if not S.ask then S.ask = {id = id, at = now} end
         S.n.claim = S.n.claim + 1
         if S.n.claim <= 20 then seatLog(string.format("action=claim;vehicle=%d;role=guest;age=%d", id, r.age)) end
     end
@@ -494,29 +512,45 @@ W.handlers[SEAT] = function(v)
         if role ~= 2 or action ~= CLAIM then return end
         local r = S.board("poll")
         if not r or r.on ~= 1 then return end
-        local why = R.localVehicle() == id and "host_drives" or wants(r, id, HOST_WANT_MS) and "host_first" or nil
+        if not S.hitsSeen then S.hitsSeen = tonumber(r.hits) or 0 end
+        local live = S.granted[id] and now - S.granted[id] <= GRANT_MS
+        local why = R.localVehicle() == id and "host_drives" or not live and wants(r, id, HOST_WANT_MS) and "host_first" or nil
         if why then
             S.tx(id, 1, DENY)
             S.granted[id] = nil
             S.n.deny = S.n.deny + 1
             seatLog(string.format("action=deny;vehicle=%d;role=host;why=%s", id, why))
         else
-            if not S.granted[id] then seatLog(string.format("action=grant;vehicle=%d;role=host", id)) end
+            -- Grant, and yield at once: this copy's own deny for the vehicle, refreshed by every claim.
             S.tx(id, 1, GRANT)
+            S.board(string.format("deny %d %d", id, GRANT_MS))
+            if not live then
+                seatLog(string.format("action=grant;vehicle=%d;role=host", id))
+                seatLog(string.format("action=yield;vehicle=%d;role=host", id))
+                S.n.yield = S.n.yield + 1
+            end
             S.granted[id] = now
             S.n.grant = S.n.grant + 1
         end
         return
     end
-    if role ~= 1 then return end
+    if role ~= 1 or (action ~= DENY and action ~= GRANT) then return end
+    -- Any answer: the host speaks SEAT; the guest holds again.
+    S.ask = nil
+    if S.silent then S.silent = nil; seatLog("state=answered") end
     if action == DENY then
         local r = S.board(string.format("deny %d %d", id, DENY_MS))
+        S.gotGrant[id] = nil
         S.n.deny = S.n.deny + 1
         seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d", id, r and r.deny == id and 1 or 0))
         toast(6, now)
-    elseif action == GRANT and not S.grantLogged then
-        S.grantLogged = true
-        seatLog(string.format("action=grant;vehicle=%d;role=guest", id))
+    else
+        local r = S.board(string.format("grant %d %d", id, GRANT_MS))
+        S.n.grant = S.n.grant + 1
+        if not S.gotGrant[id] or now - S.gotGrant[id] > GRANT_MS then
+            seatLog(string.format("action=grant;vehicle=%d;role=guest;set=%d", id, r and r.grant == id and 1 or 0))
+        end
+        S.gotGrant[id] = now
     end
 end
 local tick = W.tick
@@ -528,7 +562,7 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
-    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.off, S.granted, S.next = nil, {}, 0 end
+    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.reset() end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)

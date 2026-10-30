@@ -215,26 +215,41 @@ inline std::uint32_t PhaseOneDword(std::uint32_t dword, std::uint8_t imm) noexce
 }
 
 // --- M6 seat races (lab key partner_ride_race; docs/vehicles-companions-design.md 4 rule 3, 5 SEAT) ---
-// Before either player sits in an empty vehicle, each copy's pre-query (site A) records the vehicle its
-// player could take as the driver (a stock search that found seat 0 or 1: stock phase 1 makes both the
-// driver). The world SEAT op (lua/coop/world_ride_pose.lua) claims it for the guest; the host denies a
-// claim for a vehicle its own player wants or drives (ties go to the host) and grants the rest (the host
-// then yields that vehicle for a while). A live deny makes both wrappers answer 4 for that vehicle in the
-// stock verdict only (no ride icon, phase 1's no-seat exit): the loser stays on foot. Once the winner
-// drives, the peer-driver policy decides as before (the loser may still take a passenger seat).
+// Review R1/R2. Site C (0x1246A4F: RideVehicle CanExec's call of the ride pre-query 0x1245820, retargeted
+// only with the key) records the want: the pre-query's final answer (true with seat 0 or 1, after its door
+// bits and line check; stock phase 1 makes both seats the driver's) for a vehicle with no peer-driver
+// policy. The world SEAT op (lua/coop/world_ride_pose.lua) claims it for the guest; the host denies a
+// claim for a vehicle its own player wants or drives (ties go to the host) and grants the rest, yielding
+// that vehicle at once (its own deny, refreshed while the guest keeps claiming). The guest HOLDS (a lease
+// Lua refreshes) every such driver's seat it has no live grant for, so it never drives an empty vehicle
+// before the host answered: no window of one round trip. Site C answers false for a deny or a hold (no
+// ride icon; CanExec returns false); site B answers 4 (phase 1's no-seat exit) as the backstop: a deny for
+// any stock driver's seat of that vehicle, a hold only for the vehicle site C wants. Once the winner drives,
+// the peer-driver policy decides as before (the loser may still take a passenger seat).
 inline constexpr std::uint32_t kRaceDenyMaxMs = 5000;
-// A want needs the player beside the vehicle: within kRaceNearM (horizontal) of the record's origin
-// (unit+0x20; a truck's origin is its bed, about 3 m behind the cab doors).
-inline constexpr float kRaceNearM = 4.5f;
-inline constexpr std::size_t kUnitPos = 0x20;  // float x, y, z (partner_vehicle::kPos)
+// Site B holds only a vehicle site C wanted this recently (it sees a want every frame the icon would show).
+inline constexpr std::uint32_t kRaceWantFreshMs = 1000;
 inline bool RaceWantSeat(Verdict verdict, std::uint8_t result) noexcept { return verdict == Verdict::stock && result <= kFrontSeat; }
-inline bool RaceNear(const float* player, const float* vehicle) noexcept {
-    if (!player || !vehicle) return false;
-    const float dx = player[0] - vehicle[0], dz = player[2] - vehicle[2];
-    return dx * dx + dz * dz <= kRaceNearM * kRaceNearM;
-}
 inline bool RaceDenied(std::uint16_t deny_vehicle, std::uint32_t deny_until, std::uint32_t now_ms, std::uint16_t vehicle) noexcept {
     return deny_vehicle != kVehicleUnknown && vehicle == deny_vehicle && static_cast<std::uint32_t>(deny_until - now_ms) <= kRaceDenyMaxMs;
+}
+enum class RaceVerdict : std::uint8_t { pass, deny, hold };
+struct RaceIn {
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint32_t now_ms = 0;
+    std::uint16_t deny_vehicle = kVehicleUnknown;
+    std::uint32_t deny_until = 0;
+    bool hold_on = false;  // the guest's hold lease (Lua's "hold <ms>")
+    std::uint32_t hold_until = 0;
+    std::uint16_t grant_vehicle = kVehicleUnknown;  // the host's grant (Lua's "grant <id> <ms>")
+    std::uint32_t grant_until = 0;
+};
+// A deny first; then a live hold unless this vehicle holds a live grant; else pass.
+inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
+    if (RaceDenied(in.deny_vehicle, in.deny_until, in.now_ms, in.vehicle)) return RaceVerdict::deny;
+    const bool held = in.hold_on && static_cast<std::uint32_t>(in.hold_until - in.now_ms) <= kRaceDenyMaxMs;
+    if (held && !RaceDenied(in.grant_vehicle, in.grant_until, in.now_ms, in.vehicle)) return RaceVerdict::hold;
+    return RaceVerdict::pass;
 }
 
 // The MGS_COOP_BOARD_SEAT_V1 request (game_script_observer.cpp SelectBoardSeatReceipt; review R8: a pure,

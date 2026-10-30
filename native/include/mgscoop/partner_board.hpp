@@ -45,20 +45,33 @@ using NowFn = std::uint64_t (*)() noexcept;
 const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts = {}) noexcept;
 // The seat-1 options that are live (both off until Install armed them).
 SeatOpts LiveSeatOpts() noexcept;
-// M6 seat races (partner_ride_race; partner_board_policy.hpp "seat races"): on, the pre-query records the
-// empty vehicle the local player could drive (want) and a live deny answers 4 for that vehicle in the
-// stock verdict at both sites. RaceDeny(vehicle, ms) sets it for ms (at most kRaceDenyMaxMs; 0 or 0xFFFF
-// clears). The wrappers only read u16 unit+0x78 for it (SEH).
-void SetRace(bool on) noexcept;
+// M6 seat races (partner_ride_race; partner_board_policy.hpp "seat races", review R1/R2): InstallRace
+// retargets site C 0x1246A4F (RideVehicle CanExec's call of the pre-query 0x1245820) after Install
+// succeeded, and turns the race on: nullptr, or "board" (not installed), c_<RetargetCall reason> (the
+// race stays off, A and B unchanged). Logs partner_board=race once. Site C records the want (the
+// pre-query's final answer: true with seat 0/1 for a vehicle without a peer-driver policy) and answers
+// false for a live deny or an ungranted hold; site B answers 4 for them (the backstop). RaceDeny(vehicle,
+// ms) / RaceGrant(vehicle, ms) set one vehicle for ms (at most kRaceDenyMaxMs; 0 or 0xFFFF clears; a deny
+// withdraws a grant of that vehicle and the other way round); RaceHold(ms) is the guest's lease (0 clears).
+// The wrappers only read u16 unit+0x78 and the pre-query's seat answer for it (SEH).
+const char* InstallRace() noexcept;
+void SetRace(bool on) noexcept;  // tests; the game turns it on through InstallRace only
 bool LiveRace() noexcept;
 void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept;
+void RaceGrant(std::uint16_t vehicle, std::uint32_t ms) noexcept;
+void RaceHold(std::uint32_t ms) noexcept;
 struct RaceState {
     bool on;
-    std::uint16_t want;           // the last vehicle the pre-query offered as the driver's (0xFFFF none)
+    std::uint16_t want;           // the last vehicle the pre-query answered as the driver's (0xFFFF none)
     std::uint32_t want_age_ms;    // since then (0xFFFFFFFF none)
     std::uint16_t deny;           // the denied vehicle while live (0xFFFF none)
     std::uint32_t deny_left_ms;
-    std::uint32_t hits;           // searches answered 4 by the deny (process lifetime)
+    std::uint32_t hits;           // answers refused by the deny (process lifetime)
+    bool hold;                    // the guest's hold lease is live
+    std::uint32_t hold_left_ms;
+    std::uint16_t grant;          // the granted vehicle while live (0xFFFF none)
+    std::uint32_t grant_left_ms;
+    std::uint32_t holds;          // answers refused by the hold (process lifetime)
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;
@@ -107,6 +120,10 @@ using LimitFn = bool (*)(std::uint8_t limit) noexcept;
 void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept;
 std::uint8_t SiteAForTest(void* unit, const float* pos, std::uint8_t first, std::uint8_t last) noexcept;
 std::uint8_t SiteBForTest(void* unit, const float* pos) noexcept;
+// Review R1/R2: the pre-query 0x1245820(action, body, unit, id, char* seat) bound without an install.
+using PrequeryFn = bool (*)(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat);
+void BindPrequeryForTest(PrequeryFn prequery) noexcept;
+bool SiteCForTest(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept;
 void ResetForTest() noexcept;
 } // namespace detail
 

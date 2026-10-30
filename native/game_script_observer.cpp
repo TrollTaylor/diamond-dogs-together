@@ -1003,11 +1003,10 @@ const char* PartnerBoardInstall(void*) noexcept {
     opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
     opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
     const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
-    // M6 seat races (lab.ini partner_ride_race, off unless named): the pre-query's want and the SEAT deny.
-    if (!why && config.partner_ride_race && !mgscoop::partner_board::LiveRace()) {
-        mgscoop::partner_board::SetRace(true);
-        Log("partner_board=race; result=ok\r\n");
-    }
+    // M6 seat races (lab.ini partner_ride_race, off unless named; review R1/R2): site C, the pre-query's final
+    // answer (the want), the guest's hold and the SEAT deny / grant. Logs partner_board=race once; a refusal
+    // leaves the race off and the board as it is.
+    if (!why && config.partner_ride_race) mgscoop::partner_board::InstallRace();
     return why;
 }
 bool PartnerBoardLive(void*) noexcept {
@@ -4405,41 +4404,38 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     return finish(reply);
 }
 // M6 seat races (lua/coop/world_ride_pose.lua SEAT op 54; lab.ini partner_ride_race=1; partner_board "seat races"):
-//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle 25600..26111> <ms 1..5000>
-//   -> return {ok=true,on=0}                                   (the key off or the board not installed)
-//   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>}
+//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>
+//     (partner_board::ParseSeatRequest: vehicle 25600..26111, deny / grant ms 1..5000, hold ms 0..5000; review R8)
+//   -> return {ok=true,on=0}                                   (the key off or site C not installed)
+//   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
+//              grant=<id|65535>,gleft=<ms>,holds=<n>}
 //   -> return {ok=false,reason='request'}
-// Atomics only: the board wrappers read the deny, the pre-query writes the want.
+// Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
 bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
     static constexpr char kPrefix[] = "return 'MGS_COOP_BOARD_SEAT_V1' -- ";
     constexpr std::size_t prefix = sizeof(kPrefix) - 1;
     if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, kPrefix, prefix) != 0) return false;
     world_quiet = true;
-    static char reply[160]{};
+    static char reply[200]{};
     const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
     namespace pb = mgscoop::partner_board;
-    const char* text = buffer + prefix;
-    const std::size_t n = size - prefix;
+    const pb::SeatRequest request = pb::ParseSeatRequest(buffer + prefix, size - prefix);
     if (!pb::LiveRace()) return finish("return {ok=true,on=0}");
-    if (n == 4 && std::memcmp(text, "poll", 4) == 0) {
-    } else if (n == 5 && std::memcmp(text, "clear", 5) == 0) {
-        pb::RaceDeny(pb::kVehicleUnknown, 0);
-    } else {
-        unsigned vehicle = 0, ms = 0;
-        char tail = 0;
-        char copy[40]{};
-        if (n >= sizeof(copy)) return finish("return {ok=false,reason='request'}");
-        std::memcpy(copy, text, n);
-        if (sscanf_s(copy, "deny %u %u%c", &vehicle, &ms, &tail, 1u) != 2 || vehicle < 25600 || vehicle > 26111 || ms < 1 ||
-            ms > pb::kRaceDenyMaxMs)
-            return finish("return {ok=false,reason='request'}");
-        pb::RaceDeny(static_cast<std::uint16_t>(vehicle), ms);
+    switch (request.cmd) {
+    case pb::SeatCmd::poll: break;
+    case pb::SeatCmd::clear: pb::RaceDeny(pb::kVehicleUnknown, 0); pb::RaceGrant(pb::kVehicleUnknown, 0); pb::RaceHold(0); break;
+    case pb::SeatCmd::deny: pb::RaceDeny(request.vehicle, request.ms); break;
+    case pb::SeatCmd::grant: pb::RaceGrant(request.vehicle, request.ms); break;
+    case pb::SeatCmd::hold: pb::RaceHold(request.ms); break;
+    default: return finish("return {ok=false,reason='request'}");
     }
     pb::RaceState rs{};
     pb::ReadRace(rs);
     const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
-    if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply), "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u}", unsigned(rs.want),
-                                age, unsigned(rs.deny), rs.deny_left_ms, rs.hits)))
+    if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
+                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u}",
+                                unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
+                                rs.grant_left_ms, rs.holds)))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
