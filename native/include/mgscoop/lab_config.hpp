@@ -567,6 +567,12 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // G2 back-seat aim (docs/native-puppet.md "Seat aim"): the read-only census
+    // (partner_seat_aim lines: the local player in a vehicle ride act and body 1
+    // in the seat flow: act, upper act, gun mode, posture, the weapon flags).
+    // Lab only (play forces it off), default off; a named value records _given.
+    bool partner_seat_aim = false;
+    bool partner_seat_aim_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

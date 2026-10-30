@@ -357,6 +357,9 @@ $script:LabPartnerKeys = @(
     # Horse / D-Walker riders (docs/mounts.md): hide the partner body while the remote's act is a mount act
     # (lab only: the loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_mount'; Json = 'native_mount'; Kind = 'enum'; Values = @('off', 'hide') },
+    # G2 back-seat aim (docs/native-puppet.md "Seat aim"): the read-only census of the local player in a vehicle ride act
+    # and of the partner body in the seat flow (lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_seat_aim'; Json = 'seat_aim'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

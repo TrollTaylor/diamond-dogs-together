@@ -169,6 +169,8 @@ int main(int argc, char** argv) {
         // Horse / D-Walker riders (hide with the gun profile in lab; play forces off) and whether it was named.
         std::printf("partner_native_mount=%s\npartner_native_mount_given=%d\n", mgscoop::PartnerNativeMountName(c.partner_native_mount),
                     c.partner_native_mount_given ? 1 : 0);
+        // G2: the back-seat aim census (lab only, default 0; play forces it off) and whether it was named.
+        std::printf("partner_seat_aim=%d\npartner_seat_aim_given=%d\n", c.partner_seat_aim ? 1 : 0, c.partner_seat_aim_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

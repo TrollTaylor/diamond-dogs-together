@@ -517,6 +517,114 @@ too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
 
+### Seat aim
+
+G2 (0.13.6, in progress; research scratchpad `complete/re-seat-aim.md`):
+aiming and shooting from the back seat, for the local passenger and for the
+partner shown in a back seat. **Status: research and a read-only lab census;
+nothing changes how the game plays.** Key `partner_seat_aim=0|1` (lab only,
+default 0, play forces it off; a named value records `partner_seat_aim_given`).
+
+**The local passenger: stock already allows its weapon (static; not yet run).**
+- The player's gun plugin (`AttackActionImpl::PollingImpl 0x1054210`) runs
+  `UpdateAttackType 0x108CD40`, then `EnableCheck 0x103E010`, then
+  `PollingForLocal 0x1053930` every frame.
+  - EnableCheck refuses the weapon while flag 0xC3 or 0xC2 of the per-id flag
+    record `*(PS+0x280) + (id - *(PS+8))*0x20` is set (flag n = word n >> 5,
+    bit n & 31). Otherwise it sets flag 0x18 (word 0 bit 24).
+  - A hold needs flag 0x18 and flag 0xCF clear.
+- The ride plugin's Exec stage 0 (`0x1247320`) sets flag 0xC3 for the body
+  (`0x12473A2`), then runs the ride phase with event 1. The back-seat
+  passenger phase `0x1250CF0` clears it there once its seat loop runs
+  (`work+0x5C > 0`, `0x1250FF8`). That is the only clear in the ride plugin;
+  the driver and the get-off keep it.
+- So after GetOn a stock back-seat passenger may raise its gun:
+  - upper act 2, graph-2 `GunHoldStart 0x50130AE2E584` / `GunHold
+    0xAA0EA22A5E0E`, gun mode 7, fire modes 9/10;
+  - the main act stays 0x6E, so the board report, the passenger camera handle
+    and RIDE_FAST are untouched.
+- `UpdateAttackType` has no posture for act 0x6E. The heli door has act 99 ->
+  posture 5 (`RideHeliActionPluginImpl::StateAtk 0x121FEB0`, a dedicated
+  seated-attack node) and the horse has 0x79 -> 3. The back seat therefore uses
+  the standing upper-body set (posture 0) over the seated legs.
+- The ride's `PollingForSubjectiveCamera 0x124A5C0` gives a passenger no first
+  person (only the iDroid's upper act 0x12 does), so no first-person aim is
+  expected.
+- Expected defects: the aim's yaw range is the seat's (posture 0: 75 deg pitch /
+  90 deg yaw), shots may hit the jeep, C4 (class 3) is refused, and there is no
+  first person.
+
+**The partner as a passenger: not built.** The DM seat chain owns body 1. The
+native puppet leaves (`seat`), the aim mirror refuses `ride` and acts 97..112,
+and nothing of the remote's aim or fire shows. The research note lists three
+designs:
+- (A) a graph-2 gun-hold pose on the seated body 1, the `partner_gesture`
+  pattern;
+- (B) upper-only native windows while seated;
+- (C) body 1 as a stock passenger.
+
+(A) is the smallest. It waits on two facts the census can answer: whether body
+1 holds the remote's weapon while DM-seated, and whether the gun-hold nodes
+draw without the gun plugin's per-weapon setup.
+
+**The census** (`native/include/mgscoop/partner_seat_aim.hpp`, pure, with
+`ObserveSeatAimCensus` in `game_script_observer.cpp`):
+- It runs on the 10 Hz equipment tick, with the same owner and gates as the
+  placed census.
+- It reads Q's act / upper arrays, the qualified `partner_player::ReadGun`
+  (+ `rec+0x2C1` / `+0x3D4`), the flag record of `ResolveBlock`'s PS and, for
+  the local player, `partner_pass_camera::ReadCamera`. No write, no game call.
+- Watched:
+  - k = 0, the viewer's own player: while its act is 0x6E / 0x6F / 0x70 or the
+    native passenger report holds a seat;
+  - k = 1, body 1: while the seat flow holds it.
+- Lines:
+  - `partner_seat_aim=on; mission=..; read_only=1; writes=0; calls=0`
+  - `partner_seat_aim=sample; who=local|body1; k=..; act=0x..; upper=0x..;
+    mode=..; next=..; posture=..; cls=..; equip=..; hand=..; armed=..; c2=..;
+    c3=..; cf=..; d8=..; seat=..; vehicle=..[; cam_mode=..; cam_handle=0x..]`
+    (on a change; 10 a second, 1200 a mission)
+  - `partner_seat_aim=end; who=..; reason=watch|mission|off; ms=..; samples=..;
+    armed_ms=..; aim_ms=..; aims=..; fires=..; reloads=..; posture=..; ...`
+  - `partner_seat_aim=status; ...` (every 5 s while watched)
+  - `partner_seat_aim=capped; kind=..`
+
+**Pins.** `SEAT_AIM_SITES` (16 blocks):
+- the Exec and its stage table, stage 0's set and event-1 call;
+- the passenger phase's clear and its flag 0xD8 set;
+- PollingImpl's call order;
+- EnableCheck's refusal / set / clear;
+- PollingForLocal's hold gate;
+- StateGunHoldStart's upper act and graph-2 node;
+- UpdateAttackType, whole.
+
+Also two vtable slots (Exec at +0x80 of `0x23CBD88` / `0x23CBEA8`) and
+`seat_aim_assertions` (one set and one clear of 0xC3 in the ride plugin,
+single callers). Contract 759 code sites / 195 vtable slots. Tests:
+`partner_seat_aim_tests` (also in `Get-WorkerTests`).
+
+**What a hidden run must show** (not yet run): the scenario
+`coop-vehicle-seat-aim.txt` (written: the first two halves of
+`coop-vehicle-passenger.txt` with `labsetting partner_seat_aim=1`; the
+passenger holds RMB, then RMB+LMB, in the back seat, both directions).
+- The passenger's lines show `c3=1` during GetOn, then `armed=1; c3=0`, then
+  `upper=0x02; mode=7; posture=0` and `mode=9|10`. The end line has `aims>=1;
+  fires>=1`. The driver's own lines (act 0x6F) keep `c3=1; armed=0`.
+  - The clear waits for the first clip to end (`work+0x5C` counts seat-loop
+    submits from 0), so a short `c3=1` after `board_seated` is expected.
+- FRAMES: the raised gun in the back seat with the camera outside the jeep, and
+  the muzzle flash. `act=0x6e` throughout, the pass camera `held`, no
+  `viewer_changed` / `uncertain=1` / `board_uncertain` / `crash_probe=av`.
+  - On RMB the passenger's `cam_mode` may change to an aim module.
+    `cam_handle` should stay `0x88000000000064xx`, because the pass camera
+    re-connects whenever the field is 0. A different owner there means the
+    aim module skips the jeep collision.
+- The `who=body1` lines record whether body 1 holds the remote's gun while
+  seated.
+- The driver's copy logs `partner_action_state; ... flags=0x1|0x3; ...
+  act=110` while the remote passenger aims or fires. That is the signal design
+  (A) would use; if it is missing, the sender drops aim in act 0x6E.
+
 ## Traversal icon
 
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
@@ -1958,6 +2066,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
+| `partner_seat_aim` | 0, 1 (the read-only back-seat aim census, see "Seat aim": the local player in a vehicle ride act and body 1 in the seat flow, `partner_seat_aim=sample\|end\|status` lines; lab only, default 0 with or without the gun profile, play forces it off; a named value records `partner_seat_aim_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

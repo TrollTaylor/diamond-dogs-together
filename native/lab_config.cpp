@@ -234,6 +234,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
+    else if (Equals(key, "partner_seat_aim")) {
+        // G2: the read-only back-seat aim census (lab only, default off); a named value records _given.
+        ok = ParseBool(value, result.partner_seat_aim);
+        if (ok) result.partner_seat_aim_given = true;
+    }
     else return false;
     return true;
 }
@@ -1479,6 +1484,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_ride_census = false;
         // The WS4 placed / arm census is a lab measurement too (read-only).
         c.partner_placed_census = false;
+        // G2: the back-seat aim census is a lab measurement (read-only); a named value keeps _given.
+        c.partner_seat_aim = false;
         // WS4 v2: the place / detonate mirror stays lab-only (no play-mode C4 run yet).
         c.partner_native_place_mirror = false;
         // Traversal replay runs in play too (user decision 2026-10-22; the icon
