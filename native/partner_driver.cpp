@@ -3437,8 +3437,24 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     }
     if (c.turn.pending || c.turn.check_ms) {
+        // Design 8.36: the player's own camera input while the turn is pending (on foot): the effective right stick or
+        // mouse above kLookInput (as the shot guard reads it), or the local gun aiming. Either drops the turn.
+        bool turn_look = false, turn_aim = false;
+        unsigned turn_gun = 0;
+        if (c.turn.pending && !lp.valid) {
+            partner_input::PadRaw turn_raw{};
+            if (h.read_pad && h.read_pad(h.context, st, turn_raw)) {
+                const partner_input::PadSnapshot tp = partner_input::Effective(turn_raw);
+                turn_look = (std::isfinite(tp.rx) && std::fabs(tp.rx) > pc::kLookInput) || (std::isfinite(tp.ry) && std::fabs(tp.ry) > pc::kLookInput);
+            }
+            pp::AimRead turn_ar{};
+            if (h.read_aim && h.read_aim(h.context, st, turn_ar)) {
+                turn_aim = pc::GunAims(turn_ar.gun_ok[0], turn_ar.gun_state[0], turn_ar.gun_flags[0]);
+                turn_gun = turn_ar.gun_ok[0] ? turn_ar.gun_state[0] : 0xFFu;
+            }
+        }
         const char* why = "none";
-        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why);
+        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim);
         const unsigned age = static_cast<unsigned>(pc::ClampMs(now >= c.turn.since_ms ? now - c.turn.since_ms : 0));
         if (ta == pc::TurnAct::request) {
             partner_vehicle::Read vr{};
@@ -3455,8 +3471,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                         static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests);
         } else if (ta == pc::TurnAct::expire) {
             EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                        "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u\r\n",
-                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u);
+                        "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
         } else if (ta == pc::TurnAct::check) {
             // About kTurnCheckMs after the request: the camera's world yaw against the one asked for, and its distance to
             // the body (the frame shows the rest).
