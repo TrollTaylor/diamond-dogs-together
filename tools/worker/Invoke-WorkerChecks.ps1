@@ -93,7 +93,16 @@ function Get-WorkerTests {
         # Diamond Dogs Together (DiamondDogsTogether.exe): archive utilities, the
         # core on temp folders with a fake environment, the UI logic, and the
         # exe's own --selftest (read-only for its folder; a throwaway model in %TEMP%).
-        'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest'
+        'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
+        # 0.14.4 review: the fixtures of shipped code the receipt had left out. dinput8.dll: the dog guard, the act
+        # census, the ammo-leak block, the overlay catalogue (read against partner_sync.lua) and the seated-rider patch
+        # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks;
+        # DiamondDogsTogether.exe: its embedded icon, and the local test's --local-watch helper as real hidden processes
+        # on temp folders (no game, no window, no input).
+        'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
+        'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
+        'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check',
+        'launcher_icon_tests', 'ddt_local_watch_process'
     )
 }
 function Get-WorkerHash([string]$Text) {
@@ -189,7 +198,12 @@ function Get-WorkerPlan {
         project = $Root; build_directory = $cache; flags = $flags
         coordinator_lock = 'Local\mgs-coop-checks-' + (Get-WorkerHash ([IO.Path]::GetFullPath($Root).ToUpperInvariant())).Substring(0, 16)
         tests = @(Get-WorkerTests)
-        excluded = @('lab_scripts_tests', 'friend_package_tests', 'probe_install_recovery')
+        # Never run here, by name (Assert-WorkerCoverage refuses any other test the Release build registers): the
+        # unsafe default flows; the runtime .dat build from the game folder's archives; the launcher's mock pages
+        # rendered in a DX11 window; the Python check that the committed icon files are what the generator makes
+        # (launcher_icon_tests checks the icon the exe embeds).
+        excluded = @('lab_scripts_tests', 'friend_package_tests', 'probe_install_recovery',
+            'ddt_runtime_dat_integration', 'ddt_launcher_screens', 'launcher_assets_current')
         pure_input_script = 'tests\lab_scripts_tests.ps1 -InputOnly'
         retail_game_launch = $false; system_input = $false; installation = $false
         evidence = 'Automated fixture checks only; runtime worker and gameplay are not validated.'
@@ -241,7 +255,7 @@ function Assert-WorkerInventory {
         character_composed_lua_check='character_lua_check'; character_game_lua_check='character_lua_check'
         player_package_mission_list_lua_check='player_package_lua_check'
     }
-    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke'; ddt_launcher_selftest='DiamondDogsTogether'; partner_defer_pose_nested_foreign_tests='partner_defer_tests'; partner_defer_pose_held_generation_tests='partner_defer_tests';
+    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke'; ddt_launcher_selftest='DiamondDogsTogether'; ddt_local_watch_process='ddt_core_tests'; partner_defer_pose_nested_foreign_tests='partner_defer_tests'; partner_defer_pose_held_generation_tests='partner_defer_tests';
         master_server_patch_retarget_tests='master_server_patch_tests'; master_server_patch_retarget_loopback_tests='master_server_patch_tests' }
     foreach ($name in $Allowed) {
         if (!$byName.ContainsKey($name)) { throw "Required audited test is missing: $name" }
@@ -296,6 +310,21 @@ function Assert-WorkerInventory {
                 if ($command.Count -ne 2 -or $command[1] -cne $mode) { throw "Unaudited patch fixture mode: $name" }
             } elseif ($name -eq 'ddt_launcher_selftest') {
                 if ($command.Count -ne 2 -or $command[1] -cne '--selftest') { throw 'The launcher runs only its --selftest here' }
+            } elseif ($name -eq 'ddt_local_watch_process') {
+                if ($command.Count -ne 3 -or $command[1] -cne '--local-watch-process' -or
+                    [IO.Path]::GetFullPath($command[2]) -ine (Join-Path $Directory 'DiamondDogsTogether.exe')) {
+                    throw 'Unaudited local-watch helper fixture: it runs only this build''s DiamondDogsTogether.exe'
+                }
+            } elseif ($name -eq 'launcher_icon_tests') {
+                $want = @((Join-Path $Root 'native\launcher\resources\ddt_launcher.ico'), (Join-Path $Root 'native\launcher\resources\ddt_logo.png'),
+                    (Join-Path $Root 'docs\readme\logo.png'), (Join-Path $Directory 'DiamondDogsTogether.exe'))
+                if ($command.Count -ne 5 -or @(0..3 | Where-Object { [IO.Path]::GetFullPath($command[$_ + 1]) -ine $want[$_] }).Count) {
+                    throw 'Unaudited icon fixture input'
+                }
+            } elseif ($name -eq 'partner_dm_overlay_tests') {
+                if ($command.Count -ne 2 -or [IO.Path]::GetFullPath($command[1]) -ine (Join-Path $Root 'lua\coop\partner_sync.lua')) {
+                    throw 'Unaudited overlay fixture input'
+                }
             } elseif ($name -eq 'partner_defer_pose_nested_foreign_tests') {
                 if ($command.Count -ne 2 -or $command[1] -cne '--pose-nested-foreign') { throw 'Unexpected pose-window fixture mode' }
             } elseif ($name -eq 'partner_defer_pose_held_generation_tests') {
@@ -330,6 +359,19 @@ function Assert-WorkerInventory {
                     }
                 }
             }
+        }
+    }
+}
+# The Release receipt (the build tools/package.ps1 -Friend packages) covers every registered test: each one is audited
+# (Get-WorkerTests) or excluded by name (the plan's excluded list, with its reason), so a new fixture of shipped code is
+# never silently left out of the receipt (0.14.4 review). Other profiles keep their fixed list only.
+function Assert-WorkerCoverage {
+    param($Inventory, $Plan)
+    if ($Plan.profile -cne 'Release') { return }
+    foreach ($test in @($Inventory.tests)) {
+        $name = [string]$test.name
+        if (@($Plan.tests) -cnotcontains $name -and @($Plan.excluded) -cnotcontains $name) {
+            throw "The Release receipt neither audits nor excludes: $name (add it to Get-WorkerTests, or to the plan's excluded list with its reason)"
         }
     }
 }
@@ -439,6 +481,7 @@ try {
     $inventoryResult = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '--show-only=json-v1') 'inventory' 60
     $inventory = $inventoryResult.Output | ConvertFrom-Json
     Assert-WorkerInventory $inventory $projectRoot $plan.build_directory $plan.tests
+    Assert-WorkerCoverage $inventory $plan
     Write-WorkerJson (Join-Path $runDirectory 'ctest-inventory.json') $inventory
     $regex = '^(' + (($plan.tests | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')$'
     # CTest retains setup/cleanup scheduling; the dependency audit above refuses
