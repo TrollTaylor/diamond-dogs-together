@@ -1896,6 +1896,19 @@ test it neither runs nor excludes by name. The other four findings (two automati
 close during setup, the tag and network wording, untracked files in the source zip) are in docs/STATUS.md, section
 "the 0.14.4 review's launcher and package findings fixed", with their failing-first tests and hidden end-to-end runs.
 
+### 8.15 Round 2 of that review (2026-10-29, branch `wp/launcher-fixes2`)
+
+Release tooling, the launcher and tests only; sections 9 and 10 stand as they are (no behaviour, op code, CFG index or
+lab key change, no play default). What touches this design: the eleven fixtures of its shipped code that 8.14 added to
+the Release receipt (`dog_guard_tests`, four partner fixtures, and the companion, buddy companion, dog guard, relief,
+relief sync and outcome attribution Lua checks) stay in every profile's list, so each hidden run's preflight runs them
+too (0.02-0.16 s each in the receipt [O]). Only the launcher's two checks (`ddt_local_watch_process`,
+`launcher_icon_tests`) moved to the Release receipt alone [O: `-PlanOnly`, 309 tests for Normal and Research against
+311 for Release]. No Normal-profile worker check ran [U]. The other findings (the tag and source zip wording, the
+package test and a developer's untracked files, the fail-closed refusal, the abandoned setup lock, a start in the
+closing window's last moments, the end-to-end harness outside `tools/worker`) are in docs/STATUS.md, section "the
+review of those launcher and package fixes, round 2".
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -2618,6 +2631,23 @@ failing-first tests. Details and runs: docs/STATUS.md, section "the 0.14.4 revie
 |---|---|---|
 | Two automatic launcher setups can run at once after a window closes during setup | Accepted, both ends | `8c7a0da`: the closing window ends its setup before any join and holds the folder until then; a per-folder setup lock makes the next window wait. Hidden end-to-end runs `r4`, `r5` [O] |
 | The Release receipt omits new shipped tests | Accepted, widened | `bc56c0d`: 13 fixtures added (298 -> 311), four of them missing since before 0.14.4; a registered test that is neither run nor excluded by name is refused. Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` [O] |
-| "The tag holds the same source" is inexact | Accepted | `d6da17f`: the tag holds the same code, apart from the package record in docs/STATUS.md; `build.source_commit` names the commit |
+| "The tag holds the same source" is inexact | Accepted | `d6da17f`: ~~the tag holds the same code, apart from the package record in docs/STATUS.md~~ (refuted in round 2, below; corrected by `2dcd0e3`); `build.source_commit` names the commit |
 | The notices say the exe downloads nothing | Accepted | `d6da17f`: its only network access is the update check and, on Update now, the download from this repository's releases |
 | Untracked files could be published in the source zip | Accepted | `c78ed3b`: package.ps1 refuses them by name before writing anything; `source_dirty` counts them |
+
+### The 0.14.4 pre-release review, round 2: the launcher and package fixes (2026-10-29, branch `wp/launcher-fixes2`)
+
+Verdict of the review: fix first (one major, seven minor). Each finding was checked against the code before it was
+changed. Details, failing-first tests and runs: docs/STATUS.md, section "the review of those launcher and package fixes,
+round 2".
+
+| Finding | Verdict | Change |
+|---|---|---|
+| Major: the tag/zip wording is still false (16 tracked paths missing from the zip, MinHook only a link, later docs commits) | Accepted (confirmed with `git ls-tree`) | `2dcd0e3`: the texts compare the zip with `build.source_commit` and list what it leaves out; `friend_package_tests` checks the wording and the left-out kinds |
+| `friend_package_tests` depends on the developer's untracked files | Accepted | `f93dc74`: the real-tree run gives its child gits an excludes file of exactly those files; `package.ps1` keeps its refusal |
+| The shared test list adds a slow process test to every hidden-run preflight | Accepted, other fix | `8db0313`: `launcher_icon_tests` and `ddt_local_watch_process` run only in the Release receipt (309 / 311); a Normal check would need a new D: build folder, so none ran [U] |
+| No test of an abandoned setup lock; e2e window C was vacuous | Accepted | `9b20ce7`: two sub-tests; a mutation check (WAIT_ABANDONED dropped) fails 5 checks. STATUS says window C never tried a setup |
+| STATUS overclaims "does not depend on which program runs the setup" | Accepted | Docs: "a setup run by Diamond Dogs Together from this version on"; older exes and the dev install tools take no lock |
+| A start during the ~50 ms closing gap exits without a window | Accepted | `bc9f305`: the claim waits up to 2 s when no window holds the folder, then looks once more; real-mutex unit tests [O], no end-to-end run [U] |
+| The untracked-file refusal fails open without git | Accepted | `6240a0a`: with a `.git` entry, a git that cannot be run refuses the package |
+| The launcher e2e ran outside `tools/worker` and without the verify lock | Accepted as a record | STATUS records it as a deviation, not sanctioned; no such harness ran in round 2; the user decides whether it may |
