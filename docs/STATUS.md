@@ -1,3 +1,16 @@
+## 2026-10-30: seat 1 drawn in the seat, built behind a lab key (branch `wp/seat1-draw`, unproven)
+
+**Cause** (design 8.33): the partner's seat-1 body on the driver's copy was anchored on seat 1's own matrix, but the
+player's FrontRight clips are authored on the driver's seat matrix (the stock remap `0xB79A3F` hands a player in seat 1
+seat 0's matrix), so it sat one seat spacing further right, outside the jeep, parked and moving alike [O frames: the
+D-Dog in seat 1 beside it in `3c748d46`; I the clip origin]. The passenger's own copy draws itself outside too (its
+remap skip), hence `err_mm` 0-2. **Built:** lab key `partner_ride_seat1_anchor` (off unless named, lab and play): the
+anchor immediate 0 for seat 1 (`partner_ride_seat_patch=applied; seat=1; anchor=0;`). Tests failing first (`2bf2b51`
+-> `9f2ef8b`); full CTest 336/336. **Play defaults:** unchanged. **Not proven:** four hidden runs of
+`m6m7c-seat1-draw-play.txt` stopped before gameplay (`IsolationFailed=True`, `child_exited_before_admission`: the
+guest's worker hook refused `required_hooks_or_private_desktop`; another track's run at 13:55 too), so no frame, no play
+rehearsal; the key stays off. Next: rerun that scenario once the worker admits both copies, then flip it on.
+
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 
 **Merged:** `e694c92` `wp/seat-shoot2` (`5029a26`; S1 `partner_seat_shot` built, off in lab and play). Contract 824 code

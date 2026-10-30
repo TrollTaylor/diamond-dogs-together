@@ -3075,6 +3075,32 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
 - Never seen: `step=error`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`, two Dead commits for
   one guard. Not proven: a moving jeep, two PCs, a 0.14.4 partner; design B (the driver sees the raised gun).
 
+### 8.33 Results: seat 1 drawn in the seat on the driver's copy, built behind a lab key (2026-10-30, branch `wp/seat1-draw`)
+
+- **Cause.** [O, frames looked at] `3c748d46` host `m6-jeep-1-stopped`: the driver's own D-Dog sits in seat 1 and the
+  guest's body 1 one seat spacing further right, outside the jeep; the same offset in `1f81de65` / `37b94432` host and
+  `83defaeb` guest frames, parked and while driving (`1f81de65` host `s1-drive-h-03`: the body keeps that offset, it
+  does not trail). The passenger's own copy shows itself outside the right side too (`3c748d46` host
+  `m6-jeep-1r-seated`, `1f81de65` guest `s1-stopped`), which is why `err_mm` reads 0-2 at rest. [O, Ghidra]
+  `0x140B799C0` answers seat 0's matrix for seat 1 while `rider[1]` holds a player id. [I] The player's FrontRight
+  clips are authored on the driver's seat matrix; body 1 (never in `rider[]`) was anchored on seat 1's own matrix
+  (anchor immediate 1), and the passenger's own copy skips that remap while seated (`board_remap`), so both draw one
+  extra seat spacing. The moving `err_mm` (2-2.6 m) compares with the peer's streamed pose, which lags one way by about
+  half the RTT; [I] not a draw lag.
+- **Built** (`2bf2b51` red -> `9f2ef8b`; first form `7ddba0f` -> `802fed3`): lab key `partner_ride_seat1_anchor`
+  (off unless named, lab and play; a named 1 runs in play). With it, `partner_ride_seat::Arm` writes the anchor
+  immediate `AnchorSeat(1) = 0` for a seat-1 ride (`partner_ride_seat_patch=applied; seat=1; anchor=0;`); seats 0, 2,
+  3 and the key off are unchanged (`anchor=<seat>`). No new patch site (the same immediate), no wire change. Expected
+  side effect [I]: the driver's copy reads `err_mm` about one seat spacing at rest while the passenger's own copy still
+  draws itself outside (under the 3 m `seat_far` latch; the driver's own vehicle is exempt anyway).
+- **Not proven.** All four hidden runs of `m6m7c-seat1-draw-play.txt` stopped before gameplay
+  (`IsolationFailed=True`, `child_exited_before_admission`, 1067: the guest's worker hook logged `refused
+  required_hooks_or_private_desktop` 0.2 s after `configured`, the host was admitted): `37bfbe8e`, `37c5eb3f`,
+  `2a69a71c`, `aab7c606` (archive `D:\mgs-coop-run-archive\m6m7c\`); another track's run (`1b597e17`, 13:55) failed the
+  same way, earlier ones at 13:41-13:47 were admitted [O]. So the key stays off; the frame proof (both roles, parked and
+  under throttle, back seat 2 unchanged, the passenger's own view) and the play rehearsal are open. The passenger's own
+  copy (the remap skip) is left for the seat-1 camera track.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3522,6 +3548,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     screen draws the seat-1 passenger pushed out past the jeep's right side, at rest too [O]: seat 1 is not frame-clean.
   - **Smoke after the M7 merge (8.32, `e694c92`):** race and D11 hold in play (`37b94432`); seat 1 boards and its
     gun fires across the jeep; the driver's view of the seat-1 passenger is unchanged.
+  - **Seat-1 draw (8.33, `wp/seat1-draw`):** cause found (body 1 anchored on seat 1's own matrix; the player's clips
+    want the driver's); fix built behind lab key `partner_ride_seat1_anchor`, off: no frame proof yet (the hidden worker
+    refused the guest before gameplay in all four runs).
 
 ### M7. Shooting as a passenger
 
