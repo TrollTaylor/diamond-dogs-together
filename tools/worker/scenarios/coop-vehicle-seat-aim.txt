@@ -1,134 +1,107 @@
-# G2 back-seat aim (docs/native-puppet.md "Seat aim"; research scratchpad complete/re-seat-aim.md): does a stock
-# back-seat passenger raise and fire its own gun? Read-only census partner_seat_aim=1 on both copies; the board
-# runs passenger as in coop-vehicle-passenger.txt (this file is its first two halves, without the truck, plus an
-# aim and a fire in the back seat). Nothing here patches or calls the game for the aim: the stock passenger phase
-# 0x1250CF0 clears the gun plugin's "no weapon" flag 0xC3 once its seat loop runs, so the passenger's RMB / LMB
-# should reach the stock gun hold (upper act 2, gun mode 7) and fire (modes 9/10) with the standing upper-body set.
+# M7 / E8 + E9 (docs/vehicles-companions-design.md 6.7, section 8 E8/E9; docs/native-puppet.md "Seat aim"):
+# does a stock back-seat passenger raise and fire its own gun, and what does the driver's copy show of it?
+# Read-only census partner_seat_aim=1 on both copies (lab only); the board runs passenger (the play default).
+# Africa, seed africa-jeep (Masa Village, veh_lv_0000 = 25608 at about (-654.32, 0.43, 878.61), yaw 2.664 rad: forward
+# f = (0.460, -0.888), the driver's side L = (-0.888, -0.460)). The host drives (goto_vehicle jeep = the driver's door);
+# the guest boards from the passenger side (beside its boot spot) so it takes back seat 3, with no driver between it
+# and a target ahead-right. A guard is warped 12 m ahead of the jeep and 1.5 m to the passenger side, facing the jeep
+# (the host stands 17 m ahead facing back for spawn_enemy here; debug_soldier_warp=1, notice restricted).
 #
-# Expected, first half (the guest is the passenger, the host drives):
-#   guest  partner_seat_aim=on; mission=..; read_only=1; writes=0; calls=0
-#          partner_seat_aim=sample; who=local; k=0; act=0x6e; ... c3=1 during GetOn, then armed=1; c2=0; c3=0
-#          (the weapon enabled once the seat loop runs); cam_handle=0x88000000000064xx (the passenger camera)
-#          during the RMB hold: upper=0x02 and mode=7; posture=0 (no back-seat posture in UpdateAttackType);
-#          during RMB+LMB: mode=9 or 10; after the get-off: partner_seat_aim=end; who=local; k=0; reason=watch; ...;
-#          aims>=1; fires>=1 (also partner_action_events=local ... fire_count increments)
-#          act=0x6e in every sample while seated (the aim never breaks the seat), partner_ride=local_passenger stays on,
-#          no new partner_ride=pass_camera; state=refused, no viewer_changed / uncertain=1 / board_uncertain /
-#          crash_probe=av
-#   host   partner_seat_aim=sample; who=local; k=0; act=0x6f; ... armed=0; ...; c3=1 (the driver keeps "no weapon")
-#          partner_seat_aim=sample; who=body1; k=1; ...; seat=2|3 while the seat flow holds body 1: equip / hand / mode
-#          say whether body 1 still holds the remote's gun while DM-seated (design A of the research note)
-#          partner_action_state; ... flags=0x1|0x3; ...; act=110 while the remote passenger aims / fires (the signal
-#          design A would use; missing means the sender drops aim in act 0x6E)
-#   guest  a short c3=1 after board_seated is expected (the clear waits for the first GetOn / loop clip to end); on RMB
-#          cam_mode may change but cam_handle should stay 0x88000000000064xx (the pass camera re-connects a cleared field)
-#   seat-aim-guest-NN: the passenger's OWN view with the raised gun, the camera outside the jeep (no interior clip);
-#   seat-fire-guest-NN: the muzzle flash / shots from the back seat (note whether they hit the jeep);
-#   seat-aim-host-NN: the driver's view of the partner body while the remote aims (expected: seated, no aim; record it).
-# Second half: the roles swapped (the host is the passenger): the same lines with host / guest exchanged.
-# Not yet run (0.13.6 in progress). Record also: the aim's yaw range (aim sideways), whether first person is refused
-# (expected: the ride's PollingForSubjectiveCamera gives a passenger none) and the get-off right after the aim.
+# Expected (the guest is the passenger, the host drives):
+#   guest  partner_seat_aim=on; mission=30020; read_only=1; writes=0; calls=0
+#          partner_seat_aim=sample; who=local; k=0; act=0x6e; ... armed=1; c2=0; c3=0 once the seat loop runs
+#          during the RMB hold: upper=0x02 and mode=7 (posture=0: no back-seat posture in UpdateAttackType);
+#          during RMB+LMB: mode=9 or 10; after the get-off partner_seat_aim=end; who=local; ...; aims>=1; fires>=1
+#          aim_dir=refused; reason=ride while seated (the 0.13.6 RideGate), never reason=convention
+#          the kill: world_lua=event=req; rid=..; ent=.. (REQ_OUTCOME), the host's event=commit; ...; actor=guest;
+#   host   partner_seat_aim=sample; who=local; k=0; act=0x6f; ... armed=0 (the driver keeps "no weapon")
+#          partner_seat_aim=sample; who=body1; k=1; ...; seat=3: equip / hand / mode say whether body 1 still holds
+#          the remote's gun while DM-seated (E9's question); partner_action_state; ... flags=0x1|0x3; ...; act=110
+#          while the remote passenger aims / fires (the signal the partner gun hold uses)
+# Frames: seat-aim-guest-NN (the passenger's own view, gun raised?), seat-fire-guest-NN (the muzzle flash, the guard),
+#   seat-aim-host-NN (the driver's view of the partner body while the remote aims), seat-drive-fire-guest-NN.
+# The 0.13.5 version of this file (title + the Wakh Sind jeep, both role orders) was never run; its second half (the
+# host as the passenger) is the reverse-roles part of coop-vehicle-seat-shoot.txt.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-aim.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
 labsetting partner_native_ride=seat
 labsetting partner_ride_board=passenger
 labsetting partner_seat_aim=1
 labsetting nametag=1
-title 200
-waitgameplay host 120
-waitgameplay guest 120
+labsetting debug_soldier_warp=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
 both debug godmode 1
-host debug time 43200
-host debug weather sunny
-guest debug teleport 805.0 342.1 1636.5 -60
+waitlog host 'partner_seat_aim=on; mission=30020' 30
+waitlog guest 'partner_seat_aim=on; mission=30020' 30
+host debug clear_enemies 100
 wait 2000
-stance host stand
-stance guest stand
-placebehind host guest 6 -0.7
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+# The guard: 12 m ahead of the jeep, 1.5 m to the passenger side, facing the jeep.
+host debug teleport -645.16 2.00 864.21 -27.4
 wait 4000
-waitlog host 'partner_seat_aim=on; mission=' 10
-waitlog guest 'partner_seat_aim=on; mission=' 10
+host run position
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+host capture guard-placed
+# The host drives: back to the driver's door, board.
 host debug goto_vehicle jeep
-guest debug goto_vehicle jeep
-wait 4000
-host debug clear_enemies 100
-wait 1500
-host debug clear_enemies 100
+wait 3000
 host press e 150
-wait 2500
+wait 3500
 host run vehicle_seats
 host require vehicle;id=
-waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 waitlog host 'partner_seat_aim=sample; who=local; k=0; act=0x6f;' 10
+# The guest boards from the passenger side (back seat 3).
+guest debug teleport -653.44 1.20 879.74 -117
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 guest press e 150
 wait 3500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
 waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
-waitlog guest 'partner_ride=pass_camera; state=connect; vehicle=256[0-9][0-9]; seat=[23]; reason=handle' 5
 waitlog guest 'partner_seat_aim=sample; who=local; k=0; act=0x6e;.* armed=1; c2=0; c3=0;' 10
 waitlog host 'partner_seat_aim=sample; who=body1; k=1;' 10
 wait 1000
 both capture seat-before-aim
-heldcapture guest guest rmb seat-aim-guest 4
-wait 400
+logmark both
+heldcapture guest guest rmb seat-aim-guest 3
+wait 300
 heldcapture guest host rmb seat-aim-host 3
-wait 400
-heldcapture guest guest rmb+lmb seat-fire-guest 4
-wait 600
+wait 300
 waitlog guest 'partner_seat_aim=sample; who=local; k=0; act=0x6e; upper=0x02;' 5
-host hold w 1500 nowait
-heldcapture guest guest rmb seat-aim-drive 3
+heldcapture guest guest rmb+lmb seat-fire-guest 4
+wait 300
+heldcapture guest host rmb+lmb seat-fire-host 2
+wait 1500
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 5
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 5
+# A second try further right if the guard still stands.
+guest hold rmb 1500 nowait
+wait 400
+guest mouse 120 0
+wait 600
+guest hold rmb+lmb 1500 nowait
+guest burst seat-fire2-guest 3 400
+guest release
+wait 1500
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 5
+# While the host drives (reverse, away from the guard): aim and fire again.
+host hold s 1500 nowait
+heldcapture guest guest rmb+lmb seat-drive-fire-guest 3
 host release
 wait 1500
 both capture seat-after-aim
+host run vehicle_state_status 25608
 guest press e 150
-guest burst seat-exit 4 300
+guest burst seat-exit 3 300
 wait 2500
 waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
 waitlog guest 'partner_seat_aim=end; who=local; k=0; reason=watch;' 10
 both capture seat-exited
 host press e 150
-wait 2500
-state
-both debug heal
-both debug godmode 1
-wait 1500
-host debug clear_enemies 100
-wait 1000
-guest debug goto_vehicle jeep
-host debug goto_vehicle jeep
-wait 4000
-guest press e 150
-wait 2500
-guest run vehicle_seats
-guest require vehicle;id=
-guest hold s 1500
-guest release
-wait 1500
-host debug goto_vehicle jeep
-wait 3000
-host debug clear_enemies 100
-waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
-host press e 150
-wait 3500
-waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
-waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
-waitlog host 'partner_seat_aim=sample; who=local; k=0; act=0x6e;.* armed=1; c2=0; c3=0;' 10
-wait 1000
-both capture seat-rev-before-aim
-heldcapture host host rmb seat-rev-aim-host 4
-wait 400
-heldcapture host guest rmb seat-rev-aim-guest 3
-wait 400
-heldcapture host host rmb+lmb seat-rev-fire-host 4
-wait 600
-waitlog host 'partner_seat_aim=sample; who=local; k=0; act=0x6e; upper=0x02;' 5
-wait 1500
-both capture seat-rev-after-aim
-host press e 150
-host burst seat-rev-exit 4 300
-wait 2500
-waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=off' 5
-waitlog host 'partner_seat_aim=end; who=local; k=0; reason=watch;' 10
-both capture seat-rev-exited
-guest press e 150
 wait 2500
 state
