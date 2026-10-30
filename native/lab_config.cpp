@@ -963,6 +963,14 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
         if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
     }
+    // 8. The vehicle fixes of 2026-10-29: world_vehicle_damage (the guest's vehicle damage report) on in play unless
+    // named (lab FRAME ac0f7656 on both copies; play rehearsal 247a4eed with -WanSim bad: the guest's round reported,
+    // applied 117 ms later and kept on both copies past the refresh); it acts only where VEHICLE_STATE runs. The lab
+    // keeps it off unless named. world_vehicle_crew has no play default: its play rehearsal (247a4eed) never reached
+    // the rule (the alerted armoured vehicle drove apart on the two copies, so VEHICLE_GONE refused it as far).
+    if (result.mode == LabMode::play) {
+        if (!result.world_vehicle_damage_given) result.world_vehicle_damage = true;
+    }
     out = result;
     return true;
 }

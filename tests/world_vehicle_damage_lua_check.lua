@@ -72,7 +72,7 @@ local function Fixture(role, opts)
         local r = {c = c.poolCount or 24}
         for id = tonumber(first), tonumber(first) + tonumber(n) - 1 do
             local v = c.pool[id]
-            if v and not v.released then r[id] = {v.alive and v.life or 65535, 0, 4, 1} end
+            if v and not v.released then r[id] = {v.alive and v.life or v.wreckLife or 65535, 0, 4, 1} end
         end
         return r
     end
@@ -216,6 +216,15 @@ local okL = g.S.lever({'vehicle_life', '25608', '1500'})
 g:poll()
 check(okL and g:has('event=vehicle_damage;step=lever_hit') and #g:sent(OP) == 1 and g:sent(OP)[1][7] == 1500 and g:sent(OP)[1][8] == 800,
     'the guest\'s lab lever drop: reported (a stand-in for its own hit)')
+-- A wreck: its life word reads near 65535 and still falls (run 247a4eed); never reported.
+g = Fixture('guest', {pool = {JEEP}})
+g:at(-650, 877.7)
+g:polls(2)
+g.pool[25608].alive, g.pool[25608].wreckLife = false, 65488
+g:poll(600)
+g.pool[25608].wreckLife = 65484
+g:poll(600)
+check(#g:sent(OP) == 0 and g:has('step=skip;id=25608;reason=not_alive'), 'a wreck whose life word falls: not_alive, never reported')
 -- Guest: who may report.
 local function guest1(extra, setup)
     local x = Fixture('guest', {pool = {{25608, -653, 877.7, 'veh_lv_0000', extra}}})

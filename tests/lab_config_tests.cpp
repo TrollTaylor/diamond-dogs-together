@@ -1533,8 +1533,16 @@ int main() {
                 Check(!(vfBad.*k.on) && vfBad.invalid_values == 1 && vfBad.unknown_keys == 0, ("an invalid " + n + " keeps it off").c_str());
                 Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
                       (n + "=1 parses in play with no refusal bit").c_str());
-                Check(!(vehiclePlayDefault.*k.on) && !(vehiclePlayDefault.*k.given), (n + " stays off in play unless named").c_str());
             }
+            // Play defaults: world_vehicle_damage on in play unless named (lab FRAME ac0f7656 on both copies; the play
+            // rehearsal 247a4eed, -WanSim bad); world_vehicle_crew stays off in play (its play rehearsal 247a4eed never
+            // reached the rule: the alerted armoured vehicle drove apart on the two copies), a named 1 turns it on.
+            Check(vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
+                  "world_vehicle_damage defaults on in play");
+            Check(!vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew stays off in play unless named");
+            const auto dmgOff = Lab(play + "world_vehicle_damage=0\n");
+            Check(dmgOff.mode == mgscoop::LabMode::play && !dmgOff.world_vehicle_damage && dmgOff.world_vehicle_damage_given,
+                  "a named world_vehicle_damage=0 keeps it off in play");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.

@@ -100,6 +100,8 @@ function D.report(id, life, t, flags)
   local k = D.known[id]
   if not k or life >= k then return false end
   local why = D.skip(id)
+  -- A wreck's life word reads near 65535 and still falls (run 247a4eed: 65488 -> 65484): only a live vehicle reports.
+  if not why and not S.alive(id) then why = "not_alive" end
   local x, y, z = S.pose(id)
   if not why and not x then why = "pose_unreadable" end
   if not why then
