@@ -3413,6 +3413,26 @@ descriptions were wrong, seat 3 was not seen at the final code, the raise's writ
 - Still [U]: the host-role hold path (the host's RMB did not register during the get-off in this run), a moving jeep
   at the get-off, seat 2 in the guest role, problem (3).
 
+### 8.43 The seat fixes merged and on in play (2026-10-30, branch `wp/seat-fixes`)
+
+Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38-8.42 were 8.33-8.37 on `wp/aim-view`
+(renumbered in the docs at the merge; code comments and scenario headers keep the branch numbers).
+- **Merge** (`a520315`, `776645f`): the partner_driver Api keeps `ride_seat_getoff` then `pass_camera_turn`; lab_config
+  keeps every key; contract 826 / 209.
+- **Flips** (`5b4e464`, failing first `bc8484e`): `partner_ride_seat1_anchor` and `partner_seat_shot` follow the gun
+  profile in lab and play (a named 0 opts out); `partner_pass_camera=view` stays the default.
+- **Rehearsal** (play, `-WanSim bad`, shipped defaults; [O] both copies' lines and frames): `c66eb55f32ee4d4ca5c95f41dfadf492` and `9b5df4b84152422aa405be37f6d937a7` (STATUS has the
+  numbers). Both roles: the front-seat partner in the seat parked and while driving on the driver's copy, the own view in
+  the seat, the get-off line on the driver's copy with end corrections 5-29 mm, S1 `shift` on two front-seat lines and
+  on both 60faf9fc seat-2 lines with the shooter's copy of the jeep unchanged, the get-off turn from seats 1 and 2 and
+  through an RMB get-off (now also the host's hold). D11 and the race as before. Never-lines zero.
+- **Seen, not caused by the flips** [I]: guards alerted in both runs fired on the jeep (red hit arcs, `downed_damage`
+  samples); in `c66eb55f32ee4d4ca5c95f41dfadf492` the jeep broke on the guest's copy while ridden and was removed on both. In `9b5df4b84152422aa405be37f6d937a7` the driver's copy
+  stayed at 2300 through the host's four seated S1 shots [O].
+- **Open:** seat 3 / D-Dog, a guard hit by a seated shot, teardown and mission end while seated (run 3 refused: D: under
+  3 GB); the first E after `goto_vehicle right` sometimes does not board (2 of 5); seat-1/2 aim views (first-person
+  track); stock-hit status of the front-seat lines [U].
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
