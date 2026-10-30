@@ -9,8 +9,11 @@
 --          drop below that goes to the host as VEHICLE_DAMAGE (op 58: seq, id, locator hash, type, flags 1 the guest
 --          rides it / 2 sent before a VEHICLE_STATE write, life, drop, xyz) when the vehicle still lives (life 1 or more:
 --          a destruction is D12's), is not index 0 (M3), an LRRP truck, one this copy lost or watches, or the partner's
---          ride here (the host drives it: the host's copy takes its own damage), and the guest's player stands within
---          NEAR_MM of it (D12's 300 m: a rifle or launcher range; who hit it is not known [I]). One report per vehicle
+--          ride here (the host drives it: the host's copy takes its own damage), the guest's player stands within
+--          NEAR_MM of it (D12's 300 m: a rifle or launcher range) and fired within FIRE_MS (PlayerStatus GUN_FIRE or
+--          GUN_FIRE_SUPPRESSOR, sampled every frame; the lab lever vehicle_life stands in for a hit): each copy's own
+--          guards hit vehicles on that copy, so a drop without the guest's fire is never sent (run 846c1147: the guards'
+--          rounds on both copies added up and broke the jeep). Who hit it is still not known [I]. One report per vehicle
 --          per GAP_MS (drops in between add up), RATE_N per second over all vehicles. VEHICLE_STATE asks before it writes
 --          a life (S.lifeHook): an unreported drop goes out first, and a raise is skipped (logged keep) while a report is
 --          in flight (HOLD_MS, until the host's state carries a life below the one before the drop) or a drop waits for
@@ -33,8 +36,8 @@ W.vehicleDamage = D
 local OP = 58
 W.OP.VEHICLE_DAMAGE = OP
 local fmt, floor, sqrt, max, min, H = string.format, math.floor, math.sqrt, math.max, math.min, W.handlers
-local TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS = 250, 500, 3000, 8, 300000, 3000
-D.TICK_MS, D.GAP_MS, D.HOLD_MS, D.RATE_N, D.NEAR_MM, D.FRESH_MS = TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS
+local TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS, FIRE_MS = 250, 500, 3000, 8, 300000, 3000, 3000
+D.TICK_MS, D.GAP_MS, D.HOLD_MS, D.RATE_N, D.NEAR_MM, D.FRESH_MS, D.FIRE_MS = TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS, FIRE_MS
 local function L(...)
   local ok, text = pcall(fmt, ...)
   if ok and type(W.log) == "function" then pcall(W.log, "event=vehicle_damage;" .. text) end
@@ -43,7 +46,7 @@ local function now() return W.now() end
 local function role() return W.host and "host" or "guest" end
 function D.reset()
   D.known, D.pend, D.lastTx, D.sent, D.why, D.refusedWhy = {}, {}, {}, {}, {}, {}
-  D.seq, D.nextTick, D.failed, D.offLogged = 0, 0, false, false
+  D.seq, D.nextTick, D.failed, D.offLogged, D.fireAt = 0, 0, false, false, nil
   D.st = {tx = 0, keep = 0, rx = 0, applied = 0, same = 0, refused = 0}
 end
 D.reset()
@@ -75,6 +78,14 @@ local function partnerRide(id)
 end
 
 -- Guest.
+-- The guest's own fire now (PlayerStatus GUN_FIRE / GUN_FIRE_SUPPRESSOR, as partner_actions.lua reads it).
+function D.firing()
+  local f = W.get(PlayerInfo, "OrCheckStatus")
+  local a, b = W.get(PlayerStatus, "GUN_FIRE"), W.get(PlayerStatus, "GUN_FIRE_SUPPRESSOR")
+  if type(f) ~= "function" or type(a) ~= "number" or type(b) ~= "number" then return false end
+  local ok, yes = pcall(f, {a, b})
+  return ok and yes == true
+end
 -- Why this copy's drop on id is not the guest's to report (nil: report it).
 function D.skip(id)
   if id % 512 == 0 then return "index0" end
@@ -94,7 +105,8 @@ function D.report(id, life, t, flags)
   if not why then
     local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
     if type(px) ~= "number" or type(pz) ~= "number" then why = "position"
-    elseif hdist(floor(px * 1000), floor(pz * 1000), x, z) > NEAR_MM then why = "far" end
+    elseif hdist(floor(px * 1000), floor(pz * 1000), x, z) > NEAR_MM then why = "far"
+    elseif D.fireAt == nil or t - D.fireAt > FIRE_MS then why = "no_fire" end
   end
   if why then
     D.known[id] = life
@@ -226,11 +238,20 @@ end)
 W.stopHooks[#W.stopHooks + 1] = function(final)
   if final then D.known, D.pend, D.lastTx = {}, {}, {} end
 end
+-- The lab lever vehicle_life on the guest (world_vehicle_state.lua, lab only) stands in for the guest's own hit.
+local baseLever = S.lever
+if type(baseLever) == "function" then
+  S.lever = function(a, ...)
+    if not W.host and D.on() and type(a) == "table" and a[1] == "vehicle_life" then D.fireAt = now(); L("step=lever_hit") end
+    return baseLever(a, ...)
+  end
+end
 local tick = W.tick
 function W.tick(...)
   if tick then tick(...) end
   if W.host or not D.on() then return end
   local t = now()
+  if D.firing() then D.fireAt = t end
   if t < D.nextTick then return end
   D.nextTick = t + TICK_MS
   local ok, err = pcall(D.guestTick, t)

@@ -24,13 +24,19 @@ local OP, STATE_OP = 58, 51
 -- opts: role 'host'|'guest', damage (the key, default on), state (VEHICLE_STATE, default on), paired (default true).
 local function Fixture(role, opts)
     opts = opts or {}
-    local c = {logs = {}, tx = {}, lifeSet = {}, clock = 100000}
+    -- c.firing: the guest's player fires (PlayerStatus GUN_FIRE); on unless opts.fire == false (the older checks).
+    local c = {logs = {}, tx = {}, lifeSet = {}, clock = 100000, firing = opts.fire ~= false}
     c.pool, c.names = {}, {}
     local env = setmetatable({}, {__index = _G})
     env._G = env
     env.vars = {missionCode = 30020, playerVehicleGameObjectId = 65535, playerPosX = 0, playerPosY = 0, playerPosZ = 0}
-    env.PlayerStatus = {ON_VEHICLE = 4}
-    env.PlayerInfo = {OrCheckStatus = function(s) return s[1] == 4 and c.riding == true end}
+    env.PlayerStatus = {ON_VEHICLE = 4, GUN_FIRE = 8, GUN_FIRE_SUPPRESSOR = 16}
+    env.PlayerInfo = {OrCheckStatus = function(s)
+        for _, m in ipairs(s) do
+            if m == 4 and c.riding == true or (m == 8 or m == 16) and c.firing == true then return true end
+        end
+        return false
+    end}
     env.Tpp = {IsVehicle = function(id) return type(id) == 'number' and id >= 25600 and id <= 26111 end}
     local function vector(v) return {GetX = function() return v.x end, GetY = function() return v.y end, GetZ = function() return v.z end} end
     local W = {OP = {RECEIVED = 3, REJECT = 4, RIDE_BODY = 42, RIDE_FAST = 44}, handlers = {}, startHooks = {}, pairedHooks = {},
@@ -123,6 +129,8 @@ local function Fixture(role, opts)
     function c:count(pattern) local n = 0; for _, l in ipairs(self.logs) do if l:find(pattern, 1, true) then n = n + 1 end end; return n end
     function c:sent(op) local n = {} for _, t in ipairs(self.tx) do if t[1] == op then n[#n + 1] = t end end return n end
     function c:at(x, z) self.env.vars.playerPosX, self.env.vars.playerPosZ = x, z end
+    -- The guest's player fires (GUN_FIRE seen on the next tick only).
+    function c:fire() self.firing = true; self:poll(10); self.firing = false end
     -- The guest's DOWNED_STATUS record on the host (world_downed.lua D.records[2]): pos in mm, at = receive time.
     function c:guestAt(x, z, age) self.W.downed.records[2] = {pos = {x * 1000, 1000, z * 1000}, at = self.clock - (age or 0)} end
     -- The host's VEHICLE_STATE for id at life, flags (1 a change, 4 a refresh).
@@ -140,9 +148,10 @@ local JEEP = {25608, -653, 877.7, 'veh_lv_0000'}
 -- Module surface.
 local g = Fixture('guest', {pool = {JEEP}})
 check(type(g.D) == 'table' and g.W.OP.VEHICLE_DAMAGE == OP, 'W.vehicleDamage and op 58 (VEHICLE_DAMAGE)')
-check(g.D.NEAR_MM == 300000 and g.D.GAP_MS == 500 and g.D.HOLD_MS == 3000 and g.D.RATE_N == 8 and g.D.FRESH_MS == 3000 and g.D.TICK_MS == 250,
+check(g.D.NEAR_MM == 300000 and g.D.GAP_MS == 500 and g.D.HOLD_MS == 3000 and g.D.RATE_N == 8 and g.D.FRESH_MS == 3000 and g.D.TICK_MS == 250 and
+    g.D.FIRE_MS == 3000,
     'rules: 300 m, one report per vehicle per 500 ms, a raise held 3 s while a report is in flight, 8 reports per second, a guest ' ..
-    'position at most 3 s old, a 250 ms scan')
+    'position at most 3 s old, a 250 ms scan, the guest\'s own fire within 3 s')
 check(g:has('event=vehicle_damage;step=on;mission=30020;role=guest'), 'the start line')
 check(not Fixture('guest', {damage = false}):has('event=vehicle_damage;step=on'), 'key off: no start line')
 check(not Fixture('guest', {state = false}):has('event=vehicle_damage;step=on') and not Fixture('guest', {state = false}).D.on(),
@@ -181,6 +190,32 @@ g.pool[25608].alive = false
 g:poll(600)
 check(#g:sent(OP) == 2 and g.D.known[25608] == nil, 'a destruction: no damage report (D12 requests it)')
 
+-- Guest: only a drop near the guest's own fire (GUN_FIRE within 3 s) is reported: each copy's guards hit vehicles on
+-- their own copy (run 846c1147: their rounds on both copies added up and broke the jeep).
+g = Fixture('guest', {pool = {JEEP}, fire = false})
+g:at(-650, 877.7)
+g:polls(2)
+g.pool[25608].life = 1950
+g:poll(600)
+check(#g:sent(OP) == 0 and g:has('event=vehicle_damage;step=skip;id=25608;reason=no_fire;life=1950;drop=350') and g.D.known[25608] == 1950,
+    'a drop with no fire of the guest\'s: not reported (no_fire); VEHICLE_STATE heals it as in 0.14.4')
+g:fire()
+g.clock = g.clock + 2800
+g.pool[25608].life = 1900
+g:poll(100)
+check(#g:sent(OP) == 1 and g:sent(OP)[1][8] == 50, 'the guest fired 2.9 s before the drop: reported')
+g.clock = g.clock + 3200
+g.pool[25608].life = 1800
+g:poll(100)
+check(#g:sent(OP) == 1 and g:has('reason=no_fire;life=1800;drop=100'), 'its last shot 3.3 s before: not reported')
+-- The lab lever vehicle_life on the guest stands in for its own hit.
+g = Fixture('guest', {pool = {JEEP}, fire = false})
+g:at(-650, 877.7)
+g:polls(2)
+local okL = g.S.lever({'vehicle_life', '25608', '1500'})
+g:poll()
+check(okL and g:has('event=vehicle_damage;step=lever_hit') and #g:sent(OP) == 1 and g:sent(OP)[1][7] == 1500 and g:sent(OP)[1][8] == 800,
+    'the guest\'s lab lever drop: reported (a stand-in for its own hit)')
 -- Guest: who may report.
 local function guest1(extra, setup)
     local x = Fixture('guest', {pool = {{25608, -653, 877.7, 'veh_lv_0000', extra}}})
