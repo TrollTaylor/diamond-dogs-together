@@ -319,9 +319,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.partner_ride_cab = false;
     }
     else if (Equals(key, "partner_ride_seat1_anchor")) {
-        // Seat 1 on the driver's seat matrix (design 8.33; lab and play, off unless named); a named value records _given.
+        // Seat 1 on the driver's seat matrix (design 8.33; lab and play, off unless named); as partner_ride_front, an
+        // invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_ride_seat1_anchor);
-        if (ok) result.partner_ride_seat1_anchor_given = true;
+        result.partner_ride_seat1_anchor_given = true;
+        if (!ok) result.partner_ride_seat1_anchor = false;
     }
     else if (Equals(key, "partner_ride_race")) {
         ok = ParseBool(value, result.partner_ride_race);

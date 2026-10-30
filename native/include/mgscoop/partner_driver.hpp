@@ -365,6 +365,7 @@ struct Hooks {
     // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
     // any null: the seat refuses with reason=unavailable and the ride hides as before).
     // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
+    // `vehicle`: the seated vehicle's id (the seat-1 anchor reads this copy's category of it; design 8.34).
     bool (*ride_seat_arm)(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept = nullptr;
     void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
     // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook

@@ -50,7 +50,8 @@ const Site& SiteFor(SiteId id) noexcept;
 // The seat dword for `seat` (0..3): 0x00B04130 | seat << 24.
 std::uint32_t SeatDword(std::uint8_t seat) noexcept;
 // The seat whose matrix the anchor reads for a seated `seat`: with `seat1_driver_matrix` (lab.ini
-// partner_ride_seat1_anchor) seat 1 -> 0, the others unchanged.
+// partner_ride_seat1_anchor) seat 1 of a light vehicle (`category` = unit+0x6C >> 4 of this copy's vehicle: 1, 2)
+// -> 0; the truck cab (3, 4), an unknown category (kCategoryUnknown) and the other seats unchanged.
 inline constexpr std::uint8_t kCategoryUnknown = 0xFF;
 std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t category) noexcept;
 // The process-wide choice Arm applies (the observer sets it from lab.ini; default off).

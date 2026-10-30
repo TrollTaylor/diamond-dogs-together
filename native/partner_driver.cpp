@@ -6164,7 +6164,7 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
         m.dm_patched = h.dm_patch(h.context, true, "seat");
         if (!m.dm_patched) { m.dm_patch_failed = true; return refuse("dm_patch"); }
     }
-    if (!h.ride_seat_arm(h.context, seat, 0xFFFF)) return refuse("seat_patch");
+    if (!h.ride_seat_arm(h.context, seat, vehicle)) return refuse("seat_patch");
     s.manual = true;
     s.armed = true;
     s.vehicle = vehicle;

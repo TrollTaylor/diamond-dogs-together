@@ -671,7 +671,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             }
         }
         if (!s.armed) {
-            if (!h.ride_seat_arm(h.context, s.seat, 0xFFFF)) {
+            if (!h.ride_seat_arm(h.context, s.seat, s.vehicle)) {
                 SeatRefuse(m, h, "seat_patch", now);
                 break;
             }

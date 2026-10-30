@@ -920,8 +920,23 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     return mgscoop::partner_dm_patch::Patched();
 }
 // The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
-bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t) noexcept {
-    return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
+// Seat 1 on the driver's seat matrix (lab.ini partner_ride_seat1_anchor; design 8.33, 8.34): set from the lab config
+// before every Arm (independent of the board install), logged once; a light vehicle only, so seat 1 reads this
+// copy's category of the vehicle (unknown without the code gate or a live read: seat 1's own matrix).
+volatile LONG partner_seat1_anchor_logged = 0;
+bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t vehicle) noexcept {
+    if (!game_base) return false;
+    const bool anchor = mgscoop::GetLabConfig().partner_ride_seat1_anchor;
+    mgscoop::partner_ride_seat::SetSeatOneAnchor(anchor);
+    if (InterlockedCompareExchange(&partner_seat1_anchor_logged, 1, 0) == 0)
+        LogFormat("partner_ride_seat1_anchor=configured; on=%u\r\n", anchor ? 1u : 0u);
+    std::uint8_t category = mgscoop::partner_ride_seat::kCategoryUnknown;
+    if (anchor && seat == 1 && partner_gate_ok) {
+        mgscoop::partner_vehicle::Read r{};
+        mgscoop::partner_vehicle::ReadLive(game_base, vehicle, r);
+        if (!r.refusal && r.unit.id == vehicle) category = mgscoop::partner_vehicle::Category(r.unit.type);
+    }
+    return mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log, category);
 }
 void PartnerRideSeatRevert(void*, const char* reason) noexcept {
     if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
@@ -1003,8 +1018,6 @@ const char* PartnerBoardInstall(void*) noexcept {
     mgscoop::partner_board::SeatOpts opts{};
     opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
     opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
-    // Seat 1 on the driver's seat matrix (lab.ini partner_ride_seat1_anchor; design 8.33): the anchor immediate Arm writes.
-    mgscoop::partner_ride_seat::SetSeatOneAnchor(config.partner_ride_seat1_anchor);
     const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
     // M6 seat races (lab.ini partner_ride_race, off unless named; review R1/R2): site C, the pre-query's final
     // answer (the want), the guest's hold and the SEAT deny / grant. Logs partner_board=race once; a refusal
