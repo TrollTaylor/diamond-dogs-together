@@ -1,15 +1,17 @@
 ## 2026-10-30: seat 1 drawn in the seat, built behind a lab key (branch `wp/seat1-draw`, unproven)
 
-**Cause** (design 8.33): the partner's seat-1 body on the driver's copy was anchored on seat 1's own matrix, but the
-player's FrontRight clips are authored on the driver's seat matrix (the stock remap `0xB79A3F` hands a player in seat 1
-seat 0's matrix), so it sat one seat spacing further right, outside the jeep, parked and moving alike [O frames: the
-D-Dog in seat 1 beside it in `3c748d46`; I the clip origin]. The passenger's own copy draws itself outside too (its
-remap skip), hence `err_mm` 0-2. **Built:** lab key `partner_ride_seat1_anchor` (off unless named, lab and play): the
-anchor immediate 0 for seat 1 (`partner_ride_seat_patch=applied; seat=1; anchor=0;`). Tests failing first (`2bf2b51`
--> `9f2ef8b`); full CTest 336/336. **Play defaults:** unchanged. **Not proven:** four hidden runs of
-`m6m7c-seat1-draw-play.txt` stopped before gameplay (`IsolationFailed=True`, `child_exited_before_admission`: the
-guest's worker hook refused `required_hooks_or_private_desktop`; another track's run at 13:55 too), so no frame, no play
-rehearsal; the key stays off. Next: rerun that scenario once the worker admits both copies, then flip it on.
+**Cause** (design 8.33): a copy that draws the peer in seat 1 anchored body 1 on seat 1's own matrix, but the player's
+FrontRight clips are authored on the driver's seat matrix [I] (the stock remap `0xB79A3F` hands a player in seat 1 seat
+0's matrix [O]), so it sat one seat spacing further right, outside the jeep [O frames]. The passenger's own copy draws
+itself outside too (its remap skip), hence `err_mm` 0-2. **Built** (lab key `partner_ride_seat1_anchor`, off unless
+named, lab and play): any copy drawing the peer in seat 1 of a light vehicle (category 1/2) anchors on seat 0's matrix;
+the truck cab and an unknown category keep seat 1's (review, design 8.34). Line: `partner_ride_seat_patch=applied;
+seat=1; sites=..; seat_dword=0x00b04130; anchor=0; cat=1` (the 0.14.4 prefix kept); the key is read before every Arm
+(`partner_ride_seat1_anchor=configured; on=1`). Tests failing first (`2bf2b51` -> `9f2ef8b`, `f0580fd` -> `5a6a443`).
+**Play defaults:** unchanged; nothing changes for players. **Not proven:** no frame, no play rehearsal: every
+two-copy hidden run since 13:50 (three worktrees, three builds, through 14:19) refused the guest before admission
+(`required_hooks_or_private_desktop`, `desktop_ownership_violation=true`) while a second RDP session was active [O];
+the cause is [U]. Before a flip: frames on both copies, the rehearsal, and the passenger's own copy (8.34).
 
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 

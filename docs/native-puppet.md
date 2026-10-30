@@ -661,8 +661,9 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   only 1 / 2 at the immediates. The local passenger report, the receiver's `local_vehicle` gate and the passenger
   camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`, `board_seat1_blocks`; `vehicle_door`
   accepts the remap's `jmp`. With `partner_ride_seat1_anchor=1` (8.33; off unless named, lab and play, not yet
-  frame-proven) the driver's copy anchors body 1's seat-1 DM on seat 0's matrix
-  (`partner_ride_seat::AnchorSeat`, the anchor immediate 0; `partner_ride_seat_patch=applied; seat=1; anchor=0;`): the
+  frame-proven) any copy that draws the peer in seat 1 of a light vehicle (category 1/2; not the truck cab, design
+  8.34) anchors body 1's seat-1 DM on seat 0's matrix (`partner_ride_seat::AnchorSeat`, the anchor immediate 0; the
+  applied line ends `anchor=0; cat=1`): the
   player's FrontRight clips carry the driver-to-passenger offset (the stock remap hands a player in seat 1 the driver's
   matrix), so seat 1's own matrix drew the body one seat further right, outside the jeep.
 - `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query

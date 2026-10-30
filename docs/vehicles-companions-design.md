@@ -3089,10 +3089,10 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
   half the RTT; [I] not a draw lag.
 - **Built** (`2bf2b51` red -> `9f2ef8b`; first form `7ddba0f` -> `802fed3`): lab key `partner_ride_seat1_anchor`
   (off unless named, lab and play; a named 1 runs in play). With it, `partner_ride_seat::Arm` writes the anchor
-  immediate `AnchorSeat(1) = 0` for a seat-1 ride (`partner_ride_seat_patch=applied; seat=1; anchor=0;`); seats 0, 2,
-  3 and the key off are unchanged (`anchor=<seat>`). No new patch site (the same immediate), no wire change. Expected
-  side effect [I]: the driver's copy reads `err_mm` about one seat spacing at rest while the passenger's own copy still
-  draws itself outside (under the 3 m `seat_far` latch; the driver's own vehicle is exempt anyway).
+  immediate `AnchorSeat(1) = 0` for a seat-1 ride on any copy that draws the peer there (not only the driver's; light
+  vehicles only since 8.34); seats 0, 2, 3 and the key off are unchanged. No new patch site (the same immediate), no
+  wire change. Expected side effect [I]: that copy reads `err_mm` about one seat spacing at rest while the passenger's
+  own copy still draws itself outside (8.34).
 - **Not proven.** All four hidden runs of `m6m7c-seat1-draw-play.txt` stopped before gameplay
   (`IsolationFailed=True`, `child_exited_before_admission`, 1067: the guest's worker hook logged `refused
   required_hooks_or_private_desktop` 0.2 s after `configured`, the host was admitted): `37bfbe8e`, `37c5eb3f`,
@@ -3100,6 +3100,37 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
   same way, earlier ones at 13:41-13:47 were admitted [O]. So the key stays off; the frame proof (both roles, parked and
   under throttle, back seat 2 unchanged, the passenger's own view) and the play rehearsal are open. The passenger's own
   copy (the remap skip) is left for the seat-1 camera track.
+
+### 8.34 Review fixes for the seat-1 anchor (2026-10-30, branch `wp/seat1-draw`; still behind the lab key, unproven)
+
+- **Light vehicles only** (`f0580fd` red -> `5a6a443`): `AnchorSeat(seat, on, category)` gives 0 only for seat 1 of
+  category 1/2 (this copy's `unit+0x6C >> 4` of the seated vehicle, read by the observer through
+  `partner_vehicle::ReadLive`; the driver's seat arm now names the vehicle). The truck cab (3/4) plays the light
+  FrontRight loop as a guess (`kTruck[1]`) and has no frame, so it keeps seat 1's matrix; an unknown category too.
+- **The key applies without the board**: read from the lab config before every `Arm` (it was set only inside the
+  board install, once, after the code gate), logged once per process `partner_ride_seat1_anchor=configured; on=..`.
+- **Log line**: the 0.14.4 prefix is back (`partner_ride_seat_patch=applied; seat=N; sites=..; seat_dword=..`), with
+  `anchor=..; cat=..` at its end. **Lab key**: an invalid value is named and off, also after a valid 1 (as
+  `partner_ride_front`).
+- **Scenario** `m6m7c-seat1-draw-play.txt`: waits for `configured; on=1` on both copies, `anchor=0; cat=[12]`, the
+  back seat's own anchor, and `partner_ride_seat_patch=reverted` after each seat-1 get-off; part B says back seat 2 or
+  3 (it accepts either). NEVER lines (`seat_far`, `two_drivers`, `board_uncertain`, `seat_patch=refused`) are sliced
+  after the run: the runner has no negative wait.
+- **D-Dog in seat 1** [O code]: not an overlap in the normal case: the v4 handshake (`OneTaken`, review R3) keeps the
+  peer out of a seat 1 the driver's dog already holds, and a dog that jumps in later moves this copy's drawing to a
+  free back seat (`DrawSeat`, 8.25). Residual [I]: `DrawSeat` reason `full` (both back seats taken) or `other` (a
+  soldier) would now draw the peer inside the occupant instead of outside the jeep. The frame `3c748d46` predates R3.
+- **Both copies must agree before a flip** [I]: with the key, the driver's copy draws the peer in the seat while the
+  passenger's own copy still draws itself one seat spacing outside (its remap skip), so `err_mm` at rest gains about
+  0.7 m. The `seat_far` latch (3 m) exempts only the viewer's own vehicle; a driver who bails out of a moving jeep
+  (about 2-2.6 m streamed lag under `-WanSim bad`) could cross it and drop the peer out of the seat. Pair the flip with
+  the seat-1 own-view fix (keep the stock remap while the local player is seated) or prove `err_mm` in that case.
+- **Not proven, worker blocked** [O]: every two-copy hidden run on this machine since the supervisor start 13:50:59
+  refused the guest before admission (`required_hooks_or_private_desktop` 0.2 s after `configured`; supervisor
+  `desktop_ownership_violation=true`; the admitted runs before had false): this track's `37bfbe8e` (13:50:59),
+  `37c5eb3f`, `2a69a71c`, `aab7c606` (14:04:04), companion-host's `1b597e17`, `62af662d` (14:06), `cf8111c4` (14:08),
+  `f3fbeefd` (14:16), and launcher-setup's `eb4d3a3e` (14:18), whose runs at 13:41 and 13:45 had been admitted. A
+  second RDP session was active (qwinsta 14:05, 14:14 and 14:22); whether it causes this is [U].
 
 ## 9. Milestones
 
@@ -3548,9 +3579,10 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     screen draws the seat-1 passenger pushed out past the jeep's right side, at rest too [O]: seat 1 is not frame-clean.
   - **Smoke after the M7 merge (8.32, `e694c92`):** race and D11 hold in play (`37b94432`); seat 1 boards and its
     gun fires across the jeep; the driver's view of the seat-1 passenger is unchanged.
-  - **Seat-1 draw (8.33, `wp/seat1-draw`):** cause found (body 1 anchored on seat 1's own matrix; the player's clips
-    want the driver's); fix built behind lab key `partner_ride_seat1_anchor`, off: no frame proof yet (the hidden worker
-    refused the guest before gameplay in all four runs).
+  - **Seat-1 draw (8.33, 8.34, `wp/seat1-draw`):** cause found (body 1 anchored on seat 1's own matrix; the player's
+    clips want the driver's); fix built behind lab key `partner_ride_seat1_anchor` (light vehicles only), off: no frame
+    proof yet (the hidden worker refuses the guest before admission machine-wide since 13:50); flip only together with
+    the passenger's own view.
 
 ### M7. Shooting as a passenger
 
