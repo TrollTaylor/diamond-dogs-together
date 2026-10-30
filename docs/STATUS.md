@@ -1,18 +1,17 @@
-## 2026-10-30: seat 1 drawn in the seat, built behind a lab key (branch `wp/seat1-draw`, unproven)
+## 2026-10-30: seat 1 drawn in the seat, proven in play behind a lab key (branch `wp/seat1-draw`)
 
-**Cause** (design 8.33): a copy that draws the peer in seat 1 anchored body 1 on seat 1's own matrix, but the player's
-FrontRight clips are authored on the driver's seat matrix [I] (the stock remap `0xB79A3F` hands a player in seat 1 seat
-0's matrix [O]), so it sat one seat spacing further right, outside the jeep [O frames]. The passenger's own copy draws
-itself outside too (its remap skip), hence `err_mm` 0-2. **Built** (lab key `partner_ride_seat1_anchor`, off unless
-named, lab and play): any copy drawing the peer in seat 1 of a light vehicle (category 1/2) anchors on seat 0's matrix;
-the truck cab and an unknown category keep seat 1's (review, design 8.34). Line: `partner_ride_seat_patch=applied;
-seat=1; sites=..; seat_dword=0x00b04130; anchor=0; cat=1` (the 0.14.4 prefix kept); the key is read before every Arm
-(`partner_ride_seat1_anchor=configured; on=1`). Tests failing first (`2bf2b51` -> `9f2ef8b`, `f0580fd` -> `5a6a443`);
-full CTest 336/336.
-**Play defaults:** unchanged; nothing changes for players. **Not proven:** no frame, no play rehearsal: every
-two-copy hidden run since 13:50 (three worktrees, three builds, through `e181f40e` at 14:26) refused the guest before admission
-(`required_hooks_or_private_desktop`, `desktop_ownership_violation=true`) while a second RDP session was active [O];
-the cause is [U]. Before a flip: frames on both copies, the rehearsal, and the passenger's own copy (8.34).
+**Fix** (design 8.33-8.35, lab key `partner_ride_seat1_anchor`, off unless named, lab and play): a copy drawing the
+peer in seat 1 of a light vehicle anchors it on the driver's seat matrix (the player's FrontRight clips are authored
+there [I]; the stock remap `0xB79A3F` hands a player in seat 1 seat 0's matrix [O]), and (new, `4f63a17` red ->
+`106d90e`) the passenger's own copy keeps that stock remap while it sits in seat 1 (`board_remap; state=stock;
+why=seated_own`); the truck cab keeps seat 1's matrix and the skip. **Proven** (`-Mode play -WanSim bad`, key named, [O]
+lines on both copies and frames looked at; design 8.35): `f58eebf7` the driver's copy draws the partner IN the front
+seat for both roles, parked, under W and stopped, back seat 2 unchanged, but the passenger's own copy still drew itself
+outside; `086d8043` with the own-view fix both copies draw the passenger in the seat, `err_mm` at rest 0-2 (was 855-932);
+`b4c10e6b` the driver's own D-Dog keeps seat 1 and the partner takes back seat 3, never drawn on the dog. Zero
+`step=error`, faults, `board_uncertain`, `two_drivers`, `seat_far`, `seat_patch=refused`.
+**Open:** the end of a seat-1 get-off corrects the partner once by 0.87-2.1 m on the driver's copy with the key (16-89 mm
+without); whether it shows as a pop is [U]. **Play defaults:** unchanged (key off) until the combined rehearsal.
 
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 

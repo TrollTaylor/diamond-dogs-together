@@ -3133,6 +3133,46 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
   this track's rerun with the review fixes `e181f40e` (14:26, key named). A second RDP session was active (qwinsta
   14:05, 14:14, 14:22 and 14:27); whether it causes this is [U]. Full CTest 336/336 at `cc8cac5`.
 
+### 8.35 Results: the seat-1 anchor proven in play, and the passenger's own view (2026-10-30, branch `wp/seat1-draw`)
+
+Hidden worker, `-Mode play -WanSim bad`, research build, native gun stage, key `partner_ride_seat1_anchor=1` named;
+logs sliced from both copies, frames looked at (session scratch `complete/frames/m6m7d-draw/`); runs archived under
+`D:\mgs-coop-run-archive\m6m7d\`. All three Closed, BaselineRestored, RealSavesUnchanged, IsolationFailed=False; every
+expectation met; zero `step=error`, faults, `viewer_changed`, `board_uncertain`, `two_drivers`, `seat_far`,
+`seat_patch=refused`, `pass_camera; state=refused` on both copies.
+
+- **`f58eebf7` (`m6m7c-seat1-draw-play.txt`, seeds afgh-quiet / afgh-horse, `1f30ffd`)** [O]: the driver's copy draws the
+  seat-1 partner IN the front right seat for both roles, parked, under the driver's W and stopped (guest `a-parked`,
+  `a-drive-01..03`, `a-stopped`; host `c-parked`, `c-drive-01..03`, `c-stopped`); applied `seat=1; ...; anchor=0; cat=2`
+  on both drivers, `configured; on=1`, `reverted` after each get-off; back seat 2 unchanged (`b-back`, `anchor=2`,
+  `err_mm` 1-2). The passenger's own copy still drew itself outside the right side (host `a-parked`, guest `c-parked`:
+  legs over the front right wheel), so `err_mm` at rest read 855-932 on the drivers' copies.
+- **Own view** (`4f63a17` red -> `106d90e`): with the same key, the passenger's own copy keeps the stock seat-1 remap while
+  it sits in seat 1 of a light vehicle (`partner_board::OwnSeatOneStock`: the key, the local report's seat 1, this copy's
+  category 1/2 read from `unit+0x6C` into `LocalPassenger::category`; `RemapWanted` answers stock over the policy, the
+  seated report and the hold): `partner_ride=board_remap; state=stock; why=seated_own`. The truck cab and an unread
+  category keep the skip. While it sits there its published policy reads `seat1=none` (the existing rule: seat 1 is
+  offered only with the skip live); after the get-off the skip is back (`why=policy`).
+- **`086d8043` (the same scenario with the own-view waits and boarding/get-off bursts)** [O]: `why=seated_own` on the
+  host (A) and the guest (C), the skip back after each get-off; both passengers' own views now show themselves IN the
+  front right seat (host `a-parked`, `a-stopped`; guest `c-parked`, `c-drive-p`); the drivers' copies as in `f58eebf7`;
+  `err_mm` at rest for seat 1 is 0-2 on both drivers' copies (was 855-932): both copies agree, so the `seat_far` risk of
+  8.34 is gone at rest. Moving `err_mm` 0.2-2.8 m is the streamed lag as before.
+- **`b4c10e6b` (`m6m7d-seat1-dog-play.txt`, host seed afgh-ledge: the host's own D-Dog)** [O]: the host drives, its dog
+  takes seat 1 on its copy (`riders=0,9728,..`, `seat_ext_tx; ...; flags=0x05; rider1=9728`), the guest's policy offers
+  no seat 1 (`seat1=none; flags=0x05`), the guest boards back seat 3 and the host's copy draws it there (`applied;
+  seat=3; ...; anchor=3`; no seat-1 anchor); frames parked, under W and stopped: the dog in the front right seat, the
+  partner in the back right, never one on the other. Not covered: the dog jumping in after the partner sat in seat 1
+  (`DrawSeat` reason `dog`/`full`/`other`).
+- **Open: the seat-1 get-off** [O logs]: when the partner's get-off ends, the driver's copy corrects the body once by
+  0.87 m (guest driving, both runs) or 1.5-2.1 m (host driving) with the key, against 16-89 mm without it (`1f81de65`,
+  `83defaeb`, `37b94432`) and 52 mm for back seat 2. [I] The own copy plays the get-off on seat 1's own matrix (the stock
+  update clears `rider[1]` before phase 6, so the remap no longer applies), the driver's copy keeps anchor 0 until the
+  revert. Whether players see it as a pop is [U] (no driver-copy burst during a get-off); next: a burst there, then
+  re-arm anchor 1 at the get-off request if it shows. The own view's boarding and get-off bursts show no jump, but the
+  camera angle (the stock get-off camera faces the driver up close, as without the key) is inconclusive [U]. The aim
+  view from seat 1 (the own leg, problem 2) was not exercised with the own-view fix [U].
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
