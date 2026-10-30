@@ -1,3 +1,15 @@
+## 2026-10-30: the seated aim view and the camera after a get-off (branch `wp/aim-view`; built, not proven)
+
+**Built** (`bd6f0cf`, design 8.33): `partner_pass_camera=view` = aim + the seated aim camera raised 0.60 m over the
+shoulder from seats 1-3 (the stock aim module's own variant offset, obj+0x174 / +0x50, restored at the boarding end,
+a variant change, the latch and terminate) + one stock camera rotation request toward the jeep's forward after a
+get-off (seat 1's get-off camera ends on the driver's side looking across the jeep [O frames 37b94432]; the exit itself
+goes out of the right door). Five new pinned sites (contract 829 code sites / 209 slots), 310 unit checks, four mutants
+caught. **Not proven, default unchanged (`aim`):** the three hidden runs `1b597e17`, `62af662d`, `cf8111c4` ended
+`IsolationFailed` / `child_exited_before_admission` (guest `required_hooks_or_private_desktop`), as every hidden run on
+the machine since 13:51 [O supervisor.json]. Players see no change. Next: `m6m7c-aim-view.txt` (lab), then flip the
+default and `m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`).
+
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 
 **Merged:** `e694c92` `wp/seat-shoot2` (`5029a26`; S1 `partner_seat_shot` built, off in lab and play). Contract 824 code

@@ -274,7 +274,7 @@ int main() {
             const auto profile = Lab(gun + mode);
             Check(profile.partner_pass_camera == kPassCameraDefault && !profile.partner_pass_camera_given && !profile.partner_pass_camera_trace,
                   "the shipped camera mode in lab and play, no trace");
-            for (const char* value : {"off", "connect", "drop", "aim"}) {
+            for (const char* value : {"off", "connect", "drop", "aim", "view"}) {  // view: design 8.33
                 const auto named = Lab(gun + mode + "partner_pass_camera=" + value + "\npartner_pass_camera_trace=1\n");
                 // Design 8.28: drop is a lab option (it blocks the seat-2 gun: runs 17fce0b7, 43e5b981); play runs aim.
                 const char* want = !lab && std::strcmp(value, "drop") == 0 ? "aim" : value;
@@ -284,7 +284,7 @@ int main() {
                       "a named camera mode runs in lab and play (drop runs as aim in play); the trace in the lab only");
             }
         }
-        for (const char* value : {"", "on", "1", "Aim", "connected"}) {
+        for (const char* value : {"", "on", "1", "Aim", "connected", "View", "views"}) {
             const auto invalid = Lab(gun + "mode=play\npartner_pass_camera=" + value + "\n");
             Check(invalid.partner_pass_camera == kPassCameraDefault && invalid.partner_pass_camera_given && invalid.invalid_values == 1 &&
                       invalid.unknown_keys == 0,

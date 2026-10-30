@@ -557,6 +557,29 @@ Pins: the look-at update's angle writes 0x111FCB1, vt+0x88's angle and
 rotation writes 0x112106E, the aim-point solve's eye 0x109705C, slot vt+0xF0,
 the aim module's slots +0x18 / +0x20 (13 pass camera blocks).
 
+**The seated aim view and the camera after a get-off (design 8.33; built, not
+proven, default off).** Mode `partner_pass_camera=view` (lab and play key,
+not the default; lever `debug passcam view`) is aim plus two camera changes.
+(1) While the local passenger is seated (an armed boarding, seats 1-3) it
+uses the stock aim module's own variant offset: the module object (module -
+0x20) holds a flag +0x174 and nine entries at +0x50 (stride 0x20: offset[4],
+distance +0x10, scale +0x14) for the variants CAM+0x344 listed at 0x23D4870;
+after its parameter load (0xB8A0BF169F98) every update, FUN_1412BBFE0 adds the
+entry of the current variant to the target offset CAM+0x150, which
+SetRotationAndAngles 0x1121704 blends into CAM+0x140 for the position solve.
+`WriteRaise` writes the entry (0, 0.60, 0, 0, 0, 1.0) then the flag, and
+writes the constructor's values back (flag first) at the boarding end, a
+variant change, the mission latch and terminate; never over a set flag or a
+foreign entry (`state=view; event=apply|restore|refused` lines). (2) After the
+boarding ends and the VehicleCamera let go, one stock rotation request
+(`RequestTurn`: the fields and gate of PlayerCamera vt+0xE0 0x111A920, which
+RequestToSetCameraRotation calls) toward the vehicle's forward yaw, 0.12 rad
+down (`state=turn; event=request|refused|expire|check`). No game function is
+called. Pins: 0x12BD4D4, 0x12BC015, 0x12BC049, 0x111A920, 0x111A948 (18
+blocks) and the variant ids (generator-checked). [U] whether the seated
+variant is in the list, whether +y is up in the solve's frame, and the frames:
+the hidden runs of 8.33 never started (worker isolation failures).
+
 ### Truck test levers
 
 G4 (0.13.6 in progress, `wp/truck-helper`): lab tooling for the one F1 proof

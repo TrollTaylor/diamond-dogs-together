@@ -3075,6 +3075,26 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
 - Never seen: `step=error`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`, two Dead commits for
   one guard. Not proven: a moving jeep, two PCs, a 0.14.4 partner; design B (the driver sees the raised gun).
 
+### 8.33 The seated aim view and the camera after a get-off (2026-10-30, branch `wp/aim-view`; built, not proven)
+
+Problems (2) and (4) of 8.32's frames: from seat 1 the aim view is the passenger's own leg, from seat 2 the jeep's
+panel (the seated aim camera sits ~1.19 m behind and ~0.10 m above the body root [O 4f1a072f]); after the stock get-off
+from seat 1 (`37b94432`, `83defaeb`) and seat 2 (`1f81de65`) the camera faces the driver up close. [O frames] the
+seat-1 get-off camera (the VehicleCamera, act 0x70) jumps to the driver's side looking across the jeep at the exiting
+passenger (`s1-exit-01`) and stays there once the fallback camera takes over, so with the handle cleared its collision
+holds it inside the jeep's left side, at the driver; the exit itself goes out of the right door (the driver's copy,
+`37b94432-host-s1-exited`), so seat 1's exit is not wrong. After seat 3 the camera stays behind, looking forward.
+Built (`bd6f0cf`; `native/partner_pass_camera.cpp`, `partner_pass_camera_policy.hpp` RaisePlan / TurnStep,
+`TickPassCamera`): mode `partner_pass_camera=view` = aim + (1) the stock aim module's variant offset (obj+0x50 +
+0x20 k, flag obj+0x174; FUN_1412BBFE0 adds it to CAM+0x150 after every parameter load) set to 0.60 m up while the local
+passenger is seated, restored at the end; (2) one stock rotation request (the fields of PlayerCamera vt+0xE0
+0x111A920) toward the jeep's forward yaw after the get-off. Five pinned sites, the variant ids generator-checked;
+310 unit checks (four mutants of the new rules each fail a check); no wire change. **Not proven:** all three hidden
+runs (`1b597e17`, `62af662d`, `cf8111c4`, scenario `m6m7c-aim-view.txt`) ended `IsolationFailed`
+(`child_exited_before_admission`: the guest's worker refused `required_hooks_or_private_desktop`), like every other
+hidden run on the machine since 13:51. The default stays `aim`; `view` is behind the key. Next: the lab run, then
+`m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`) after the default flips.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3567,6 +3587,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   **Merged (8.32, `e694c92`): a seated kill in play** (`299de3e1`, seat 3, one Dead commit); seat 1 and seat 2 hit to
   Dying in play; shots toward the jeep's own body damage it (S1's case, S1 off). Not met: `m7-partner-gun`, a moving
   jeep, the truck cab, two-PC.
+  **8.33 (`wp/aim-view`, built, not proven):** `partner_pass_camera=view` raises the seated aim camera 0.60 m (the
+  stock aim module's variant offset) and turns the camera behind the player after a get-off; off by default (the hidden
+  runs failed isolation).
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 
