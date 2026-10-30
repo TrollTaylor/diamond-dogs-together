@@ -4,11 +4,14 @@
 # GunHold on the DM-seated body 1, its aim rates from the guest's seated v6 direction). Part B: the roles reversed (the
 # guest drives, the host shoots from back seat 2).
 # The target, relative to the jeep wherever it stands: goto_vehicle jeep puts a player 1.9 m out on the driver's side
-# facing the jeep; forward 7 carries the host through to 5.1 m out on the passenger side, facing away; spawn_enemy here
-# warps a guard 5 m further (debug_soldier_warp=1, notice restricted); enemy sleep nearest puts him to sleep so he does
-# not walk off (host commit, the guest applies). The passenger boards from the driver's side (back seat 2), its camera
-# still facing the passenger side; the lever enemy_aim_nearest 0.3 turns its camera to the sleeping guard (Player.
-# RequestToSetCameraRotation) before and during each burst, while the driver reverses.
+# facing the jeep; forward -12 backs the host to 13.9 m out, still facing the jeep; spawn_enemy here warps a guard 5 m
+# in front of it, 8.9 m out on the driver's side (debug_soldier_warp=1, notice restricted); enemy sleep nearest puts him
+# to sleep so he does not walk off (host commit, the guest applies). The passenger boards from the driver's side (back
+# seat 2) and aims OUT of its own side: run d40e4126 aimed across the jeep from seat 2 at a guard on the far side, and
+# the aim camera, behind the passenger and outside the jeep (the passenger camera skips the jeep's collision), looked
+# through the jeep's body. The lever enemy_aim_nearest 0.3 turns its camera to the sleeping guard (Player.
+# RequestToSetCameraRotation) before and during each burst, while the driver reverses (backing away brings the guard
+# forward of the seat, inside its 90-degree aim limit).
 # Expected (lab): guest partner_seat_gun=configured; key=1 / host the same; guest aim_dir=valid; reason=seat while it
 # aims seated (never reason=convention); host partner_seat_gun=hold; seq=..; vehicle=25608; seat=2 -> partner_gesture=
 # submit; ...; kind=gun_start -> applied; ok=1 -> submit; kind=gun_hold -> partner_seat_gun=rates; ok=1 -> release ->
@@ -34,7 +37,7 @@ wait 2000
 # --- Part A: the guard on the passenger side, asleep -------------------------------------------------------------
 host debug goto_vehicle jeep
 wait 2500
-host debug forward 7
+host debug forward -12
 wait 3000
 host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
@@ -129,7 +132,7 @@ both capture m7-off
 logmark both
 host debug goto_vehicle jeep
 wait 2500
-host debug forward 7
+host debug forward -12
 wait 3000
 host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
@@ -172,7 +175,7 @@ host run enemy_aim_nearest 0.3
 wait 600
 host release
 guest release
-waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=host;' 4
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[345]; .*actor=host;' 4
 guest hold s 1500 nowait
 host run enemy_aim_nearest 0.3
 host hold rmb 1500 nowait
@@ -185,8 +188,8 @@ host run enemy_aim_nearest 0.3
 wait 600
 host release
 guest release
-waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=host;' 6
-waitlog guest 'world_lua=event=apply; ent=[0-9]+;' 8
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[345]; .*actor=host;' 6
+waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[345];' 8
 wait 1500
 both capture m7-rev-after
 host press e 150

@@ -6743,6 +6743,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                     h.submit_look(h.context, looks.look[st.local]);
                 Probe(d, h, st, clock);
                 SeatReportRealized(m, h, realized_now, parts_now, now);
+                // M7 seat gun: the gesture step also runs while the seat owns body 1 (run d40e4126: this branch
+                // returned before TickGesture, so no hold ever started); ordinary gestures stay refused (block seat).
+                if (set.seat_gun)
+                    TickGesture(d, h, EffectiveSettings(d.settings, m.native_out.active), clock, realized_now, parts_now, anim_ok, anim, looks_ok,
+                                looks, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live, st, remote_flags);
                 m.body_ok = false;
                 reply = partner::Reply{seat_out.ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
                                        status, age_ms, partner::Look{}, 0};
