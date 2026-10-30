@@ -1,7 +1,7 @@
 # The play rehearsal of the vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md section 8.14) in mode=play
-# over -WanSim bad, no lab lever (play refuses them). The two new keys are named (off in play by default until this
-# rehearsal and the lab FRAME pass); every other vehicle key at its play default (VEHICLE_GONE, VEHICLE_STATE,
-# world_vehicle_break, world_vehicle_credit, world_loadout_block on in 30020). Africa, africa-jeep seed.
+# over -WanSim bad, no lab lever (play refuses them) and no vehicle key named: every vehicle key at its play default
+# (VEHICLE_GONE, VEHICLE_STATE, world_vehicle_break, world_vehicle_credit, world_loadout_block, world_vehicle_damage and
+# world_vehicle_crew on in 30020). Africa, africa-jeep seed.
 #   1. D11 with the pre-pair fix in: the guest arrives in 30020 by the host's follow (step=arrived marks the mission
 #      co-op); both drop items inactive; the guest's real iDroid path to LOADOUT refused with its toast.
 #   2. The guest's vehicle damage report: the guest's real rifle rounds at 25608 from its boot spot -> VEHICLE_DAMAGE ->
@@ -24,15 +24,19 @@
 #   world_vehicle_damage runs at its play default (on since 9538f86, not named), the host fires from the guest's spot,
 #   and in 3 the host asks the ignore from 12 m and both approach from behind (west; the hull lies east-west, front
 #   east).
+#   8995e351 (build da2043d, world_vehicle_crew named, the damage report at its play default): 1 and 3 passed (the
+#   guest's charges from behind: break_crew, the host's wreck, frames on both); 2 found no jeep: the Masa Village guards
+#   broke 25608 on the host's copy before part 2 cleared them. Now no vehicle key is named (both fixes on in play since
+#   their play defaults) and the guards are cleared at the start (the armoured vehicle is 480 m away).
 # NEVER: step=error, viewer_changed, faults; event=vehicle_damage step=tx after part 2's host logmark; a step=hold or
 #        hold_timeout for 25623.
-labsetting world_vehicle_crew=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
 both debug godmode 1
+host debug clear_enemies 100
 host debug time 43200
 host debug weather sunny
 waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1; crew=1' 30

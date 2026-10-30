@@ -1535,11 +1535,14 @@ int main() {
                       (n + "=1 parses in play with no refusal bit").c_str());
             }
             // Play defaults: world_vehicle_damage on in play unless named (lab FRAME ac0f7656 on both copies; the play
-            // rehearsal 247a4eed, -WanSim bad); world_vehicle_crew stays off in play (its play rehearsal 247a4eed never
-            // reached the rule: the alerted armoured vehicle drove apart on the two copies), a named 1 turns it on.
+            // rehearsal 247a4eed, -WanSim bad); world_vehicle_crew on in play unless named (lab FRAME ac0f7656; the play
+            // rehearsal 8995e351, -WanSim bad, frames on both copies; 247a4eed never reached the rule).
             Check(vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
                   "world_vehicle_damage defaults on in play");
-            Check(!vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew stays off in play unless named");
+            Check(vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults on in play");
+            const auto crewOff = Lab(play + "world_vehicle_crew=0\n");
+            Check(crewOff.mode == mgscoop::LabMode::play && !crewOff.world_vehicle_crew && crewOff.world_vehicle_crew_given,
+                  "a named world_vehicle_crew=0 keeps it off in play");
             const auto dmgOff = Lab(play + "world_vehicle_damage=0\n");
             Check(dmgOff.mode == mgscoop::LabMode::play && !dmgOff.world_vehicle_damage && dmgOff.world_vehicle_damage_given,
                   "a named world_vehicle_damage=0 keeps it off in play");

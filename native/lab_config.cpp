@@ -963,13 +963,15 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
         if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
     }
-    // 8. The vehicle fixes of 2026-10-29: world_vehicle_damage (the guest's vehicle damage report) on in play unless
-    // named (lab FRAME ac0f7656 on both copies; play rehearsal 247a4eed with -WanSim bad: the guest's round reported,
-    // applied 117 ms later and kept on both copies past the refresh); it acts only where VEHICLE_STATE runs. The lab
-    // keeps it off unless named. world_vehicle_crew has no play default: its play rehearsal (247a4eed) never reached
-    // the rule (the alerted armoured vehicle drove apart on the two copies, so VEHICLE_GONE refused it as far).
+    // 8. The vehicle fixes of 2026-10-29, on in play unless named, off in the lab unless named:
+    // world_vehicle_damage (the guest's vehicle damage report; lab FRAME ac0f7656 on both copies; play rehearsal
+    // 247a4eed with -WanSim bad: the guest's round reported, applied 117 ms later and kept on both copies past the
+    // refresh; it acts only where VEHICLE_STATE runs) and world_vehicle_crew (D12, a soldier-crewed host copy wrecked at
+    // once; lab FRAME ac0f7656; play rehearsal 8995e351 with -WanSim bad, the guest's real C4, frames on both copies;
+    // it acts only with world_vehicle_break, where VEHICLE_GONE runs).
     if (result.mode == LabMode::play) {
         if (!result.world_vehicle_damage_given) result.world_vehicle_damage = true;
+        if (!result.world_vehicle_crew_given) result.world_vehicle_crew = true;
     }
     out = result;
     return true;
