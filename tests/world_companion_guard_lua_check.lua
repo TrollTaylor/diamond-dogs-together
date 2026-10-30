@@ -1,6 +1,7 @@
 -- D7 dog guard (docs/vehicles-companions-design.md 6.12, 8.9): lua/coop/world_companion_guard.lua on top of the M2 hold
 -- (world_buddy.lua, world_companion_dog.lua) with a recording companion module and native receipts. No game process.
 -- Usage: lua51 world_companion_guard_lua_check.lua <world_buddy.lua> <world_companion_dog.lua> <world_companion_guard.lua>
+--   <world_sync.lua>
 -- Written before world_companion_guard.lua: the first check after the chunk-size checks failed (no W.dogGuard).
 -- Review 2026-10-29 (hold through a link loss, the unknown host state, the one-shot DOG-bit repair, play refusals):
 -- written before the chunk changed; the red run is scratchpad decisions/dog/fix-red-lua.log.
@@ -23,6 +24,17 @@ local function F(host, o)
   env.DemoDaemon = {IsDemoPlaying = function() return false end}
   env.GameObject = {NULL_ID = 65535, GetGameObjectIdByIndex = function() return c.id end}
   env.TppBuddyService = {UnsetDeadBuddyType = function(t) c.calls[#c.calls + 1] = {name = "UnsetDeadBuddyType", t = t}; env.vars.deadBuddyType = 0 end}
+  -- Heroism, demon points and the dog's bond (raw vars.buddyFriendlyPoint, 0..1000; GetFriendlyPoint is raw / 10).
+  env.BuddyFriendlyType = {QUIET = 0, DOG = 1, HORSE = 2}
+  env.vars.buddyFriendlyPoint = {[0] = 400, [1] = o.bond or 523, [2] = 300}
+  c.mbm = {h = o.heroic or 1000, o = o.ogre or 50}
+  env.TppBuddyService.GetFriendlyPoint = function(t) return math.floor(env.vars.buddyFriendlyPoint[t] * 100 / 1000) end
+  if not o.noMbm then
+    env.TppMotherBaseManagement = {GetHeroicPoint = function() return math.max(0, math.min(99999999, c.mbm.h)) end,
+      AddHeroicPoint = function(t) c.calls[#c.calls + 1] = {name = "AddHeroicPoint", n = t.heroicPoint}; c.mbm.h = math.min(99999999, c.mbm.h + t.heroicPoint) end,
+      GetOgrePoint = function() return c.mbm.o end,
+      SubOgrePoint = function(t) c.calls[#c.calls + 1] = {name = "SubOgrePoint", n = t.ogrePoint}; c.mbm.o = c.mbm.o - t.ogrePoint end}
+  end
   env.TppBuddy2BlockController = {GetActiveBuddyType = function() return c.buddy end, IsBlockActive = function() return c.block end,
     CallBuddy = function() return true end,
     DeleteBuddy = function() c.calls[#c.calls + 1] = {name = "DeleteBuddy", token = c.W.companion.token}; return true end}
@@ -87,6 +99,19 @@ local function F(host, o)
   function c:logged(p) for _, l in ipairs(self.logs) do if l:find(p) then return l end end end
   function c:nlogged(p) local k = 0; for _, l in ipairs(self.logs) do if l:find(p) then k = k + 1 end end; return k end
   function c:lastGuard() return self.guard[#self.guard] end
+  -- The stock dying penalty (BuddyServiceImpl slot 0x258, 0x140A4F440, run by the dog's life update just before its Dead
+  -- message): nothing when the DOG bit of deadBuddyType is set; else 30 heroism and 20 raw bond, or 60, 100 raw and +150
+  -- demon points when a player (id 0..511) made the kill; heroism never below 0 by it; then the DOG bit.
+  function c:penalty(att)
+    local v = self.env.vars
+    if math.floor(v.deadBuddyType / 4) % 2 == 1 then return end
+    local p = type(att) == "number" and att >= 0 and att < 512
+    self.mbm.h = self.mbm.h - math.min(p and 60 or 30, math.max(0, self.mbm.h))
+    v.buddyFriendlyPoint[1] = math.max(0, v.buddyFriendlyPoint[1] - (p and 100 or 20))
+    self.mbm.o = self.mbm.o + (p and 150 or 0)
+    v.deadBuddyType = v.deadBuddyType + 4
+  end
+  function c:die(att, cls) self:penalty(att); self.W.companionHurt("Dead", 9728, cls or "other", att) end
   return c
 end
 
@@ -292,4 +317,73 @@ for _, f in ipairs(g.W.startHooks) do f() end; check(g.W.dogGuard.s.linkSim == n
 ok, r = F(true).C.lever({"companion_lab", "link_sim", "on"}); check(not ok and r == "guest_lab_only", "link_sim is the guest's")
 ok, r = F(false, {play = true}).C.lever({"companion_lab", "link_sim", "on"}); check(not ok and r == "lab_only", "link_sim refused in play")
 ok, r = F(false).C.lever({"companion_lab", "link_sim", "maybe"}); check(not ok and r == "companion_args", "link_sim takes on or off")
+
+-- Heroism at a copy's death (user decision 2026-10-29; design 8.14): when the guest's copy of the host's dog dies on the
+-- guest's PC the stock game takes the guest's heroism and bond (and demon points for a player's kill) for a death that
+-- is not real; under the key the guest gets exactly that back, once per death, measured against its last sample before
+-- the death. The host and a guest without the key keep the stock penalty. Written before the chunk changed; red run in
+-- the session scratchpad next2/dog/red-lua.log.
+local HG = "event=dog_hero;role=guest;"
+g = F(false); g:pose(900, 0x80 + 31); g:tick()
+g:die(65535, "other")
+check(g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523 and g.mbm.o == 50, "a guard's kill of the copy: heroism and bond given back")
+check(g:logged(HG .. "step=given;by=other;att=65535;heroic=1000>970>1000;bond=523>503>523;ogre=50>50>50;give=30,20,0;expect=30,20,0;gate=0;ms=0;n=1;$"),
+  "logged with the sample before, the value after the penalty and the readback")
+check(g:count("AddHeroicPoint") == 1 and g:count("SubOgrePoint") == 0, "through AddHeroicPoint; no demon points to take")
+g.W.companionHurt("Dead", 9728, "other", 65535)
+check(g:nlogged("step=given") == 1 and g.mbm.h == 1000 and g:count("AddHeroicPoint") == 1, "a repeated Dead message of the same death gives nothing more")
+for t = 1100, 3000, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
+check(g.env.vars.deadBuddyType == 0, "(the restore cleared the DOG bit)")
+g:die(65535, "other")
+check(g:nlogged("step=given") == 2 and g:logged("step=given;.*;n=2;$") and g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523,
+  "a later death of the restored copy: given back again (once per death)")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:die(0, "local")
+check(g:logged(HG .. "step=given;by=player;att=0;heroic=1000>940>1000;bond=523>423>523;ogre=50>200>50;give=60,100,150;expect=60,100,150;"),
+  "the guest's own kill: 60 heroism, 100 raw bond and the 150 demon points back")
+check(g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523 and g.mbm.o == 50 and g:count("SubOgrePoint") == 1, "all three restored")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:die(1, "mirror")
+check(g:logged("step=given;by=player;att=1;") and g.mbm.h == 1000 and g.mbm.o == 50, "the host's body (player 1) counts as a player, as the stock rule does")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:penalty(0); g.W.companionHurt("Dead", 9728, "other")
+check(g:logged("step=given;by=unknown;att=nil;.*give=60,100,150;expect=60,100,150;") and g.mbm.h == 1000, "no attacker from an older observer: what was lost, at most a player's amounts")
+-- The stock gate: a DOG bit already set means the game took nothing; nothing is given.
+g = F(false); g:pose(900, 0x80 + 31); g.env.vars.deadBuddyType = 4; g:tick(); g:die(65535, "other")
+check(g:logged(HG .. "step=none;by=other;att=65535;heroic=1000>1000;bond=523>523;ogre=50>50;gate=1;") and g:count("AddHeroicPoint") == 0, "the stock gate: nothing taken, nothing given")
+-- Clamps: never more than the death took, never more than the stock amount.
+g = F(false, {heroic = 20, bond = 15}); g:pose(900, 0x80 + 31); g:tick(); g:die(65535, "other")
+check(g.mbm.h == 20 and g.env.vars.buddyFriendlyPoint[1] == 15 and g:logged("give=20,15,0;expect=30,20,0;"), "heroism and bond near 0: what the death took")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.mbm.h = g.mbm.h - 10; g:die(65535, "other")
+check(g.mbm.h == 990 and g:logged("heroic=1000>960>990;.*give=30,20,0;"), "another loss in the same 100 ms is not the death's: only its 30")
+-- Order: a penalty that lands after the Dead message is given back at the next tick; none within 1 s is logged once.
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other", 65535)
+check(not g:logged("event=dog_hero"), "nothing lost yet: wait")
+g:penalty(65535); g:pose(1050, 0x80 + 31); g:tick(1100)
+check(g:logged("step=given;by=other;att=65535;heroic=1000>970>1000;.*ms=100;n=1;$") and g.mbm.h == 1000, "a late penalty: given at the next tick")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other", 65535)
+for t = 1100, 2500, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
+check(g:nlogged(HG .. "step=none;by=other;att=65535;heroic=1000>1000;bond=523>523;ogre=50>50;gate=0;ms=1") == 1 and g:count("AddHeroicPoint") == 0,
+  "nothing taken within 1 s: logged once, nothing given")
+-- Every copy death under the key: the host's dog down too (mirrored) and an unknown host state.
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:pose(1050, 0x80 + 64); g:tick(1100); g:die(65535, "other")
+check(g:logged("step=dead;host=down") and g:logged("step=given;by=other;") and g.mbm.h == 1000, "the mirrored down: the host pays on its PC, the guest gets it back")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:tick(5000); g:die(65535, "other")
+check(g:logged("step=dead;host=unknown") and g:logged("step=given;") and g.mbm.h == 1000, "an unknown host state: given back")
+-- Left alone: the host's own dog, a guest without the key or without the peer's, a missing API.
+h = F(true); h:tick(); h:die(65535, "other")
+check(h.mbm.h == 970 and h.env.vars.buddyFriendlyPoint[1] == 503 and not h:logged("event=dog_hero"), "the host's own dog's death keeps the stock penalty")
+g = F(false, {off = true}); g:tick(); g:die(0, "local")
+check(g.mbm.h == 940 and g.env.vars.buddyFriendlyPoint[1] == 423 and g.mbm.o == 200 and not g:logged("event=dog_hero"), "key off: the guest's own dog's death keeps it")
+g = F(false, {peer = false}); g:tick(); g:die(65535, "other")
+check(g.mbm.h == 970 and not g:logged("event=dog_hero"), "the peer's key not seen: the guest's own dog, stock")
+g = F(false, {noMbm = true}); g:pose(900, 0x80 + 31); g:tick(); g:die(65535, "other")
+check(g:logged(HG .. "step=no_sample;by=other;att=65535;n=1;") and g:logged("step=dead;host=alive"), "no heroism API: named once, the restore unaffected")
+-- The readback lever (both roles, play too: read only).
+g = F(false); g:pose(900, 0x80 + 31); g:tick()
+ok, r = g.C.lever({"companion_lab", "hero"})
+check(ok and r == "hero;role=guest;heroic=1000;ogre=50;bond=52;bond_raw=523;dead_bit=0;applies=1;deaths=0", "companion_lab hero reads the guest's values")
+g:die(65535, "other"); ok, r = g.C.lever({"companion_lab", "hero"}); check(ok and r:find(";heroic=1000;.*;deaths=1$"), "and counts the deaths given back")
+ok, r = F(true, {play = true}).C.lever({"companion_lab", "hero"}); check(ok and r:find("^hero;role=host;heroic=1000;.*;applies=0;"), "the host's, in play too")
+ok, r = F(false, {off = true}).C.lever({"companion_lab", "hero"}); check(ok and r:find(";applies=0;"), "key off: read only")
+-- world_sync.lua's observer hands the raw attacker on (the stock rule's player test needs the id, not the class).
+local hs = assert(io.open(assert(arg[4]), "rb")); local syncText = hs:read("*a"); hs:close()
+check(syncText:find("pcall(W.companionHurt, kind, a0, class2, att)", 1, true), "world_sync.lua passes the attacker id to W.companionHurt")
 print("world_companion_guard_lua_check: " .. checks .. " checks PASS")

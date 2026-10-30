@@ -100,13 +100,73 @@ function G.disarm(why)
 end
 -- Restore: the reconcile (world_companion.lua) loads the host's kind at the host's pose; primed to try now.
 local function prime() C.mismatchAt, C.fixAt, C.fixWant, C.fixN, C.fixQuit = W.now() - 60000, nil, nil, nil, nil end
-function G.hurt(msg, id)
+-- Heroism at a copy's death (user decision 2026-10-29; design 8.14). The stock penalty is the buddy service's dying
+-- handler (BuddyServiceImpl slot 0x258, 0x140A4F440, which the dog's life update calls at 0x140CA504E just before its
+-- Dead message): unless the DOG bit of deadBuddyType is set it takes 30 heroism and 20 raw bond (vars.buddyFriendlyPoint
+-- 0..1000; GetFriendlyPoint is raw / 10), or 60, 100 raw and +150 demon points when a player (id 0..511) made the kill,
+-- then sets that bit. The guest's copy is the host's dog, so each copy death gets back exactly what it took, once,
+-- measured against the last sample before it (the sample freezes when the bit appears) and never more than the stock
+-- amount. The stock "D-Dog Near Death" notice still shows; the host and a guest without the key keep the stock game.
+local HERO = {other = {30, 20, 0}, player = {60, 100, 150}}
+local function HL(text) W.log("event=dog_hero;role=guest;" .. text) end
+local function heroRead()
+ local M, t, dead = TppMotherBaseManagement, W.api.buddyDog, W.get(vars, "deadBuddyType")
+ local ft = W.get(BuddyFriendlyType, "DOG")
+ local okh, h = pcall(W.get(M, "GetHeroicPoint"))
+ local oko, o = pcall(W.get(M, "GetOgrePoint"))
+ local b = type(ft) == "number" and W.get(W.get(vars, "buddyFriendlyPoint"), ft)
+ if not (okh and oko and type(h) == "number" and type(o) == "number" and type(b) == "number" and type(t) == "number" and type(dead) == "number") then return nil end
+ return {h = h, o = o, b = b, ft = ft, gate = floor(dead / 2 ^ t) % 2 == 1, at = W.now()}
+end
+G.heroRead = heroRead
+local function heroGive(p, now)
+ local a, e, pre = heroRead(), p.exp, p.pre
+ if not a then return now - p.at >= 1000 end
+ local gh, gb, go = math.min(e[1], math.max(0, pre.h - a.h)), math.min(e[2], math.max(0, pre.b - a.b)), math.min(e[3], math.max(0, a.o - pre.o))
+ local head = fmt("by=%s;att=%s;", p.by, tostring(p.att))
+ if gh + gb + go == 0 then
+  if not pre.gate and now - p.at < 1000 then return false end
+  HL(fmt("step=none;%sheroic=%d>%d;bond=%d>%d;ogre=%d>%d;gate=%d;ms=%d;n=%d;", head, pre.h, a.h, pre.b, a.b, pre.o, a.o, pre.gate and 1 or 0, now - p.at, p.n))
+  return true
+ end
+ local M = TppMotherBaseManagement
+ if gh > 0 then pcall(W.get(M, "AddHeroicPoint"), {heroicPoint = gh}) end
+ if gb > 0 then pcall(function() vars.buddyFriendlyPoint[a.ft] = a.b + gb end) end
+ if go > 0 then pcall(W.get(M, "SubOgrePoint"), {ogrePoint = go}) end
+ local z = heroRead() or a
+ G.s.heroGiven = (G.s.heroGiven or 0) + 1
+ HL(fmt("step=given;%sheroic=%d>%d>%d;bond=%d>%d>%d;ogre=%d>%d>%d;give=%d,%d,%d;expect=%d,%d,%d;gate=0;ms=%d;n=%d;", head, pre.h, a.h, z.h,
+  pre.b, a.b, z.b, pre.o, a.o, z.o, gh, gb, go, e[1], e[2], e[3], now - p.at, p.n))
+ return true
+end
+function G.heroDeath(att, now)
+ local s = G.s
+ -- One death, one answer: a repeated Dead message within 1 s is the same death (a copy needs 1.5 s to come back).
+ if s.heroP or now - (s.heroLast or -1000) < 1000 then return end
+ local by = type(att) ~= "number" and "unknown" or att >= 0 and att < 512 and "player" or "other"
+ local pre = s.heroPre
+ s.heroN, s.heroPre, s.heroLast = (s.heroN or 0) + 1, nil, now
+ if not pre then HL(fmt("step=no_sample;by=%s;att=%s;n=%d;", by, tostring(att), s.heroN)); return end
+ s.heroP = {pre = pre, exp = pre.gate and {0, 0, 0} or HERO[by] or HERO.player, at = now, by = by, att = att, n = s.heroN}
+ if heroGive(s.heroP, now) then s.heroP = nil end
+end
+-- Every tick: settle a pending death, else sample. A sample with the DOG bit newly set (the penalty landed, its Dead
+-- message not yet seen) keeps the one before it, for 1 s at most.
+local function heroTick(now)
+ local s = G.s
+ if s.heroP then if heroGive(s.heroP, now) then s.heroP = nil end return end
+ local r, p = heroRead(), s.heroPre
+ if r and (not r.gate or not p or p.gate or now - p.at > 1000) then s.heroPre = r end
+end
+function G.hurt(msg, id, _, att)
  if msg ~= "Dead" or id ~= DOG_ID or W.host or not C.applies() then return end
  local s, now = G.s, W.now()
  local byte, alive, _, known = G.hostState(now)
  s.dead = {at = now, mirrored = known and not alive, unknown = not known or nil}
  R(fmt("step=dead;host=%s;byte=%d;armed=%d;drops=%d;n=%d", not known and "unknown" or alive and "alive" or "down", byte,
   s.armed and 1 or 0, s.drops or 0, (s.restores or 0) + 1))
+ local ok, err = pcall(G.heroDeath, att, now)
+ if not ok then HL("step=error;msg=" .. string.sub(tostring(err), 1, 80)) end
 end
 -- A dead DOG bit in deadBuddyType stops every reload (runs dc761c98, 033193d3). Only that bit is cleared, once after
 -- the death and once more before a primed reload if it is set again (review 2026-10-29: the whole-word rewrite every
@@ -175,6 +235,8 @@ function G.tick(now)
  if now < (s.next or 0) then return end
  s.next = now + 100
  if W.host or not C.applies() then if s.armed or s.armedAt then G.disarm("off") end return end
+ local hok, herr = pcall(heroTick, now)
+ if not hok and now >= (s.heroErrAt or 0) then s.heroErrAt = now + 10000; HL("step=error;msg=" .. string.sub(tostring(herr), 1, 80)) end
  local _, have = pcall(lib.active)
  local byte, alive, present, known = G.hostState(now)
  if have == W.api.buddyDog and W.inGame() then
@@ -195,9 +257,9 @@ function C.tick(now)
  end
 end
 local hurt = W.companionHurt
-function W.companionHurt(msg, id, cls)
+function W.companionHurt(msg, id, cls, att)
  if hurt then hurt(msg, id, cls) end
- pcall(G.hurt, msg, id, cls)
+ pcall(G.hurt, msg, id, cls, att)
 end
 W.startHooks[#W.startHooks + 1] = function() local l = G.s.labOff; G.s = {labOff = l} end
 -- An unpair no longer disarms (review 2026-10-29): the next tick sends the hold at once.
@@ -205,13 +267,20 @@ W.unpairedHooks[#W.unpairedHooks + 1] = function() G.s.armedAt = nil end
 -- Lab levers: companion_lab dog_life|dog_stun <0..100> (the host's own dog; 0 life = its death), recall (host: the
 -- dead DOG bit cleared, the dog called 5 m in front), kill_mirror (guest: the forced death the restore answers),
 -- guard on|off (guest), link_sim on|off (guest: this module sees the link as lost, the hold and an unknown host state,
--- while the world link stays up; cleared at mission start), dog_state (both: the receipt).
+-- while the world link stays up; cleared at mission start), dog_state (both: the receipt), hero (both, play too: this
+-- PC's heroism, demon points and the dog's bond, read only).
 local lever = C.lever
 function C.lever(a, id, A, mission)
- if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, link_sim = 1, dog_state = 1})[a[2]] then
+ if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, link_sim = 1, dog_state = 1, hero = 1})[a[2]] then
   return lever(a, id, A, mission)
  end
  local s, n = G.s, tonumber(a[3])
+ if a[2] == "hero" and #a == 2 then
+  local r = heroRead()
+  if not r then return false, "hero;unavailable" end
+  return true, fmt("hero;role=%s;heroic=%d;ogre=%d;bond=%d;bond_raw=%d;dead_bit=%d;applies=%d;deaths=%d", W.host and "host" or "guest", r.h, r.o,
+   floor(r.b / 10), r.b, r.gate and 1 or 0, not W.host and C.applies() and 1 or 0, s.heroGiven or 0)
+ end
  if a[2] == "dog_state" and #a == 2 then
   -- An armed guest reads by re-arming (a guest's arm 0 is a disarm); a disarmed guest (guard off) and the host read
   -- with arm 0, which answers the live record (review 2026-10-29: the last arm's reply was stale).

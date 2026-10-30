@@ -127,9 +127,10 @@ mgs_add_lua_check(world_companion_lua_check "${_mgs_coop}/world_companion.lua" "
   "${_mgs_coop}/world_companion_dog.lua")
 # M2 D-Dog synced (docs/vehicles-companions-design.md 6.2): world_buddy.lua with the host-owned companion on.
 mgs_add_lua_check(world_buddy_companion_lua_check "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_companion_dog.lua")
-# D7 dog guard (docs/vehicles-companions-design.md 6.12, 8.9): the guard lease, the host's state byte, the restore.
+# D7 dog guard (docs/vehicles-companions-design.md 6.12, 8.9): the guard lease, the host's state byte, the restore;
+# 8.14: the heroism, bond and demon points of a copy's death given back (world_sync.lua hands on the attacker id).
 mgs_add_lua_check(world_companion_guard_lua_check "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_companion_dog.lua"
-  "${_mgs_coop}/world_companion_guard.lua")
+  "${_mgs_coop}/world_companion_guard.lua" "${_mgs_coop}/world_sync.lua")
 # M3 experiments E2/E17/E18: the sortie (relief) vehicle lab levers and census.
 mgs_add_lua_check(world_relief_lua_check "${_mgs_coop}/world_relief.lua")
 # M3 sortie vehicle on both copies (route A): the module with the follow seeds, follow and VEHICLE_GONE.
