@@ -2985,7 +2985,9 @@ void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
     d.local_passenger = partner_board::LocalPassenger{};
     // The passenger camera connects only from a tick's own report (cleared just above), so
     // nothing of it outlives a mission boundary or a stop; the stock clears release the handle.
-    // M7 S1: the seated-shot publication ends with the report (a stale one is ignored by the hook after 500 ms anyway).
+    // M7 S1: the seated-shot publication ends with the report. This withdrawal owns the mission boundaries and the stop
+    // (Tick returns before TickSeatShot while terminating); the hook also ignores a publication older than
+    // partner_seat_shot::MaxAgeMs (50-250 ms by the vehicle's speed).
     if (h.seat_shot_withdraw) h.seat_shot_withdraw(h.context);
     d.mission.seat_shot.published = false;
 }
@@ -3489,7 +3491,7 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the
 // seatshot lever's override wins) decides apply: off on a lab copy still plans every seated shot (census lines, nothing
 // moved); off in play publishes nothing. One line per planned shot (the hook's last plan), capped per mission.
-void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminating) noexcept {
+void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
     auto& s = m.seat_shot;
@@ -3524,11 +3526,12 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
         s.last_seq = ss.seq;
         EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot",
                     "partner_seat_shot=shot; result=%s; vehicle=%u; seat=%u; apply=%u; t_cm=%d; exit_cm=%d; dist_cm=%d; inside=%u; "
-                    "o_cm=%d,%d,%d; d_milli=%d,%d,%d; shifted=%u; census=%u; refused=%u; stale=%u\r\n",
+                    "o_cm=%d,%d,%d; d_milli=%d,%d,%d; shifted=%u; census=%u; refused=%u; stale=%u; age_ms=%u; max_ms=%u\r\n",
                     ss.result ? ss.result : "-", unsigned(ss.vehicle), unsigned(ss.seat), ss.apply ? 1u : 0u, cm(ss.t), cm(ss.exit),
                     ss.dist < 0.0f ? -1 : cm(ss.dist), ss.inside ? 1u : 0u, cm(ss.o_local[0]), cm(ss.o_local[1]), cm(ss.o_local[2]),
                     milli(ss.d_local[0]), milli(ss.d_local[1]), milli(ss.d_local[2]), ss.shifted - s.seen.shifted,
-                    ss.census - s.seen.census, ss.refused - s.seen.refused, ss.stale - s.seen.stale);
+                    ss.census - s.seen.census, ss.refused - s.seen.refused, ss.stale - s.seen.stale, unsigned(ss.age_ms),
+                    unsigned(ss.max_ms));
     }
     const partner_board::LocalPassenger& lp = d.local_passenger;
     // The refusal, in order (nullptr: publish).
@@ -3536,7 +3539,7 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
     partner_vehicle::Read vr{};
     pss::Class cls = pss::Class::none;
     std::uint8_t category = 0xFF;
-    if (terminating) why = "terminating";
+    if (terminating) why = "terminating";  // defensive: Tick returns before this while terminating (BoardWithdraw owns it)
     else if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) why = "board_mode";
     else if (!apply && d.settings.play_mode) why = "key_off";
     else if (!lp.valid) why = "not_seated";
@@ -3560,6 +3563,7 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
         }
     }
     if (why) {
+        s.speed_have = false;
         if (s.published) {
             h.seat_shot_withdraw(h.context);
             s.published = false;
@@ -3586,6 +3590,18 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
     pub.pos[1] = vr.unit.pos[1];
     pub.pos[2] = vr.unit.pos[2];
     pub.yaw = vr.unit.pos[3];
+    // The vehicle's speed from the last publication (the hook's freshness window, partner_seat_shot::MaxAgeMs).
+    if (s.speed_have && s.speed_vehicle == lp.vehicle && now > s.speed_ms && now - s.speed_ms <= 1000) {
+        const float dx = pub.pos[0] - s.speed_pos[0], dy = pub.pos[1] - s.speed_pos[1], dz = pub.pos[2] - s.speed_pos[2];
+        const float v = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0f / static_cast<float>(now - s.speed_ms);
+        if (std::isfinite(v)) pub.speed = v;
+    }
+    if (!s.speed_have || s.speed_vehicle != lp.vehicle || now != s.speed_ms) {
+        s.speed_have = true;
+        s.speed_vehicle = lp.vehicle;
+        s.speed_ms = now;
+        std::memcpy(s.speed_pos, pub.pos, sizeof(s.speed_pos));
+    }
     pp::AimRead aim{};
     const bool aim_ok = h.read_aim && h.read_aim(h.context, st, aim);
     if (aim_ok && aim.q_ok && pss::Finite3(aim.q10[0])) {
@@ -6897,7 +6913,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     partner::Tick ride_tick = tick;
     TickBoard(d, h, st, now, terminating, ride_tick);
     TickPassCamera(d, h, st, now, terminating);
-    TickSeatShot(d, h, st, terminating);
+    TickSeatShot(d, h, st, now, terminating);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     SendSeatExt(d, h, now);

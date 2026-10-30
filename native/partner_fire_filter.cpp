@@ -118,7 +118,22 @@ std::uint64_t (*g_ss_clock)() noexcept = nullptr;
 volatile LONG g_ss_seen = 0, g_ss_shifted = 0, g_ss_census = 0, g_ss_refused = 0, g_ss_stale = 0, g_ss_unread = 0, g_ss_busy = 0;
 volatile LONG g_ss_last_lock = 0, g_ss_last_seq = 0;
 SeatShotStats g_ss_last{};
-std::uint64_t SeatShotNow() noexcept { return g_ss_clock ? g_ss_clock() : GetTickCount64(); }
+// The hook's clock: QueryPerformanceCounter in ms (GetTickCount64 steps by ~15.6 ms, a third of the window at speed).
+volatile LONGLONG g_ss_qpc_freq = 0;
+std::uint64_t QpcMs() noexcept {
+    LONGLONG f = g_ss_qpc_freq;
+    if (f <= 0) {
+        LARGE_INTEGER q{};
+        if (!QueryPerformanceFrequency(&q) || q.QuadPart <= 0) return GetTickCount64();
+        f = q.QuadPart;
+        InterlockedExchange64(&g_ss_qpc_freq, f);
+    }
+    LARGE_INTEGER c{};
+    if (!QueryPerformanceCounter(&c)) return GetTickCount64();
+    const auto v = static_cast<std::uint64_t>(c.QuadPart), uf = static_cast<std::uint64_t>(f);
+    return v / uf * 1000u + v % uf * 1000u / uf;
+}
+std::uint64_t SeatShotNow() noexcept { return g_ss_clock ? g_ss_clock() : QpcMs(); }
 bool ReadPub(pss::Pub& out) noexcept {
     for (int i = 0; i < 4; ++i) {
         const LONG a = InterlockedCompareExchange(&g_ss_seq, 0, 0);
@@ -130,7 +145,7 @@ bool ReadPub(pss::Pub& out) noexcept {
     }
     return false;
 }
-void RecordLast(const pss::Pub& p, const pss::Plan& plan) noexcept {
+void RecordLast(const pss::Pub& p, const pss::Plan& plan, std::uint64_t age, std::uint64_t window) noexcept {
     if (InterlockedCompareExchange(&g_ss_last_lock, 1, 0) != 0) return;  // another hook thread is writing: skip this one
     g_ss_last.result = plan.result;
     g_ss_last.apply = p.apply;
@@ -140,6 +155,8 @@ void RecordLast(const pss::Pub& p, const pss::Plan& plan) noexcept {
     g_ss_last.t = plan.t;
     g_ss_last.exit = plan.exit;
     g_ss_last.dist = plan.dist;
+    g_ss_last.age_ms = static_cast<std::uint32_t>(age > 0xFFFFFFFFull ? 0xFFFFFFFFull : age);
+    g_ss_last.max_ms = static_cast<std::uint32_t>(window);
     for (int i = 0; i < 3; ++i) {
         g_ss_last.o_local[i] = plan.o_local[i];
         g_ss_last.d_local[i] = plan.d_local[i];
@@ -155,13 +172,21 @@ bool SeatShotStep(const void* record, std::uint16_t owner, unsigned char* copy) 
     if (p.owner != owner) return false;
     InterlockedIncrement(&g_ss_seen);
     const std::uint64_t now = SeatShotNow();
-    if (now < p.ms || now - p.ms > pss::kFreshMs) { InterlockedIncrement(&g_ss_stale); return false; }
+    const std::uint64_t age = now >= p.ms ? now - p.ms : 0xFFFFFFFFull, window = pss::MaxAgeMs(p.speed);
+    if (!pss::Fresh(now, p.ms, p.speed)) {
+        // A stale shot is a plan too (its line says stale with the age): the stock shot, which can hit the jeep.
+        pss::Plan stale{};
+        stale.result = "stale";
+        RecordLast(p, stale, age, window);
+        InterlockedIncrement(&g_ss_stale);
+        return false;
+    }
     if (!ReadRecord(record, 0, copy, pss::kRecordBytes)) { InterlockedIncrement(&g_ss_unread); return false; }
     float start[3], dir[3];
     std::memcpy(start, copy + pss::kPos, sizeof(start));
     std::memcpy(dir, copy + pss::kDir, sizeof(dir));
     const pss::Plan plan = pss::PlanShot(p, start, dir);
-    RecordLast(p, plan);
+    RecordLast(p, plan, age, window);
     if (plan.move) {
         std::memcpy(copy + pss::kPos, plan.pos, sizeof(plan.pos));  // +0x0C (w) kept
         InterlockedIncrement(&g_ss_shifted);

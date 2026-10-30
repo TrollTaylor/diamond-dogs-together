@@ -801,6 +801,11 @@ struct Mission {
         std::uint32_t last_seq;
         partner_fire_filter::SeatShotStats seen;
         LogCap cap;
+        // The last publication's vehicle position and time (the speed the hook's freshness window follows).
+        bool speed_have;
+        std::uint16_t speed_vehicle;
+        std::uint64_t speed_ms;
+        float speed_pos[3];
     } seat_shot;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).

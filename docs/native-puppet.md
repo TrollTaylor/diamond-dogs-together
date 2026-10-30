@@ -943,15 +943,19 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 
 ### Seat shot (S1)
 
-M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31). Key `partner_seat_shot=0|1` (`_given`):
-**off unless named, in lab and play** (built and tested; it showed no effect in the runs, so nothing flips). Lab
-lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
+M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31, on since 8.37). Key
+`partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab, off in play unless named** since
+`wp/self-hit` (8.37: a stock seated shot cost the shooter's copy of the jeep 702 life, S1 shots on the same line none;
+the play default waits for a play run on lines that hit the jeep in stock); a named 0 opts out. Lab lever
+`seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
 **What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a
 light vehicle, seat 1 of a truck) and the fire filter's RequestBullet hook is live, the driver tick publishes the ridden
 vehicle's record (position, yaw; the class from its category `+0x6C >> 4`), the seat, the owner and this copy's aim
 target `Q+0x10[local]` through a seqlock (`partner_fire_filter::PublishSeatShot`). The hook (`Hook`, slot 0 of
-`0x2337DE8` / `0x2337D18`), for a request of that owner and a publication at most 50 ms old, forwards a COPY of the
+`0x2337DE8` / `0x2337D18`), for a request of that owner and a fresh publication (`MaxAgeMs`: 1 m of drift at the
+vehicle's speed from the last two publications, 50 ms at 20 m/s and over or speed unknown, up to 250 ms parked, on a
+QueryPerformanceCounter clock; a stale shot is the stock one, logged `result=stale`), forwards a COPY of the
 record (0x34 bytes, what RequestBullet's slot copy `0xD32690` reads) whose start (`+0x00`) moves along its own direction
 (`+0x10`) to where the line leaves the vehicle's box, +5 cm, never closer than 0.3 m to the target; a start outside
 the box is never moved (`result=outside`: the seated muzzle is always inside, so the pose is stale or wrong). The caller's record
@@ -973,8 +977,8 @@ runs straight into the slot call `0x130343C` and the loop jumps back above it.
 
 **Lines.** `partner_seat_shot=configured; key=..; play=..` once; `published; vehicle=..; seat=..; class=light|truck;
 cat=..; apply=0|1; source=key|lever; veh_cm=..; yaw_mrad=..; body_cm=..; target=..` on each change; one `shot;
-result=shift|census|outside|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
-o_cm=..; d_milli=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
+result=shift|census|stale|outside|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
+o_cm=..; d_milli=..; ...; age_ms=..; max_ms=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
 only) and `withdrawn; reason=..`. Off on a lab copy still plans every seated shot (`result=census`, nothing moved); off
 in play publishes nothing.
 

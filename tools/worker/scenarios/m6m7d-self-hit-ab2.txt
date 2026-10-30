@@ -1,0 +1,448 @@
+# m6m7d problem 3, the discriminating LAB A/B of S1 (partner_seat_shot) for BOTH roles as the seated shooter, run 2
+# (run 1 d1e9e028 did not discriminate: in the lab boot 4158955462 lay 3.7 m behind the jeep, the host's seat-2 gun
+# never fired at him; the guest's nearest was the awake 1465137544 (18 m right-rear), awake guards fired on the jeep).
+# Africa jeep (30020, veh_lv_0000 = 25608). Each seat aims ONCE per boarding (after the first seated aim
+# enemy_aim_nearest's rotY is applied relative to the jeep, 66ad131f) and fires both arms on that line: the S1 arm FIRST
+# (the target standing), then the stock arm (lever seatshot off) on the same line; the jeep's life on BOTH copies after
+# every single shot; the life set back to 2300 (lab lever vehicle_life) after each line.
+#   G. The host drives, the GUEST in back seat 3 aims at 2552560298 (22 m front-right; the 8a920ec8 stock line, which
+#      cost the guest's copy 702 a shot). 4158955462 is killed and 1465137544 disabled first, as 8a920ec8 left them.
+#   H1. The guest drives, the HOST in back seat 2 aims at a fresh warped guard at the 8a920ec8 B spot (22 m, about 58
+#      deg right of the nose: the line crosses the jeep diagonally; S1 shifted it 1.1 m there).
+#   H2. The same, a fresh warped guard 10 m out about 38 deg LEFT of the nose (the mirror of G's line from the left back
+#      seat: it leaves the jeep past the left rear rail, as the front-right line leaves past the right one).
+# Frames: the shooter's view at every shot, the driver's copy (the jeep from behind) after each arm.
+# partner_ride_front=0 keeps a right-side passenger in back seat 3.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7d-self-hit-ab2.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+labsetting partner_ride_front=0
+labsetting world_vehicle_state=1
+labsetting debug_soldier_warp=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_seat_shot=configured; key=1; play=0' 30
+waitlog guest 'partner_seat_shot=configured; key=1; play=0' 30
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run enemy disable 1465137544
+host run cp_phase nearest sneak
+host run enemy kill 4158955462
+host expect ^enemy_kill;ent=4158955462;
+host run enemy_list 60
+# The guest steps 10 m back: at the driver's door the seat race would give it the empty jeep (3d452714).
+guest debug forward -10
+wait 2500
+both capture s-start
+# --- G. The host drives, the guest in back seat 3, one aim at 2552560298 ---------------------------------------------
+logmark both
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25608
+guest debug goto_vehicle jeep right
+wait 3000
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+waitlog guest 'partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+both capture g-seated
+host run enemy sleep 2552560298
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest run enemy_aim_nearest 1.6
+guest expect ^aim_nearest;ent=2552560298;
+wait 800
+logmark both
+# G S1 arm (the key: on): 4 shots on the one line.
+guest hold rmb 1500 nowait
+wait 700
+guest capture g-aim
+host capture g-drv-aim
+guest press lmb 120
+wait 300
+guest capture g-on-1
+host capture g-drv-on-1
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture g-on-2
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture g-on-3
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture g-on-4
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=3; apply=1;' 3
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=2552560298; state=[45];' 6
+waitlog host 'world_lua=event=commit; ent=2552560298; state=[45]; ver=[0-9]+; actor=guest;' 8
+wait 1000
+both capture g-on-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# G stock arm (lever seatshot off): two shots on the same line, the life read after each.
+guest debug seatshot off
+waitlog guest 'partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 500
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture g-off-1
+host capture g-drv-off-1
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture g-off-2
+guest release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog guest 'partner_seat_shot=shot; result=census; vehicle=25608; seat=3; apply=0;' 3
+wait 1000
+both capture g-off-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+guest debug seatshot lab
+waitlog guest 'partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=[12]; apply=1; source=key;' 5
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=off' 5
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+host debug forward -6
+wait 2000
+both capture g-parked
+host run vehicle_life 25608 2300
+wait 1000
+guest run vehicle_life 25608 2300
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# --- H1. The guest drives, the host in back seat 2, one aim at a fresh guard 22 m out (8a920ec8 B spot) ---------
+# A fresh guard for H1: the host on foot warps the nearest unused guard 5 m in front of itself (lab).
+host debug teleport -633.5 3.0 871.8 0
+wait 3500
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host debug forward -3
+wait 1500
+host capture h1-guard
+host run cp_phase nearest sneak
+host debug goto_vehicle jeep right
+wait 2000
+host debug forward -10
+wait 2500
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+both capture h1-seated
+host run enemy sleep nearest
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=\d+;
+wait 800
+logmark both
+# H1 S1 arm (the key: on): 3 shots on the one line.
+host hold rmb 1500 nowait
+wait 700
+host capture h1-aim
+guest capture h1-drv-aim
+host press lmb 120
+wait 300
+host capture h1-on-1
+guest capture h1-drv-on-1
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h1-on-2
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h1-on-3
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=host;' 8
+waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[45];' 8
+wait 1000
+both capture h1-on-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# H1 stock arm (lever seatshot off): two shots on the same line, the life read after each.
+host debug seatshot off
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 500
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h1-off-1
+guest capture h1-drv-off-1
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h1-off-2
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+wait 1000
+both capture h1-off-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host debug seatshot lab
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host run vehicle_life 25608 2300
+wait 1000
+guest run vehicle_life 25608 2300
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# --- H2. The guest stays at the wheel; the host in back seat 2 again, one aim at a fresh guard 10 m front-left ----
+# A fresh guard for H2: the host on foot warps the nearest unused guard 5 m in front of itself (lab).
+host debug teleport -657.1 1.2 874.2 180
+wait 3500
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host debug forward -3
+wait 1500
+host capture h2-guard
+host run cp_phase nearest sneak
+logmark both
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+both capture h2-seated
+host run enemy sleep nearest
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=\d+;
+wait 800
+logmark both
+# H2 S1 arm (the key: on): 3 shots on the one line.
+host hold rmb 1500 nowait
+wait 700
+host capture h2-aim
+guest capture h2-drv-aim
+host press lmb 120
+wait 300
+host capture h2-on-1
+guest capture h2-drv-on-1
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h2-on-2
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h2-on-3
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=host;' 8
+waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[45];' 8
+wait 1000
+both capture h2-on-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# H2 stock arm (lever seatshot off): two shots on the same line, the life read after each.
+host debug seatshot off
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 500
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h2-off-1
+guest capture h2-drv-off-1
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h2-off-2
+host release
+wait 1200
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+wait 1000
+both capture h2-off-after
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host debug seatshot lab
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+host debug forward -6
+wait 2000
+both capture h2-parked
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+state

@@ -387,6 +387,23 @@ void TestSeatShotHook() {
     fill(0);
     Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 2,
           "S1 hook: a stale publication: untouched");
+    // The window follows the speed (review of 8.33): parked (speed 0), 120 ms old is still fresh and moved (a 25 fps copy);
+    // at 20 m/s, 60 ms old is stale and the last plan says so with its age (the line carries age_ms / max_ms).
+    p.speed = 0.0f;
+    ff::PublishSeatShot(p);
+    g_ss_now += 120;
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record != record && ff::ReadSeatShot(st) && st.stale == 2 &&
+              std::strcmp(st.result, "shift") == 0 && st.age_ms == 120 && st.max_ms == 250,
+          "S1 hook: parked, 120 ms old: fresh, moved (age 120, window 250)");
+    p.speed = 20.0f;
+    ff::PublishSeatShot(p);
+    g_ss_now += 60;
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 3 &&
+              std::strcmp(st.result, "stale") == 0 && st.age_ms == 60 && st.max_ms == 50 && st.seat == 3 && st.vehicle == 25608,
+          "S1 hook: 20 m/s, 60 ms old: stale, untouched, the last plan says stale (age 60, window 50)");
+    p.speed = -1.0f;
     // Fresh again, but the line misses the box (shooting straight up): untouched, refused counted.
     ff::PublishSeatShot(p);
     fill(0);

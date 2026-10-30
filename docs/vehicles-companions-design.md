@@ -3225,6 +3225,69 @@ expectation met; zero `step=error`, faults, `viewer_changed`, `board_uncertain`,
   1, the truck cab, category-1 vehicles and two PCs were not run; the combined rehearsal must fire from seat 1 in both
   roles with this key and the shipped camera/shot keys.
 
+### 8.37 Results: S1 on in lab, a seated passenger's shots start past their own jeep (2026-10-30, branch `wp/self-hit`)
+
+The user saw shots toward the shooter's own jeep damage it (8.32; `37b94432` burned). S1 (8.30 / 8.31, docs/native-puppet.md
+"Seat shot (S1)") follows the native gun profile in lab and play since `50e97a0` (failing first `c1465ce`: `lab_config`
+check 517, `friend_package` "play defaults the seat shot on"); a named 0 opts out. No code path, wire or patch site
+changed (contract 824 / 209). Hidden runs (archives `D:\mgs-coop-run-archive\m6m7c\<id>`, frames session scratch
+`complete/frames/m6m7c-hit/`, looked at):
+- [O] `66ad131f` (lab repro, `m6m7c-self-hit-lab.txt`): back seat 3 fired two stock shots between two life reads (one
+  front-right at guard 2552560298, 22 m; one rear-left after a re-aim) and the guest's copy lost 702 (2260 -> 1558): ONE
+  of them hit, which one is [U]. The host's copy kept 2260 and resent it ~55 s later. [O] After the first seated aim,
+  `enemy_aim_nearest` turned the camera to the requested rotY RELATIVE to the jeep (pass camera guard `now_mrad` 1984 =
+  the requested 113.7 deg): a lever artifact (`RequestToSetCameraRotation`), not the player's mouse [I]. Whether that turn
+  caused `299de3e1`'s damage is [U] (review): every observed self-hit costs exactly 702, `8a920ec8`'s ONE stock shot on
+  the front-right line cost 702, and `299de3e1`'s 2106 = 3 x 702 came from three shots at that front-right guard, so the
+  front-right line itself hits the jeep.
+- [O] `8a920ec8` (lab, the flipped build, `m6m7c-self-hit-proof.txt`): the same seat-3 line, one shot with the lever
+  `seatshot off`: the guard Dying (the round went through the jeep) and the guest's copy 2300 -> 1598; two S1 shots on
+  that line (`result=shift`, start moved 0.57-0.59 m to the right side's exit): 1598 -> 1598 (they did not hit the guard,
+  already Dying). Seat 2 (host, guest driving) across the jeep at a guard 22 m out: Dying (`commit actor=host`, guest
+  `apply` ok), the life unchanged on both copies (after an earlier drop to 2247 / 2124 with no seated shot in that
+  window: cause [U], likely the warped guard awake and firing (`downed_damage` attacker 1076) [I]).
+- [O] `41dcbf22` (PLAY rehearsal, `m6m7c-self-hit-play.txt`, shipped defaults, `-WanSim bad`, Forced=False): seat 3
+  killed a guard 8 m out (shot 1), seat 2 one 22 m out across the jeep (shots 1-2); `shift` exits 0.44-1.62 m; life 2300
+  on both copies before, after and parked; no never-line. Not discriminating (review): neither line was shown to hit the
+  jeep in stock (seat 3's 8 m line killed in `299de3e1` without, by arithmetic, damaging it).
+
+**Review round (same branch).** Code [O]: the hook judged freshness on a fixed 50 ms window read with GetTickCount64
+(15.6 ms steps) while the driver publishes once per tick, so a 25-30 fps copy could judge a parked seated shot stale and
+send the stock shot [I]. Now `MaxAgeMs` allows 1 m of drift at the vehicle's speed from the driver's last two
+publications (50 ms at 20 m/s and over or speed unknown, up to 250 ms parked) on a QueryPerformanceCounter clock; a stale
+shot logs `result=stale` and every shot line carries `age_ms` / `max_ms` (failing first `4300b51`, fix `5e1873c`;
+unit-tested, no hidden run). The discriminating play run `m6m7c-self-hit-play2.txt` (four shots each on stock-hit lines:
+the host in seat 2 across the jeep to the right, the guest in seat 3 at the front-right guard) could not run: both
+attempts (`ca49439f`, `eb4d3a3e`) ended IsolationFailed with `child_exited_before_admission` (the guest worker refused
+`required_hooks_or_private_desktop`; every hidden run on this machine from 14:04 ended the same). So the play default is
+back OFF (`fbf6328`, failing first `e6d06b8`): S1 follows the gun profile in lab and runs in play only with a named 1.
+Flip it once that run passes on both copies. Not proven: seat 1 and the truck cab, a moving jeep, launchers and thrown
+items (S1 moves only RequestBullet's bullets), two PCs, a 0.14.4 partner (local only, no wire change [I]). `c1465ce`'s
+message calls `66ad131f`'s S1 shots "the same line": they were on the rear-left re-aim line.
+
+**Proof round (m6m7d, same branch; STATUS top), corrected by its review.** [O] `76bc4a1c` (lab,
+`m6m7d-self-hit-ab2.txt`): the HOST in back seat 2, S1 6 shots (`shift`, exit 0.91-1.11 m) cost nothing; the stock arm
+fired after them, so recoil put its 4 shots 40-160 milli HIGHER (adjacent lines, not the same): 3 cost the host's copy
+702. The guest's copy is no witness for host-role shots (`vehicle_state` skip `occupied` / `partner_ride` while ridden;
+pre-existing). The GUEST in seat 3: one S1 shot on a line 1.8 deg from `8a920ec8`'s stock-hit line (`d_milli`
+754,655,-50 vs 774,632,-49) put the guard to Dying, life 2260 on both copies; the rest climbed onto lines not shown to
+hit. `8a920ec8`'s seat-2 S1 shot on the H1 stock-hit line (46 milli lower) downed a guard with no life lost, so S1 does
+not swallow the round. Not discriminating: `d1e9e028`, `bd6b36c6` (play; RTT 174-188 ms, loss up to 16.6 %): seat 2
+never fired in either arm (the lever's 3.7 m aim into the wheel arch); non-702 drops with enemy fire [I]. Review
+re-prove: `9ff5170f` (`m6m7d-self-hit-ab3.txt`, one shot per boarding): S1 from seat 2 killed both guards (9.8 m
+front-left; 22 m front-right along two identical level shots crossing 1.55 m of the jeep), host life 2300; its stock arm
+had no target left; 2 S1 shots while moving (`max_ms` 142 / 88, `age_ms` 2-3, `shift`), life 2300. `60faf9fc` lab
+(`m6m7d-self-hit-ab4.txt`, the review's fix): the host in back seat 2, ONE shot per boarding along two fixed
+jeep-relative lines (lever `enemy_cam_turn` as each boarding's first aim), so S1 and stock fired on identical lines
+(`d_milli` within 2 milli). Line A (826,-564,+11, beside `76bc4a1c`'s H2 stock hits): S1 2 shots 2300 -> 2300; stock 2
+shots 2300 -> 1598 -> 896. Line B (523,852,-23, the H1 line): S1 2 shots 896 -> 896; stock 2 shots 896 -> 194 -> 0. On
+foot the host saw the jeep intact after the S1 shots and a burning wreck after the 4th stock shot [O, frames]. The
+guest's copy still showed an intact jeep at the end: nothing is sent while the jeep is ridden and no destroyed state
+followed before the run ended (pre-existing sync gap, vehicles track); its own -718 / -247 came while guards 1084 / 1072
+fired on the riders [I]. Still needed for the play flip: seat 1 (the play front seat) with S1, a play run on a
+stock-hit line, a mission end while seated, a point-blank target. Lab scenarios that need stock seated shots name
+`partner_seat_shot=0` (S1 is on in lab with the gun profile).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3721,6 +3784,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   **Merged (8.32, `e694c92`): a seated kill in play** (`299de3e1`, seat 3, one Dead commit); seat 1 and seat 2 hit to
   Dying in play; shots toward the jeep's own body damage it (S1's case, S1 off). Not met: `m7-partner-gun`, a moving
   jeep, the truck cab, two-PC.
+  **S1 on in lab only (8.37, `wp/self-hit`)**: the lab A/B `8a920ec8` on one line (702 life lost with S1 off, none with
+  S1); play waits for the discriminating run `m6m7c-self-hit-play2.txt` (`41dcbf22` fired on no stock-hit line).
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

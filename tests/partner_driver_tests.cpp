@@ -7455,6 +7455,19 @@ void TestSeatShotDriver() {
                                               "dist_cm=1530; inside=1;") == 1,
               "S1 driver: one line per new plan");
         Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot;") == 1, "S1 driver: the same plan is not logged again");
+        // The shot line carries the publication's age and window; the publication carries the vehicle's speed from the
+        // last two publications (review of 8.33): unknown on the first, then 0.33 m in 33 ms = 10 m/s.
+        g_ss.stats.seq = 2;
+        g_ss.stats.age_ms = 7;
+        g_ss.stats.max_ms = 100;
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot; result=shift;") == 2 && s.fake.Containing("; age_ms=7; max_ms=100") == 1,
+              "S1 driver: the shot line's age and window");
+        Check(g_ss.pubs.front().speed < 0.0f && std::fabs(g_ss.pubs.back().speed) < 0.01f, "S1 driver: speed unknown first, then parked 0");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] += 0.33f;
+        Check(s.Tick(0) && std::fabs(g_ss.pubs.back().speed - 10.0f) < 0.05f, "S1 driver: 0.33 m in 33 ms: 10 m/s");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] -= 0.33f;
         g_board.lp = mgscoop::partner_board::LocalPassenger{};
         g_board.lp.reason = "act";
         Check(s.Tick(0) && g_ss.withdraws == 1 && s.fake.Containing("partner_seat_shot=withdrawn; vehicle=25608; seat=3; reason=not_seated") == 1,
