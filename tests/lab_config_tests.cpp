@@ -559,10 +559,10 @@ int main() {
                   "an invalid seat gun value refuses");
         }
     }
-    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): LAB ONLY by default: on with the gun
-    // profile in lab, off in play unless named (no play run has fired on a line shown to hit the jeep in stock yet, design
-    // 8.33); off without the gun profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab
-    // and play, a named 1 runs in both (no refusal bit).
+    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
+    // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
+    // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs
+    // in both (no refusal bit).
     {
         Check(!LabConfig{}.partner_seat_shot && !LabConfig{}.partner_seat_shot_given && !Lab("").partner_seat_shot,
               "seat shot off without the gun profile");
@@ -570,12 +570,10 @@ int main() {
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            // Lab only by default (review of 8.33: the play rehearsal 41dcbf22 fired on no line shown to hit the jeep in stock
-            // and the discriminating play run could not run): on with the gun profile in lab, off in play unless named.
-            const bool play = std::string(mode) == "mode=play\n";
-            Check(profile.partner_seat_shot == !play && !profile.partner_seat_shot_given && profile.invalid_values == 0 &&
+            // On with the gun profile in lab and play (not named).
+            Check(profile.partner_seat_shot && !profile.partner_seat_shot_given && profile.invalid_values == 0 &&
                       profile.play_refused == 0,
-                  "the gun profile turns the seat shot on in lab, off in play (not named)");
+                  "the gun profile turns the seat shot on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_seat_shot=1\n");
             Check(named.partner_seat_shot && named.partner_seat_shot_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0 && named.partner_ride_board == profile.partner_ride_board,
@@ -589,8 +587,9 @@ int main() {
                   "an invalid seat shot value refuses");
         }
     }
-    // Seat 1 on the driver's seat matrix (partner_ride_seat1_anchor, design 8.33): off unless named, in lab and play,
-    // until a FRAME proof on both copies and a play rehearsal; a named 1 runs in lab AND play (no refusal bit).
+    // Seat 1 on the driver's seat matrix (partner_ride_seat1_anchor, design 8.33-8.36): follows the gun profile in lab AND
+    // play since the seat-fixes merge (as partner_ride_front; design 8.43), off without it; a named 0 is its off switch,
+    // a named 1 runs in lab and play (no refusal bit).
     {
         Check(!LabConfig{}.partner_ride_seat1_anchor && !LabConfig{}.partner_ride_seat1_anchor_given && !Lab("").partner_ride_seat1_anchor,
               "seat-1 anchor defaults off");
@@ -598,8 +597,9 @@ int main() {
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_ride_seat1_anchor && !profile.partner_ride_seat1_anchor_given && profile.invalid_values == 0,
-                  "the gun profile leaves the seat-1 anchor off in lab and play");
+            Check(profile.partner_ride_seat1_anchor && !profile.partner_ride_seat1_anchor_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0 && profile.partner_ride_front,
+                  "the gun profile turns the seat-1 anchor on in lab and play (not named), with the front seat");
             const auto named = Lab(gun + mode + "partner_ride_seat1_anchor=1\n");
             Check(named.partner_ride_seat1_anchor && named.partner_ride_seat1_anchor_given && named.invalid_values == 0 &&
                       named.unknown_keys == 0 && named.play_refused == 0 && named.partner_ride_front == profile.partner_ride_front,
