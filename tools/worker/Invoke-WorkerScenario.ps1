@@ -125,7 +125,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    and partner_pass_camera_trace=0|1, its lab trace (lab only, default 0);
                                    debug_vehicle_door=0|1, G4 truck test levers: the native door spot behind debug
                                    goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only, default 0);
-                                   partner_ride_seat1_anchor=0|1, seat 1 drawn on the driver's seat matrix (8.33);
+                                   partner_ride_seat1_anchor=0|1, seat 1 drawn on the driver's seat matrix (8.33; default on with the gun profile);
                                    partner_ride_front=0|1 / partner_ride_cab=0|1, M6 seat 1: the light vehicle's front
                                    seat / the truck cab seat for a passenger (default on with the gun profile; the cab
                                    in lab only, a named 1 runs it in play);
@@ -155,7 +155,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    lab only, default 0);
                                    partner_seat_aim=0|1, the read-only back-seat aim census (the local player in a vehicle
                                    ride act, the partner body in the seat flow; docs/native-puppet.md "Seat aim"; lab only, default off);
-                                   partner_seat_shot=0|1, M7 S1: the seated passenger's bullets start past the ridden vehicle;
+                                   partner_seat_shot=0|1, M7 S1: the seated passenger's bullets start past the ridden vehicle (default on with the gun profile);
                                    partner_seat_gun=0|1, M7: the remote back-seat passenger's raised gun on the seated partner
                                    body and this copy's seated aim direction (docs/native-puppet.md "Seat gun"; lab and play,
                                    default off);

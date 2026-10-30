@@ -319,8 +319,8 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.partner_ride_cab = false;
     }
     else if (Equals(key, "partner_ride_seat1_anchor")) {
-        // Seat 1 on the driver's seat matrix (design 8.33; lab and play, off unless named); as partner_ride_front, an
-        // invalid value is named and off (also after a valid 1).
+        // Seat 1 on the driver's seat matrix (design 8.33; follows the gun profile in lab and play unless named); as
+        // partner_ride_front, an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_ride_seat1_anchor);
         result.partner_ride_seat1_anchor_given = true;
         if (!ok) result.partner_ride_seat1_anchor = false;
@@ -1738,12 +1738,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
-    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab since the self-hit round
-    // (design 8.37: the lab A/B 8a920ec8 on one line); play forces it off below unless named; a named 0 opts out.
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab and play (design 8.37:
+    // the lab A/B 60faf9fc on identical lines; the seat-fixes merge turned it on in play, design 8.43); a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
-    // Seat 1 on the driver's seat matrix (design 8.33): off unless named, in lab and play, until a FRAME proof on both
-    // copies and a play rehearsal; a named 1 runs in play too.
-    if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = false;
+    // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
+    // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
+    if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
@@ -1808,9 +1808,6 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // M6 truck cab seat 1: lab-only by default (review of 8.25: its play rehearsal named world_relief=1 for the
         // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
         if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
-        // M7 S1: lab-only by default (review of 8.33: the play rehearsal 41dcbf22 fired on no line shown to hit the jeep in
-        // stock; the discriminating play run m6m7c-self-hit-play2.txt has not run); a named 1 runs in play.
-        if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
         // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
         // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28). View runs in play (8.37).
         c.partner_pass_camera_trace = false;

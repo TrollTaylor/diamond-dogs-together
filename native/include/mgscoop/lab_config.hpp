@@ -631,8 +631,8 @@ struct LabConfig {
     // Seat 1 on the driver's seat matrix (design 8.33, 8.34; partner_ride_seat::AnchorSeat): a copy that draws the peer
     // in seat 1 of a light vehicle (the truck cab excluded) draws it in the seat instead of one seat further right,
     // outside the jeep; the passenger's own copy keeps the stock seat-1 remap while it sits there (design 8.35,
-    // partner_board::OwnSeatOneStock). Frame-proven in play (8.35); off unless named, in lab and play, until the combined
-    // play rehearsal; a named 1 runs in play too; an invalid value refuses (named, off), also after a valid 1.
+    // partner_board::OwnSeatOneStock). Frame-proven in play (8.35, 8.36); follows the gun profile in lab and play since the
+    // seat-fixes merge (8.43); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_seat1_anchor = false;
     bool partner_ride_seat1_anchor_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
@@ -662,8 +662,8 @@ struct LabConfig {
     bool partner_seat_gun_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
-    // change). Off unless named, in lab and play, until a FRAME proof on both copies and a play rehearsal; a lab copy
-    // with it off still logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
+    // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
+    // logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
