@@ -4,9 +4,13 @@
 #   A. The host drives (stopped), the guest in back seat 3: aim at the nearest (asleep) guard, two shots, the aim end, the
 #      guest's get-off and the camera after it.
 #   B. The guest drives, the host in back seat 2: the same; both get-offs.
-# Expected: state=view; event=apply on each seat and restore reason=end at each get-off; the aim frames from over the
-# shoulder (seat 3 at least as clear as 299de3e1, seat 2 not the panel); the gun fires and the guard window opens;
-# state=turn; event=request after each get-off and the player framed from behind; the drivers' copies unchanged.
+# Expected (design 8.34): seat 3 is never raised (no state=view line, no turn: its view is clear, the non-regression
+# leg); seat 2: state=view; event=apply and restore at the get-off, state=turn; event=request after it and the player
+# framed from behind; the aim frames from over the shoulder (seat 3 as clear as 299de3e1, seat 2 not the panel); the gun
+# fires and the guard window opens; vehicle_state_status before and after the shots; the drivers' copies unchanged.
+# NOT covered here: seat 1 (the driver's D-Dog takes it at this seed). Before view ships in play, flip.py must also drop
+# the play clamp (lab_config: view runs as aim in play) and a seat-1 play leg is needed at a seed without D-Dog
+# (afgh-quiet / afgh-horse, the lab scenario's layout, with -Mode play -WanSim bad).
 # NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; pass_camera; state=refused;
 #   state=view; event=refused.
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -105,6 +109,8 @@ host press e 150
 wait 3500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_ride=pass_camera; state=view; event=apply; vehicle=25608; seat=2; reason=apply; ok=1;' 5
+guest run vehicle_state_status 25608
 wait 1000
 both capture b-seated
 host run enemy sleep nearest
@@ -136,6 +142,8 @@ host burst b-exit 3 300
 wait 2500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
 waitlog host 'partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=stock; ok=1' 10
+waitlog host 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=2; reason=made;' 8
+guest run vehicle_state_status 25608
 wait 1500
 both capture b-exited
 guest press e 150
