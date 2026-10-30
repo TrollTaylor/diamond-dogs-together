@@ -7597,7 +7597,8 @@ void TestPassCameraViewDriver() {
               "cancel: the mode left view, no request");
     }
     {
-        // Design 8.36: the player's own input while the turn is pending (a look, an aim on foot): dropped, no request.
+        // Design 8.36: a look while the turn is pending drops it (no request). Design 8.37: an aim on foot holds it (one
+        // hold line); the request follows the aim's end once the aim camera module let go (kTurnSettleMs).
         for (int which = 0; which < 3; ++which) {
             Session s(0);
             ViewSetup(s);
@@ -7617,8 +7618,24 @@ void TestPassCameraViewDriver() {
             }
             Check(s.Tick(0, 100), "input: the get-off tick");
             s.fake.pad = mgscoop::partner_input::PadRaw{};
-            GuardGun(s, 0);
             g_pass.cam = PassCam(0, 0);
+            if (which == 1) {
+                // Still aiming after the stock let go; then released while the aim camera module blends out.
+                for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty() && s.driver.mission.pass_camera.turn.pending,
+                                                  "aim: held while aiming");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=hold; vehicle=25608; seat=1; reason=aiming;") == 1,
+                      "aim: one hold line");
+                GuardGun(s, 0);
+                g_guard.mvt = mgscoop::partner_pass_camera::kAimModuleVtableRva;
+                for (int i = 0; i < 4; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty(), "aim: settling after the aim");
+                g_guard.mvt = 0x23B29E0;  // the fallback module
+                Check(s.Tick(0, 100) && g_raise.turns.size() == 1 && g_raise.turns[0] == 0.5f &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1 &&
+                          s.fake.Containing("aimed=1") == 1,
+                      "aim: the request after the aim");
+                continue;
+            }
+            GuardGun(s, 0);
             for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100), "input: on foot");
             if (which == 2) {
                 Check(g_raise.turns.size() == 1 &&
@@ -7626,9 +7643,8 @@ void TestPassCameraViewDriver() {
                       "input: none, the request as before");
             } else {
                 Check(g_raise.turns.empty() && !s.driver.mission.pass_camera.turn.pending, "input: no request");
-                Check(s.fake.Containing(which == 0 ? "partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;"
-                                                   : "partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=aiming;") == 1,
-                      "input: the expire line names the input");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;") == 1,
+                      "input: the expire line names the look");
             }
         }
     }

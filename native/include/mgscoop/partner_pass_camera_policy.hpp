@@ -633,9 +633,10 @@ inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
 inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
 inline constexpr std::uint32_t kTurnFlags = 0x400126;
 inline constexpr std::uint64_t kTurnMs = 6000, kTurnCheckMs = 900;
+inline constexpr std::uint64_t kTurnSettleMs = 300, kTurnAfterAimMs = 3000, kTurnAimMaxMs = 20000;
 inline constexpr std::size_t kCamRequestFlags = 0xD38, kCamRequest = 0xD80;
 inline constexpr std::uint32_t kRequestBusy = 0x1001, kRequestBit = 2, kCamLockBit = 1u << 9;
-enum class TurnAct : std::uint8_t { none, request, expire, check };
+enum class TurnAct : std::uint8_t { none, request, expire, check, hold };
 struct Turn {
     bool pending = false;
     bool seen_stock = false;     // the VehicleCamera was the active module since the boarding ended
@@ -645,6 +646,8 @@ struct Turn {
     std::uint64_t since_ms = 0;
     std::uint64_t check_ms = 0;  // a request was made: its check line is due then (0: none)
     float yaw = 0.0f;            // the requested world yaw
+    bool aimed = false;          // the player aimed on foot while the turn was pending (design 8.37)
+    std::uint64_t aim_end_ms = 0;  // the first tick after that aim (0: aiming, or no aim)
     std::uint32_t requests = 0, expired = 0;
 };
 // The boarding ended (a get-off, a seat change, a lost report): arm the turn for that vehicle and seat.
@@ -673,7 +676,8 @@ inline bool TurnCancel(Turn& t) noexcept {
 // the player who looks or aims while the turn is pending (under the stock get-off or after it) has the camera: the turn
 // is dropped, never requested over their input.
 inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason, bool look = false,
-                        bool aiming = false) noexcept {
+                        bool aiming = false, bool aim_cam = false) noexcept {
+    (void)aim_cam;
     reason = "none";
     if (t.check_ms && now_ms >= t.check_ms) {
         t.check_ms = 0;
