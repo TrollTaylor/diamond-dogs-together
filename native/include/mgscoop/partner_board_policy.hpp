@@ -232,6 +232,7 @@ inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int 
 // that offers seat 1 (applied before that policy is published), the local player in seat 1, a seat-1
 // steer not yet confirmed, or kRemapHoldMs after the last seat-1 steer; else the stock jne is back.
 // Site B steers seat 1 only while the skip is live (else 4, counted remap_refused).
+// Design 8.35: never while OwnSeatOneStock (the local player seated in a light vehicle's seat 1 with the anchor key).
 inline constexpr std::uint64_t kRemapHoldMs = 5000;
 struct RemapIn {
     bool armed = false;            // seat 1 installed (partner_ride_front / partner_ride_cab, the board's seat_one ok)
@@ -242,7 +243,7 @@ struct RemapIn {
     std::uint64_t last_seat_one_ms = 0, now_ms = 0;
 };
 inline bool RemapWanted(const RemapIn& in) noexcept {
-    if (!in.armed) return false;
+    if (!in.armed || in.own_seat_one_stock) return false;
     if (in.policy_one || in.local_seat_one || in.steer_pending_one) return true;
     return in.last_seat_one_ms && in.now_ms >= in.last_seat_one_ms && in.now_ms - in.last_seat_one_ms < kRemapHoldMs;
 }
@@ -424,8 +425,13 @@ struct LocalPassenger {
     std::uint8_t category = kCategoryUnread;  // this copy's unit+0x6C >> 4 of the vehicle (design 8.35)
     const char* reason = "unread";
 };
-// STUB (red)
-inline bool OwnSeatOneStock(bool, const LocalPassenger&) noexcept { return false; }
+// Design 8.35 (lab.ini partner_ride_seat1_anchor): the local player seated in seat 1 of a light vehicle (this copy's
+// category 1, 2) keeps the stock seat-1 remap (0xB79A3F: seat 1 -> seat 0's matrix while a player sits in rider[1]):
+// the player's FrontRight clips are authored on the driver's seat matrix, so with the skip the own copy drew the
+// player one seat spacing further right, outside the jeep. The truck cab and an unread category keep the skip.
+inline bool OwnSeatOneStock(bool seat1_anchor, const LocalPassenger& lp) noexcept {
+    return seat1_anchor && lp.valid && lp.seat == kFrontSeat && (lp.category == 1 || lp.category == 2);
+}
 inline bool SameReport(const LocalPassenger& a, const LocalPassenger& b) noexcept {
     return a.valid == b.valid && (!a.valid || (a.vehicle == b.vehicle && a.seat == b.seat));
 }
@@ -474,6 +480,8 @@ LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, s
         out.valid = true;
         out.vehicle = id;
         out.seat = s;
+        std::uint8_t cat = 0;
+        if (Get(r, rec + kUnitCategory, cat)) out.category = static_cast<std::uint8_t>(cat >> 4);
         out.reason = "ok";
         return out;
     }

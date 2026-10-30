@@ -601,6 +601,9 @@ struct Settings {
     // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
     // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
     bool ride_front = false, ride_cab = false;
+    // lab.ini partner_ride_seat1_anchor (design 8.33-8.35): the local player in a light vehicle's seat 1 keeps the
+    // stock seat-1 remap while seated (partner_board::OwnSeatOneStock). Off unless named, lab and play.
+    bool ride_seat1_anchor = false;
     // The passenger camera's mode (lab.ini partner_pass_camera, design 8.27; the lab lever passcam overrides it on a
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
     PartnerPassCamera pass_camera = PartnerPassCamera::aim;

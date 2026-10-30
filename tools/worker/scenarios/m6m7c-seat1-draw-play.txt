@@ -17,6 +17,9 @@
 # Review (design 8.34): the anchor is a light vehicle's only (the applied line ends `anchor=0; cat=1|2`; no truck part:
 # the cab keeps seat 1's matrix by code); each copy logs `partner_ride_seat1_anchor=configured; on=1` at its first Arm;
 # the anchor-0 dword is waited back to retail (`partner_ride_seat_patch=reverted`) after each seat-1 get-off.
+# Own view (design 8.35, the same key): the passenger's own copy keeps the stock seat-1 remap while it sits in seat 1
+# (`board_remap; state=stock; why=seated_own`) and skips it again after the get-off; bursts a-geton/a-getoff and
+# c-geton/c-getoff show the passenger's own boarding and get-off (no snap).
 # NEVER (no negative waitlog exists: sliced from both logs after the run): step=error, viewer_changed, faults;
 # board_uncertain; two_drivers; seat_far; partner_ride_seat_patch=refused.
 labsetting partner_ride_seat1_anchor=1
@@ -56,9 +59,11 @@ host debug teleport 574.36 320.2 1157.5 96
 wait 3000
 waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
 host press e 150
-wait 4500
+host burst a-geton 3 400
+wait 3300
 waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride=board_remap; state=stock; why=seated_own; ok=1' 10
 waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 10
 waitlog guest 'partner_ride_seat_patch=applied; seat=1; sites=[^;]*; seat_dword=0x00b04130; anchor=0; cat=[12]' 10
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
@@ -72,8 +77,10 @@ guest release
 wait 2500
 both capture a-stopped
 host press e 150
-wait 3500
+host burst a-getoff 4 300
+wait 2300
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog host 'partner_ride=board_remap; state=skip; why=' 10
 waitlog guest 'partner_ride_seat_patch=reverted;' 10
 both capture a-exited
 host run vehicle_seats
@@ -108,9 +115,11 @@ guest debug goto_vehicle jeep right
 wait 3000
 waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
 guest press e 150
-wait 4500
+guest burst c-geton 3 400
+wait 3300
 waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride=board_remap; state=stock; why=seated_own; ok=1' 10
 waitlog host 'partner_ride_seat_patch=applied; seat=1; sites=[^;]*; seat_dword=0x00b04130; anchor=0; cat=[12]' 10
 waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
 wait 2500
@@ -123,8 +132,10 @@ host release
 wait 2500
 both capture c-stopped
 guest press e 150
-wait 3500
+guest burst c-getoff 4 300
+wait 2300
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog guest 'partner_ride=board_remap; state=skip; why=' 10
 waitlog host 'partner_ride_seat_patch=reverted;' 10
 both capture c-exited
 host press e 150
