@@ -3175,6 +3175,31 @@ descriptions were wrong, seat 3 was not seen at the final code, the raise's writ
   (godmode, the jeep's life unread), seat 2 in the guest role. Not flipped; before any flip of `view`: strip the inert
   raise (or prove its write-back), the turn after an aim, a play rehearsal with the play clamp lifted.
 
+### 8.37 The get-off turn finished and on (2026-10-30, branch `wp/aim-view`; default `view` in lab and play)
+
+- **Raise removed** (`2284282`): the seated aim raise of 8.33 never acted in game (8.35) and its write-back paths were
+  unproven (8.36 review). Gone: `ReadRaise` / `WriteRaise`, `RaisePlan` / `RaiseDone` / `RaiseForget`, `RaiseRevert` at
+  MissionEnd / Stop / MissionStart, the two hooks, the pins 0x12BD4D4 / 0x12BC015 / 0x12BC049 and the variant-id check
+  (826 sites / 209 slots, 15 pass camera blocks). Mode `view` = the aim mode's handle and shot guard plus the turn.
+- **Turn through an aim** (red `e4ec26d`, fix `a4db8b9`): an on-foot aim while the turn is pending holds it (`event=hold;
+  reason=aiming`, once); after the aim the request waits kTurnSettleMs = 300 ms and while the aim camera module is the
+  mode, with the stock get-off's own conditions, within kTurnAfterAimMs = 3 s of the aim's end (past kTurnMs if need
+  be); an aim still held kTurnAimMaxMs = 20 s after the get-off drops it; a look (also while aiming) and a re-boarding
+  drop it; seat 3 never arms. The request line names `aimed=`.
+- **Default** `partner_pass_camera=view` in lab and play (struct and ResolveWeaponDefaults); the play clamp maps only
+  `drop` to `aim`.
+- **Earlier request: not done.** FUN_14111CBA0 latches the request (CAM+0xD38 bit 2 -> 0x2000) on every camera update
+  and clears bits 0-2; no CAM+0xD38 access exists in 0x12B0000..0x12E0000 (the VehicleCamera) [I, byte scan], so a
+  request under the VehicleCamera would be consumed unseen. The stock close-up stays 1.7 s (seat 1) / 3.1 s (seat 2).
+- **Play rehearsal `ae6283d3`** (`m6m7e-getoff-camera-play.txt`, `-Mode play -WanSim bad`, shipped defaults; STATUS has
+  the lines and frames) [O]: guest seat 1 no input (request 1693 ms), guest seat 1 RMB through the get-off (hold 575 ms,
+  request 5436 ms after the release, `aimed=1`; ~0.4-0.7 s of the stock driver view between the aim's end and the swing),
+  guest mouse look (`reason=look`, view kept), host seat 2 (3086 ms), host seat 1 RMB (the aim only began after the
+  stock get-off: request first, the aim from the turned view), host seat 1 at a heading ~78 deg away (`yaw_mrad=1462`
+  vs 108, `yaw_err_mrad=0`). Both copies clean.
+- Still [U]: the host-role hold path (the host's RMB did not register during the get-off in this run), a moving jeep
+  at the get-off, seat 2 in the guest role, problem (3).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

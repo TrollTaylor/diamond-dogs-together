@@ -1,3 +1,32 @@
+## 2026-10-30: the get-off camera turn ON for players (branch `wp/aim-view`; `partner_pass_camera=view` default)
+
+**Players now get** (lab and play, default `view`; design 8.37): after getting out of a jeep's front seat or left back
+seat the camera no longer stays on the driver up close: about 1.7 s (front) / 3.1 s (left back) after the get-off starts
+it turns to look along the jeep from behind the player. Holding RMB through the get-off keeps the turn waiting; it
+follows ~0.3 s after the aim ends (the stock camera shows the driver for about half a second before it). Turning the
+camera yourself (mouse or stick) during the get-off cancels the turn. The right back seat (seat 3) is unchanged.
+- Code: the inert seated raise removed (`2284282`: the aim-module entry write and its restore paths, `RaiseRevert`, the
+  hooks, three pins; 826 sites / 209 slots); the turn held through an on-foot aim (red `e4ec26d`, fix `a4db8b9`:
+  `state=turn; event=hold; reason=aiming`, the request line's `aimed=`); default `view` in lab and play, the play clamp
+  maps only `drop` to `aim`.
+- Play rehearsal `ae6283d3` (`m6m7e-getoff-camera-play.txt`, `-Mode play -WanSim bad`, shipped defaults, afgh-quiet /
+  afgh-horse, both copies admitted, closed, restored; `IsolationFailed False`) [O] in the slices and frames:
+  - guest seat 1, no input: `request ms=1693 aimed=0`, check `yaw_err_mrad=0 cam_body_cm=524`; `a-exit-02/04` the
+    driver up close, `a-exit-06..10` / `a-exited` along the jeep behind the player.
+  - guest seat 1, RMB held through the get-off: `hold ms=575`, the stock release at 1686 ms with no request, `request
+    ms=5436 aimed=1` after the release; `h-aim-*` the stock aim, `h-rel-03` (+0.7 s) the driver view, `h-rel-04` the
+    swing, `h-rel-05..10` / `h-after` along the jeep.
+  - guest seat 1, three mouse steps: `expire reason=look ms=841`, no request; `l-exited` keeps the turned-away view.
+  - host seat 2: `request ms=3086`, check 0 / 524; `k-exit-09..12` / `k-exited` along the jeep.
+  - host seat 1, RMB: the host's aim began only after the stock get-off ended (no hold line; `request ms=1685 aimed=0`,
+    the check at 1.59 m while aiming); the aim starts from the turned view and ends on it (`g-aim-02`, `g-after`).
+  - host seat 1 after the guest drove the jeep to another heading: `yaw_mrad=1462` (108 before, ~78 deg), check
+    `yaw_err_mrad=0`; `t-exited` along the jeep's new heading.
+  - No `step=error`, `viewer_changed`, faults, `board_uncertain`, `state=refused`, `state=view` on either copy.
+- Not done: an earlier request (the VehicleCamera never reads CAM+0xD38 [I, byte scan]; skipped); the aim views from
+  seats 1 and 2 (own leg / panel) are the first-person track's; problem (3) not this branch's.
+Frames `D:/mgs-coop-run-archive/m6m7e/frames/aim-finish/best-sheet-ae6283d3.jpg`, `ae6283d3-sheet-aim-through.jpg`.
+
 ## 2026-10-30: aim view review closed (branch `wp/aim-view`; the get-off turn yields to the player)
 
 **Fixed** (design 8.36; red `195ddf4`, fix `325391a`): a look (stick or mouse) or an on-foot aim while the get-off turn
