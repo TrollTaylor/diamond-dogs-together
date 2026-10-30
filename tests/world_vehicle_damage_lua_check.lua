@@ -60,8 +60,10 @@ local function Fixture(role, opts)
     W.receipt = function(source)
         local first, n = source:match("^return 'MGS_COOP_VEHICLE_LIFE_V1' %-%- (%d+) (%d+)$")
         assert(first, 'only the life receipt: ' .. source)
+        -- The native read takes 1..32 ids (game_script_observer.cpp SelectVehicleLifeReceipt).
+        if tonumber(n) < 1 or tonumber(n) > 32 then return {refused = 'request'} end
         c.reads = (c.reads or 0) + 1
-        local r = {c = 24}
+        local r = {c = c.poolCount or 24}
         for id = tonumber(first), tonumber(first) + tonumber(n) - 1 do
             local v = c.pool[id]
             if v and not v.released then r[id] = {v.alive and v.life or 65535, 0, 4, 1} end
@@ -233,6 +235,15 @@ check(#g:sent(OP) == 8, '12 drops at once: 8 reports in the first second')
 g:poll(1000)
 check(#g:sent(OP) == 12, 'the other 4 in the next')
 
+-- A pool of more than 32 (the native read's limit) is read in pieces: a drop on the 40th slot is reported too.
+g = Fixture('guest', {pool = {{25639, -653, 877.7}}})
+g.poolCount = 48
+g.S.readLife(25600, 1)
+g:at(-650, 877.7)
+g:polls(2)
+g.pool[25639].life = 1500
+g:poll(600)
+check(g.S.pool == 48 and #g:sent(OP) == 1 and g:sent(OP)[1][3] == 25639, 'a pool of 48: read as 32 + 16, the 40th slot reported')
 -- Guest: VEHICLE_STATE never heals a reported drop while the report is in flight.
 g = Fixture('guest', {pool = {JEEP}})
 g:at(-650, 877.7)

@@ -115,18 +115,22 @@ function D.report(id, life, t, flags)
   L("step=tx;id=%d;life=%d;drop=%d;f=%d;seq=%d", id, life, drop, flags, seq)
   return true
 end
+-- The pool, 32 ids per read (the native read takes 1..32).
 function D.guestTick(t)
   if not linked() then return end
-  local r = S.readLife(25600, S.pool)
-  if type(r) ~= "table" then return end
-  for i = 0, S.pool - 1 do
-    local id = 25600 + i
-    local life = lifeOf(r, id)
-    if not life then D.known[id], D.pend[id] = nil, nil
-    else
-      local k = D.known[id]
-      if k == nil or life > k then D.known[id] = life
-      elseif life < k then D.report(id, life, t, 0) end
+  for first = 0, S.pool - 1, 32 do
+    local n = min(32, S.pool - first)
+    local r = S.readLife(25600 + first, n)
+    if type(r) ~= "table" then return end
+    for i = first, first + n - 1 do
+      local id = 25600 + i
+      local life = lifeOf(r, id)
+      if not life then D.known[id], D.pend[id] = nil, nil
+      else
+        local k = D.known[id]
+        if k == nil or life > k then D.known[id] = life
+        elseif life < k then D.report(id, life, t, 0) end
+      end
     end
   end
 end
