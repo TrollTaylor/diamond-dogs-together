@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -276,6 +277,137 @@ void TestFireFilter() {
         ff::detail::SetOriginalForTest(nullptr);
         ff::detail::ResetForTest();
     }
+}
+
+// M7 seated shots, S1 (partner_seat_shot.hpp): the RequestBullet hook forwards a moved COPY of a seated passenger's
+// record (never the caller's record: the shot handler re-uses it for every pellet), only for the published owner, only
+// with a fresh publication and apply on.
+std::uint64_t g_ss_now = 1000;
+std::uint64_t SeatShotClock() noexcept { return g_ss_now; }
+alignas(16) unsigned char g_ss_seen_record[0x40]{};
+void* SeatShotFakeRequest(void* iface, const void* record) noexcept {
+    ++g_forwarded;
+    g_forwarded_record = record;
+    std::memcpy(g_ss_seen_record, record, mgscoop::partner_seat_shot::kRecordBytes);
+    return iface;
+}
+void TestSeatShotHook() {
+    namespace ss = mgscoop::partner_seat_shot;
+    FireImage img;
+    ff::detail::ResetForTest();
+    ff::detail::SetOriginalForTest(&SeatShotFakeRequest);
+    ff::detail::SetSeatShotClockForTest(&SeatShotClock);
+    Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && ff::Arm(1), "S1 hook: installed, instance 1 armed");
+    const auto fn = reinterpret_cast<ff::detail::RequestFn>(img.Slot(pc::fire_slot_live_rva));
+    // A seated shot across a jeep at yaw 0 (the pure test's geometry): start 1 m back, 0.3 m right, 1.1 m up; the guard
+    // 15.3 m to the left.
+    alignas(16) unsigned char record[0x60]{};
+    const float start[4] = {99.7f, 11.1f, 199.0f, 1.0f};
+    float dir[4] = {15.3f, -0.9f, 0.0f, 0.0f};
+    const float len = std::sqrt(dir[0] * dir[0] + dir[1] * dir[1]);
+    dir[0] /= len;
+    dir[1] /= len;
+    const auto fill = [&](std::uint16_t owner) {
+        std::memset(record, 0, sizeof(record));
+        std::memcpy(record + ss::kPos, start, sizeof(start));
+        std::memcpy(record + ss::kDir, dir, sizeof(dir));
+        std::memcpy(record + pc::shot_owner, &owner, 2);
+        record[0x2E] = 0x12;
+        record[0x32] = 0x45;
+    };
+    // Nothing published: the caller's record is forwarded as it is.
+    g_forwarded = 0;
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) == reinterpret_cast<void*>(0x1234) && g_forwarded == 1 && g_forwarded_record == record &&
+              !ff::SeatShotPublished(),
+          "S1 hook: unpublished: the record itself");
+    ss::Pub p{};
+    p.owner = 0;
+    p.vehicle = 25608;
+    p.seat = 3;
+    p.cls = ss::Class::light;
+    p.apply = true;
+    p.target_ok = true;
+    p.pos[0] = 100.0f; p.pos[1] = 10.0f; p.pos[2] = 200.0f;
+    p.target[0] = 115.0f; p.target[1] = 10.2f; p.target[2] = 199.0f;
+    ff::PublishSeatShot(p);
+    Check(ff::SeatShotPublished(), "S1 hook: published");
+    // The local passenger's shot: a moved copy is forwarded; the caller's record is unchanged.
+    fill(0);
+    unsigned char before[0x60];
+    std::memcpy(before, record, sizeof(before));
+    Check(fn(reinterpret_cast<void*>(0x1234), record) == reinterpret_cast<void*>(0x1234) && g_forwarded == 2 && g_forwarded_record != record &&
+              std::memcmp(before, record, sizeof(before)) == 0,
+          "S1 hook: a copy is forwarded, the caller's record untouched");
+    float moved[4], kept[4];
+    std::memcpy(moved, g_ss_seen_record + ss::kPos, sizeof(moved));
+    std::memcpy(kept, g_ss_seen_record + ss::kDir, sizeof(kept));
+    Check(moved[0] > 101.15f && moved[0] < 101.25f && std::fabs(moved[2] - 199.0f) < 1e-3f && moved[3] == 1.0f &&
+              std::memcmp(kept, dir, sizeof(dir)) == 0 && std::memcmp(g_ss_seen_record + 0x20, record + 0x20, ss::kRecordBytes - 0x20) == 0,
+          "S1 hook: the start moved past the jeep's far side; the direction, w and the rest of the record kept");
+    ff::SeatShotStats st{};
+    Check(ff::ReadSeatShot(st) && st.seq == 1 && st.shifted == 1 && st.seen == 1 && std::strcmp(st.result, "shift") == 0 && st.inside &&
+              st.vehicle == 25608 && st.seat == 3 && st.apply && st.t > 1.49f && st.t < 1.52f,
+          "S1 hook: the last plan and the counters");
+    // Pellets: the same record with a new direction each time: each moves along its own direction.
+    {
+        float d2[4] = {dir[0], dir[1], 0.05f, 0.0f};
+        std::memcpy(record + ss::kDir, d2, sizeof(d2));
+        fn(reinterpret_cast<void*>(0x1234), record);
+        float m2[4];
+        std::memcpy(m2, g_ss_seen_record + ss::kPos, sizeof(m2));
+        Check(std::fabs(m2[2] - 199.0f) > 0.05f && std::memcmp(record + ss::kPos, start, sizeof(start)) == 0,
+              "S1 hook: a second pellet moves along its own direction; the record's start still the original");
+    }
+    // Instance 1 (the armed partner body) is still dropped; a soldier owner (type bits) and another player are untouched.
+    const unsigned forwarded = g_forwarded;
+    fill(1);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) == nullptr && g_forwarded == forwarded, "S1 hook: instance 1 still dropped");
+    fill(0x401);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record, "S1 hook: a soldier's shot untouched");
+    fill(2);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record, "S1 hook: another owner untouched");
+    // Apply off: planned (census), the record forwarded as it is.
+    p.apply = false;
+    ff::PublishSeatShot(p);
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) &&
+              std::strcmp(st.result, "census") == 0 && st.census == 1 && !st.apply,
+          "S1 hook: apply off: census only");
+    // A stale publication (older than kFreshMs): untouched, counted.
+    p.apply = true;
+    ff::PublishSeatShot(p);
+    g_ss_now += ss::kFreshMs + 1;
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 1,
+          "S1 hook: a stale publication: untouched");
+    // Fresh again, but the line misses the box (shooting straight up): untouched, refused counted.
+    ff::PublishSeatShot(p);
+    fill(0);
+    const float up[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    std::memcpy(record + ss::kDir, up, sizeof(up));
+    const float high[4] = {100.0f, 14.0f, 200.0f, 1.0f};
+    std::memcpy(record + ss::kPos, high, sizeof(high));
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) &&
+              std::strcmp(st.result, "miss") == 0 && st.refused == 1,
+          "S1 hook: a line that misses the box: untouched");
+    // Withdrawn: untouched again, nothing counted.
+    ff::WithdrawSeatShot();
+    fill(0);
+    const std::uint32_t seen = st.seen;
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && !ff::SeatShotPublished() && ff::ReadSeatShot(st) &&
+              st.seen == seen,
+          "S1 hook: withdrawn: untouched");
+    // The lever's override.
+    Check(ff::SeatShotOverride() == -1, "S1 lever: none by default");
+    ff::SetSeatShotOverride(1);
+    Check(ff::SeatShotOverride() == 1, "S1 lever: on");
+    ff::SetSeatShotOverride(-5);
+    Check(ff::SeatShotOverride() == -1, "S1 lever: cleared");
+    ff::Disarm();
+    ff::detail::SetSeatShotClockForTest(nullptr);
+    ff::detail::SetOriginalForTest(nullptr);
+    ff::detail::ResetForTest();
 }
 
 // Anim round 1 (docs/anim-round1-weapons.md): the fire/projectile census. The
@@ -660,6 +792,7 @@ void TestLookSource() {
 
 int main() {
     TestFireFilter();
+    TestSeatShotHook();
     TestFireCensus();
     TestNoiseFilter();
     TestLookSource();

@@ -333,6 +333,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.partner_seat_gun);
         if (ok) result.partner_seat_gun_given = true;
     }
+    else if (false && Equals(key, "partner_seat_shot")) {  // stub
+        // M7 S1: the seated passenger's bullets start past the ridden vehicle (lab and play); a named value records _given.
+        ok = ParseBool(value, result.partner_seat_shot);
+        if (ok) result.partner_seat_shot_given = true;
+    }
     else if (Equals(key, "partner_seat_aim")) {
         // G2: the read-only back-seat aim census (lab only, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_aim);
@@ -1725,6 +1730,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot"): off unless named, in lab and play, until a FRAME proof
+    // on both copies and a play rehearsal; a named 1 runs in play too.
+    if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was

@@ -7290,6 +7290,140 @@ void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPa
     s.ride_suffix = " ride=0";
 }
 
+// M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's
+// RequestBullet hook (light vehicle or truck cab, the hook live), withdraws it after, never publishes in play with the
+// key off, ignores the lab lever in play, and logs one line per new plan of the hook.
+struct SeatShotFake {
+    std::vector<mgscoop::partner_seat_shot::Pub> pubs;
+    unsigned withdraws = 0;
+    mgscoop::partner_fire_filter::SeatShotStats stats{};
+    int override_value = -1;
+} g_ss;
+void HookSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { g_ss.pubs.push_back(pub); }
+void HookSeatShotWithdraw(void*) noexcept { ++g_ss.withdraws; }
+bool HookSeatShotStats(void*, mgscoop::partner_fire_filter::SeatShotStats& out) noexcept { out = g_ss.stats; return true; }
+int HookSeatShotOverride(void*) noexcept { return g_ss.override_value; }
+void SeatShotSetup(Session& s, bool key) {
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    g_ss = SeatShotFake{};
+    s.hooks.seat_shot_publish = HookSeatShotPublish;
+    s.hooks.seat_shot_withdraw = HookSeatShotWithdraw;
+    s.hooks.seat_shot_stats = HookSeatShotStats;
+    s.hooks.seat_shot_override = HookSeatShotOverride;
+    s.hooks.vehicle_read = HookVehicleRead;
+    s.hooks.read_aim = HookReadAim;
+    s.hooks.fire_stats = HookFireStats;
+    s.driver.settings.seat_shot = key;
+    s.fake.fire.installed = s.fake.fire.live = true;
+    auto jeep = VehicleRead(25608, 0x20);
+    jeep.unit.pos[0] = 100.0f; jeep.unit.pos[1] = 10.0f; jeep.unit.pos[2] = 200.0f; jeep.unit.pos[3] = 0.5f;
+    s.fake.vehicles.push_back(jeep);
+    auto truck = VehicleRead(25602, 0x40);
+    truck.unit.pos[3] = 0.0f;
+    s.fake.vehicles.push_back(truck);
+    s.fake.aim_read = pp::AimRead{};
+    s.fake.aim_read.q_ok = true;
+    s.fake.aim_read.q10[0][0] = 115.0f; s.fake.aim_read.q10[0][1] = 10.2f; s.fake.aim_read.q10[0][2] = 199.0f;
+    s.fake.aim_read_ok = true;
+    s.ride_suffix = " ride=0";
+}
+
+void TestSeatShotDriver() {
+    namespace ss = mgscoop::partner_seat_shot;
+    {
+        // Lab, key on: the back-seat passenger of the jeep is published with the vehicle record, the class, the owner and
+        // the aim target; the published line once; the hook's new plan is logged; the get-off withdraws.
+        Session s(0);
+        SeatShotSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 3);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1, "S1 driver: published while seated");
+        const ss::Pub& p = g_ss.pubs.back();
+        Check(p.owner == 0 && p.vehicle == 25608 && p.seat == 3 && p.cls == ss::Class::light && p.apply && p.target_ok &&
+                  p.pos[0] == 100.0f && p.pos[2] == 200.0f && p.yaw == 0.5f && p.target[0] == 115.0f,
+              "S1 driver: the publication (owner 0, jeep, seat 3, light, apply, record, target)");
+        Check(s.fake.Containing("partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=2; apply=1; source=key;") == 1 &&
+                  s.fake.Containing("partner_seat_shot=configured; key=1; play=0") == 1,
+              "S1 driver: the configured and published lines");
+        Check(s.Tick(0) && g_ss.pubs.size() == 2 && s.fake.Containing("partner_seat_shot=published;") == 1, "S1 driver: every tick, one line");
+        g_ss.stats.seq = 1;
+        g_ss.stats.shifted = 1;
+        g_ss.stats.result = "shift";
+        g_ss.stats.apply = true;
+        g_ss.stats.inside = true;
+        g_ss.stats.vehicle = 25608;
+        g_ss.stats.seat = 3;
+        g_ss.stats.t = 1.5f;
+        g_ss.stats.exit = 1.45f;
+        g_ss.stats.dist = 15.3f;
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot; result=shift; vehicle=25608; seat=3; apply=1; t_cm=150; exit_cm=145; "
+                                              "dist_cm=1530; inside=1;") == 1,
+              "S1 driver: one line per new plan");
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot;") == 1, "S1 driver: the same plan is not logged again");
+        g_board.lp = mgscoop::partner_board::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && g_ss.withdraws == 1 && s.fake.Containing("partner_seat_shot=withdrawn; vehicle=25608; seat=3; reason=not_seated") == 1,
+              "S1 driver: the get-off withdraws");
+        const std::size_t n = g_ss.pubs.size();
+        Check(s.Tick(0) && g_ss.pubs.size() == n && g_ss.withdraws == 1, "S1 driver: on foot nothing is published");
+    }
+    {
+        // Lab, key off: still published with apply off (the census); the lever on applies (lab only).
+        Session s(0);
+        SeatShotSetup(s, false);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && !g_ss.pubs.back().apply, "S1 driver: lab key off: the census publication");
+        g_ss.override_value = 1;
+        Check(s.Tick(0) && g_ss.pubs.back().apply &&
+                  s.fake.Containing("partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=2; apply=1; source=lever;") == 1,
+              "S1 driver: the lab lever turns it on");
+        g_ss.override_value = 0;
+        s.driver.settings.seat_shot = true;
+        Check(s.Tick(0) && !g_ss.pubs.back().apply, "S1 driver: the lab lever off wins over the key");
+    }
+    {
+        // Play: key off publishes nothing; key on publishes; the lever is ignored in play.
+        Session s(0);
+        SeatShotSetup(s, false);
+        s.driver.settings.play_mode = true;
+        g_board.lp = BoardPassenger(25608, 3);
+        g_ss.override_value = 1;
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25608; seat=3; reason=key_off") == 1,
+              "S1 driver: play, key off: nothing published, the lever ignored");
+        s.driver.settings.seat_shot = true;
+        g_ss.override_value = 0;
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && g_ss.pubs.back().apply, "S1 driver: play, key on: published (the lever ignored)");
+    }
+    {
+        // The refusals: the fire hook not live, an unreadable vehicle, a truck's back seat (no class), block mode, a
+        // terminating tick; the truck cab is a truck.
+        Session s(0);
+        SeatShotSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 3);
+        s.fake.fire.live = false;
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25608; seat=3; reason=fire_hook") == 1,
+              "S1 driver: the fire hook not live: refused");
+        s.fake.fire.live = true;
+        g_board.lp = BoardPassenger(25609, 3);
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("reason=vehicle;") == 1, "S1 driver: an unreadable vehicle: refused");
+        g_board.lp = BoardPassenger(25602, 2);
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25602; seat=2; reason=class; cat=4") == 1,
+              "S1 driver: a truck's seat 2: no class");
+        g_board.lp = BoardPassenger(25602, 1);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && g_ss.pubs.back().cls == ss::Class::truck, "S1 driver: the truck cab: a truck");
+        // The mission end withdraws (BoardWithdraw; a terminating tick returns before the board, and the hook ignores a
+        // publication older than kFreshMs anyway).
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_ss.withdraws == 1 && !s.driver.mission.seat_shot.published, "S1 driver: the mission end withdraws");
+    }
+    {
+        Session s(0);
+        SeatShotSetup(s, true);
+        s.driver.settings.ride_board = mgscoop::PartnerRideBoard::block;
+        g_board.lp = BoardPassenger(25608, 3);
+        Check(s.Tick(0) && g_ss.pubs.empty(), "S1 driver: block mode: nothing");
+    }
+}
+
 void TestPassCameraGuardDriver() {
     namespace pc = mgscoop::partner_pass_camera;
     namespace pb = mgscoop::partner_board;
@@ -9479,6 +9613,7 @@ int main() {
     TestRidePeerVehicle();
     TestPassCameraDriver();
     TestPassCameraGuardDriver();
+    TestSeatShotDriver();
     TestBoardSeatGates();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();

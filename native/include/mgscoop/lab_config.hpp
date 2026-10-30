@@ -651,6 +651,12 @@ struct LabConfig {
     // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
     bool partner_seat_gun = false;
     bool partner_seat_gun_given = false;
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot"; partner_seat_shot.hpp): the local seated passenger's
+    // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
+    // change). Off unless named, in lab and play, until a FRAME proof on both copies and a play rehearsal; a lab copy
+    // with it off still logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
+    bool partner_seat_shot = false;
+    bool partner_seat_shot_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
