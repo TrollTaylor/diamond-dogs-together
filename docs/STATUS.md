@@ -1,3 +1,21 @@
+## 2026-10-30: seated shots land; the bullet-start fix S1 built, kept off (branch `wp/seat-shoot2`)
+
+**Shooting from a back seat hits [O]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, the first shot killed a
+guard 8.5-9.4 m out across the jeep in both role orders (guest: `event=req` + host `commit actor=guest`; host: one
+`commit actor=host`), frames on both copies; on-foot control in the same run. One of those kills came with S1 off: the
+earlier misses (8.22) fit the camera's sky swing, fixed by `partner_pass_camera=aim` (on in play since 8.27) [I].
+Built: `partner_seat_shot` (S1: the RequestBullet hook moves a seated passenger's bullet start past the ridden
+vehicle's box; lab lever `seatshot`; contract `SEAT_SHOT_SITES`, 829 sites / 209 slots; failing first `bbe8160` ->
+`acfd916`; no new test executable). **Play default: S1 OFF** (lab and play): no effect seen (`a9d0af0f`: a steep line
+into the jeep from seat 2 never fires, with S1 off or on: the stock gun refuses it). Play rehearsal `381880b8`
+(`-WanSim bad`, shipped defaults): seat 3 fired in both role orders, no fault, jeep life unchanged; no target in range
+(play refuses the soldier warp), so no kill in play. `3d452714` stopped at the seat race (scenarios fixed). Merged
+`dev/oct7-continue` (`7a9a334`). All Closed, BaselineRestored, RealSavesUnchanged. Archives
+`%USERPROFILE%\mgs-coop-run-archive\m6m7b\<id>`.
+Not done / not proven: the driver seeing the partner raise the gun (design B; not attempted: even the stock passenger
+holds the rifle low; next B1p, posture 3 for the seated acts); `partner_seat_gun` / `partner_seat_aim` stay off; seat
+1 (gun does not fire) and the truck cab; a kill in play; two-PC. Full CTest 336/336 (`tools/build.ps1`, 116 s).
+
 ## 2026-10-30: seats on, aim camera fixed, faster tests (`dev/oct7-continue`, local only)
 
 Merged (nothing pushed, tagged or released; not two-PC tested): `ff10600` `wp/test-speed` (`d620838`), `9c2b5a8`

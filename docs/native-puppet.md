@@ -931,6 +931,56 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 `coop-vehicle-seat-shoot.txt` (both role orders), `coop-vehicle-seat-shoot-play.txt`
 (the play rehearsal, not run), `coop-vehicle-seat-shoot-diag.txt`.
 
+### Seat shot (S1)
+
+M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30). Key `partner_seat_shot=0|1` (`_given`):
+**off unless named, in lab and play** (built and tested; it showed no effect in the runs, so nothing flips). Lab
+lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
+
+**What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a
+light vehicle, seat 1 of a truck) and the fire filter's RequestBullet hook is live, the driver tick publishes the ridden
+vehicle's record (position, yaw; the class from its category `+0x6C >> 4`), the seat, the owner and this copy's aim
+target `Q+0x10[local]` through a seqlock (`partner_fire_filter::PublishSeatShot`). The hook (`Hook`, slot 0 of
+`0x2337DE8` / `0x2337D18`), for a request of that owner and a publication at most 500 ms old, forwards a COPY of the
+record (0x34 bytes, what RequestBullet's slot copy `0xD32690` reads) whose start (`+0x00`) moves along its own direction
+(`+0x10`) to where the line leaves the vehicle's box, +5 cm, never closer than 0.3 m to the target. The caller's record
+is never written: the shot handler `0x1302F50` re-uses it for every pellet (`0x130342E`). Boxes in the vehicle frame
+(forward `(sin yaw, 0, cos yaw)`, right `(-cos yaw, 0, sin yaw)`, origin the record, near the ground): light vehicle
+centre 0.2 m back and 1.0 m up, half extents 2.5 x 1.15 x 1.25 m; truck centre 0.5 m back and 1.6 m up, 4.2 x 1.45 x
+1.9 m. Local only (the shooter's copy decides hits; world sync carries them); no wire change.
+
+**Why.** The reticle and the shot's target come from the camera's look ray (`Q+0x10[local]`, written at `0x111931C`),
+which skips the ridden jeep while the passenger camera's handle is set; the bullet starts at the muzzle on the seated
+body (`0x1044FF0`, low in the cabin) and the hit loop skips only the shooter's own character (`0xD2DC60`), never a
+vehicle [O code]. So a line from the muzzle that crosses the jeep's body would end at the jeep [I]. Contract:
+`SEAT_SHOT_SITES` (`tools/generate_partner_contract.py`).
+
+**Lines.** `partner_seat_shot=configured; key=..; play=..` once; `published; vehicle=..; seat=..; class=light|truck;
+cat=..; apply=0|1; source=key|lever; veh_cm=..; yaw_mrad=..; body_cm=..; target=..` on each change; one `shot;
+result=shift|census|clear|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
+o_cm=..; d_milli=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
+only) and `withdrawn; reason=..`. Off on a lab copy still plans every seated shot (`result=census`, nothing moved); off
+in play publishes nothing.
+
+**Status (runs, design 8.30).** [O] `0af9baa3` (lab, africa-jeep): from back seat 3 the first shot with S1 OFF
+killed a guard lying 8.6 m out across the jeep (the reticle red on him; `Dead; att=local` right after the census
+line); with S1 on, a standing guard (8.5 m) and, roles reversed, a sleeping one (9.4 m) died to the first shot. The
+census put the muzzle on the jeep's centre line 1.37-1.45 m above its record, the line 7 deg down, `inside=1`, exit
+1.12 m: such a line clears the far side. [O] `a9d0af0f`: from seat 2 aiming steeply across the jeep at a guard 2.4 m
+out the gun never fired, with S1 off and on (the reticle a red crossed box, the magazine unchanged, no `shot` line,
+the jeep's life 2260 before and after): the stock gun refuses a muzzle line into the jeep before any bullet exists
+[I: the blocked gun mode 15], so S1 never sees it. A line that the gun accepts but the jeep's body stops further out
+was not found [U]. The earlier seated misses (8.22) fit the camera's swing to the sky at the shot, fixed since 8.27 /
+8.28 [I]. Play rehearsal `381880b8` (shipped defaults, S1 off, `-WanSim bad`): seat 3 fired in both
+role orders with no fault and no jeep damage; it had no target in range (no kill in play).
+
+**Tests.** `partner_seat_gun_tests` (the pure part: classes, frame, slab test, plan, lever, the contract's
+`seat_shot_blocks`), `partner_input_hook_tests` `TestSeatShotHook` (the hook forwards a moved copy for the published
+owner only, never writes the caller's record, pellets, census, stale, miss, withdrawn), `partner_driver_tests`
+`TestSeatShotDriver`, `lab_config_tests`, `lab_ini_check`, `worker_session_tests`. Failing first: `bbe8160` (stubs)
+-> `acfd916`. Scenarios `coop-vehicle-seat-shot-s1.txt`, `coop-vehicle-seat-shot-ab.txt`,
+`coop-vehicle-seat-shot-play.txt` (the play rehearsal at the shipped defaults, S1 off).
+
 ## Traversal icon
 
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
