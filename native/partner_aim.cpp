@@ -42,6 +42,7 @@ const char* DirReasonName(DirReason reason) noexcept {
     case DirReason::convention: return "convention";
     case DirReason::prone_frame: return "prone_frame";
     case DirReason::ride: return "ride";
+    case DirReason::seat: return "seat";
     default: return "none";
     }
 }
@@ -71,6 +72,14 @@ GunDirOut GunDir(const GunDirIn& in) noexcept {
     o.yaw = WrapPi(static_cast<double>(in.body_yaw) + o.rel_yaw);
     o.ok = std::isfinite(o.pitch) && std::isfinite(o.yaw);
     o.reason = o.ok ? DirReason::none : DirReason::range;
+    return o;
+}
+
+GunDirOut GunDirSeated(const GunDirIn& in) noexcept {
+    GunDirIn standing = in;
+    standing.stance = 1;
+    GunDirOut o = GunDir(standing);
+    if (o.ok) o.reason = DirReason::seat;
     return o;
 }
 

@@ -75,7 +75,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Seats:** you can ride along in a jeep's back seats. The jeep's front passenger seat and a truck's cab seat work in testing but are off in this version (with D-Dog along, the dog already sits in the jeep's front seat on the driver's screen); a truck's bed and the inside of armoured vehicles and tanks aren't available yet. If you both get into the same empty vehicle's driver's seat at the same moment, each of you ends up driving your own copy of it.
 - **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
 - **Supply drops:** only the host can order a LOADOUT or VEHICLES supply drop in co-op (both can bring a vehicle), also while the host's game is still loading after you travel together; the guest's iDroid says so.
-- **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.
+- **Mounts:** a partner riding D-Horse or D-Walker is hidden. Shooting from a vehicle is not supported yet: in a jeep's back seat you can aim and fire, but your shots do not seem to hit, you can only aim across the jeep, your aim jumps up when you fire, the camera can swing to the sky or show the inside of the jeep, and your partner does not see you aim.
 - **Look:** your custom character may look like Snake on your partner's screen.
 - **Players:** two only.
 

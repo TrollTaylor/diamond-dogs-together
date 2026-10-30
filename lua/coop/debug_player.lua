@@ -174,9 +174,11 @@ do
         if ok3 ~= nil then return ok3, msg3 end
       end
       if #a > 2 and a[2] ~= "sortie" and a[2] ~= "jeep" then return false, "door_unavailable" end
+      -- "jeep right" (M7 tests): the same spot on the jeep's other (passenger) side, still facing it.
+      local right = #a == 3 and a[2] == "jeep" and a[3] == "right"
       -- M6 (6.6, review runs): "sortie|jeep driver|passenger [cm]": the door arguments are checked before any search.
       local doorSeat, doorCm = nil, nil
-      if #a > 2 then
+      if #a > 2 and not right then
         doorSeat = a[3] == "driver" and 0 or a[3] == "passenger" and 1 or nil
         doorCm = a[4] and a[4]:match("^%d%d?%d?$") and tonumber(a[4]) or (a[4] == nil and 60 or nil)
         if not doorSeat or not doorCm or doorCm > 150 then return false, "goto_vehicle_args" end
@@ -237,7 +239,7 @@ do
         local ok3, msg3 = A.warp({r.x / 1000, r.y / 1000, r.z / 1000, math.deg(r.face / 1000)}, id)
         return ok3, fmt("%s;vehicle=%s;id=%d;door=%d;out=%d", msg3, bestName, best[5], seat, cm)
       end
-      local s = best[4] + math.pi / 2
+      local s = best[4] + (right and -1 or 1) * math.pi / 2
       local x, z = best[1] + 1.9 * math.sin(s), best[3] + 1.9 * math.cos(s)
       if type(W) == "table" and type(W.log) == "function" then pcall(W.log, fmt("goto_vehicle;name=%s;id=%d;dist=%.0f", bestName, best[5], math.sqrt(bestD))) end
       local ok2, msg = A.warp({x, best[2] + 0.5, z, math.deg(math.atan2(best[1] - x, best[3] - z))}, id)

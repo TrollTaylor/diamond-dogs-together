@@ -103,6 +103,7 @@
 #include "mgscoop/partner_support_guard.hpp"
 #include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_placed_census.hpp"
+#include "mgscoop/partner_seat_aim.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
@@ -2267,6 +2268,98 @@ void ObservePlacedCensus() noexcept {
     }
 }
 
+// G2 (docs/native-puppet.md "Seat aim"; research complete/re-seat-aim.md): the
+// read-only back-seat aim census, lab key partner_seat_aim=1 in lab mode (play
+// forces the key off). Same natural owner and 10 Hz cadence as the equipment
+// observers. Reads only: Q's act / upper-act arrays, the qualified
+// partner_player::ReadGun (plus its rec+0x2C1 / +0x3D4), the per-id flag record
+// *(PS+0x280) of ResolveBlock's PS and, for the local player, the camera through
+// partner_pass_camera::ReadCamera. No write, no game call. Watched: the local
+// player (k = 0) while its act is a vehicle ride act or the native passenger
+// report holds a back seat, body 1 (k = 1) while the seat flow holds it.
+//   partner_seat_aim=on; ..        once per mission
+//   partner_seat_aim=sample; ..    on a change of a watched instance
+//   partner_seat_aim=end; ..       when a watch ends (aims, fires, reloads, armed / aim time)
+//   partner_seat_aim=status; ..    every 5 s while either instance is watched
+void ObserveSeatAimCensus() noexcept {
+    namespace sa=mgscoop::partner_seat_aim;
+    const auto& config=mgscoop::GetLabConfig();
+    const bool on=config.partner_seat_aim && config.mode==mgscoop::LabMode::lab && lab_active && partner_on && partner_gate_ok;
+    struct CensusState {
+        std::uint32_t mission=0xFFFFFFFFu,realize_gen=0xFFFFFFFFu;
+        bool announced=false;
+        sa::Track track[2]{};
+        sa::Budgets budgets{};
+        std::uint64_t status_ms=0;
+    };
+    static CensusState st;
+    const auto emit=[](const char* line) noexcept {Log(line);};
+    const std::uint64_t now=mgscoop::partner_net::NowMs();
+    if(!on || !game_base) {
+        // Turned off mid-mission (or the gate fell): close the open watches once.
+        for(std::uint32_t k=0;k<2;++k) sa::Finish(st.track[k],k,now,"off",st.budgets,emit);
+        return;
+    }
+    const auto& mission=partner_driver.mission;
+    if(st.mission!=partner_mission || st.realize_gen!=mission.realize_gen) {
+        for(std::uint32_t k=0;k<2;++k) sa::Finish(st.track[k],k,now,"mission",st.budgets,emit);
+        st=CensusState{};st.mission=partner_mission;st.realize_gen=mission.realize_gen;
+    }
+    char line[400]{};
+    if(!st.announced) {
+        st.announced=true;
+        if(sa::FormatOn(line,sizeof(line),partner_mission)) Log(line);
+    }
+    const auto read=[](std::uintptr_t at,void* out,std::size_t size) noexcept {
+        SIZE_T count=0;
+        return at && size && at<=UINTPTR_MAX-size &&
+            ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&count) && count==size;
+    };
+    pp::State state{};
+    const bool state_ok=mission.realized && pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.arrays_ok &&
+        state.count==2 && state.local==0 && state.ids[0]==0 && state.ids[1]==1;
+    const auto& seat=mission.seat;
+    const bool seat_flow=seat.phase==pd::SeatPhase::arm || seat.phase==pd::SeatPhase::play || seat.phase==pd::SeatPhase::seated ||
+        seat.phase==pd::SeatPhase::exit;
+    const auto& lp=partner_driver.local_passenger;
+    for(std::uint32_t k=0;k<2;++k) {
+        sa::Sample s{};
+        const bool realized=state_ok && pp::Realized(state,k);
+        if(realized) s.ok=sa::ReadActs(read,state.Q,state.ids[k],s.act,s.upper);
+        // Only a watched instance reads its gun record, flag record and camera.
+        const bool watch=k==0 ? sa::WatchLocal(s.ok,s.act,lp.valid) : sa::WatchBody1(mission.ride_seated,seat_flow);
+        if(realized && watch) {
+            pp::Gun1 gun{};
+            if(pp::ReadGun(partner_addresses,state,k,gun) && gun.fields_ok) {
+                s.gun_ok=true;
+                s.mode=gun.mode_cur;s.equip=static_cast<std::uint16_t>(gun.fields.equip);
+                s.cls=mgscoop::partner_placed_census::GunClass(gun.fields.flags27c);s.hand=gun.hand_slot;
+                sa::ReadGunExtra(read,gun.rec,s.next,s.posture);
+            }
+            pp::Block block{};
+            if(!pp::ResolveBlock(partner_addresses,state,k,block) && block.ps) {
+                const sa::Flags flags=sa::ReadFlags(read,block.ps,block.id);
+                s.flags_ok=flags.ok;s.w0=flags.w0;s.w6=flags.w6;
+            }
+            if(k==0) {
+                mgscoop::partner_pass_camera::Camera cam{};
+                if(mgscoop::partner_pass_camera::ReadCamera(game_base,state.P,cam) && cam.ok) {
+                    s.cam_ok=true;s.cam_mode=cam.mode;s.cam_handle=cam.connect;
+                }
+                if(lp.valid) {s.seat=lp.seat;s.vehicle=lp.vehicle;}
+            } else {
+                s.seat=seat.seat;s.vehicle=seat.vehicle;
+            }
+        }
+        sa::Tick(st.track[k],k,watch,s,now,st.budgets,emit);
+    }
+    if((st.track[0].episode.active || st.track[1].episode.active) && (now<st.status_ms || now-st.status_ms>=sa::k::kStatusMs) &&
+       mgscoop::partner_placed_census::Take(st.budgets.other,now,sa::k::kOtherPerSecond,sa::k::kOtherCap)) {
+        st.status_ms=now;
+        if(sa::FormatStatus(line,sizeof(line),st.track[0],st.track[1])) Log(line);
+    }
+}
+
 // The existing Lua OnUpdate polls in every mission, including title/ACC.
 // This path remains on the natural runtime owner under receipt_lock, independent
 // of the menu. Closing, termination and batch execution stop it before any reads.
@@ -2285,6 +2378,7 @@ void ObserveEquipmentTick() noexcept {
     ObserveNativeSupport();
     ObserveNativeCbox();
     ObservePlacedCensus();
+    ObserveSeatAimCensus();
 }
 
 void PublishDebugSnapshot() noexcept {

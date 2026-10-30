@@ -10,6 +10,7 @@
 #include <cstring>
 #include <MinHook.h>
 #include "mgscoop/partner_gesture.hpp"
+#include "mgscoop/partner_seat_gun.hpp"
 #include "mgscoop/partner_upper_phase_observer.hpp"
 
 namespace mgscoop::partner_gesture {
@@ -21,10 +22,14 @@ constexpr std::uintptr_t kPlayerSlot = 0x2a82c30, kPVtable = 0x2295490, kQVtable
                          kPsVtable = 0x23b09f0, kPsVtableAlt = 0x23b0c70;
 constexpr std::uintptr_t kCallSite = 0xaf037c;  // e8 rel32 -> 0xB6C410, next ip 0xAF0381
 constexpr std::size_t kRecord = 0x28;           // request record stride (buffer+0xC)
+// M7 seat gun: body 1's rate record (partner_player_contract rate_* / ps_rates; the rates mirror's chain).
+constexpr std::uintptr_t kRateSpVtable = 0x23ad380, kRateRecVtable = 0x23ad2b0;
+constexpr std::size_t kPsRates = 0x260, kRateStride = 0x88, kRateR5c = 0x5c, kRateR60 = 0x60;
+namespace sg = mgscoop::partner_seat_gun;
 
 struct Identity {
     std::uintptr_t P, Q;
-    std::uintptr_t cs[2], entry[2], graphs[2], buffer[2], records[2], upper[2];
+    std::uintptr_t cs[2], entry[2], graphs[2], buffer[2], records[2], upper[2], ps[2];
 };
 struct Nodes {
     bool ok;
@@ -38,11 +43,19 @@ struct Active {
     std::uint64_t node, submit_ms;
     std::uintptr_t entry, cs;
 };
+// The aim rates a gun kind wrote (M7): the record and its originals, put back when the hold ends.
+struct SavedRates {
+    bool saved;
+    std::uintptr_t rec;
+    float r5c, r60;
+};
 // Single owner: the body-1 update holding g_busy.
 struct HookState {
     Active active;
     std::uint32_t handled_seq, epoch;
     bool epoch_have, uncertain;
+    SavedRates rates;
+    bool chained;  // this update chained gun_start to GunHold (After reads it back)
 };
 struct Ticket {
     bool submitted;
@@ -65,6 +78,8 @@ std::atomic<bool> g_installed{false}, g_faulted{false}, g_shutdown{false};
 std::atomic<bool> g_pub_active{false}, g_pub_uncertain{false};
 std::atomic<std::uint32_t> g_pub_seq{0}, g_pub_epoch{0};
 std::atomic<std::uint32_t> g_body_calls{0}, g_submits{0}, g_ends{0}, g_refusals{0};
+std::atomic<std::uint32_t> g_rate_writes{0}, g_rate_restores{0};
+std::atomic<const char*> g_rate_refusal{nullptr};
 std::atomic_flag g_busy = ATOMIC_FLAG_INIT;
 volatile LONG g_install_state = 0;
 const char* g_install_result = "not_installed";
@@ -124,6 +139,7 @@ const char* Resolve(std::uintptr_t image, Identity& id) noexcept {
         if (!Rd(ps + 0x238, cs) || !Rd(cs, vt) || vt != image + kCsVtableRva || !Rd(cs + 8, n) || n != 1 || !Rd(cs + 0xc, base) ||
             base != k || !Rd(cs + 0x10, entries) || !entries) return "cs";
         id.cs[k] = cs;
+        id.ps[k] = ps;
         id.entry[k] = entries;  // the block's only id: index 0
         if (!Rd(entries + 0x90, id.graphs[k]) || !id.graphs[k] || id.graphs[k] > kMax - 0x20 || !Rd(entries + 0x98, id.buffer[k]) ||
             id.buffer[k] != id.graphs[k] + 0x20 || !Rd(entries + 0xb0, channels) || channels != 4) return "entry";
@@ -218,12 +234,63 @@ bool CallSubmit(pol::Method method, std::uintptr_t cs, std::uint64_t node, float
 }
 bool CallEnd(pol::Kind kind, std::uintptr_t cs, bool& out) noexcept {
     __try {
-        out = kind == pol::Kind::pickup ? g_calls.motion_end(reinterpret_cast<void*>(cs), 1, pol::kGraphUpper)
+        out = kind == pol::Kind::pickup || kind == pol::Kind::gun_start ? g_calls.motion_end(reinterpret_cast<void*>(cs), 1, pol::kGraphUpper)
                                         : g_calls.play_end(reinterpret_cast<void*>(cs), 1, pol::kEndLayer);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+// M7: body 1's own rate record (the rate service of body 1's PS: sp = *(PS1+0x260) with the interface vtable,
+// rec = *(sp+0x10) + (1 - *(u32)(sp+8))*0x88 with 1 - base < count <= 64 and the record vtable).
+const char* RateRecord(const Identity& id, std::uintptr_t& rec) noexcept {
+    rec = 0;
+    std::uintptr_t sp = 0, vt = 0, recs = 0;
+    std::uint32_t base = 0, count = 0;
+    if (!id.ps[1] || !Rd(id.ps[1] + kPsRates, sp) || !sp || !Rd(sp, vt) || vt != g_image + kRateSpVtable) return "rate_sp";
+    if (!Rd(sp + 8, base) || !Rd(sp + 0xc, count) || base > 1 || count > 64 || 1 - base >= count) return "rate_bounds";
+    if (!Rd(sp + 0x10, recs) || !recs || recs > kMax - 2 * kRateStride) return "rate_rec";
+    const std::uintptr_t r = recs + static_cast<std::uintptr_t>(1 - base) * kRateStride;
+    if (!Rd(r, vt) || vt != g_image + kRateRecVtable) return "rate_rec_vtable";
+    rec = r;
+    return nullptr;
+}
+bool WriteFloat(std::uintptr_t at, float v) noexcept {
+    if (!at || at > kMax - sizeof(float)) return false;
+    __try {
+        *reinterpret_cast<volatile float*>(at) = v;
+        return true;
+    } __except (AccessFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+// While a gun kind runs: body 1's aim pose from the driver's rates (the first write saves the originals).
+void ApplyRates(HookState& h, const Identity& id, const Command& cmd) noexcept {
+    if (!cmd.rates_valid || !sg::RateOk(cmd.r5c) || !sg::RateOk(cmd.r60)) return;
+    std::uintptr_t rec = 0;
+    if (const char* why = RateRecord(id, rec)) { g_rate_refusal.store(why, std::memory_order_release); return; }
+    if (h.rates.saved && h.rates.rec != rec) { g_rate_refusal.store("rate_moved", std::memory_order_release); return; }
+    if (!h.rates.saved) {
+        float a = 0.0f, b = 0.0f;
+        if (!Rd(rec + kRateR5c, a) || !Rd(rec + kRateR60, b)) { g_rate_refusal.store("rate_read", std::memory_order_release); return; }
+        h.rates = SavedRates{true, rec, a, b};
+    }
+    if (!WriteFloat(rec + kRateR5c, cmd.r5c) || !WriteFloat(rec + kRateR60, cmd.r60)) {
+        g_rate_refusal.store("rate_write", std::memory_order_release);
+        return;
+    }
+    ++g_rate_writes;
+}
+// The hold ended: the originals go back to the same record of the same body 1 (a changed identity or record drops
+// them without a write).
+void RestoreRates(HookState& h, const Identity* id) noexcept {
+    if (!h.rates.saved) return;
+    std::uintptr_t rec = 0;
+    if (id && !RateRecord(*id, rec) && rec == h.rates.rec && WriteFloat(rec + kRateR5c, h.rates.r5c) &&
+        WriteFloat(rec + kRateR60, h.rates.r60))
+        ++g_rate_restores;
+    h.rates = SavedRates{};
 }
 
 void Push(const Receipt& r) noexcept {
@@ -259,9 +326,60 @@ void Publish(const HookState& h) noexcept {
 void Fault(HookState& h, Receipt r, const char* why) noexcept {
     g_faulted.store(true, std::memory_order_release);
     h.active = Active{};
+    h.rates = SavedRates{};  // no write after a fault
     r.stage = Stage::fault;
     r.reason = why;
     Push(r);
+}
+
+// M7: the raise clip ended: GunHold on body 1's graph 2 (the same checks as a new submission). True when the hold
+// goes on (submitted, or an uncertain / faulted update that already dropped it); false: refused, the caller ends it.
+bool Chain(HookState& h, const Identity& id, std::uint64_t now) noexcept {
+    Active& a = h.active;
+    Receipt r{};
+    r.stage = Stage::refused;
+    r.seq = a.seq;
+    r.kind = pol::Kind::gun_hold;
+    r.method = pol::Method::set_current;
+    r.node = sg::kGunHold;
+    bool exist = false;
+    Digest v0{}, v1{}, b0{}, b1{};
+    if (h.uncertain) r.reason = "uncertain";
+    else if (!SlotsOk(g_image)) r.reason = "slots";
+    else if (!CallExist(id.cs[1], sg::kGunHold, exist)) { Fault(h, r, "exist_call"); return true; }
+    else if (!exist) r.reason = "no_node";
+    else if (!ReadDigest(id, 0, pol::kGraphUpper, v0) || !ReadDigest(id, 1, 0, b0)) r.reason = "digest";
+    else if (Pending(b0)) r.reason = "pending";
+    else if (ShuttingDown()) r.reason = "shutdown";
+    r.exist = exist;
+    if (r.reason) {
+        ++g_refusals;
+        Push(r);
+        return false;
+    }
+    if (!CallSubmit(pol::Method::set_current, id.cs[1], sg::kGunHold, sg::kHoldBlend)) { Fault(h, r, "submit_call"); return true; }
+    const char* surprise = !ReadDigest(id, 0, pol::kGraphUpper, v1) || !ReadDigest(id, 1, 0, b1) ? "digest_after"
+                         : !SameDigest(v0, v1)                                                     ? "viewer_changed"
+                         : !Isolated(b0, b1)                                                       ? "body1_foreign"
+                                                                                                   : nullptr;
+    if (surprise) {
+        h.uncertain = true;
+        Receipt u = r;
+        u.stage = Stage::uncertain;
+        u.reason = surprise;
+        Push(u);
+        h.rates = SavedRates{};  // no further write this epoch
+        h.active = Active{};
+        return true;
+    }
+    ++g_submits;
+    r.stage = Stage::submit;
+    Push(r);
+    a.kind = pol::Kind::gun_hold;
+    a.node = sg::kGunHold;
+    a.submit_ms = now;
+    h.chained = true;
+    return true;
 }
 
 // Ends a running gesture (before the original update).
@@ -274,12 +392,18 @@ void TickActive(HookState& h, const Command& cmd, bool lease, const char* why, c
     const bool pending = same && ReadDigest(id, 1, 0, at_entry) && Pending(at_entry);
     const std::uint64_t elapsed = now >= a.submit_ms ? now - a.submit_ms : 0;
     bool clip = false;
+    const bool held = cmd.hold_seq != 0 && cmd.hold_seq == a.seq;
     if (same && ours && lease && !pending && !ShuttingDown() && elapsed >= pol::kMinPlayMs && SlotsOk(g_image) &&
-        (a.kind == pol::Kind::pickup || PlayEndReady(id.entry[1])) && !CallEnd(a.kind, id.cs[1], clip)) {
+        a.kind != pol::Kind::gun_hold && (!pol::GunKind(a.kind) || held) &&
+        (a.kind == pol::Kind::pickup || a.kind == pol::Kind::gun_start || PlayEndReady(id.entry[1])) && !CallEnd(a.kind, id.cs[1], clip)) {
         Fault(h, FromActive(a, Stage::fault), "end_call");
         return;
     }
-    const pol::EndOut e = pol::End({a.kind, lease, same, ours, clip, cmd.remote_known, cmd.remote_speed, elapsed, pending, ShuttingDown()});
+    pol::EndOut e = pol::End({a.kind, lease, same, ours, clip, cmd.remote_known, cmd.remote_speed, elapsed, pending, ShuttingDown(), held});
+    if (e.chain) {
+        if (Chain(h, id, now)) return;
+        e = pol::EndOut{pol::Via::override_, "chain", true, false};
+    }
     if (e.via == pol::Via::none) return;
     Receipt r = FromActive(a, Stage::ended);
     r.via = e.via;
@@ -315,6 +439,7 @@ void TickActive(HookState& h, const Command& cmd, bool lease, const char* why, c
             }
         }
     }
+    if (pol::GunKind(a.kind)) RestoreRates(h, same && !h.uncertain ? &id : nullptr);
     ++g_ends;
     Push(r);
     h.active = Active{};
@@ -339,16 +464,23 @@ Ticket Before(std::uint64_t now) noexcept {
             ++g_ends;
         }
         h.active = Active{};
+        h.rates = SavedRates{};  // the old body's record: never written again
         h.epoch = cmd.epoch;
         h.epoch_have = true;
         h.uncertain = false;
     }
+    h.chained = false;
     const bool lease = have && cmd.enabled && now >= cmd.now_ms && now - cmd.now_ms <= pol::kLeaseMs;
     Identity id{};
     const char* why = Resolve(g_image, id);
     if (h.active.on) {
         TickActive(h, cmd, lease, why, id, now);
         if (g_faulted.load(std::memory_order_acquire)) { Publish(h); return t; }
+        if (h.chained) t = Ticket{true, h.active.seq, h.active.kind, h.active.method, h.active.node, id.upper[1]};
+        // M7: body 1's aim pose while a gun kind holds (same body, lease, no latch).
+        if (h.active.on && pol::GunKind(h.active.kind) && lease && !why && !h.uncertain && id.entry[1] == h.active.entry &&
+            id.cs[1] == h.active.cs)
+            ApplyRates(h, id, cmd);
     }
     const Request& q = cmd.request;
     if (!have || !q.seq || q.seq == h.handled_seq || (h.active.on && q.seq == h.active.seq)) { Publish(h); return t; }
@@ -371,7 +503,10 @@ Ticket Before(std::uint64_t now) noexcept {
     else if (why) r.reason = why;
     else if (!arrays) r.reason = "body_unread";
     else if (act == 0x4D) r.reason = "box";
-    else if (!pol::BodyReady(act, q28, upper)) r.reason = act < 1 || act > 6 ? "body_act" : q28 ? "body_q28" : "body_upper";
+    else if (pol::GunKind(q.kind) && cmd.hold_seq != q.seq) r.reason = "released";
+    else if (pol::GunKind(q.kind) ? !pol::SeatBodyReady(act, q28, upper) : !pol::BodyReady(act, q28, upper))
+        r.reason = pol::GunKind(q.kind) ? (act != pol::kSeatDmAct ? "body_act" : q28 ? "body_q28" : "body_upper")
+                                        : act < 1 || act > 6 ? "body_act" : q28 ? "body_q28" : "body_upper";
     else if (q.method != pol::Method::set_current && q.method != pol::Method::reserve_reset) r.reason = "method";
     else if (!SlotsOk(g_image)) r.reason = "slots";
     else if (!CallExist(id.cs[1], q.node, exist)) { Fault(h, r, "exist_call"); Publish(h); return t; }
@@ -411,6 +546,7 @@ Ticket Before(std::uint64_t now) noexcept {
     Push(r);
     h.active = Active{true, q.seq, q.kind, q.method, q.node, now, id.entry[1], id.cs[1]};
     t = Ticket{true, q.seq, q.kind, q.method, q.node, id.upper[1]};
+    if (pol::GunKind(q.kind)) ApplyRates(h, id, cmd);
     Publish(h);
     return t;
 }
@@ -580,6 +716,9 @@ void Step(const Command& command, Status& out) noexcept {
     out.submits = g_submits.load(std::memory_order_relaxed);
     out.ends = g_ends.load(std::memory_order_relaxed);
     out.refusals = g_refusals.load(std::memory_order_relaxed);
+    out.rate_writes = g_rate_writes.load(std::memory_order_relaxed);
+    out.rate_restores = g_rate_restores.load(std::memory_order_relaxed);
+    out.rate_refusal = g_rate_refusal.load(std::memory_order_acquire);
 }
 
 std::uintptr_t ForwardUpdate(OriginalFn original, void* entry, std::uintptr_t caller, std::uint64_t now_ms) noexcept {
@@ -621,6 +760,9 @@ void ResetForTest() noexcept {
     g_submits.store(0);
     g_ends.store(0);
     g_refusals.store(0);
+    g_rate_writes.store(0);
+    g_rate_restores.store(0);
+    g_rate_refusal.store(nullptr);
     g_busy.clear();
     AcquireSRWLockExclusive(&g_lock);
     g_cmd = Command{};

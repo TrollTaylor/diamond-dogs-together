@@ -28,8 +28,12 @@
 
 namespace mgscoop::partner_gesture_policy {
 
-enum class Kind : std::uint8_t { none = 0, pickup = 1, sign_go = 2, sign_stop = 3, knock = 4 };
-inline constexpr std::uint8_t kKindMax = 4;
+enum class Kind : std::uint8_t { none = 0, pickup = 1, sign_go = 2, sign_stop = 3, knock = 4, gun_start = 5, gun_hold = 6 };
+inline constexpr std::uint8_t kKindMax = 4;  // the wire's kinds (1..4); 5 and 6 are local only, never encoded or decoded
+// M7 (partner_seat_gun.hpp): the partner's raised gun on the seated body 1. gun_start = GunHoldStart (the raise clip),
+// gun_hold = GunHold (the held loop the raise chains to). Requested by the driver from the remote's live aim, never
+// sent: they hold while the driver's command names them (Command::hold_seq), with no deadline.
+inline constexpr bool GunKind(Kind kind) noexcept { return kind == Kind::gun_start || kind == Kind::gun_hold; }
 inline constexpr std::uint8_t kUpperPickup = 0x15, kUpperKnock = 0x17, kUpperSignGo = 0x18, kUpperSignStop = 0x19;
 // The gesture an upper act byte stands for (none for every other value: 0
 // idle, 5 reload, 0x16 / 0x1A..0x1B the other plugins).
@@ -127,6 +131,10 @@ inline constexpr std::uint64_t kLeaseMs = 250;        // the driver's command mu
 // Body 1 may take a gesture only in plain locomotion (act 1..6), with no upper
 // action of its own (Q+0x20 == 0) and Q+0x28 == 0, like the stock pickup.
 bool BodyReady(std::uint16_t act, std::uint8_t q28, std::uint8_t upper) noexcept;
+// The gun kinds' body gate: body 1 seated by the DM seat chain (act 0x8B, the direct-motion act of
+// partner_player_contract q18_dm_act), Q+0x28 == 0, and no upper action of its own except the aim (upper act 2).
+inline constexpr std::uint16_t kSeatDmAct = 0x8B;
+bool SeatBodyReady(std::uint16_t act, std::uint8_t q28, std::uint8_t upper) noexcept;
 struct GateIn {
     bool enabled;       // partner_native_gesture
     bool native;        // the native drive is active this tick
@@ -161,11 +169,13 @@ struct EndIn {
     // graph 2 now, and a stateNull would overwrite its request.
     bool pending;
     bool shutdown;       // the game window is closing (partner_gesture::Shutdown)
+    bool held;           // gun kinds: the driver's command still holds this gesture (Command::hold_seq)
 };
 struct EndOut {
     Via via;
-    const char* cause;   // identity | shutdown | pending | lease | node | clip | speed | deadline
+    const char* cause;   // identity | shutdown | pending | lease | release | node | clip | speed | deadline
     bool null_return;    // return graph 2 to stateNull (only while it still shows our node)
+    bool chain;          // gun_start: the raise clip ended, submit GunHold now (via stays none)
 };
 EndOut End(const EndIn& in) noexcept;
 

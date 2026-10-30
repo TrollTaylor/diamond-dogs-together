@@ -8995,6 +8995,213 @@ void TestGestures() {
     st.dropped = 0;
 }
 
+// M7 seat gun at the driver level (review of wp/seat-shoot; docs/native-puppet.md "Seat gun"). The seat-owned branch
+// of the tick runs the gesture step only with partner_seat_gun (run d40e4126: before 8c0d482 it returned before
+// TickGesture, so no hold ever started); the gate takes a passenger seat (1..3) only, never the driver's seat 0; the
+// command stays enabled while the hold or its still-running gesture lasts (the native drive is off while seated) and
+// names the gun_start request in hold_seq; the hook's own end (HookEnded) releases it and the next start waits
+// kRetryMs; the aim's end and the seat's end release it; an ordinary gesture stays refused while seated.
+void TestSeatGunDriver() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace gp = mgscoop::partner_gesture_policy;
+    namespace pg = mgscoop::partner_gesture;
+    namespace psg = mgscoop::partner_seat_gun;
+    constexpr std::uint64_t kBackLeftLoop = 0xc40b38a1a985ull, kFrontLeftLoop = 0x489157d7d94full;
+    // The remote rides the given seat of jeep 25609 and the seat flow holds body 1 there; the gesture hook was
+    // installed on foot while the native drive ran (every live run).
+    const auto seated = [&](SeatSession& s, bool key, std::uint8_t seat) {
+        AddGestureHooks(s.hooks);
+        s.driver.settings.ngesture = true;
+        s.driver.settings.seat_gun = key;
+        s.driver.gesture_install_tried = true;
+        s.driver.gesture_install_refusal = nullptr;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, seat, 25609);
+        s.fake.sample.act = seat ? 110 : 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == seat, "the seat plays");
+        s.Playing(seat ? kBackLeftLoop : kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.driver.mission.ride_seated,
+              "seated, confirmed");
+        s.fake.gesture_commands.clear();
+        s.fake.lines.clear();
+    };
+    const auto aim = [](SeatSession& s, bool on) { s.fake.sample.flags = on ? mgscoop::sync::ActionFlag::Aiming : 0u; };
+    const auto receipt = [](SeatSession& s, pg::Stage stage, std::uint32_t seq, gp::Kind kind) {
+        pg::Status& st = s.fake.gesture_status;
+        pg::Receipt& r = st.receipts[st.count++];
+        r = pg::Receipt{};
+        r.stage = stage;
+        r.seq = seq;
+        r.kind = kind;
+        r.node = kind == gp::Kind::gun_hold ? psg::kGunHold : psg::kGunHoldStart;
+        if (stage == pg::Stage::ended) { r.via = gp::Via::override_; r.cause = "node"; }
+        if (stage == pg::Stage::refused) r.reason = "no_node";
+    };
+    {
+        // Key off: the seat-owned branch stays as before (no gesture step, no seat-gun line) while the remote aims.
+        SeatSession s;
+        seated(s, false, 2);
+        aim(s, true);
+        for (unsigned i = 0; i < 5; ++i) Check(s.Step(), "seated ticks");
+        Check(s.fake.gesture_commands.empty() && s.fake.Containing("partner_seat_gun=") == 0 && !s.driver.mission.seat_gun.want,
+              "key off: no gesture step and no hold in the seat-owned branch");
+    }
+    {
+        // Key on, the remote in back seat 2: the hold starts from the seat-owned branch (fails before 8c0d482).
+        SeatSession s;
+        seated(s, true, 2);
+        Check(s.Step() && !s.fake.gesture_commands.empty() && !s.fake.gesture_commands.back().enabled &&
+                  !s.fake.gesture_commands.back().hold_seq && !s.fake.gesture_commands.back().request.seq &&
+                  !s.driver.mission.seat_gun.want && s.driver.mission.seat_gun_configured_logged,
+              "key on, not aiming: the step runs, disabled (the native drive is off while seated), nothing held");
+        aim(s, true);
+        Check(s.Step(), "aiming tick");
+        const pg::Command c = s.fake.gesture_commands.back();
+        Check(c.enabled && c.request.seq != 0 && c.request.kind == gp::Kind::gun_start && c.request.node == psg::kGunHoldStart &&
+                  c.request.method == gp::Method::set_current && c.hold_seq == c.request.seq && s.driver.mission.seat_gun.want &&
+                  s.driver.mission.seat_gun_seq == c.request.seq,
+              "the remote aims: an enabled command with the gun_start request, held by hold_seq");
+        const std::uint32_t seq = c.request.seq;
+        const std::string seqs = std::to_string(seq);
+        Check(s.fake.Containing(("partner_seat_gun=hold; seq=" + seqs + "; vehicle=25609; seat=2; pose_aim=1; input_aim=0; flags=0x1; starts=1").c_str()) == 1,
+              "one hold line");
+        // The hook takes it and runs it: the request is answered, the hold stays published.
+        receipt(s, pg::Stage::submit, seq, gp::Kind::gun_start);
+        s.fake.gesture_status.active = true;
+        s.fake.gesture_status.active_seq = seq;
+        Check(s.Step() && s.Step() && s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().request.seq &&
+                  s.fake.gesture_commands.back().hold_seq == seq && s.driver.mission.gesture_active_seq == seq,
+              "answered: no request, still held and enabled");
+        // An ordinary gesture from the remote stays refused while the seat owns body 1.
+        s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+        Check(s.Step() && s.fake.Containing("partner_gesture=refused; reason=not_native; where=driver; kind=pickup;") == 1 &&
+                  !s.fake.gesture_commands.back().request.seq && s.fake.gesture_commands.back().hold_seq == seq,
+              "a pickup while seated is refused; the hold goes on");
+        // The chain's own refusal (GunHold refused) does not end the hold here: the hook ends it next.
+        receipt(s, pg::Stage::refused, seq, gp::Kind::gun_hold);
+        Check(s.Step() && s.driver.mission.seat_gun.want && s.fake.Containing("partner_seat_gun=hook_ended;") == 0,
+              "a refused gun_hold receipt is not the end");
+        // The hook ends it (a node override): released, and no new start before kRetryMs although the remote aims.
+        receipt(s, pg::Stage::ended, seq, gp::Kind::gun_start);
+        s.fake.gesture_status.active = false;
+        s.fake.gesture_status.active_seq = 0;
+        Check(s.Step() && !s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=hook_ended; seq=" + seqs + "; stage=ended; why=node; retry_ms=1000;").c_str()) == 1,
+              "the hook's end: released, one hook_ended line");
+        Check(s.Step() && !s.fake.gesture_commands.back().hold_seq && !s.fake.gesture_commands.back().enabled &&
+                  !s.fake.gesture_commands.back().request.seq,
+              "the next command holds nothing and is disabled");
+        for (unsigned i = 0; i < 20; ++i) Check(s.Step(), "within the retry wait");
+        Check(!s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 1, "no restart inside kRetryMs");
+        Check(s.Step(600) && s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 2 &&
+                  s.driver.mission.seat_gun_seq != seq && s.fake.gesture_commands.back().hold_seq == s.driver.mission.seat_gun_seq,
+              "after kRetryMs the still-aiming remote starts a new hold with a new seq");
+        const std::uint32_t seq2 = s.driver.mission.seat_gun_seq;
+        receipt(s, pg::Stage::submit, seq2, gp::Kind::gun_start);
+        s.fake.gesture_status.active = true;
+        s.fake.gesture_status.active_seq = seq2;
+        Check(s.Step(), "the second hold runs");
+        // The aim ends: released after kReleaseMs; the still-running gesture keeps the command enabled (the hook ends
+        // it under the lease with stateNull) until the hook reports it gone.
+        aim(s, false);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "inside the release debounce");
+        for (unsigned i = 0; i < 12; ++i) Check(s.Step(), "release ticks");
+        Check(!s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=release; seq=" + std::to_string(seq2) + "; cause=aim;").c_str()) == 1 &&
+                  s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().hold_seq,
+              "the aim ends: released (cause=aim); enabled while the hook still runs it, hold_seq 0");
+        s.fake.gesture_status.active = false;
+        s.fake.gesture_status.active_seq = 0;
+        Check(s.Step() && s.Step() && !s.fake.gesture_commands.back().enabled, "the hook's gesture gone: disabled again");
+    }
+    {
+        // The remote drives (seat 0, body 1 seated at the wheel): refused (driver), nothing requested.
+        SeatSession s;
+        seated(s, true, 0);
+        aim(s, true);
+        for (unsigned i = 0; i < 3; ++i) Check(s.Step(), "seated ticks");
+        Check(!s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 0 && !s.fake.gesture_commands.back().hold_seq &&
+                  !s.fake.gesture_commands.back().request.seq &&
+                  s.fake.Containing("partner_seat_gun=refused; reason=driver; seat_phase=seated; ride_seated=1; ride_live=1; ride_kind=2; ride_seat=0") == 1,
+              "the driver's seat: refused once (driver)");
+    }
+    {
+        // A gun_start request no body-1 update answers within kRequestMs: the driver drops it and releases the hold.
+        SeatSession s;
+        seated(s, true, 2);
+        aim(s, true);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "holding");
+        Check(s.Step(600) && !s.driver.mission.seat_gun.want && !s.fake.gesture_commands.back().hold_seq &&
+                  s.fake.Containing("partner_gesture=refused; reason=unanswered; where=driver; kind=gun_start;") == 1,
+              "unanswered: dropped and released (the next start waits kRetryMs)");
+    }
+    {
+        // The seat ends while the hold runs: released by the gate.
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        seated(s, true, 2);
+        aim(s, true);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "holding");
+        const std::uint32_t seq = s.driver.mission.seat_gun_seq;
+        s.fake.sample.act = 112;
+        for (unsigned i = 0; i < 3 && s.driver.mission.seat_gun.want; ++i) Check(s.Step(), "getting off");
+        Check(!s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=release; seq=" + std::to_string(seq) + "; cause=gate; refusal=not_seated;").c_str()) == 1 &&
+                  !s.fake.gesture_commands.back().hold_seq,
+              "the seat's end releases the hold (cause=gate, not_seated)");
+    }
+}
+
+// M7 seat gun, the sender (SenderV6): with partner_seat_gun a back-seat passenger (the native passenger report) sends
+// its seated direction (GunDirSeated: the seated stance read as standing; reason seat) and runs no convention check;
+// without the key, or while it drives, it sends none (the 0.13.6 ride gate). Not a validated direction: the check is
+// skipped, not passed.
+void TestSeatGunSender() {
+    namespace pi = mgscoop::partner_input;
+    namespace pam = mgscoop::partner_aim;
+    NativeSession s;
+    s.hooks.peer_input_v6 = HookPeerInputV6;
+    AddWeaponHooks(s.hooks);
+    s.hooks.read_aim = HookReadAim;
+    s.driver.settings.ngun = true;
+    Check(s.Until(mgscoop::partner_native::Mode::active, 9000), "seat sender: native active");
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    s.fake.peer_v6 = true;
+    auto& r = s.fake.aim_read;
+    r.gun_ok[0] = r.rate_ok[0] = r.body_ok[0] = true; r.stance[0] = 2; r.gun_class[0] = 0;
+    r.r5c[0] = .625f; r.r60[0] = .517f; r.body_yaw[0] = static_cast<float>(4.8 * 3.14159265358979323846 / 180.0);
+    s.fake.aim_read_ok = true; s.fake.gun0_ok = true;
+    s.fake.gun0.fields_ok = true; s.fake.gun0.fields.flags27c = 1u << 6; s.fake.gun0.fields.equip = 46;
+    s.fake.gun0.gun3c0 = (1u << 18) | 4u; s.fake.gun0.mode_cur = 7;
+    s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 6 && (s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir),
+          "on foot: a v6 direction");
+    const auto checks0 = s.driver.mission.dir_check.checks;
+    // A back seat (seat 3 of jeep 25603), the seated stance unread as 0, key off: nothing (reason ride).
+    g_board.lp = BoardPassenger(25603, 3);
+    r.stance[0] = 0;
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    Check(s.driver.local_passenger.valid && !(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == pam::DirReason::ride && s.driver.mission.dir_check.checks == checks0,
+          "back seat, key off: no direction, no check");
+    // Key on: the seated direction, reason seat, unchecked (checks unchanged, never latched).
+    s.driver.settings.seat_gun = true;
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    const auto sent = s.fake.inputs.back();
+    Check((sent.gun_flags & pi::GunFlag::AimDir) && std::abs(sent.aim_pitch_cdeg - 1875) <= 1 && std::abs(sent.aim_yaw_cdeg - 174) <= 1 &&
+              s.driver.mission.dir_reason == pam::DirReason::seat && s.driver.mission.dir_check.checks == checks0 &&
+              !s.driver.mission.dir_check.latched && s.fake.Containing("aim_dir=valid; reason=seat; checks=") == 1,
+          "back seat, key on: the seated direction (the standing convention), not checked");
+    // Key on but driving (no passenger report; the tick's vehicle): nothing.
+    g_board.lp = mgscoop::partner_board::LocalPassenger{};
+    s.ride_suffix = " ride=2 veh=25603 seat=0";
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    Check(!s.driver.local_passenger.valid && !(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == pam::DirReason::ride && s.driver.mission.dir_check.checks == checks0,
+          "driving, key on: no direction, no check");
+}
+
 // G4 truck test levers (vehicle_door; docs/native-puppet.md "Truck test levers"): the peer's live vehicle ride
 // (its link epoch, inside the lease) names the vehicle goto_partner_vehicle reads on this copy; nothing else does.
 void TestRidePeerVehicle() {
@@ -9088,6 +9295,8 @@ int main() {
     TestBodySafetyNativeDrop();
     TestUiFilterLog();
     TestGestures();
+    TestSeatGunDriver();
+    TestSeatGunSender();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();

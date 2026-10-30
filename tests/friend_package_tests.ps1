@@ -548,6 +548,22 @@ try {
             $file = Join-Path $fixture 'play-boot-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "lab_fast_boot=1`nlab_boot=30020 time=12:00`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['lab_fast_boot'])|$($m['lab_boot_mission'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0x1000000|0/1' 'native: play forces the test boot off with its refusal bit'
+            # G2 back-seat aim census (docs/native-puppet.md "Seat aim"): read-only and lab only; Play-Coop never names the
+            # key, play defaults it off, and a named 1 is forced off in play (recorded as named, no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_seat_aim') -and !$guestIni.Contains('partner_seat_aim') -and
+                !$clipsIni.Contains('partner_seat_aim')) 'Play-Coop lab.ini never names partner_seat_aim'
+            Assert-Equal "$($n['partner_seat_aim'])|$($n['partner_seat_aim_given'])" '0|0' 'native: play leaves the seat aim census off'
+            $file = Join-Path $fixture 'play-seat-aim-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_aim=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_aim'])|$($m['partner_seat_aim_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat aim census is forced off in play'
+            # M7 seat gun (docs/native-puppet.md "Seat gun"): Play-Coop never names the key and play defaults it off; a named
+            # 1 runs in play (recorded as named, no refusal bit) until the play default flips after its proof.
+            Assert-True (!$hostIni.Contains('partner_seat_gun') -and !$guestIni.Contains('partner_seat_gun') -and
+                !$clipsIni.Contains('partner_seat_gun')) 'Play-Coop lab.ini never names partner_seat_gun'
+            Assert-Equal "$($n['partner_seat_gun'])|$($n['partner_seat_gun_given'])" '0|0' 'native: play leaves the seat gun off'
+            $file = Join-Path $fixture 'play-seat-gun-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_gun=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_gun'])|$($m['partner_seat_gun_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1|1|0x0|0/0' 'native: a named seat gun runs in play'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

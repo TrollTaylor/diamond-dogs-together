@@ -71,12 +71,12 @@ function Get-WorkerTests {
         'partner_cbox_tests',
         'partner_player_tests', 'teammate_targeting_tests', 'downed_damage_tests', 'downed_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
         'partner_support_equip_tests', 'partner_fire_support_tests', 'partner_support_policy_tests', 'partner_support_guard_fixture', 'partner_placed_census_tests', 'partner_placed_policy_tests',
-        'partner_native_tests', 'partner_equip_wire_tests', 'partner_ride_wire_tests', 'partner_traverse_tests', 'partner_icon_tests', 'partner_gesture_tests', 'partner_gesture_hook_tests', 'partner_ui_filter_tests', 'partner_gesture_lever_tests', 'partner_gesture_lever_fire_tests', 'partner_vehicle_tests', 'partner_board_tests', 'vehicle_door_tests', 'partner_pass_camera_tests', 'partner_defer_tests', 'partner_defer_pose_nested_foreign_tests', 'partner_defer_pose_held_generation_tests',
+        'partner_native_tests', 'partner_equip_wire_tests', 'partner_ride_wire_tests', 'partner_traverse_tests', 'partner_icon_tests', 'partner_gesture_tests', 'partner_gesture_hook_tests', 'partner_ui_filter_tests', 'partner_gesture_lever_tests', 'partner_gesture_lever_fire_tests', 'partner_vehicle_tests', 'partner_board_tests', 'vehicle_door_tests', 'partner_pass_camera_tests', 'partner_seat_aim_tests', 'partner_seat_gun_tests', 'partner_defer_tests', 'partner_defer_pose_nested_foreign_tests', 'partner_defer_pose_held_generation_tests',
         'partner_mount_tests', 'partner_body_safety_tests', 'log_budget_tests',
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests',
+        'build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests', 'worker_coverage_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
@@ -267,7 +267,7 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests')) {
+        if ($name -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {

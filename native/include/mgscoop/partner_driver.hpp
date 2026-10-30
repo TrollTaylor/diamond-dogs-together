@@ -67,6 +67,7 @@
 #include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_gesture.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
+#include "mgscoop/partner_seat_gun.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -616,6 +617,7 @@ struct Settings {
     bool traverse;     // traversal replay (partner_native_traverse)
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
+    bool seat_gun;     // M7: the remote passenger's raised gun on the seated body 1, this copy's seated v6 direction (partner_seat_gun)
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
@@ -1325,6 +1327,15 @@ struct Mission {
     const char* gesture_hook_resolve;
     std::uint32_t gesture_hook_body_calls;
     LogCap gesture_cap;
+    // --- M7 seat gun (partner_seat_gun.hpp, docs/native-puppet.md "Seat gun"): the hold decision, the seq of the
+    // hold's gun_start request (the hook's hold_seq), the seq the hook last reported active, the refusal last logged,
+    // the hold's start and the rates line clock, and the line family.
+    partner_seat_gun::State seat_gun;
+    std::uint32_t seat_gun_seq, gesture_active_seq;
+    const char* seat_gun_refusal_logged;
+    bool seat_gun_configured_logged;
+    std::uint64_t seat_gun_since_ms, seat_gun_rates_ms;
+    LogCap seat_gun_cap;
 };
 
 struct Driver {

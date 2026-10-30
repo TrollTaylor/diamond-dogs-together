@@ -1,0 +1,138 @@
+# M7 play rehearsal (docs/vehicles-companions-design.md section 9 M7): coop-vehicle-seat-shoot.txt in mode=play over
+# -WanSim bad, with the one key the rehearsal is for, partner_seat_gun=1 (a named 1 runs in play; play leaves it off
+# otherwise). Play refuses the test boot and debug_soldier_warp, so the target is the nearest guard after
+# clear_enemies 100 and spawn_enemy here (the route fallback places a guard on the nearest authored route), put to sleep
+# by enemy sleep nearest; the passenger turns its camera to it with enemy_aim_nearest 1.6 (the seat's +-90 deg range
+# may not reach it: then no kill, and the rehearsal still covers the raised gun, the seated direction and the release).
+# Part A the host drives and the guest shoots from back seat 3 across the jeep to the left; Part B the reverse (the
+# raised gun and the direction only). Geometry and expectations: coop-vehicle-seat-shoot.txt.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-shoot-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+labsetting partner_seat_gun=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'partner_seat_gun=configured; key=1' 30
+waitlog guest 'partner_seat_gun=configured; key=1' 30
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 2000
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+wait 3000
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+wait 2000
+host capture m7p-guard
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+wait 1500
+both capture m7p-seated
+logmark both
+guest run enemy_aim_nearest 1.6
+wait 600
+heldcapture guest guest rmb m7p-seat-aim 2
+waitlog guest 'aim_dir=valid; reason=seat;' 5
+heldcapture guest host rmb m7p-partner-gun 3
+waitlog host 'partner_seat_gun=hold; seq=[0-9]+; vehicle=256[0-9][0-9]; seat=[23];' 5
+waitlog host 'partner_gesture=submit; graph=2; node=0x50130ae2e584; exist=1; kind=gun_start;' 5
+waitlog host 'partner_seat_gun=rates; seq=[0-9]+; ok=1;' 5
+host hold s 1500 nowait
+guest run enemy_aim_nearest 1.6
+guest hold rmb 1500 nowait
+wait 600
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+guest capture m7p-fire-guest-1
+host capture m7p-fire-host-1
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 400
+guest release
+host release
+host hold w 1500 nowait
+guest run enemy_aim_nearest 1.6
+guest hold rmb 1500 nowait
+wait 600
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+guest capture m7p-fire-guest-2
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 400
+guest release
+host release
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 8
+wait 1500
+waitlog host 'partner_gesture=ended; .*cause=release' 5
+both capture m7p-after
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+logmark both
+guest debug goto_vehicle jeep
+wait 2500
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=
+host debug goto_vehicle jeep right
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
+wait 1500
+host run enemy_aim_nearest 1.6
+wait 600
+heldcapture host host rmb m7p-rev-seat-aim 2
+heldcapture host guest rmb m7p-rev-partner-gun 3
+waitlog guest 'partner_seat_gun=hold; seq=[0-9]+; vehicle=256[0-9][0-9]; seat=[23];' 5
+waitlog guest 'partner_seat_gun=rates; seq=[0-9]+; ok=1;' 5
+wait 1500
+waitlog guest 'partner_gesture=ended; .*cause=release' 5
+both capture m7p-rev-after
+host press e 150
+wait 3500
+guest press e 150
+wait 3500
+state

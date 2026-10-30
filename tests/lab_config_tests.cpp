@@ -452,6 +452,64 @@ int main() {
                   "an invalid unrealize_all value refuses");
         }
     }
+    // G2 back-seat aim census (partner_seat_aim, docs/native-puppet.md "Seat aim"): read-only, lab only; off by default
+    // with or without the gun profile; a named 1 runs in lab, play forces it off (still recording _given, no refusal bit);
+    // independent of the board key.
+    {
+        Check(!LabConfig{}.partner_seat_aim && !LabConfig{}.partner_seat_aim_given && !Lab("").partner_seat_aim,
+              "seat aim census defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_seat_aim && !profile.partner_seat_aim_given && profile.invalid_values == 0,
+                  "the gun profile leaves the seat aim census off in lab and play");
+            const auto named = Lab(gun + mode + "partner_seat_aim=1\n");
+            Check(named.partner_seat_aim == lab && named.partner_seat_aim_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0 && named.partner_ride_board == profile.partner_ride_board && !named.partner_ride_board_given,
+                  "a named seat aim census runs in lab only and leaves the board default");
+            const auto off = Lab(gun + mode + "partner_seat_aim=0\n");
+            Check(!off.partner_seat_aim && off.partner_seat_aim_given, "a named seat aim census 0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_seat_aim=1\n");
+        Check(alone.partner_seat_aim && alone.partner_seat_aim_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_seat_aim=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_seat_aim=1\npartner_seat_aim=0\n");
+        Check(!later.partner_seat_aim, "a later 0 turns the seat aim census off");
+        for (const char* value : {"2", "-1", "", "census", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_aim=") + value + "\n");
+            Check(!invalid.partner_seat_aim && !invalid.partner_seat_aim_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid seat aim value refuses");
+        }
+    }
+    // M7 seat gun (partner_seat_gun, docs/native-puppet.md "Seat gun"): off by default with or without the gun profile,
+    // in lab and play; a named 1 runs in lab AND play (no refusal bit); independent of the gesture and board keys.
+    {
+        Check(!LabConfig{}.partner_seat_gun && !LabConfig{}.partner_seat_gun_given && !Lab("").partner_seat_gun, "seat gun defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_seat_gun && !profile.partner_seat_gun_given && profile.invalid_values == 0,
+                  "the gun profile leaves the seat gun off in lab and play");
+            const auto named = Lab(gun + mode + "partner_seat_gun=1\n");
+            Check(named.partner_seat_gun && named.partner_seat_gun_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0 && named.partner_native_gesture == profile.partner_native_gesture &&
+                      named.partner_ride_board == profile.partner_ride_board,
+                  "a named seat gun runs in lab and play and leaves the gesture and board defaults");
+            const auto off = Lab(gun + mode + "partner_seat_gun=0\n");
+            Check(!off.partner_seat_gun && off.partner_seat_gun_given, "a named seat gun 0 stays off");
+        }
+        const auto later = Lab("enabled=1\nrole=host\npartner_seat_gun=1\npartner_seat_gun=0\n");
+        Check(!later.partner_seat_gun, "a later 0 turns the seat gun off");
+        for (const char* value : {"2", "-1", "", "hold", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_gun=") + value + "\n");
+            Check(!invalid.partner_seat_gun && !invalid.partner_seat_gun_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid seat gun value refuses");
+        }
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

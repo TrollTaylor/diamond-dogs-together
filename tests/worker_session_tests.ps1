@@ -179,6 +179,10 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # G5: the other ride hides unrealize body 1 (lab only, default 0)
     'partner_native_unrealize_all=1','partner_native_unrealize_all=0','guest:partner_native_unrealize_all=1','host:partner_native_unrealize_all=0',
+    # G2: the read-only back-seat aim census (lab only, default 0)
+    'partner_seat_aim=1','partner_seat_aim=0','guest:partner_seat_aim=1','host:partner_seat_aim=0',
+    # M7: the seat gun (lab and play, default 0)
+    'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
     # 0.13.6 online-net-epoch: the link-session counter skew (lab and the play rehearsal only)
@@ -204,6 +208,8 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_gesture_lever=2','partner_gesture_lever=','partner_gesture_lever=on','both:partner_gesture_lever=1','partner_gesture_levers=1','partner_native_gesture_lever=1',
     'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
     'partner_native_unrealize_all=2','partner_native_unrealize_all=','partner_native_unrealize_all=on','both:partner_native_unrealize_all=1','partner_native_unrealize=1',
+    'partner_seat_aim=2','partner_seat_aim=','partner_seat_aim=on','both:partner_seat_aim=1','partner_seat_aims=1',
+    'partner_seat_gun=2','partner_seat_gun=','partner_seat_gun=on','both:partner_seat_gun=1','partner_seat_guns=1',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
     'link_session_skew=','link_session_skew=1000','link_session_skew=-1','link_session_skew=on','both:link_session_skew=2','link_session_skews=2')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
@@ -227,6 +233,8 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting host partner_gesture_lever=1','labsetting partner_gesture_lever=0',
         'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
         'labsetting partner_native_unrealize_all=1','labsetting guest partner_native_unrealize_all=1','labsetting host partner_native_unrealize_all=0',
+        'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
+        'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
@@ -234,7 +242,8 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
 foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
-        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1',
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1','labsetting partner_seat_aim=on',
+        'labsetting both partner_seat_aim=1','labsetting partner_seat_gun=on','labsetting both partner_seat_gun=1',
         'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
         'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
