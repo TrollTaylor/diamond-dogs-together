@@ -567,8 +567,12 @@ int main() {
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(profile.partner_seat_shot && !profile.partner_seat_shot_given && profile.invalid_values == 0 && profile.play_refused == 0,
-                  "the gun profile turns the seat shot on in lab and play");
+            // Lab only by default (review of 8.33: the play rehearsal 41dcbf22 fired on no line shown to hit the jeep in stock
+            // and the discriminating play run could not run): on with the gun profile in lab, off in play unless named.
+            const bool play = std::string(mode) == "mode=play\n";
+            Check(profile.partner_seat_shot == !play && !profile.partner_seat_shot_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0,
+                  "the gun profile turns the seat shot on in lab, off in play (not named)");
             const auto named = Lab(gun + mode + "partner_seat_shot=1\n");
             Check(named.partner_seat_shot && named.partner_seat_shot_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0 && named.partner_ride_board == profile.partner_ride_board,
