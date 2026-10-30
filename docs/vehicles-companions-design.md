@@ -1613,13 +1613,13 @@ window after the restore read `within=0`).
 | Fresh record only | [O] the host's first state line in each run and the line right after its re-call read `byte=0; ...; life=nil; max=nil` (the new dog's record not yet updated), then `byte=159; life=10000`; the guest's arm after each reload reads the reloaded copy's fresh record (`life=10000; state=0`) | `7fe2845e`, `cc2e15d2` |
 | Hold under guard fire (`link_sim`) | **Pass** [O] (`9fa48400`). The copy armed with the host's byte in the E19 shield (1 hit dropped), then `link_sim on` (212088794): `step=held; reason=hold; byte=0` 83 ms later (receipt arm 2, native `dog_guard::Admit` grant hold, follow 0) and `dog_state` `reason=hold; armed=1; life=10000; state=0` twice; the guard kept firing and the hold kept dropping: drops 4, 8, 11, 14 in `step=drops` lines and 16 when the guard went off about 25 s later, attacker 1116, attack 333, `life=10000; state=0`, no Dead. FRAME: the copy standing over the prone guest with the guard aiming at them on the guest's screen during the hold (`9fa4-guest-hd-held-1`, `-2`); the host's screen shows the prone guest under fire (`9fa4-host-hd-held-1`; the copy exists only on the guest's PC). That a **real** unpair or link drop takes this path is [I]: the lever skips only the guard module's link test (`W.paired`, `eff`) and its host-state sources; the unpair itself is covered by the fixture and `dog_guard_tests` (no worker lever cuts the world link, no run lost it) | `9fa48400` |
 | Unknown host state at a death (`link_sim`) | **Pass** [O] (`9fa48400`). `guard off` under `link_sim` (212113667), the copy still in the line of fire: a real death 71.5 s later (`Dead; att=other`) -> `step=dead; host=unknown; byte=0; armed=0` -> one `step=vars; why=death` (+52 ms) -> **nothing for 5.1 s** (no send-away, no reload, no mirror) -> `link_sim off` -> `step=host_known; host=alive; ms=5171` -> `step=delete` in the same tick -> `step=reload; n=1` -> `reconcile; via=load` -> `step=back; ms=6172`; `kdog` on both, `dog_state` `life=10000; state=0; restores=1`. FRAME: 1.5 s after the death the stock retreat lifts the copy away on the guest's screen (`9fa4-guest-hd-unk-dead`), 4.5 s after it the copy is gone and the module has not sent it away (`9fa4-guest-hd-unk-wait`); the host's screen shows no message (`9fa4-host-hd-unk-dead`) and later its dog beside Snake (`9fa4-host-hd-back`). The guest's frames after the restore face away from the copy (`back` rests on the logs) | `9fa48400` |
-| Heroism at a copy's death (new) | [O] (`9fa48400`): when the guest's copy dies on the guest's PC the stock game shows "D-Dog Near Death [Heroism -30]" there (`9fa4-guest-hd-unk-dead`; not on the host's screen). So every death the guard cannot see (the restore cases) costs the guest's PC 30 heroism; whether that reaches the guest's own save is [U] (D8 (b) restores the buddy vars only). The mirrored down shows it on both PCs (`cc2e-*-rv-down`), where the host's dog really fell | `9fa48400`, `cc2e15d2` |
+| Heroism at a copy's death (new) | [O] (`9fa48400`): when the guest's copy dies on the guest's PC the stock game shows "D-Dog Near Death [Heroism -30]" there (`9fa4-guest-hd-unk-dead`; not on the host's screen). So every death the guard cannot see (the restore cases) costs the guest's PC 30 heroism; whether that reaches the guest's own save is [U] (D8 (b) restores the buddy vars only). The mirrored down shows it on both PCs (`cc2e-*-rv-down`), where the host's dog really fell. **Since 8.14 (user decision 2026-10-29) the guest gets it back** | `9fa48400`, `cc2e15d2` |
 | Host-side pass-through | [I], answered from the code: `ProcessHook` drops only when `count && index==0 && Armed(...)`; nothing in it depends on the role, and a host can never arm (`dog_guard::Admit` returns `role` for an arm from a host, `Control` arms only `q.guest && q.arm`), so on the host's PC every hit takes the same `originalProcess` branch that the guest's unarmed hook took to a real death (`7fe2845e`, `cc2e15d2`, `9fa48400`). The host's dog took no real hit in any run (its byte 159 throughout). With the key off nothing is installed on either PC (`19e438fe`) | `7fe2845e`, `cc2e15d2`, `9fa48400`, `19e438fe` |
 | Log caps per mission | [I] code read (`Disarm` resets them); no run reached a second mission | - |
 
 **Still open after the fixes:** the hold and the unknown-state restore are proven at runtime only through the lab
 lever (`9fa48400`); a real link loss or unpair with the dog held was never run (no worker lever cuts the world link);
-the guest's PC loses 30 heroism at each death of the copy (above; whether it reaches the guest's save [U]);
+the guest's PC loses 30 heroism at each death of the copy (above; given back since 8.14);
 the host's dog never took a real hit with the hooks installed; the guard's drop, the follow, the restore and the
 re-call still have no play rehearsal under the key (play refuses their levers, and natural guard fire at the dog has
 not happened in play); which native code sets the kill flag in a stock death, and whether undoing one the module did
@@ -1884,6 +1884,95 @@ line on either copy. Link: RTT 175-189 ms, loss up to 14.2 %. Slices (cut at the
 Not in this smoke: D12 (its play rehearsals are `f729d7f4` and `33a7fa6e`), any death of a dog copy, the guard under
 the key, a mission end, D15. No defect found.
 
+### 8.14 Heroism at a copy's death: given back on the guest (2026-10-29, branch `wp/dog-heroism`)
+
+The user approved it on 2026-10-29: when the guest's copy of the host's D-Dog dies on the guest's PC (8.10, `9fa48400`:
+"D-Dog Near Death [Heroism -30]" on the guest's screen only; `f729d7f4`: "(Heroism -60)" and "Bond with D-Dog Has
+Decreased Significantly" for the guest's own C4), the guest's save must not pay for a death that is not real. Built on
+`wp/dog-heroism` (from `dev/oct7-continue` `01fd055`) behind M1's key `companion_host_owned`; Lua only, guest only.
+
+**Static reads (capstone on `085c2f82...bb45`, read-only; no Ghidra/REA session)** [O]:
+- **No Lua.** The extracted `TppHero.lua` has no buddy entry; the penalty is native.
+- **Where it is applied.** The dog's life update (`0x140CA4C40`, 8.9) on the change to state 2 (`0x140CA4FF6`) reads the
+  last attacker (`[record+0x60]` slot `0xD0`), sets *by player* when it is a player object (`id != 0xFFFF` and
+  `(id & 0xFE00) == 0`, ids 0..511), calls the buddy service's slot `0x250` with (BuddyType 2 = DOG, by player)
+  (`0x140CA504E`), builds the announce from the service's `+0xA4` (the penalty: the "[Heroism -30]" of the notice) and
+  then posts `Dead` (`0x140CA5105`). The service is the static `BuddyServiceImpl` at `0x142C29030` (vtable
+  `0x1422BC070`, constructor `0x140A4D6B0`; the Lua `TppBuddyService` bindings call the same object).
+- **The penalty** (slot `0x250` `0x140A4F6A0` jumps to slot `0x258` = `0x140A4F440`): returns at once when the type's bit
+  in `deadBuddyType` (vars `+0x2D6C`, slot `0x3C0`) is already set; else heroism 60 and demon points 150 (types 4 and 5:
+  30 and 75), halved heroism and **no** demon points when no player made the kill; the bond of the type's
+  BuddyFriendlyType (slot `0x408`: HORSE 2, DOG 1, QUIET 0) changes by -100 raw (a player's kill) or -20 raw (slot
+  `0x420`, `vars.buddyFriendlyPoint` u16[8] at `+0x2DE4`, clamped 0..1000; `GetFriendlyPoint` returns raw / 10, so -10 or
+  -2 bond points); heroism `[MBM+0xA28]` loses min(penalty, the total `[+0xA20]+[+0xA28]`) through the same virtual
+  `+0x168` that the Lua `SubHeroicPoint` / `AddHeroicPoint` use; demon points `[MBM+0xA38]` grow; the penalty is kept
+  at `+0xA4`; then the type's `deadBuddyType` bit is set (slot `0x3C8`: the 0 -> 4 seen since E19). So for D-Dog: **30
+  heroism and 2 bond points** for a guard's kill, **60 heroism, 10 bond points and +150 demon points** for a player's
+  kill (the guest's own C4 in `f729d7f4`, or the host's body, player 1 on the guest's PC).
+- **The Lua side:** `TppMotherBaseManagement.GetHeroicPoint` (`0x140A8E550`, the clamped total), `AddHeroicPoint`
+  (`0x140A87EB0`, `+0xA28` += n), `GetOgrePoint` / `SubOgrePoint` (`0x140A914B0` / `0x140AB1450`, `+0xA38`);
+  `TppBuddyService.Get/Set/AddFriendlyPoint` (`0x140A51170`, `0x140A54450`, `0x140A4DA70`; points x 10 = raw).
+- **Prevent or give back.** The only Lua-reachable gate is the `deadBuddyType` bit, and a set DOG bit stops every
+  reload (8.2, `dc761c98`) and makes the stock scripts treat D-Dog as dead (`IsDeadBuddyType`), so it cannot be kept set
+  on a live copy, and a death the guard cannot see cannot be foreseen. The notice itself is posted by the same native
+  code. So the guest **gives the amount back** right after the death; the notice still shows.
+
+**Built** (`85ba7ec`, `159ae49`, `e905f99`; fixtures written first: `world_companion_guard_lua_check` failed its check 116
+before the give-back and its check 143 before `kill_own`, red logs in the session scratch `next2/dog/red-lua.log`,
+`red-lua2.log`; 115 -> 149 checks):
+- `lua/coop/world_companion_guard.lua`, guest only, while `C.applies()` (the key on both PCs, the guest's dog being
+  the host's copy): every 100 ms tick samples heroism (`GetHeroicPoint`), demon points (`GetOgrePoint`), the raw dog
+  bond (`vars.buddyFriendlyPoint[BuddyFriendlyType.DOG]`) and the DOG bit; a sample in which the bit has just appeared
+  (the penalty landed, its `Dead` not yet seen) keeps the one before it (for 1 s at most). At each `Dead` of 9728 it
+  compares that sample with the values now and gives back what was lost, **never more than the stock amount** (30
+  heroism and 20 raw bond, or 60, 100 raw and the 150 demon points for a player's kill, from the attacker id; with no
+  id, at most the player amounts), and nothing when the bit was already set before the death (the stock gate: the
+  game took nothing): `AddHeroicPoint{heroicPoint=n}`, the raw bond written back, `SubOgrePoint{ogrePoint=n}`. Once
+  per death (a repeated `Dead` within 1 s is the same death); a penalty that lands after the `Dead` is settled at the
+  next tick, and nothing lost within 1 s is logged once (`step=none`). Every copy death counts: the restore cases,
+  an unknown host state, and the mirrored down (the host's dog really fell; the host pays on its own PC, the guest's
+  save does not pay for the host's dog). Log `event=dog_hero;role=guest;step=given;by=other|player|unknown;att=<id>;
+  h=<before>:<after the penalty>:<readback>;b=...;o=...;give=<heroism>,<raw bond>,<demon points>;ms=..;n=<death>`
+  (`step=none`, `step=no_sample`, `step=error`), within W.log's 160 bytes.
+- `lua/coop/world_sync.lua` hands the raw attacker id to `W.companionHurt` (the stock rule's player test needs the id).
+- Lab lever `companion_lab hero` (both roles; also in play: read only): `hero;role=..;heroic=..;ogre=..;bond=..;
+  bond_raw=..;dead_bit=..;applies=..;deaths=<given back this mission>`.
+- Lab lever `companion_lab kill_own` (guest, lab only; refused while the session is host-owned, where `kill_mirror` is
+  the lever): the native kill flag on the guest's **own** dog through a lab op with arm 0 (`dog_guard::Admit` grants a
+  lab op without an arm while linked), for the control below.
+- Nothing changes on the host or with the key off (the shipped default), and nothing on the wire (protocol section 15).
+
+**Runs** (hidden worker, loopback, research build, native gun stage, copied saves, low graphics; every run closed with
+the baseline restored and the real saves unchanged; slices cut at the session offsets of both copies'
+`script-observer.log`, no other run appended; archived under `%USERPROFILE%\mgs-coop-run-archive\next2\<run>` with the
+worker's probe folder; frames as JPEG in the session scratch `complete/frames/dog/<run4>-<role>-<label>.jpg`, each
+looked at):
+
+| Run | Scenario | What it is for |
+|---|---|---|
+| `c7fdfdbf` | `companion-dog-heroism.txt` (`159ae49`), lab, `companion_host_owned=1`, host `afgh-ledge`, guest `afgh-horse` | three copy deaths with readbacks on both copies: the lab kill, the host's dog down (mirrored), a real death by guard fire with the guard off; **every expectation met** (ExpectFailures empty) |
+| `a7f00043` | `companion-dog-heroism-off.txt` first version (`159ae49`), lab, both keys off, `africa-jeep` | the control by the guest's own C4: **failed** (two expectations: no `Dead`). The C4 went off near the host's body, about 18 m from the guest, not at the dog: the host's dog (and the guest's, held at its pose by the legacy mirror) had moved away (both read at the same spot about 30 m south afterwards), and the blast on the guest's PC reached the host through the friendly hit (`friendly_hit=owner; damage_milli=5500000; applied=1` on the host, the host downed despite godmode: "WOUNDED, Crawl to cover", `a7f0-host-hc-blast-02`). Nothing of this branch ran (`dog_guard=off; reason=key_off` on both, no `dog_hero`); the guest's heroism fell 10 (its own blast injury [I]) |
+| `2243bbc6` | `companion-dog-heroism-off.txt` (`e905f99`), lab, `companion_host_owned=1` on the guest only, `africa-jeep` | the control: the guest's own dog dies by `kill_own` in a session that is not host-owned; **every expectation met** |
+
+| # | Result | Evidence |
+|---|---|---|
+| The lab kill while the host's dog lives | **Pass, both copies** [O]. Guest readback before `heroic=244995; ogre=48950; bond=100; bond_raw=1000; dead_bit=0; applies=1`; `kill_mirror` -> `Dead` 9728 (`att=none`, raw 65535) -> `dog_restore; step=dead; host=alive` and in the next ms `dog_hero; step=given; by=other; att=65535; h=244995:244965:244995; b=1000:980:1000; o=48950:48950:48950; give=30,20,0; ms=0; n=1` (the stock penalty exactly 30 heroism and 20 raw bond, demon points untouched, all back). Guest readbacks right after the death and after `step=back` (2719 ms): `heroic=244995; bond_raw=1000; dead_bit=0; deaths=1`, the same as before. Host readbacks before, after and after the restore: `heroic=244995; ogre=48950; bond_raw=1000` unchanged, no `dog_hero` line on the host in the whole run. FRAME: on the guest's screen the copy lying in the grass beside the host before (`c7fd-guest-hr-before`), carried off by the stock Fulton balloon at +0.3 s (`hr-dead`) and the stock notice "D-Dog Near Death [Heroism -30]" at +1.5 s (`hr-dead-2`: the notice still shows; the heroism is back); on the host's screen at the same moment the host's dog stands beside Snake and no notice shows (`c7fd-host-hr-dead-2`); the copy back beside the host (`c7fd-guest-hr-back`) | `c7fdfdbf` |
+| The host's dog down (mirrored) | **Pass, both copies** [O]. Host `dog_life 0` -> the host's own stock penalty stays: host readback `heroic=244995 -> 244965; bond_raw=1000 -> 980; dead_bit=1` (a host-side death, left alone); the guest's copy follows (`dog_guard=follow; byte=0xc0; kill=1`) -> `Dead` (`att=none`) -> `step=dead; host=down` -> `dog_hero; step=given; by=other; att=65535; h=244995:244965:244995; b=1000:980:1000; ...; n=2` -> guest readback `heroic=244995; bond_raw=1000; deaths=2`, again after the host's re-call (`step=recalled; ms=34134`). FRAME: "D-Dog Near Death [Heroism -30]" and the extraction on both screens (`c7fd-host-hr-down`, `c7fd-guest-hr-down`): the host paid, the guest got it back | `c7fdfdbf` |
+| A real death by guard fire (guard off) | **Pass** [O]. The copy held in the line of fire of an alerted guard with the guard off: `Dead` 9728 `att=other` 62.8 s after `guard off` -> `step=dead; host=alive; armed=0; drops=4` -> `dog_hero; step=given; by=other; att=1206; h=244985:244955:244985; b=1000:980:1000; o=48950:48950:48950; give=30,20,0; ms=0; n=3` -> restore `step=back; ms=2585`; guest readbacks just before `guard off` and after the death and after the restore all `heroic=244985; bond_raw=1000` (`deaths=3`). The guest's heroism had dropped 244995 -> 244985 between the re-call and the shield, and the host's 244965 -> 244955 -> 244945 during the fight: the stock game's own 10-point combat penalties on each PC (their cause, an alert or an injury under godmode, [I]); the give-back measured only the death (its sample was taken within 100 ms before it). FRAME: the notice "D-Dog Near Death [Heroism -30]" on the guest's screen beside the prone guest and the guard (`c7fd-guest-hr-fire-dead`); no notice on the host's (`c7fd-host-hr-fire-dead`, the prone guest under fire) | `c7fdfdbf` |
+| Once per death; the host and the key | [O] three deaths, three `step=given` lines (`n=1..3`), the readback's `deaths` 1, 2, 3; no `dog_hero` line on the host (its own dog's death kept the stock penalty, above); no `step=error`, `event=error` or `viewer_changed` on either copy | `c7fdfdbf` |
+| Control: the guest's own dog keeps the stock penalty | **Pass, both copies** [O]. The host runs without the key (`dog_guard=off; reason=key_off`), the guest with it (`dog_guard=installed`, `dog_guard_code_gate=ok`); without the host's COMPANION signal the guest's peer agreement never forms, so its readback says `applies=0` and its buddy is its own (`kdog`, `vars_type=2`; the legacy mirror holds it at the host dog's pose: `result=target_submitted`). Readbacks before: guest and host `heroic=244985; ogre=48950; bond_raw=1000; dead_bit=0`. `kill_own` -> `kill_own; ready=true; reason=ok; installed=1` -> `dog_guard=lab; op=1; pct=0; kill=1; wrote=1; guest=1` -> `Dead` 9728 (`att=none`) -> guest readbacks right after and 5 s later `heroic=244955; bond=98; bond_raw=980; dead_bit=1; applies=0; deaths=0`: **30 heroism and 20 raw bond lost and not given back**; no `dog_hero` and no `dog_restore` line on either copy; host readbacks `heroic=244985; bond_raw=1000` unchanged. FRAME: the stock notice "D-Dog Near Death [Heroism -30]" on the guest's screen (`2243-guest-hc-dead-2`; the dog itself is out of view behind the host's tree, so the death rests on the log and the notice); none on the host's (`2243-host-hc-dead-2`). Not run: a session with the key off on **both** copies and a death of the guest's dog (no lever reaches its record without the guard installed; the C4 control failed, above): that case is the fixture's (`key off: the guest's own dog's death keeps it`) and the code's (`G.hurt` and the tick return before anything while `C.applies()` is false, and `C.applies()` needs the key) [I] | `2243bbc6` |
+
+**Still open:** play has no rehearsal of the give-back: `companion_host_owned` stays **off in lab and play** (unchanged),
+and under the key play refuses every lever that kills the copy (`kill_mirror`, `guard`, `dog_life`), as it does for
+the rest of D7 (section 9 M2). The by-player branch (60 heroism, 100 raw bond, 150 demon points) is fixture-only:
+none of the three copy deaths had a player attacker (`att=65535` twice, a guard `1206` once) [I from the stock rule].
+Whether the give-back reaches the guest's **save** rests on the stock save of `mbmTppHeroicPoint` and
+`buddyFriendlyPoint` (both saved vars) [I]: no run reached a checkpoint or mission end after a death. The stock play
+counters of heroism added and taken (`mbmPdTotalAddedHeroicPoint` / `...Subtracted...`) both move by the amount
+(the virtual `+0x168` that `AddHeroicPoint` and the penalty share) [I]. The stock notice cannot be suppressed from Lua
+(it is posted by the same native code) and still shows. A death in Mother Base, a fall or drowning were not run; no
+two-PC session.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -2052,8 +2141,11 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     unknown-host-state wait are proven at runtime through the guest's lab lever `link_sim` (`9fa48400`), but a real link
     loss or unpair with the dog held was never run (no worker lever cuts the link; tests only); (6) the host's dog never
     took a real hit with the hooks installed (the host-side pass-through is [I] from the shared code path); (7) each
-    death of the guest's copy costs the guest's PC 30 heroism (stock "D-Dog Near Death", `9fa48400`; whether it
-    reaches the guest's save [U]).
+    death of the guest's copy cost the guest's PC 30 heroism and 2 bond points (stock "D-Dog Near Death", `9fa48400`);
+    since 8.14 the guest gets exactly that back, once per death (lab `c7fdfdbf`: the lab kill, the mirrored down and a
+    guard-fire death, readbacks equal before and after on the guest, the host's own death left to the stock game; the
+    control `2243bbc6`: the guest's own dog in a session that is not host-owned keeps the stock -30); like the rest of
+    D7 it has no play rehearsal (play refuses the levers that kill the copy).
   - **Review fixes (2026-10-29, 8.10; `e38f2f4`, `d413778`, `5ef2470`):** the guard's two slots are installed only on a
     PC running the key (a default play session installs nothing: `19e438fe`, `-Mode play -WanSim bad`, both copies
     `dog_guard=off;reason=key_off;slots=0`); an armed guard is held drop-only through a link loss until the session or
@@ -2391,7 +2483,11 @@ The original questions:
   `buddyCommonFlag`; no new decision is needed for D7 itself. Open for the user: whether lab-only proof of the guard's
   drop, the follow and the restore is acceptable for the play default (play cannot drive those paths), section 9 M2;
   and (found in the resume run `9fa48400`, 8.10) whether the 30 heroism the stock game takes from the guest's PC at
-  each death of the copy (the restore cases) should be given back.
+  each death of the copy (the restore cases) should be given back. **Answered by the user on 2026-10-29: give it
+  back.** Built in 8.14 (`wp/dog-heroism`): under the key the guest gets back exactly the heroism, bond and demon
+  points the stock dying penalty took, once per death, for every death of its copy (the restore cases and, as built,
+  the mirrored down too: the host pays for its own dog on its own PC); the host and a guest whose dog is its own keep
+  the stock game.
 - **D8. The guest's co-op save and the host's buddy:** (a) accept it (the guest's co-op save takes the host's buddy,
   look and relief choices); (b) the guest's own buddy vars are restored around each save write and at the end of the
   session (recommended); (c) restore them only at the end of the session.
@@ -2459,7 +2555,7 @@ here.
 
 | Decision | Built | Play default | Proven | Unproven or for the two-PC session |
 |---|---|---|---|---|
-| D7 (D-Dog on the guest's PC) | Native guard `dog_guard` (two exact vtable slots: the dog's `ProcessDamages` and its life update) plus `lua/coop/world_companion_guard.lua`: the guest's copy drops every hit while armed, follows the host dog's state byte (hurt, asleep, down), is brought back from the host's live state after a death the guard cannot see (about 2.6 s), holds drop-only through a link loss, waits when the host's state is unknown. No new op (the byte rides COMPANION / COMPANION_POSE). Installed only under `companion_host_owned`, on both roles | **Off** (the guard follows `companion_host_owned`, off in lab and play; a default session installs nothing: `19e438fe`, and the combined smoke `a1d7aaa1` [O]) | Lab [O]: E19 passes (`3922cc80`: 50 hits dropped in about 85 s; `7fe2845e`, `cc2e15d2`), the restore (`3922cc80`, `3f69e3b7`, `606048af`, FRAME `606048af` and `cc2e15d2`), the follow (down: "D-Dog Near Death" and the extraction on both screens, `3f69e3b7`, `606048af`; asleep: the STN marker on both, `3f69e3b7`) and the re-call (FRAME `606048af`, `cc2e15d2`), the hold under a simulated link loss (`9fa48400`). Play rehearsals with the key named: `1713b0a1` (passed), `f7033e2e` (no guard fired at the dog) | The guard's drops, the follow, the restore and the re-call in play (play refuses their levers; no guard ever fired at the dog in play); a real link loss [I]; the host-side pass-through [I]; falls, drowning, out of bounds; the 30 heroism the guest's PC loses at each copy death (open question); M1's own gaps keep the key off; two-PC |
+| D7 (D-Dog on the guest's PC) | Native guard `dog_guard` (two exact vtable slots: the dog's `ProcessDamages` and its life update) plus `lua/coop/world_companion_guard.lua`: the guest's copy drops every hit while armed, follows the host dog's state byte (hurt, asleep, down), is brought back from the host's live state after a death the guard cannot see (about 2.6 s), holds drop-only through a link loss, waits when the host's state is unknown, and (8.14, `wp/dog-heroism`) gives the guest back the heroism, bond and demon points each copy death costs it. No new op (the byte rides COMPANION / COMPANION_POSE). Installed only under `companion_host_owned`, on both roles | **Off** (the guard follows `companion_host_owned`, off in lab and play; a default session installs nothing: `19e438fe`, and the combined smoke `a1d7aaa1` [O]) | Lab [O]: E19 passes (`3922cc80`: 50 hits dropped in about 85 s; `7fe2845e`, `cc2e15d2`), the restore (`3922cc80`, `3f69e3b7`, `606048af`, FRAME `606048af` and `cc2e15d2`), the follow (down: "D-Dog Near Death" and the extraction on both screens, `3f69e3b7`, `606048af`; asleep: the STN marker on both, `3f69e3b7`) and the re-call (FRAME `606048af`, `cc2e15d2`), the hold under a simulated link loss (`9fa48400`). Play rehearsals with the key named: `1713b0a1` (passed), `f7033e2e` (no guard fired at the dog) | The guard's drops, the follow, the restore and the re-call in play (play refuses their levers; no guard ever fired at the dog in play); a real link loss [I]; the host-side pass-through [I]; falls, drowning, out of bounds; the heroism give-back (8.14, `wp/dog-heroism`: lab `c7fdfdbf`, control `2243bbc6`) has no play rehearsal and its by-player branch is fixture-only; M1's own gaps keep the key off; two-PC |
 | D11 (the guest's LOADOUT drop) | `world_vehicle_rules.lua`, key `world_loadout_block` (CFG `r[15]` bit 32): the guest's iDroid LOADOUT item is inactive in co-op and refused with a toast (NOTE 13 a 5); by the reviewer's pick the VEHICLES item too (NOTE 13 a 4), whatever `world_relief` says; the host's items are untouched | **On** | FRAME `c0203fdd` (lab, LOADOUT; the toast is logged, the lab HUD is off), `70146170` and `47b95ae7` (play, LOADOUT toast drawn), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: both items refused with both toasts drawn, the host's VEHICLES list opens), again in the combined smoke `a1d7aaa1` | The guest's sortie-prep vehicle with `world_relief` off is still the guest's own (M3, not part of D11); two-PC |
 | D12 (a vehicle the guest destroys) | Key `world_vehicle_break` (bit 8): the guest's unattributed break goes to the host as REQ_VEHICLE_GONE cause 4; the host judges it (the guest within 300 m of the wreck at arrival or now, or the host's copy already badly damaged), refuses it (REJECT 8) when the guest was too far, or at once while the host's own player rides it, holds while D-Dog or a soldier is seated or the position or rate is not clear (REJECT 9 after 120 s), and a host without the key answers REJECT 11. The host wrecks its copy, or removes it with a Despawn while either player is within 15 m (the blast rule, added after the review) | **On** where VEHICLE_GONE runs (30010, 30020) | FRAME `c0203fdd` (lab lever; the host's screen shows the fire and smoke behind the host's body, not the burning jeep), `09333f05` (the ridden refusal), `7762536a` (a seated D-Dog held, then the wreck; a far refusal; the blast measured at 3500 of 7800 life), `f729d7f4` and `33a7fa6e` (play `-WanSim bad`, shipped defaults: the guest's real C4 with the host 8 m away -> Despawn, host life unchanged; with nobody within 15 m -> the wreck, seen intact, burning and burnt on the host's screen). Earlier play `70146170`, `47b95ae7` (the host's frames show the smoke column, not the jeep). 120 m judged near (`0f3f00f1`, logs only) | A soldier-crewed vehicle stays split after the hold (open question for the user); a real launcher or rifle kill at 60-300 m; the 15 m margin is not a measured radius [I]; D-Dog or a buddy near the host's copy at the wreck [U]; multi-hit kills spread over more than about 10 s [I]; two-PC |
 | D13 (the M4 play defaults) | Nothing changed: VEHICLE_GONE and VEHICLE_STATE stay on in play in Afghanistan and Africa; Mother Base and the wreck parity (`world_vehicle_wreck`) stay lab only | **On** (30010, 30020) | The M4 proofs (section 9 M4: `4bbbfde4`, `b31a1b65`, `e44516d7`); in the combined smoke `a1d7aaa1` a jeep the guest drove with the host in a back seat stayed parked where the guest left it, FRAME | Mother Base in play; two-PC |

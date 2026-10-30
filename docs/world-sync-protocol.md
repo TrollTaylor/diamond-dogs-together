@@ -1068,6 +1068,13 @@ and once the host's dog is down, the copy's own stock death. Review 2026-10-29 (
 level or another epoch) an armed lease is held drop-only, with no byte followed and no lab op, until the session or the
 mission ends, and a hold never starts the guard; the reply carries the record only when under a second old.
 
+**Heroism at a copy's death (2026-10-29, `docs/vehicles-companions-design.md` 8.14).** Under `companion_host_owned` the
+guest gives back the heroism, bond and demon points the stock dying penalty takes at each death of its copy of the
+host's dog (`world_companion_guard.lua`, log `event=dog_hero`, lever `companion_lab hero`). **No wire change and no
+receipt change:** it reads and writes only the guest's own vars and Mother Base points, so a 0.14.4 partner (host or
+guest) is unaffected and needs nothing; with a 0.14.4 host the give-back still runs on a new guest whenever the key's
+peer agreement holds (`C.applies`). The observer now hands the raw attacker id to `W.companionHurt` (local Lua only).
+
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
 | 0x27 | BUDDY_STATE | H->G | sequence, kind, present, x/y/z mm, heading mrad, sender tick (+ native age ms) | world | 24 |
