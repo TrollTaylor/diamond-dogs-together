@@ -743,8 +743,9 @@ struct LabConfig {
     bool world_loadout_block = false;
     bool world_loadout_block_given = false;
     // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md sections 8.14 and 8.15), lab and
-    // play (no refusal bit), off in lab and play unless named (the review of 2026-10-29 turned both play
-    // defaults off again):
+    // play (no refusal bit), off in the lab unless named; in play world_vehicle_crew is on unless named (lab
+    // FRAME c0a385a5, play rehearsal c6db67b8) and world_vehicle_damage off unless named (the review of
+    // 2026-10-29 turned it off again):
     // world_vehicle_crew=0|1 (D12, bit 64; lua/coop/world_vehicle_rules.lua): a guest destruction the
     // host judged plausible whose only hold is an NPC crew (soldiers, not a player, D-Dog or a buddy)
     // is applied at once (the host's copy wrecked: the engine's blast decides the crew), held only

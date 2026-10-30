@@ -1514,7 +1514,7 @@ int main() {
         }
         // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md 8.14): world_vehicle_crew (D12, a crewed
         // vehicle wrecked at once, r[15] bit 64) and world_vehicle_damage (the guest's vehicle damage report, bit 128). Lab
-        // and play (no refusal bit), off in lab and play unless named until each has its FRAME proof and play rehearsal.
+        // and play (no refusal bit), off in the lab unless named; in play see the defaults below.
         {
             struct Key { const char* name; bool mgscoop::LabConfig::*on; bool mgscoop::LabConfig::*given; };
             const Key keys[] = {{"world_vehicle_crew", &mgscoop::LabConfig::world_vehicle_crew, &mgscoop::LabConfig::world_vehicle_crew_given},
@@ -1534,13 +1534,15 @@ int main() {
                 Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
                       (n + "=1 parses in play with no refusal bit").c_str());
             }
-            // Play defaults (review of 2026-10-29): both off in play unless named again. world_vehicle_damage: its fire gate
-            // was never run against live AI fire (every damage run after 846c1147 cleared the guards first), and each
-            // copy's guards hit vehicles on their own copy. world_vehicle_crew: the per-type blast distance (50 m for every
-            // type but the light vehicles, after ac0f7656's 25 m knockdown) changed the path its play rehearsals proved.
+            // Play defaults (review of 2026-10-29). world_vehicle_damage off in play unless named: its fire gate was never
+            // run against live AI fire (every damage run after 846c1147 cleared the guards first), and each copy's guards
+            // hit vehicles on their own copy. world_vehicle_crew on in play unless named again, with the blast distance by
+            // type (50 m for every type but the light vehicles, after ac0f7656's 25 m knockdown): lab FRAME c0a385a5 (the
+            // crew_near hold and the wreck once clear, both screens) and the play rehearsal c6db67b8 (-WanSim bad, the
+            // guest's real C4, the hold, then the wreck, frames on both copies).
             Check(!vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
                   "world_vehicle_damage defaults off in play");
-            Check(!vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults off in play");
+            Check(vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults on in play");
             const auto crewOff = Lab(play + "world_vehicle_crew=0\n");
             Check(crewOff.mode == mgscoop::LabMode::play && !crewOff.world_vehicle_crew && crewOff.world_vehicle_crew_given,
                   "a named world_vehicle_crew=0 keeps it off in play");

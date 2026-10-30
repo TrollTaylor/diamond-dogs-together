@@ -3,7 +3,7 @@
 -- world_vehicle_rules.lua; it needs VEHICLE_GONE (world_vehicle.lua) and VEHICLE_STATE (world_vehicle_state.lua).
 -- VEHICLE_STATE writes the host's body life over the guest's copy, so damage the guest did to its own copy short of a
 -- destruction was undone at the host's next state (run 4bbbfde4: 1602 back to 2270). With lab.ini world_vehicle_damage=1
--- (CFG r[15] bit 128; lab and play, off in both unless named) on both copies, wherever VEHICLE_STATE runs:
+-- (CFG r[15] bit 128; lab and play, off in both unless named: the review of 2026-10-29) on both copies, wherever VEHICLE_STATE runs:
 --   guest: reads its copy's body life (VEHICLE_STATE's native read, the pool every TICK_MS) and keeps, per vehicle, the
 --          life it last agreed with (its first read, any raise, every life VEHICLE_STATE wrote or found, each report). A
 --          drop below that goes to the host as VEHICLE_DAMAGE (op 58: seq, id, locator hash, type, flags 1 the guest

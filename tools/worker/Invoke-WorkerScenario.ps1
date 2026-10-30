@@ -162,7 +162,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    the decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; off in the lab unless named,
                                    on in play unless named):
                                    world_vehicle_break=0|1 (D12), world_vehicle_credit=0|1 (D14), world_loadout_block=0|1 (D11);
-                                   the vehicle fixes of 2026-10-29 (lab and play, off unless named): world_vehicle_crew=0|1 (D12, a
+                                   the vehicle fixes of 2026-10-29 (off in the lab unless named; in play crew on, damage off): world_vehicle_crew=0|1 (D12, a
                                    crewed vehicle wrecked at once), world_vehicle_damage=0|1 (the guest's vehicle damage report);
                                    M1: companion_host_owned=0|1, the host's buddy is the session's companion (lab and
                                    play, default 0; docs/vehicles-companions-design.md 6.1);
