@@ -65,6 +65,9 @@ bool Installed() noexcept;
 const char* InstallRefusal() noexcept;
 // Both call sites still call our stubs (the driver checks it every tick).
 bool PatchLive(const void* base) noexcept;
+// Review R5: site B owns the two phase-1 immediates only while its call is ours. Once site B is no longer
+// live, the driver tick calls this: both immediates go back to the stock 2 (true when one was written).
+bool RestorePhaseOneIfBLost(const void* base) noexcept;
 // The driver tick's policy word (Pack); 0 = off.
 void Publish(std::uint64_t policy) noexcept;
 std::uint64_t Published() noexcept;

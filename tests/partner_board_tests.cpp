@@ -587,6 +587,23 @@ void TestSeatOneInstall() {
         img.base[0x1251835] = 1;
         Check(pb::detail::VerifyImage(img.base, img.span, mismatch) == nullptr, "a phase-1 immediate at 1 still verifies");
         img.base[0x1251835] = 2;
+        // Review R5: the owned bytes verify only in one of their two states.
+        img.base[0x1251895] = 3;
+        Check(Same(pb::detail::VerifyImage(img.base, img.span, mismatch), "bytes") && mismatch == 0x125188e,
+              "a phase-1 immediate that is neither 1 nor 2 refuses");
+        img.base[0x1251895] = 0;
+        Check(Same(pb::detail::VerifyImage(img.base, img.span, mismatch), "bytes"), "an immediate of 0 refuses");
+        img.base[0x1251895] = 2;
+        // Review R5: site B lost while a steered call left the immediates at 1: the tick puts them back to 2.
+        img.base[0x1251835] = 1;
+        img.base[0x1251895] = 1;
+        Check(!pb::RestorePhaseOneIfBLost(img.base) && img.base[0x1251835] == 1, "site B live: the immediates stay site B's");
+        std::uint32_t saved = img.Rel(c::board_b_site);
+        img.base[c::board_b_site + 1] ^= 1;
+        Check(pb::RestorePhaseOneIfBLost(img.base) && img.base[0x1251835] == 2 && img.base[0x1251895] == 2,
+              "site B lost: both immediates back to the stock 2");
+        Check(!pb::RestorePhaseOneIfBLost(img.base), "once: nothing left to restore");
+        std::memcpy(img.base + c::board_b_site + 1, &saved, 4);
         pb::detail::ResetForTest();
     }
     {
@@ -601,6 +618,19 @@ void TestSeatOneInstall() {
               "the board installs, seat 1 does not");
         Check(img.base[0xB79A43] == 0x75 && Logged("partner_board=seat_one; result=refused; reason=bytes; front=0; cab=1;"),
               "the remap is untouched and the refusal is logged");
+        pb::detail::ResetForTest();
+    }
+    {
+        // Review R5: the remap opcode is owned in two states only (jne 0x75, jmp 0xEB).
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        pb::SeatOpts front{};
+        front.front = true;
+        img.base[0xB79A43] = 0x74;
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log, front) == nullptr && !pb::SeatOne(pb::LiveSeatOpts()) &&
+                  img.base[0xB79A43] == 0x74 && Logged("partner_board=seat_one; result=refused; reason=bytes;"),
+              "a remap opcode that is neither jne nor jmp refuses seat 1");
         pb::detail::ResetForTest();
     }
     {
@@ -676,6 +706,37 @@ void TestRace() {
     pb::detail::ResetForTest();
 }
 
+// Review R8: the MGS_COOP_BOARD_SEAT_V1 request parser (game_script_observer.cpp SelectBoardSeatReceipt).
+pb::SeatRequest Req(const char* text) { return pb::ParseSeatRequest(text, std::strlen(text)); }
+void TestSeatRequest() {
+    Check(Req("poll").cmd == pb::SeatCmd::poll && Req("clear").cmd == pb::SeatCmd::clear, "poll and clear");
+    pb::SeatRequest r = Req("deny 25608 3000");
+    Check(r.cmd == pb::SeatCmd::deny && r.vehicle == 25608 && r.ms == 3000, "deny <vehicle> <ms>");
+    r = Req("grant 26111 5000");
+    Check(r.cmd == pb::SeatCmd::grant && r.vehicle == 26111 && r.ms == 5000, "grant <vehicle> <ms> (the top id, the cap)");
+    r = Req("deny 25600 1");
+    Check(r.cmd == pb::SeatCmd::deny && r.vehicle == 25600 && r.ms == 1, "the first id, 1 ms");
+    r = Req("hold 2000");
+    Check(r.cmd == pb::SeatCmd::hold && r.ms == 2000 && r.vehicle == pb::kVehicleUnknown, "hold <ms>");
+    r = Req("hold 0");
+    Check(r.cmd == pb::SeatCmd::hold && r.ms == 0, "hold 0 clears");
+    const char* bad[] = {"", "pol", "polls", "poll ", " poll", "clear 1", "deny", "deny 25608", "deny 25608 ", "deny 25608 3000 ",
+                         "deny 25608 3000x", "deny 25608 3000 1", "deny  25608 3000", "deny 25608  3000", "deny 25599 3000",
+                         "deny 26112 3000", "deny 25608 0", "deny 25608 5001", "deny -25608 3000", "deny +25608 3000",
+                         "deny 25608 -1", "deny 0x6408 100", "deny 25608 99999999999", "deny 4294992904 100", "grant 25608 0",
+                         "grant 25608", "hold", "hold 5001", "hold -1", "hold 1 2", "HOLD 100", "deny 25608 3000\n"};
+    for (const char* b : bad) {
+        if (Req(b).cmd != pb::SeatCmd::bad) {
+            std::fprintf(stderr, "accepted: '%s'\n", b);
+            Check(false, "a malformed request is refused");
+        }
+    }
+    Check(pb::ParseSeatRequest(nullptr, 4).cmd == pb::SeatCmd::bad, "no text");
+    Check(pb::ParseSeatRequest("poll", 3).cmd == pb::SeatCmd::bad, "the length is the request's (no NUL needed)");
+    char unterminated[4] = {'p', 'o', 'l', 'l'};
+    Check(pb::ParseSeatRequest(unterminated, 4).cmd == pb::SeatCmd::poll, "an unterminated buffer");
+}
+
 void TestSeatOneLocalPassenger() {
     Memory m = Passenger();
     Lookup l;
@@ -726,6 +787,7 @@ int main() {
     TestSeatOneInstall();
     TestSeatOneLocalPassenger();
     TestRace();
+    TestSeatRequest();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);
     return 0;

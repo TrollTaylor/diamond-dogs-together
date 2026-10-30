@@ -252,10 +252,13 @@ std::size_t MaskedOperand(std::uintptr_t block) noexcept {
     if (block == c::board_b_block_rva) return c::board_b_site + 1 - c::board_b_block_rva;
     return static_cast<std::size_t>(-1);
 }
-// M6: the bytes site B and the seat-one install own (either value is ours): the two
-// phase-1 immediates and the remap's jne/jmp opcode.
-bool SeatOneByte(std::uintptr_t rva) noexcept {
-    return rva == c::board_seat1_pass_rva + 1 || rva == c::board_seat1_phase_rva + 1 || rva == c::board_remap_rva + 3;
+// M6: the bytes site B and the seat-one install own: the two phase-1 immediates (stock 2 or
+// our 1) and the remap's opcode (stock jne 0x75 or our jmp 0xEB). Review R5: only those two
+// values verify; anything else at an owned byte is a foreign change. -1: not an owned byte.
+int SeatOneByteOk(std::uintptr_t rva, unsigned char b) noexcept {
+    if (rva == c::board_seat1_pass_rva + 1 || rva == c::board_seat1_phase_rva + 1) return b == kPhaseOneStock || b == kPhaseOneSeatOne;
+    if (rva == c::board_remap_rva + 3) return b == 0x75 || b == 0xEB;
+    return -1;
 }
 
 bool SiteLive(std::uintptr_t base, std::uintptr_t site, std::uintptr_t next_ip, const void* stub) noexcept {
@@ -293,8 +296,8 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
         __try {
             for (std::size_t i = 0; i < site->size && same; ++i) {
                 if (i >= skip && i < skip + 4) continue;
-                if (SeatOneByte(site->rva + i)) continue;
-                same = image[site->rva + i] == site->bytes[i];
+                const int owned = SeatOneByteOk(site->rva + i, image[site->rva + i]);
+                same = owned >= 0 ? owned == 1 : image[site->rva + i] == site->bytes[i];
             }
         } __except (ReadFilter(GetExceptionCode())) {
             return "read";
@@ -367,9 +370,8 @@ const char* InstallSeatOne(std::size_t span) noexcept {
             for (std::size_t i = 0; i < site->size && same; ++i) {
                 const std::uintptr_t at = site->rva + i;
                 const unsigned char b = image[at];
-                if (at == c::board_seat1_pass_rva + 1 || at == c::board_seat1_phase_rva + 1) same = b == kPhaseOneStock || b == kPhaseOneSeatOne;
-                else if (at == c::board_remap_rva + 3) same = b == 0x75 || b == 0xEB;
-                else same = b == site->bytes[i];
+                const int owned = SeatOneByteOk(at, b);
+                same = owned >= 0 ? owned == 1 : b == site->bytes[i];
             }
         } __except (ReadFilter(GetExceptionCode())) {
             return "read";
@@ -494,6 +496,23 @@ bool PatchLive(const void* base) noexcept {
     const auto b = reinterpret_cast<std::uintptr_t>(base);
     if (!g_installed || !b) return false;
     return SiteLive(b, c::board_a_site, c::board_a_next_ip, g_stub_a) && SiteLive(b, c::board_b_site, c::board_b_next_ip, g_stub_b);
+}
+
+// Review R5: without site B nothing resets the immediates a steered call left at 1, and a stock
+// right-door driver would then become a passenger of an empty vehicle. Called from the driver tick
+// only while site B is not live (no wrapper call can write them then): back to the stock 2.
+bool RestorePhaseOneIfBLost(const void* base) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    if (!g_installed || !b || b != g_base || !g_limit) return false;
+    if (SiteLive(b, c::board_b_site, c::board_b_next_ip, g_stub_b)) return false;
+    bool changed = false;
+    const std::uintptr_t sites[2] = {c::board_seat1_pass_rva, c::board_seat1_phase_rva};
+    for (const std::uintptr_t rva : sites) {
+        const unsigned char imm = reinterpret_cast<const volatile unsigned char*>(b + rva)[1];
+        if (imm == kPhaseOneSeatOne) changed = true;
+    }
+    if (!changed) return false;
+    return SetPhaseOneLimitLive(kPhaseOneStock);
 }
 
 void Publish(std::uint64_t policy) noexcept { g_policy.store(policy, std::memory_order_release); }

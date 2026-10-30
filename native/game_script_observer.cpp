@@ -1010,7 +1010,13 @@ const char* PartnerBoardInstall(void*) noexcept {
     }
     return why;
 }
-bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
+bool PartnerBoardLive(void*) noexcept {
+    if (!game_base) return false;
+    const bool live = mgscoop::partner_board::PatchLive(game_base);
+    // Review R5: site B lost with a phase-1 immediate left at 1 (seat 1): back to the stock 2.
+    if (!live && mgscoop::partner_board::RestorePhaseOneIfBLost(game_base)) Log("partner_board=phase_one_restored; reason=site_b_lost\r\n");
+    return live;
+}
 void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
 void PartnerBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { mgscoop::partner_board::ReadStats(out); }
 bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board::LocalPassenger& out) noexcept {

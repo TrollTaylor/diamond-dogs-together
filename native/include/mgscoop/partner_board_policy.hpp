@@ -237,6 +237,74 @@ inline bool RaceDenied(std::uint16_t deny_vehicle, std::uint32_t deny_until, std
     return deny_vehicle != kVehicleUnknown && vehicle == deny_vehicle && static_cast<std::uint32_t>(deny_until - now_ms) <= kRaceDenyMaxMs;
 }
 
+// The MGS_COOP_BOARD_SEAT_V1 request (game_script_observer.cpp SelectBoardSeatReceipt; review R8: a pure,
+// tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>,
+// single spaces, decimal digits only, nothing after the last number. vehicle 25600..26111 (a TppVehicle2
+// id); deny / grant ms 1..kRaceDenyMaxMs; hold ms 0..kRaceDenyMaxMs (0 clears the hold).
+enum class SeatCmd : std::uint8_t { bad, poll, clear, deny, grant, hold };
+struct SeatRequest {
+    SeatCmd cmd = SeatCmd::bad;
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint32_t ms = 0;
+};
+namespace detail {
+// One decimal number of 1..10 digits from p up to end or the next space (p then points there); false on
+// anything else (an empty field, a sign, a non-digit, a value above 0xFFFFFFFF).
+inline bool SeatNumber(const char*& p, const char* end, std::uint32_t& out) noexcept {
+    std::uint64_t v = 0;
+    unsigned digits = 0;
+    while (p < end && *p != ' ') {
+        if (*p < '0' || *p > '9' || ++digits > 10) return false;
+        v = v * 10u + static_cast<unsigned>(*p - '0');
+        ++p;
+    }
+    if (!digits || v > 0xFFFFFFFFull) return false;
+    out = static_cast<std::uint32_t>(v);
+    return true;
+}
+inline bool SeatWord(const char*& p, const char* end, const char* word) noexcept {
+    const char* q = p;
+    for (; *word; ++word, ++q)
+        if (q >= end || *q != *word) return false;
+    p = q;
+    return true;
+}
+} // namespace detail
+inline SeatRequest ParseSeatRequest(const char* text, std::size_t n) noexcept {
+    SeatRequest r{};
+    if (!text || !n) return r;
+    const char* p = text;
+    const char* end = text + n;
+    SeatCmd cmd = SeatCmd::bad;
+    if (detail::SeatWord(p, end, "poll")) cmd = SeatCmd::poll;
+    else if (detail::SeatWord(p, end, "clear")) cmd = SeatCmd::clear;
+    else if (detail::SeatWord(p, end, "deny ")) cmd = SeatCmd::deny;
+    else if (detail::SeatWord(p, end, "grant ")) cmd = SeatCmd::grant;
+    else if (detail::SeatWord(p, end, "hold ")) cmd = SeatCmd::hold;
+    else return r;
+    if (cmd == SeatCmd::poll || cmd == SeatCmd::clear) {
+        if (p != end) return r;
+        r.cmd = cmd;
+        return r;
+    }
+    std::uint32_t a = 0, ms = 0;
+    if (!detail::SeatNumber(p, end, a)) return r;
+    if (cmd == SeatCmd::hold) {
+        if (p != end || a > kRaceDenyMaxMs) return r;
+        r.cmd = cmd;
+        r.ms = a;
+        return r;
+    }
+    if (p >= end || *p != ' ') return r;
+    ++p;
+    if (!detail::SeatNumber(p, end, ms) || p != end) return r;
+    if (a < kVehicleBase || a > (kVehicleBase | 0x1FFu) || ms < 1 || ms > kRaceDenyMaxMs) return r;
+    r.cmd = cmd;
+    r.vehicle = static_cast<std::uint16_t>(a);
+    r.ms = ms;
+    return r;
+}
+
 // --- The local passenger report (sender) --------------------------------------
 // Lua reports a passenger as on foot (PlayerStatus.ON_VEHICLE is set only for
 // act 0x6F in UpdatePlayerInfo 0x12CE870), so native reads it: the local act is
