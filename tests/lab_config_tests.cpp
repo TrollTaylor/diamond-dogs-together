@@ -580,6 +580,31 @@ int main() {
                   "an invalid seat shot value refuses");
         }
     }
+    // Seat 1 on the driver's seat matrix (partner_ride_seat1_anchor, design 8.33): off unless named, in lab and play,
+    // until a FRAME proof on both copies and a play rehearsal; a named 1 runs in lab AND play (no refusal bit).
+    {
+        Check(!LabConfig{}.partner_ride_seat1_anchor && !LabConfig{}.partner_ride_seat1_anchor_given && !Lab("").partner_ride_seat1_anchor,
+              "seat-1 anchor defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_ride_seat1_anchor && !profile.partner_ride_seat1_anchor_given && profile.invalid_values == 0,
+                  "the gun profile leaves the seat-1 anchor off in lab and play");
+            const auto named = Lab(gun + mode + "partner_ride_seat1_anchor=1\n");
+            Check(named.partner_ride_seat1_anchor && named.partner_ride_seat1_anchor_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_ride_front == profile.partner_ride_front,
+                  "a named seat-1 anchor runs in lab and play and leaves the front seat default");
+            const auto off = Lab(gun + mode + "partner_ride_seat1_anchor=0\n");
+            Check(!off.partner_ride_seat1_anchor && off.partner_ride_seat1_anchor_given, "a named seat-1 anchor 0 stays off");
+        }
+        for (const char* value : {"2", "", "on"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=") + value + "\n");
+            Check(!invalid.partner_ride_seat1_anchor && !invalid.partner_ride_seat1_anchor_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid seat-1 anchor value refuses");
+        }
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).

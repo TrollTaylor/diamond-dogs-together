@@ -100,8 +100,11 @@ void TestTable() {
     // Seat 1 anchors on the driver's seat matrix (the stock rule for a player in seat 1, 0xB79A3F: the player's
     // FrontRight clips carry the driver-to-passenger offset; on the seat-1 matrix they drew one seat further right,
     // outside the jeep, design 8.33).
-    Check(prs::AnchorSeat(1) == 0, "seat 1 anchors on seat 0's matrix");
-    Check(prs::AnchorSeat(0) == 0 && prs::AnchorSeat(2) == 2 && prs::AnchorSeat(3) == 3, "the other seats anchor on their own matrix");
+    Check(prs::AnchorSeat(1, true) == 0, "seat 1 anchors on seat 0's matrix with partner_ride_seat1_anchor");
+    Check(prs::AnchorSeat(1, false) == 1, "without the key seat 1 keeps its own matrix (0.14.4)");
+    for (const bool on : {false, true})
+        Check(prs::AnchorSeat(0, on) == 0 && prs::AnchorSeat(2, on) == 2 && prs::AnchorSeat(3, on) == 3,
+              "the other seats anchor on their own matrix");
 }
 
 void TestFixture() {
@@ -139,13 +142,21 @@ void TestFixture() {
               Dword(image, c::ride_cam_play_rva) == c::ride_cam_play_new, "seat 2 keeps the retail immediate");
     prs::Revert(image, kSpan, Log, "seat2");
     Check(AllOriginal(image) && !prs::Armed(), "seat 2 reverted");
-    // Seat 1 writes the anchor immediate 0 (the driver's seat matrix) and still reports seat 1.
+    // Seat 1: off (the default) writes the immediate 1; with the key, 0 (the driver's seat matrix), still seat 1.
+    Check(!prs::SeatOneAnchor(), "the seat-1 anchor is off by default");
     logged.clear();
-    Check(prs::Arm(image, kSpan, 1, Log) && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x00b04130u,
-          "seat 1 arms the anchor immediate 0");
+    Check(prs::Arm(image, kSpan, 1, Log) && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x01b04130u &&
+              Logged("partner_ride_seat_patch=applied; seat=1; anchor=1;"),
+          "seat 1 without the key arms the immediate 1");
+    prs::Revert(image, kSpan, Log, "seat1");
+    prs::SetSeatOneAnchor(true);
+    logged.clear();
+    Check(prs::SeatOneAnchor() && prs::Arm(image, kSpan, 1, Log) && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x00b04130u,
+          "seat 1 with the key arms the anchor immediate 0");
     Check(Logged("partner_ride_seat_patch=applied; seat=1; anchor=0;"), "the applied line names the anchor");
     prs::Revert(image, kSpan, Log, "seat1");
     Check(AllOriginal(image) && !prs::Armed(), "seat 1 reverted");
+    prs::SetSeatOneAnchor(false);
     // Refusals write nothing.
     logged.clear();
     Check(!prs::Arm(image, kSpan, 4, Log) && Logged("reason=args") && AllOriginal(image), "seat 4 refused");
@@ -231,7 +242,7 @@ void TestRetailCopy() {
         if (raw + n <= data.size()) std::memcpy(image + va, &data[raw], n);
     }
     Check(prs::VerifyImage(image, kSpan) == nullptr && AllOriginal(image), "the retail image matches every pinned block");
-    Check(prs::Arm(image, kSpan, 1, Log) && Dword(image, c::ride_seat_rva) == 0x00b04130u, "arm on the retail copy (seat 1 anchors on 0)");
+    Check(prs::Arm(image, kSpan, 1, Log) && Dword(image, c::ride_seat_rva) == 0x01b04130u, "arm on the retail copy");
     prs::Revert(image, kSpan, Log, "retail");
     Check(AllOriginal(image), "revert on the retail copy");
     VirtualFree(image, 0, MEM_RELEASE);

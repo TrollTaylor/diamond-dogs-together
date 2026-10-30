@@ -86,7 +86,9 @@ std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base |
 // 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
 // in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
 // jeep (design 8.33).
-std::uint8_t AnchorSeat(std::uint8_t seat) noexcept { return seat == 1 ? 0 : seat; }
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix) noexcept { (void)seat1_driver_matrix; return seat == 1 ? 0 : seat; }
+void SetSeatOneAnchor(bool) noexcept {}
+bool SeatOneAnchor() noexcept { return false; }
 
 const char* VerifyImage(const unsigned char* base, std::size_t span) noexcept {
     if (!base) return "base";
@@ -138,7 +140,7 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     // part way puts back exactly what this call wrote.
     std::uint32_t written_from[kSites]{};
     bool written[kSites]{};
-    const std::uint8_t anchor = AnchorSeat(seat);
+    const std::uint8_t anchor = AnchorSeat(seat, true);
     for (unsigned i = 0; i < kSites; ++i) {
         const Site& s = kSiteTable[i];
         const std::uint32_t current = ReadDword(image, s.rva);
