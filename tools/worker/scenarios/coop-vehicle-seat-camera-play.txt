@@ -7,6 +7,7 @@
 # off. Then the roles reverse: the host drives, the guest boards back seat 3 from the right side and does the same.
 # v1 of this file ran as 06aa3fc6 (8.25: three shots per seat and a straight moving shot). The mouse pulls down stay
 # small: a pull of 250 aimed the gun into the jeep in lab a64c40d4 (gun mode 15, no shots for ~20 s).
+# This version ran as d946a420 at the shipped code (design 8.26): every expectation met.
 # Expected (play, -WanSim bad): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key;
 #   state=guard; event=close; ...; end=..; ...; settle=..; yaw_mrad=..; the stock get-off releases the camera
 #   (state=release; reason=stock).

@@ -1,8 +1,30 @@
+## 2026-10-30: the aim camera's review fixes (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.26, `docs/native-puppet.md` "Passenger camera"): the shot guard of
+`partner_pass_camera=aim` now holds a seated shot's pull up and sideways only while the player gives no look input;
+the mouse / right stick moves its own axis freely inside a shot window; it writes only while aiming in the aim camera
+(an aim end closes the window without a write); each window settles a remaining climb (no climb from shot to shot);
+play runs a named `drop` as `aim`. **Play default: `aim` stays ON**, re-proven at the shipped code: play rehearsal
+`d946a420` (`-WanSim bad`, shipped defaults, every expectation met, Forced=False; host seat 2 and guest seat 3 as
+shooters, frames on both copies: mouse turns kept, no sky, no climb, the drivers' views unchanged).
+Fix runs (lab, both copies as shooters, every expectation met): `a64c40d4` (yaw free: a four-shot burst without input
+turned 0.93 rad sideways), `049aa5ed` (both axes followed 150 ms after a mouse turn: the pull lifted the view 20 deg),
+`d60dbb48` (per-axis input: every aim frame level on both copies, no climb, a no-input burst 26 mrad sideways, but a
+60 ms input latch let the pull take back each mouse step). Tests failing first (`10ed98a`, `31e5a8a`, `fdadbb7`,
+`fb662ad`), driver wiring tests each caught a mutation; contract 822 sites / 209 slots; full CTest 321/321.
+Corrections of 8.25: the view was held at pulls up to ~7 deg written back each tick, not "within ~3 deg"; seat 2's
+frames show only that the sky swing is gone (they look at the wheel arch); defect 1's cause is the seated aim
+camera's low pivot, our handle only picks which broken view.
+Not fixed / not proven: seat 2's view through the side panel; the 90 deg range; aiming down into the jeep's body
+stops the gun (gun mode 15, stock [I]); whether seated shots hit enemies; an explosion beside the jeep after seated
+shots (`a64c40d4`, `d60dbb48`, `d946a420`; source [U]); slow mouse tracking through a burst (tests only); a
+held-trigger automatic burst; seat 1; two-PC.
+
 ## 2026-10-30: the passenger aim camera (branch `wp/seat-shoot2`)
 
 Built (`docs/vehicles-companions-design.md` 8.25, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
-off|connect|aim|drop` (lab and play) with a shot guard that holds the back-seat passenger's camera (look angles and
-rotation CAM+0x90) within ~3 deg of the aim through each shot; lab lever `passcam`, lab trace
+off|connect|aim|drop` (lab and play) with a shot guard that writes the back-seat passenger's camera (look angles and
+rotation CAM+0x90) back toward the aim each tick through each shot (pulls up to ~7 deg; see the review fixes above); lab lever `passcam`, lab trace
 `partner_pass_camera_trace`, Lua lever `enemy_cam_turn`. **Play default: `aim` (ON)**: fixes the view swinging to
 the sky at each shot and the view stuck pitched up after the aim. Proof: lab `7e79996f` (africa-jeep; guest seats 3
 and 2, host seat 3; three shots each, every expectation met, frames on both copies), the A/B and trace runs
