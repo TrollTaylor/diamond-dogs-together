@@ -3115,18 +3115,28 @@ Flip it once that run passes on both copies. Not proven: seat 1 and the truck ca
 items (S1 moves only RequestBullet's bullets), two PCs, a 0.14.4 partner (local only, no wire change [I]). `c1465ce`'s
 message calls `66ad131f`'s S1 shots "the same line": they were on the rear-left re-aim line.
 
-**Proof round (m6m7d, same branch; STATUS top).** [O] `76bc4a1c` (lab, `m6m7d-self-hit-ab2.txt`, S1 arm first then the
-stock arm on one aim, life on both copies after every shot): the HOST in back seat 2 on two lines (a warped guard 27 m
-at rotY 92.5, look ray ended 5.1 m out; a warped guard 9 m front-left at rotY -172.3): S1 6 shots (`shift`, exit
-0.91-1.11 m) cost nothing; stock 4 shots (`census`) cost the host's copy 702 three times (the guest's copy kept 2300
-until the resend). A -70 between the arms came with guard 1068 firing (`downed_damage`) [O]. The GUEST in seat 3 on the
-`8a920ec8` line (`o_cm` -79,66,141, `d_milli` 754,655,-50): S1 4 shots, shot 1 put the guard to Dying, 2260 on both
-copies; the two stock shots after them climbed (`d_milli` z +102 / +134; guard `up_mrad` +37 a shot) and cost nothing,
-so the line costs 702 only when level (`8a920ec8`). Not discriminating: `d1e9e028` (lab) and `bd6b36c6` (play,
-`-WanSim bad`, named key): `enemy_aim_nearest` from seat 2 measured 4158955462 at 3.7 m (seat 3: 8.1 m) and turned the
-camera into the rear wheel arch; that seat never fired [O]; why the seated pose reads 3.7 m is [U]. Seat 3 killed him in
-play with 4 S1 shots, 2300 on both copies, on a line not shown to hit in stock. Still needed for the play flip: a play run
-with seat 2 on a stock-hit line at a natural guard and the guest's first shot level.
+**Proof round (m6m7d, same branch; STATUS top), corrected by its review.** [O] `76bc4a1c` (lab,
+`m6m7d-self-hit-ab2.txt`): the HOST in back seat 2, S1 6 shots (`shift`, exit 0.91-1.11 m) cost nothing; the stock arm
+fired after them, so recoil put its 4 shots 40-160 milli HIGHER (adjacent lines, not the same): 3 cost the host's copy
+702. The guest's copy is no witness for host-role shots (`vehicle_state` skip `occupied` / `partner_ride` while ridden;
+pre-existing). The GUEST in seat 3: one S1 shot on a line 1.8 deg from `8a920ec8`'s stock-hit line (`d_milli`
+754,655,-50 vs 774,632,-49) put the guard to Dying, life 2260 on both copies; the rest climbed onto lines not shown to
+hit. `8a920ec8`'s seat-2 S1 shot on the H1 stock-hit line (46 milli lower) downed a guard with no life lost, so S1 does
+not swallow the round. Not discriminating: `d1e9e028`, `bd6b36c6` (play; RTT 174-188 ms, loss up to 16.6 %): seat 2
+never fired in either arm (the lever's 3.7 m aim into the wheel arch); non-702 drops with enemy fire [I]. Review
+re-prove: `9ff5170f` (`m6m7d-self-hit-ab3.txt`, one shot per boarding): S1 from seat 2 killed both guards (9.8 m
+front-left; 22 m front-right along two identical level shots crossing 1.55 m of the jeep), host life 2300; its stock arm
+had no target left; 2 S1 shots while moving (`max_ms` 142 / 88, `age_ms` 2-3, `shift`), life 2300. `60faf9fc` lab
+(`m6m7d-self-hit-ab4.txt`, the review's fix): the host in back seat 2, ONE shot per boarding along two fixed
+jeep-relative lines (lever `enemy_cam_turn` as each boarding's first aim), so S1 and stock fired on identical lines
+(`d_milli` within 2 milli). Line A (826,-564,+11, beside `76bc4a1c`'s H2 stock hits): S1 2 shots 2300 -> 2300; stock 2
+shots 2300 -> 1598 -> 896. Line B (523,852,-23, the H1 line): S1 2 shots 896 -> 896; stock 2 shots 896 -> 194 -> 0. On
+foot the host saw the jeep intact after the S1 shots and a burning wreck after the 4th stock shot [O, frames]. The
+guest's copy still showed an intact jeep at the end: nothing is sent while the jeep is ridden and no destroyed state
+followed before the run ended (pre-existing sync gap, vehicles track); its own -718 / -247 came while guards 1084 / 1072
+fired on the riders [I]. Still needed for the play flip: seat 1 (the play front seat) with S1, a play run on a
+stock-hit line, a mission end while seated, a point-blank target. Lab scenarios that need stock seated shots name
+`partner_seat_shot=0` (S1 is on in lab with the gun profile).
 
 ## 9. Milestones
 
