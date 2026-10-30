@@ -342,12 +342,12 @@ void TestSeatShotHook() {
     float moved[4], kept[4];
     std::memcpy(moved, g_ss_seen_record + ss::kPos, sizeof(moved));
     std::memcpy(kept, g_ss_seen_record + ss::kDir, sizeof(kept));
-    Check(moved[0] > 101.15f && moved[0] < 101.25f && std::fabs(moved[2] - 199.0f) < 1e-3f && moved[3] == 1.0f &&
+    Check(moved[0] > 101.0f && moved[0] < 101.1f && std::fabs(moved[2] - 199.0f) < 1e-3f && moved[3] == 1.0f &&
               std::memcmp(kept, dir, sizeof(dir)) == 0 && std::memcmp(g_ss_seen_record + 0x20, record + 0x20, ss::kRecordBytes - 0x20) == 0,
           "S1 hook: the start moved past the jeep's far side; the direction, w and the rest of the record kept");
     ff::SeatShotStats st{};
     Check(ff::ReadSeatShot(st) && st.seq == 1 && st.shifted == 1 && st.seen == 1 && std::strcmp(st.result, "shift") == 0 && st.inside &&
-              st.vehicle == 25608 && st.seat == 3 && st.apply && st.t > 1.49f && st.t < 1.52f,
+              st.vehicle == 25608 && st.seat == 3 && st.apply && st.t > 1.34f && st.t < 1.37f,
           "S1 hook: the last plan and the counters");
     // Pellets: the same record with a new direction each time: each moves along its own direction.
     {
@@ -374,12 +374,18 @@ void TestSeatShotHook() {
     Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) &&
               std::strcmp(st.result, "census") == 0 && st.census == 1 && !st.apply,
           "S1 hook: apply off: census only");
-    // A stale publication (older than kFreshMs): untouched, counted.
+    // A stale publication (older than kFreshMs): untouched, counted. 60 ms is already stale: at 20 m/s a jeep moves
+    // 1.2 m in that time (review of 8.30: 500 ms let a moving jeep's box lie metres ahead).
     p.apply = true;
+    ff::PublishSeatShot(p);
+    g_ss_now += 60;
+    fill(0);
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 1,
+          "S1 hook: a publication 60 ms old: stale, untouched");
     ff::PublishSeatShot(p);
     g_ss_now += ss::kFreshMs + 1;
     fill(0);
-    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 1,
+    Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 2,
           "S1 hook: a stale publication: untouched");
     // Fresh again, but the line misses the box (shooting straight up): untouched, refused counted.
     ff::PublishSeatShot(p);

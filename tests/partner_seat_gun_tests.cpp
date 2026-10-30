@@ -280,8 +280,13 @@ int main() {
             const float o4[3] = {0, 3, 0};
             Check(!ss::RayBox(o4, dx, h, tin, tout), "S1 box: the box behind the start: no crossing");
         }
+        // The light box is the jeep (~4.2 x 1.9 m) plus about 5 cm a side, not more: a start moved past a bigger box can
+        // skip a wall or rock the jeep stands against (review of 8.30). The publication is fresh for 50 ms at most: a pose
+        // older than that is metres off on a moving jeep.
+        Check(ss::kLightBox.half_side == 1.0f && ss::kLightBox.half_fwd == 2.2f && ss::kFreshMs <= 50,
+              "S1 box: the light box hugs the jeep (4.4 x 2.0 m); fresh for 50 ms");
         // A seated shot across a jeep at yaw 0: the start 0.3 m right of the centre line and 1.1 m up (in the box), aiming
-        // left and slightly down at a guard 15 m out: the start moves to the box's left side (-1.15 m) + 5 cm.
+        // left and slightly down at a guard 15 m out: the start moves to the box's left side (-1.0 m) + 5 cm.
         ss::Pub p{};
         p.owner = 0;
         p.vehicle = 25608;
@@ -300,15 +305,15 @@ int main() {
         Check(Near(q.o_local[0], -1.0, 1e-3) && Near(q.o_local[1], 0.3, 1e-3) && Near(q.o_local[2], 1.1, 1e-3),
               "S1 plan: the start in the vehicle frame (1 m back, 0.3 m right, 1.1 m up)");
         Check(q.d_local[1] < -0.99f, "S1 plan: the direction points left (across the jeep)");
-        // Exit through the left side at local right = -1.15: the line runs 1.45 m sideways (plus the dip), then +5 cm.
-        Check(q.exit > 1.44f && q.exit < 1.47f && Near(q.t, q.exit + ss::kExitPadM, 1e-4), "S1 plan: the exit and the pad");
+        // Exit through the left side at local right = -1.0: the line runs 1.3 m sideways (plus the dip), then +5 cm.
+        Check(q.exit > 1.29f && q.exit < 1.32f && Near(q.t, q.exit + ss::kExitPadM, 1e-4), "S1 plan: the exit and the pad");
         Check(Near(q.dist, std::sqrt(15.3 * 15.3 + 0.9 * 0.9), 1e-3), "S1 plan: the target distance");
-        Check(q.pos[0] > 100.0f + 1.15f && q.pos[0] < 100.0f + 1.25f && std::fabs(q.pos[2] - (200.0f - 1.0f)) < 1e-3f,
+        Check(q.pos[0] > 100.0f + 1.0f && q.pos[0] < 100.0f + 1.1f && std::fabs(q.pos[2] - (200.0f - 1.0f)) < 1e-3f,
               "S1 plan: the moved start just past the left side, on the line");
         // The same with apply off: planned, not moved (the lab census).
         p.apply = false;
         q = ss::PlanShot(p, start, dir);
-        Check(Is(q.result, "census") && !q.move && q.t > 1.4f, "S1 plan: apply off plans without a move");
+        Check(Is(q.result, "census") && !q.move && q.t > 1.3f, "S1 plan: apply off plans without a move");
         p.apply = true;
         // The target 1.2 m away, inside the box: the start stops 0.3 m before it.
         {
@@ -321,18 +326,23 @@ int main() {
             q = ss::PlanShot(n, start, d2);
             Check(Is(q.result, "near") && !q.move, "S1 plan: a target within 0.3 m: nothing to move");
         }
-        // A start outside the box whose line meets the box only beyond the target: clear, no move.
+        // A start outside the box: a seated passenger's muzzle is always inside it, so the pose is stale or wrong (a moving
+        // jeep's box ahead along the line): nothing moves, whether the target is before or beyond the box.
         {
             ss::Pub n = p;
             const float s2[3] = {100.0f - 5.0f, 11.0f, 199.0f};  // 5 m right of the jeep
             n.target[0] = 100.0f - 3.0f; n.target[1] = 11.0f; n.target[2] = 199.0f;  // a guard between the start and the jeep
             const float d2[3] = {1, 0, 0};
             q = ss::PlanShot(n, s2, d2);
-            Check(Is(q.result, "clear") && !q.move, "S1 plan: the target before the box: clear");
-            // Beyond the jeep instead: the start moves past the far side.
+            Check(Is(q.result, "outside") && !q.move && !q.inside, "S1 plan: a start outside the box (target before it): outside");
             n.target[0] = 100.0f + 15.0f;
             q = ss::PlanShot(n, s2, d2);
-            Check(Is(q.result, "shift") && !q.inside && q.pos[0] > 101.15f && q.pos[0] < 101.25f, "S1 plan: from outside through the box");
+            Check(Is(q.result, "outside") && !q.move && !q.inside, "S1 plan: a start outside the box (target beyond it): outside");
+            // The jeep moved 3 m on since the publication (the box 3 m behind the real one): the muzzle left the old box.
+            n = p;
+            n.pos[2] = 200.0f - 3.0f;
+            q = ss::PlanShot(n, start, dir);
+            Check(Is(q.result, "outside") && !q.move, "S1 plan: a box 3 m behind the muzzle (a stale pose): outside");
         }
         // Refusals: no class, no target, a zero or non-finite direction, a line that misses the box.
         {
@@ -382,11 +392,18 @@ int main() {
         // The record layout the hook relies on (RequestBullet's slot copy 0xD32690; the pellet loop 0x130342E).
         Check(ss::kPos == 0x00 && ss::kDir == 0x10 && ss::kRecordBytes == 0x34 && c::shot_owner == 0x2a,
               "S1 record: start +0x00, direction +0x10, owner +0x2A, 0x34 bytes copied");
-        // The contract pins the copy, the pellet store, the hit loop's owner skip, the target, the camera's writer and the
-        // origin call (SEAT_SHOT_SITES; the code gate checks the same bytes in the running image).
-        Check(sizeof(c::seat_shot_blocks) / sizeof(c::seat_shot_blocks[0]) == 7 && c::seat_shot_blocks[0] == 0xd32690 &&
-                  c::seat_shot_blocks[1] == 0x130342e && c::seat_shot_blocks[2] == 0xd2dc60 && c::seat_shot_blocks[5] == 0x1119314,
-              "S1 record: the contract's seat shot blocks");
+        // The partner's code gate (all-or-nothing) holds only what S1 relies on: the copy and the pellet store
+        // (SEAT_SHOT_SITES). The static facts behind S1 (the hit loop's owner skip, the shot target, the camera's writer,
+        // the origin call) are generator checks only (SEAT_SHOT_FACTS), so they never switch the partner off.
+        {
+            bool facts_in_gate = false;
+            for (const auto& s : c::code_sites)
+                if (s.rva == 0xd2dc60 || s.rva == 0x108b0fc || s.rva == 0x11192c5 || s.rva == 0x1119314 || s.rva == 0x1041214)
+                    facts_in_gate = true;
+            Check(sizeof(c::seat_shot_blocks) / sizeof(c::seat_shot_blocks[0]) == 2 && c::seat_shot_blocks[0] == 0xd32690 &&
+                      c::seat_shot_blocks[1] == 0x130342e && !facts_in_gate,
+                  "S1 gate: only the copy and the pellet store join the partner code gate");
+        }
     }
     std::printf("partner_seat_gun_tests: %u checks passed\n", checks);
     return 0;
