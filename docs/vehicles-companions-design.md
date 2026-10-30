@@ -2381,6 +2381,7 @@ checks (`Source changed during worker checks`: the tree was edited while they ra
 | `f49c167d` | `0c9f93f` | `coop-vehicle-passenger-m6.txt` (first form) | Jeep seat 1 in both roles passed (lines below); the first half's jeep did not move under the host's W (its drive frames are stationary); the truck half stopped: the LRRP truck the host reached coasted 23 m once `clear_enemies` took its driver (`gate=far; d3=23.13`) |
 | `3c748d46` | `387c6b0` | the same, reworked (back out first; the sortie truck) | Jeep seat 1 in both roles passed again with the jeep moving; SEAT denied the guest standing by the jeep the host took; the truck part stopped at `goto_vehicle sortie` (`door_unavailable`, a lever bug, fixed in `5bcdc9f`) after the guest's copy loaded the sortie truck 10 s after the census asked |
 | `b66c7031` | `5bcdc9f` | `coop-vehicle-passenger-m6-truck.txt` (first form) | The sortie truck on both copies; the cab seat in the first role passed; the reverse cab boarding failed; the seat race passed; the WAV census |
+| `73af7206` | `b27e43b` | `coop-vehicle-passenger-m6-truck.txt` (both drivers reverse) | The cab seat in both roles, frames while moving; stopped at the host's get-off when the worker lost its private input desktop |
 
 - **Light vehicle front seat (1), both roles [O, `f49c167d` and `3c748d46`].** Both copies:
   `partner_board=seat_one; result=ok; reason=none; front=1; cab=1; remap=0xb79a40; sites=0x1251834,0x1251894`. The
@@ -2445,6 +2446,25 @@ checks (`Source changed during worker checks`: the tree was edited while they ra
   one seat (`riders=65535`): a driver only, as 3.7 says. The tank load was refused (`relief_present`: the remove 3 s
   after the race found it ridden); its seat count stays [U].
 
+- **Truck cab seat (1), both roles [O, `73af7206`].** With both drivers reversing away from the building: the guest
+  boarded the cab behind the host (`board_passenger; vehicle=25600; seat=1; site=phase1; n=1; type=4; seats=2`,
+  `local_passenger ... state=on`, `board_seated`, `pass_camera; state=connect; ...; mode=5`; host
+  `partner_ride_seat=confirmed; vehicle=25600; seat=1; state=0x8a991a913969`), rode while the host reversed and got off
+  with the stock get-off (`state=off; reason=act`, `release; reason=stock; ok=1`); then the host boarded the cab behind
+  the guest's driving with the same lines and roles swapped (`board_passenger ... seat=1; site=phase1`,
+  `local_passenger ... state=on`, guest `confirmed ... state=0x8a991a913969`). Frames: `m6-truck-1-drive-NN` (host:
+  the truck reversing in its dust with the guest's body behind the right half of the windscreen and its tag at the
+  cab), `m6-truck-1-drive-g-NN` (guest: its own camera at the cab's right door while the truck moves past the crates),
+  `m6-truck-1-exit-NN` (the guest's get-off, the host at the wheel), `m6-truck-1r-seated` (guest: the host's tag at the
+  cab's right seat), `m6-truck-1r-drive-h-NN` (host: its camera at the right door while the truck moves). The run then
+  stopped at the host's get-off press: the worker lost its private input desktop (`SupervisorReason
+  input_desktop_unavailable`, `IsolationFailed=True`, `Forced=True`); it closed with the baseline restored and the real
+  saves unchanged. So the host's stock get-off from the cab, the race and the census did not run in `73af7206`; the
+  race had passed in `b66c7031`.
+- **The truck's seat-1 pose [O].** The stock passenger phase has no truck loop state; in the frames the passenger
+  stays seated in the cab after `stateTruckGetOnFrontRight` on its own copy, and the DM chain draws body 1 there on the
+  driver's copy. The passenger's own camera sits close to the right door (the fallback module with the cab's ignore
+  handle), not behind the truck as for the jeep.
 - **E7, the truck bed: static only, not built [O for the reads, I for the reading].** `seats=2` on every truck: the
   bed is not a seat index, and a seat index 2 / 3 on a truck would draw at `0xB799C0`'s constant default matrix (not out
   of bounds, but in the wrong place). `stateTruckHide` (`0x14ccf58e81a1`), `stateTruckHideLoop` (`0xadbf02f59b9d`) and
