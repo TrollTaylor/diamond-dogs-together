@@ -112,8 +112,13 @@ function Get-WorkerTests {
 function Get-WorkerShardedTests {
     return [ordered]@{ ddt_core_tests = 5; link_udp_tests = 2; worker_session_tests = 2; local_coop_session_tests = 2 }
 }
-function Get-WorkerShardNames {
-    $sharded = Get-WorkerShardedTests
+# The sharded suites the receipt never runs (Get-WorkerPlan's excluded list): the unsafe default flows of the lab scripts
+# and the friend package's full flows.
+function Get-WorkerExcludedShardedTests {
+    return [ordered]@{ lab_scripts_tests = 6; friend_package_tests = 2 }
+}
+function Get-WorkerShardNames($Sharded = (Get-WorkerShardedTests)) {
+    $sharded = $Sharded
     return @(foreach ($base in $sharded.Keys) { foreach ($k in 1..$sharded[$base]) { $base + '_' + $k } })
 }
 # The shard a test name stands for ([pscustomobject] base, index, count), or $null.
@@ -230,7 +235,7 @@ function Get-WorkerPlan {
         # unsafe default flows; the runtime .dat build from the game folder's archives; the launcher's mock pages
         # rendered in a DX11 window; the Python check that the committed icon files are what the generator makes
         # (launcher_icon_tests checks the icon the exe embeds).
-        excluded = @('lab_scripts_tests', 'friend_package_tests', 'probe_install_recovery',
+        excluded = @(Get-WorkerShardNames (Get-WorkerExcludedShardedTests)) + @('probe_install_recovery',
             'ddt_runtime_dat_integration', 'ddt_launcher_screens', 'launcher_assets_current')
         pure_input_script = 'tests\lab_scripts_tests.ps1 -InputOnly'
         retail_game_launch = $false; system_input = $false; installation = $false

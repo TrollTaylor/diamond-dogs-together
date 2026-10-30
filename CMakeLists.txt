@@ -1199,20 +1199,20 @@ if(WIN32)
     add_test(NAME worker_coverage_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_coverage_tests.ps1")
     add_test(NAME local_coop_windows_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_windows_tests.ps1")
     mgs_add_test_shards(local_coop_session_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_session_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check>)
-    add_test(NAME lab_scripts_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    # Six shards (tests/TestShards.psm1): the pure parts, the partner fixture runs, the installs and the dry run's four parts.
+    mgs_add_test_shards(lab_scripts_tests 6 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
     # The Diamond Dogs Together package (tools/package.ps1 -Friend, the drop-in
     # zip) and the developer tools that remain (tools/CoopPlay.psm1, tools/dev:
     # FriendCommon.psm1 and the local two-window test). The test needs
     # PowerShell 7; it runs the developer scripts under Windows PowerShell 5.1
     # (what Play-Offline-Coop.bat uses) when available.
-    add_test(NAME friend_package_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    # Two shards: the package part (with the local two-window test, which copies its package), and the rest.
+    mgs_add_test_shards(friend_package_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
     message(WARNING "PowerShell 7 (pwsh) not found: lab_scripts_tests (tools/lab scripts, guest install path) and friend_package_tests will be reported as SKIPPED, not run.")
-    add_test(NAME lab_scripts_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(lab_scripts_tests PROPERTIES SKIP_RETURN_CODE 1)
-    add_test(NAME friend_package_tests COMMAND "${CMAKE_COMMAND}" -E false)
-    set_tests_properties(friend_package_tests PROPERTIES SKIP_RETURN_CODE 1)
+    mgs_add_test_shards(lab_scripts_tests 6 SKIPPED)
+    mgs_add_test_shards(friend_package_tests 2 SKIPPED)
     add_test(NAME build_profile_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(build_profile_tests PROPERTIES SKIP_RETURN_CODE 1)
     mgs_add_test_shards(worker_session_tests 2 SKIPPED)

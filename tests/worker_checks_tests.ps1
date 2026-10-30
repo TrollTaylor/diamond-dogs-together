@@ -11,7 +11,7 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerShardNames','Get-WorkerShard','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerExcludedShardedTests','Get-WorkerShardNames','Get-WorkerShard','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
     'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
@@ -77,10 +77,11 @@ try {
     $custom = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ('build\space ' + [char]0x96EA)
     Check ($custom.build_directory -ceq (Join-Path $fixture ('build\space ' + [char]0x96EA))) 'spaced/non-ASCII cache remains a literal checkout-relative path'
     Check (!$normal.retail_game_launch -and !$normal.system_input -and !$normal.installation) 'plan makes no runtime/installation claim'
-    foreach ($excluded in @('lab_scripts_tests','friend_package_tests','probe_install_recovery')) {
+    foreach ($excluded in @('lab_scripts_tests_1','lab_scripts_tests_6','friend_package_tests_1','friend_package_tests_2','probe_install_recovery')) {
         Check ($normal.tests -cnotcontains $excluded -and $normal.excluded -ccontains $excluded) "unsafe default flow excluded: $excluded"
     }
     Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
+    Check ($normal.excluded -cnotcontains 'lab_scripts_tests' -and $normal.excluded -cnotcontains 'lab_scripts_tests_7' -and $normal.excluded -cnotcontains 'friend_package_tests_3') 'the excluded suites are named as exactly their CTest shards'
     Check ($normal.tests -ccontains 'worker_session_tests_1' -and $normal.tests -ccontains 'worker_session_tests_2' -and $normal.tests -cnotcontains 'worker_session_tests') 'audited detached controller fixture is explicitly included (as its two CTest shards)'
     Check ($normal.tests -ccontains 'steam_transport_tests') 'the Steam online fixture (fake Steam interfaces, no Steam call) is audited'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
