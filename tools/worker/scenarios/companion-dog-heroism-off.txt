@@ -1,0 +1,81 @@
+# Control for the heroism give-back (docs/vehicles-companions-design.md 8.14): companion_host_owned OFF (the shipped
+# default), so each PC keeps its own D-Dog and world_companion_guard.lua gives nothing back. The guest's own C4 kills
+# the guest's OWN dog (the legacy mirror holds it at the host dog's pose, here 5 m in front of the host): the stock
+# penalty for a player's kill stays on the guest's PC (60 heroism, 100 raw bond = 10 bond points, +150 demon points,
+# "D-Dog Near Death (Heroism -60)" / "Bond with D-Dog Has Decreased Significantly"), and the host's readback is unchanged
+# (a partner's C4 does not explode on the host's PC: run f729d7f4). Seed africa-jeep (a D-Dog on both copies, C4 in
+# support slot 2), away from the jeep.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-heroism-off.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected: dog_guard=off reason=key_off on both; guest obs Dead id=9728 att=local; the guest's hero readback 60 lower,
+# bond_raw 100 lower, ogre 150 higher, dead_bit=1, applies=0, deaths=0; the host's unchanged. NEVER: event=dog_hero.
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+waitlog host 'dog_guard=off;reason=key_off;slots=0' 5
+waitlog guest 'dog_guard=off;reason=key_off;slots=0' 5
+host debug clear_enemies 100
+host run godmode 1
+guest run godmode 1
+host run teleport -661.66 1.20 874.97 262
+wait 3000
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+host run companion_lab call_here dog
+host expect ^call_here;kind=dog;
+placebehind guest host 2 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 60
+wait 4000
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=0;deaths=0$
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=0;deaths=0$
+both capture hc-before
+guest debug slot support 2
+wait 2000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+guest hold s 1500
+guest hold s 1500
+wait 1000
+both capture hc-placed
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press e
+guest release
+both burst hc-blast 4 500
+waitlog guest 'world_lua=event=obs; m=Dead; ent=0; id=9728; att=local;' 15
+wait 800
+both capture hc-dead
+wait 1500
+both capture hc-dead-2
+wait 1500
+guest capture hc-dead-3
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;.*;dead_bit=1;applies=0;deaths=0$
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;.*;dead_bit=0;applies=0;deaths=0$
+wait 5000
+guest run companion_lab hero
+host run companion_lab hero
+host run buddy_status
+guest run buddy_status
+state

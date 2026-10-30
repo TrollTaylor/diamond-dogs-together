@@ -327,9 +327,14 @@ local HG = "event=dog_hero;role=guest;"
 g = F(false); g:pose(900, 0x80 + 31); g:tick()
 g:die(65535, "other")
 check(g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523 and g.mbm.o == 50, "a guard's kill of the copy: heroism and bond given back")
-check(g:logged(HG .. "step=given;by=other;att=65535;heroic=1000>970>1000;bond=523>503>523;ogre=50>50>50;give=30,20,0;expect=30,20,0;gate=0;ms=0;n=1;$"),
+check(g:logged(HG .. "step=given;by=other;att=65535;h=1000:970:1000;b=523:503:523;o=50:50:50;give=30,20,0;ms=0;n=1;$"),
   "logged with the sample before, the value after the penalty and the readback")
 check(g:count("AddHeroicPoint") == 1 and g:count("SubOgrePoint") == 0, "through AddHeroicPoint; no demon points to take")
+do
+  local L = F(false, {heroic = 9999999, ogre = 9999999}); L:pose(900, 0x80 + 31); L:tick(); L:die(65535, "other")
+  local line = L:logged("step=given;")
+  check(line and #line <= 160 and line:find(";n=1;$") and not line:find("[^%w_=:,.;%-]"), "a given line with 7-digit heroism and demon points fits W.log's 160 bytes and its sanitizer")
+end
 g.W.companionHurt("Dead", 9728, "other", 65535)
 check(g:nlogged("step=given") == 1 and g.mbm.h == 1000 and g:count("AddHeroicPoint") == 1, "a repeated Dead message of the same death gives nothing more")
 for t = 1100, 3000, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
@@ -338,29 +343,29 @@ g:die(65535, "other")
 check(g:nlogged("step=given") == 2 and g:logged("step=given;.*;n=2;$") and g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523,
   "a later death of the restored copy: given back again (once per death)")
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:die(0, "local")
-check(g:logged(HG .. "step=given;by=player;att=0;heroic=1000>940>1000;bond=523>423>523;ogre=50>200>50;give=60,100,150;expect=60,100,150;"),
+check(g:logged(HG .. "step=given;by=player;att=0;h=1000:940:1000;b=523:423:523;o=50:200:50;give=60,100,150;ms=0;"),
   "the guest's own kill: 60 heroism, 100 raw bond and the 150 demon points back")
 check(g.mbm.h == 1000 and g.env.vars.buddyFriendlyPoint[1] == 523 and g.mbm.o == 50 and g:count("SubOgrePoint") == 1, "all three restored")
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:die(1, "mirror")
 check(g:logged("step=given;by=player;att=1;") and g.mbm.h == 1000 and g.mbm.o == 50, "the host's body (player 1) counts as a player, as the stock rule does")
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:penalty(0); g.W.companionHurt("Dead", 9728, "other")
-check(g:logged("step=given;by=unknown;att=nil;.*give=60,100,150;expect=60,100,150;") and g.mbm.h == 1000, "no attacker from an older observer: what was lost, at most a player's amounts")
+check(g:logged("step=given;by=unknown;att=nil;.*give=60,100,150;") and g.mbm.h == 1000, "no attacker from an older observer: what was lost, at most a player's amounts")
 -- The stock gate: a DOG bit already set means the game took nothing; nothing is given.
 g = F(false); g:pose(900, 0x80 + 31); g.env.vars.deadBuddyType = 4; g:tick(); g:die(65535, "other")
-check(g:logged(HG .. "step=none;by=other;att=65535;heroic=1000>1000;bond=523>523;ogre=50>50;gate=1;") and g:count("AddHeroicPoint") == 0, "the stock gate: nothing taken, nothing given")
+check(g:logged(HG .. "step=none;by=other;att=65535;h=1000:1000;b=523:523;o=50:50;gate=1;") and g:count("AddHeroicPoint") == 0, "the stock gate: nothing taken, nothing given")
 -- Clamps: never more than the death took, never more than the stock amount.
 g = F(false, {heroic = 20, bond = 15}); g:pose(900, 0x80 + 31); g:tick(); g:die(65535, "other")
-check(g.mbm.h == 20 and g.env.vars.buddyFriendlyPoint[1] == 15 and g:logged("give=20,15,0;expect=30,20,0;"), "heroism and bond near 0: what the death took")
+check(g.mbm.h == 20 and g.env.vars.buddyFriendlyPoint[1] == 15 and g:logged("give=20,15,0;"), "heroism and bond near 0: what the death took")
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.mbm.h = g.mbm.h - 10; g:die(65535, "other")
-check(g.mbm.h == 990 and g:logged("heroic=1000>960>990;.*give=30,20,0;"), "another loss in the same 100 ms is not the death's: only its 30")
+check(g.mbm.h == 990 and g:logged("h=1000:960:990;.*give=30,20,0;"), "another loss in the same 100 ms is not the death's: only its 30")
 -- Order: a penalty that lands after the Dead message is given back at the next tick; none within 1 s is logged once.
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other", 65535)
 check(not g:logged("event=dog_hero"), "nothing lost yet: wait")
 g:penalty(65535); g:pose(1050, 0x80 + 31); g:tick(1100)
-check(g:logged("step=given;by=other;att=65535;heroic=1000>970>1000;.*ms=100;n=1;$") and g.mbm.h == 1000, "a late penalty: given at the next tick")
+check(g:logged("step=given;by=other;att=65535;h=1000:970:1000;.*ms=100;n=1;$") and g.mbm.h == 1000, "a late penalty: given at the next tick")
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g.W.companionHurt("Dead", 9728, "other", 65535)
 for t = 1100, 2500, 100 do g:pose(t - 50, 0x80 + 31); g:tick(t) end
-check(g:nlogged(HG .. "step=none;by=other;att=65535;heroic=1000>1000;bond=523>523;ogre=50>50;gate=0;ms=1") == 1 and g:count("AddHeroicPoint") == 0,
+check(g:nlogged(HG .. "step=none;by=other;att=65535;h=1000:1000;b=523:523;o=50:50;gate=0;ms=1") == 1 and g:count("AddHeroicPoint") == 0,
   "nothing taken within 1 s: logged once, nothing given")
 -- Every copy death under the key: the host's dog down too (mirrored) and an unknown host state.
 g = F(false); g:pose(900, 0x80 + 31); g:tick(); g:pose(1050, 0x80 + 64); g:tick(1100); g:die(65535, "other")

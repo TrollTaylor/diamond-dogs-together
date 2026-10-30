@@ -108,6 +108,8 @@ local function prime() C.mismatchAt, C.fixAt, C.fixWant, C.fixN, C.fixQuit = W.n
 -- measured against the last sample before it (the sample freezes when the bit appears) and never more than the stock
 -- amount. The stock "D-Dog Near Death" notice still shows; the host and a guest without the key keep the stock game.
 local HERO = {other = {30, 20, 0}, player = {60, 100, 150}}
+-- Log: h, b, o = heroism, raw bond, demon points as before:after-the-penalty[:readback] (W.log keeps 160 bytes and
+-- turns '>' into '_', so ':'); give = what was given back; by = other | player | unknown (no attacker id).
 local function HL(text) W.log("event=dog_hero;role=guest;" .. text) end
 local function heroRead()
  local M, t, dead = TppMotherBaseManagement, W.api.buddyDog, W.get(vars, "deadBuddyType")
@@ -126,7 +128,7 @@ local function heroGive(p, now)
  local head = fmt("by=%s;att=%s;", p.by, tostring(p.att))
  if gh + gb + go == 0 then
   if not pre.gate and now - p.at < 1000 then return false end
-  HL(fmt("step=none;%sheroic=%d>%d;bond=%d>%d;ogre=%d>%d;gate=%d;ms=%d;n=%d;", head, pre.h, a.h, pre.b, a.b, pre.o, a.o, pre.gate and 1 or 0, now - p.at, p.n))
+  HL(fmt("step=none;%sh=%d:%d;b=%d:%d;o=%d:%d;gate=%d;ms=%d;n=%d;", head, pre.h, a.h, pre.b, a.b, pre.o, a.o, pre.gate and 1 or 0, now - p.at, p.n))
   return true
  end
  local M = TppMotherBaseManagement
@@ -135,8 +137,8 @@ local function heroGive(p, now)
  if go > 0 then pcall(W.get(M, "SubOgrePoint"), {ogrePoint = go}) end
  local z = heroRead() or a
  G.s.heroGiven = (G.s.heroGiven or 0) + 1
- HL(fmt("step=given;%sheroic=%d>%d>%d;bond=%d>%d>%d;ogre=%d>%d>%d;give=%d,%d,%d;expect=%d,%d,%d;gate=0;ms=%d;n=%d;", head, pre.h, a.h, z.h,
-  pre.b, a.b, z.b, pre.o, a.o, z.o, gh, gb, go, e[1], e[2], e[3], now - p.at, p.n))
+ HL(fmt("step=given;%sh=%d:%d:%d;b=%d:%d:%d;o=%d:%d:%d;give=%d,%d,%d;ms=%d;n=%d;", head, pre.h, a.h, z.h, pre.b, a.b, z.b,
+  pre.o, a.o, z.o, gh, gb, go, now - p.at, p.n))
  return true
 end
 function G.heroDeath(att, now)
