@@ -53,6 +53,10 @@ struct Config {
     bool vehicle_break = false;
     bool vehicle_credit = false;
     bool loadout_block = false;
+    // The vehicle fixes of 2026-10-29: CFG r[15] bit 64 world_vehicle_crew (D12, a crewed vehicle
+    // wrecked at once), bit 128 world_vehicle_damage (the guest's vehicle damage report).
+    bool vehicle_crew = false;
+    bool vehicle_damage = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

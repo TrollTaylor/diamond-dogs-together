@@ -266,6 +266,19 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_loadout_block_given = true;
         if (!ok) result.world_loadout_block = false;
     }
+    // The vehicle fixes of 2026-10-29 (lab and play; off in the lab unless named; in play world_vehicle_crew on and
+    // world_vehicle_damage off unless named; see the defaults, step 8):
+    // D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
+    else if (Equals(key, "world_vehicle_crew")) {
+        ok = ParseBool(value, result.world_vehicle_crew);
+        result.world_vehicle_crew_given = true;
+        if (!ok) result.world_vehicle_crew = false;
+    }
+    else if (Equals(key, "world_vehicle_damage")) {
+        ok = ParseBool(value, result.world_vehicle_damage);
+        result.world_vehicle_damage_given = true;
+        if (!ok) result.world_vehicle_damage = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
@@ -951,6 +964,13 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
         if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
     }
+    // 8. The vehicle fixes of 2026-10-29. world_vehicle_damage stays off in lab and play unless named (the review of
+    // 2026-10-29 turned its play default off again: its fire gate was never run against live AI fire). world_vehicle_crew
+    // (D12, a soldier-crewed host copy wrecked at once; it acts only with world_vehicle_break, where VEHICLE_GONE runs) is
+    // on in play unless named, with the review's blast distance by type: lab FRAME c0a385a5 (the crew_near hold and the
+    // wreck once clear, on both screens) and the play rehearsal c6db67b8 with -WanSim bad (the guest's real C4, the hold,
+    // the wreck, frames on both copies).
+    if (result.mode == LabMode::play && !result.world_vehicle_crew_given) result.world_vehicle_crew = true;
     out = result;
     return true;
 }

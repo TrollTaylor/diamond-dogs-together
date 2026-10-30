@@ -5,7 +5,9 @@
 --   D11 world_loadout_block (bit 32): the guest's iDroid supply drops that can bring a vehicle, LOADOUT
 --       (MSN_DROP_LOADOUT, NOTE 13 a 5) and, since the user's pick of the review (only the host picks vehicles), VEHICLES
 --       (MSN_DROP_VEHICLE, NOTE 13 a 4), are inactive while the guest is paired in co-op (any mission world sync runs),
---       and inside that mission across a link drop until its final stop; selecting one logs the refusal and shows its
+--       and inside that mission across a link drop until its final stop; a host-led follow's arrival (world_follow.lua)
+--       marks the mission co-op before PAIRED, a mark that lapses PREPAIR_MS later without PAIRED (logged
+--       prepair_lapsed: the host's game failed or quit while loading); selecting one logs the refusal and shows its
 --       toast. Whatever world_relief says: this module then owns the VEHICLES item (VR.ownsVehicleDrop) and
 --       world_relief_sync.lua leaves it alone. The host's iDroid and every other item stay as they are.
 --   D12 world_vehicle_break (bit 8; with VEHICLE_GONE): a vehicle that breaks on the guest's copy without attribution
@@ -17,13 +19,23 @@
 --       after 120 s); then applied only when the guest's player (its DOWNED_STATUS position, world_downed.lua, at most
 --       3 s old: the closer of the one when the request arrived and the current one) stands within 300 m of the pose the
 --       guest reported (a launcher or rifle range), or the host's own copy is down to a quarter of the highest body life
---       it read; held while no position is known; at most 4 applied per 20 s, more wait. Applied: the host's copy
+--       it read by its own damage (never by the guest's reported drops); held while no position is known; at most 4 applied per 20 s, more wait; an unnamed copy (no Despawn
+--       outside Mother Base) is held (blast_near) while a player stands within its blast distance. Applied: the host's copy
 --       becomes the same wreck (SetBodyLife 0, the engine's own destruction; read back, the Despawn if it does not
---       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within 15 m of the
---       host's copy, or a position cannot be read: then a Despawn, logged break_safe (run 7762536a: the wreck's later
---       explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). Refused: REJECT 8; the
+--       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within the blast
+--       distance of the host's copy, or a position cannot be read: then a Despawn, logged break_safe (run 7762536a: the
+--       wreck's later explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). The blast
+--       distance (VR.blastMm) is BLAST_MM for a light vehicle (that jeep) and HEAVY_BLAST_MM for every other type, an
+--       unknown type or a missing Vehicle.type binding (run ac0f7656: the armoured vehicle's own destruction threw the
+--       guest flat 25 m away; the review of 2026-10-29). Refused: REJECT 8; the
 --       guest's copy keeps its wreck (no engine command undoes one: SetBodyLife writes the life word only, IsAlive
 --       reads rec+0x70 bits nothing clears), logged break_refused.
+--       D12 crew (world_vehicle_crew, bit 64; the user's pick of 2026-10-29: wreck at once): a hold whose only reason is
+--       an NPC crew (every filled seat a soldier: world sync's roster or a TppSoldier2 id; never a player, D-Dog, a
+--       buddy or the partner's ride) is judged at once and applied as the wreck, so both copies end with one; the
+--       engine's blast decides the crew on the host's copy (their deaths are host outcomes, synced as usual; on the
+--       guest's copy they died unattributed already, so nothing counts twice). Held (crew_near) while a player stands
+--       within the blast distance of the host's copy: a Despawn under seated soldiers is untested. Logged break_crew.
 --   D14 world_vehicle_credit (bit 16; with VEHICLE_GONE): the receiver of a Fulton loss (cause 1) removes its copy with
 --       the stock Seize {"Instant"} instead of a Despawn, so its own engine runs TppTerminal.OnFulton ->
 --       OnFultonVehicle -> AddTempResource (E17: no GMP charged, the temporary resource commits at the mission end) and
@@ -38,7 +50,8 @@ local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, ASK_MS, QUEUE_N = 300000, 3000, 4, 20000, 6, 60000, 32
 local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED, BLAST_MM = 5000, 10000, 2000, 3000, 130000, 4, 15000
 VR.BREAK_MM, VR.FRESH_MS, VR.RATE_N, VR.RATE_MS, VR.ASK_N, VR.QUEUE_N, VR.CREDIT_MS = BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, QUEUE_N, CREDIT_MS
-VR.UNATTRIBUTED, VR.BLAST_MM = UNATTRIBUTED, BLAST_MM
+local PREPAIR_MS, HEAVY_BLAST_MM = 300000, 50000
+VR.UNATTRIBUTED, VR.BLAST_MM, VR.HEAVY_BLAST_MM, VR.PREPAIR_MS = UNATTRIBUTED, BLAST_MM, HEAVY_BLAST_MM, PREPAIR_MS
 -- The guest's iDroid drop items this module sets inactive: name, NOTE 13 a (the toast), log path.
 local ITEMS = {{"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}, {"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
 local function L(...)
@@ -52,6 +65,7 @@ function VR.breakOn() return W.vehicleBreakOn == true and G.on() end
 G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
 function VR.loadoutOn() return W.vehicleLoadoutOn == true and W.active == true and not W.host end
+function VR.crewOn() return W.vehicleCrewOn == true and VR.breakOn() end
 -- The guest's VEHICLES drop item is this module's while its key runs (world_relief_sync.lua asks).
 function VR.ownsVehicleDrop() return W.vehicleLoadoutOn == true and not W.host end
 function VR.reset()
@@ -145,7 +159,11 @@ function VR.plausible(q, t)
     if d == nil or da < d then d = da end
   end
   local life, peak = VR.life(q.id)
-  local heavy = life ~= nil and peak ~= nil and peak > 0 and life * 4 <= peak
+  -- Heavy counts this copy's own damage only: the guest's reported drops (world_vehicle_damage.lua D.given) never make
+  -- a far request plausible (the review of 2026-10-29).
+  local Dm = W.vehicleDamage
+  local given = type(Dm) == "table" and type(Dm.given) == "table" and Dm.given[q.id] or 0
+  local heavy = life ~= nil and peak ~= nil and peak > 0 and (life + given) * 4 <= peak
   if d ~= nil and d <= BREAK_MM then return true, "near", d, life, peak end
   if heavy then return true, "heavy", d, life, peak end
   if d ~= nil then return false, "guest_far", d, life, peak end
@@ -163,6 +181,33 @@ local function held(q, why, extra)
   q.vrHold = why
   L("step=break_hold;id=%d;rid=%d;why=%s%s", q.id, q.rid or 0, why, extra or "")
 end
+-- D12 crew: a rider id is an NPC soldier when world sync's roster names it (W.byId) or its type index is TppSoldier2.
+function VR.soldier(v)
+  if type(W.byId) == "table" and W.byId[v] ~= nil then return true end
+  local f, want = W.get(W.get(_G, "GameObject"), "GetTypeIndex"), W.get(W.get(_G, "TppGameObject"), "GAME_OBJECT_TYPE_SOLDIER2")
+  if type(f) ~= "function" or type(want) ~= "number" then return false end
+  local ok, t = pcall(f, v)
+  return ok and t == want
+end
+-- The number of filled seats of this copy's id when every one is an NPC soldier and the partner does not ride it, else
+-- nil (an empty, unreadable or other rider keeps VEHICLE_GONE's hold).
+function VR.crew(id)
+  local a = W.api
+  local ok, r = pcall(a.send, id, {id = "GetRiderId"})
+  if not ok or type(r) ~= "table" then return nil end
+  local n = 0
+  for _, v in pairs(r) do
+    if type(v) ~= "number" then return nil end
+    if v ~= 65535 then
+      if not VR.soldier(v) then return nil end
+      n = n + 1
+    end
+  end
+  local rp = W.ridePose
+  local tracks = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if n == 0 or type(tracks) == "table" and tracks[id] ~= nil or G.rides[id] and now() - G.rides[id] < G.RIDE_MS then return nil end
+  return n
+end
 local baseDecide = G.decide
 G.decide = function(q, ...)
   local verdict, why = baseDecide(q, ...)
@@ -174,6 +219,15 @@ G.decide = function(q, ...)
     L("step=break_judge;id=%d;rid=%d;ok=0;why=ridden;by=%s", q.id, q.rid or 0, why)
     return "refuse", "ridden"
   end
+  -- D12 crew: an NPC crew alone no longer holds; a player within the blast distance of the host's copy does.
+  if verdict == "hold" and why == "occupied" and VR.crewOn() then
+    local n = VR.crew(q.id)
+    if n then
+      local who, d, b = VR.nearBlast(q.id, now())
+      if who then held(q, "crew_near", fmt(";near=%s;d_mm=%d;crew=%d;blast_mm=%d", who, d or -1, n, b)); return "hold", "crew_near" end
+      q.crew, verdict = n, "apply"
+    end
+  end
   if verdict ~= "apply" then return verdict, why end
   local t = now()
   if q.ok == nil then
@@ -183,28 +237,45 @@ G.decide = function(q, ...)
     if not ok then judged(q, false); return "refuse", pwhy end
   end
   if not q.ok then return "refuse", q.pwhy end
+  -- An unnamed copy has no Despawn outside Mother Base (VEHICLE_GONE: no_locator, REJECT 8): a player within the blast
+  -- holds it (blast_near) until clear, never the break_safe Despawn that cannot run (index 0 is VEHICLE_GONE's refusal).
+  if q.named == nil then q.named = G.locator(q.id) ~= nil or W.mission == 30050 end
+  if not q.named and q.id % 512 ~= 0 then
+    local who, d, b = VR.nearBlast(q.id, t)
+    if who then held(q, "blast_near", fmt(";near=%s;d_mm=%d;blast_mm=%d", who, d or -1, b)); return "hold", "blast_near" end
+  end
   VR.applied = window(VR.applied, t, RATE_MS)
   if #VR.applied >= RATE_N then held(q, "rate", fmt(";n=%d", #VR.applied)); return "hold", "rate" end
   VR.applied[#VR.applied + 1], VR.st.applied = t, VR.st.applied + 1
   judged(q, true)
+  if q.crew then L("step=break_crew;id=%d;rid=%d;crew=%d", q.id, q.rid or 0, q.crew) end
   return "apply"
 end
 
--- D12, host: who stands within BLAST_MM of this copy of id now: "host" (its own player), "partner" (the guest's fresh
--- DOWNED_STATUS position: the host's blast can reach body 1 too), "unknown" (the copy's or the host's position cannot be
--- read), or nil (nobody: the wreck is safe to run).
+-- D12, host: the blast distance of this copy of id (mm): BLAST_MM for a light vehicle (Vehicle.type EASTERN_ or
+-- WESTERN_LIGHT_VEHICLE, compared by name), HEAVY_BLAST_MM for any other type, an unknown one or no binding.
+function VR.blastMm(id)
+  local types, t = W.get(W.get(_G, "Vehicle"), "type"), G.vtype(id)
+  if type(types) == "table" and type(t) == "number" and t ~= 255 and
+    (t == W.get(types, "EASTERN_LIGHT_VEHICLE") or t == W.get(types, "WESTERN_LIGHT_VEHICLE")) then return BLAST_MM end
+  return HEAVY_BLAST_MM
+end
+-- D12, host: who stands within the blast distance of this copy of id now: "host" (its own player), "partner" (the
+-- guest's fresh DOWNED_STATUS position: the host's blast can reach body 1 too), "unknown" (the copy's or the host's
+-- position cannot be read), or nil (nobody: the wreck is safe to run); then the distance and the blast distance used.
 function VR.nearBlast(id, t)
+  local b = VR.blastMm(id)
   local x, _, z = G.pose(id)
-  if type(x) ~= "number" or type(z) ~= "number" then return "unknown", -1 end
+  if type(x) ~= "number" or type(z) ~= "number" then return "unknown", -1, b end
   local q = {x = x, z = z}
   local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
-  if type(px) ~= "number" or type(pz) ~= "number" then return "unknown", -1 end
+  if type(px) ~= "number" or type(pz) ~= "number" then return "unknown", -1, b end
   local d = dist(px * 1000, pz * 1000, q)
-  if d <= BLAST_MM then return "host", d end
+  if d <= b then return "host", d, b end
   local gx, gz = VR.guestPos(t)
   if gx then
     d = dist(gx, gz, q)
-    if d <= BLAST_MM then return "partner", d end
+    if d <= b then return "partner", d, b end
   end
 end
 -- Removal forms (both keys need VEHICLE_GONE on). The id is marked gone before the command: the engine's own
@@ -227,9 +298,9 @@ G.remove = function(id, cause, ...)
   -- D12: the host applies a guest's destruction as the same wreck on its own copy, or as a Despawn while a player
   -- stands within the blast (break_safe).
   if cause == 2 and W.host and VR.breakOn() then
-    local who, d = VR.nearBlast(id, t)
+    local who, d, b = VR.nearBlast(id, t)
     if who then
-      L("step=break_safe;id=%d;near=%s;d_mm=%d;form=despawn", id, who, d or -1)
+      L("step=break_safe;id=%d;near=%s;d_mm=%d;form=despawn;blast_mm=%d", id, who, d or -1, b)
       return G.despawn(id)
     end
     return form(id, {id = "SetBodyLife", life = 0}, "wreck", cause, ...)
@@ -324,6 +395,11 @@ function VR.unguard()
   for _, it in ipairs(ITEMS) do L("step=unguard;path=%s;mission=%d", it[3], W.mission or 0) end
 end
 local function guard(t)
+  -- The pre-pair mark (an arrival without PAIRED yet) lapses after PREPAIR_MS: the guest plays this mission alone.
+  if VR.prepairAt and t - VR.prepairAt >= PREPAIR_MS then
+    VR.prepairAt = nil
+    if W.paired ~= true then VR.stopped = true; L("step=prepair_lapsed;mission=%d;ms=%d", W.mission or 0, PREPAIR_MS) end
+  end
   if not (VR.loadoutOn() and W.inGame() and VR.coopNow()) then VR.unguard(); return end
   if t < (VR.greyAt or 0) then return end
   VR.greyAt = t + GREY_MS
@@ -378,6 +454,13 @@ function W.tick(...)
 end
 W.startHooks[#W.startHooks + 1] = function()
   VR.reset()
+  -- D11 pre-pair gap (0.14.4 review): a host-led follow into this mission (world_follow.lua's arrival) makes it co-op at
+  -- once, so the guest's items are inactive before PAIRED; the last mission's final stop no longer carries over.
+  local F = W.follow
+  VR.prepairAt = nil
+  if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then
+    VR.coop, VR.stopped, VR.prepairAt = W.mission, nil, W.paired ~= true and now() or nil
+  end
   local s = type(W.api) == "table" and W.api.str32
   if type(s) == "function" then
     local ok, ids = pcall(function()
@@ -390,13 +473,13 @@ W.startHooks[#W.startHooks + 1] = function()
   if VR.creditOn() then pcall(VR.install) end
   local on = W.vehicleBreakOn == true or W.vehicleCreditOn == true or W.vehicleLoadoutOn == true
   if on then
-    L("step=on;mission=%d;role=%s;break=%d;credit=%d;loadout=%d;gone=%d", W.mission or 0, role(), VR.breakOn() and 1 or 0,
-      VR.creditOn() and 1 or 0, W.vehicleLoadoutOn == true and 1 or 0, G.on() and 1 or 0)
+    L("step=on;mission=%d;role=%s;break=%d;credit=%d;loadout=%d;gone=%d%s", W.mission or 0, role(), VR.breakOn() and 1 or 0,
+      VR.creditOn() and 1 or 0, W.vehicleLoadoutOn == true and 1 or 0, G.on() and 1 or 0, W.vehicleCrewOn == true and ";crew=1" or "")
   end
 end
-W.pairedHooks[#W.pairedHooks + 1] = function() VR.coop, VR.stopped = W.mission, nil end
+W.pairedHooks[#W.pairedHooks + 1] = function() VR.coop, VR.stopped, VR.prepairAt = W.mission, nil, nil end
 W.stopHooks[#W.stopHooks + 1] = function(final)
-  if final then VR.stopped, VR.queue = true, {}; pcall(VR.unguard) end
+  if final then VR.stopped, VR.queue, VR.prepairAt = true, {}, nil; pcall(VR.unguard) end
 end
 -- debug vehicle_gone_status (read only) carries this module's counters too: vr=<break><credit><loadout><greyed>,
 -- j judged, a applied, r refused (host), q asked (guest), s Seize credits sent, c credits seen after them. The base

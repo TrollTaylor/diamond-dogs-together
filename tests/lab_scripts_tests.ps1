@@ -575,7 +575,7 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
     # The vehicle decisions of 2026-10-29: D11 world_loadout_block, D12 world_vehicle_break, D14 world_vehicle_credit likewise.
-    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit')) {
+    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit', 'world_vehicle_crew', 'world_vehicle_damage')) {
         Assert-Equal "$(ConvertTo-LabPartnerValue -Key $vk -Value 1)/$(ConvertTo-LabPartnerValue -Key $vk -Value 0)" '1/0' "$vk values"
         Assert-Throws { ConvertTo-LabPartnerValue -Key $vk -Value 2 } '' "$vk=2 refused"
     }
@@ -1098,6 +1098,15 @@ try {
         $file = Join-Path $fixture 'vehicle-decisions-guest-lab.ini'; [IO.File]::WriteAllText($file, $vdIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_loadout_block'])$($n['world_vehicle_break'])$($n['world_vehicle_credit'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '111|lab|0x0|0/0' 'native: the D11 / D12 / D14 keys parse'
+        # The vehicle fixes of 2026-10-29 (world_vehicle_crew, world_vehicle_damage): off by default; LabCommon writes each; native parses it.
+        Assert-Equal "$($vdDefault['world_vehicle_crew'])$($vdDefault['world_vehicle_damage'])" '00' 'native: the crew / damage keys default off'
+        $vfOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_crew=1', 'world_vehicle_damage=1') -Role guest
+        $vfIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vfOverrides)
+        $vfText = ConvertFrom-IniText $vfIni
+        Assert-Equal "$($vfText['world_vehicle_crew'])$($vfText['world_vehicle_damage'])" '11' 'LabCommon writes the crew / damage keys'
+        $file = Join-Path $fixture 'vehicle-fixes-guest-lab.ini'; [IO.File]::WriteAllText($file, $vfIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_crew'])$($n['world_vehicle_damage'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '11|lab|0x0|0/0' 'native: the crew / damage keys parse'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')

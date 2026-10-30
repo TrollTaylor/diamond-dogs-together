@@ -713,4 +713,18 @@ local idleHold = fixture(2)
 idleHold.F.replayHold = function() idleHold.holdCalls = (idleHold.holdCalls or 0) + 1; return true end
 idleHold.F.tick(idleHold.time)
 check(not idleHold.holdCalls, 'no queued transition: the hold is never asked')
+-- D11 pre-pair gap (0.14.4 review, finding game-d11-prepair-gap): a start that replays the host's transition into this
+-- mission records it (F.arrivedMission, read by world_vehicle_rules.lua and world_relief_sync.lua), any other start clears it.
+local arrival = fixture(2)
+arrival.F.current = {41, 1, 30050, 30020}
+arrival.W.mission = 30020
+for _, f in ipairs(arrival.W.startHooks) do f() end
+check(arrival.F.arrivedMission == 30020 and logged(arrival, 'step=arrived;id=41;mission=30020'),
+    'the follow arrival marks the mission (F.arrivedMission)')
+arrival.W.mission = 30010
+for _, f in ipairs(arrival.W.startHooks) do f() end
+check(arrival.F.arrivedMission == nil, 'a later start without a replayed transition (a solo load) clears it')
+arrival.F.current = {42, 1, 30010, 30020}
+for _, f in ipairs(arrival.W.startHooks) do f() end
+check(arrival.F.arrivedMission == nil and logged(arrival, 'step=refused;reason=wrong_destination'), 'a wrong destination is no arrival')
 print('world_follow_lua_check: ' .. checks .. ' checks passed')

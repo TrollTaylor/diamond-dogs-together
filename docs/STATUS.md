@@ -1,3 +1,101 @@
+## 2026-10-30: the review of the vehicle fixes (`wp/vehicle-fixes2`, unreleased, not two-PC tested)
+
+Branch `wp/vehicle-fixes2` in `D:/mgs-coop-wt/vehicle-state`, new commits after `116847e`; local, nothing merged,
+pushed, tagged or released. The independent review of the vehicle fixes (verdict `ship_behind_lab_key`: three major,
+four minor findings, four refuted claims) was checked finding by finding against the code, the slices and the frames.
+Details: `docs/vehicles-companions-design.md` 8.15 (results) and section 11 (the finding table),
+`docs/world-sync-protocol.md` section 20 (the review note; no wire change).
+
+| Finding | Outcome | Proof |
+|---|---|---|
+| Major: `world_vehicle_damage` on in play without its fire gate meeting live AI fire (the guards' rounds on the two copies add up) | **Off in play again** (`795bdfc`), lab key; host bounds per report (half the life) and per second (3 per vehicle, 16 in all), and D12's heavy rule ignores reported drops (`8f20483`) | The bound live in the lab `c0a385a5` (2260 -> lever 600 -> host 1130 `cap=1`; -> 300 -> 565; both copies 565 past the refresh) [O]; a live-guard rehearsal or shot attribution stays open [U] |
+| Major: the crew rule's 15 m (a jeep) vs. the armoured vehicle's blast that knocked the guest flat at 25 m | **Fixed** (`77be734`): 15 m for light vehicles, 50 m for every other type, an unknown type or a missing binding, for the hold and `break_safe`; an unnamed copy with a player inside it is held (`blast_near`) instead of a Despawn that cannot run | Lab FRAME `c0a385a5`: no knockdown at 33 m; the `crew_near` hold with the guest 33 m away (both screens), the wreck once it stood 63 m away, the host 60 m away on its feet; play `c6db67b8` and `98d84a21` (`-WanSim bad`, the guest's real C4 from 25 m: the same hold and release, frames on both copies) [O]. The blast's damage between 25 and 50 m is unmeasured [U]; `blast_near` live [fixture] |
+| Major: the D11 pre-PAIRED fix in play by default without a play rehearsal of that window | **Rehearsed in play** with the new worker step `titlecontinue` (`5293dc2`); the pre-pair mark now lapses 300 s after the arrival without PAIRED (`017e777`) | `98d84a21` (play, `-WanSim bad`, the shipped defaults): both items refused before PAIRED with both toasts drawn, the host on its tips screen (frames), PAIRED 45.2 s after the arrival; `c6db67b8`: LOADOUT the same, VEHICLES not reached (the alerted Masa guards closed the iDroid) [O]. The lapse [fixture] |
+| Minor: the host takes the guest's drop at face value; reported drops feed the heavy rule | **Fixed** (`8f20483`) | Fixtures (failing first); the bound live in `c0a385a5` |
+| Minor: protocol section 20 says the guards' fire counts once | **Fixed** (`3d2fc8b`) | Rewritten: counted once only when the host copy's own hit came first |
+| Minor: README states the crew hold as fact, the guest's gunfire as shared | **Fixed**: the hold is now proven live and the README names its distances; the damage report is off in play, so the README no longer claims it | `c0a385a5`, `c6db67b8`, `98d84a21` |
+| Minor: stale "off in play" comments; 8.14 `Forced=True` for every run | **Fixed** (`3929a6c`, `3d2fc8b`) | |
+| Refuted claims (D11 fix in play, "counts once", the damage FRAME, `Forced`) | **Corrected** in 8.14, section 20, this file (below) and the roadmap | |
+
+**Play defaults now.** `world_vehicle_crew` **on** in play unless named (`3929a6c`; lab FRAME `c0a385a5`, the play
+rehearsal `c6db67b8` with the key named, again at the shipped defaults `98d84a21`). `world_vehicle_damage` **off** in
+play unless named (`795bdfc`). The D11 fix rides on `world_loadout_block` (on; play rehearsals `c6db67b8`, `98d84a21`).
+In the lab both keys stay off unless named.
+
+**Hidden runs** (3 of 3 budgeted; research build, native gun stage, copied saves, `africa-jeep` seed; each Closed,
+BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\<id>`; slices `next2/vehicles/slice-<run8>` in the session scratch; frames
+`complete/frames/next2-vehicles/<run8>-<role>-<label>.jpg`):
+- `c0a385a55fd949a89f31505cb4ee19d5` (lab, `vehicle-review-lab.txt` at `2d47238`, every key named): **every expectation
+  met** (`Forced=True` at shutdown): the host's half bound twice; the crew hold at 33 m and the wreck once clear.
+- `c6db67b8999c4a79ab38ac6a57870fac` (play, `-WanSim bad`, `vehicle-review-play.txt` at `3d2fc8b`, crew named):
+  `Forced=False`, link 176-188 ms, loss up to 3.8 %; D11 before PAIRED: LOADOUT refused with its toast; VEHICLES not
+  reached (the alerted guards closed the iDroid; 2 expectations failed); the crew part met every expectation.
+- `98d84a219dd4494ebd6d5578614ad189` (play, `-WanSim bad`, the same scenario at `b4cd471`, **no vehicle key named**):
+  `Forced=False`, link 176-190 ms, loss up to 3.2 %; every behaviour met (D11 both items before PAIRED, the crew at its
+  default, no VEHICLE_DAMAGE line on either copy); one expectation failed by the scenario's own timing: the VEHICLES
+  toast is drawn in the frame, but its log line fell inside the HUD toast log's 10 s gap per note code (the scenario
+  waited 3.5 s; it now waits 10.5 s again).
+
+**Checks.** Tests first for every rule (logs `next2/vehicles/failfirst-*.log`: rules check 108, 63, 71; relief_sync 99;
+damage 47, 69; lab_config 1274, 1275; worker_loading). `pwsh -File tools/build.ps1 -Fast` 302/302 after each change;
+the full `pwsh -File tools/build.ps1` (Debug) 318/318 before the docs commit (code at `3929a6c`, scenario `b4cd471`).
+
+**Wire.** No change since 8.14: VEHICLE_DAMAGE 0x3A (a 0.14.4 partner skips it by its length; play pairing refuses
+mismatched builds anyway). The host bounds, the blast distances and the lapse are local behaviour.
+
+**Integration note.** `wp/launcher-fixes2` (`bc56c0d`): `Assert-WorkerCoverage` must admit
+`world_vehicle_damage_lua_check` (as before). The new worker step `titlecontinue` touches
+`tools/worker/Invoke-WorkerScenario.ps1` (help, validation, roles, dispatch) and `tests/worker_loading_tests.ps1`.
+
+## 2026-10-29: the vehicle fixes (D12 crew, the guest's vehicle damage report, D11 before PAIRED; `wp/vehicle-fixes2`, unreleased, not two-PC tested)
+
+**Superseded in part by the review above** (2026-10-30): the damage report is off in play again, the crew rule's
+blast distance depends on the vehicle type, and these refuted claims are corrected: the D11 fix was not exercised in
+`247a4eed` / `8995e351` / `34d5744d` (the guest's first guard line has the same millisecond as PAIRED: the old paired
+refusal); the damage FRAME shows the jeep, not the shared life; `Forced=False` held for four runs, not none.
+
+Branch `wp/vehicle-fixes2` in `D:/mgs-coop-wt/vehicle-state`, from `dev/oct7-continue` `01fd055` (0.14.4); local,
+nothing merged, pushed, tagged or released. The user approved the three fixes on 2026-10-29 after the 0.14.4 review
+(D12's open question; findings `game-d11-prepair-gap` and `game-vstate-heals-guest-damage`). Details:
+`docs/vehicles-companions-design.md` 8.14 (results), section 10 (D11, D12), `docs/world-sync-protocol.md` section 20
+(the op and the keys).
+
+| Fix | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| D12 crew: a soldier-crewed vehicle the guest destroys is wrecked on the host's PC at once | `world_vehicle_crew` (CFG `r[15]` bit 64, `world_vehicle_rules.lua`): a hold whose only reason is an NPC crew is judged at once and applied as the host's wreck (`break_crew`); held while a player is within 15 m of the host's copy; D-Dog, a buddy, the partner's ride and the host's own player keep the old hold or refusal | **On** where `world_vehicle_break` runs (30010, 30020) | FRAME lab `ac0f7656` (the guest's lever, the burning armoured vehicle on both screens), play `8995e351` (`-WanSim bad`, the guest's real C4, frames on both), again at the shipped defaults `34d5744d`; the crew's death counts once on each copy (one host commit, a `terminal_local` apply on the guest) [O] | An enemy vehicle that drives off in a fight moves separately on each PC (`247a4eed`: refused as far, the split stays; M8); `crew_near` and a Despawn under seated soldiers [U]; two-PC |
+| The guest's vehicle damage report | `world_vehicle_damage` (bit 128), new chunk `world_vehicle_damage.lua`, new op VEHICLE_DAMAGE 0x3A (guest to host, 26 bytes): drops of the guest's copy within 3 s of its own fire (GUN_FIRE) and 300 m are reported; the host applies the lower life (at most the guest's drop, never 0) and VEHICLE_STATE carries it back | **On** where VEHICLE_STATE runs (30010, 30020) | FRAME lab `ac0f7656` (the jeep on both screens at the shared life; the engine draws no damage at these lives), play `247a4eed` (the guest's real round 2020 -> 1990 on both copies past the refresh, applied 117 ms after the report), again at the shipped defaults `34d5744d` (the host's round synced and never reported back) | The guest's explosives short of a destruction, its collisions, a guard's round in the guest's 3 s window [I]; two-PC |
+| D11 before PAIRED | `world_follow.lua` records the follow arrival (`F.arrivedMission`); `world_vehicle_rules.lua` and `world_relief_sync.lua` mark that mission co-op at the guest's start, so LOADOUT and VEHICLES are inactive before PAIRED | (rides on `world_loadout_block`, **on**) | Lab `ac0f7656` (guard 29 s before PAIRED), `d3f5ca56` (104 s, on foot) with the host held on its tips screen (frames); FRAME `251adcb6` (both items refused with both toasts on the guest's screen before PAIRED, the host on its tips screen; the pair formed 96 s after the arrival); play `247a4eed`, `8995e351` (the fix in, refused with its toast; the play worker always pairs first) | The pre-pair window in play (the play worker always pairs first) [I]; two-PC |
+
+**Hidden runs** (research build, native gun stage, copied saves, `africa-jeep` seed; each Closed, BaselineRestored,
+RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\<id>`; slices in the session scratch `next2/vehicles/slice-<run8>`; frames in
+`complete/frames/next2-vehicles/`):
+- `846c1147` (lab, `20a7120`): the report path worked (the guest's lever 2140 -> 1500 applied on the host 17 ms later),
+  but the guards' rounds on both copies were reported and added up until the host's jeep broke: the fire gate
+  (`d8497c5`). Stopped at A2 (`goto_vehicle` went to a jeep 600 m away).
+- `ac0f7656` (lab, `d8497c5`): the lab FRAME run (damage A/A2/A3, crew, D11's guard before PAIRED); the guest's iDroid
+  did not open while it rode the helicopter in.
+- `247a4eed` (play, `-WanSim bad`, `d8497c5`, the two keys named): D11 and the guest's damage passed; the host's rounds
+  missed; the crew part failed outside the rule (the alerted armoured vehicle drove apart, refused as far).
+- `d3f5ca56` (lab, `9538f86`): D11 on foot, the guard 104 s before PAIRED; the iDroid opened too late (arrival popups).
+- `8995e351` (play, `-WanSim bad`, `da2043d`, crew named, the damage report at its play default): D11 and the crew
+  passed; the Masa guards broke the jeep before the damage part. `Forced=False`.
+- (none): `vehicle-fixes2-d11.txt` at `f6823b9` never launched: the worker's audited CTest snapshot held a
+  failing-first test (`lab_config_tests` check 1275) written before its code.
+- `251adcb6` (lab, `f6823b9`): **the D11 FRAME before PAIRED, every expectation met**, `Forced=False`.
+- `34d5744d` (play, `-WanSim bad`, `f6823b9`, **no vehicle key named**: the shipped defaults): **every expectation
+  met**, `Forced=False`, link 175-186 ms, loss up to 13.3 %: D11, the guest's and the host's rounds, the crew.
+
+**Checks.** Tests first for every rule (logs `next2/vehicles/failfirst-*.log`). `pwsh -File tools/build.ps1 -Fast` 302/302 after each code change; the full `pwsh -File tools/build.ps1` (Debug) 318/318 (317 before plus `world_vehicle_damage_lua_check`) at the last code commit `f6823b9`. Hidden runs: 7 launched (`846c1147`, `ac0f7656`, `247a4eed`, `d3f5ca56`, `8995e351`, `251adcb6`, `34d5744d`) of the 8 budgeted; one more refused at its worker checks before launch.
+
+**Wire.** VEHICLE_DAMAGE 0x3A is new; a 0.14.4 partner skips it by its length (`unknown_op`) and play pairing refuses
+mismatched builds anyway. No other op or field changed. 0x35-0x37 stay reserved; 0x3B onward are free.
+
+**Integration note.** `wp/launcher-fixes2` (`bc56c0d`) adds `Assert-WorkerCoverage` / `Assert-WorkerInventory` to
+`tools/worker/Invoke-WorkerChecks.ps1`: the new `world_vehicle_damage_lua_check` (four Lua arguments) is in
+`Get-WorkerTests` here and must stay admitted there at the merge.
+
 ## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
 
 **Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T004356Z-a5bd9d1b` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.

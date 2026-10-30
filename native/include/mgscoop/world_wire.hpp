@@ -84,6 +84,11 @@ inline constexpr std::uint8_t vehicle_state = 0x33;
 // (52), the host's relief vehicle (index 0) and its carry; applied by the guest's Lua only with
 // the lab.ini key world_relief=1 (CFG r[17]).
 inline constexpr std::uint8_t vehicle_spawn = 0x34;
+// The vehicle fixes of 2026-10-29 (docs/world-sync-protocol.md section 20): VEHICLE_DAMAGE (58), the
+// guest's report of a body-life drop on its own copy of a vehicle; applied by the host's Lua only with the
+// lab.ini key world_vehicle_damage=1 (CFG r[15] bit 128). A partner without the op (0.14.4 and older)
+// skips it by its length (unknown_op), so it changes nothing there. 0x35-0x37 stay reserved (design 5).
+inline constexpr std::uint8_t vehicle_damage = 0x3A;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -234,7 +239,8 @@ struct CfgReply {
     // world_vehicle_gone), bit 2 (M4) lua/coop/world_vehicle_state.lua (lab key
     // world_vehicle_state), bit 4 (M4 review) VEHICLE_GONE's wreck parity (lab key
     // world_vehicle_wreck), bits 8 / 16 / 32 the vehicle decisions of 2026-10-29 (lab keys
-    // world_vehicle_break, world_vehicle_credit, world_loadout_block: lua/coop/world_vehicle_rules.lua);
+    // world_vehicle_break, world_vehicle_credit, world_loadout_block: lua/coop/world_vehicle_rules.lua),
+    // bits 64 / 128 the vehicle fixes of 2026-10-29 (world_vehicle_crew, world_vehicle_damage);
     // all lab and play; 0 none (world::VehicleModules).
     std::uint8_t vehicle_gone;
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): r[16] 1 turns on

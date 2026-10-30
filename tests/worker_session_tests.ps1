@@ -279,7 +279,7 @@ foreach($bad in @('world_vehicle_wreck=2','world_vehicle_wreck=','world_vehicle_
 Assert-True ('labsetting world_vehicle_wreck=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_wreck=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_wreck=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_wreck=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_wreck=0|1 only'
 # The vehicle decisions of 2026-10-29: world_loadout_block (D11), world_vehicle_break (D12), world_vehicle_credit (D14), each 0|1.
-foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit')){
+foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage')){
     foreach($ok in @("$vk=1","$vk=0","host:$vk=1","guest:$vk=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
     }
@@ -844,14 +844,14 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ([regex]::IsMatch($cmakeText,'if\(MGS_BACKGROUND_WORKER\)\s+target_compile_definitions\(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1\)\s+endif\(\)')) 'only the worker build compiles the stall into partner_net'
         Assert-True ($cmakeText.Contains('option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)')) 'the background worker stays default OFF'
     }
-    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
+    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120','waitmission guest 30010 240 only',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
         'host worldtrigger world=0','guest worldtrigger world=0')){
         $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
     }
     foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','both worldtrigger world=0','host worldtrigger world=1','host worldtrigger world=0 extra',
         'host worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
-        'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401')){
+        'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401','waitmission guest 30010 240 alone','waitmission guest 30010 240 only x')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('hidden travel refuses '+$step)
     }

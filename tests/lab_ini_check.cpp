@@ -128,6 +128,8 @@ int main(int argc, char** argv) {
         // The vehicle decisions of 2026-10-29 (D11, D12, D14), lab and play.
         std::printf("world_loadout_block=%d\nworld_vehicle_break=%d\nworld_vehicle_credit=%d\n", c.world_loadout_block ? 1 : 0,
                     c.world_vehicle_break ? 1 : 0, c.world_vehicle_credit ? 1 : 0);
+        // The vehicle fixes of 2026-10-29, lab and play.
+        std::printf("world_vehicle_crew=%d\nworld_vehicle_damage=%d\n", c.world_vehicle_crew ? 1 : 0, c.world_vehicle_damage ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
