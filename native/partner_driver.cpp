@@ -5529,7 +5529,7 @@ void TickSeatGun(Driver& d, const Hooks& h, const Clock& clock, bool realized, b
     g.installed = installed;
     g.uncertain = m.gesture_uncertain;
     g.seated = m.ride_seated && m.seat.phase == SeatPhase::seated;
-    g.passenger = ride_live && rp.kind == partner_ride_wire::Kind::vehicle && rp.seat >= 1 && rp.seat <= 3;
+    g.passenger = psg::PassengerSeat(ride_live && rp.kind == partner_ride_wire::Kind::vehicle, rp.seat);
     g.realized = realized && parts_loaded;
     g.block = m.carry_hold                                     ? "carry"
             : mgscoop::partner_dm_overlay::Active(m.overlay)  ? "overlay"

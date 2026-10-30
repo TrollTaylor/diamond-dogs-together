@@ -63,6 +63,12 @@ int main() {
         g = Ready(); g.other_gesture = true; Check(Is(sg::Gate(g), "busy"), "gate: another gesture runs");
         g = Ready(); g.enabled = false; g.seated = false; Check(Is(sg::Gate(g), "key_off"), "gate: the key first");
     }
+    // The remote's seat the gate takes as a passenger (review of wp/seat-shoot): 1..3 of a live vehicle ride; never
+    // the driver's seat 0, a seat the wire leaves unknown (255) or one past a light vehicle's four.
+    Check(sg::PassengerSeat(true, 1) && sg::PassengerSeat(true, 2) && sg::PassengerSeat(true, 3), "passenger seat: 1..3");
+    Check(!sg::PassengerSeat(true, 0), "passenger seat: the driver's seat 0 is not one");
+    Check(!sg::PassengerSeat(true, 4) && !sg::PassengerSeat(true, 255), "passenger seat: 4 and the unknown seat 255 are not");
+    Check(!sg::PassengerSeat(false, 2), "passenger seat: no live vehicle ride, no seat");
 
     // --- The remote's aim: its live pose flags, or its newest input frame.
     Check(sg::RemoteAiming({true, true, false, 0, false}), "aim: the live pose sample's Aiming flag");

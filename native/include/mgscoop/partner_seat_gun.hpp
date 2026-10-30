@@ -44,6 +44,9 @@ struct GateIn {
     bool other_gesture;  // a gesture (pickup, sign, knock) is running or waiting on body 1
 };
 const char* Gate(const GateIn& in) noexcept;
+// GateIn::passenger from the remote's live ride: a passenger seat 1..3 of a vehicle ride, never the driver's seat 0,
+// the wire's unknown seat (255) or a seat past a light vehicle's four.
+inline bool PassengerSeat(bool vehicle_ride_live, std::uint8_t seat) noexcept { return vehicle_ride_live && seat >= 1 && seat <= 3; }
 
 // The remote's aim: its live pose sample's action flags (sync::ActionFlag::Aiming; run 6fc3098b showed them arriving
 // from a back-seat passenger: partner_action_state; flags=0x1|0x3; act=110), or its newest input frame's v5 gun group.
