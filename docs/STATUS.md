@@ -26,6 +26,7 @@ camera yourself (mouse or stick) during the get-off cancels the turn. The right 
 - Not done: an earlier request (the VehicleCamera never reads CAM+0xD38 [I, byte scan]; skipped); the aim views from
   seats 1 and 2 (own leg / panel) are the first-person track's; problem (3) not this branch's.
 Frames `D:/mgs-coop-run-archive/m6m7e/frames/aim-finish/best-sheet-ae6283d3.jpg`, `ae6283d3-sheet-aim-through.jpg`.
+Full CTest 336/336; contract `--check` 826 / 209.
 
 ## 2026-10-30: aim view review closed (branch `wp/aim-view`; the get-off turn yields to the player)
 
