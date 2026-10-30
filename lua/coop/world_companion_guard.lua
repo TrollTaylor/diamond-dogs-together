@@ -270,10 +270,10 @@ W.unpairedHooks[#W.unpairedHooks + 1] = function() G.s.armedAt = nil end
 -- dead DOG bit cleared, the dog called 5 m in front), kill_mirror (guest: the forced death the restore answers),
 -- guard on|off (guest), link_sim on|off (guest: this module sees the link as lost, the hold and an unknown host state,
 -- while the world link stays up; cleared at mission start), dog_state (both: the receipt), hero (both, play too: this
--- PC's heroism, demon points and the dog's bond, read only).
+-- PC's heroism, demon points and the dog's bond, read only), kill_own (guest: its own dog's death, no host-owned session).
 local lever = C.lever
 function C.lever(a, id, A, mission)
- if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, link_sim = 1, dog_state = 1, hero = 1})[a[2]] then
+ if a[1] ~= "companion_lab" or not ({dog_life = 1, dog_stun = 1, recall = 1, kill_mirror = 1, guard = 1, link_sim = 1, dog_state = 1, hero = 1, kill_own = 1})[a[2]] then
   return lever(a, id, A, mission)
  end
  local s, n = G.s, tonumber(a[3])
@@ -308,6 +308,16 @@ function C.lever(a, id, A, mission)
   local after = W.get(vars, "deadBuddyType")
   local ok, r = lever({"companion_lab", "call_here", "dog"}, id, A, mission)
   return ok, fmt("recall;dead=%s>%s;%s", tostring(before), tostring(after), tostring(r))
+ end
+ -- kill_own (guest): the stock death of the guest's OWN dog when the session is not host-owned (the key on this PC
+ -- only, so its guard is installed; C.applies() false): the native kill flag through a lab op with arm 0, the
+ -- control of the heroism give-back (design 8.14).
+ if a[2] == "kill_own" and #a == 2 then
+  if W.host then return false, "guest_lab_only" end
+  if C.applies() then return false, "host_owned_use_kill_mirror" end
+  local r = G.call(0, 0, 1, 0)
+  if not r then return false, "kill_own;receipt=none" end
+  return r.ready == true, fmt("kill_own;ready=%s;reason=%s;installed=%s", tostring(r.ready), tostring(r.reason), tostring(r.installed))
  end
  if a[2] == "kill_mirror" and #a == 2 then
   if W.host then return false, "guest_lab_only" end

@@ -388,6 +388,19 @@ check(ok and r == "hero;role=guest;heroic=1000;ogre=50;bond=52;bond_raw=523;dead
 g:die(65535, "other"); ok, r = g.C.lever({"companion_lab", "hero"}); check(ok and r:find(";heroic=1000;.*;deaths=1$"), "and counts the deaths given back")
 ok, r = F(true, {play = true}).C.lever({"companion_lab", "hero"}); check(ok and r:find("^hero;role=host;heroic=1000;.*;applies=0;"), "the host's, in play too")
 ok, r = F(false, {off = true}).C.lever({"companion_lab", "hero"}); check(ok and r:find(";applies=0;"), "key off: read only")
+-- Lab lever kill_own (guest; the control of the give-back, design 8.14): the native kill on the guest's OWN dog when the
+-- session is not host-owned (the key on this PC only, so its guard is installed; C.applies() false), through a lab op
+-- with arm 0 (a guest's arm 0 never arms). Written before the lever; red run in the session scratchpad next2/dog/red-lua2.log.
+g = F(false, {peer = false}); g:tick()
+ok, r = g.C.lever({"companion_lab", "kill_own"}); q = g:lastGuard()
+check(ok and r == "kill_own;ready=true;reason=ok;installed=1" and q[3] == 1 and q[4] == 0 and q[6] == 1 and q[7] == 0,
+  "kill_own: the guest's own dog, lab op 1 at 0 % with arm 0")
+g:die(65535, "other"); check(g.mbm.h == 970 and not g:logged("event=dog_hero"), "and its death keeps the stock penalty (nothing given back)")
+g = F(false); g:pose(900, 0x80 + 31); g:tick(); n = #g.guard
+ok, r = g.C.lever({"companion_lab", "kill_own"}); check(not ok and r == "host_owned_use_kill_mirror" and #g.guard == n, "kill_own refuses the host's copy (kill_mirror is its lever)")
+ok, r = F(true, {peer = false}).C.lever({"companion_lab", "kill_own"}); check(not ok and r == "guest_lab_only", "kill_own is the guest's")
+ok, r = F(false, {peer = false, play = true}).C.lever({"companion_lab", "kill_own"}); check(not ok and r == "lab_only", "kill_own refused in play")
+g = F(false, {peer = false}); g.noGuard = true; ok, r = g.C.lever({"companion_lab", "kill_own"}); check(not ok and r == "kill_own;receipt=none", "no receipt: refused")
 -- world_sync.lua's observer hands the raw attacker on (the stock rule's player test needs the id, not the class).
 local hs = assert(io.open(assert(arg[4]), "rb")); local syncText = hs:read("*a"); hs:close()
 check(syncText:find("pcall(W.companionHurt, kind, a0, class2, att)", 1, true), "world_sync.lua passes the attacker id to W.companionHurt")
