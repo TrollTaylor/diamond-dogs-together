@@ -18,7 +18,8 @@ Branch `wp/launcher-fixes2` from `dev/oct7-continue` `01fd055`, in the worktree 
    - `Assert-WorkerInventory` admits the exact arguments of the three that take any.
    - The new `Assert-WorkerCoverage` refuses a Release inventory test that is neither audited nor excluded by name. The excluded list now also names `ddt_runtime_dat_integration` (reads the game folder), `ddt_launcher_screens` (mock pages in a DX11 window) and `launcher_assets_current` (Python asset check; `launcher_icon_tests` checks the icon the exe embeds).
    - Failing first [O]: `tests/worker_checks_tests.ps1` stopped at the shipped-module check; it now passes 147 checks.
-   - Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` passed with 311 audited tests (`ctest-results.xml` 311 / 0 failures) [O].
+   - Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` passed with 311 audited tests (`ctest-results.xml` 311 / 0 failures) [O]; its run folder (receipt, exe, dll, logs) is archived under `%USERPROFILE%\mgs-coop-run-archive
+ext261030-014929-6188027e7b644a37bf51164ae9fc7020`.
 3. **"The tag holds the same source" was inexact** (`d6da17f`). `tools/package-readme-player.txt`, `THIRD_PARTY_NOTICES.md` and `README.md` now say:
    - The source zip is the complete source of the two programs.
    - The tag `v<version>` holds the same code and differs only by the package's record in `docs/STATUS.md`, written after the build.
