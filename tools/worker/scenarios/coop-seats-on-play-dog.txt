@@ -1,0 +1,103 @@
+# Seats on (docs/vehicles-companions-design.md 8.25), the second play rehearsal at the SHIPPED play defaults (no
+# labsetting): the host's D-Dog rides (host seed afgh-ledge: the lab save's D-Dog), the guest's buddy is the D-Horse
+# (guest seed afgh-horse), so seat 1 stays empty on the guest's copy and the host's dog takes it on the host's copy.
+# -Mode play -WanSim bad, the Wakh Sind jeep (25608) at its spawn pose (door spots of run 3c748d46).
+#   C  the guest drives (granted, the host away), the host boards seat 1 beside it (seat 1 empty on the driver's copy);
+#      frames while the guest holds the throttle, on both copies; the host's stock get-off.
+#   D  the host drives (it gets in by the right door, the guest's claim at the left door denied); its D-Dog takes seat 1
+#      on the host's copy (seat_ext_tx flags=0x07; rider1=9728): the guest's board offers no seat 1 and it gets a back
+#      seat; frames while the host holds the throttle, on both copies (the dog in front, the guest behind).
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-seats-on-play-dog.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+# --- C: the host in seat 1 beside the guest's driving ---------------------------------------------------------------
+logmark both
+guest debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+waitlog host 'world_lua=event=seat; action=grant; vehicle=25608; role=host' 8
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+waitlog guest 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x03; rider1=65535; read=1;' 10
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+host debug teleport 574.36 320.2 1157.5 96
+wait 2500
+host capture s2-c-door
+host press e 150
+wait 4500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+both capture s2-c-seated
+guest hold w 1500 nowait
+guest burst s2-c-drive-g 6 150
+guest release
+guest hold w 1500 nowait
+host burst s2-c-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst s2-c-exit 4 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25608; seat=1; reason=stock; ok=1' 10
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture s2-c-exited
+# --- D: the host's dog in seat 1 on its copy: the guest gets a back seat -------------------------------------------
+logmark both
+host press e 150
+wait 4500
+host run vehicle_seats
+host expect vehicle;id=25608
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x07; rider1=9728; read=1;' 20
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x07' 10
+host run vehicle_seats
+guest capture s2-d-door
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=[23]; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 1000
+both capture s2-d-seated
+host hold w 1500 nowait
+host burst s2-d-drive-h 6 150
+host release
+host hold w 1500 nowait
+guest burst s2-d-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+wait 3000
+host press e 150
+wait 3000
+state
