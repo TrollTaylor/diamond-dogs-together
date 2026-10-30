@@ -322,6 +322,9 @@ if (!(Test-Path -LiteralPath $buildRoot)) { $null = New-Item -ItemType Directory
 # parts dealt to it by their cost (ms, measured alone). The definitions the later parts read (fixture texts, the
 # partner fixture-run helpers, the dry run's folders) stay outside the parts and run in every shard; a dry part that
 # runs without the dry parts before it first replays their Prepare calls (Use-DryState). -Part core,logs runs only those.
+# Only the plain run (no -Shard / -Part) chains the dry parts through a real Start / Smoke / Stop; AGENTS.md asks for it
+# once before merging a change to the lab scripts' flows. At the current costs install and e2e share shard 7, so e2e's
+# own fixture replica (for an e2e run without install) runs only with -Part e2e.
 Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
 Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{
     core = 5400; logs = 4200; 'partner-a' = 21600; 'partner-b' = 16100; install = 11000; e2e = 10800
