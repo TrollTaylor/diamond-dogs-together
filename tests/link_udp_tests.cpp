@@ -20,7 +20,9 @@
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/udp_transport.hpp"
+#include "test_cases.hpp"
 #include "test_port_lock.hpp"
+#include "test_timer_resolution.hpp"
 
 // Background-worker builds (MGS_BACKGROUND_WORKER=1, also on partner_net) admit the
 // worker-only input stall; every other build, the friend/Release loader's included, refuses it.
@@ -53,6 +55,14 @@ std::uint64_t NowMs() {
     return static_cast<std::uint64_t>(c.QuadPart) * 1000 / static_cast<std::uint64_t>(f.QuadPart);
 }
 constexpr std::uint32_t kLoopback = 0x7F000001u;
+// Each case binds its own fixed ports (48220-48261 in all) and holds its own machine-wide lock while it runs
+// (tests/test_port_lock.hpp), so the CTest shards of this fixture (cmake/test_shards.cmake) and the shards of other
+// checkouts run at the same time unless they share a case.
+struct PortLock {
+    PortLock(const wchar_t* name, std::uint16_t first, std::uint16_t last)
+        : lock((std::wstring(L"Local\\mgs-coop-test-ports-link_udp_tests-") + name).c_str(), first, last) {}
+    mgscoop::test::MachinePortLock lock;
+};
 
 link::HmacKey Psk(const char* secret) {
     char s[link::kSecretChars];
@@ -137,6 +147,7 @@ const char kSecret[] = "7K3QZ9M2XWD4HT8RVN6B";
 const char kOther[] = "C00PC00PC00PC00PC00P";
 
 void SessionOverSockets() {
+    const PortLock ports(L"SessionOverSockets", 48220, 48221);
     static UdpNode host, guest;
     Check(StartNode(host, link::Role::host, 48220, Endpoint{}, kSecret), "host transport");
     Check(StartNode(guest, link::Role::guest, 0, Endpoint{kLoopback, 48220}, kSecret), "guest transport (ephemeral port)");
@@ -198,6 +209,7 @@ void SessionOverSockets() {
 }
 
 void WrongSecret() {
+    const PortLock ports(L"WrongSecret", 48222, 48223);
     static UdpNode host, guest;
     Check(StartNode(host, link::Role::host, 48222, Endpoint{}, kSecret), "host transport");
     Check(StartNode(guest, link::Role::guest, 48223, Endpoint{kLoopback, 48222}, kOther), "guest transport");
@@ -258,6 +270,7 @@ void SendNumbered(lab::UdpTransport& sender, std::uint32_t count, bool droppable
 }
 
 void Impairments() {
+    const PortLock ports(L"Impairments", 48240, 48250);
     {
         // Jitter reorders.
         static lab::UdpTransport s, r;
@@ -519,6 +532,7 @@ bool RestartGuest(const link::SessionConfig& sc, std::uint32_t expected_session)
 }
 
 void PartnerNetV2() {
+    const PortLock ports(L"PartnerNetV2", 48260, 48261);
     namespace net = mgscoop::partner_net;
     wchar_t temp[MAX_PATH]{};
     GetTempPathW(MAX_PATH, temp);
@@ -832,13 +846,20 @@ void PartnerNetV2() {
 }
 } // namespace
 
-int main() {
-    // Ports 48220-48261 (tests/test_port_lock.hpp).
-    const mgscoop::test::MachinePortLock port_lock(L"Local\\mgs-coop-test-ports-link_udp_tests", 48220, 48261);
-    SessionOverSockets();
-    WrongSecret();
-    Impairments();
-    PartnerNetV2();
+int main(int argc, char** argv) {
+    const mgscoop::test::FineTimerResolution timer_resolution;   // Sleep(1..5) polls at ~1 ms, not 15.6 ms
+    // The cases with their cost (ms, measured alone; it only balances the CTest shards). tests/test_cases.hpp:
+    // --case A[,B], --shard K/N, --list.
+    static const mgscoop::test::TestCase kCases[] = {
+        {"SessionOverSockets", SessionOverSockets, 2980},
+        {"WrongSecret", WrongSecret, 640},
+        {"Impairments", Impairments, 2520},
+        {"PartnerNetV2", PartnerNetV2, 19140},
+    };
+    std::vector<const mgscoop::test::TestCase*> selected;
+    bool listed = false;
+    if (!mgscoop::test::SelectTestCases(kCases, sizeof kCases / sizeof kCases[0], argc, argv, selected, listed)) return 2;
+    mgscoop::test::RunTestCases(selected);
     std::printf("link_udp_tests: %u checks passed\n", checks);
     return 0;
 }

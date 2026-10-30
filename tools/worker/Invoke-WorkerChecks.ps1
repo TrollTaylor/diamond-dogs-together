@@ -65,7 +65,7 @@ function Get-WorkerTests {
         'steam_getter_tests', 'typed_payload_tests', 'player_sync_tests', 'input_receiver_tests',
         'steam_packet_tests', 'four_player_lab', 'peer_router_tests', 'allocation_bridge_tests',
         'session_allocation_reuse_tests', 'script_load_bridge_tests', 'player_ghost_tests',
-        'link_udp_tests', 'steam_loopback_tests', 'steam_shim_patches_tests', 'steam_identity_tests', 'steam_transport_tests',
+        'steam_loopback_tests', 'steam_shim_patches_tests', 'steam_identity_tests', 'steam_transport_tests',
         'partner_upper_end_off_tests', 'partner_upper_end_on_tests',
         'partner_upper_phase_off_tests', 'partner_upper_phase_on_tests', 'partner_upper_phase_combined_tests',
         'partner_upper_manual_idle_off_tests', 'partner_upper_manual_idle_on_tests',
@@ -110,7 +110,7 @@ function Get-WorkerTests {
 # plus --shard K/N (C++, tests/test_cases.hpp) or -Shard K/N (PowerShell, tests/TestShards.psm1). The counts are the
 # ones CMake registers: a missing shard fails the inventory audit, an extra one the Release coverage (worker_coverage_tests).
 function Get-WorkerShardedTests {
-    return [ordered]@{ ddt_core_tests = 5 }
+    return [ordered]@{ ddt_core_tests = 5; link_udp_tests = 2 }
 }
 function Get-WorkerShardNames {
     $sharded = Get-WorkerShardedTests

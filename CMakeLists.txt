@@ -545,7 +545,8 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   if(MGS_BACKGROUND_WORKER)
     target_compile_definitions(link_udp_tests PRIVATE MGS_BACKGROUND_WORKER=1)
   endif()
-  add_test(NAME link_udp_tests COMMAND link_udp_tests)
+  # Two shards (tests/test_cases.hpp): PartnerNetV2 alone, and the session, wrong-secret and impairment cases.
+  mgs_add_test_shards(link_udp_tests 2 COMMAND link_udp_tests)
   # Automatic save handoff glue (join-fix phase 2): file actions against fake
   # save trees in a temporary folder under the build directory.
   add_executable(save_handoff_io_tests tests/save_handoff_io_tests.cpp)

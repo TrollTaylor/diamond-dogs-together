@@ -20,12 +20,12 @@ set(MGS_SLOW_TESTS
   build_profile_tests worker_loading_tests probe_install_recovery mgo_unique_rest_session_tests
   mgo_standing_cycle_session_tests mgo_standing_frame_policy_tests worker_coverage_tests
   # over ~10 s (real sockets with timers; the launcher core end to end; real helper processes)
-  link_udp_tests ddt_local_watch_process
+  ddt_local_watch_process
   # the game folder and the GPU
   ddt_runtime_dat_integration ddt_launcher_screens)
 
 # Sharded suites (cmake/test_shards.cmake) whose entries <name>_1 .. <name>_N are all slow.
-set(MGS_SLOW_SHARDED_TESTS ddt_core_tests)
+set(MGS_SLOW_SHARDED_TESTS ddt_core_tests link_udp_tests)
 
 # name -> tests that share it
 set(MGS_TEST_RESOURCE_LOCKS
