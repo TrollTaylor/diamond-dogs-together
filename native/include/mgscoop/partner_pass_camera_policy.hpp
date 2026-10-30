@@ -251,9 +251,11 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 // stays clear, but in seat 2 the collision pulls the camera into the passenger (cam at the pivot, the aim target
 // 0-1 m away) and the gun refuses to fire (gun mode 15; runs 17fce0b7, 43e5b981), so drop is not the default. The lab
 // lever "passcam off|connect|aim|drop|lab|status" overrides the key on this copy (lab only).
-enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
+// view (design 8.33) is aim plus the seated aim view (the aim camera raised over the shoulder while seated) and the camera
+// turned behind the player after a get-off (the parts at the end of this file).
+enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 inline const char* ModeName(Mode m) noexcept {
-    return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : "aim";
+    return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : m == Mode::view ? "view" : "aim";
 }
 inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (!text) return false;
@@ -261,10 +263,12 @@ inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (n == 7 && std::memcmp(text, "connect", 7) == 0) { out = Mode::connect; return true; }
     if (n == 4 && std::memcmp(text, "drop", 4) == 0) { out = Mode::drop; return true; }
     if (n == 3 && std::memcmp(text, "aim", 3) == 0) { out = Mode::aim; return true; }
+    if (n == 4 && std::memcmp(text, "view", 4) == 0) { out = Mode::view; return true; }
     return false;
 }
 inline bool DropsWhileAiming(Mode m) noexcept { return m == Mode::drop; }
-inline bool Guards(Mode m) noexcept { return m == Mode::aim || m == Mode::drop; }
+inline bool Guards(Mode m) noexcept { return m == Mode::aim || m == Mode::drop || m == Mode::view; }
+inline bool Views(Mode m) noexcept { return m == Mode::view; }
 // The local gun aims: the qualified gun record's aim flag (rec+0x3C0 bit 18, partner_input GunFlag::Aiming) or its
 // current mode in the aim / fire / reload family (partner_seat_aim census, run 6fc3098b: RMB 6 / 7, RMB+LMB 9 / 10,
 // an empty magazine 11 / 12).
@@ -607,6 +611,172 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
     const bool fast = aiming || (last_aim_ms && now_ms >= last_aim_ms && now_ms - last_aim_ms < kTraceAfterMs);
     const std::uint64_t every = fast ? kTraceAimMs : kTraceIdleMs;
     return !last_ms || now_ms < last_ms || now_ms - last_ms >= every;
+}
+
+// --- The seated aim view (mode view; design 8.33) -------------------------------------------------------------------
+// [O] runs 37b94432 / 299de3e1 / 1f81de65: the seated aim camera sits ~1.19 m behind and ~0.10 m above the body root, at
+// the side panel's height: seat 1 sees its own leg, seat 2 the jeep's panel (seat 3, aiming across, is clear). [O] The
+// aim module (vtable 0x23D4D20; its object is the module - 0x20: Update 0x12BD4D0 -> FUN_1412BBFE0) loads its parameter
+// set 0xB8A0BF169F98 for the variant CAM+0x344 on every update, then, when obj+0x174 is set, adds the entry
+// obj+0x50 + 0x20 k (k: the index of CAM+0x344 in the stock list 0x23D4870, 9 ids) to the target offset CAM+0x150..0x15C,
+// its +0x10 to the distance CAM+0x234 and multiplies CAM+0x2DC by its +0x14 (0x12BC015..0x12BC08A, pinned). The target
+// offset is blended into CAM+0x140 (PlayerCamera_SetRotationAndAngles 0x1121704), the offset the position solve 0x1121D30
+// turns by the camera's rotation. The constructor (0x12BB250) leaves every entry (0, 0, 0, 0, 0, 1.0) and the flag 0.
+// Mode view writes the entry of the current variant to (0, kRaiseM, 0, 0, 0, 1.0) and then the flag 1 while the local
+// passenger is seated (an armed boarding): the aim camera rises over the shoulder. It writes the constructor's values
+// back (the flag first) when the boarding ends, the mode changes, the variant changes or the mission terminates. Never
+// over a set flag or an entry that is not the constructor's (another owner: refused for the boarding).
+// [I] the parameter load rewrites CAM+0x150 every update (the stock add would grow otherwise); the lab trace's off field
+// (CAM+0x140) shows it.
+inline constexpr std::size_t kAimObj = 0x20;
+inline constexpr std::size_t kAimFlag = 0x174;
+inline constexpr std::size_t kAimTable = 0x50, kAimStride = 0x20;
+inline constexpr std::size_t kCamVariant = 0x344;
+inline constexpr std::uintptr_t kAimVariantsRva = 0x23D4870;
+inline constexpr unsigned kAimVariants = 9;
+inline constexpr float kRaiseM = 0.60f;
+struct RaiseView {
+    bool ok = false;            // the local PlayerCamera was read
+    bool module = false;        // an aim module (kAimModuleVtableRva) is among CAM+0xBD0[0..5]
+    std::uint8_t flag = 0;      // obj+0x174
+    std::int32_t variant = -1;  // CAM+0x344
+    int index = -1;             // its index in the stock list (-1: none)
+    float entry[6]{};           // obj+0x50 + 0x20 index: offset x, y, z, w, distance, scale
+};
+inline bool EntryStock(const float* e) noexcept {
+    return e && e[0] == 0.0f && e[1] == 0.0f && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
+}
+inline bool EntryRaised(const float* e, float raise) noexcept {
+    return e && e[0] == 0.0f && e[1] == raise && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
+}
+// The index of a variant in the stock list (-1: none).
+inline int VariantIndex(const std::int32_t* ids, unsigned n, std::int32_t variant) noexcept {
+    if (!ids) return -1;
+    for (unsigned i = 0; i < n; ++i)
+        if (ids[i] == variant) return static_cast<int>(i);
+    return -1;
+}
+enum class RaiseWrite : std::uint8_t { none, apply, restore };
+struct Raise {
+    bool applied = false;
+    int index = -1;                 // the entry written
+    const char* refused = nullptr;  // latched for the boarding (other_owner, entry, lost)
+    std::uint32_t applies = 0, restores = 0;
+};
+// One tick. `want`: mode view and an armed boarding (the local passenger seated). Reasons (static): end, camera, module,
+// variant, other_owner, entry, lost, held, apply, restore_variant, refused.
+inline RaiseWrite RaisePlan(Raise& r, bool want, const RaiseView& v, float raise, const char*& reason) noexcept {
+    if (r.applied) {
+        if (!want) { reason = "end"; return RaiseWrite::restore; }
+        if (!v.ok || !v.module) { reason = "camera"; return RaiseWrite::none; }
+        if (v.index != r.index) { reason = "restore_variant"; return RaiseWrite::restore; }
+        if (v.flag == 0 || !EntryRaised(v.entry, raise)) {
+            // Someone else changed the entry or the flag: ours is gone; nothing is written again this boarding.
+            r.applied = false;
+            r.index = -1;
+            r.refused = "lost";
+            reason = "lost";
+            return RaiseWrite::none;
+        }
+        reason = "held";
+        return RaiseWrite::none;
+    }
+    if (!want) {
+        r.refused = nullptr;
+        reason = "end";
+        return RaiseWrite::none;
+    }
+    if (r.refused) { reason = "refused"; return RaiseWrite::none; }
+    if (!v.ok) { reason = "camera"; return RaiseWrite::none; }
+    if (!v.module) { reason = "module"; return RaiseWrite::none; }
+    if (v.index < 0) { reason = "variant"; return RaiseWrite::none; }
+    if (v.flag != 0) { r.refused = reason = "other_owner"; return RaiseWrite::none; }
+    if (!EntryStock(v.entry)) { r.refused = reason = "entry"; return RaiseWrite::none; }
+    reason = "apply";
+    return RaiseWrite::apply;
+}
+// The driver's bookkeeping after the write (ok: the native write succeeded). A restore is never retried (a failed one
+// is a fault: the driver latches the mission).
+inline void RaiseDone(Raise& r, RaiseWrite w, int index, bool ok) noexcept {
+    if (w == RaiseWrite::apply && ok) {
+        r.applied = true;
+        r.index = index;
+        ++r.applies;
+    } else if (w == RaiseWrite::restore) {
+        r.applied = false;
+        r.index = -1;
+        if (ok) ++r.restores;
+    }
+}
+
+// --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------
+// [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
+// driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close
+// to the driver with the player out of view; after seat 3 (299de3e1) it stays behind, looking forward. Mode view asks
+// once, after the boarding ended and the stock VehicleCamera is no longer the active module, for the stock camera
+// rotation of RequestToSetCameraRotation (PlayerCamera vt+0xE0 0x111A920, pinned: unless CAM+0xD38 & 0x1001 or CAM+0x204
+// bit 9, CAM+0xD38 |= 2 and CAM+0xD80..0xD94 = {interp, 0.4, 0.8, 0x400126, pitch, yaw}) toward the vehicle's forward
+// (the vehicle record's yaw: forward = (sin, 0, cos), the camera's world yaw atan2(fx, fz)), kTurnPitch down (positive
+// looks down, like the Lua rotX): the camera swings behind the player along the jeep's side, as after seat 3.
+inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
+inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
+inline constexpr std::uint32_t kTurnFlags = 0x400126;
+inline constexpr std::uint64_t kTurnWaitMs = 1500, kTurnMs = 6000, kTurnCheckMs = 900;
+inline constexpr std::size_t kCamRequestFlags = 0xD38, kCamRequest = 0xD80;
+inline constexpr std::uint32_t kRequestBusy = 0x1001, kRequestBit = 2, kCamLockBit = 1u << 9;
+enum class TurnAct : std::uint8_t { none, request, expire, check };
+struct Turn {
+    bool pending = false;
+    bool seen_stock = false;     // the VehicleCamera was the active module since the boarding ended
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    std::uint64_t since_ms = 0;
+    std::uint64_t check_ms = 0;  // a request was made: its check line is due then (0: none)
+    float yaw = 0.0f;            // the requested world yaw
+    std::uint32_t requests = 0, expired = 0;
+};
+// The boarding ended (a get-off, a seat change, a lost report): arm the turn for that vehicle and seat.
+inline void TurnArm(Turn& t, std::uint16_t vehicle, std::uint8_t seat, std::uint64_t now_ms) noexcept {
+    t.pending = true;
+    t.seen_stock = false;
+    t.vehicle = vehicle;
+    t.seat = seat;
+    t.since_ms = now_ms ? now_ms : 1;
+}
+// One tick. Reasons (static): check, seated, timeout, wait, stock, request.
+inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason) noexcept {
+    reason = "none";
+    if (t.check_ms && now_ms >= t.check_ms) {
+        t.check_ms = 0;
+        reason = "check";
+        return TurnAct::check;
+    }
+    if (!t.pending) return TurnAct::none;
+    const std::uint64_t age = now_ms >= t.since_ms ? now_ms - t.since_ms : 0;
+    if (seated) { t.pending = false; ++t.expired; reason = "seated"; return TurnAct::expire; }
+    if (age >= kTurnMs) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
+    if (!cam.ok) { reason = "wait"; return TurnAct::none; }
+    if (StockModule(cam)) { t.seen_stock = true; reason = "stock"; return TurnAct::none; }
+    if (!t.seen_stock && age < kTurnWaitMs) { reason = "wait"; return TurnAct::none; }
+    reason = "request";
+    return TurnAct::request;
+}
+// The request was made (ok) or refused (its own gate, the vehicle unread): either way the turn is spent.
+inline void TurnDone(Turn& t, bool ok, float yaw, std::uint64_t now_ms) noexcept {
+    t.pending = false;
+    if (ok) {
+        ++t.requests;
+        t.yaw = yaw;
+        t.check_ms = (now_ms ? now_ms : 1) + kTurnCheckMs;
+    } else {
+        ++t.expired;
+    }
+}
+// The request's own gate (0x111A920): busy while CAM+0xD38 & 0x1001, locked while CAM+0x204 bit 9.
+inline const char* RequestGate(std::uint32_t d38, std::uint32_t f204) noexcept {
+    if (d38 & kRequestBusy) return "busy";
+    if (f204 & kCamLockBit) return "locked";
+    return nullptr;
 }
 
 } // namespace mgscoop::partner_pass_camera

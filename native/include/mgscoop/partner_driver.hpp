@@ -455,6 +455,12 @@ struct Hooks {
     void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
     bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
     int (*seat_shot_override)(void* context) noexcept = nullptr;
+    // Design 8.33 (partner_pass_camera=view): the seated aim view's read / write of the aim module's variant entry
+    // (partner_pass_camera::ReadRaise / WriteRaise) and the get-off camera request (RequestTurn: nullptr when made, else
+    // its refusal). Any null: mode view runs as aim (no raise, no turn).
+    bool (*pass_camera_raise_read)(void* context, const partner_player::State& state, partner_pass_camera::RaiseView& out) noexcept = nullptr;
+    bool (*pass_camera_raise_write)(void* context, const partner_player::State& state, int index, bool on, float raise) noexcept = nullptr;
+    const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -783,6 +789,11 @@ struct Mission {
         LogCap aim_cap, trace_cap;
         std::uint64_t trace_ms, trace_aim_ms;
         std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
+        // Design 8.33 (mode view): the seated aim view (its last refusal logged) and the get-off camera turn (lines under
+        // aim_cap).
+        partner_pass_camera::Raise raise;
+        const char* raise_logged;
+        partner_pass_camera::Turn turn;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).

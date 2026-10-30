@@ -28,13 +28,20 @@ static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c:
                   c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
               "the look angles and the eye (design 8.27)");
 static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.28)");
+static_assert(c::pass_cam_aim_obj == kAimObj && c::pass_cam_aim_flag == kAimFlag && c::pass_cam_aim_table == kAimTable &&
+                  c::pass_cam_aim_stride == kAimStride && c::pass_cam_variant == kCamVariant &&
+                  c::pass_cam_aim_variants_rva == kAimVariantsRva && c::pass_cam_aim_variants == kAimVariants,
+              "the seated aim view (design 8.33)");
+static_assert(c::pass_cam_request_flags == kCamRequestFlags && c::pass_cam_request == kCamRequest && c::pass_cam_lock_bit == kCamLockBit &&
+                  c::pass_cam_request_busy == kRequestBusy && c::pass_cam_request_flags_value == kTurnFlags,
+              "the get-off camera request (design 8.33)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;
 volatile LONG g_installed = 0;
 const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
-std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0};
+std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0}, g_raises{0}, g_turns{0};
 volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
 
 void LogFormat(const char* format, ...) noexcept {
@@ -115,6 +122,8 @@ void ResetForTest() noexcept {
     g_clears.store(0);
     g_faults.store(0);
     g_angles.store(0);
+    g_raises.store(0);
+    g_turns.store(0);
     g_override = -1;
 }
 } // namespace detail
@@ -191,6 +200,101 @@ void ReadStats(Stats& out) noexcept {
     out.clears = g_clears.load(std::memory_order_relaxed);
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.angles = g_angles.load(std::memory_order_relaxed);
+    out.raises = g_raises.load(std::memory_order_relaxed);
+    out.turns = g_turns.load(std::memory_order_relaxed);
+}
+
+namespace {
+// The aim module's object (module - kAimObj) among CAM+0xBD0[0..5] (0: none).
+std::uintptr_t AimObject(std::uintptr_t b, std::uintptr_t cam) noexcept {
+    for (unsigned i = 0; i < kModuleCount; ++i) {
+        std::uintptr_t module = 0, vt = 0;
+        if (!ReadValue(cam + kCamModules + 8u * i, module) || !module || !ReadValue(module, vt)) continue;
+        if (vt == b + kAimModuleVtableRva && module > kAimObj) return module - kAimObj;
+    }
+    return 0;
+}
+} // namespace
+
+bool ReadRaise(const void* base, std::uintptr_t P, RaiseView& out) noexcept {
+    out = RaiseView{};
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    if (!cam) return false;
+    RaiseView v{};
+    if (!ReadValue(cam + kCamVariant, v.variant)) return false;
+    v.ok = true;
+    const std::uintptr_t obj = AimObject(b, cam);
+    if (obj) {
+        // The ids of 0x23D4870 as the contract pinned them (the generator checks the file; the code sites reading them
+        // are verified at install).
+        v.module = ReadValue(obj + kAimFlag, v.flag);
+        v.index = v.module ? VariantIndex(c::pass_cam_aim_variant_ids, kAimVariants, v.variant) : -1;
+        if (v.index >= 0) {
+            const std::uintptr_t e = obj + kAimTable + kAimStride * static_cast<unsigned>(v.index);
+            for (unsigned i = 0; i < 6; ++i)
+                if (!ReadValue(e + 4u * i, v.entry[i])) v.module = false;
+            if (!v.module) v.index = -1;
+        }
+    }
+    out = v;
+    return true;
+}
+
+bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float raise) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    if (!cam || index < 0 || index >= static_cast<int>(kAimVariants)) return false;
+    const std::uintptr_t obj = AimObject(b, cam);
+    if (!obj) return false;
+    const std::uintptr_t e = obj + kAimTable + kAimStride * static_cast<unsigned>(index);
+    __try {
+        auto* entry = reinterpret_cast<volatile float*>(e);
+        auto* flag = reinterpret_cast<volatile std::uint8_t*>(obj + kAimFlag);
+        if (on) {
+            // The entry first, then the flag: the aim module's update never adds a half-written entry.
+            entry[0] = 0.0f;
+            entry[1] = raise;
+            entry[2] = 0.0f;
+            entry[3] = 0.0f;
+            entry[4] = 0.0f;
+            entry[5] = 1.0f;
+            *flag = 1;
+        } else {
+            *flag = 0;
+            entry[0] = entry[1] = entry[2] = entry[3] = 0.0f;
+            entry[4] = 0.0f;
+            entry[5] = 1.0f;
+        }
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_raises.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    std::uint32_t d38 = 0, f204 = 0;
+    if (!cam || !ReadValue(cam + kCamRequestFlags, d38) || !ReadValue(cam + kCamFlags, f204)) return "camera";
+    if (const char* why = RequestGate(d38, f204)) return why;
+    __try {
+        // 0x111A920's order: the flag word, then the six request fields.
+        *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequestFlags) = d38 | kRequestBit;
+        auto* r = reinterpret_cast<volatile float*>(cam + kCamRequest);
+        r[0] = interp;
+        r[1] = kTurnSpeed;
+        r[2] = kTurnBlend;
+        *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequest + 0xC) = kTurnFlags;
+        r[4] = pitch;
+        r[5] = yaw;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return "fault";
+    }
+    g_turns.fetch_add(1, std::memory_order_relaxed);
+    return nullptr;
 }
 
 std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept {
@@ -266,7 +370,7 @@ bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacit
     const int value = Override();
     if (result && capacity) {
         if (refusal)
-            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|lab|status", refusal);
+            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|view|lab|status", refusal);
         else
             StringCchPrintfA(result, capacity, "passcam=%s; override=%s; writes=%u; clears=%u; faults=%u",
                              value < 0 ? "lab" : ModeName(static_cast<Mode>(value)), value < 0 ? "none" : "set",

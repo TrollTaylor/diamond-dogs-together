@@ -299,7 +299,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (ok) result.partner_ride_board_given = true;
     }
     else if (Equals(key, "partner_pass_camera")) {
-        // The passenger camera's mode off|connect|drop|aim (lab and play; design 8.27); an invalid value refuses (named,
+        // The passenger camera's mode off|connect|drop|aim|view (lab and play; design 8.27, 8.33); an invalid value refuses (named,
         // the default kept).
         PartnerPassCamera mode{};
         ok = ParsePartnerPassCamera(value.data, value.size, mode);
@@ -1917,7 +1917,7 @@ bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard&
 }
 
 const char* PartnerPassCameraName(PartnerPassCamera value) noexcept {
-    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : value == PartnerPassCamera::drop ? "drop" : "connect";
+    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : value == PartnerPassCamera::drop ? "drop" : value == PartnerPassCamera::view ? "view" : "connect";
 }
 
 bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept {
@@ -1927,6 +1927,7 @@ bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamer
     else if (Equals(s, "connect")) out = PartnerPassCamera::connect;
     else if (Equals(s, "drop")) out = PartnerPassCamera::drop;
     else if (Equals(s, "aim")) out = PartnerPassCamera::aim;
+    else if (Equals(s, "view")) out = PartnerPassCamera::view;
     else return false;
     return true;
 }

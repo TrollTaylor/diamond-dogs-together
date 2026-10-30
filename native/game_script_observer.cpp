@@ -1091,6 +1091,20 @@ std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
     if (!game_base || !partner_gate_ok) return 0;
     return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
 }
+// Design 8.33 (partner_pass_camera=view): the seated aim view and the get-off camera request.
+bool PartnerPassCameraRaiseRead(void*, const pp::State& state, mgscoop::partner_pass_camera::RaiseView& out) noexcept {
+    out = mgscoop::partner_pass_camera::RaiseView{};
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::ReadRaise(game_base, state.P, out);
+}
+bool PartnerPassCameraRaiseWrite(void*, const pp::State& state, int index, bool on, float raise) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::WriteRaise(game_base, state.P, index, on, raise);
+}
+const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, float yaw, float interp) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
+    return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);
+}
 // M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
 void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
 void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
@@ -1196,7 +1210,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
-    PartnerSeatShotOverride};
+    PartnerSeatShotOverride, PartnerPassCameraRaiseRead, PartnerPassCameraRaiseWrite, PartnerPassCameraTurn};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
