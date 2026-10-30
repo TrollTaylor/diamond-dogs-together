@@ -23,6 +23,8 @@ host run enemy sleep 4158955462
 host run enemy sleep 138337336
 host run enemy sleep 2552560298
 host run enemy sleep 1480013509
+# 1465137544 (awake patrol) took the nearest slot and fired on the jeep in the lab (d1e9e028): out of the way.
+host run enemy disable 1465137544
 host run cp_phase nearest sneak
 host debug time 43200
 host debug weather sunny
