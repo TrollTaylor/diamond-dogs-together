@@ -557,9 +557,10 @@ int main() {
                   "an invalid seat gun value refuses");
         }
     }
-    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): ON with the gun profile in lab and play
-    // since its proof (design 8.33: the lab A/B, then the play rehearsal at these defaults); off without the gun profile (the
-    // RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs (no refusal bit).
+    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): LAB ONLY by default: on with the gun
+    // profile in lab, off in play unless named (no play run has fired on a line shown to hit the jeep in stock yet, design
+    // 8.33); off without the gun profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab
+    // and play, a named 1 runs in both (no refusal bit).
     {
         Check(!LabConfig{}.partner_seat_shot && !LabConfig{}.partner_seat_shot_given && !Lab("").partner_seat_shot,
               "seat shot off without the gun profile");

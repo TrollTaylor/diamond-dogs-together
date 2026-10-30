@@ -1,0 +1,326 @@
+# m6m7d review re-prove (hit): the HOST in back seat 2 on the H2 line of 76bc4a1c (warped guard 9-10 m front-left,
+# rotY about -172, the aim 1.6 m over him: both stock shots there cost 702), now ONE LEVEL SHOT PER BOARDING: every
+# shot is the first seated aim of its boarding, so S1 and stock fire on the identical line (76bc4a1c's arms differed by
+# 40-160 milli of recoil climb). S1 arm: 3 boardings, 1 shot each; then the host on foot frames the jeep. Stock arm
+# (lever seatshot off): 3 boardings, 1 shot each (2300 -> 1598 -> 896 -> 194 if every one hits); then the host on foot
+# frames the jeep again (what a player sees: smoke or not). The host's copy is the discriminating one (the guest's copy
+# gets no life sends while the jeep is occupied). Last: life reset, one boarding, the guest drives on the throttle and
+# the host fires 2 S1 shots while moving (max_ms below 250, result shift or stale, life on the host's copy).
+# Africa jeep (30020, veh_lv_0000 = 25608), the guest drives throughout.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7d-self-hit-ab3.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+labsetting partner_ride_front=0
+labsetting world_vehicle_state=1
+labsetting debug_soldier_warp=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_seat_shot=configured; key=1; play=0' 30
+waitlog guest 'partner_seat_shot=configured; key=1; play=0' 30
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run enemy disable 1465137544
+host run cp_phase nearest sneak
+host run enemy kill 4158955462
+host expect ^enemy_kill;ent=4158955462;
+guest debug forward -10
+wait 2500
+both capture s-start
+# The H2 guard: the host on foot warps the nearest unused guard 5 m in front of itself (lab), as 76bc4a1c H2.
+host debug teleport -657.1 1.2 874.2 180
+wait 3500
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host debug forward -3
+wait 1500
+host capture guard
+host run cp_phase nearest sneak
+host debug goto_vehicle jeep right
+wait 2000
+host debug forward -10
+wait 2500
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+host run vehicle_life 25608 2300
+wait 1000
+guest run vehicle_life 25608 2300
+wait 1000
+# --- S1 arm: 3 boardings, one level shot each (the key: on) -----------------------------------------------------
+# S1 boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture on1-aim
+guest capture on1-drv-aim
+host press lmb 120
+wait 300
+host capture on1-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# S1 boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture on2-aim
+host press lmb 120
+wait 300
+host capture on2-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# S1 boarding 3
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture on3-aim
+host press lmb 120
+wait 300
+host capture on3-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# The jeep after the S1 arm, from the host on foot (the discriminating copy) and the driver.
+host debug forward -6
+wait 2500
+both capture on-after-a
+wait 3000
+host capture on-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+# --- stock arm: 3 boardings, one level shot each (lever seatshot off) -------------------------------------------
+host debug seatshot off
+wait 500
+# stock boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture off1-aim
+guest capture off1-drv-aim
+host press lmb 120
+wait 300
+host capture off1-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# stock boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture off2-aim
+host press lmb 120
+wait 300
+host capture off2-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# stock boarding 3
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture off3-aim
+host press lmb 120
+wait 300
+host capture off3-shot
+host release
+wait 1200
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# The jeep after the stock arm, from the host on foot and the driver.
+host debug forward -6
+wait 2500
+both capture off-after-a
+wait 3000
+host capture off-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host debug seatshot lab
+wait 500
+# --- moving: life reset, one boarding, the guest on the throttle, 2 S1 shots ---------------------------------------
+host run vehicle_life 25608 2300
+wait 1000
+guest run vehicle_life 25608 2300
+wait 1000
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 1000
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=
+wait 800
+logmark both
+guest hold w 4000 nowait
+wait 1200
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture mv-1
+guest capture mv-drv-1
+host release
+wait 400
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture mv-2
+guest capture mv-drv-2
+host release
+wait 400
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=(shift|stale); vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+guest press e 150
+wait 3500
+host debug forward -6
+wait 2000
+both capture mv-parked
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect ^vstate;id=25608;alive=1;
+state
