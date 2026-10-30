@@ -1091,6 +1091,13 @@ std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
     if (!game_base || !partner_gate_ok) return 0;
     return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
 }
+// M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
+void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
+void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
+bool PartnerSeatShotStats(void*, mgscoop::partner_fire_filter::SeatShotStats& out) noexcept {
+    return mgscoop::partner_fire_filter::ReadSeatShot(out);
+}
+int PartnerSeatShotOverride(void*) noexcept { return mgscoop::partner_fire_filter::SeatShotOverride(); }
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1188,7 +1195,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
-    PartnerPassCameraMvt, PartnerPassCameraRotation};
+    PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
+    PartnerSeatShotOverride};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -2731,6 +2739,20 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 replacement = {reply, std::strlen(reply)};
                 debug_quiet = true;
                 return true;
+            }
+            // "seatshot on|off|lab|status" (M7 S1's live A/B switch, lab only; docs/native-puppet.md "Seat shot (S1)").
+            {
+                int next = -1;
+                if (mgscoop::partner_seat_shot::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,
+                                                              mgscoop::partner_fire_filter::SeatShotOverride(), next, tag_result,
+                                                              sizeof(tag_result), tag_ok)) {
+                    if (tag_ok) mgscoop::partner_fire_filter::SetSeatShotOverride(next);
+                    debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                    LogFormat("debug_menu=seatshot; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                    replacement = {reply, std::strlen(reply)};
+                    debug_quiet = true;
+                    return true;
+                }
             }
             // "gesture_lever knock|sign_go|sign_stop" (docs/native-puppet.md "Gestures",
             // "Lab lever: knock and hand signs"): this copy's own knock / hand sign through

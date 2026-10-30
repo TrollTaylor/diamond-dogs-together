@@ -448,7 +448,16 @@ struct Hooks {
     std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
     // The shot guard's rotation write (partner_pass_camera::WriteRotation). May be null (the pitch only).
     bool (*pass_camera_rotation)(void* context, const partner_player::State& state, const float (&rot)[4]) noexcept = nullptr;
+    // M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)"): publish / withdraw the local
+    // seated passenger for the fire filter's RequestBullet hook (partner_fire_filter::PublishSeatShot / WithdrawSeatShot),
+    // its counters and last plan (ReadSeatShot), the lab lever's override (-1 none). Any null: nothing is published.
+    void (*seat_shot_publish)(void* context, const partner_seat_shot::Pub& pub) noexcept = nullptr;
+    void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
+    bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
+    int (*seat_shot_override)(void* context) noexcept = nullptr;
 };
+// M7 seated shots: the per-mission cap of the partner_seat_shot lines.
+inline constexpr unsigned kSeatShotLogCap = 300;
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
 inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
@@ -635,6 +644,9 @@ struct Settings {
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
     bool seat_gun;     // M7: the remote passenger's raised gun on the seated body 1, this copy's seated v6 direction (partner_seat_gun)
+    // M7 seated shots, S1 (lab.ini partner_seat_shot; partner_seat_shot.hpp): the local seated passenger's bullets start
+    // past the ridden vehicle. Key off: the lab copy still plans (census lines, nothing moved); play publishes nothing.
+    bool seat_shot;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
@@ -772,6 +784,17 @@ struct Mission {
         std::uint64_t trace_ms, trace_aim_ms;
         std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
     } pass_camera;
+    // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
+    // last plan seq logged and the hook's counters at this mission's start (lines under cap).
+    struct SeatShot {
+        bool configured_logged, published, apply, stats_have;
+        std::uint16_t vehicle;
+        std::uint8_t seat;
+        const char* refusal_logged;
+        std::uint32_t last_seq;
+        partner_fire_filter::SeatShotStats seen;
+        LogCap cap;
+    } seat_shot;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
     const char* seat_unavailable;

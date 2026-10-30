@@ -205,6 +205,7 @@ int main(int argc, char** argv) {
         std::printf("partner_seat_aim=%d\npartner_seat_aim_given=%d\n", c.partner_seat_aim ? 1 : 0, c.partner_seat_aim_given ? 1 : 0);
         // M7: the seat gun (lab and play, default 0; a named 1 runs in play too) and whether it was named.
         std::printf("partner_seat_gun=%d\npartner_seat_gun_given=%d\n", c.partner_seat_gun ? 1 : 0, c.partner_seat_gun_given ? 1 : 0);
+        std::printf("partner_seat_shot=%d\npartner_seat_shot_given=%d\n", c.partner_seat_shot ? 1 : 0, c.partner_seat_shot_given ? 1 : 0);
         // Design 8.27: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
         std::printf("partner_pass_camera=%s\npartner_pass_camera_given=%d\npartner_pass_camera_trace=%d\n",
                     mgscoop::PartnerPassCameraName(c.partner_pass_camera), c.partner_pass_camera_given ? 1 : 0,

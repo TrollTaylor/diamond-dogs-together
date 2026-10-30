@@ -1,3 +1,41 @@
+## 2026-10-30: the seated-shot review fixed; both back seats hit on the merged build (branch `wp/seat-shoot2`)
+
+**Built:** the review of 8.30 (design 8.31). S1 (`partner_seat_shot`, still off in lab and play) never moves a start
+outside the vehicle's box, its jeep box hugs the jeep (4.4 x 2.0 m) and a pose is fresh for 50 ms; only the two pins
+S1 relies on join the partner's code gate (the five static facts are generator checks, `SEAT_SHOT_FACTS`); the pellet
+assertion reads the executable. Contract 824 code sites / 209 slots. Failing first `19c55b5` -> `50389fb`. The 8.30 /
+README claims corrected (seat 3 only; frames on the shooter's copy; two commits per kill; the on-foot control Dying on
+the guest only).
+**Play default:** unchanged (no flip): seated firing with the aim camera was already on; S1 stays off.
+**Proof:** lab `881b37e6` (merged build, africa-jeep; every expectation met; Closed, BaselineRestored,
+RealSavesUnchanged, Forced=True): back seat 3 (the guest shooting, the host driving) killed a guard 8.5 m out at
+shot 2; back seat 2 (the host shooting through the known side-panel view, the reticle red) killed one 9.3 m out at
+shot 2, and the guest's driver view framed that kill; every held-aim shot fired (3/3, 2/2, 3/3); with the lever on
+the fixed box moved the start 1.02 m (`stale=0`). S1 off in both kills. README Seats line: either back seat hits.
+**Not proven:** a kill in play or from a moving jeep, longer range, two PCs; the driver's camera cannot be aimed by
+the scenario (part A's kill on the driver's copy by lines only); the partner's Dying state still fails to apply on
+the other copy (readback 2; Dead follows). Full CTest 336/336.
+
+## 2026-10-30: seated shots land; the bullet-start fix S1 built, kept off (branch `wp/seat-shoot2`)
+
+**Shooting from the right back seat hits [O, lab]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, a stopped
+jeep, the first shot killed a guard 8.5-9.4 m out across the jeep in both role orders (guest: `event=req` + host `commit
+actor=guest`; host: `commit` state 4 then state 5, one Dead commit per kill), frames on the shooter's copy (on the other
+copy the kill by its `commit` / `apply` lines); on-foot control in the same run (Dying on the guest's copy only: the
+host's apply failed, readback 2). One of those kills came with S1 off: the
+earlier misses (8.22) fit the camera's sky swing, fixed by `partner_pass_camera=aim` (on in play since 8.27) [I].
+Built: `partner_seat_shot` (S1: the RequestBullet hook moves a seated passenger's bullet start past the ridden
+vehicle's box; lab lever `seatshot`; contract `SEAT_SHOT_SITES`, 829 sites / 209 slots; failing first `bbe8160` ->
+`acfd916`; no new test executable). **Play default: S1 OFF** (lab and play): no effect seen (`a9d0af0f`: a steep line
+into the jeep from seat 2 never fires, with S1 off or on: the stock gun refuses it). Play rehearsal `381880b8`
+(`-WanSim bad`, shipped defaults): seat 3 fired in both role orders, no fault, jeep life unchanged; no target in range
+(play refuses the soldier warp), so no kill in play. `3d452714` stopped at the seat race (scenarios fixed). Merged
+`dev/oct7-continue` (`7a9a334`). All Closed, BaselineRestored, RealSavesUnchanged. Archives
+`%USERPROFILE%\mgs-coop-run-archive\m6m7b\<id>`.
+Not done / not proven: the driver seeing the partner raise the gun (design B; not attempted: even the stock passenger
+holds the rifle low; next B1p, posture 3 for the seated acts); `partner_seat_gun` / `partner_seat_aim` stay off; seat
+1 (gun does not fire) and the truck cab; a kill in play; two-PC. Full CTest 336/336 (`tools/build.ps1`, 116 s).
+
 ## 2026-10-30: seats on, aim camera fixed, faster tests (`dev/oct7-continue`, local only)
 
 Merged (nothing pushed, tagged or released; not two-PC tested): `ff10600` `wp/test-speed` (`d620838`), `9c2b5a8`

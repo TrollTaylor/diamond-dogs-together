@@ -109,6 +109,68 @@ bool Read(std::uintptr_t address, void* out, std::size_t size) noexcept {
 template <class T>
 bool ReadValue(std::uintptr_t address, T& value) noexcept { return Read(address, &value, sizeof(value)); }
 
+// --- M7 seated shots, S1 (partner_seat_shot.hpp): the publication (one writer, the driver tick; any thread reads)
+// and the last plan (any hook thread writes under a try-lock; the driver reads).
+namespace pss = mgscoop::partner_seat_shot;
+volatile LONG g_ss_on = 0, g_ss_seq = 0, g_ss_override = -1;
+pss::Pub g_ss_pub{};
+std::uint64_t (*g_ss_clock)() noexcept = nullptr;
+volatile LONG g_ss_seen = 0, g_ss_shifted = 0, g_ss_census = 0, g_ss_refused = 0, g_ss_stale = 0, g_ss_unread = 0, g_ss_busy = 0;
+volatile LONG g_ss_last_lock = 0, g_ss_last_seq = 0;
+SeatShotStats g_ss_last{};
+std::uint64_t SeatShotNow() noexcept { return g_ss_clock ? g_ss_clock() : GetTickCount64(); }
+bool ReadPub(pss::Pub& out) noexcept {
+    for (int i = 0; i < 4; ++i) {
+        const LONG a = InterlockedCompareExchange(&g_ss_seq, 0, 0);
+        if (a & 1) continue;
+        MemoryBarrier();
+        std::memcpy(&out, const_cast<const pss::Pub*>(&g_ss_pub), sizeof(out));
+        MemoryBarrier();
+        if (InterlockedCompareExchange(&g_ss_seq, 0, 0) == a) return true;
+    }
+    return false;
+}
+void RecordLast(const pss::Pub& p, const pss::Plan& plan) noexcept {
+    if (InterlockedCompareExchange(&g_ss_last_lock, 1, 0) != 0) return;  // another hook thread is writing: skip this one
+    g_ss_last.result = plan.result;
+    g_ss_last.apply = p.apply;
+    g_ss_last.inside = plan.inside;
+    g_ss_last.seat = p.seat;
+    g_ss_last.vehicle = p.vehicle;
+    g_ss_last.t = plan.t;
+    g_ss_last.exit = plan.exit;
+    g_ss_last.dist = plan.dist;
+    for (int i = 0; i < 3; ++i) {
+        g_ss_last.o_local[i] = plan.o_local[i];
+        g_ss_last.d_local[i] = plan.d_local[i];
+    }
+    g_ss_last.seq = static_cast<std::uint32_t>(InterlockedIncrement(&g_ss_last_seq));
+    InterlockedExchange(&g_ss_last_lock, 0);
+}
+// True when `copy` (kRecordBytes, 16-aligned) holds the record with its start moved; the caller forwards it.
+static_assert(mgscoop::partner_seat_shot::kRecordBytes <= 0x40, "the hook's copy holds the slot's record");
+bool SeatShotStep(const void* record, std::uint16_t owner, unsigned char* copy) noexcept {
+    pss::Pub p{};
+    if (!ReadPub(p)) { InterlockedIncrement(&g_ss_busy); return false; }
+    if (p.owner != owner) return false;
+    InterlockedIncrement(&g_ss_seen);
+    const std::uint64_t now = SeatShotNow();
+    if (now < p.ms || now - p.ms > pss::kFreshMs) { InterlockedIncrement(&g_ss_stale); return false; }
+    if (!ReadRecord(record, 0, copy, pss::kRecordBytes)) { InterlockedIncrement(&g_ss_unread); return false; }
+    float start[3], dir[3];
+    std::memcpy(start, copy + pss::kPos, sizeof(start));
+    std::memcpy(dir, copy + pss::kDir, sizeof(dir));
+    const pss::Plan plan = pss::PlanShot(p, start, dir);
+    RecordLast(p, plan);
+    if (plan.move) {
+        std::memcpy(copy + pss::kPos, plan.pos, sizeof(plan.pos));  // +0x0C (w) kept
+        InterlockedIncrement(&g_ss_shifted);
+        return true;
+    }
+    InterlockedIncrement(std::strcmp(plan.result, "census") == 0 ? &g_ss_census : &g_ss_refused);
+    return false;
+}
+
 void* Hook(void* iface, const void* record) noexcept {
     InterlockedExchange(&g_last_thread, static_cast<LONG>(GetCurrentThreadId()));
     std::uint16_t owner = 0xFFFF;
@@ -130,7 +192,12 @@ void* Hook(void* iface, const void* record) noexcept {
     InterlockedIncrement(&g_passed);
     if ((owner & c::shot_owner_type_mask) == 0) InterlockedIncrement(&g_passed_player);
     const detail::RequestFn original = g_test_original ? g_test_original : g_original;
-    return original ? original(iface, record) : nullptr;
+    // M7 S1: the local seated passenger's bullet starts past the ridden vehicle (a moved copy; never the caller's record,
+    // which the shot handler re-uses for every pellet).
+    alignas(16) unsigned char copy[0x40]{};
+    const void* forward = record;
+    if (g_ss_on && record && owner != 0xFFFFu && (owner & c::shot_owner_type_mask) == 0 && SeatShotStep(record, owner, copy)) forward = copy;
+    return original ? original(iface, forward) : nullptr;
 }
 
 std::uintptr_t HookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&Hook); }
@@ -295,7 +362,16 @@ void ResetForTest() noexcept {
     std::memset(g_c_ring, 0, sizeof(g_c_ring));
     InterlockedExchange(&g_slot_installed, 0);
     g_slot_base = 0;
+    InterlockedExchange(&g_ss_on, 0);
+    InterlockedExchange(&g_ss_seq, 0);
+    InterlockedExchange(&g_ss_override, -1);
+    g_ss_pub = pss::Pub{};
+    volatile LONG* const counters[] = {&g_ss_seen, &g_ss_shifted, &g_ss_census, &g_ss_refused, &g_ss_stale, &g_ss_unread, &g_ss_busy, &g_ss_last_seq};
+    for (volatile LONG* v : counters) InterlockedExchange(v, 0);
+    InterlockedExchange(&g_ss_last_lock, 0);
+    g_ss_last = SeatShotStats{};
 }
+void SetSeatShotClockForTest(std::uint64_t (*clock)() noexcept) noexcept { g_ss_clock = clock; }
 void SetOriginalForTest(RequestFn original) noexcept { g_test_original = original; }
 NoiseFn NoiseHookEntry() noexcept { return &NoiseHook; }
 void SetNoiseOriginalForTest(NoiseFn original) noexcept { g_noise_test_original = original; }
@@ -490,6 +566,38 @@ const char* CensusKindName(CensusKind kind) noexcept {
     default: return "bullet";
     }
 }
+
+void PublishSeatShot(const partner_seat_shot::Pub& pub) noexcept {
+    partner_seat_shot::Pub p = pub;
+    p.ms = SeatShotNow();
+    InterlockedIncrement(&g_ss_seq);  // odd: being written (one writer: the driver tick)
+    MemoryBarrier();
+    std::memcpy(const_cast<partner_seat_shot::Pub*>(&g_ss_pub), &p, sizeof(p));
+    MemoryBarrier();
+    InterlockedIncrement(&g_ss_seq);
+    InterlockedExchange(&g_ss_on, 1);
+}
+void WithdrawSeatShot() noexcept { InterlockedExchange(&g_ss_on, 0); }
+bool SeatShotPublished() noexcept { return InterlockedCompareExchange(&g_ss_on, 0, 0) != 0; }
+bool ReadSeatShot(SeatShotStats& out) noexcept {
+    out = SeatShotStats{};
+    const bool last = InterlockedCompareExchange(&g_ss_last_lock, 1, 0) == 0;
+    if (last) {
+        out = g_ss_last;
+        InterlockedExchange(&g_ss_last_lock, 0);
+    }
+    out.seen = static_cast<std::uint32_t>(g_ss_seen);
+    out.shifted = static_cast<std::uint32_t>(g_ss_shifted);
+    out.census = static_cast<std::uint32_t>(g_ss_census);
+    out.refused = static_cast<std::uint32_t>(g_ss_refused);
+    out.stale = static_cast<std::uint32_t>(g_ss_stale);
+    out.unread = static_cast<std::uint32_t>(g_ss_unread);
+    out.busy = static_cast<std::uint32_t>(g_ss_busy);
+    if (!last) out.seq = 0;
+    return last;
+}
+int SeatShotOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_ss_override, 0, 0)); }
+void SetSeatShotOverride(int value) noexcept { InterlockedExchange(&g_ss_override, value < 0 ? -1 : value ? 1 : 0); }
 
 void SetCensus(bool on) noexcept { InterlockedExchange(&g_census_on, on ? 1 : 0); }
 bool CensusOn() noexcept { return g_census_on != 0; }

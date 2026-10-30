@@ -1,0 +1,197 @@
+# M7 seated shots after the review of 8.30 (docs/native-puppet.md "Seat shot (S1)"; design 8.31): on the merged build,
+# a seated kill with S1 off (the shipped forwarding: the lab copy only plans and logs, result=census), the driver's own
+# view of the guard and the kill, the S1 box after the fixes (4.4 x 2.0 m, 50 ms fresh, a start outside refused), and
+# the left back seat (seat 2) shooting across the jeep at a guard 9 m out. africa-jeep (veh_lv_0000 = 25608), lab.
+# partner_ride_front=0 keeps the boards on the back seats (seat 2 from the left side); partner_seat_shot unnamed (off).
+# Target method: the host places a guard 8.9 m out beside the jeep (goto_vehicle jeep [right], forward -12, spawn_enemy
+# here) and puts him to sleep (enemy sleep nearest: no earlier guard lives, check guard_here ent == enemy_sleep ent in
+# the slices); the shooter turns its camera to him once with enemy_aim_nearest 1.6 before its first aim; every shot is
+# hold rmb, 700 ms, lmb (the re-aim of 0af9baa3's part B fired only once). The driver turns its own camera to the guard
+# with the mouse, then with enemy_aim_nearest 0.3 (frames of what the driver sees).
+#   A. The host drives (stopped), the guest in back seat 3 shoots across the jeep at a guard on the LEFT: up to three
+#      shots with S1 off (census), then seatshot on and two shots at the same spot (shift lines with the new box).
+#   B. The guest drives, the host in back seat 2 (left rear) shoots across the jeep at a guard on the RIGHT, S1 off.
+# Expected (lab): A: guest partner_seat_shot=shot; result=census; ...; seat=3; ...; inside=1 (exit ~0.97 m), the
+# guest's world_lua=event=req and the host's commit actor=guest; after the lever result=shift; ...; stale=0.
+# B: host partner_seat_shot=shot; result=census; ...; seat=2 and the host's commit actor=host, the guest's apply.
+# Frames (look at them): a-guard, a-aim, a-shot-N (the guest), a-drv-look1/2, a-drv-shot, a-drv-after (the host);
+# a-on-N; b-guard, b-aim, b-shot-N (the host), b-drv-look1/2, b-drv-shot, b-drv-after (the guest).
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-shot-fix.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=0
+labsetting nametag=1
+labsetting debug_soldier_warp=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_seat_shot=configured; key=0; play=0' 30
+waitlog guest 'partner_seat_shot=configured; key=0; play=0' 30
+host debug clear_enemies 100
+wait 2000
+host debug clear_enemies 100
+# The guest steps 10 m back (its boot spot faces the driver's door; the seat race would give it the empty jeep).
+guest debug forward -10
+wait 2500
+# --- A. The guest in seat 3 shoots across the jeep at a guard on the left; the host drives -------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host capture a-guard
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+host run vehicle_state_status 25608
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=3;' 10
+waitlog guest 'partner_seat_shot=published; vehicle=256[0-9][0-9]; seat=3; class=light; cat=[12]; apply=0; source=key;' 5
+wait 1000
+both capture a-seated
+# The driver looks left at the guard: the mouse first, then the camera lever.
+host mouse -700 0
+wait 800
+host capture a-drv-look1
+host run enemy_aim_nearest 0.3
+wait 800
+host capture a-drv-look2
+guest run enemy_aim_nearest 1.6
+guest expect ^aim_nearest;ent=\d+;
+wait 600
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest capture a-aim
+guest press lmb 120
+wait 300
+guest capture a-shot-1
+host capture a-drv-shot
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-shot-2
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-shot-3
+guest release
+waitlog guest 'partner_seat_shot=shot; result=census; vehicle=256[0-9][0-9]; seat=3; apply=0;' 5
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 8
+wait 1500
+both capture a-after
+host capture a-drv-after
+# S1 on (the lever) with the fixed box: two shots at the same spot.
+guest debug seatshot on
+waitlog guest 'partner_seat_shot=published; vehicle=256[0-9][0-9]; seat=3; class=light; cat=[12]; apply=1; source=lever;' 5
+guest hold rmb 1500 nowait
+wait 700
+guest capture a-on-aim
+guest press lmb 120
+wait 300
+guest capture a-on-1
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-on-2
+guest release
+waitlog guest 'partner_seat_shot=shot; result=(shift|near); vehicle=256[0-9][0-9]; seat=3; apply=1;' 5
+guest debug seatshot lab
+wait 1000
+host run vehicle_state_status 25608
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=off' 8
+host press e 150
+wait 3500
+# --- B. The host in seat 2 shoots across the jeep at a guard on the right; the guest drives ------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host capture b-guard
+guest debug goto_vehicle jeep
+wait 2500
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=
+host debug goto_vehicle jeep
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=2;' 10
+waitlog host 'partner_seat_shot=published; vehicle=256[0-9][0-9]; seat=2; class=light; cat=[12]; apply=0; source=key;' 5
+wait 1000
+both capture b-seated
+# The driver looks right at the guard.
+guest mouse 700 0
+wait 800
+guest capture b-drv-look1
+guest run enemy_aim_nearest 0.3
+wait 800
+guest capture b-drv-look2
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=\d+;
+wait 600
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-aim
+host press lmb 120
+wait 300
+host capture b-shot-1
+guest capture b-drv-shot
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture b-shot-2
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture b-shot-3
+host release
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=256[0-9][0-9]; seat=2; apply=0;' 5
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=host;' 8
+waitlog guest 'world_lua=event=apply; ent=[0-9]+;' 8
+wait 1500
+both capture b-after
+guest capture b-drv-after
+host run vehicle_state_status 25608
+host press e 150
+wait 3500
+guest press e 150
+wait 3500
+both capture b-off
+state

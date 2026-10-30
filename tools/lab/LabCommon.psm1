@@ -384,6 +384,7 @@ $script:LabPartnerKeys = @(
     # M7 seat gun (docs/native-puppet.md "Seat gun"): the partner's raised gun on the seated body and this copy's seated
     # aim direction (lab and play: off unless set, a named 1 runs in play too; written only when set).
     @{ Key = 'partner_seat_gun'; Json = 'seat_gun'; Kind = 'bool' },
+    @{ Key = 'partner_seat_shot'; Json = 'seat_shot'; Kind = 'bool' },
     # The passenger camera (docs/native-puppet.md "Passenger camera", design 8.27): its mode off|connect|drop|aim (lab and
     # play) and its read-only lab trace (lab only, forced off in play); written only when set.
     @{ Key = 'partner_pass_camera'; Json = 'pass_camera'; Kind = 'enum'; Values = @('off', 'connect', 'drop', 'aim') },

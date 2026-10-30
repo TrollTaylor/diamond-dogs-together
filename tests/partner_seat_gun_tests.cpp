@@ -1,9 +1,10 @@
-// M7: the partner's raised gun on the seated body 1 (partner_seat_gun.hpp), pure part. Synthetic only: no game
+// M7: the partner's raised gun on the seated body 1 (partner_seat_gun.hpp) and the seated shots' S1 (partner_seat_shot.hpp), pure part. Synthetic only: no game
 // code runs. Covers the driver's gate (every refusal word, in order), the remote's aim from its input sample, the
 // hold decision (start, the release debounce, a gate fall, the retry wait after the hook ended a hold), the aim
 // rates for body 1 (straight ahead, the seat range and its clamp, a wrapped yaw, non-finite input), the nodes the
 // stock gun-hold state uses, and the gesture policy's two local kinds (never on the wire; their body gate and end).
 #include "mgscoop/partner_seat_gun.hpp"
+#include "mgscoop/partner_seat_shot.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
 #include "mgscoop/partner_aim.hpp"
 #include "partner_player_contract.hpp"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace sg = mgscoop::partner_seat_gun;
 namespace gp = mgscoop::partner_gesture_policy;
@@ -236,6 +238,177 @@ int main() {
         in.r60 = 0.5f; in.body_ok = false;
         Check(pa::GunDirSeated(in).reason == pa::DirReason::body, "seated dir: no body yaw refuses");
         Check(std::strcmp(pa::DirReasonName(pa::DirReason::seat), "seat") == 0, "seated dir: the reason name");
+    }
+    // --- M7 seated shots, S1 (partner_seat_shot.hpp): the box, the plan, the lever ----------------------------------
+    {
+        namespace ss = mgscoop::partner_seat_shot;
+        // The classes: light vehicles (category 1, 2) in seats 1..3, a truck (3, 4) only in its cab seat 1.
+        Check(ss::ClassFor(1, 2) == ss::Class::light && ss::ClassFor(2, 3) == ss::Class::light && ss::ClassFor(2, 1) == ss::Class::light,
+              "S1 class: light vehicles in seats 1..3");
+        Check(ss::ClassFor(4, 1) == ss::Class::truck && ss::ClassFor(3, 1) == ss::Class::truck && ss::ClassFor(4, 2) == ss::Class::none,
+              "S1 class: a truck only in its cab seat");
+        Check(ss::ClassFor(2, 0) == ss::Class::none && ss::ClassFor(2, 4) == ss::Class::none && ss::ClassFor(5, 1) == ss::Class::none &&
+                  ss::ClassFor(0, 2) == ss::Class::none,
+              "S1 class: the driver, seat 4, armoured and unknown categories: none");
+        Check(Is(ss::ClassName(ss::Class::light), "light") && Is(ss::ClassName(ss::Class::truck), "truck") &&
+                  Is(ss::ClassName(ss::Class::none), "none"),
+              "S1 class names");
+        // The vehicle frame: yaw 0 faces +z, its right is -x (lua goto_vehicle's passenger side, yaw - pi/2).
+        {
+            const float w[3] = {0.0f, 2.0f, 1.0f}, r[3] = {-1.0f, 0.0f, 0.0f};
+            float a[3], b[3];
+            ss::ToLocal(0.0f, w, a);
+            ss::ToLocal(0.0f, r, b);
+            Check(Near(a[0], 1.0) && Near(a[1], 0.0) && Near(a[2], 2.0) && Near(b[0], 0.0) && Near(b[1], 1.0) && Near(b[2], 0.0),
+                  "S1 frame: forward +z, right -x, up +y at yaw 0");
+            const float f90[3] = {1.0f, 0.0f, 0.0f};
+            ss::ToLocal(static_cast<float>(kPi / 2), f90, a);
+            Check(Near(a[0], 1.0) && Near(a[1], 0.0), "S1 frame: yaw +90 deg faces +x");
+        }
+        // The slab test: inside, outside crossing, grazing a face, missing, behind.
+        {
+            const float h[3] = {2.0f, 1.0f, 1.0f};
+            float tin = 0, tout = 0;
+            const float o0[3] = {0, 0, 0}, dx[3] = {0, 1, 0};
+            Check(ss::RayBox(o0, dx, h, tin, tout) && tin < 0 && Near(tout, 1.0), "S1 box: from the centre out of a side: exit 1 m");
+            const float o1[3] = {0, -3, 0};
+            Check(ss::RayBox(o1, dx, h, tin, tout) && Near(tin, 2.0) && Near(tout, 4.0), "S1 box: from outside through it: enter 2, exit 4");
+            const float o2[3] = {0, -3, 1.0f};
+            Check(ss::RayBox(o2, dx, h, tin, tout) && Near(tout, 4.0), "S1 box: grazing the top face counts");
+            const float o3[3] = {0, -3, 1.5f};
+            Check(!ss::RayBox(o3, dx, h, tin, tout), "S1 box: above the box: no crossing");
+            const float o4[3] = {0, 3, 0};
+            Check(!ss::RayBox(o4, dx, h, tin, tout), "S1 box: the box behind the start: no crossing");
+        }
+        // The light box is the jeep (~4.2 x 1.9 m) plus about 5 cm a side, not more: a start moved past a bigger box can
+        // skip a wall or rock the jeep stands against (review of 8.30). The publication is fresh for 50 ms at most: a pose
+        // older than that is metres off on a moving jeep.
+        Check(ss::kLightBox.half_side == 1.0f && ss::kLightBox.half_fwd == 2.2f && ss::kFreshMs <= 50,
+              "S1 box: the light box hugs the jeep (4.4 x 2.0 m); fresh for 50 ms");
+        // A seated shot across a jeep at yaw 0: the start 0.3 m right of the centre line and 1.1 m up (in the box), aiming
+        // left and slightly down at a guard 15 m out: the start moves to the box's left side (-1.0 m) + 5 cm.
+        ss::Pub p{};
+        p.owner = 0;
+        p.vehicle = 25608;
+        p.seat = 3;
+        p.cls = ss::Class::light;
+        p.apply = true;
+        p.target_ok = true;
+        p.pos[0] = 100.0f; p.pos[1] = 10.0f; p.pos[2] = 200.0f;
+        p.yaw = 0.0f;
+        const float start[3] = {100.0f - 0.3f, 11.1f, 200.0f - 1.0f};  // right 0.3 (x -0.3), 1 m behind the record
+        const float aim[3] = {100.0f + 15.0f, 10.2f, 200.0f - 1.0f};
+        p.target[0] = aim[0]; p.target[1] = aim[1]; p.target[2] = aim[2];
+        const float dir[3] = {aim[0] - start[0], aim[1] - start[1], aim[2] - start[2]};  // not unit: the plan normalizes
+        ss::Plan q = ss::PlanShot(p, start, dir);
+        Check(Is(q.result, "shift") && q.move && q.inside, "S1 plan: inside, moved");
+        Check(Near(q.o_local[0], -1.0, 1e-3) && Near(q.o_local[1], 0.3, 1e-3) && Near(q.o_local[2], 1.1, 1e-3),
+              "S1 plan: the start in the vehicle frame (1 m back, 0.3 m right, 1.1 m up)");
+        Check(q.d_local[1] < -0.99f, "S1 plan: the direction points left (across the jeep)");
+        // Exit through the left side at local right = -1.0: the line runs 1.3 m sideways (plus the dip), then +5 cm.
+        Check(q.exit > 1.29f && q.exit < 1.32f && Near(q.t, q.exit + ss::kExitPadM, 1e-4), "S1 plan: the exit and the pad");
+        Check(Near(q.dist, std::sqrt(15.3 * 15.3 + 0.9 * 0.9), 1e-3), "S1 plan: the target distance");
+        Check(q.pos[0] > 100.0f + 1.0f && q.pos[0] < 100.0f + 1.1f && std::fabs(q.pos[2] - (200.0f - 1.0f)) < 1e-3f,
+              "S1 plan: the moved start just past the left side, on the line");
+        // The same with apply off: planned, not moved (the lab census).
+        p.apply = false;
+        q = ss::PlanShot(p, start, dir);
+        Check(Is(q.result, "census") && !q.move && q.t > 1.3f, "S1 plan: apply off plans without a move");
+        p.apply = true;
+        // The target 1.2 m away, inside the box: the start stops 0.3 m before it.
+        {
+            ss::Pub n = p;
+            n.target[0] = start[0] + 1.2f; n.target[1] = start[1]; n.target[2] = start[2];
+            const float d2[3] = {1, 0, 0};
+            q = ss::PlanShot(n, start, d2);
+            Check(Is(q.result, "shift") && Near(q.t, 0.9, 1e-4), "S1 plan: never closer than 0.3 m to the target");
+            n.target[0] = start[0] + 0.25f;
+            q = ss::PlanShot(n, start, d2);
+            Check(Is(q.result, "near") && !q.move, "S1 plan: a target within 0.3 m: nothing to move");
+        }
+        // A start outside the box: a seated passenger's muzzle is always inside it, so the pose is stale or wrong (a moving
+        // jeep's box ahead along the line): nothing moves, whether the target is before or beyond the box.
+        {
+            ss::Pub n = p;
+            const float s2[3] = {100.0f - 5.0f, 11.0f, 199.0f};  // 5 m right of the jeep
+            n.target[0] = 100.0f - 3.0f; n.target[1] = 11.0f; n.target[2] = 199.0f;  // a guard between the start and the jeep
+            const float d2[3] = {1, 0, 0};
+            q = ss::PlanShot(n, s2, d2);
+            Check(Is(q.result, "outside") && !q.move && !q.inside, "S1 plan: a start outside the box (target before it): outside");
+            n.target[0] = 100.0f + 15.0f;
+            q = ss::PlanShot(n, s2, d2);
+            Check(Is(q.result, "outside") && !q.move && !q.inside, "S1 plan: a start outside the box (target beyond it): outside");
+            // The jeep moved 4 m on since the publication (200 ms at 20 m/s; the old box 4 m behind the real one) and the
+            // passenger shoots backwards: the old box lies ahead along the line (it would have moved the start 5.5 m back,
+            // through whatever stands there). The muzzle (0.8 m behind the box centre) is outside the old box: no move.
+            // Up to 3 m it stays inside: kFreshMs keeps a pose within ~1 m.
+            n = p;
+            n.pos[2] = 200.0f - 4.0f;
+            n.target[0] = start[0]; n.target[1] = start[1]; n.target[2] = start[2] - 15.0f;
+            const float back[3] = {0, 0, -1};
+            q = ss::PlanShot(n, start, back);
+            Check(Is(q.result, "outside") && !q.move && q.exit > 5.0f, "S1 plan: an old box ahead along the line (a stale pose): outside");
+        }
+        // Refusals: no class, no target, a zero or non-finite direction, a line that misses the box.
+        {
+            ss::Pub n = p;
+            n.cls = ss::Class::none;
+            Check(Is(ss::PlanShot(n, start, dir).result, "class"), "S1 plan: no class");
+            n = p;
+            n.target_ok = false;
+            Check(Is(ss::PlanShot(n, start, dir).result, "target") && !ss::PlanShot(n, start, dir).move, "S1 plan: no target read: no move");
+            const float zero[3] = {0, 0, 0};
+            Check(Is(ss::PlanShot(p, start, zero).result, "dir"), "S1 plan: a zero direction");
+            const float bad[3] = {std::numeric_limits<float>::quiet_NaN(), 0, 1};
+            Check(Is(ss::PlanShot(p, start, bad).result, "nonfinite"), "S1 plan: a non-finite direction");
+            const float far_start[3] = {100.0f, 30.0f, 200.0f}, up[3] = {0, 1, 0};
+            Check(Is(ss::PlanShot(p, far_start, up).result, "miss"), "S1 plan: the line does not cross the box");
+        }
+        // A truck cab: the bigger box (half side 1.45 m).
+        {
+            ss::Pub n = p;
+            n.cls = ss::Class::truck;
+            n.seat = 1;
+            const float s2[3] = {100.0f - 0.4f, 11.6f, 200.9f};
+            n.target[0] = 100.0f - 20.0f; n.target[1] = 11.0f; n.target[2] = 200.9f;
+            const float d2[3] = {-1, 0, 0};
+            q = ss::PlanShot(n, s2, d2);
+            Check(Is(q.result, "shift") && Near(q.exit, 1.05, 1e-3), "S1 plan: the truck cab out of the right window");
+        }
+        // The lever (lab only): on / off / lab (none) / status; other text is not ours.
+        {
+            char r[160]{};
+            bool ok = false;
+            int next = 7;
+            Check(!ss::HandleCommand("seatshots on", true, -1, next, r, sizeof(r), ok) && next == -1, "S1 lever: a longer word is not ours");
+            Check(ss::HandleCommand("seatshot on", false, -1, next, r, sizeof(r), ok) && !ok && next == -1 && std::strstr(r, "reason=lab_only"),
+                  "S1 lever: lab only");
+            Check(ss::HandleCommand("seatshot on", true, -1, next, r, sizeof(r), ok) && ok && next == 1 && Is(r, "seatshot=on; override=set"),
+                  "S1 lever: on");
+            Check(ss::HandleCommand("seatshot off", true, 1, next, r, sizeof(r), ok) && ok && next == 0, "S1 lever: off");
+            Check(ss::HandleCommand("seatshot lab", true, 0, next, r, sizeof(r), ok) && ok && next == -1 && Is(r, "seatshot=lab; override=none"),
+                  "S1 lever: lab clears");
+            Check(ss::HandleCommand("seatshot status", true, 1, next, r, sizeof(r), ok) && ok && next == 1 && std::strstr(r, "seatshot=on"),
+                  "S1 lever: status keeps");
+            Check(ss::HandleCommand("seatshot maybe", true, 1, next, r, sizeof(r), ok) && !ok && next == 1 && std::strstr(r, "reason=args"),
+                  "S1 lever: bad argument refused");
+            Check(ss::HandleCommand("seatshot", true, 0, next, r, sizeof(r), ok) && !ok && next == 0, "S1 lever: no argument refused");
+        }
+        // The record layout the hook relies on (RequestBullet's slot copy 0xD32690; the pellet loop 0x130342E).
+        Check(ss::kPos == 0x00 && ss::kDir == 0x10 && ss::kRecordBytes == 0x34 && c::shot_owner == 0x2a,
+              "S1 record: start +0x00, direction +0x10, owner +0x2A, 0x34 bytes copied");
+        // The partner's code gate (all-or-nothing) holds only what S1 relies on: the copy and the pellet store
+        // (SEAT_SHOT_SITES). The static facts behind S1 (the hit loop's owner skip, the shot target, the camera's writer,
+        // the origin call) are generator checks only (SEAT_SHOT_FACTS), so they never switch the partner off.
+        {
+            bool facts_in_gate = false;
+            for (const auto& s : c::code_sites)
+                if (s.rva == 0xd2dc60 || s.rva == 0x108b0fc || s.rva == 0x11192c5 || s.rva == 0x1119314 || s.rva == 0x1041214)
+                    facts_in_gate = true;
+            Check(sizeof(c::seat_shot_blocks) / sizeof(c::seat_shot_blocks[0]) == 2 && c::seat_shot_blocks[0] == 0xd32690 &&
+                      c::seat_shot_blocks[1] == 0x130342e && !facts_in_gate,
+                  "S1 gate: only the copy and the pellet store join the partner code gate");
+        }
     }
     std::printf("partner_seat_gun_tests: %u checks passed\n", checks);
     return 0;
