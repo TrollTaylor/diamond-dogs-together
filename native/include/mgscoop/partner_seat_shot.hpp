@@ -64,7 +64,12 @@ inline const BoxSpec* SpecFor(Class c) noexcept {
 inline constexpr float kExitPadM = 0.05f;     // the start lands this far past the box
 inline constexpr float kTargetGapM = 0.3f;    // and never closer than this to the aim target
 inline constexpr float kMaxShiftM = 9.0f;     // no exit of these boxes is farther (sanity)
-inline constexpr std::uint64_t kFreshMs = 50;  // older is stale (published every tick; 20 m/s is 1 m in 50 ms)
+inline constexpr std::uint64_t kFreshMs = 50;  // the floor of the freshness window (20 m/s is 1 m in 50 ms)
+// The freshness window grows as the ridden vehicle slows (review of 8.33: at 25-30 fps a 50 ms window on a 15.6 ms clock
+// judged parked shots stale, and a stale shot is the stock one that hits the jeep): the pose may drift at most kDriftM, the
+// window is never under kFreshMs nor over kMaxAgeMs (a driver tick that stopped). Speed unknown (< 0): kFreshMs.
+inline constexpr std::uint64_t kMaxAgeMs = 250;
+inline constexpr float kDriftM = 1.0f;
 inline constexpr std::size_t kRecordBytes = 0x34;  // RequestBullet's slot copy 0xD32690 reads +0x00..+0x32
 inline constexpr std::size_t kPos = 0x00, kDir = 0x10;  // record +0x00 start (x, y, z, w), +0x10 direction
 
@@ -80,7 +85,14 @@ struct Pub {
     float yaw = 0;                  // +0x2C, radians
     float target[3]{};              // Q+0x10[local] (the look ray's hit: the shot's target)
     std::uint64_t ms = 0;           // publish time (the hook's clock)
+    float speed = -1.0f;            // the vehicle's speed from the driver's last two publications, m/s (-1 unknown)
 };
+// The longest a publication stays fresh at this speed, ms.
+inline std::uint64_t MaxAgeMs(float speed) noexcept {
+    (void)speed;
+    return kFreshMs;  // STUB (red step)
+}
+inline bool Fresh(std::uint64_t now, std::uint64_t ms, float speed) noexcept { return now >= ms && now - ms <= MaxAgeMs(speed); }
 
 struct Plan {
     // shift (moved and applied) | census (would move; apply off) | class | nonfinite | dir | miss (the line does
