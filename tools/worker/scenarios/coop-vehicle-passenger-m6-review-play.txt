@@ -7,7 +7,8 @@
 #   A  the race inside one round trip (RTT about 180 ms): both at the two front doors, both press E at once: the guest's
 #      hold refuses its icon before any answer (event=seat; action=hold; ...; deny=65535; grant=65535), the host drives,
 #      no board_uncertain two_drivers on either copy.
-#   B  the host beside the jeep (debug goto_vehicle jeep, no usable door): the guest's claim is granted, the guest drives.
+#   B  the host at the jeep's rear (3.1 m behind its origin, no front door): the guest's claim is granted, the guest
+#      drives (the 1.9 m spot of debug goto_vehicle jeep is the driver's door at this pose: lab run 43473119).
 #   C  the host boards beside the guest's driving: seat 1 only if the guest's copy has seat 1 free (seat_ext_tx flags);
 #      frames on both copies with the driver's own copy moving (the gap of run 65277fb8).
 # Run (play):
@@ -61,7 +62,7 @@ host run vehicle_seats
 host expect vehicle_not_riding
 # --- B: the host beside the jeep without a usable door: the guest's claim is granted --------------------------------
 guest debug teleport 600.0 320.5 1157.5 -90
-host debug goto_vehicle jeep
+host debug teleport 576.10 320.2 1160.80 180
 wait 4500
 logmark both
 guest debug teleport 577.20 320.2 1157.19 -84

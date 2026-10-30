@@ -3,10 +3,11 @@
 #      and press E at once, before any SEAT answer exists. The guest's native hold refuses its ride icon while no deny
 #      or grant is live (guest world_lua=event=seat; action=hold; vehicle=25608; ...; deny=65535; grant=65535); the
 #      host drives; the guest is never a second driver (no board_uncertain two_drivers on either copy).
-#   B  the want after the door check: the host stands beside the jeep (the 1.9 m spot of debug goto_vehicle jeep,
-#      within 4.5 m of its origin, no usable door: run 65277fb8 counted it as a host want), the guest at the driver's
-#      door claims it: the host grants and yields (event=seat; action=grant / action=yield; role=host), the guest gets
-#      its grant (action=grant; ...; role=guest; set=1), boards and drives.
+#   B  the want after the door check: the host stands at the jeep's rear (3.1 m behind its origin at the spawn pose:
+#      within the old 4.5 m near gate, no front door; run 43473119 found that the 1.9 m spot of debug goto_vehicle jeep
+#      is the driver's door at this pose), the guest at the driver's door claims it: the host grants and yields
+#      (event=seat; action=grant / action=yield; role=host), the guest gets its grant (action=grant; ...; role=guest;
+#      set=1), boards and drives; the host's E there does nothing.
 #   C  the seat-1 handshake on the jeep: the guest drives; its copy sends the v4 seat addendum (partner_ride=seat_ext_tx;
 #      ...; vehicle=25608; flags=0x03 or 0x07 with rider1 = its D-Dog 9728); the host's policy offers seat 1 only when
 #      that seat is free on the guest's copy (board_policy ...; seat1=front,cab) and else the back seats (seat1=none);
@@ -70,7 +71,7 @@ host run vehicle_seats
 host expect vehicle_not_riding
 # --- B: the host beside the jeep without a usable door: the guest's claim is granted --------------------------------
 guest debug teleport 594.0 320.5 1157.5 -90
-host debug goto_vehicle jeep
+host debug teleport 576.10 320.2 1160.80 180
 wait 4500
 logmark both
 guest run goto_vehicle jeep driver 60
