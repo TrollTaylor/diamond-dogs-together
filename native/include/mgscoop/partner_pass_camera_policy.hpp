@@ -350,6 +350,13 @@ struct View {
 inline constexpr std::size_t kCamPitch = 0x270, kCamYaw = 0x274, kCamPitchPrev = 0x268, kCamYawPrev = 0x26C;
 inline constexpr std::size_t kCamRotation = 0x90;
 inline constexpr float kKickUp = 0.05f, kSettleUp = 0.01f;
+// The world yaw of CAM+0x90 without the player's look input: held within kKickYaw (the pull also turns it sideways:
+// 0.93 rad in a four-shot burst with the pitch held, run a64c40d4 host); a close settles it above kSettleYaw.
+inline constexpr float kKickYaw = 0.035f, kSettleYaw = 0.01f;
+// The player's own look input (the effective right stick, which carries the mouse: PP+0x474 / +0x47C with PP+0x488
+// bit 1, the PP update 0x1207157): above kLookInput on a tick, everything follows the camera for kLookLatchMs.
+inline constexpr float kLookInput = 0.02f;
+inline constexpr std::uint64_t kLookLatchMs = 150;
 inline constexpr std::uint64_t kGuardHoldMs = 350;
 // The aim camera module (CAM+0xBD0[2] while RMB is held: runs 4f1a072f..06aa3fc6 mvt=0x23d4d20; its CanActivate
 // 0x12BBAE0 reads the gun record's aim bit and the pad's aim button). Pinned in the contract (slots).
@@ -383,6 +390,9 @@ inline float WorldYaw(const float* q) noexcept {
 }
 // q turned down by `down` rad about its own right axis (q * qx(down), normalized): the up-pitch drops by `down`, the yaw
 // and roll stay (exact without roll).
+// q turned by `turn` rad about the world vertical (qy(turn) * q, normalized): the world yaw grows by `turn`, the
+// up-pitch and roll stay.
+inline void YawTurn(const float* q, float, float* out) noexcept { for (unsigned i = 0; i < 4; ++i) out[i] = q[i]; }  // STUB
 inline void PitchDown(const float* q, float down, float* out) noexcept {
     const float s = std::sin(0.5f * down), c = std::cos(0.5f * down);
     const float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -396,6 +406,7 @@ struct GuardIn {
     bool firing = false;      // GunFires
     bool aim_module = false;  // the active camera module is the aim camera (kAimModuleVtableRva)
     bool ang_ok = false;      // the look angles were read
+    bool look = false;        // the player's own look input this tick (right stick / mouse above kLookInput)
     float pitch = 0.0f, yaw = 0.0f;  // CAM+0x270 / +0x274
     const float* rot = nullptr;      // CAM+0x90 (null: unread)
     std::uint64_t now_ms = 0;
@@ -406,6 +417,9 @@ struct Guard {
     bool up_ok = false;
     float ref_up = 0.0f;      // the world up-pitch reference of CAM+0x90
     float open_yaw = 0.0f, last_yaw = 0.0f;  // the angle yaw at the window's open and its last tick
+    float ref_yaw = 0.0f;     // the world yaw reference of CAM+0x90 (with ref_up)
+    std::uint64_t last_look_ms = 0;   // the last tick with the player's look input
+    std::uint32_t look_ticks = 0;     // window ticks that followed the player's input (the open window)
     std::uint64_t last_fire_ms = 0;
     bool active = false;              // a shot window is open
     std::uint32_t window_writes = 0;  // ticks with a write in the open window (its settle included)

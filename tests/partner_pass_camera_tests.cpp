@@ -388,13 +388,14 @@ Rot Look(float yaw, float up) {
     return Rot{{cy * sx, sy * cx, -sy * sx, cy * cx}};
 }
 bool Near(float a, float b, float eps = 1e-3f) { return std::fabs(a - b) < eps; }
-pc::GuardIn Tick(bool aiming, bool firing, float pitch, float yaw, const Rot* r, std::uint64_t now, bool module = true) {
+pc::GuardIn Tick(bool aiming, bool firing, float pitch, float yaw, const Rot* r, std::uint64_t now, bool module = true, bool look = false) {
     pc::GuardIn in{};
     in.on = true;
     in.aiming = aiming;
     in.firing = firing;
     in.aim_module = module;
     in.ang_ok = true;
+    in.look = look;
     in.pitch = pitch;
     in.yaw = yaw;
     in.rot = r ? r->q : nullptr;
@@ -417,84 +418,147 @@ void TestGuardMath() {
     Check(Near(pc::UpPitch(out), 0.5f) && Near(pc::WorldYaw(out), 1.2f), "a negative turn raises it");
     pc::PitchDown(aimed, 0.1f, out);
     Check(Near(pc::UpPitch(out), -0.1873f, 0.01f) && Near(pc::WorldYaw(out), pc::WorldYaw(aimed), 0.01f), "the measured rotation with its small roll");
+    pc::YawTurn(l.q, 0.5f, out);
+    Check(pc::QuatOk(out) && Near(pc::WorldYaw(out), 1.7f) && Near(pc::UpPitch(out), 0.3f), "YawTurn: the world yaw turns, the pitch stays");
+    const Rot w = Look(3.0f, -0.2f);
+    pc::YawTurn(w.q, 0.4f, out);
+    Check(Near(pc::WorldYaw(out), pc::WrapPi(3.4f)) && Near(pc::UpPitch(out), -0.2f), "YawTurn across the wrap");
     const float zero[4] = {0, 0, 0, 0}, nanq[4] = {std::nanf(""), 0, 0, 1};
     Check(!pc::QuatOk(zero) && !pc::QuatOk(nanq) && !pc::QuatOk(nullptr), "a zero, NaN or missing rotation is not one");
 }
 
-// The shot guard (run 4f1a072f: a seated shot pulls the camera from the aimed pitch to 70 deg up within 0.5 s; review
-// fixes 8.26: only the pull up is held, the yaw and the aim down pass, nothing outside the aim, no climb).
+// The shot guard (run 4f1a072f: a seated shot pulls the camera from the aimed pitch to 70 deg up within 0.5 s; run
+// a64c40d4: with the pitch held the pull turns the view sideways, 0.93 rad in a four-shot burst). Review fixes 8.26:
+// the player's own look input passes (everything follows it), the pull up and sideways without input is held.
 void TestGuard() {
     pc::Guard g{};
     Rot r = Look(1.0f, -0.05f);
     // Aiming, not firing: the references follow the player's own aim; nothing is written.
     pc::GuardOut o = pc::GuardStep(g, Tick(true, false, 0.05f, 1.57f, &r, 1000));
     Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::none && g.ref_ok && g.ref_pitch == 0.05f && g.up_ok &&
-              Near(g.ref_up, -0.05f),
-          "aimed: the references (angle pitch, world up-pitch)");
+              Near(g.ref_up, -0.05f) && Near(g.ref_yaw, 1.0f),
+          "aimed: the references (angle pitch, world up-pitch and yaw)");
     r = Look(1.1f, -0.10f);
     o = pc::GuardStep(g, Tick(true, false, 0.10f, 1.67f, &r, 1050));
-    Check(!o.write && g.ref_pitch == 0.10f && Near(g.ref_up, -0.10f), "the player's own aim moves the references");
+    Check(!o.write && g.ref_pitch == 0.10f && Near(g.ref_up, -0.10f) && Near(g.ref_yaw, 1.1f), "the player's own aim moves the references");
     // The shot: a window opens; a small kick stays.
-    r = Look(1.1f, -0.08f);
+    r = Look(1.12f, -0.08f);
     o = pc::GuardStep(g, Tick(true, true, 0.08f, 1.67f, &r, 1100));
     Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::open && g.active && g.windows == 1, "the shot opens a window; a 1 deg kick stays");
-    // The pull up (the angle and the rotation): both written back, the rotation keeps its yaw.
-    r = Look(1.12f, 0.25f);
+    // The pull up and sideways (no input): the angle pitch and CAM+0x90 written back to the references.
+    r = Look(1.16f, 0.25f);
     o = pc::GuardStep(g, Tick(true, true, -0.25f, 1.69f, &r, 1150));
-    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.12f),
-          "the pull up: the angle pitch to its reference, CAM+0x90 turned down to its reference, its yaw kept");
+    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.1f),
+          "the pull: the angle pitch and the rotation back at the references");
     Check(g.window_writes == 1 && g.rot_writes == 1 && Near(g.window_max, 0.35f), "counted, the pull measured");
-    // F1: the player's own yaw passes inside the window (no yaw is ever written).
+    // The pull sideways alone (a64c40d4): held.
+    r = Look(1.2f, -0.10f);
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 1.70f, &r, 1200));
+    Check(!o.write && o.write_rot && Near(pc::WorldYaw(o.rot), 1.1f) && Near(pc::UpPitch(o.rot), -0.10f), "the pull sideways: held");
+    // F1: the player's own turn (look input) passes inside the window, and the references follow it.
     r = Look(1.6f, -0.10f);
-    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1200));
-    Check(!o.write && !o.write_rot, "a mouse turn of 0.5 rad inside the window: nothing written");
-    // F2: the vehicle turns while the pull goes up: the written rotation has the current yaw, not the window's first.
-    r = Look(1.9f, 0.20f);
-    o = pc::GuardStep(g, Tick(true, true, -0.20f, 2.17f, &r, 1250));
-    Check(o.write_rot && Near(pc::WorldYaw(o.rot), 1.9f) && Near(pc::UpPitch(o.rot), -0.10f), "a turning vehicle: the yaw follows, the pitch is held");
-    // F1: the player's aim down passes and moves both references down; the pull up from there is held at the new aim.
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1250, true, true));
+    Check(!o.write && !o.write_rot && Near(g.ref_yaw, 1.6f) && g.look_ticks == 1, "a mouse turn of 0.5 rad inside the window: nothing written");
+    r = Look(1.62f, -0.12f);
+    o = pc::GuardStep(g, Tick(true, true, 0.12f, 2.19f, &r, 1300));
+    Check(!o.write && !o.write_rot && Near(g.ref_yaw, 1.62f) && g.ref_pitch == 0.12f && g.look_ticks == 2,
+          "within kLookLatchMs of the input: still the player's");
+    // The latch over: the pull is held at the player's new aim.
+    r = Look(1.62f, 0.20f);
+    o = pc::GuardStep(g, Tick(true, true, -0.20f, 2.19f, &r, 1300 + pc::kLookLatchMs + 1));
+    Check(o.write && o.pitch == 0.12f && o.write_rot && Near(pc::UpPitch(o.rot), -0.12f) && Near(pc::WorldYaw(o.rot), 1.62f),
+          "after the input: the pull held at the player's new aim");
+    // F1: the player's aim UP with input passes too.
+    r = Look(1.62f, 0.10f);
+    o = pc::GuardStep(g, Tick(true, true, -0.10f, 2.19f, &r, 1500, true, true));
+    Check(!o.write && !o.write_rot && g.ref_pitch == -0.10f && Near(g.ref_up, 0.10f), "aim up with input: passes, the references follow");
+    // F2: the jeep turns without input: the stock aim camera keeps its world yaw (a64c40d4: CAM+0x90's yaw constant
+    // while the body yaw turned 58 deg), the vehicle-relative angle yaw changes: nothing written.
+    for (std::uint64_t t = 1700; t <= 1850; t += 50) {
+        const float rel = 2.19f - 0.002f * static_cast<float>(t - 1700);
+        o = pc::GuardStep(g, Tick(true, true, -0.10f, rel, &r, t));
+        Check(!o.write && !o.write_rot, "a turning jeep: the world-stable aim camera needs no write");
+    }
+    // The hold's close settles a remaining climb and yaw under the kick bounds.
+    r = Look(1.64f, 0.13f);
+    o = pc::GuardStep(g, Tick(true, false, -0.13f, 1.89f, &r, 1850 + pc::kGuardHoldMs - 1));
+    Check(!o.write && !o.write_rot && g.active, "within kGuardHoldMs: 0.02 rad aside and 0.03 rad up stay");
+    o = pc::GuardStep(g, Tick(true, false, -0.13f, 1.89f, &r, 1850 + pc::kGuardHoldMs));
+    Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::hold && o.settle && o.write && o.pitch == -0.10f && o.write_rot &&
+              Near(pc::UpPitch(o.rot), 0.10f) && Near(pc::WorldYaw(o.rot), 1.62f) && !g.active && g.settles == 1,
+          "the hold's close settles the remaining climb and yaw");
+    Check(g.ref_pitch == -0.10f && Near(g.ref_up, 0.10f) && Near(g.ref_yaw, 1.62f), "the settled references");
+    // The next aimed tick: the references follow the player again.
+    r = Look(1.7f, 0.05f);
+    o = pc::GuardStep(g, Tick(true, false, -0.05f, 1.9f, &r, 2400));
+    Check(!o.write && g.ref_pitch == -0.05f && Near(g.ref_up, 0.05f) && Near(g.ref_yaw, 1.7f) && o.event == pc::GuardEvent::none,
+          "after the window: follows again");
+    Check(pc::GunFires(true, 9) && pc::GunFires(true, 10) && !pc::GunFires(true, 7) && !pc::GunFires(false, 9), "firing is gun mode 9 / 10");
+    Check(pc::kKickUp <= 0.06f && pc::kKickYaw <= 0.04f && pc::kSettleUp < pc::kKickUp && pc::kSettleYaw < pc::kKickYaw &&
+              pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600 && pc::kLookLatchMs >= 50 && pc::kLookLatchMs <= 300,
+          "at most about 3 deg of kick, a hold shorter than a shot cycle, a short input latch");
+}
+
+// A burst without input (a64c40d4 host: the yaw pulled 0.93 rad in 1.2 s): every tick's pull sideways and up is held.
+void TestGuardBurst() {
+    pc::Guard g{};
+    Rot r = Look(-0.2f, -0.09f);
+    pc::GuardStep(g, Tick(true, false, 0.09f, 1.2f, &r, 1000));
+    // The game: each tick the pull adds 0.03 rad sideways and 0.04 rad up to whatever the camera holds (the angle pitch
+    // follows the rotation); the guard's writes replace it.
+    float yaw = -0.2f, up = -0.09f, pitch = 0.09f, worst_yaw = 0.0f, worst_up = 0.0f;
+    unsigned writes = 0;
+    for (int tick = 1; tick <= 70; ++tick) {
+        yaw -= 0.03f;
+        up += 0.04f;
+        pitch -= 0.04f;
+        worst_yaw = std::fabs(yaw + 0.2f) > worst_yaw ? std::fabs(yaw + 0.2f) : worst_yaw;
+        worst_up = up + 0.09f > worst_up ? up + 0.09f : worst_up;
+        const Rot pulled = Look(yaw, up);
+        const pc::GuardOut o = pc::GuardStep(g, Tick(true, true, pitch, 1.2f, &pulled, 1000 + 18u * static_cast<unsigned>(tick)));
+        if (o.write_rot) {
+            yaw = pc::WorldYaw(o.rot);
+            up = pc::UpPitch(o.rot);
+            ++writes;
+        }
+        if (o.write) pitch = o.pitch;
+    }
+    Check(g.windows == 1 && g.active && writes >= 30, "one window for the burst, written about every second tick");
+    Check(worst_yaw < 0.07f && worst_up < 0.09f, "the burst's pull never got two ticks past the aim (a64c40d4 without it: 0.93 rad)");
+}
+
+// The rules for a pitch going down without input (the player's mouse is the input path; these are the vehicle's).
+void TestGuardDownRules() {
+    pc::Guard g{};
+    Rot r = Look(1.9f, -0.10f);
+    pc::GuardStep(g, Tick(true, false, 0.10f, 2.17f, &r, 1000));
+    pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1050));
+    // The angle down with the world down (the player's aim, seen without input): both references follow.
     r = Look(1.9f, -0.30f);
-    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1300));
+    pc::GuardOut o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1100));
     Check(!o.write && !o.write_rot && g.ref_pitch == 0.30f && Near(g.ref_up, -0.30f), "aim down: passes, the references follow");
     r = Look(1.9f, -0.10f);
-    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1350));
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1150));
     Check(o.write && o.pitch == 0.30f && o.write_rot && Near(pc::UpPitch(o.rot), -0.30f), "the pull up from the lower aim is held there");
     // A bump of the vehicle alone (the world pitch down, the angle unchanged) moves no reference: no ratchet.
     r = Look(1.9f, -0.40f);
-    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1400));
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1200));
     Check(!o.write && !o.write_rot && g.ref_pitch == 0.30f && Near(g.ref_up, -0.30f), "a bump down: the references stay");
     r = Look(1.9f, -0.30f);
-    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1450));
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1250));
     Check(!o.write && !o.write_rot, "back from the bump: nothing written");
     // The vehicle noses up (the world pitch up, the angle unchanged): CAM+0x90 turned down once; the angle then reads
     // the drop (followed), the world stays at its reference: no runaway.
     r = Look(1.9f, -0.20f);
-    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1500));
+    o = pc::GuardStep(g, Tick(true, true, 0.30f, 2.17f, &r, 1300));
     Check(o.write_rot && !o.write && Near(pc::UpPitch(o.rot), -0.30f), "nose up: the world pitch held");
     const std::uint32_t rot_before = g.rot_writes;
-    for (std::uint64_t t = 1550; t <= 1700; t += 50) {
+    for (std::uint64_t t = 1350; t <= 1500; t += 50) {
         r = Look(1.9f, -0.30f);
         o = pc::GuardStep(g, Tick(true, true, 0.40f, 2.17f, &r, t));
         Check(!o.write && !o.write_rot, "nose up, the next ticks: nothing more");
     }
     Check(g.rot_writes == rot_before && g.ref_pitch == 0.40f && Near(g.ref_up, -0.30f), "no runaway: the world reference stayed");
-    // Between shots (aiming, not firing) inside the hold: still held. The window's last tick sits 0.03 rad above
-    // (under kKickUp): the hold's close settles it back (F4: no climb from shot to shot).
-    r = Look(1.9f, -0.27f);
-    o = pc::GuardStep(g, Tick(true, false, 0.37f, 2.20f, &r, 1700 + pc::kGuardHoldMs - 1));
-    Check(!o.write && !o.write_rot && g.active, "within kGuardHoldMs after the last shot: the window is open, 0.03 rad stays");
-    o = pc::GuardStep(g, Tick(true, false, 0.37f, 2.20f, &r, 1700 + pc::kGuardHoldMs));
-    Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::hold && o.settle && o.write && o.pitch == 0.40f && o.write_rot &&
-              Near(pc::UpPitch(o.rot), -0.30f) && !g.active && g.settles == 1,
-          "the hold's close settles the remaining climb");
-    Check(Near(pc::WindowYaw(g), 0.53f) && g.ref_pitch == 0.40f && Near(g.ref_up, -0.30f), "the close's yaw moved, the settled references");
-    // The next aimed tick: the references follow the player again.
-    r = Look(1.9f, -0.31f);
-    o = pc::GuardStep(g, Tick(true, false, 0.41f, 2.20f, &r, 2200));
-    Check(!o.write && g.ref_pitch == 0.41f && Near(g.ref_up, -0.31f) && o.event == pc::GuardEvent::none, "after the window: follows again");
-    Check(pc::GunFires(true, 9) && pc::GunFires(true, 10) && !pc::GunFires(true, 7) && !pc::GunFires(false, 9), "firing is gun mode 9 / 10");
-    Check(pc::kKickUp <= 0.06f && pc::kSettleUp < pc::kKickUp && pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600,
-          "at most about 3 deg of kick, a hold shorter than a shot cycle");
 }
 
 // F4: shot after shot, each window ending a little above the aim: no climb.
@@ -554,7 +618,7 @@ void TestGuardEdges() {
     pc::Guard f{};
     Rot r = Look(-2.0f, 0.1f);
     pc::GuardOut o = pc::GuardStep(f, Tick(true, true, -0.1f, -2.0f, &r, 5000));
-    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::open && f.ref_pitch == -0.1f && Near(f.ref_up, 0.1f),
+    Check(!o.write && !o.write_rot && o.event == pc::GuardEvent::open && f.ref_pitch == -0.1f && Near(f.ref_up, 0.1f) && Near(f.ref_yaw, -2.0f),
           "a shot with no aimed tick: its first tick is the reference");
     pc::Guard n{};
     pc::GuardStep(n, Tick(true, false, 0.0f, 0.0f, nullptr, 1000));
@@ -772,6 +836,8 @@ int main() {
     TestAimStep();
     TestGuardMath();
     TestGuard();
+    TestGuardBurst();
+    TestGuardDownRules();
     TestGuardNoClimb();
     TestGuardAimGate();
     TestGuardEdges();

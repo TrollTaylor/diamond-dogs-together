@@ -7320,6 +7320,27 @@ void TestPassCameraGuardDriver() {
               "the aim end closes the window (end=aim_end)");
     }
     {
+        // The player's own look input (the effective right stick, which carries the mouse: PP+0x474 with PP+0x488 bit 1)
+        // inside a window: the camera follows it, nothing is written; without it the sideways pull is held.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        s.fake.pad.kb_flags = 2;
+        s.fake.pad.kb_f[1] = 0.6f;
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "a mouse turn inside the window: not written");
+        s.fake.pad.kb_f[1] = 0.0f;
+        s.Tick(0, 200);
+        GuardView(0.10f, 1.07f, -2.5f, -0.10f);
+        Check(s.Tick(0) && g_guard.rot_writes.size() == 1 && std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f,
+              "without input the sideways pull is held at the player's last aim");
+    }
+    {
         // F3: firing while the active module is not the aim camera (the seated fallback): nothing written, no window.
         Session s(0);
         GuardSetup(s);
