@@ -51,7 +51,7 @@ guest expect vehicle_census;first=0;n=2;found=1;25600:4:2
 host run vehicle_seats
 host expect vehicle;id=25600
 both capture s4-truck-after
-guest debug teleport -330.0 317.0 775.0 -128
+guest debug teleport -330.0 322.0 775.0 -128
 wait 3000
 waitlog guest 'world_lua=event=seat; action=fulton; on=0; vehicle=25600' 5
 state
