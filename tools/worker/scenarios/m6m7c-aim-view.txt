@@ -3,7 +3,10 @@
 # seed afgh-horse: seat 1 stays empty on each driver's copy, 37b94432).
 #   1. The host drives (stopped); the guest in front seat 1: aim at the nearest guard (asleep), two shots, the aim end,
 #      the stock get-off, the camera after it, an aim on foot (the raise restored).
+#   1b. The host still drives; the guest in back seat 3 (right rear): aim, a shot, the get-off (never raised, no turn:
+#      the non-regression leg).
 #   2. The guest drives; the host in back seat 2 (left rear): aim, two shots, the aim end, the get-off, the camera after.
+#   3. The guest still drives; the host in front seat 1: aim, two shots, the get-off (seat 1 in the host's role).
 # Expected (waited for; design 8.34): state=view; event=apply on seat 1 / 2 (variant in the list), restore reason=end at
 # each get-off; state=turn; event=request after each get-off (an observed get-off: act 0x70 and the stock clear), then
 # its check line (yaw_err_mrad: [U] whether the request's yaw is world or vehicle-relative after a seated aim, 8.27);
@@ -95,6 +98,35 @@ wait 900
 guest capture s1-foot-aim
 guest release
 wait 1000
+# --- 1b. The host still drives; the guest in back seat 3 (right rear): no raise, no turn -----------------------------
+logmark both
+guest debug goto_vehicle jeep right
+wait 3000
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+wait 1000
+host run enemy sleep nearest
+guest run enemy_aim_nearest 1.6
+guest expect ^aim_nearest;ent=\d+;
+wait 600
+guest hold rmb 1500 nowait
+wait 700
+guest capture k3-aim
+guest press lmb 120
+wait 300
+guest capture k3-shot
+host capture k3-drv-shot
+guest release
+wait 1000
+guest capture k3-aim-end
+guest press e 150
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=off' 5
+wait 1200
+guest capture k3-exited
+host run vehicle_state_status 25608
 host press e 150
 wait 3500
 host run vehicle_seats
@@ -150,8 +182,50 @@ wait 1200
 waitlog host 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=2;' 5
 wait 1200
 both capture k2-exited
+guest run vehicle_state_status 25608
+# --- 3. The guest still drives; the host in front seat 1 (seat 1 in the host's role) ---------------------------------
+logmark both
+host debug teleport 574.36 320.2 1157.5 96
+wait 3000
+host press e 150
+wait 4500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog host 'partner_ride=pass_camera; state=view; event=apply; vehicle=25608; seat=1; reason=apply; ok=1;' 5
+wait 1000
+both capture h1-seated
+host run enemy sleep nearest
+host run enemy_aim_nearest 1.6
+host expect ^aim_nearest;ent=\d+;
+wait 600
+host hold rmb 1500 nowait
+wait 700
+host capture h1-aim
+guest capture h1-drv-aim
+host press lmb 120
+wait 300
+host capture h1-shot-1
+host hold rmb 1500 nowait
+wait 700
+host press lmb 120
+wait 300
+host capture h1-shot-2
+guest capture h1-drv-shot
+host release
+wait 1000
+host capture h1-aim-end
+host press e 150
+host burst h1-exit 3 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 10
+waitlog host 'partner_ride=pass_camera; state=view; event=restore;' 5
+waitlog host 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;' 8
+wait 1200
+waitlog host 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=1;' 5
+wait 1200
+both capture h1-exited
+guest run vehicle_state_status 25608
 guest press e 150
 wait 3500
 host run vehicle_state_status 25608
-guest run vehicle_state_status 25608
 state
