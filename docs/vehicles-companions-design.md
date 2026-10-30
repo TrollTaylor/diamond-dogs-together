@@ -3082,20 +3082,24 @@ The user saw shots toward the shooter's own jeep damage it (8.32; `37b94432` bur
 check 517, `friend_package` "play defaults the seat shot on"); a named 0 opts out. No code path, wire or patch site
 changed (contract 824 / 209). Hidden runs (archives `D:\mgs-coop-run-archive\m6m7c\<id>`, frames session scratch
 `complete/frames/m6m7c-hit/`, looked at):
-- [O] `66ad131f` (lab repro, `m6m7c-self-hit-lab.txt`): back seat 3's first shot at guard 2552560298 (22 m front-right)
-  with S1 off cost the guest's copy 702 life (2260 -> 1558); the host's copy kept 2260 and resent it ~55 s later. Every
-  later `enemy_aim_nearest` turned the camera to the requested rotY RELATIVE to the jeep (pass camera guard `now_mrad`
-  1984 = the requested 113.7 deg), so the re-aimed shots went rear-left [O]: `299de3e1`'s re-aimed shots took that turn
-  into the jeep [I strong]. A lever artifact (`RequestToSetCameraRotation`), not the player's mouse [I].
+- [O] `66ad131f` (lab repro, `m6m7c-self-hit-lab.txt`): back seat 3 fired two stock shots between two life reads (one
+  front-right at guard 2552560298, 22 m; one rear-left after a re-aim) and the guest's copy lost 702 (2260 -> 1558): ONE
+  of them hit, which one is [U]. The host's copy kept 2260 and resent it ~55 s later. [O] After the first seated aim,
+  `enemy_aim_nearest` turned the camera to the requested rotY RELATIVE to the jeep (pass camera guard `now_mrad` 1984 =
+  the requested 113.7 deg): a lever artifact (`RequestToSetCameraRotation`), not the player's mouse [I]. Whether that turn
+  caused `299de3e1`'s damage is [U] (review): every observed self-hit costs exactly 702, `8a920ec8`'s ONE stock shot on
+  the front-right line cost 702, and `299de3e1`'s 2106 = 3 x 702 came from three shots at that front-right guard, so the
+  front-right line itself hits the jeep.
 - [O] `8a920ec8` (lab, the flipped build, `m6m7c-self-hit-proof.txt`): the same seat-3 line, one shot with the lever
   `seatshot off`: the guard Dying (the round went through the jeep) and the guest's copy 2300 -> 1598; two S1 shots on
-  that line (`result=shift`, start moved 0.57-0.59 m to the right side's exit): 1598 -> 1598. Seat 2 (host, guest
-  driving) across the jeep at a guard 22 m out: Dying (`commit actor=host`, guest `apply` ok), the life unchanged on
-  both copies (2247 / 2124 from an earlier, unrelated hit: no seated shot in that window).
+  that line (`result=shift`, start moved 0.57-0.59 m to the right side's exit): 1598 -> 1598 (they did not hit the guard,
+  already Dying). Seat 2 (host, guest driving) across the jeep at a guard 22 m out: Dying (`commit actor=host`, guest
+  `apply` ok), the life unchanged on both copies (after an earlier drop to 2247 / 2124 with no seated shot in that
+  window: cause [U], likely the warped guard awake and firing (`downed_damage` attacker 1076) [I]).
 - [O] `41dcbf22` (PLAY rehearsal, `m6m7c-self-hit-play.txt`, shipped defaults, `-WanSim bad`, Forced=False): seat 3
   killed a guard 8 m out (shot 1), seat 2 one 22 m out across the jeep (shots 1-2); `shift` exits 0.44-1.62 m; life 2300
-  on both copies before, after and parked; no never-line.
-Not proven: seat 1 and the truck cab (covered by S1's classes, not run), a moving jeep (the 50 ms pose), two PCs.
+  on both copies before, after and parked; no never-line. Not discriminating (review): neither line was shown to hit the
+  jeep in stock (seat 3's 8 m line killed in `299de3e1` without, by arithmetic, damaging it).
 
 ## 9. Milestones
 
