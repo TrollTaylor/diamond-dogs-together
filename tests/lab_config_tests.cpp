@@ -216,9 +216,9 @@ int main() {
         }
     }
     // M6 seat 1 (partner_ride_front / partner_ride_cab, docs/vehicles-companions-design.md 6.6) and the seat races:
-    // since the seats-on round (8.25) they follow the native gun profile in lab and play (on, not named), off without
-    // it; a named 0 is the off switch in either mode, a named 1 runs in either mode; an invalid value refuses and counts
-    // as named, off.
+    // since the seats-on round (8.25) they follow the native gun profile (on, not named), off without it; the truck cab
+    // only in lab (8.26: no play rehearsal at the shipped defaults yet), a named 1 runs it in play. A named 0 is the off
+    // switch in either mode, a named 1 runs in either mode; an invalid value refuses and counts as named, off.
     {
         Check(!LabConfig{}.partner_ride_front && !LabConfig{}.partner_ride_front_given && !LabConfig{}.partner_ride_cab &&
                   !LabConfig{}.partner_ride_cab_given && !Lab("").partner_ride_front && !Lab("").partner_ride_cab,
@@ -227,10 +227,11 @@ int main() {
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(profile.partner_ride_front && profile.partner_ride_cab && profile.partner_ride_race && !profile.partner_ride_front_given &&
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            Check(profile.partner_ride_front && profile.partner_ride_cab == !play && profile.partner_ride_race && !profile.partner_ride_front_given &&
                       !profile.partner_ride_cab_given && !profile.partner_ride_race_given &&
                       profile.partner_ride_board == PartnerRideBoard::passenger && profile.invalid_values == 0 && profile.play_refused == 0,
-                  "seats on: the gun profile turns the front seat, the truck cab and the seat race on in lab and play");
+                  "seats on: the gun profile turns the front seat and the seat race on in lab and play, the truck cab in lab only");
             const auto offAll = Lab(gun + mode + "partner_ride_front=0\npartner_ride_cab=0\npartner_ride_race=0\n");
             Check(!offAll.partner_ride_front && !offAll.partner_ride_cab && !offAll.partner_ride_race && offAll.partner_ride_race_given,
                   "each seat key stays an off switch under the gun profile");

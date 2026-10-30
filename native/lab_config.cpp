@@ -1687,8 +1687,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat) and the seat races (SEAT op 54) follow the gun
-    // profile in lab and play since the seats-on round (docs/vehicles-companions-design.md 8.25: the lab FRAME proofs of
-    // 8.20 / 8.21 and the play rehearsals of 8.25 at these defaults); each key named 0 stays an off switch.
+    // profile since the seats-on round (docs/vehicles-companions-design.md 8.25: the lab FRAME proofs of 8.20 / 8.21 and
+    // the play rehearsals of 8.25 / 8.26 at these defaults); the truck cab in lab only (play forces it off below unless
+    // named); each key named 0 stays an off switch.
     if (!c.partner_ride_front_given) c.partner_ride_front = gun;
     if (!c.partner_ride_cab_given) c.partner_ride_cab = gun;
     if (!c.partner_ride_race_given) c.partner_ride_race = gun;
@@ -1773,6 +1774,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.debug_vehicle_door = false;
         // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
         c.partner_native_unrealize_all = false;
+        // M6 truck cab seat 1: lab-only by default (review of 8.25: its play rehearsal named world_relief=1 for the
+        // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
+        if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
     }
 }
 
