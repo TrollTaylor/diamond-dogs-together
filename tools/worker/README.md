@@ -45,7 +45,15 @@ real `mgsvtpp.exe` or a `worker_supervisor.exe` runs, then register in
 time. A worker session must not start under a running suite: after taking the
 lock, `Import-Module tools\VerifyLock.psm1; Wait-CtestReaders` waits until the
 registered suites have finished (no new one starts while the lock is held).
-`Invoke-WorkerChecks.ps1` still runs its audited CTest set with `-j 1`.
+`Invoke-WorkerChecks.ps1` runs its audited CTest set with `-j -TestJobs` (half the logical processors, at most
+16). Its bootstrap only configures (`tools/build.ps1 -ConfigureOnly`), so an unchanged tree compiles nothing.
+
+Preflight reuse: `Invoke-WorkerChecks.ps1 -Reuse` (what `Invoke-WorkerScenario.ps1` asks for unless
+`-FreshChecks`) prints the profile's newest receipt and stops when that receipt passed for the identical source
+snapshot (every hashed file, none added or removed), flags, configuration, audited and excluded tests and built
+programs (`dinput8.dll`, `DiamondDogsTogether.exe`, `worker_supervisor.exe`, `worker_probe.exe`). Anything else
+runs the full checks. `-Profile Release -Reuse` is refused: `tools/package.ps1 -CheckReceipt` needs a fresh
+Release receipt.
 
 ## Coordinator protocol
 

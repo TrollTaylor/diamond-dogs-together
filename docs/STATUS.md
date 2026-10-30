@@ -1597,7 +1597,8 @@ Branch `wp/fast-tests` from `dev/oct7-continue` `ba7bb62`. Tests and tooling onl
   worktrees run at the same time. Hidden-worker runs, worker checks, packaging and installs keep taking the lock; after
   taking it, `Wait-CtestReaders` waits for suites that were already running (`tools/worker/README.md`).
   `tools/build.ps1 -NoWorkerWait` skips the wait (the `build_profile_tests` fixture). `Invoke-WorkerChecks.ps1` is
-  unchanged (`-j 1`).
+  unchanged (`-j 1`). (Superseded 2026-10-30: parallel preflight tests, sharded suites and preflight reuse; see the
+  top section "developer test loop, faster".)
 
 ## October 23, 2026: developer test boot (`lab_fast_boot`, `lab_boot`, save-seed library, low graphics preset)
 
