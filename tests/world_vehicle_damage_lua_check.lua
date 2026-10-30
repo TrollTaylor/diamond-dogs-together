@@ -282,6 +282,14 @@ g:state(25608, 2300, 4, str32('veh_lv_0000'))
 r = g:sent(OP)
 check(#r == 1 and r[1][6] == 2 and r[1][7] == 1700 and r[1][8] == 600 and g.pool[25608].life == 1700 and g:has('step=keep;id=25608'),
     'an unscanned drop before the host\'s state: reported first (flag 2), then kept')
+-- A send that fails (the world queue) never keeps the lower life: VEHICLE_STATE takes the host's life again.
+g = Fixture('guest', {pool = {JEEP}})
+g:at(-650, 877.7)
+g:polls(2)
+g.txFails = true
+g.pool[25608].life = 1700
+g:state(25608, 2300, 4, str32('veh_lv_0000'))
+check(#g:sent(OP) == 0 and g.pool[25608].life == 2300 and not g:has('step=keep'), 'a failed send: the host life is taken (never kept)')
 -- A drop that may not be reported (far) is healed by VEHICLE_STATE as in 0.14.4.
 g = Fixture('guest', {pool = {JEEP}})
 g:at(-1000, 877.7)

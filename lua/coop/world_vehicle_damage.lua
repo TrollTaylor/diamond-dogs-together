@@ -136,13 +136,15 @@ function D.guestTick(t)
 end
 -- VEHICLE_STATE (world_vehicle_state.lua S.consider) asks before it writes the host's `life` over this copy's `here`:
 -- an unreported drop goes out first; true keeps this copy's lower life (a drop waiting for its gap, or a report in
--- flight that the host's state does not carry yet).
+-- flight that the host's state does not carry yet). Anything else (a refused send, the rate) takes the host's life.
 function S.lifeHook(id, here, life, q, t)
   if W.host or not D.on() then return false end
   local k = D.known[id]
   if k and here < k then D.report(id, here, t, 2) end
   if life <= here then return false end
-  local p, waiting = D.pend[id], D.known[id] ~= nil and here < D.known[id]
+  -- Waiting: a drop that could not go out only because its vehicle's last report is under GAP_MS old.
+  local last = D.lastTx[id]
+  local p, waiting = D.pend[id], D.known[id] ~= nil and here < D.known[id] and last ~= nil and t - last < GAP_MS
   if waiting or p and t - p.at < HOLD_MS and life >= p.base then
     D.st.keep = D.st.keep + 1
     if not p or p.kept ~= life then
