@@ -452,6 +452,182 @@ void TestReceiverGates() {
               !pb::FarExempt(pb::Mode::passenger, 0xFFFF, 0xFFFF, none), "far kept for any other vehicle and outside passenger mode");
 }
 
+// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the light vehicle's front seat and the truck cab seat.
+void TestSeatOneDecide() {
+    pb::Policy p{};
+    p.vehicle = 25603; p.peer_seat = 0; p.mode = pb::Mode::passenger; p.until_ms = 5000;
+    pb::SeatOpts none{}, front{}, cab{}, both{};
+    front.front = true; cab.cab = true; both.front = both.cab = true;
+    Check(!pb::SeatOne(none) && pb::SeatOne(front) && pb::SeatOne(cab) && pb::PackOpts(both) == 3 && pb::UnpackOpts(2).cab &&
+              !pb::UnpackOpts(2).front, "the seat-1 options pack");
+    pb::Range r = pb::DecideSeats(p, true, 2, 4, front);
+    Check(r.ok && r.first == 1 && r.last == 3 && Same(r.reason, "front_seat"), "front: seats 1..3 of a 4-seat light vehicle");
+    r = pb::DecideSeats(p, true, 1, 2, front);
+    Check(r.ok && r.first == 1 && r.last == 1, "front: a 2-seat light vehicle offers seat 1 only");
+    r = pb::DecideSeats(p, true, 2, 4, none);
+    Check(r.ok && r.first == 2 && r.last == 3 && Same(r.reason, "back_seats"), "without the key: the back seats only");
+    Check(!pb::DecideSeats(p, true, 1, 2, none).ok && Same(pb::DecideSeats(p, true, 1, 2, none).reason, "seats"),
+          "without the key a 2-seat light vehicle blocks");
+    Check(!pb::DecideSeats(p, true, 4, 2, front).ok && Same(pb::DecideSeats(p, true, 4, 2, front).reason, "type"),
+          "the front key alone: a truck blocks");
+    r = pb::DecideSeats(p, true, 4, 2, cab);
+    Check(r.ok && r.first == 1 && r.last == 1 && Same(r.reason, "cab_seat"), "cab: truck seat 1");
+    r = pb::DecideSeats(p, true, 3, 4, cab);
+    Check(r.ok && r.first == 1 && r.last == 1, "cab: never a seat 2/3 of a truck (its bed is not a seat)");
+    Check(!pb::DecideSeats(p, true, 4, 1, cab).ok && Same(pb::DecideSeats(p, true, 4, 1, cab).reason, "seats"), "a one-seat truck blocks");
+    r = pb::DecideSeats(p, true, 2, 4, cab);
+    Check(r.ok && r.first == 2 && r.last == 3, "the cab key alone: a light vehicle keeps its back seats");
+    Check(!pb::DecideSeats(p, true, 5, 2, both).ok && !pb::DecideSeats(p, true, 8, 4, both).ok &&
+              Same(pb::DecideSeats(p, true, 7, 2, both).reason, "type"), "armoured vehicles stay blocked");
+    Check(!pb::DecideSeats(p, false, 4, 2, cab).ok && Same(pb::DecideSeats(p, false, 4, 2, cab).reason, "facts_read"), "unread facts");
+    pb::Policy q = p; q.peer_seat = 1;
+    Check(!pb::DecideSeats(q, true, 4, 2, cab).ok && Same(pb::DecideSeats(q, true, 4, 2, cab).reason, "no_seat"),
+          "the peer in the cab seat: none");
+    r = pb::DecideSeats(q, true, 2, 4, front);
+    Check(r.ok && r.first == 2 && r.last == 3 && Same(r.reason, "back_seats"), "the peer in seat 1: the front seat is excluded");
+    // The phase-1 immediates.
+    Check(pb::PhaseOneLimit(pb::Verdict::seats, 1, true) == 1, "a steered seat 1: cmp al,1 at both sites");
+    Check(pb::PhaseOneLimit(pb::Verdict::seats, 2, true) == 2 && pb::PhaseOneLimit(pb::Verdict::seats, 4, true) == 2 &&
+              pb::PhaseOneLimit(pb::Verdict::stock, 1, true) == 2 && pb::PhaseOneLimit(pb::Verdict::block, 4, true) == 2 &&
+              pb::PhaseOneLimit(pb::Verdict::seats, 1, false) == 2, "every other call: stock cmp al,2");
+    Check(pb::PhaseOneDword(c::board_seat1_pass_orig, 1) == 0x0872013Cu && pb::PhaseOneDword(c::board_seat1_phase_orig, 1) == 0x920F013Cu &&
+              pb::PhaseOneDword(0x0872013Cu, 2) == c::board_seat1_pass_orig, "the immediate is byte 1 of each dword");
+    Check(c::board_seat1_pass_orig == 0x0872023Cu && c::board_seat1_phase_orig == 0x920F023Cu && c::board_remap_orig == 0x7501FF80u &&
+              c::board_remap_skip == 0xEB01FF80u && c::board_seat1_pass_rva == 0x1251834 && c::board_seat1_phase_rva == 0x1251894 &&
+              c::board_remap_rva == 0xB79A40, "the contract's seat-1 dwords");
+    // The receiver gate.
+    Check(pb::LocalVehicleSeatAllowed(pb::Mode::passenger, 1, true) && !pb::LocalVehicleSeatAllowed(pb::Mode::passenger, 1, false) &&
+              !pb::LocalVehicleSeatAllowed(pb::Mode::block, 1, true) && !pb::LocalVehicleSeatAllowed(pb::Mode::passenger, 0, true) &&
+              pb::LocalVehicleSeatAllowed(pb::Mode::passenger, 2, true), "seat 1 of the viewer's own vehicle only with seat 1 on");
+}
+
+std::vector<std::uint8_t> g_limits;
+bool g_limit_ok = true;
+bool FakeLimit(std::uint8_t limit) noexcept {
+    g_limits.push_back(limit);
+    return g_limit_ok;
+}
+void TestSeatOneWrappers() {
+    unsigned char unit[0x80]{};
+    const std::uint16_t index = 3;  // 25603
+    std::memcpy(unit + pb::kUnitIndex, &index, 2);
+    const float pos[4]{1, 2, 3, 0};
+    pb::SeatOpts front{};
+    front.front = true;
+    {
+        Bind();
+        g_limits.clear();
+        g_limit_ok = true;
+        pb::detail::BindSeatOneForTest(front, &FakeLimit);
+        Policy(pb::Mode::passenger);
+        g.type_value = 2; g.count_value = 4; g.nearest_result = 1;
+        Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 3, "site B searches 1..3 and steers seat 1");
+        Check(g_limits.size() == 1 && g_limits[0] == 1, "both phase-1 immediates go to 1 for this call");
+        pb::Stats s{};
+        pb::ReadStats(s);
+        Check(s.seat_one == 1 && s.steer[1] == 1 && s.last_seat[1] == 1 && s.faults == 0, "counted as a seat-1 steer");
+        g.nearest_result = 2;
+        Check(pb::detail::SiteBForTest(unit, pos) == 2 && g_limits.size() == 2 && g_limits[1] == 2, "a back seat: stock 2");
+        Policy(pb::Mode::off);
+        g.driver_result = 1;
+        Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.driver == 1 && g_limits.size() == 3 && g_limits[2] == 2,
+              "policy off: the stock driver search, stock 2 (a right-door driver stays a driver)");
+        g.nearest_result = 1;
+        g.first = g.last = 0xEE;
+        Policy(pb::Mode::passenger);
+        Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 1 && g.first == 1 && g.last == 3 && g_limits.size() == 3,
+              "site A offers seat 1 too and never touches the immediates");
+        g_limit_ok = false;
+        Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "a failed immediate write never seats the viewer in seat 1");
+        pb::ReadStats(s);
+        Check(s.faults == 1 && s.seat_one == 1, "the failed write is a fault");
+        g.nearest_result = 2;
+        Check(pb::detail::SiteBForTest(unit, pos) == 2, "a back seat passes even when the restore failed");
+        pb::detail::ResetForTest();
+    }
+    {
+        // Seat 1 off: the wrappers never call the writer and never offer seat 1.
+        Bind();
+        g_limits.clear();
+        Policy(pb::Mode::passenger);
+        g.type_value = 2; g.count_value = 4; g.nearest_result = 2;
+        Check(pb::detail::SiteBForTest(unit, pos) == 2 && g.first == 2 && g.last == 3 && g_limits.empty(), "off: back seats, no writer");
+        pb::detail::ResetForTest();
+    }
+    {
+        // The truck cab with the cab key.
+        Bind();
+        g_limits.clear();
+        g_limit_ok = true;
+        pb::SeatOpts cab{};
+        cab.cab = true;
+        pb::detail::BindSeatOneForTest(cab, &FakeLimit);
+        Policy(pb::Mode::passenger);
+        g.type_value = 4; g.count_value = 2; g.nearest_result = 1;
+        Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 1 && g_limits.size() == 1 && g_limits[0] == 1,
+              "cab: truck seat 1 with both immediates at 1");
+        pb::detail::ResetForTest();
+    }
+}
+
+void TestSeatOneInstall() {
+    {
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        pb::SeatOpts front{};
+        front.front = true;
+        Check(img.base[0xB79A43] == 0x75 && img.base[0x1251835] == 2 && img.base[0x1251895] == 2, "the stock seat-1 bytes");
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log, front) == nullptr && pb::LiveSeatOpts().front && !pb::LiveSeatOpts().cab,
+              "installed with seat 1");
+        Check(img.base[0xB79A43] == 0xEB && img.base[0x1251835] == 2 && img.base[0x1251895] == 2, "the remap is a jmp; phase 1 still stock");
+        Check(Logged("partner_board=seat_one; result=ok; reason=none; front=1; cab=0; remap=0xb79a40; sites=0x1251834,0x1251894"),
+              "the seat_one line");
+        std::uintptr_t mismatch = 0;
+        img.base[0x1251835] = 1;
+        Check(pb::detail::VerifyImage(img.base, img.span, mismatch) == nullptr, "a phase-1 immediate at 1 still verifies");
+        img.base[0x1251835] = 2;
+        pb::detail::ResetForTest();
+    }
+    {
+        // A changed seat-1 block: the back seats stay, seat 1 is refused, nothing of it written.
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        pb::SeatOpts cab{};
+        cab.cab = true;
+        img.base[0xB79A57] ^= 1;
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log, cab) == nullptr && pb::Installed() && !pb::SeatOne(pb::LiveSeatOpts()),
+              "the board installs, seat 1 does not");
+        Check(img.base[0xB79A43] == 0x75 && Logged("partner_board=seat_one; result=refused; reason=bytes; front=0; cab=1;"),
+              "the remap is untouched and the refusal is logged");
+        pb::detail::ResetForTest();
+    }
+    {
+        // Without the options nothing of seat 1 is touched or logged.
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log) == nullptr && img.base[0xB79A43] == 0x75 && !Logged("partner_board=seat_one"),
+              "no options: no seat-1 install");
+        pb::detail::ResetForTest();
+    }
+}
+
+void TestSeatOneLocalPassenger() {
+    Memory m = Passenger();
+    Lookup l;
+    l.recs[25603] = kUnit;
+    Riders(m, kUnit, 0xFFFF, 0, 0xFFFF, 0xFFFF);
+    Check(!pb::ReadLocalPassenger(m, l, kP, kQ, 0).valid, "seat 1 off: rider[1] is not a passenger report");
+    const pb::LocalPassenger lp = pb::ReadLocalPassenger(m, l, kP, kQ, 0, true);
+    Check(lp.valid && lp.vehicle == 25603 && lp.seat == 1 && Same(lp.reason, "ok"), "seat 1 on: rider[1] == local is seat 1");
+    Riders(m, kUnit, 0xFFFF, 0xFFFF, 0, 0xFFFF);
+    Check(pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).seat == 2, "seat 1 on: the back seats still read");
+    Riders(m, kUnit, 0, 0xFFFF, 0xFFFF, 0xFFFF);
+    Check(!pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).valid, "seat 1 on: the driver's seat is still no passenger");
+}
+
 void TestSurprise() {
     pb::SurpriseIn in{};
     in.installed = in.live = true;
@@ -483,6 +659,10 @@ int main() {
     TestVerifyAndInstall();
     TestLocalPassenger();
     TestReceiverGates();
+    TestSeatOneDecide();
+    TestSeatOneWrappers();
+    TestSeatOneInstall();
+    TestSeatOneLocalPassenger();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);
     return 0;

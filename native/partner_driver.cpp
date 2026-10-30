@@ -3027,6 +3027,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     ai.passenger = lp.valid;
     ai.vehicle = lp.vehicle;
     ai.seat = lp.seat;
+    ai.seat_one = d.settings.ride_front || d.settings.ride_cab;
     const char* arm_reason = "none";
     const pc::Arm arm = pc::ArmFor(ai, arm_reason);
     pc::Camera cam{};
@@ -5803,6 +5804,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
     // lab and play; with it the passenger camera).
     d.settings.ride_board = lab.partner_ride_board;
+    d.settings.ride_front = lab.partner_ride_front;
+    d.settings.ride_cab = lab.partner_ride_cab;
     d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;

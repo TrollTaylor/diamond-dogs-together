@@ -997,7 +997,12 @@ const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::S
 // only (ReadProcessMemory) and resolves the vehicle through partner_vehicle::ReadLive.
 const char* PartnerBoardInstall(void*) noexcept {
     if (!game_base || !partner_gate_ok) return "gate";
-    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab, passenger mode only; off unless named).
+    const auto& config = mgscoop::GetLabConfig();
+    mgscoop::partner_board::SeatOpts opts{};
+    opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
+    opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
+    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
 }
 bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
 void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
@@ -1014,7 +1019,8 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
         mgscoop::partner_vehicle::ReadLive(game_base, id, r);
         return !r.refusal && r.unit.id == id ? r.unit.rec : 0;
     };
-    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local);
+    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local,
+                                                     mgscoop::partner_board::SeatOne(mgscoop::partner_board::LiveSeatOpts()));
     return true;
 }
 // F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):

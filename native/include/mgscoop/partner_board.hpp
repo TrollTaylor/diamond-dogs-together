@@ -35,7 +35,16 @@ using NowFn = std::uint64_t (*)() noexcept;
 // (B refused, A reverted) or b_revert (B refused and A could not be reverted:
 // its wrapper stays and passes through, the policy is never published). Logs
 // partner_board=installed|refused once.
-const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) noexcept;
+//
+// M6 seat 1 (opts.front / opts.cab, partner_board_policy.hpp): after both sites
+// are live, the seat-1 blocks (board_seat1_blocks: the two phase-1 sites and the
+// seat matrix's seat-1 remap) are checked and the remap `jne` becomes a `jmp`
+// (one locked dword, never reverted; logged partner_board=seat_one). A refusal
+// there keeps the back seats (opts stay off). Site B then sets both phase-1
+// immediates for each call it makes (1 only for a steered seat 1).
+const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts = {}) noexcept;
+// The seat-1 options that are live (both off until Install armed them).
+SeatOpts LiveSeatOpts() noexcept;
 bool Installed() noexcept;
 const char* InstallRefusal() noexcept;
 // Both call sites still call our stubs (the driver checks it every tick).
@@ -53,8 +62,9 @@ struct Stats {
     std::uint16_t last_vehicle;   // the policy vehicle of the last block or steer
     std::uint8_t last_type;       // GetVehicleType of the last passenger decision (0xFF none)
     std::uint8_t last_count;      // its seat count (0xFF none)
-    std::uint32_t faults;         // SEH-caught index reads / getter calls
+    std::uint32_t faults;         // SEH-caught index reads / getter calls; failed phase-1 immediate writes
     const char* last_reason;      // the last non-stock decision's reason (static)
+    std::uint32_t seat_one;       // M6: phase-1 calls steered to seat 1 with both immediates at 1
 };
 void ReadStats(Stats& out) noexcept;
 
@@ -72,6 +82,10 @@ using DriverFn = std::uint8_t (*)(void* unit, const float* pos);
 using TypeFn = std::uint8_t (*)(void* unit);
 using CountFn = int (*)(void* unit);
 void BindForTest(NearestFn nearest, DriverFn driver, TypeFn type, CountFn count, NowFn now) noexcept;
+// M6: the seat-1 options and the phase-1 immediate writer bound without an install
+// (the live writer patches the two image dwords; false: not written).
+using LimitFn = bool (*)(std::uint8_t limit) noexcept;
+void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept;
 std::uint8_t SiteAForTest(void* unit, const float* pos, std::uint8_t first, std::uint8_t last) noexcept;
 std::uint8_t SiteBForTest(void* unit, const float* pos) noexcept;
 void ResetForTest() noexcept;

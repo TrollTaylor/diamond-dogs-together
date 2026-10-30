@@ -81,6 +81,7 @@ struct ArmIn {
     bool passenger = false;                 // partner_board::LocalPassenger::valid
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
+    bool seat_one = false;                  // M6: partner_ride_front / partner_ride_cab (seat 1 is a passenger seat)
 };
 inline Arm ArmFor(const ArmIn& in, const char*& reason) noexcept {
     Arm a{};
@@ -88,7 +89,7 @@ inline Arm ArmFor(const ArmIn& in, const char*& reason) noexcept {
     if (!in.passenger) { reason = "not_passenger"; return a; }
     if (!in.installed) { reason = "install"; return a; }
     if (in.uncertain) { reason = "uncertain"; return a; }
-    if (in.seat < kBackFirst || in.seat > kBackLast) { reason = "seat"; return a; }
+    if ((in.seat < kBackFirst || in.seat > kBackLast) && !(in.seat_one && in.seat == 1)) { reason = "seat"; return a; }
     if (in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != (kVehicleBase >> 9)) { reason = "vehicle"; return a; }
     a.armed = true;
     a.vehicle = in.vehicle;

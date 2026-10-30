@@ -567,6 +567,9 @@ struct Settings {
     // F1 vehicles (lab.ini partner_ride_board; docs/native-puppet.md "Vehicle boarding"):
     // the board block / passenger hook and the local passenger report. Off by default; play forces off.
     PartnerRideBoard ride_board;
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
+    // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
+    bool ride_front = false, ride_cab = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini

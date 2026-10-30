@@ -233,6 +233,13 @@ void TestVerifyImage() {
     image[0x218D51C] ^= 1;
     Check(vd::VerifyImage(image, kSpan) && std::strcmp(vd::VerifyImage(image, kSpan), "data") == 0, "a changed radius refuses");
     image[0x218D51C] ^= 1;
+    // M6 seat 1: the board turns the seat matrix's seat-1 remap jne (0xB79A43) into a jmp for the process.
+    Check(c::board_remap_rva == 0xB79A40 && image[0xB79A43] == 0x75, "the remap opcode byte is a jne in the stock image");
+    image[0xB79A43] = 0xEB;
+    Check(vd::VerifyImage(image, kSpan) == nullptr, "the board's remap jmp still verifies");
+    image[0xB79A43] = 0x74;
+    Check(vd::VerifyImage(image, kSpan) && std::strcmp(vd::VerifyImage(image, kSpan), "block") == 0, "any other remap opcode refuses");
+    image[0xB79A43] = 0x75;
     Check(vd::VerifyImage(image, 0x1000000) && std::strcmp(vd::VerifyImage(image, 0x1000000), "span") == 0, "a short span refuses");
     Check(vd::VerifyImage(nullptr, kSpan) && std::strcmp(vd::VerifyImage(nullptr, kSpan), "base") == 0, "no image");
     VirtualFree(image, 0, MEM_RELEASE);

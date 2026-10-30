@@ -2458,6 +2458,27 @@ def board_assertions():
         inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
         need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
     need(any(f[0] == 0x1245820 and f[1] > 0x12458C2 for f in funcs), 'the pre-query 0x1245820 runs through site A')
+    # M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): site B sets the two phase-1 `cmp al,imm8` immediates to 1
+    # for a steered seat 1 (TryToRide gets seat 1, the next phase is 2, the passenger phase 0x1250CF0); the seat-1 remap
+    # of the seat matrix 0xB799C0 (seat 1 -> 0 while rider[1] is a player id) becomes a jmp.
+    need(rd(0x1251832, 14) == bytes.fromhex('240f3c0272080fb6c183e00feb03') and rd(0x1251840, 3) == bytes.fromhex('418bc7'),
+         'phase 1 seat pass: and al,0xf; cmp al,2 (0x1251834); jb 0x1251840 (mov eax,r15d = 0); else the seat')
+    need(call_target(0x1251851) == 0xCB9470 and rd(0x1251847, 3) == bytes.fromhex('0fb6d0'),
+         'phase 1 passes the chosen seat (dl = al) to TryToRide 0xCB9470')
+    need(rd(0x1251892, 12) == bytes.fromhex('240f3c020f92c00402884355'),
+         'phase 1 phase select: and al,0xf; cmp al,2 (0x1251894); setb al; add al,2; mov [rbx+0x55],al')
+    need(rd(0x1250E96, 32)[-8:] == bytes.fromhex('6e00000066890c78'), 'the passenger phase writes act 0x6E')
+    need(rd(0xB79A3F, 6) == bytes.fromhex('4080ff017515'), 'the seat matrix remap: cmp dil,1; jne 0xB79A5A (0xB79A43)')
+    need(0xB79A45 + 0x15 == 0xB79A5A and rd(0xB79A57, 3) == bytes.fromhex('0f44f9'),
+         'the remap jne skips exactly the cmove that maps seat 1 to 0')
+    for site in (0x1251834, 0x1251894, 0xB79A40):
+        need((site & 63) + 4 <= 64, f'seat-1 dword {site:#x} inside one cache line')
+    for site, lo, hi in ((0x1251834, 0x1251835, 0x1251836), (0x1251894, 0x1251895, 0x1251896), (0xB79A40, 0xB79A40, 0xB79A44)):
+        owner = [f for f in funcs if f[0] <= site < f[1]]
+        need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
+        local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+        inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
     return out
 
 
@@ -3342,6 +3363,15 @@ w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, b
 w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
 w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
 w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
+w('// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the phase-1 dwords site B sets to `cmp al,1` for a steered')
+w('// seat 1 only (0x1251834: TryToRide gets seat 1; 0x1251894: the passenger phase 2), and the seat matrix 0xB799C0\'s')
+w('// seat-1 remap dword (0xB79A40: `cmp dil,1; jne` -> `jmp`, so a player in rider[1] is drawn at seat 1).')
+w(f'inline constexpr std::uintptr_t board_seat1_pass_rva=0x1251834, board_seat1_phase_rva=0x1251894, board_remap_rva=0xb79a40;')
+w(f'inline constexpr std::uint32_t board_seat1_pass_orig=0x{struct.unpack("<I", rd(0x1251834, 4))[0]:08x}, '
+  f'board_seat1_phase_orig=0x{struct.unpack("<I", rd(0x1251894, 4))[0]:08x}, '
+  f'board_remap_orig=0x{struct.unpack("<I", rd(0xB79A40, 4))[0]:08x}, '
+  f'board_remap_skip=0x{(struct.unpack("<I", rd(0xB79A40, 4))[0] & 0x00FFFFFF) | 0xEB000000:08x};')
+w('inline constexpr std::uintptr_t board_seat1_blocks[]={0x1251822,0x125188e,0xb79a3f};')
 w('// --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera") ------------------------')
 w('// The VehicleCamera module (live vtable 0x23d67f0, base 0x23d6720): CanActivate 0x12d0f60 at slot +0x18 of both, true')
 w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six modules at CAM+0xbd0, the mode at +0x340')

@@ -282,8 +282,32 @@ local function real(s, lo, hi)
     local v = type(s) == "string" and s:match("^%-?%d+%.?%d*$") and tonumber(s)
     return v and v >= lo and v <= hi and v or nil
 end
+-- M6 E6 (docs/vehicles-companions-design.md section 8): vehicle_census [first 0..511] [n 1..64], read-only, lab or
+-- play: each live TppVehicle2 id 25600+first.. (GetVehicleType answers) with its GetRiderId seat count and riders and
+-- its pose, one line each (event=vehicle_census); the reply counts them.
+function R.vehicles(a)
+    local first, cnt = real(a[2] or "0", 0, 511), real(a[3] or "48", 1, 64)
+    if #a > 3 or not (first and cnt and first == floor(first) and cnt == floor(cnt)) then return false, "vehicle_census_args" end
+    local found, o = 0, {}
+    for i = first, math.min(511, first + cnt - 1) do
+        local id = RID + i
+        local t = send(id, {id = "GetVehicleType"})
+        if n(t) then
+            local r, s = send(id, {id = "GetRiderId"}), {}
+            if type(r) == "table" then for k = 1, 16 do if r[k] == nil then break end s[k] = num(r[k]) end end
+            local p, x, y, z = send(id, {id = "GetPosition"})
+            if p ~= nil then local ok; ok, x, y, z = pcall(function() return p:GetX(), p:GetY(), p:GetZ() end) end
+            W.log(fmt("event=vehicle_census; id=%d; type=%s; seats=%d; riders=%s; x=%s; y=%s; z=%s", id, num(t), #s,
+                #s > 0 and concat(s, ",") or "none", num(x, "%.1f"), num(y, "%.1f"), num(z, "%.1f")))
+            found = found + 1
+            if #o < 8 then o[#o + 1] = fmt("%d:%s:%d", id, num(t), #s) end
+        end
+    end
+    return true, fmt("vehicle_census;first=%d;n=%d;found=%d;%s", first, cnt, found, concat(o, ","))
+end
 function R.run(a)
     local cmd = a[1]
+    if cmd == "vehicle_census" then return R.vehicles(a) end
     if cmd == "relief_census" and (#a == 1 or #a == 2 and a[2]:match("^[%w_]+$") and #a[2] <= 16) then return R.census(a[2]) end
     if cmd == "relief_status" or cmd == "relief_lab" then
         local S = W.reliefSync

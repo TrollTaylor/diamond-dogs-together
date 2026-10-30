@@ -265,4 +265,6 @@ c=G();c.W.relief={run=function(a)got[#got+1]=table.concat(a," ");return true,"re
 ok,msg=lever(c,"relief_census arrival");check(ok and msg=="relief;m=30010" and got[1]=="relief_census arrival","census routes with its tag")
 ok,msg=lever(c,"relief_arm 2 805 343 1636.5 0");check(ok and got[2]=="relief_arm 2 805 343 1636.5 0" and c.reads==0,"arm routes its five arguments")
 ok,msg=lever(c,"relief_unknown");check(ok and got[3]=="relief_unknown","any relief_ word goes to the module, which checks it")
+check(c.V.handles.vehicle_census,"handled here: vehicle_census")
+ok,msg=lever(c,"vehicle_census 0 8");check(ok and got[4]=="vehicle_census 0 8","M6 E6: vehicle_census routes to the world module")
 print("debug_vehicle_lua_check: "..checks.." checks PASS")

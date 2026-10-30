@@ -279,4 +279,21 @@ check(ok and text == 'sync;relief_status', 'relief_status routed in play')
 ok, text = c:run('relief_lab nonactive vehicle')
 check(ok and text == 'sync;relief_lab nonactive vehicle', 'relief_lab routed (the module checks the mode)')
 
+-- M6 E6: vehicle_census (read-only, any mode): the live ids from 25600+first with type, seat count, riders and pose.
+c = Fixture(2)
+ok, text = c:run('vehicle_census 0 4')
+check(ok and text == 'vehicle_census;first=0;n=4;found=1;25600:2:4', 'one live vehicle in 25600..25603: ' .. tostring(text))
+check(c:has('event=vehicle_census; id=25600; type=2; seats=4; riders=65535,65535,65535,65535; x=805.0; y=343.0; z=1636.5'),
+    'one census line per live vehicle')
+for _, s in ipairs(c.sent) do
+    check(s.cmd.id == 'GetVehicleType' or s.cmd.id == 'GetRiderId' or s.cmd.id == 'GetPosition', 'read-only commands only: ' .. tostring(s.cmd.id))
+end
+check(#c.sent == 6 and c.sent[1].id == 25600 and c.sent[6].id == 25603, 'four ids probed, three reads of the live one')
+ok, text = c:run('vehicle_census')
+check(ok and text:find('vehicle_census;first=0;n=48;found=1;', 1, true), 'the default range 0..47')
+for _, bad in ipairs({'vehicle_census 512', 'vehicle_census 0 65', 'vehicle_census 0 0', 'vehicle_census x', 'vehicle_census 1.5', 'vehicle_census 0 4 9'}) do
+    ok, text = c:run(bad)
+    check(not ok and text == 'vehicle_census_args', 'strict census arguments: ' .. bad)
+end
+
 print('world_relief_lua_check: ' .. checks .. ' checks PASS')

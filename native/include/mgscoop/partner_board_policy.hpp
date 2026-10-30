@@ -22,6 +22,24 @@
 // to TryToRide (0x1251832..0x1251840) and selects the passenger phase 0x1250CF0
 // (0x1251894..0x125189B), which writes act 0x6E and attaches the viewer to the
 // copy RIDE_FAST moves. rider[] is never written by us.
+//
+// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; lab keys
+// partner_ride_front (light vehicle front seat) and partner_ride_cab (truck cab
+// seat), default off in lab and play). Stock phase 1 treats seat 1 like the
+// driver's seat at two sites: 0x1251834 `cmp al,2; jb` passes seat 0 to
+// TryToRide for any seat below 2, and 0x1251894 `cmp al,2; setb` selects the
+// driver phase 3 for any seat below 2. The site B wrapper sets both cmp
+// immediates to 1 for exactly the phase-1 call it steers to seat 1 and back to
+// 2 for every other call (both sites run only after site B in the same call,
+// on the same thread), so a stock seat 1 (the driver entering by the right door)
+// keeps its stock meaning. The seat matrix 0xB799C0 maps seat 1 to seat 0 while
+// rider[1] holds a player id (0xB79A3F); with seat 1 on, its `jne` (0xB79A43) is
+// a `jmp` for the process (no stock path seats a player in rider[1]: phase 1
+// passes seat 0), so the stock passenger phase places the viewer at the front
+// right seat (0x141259B80 -> 0xB7AF90(unit, out, seat)). The passenger phase
+// plays GetOn for seat 1 of both classes (stateVehicleGetOnFrontRight,
+// stateTruckGetOnFrontRight) and the light loop for a light vehicle; a truck
+// gets no loop state from 0x14124B2D0 (E6 reads what the graph does).
 #include <cstddef>
 #include <cstdint>
 
@@ -52,6 +70,24 @@ inline constexpr std::size_t kPUnits = 0x120;      // (*(P+0x120))[body] = the r
 inline constexpr std::uint16_t kActPassenger = 0x6E;  // the passenger phase's act (0x1250EAD)
 // A steered phase-1 seat must show up as the local passenger this soon.
 inline constexpr std::uint64_t kSteerConfirmMs = 3000;
+// M6 seat 1: the options (process constants from lab.ini) and the classes.
+struct SeatOpts {
+    bool front = false;  // partner_ride_front: seat 1 of a light vehicle
+    bool cab = false;    // partner_ride_cab: seat 1 of a truck
+};
+inline bool SeatOne(const SeatOpts& o) noexcept { return o.front || o.cab; }
+inline std::uint8_t PackOpts(const SeatOpts& o) noexcept { return static_cast<std::uint8_t>((o.front ? 1u : 0u) | (o.cab ? 2u : 0u)); }
+inline SeatOpts UnpackOpts(std::uint8_t bits) noexcept {
+    SeatOpts o{};
+    o.front = (bits & 1u) != 0;
+    o.cab = (bits & 2u) != 0;
+    return o;
+}
+inline constexpr std::uint8_t kFrontSeat = 1;
+inline constexpr std::uint8_t kTruckFirst = 3, kTruckLast = 4;
+inline constexpr int kFrontSeatsMin = 2, kCabSeatsMin = 2;
+// The two phase-1 `cmp al,imm8` immediates (stock 2; 1 only for a steered seat 1).
+inline constexpr std::uint8_t kPhaseOneStock = 2, kPhaseOneSeatOne = 1;
 
 // --- The published policy (one atomic u64) -----------------------------------
 struct Policy {
@@ -135,15 +171,47 @@ struct Range {
     std::uint8_t first = kNoSeat, last = kNoSeat;
     const char* reason = "unread";
 };
-inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int count) noexcept {
+inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int count, SeatOpts opts = {}) noexcept {
     Range r{};
     if (!facts_ok) { r.reason = "facts_read"; return r; }
+    // M6: the truck cab seat 1 (never a seat index 2 or 3 of a truck: its bed is not a seat).
+    if (opts.cab && type >= kTruckFirst && type <= kTruckLast) {
+        if (count < kCabSeatsMin || count > kPassengerSeatsMax) { r.reason = "seats"; return r; }
+        if (p.peer_seat == kFrontSeat) { r.reason = "no_seat"; return r; }
+        r.ok = true;
+        r.first = r.last = kFrontSeat;
+        r.reason = "cab_seat";
+        return r;
+    }
     if (type < kLightFirst || type > kLightLast) { r.reason = "type"; return r; }
+    // M6: the light vehicle's front seat 1 joins the back seats (a 2-seat light vehicle offers seat 1 only).
+    if (opts.front) {
+        if (count < kFrontSeatsMin || count > kPassengerSeatsMax) { r.reason = "seats"; return r; }
+        std::uint8_t first = kFrontSeat;
+        std::uint8_t last = static_cast<std::uint8_t>(count - 1 < kBackLast ? count - 1 : kBackLast);
+        if (p.peer_seat == first) ++first;
+        if (p.peer_seat == last) --last;
+        if (first > last) { r.reason = "no_seat"; return r; }
+        r.ok = true;
+        r.first = first;
+        r.last = last;
+        r.reason = first == kFrontSeat ? "front_seat" : "back_seats";
+        return r;
+    }
     if (count < kPassengerSeatsMin || count > kPassengerSeatsMax) { r.reason = "seats"; return r; }
     if (!BackSeats(count, p.peer_seat, r.first, r.last)) { r.reason = "no_back_seat"; return r; }
     r.ok = true;
     r.reason = "back_seats";
     return r;
+}
+// M6: the phase-1 immediate the site B wrapper wants for this call: 1 only when
+// it steered the viewer to seat 1 with the option installed, else stock 2.
+inline std::uint8_t PhaseOneLimit(Verdict verdict, std::uint8_t result, bool seat_one) noexcept {
+    return seat_one && verdict == Verdict::seats && result == kFrontSeat ? kPhaseOneSeatOne : kPhaseOneStock;
+}
+// The dword at a phase-1 site (`3C imm8 ..`, little-endian: byte 1 is the immediate) with `imm`.
+inline std::uint32_t PhaseOneDword(std::uint32_t dword, std::uint8_t imm) noexcept {
+    return (dword & 0xFFFF00FFu) | (static_cast<std::uint32_t>(imm) << 8);
 }
 
 // --- The local passenger report (sender) --------------------------------------
@@ -170,8 +238,11 @@ template <class Reader, class T> bool Get(Reader& r, std::uintptr_t at, T& out) 
 // reader(address, out, size) -> bool (SEH or ReadProcessMemory in the game, a
 // fixture in tests); lookup(id) -> the live unit record of that vehicle id, 0
 // when the id is not a live vehicle (partner_vehicle::ReadLive). Reads only.
+// seat_one (M6, partner_ride_front / partner_ride_cab installed): seat 1 is a
+// passenger seat too (only a steered phase 1 seats a player there).
 template <class Reader, class Lookup>
-LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, std::uintptr_t Q, std::uint32_t local) noexcept {
+LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, std::uintptr_t Q, std::uint32_t local,
+                                  bool seat_one = false) noexcept {
     using detail::Get;
     LocalPassenger out{};
     if (!P || !Q || local > 1) { out.reason = "state"; return out; }
@@ -199,7 +270,7 @@ LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, s
     std::uint16_t riders[4]{};
     if (!r(rec + kUnitRiders, riders, sizeof(riders))) { out.via = 0; out.reason = "riders_read"; return out; }
     const auto me = static_cast<std::uint16_t>(local & 0x1FFu);
-    for (std::uint8_t s = kBackFirst; s <= kBackLast; ++s) {
+    for (std::uint8_t s = seat_one ? kFrontSeat : kBackFirst; s <= kBackLast; ++s) {
         if (riders[s] != me) continue;
         out.valid = true;
         out.vehicle = id;
@@ -215,8 +286,9 @@ LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, s
 // --- The receiver's seat gates (partner_driver_seat.inc) ----------------------
 // The peer seated by id in the vehicle the viewer drives: only a back seat, only
 // in passenger mode (today's "local_vehicle" refusal otherwise).
-inline bool LocalVehicleSeatAllowed(Mode mode, std::uint8_t seat) noexcept {
-    return mode == Mode::passenger && seat >= kBackFirst && seat <= kBackLast;
+// M6: seat 1 too while seat 1 is on (the peer's own board offers it only for its class).
+inline bool LocalVehicleSeatAllowed(Mode mode, std::uint8_t seat, bool seat_one = false) noexcept {
+    return mode == Mode::passenger && ((seat >= kBackFirst && seat <= kBackLast) || (seat_one && seat == kFrontSeat));
 }
 // The peer's seat is the viewer's own passenger seat: refused natively (Lua's
 // shared_seat guard needs ON_VEHICLE and cannot see a passenger).

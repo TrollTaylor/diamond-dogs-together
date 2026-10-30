@@ -414,7 +414,8 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     if (s.remote_category == rw::kCategoryUnknown) return "remote_category";
     // F1 vehicles (partner_ride_board=passenger): the peer in a back seat of the vehicle the
     // viewer drives is seated there (never rider[]); any other seat of it stays refused.
-    if (s.vehicle == d.local_vehicle && !partner_board::LocalVehicleSeatAllowed(BoardMode(d.settings.ride_board), s.seat))
+    if (s.vehicle == d.local_vehicle &&
+        !partner_board::LocalVehicleSeatAllowed(BoardMode(d.settings.ride_board), s.seat, d.settings.ride_front || d.settings.ride_cab))
         return "local_vehicle";
     // The viewer's own back seat (Lua's shared_seat guard needs ON_VEHICLE and cannot see a passenger).
     if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) return "shared_seat";

@@ -433,6 +433,12 @@ inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, boar
 inline constexpr std::uint16_t board_act_passenger=0x6e;
 // The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).
 inline constexpr std::uintptr_t board_blocks[]={0x1245877,0x125145c,0x1246a3f,0x124b360,0x124b3a0,0x124b3ee,0x124b454,0x124b480,0x55e7f0,0xa27cc0,0xa27d07,0xa27220,0xa27260,0x1251822,0x125188e,0xa2956a,0x1250e96,0x125ad61,0x12cf42f};
+// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the phase-1 dwords site B sets to `cmp al,1` for a steered
+// seat 1 only (0x1251834: TryToRide gets seat 1; 0x1251894: the passenger phase 2), and the seat matrix 0xB799C0's
+// seat-1 remap dword (0xB79A40: `cmp dil,1; jne` -> `jmp`, so a player in rider[1] is drawn at seat 1).
+inline constexpr std::uintptr_t board_seat1_pass_rva=0x1251834, board_seat1_phase_rva=0x1251894, board_remap_rva=0xb79a40;
+inline constexpr std::uint32_t board_seat1_pass_orig=0x0872023c, board_seat1_phase_orig=0x920f023c, board_remap_orig=0x7501ff80, board_remap_skip=0xeb01ff80;
+inline constexpr std::uintptr_t board_seat1_blocks[]={0x1251822,0x125188e,0xb79a3f};
 // --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera") ------------------------
 // The VehicleCamera module (live vtable 0x23d67f0, base 0x23d6720): CanActivate 0x12d0f60 at slot +0x18 of both, true
 // only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six modules at CAM+0xbd0, the mode at +0x340

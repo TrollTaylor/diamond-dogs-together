@@ -42,6 +42,10 @@ detail::TypeFn g_type = nullptr;
 detail::CountFn g_count = nullptr;
 
 std::atomic<std::uint64_t> g_policy{0};
+// M6 seat 1: the live options (PackOpts; 0 until the remap skip is in) and the phase-1 writer.
+std::atomic<std::uint8_t> g_opts{0};
+detail::LimitFn g_limit = nullptr;
+std::atomic<std::uint32_t> g_seat_one{0};
 std::atomic<std::uint32_t> g_calls[2]{}, g_block[2]{}, g_steer[2]{}, g_faults{0};
 std::atomic<std::uint32_t> g_last_seat[2]{};
 std::atomic<std::uint32_t> g_last_vehicle{kVehicleUnknown}, g_last_type{0xFF}, g_last_count{0xFF};
@@ -110,7 +114,7 @@ Pick Choose(void* unit) noexcept {
     if (!facts) g_faults.fetch_add(1, std::memory_order_relaxed);
     g_last_type.store(facts ? type : 0xFFu, std::memory_order_relaxed);
     g_last_count.store(facts && count >= 0 && count < 0xFF ? static_cast<std::uint32_t>(count) : 0xFFu, std::memory_order_relaxed);
-    const Range r = DecideSeats(p, facts, type, count);
+    const Range r = DecideSeats(p, facts, type, count, UnpackOpts(g_opts.load(std::memory_order_acquire)));
     k.reason = r.reason;
     if (!r.ok) {
         k.verdict = Verdict::block;
@@ -147,7 +151,10 @@ std::uint8_t SiteA(void* unit, const float* pos, std::uint8_t first, std::uint8_
     Note(0, k, result);
     return result;
 }
-// Site B 0x1251479: phase 1 0x1251200's SearchNearestRideSeatForDriver.
+// Site B 0x1251479: phase 1 0x1251200's SearchNearestRideSeatForDriver. With seat 1
+// live (M6) every call also sets the two phase-1 immediates that run after it in the
+// same call: 1 for a steered seat 1, else stock 2. A failed write never seats the
+// viewer in seat 1 under the stock driver mapping: seat 1 then answers 4 (counted).
 std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     const DWORD error = GetLastError();
     const Pick k = Choose(unit);
@@ -155,8 +162,44 @@ std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     std::uint8_t result = kNoSeat;
     if (k.verdict == Verdict::stock) result = g_driver(unit, pos);
     else if (k.verdict == Verdict::seats) result = g_nearest(unit, pos, k.first, k.last);
+    if (g_opts.load(std::memory_order_acquire) && g_limit) {
+        const std::uint8_t limit = PhaseOneLimit(k.verdict, result, true);
+        const DWORD before = GetLastError();
+        const bool written = g_limit(limit);
+        SetLastError(before);
+        if (!written) {
+            g_faults.fetch_add(1, std::memory_order_relaxed);
+            if (result == kFrontSeat) result = kNoSeat;
+        } else if (limit == kPhaseOneSeatOne) {
+            g_seat_one.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     Note(1, k, result);
     return result;
+}
+
+// The live writer: both phase-1 dwords (`3C imm8 ..`) with `limit`, only over bytes that are
+// the stock instruction with either immediate (anything else: false, nothing written).
+bool SetPhaseOneLimitLive(std::uint8_t limit) noexcept {
+    if (!g_base) return false;
+    const std::uintptr_t sites[2] = {c::board_seat1_pass_rva, c::board_seat1_phase_rva};
+    const std::uint32_t originals[2] = {c::board_seat1_pass_orig, c::board_seat1_phase_orig};
+    for (unsigned i = 0; i < 2; ++i) {
+        auto* at = reinterpret_cast<unsigned char*>(g_base + sites[i]);
+        std::uint32_t current = 0;
+        __try {
+            std::memcpy(&current, at, sizeof(current));
+        } __except (ReadFilter(GetExceptionCode())) {
+            return false;
+        }
+        const std::uint8_t imm = static_cast<std::uint8_t>(current >> 8);
+        if (PhaseOneDword(current, kPhaseOneStock) != originals[i] || (imm != kPhaseOneStock && imm != kPhaseOneSeatOne)) return false;
+        const std::uint32_t want = PhaseOneDword(originals[i], limit);
+        if (current == want) continue;
+        const char* why = near_code::PatchDword(at, current, want);
+        if (why && std::strcmp(why, "protect_restore") != 0) return false;
+    }
+    return true;
 }
 
 const c::Site* SiteAt(std::uintptr_t rva) noexcept {
@@ -170,6 +213,11 @@ std::size_t MaskedOperand(std::uintptr_t block) noexcept {
     if (block == c::board_a_block_rva) return c::board_a_site + 1 - c::board_a_block_rva;
     if (block == c::board_b_block_rva) return c::board_b_site + 1 - c::board_b_block_rva;
     return static_cast<std::size_t>(-1);
+}
+// M6: the bytes site B and the seat-one install own (either value is ours): the two
+// phase-1 immediates and the remap's jne/jmp opcode.
+bool SeatOneByte(std::uintptr_t rva) noexcept {
+    return rva == c::board_seat1_pass_rva + 1 || rva == c::board_seat1_phase_rva + 1 || rva == c::board_remap_rva + 3;
 }
 
 bool SiteLive(std::uintptr_t base, std::uintptr_t site, std::uintptr_t next_ip, const void* stub) noexcept {
@@ -207,6 +255,7 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
         __try {
             for (std::size_t i = 0; i < site->size && same; ++i) {
                 if (i >= skip && i < skip + 4) continue;
+                if (SeatOneByte(site->rva + i)) continue;
                 same = image[site->rva + i] == site->bytes[i];
             }
         } __except (ReadFilter(GetExceptionCode())) {
@@ -218,6 +267,10 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
     return nullptr;
 }
 
+void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept {
+    g_opts.store(PackOpts(opts), std::memory_order_release);
+    g_limit = limit;
+}
 void BindForTest(NearestFn nearest, DriverFn driver, TypeFn type, CountFn count, NowFn now) noexcept {
     g_nearest = nearest;
     g_driver = driver;
@@ -241,6 +294,9 @@ void ResetForTest() noexcept {
     g_type = nullptr;
     g_count = nullptr;
     g_policy.store(0);
+    g_opts.store(0);
+    g_limit = nullptr;
+    g_seat_one.store(0);
     for (unsigned i = 0; i < 2; ++i) {
         g_calls[i].store(0);
         g_block[i].store(0);
@@ -255,7 +311,41 @@ void ResetForTest() noexcept {
 }
 } // namespace detail
 
-const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) noexcept {
+namespace {
+// M6: the seat-1 blocks against the image (the owned bytes accepted in either state), then the
+// remap jne -> jmp. nullptr when seat 1 is live.
+const char* InstallSeatOne(std::size_t span) noexcept {
+    const auto* image = reinterpret_cast<const unsigned char*>(g_base);
+    for (const std::uintptr_t rva : c::board_seat1_blocks) {
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            for (std::size_t i = 0; i < site->size && same; ++i) {
+                const std::uintptr_t at = site->rva + i;
+                const unsigned char b = image[at];
+                if (at == c::board_seat1_pass_rva + 1 || at == c::board_seat1_phase_rva + 1) same = b == kPhaseOneStock || b == kPhaseOneSeatOne;
+                else if (at == c::board_remap_rva + 3) same = b == 0x75 || b == 0xEB;
+                else same = b == site->bytes[i];
+            }
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    auto* remap = reinterpret_cast<unsigned char*>(g_base + c::board_remap_rva);
+    std::uint32_t current = 0;
+    std::memcpy(&current, remap, sizeof(current));
+    if (current == c::board_remap_skip) return nullptr;
+    if (current != c::board_remap_orig) return "remap";
+    const char* why = near_code::PatchDword(remap, c::board_remap_orig, c::board_remap_skip);
+    if (why && std::strcmp(why, "protect_restore") != 0) return "remap_write";
+    return nullptr;
+}
+} // namespace
+
+const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts) noexcept {
     if (InterlockedCompareExchange(&g_install_tried, 1, 0) != 0) return g_installed ? nullptr : g_refusal;
     const DWORD error = GetLastError();
     g_base = reinterpret_cast<std::uintptr_t>(base);
@@ -310,9 +400,23 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) no
               static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub_a)),
               static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub_b)),
               static_cast<unsigned>(sizeof(c::board_blocks) / sizeof(c::board_blocks[0])), warn ? "protect_restore" : "none");
+    if (SeatOne(opts)) {
+        // The phase-1 immediates start stock (2); site B owns them from here.
+        const char* why = InstallSeatOne(span);
+        if (!why) {
+            g_limit = &SetPhaseOneLimitLive;
+            g_opts.store(PackOpts(opts), std::memory_order_release);
+        }
+        LogFormat("partner_board=seat_one; result=%s; reason=%s; front=%u; cab=%u; remap=0x%llx; sites=0x%llx,0x%llx\r\n",
+                  why ? "refused" : "ok", why ? why : "none", opts.front ? 1u : 0u, opts.cab ? 1u : 0u,
+                  static_cast<unsigned long long>(c::board_remap_rva), static_cast<unsigned long long>(c::board_seat1_pass_rva),
+                  static_cast<unsigned long long>(c::board_seat1_phase_rva));
+    }
     SetLastError(error);
     return nullptr;
 }
+
+SeatOpts LiveSeatOpts() noexcept { return UnpackOpts(g_opts.load(std::memory_order_acquire)); }
 
 bool Installed() noexcept { return g_installed != 0; }
 const char* InstallRefusal() noexcept { return g_refusal; }
@@ -339,6 +443,7 @@ void ReadStats(Stats& out) noexcept {
     out.last_count = static_cast<std::uint8_t>(g_last_count.load(std::memory_order_relaxed));
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.last_reason = g_last_reason.load(std::memory_order_relaxed);
+    out.seat_one = g_seat_one.load(std::memory_order_relaxed);
 }
 
 } // namespace mgscoop::partner_board
