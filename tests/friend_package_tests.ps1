@@ -1249,6 +1249,13 @@ try {
         Assert-True $readme.Contains($needle) "README.txt mentions $needle"
     }
     foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64', 'mgs-coop\source.zip') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
+    # 0.14.4 review, round 2: the source zip is compared with the commit package.json names, never with the tag (the
+    # tag can sit on a later commit, and the repository holds MinHook only as a link).
+    $notices = [IO.File]::ReadAllText((Join-Path $pkg 'mgs-coop/THIRD_PARTY_NOTICES.md'))
+    foreach ($text in @($readme, $notices)) {
+        Assert-True ($text.Contains('source_commit') -and $text.Contains('source_dirty') -and $text.Contains('later commit')) 'README.txt and the notices name source_commit as the zip''s commit; the tag can be later'
+        Assert-True (!$text.Contains('holds the same code') -and !$text.Contains('differs only') -and !$text.Contains('differs from the source zip only')) 'README.txt and the notices no longer say the tag equals the zip'
+    }
     # DDT-source-<version>.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
     $sourceZip = [IO.Compression.ZipFile]::OpenRead($sourceZipPath)
     try {
@@ -1275,6 +1282,22 @@ try {
         Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'the source zip: no retired player scripts, no build output'
         Assert-Equal @($sourceNames | Where-Object { [IO.Path]::GetExtension($_) -in @('.log', '.go', '.mod', '.sum') -and
             $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'the source zip: logs and Go files only at their exact places'
+        # THIRD_PARTY_NOTICES.md names every kind of tracked file the zip leaves out (0.14.4 review, round 2: it had said
+        # the tag differs only by docs/STATUS.md). A tracked file of any other kind left out fails here, so that text
+        # stays exact. Files deleted in the working tree are not counted (that tree is dirty anyway).
+        $tracked = @(& git -C $projectRoot -c core.quotepath=off ls-files 2>$null)
+        $trackedOk = $LASTEXITCODE -eq 0
+        $deleted = @(& git -C $projectRoot -c core.quotepath=off ls-files --deleted 2>$null)
+        if ($trackedOk -and $LASTEXITCODE -eq 0 -and $tracked.Count) {
+            $inZip = [Collections.Generic.HashSet[string]]::new([string[]]$sourceNames, [StringComparer]::Ordinal)
+            $leftOut = @($tracked | Where-Object { !$inZip.Contains($_) -and $deleted -cnotcontains $_ })
+            $namedPattern = '^(\.gitignore|\.gitmodules|AGENTS\.md|Play-Offline-Coop\.bat|third_party/minhook|(.+/)?\.git(ignore|attributes)|docs/readme/[^/]+\.(jpg|png)|docs/evidence/[^/]+)$'
+            Assert-Equal (@($leftOut | Where-Object { $_ -cnotmatch $namedPattern }) -join ', ') '' 'the source zip leaves out only the kinds of tracked file THIRD_PARTY_NOTICES.md names'
+            Assert-True ($leftOut -ccontains 'third_party/minhook' -and $leftOut -ccontains 'AGENTS.md') 'the check sees the left-out files (the MinHook link, AGENTS.md)'
+            foreach ($named in '`.gitignore`', '`.gitmodules`', '`.gitattributes`', '`AGENTS.md`', '`Play-Offline-Coop.bat`', '`docs/evidence`', '`docs/readme`') {
+                Assert-True $notices.Contains($named) "THIRD_PARTY_NOTICES.md names $named among the files the zip leaves out"
+            }
+        }
     } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.

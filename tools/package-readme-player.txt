@@ -82,11 +82,15 @@ mgs-coop\THIRD_PARTY_NOTICES.md lists the third-party code: Dynamite
 and Dear ImGui (MIT); the full licence texts are next to it. The complete
 source code of the two programs in this zip is DDT-source-@VERSION@.zip:
 download it from the same release page as this zip (release v@VERSION@ on
-https://github.com/TrollTaylor/diamond-dogs-together/releases). The tag
-v@VERSION@ of that repository holds the same code. It differs only by the
-record of this package in docs/STATUS.md, written after the package was
-built; the "source_commit" line of mgs-coop\package.json names the exact
-commit.
+https://github.com/TrollTaylor/diamond-dogs-together/releases). It was
+made from the commit of that repository named on the "source_commit" line
+of mgs-coop\package.json ("source_dirty": false means the files did not
+differ from that commit). The zip has MinHook's source files, where the
+repository has only a link to MinHook's own repository, and it leaves out
+the repository files the programs are not built from: README pictures, git
+settings, developer notes and launch scripts, and evidence files. The tag
+v@VERSION@ can be on a later commit: at least the record of this package
+in docs/STATUS.md is written after the package is built.
 
 NETWORK
 DiamondDogsTogether.exe goes online only to check this repository's
