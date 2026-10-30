@@ -628,8 +628,9 @@ struct LabConfig {
     bool partner_ride_cab_given = false;
     // Seat 1 on the driver's seat matrix (design 8.33, 8.34; partner_ride_seat::AnchorSeat): a copy that draws the peer
     // in seat 1 of a light vehicle (the truck cab excluded) draws it in the seat instead of one seat further right,
-    // outside the jeep. Off unless named, in lab and play, until a FRAME proof on both copies and a play rehearsal; a
-    // named 1 runs in play too; an invalid value refuses (named, off), also after a valid 1.
+    // outside the jeep; the passenger's own copy keeps the stock seat-1 remap while it sits there (design 8.35,
+    // partner_board::OwnSeatOneStock). Frame-proven in play (8.35); off unless named, in lab and play, until the combined
+    // play rehearsal; a named 1 runs in play too; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_seat1_anchor = false;
     bool partner_ride_seat1_anchor_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
