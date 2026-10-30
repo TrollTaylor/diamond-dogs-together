@@ -10,7 +10,9 @@
 #   3. D12 crew: the guest's real C4 on the soldier-crewed patrol jeep 25623 (the soldier set to ignore the players on
 #      both copies first), the guest 25 m away and the host 30 m away when it goes off -> REQ cause 4 -> the host judges
 #      it near and wrecks its copy at once (break_crew) -> req_done; the wreck on both screens; the crew's fate in the
-#      logs of both copies.
+#      logs of both copies. 25623 is the side-op armoured vehicle ("Eliminate the Armored Vehicle Unit 04") with one
+#      soldier aboard (lab run ac0f7656: crew=1, the wreck on both screens); the guest places its charges from 3 m east
+#      of its centre (the hull lies north-south).
 # Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-fixes2-play.txt
@@ -125,7 +127,7 @@ wait 3000
 host run enemy info nearest
 host run enemy ignore nearest
 wait 1500
-guest debug teleport -372.85 0.50 489.18 -90
+guest debug teleport -371.85 0.50 489.18 -90
 wait 3000
 guest run position
 guest run vehicle_state_status 25623
