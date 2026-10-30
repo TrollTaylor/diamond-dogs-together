@@ -372,6 +372,9 @@ $script:LabPartnerKeys = @(
     # without the mount key) unrealize the partner body and the net-quality rebase after a ride is logged (lab only: the
     # loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_unrealize_all'; Json = 'native_unrealize_all'; Kind = 'bool' },
+    # G2 back-seat aim (docs/native-puppet.md "Seat aim"): the read-only census of the local player in a vehicle ride act
+    # and of the partner body in the seat flow (lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_seat_aim'; Json = 'seat_aim'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },

@@ -197,6 +197,8 @@ int main(int argc, char** argv) {
         std::printf("lab_fast_boot=%d\nlab_boot_mission=%u\nlab_boot_pos=%d\nlab_boot_clock_s=%d\nlab_boot_weather=%s\n", c.lab_fast_boot ? 1 : 0,
                     static_cast<unsigned>(c.lab_boot.mission), c.lab_boot.has_pos ? 1 : 0, static_cast<int>(c.lab_boot.clock_s),
                     mgscoop::LabBootWeatherName(c.lab_boot.weather));
+        // G2: the back-seat aim census (lab only, default 0; play forces it off) and whether it was named.
+        std::printf("partner_seat_aim=%d\npartner_seat_aim_given=%d\n", c.partner_seat_aim ? 1 : 0, c.partner_seat_aim_given ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

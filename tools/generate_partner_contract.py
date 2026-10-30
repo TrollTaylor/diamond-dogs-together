@@ -944,6 +944,52 @@ DOOR_DATA = [(0x21124C0, 0x3ECCCCCD), (0x21124C4, 0x3ECCCCCD), (0x21124C8, 0x3EC
 # The blocks vehicle_door re-checks before its first native call (DOOR_SITES plus the seat matrix, its seat-1 remap,
 # the record world matrix and the two getters it calls).
 DOOR_BLOCKS = [rva for rva, _, _ in DOOR_SITES] + [0xB7AF90, 0xB79A3F, 0x55DBC8, 0x55E7F0, 0xA27CC0, 0xA27D07]
+# --- G2 back-seat aim (partner_seat_aim, the read-only census; docs/native-puppet.md "Seat aim", research
+# complete/re-seat-aim.md): what the census's reading of a stock back-seat passenger's weapon rests on. The gun plugin
+# (AttackActionImpl::PollingImpl 0x1054210) runs UpdateAttackType, then EnableCheck, then PollingForLocal; EnableCheck
+# refuses the weapon while flag 0xC3 or 0xC2 of the per-id flag record rec = *(PS+0x280) + (id - *(PS+8))*0x20 is set
+# (flag n = word n >> 5, bit n & 31), else sets flag 0x18 (word 0 bit 24); a hold needs flag 0x18 and not flag 0xCF.
+# The ride plugin's Exec stage 0 (0x1247320) sets flag 0xC3 for an offline or local body and then runs the current ride
+# phase with event 1; the passenger phase 0x1250CF0's event 1 clears it once its seat loop runs (work+0x5C > 0): the
+# only clear of word 6 bit 3 in the ride plugin. UpdateAttackType has no posture for the passenger act 0x6E (heli
+# door 99 -> 5, horse 0x79 -> 3, 0x88 -> 6). Nothing here is patched or called.
+SEAT_AIM_SITES = [
+    (0x12475D0, '83fa06775e4c8d0d248adbfe8bc2418b9481387624014903d1ffe24883c1d0418bd0e929fdffff',
+     'RideVehicleActionImpl Exec 0x12475D0 (vt+0x80): stage <= 6 through the RVA table 0x1247638; stage 0 -> jmp 0x1247320'),
+    (0x1247638, 'eb75240133762401f7752401037624010f7624011b76240127762401',
+     'the ride Exec stage table: 0 -> 0x12475EB (0x1247320), 1 -> return, 2 -> 0x12475F7 (ExecPreMotionGraph 0x12471B0), ..'),
+    (0x124738E, '488b49788bd32b510848c1e20548039180020000834a1808',
+     'ride Exec stage 0 0x1247320 (offline, or the local body online): flag record word 6 |= 8 (flag 0xC3, no weapon)'),
+    (0x12473FE, '0f284e404533c98bd3660f6fc1458d4101660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'ride Exec stage 0: then the current phase function (work+0x40/+0x48) with event 1'),
+    (0x1250FC4, '8bd7488bcee852cbefff84c00f85d1010000837b5c000f8ec7010000488b4608488b48782b79088bc748c1e00548038180020000836018f7',
+     'passenger phase 0x1250CF0 event 1: not IsNeedToSync 0x114DB20 and work+0x5C > 0 (the seat loop runs): word 6 &= ~8 '
+     '(flag 0xC3 cleared: a back-seat passenger keeps its weapon)'),
+    (0x12510BD, 'f30f1042400f54056770e5000f2f0568bcec000f83d1000000498b40782b78088bcf48c1e1054803888002000081491800000001',
+     'passenger phase event 10: |unit+0x40| under the threshold: word 6 |= 0x1000000 (flag 0xD8)'),
+    (0x10542E6, 'e8453c04008bd7488bcee81b9dfeff8bd7488bce4584ff7507e82cf6ffffeb05e865f0ffff',
+     'gun plugin PollingImpl 0x1054210: EnableCheck 0x103E010, then PollingForLocal 0x1053930 (or PollingForGhost 0x1053370)'),
+    (0x103E192, 'bac30000004533c9498bce448d42ffe8ea5cfbff84c00f85e1000000',
+     'EnableCheck: OrCheck 0xFF3E90(flag record, 0xC3, 0xC2) true -> refuse (0x103E28F)'),
+    (0x103E26F, '488b4608488b48782b79088bc748c1e00548038180020000810800000001eb1e',
+     'EnableCheck admitted: flag record word 0 |= 0x1000000 (flag 0x18, the weapon usable)'),
+    (0x103E28F, '488b4608488b48782b79088bc748c1e005480381800200008120fffffffe',
+     'EnableCheck refused: flag record word 0 &= ~0x1000000 (flag 0x18 cleared)'),
+    (0x1053B70, '41f64603010f84e0020000418b4618c1e80fa8010f85d1020000',
+     'PollingForLocal 0x1053930: no hold unless flag 0x18 (word 0 byte 3 bit 0) is set and flag 0xCF (word 6 bit 15) clear'),
+    (0x10756B4, '488b4060458d4f7d458d4719488b40204c897c242041c6040602',
+     'StateGunHoldStart 0x1075620 enter: (*(Q+0x20))[id] = 2 (the census\'s aiming upper act; Set(0xC8, 0x19, 0x7D))'),
+    (0x1075A23, '49b984e5e20a1350000041b802000000488b8938020000418bd6488b01740ef30f11742420ff9090010000',
+     'StateGunHoldStart enter: graph 2 node 0x50130AE2E584 on the body\'s cs (vt+0x190, or vt+0x170 at 0x1075A50)'),
+    (0x108CD40, '80bad503000000458bc87408c682d403000007c34c8b5108498b8238010000488b4060488b4018460fb704484183e863746f4183e81674614183f8'
+     '0f7453498b4a78442b4908418bc148c1e005480381',
+     'UpdateAttackType 0x108CD40 (1/3): posture rec+0x3D4 = 7 with rec+0x3D5; act 99 -> 5, 0x79 -> 3, 0x88 -> 6 (no 0x6E)'),
+    (0x108CD90, '80020000f6400c017408c682d403000002c38b00c1e816a8017408c682d403000001c3488b81d802000041803c01417508c682d403000004c3'
+     'c682d403000000c3c682d403000006c3c682d403000003',
+     'UpdateAttackType (2/3): flag record word 3 bit 0 -> 2, word 0 bit 22 -> 1, PS byte 0x2D8 == 0x41 -> 4, else 0'),
+    (0x108CDE0, 'c3c682d403000005c3', 'UpdateAttackType (3/3): the act-99 (heli door) posture 5'),
+]
+SITES += SEAT_AIM_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -1585,6 +1631,9 @@ SLOTS += [
     (0x23C5A20, 0x38, 0x11E50B0, 'KnockActionPluginImpl vt+0x38 = RequestHandSignStop (the lever\'s sign_stop)'),
     (0x23C5A20, 0x58, 0x11E5160, 'KnockActionPluginImpl vt+0x58 = the polling that takes the request'),
 ]
+# G2 back-seat aim census: the ride plugin's Exec (stage 0 sets / the passenger phase clears flag 0xC3) in both
+# RideVehicleActionImpl vtables (CanExec 0x1246650 at +0x8 of each).
+SLOTS += [(vt, 0x80, 0x12475D0, f'RideVehicleActionImpl vtable {vt:#x} +0x80 = Exec(stage, body)') for vt in (0x23CBD88, 0x23CBEA8)]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2487,6 +2536,34 @@ def pass_camera_assertions():
     return out
 
 
+def seat_aim_assertions():
+    """G2 back-seat aim census (partner_seat_aim): in the ride plugin (0x1244000..0x125D000) flag 0xC3 is set only by
+    the Exec stage 0 and cleared only by the passenger phase's event 1; the stage-0 function and the passenger phase
+    are reached only through the Exec table / the phase table; the gun plugin's posture and hold pollers have one
+    caller (its PollingImpl)."""
+    import re
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    lo, hi = 0x1244000, 0x125D000
+    code = rd(lo, hi - lo)
+    sets = [lo + m.start() for m in re.finditer(rb'\x83[\x48-\x4f]\x18\x08|\x83\x4c.\x18\x08|\x81[\x48-\x4f]\x18\x08\x00\x00\x00', code, re.S)]
+    clears = [lo + m.start() for m in re.finditer(rb'\x83[\x60-\x67]\x18\xf7|\x83\x64.\x18\xf7|\x81[\x60-\x67]\x18\xf7\xff\xff\xff', code, re.S)]
+    need(sets == [0x12473A2], f'ride plugin: word 6 |= 8 (flag 0xC3) only at 0x12473A2: {[hex(x) for x in sets]}')
+    need(clears == [0x1250FF8], f'ride plugin: word 6 &= ~8 only at 0x1250FF8 (the passenger phase): {[hex(x) for x in clears]}')
+    need(rel_refs(0x1247320) == [0x12475F2], 'the ride stage-0 function 0x1247320 only through the Exec table (jmp 0x12475F2)')
+    need(jump_table(0x1247638, 7)[0] == 0x12475EB, 'Exec stage 0 -> 0x12475EB')
+    need(qword_hits(0x12475D0) == [0x23CBE08, 0x23CBF28], f'Exec 0x12475D0 only at +0x80 of the two ride vtables: '
+         f'{[hex(x) for x in qword_hits(0x12475D0)]}')
+    need(lea_rip_refs(0x1250CF0) == [0x12481A6] and rel_refs(0x1250CF0) == [], 'the passenger phase only through the phase table')
+    need(rel_refs(0x108CD40) == [0x10541B9], 'UpdateAttackType 0x108CD40 only from PollingImpl')
+    need(rel_refs(0x1053930) == [0x10542FF], 'PollingForLocal 0x1053930 only from PollingImpl')
+    need(sorted(rel_refs(0x103E010)) == [0x1040330, 0x10542F0], 'EnableCheck 0x103E010 from PollingImpl and 0x1040330')
+    return out
+
+
 # (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
 # calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
 # REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
@@ -2916,6 +2993,7 @@ def ui_filter_assertions():
 failures += ui_filter_assertions()
 failures += gesture_assertions()
 failures += gesture_lever_assertions()
+failures += seat_aim_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -3359,6 +3437,17 @@ w('inline constexpr float door_offset_m=0.4f, door_radius_m=1.4f;')
 w('// The contract blocks vehicle_door re-checks before its first native call (code_sites rvas) and the two constants.')
 w('inline constexpr std::uintptr_t door_blocks[]={' + ','.join(f'0x{rva:x}' for rva in DOOR_BLOCKS) + '};')
 w('inline constexpr DataWord door_data[]={' + ','.join(f'{{0x{rva:x},0x{value:08x}}}' for rva, value in DOOR_DATA) + '};')
+w('// --- G2 back-seat aim census (partner_seat_aim, read-only; docs/native-puppet.md "Seat aim") ---------------------')
+w('// The per-id flag record *(PS+0x280) + (id - *(PS+8))*0x20 (ps_rec280, ps_rec280_stride): flag n = word n >> 5, bit')
+w('// n & 31. Word 0 bit 24 = flag 0x18 (EnableCheck: the weapon usable); word 6 (+0x18) bit 2 / 3 = flags 0xC2 / 0xC3')
+w('// (EnableCheck refuses; the ride\'s Exec stage 0 sets 0xC3, the passenger phase clears it), bit 15 = 0xCF (no hold),')
+w('// bit 24 = 0xD8 (the passenger phase on a slow vehicle). The gun record\'s requested next state u8 rec+0x2C1; its')
+w('// posture rec+0x3D4 (gun_class) comes from UpdateAttackType: act 99 (heli door) 5, 0x79 (horse) 3, 0x88 6, none for 0x6e.')
+w('inline constexpr std::size_t flag_word6=0x18, gun_next_state=0x2c1;')
+w('inline constexpr std::uint32_t flag_w0_armed=0x1000000, flag_w6_c2=0x4, flag_w6_c3=0x8, flag_w6_cf=0x8000, flag_w6_d8=0x1000000;')
+w('inline constexpr std::uint16_t act_ride_passenger=0x6e, act_ride_driver=0x6f, act_ride_getoff=0x70, act_heli_attack=0x63, act_horse_ride=0x79;')
+w('inline constexpr std::uint8_t upper_gun_hold=2, posture_heli=5, posture_horse=3;')
+w('inline constexpr std::uintptr_t seat_aim_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_AIM_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')

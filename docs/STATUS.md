@@ -2262,6 +2262,43 @@ end of this subsection (sea death proven both ways, put-down and seated aim pass
   kind=knock` without a lever line); E did nothing. **Default unchanged (0)** (a lab lever); the knock / sign kinds
   of `partner_native_gesture` stay unproven visually.
 
+## 2026-10-22: the back-seat aim census (`partner_seat_aim`; left uncommitted on `wp/seat-aim`, committed and merged on 2026-10-30)
+
+Written on 0.13.5 (`cc973a8`) in `D:/mgs-coop-wt/seat-aim` and left uncommitted; committed there as `wip(seat-aim)` and
+merged into `wp/seat-shoot` (M7) on 2026-10-30. The contract counts below are 0.13.5's; the merge regenerated the
+contract (816 code sites / 206 vtable slots).
+
+### partner_seat_aim
+
+- **G2: aiming and shooting from the back seat, research first** (`wp/seat-aim`; [native-puppet.md "Seat aim"](native-puppet.md);
+  research scratchpad `complete/re-seat-aim.md`). Verdict: **partial**.
+- **The local passenger:** stock already allows the weapon in a back seat (static reading, not yet run).
+  - The ride plugin's Exec stage 0 sets the "no weapon" flag 0xC3 every frame (`0x12473A2`).
+  - The passenger phase clears it once its seat loop runs (`0x1250FF8`; the only clear in the ride plugin; the
+    driver keeps it).
+  - The gun plugin's EnableCheck (`0x103E010`) refuses only on 0xC3 / 0xC2.
+  - Expect RMB / LMB to raise and fire the gun with the **standing** upper-body set (UpdateAttackType has no posture
+    for act 0x6E, unlike the heli door's act 99 / posture 5 and the horse's 0x79 / 3), the act staying 0x6E, and no
+    first person (the ride's PollingForSubjectiveCamera gives a passenger none).
+- **The partner shown as a passenger:** not built. The DM seat chain owns body 1, the native puppet leaves (`seat`),
+  and the aim mirror refuses ride. Three designs are in the note: (A) a graph-2 gun-hold pose on the seated body 1 in
+  the `partner_gesture` style, (B) upper-only native windows while seated, (C) body 1 as a stock passenger. Each waits
+  on run facts first.
+- **Built (lab only, read-only):** new key `partner_seat_aim=0|1` (`_given`; default 0 in lab and play, play forces it
+  off), the census `partner_seat_aim=on|sample|end|status|capped`.
+  - The local player in a vehicle ride act and body 1 in the seat flow.
+  - Fields: act, upper act, gun mode, posture, the weapon flags 0x18 / 0xC2 / 0xC3 / 0xCF / 0xD8, the local camera
+    mode and handle.
+  - Per watch: aims, fires, reloads and armed / aim time.
+  - No write, no game call.
+- **Contract** 759 code sites / 195 vtable slots (0.13.5: 743 / 193): `SEAT_AIM_SITES` (16 blocks), Exec at +0x80 of
+  both ride vtables, `seat_aim_assertions`.
+- **Tests:** new `partner_seat_aim_tests` (in `Get-WorkerTests`), plus `lab_config_tests`, `lab_ini_check`,
+  `worker_session_tests`, `friend_package_tests`, the three `-LabSetting` allow-lists and the help.
+- **Scenario** `coop-vehicle-seat-aim.txt` (written, not run): the first two halves of `coop-vehicle-passenger.txt`
+  with `labsetting partner_seat_aim=1`. The passenger holds RMB, then RMB+LMB, in the back seat, in both directions.
+- **No hidden run yet.** The checks are in native-puppet.md "Seat aim".
+
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 
 Branch `wp/integ9` from `wp/integ8` `228eecb` (0.13.4): merge commits of `wp/board` `7b504fd`, `wp/cbox-native`
