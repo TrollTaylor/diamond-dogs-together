@@ -924,6 +924,9 @@ PASS_CAMERA_SITES = [
      'wrapped by 0xD93F0), then copies them to CAM+0x268 / +0x26C (the shot guard writes the four the same way)'),
     (0x109705C, '488b81b8000000440f2890e0000000',
      'GunAimPointSolve 0x1096F90: the eye the gun aim point rec+0x150 is measured from is CAM+0xE0 (CAM = *(P+0xB8))'),
+    (0x112106E, 'f30f1187700200000f28c7e88c4f8e00410f28e8410f28c8410f28d9410fc6c8c9410fc6e8d2f30f118774020000440f298f90000000',
+     'PlayerCamera vt+0x88 0x1120B00: writes the look pitch CAM+0x270 and yaw +0x274 (atan2 of its direction) with the '
+     'rotation CAM+0x90 (the shot guard holds the rotation too)'),
 ]
 SITES += PASS_CAMERA_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
@@ -3534,7 +3537,7 @@ w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
 w('// Design 8.25: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot')
 w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.')
-w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0;')
+w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')

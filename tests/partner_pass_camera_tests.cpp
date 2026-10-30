@@ -427,6 +427,42 @@ void TestGuard() {
           "at most about 3 deg of kick, a hold shorter than a shot cycle");
 }
 
+// The rotation hold (run 17fce0b7: the angles held, the view still swung; CAM+0x90 tracks the view).
+void TestGuardRotation() {
+    const float aimed[4] = {0.0f, 0.852f, 0.0f, -0.5235f};   // ~unit
+    const float up[4] = {0.296f, 0.708f, 0.459f, -0.445f};   // the swung view of 4f1a072f (~unit)
+    const float kick[4] = {0.01f, 0.852f, 0.01f, -0.5235f};  // ~1.6 deg away
+    Check(pc::QuatOk(aimed) && pc::QuatOk(up) && !pc::QuatOk(nullptr), "unit rotations");
+    const float zero[4] = {0, 0, 0, 0}, nanq[4] = {std::nanf(""), 0, 0, 1};
+    Check(!pc::QuatOk(zero) && !pc::QuatOk(nanq), "a zero or NaN rotation is not one");
+    Check(pc::QuatAngle(aimed, aimed) < 1e-3f && pc::QuatAngle(aimed, up) > 1.0f && pc::QuatAngle(aimed, kick) < pc::kKickRot,
+          "rotation distances");
+    pc::Guard g{};
+    pc::GuardOut o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1000, aimed);
+    Check(!o.write && !o.write_rot && g.rot_ok && g.ref_rot[1] == aimed[1], "aimed: the rotation reference");
+    o = pc::GuardStep(g, true, true, true, true, 0.087f, 1.576f, 1100, kick);
+    Check(o.event == pc::GuardEvent::open && !o.write_rot, "a small kick of the rotation stays");
+    o = pc::GuardStep(g, true, true, true, true, 0.087f, 1.576f, 1200, up);
+    Check(!o.write && o.write_rot && o.rot[1] == aimed[1] && o.rot[3] == aimed[3] && g.rot_writes == 1,
+          "the swung rotation is written back to the reference while the angles stay");
+    Check(g.window_max > 1.0f, "the pull counts the rotation");
+    o = pc::GuardStep(g, true, true, false, true, 0.087f, 1.576f, 1200 + pc::kGuardHoldMs, up);
+    Check(o.event == pc::GuardEvent::close && !o.write_rot && g.ref_rot[0] == up[0], "after the window the reference follows again");
+    // No rotation read: the angles alone, as before.
+    pc::Guard n{};
+    pc::GuardStep(n, true, true, false, true, 0.0f, 0.0f, 1000);
+    o = pc::GuardStep(n, true, true, true, true, -1.0f, 0.0f, 1100);
+    Check(o.write && !o.write_rot && !n.rot_ok, "without the rotation: the angles only");
+    // A shot with no aimed tick: its first rotation is the reference.
+    pc::Guard f{};
+    o = pc::GuardStep(f, true, false, true, true, 0.0f, 0.0f, 5000, up);
+    Check(f.rot_ok && f.ref_rot[0] == up[0] && !o.write_rot, "a first-tick rotation reference");
+    // Off resets the rotation reference.
+    pc::GuardStep(f, false, true, true, true, 0.0f, 0.0f, 5100, up);
+    Check(!f.rot_ok, "off: the rotation reference reset");
+    Check(pc::kCamRotation == 0x90 && c::pass_cam_rotation == pc::kCamRotation && pc::kKickRot <= 0.07f, "the rotation offset and kick");
+}
+
 void TestTraceDue() {
     Check(pc::TraceDue(0, 0, false, 5000), "the first line is due");
     Check(!pc::TraceDue(5000, 0, false, 5000 + pc::kTraceIdleMs - 1) && pc::TraceDue(5000, 0, false, 5000 + pc::kTraceIdleMs),
@@ -498,6 +534,11 @@ void TestWriteAnglesAndModeVtable() {
     pc::Stats st{};
     pc::ReadStats(st);
     Check(st.angles == 1 && st.faults == 0 && st.writes == 0, "one angle write counted (not a handle write)");
+    const float q[4] = {0.1f, 0.7f, 0.1f, -0.7f};
+    Check(pc::WriteRotation(k.Base(), k.P(), q) && k.Get<float>(pc::kCamRotation) == 0.1f && k.Get<float>(pc::kCamRotation + 12) == -0.7f,
+          "the rotation hold writes CAM+0x90..0x9C");
+    pc::ReadStats(st);
+    Check(st.angles == 2, "the rotation write counted with the angle writes");
     // The current mode's module vtable: the fallback module at index 5.
     Check(pc::ModeVtable(k.Base(), k.P()) == 0x23B29E0, "the trace's mvt: the fallback module");
     k.Mode(3);
@@ -522,7 +563,11 @@ void TestWriteAnglesAndModeVtable() {
         Check(!pc::WriteAngles(reinterpret_cast<const void*>(Chain::kBase), reinterpret_cast<std::uintptr_t>(player), 0.0f, 0.0f),
               "a faulting angle write reports false");
         pc::ReadStats(st);
-        Check(st.faults == 1 && st.angles == 1, "the fault is counted");
+        Check(st.faults == 1 && st.angles == 2, "the fault is counted");
+        Check(!pc::WriteRotation(reinterpret_cast<const void*>(Chain::kBase), reinterpret_cast<std::uintptr_t>(player), q),
+              "a faulting rotation write reports false");
+        pc::ReadStats(st);
+        Check(st.faults == 2, "that fault is counted too");
         VirtualFree(page, 0, MEM_RELEASE);
     }
     pc::detail::ResetForTest();
@@ -550,7 +595,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 12, "twelve passenger camera blocks are pinned (8.25: the look angles, the eye)");
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 13, "thirteen passenger camera blocks are pinned (8.25: the look angles, the eye, the rotation)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;
@@ -581,7 +626,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=12"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=13"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }
@@ -610,6 +655,7 @@ int main() {
     TestModeAndAim();
     TestAimStep();
     TestGuard();
+    TestGuardRotation();
     TestTraceDue();
     TestReadViewAndLever();
     TestWriteAnglesAndModeVtable();

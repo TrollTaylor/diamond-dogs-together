@@ -344,9 +344,36 @@ inline float WrapPi(float a) noexcept {
     return a;
 }
 inline bool GunFires(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 9 || mode == 10); }
+// Run 17fce0b7: with the look angles held the view still swung (the aim target ray went 72 deg up), so the angles are
+// not the state the shot moves. CAM+0x90, the rotation the look update writes with the angles (0x112106E..0x112109C,
+// PlayerCamera vt+0x88) and the aim-point solve reads (0x10970C1), tracked the view in 4f1a072f: the guard also keeps
+// it. Its reference is CAM+0x90 at the last aimed tick; in a window a rotation more than kKickRot from it is written back.
+inline constexpr std::size_t kCamRotation = 0x90;
+inline constexpr float kKickRot = 0.06f;
+inline bool QuatOk(const float* q) noexcept {
+    if (!q) return false;
+    float n = 0.0f;
+    for (unsigned i = 0; i < 4; ++i) {
+        if (!std::isfinite(q[i])) return false;
+        n += q[i] * q[i];
+    }
+    return n > 0.9f && n < 1.1f;
+}
+// The angle between two rotations (rad, 0..pi; normalized first).
+inline float QuatAngle(const float* a, const float* b) noexcept {
+    const float na = std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2] + a[3] * a[3]);
+    const float nb = std::sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]);
+    if (!(na > 0.0f) || !(nb > 0.0f)) return kPi;
+    float d = std::fabs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) / (na * nb);
+    if (d > 1.0f) d = 1.0f;
+    return 2.0f * std::acos(d);
+}
 struct Guard {
     bool ref_ok = false;
     float ref_pitch = 0.0f, ref_yaw = 0.0f;
+    bool rot_ok = false;
+    float ref_rot[4]{};
+    std::uint32_t rot_writes = 0;
     std::uint64_t last_fire_ms = 0;
     bool active = false;             // a shot window is open
     std::uint32_t window_writes = 0;  // writes in the open window
@@ -357,15 +384,19 @@ enum class GuardEvent : std::uint8_t { none, open, close };
 struct GuardOut {
     bool write = false;
     float pitch = 0.0f, yaw = 0.0f;  // the values to write (write only)
+    bool write_rot = false;
+    float rot[4]{};                  // the rotation to write (write_rot only)
     GuardEvent event = GuardEvent::none;
 };
 // One tick. `on`: mode aim, an armed boarding, the angles read (ang_ok). Not on: the state resets (a window closes
 // without a line; the counters stay).
 inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_ok, float pitch, float yaw,
-                          std::uint64_t now_ms) noexcept {
+                          std::uint64_t now_ms, const float* rot = nullptr) noexcept {
     GuardOut o{};
+    const bool rot_now = QuatOk(rot);
     if (!on || !ang_ok || !std::isfinite(pitch) || !std::isfinite(yaw)) {
         g.ref_ok = false;
+        g.rot_ok = false;
         g.last_fire_ms = 0;
         g.active = false;
         return o;
@@ -379,7 +410,9 @@ inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_
         }
         g.last_fire_ms = 0;
         g.ref_ok = aiming;
+        g.rot_ok = aiming && rot_now;
         if (aiming) { g.ref_pitch = pitch; g.ref_yaw = yaw; }
+        if (g.rot_ok) for (unsigned i = 0; i < 4; ++i) g.ref_rot[i] = rot[i];
         return o;
     }
     if (!g.ref_ok) {
@@ -387,6 +420,8 @@ inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_
         g.ref_ok = true;
         g.ref_pitch = pitch;
         g.ref_yaw = yaw;
+        g.rot_ok = rot_now;
+        if (g.rot_ok) for (unsigned i = 0; i < 4; ++i) g.ref_rot[i] = rot[i];
     }
     if (!g.active) {
         g.active = true;
@@ -406,6 +441,15 @@ inline GuardOut GuardStep(Guard& g, bool on, bool aiming, bool firing, bool ang_
         o.yaw = y;
         ++g.window_writes;
         ++g.writes;
+    }
+    if (g.rot_ok && rot_now) {
+        const float pull_rot = QuatAngle(rot, g.ref_rot);
+        if (pull_rot > g.window_max) g.window_max = pull_rot;
+        if (pull_rot > kKickRot) {
+            o.write_rot = true;
+            for (unsigned i = 0; i < 4; ++i) o.rot[i] = g.ref_rot[i];
+            ++g.rot_writes;
+        }
     }
     return o;
 }

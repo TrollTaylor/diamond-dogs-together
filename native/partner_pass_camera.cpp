@@ -24,7 +24,8 @@ static_assert(c::p_local_id == kPLocalId && c::q_act == kQAct && c::board_p_unit
 static_assert(c::cam_connect == kCamConnect && c::cam_connect_on == kCamConnectOn && c::pass_cam_target == kCamTarget, "connect fields");
 static_assert(c::pass_cam_mode == kCamMode && c::pass_cam_prev_mode == kCamPrevMode && c::pass_cam_modules == kCamModules, "mode fields");
 static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c::pass_cam_pitch_prev == kCamPitchPrev &&
-                  c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev,
+                  c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev &&
+                  c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
               "the look angles and the eye (design 8.25)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
@@ -210,6 +211,19 @@ bool WriteAngles(const void* base, std::uintptr_t P, float pitch, float yaw) noe
         *reinterpret_cast<volatile float*>(cam + kCamYaw) = yaw;
         *reinterpret_cast<volatile float*>(cam + kCamPitchPrev) = pitch;
         *reinterpret_cast<volatile float*>(cam + kCamYawPrev) = yaw;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_angles.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    __try {
+        for (unsigned i = 0; i < 4; ++i) *reinterpret_cast<volatile float*>(cam + kCamRotation + 4u * i) = rot[i];
     } __except (ReadFilter(GetExceptionCode())) {
         g_faults.fetch_add(1, std::memory_order_relaxed);
         return false;

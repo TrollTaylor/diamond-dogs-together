@@ -1083,6 +1083,10 @@ bool PartnerPassCameraAngles(void*, const pp::State& state, float pitch, float y
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
     return mgscoop::partner_pass_camera::WriteAngles(game_base, state.P, pitch, yaw);
 }
+bool PartnerPassCameraRotation(void*, const pp::State& state, const float (&rot)[4]) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::WriteRotation(game_base, state.P, rot);
+}
 std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
     if (!game_base || !partner_gate_ok) return 0;
     return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
@@ -1184,7 +1188,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraAngles,
-    PartnerPassCameraMvt};
+    PartnerPassCameraMvt, PartnerPassCameraRotation};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

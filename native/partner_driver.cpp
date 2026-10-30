@@ -3178,9 +3178,10 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     const bool gv_need = guard_on && (aiming || firing || c.guard.active || c.guard.last_fire_ms != 0);
     const bool gv_ok = gv_need && h.pass_camera_view(h.context, st, gv) && gv.ok;
     const pc::GuardOut go = pc::GuardStep(c.guard, guard_on && (gv_ok || !gv_need), aiming, firing, gv_ok || !gv_need,
-                                          gv_ok ? gv.ang[2] : 0.0f, gv_ok ? gv.ang[3] : 0.0f, now);
+                                          gv_ok ? gv.ang[2] : 0.0f, gv_ok ? gv.ang[3] : 0.0f, now, gv_ok ? gv.rot : nullptr);
     bool guard_written = false;
     if (go.write) guard_written = h.pass_camera_angles(h.context, st, go.pitch, go.yaw);
+    if (go.write_rot && h.pass_camera_rotation) guard_written = h.pass_camera_rotation(h.context, st, go.rot) || guard_written;
     if (go.event == pc::GuardEvent::open)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                     "partner_ride=pass_camera; state=guard; event=open; vehicle=%u; seat=%u; gun=%u; ref_mrad=%d,%d; now_mrad=%d,%d; windows=%u\r\n",
@@ -3189,9 +3190,10 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     gv_ok ? static_cast<int>(gv.ang[3] * 1000.0f) : 0, c.guard.windows);
     else if (go.event == pc::GuardEvent::close)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; writes=%u; max_pull_mrad=%d; total_writes=%u\r\n",
+                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; writes=%u; max_pull_mrad=%d; total_writes=%u; "
+                    "rot_writes=%u\r\n",
                     unsigned(arm.vehicle), unsigned(arm.seat), c.guard.window_writes, static_cast<int>(c.guard.window_max * 1000.0f),
-                    c.guard.writes);
+                    c.guard.writes, c.guard.rot_writes);
     if (aiming) c.trace_aim_ms = now ? now : 1;
     if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
         c.trace_ms = now ? now : 1;

@@ -446,6 +446,8 @@ struct Hooks {
     // mvt=0).
     bool (*pass_camera_angles)(void* context, const partner_player::State& state, float pitch, float yaw) noexcept = nullptr;
     std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
+    // The shot guard's rotation hold (partner_pass_camera::WriteRotation). May be null (the angles only).
+    bool (*pass_camera_rotation)(void* context, const partner_player::State& state, const float (&rot)[4]) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
