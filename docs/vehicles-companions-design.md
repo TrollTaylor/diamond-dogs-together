@@ -3053,6 +3053,28 @@ part's sleep lever took the guard just placed (`guard_here` ent = `enemy_sleep` 
   range, two PCs; the Dying state of a partner's kill still fails to apply on the other copy (readback 2: an older
   world-sync gap; Dead follows ~0.6-2 s later). Frames: session scratch `complete/frames/m6m7b-shoot/best-*`.
 
+### 8.32 Results: the seated-shot merge and its play smoke (2026-10-30, `dev/oct7-continue`)
+
+`e694c92` merged `wp/seat-shoot2` (no conflicts; it already held `bfa5e43`). Contract unchanged (824 / 209), the five
+`--check` scripts and the full CTest (336/336) pass. Two runs at the shipped play defaults (`-WanSim bad`), [O] lines on
+both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2/`); guards slept by name hash as targets
+(play refuses the soldier warp), the shooter's camera turned by `enemy_aim_nearest`:
+- `37b94432` (Wakh Sind, `m6m7b-shoot-smoke-play.txt`): D11 (both refusals and toasts) and the race (`host_first`) hold.
+  Seat 1 fires when aimed across the jeep (8 -> 7 -> 6; guard windows `aim_end`), shot 2 put a guard 22 m out to Dying
+  (guest `req` state 4, host `commit actor=guest`); the aim view is the passenger's own leg (8.29's "does not fire" held
+  only for the camera's default facing). Seat 3 was never boarded: with seat 1 free a right-side boarding takes seat 1
+  (scenario error); the guest finished the guard on foot (one Dead commit). Seat 2: three shots at guards 40-45 m out
+  hit the jeep's own panel (holes); alert; the jeep broke on both copies after that part (cause [U]).
+- `299de3e1` (africa jeep, the driver's D-Dog in seat 1, `m6m7b-shoot-smoke-play-b.txt`, every expectation met): seat 3,
+  shot 1 killed a guard 8.1 m out (guest `obs Dead att=local`, `req` state 5; host one `commit state=5 actor=guest`);
+  the driver's copy shows the guest seated and the guard lying beside the jeep. Seat 2 (guest driving): shot 1 put a
+  guard 21.5 m out to Dying (`commit actor=host`; the guest's state-4 apply fails, readback 2). Shots at a guard on the
+  seat's far side (seat 3 front-right, seat 2 through the rear panel) hit the jeep: the shooter's copy lost 2106 life
+  (guest, seat 3; the host's copy stayed 2300 and was resent) and 1404 (host, seat 2) [O life; I own bullets]. This is
+  the case S1 was built for (8.30, "none was found"), not yet tried in play.
+- Never seen: `step=error`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`, two Dead commits for
+  one guard. Not proven: a moving jeep, two PCs, a 0.14.4 partner; design B (the driver sees the raised gun).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3498,6 +3520,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     passenger camera's clip while reversing and its framing after a seat-1 get-off are camera defects.
   - **Merged (8.29, `9c2b5a8`):** the play smoke (`1f81de65`, `83defaeb`) rode seat 1 in both roles, but the driver's
     screen draws the seat-1 passenger pushed out past the jeep's right side, at rest too [O]: seat 1 is not frame-clean.
+  - **Smoke after the M7 merge (8.32, `e694c92`):** race and D11 hold in play (`37b94432`); seat 1 boards and its
+    gun fires across the jeep; the driver's view of the seat-1 passenger is unchanged.
 
 ### M7. Shooting as a passenger
 
@@ -3540,6 +3564,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   merged build both back seats hit (`881b37e6`: seat 3 guest shooter, seat 2 host shooter, S1 off; the seat 2 kill
   framed on the driver's copy too). Not met: `m7-partner-gun` (design B not attempted; B1p next), seat 1, the truck
   cab, a kill in play, a moving jeep, two-PC.
+  **Merged (8.32, `e694c92`): a seated kill in play** (`299de3e1`, seat 3, one Dead commit); seat 1 and seat 2 hit to
+  Dying in play; shots toward the jeep's own body damage it (S1's case, S1 off). Not met: `m7-partner-gun`, a moving
+  jeep, the truck cab, two-PC.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

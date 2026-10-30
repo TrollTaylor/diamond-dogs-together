@@ -1,3 +1,25 @@
+## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
+
+**Merged:** `e694c92` `wp/seat-shoot2` (`5029a26`; S1 `partner_seat_shot` built, off in lab and play). Contract 824 code
+sites / 209 slots (regenerated, no change); the five contract `--check` scripts pass; full CTest 336/336 (114 s wall,
+CTest 93.5 s). **Play defaults:** unchanged (front seat, race and `partner_pass_camera=aim` on; S1, seat gun off).
+**Smoke** (`-Mode play -WanSim bad`, shipped defaults, design 8.32; [O] lines on both copies, frames looked at):
+- `37b9443265084e42b756fbe889e5e9e8` (Wakh Sind, `m6m7b-shoot-smoke-play.txt`): D11 both refusals with toasts; the
+  race (`host_first`, guest on foot). **Seat 1 fires** across the jeep (magazine 8 -> 7 -> 6, guard windows `aim_end`)
+  and its second shot put a sleeping guard 22 m out to Dying (guest `req` state 4, host `commit actor=guest`), but the
+  aim view is the passenger's own leg. The guest then never boarded seat 3 (seat 1 free: a right-side boarding always
+  takes seat 1; scenario error) and finished the guard on foot (one Dead commit). Seat 2: three shots at guards 40-45 m
+  out hit the jeep's own panel (holes in frame), no kill; the camp went to alert; the jeep was destroyed on both copies
+  after that part (cause [U]: those shots and the alerted guards).
+- `299de3e1d147487b81ef7b1df79aa636` (africa jeep, `m6m7b-shoot-smoke-play-b.txt`; every expectation met): **a seated
+  kill in play**: back seat 3, the first shot killed a sleeping guard 8 m out (guest `obs Dead att=local`, `req` state
+  5; host one `commit state=5 actor=guest`). Seat 2 (guest driving): the first shot put a guard 21 m out to Dying
+  (`commit actor=host`; the guest's apply of state 4 fails, readback 2, as before). **Shots aimed toward the jeep's own
+  body hit the jeep:** the shooter's copy lost 2106 life (guest, 4 shots, seat 3) and 1404 (host, 4 shots, seat 2).
+Both runs Closed, BaselineRestored, RealSavesUnchanged, Forced=False; zero `step=error`, faults, `board_uncertain`,
+`two_drivers`, `pass_camera state=refused`; RTT 173-190 ms.
+**Not proven:** a moving jeep, two PCs, a 0.14.4 partner; the driver still sees no raised gun (design B not built).
+
 ## 2026-10-30: the seated-shot review fixed; both back seats hit on the merged build (branch `wp/seat-shoot2`)
 
 **Built:** the review of 8.30 (design 8.31). S1 (`partner_seat_shot`, still off in lab and play) never moves a start
