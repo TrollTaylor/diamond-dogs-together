@@ -20,6 +20,9 @@
 #   guards were in combat at the guest's arrival (night) and their hits closed its iDroid; part 2 met every expectation
 #   (the hold at 24.7 m, the wreck once the guest stood 70 m away, frames on both). Now no key is named, the guest moves
 #   away from Masa Village before its iDroid, and VEHICLES follows LOADOUT after 3.5 s (the toasts have separate limits).
+#   98d84a21 (build b4cd471, no key named): every behaviour met (both refusals before PAIRED, the crew at its default),
+#   but the VEHICLES toast, drawn in its frame, logged no line: the HUD's toast log writes one line per note code per
+#   10 s (coop_hud.hpp kToastLogGapMs) and both items use NOTE 13, so VEHICLES follows LOADOUT after 10.5 s again.
 # NEVER: step=error, viewer_changed, faults; an event=paired line for 30020 before the guest's refusals; break_safe or
 #        via=locator for 25623; a break_crew line before the guest's 70 m teleport; event=vehicle_damage step=on.
 labsetting partner_native_ride=seat
@@ -67,7 +70,7 @@ wait 500
 guest capture d11p-guest-loadout-refused
 waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
 waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
-wait 3500
+wait 10500
 guest press s
 wait 800
 guest capture d11p-guest-vehicles

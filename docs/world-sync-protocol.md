@@ -1776,3 +1776,18 @@ PAIRED), `world_relief_sync_lua_check` and `world_follow_lua_check` (the arrival
 `lab_ini_check`, `lab_scripts_tests`, `worker_session_tests`, `worker_loading_tests` (`waitmission ... only`).
 Scenarios `tools/worker/scenarios/vehicle-fixes2-lab.txt`, `vehicle-fixes2-d11.txt` and `vehicle-fixes2-play.txt`. Hidden runs: docs/STATUS.md
 "The vehicle fixes of 2026-10-29".
+
+**The review of 2026-10-29/30** (docs/vehicles-companions-design.md 8.15). No op, field or range changed: a 0.14.4
+partner and the builds before this review read the same bytes. Behaviour on the host only:
+- VEHICLE_DAMAGE: at most half of the host copy's life per report (`step=applied;...;f=;cap=1` when the bound cut it),
+  at most 3 reports per vehicle and 16 over all vehicles per second (`step=refused;reason=rate`), and the life the host
+  took is counted per vehicle; D12's heavy rule adds it back, so reported drops never make a far destruction request
+  plausible. The key is off in play unless named (above).
+- D12: the blast distance is 15 m for a light vehicle (`Vehicle.type` `EASTERN_` / `WESTERN_LIGHT_VEHICLE`) and 50 m for
+  every other type, an unknown type or a missing binding (`break_safe;...;blast_mm=`, `break_hold;why=crew_near;...;
+  blast_mm=`); an unnamed copy with a player inside its blast is held (`break_hold;why=blast_near;near=;d_mm=;
+  blast_mm=`, VEHICLE_GONE's hold, REJECT 9 after 120 s) instead of a Despawn VEHICLE_GONE cannot run there.
+- D11: the pre-pair mark lapses 300 s after the arrival without PAIRED (`event=vehicle_rules;step=prepair_lapsed`,
+  `event=relief;...;step=prepair_lapsed`).
+- Worker: `titlecontinue <role> <s>` (the host's title Continue without pressing its next loading screen) for the
+  pre-PAIRED window in `-Mode play`. Scenarios `vehicle-review-lab.txt`, `vehicle-review-play.txt`.
