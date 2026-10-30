@@ -318,13 +318,13 @@ if ($InputOnly) {
 }
 
 if (!(Test-Path -LiteralPath $buildRoot)) { $null = New-Item -ItemType Directory -Path $buildRoot }
-# CTest runs this suite as lab_scripts_tests_1 .. _6 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# CTest runs this suite as lab_scripts_tests_1 .. _7 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
 # parts dealt to it by their cost (ms, measured alone). The definitions the later parts read (fixture texts, the
 # partner fixture-run helpers, the dry run's folders) stay outside the parts and run in every shard; a dry part that
 # runs without the dry parts before it first replays their Prepare calls (Use-DryState). -Part core,logs runs only those.
 Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
 Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{
-    core = 5400; logs = 4200; 'partner-a' = 21600; 'partner-b' = 16100; install = 24600
+    core = 5400; logs = 4200; 'partner-a' = 21600; 'partner-b' = 16100; install = 11000; e2e = 10800
     'dry-online' = 26600; 'dry-gate' = 14100; 'dry-offline' = 26800; 'dry-lan' = 31000 })
 $null = New-Item -ItemType Directory -Path $fixture
 [IO.File]::WriteAllText($ownerMarker, $nonce)
@@ -2324,7 +2324,24 @@ try {
             } | ForEach-Object { $_.Name })
     }
     $pwshPath = (Get-Process -Id $PID).Path
-    if (Test-TestPart 'install') {
+    if (Test-TestPart 'e2e') {
+    if (!(Test-Path -LiteralPath variable:userdata)) {
+        # The install part did not run in this shard: the Steam userdata fixture and its save backup as that part
+        # leaves them (the backup of the four fixture files, then TPP_GAME_DATA0 changed, 311340/remote/NEW added,
+        # TPP_GRAPHICS_CONFIG removed); this part's run.json names that backup and Stop-Lab compares against it.
+        $userdata = Join-Path $fixture 'steam/userdata/7'
+        foreach ($f in '287700/local/TPP_GAME_DATA0', '287700/local/TPP_GRAPHICS_CONFIG', '311340/remote/TPP_GAME_DATA', '287700/remotecache.vdf') {
+            $path = Join-Path $userdata $f
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+            [IO.File]::WriteAllText($path, "fixture $f")
+        }
+        $backup = Join-Path $fixture 'build/lab/save-backups/1'
+        $null = Backup-RealSaves -UserData $userdata -Destination $backup
+        [IO.File]::WriteAllText((Join-Path $userdata '287700/remotecache.vdf'), 'Steam rewrites this; not verified')
+        [IO.File]::WriteAllText((Join-Path $userdata '287700/local/TPP_GAME_DATA0'), 'changed')
+        [IO.File]::WriteAllText((Join-Path $userdata '311340/remote/NEW'), 'added')
+        Remove-Item -LiteralPath (Join-Path $userdata '287700/local/TPP_GRAPHICS_CONFIG')
+    }
     $e2e = Join-Path $fixture 'e2e'
     $e2eHost = Join-Path $e2e 'MGS_TPP'
     $e2eGuest = Join-Path $e2e 'MGS_TPP_guest'
@@ -2558,7 +2575,8 @@ Start-Sleep -Milliseconds 500
         }
         # The dry parts run in this order in one process (the plain run) or without the parts before them (a shard).
         # A later part then first replays the Prepare calls those parts made, so it starts from the same folders:
-        # dry-online leaves them prepared (fuse mode), dry-offline leaves them prepared -Offline.
+        # dry-online leaves them prepared (fuse mode), dry-offline leaves them prepared -Offline. Every replayed Prepare
+        # takes the machine-wide install turn, so the dry parts stay few (the turns are the suite's long pole).
         $script:dryState = 'fresh'
         function Use-DryState([ValidateSet('prepared', 'offline')][string]$State) {
             if ($script:dryState -ceq 'fresh') {

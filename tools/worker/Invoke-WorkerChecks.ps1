@@ -119,7 +119,7 @@ function Get-WorkerShardedTests {
 # The sharded suites the receipt never runs (Get-WorkerPlan's excluded list): the unsafe default flows of the lab scripts
 # and the friend package's full flows.
 function Get-WorkerExcludedShardedTests {
-    return [ordered]@{ lab_scripts_tests = 6; friend_package_tests = 2 }
+    return [ordered]@{ lab_scripts_tests = 7; friend_package_tests = 3 }
 }
 function Get-WorkerShardNames($Sharded = (Get-WorkerShardedTests)) {
     $sharded = $Sharded

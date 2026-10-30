@@ -78,11 +78,11 @@ try {
     $custom = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ('build\space ' + [char]0x96EA)
     Check ($custom.build_directory -ceq (Join-Path $fixture ('build\space ' + [char]0x96EA))) 'spaced/non-ASCII cache remains a literal checkout-relative path'
     Check (!$normal.retail_game_launch -and !$normal.system_input -and !$normal.installation) 'plan makes no runtime/installation claim'
-    foreach ($excluded in @('lab_scripts_tests_1','lab_scripts_tests_6','friend_package_tests_1','friend_package_tests_2','probe_install_recovery')) {
+    foreach ($excluded in @('lab_scripts_tests_1','lab_scripts_tests_7','friend_package_tests_1','friend_package_tests_3','probe_install_recovery')) {
         Check ($normal.tests -cnotcontains $excluded -and $normal.excluded -ccontains $excluded) "unsafe default flow excluded: $excluded"
     }
     Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
-    Check ($normal.excluded -cnotcontains 'lab_scripts_tests' -and $normal.excluded -cnotcontains 'lab_scripts_tests_7' -and $normal.excluded -cnotcontains 'friend_package_tests_3') 'the excluded suites are named as exactly their CTest shards'
+    Check ($normal.excluded -cnotcontains 'lab_scripts_tests' -and $normal.excluded -cnotcontains 'lab_scripts_tests_8' -and $normal.excluded -cnotcontains 'friend_package_tests_4') 'the excluded suites are named as exactly their CTest shards'
     Check ($normal.tests -ccontains 'worker_session_tests_1' -and $normal.tests -ccontains 'worker_session_tests_2' -and $normal.tests -cnotcontains 'worker_session_tests') 'audited detached controller fixture is explicitly included (as its two CTest shards)'
     Check ($normal.tests -ccontains 'steam_transport_tests') 'the Steam online fixture (fake Steam interfaces, no Steam call) is audited'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
@@ -521,7 +521,8 @@ if($LASTEXITCODE -ne 0) { throw 'nested native exit was not preserved' }
     $reuseRuns = Join-Path $reuseRoot 'worker-runs'
     function Write-ReuseRun([string]$Name, $Receipt) {
         $null = New-Item -ItemType Directory -Path (Join-Path $reuseRuns $Name) -Force
-        Write-WorkerJson (Join-Path $reuseRuns "$Name\receipt.json") $Receipt
+        # A plain write (no temporary file moved over the target, which a scanner can briefly hold).
+        [IO.File]::WriteAllText((Join-Path $reuseRuns "$Name\receipt.json"), ($Receipt | ConvertTo-Json -Depth 16))
         return (Join-Path $reuseRuns "$Name\receipt.json")
     }
     Check ($null -eq (Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts)) 'no run folder: no reuse'

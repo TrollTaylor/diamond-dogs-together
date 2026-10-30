@@ -189,11 +189,12 @@ $null = New-Item -ItemType Directory -Path $fixture
 $steamRunningFile = Join-Path $fixture 'steam-running.txt'
 [IO.File]::WriteAllText($steamRunningFile, "0`n")
 $env:MGS_COOP_TEST_STEAM_RUNNING_FILE = $steamRunningFile
-# CTest runs this suite as friend_package_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# CTest runs this suite as friend_package_tests_1 .. _3 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
 # parts dealt to it by their cost (ms, measured alone). The installed-game fixtures the later parts share stay outside
-# the parts; the local two-window test copies the package the package part builds, so both are one part. -Part pure.
+# the parts; the local two-window test copies the package the package part builds, or builds it the same way when that
+# part runs in another shard. -Part pure,handoff runs only those.
 Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
-Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ pure = 4800; package = 30700; handoff = 12700 })
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ pure = 4800; package = 13000; handoff = 12700; local = 23600 })
 try {
     if (Test-TestPart 'pure') {
     # ------------------------------------------------------------ native link keys (merge gate)
@@ -1939,11 +1940,46 @@ try {
     }
 
     }
-    if (Test-TestPart 'package') {
+    if (Test-TestPart 'local') {
     # ------------------------------------------------------------ the developer's local two-window test (tools/dev; never shipped)
     # A drop-in package as tools/package.ps1 -Friend stages it, with fixture game
     # hashes and a newer inert loader; dedicated inert copies; MGS_COOP_TEST_NO_LAUNCH
     # checks the activation and restores it without starting a game.
+    if (!(Test-Path -LiteralPath variable:pkg)) {
+        # The package part did not run in this shard: build the package it builds, the same way (tools/package.ps1
+        # -Friend on the real tree, the same inert loader and launcher bytes, a synthetic passing Release receipt with
+        # the current source snapshot and Get-WorkerPlan's Release flags, the tree's untracked files ignored).
+        $replay = Join-Path $fixture 'local-package'
+        $replayReceipt = Join-Path $replay 'receipt'
+        $null = New-Item -ItemType Directory -Path $replayReceipt -Force
+        [IO.File]::WriteAllText((Join-Path $replayReceipt 'dinput8.dll'), 'INERT loader stand-in for the package test')
+        [IO.File]::WriteAllText((Join-Path $replayReceipt 'DiamondDogsTogether.exe'), 'INERT launcher stand-in for the package test; never executed')
+        $checksAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $projectRoot 'tools\worker\Invoke-WorkerChecks.ps1'), [ref]$null, [ref]$null)
+        foreach ($name in @('Get-WorkerExperiments', 'Get-WorkerReleaseExperiments', 'Get-WorkerTests', 'Get-WorkerShardedTests', 'Get-WorkerExcludedShardedTests',
+                'Get-WorkerShardNames', 'Get-WorkerReleaseOnlyTests', 'Get-WorkerHash', 'Test-WorkerUnder', 'Assert-WorkerPath', 'Get-WorkerPlan')) {
+            . ([scriptblock]::Create(@($checksAst.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name }, $true))[0].Extent.Text))
+        }
+        $replaySource = Get-WorkerSourceHashes $projectRoot
+        $replayFlags = (Get-WorkerPlan $projectRoot 'Release' 'Release' @() $false '').flags
+        $replayArtifacts = [ordered]@{ loader_sha256 = (Get-Sha256 (Join-Path $replayReceipt 'dinput8.dll')); launcher_sha256 = (Get-Sha256 (Join-Path $replayReceipt 'DiamondDogsTogether.exe')) }
+        $replayPath = Join-Path $replayReceipt 'receipt.json'
+        [IO.File]::WriteAllText($replayPath, ([ordered]@{ schema = 1; status = 'passed'; plan = [ordered]@{ profile = 'Release'; flags = $replayFlags; tests = @('inert-fixture-only') }
+            artifacts = $replayArtifacts; source_hashes = $replaySource.hashes; source_dependencies = $replaySource.dependencies } | ConvertTo-Json -Depth 12), $utf8)
+        $replayExclude = Join-Path $replay 'real-tree-untracked.exclude'
+        $untracked = @(& git -C $projectRoot -c core.quotepath=off ls-files --others --exclude-standard -- native lua tools tests third_party cmake docs CMakeLists.txt README.md THIRD_PARTY_NOTICES.md 2>$null)
+        [IO.File]::WriteAllText($replayExclude, ((@($untracked | Where-Object { $_ } | ForEach-Object { '/' + ($_ -replace '([\\*?\[\]!#])', '\$1') }) -join "`n") + "`n"))
+        $savedGit = [ordered]@{}
+        foreach ($name in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $savedGit[$name] = [Environment]::GetEnvironmentVariable($name) }
+        try {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.excludesFile'; $env:GIT_CONFIG_VALUE_0 = $replayExclude
+            $null = & (Join-Path $projectRoot 'tools\package.ps1') -Friend -LoaderPath (Join-Path $replayReceipt 'dinput8.dll') -LauncherPath (Join-Path $replayReceipt 'DiamondDogsTogether.exe') -CheckReceipt $replayPath -OutputRoot (Join-Path $replay 'dist')
+        } finally {
+            foreach ($name in $savedGit.Keys) { [Environment]::SetEnvironmentVariable($name, $savedGit[$name]) }
+        }
+        $replayRuns = @(Get-ChildItem -LiteralPath (Join-Path $replay 'dist') -Directory)
+        Assert-Equal $replayRuns.Count 1 'the local test builds the package part''s package when that part runs elsewhere'
+        $pkg = Join-Path $replayRuns[0].FullName 'package'
+    }
     $loader2 = Join-Path $fixture 'loader2.dll'; [IO.File]::WriteAllText($loader2, 'INERT drop-in package loader')
     $devPkg = Join-Path $fixture 'dev-package'
     Copy-Item -LiteralPath $pkg -Destination $devPkg -Recurse
