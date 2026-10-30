@@ -2380,6 +2380,7 @@ checks (`Source changed during worker checks`: the tree was edited while they ra
 |---|---|---|---|
 | `f49c167d` | `0c9f93f` | `coop-vehicle-passenger-m6.txt` (first form) | Jeep seat 1 in both roles passed (lines below); the first half's jeep did not move under the host's W (its drive frames are stationary); the truck half stopped: the LRRP truck the host reached coasted 23 m once `clear_enemies` took its driver (`gate=far; d3=23.13`) |
 | `3c748d46` | `387c6b0` | the same, reworked (back out first; the sortie truck) | Jeep seat 1 in both roles passed again with the jeep moving; SEAT denied the guest standing by the jeep the host took; the truck part stopped at `goto_vehicle sortie` (`door_unavailable`, a lever bug, fixed in `5bcdc9f`) after the guest's copy loaded the sortie truck 10 s after the census asked |
+| `b66c7031` | `5bcdc9f` | `coop-vehicle-passenger-m6-truck.txt` (first form) | The sortie truck on both copies; the cab seat in the first role passed; the reverse cab boarding failed; the seat race passed; the WAV census |
 
 - **Light vehicle front seat (1), both roles [O, `f49c167d` and `3c748d46`].** Both copies:
   `partner_board=seat_one; result=ok; reason=none; front=1; cab=1; remap=0xb79a40; sites=0x1251834,0x1251894`. The
@@ -2412,6 +2413,53 @@ checks (`Source changed during worker checks`: the tree was edited while they ra
 - **Census [O, both copies, 30010].** Trucks `25602..25607`: type 4, two seats, each with two soldiers
   (`riders=1194,1195`, ... `1204,1205`); light vehicles `25608..25620`: type 2, four seats; the sortie truck
   (relief type 4) `25600`: type 4, two seats.
+
+- **The sortie truck as the test truck [O, `b66c7031`].** The host's `relief_load 4 580.57 321.32 1177.24 1.309` (the
+  east truck, index 0) gave `25600` (type 4, two seats, `riders=65535,65535`); the guest's copy loaded it from the host's
+  VEHICLE_SPAWN (`event=relief; role=guest; step=load; why=host_has; type=4`) about 10 s later, at the host's live pose.
+  The free-roam LRRP trucks are not usable for the cab: each carries two soldiers (census above) and drives, and in
+  `f49c167d` the one the host reached coasted away after `clear_enemies` took its driver.
+- **Truck cab seat (1), the guest as passenger [O, `b66c7031`].** The host at the driver door (`goto_vehicle sortie
+  driver 60`, the stock door spot by id) boarded (`vehicle_seats vehicle;id=25600;seats=2;riders=0,65535`: no dog rides
+  in a truck); the guest at the passenger door: `partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1; n=1;
+  type=4; seats=2`, `local_passenger; vehicle=25600; seat=1; state=on`, `board_seated`, `pass_camera; state=connect;
+  ...; cam1f0=0x8800000000006400; cam200=1; mode=5`; the host `partner_ride_seat=confirmed; vehicle=25600; seat=1;
+  state=0x8a991a913969` (stateTruckGetOnFrontRight); after the stock get-off `state=off; reason=act` and `release;
+  reason=stock; ok=1`. Frames: `m6-truck-1-seated` (host: the truck from behind with the guest's tag at the cab;
+  guest: its own camera at the cab's right door), `m6-truck-1-exit-NN` (the guest's get-off from the cab, the host at
+  the wheel). At that attitude the truck stood nose to a building: the host's W pushed it into the wall and tilted it
+  (`m6-truck-1-drive-NN`), so these are not frames of a moving truck.
+- **The reverse cab boarding failed [O, `b66c7031`].** With the guest driving the tilted truck, the host at the
+  passenger door got the steered seat 1 from the pre-query (`board_passenger; vehicle=25600; seat=1; site=prequery`,
+  hundreds of times) but its E never started phase 1 (no `site=phase1` line): the truck door gate (within 1.4 m of the
+  door point, on its outer side) did not pass at the tilted cab [I]. The scenario now reverses away from the wall.
+- **Seat race [O, `b66c7031`, lab].** Both at the empty sortie truck's two cab doors (`goto_vehicle sortie driver`,
+  `goto_vehicle sortie passenger`): the guest's claims were denied (`world_lua=event=seat; action=deny; vehicle=25600;
+  role=guest; set=1`; host `event=seat; action=deny; vehicle=25600; role=host; why=host_first`, then
+  `why=host_drives`); both pressed E: the host drove (`vehicle;id=25600;seats=2;riders=0,65535;localSeat=1`) and the
+  guest stayed on foot (`vehicle_not_riding`). Frames `m6-race-before` (the guest at the passenger door with only the
+  Fulton prompt, no ride icon) and `m6-race` (the guest on foot by the cab, the host in it; the host's view of the truck
+  with the guest beside it). The toast is logged (`hud=toast; kind=world_note; code=13; a=6; ...; on=0`); the lab HUD
+  draws no toast.
+- **Census, armoured [O, `b66c7031`].** The wheeled armoured vehicle (relief type 5) answers `GetVehicleType` 5 and
+  one seat (`riders=65535`): a driver only, as 3.7 says. The tank load was refused (`relief_present`: the remove 3 s
+  after the race found it ridden); its seat count stays [U].
+
+- **E7, the truck bed: static only, not built [O for the reads, I for the reading].** `seats=2` on every truck: the
+  bed is not a seat index, and a seat index 2 / 3 on a truck would draw at `0xB799C0`'s constant default matrix (not out
+  of bounds, but in the wrong place). `stateTruckHide` (`0x14ccf58e81a1`), `stateTruckHideLoop` (`0xadbf02f59b9d`) and
+  `stateTruckHideToWait` (`0x287c5bce498c`) appear as immediates only inside the RideVehicle action
+  (`0x141246310` classifies them; `0x141248FEC`, `0x14124936F`, `0x14124C077`, `0x14124F794..0x14124FCA6`), so the bed
+  hide is a phase of the same stock ride action the board hooks [I]; `vars.vehicleGameObjectIdOnPlayerOnCargo` is
+  `vars + 0x114` (u16, declared at `0x140998985`). The DM anchor writes a seat matrix only for `CNP_ppos_c`
+  (`0x119882B`), so drawing body 1 in the bed needs either a new anchor branch for `CNP_CARG` / `CNP_DECK_A` or a
+  per-frame offset from the truck root; neither was built this round, and E7's runtime steps did not run.
+- **APC / tank crew: not built.** The wheeled armoured vehicle has a single seat (above); the hidden-crew design of 6.6
+  stays a stretch item.
+- **New names** (written to `C:\Users\taylo\mgs-coop-re\new-names-seats.json`, not saved into the Ghidra project):
+  `RideVehicleAction_Phase1_SeatSearch` `0x141251200`, `RideVehicleAction_PassengerPhase` `0x141250CF0`,
+  `RideVehicle_PassengerLoopState` `0x14124B2D0`, `RideVehicle_PlaceRiderOnSeat` `0x141259B80`,
+  `VehicleCommunicationInfo_SeatMatrixInner` `0x140B799C0`, `Vehicle_TryToRide` `0x140CB9470` and three more.
 
 <!-- M6-TRUCK-RESULTS -->
 
