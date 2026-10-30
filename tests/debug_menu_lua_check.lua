@@ -279,6 +279,21 @@ check(c:send('enemy_nearest')[3]:find('nearest_ent=4294967295', 1, true), 'signe
 check(c:send('enemy_enable 4294967295')[2] == 1 and c:count('enable') == 1, 'u32 max authored hash accepted')
 check(c:send('enemy_disable 2147483648')[2] == 1 and c:count('disable') == 1, 'large unsigned authored hash')
 check(c:send('enemy_enable 123')[3] == 'enemy_not_authored', 'arbitrary actor refused')
+-- M7 test lever: turn this copy's camera to the nearest living soldier (sol_a 1 m east, same height: rotY 90, rotX
+-- atan(0.4) down from the 1.5 m eye to the 1.1 m chest) through the stock Player.RequestToSetCameraRotation only.
+c.env.Player.RequestToSetCameraRotation = function(a) c.calls[#c.calls + 1] = {'camrot', a} end
+do
+    local r = c:send('enemy_aim_nearest')
+    local cam = c.calls[#c.calls]
+    check(r[2] == 1 and r[3]:find('^aim_nearest;ent=%d+;d=1%.0;rotY=90%.0;rotX=21%.8;') and cam[1] == 'camrot' and
+        math.abs(cam[2].rotY - 90) < 1e-6 and math.abs(cam[2].rotX - math.deg(math.atan(0.4))) < 1e-6 and cam[2].interpTime == 0.2,
+        'aim nearest: the camera request toward the nearest living soldier')
+    check(c:send('enemy_aim_nearest 5')[3] == 'enemy_args', 'aim nearest takes no argument')
+    local saved = c.env.Player.RequestToSetCameraRotation
+    c.env.Player.RequestToSetCameraRotation = nil
+    check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')
+    c.env.Player.RequestToSetCameraRotation = saved
+end
 check(c:send('enemy_kill_nearest')[3]:find('dead_readback=1', 1, true) and c.life[5] == 3, 'nearest soldier exact dead enum/readback')
 check(c.life[7] == 255, 'unknown soldier not mutated')
 c.deferDead = true
