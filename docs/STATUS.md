@@ -1,3 +1,26 @@
+## 2026-10-30: seat 1 drawn in the seat, proven in play behind a lab key (branch `wp/seat1-draw`)
+
+**Fix** (design 8.33-8.35, lab key `partner_ride_seat1_anchor`, off unless named, lab and play): a copy drawing the
+peer in seat 1 of a light vehicle anchors it on the driver's seat matrix (the player's FrontRight clips are authored
+there [I]; the stock remap `0xB79A3F` hands a player in seat 1 seat 0's matrix [O]), and (new, `4f63a17` red ->
+`106d90e`) the passenger's own copy keeps that stock remap while it sits in seat 1 (`board_remap; state=stock;
+why=seated_own`); the truck cab keeps seat 1's matrix and the skip. **Proven** (`-Mode play -WanSim bad`, key named, [O]
+lines on both copies and frames looked at; design 8.35): `f58eebf7` the driver's copy draws the partner IN the front
+seat for both roles, parked, under W and stopped, back seat 2 unchanged, but the passenger's own copy still drew itself
+outside; `086d8043` with the own-view fix both copies draw the passenger in the seat, `err_mm` at rest 0-2 (was 855-932);
+`b4c10e6b` the driver's own D-Dog keeps seat 1 and the partner takes back seat 3, never drawn on the dog. Zero
+`step=error`, faults, `board_uncertain`, `two_drivers`, `seat_far`, `seat_patch=refused`.
+**Review fixes (design 8.36):** the driver's copy drew the partner's whole seat-1 get-off on the driver's seat matrix and
+corrected it by 0.87 m at the end (16-89 mm without the key; the 1.5-2.1 m host-driving numbers were mostly a vehicle
+split after the drive). `0248647` red -> `d2bc44f`: once the GetOff entry plays, the seat dword goes back to seat 1's own
+immediate (`partner_ride_seat_patch=getoff; seat=1; ...; anchor=1; was=0`). `54a885b2` [O logs]: that line on the
+driver's copy, end correction **29 mm**. `01174cfd` (host driving) [O logs and frames on the driver's copy during the GetOff]: the same line, 27 mm, and the
+partner climbs out over the right side and stands at the right front wheel, no snap.
+**Not ready to flip** [O frames `54a885b2` host `a-aim-right`, `01174cfd` guest `c-aim-right`]: with the key the passenger's own body sits in the seat,
+and aiming from seat 1 now shows the jeep's side panel filling the view (the own leg at the right, a red reticle). The
+flip waits for a seat-1 aim camera proven with this key on (camera track), plus seat-1 shots with it. **Play
+defaults:** unchanged (key off).
+
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 
 **Merged:** `e694c92` `wp/seat-shoot2` (`5029a26`; S1 `partner_seat_shot` built, off in lab and play). Contract 824 code

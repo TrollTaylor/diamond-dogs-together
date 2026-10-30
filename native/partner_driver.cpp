@@ -3127,11 +3127,12 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     ri.local_seat_one = lp.valid && lp.seat == pb::kFrontSeat;
     ri.steer_pending_one = b.steer_pending && b.steer_seat == pb::kFrontSeat;
     ri.last_seat_one_ms = d.board_seat_one_ms;
+    ri.own_seat_one_stock = pb::OwnSeatOneStock(d.settings.ride_seat1_anchor, lp);
     ri.now_ms = now;
     const bool remap_want = pb::RemapWanted(ri);
     if (remap_want != d.board_remap_skip && h.board_remap && (remap_want || !d.board_remap_failed || d.board_remap_skip)) {
         const bool ok = h.board_remap(h.context, remap_want);
-        const char* why = !remap_want ? "idle" : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
+        const char* why = !remap_want ? (ri.own_seat_one_stock ? "seated_own" : "idle") : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
         EmitBoard(m, h, "partner_ride=board_remap; state=%s; why=%s; ok=%u; steers=%u\r\n", remap_want ? "skip" : "stock", why, ok ? 1u : 0u,
                   stats.seat_one);
         if (ok) d.board_remap_skip = remap_want;
@@ -6164,7 +6165,7 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
         m.dm_patched = h.dm_patch(h.context, true, "seat");
         if (!m.dm_patched) { m.dm_patch_failed = true; return refuse("dm_patch"); }
     }
-    if (!h.ride_seat_arm(h.context, seat)) return refuse("seat_patch");
+    if (!h.ride_seat_arm(h.context, seat, vehicle)) return refuse("seat_patch");
     s.manual = true;
     s.armed = true;
     s.vehicle = vehicle;
@@ -6339,6 +6340,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
+    d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
     d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;

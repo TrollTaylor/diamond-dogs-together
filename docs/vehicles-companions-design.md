@@ -3075,6 +3075,156 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
 - Never seen: `step=error`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`, two Dead commits for
   one guard. Not proven: a moving jeep, two PCs, a 0.14.4 partner; design B (the driver sees the raised gun).
 
+### 8.33 Results: seat 1 drawn in the seat on the driver's copy, built behind a lab key (2026-10-30, branch `wp/seat1-draw`)
+
+- **Cause.** [O, frames looked at] `3c748d46` host `m6-jeep-1-stopped`: the driver's own D-Dog sits in seat 1 and the
+  guest's body 1 one seat spacing further right, outside the jeep; the same offset in `1f81de65` / `37b94432` host and
+  `83defaeb` guest frames, parked and while driving (`1f81de65` host `s1-drive-h-03`: the body keeps that offset, it
+  does not trail). The passenger's own copy shows itself outside the right side too (`3c748d46` host
+  `m6-jeep-1r-seated`, `1f81de65` guest `s1-stopped`), which is why `err_mm` reads 0-2 at rest. [O, Ghidra]
+  `0x140B799C0` answers seat 0's matrix for seat 1 while `rider[1]` holds a player id. [I] The player's FrontRight
+  clips are authored on the driver's seat matrix; body 1 (never in `rider[]`) was anchored on seat 1's own matrix
+  (anchor immediate 1), and the passenger's own copy skips that remap while seated (`board_remap`), so both draw one
+  extra seat spacing. The moving `err_mm` (2-2.6 m) compares with the peer's streamed pose, which lags one way by about
+  half the RTT; [I] not a draw lag.
+- **Built** (`2bf2b51` red -> `9f2ef8b`; first form `7ddba0f` -> `802fed3`): lab key `partner_ride_seat1_anchor`
+  (off unless named, lab and play; a named 1 runs in play). With it, `partner_ride_seat::Arm` writes the anchor
+  immediate `AnchorSeat(1) = 0` for a seat-1 ride on any copy that draws the peer there (not only the driver's; light
+  vehicles only since 8.34); seats 0, 2, 3 and the key off are unchanged. No new patch site (the same immediate), no
+  wire change. Expected side effect [I]: that copy reads `err_mm` about one seat spacing at rest while the passenger's
+  own copy still draws itself outside (8.34).
+- **Not proven.** All four hidden runs of `m6m7c-seat1-draw-play.txt` stopped before gameplay
+  (`IsolationFailed=True`, `child_exited_before_admission`, 1067: the guest's worker hook logged `refused
+  required_hooks_or_private_desktop` 0.2 s after `configured`, the host was admitted): `37bfbe8e`, `37c5eb3f`,
+  `2a69a71c`, `aab7c606` (archive `D:\mgs-coop-run-archive\m6m7c\`); another track's run (`1b597e17`, 13:55) failed the
+  same way, earlier ones at 13:41-13:47 were admitted [O]. So the key stays off; the frame proof (both roles, parked and
+  under throttle, back seat 2 unchanged, the passenger's own view) and the play rehearsal are open. The passenger's own
+  copy (the remap skip) is left for the seat-1 camera track.
+
+### 8.34 Review fixes for the seat-1 anchor (2026-10-30, branch `wp/seat1-draw`; still behind the lab key, unproven)
+
+- **Light vehicles only** (`f0580fd` red -> `5a6a443`): `AnchorSeat(seat, on, category)` gives 0 only for seat 1 of
+  category 1/2 (this copy's `unit+0x6C >> 4` of the seated vehicle, read by the observer through
+  `partner_vehicle::ReadLive`; the driver's seat arm now names the vehicle). The truck cab (3/4) plays the light
+  FrontRight loop as a guess (`kTruck[1]`) and has no frame, so it keeps seat 1's matrix; an unknown category too.
+- **The key applies without the board**: read from the lab config before every `Arm` (it was set only inside the
+  board install, once, after the code gate), logged once per process `partner_ride_seat1_anchor=configured; on=..`.
+- **Log line**: the 0.14.4 prefix is back (`partner_ride_seat_patch=applied; seat=N; sites=..; seat_dword=..`), with
+  `anchor=..; cat=..` at its end. **Lab key**: an invalid value is named and off, also after a valid 1 (as
+  `partner_ride_front`).
+- **Scenario** `m6m7c-seat1-draw-play.txt`: waits for `configured; on=1` on both copies, `anchor=0; cat=[12]`, the
+  back seat's own anchor, and `partner_ride_seat_patch=reverted` after each seat-1 get-off; part B says back seat 2 or
+  3 (it accepts either). NEVER lines (`seat_far`, `two_drivers`, `board_uncertain`, `seat_patch=refused`) are sliced
+  after the run: the runner has no negative wait.
+- **D-Dog in seat 1** [O code]: not an overlap in the normal case: the v4 handshake (`OneTaken`, review R3) keeps the
+  peer out of a seat 1 the driver's dog already holds, and a dog that jumps in later moves this copy's drawing to a
+  free back seat (`DrawSeat`, 8.25). Residual [I]: `DrawSeat` reason `full` (both back seats taken) or `other` (a
+  soldier) would now draw the peer inside the occupant instead of outside the jeep. The frame `3c748d46` predates R3.
+- **Both copies must agree before a flip** [I]: with the key, the driver's copy draws the peer in the seat while the
+  passenger's own copy still draws itself one seat spacing outside (its remap skip), so `err_mm` at rest gains about
+  0.7 m. The `seat_far` latch (3 m) exempts only the viewer's own vehicle; a driver who bails out of a moving jeep
+  (about 2-2.6 m streamed lag under `-WanSim bad`) could cross it and drop the peer out of the seat. Pair the flip with
+  the seat-1 own-view fix (keep the stock remap while the local player is seated) or prove `err_mm` in that case.
+- **Not proven, worker blocked** [O]: every two-copy hidden run on this machine since the supervisor start 13:50:59
+  refused the guest before admission (`required_hooks_or_private_desktop` 0.2 s after `configured`; supervisor
+  `desktop_ownership_violation=true`; the admitted runs before had false): this track's `37bfbe8e` (13:50:59),
+  `37c5eb3f`, `2a69a71c`, `aab7c606` (14:04:04), companion-host's `1b597e17`, `62af662d` (14:06), `cf8111c4` (14:08),
+  `f3fbeefd` (14:16), launcher-setup's `eb4d3a3e` (14:18), whose runs at 13:41 and 13:45 had been admitted, and
+  this track's rerun with the review fixes `e181f40e` (14:26, key named). A second RDP session was active (qwinsta
+  14:05, 14:14, 14:22 and 14:27); whether it causes this is [U]. Full CTest 336/336 at `cc8cac5`.
+
+### 8.35 Results: the seat-1 anchor proven in play, and the passenger's own view (2026-10-30, branch `wp/seat1-draw`)
+
+Hidden worker, `-Mode play -WanSim bad`, research build, native gun stage, key `partner_ride_seat1_anchor=1` named;
+logs sliced from both copies, frames looked at (session scratch `complete/frames/m6m7d-draw/`); runs archived under
+`D:\mgs-coop-run-archive\m6m7d\`. All three Closed, BaselineRestored, RealSavesUnchanged, IsolationFailed=False; every
+expectation met; zero `step=error`, faults, `viewer_changed`, `board_uncertain`, `two_drivers`, `seat_far`,
+`seat_patch=refused`, `pass_camera; state=refused` on both copies.
+
+- **`f58eebf7` (`m6m7c-seat1-draw-play.txt`, seeds afgh-quiet / afgh-horse, `1f30ffd`)** [O]: the driver's copy draws the
+  seat-1 partner IN the front right seat for both roles, parked, under the driver's W and stopped (guest `a-parked`,
+  `a-drive-01..03`, `a-stopped`; host `c-parked`, `c-drive-01..03`, `c-stopped`); applied `seat=1; ...; anchor=0; cat=2`
+  on both drivers, `configured; on=1`, `reverted` after each get-off; back seat 2 unchanged (`b-back`, `anchor=2`,
+  `err_mm` 1-2). The passenger's own copy still drew itself outside the right side (host `a-parked`, guest `c-parked`:
+  legs over the front right wheel), so `err_mm` at rest read 855-932 on the drivers' copies.
+- **Own view** (`4f63a17` red -> `106d90e`): with the same key, the passenger's own copy keeps the stock seat-1 remap while
+  it sits in seat 1 of a light vehicle (`partner_board::OwnSeatOneStock`: the key, the local report's seat 1, this copy's
+  category 1/2 read from `unit+0x6C` into `LocalPassenger::category`; `RemapWanted` answers stock over the policy, the
+  seated report and the hold): `partner_ride=board_remap; state=stock; why=seated_own`. The truck cab and an unread
+  category keep the skip. While it sits there its published policy reads `seat1=none` (the existing rule: seat 1 is
+  offered only with the skip live); after the get-off the skip is back (`why=policy`).
+- **`086d8043` (the same scenario with the own-view waits and boarding/get-off bursts)** [O]: `why=seated_own` on the
+  host (A) and the guest (C), the skip back after each get-off; both passengers' own views now show themselves IN the
+  front right seat (host `a-parked`, `a-stopped`; guest `c-parked`, `c-drive-p`); the drivers' copies as in `f58eebf7`;
+  `err_mm` at rest for seat 1 is 0-2 on both drivers' copies (was 855-932): both copies agree, so the `seat_far` risk of
+  8.34 is gone at rest. Moving `err_mm` 0.2-2.8 m is the streamed lag as before.
+- **`b4c10e6b` (`m6m7d-seat1-dog-play.txt`, host seed afgh-ledge: the host's own D-Dog)** [O]: the host drives, its dog
+  takes seat 1 on its copy (`riders=0,9728,..`, `seat_ext_tx; ...; flags=0x05; rider1=9728`), the guest's policy offers
+  no seat 1 (`seat1=none; flags=0x05`), the guest boards back seat 3 and the host's copy draws it there (`applied;
+  seat=3; ...; anchor=3`; no seat-1 anchor); frames parked, under W and stopped: the dog in the front right seat, the
+  partner in the back right, never one on the other. Not covered: the dog jumping in after the partner sat in seat 1
+  (`DrawSeat` reason `dog`/`full`/`other`).
+- **Open: the seat-1 get-off** [O logs]: when the partner's get-off ends, the driver's copy corrects the body once by
+  0.87 m (guest driving, both runs) or 1.5-2.1 m (host driving) with the key, against 16-89 mm without it (`1f81de65`,
+  `83defaeb`, `37b94432`) and 52 mm for back seat 2. [I] The own copy plays the get-off on seat 1's own matrix (the stock
+  update clears `rider[1]` before phase 6, so the remap no longer applies), the driver's copy keeps anchor 0 until the
+  revert. Whether players see it as a pop is [U] (no driver-copy burst during a get-off); next: a burst there, then
+  re-arm anchor 1 at the get-off request if it shows. The own view's boarding and get-off bursts show no jump, but the
+  camera angle (the stock get-off camera faces the driver up close, as without the key) is inconclusive [U]. The aim
+  view from seat 1 (the own leg, problem 2) was not exercised with the own-view fix [U].
+
+### 8.36 Review fixes for the seat-1 get-off (2026-10-30, branch `wp/seat1-draw`)
+
+- **The get-off anchor** (both reviews, major) [O logs, `086d8043` guest]: at the start of the host's seat-1 get-off the
+  ride wire turns `kind=0` (foot), the driver's copy sends the GetOff advance (`exit_request; ...; reason=foot;
+  via=getoff`), the GetOff entry plays at once (`dm; when=getoff; ... rec1a0=2`) for about 1.7 s, still on anchor 0;
+  only the revert after DM End handed seat 1 back, and the body was corrected by 869 mm. **Fix** (`0248647` red ->
+  `d2bc44f`): once the GetOff entry plays, the driver calls `ride_seat_getoff`; `partner_ride_seat::ArmGetOff` rewrites
+  only the seat dword to the armed seat's own immediate (`partner_ride_seat_patch=getoff; seat=1;
+  seat_dword=0x01b04130; anchor=1; was=0`). Seats 0, 2, 3 and the key off write nothing; no new patch site.
+- **`54a885b2`** (`m6m7d-seat1-getoff-play.txt`, `-Mode play -WanSim bad`, afgh-quiet / afgh-horse, key named; Closed,
+  BaselineRestored, RealSavesUnchanged, IsolationFailed=False; zero `step=error`, faults, `viewer_changed`,
+  `board_uncertain`, `two_drivers`, `seat_far`, `seat_patch=refused`, `pass_camera; state=refused` on both copies)
+  [O logs]: guest driving, the host's seat-1 get-off: on the guest's copy `exit_request; ...; seat=1; reason=foot;
+  via=getoff`, `dm; when=getoff; ... rec1a0=2`, then `partner_ride_seat_patch=getoff; seat=1; seat_dword=0x01b04130;
+  anchor=1; was=0` on the next line; the end-of-get-off correction is **29 mm** (`869` in `f58eebf7` / `086d8043`;
+  16-89 mm without the key). [O frames] `guest-a-parked`: the partner in the front right seat; `guest-a-getoff-01..08`
+  and `a-exited`: the partner standing at the right front wheel, but the runner's `both burst` takes the host's burst
+  first, so the guest's frames start 1.3 s after its GetOff ended: the get-off itself was not caught on that copy.
+  Part C did not board (the guest's E at the right door logged `board_passenger; seat=1; site=prequery` then
+  `world_lua=event=seat; action=fulton; on=1` / `on=0`; it boarded only at the later E), so no host-driving get-off.
+  **The seat-1 aim view with the key** [O frame `host-a-aim-right`, 0.8 s after RMB, `pass_camera` mode aim, seat shot
+  key off]: the jeep's side panel fills most of the view at close range, the player's own leg in the cabin at the
+  right, a red (blocked) reticle: the own-view fix puts the passenger's own body in the seat, so the aim camera now
+  sits against the jeep (the problem-2 picture of the back left seat, now from seat 1). `host-a-aim-left` (after a
+  mouse turn) is a wide outside view of the jeep, not an aim view. The flip must wait for a seat-1 aim camera proven
+  with this key on (the camera track).
+- **`01174cfd`** (`m6m7d-seat1-getoff-host-play.txt`: part A with the roles swapped; same flags and seeds; Closed,
+  BaselineRestored, RealSavesUnchanged, IsolationFailed=False; NEVER lines 0 on both copies; one failed wait, the
+  host's seat-grant line, whose name differs for the host, and the host drove) [O logs]: the host's copy logs the
+  `getoff` line right after `dm; when=getoff`; end correction **27 mm**. [O frames, host = driver's copy, taken during
+  the GetOff (295338.2-295339.9 s)] `c-getoff-01`: the partner still in the front right seat, starting to rise;
+  `-02`: rising over the right side; `-03`: jumping down outside the right side; `-04..06`: standing at the right front
+  wheel. One continuous get-off out of the right side, never on the driver's side, no snap. `guest-c-aim-right`: the
+  guest's own seat-1 aim view is the jeep's panel as in `54a885b2` (both roles).
+- **Corrections to 8.35** [O logs/frames, reviews]: (a) the passenger's own remap skip returns at the START of its
+  get-off (`local_passenger; ... state=off; reason=act`, then `board_remap; state=skip`), not after it; the old get-off
+  bursts began 250-290 ms later and could not show a jump at that switch. (b) In `b4c10e6b` the guest's policy first
+  read `seat1=front; flags=0x01` and `seat1=none; flags=0x05` only once the host's `rider1=9728` arrived (about one round
+  trip). A board inside that window is not exercised; [I code] the driver's copy would draw the peer in a free back seat
+  (`DrawSeat` reason `dog`) and the guest's copy has no host dog (`no_host_dog`); the window is the v4 handshake's, not
+  the key's. (c) Problem 4 (the camera faces the driver up close after the get-off) was identical without the own-view
+  fix for the host role only; the guest's `c-exited` differed (behind the walking player in `086d8043`). It stays with
+  the camera track. (d) The host-driving corrections (2116 / 1519 mm) are mostly a vehicle split after the host's drive:
+  the host driver's own seat-0 get-off in the same part was corrected 1770 / 1587 mm on the guest's copy. The key's own
+  effect was about 0.87 m (part A, where the seat-0 get-off agrees to 105-114 mm). The split is open for the
+  vehicle-state work.
+- **Still open** [U]: the passenger's own boarding view ends pressed against the hood (`086d8043` host `a-geton-03`,
+  guest `c-geton-03`; a back-seat boarding keeps a wide view); no key-off seat-1 boarding burst exists to say whether it
+  is new. Seat-1 shots with the key (the own body and muzzle now sit in the cabin), a mission end while seated in seat
+  1, the truck cab, category-1 vehicles and two PCs were not run; the combined rehearsal must fire from seat 1 in both
+  roles with this key and the shipped camera/shot keys.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3522,6 +3672,10 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     screen draws the seat-1 passenger pushed out past the jeep's right side, at rest too [O]: seat 1 is not frame-clean.
   - **Smoke after the M7 merge (8.32, `e694c92`):** race and D11 hold in play (`37b94432`); seat 1 boards and its
     gun fires across the jeep; the driver's view of the seat-1 passenger is unchanged.
+  - **Seat-1 draw (8.33, 8.34, `wp/seat1-draw`):** cause found (body 1 anchored on seat 1's own matrix; the player's
+    clips want the driver's); fix built behind lab key `partner_ride_seat1_anchor` (light vehicles only), off: no frame
+    proof yet (the hidden worker refuses the guest before admission machine-wide since 13:50); flip only together with
+    the passenger's own view.
 
 ### M7. Shooting as a passenger
 

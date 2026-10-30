@@ -82,6 +82,30 @@ const Site& SiteFor(SiteId id) noexcept {
 
 std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base | (static_cast<std::uint32_t>(seat & 3u) << 24); }
 
+// The player's seat-1 clips (stateVehicle*FrontRight*) carry the driver-to-passenger offset: the stock seat matrix
+// 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
+// in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
+// jeep (design 8.33). Behind lab.ini partner_ride_seat1_anchor (off unless named) until its frame proof. A light
+// vehicle only (category 1, 2: partner_seat_shot::ClassFor): the truck cab plays the light FrontRight loop as a guess
+// (kTruck[1]) and has no frame proof, and an unknown category keeps seat 1's own matrix (review, design 8.34).
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t category) noexcept {
+    return seat1_driver_matrix && seat == 1 && (category == 1 || category == 2) ? 0 : seat;
+}
+namespace {
+#ifdef _WIN32
+volatile LONG g_seat1_anchor = 0;
+#else
+bool g_seat1_anchor = false;
+#endif
+} // namespace
+#ifdef _WIN32
+void SetSeatOneAnchor(bool on) noexcept { InterlockedExchange(&g_seat1_anchor, on ? 1 : 0); }
+bool SeatOneAnchor() noexcept { return g_seat1_anchor != 0; }
+#else
+void SetSeatOneAnchor(bool on) noexcept { g_seat1_anchor = on; }
+bool SeatOneAnchor() noexcept { return g_seat1_anchor; }
+#endif
+
 const char* VerifyImage(const unsigned char* base, std::size_t span) noexcept {
     if (!base) return "base";
     for (const std::uintptr_t rva : c::ride_seat_blocks) {
@@ -115,7 +139,7 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept {
 }
 
 #ifdef _WIN32
-bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
+bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t category) noexcept {
     auto* image = static_cast<unsigned char*>(base);
     if (!image || seat > 3) { Emit(log, "partner_ride_seat_patch=refused; reason=args\r\n"); return false; }
     if (const char* why = VerifyImage(image, span)) {
@@ -132,14 +156,15 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     // part way puts back exactly what this call wrote.
     std::uint32_t written_from[kSites]{};
     bool written[kSites]{};
+    const std::uint8_t anchor = AnchorSeat(seat, SeatOneAnchor(), category);
     for (unsigned i = 0; i < kSites; ++i) {
         const Site& s = kSiteTable[i];
         const std::uint32_t current = ReadDword(image, s.rva);
-        const std::uint32_t want = i == 0 ? SeatDword(seat) : s.patched;
+        const std::uint32_t want = i == 0 ? SeatDword(anchor) : s.patched;
         if (current == want) continue;
         if (const char* why = near_code::PatchDword(image + s.rva, current, want)) {
             for (unsigned k = i; k-- > 0;)
-                if (written[k]) near_code::PatchDword(image + kSiteTable[k].rva, k == 0 ? SeatDword(seat) : kSiteTable[k].patched, written_from[k]);
+                if (written[k]) near_code::PatchDword(image + kSiteTable[k].rva, k == 0 ? SeatDword(anchor) : kSiteTable[k].patched, written_from[k]);
             EmitFormat(log, "partner_ride_seat_patch=refused; reason=patch_%s_%s\r\n", s.name, why);
             return false;
         }
@@ -150,8 +175,8 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     InterlockedExchange(&g_armed, 1);
     char line[192]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
-            "partner_ride_seat_patch=applied; seat=%u; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x%08x\r\n",
-            unsigned(seat), SeatDword(seat)))) Emit(log, line);
+            "partner_ride_seat_patch=applied; seat=%u; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x%08x; anchor=%u; cat=%u\r\n",
+            unsigned(seat), SeatDword(anchor), unsigned(anchor), unsigned(category)))) Emit(log, line);
     return true;
 }
 
@@ -182,6 +207,25 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
     const bool was = InterlockedExchange(&g_armed, 0) != 0;
     InterlockedExchange(&g_seat, 0xFF);
     if (wrote || was) EmitFormat(log, "partner_ride_seat_patch=reverted; reason=%s%s\r\n", reason ? reason : "unknown", "");
+}
+
+bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
+    auto* image = static_cast<unsigned char*>(base);
+    (void)span;
+    if (!image || seat > 3 || !Armed() || ArmedSeat() != seat) return false;
+    if (StateOf(image, SiteId::seat) == SiteState::other) return false;  // seat 2 armed is the retail dword itself
+    const Site& s = kSiteTable[0];
+    const std::uint32_t current = ReadDword(image, s.rva);
+    const std::uint32_t want = SeatDword(seat);
+    if (current == want) return true;
+    if (const char* why = near_code::PatchDword(image + s.rva, current, want)) {
+        EmitFormat(log, "partner_ride_seat_patch=refused; reason=getoff_%s%s\r\n", why, "");
+        return false;
+    }
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_ride_seat_patch=getoff; seat=%u; seat_dword=0x%08x; anchor=%u; was=%u\r\n",
+            unsigned(seat), want, unsigned(seat), unsigned(current >> 24)))) Emit(log, line);
+    return true;
 }
 
 bool Armed() noexcept { return g_armed != 0; }

@@ -920,11 +920,30 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     return mgscoop::partner_dm_patch::Patched();
 }
 // The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
-bool PartnerRideSeatArm(void*, std::uint8_t seat) noexcept {
-    return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
+// Seat 1 on the driver's seat matrix (lab.ini partner_ride_seat1_anchor; design 8.33, 8.34): set from the lab config
+// before every Arm (independent of the board install), logged once; a light vehicle only, so seat 1 reads this
+// copy's category of the vehicle (unknown without the code gate or a live read: seat 1's own matrix).
+volatile LONG partner_seat1_anchor_logged = 0;
+bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t vehicle) noexcept {
+    if (!game_base) return false;
+    const bool anchor = mgscoop::GetLabConfig().partner_ride_seat1_anchor;
+    mgscoop::partner_ride_seat::SetSeatOneAnchor(anchor);
+    if (InterlockedCompareExchange(&partner_seat1_anchor_logged, 1, 0) == 0)
+        LogFormat("partner_ride_seat1_anchor=configured; on=%u\r\n", anchor ? 1u : 0u);
+    std::uint8_t category = mgscoop::partner_ride_seat::kCategoryUnknown;
+    if (anchor && seat == 1 && partner_gate_ok) {
+        mgscoop::partner_vehicle::Read r{};
+        mgscoop::partner_vehicle::ReadLive(game_base, vehicle, r);
+        if (!r.refusal && r.unit.id == vehicle) category = mgscoop::partner_vehicle::Category(r.unit.type);
+    }
+    return mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log, category);
 }
 void PartnerRideSeatRevert(void*, const char* reason) noexcept {
     if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
+}
+// The confirmed GetOff: the armed seat back on its own matrix (review of design 8.35).
+void PartnerRideSeatGetOff(void*, std::uint8_t seat) noexcept {
+    if (game_base) mgscoop::partner_ride_seat::ArmGetOff(game_base, game_span, seat, Log);
 }
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
@@ -1196,7 +1215,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
-    PartnerSeatShotOverride};
+    PartnerSeatShotOverride, PartnerRideSeatGetOff};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

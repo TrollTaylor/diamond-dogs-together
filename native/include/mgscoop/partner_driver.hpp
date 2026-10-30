@@ -365,7 +365,8 @@ struct Hooks {
     // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
     // any null: the seat refuses with reason=unavailable and the ride hides as before).
     // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
-    bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // `vehicle`: the seated vehicle's id (the seat-1 anchor reads this copy's category of it; design 8.34).
+    bool (*ride_seat_arm)(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept = nullptr;
     void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
     // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook
     // point of a camera-skip module (the DM entry/End camera-connect stores
@@ -455,6 +456,9 @@ struct Hooks {
     void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
     bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
     int (*seat_shot_override)(void* context) noexcept = nullptr;
+    // The seated rider's confirmed GetOff (review of design 8.35; partner_ride_seat::ArmGetOff): the armed seat goes
+    // back to its own anchor, as the passenger's own copy plays it. May be null (the anchor stays until the revert).
+    void (*ride_seat_getoff)(void* context, std::uint8_t seat) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -600,6 +604,9 @@ struct Settings {
     // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
     // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
     bool ride_front = false, ride_cab = false;
+    // lab.ini partner_ride_seat1_anchor (design 8.33-8.35): the local player in a light vehicle's seat 1 keeps the
+    // stock seat-1 remap while seated (partner_board::OwnSeatOneStock). Off unless named, lab and play.
+    bool ride_seat1_anchor = false;
     // The passenger camera's mode (lab.ini partner_pass_camera, design 8.27; the lab lever passcam overrides it on a
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
     PartnerPassCamera pass_camera = PartnerPassCamera::aim;

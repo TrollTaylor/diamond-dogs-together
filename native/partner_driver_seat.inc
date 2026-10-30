@@ -671,7 +671,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             }
         }
         if (!s.armed) {
-            if (!h.ride_seat_arm(h.context, s.seat)) {
+            if (!h.ride_seat_arm(h.context, s.seat, s.vehicle)) {
                 SeatRefuse(m, h, "seat_patch", now);
                 break;
             }
@@ -818,6 +818,9 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (s.next_sent && !s.getoff_confirmed && body_dm && dm.rec_ok && dm.rec1a0 == s.loop_entry + 1) {
             s.getoff_confirmed = true;
             SeatDmProbe(m, h, dm_ok, dm, "getoff");
+            // The GetOff plays on the seat's own matrix on the passenger's own copy (review of design 8.35): a seat-1
+            // anchor on seat 0 goes back to seat 1's own immediate now, not at the revert after DM End.
+            if (s.armed && h.ride_seat_getoff) h.ride_seat_getoff(h.context, s.seat);
         }
         if (!body_dm) {
             // Nothing (more) plays on body 1: a request still pending is ours.

@@ -186,9 +186,11 @@ struct Fake {
     bool peer_v6 = false;
     bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
-    unsigned seat_arms = 0, seat_reverts = 0;
+    unsigned seat_arms = 0, seat_reverts = 0, seat_getoffs = 0;
+    int seat_getoff_seat = -1;  // the seat the confirmed GetOff re-anchored (ride_seat_getoff)
     bool seat_arm_ok = true;
     int seat_armed = -1;
+    int seat_arm_vehicle = -1;  // the vehicle id the seat arm named (the light-vehicle check of the seat-1 anchor)
     std::string seat_revert_reason;
     // WS3 vehicles: the vehicle reads (id -> read; any other id refuses "live"),
     // the seat-by-id writes (requests, forced result, whether it wrote).
@@ -6063,11 +6065,12 @@ std::vector<std::uint8_t> ExtBytes(std::uint16_t revision, std::uint16_t vehicle
 }
 
 // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md).
-bool HookRideSeatArm(void* context, std::uint8_t seat) noexcept {
+bool HookRideSeatArm(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept {
     Fake& f = F(context);
     ++f.seat_arms;
     if (!f.seat_arm_ok) return false;
     f.seat_armed = seat;
+    f.seat_arm_vehicle = vehicle;
     f.native_order.push_back("seat_arm");
     return true;
 }
@@ -6076,6 +6079,11 @@ void HookRideSeatRevert(void* context, const char* reason) noexcept {
     ++f.seat_reverts;
     if (f.seat_armed >= 0) f.seat_revert_reason = reason ? reason : "";
     f.seat_armed = -1;
+}
+void HookRideSeatGetOff(void* context, std::uint8_t seat) noexcept {
+    Fake& f = F(context);
+    ++f.seat_getoffs;
+    f.seat_getoff_seat = seat;
 }
 struct SeatSession : Session {
     std::uint16_t ride_rev = 0;
@@ -6092,6 +6100,7 @@ struct SeatSession : Session {
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.ride_seat_getoff = HookRideSeatGetOff;
         hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
@@ -6386,7 +6395,8 @@ void TestRideSeatById() {
         Check(s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1") == 1 &&
                   s.fake.Containing("partner_ride=ext_rx; rev=1; vehicle=25600; seat=0; cat=1; type=0x10; features=0x03") == 1,
               "the offer and the received addendum are logged");
-        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0, "nothing targeted before the DM plays; the dwords armed first");
+        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25600,
+              "nothing targeted before the DM plays; the dwords armed first (naming the vehicle)");
         Check(s.Step() && s.fake.seat_targets.empty() && !s.driver.mission.seat.confirmed, "no DM yet: no write");
         s.Playing(kFrontLeftLoop);
         Check(s.Step() && s.fake.seat_targets.size() == 1 && s.fake.seat_targets[0].vehicle == 25600 && s.fake.seat_targets[0].seat == 0 &&
@@ -7864,7 +7874,8 @@ void TestRideSeat() {
         Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25608 && s.reply.seat == 0 &&
                   s.reply.seat_action == partner::seat_action::play && s.reply.seat_entry == 0 && !(s.reply.op & ~op::ride_seat),
               "a vehicle ride in seat 0 plays the seat DM (RIDE_SEAT only)");
-        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.dm_patched && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25608 && s.fake.dm_patched &&
+              s.driver.mission.seat.phase == pd::SeatPhase::seated &&
                   s.fake.Containing("partner_ride_seat=armed; vehicle=25608; seat=0;") == 1 &&
                   s.fake.Containing("partner_ride_seat=play; vehicle=25608; seat=0;") == 1 && s.fake.Containing("partner_ride=seat_show") == 1,
               "comparator and seat dwords armed before the play");
@@ -7968,14 +7979,18 @@ void TestRideSeat() {
               "advancing to entry 1 (Loop) logs the loop probe once");
         s.fake.sample.act = 112;
         Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next &&
-                  !s.driver.mission.seat.getoff_confirmed,
-              "act 112 advances to GetOff");
+                  !s.driver.mission.seat.getoff_confirmed && s.fake.seat_getoffs == 0,
+              "act 112 advances to GetOff (the anchor stays until the GetOff plays)");
         s.fake.dm.rec18 = 0xe59bbf7182faull;  // stateVehicleGetOffFrontRight
         s.fake.dm.rec1a0 = 2;
         Check(s.Step() && s.driver.mission.seat.getoff_confirmed &&
                   s.fake.Containing("partner_ride_seat=dm; when=getoff;") == 1 &&
                   s.fake.Containing("rec18=0xe59bbf7182fa; rec1a0=2;") == 1,
               "advancing to entry 2 (GetOff) logs the getoff probe once");
+        // Review of design 8.35: the GetOff plays on the seat's own matrix on the passenger's own copy, so the confirmed
+        // GetOff hands the armed seat back to its own anchor (ride_seat_getoff), once.
+        Check(s.fake.seat_getoffs == 1 && s.fake.seat_getoff_seat == 1, "the confirmed seat-1 GetOff re-anchors once");
+        Check(s.Step() && s.fake.seat_getoffs == 1, "the next tick does not re-anchor again");
 
         // Delayed seat resolution (initial seat=255 while hiding/re-showing, then usable seat=0 after 1600 ms)
         // still prepends GetOn because SeatObserveRide refreshes vehicle_since_ms when a usable seat first arrives.
