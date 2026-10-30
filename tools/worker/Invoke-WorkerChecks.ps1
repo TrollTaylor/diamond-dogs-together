@@ -96,7 +96,7 @@ function Get-WorkerTests {
         # Diamond Dogs Together (DiamondDogsTogether.exe): archive utilities, the
         # core on temp folders with a fake environment, the UI logic, and the
         # exe's own --selftest (read-only for its folder; a throwaway model in %TEMP%).
-        'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
+        'ddt_archive_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
         # 0.14.4 review: the fixtures of shipped code the receipt had left out. dinput8.dll: the dog guard, the act
         # census, the ammo-leak block, the overlay catalogue (read against partner_sync.lua) and the seated-rider patch
         # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks.
@@ -104,7 +104,27 @@ function Get-WorkerTests {
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
         'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check'
-    )
+    ) + @(Get-WorkerShardNames)
+}
+# Fixtures CTest runs as parallel shards (cmake/test_shards.cmake): <name>_1 .. <name>_N, each the fixture's own command
+# plus --shard K/N (C++, tests/test_cases.hpp) or -Shard K/N (PowerShell, tests/TestShards.psm1). The counts are the
+# ones CMake registers: a missing shard fails the inventory audit, an extra one the Release coverage (worker_coverage_tests).
+function Get-WorkerShardedTests {
+    return [ordered]@{ ddt_core_tests = 5 }
+}
+function Get-WorkerShardNames {
+    $sharded = Get-WorkerShardedTests
+    return @(foreach ($base in $sharded.Keys) { foreach ($k in 1..$sharded[$base]) { $base + '_' + $k } })
+}
+# The shard a test name stands for ([pscustomobject] base, index, count), or $null.
+function Get-WorkerShard([string]$Name) {
+    $sharded = Get-WorkerShardedTests
+    foreach ($base in $sharded.Keys) {
+        if ($Name -cmatch ('^' + [regex]::Escape($base) + '_([1-9][0-9]?)$') -and [int]$Matches[1] -le $sharded[$base]) {
+            return [pscustomobject]@{ base = $base; index = [int]$Matches[1]; count = $sharded[$base] }
+        }
+    }
+    return $null
 }
 # Only the Release receipt (the build tools/package.ps1 -Friend packages) runs these: DiamondDogsTogether.exe's embedded
 # icon, and the local test's --local-watch helper as real hidden processes on temp folders (no game, no window, no
@@ -270,27 +290,38 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests')) {
+        # A shard runs its base fixture's audited command plus exactly its own shard argument (cmake/test_shards.cmake).
+        $audit = $name
+        $shard = Get-WorkerShard $name
+        if ($shard) {
+            $flag = if ([IO.Path]::GetFileName($command[0]) -ceq 'pwsh.exe') { '-Shard' } else { '--shard' }
+            if ($command.Count -lt 3 -or $command[-2] -cne $flag -or $command[-1] -cne "$($shard.index)/$($shard.count)") {
+                throw "Unaudited shard arguments: $name"
+            }
+            $command = @($command[0..($command.Count - 3)])
+            $audit = $shard.base
+        }
+        if ($audit -cin @('build_profile_tests', 'mgo_standing_cycle_session_tests', 'mgo_standing_frame_policy_tests', 'mgo_unique_rest_session_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'worker_coverage_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
-                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {
+                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $audit + '.ps1'))) {
                 throw "Unaudited PowerShell command: $name"
             }
-        } elseif ($name -ceq 'local_coop_session_tests') {
+        } elseif ($audit -ceq 'local_coop_session_tests') {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 8 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root 'tests\local_coop_session_tests.ps1') -or
                 $command[6] -cne '-IniCheck' -or [IO.Path]::GetFullPath($command[7]) -ine (Join-Path $Directory 'lab_ini_check.exe')) {
                 throw "Unaudited local-session fixture command: $name"
             }
-        } elseif ($name -like '*_lua_check') {
+        } elseif ($audit -like '*_lua_check') {
             $scriptName = if ($luaAliases.ContainsKey($name)) { $luaAliases[$name] } else { $name }
             if ($command.Count -lt 2 -or [IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory 'lua-fixture\lua51.exe') -or
                 [IO.Path]::GetFullPath($command[1]) -ine (Join-Path $Root ('tests\' + $scriptName + '.lua'))) {
                 throw "Unaudited Lua command: $name"
             }
         } else {
-            $binaryName = if ($exeAliases.ContainsKey($name)) { $exeAliases[$name] } else { $name }
+            $binaryName = if ($exeAliases.ContainsKey($audit)) { $exeAliases[$audit] } else { $audit }
             if ([IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory ($binaryName + '.exe'))) {
                 throw "Unaudited fixture executable: $name"
             }

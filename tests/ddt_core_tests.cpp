@@ -43,6 +43,8 @@
 #include "core_util.hpp"
 #include "launcher/zip.hpp"
 #include "launcher_join_code.hpp"
+#include "test_cases.hpp"
+#include "test_timer_resolution.hpp"
 
 using namespace ddt;
 using namespace ddt::core;
@@ -4530,6 +4532,7 @@ int main(int argc, char** argv) {
         }
         if (wargv) LocalFree(wargv);
     }
+    const mgscoop::test::FineTimerResolution timer_resolution;
     wchar_t temp[MAX_PATH + 1]{};
     GetTempPathW(MAX_PATH, temp);
     g_root = FullPath(std::wstring(temp) + L"ddt-core-tests-" + std::to_wstring(GetCurrentProcessId()));
@@ -4544,57 +4547,68 @@ int main(int argc, char** argv) {
         return g_failures == 0 ? 0 : 1;
     }
 
-    TestJsonAndTime();
-    TestCodes();
-    TestIniText();
-    TestReasonFixture();
-    TestStatusLine();
-    TestEvidence();
-    TestRedaction();
-    TestSetHash();
-    TestPathsAndDiscovery();
-    TestActivationAndCleanup();
-    TestHandoff();
-    TestShareSave();
-    TestSetup();
-    TestUninstallAndLogs();
-    TestWatchdog();
-    TestModel();
-    TestAutoSetup();
-    TestUpdateDuringSetup();
-    TestCloseDuringSetup();
-    TestSetupElsewhere();
-    TestLocalText();
-    TestGraphicsConfig();
-    TestLocalLayout();
-    TestLocalPlacement();
-    TestLocalEvidence();
-    TestLocalFolderCheck();
-    TestLocalOwnedGuest();
-    TestLocalJournal();
-    TestLocalRun();
-    TestLocalWatch();
-    TestLocalThroughModel();
-    TestLocalStartOffThread();
-    TestLocalPowerShellInterop();
-    TestHandoffThroughModel();
-    TestWriteSession();
-    TestSelfTest();
-    TestUpdater();
-    TestFeedSkipsSource();
-    TestApplyUpdate();
-    TestApplyRollback();
-    TestUpdateLeftovers();
-    TestUpdatePlainErrors();
-    TestLeftoverSourceZip();
-    TestTakeOverOrder();
-    TestRestartProcesses();
-    TestUpdateThroughModel();
-    TestUpdateBlocksSessions();
-    TestUpdateBlocksSetup();
-    TestUpdateCancelRace();
-    TestUpdateNowAfterSetup();
-    TestRecentOldExe();
+    // Every case with its cost (ms, measured alone on the developer PC; it only balances the CTest shards,
+    // cmake/ddt_launcher_core.cmake). tests/test_cases.hpp: --case, --shard K/N, --list.
+    static const mgscoop::test::TestCase kCases[] = {
+        {"JsonAndTime", TestJsonAndTime, 20},
+        {"Codes", TestCodes, 10},
+        {"IniText", TestIniText, 10},
+        {"ReasonFixture", TestReasonFixture, 10},
+        {"StatusLine", TestStatusLine, 10},
+        {"Evidence", TestEvidence, 30},
+        {"Redaction", TestRedaction, 10},
+        {"SetHash", TestSetHash, 10},
+        {"PathsAndDiscovery", TestPathsAndDiscovery, 120},
+        {"ActivationAndCleanup", TestActivationAndCleanup, 450},
+        {"Handoff", TestHandoff, 1450},
+        {"ShareSave", TestShareSave, 480},
+        {"Setup", TestSetup, 970},
+        {"UninstallAndLogs", TestUninstallAndLogs, 380},
+        {"Watchdog", TestWatchdog, 340},
+        {"Model", TestModel, 1110},
+        {"AutoSetup", TestAutoSetup, 1330},
+        {"UpdateDuringSetup", TestUpdateDuringSetup, 270},
+        {"CloseDuringSetup", TestCloseDuringSetup, 190},
+        {"SetupElsewhere", TestSetupElsewhere, 3800},
+        {"LocalText", TestLocalText, 10},
+        {"GraphicsConfig", TestGraphicsConfig, 10},
+        {"LocalLayout", TestLocalLayout, 10},
+        {"LocalPlacement", TestLocalPlacement, 10},
+        {"LocalEvidence", TestLocalEvidence, 10},
+        {"LocalFolderCheck", TestLocalFolderCheck, 280},
+        {"LocalOwnedGuest", TestLocalOwnedGuest, 1000},
+        {"LocalJournal", TestLocalJournal, 690},
+        {"LocalRun", TestLocalRun, 2590},
+        {"LocalWatch", TestLocalWatch, 750},
+        {"LocalThroughModel", TestLocalThroughModel, 2880},
+        {"LocalStartOffThread", TestLocalStartOffThread, 810},
+        {"LocalPowerShellInterop", TestLocalPowerShellInterop, 9080},
+        {"HandoffThroughModel", TestHandoffThroughModel, 3980},
+        {"WriteSession", TestWriteSession, 560},
+        {"SelfTest", TestSelfTest, 50},
+        {"Updater", TestUpdater, 30},
+        {"FeedSkipsSource", TestFeedSkipsSource, 10},
+        {"ApplyUpdate", TestApplyUpdate, 2220},
+        {"ApplyRollback", TestApplyRollback, 2750},
+        {"UpdateLeftovers", TestUpdateLeftovers, 240},
+        {"UpdatePlainErrors", TestUpdatePlainErrors, 2250},
+        {"LeftoverSourceZip", TestLeftoverSourceZip, 110},
+        {"TakeOverOrder", TestTakeOverOrder, 10},
+        {"RestartProcesses", TestRestartProcesses, 970},
+        {"UpdateThroughModel", TestUpdateThroughModel, 300},
+        {"UpdateBlocksSessions", TestUpdateBlocksSessions, 220},
+        {"UpdateBlocksSetup", TestUpdateBlocksSetup, 480},
+        {"UpdateCancelRace", TestUpdateCancelRace, 3610},
+        {"UpdateNowAfterSetup", TestUpdateNowAfterSetup, 190},
+        {"RecentOldExe", TestRecentOldExe, 20},
+    };
+    std::vector<const mgscoop::test::TestCase*> selected;
+    bool listed = false;
+    if (!mgscoop::test::SelectTestCases(kCases, sizeof kCases / sizeof kCases[0], argc, argv, selected, listed)) {
+        RemoveTree(g_root);
+        return 2;
+    }
+    mgscoop::test::RunTestCases(selected);
 
     RemoveTree(g_root);
     std::printf("ddt_core_tests: %u checks, %u failures\n", g_checks, g_failures);

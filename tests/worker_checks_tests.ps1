@@ -11,7 +11,7 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerShardNames','Get-WorkerShard','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
     'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
@@ -193,20 +193,35 @@ try {
 
     # Diamond Dogs Together (the Release receipt hashes and keeps DiamondDogsTogether.exe):
     # the core and UI fixtures are plain executables; the exe itself runs only --selftest.
-    Check (@(@('ddt_archive_tests','ddt_core_tests','launcher_ui_tests','ddt_launcher_selftest') | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits the launcher fixtures and its --selftest'
+    Check (@(@('ddt_archive_tests','ddt_core_tests_1','ddt_core_tests_5','launcher_ui_tests','ddt_launcher_selftest') | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits the launcher fixtures and its --selftest'
+    Check ($release.tests -cnotcontains 'ddt_core_tests' -and $release.tests -cnotcontains 'ddt_core_tests_6') 'the core fixture is audited as its five CTest shards (cmake/test_shards.cmake), not as one entry'
     Check ($release.tests -cnotcontains 'ddt_runtime_dat_integration' -and $release.tests -cnotcontains 'ddt_launcher_screens') 'the game-folder .dat build and the window screenshots stay outside the audited set'
-    $ddtNames=@('ddt_core_tests','ddt_launcher_selftest')
+    $ddtNames=@('ddt_launcher_selftest') + @(1..5 | ForEach-Object { 'ddt_core_tests_' + $_ })
     $ddtInventory=[pscustomobject]@{tests=@(
-        [pscustomobject]@{name='ddt_core_tests';command=@((Join-Path $directory 'ddt_core_tests.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=300})},
         [pscustomobject]@{name='ddt_launcher_selftest';command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--selftest');properties=@()}
-    )}
+    ) + @(1..5 | ForEach-Object { [pscustomobject]@{name=('ddt_core_tests_' + $_);command=@((Join-Path $directory 'ddt_core_tests.exe'),'--shard',"$_/5");properties=@([pscustomobject]@{name='TIMEOUT';value=300})} })}
     Assert-WorkerInventory $ddtInventory $fixture $directory $ddtNames
-    Check $true 'the launcher --selftest and the core fixture are accepted'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[1]='--screenshot-all'
+    Check $true 'the launcher --selftest and the five core fixture shards are accepted'
+    # Shards (cmake/test_shards.cmake): exactly the base fixture's command plus its own --shard K/N.
+    Check ($null -eq (Get-WorkerShard 'ddt_core_tests_6') -and $null -eq (Get-WorkerShard 'ddt_core_tests_0') -and $null -eq (Get-WorkerShard 'ddt_core_tests') -and
+        (Get-WorkerShard 'ddt_core_tests_3').base -ceq 'ddt_core_tests' -and (Get-WorkerShard 'ddt_core_tests_3').count -eq 5) 'shard names map to their base fixture and count'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[2]='2/5'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[2]='1/4'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'ddt_core_tests.exe'))
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'ddt_core_tests.exe'),'--local-watch-process','x','--shard','1/5')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unexpected fixture arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $directory 'ddt_launcher.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests=@($bad.tests|Select-Object -First 5)
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Required audited test is missing: ddt_core_tests_5'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[1]='--screenshot-all'
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--write-session','host')
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--write-session','host')
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
 
     # 0.14.4 review (package-release-receipt-omits-new-shipped-tests): the Release receipt audits the fixture of every

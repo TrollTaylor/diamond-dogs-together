@@ -79,6 +79,7 @@ if(GIT_FOUND)
   endif()
 endif()
 message(STATUS "mgs-coop build id ${MGS_COOP_BUILD_ID}")
+include(cmake/test_shards.cmake) # mgs_add_test_shards: one long fixture as parallel CTest entries
 include(cmake/characters.cmake) # character selection; its target part is deferred to the end of this file
 add_executable(native_pose_vehicle_core_tests tests/native_pose_vehicle_core_tests.cpp)
 target_include_directories(native_pose_vehicle_core_tests PRIVATE native native/include)
