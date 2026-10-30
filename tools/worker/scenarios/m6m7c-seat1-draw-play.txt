@@ -56,9 +56,9 @@ waitlog guest 'partner_ride_seat_patch=applied; seat=1; anchor=0;' 10
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
 wait 2500
 both capture a-parked
-guest hold w 2500 nowait
-wait 600
-guest burst a-drive 4 300
+guest hold w 1500 nowait
+wait 300
+guest burst a-drive 3 250
 host capture a-drive-p
 guest release
 wait 2500
@@ -104,9 +104,9 @@ waitlog host 'partner_ride_seat_patch=applied; seat=1; anchor=0;' 10
 waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
 wait 2500
 both capture c-parked
-host hold w 2500 nowait
-wait 600
-host burst c-drive 4 300
+host hold w 1500 nowait
+wait 300
+host burst c-drive 3 250
 guest capture c-drive-p
 host release
 wait 2500
