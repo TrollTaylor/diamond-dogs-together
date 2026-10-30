@@ -417,4 +417,95 @@ do
     check(#sends == 2 and sends[2].id == 4000 and sends[2].cmd == 'SetPosition', 'a vehicle RIDE_BODY pose still places the vehicle')
     W.api, W.log = api, nil
 end
+-- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT op 54): the guest claims its pre-query's
+-- driver's seat, the host denies one it wants or drives (ties to the host) and grants the rest, then yields.
+local function seatEnv(host)
+    local c = {tx = {}, notes = {}, logs = {}, deny = {}, now = 1000, want = 65535, age = -1, on = 1}
+    local W = {OP = {}, handlers = {}, paired = true, eff = 3, mission = 30010, epoch = 7, host = host,
+        now = function() return c.now end,
+        tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return true end,
+        tick = function() end,
+        log = function(s) c.logs[#c.logs + 1] = s end,
+        note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end}
+    W.receipt = function(src)
+        local cmd = src:match("^return 'MGS_COOP_BOARD_SEAT_V1' %-%- (.+)$")
+        assert(cmd, 'the board seat receipt only: ' .. src)
+        local v, ms = cmd:match('^deny (%d+) (%d+)$')
+        if v then c.deny[#c.deny + 1] = {tonumber(v), tonumber(ms)}; c.denied = tonumber(v) end
+        if c.on ~= 1 then return {ok = true, on = 0} end
+        return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = 0}
+    end
+    local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
+    env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
+    env.PlayerStatus = {ON_VEHICLE = 4}
+    env.vars = {playerVehicleGameObjectId = 65535}
+    env.Tpp = {IsVehicle = function(id) return id >= 25600 and id <= 26111 end}
+    local f = assert(loadfile(arg[1]))
+    setfenv(f, env)
+    f()
+    c.W, c.R, c.S = W, W.ridePose, W.ridePose.seat
+    function c.drive(id) c.driving = id; env.vars.playerVehicleGameObjectId = id or 65535 end
+    function c.has(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
+    return c
+end
+local gs = seatEnv(false)
+check(gs.W.OP.SEAT == 54 and type(gs.W.handlers[54]) == 'function' and type(gs.S) == 'table', 'SEAT is op 54 with a handler')
+gs.want, gs.age = 25608, 100
+gs.S.step(1000)
+check(#gs.tx == 1 and gs.tx[1][1] == 54 and gs.tx[1][2] == 1 and gs.tx[1][3] == 25608 and gs.tx[1][4] == 0 and gs.tx[1][5] == 2 and
+    gs.tx[1][6] == 1, 'the guest claims the driver seat its pre-query offers: seq 1, id, seat 0, role guest, claim')
+check(gs.has('event=seat;action=claim;vehicle=25608;role=guest;age=100'), 'the claim line')
+gs.S.step(1100)
+gs.S.step(1300)
+check(#gs.tx == 1, 'one claim per 500 ms (and one step per 200 ms)')
+gs.S.step(1600)
+check(#gs.tx == 2 and gs.tx[2][2] == 2, 'the claim repeats while the want lasts')
+gs.age = 700
+gs.S.step(2200)
+check(#gs.tx == 2, 'a stale want (over 600 ms) is not claimed')
+gs.W.handlers[54]({5, 25608, 0, 1, 3})
+check(gs.deny[1][1] == 25608 and gs.deny[1][2] == 3000 and gs.has('event=seat;action=deny;vehicle=25608;role=guest;set=1'),
+    "the host's deny: 3 s of native deny on the guest")
+check(#gs.notes == 1 and gs.notes[1][1] == 13 and gs.notes[1][2] == 6, 'the guest gets the seat-race toast (NOTE 13 a=6)')
+gs.W.handlers[54]({6, 25608, 0, 1, 3})
+check(#gs.notes == 1 and #gs.deny == 2, 'the deny is refreshed; one toast per 3 s')
+for _, bad in ipairs({{7, 25608, 0, 2, 3}, {7, 25608, 1, 1, 3}, {7, 25599, 0, 1, 3}, {7, 25608, 0, 1}}) do
+    gs.W.handlers[54](bad)
+end
+check(#gs.deny == 2, "the guest ignores a guest-role op, another seat, a non-vehicle id, a short op")
+gs.W.handlers[54]({8, 25609, 0, 1, 2})
+check(gs.has('event=seat;action=grant;vehicle=25609;role=guest') and #gs.deny == 2, 'a grant changes nothing on the guest')
+local off = seatEnv(false)
+off.on, off.want, off.age = 0, 25608, 10
+off.S.step(1000)
+off.S.step(1400)
+check(#off.tx == 0 and off.has('event=seat;state=off') and #off.logs == 1, 'key off on this copy: one state=off line, nothing sent')
+off.on = 1
+off.S.step(2000)
+check(#off.tx == 0 and #off.logs == 1, 'off stays off for the pairing (one read)')
+-- Host.
+local hs = seatEnv(true)
+hs.want, hs.age = 25608, 300
+hs.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hs.tx == 1 and hs.tx[1][3] == 25608 and hs.tx[1][5] == 1 and hs.tx[1][6] == 3 and
+    hs.has('event=seat;action=deny;vehicle=25608;role=host;why=host_first'), 'the host wants it too: deny (ties go to the host)')
+local hd = seatEnv(true)
+hd.drive(25608)
+hd.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hd.tx == 1 and hd.tx[1][6] == 3 and hd.has('why=host_drives'), 'the host drives it: deny')
+local hg = seatEnv(true)
+hg.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hg.tx == 1 and hg.tx[1][6] == 2 and hg.has('event=seat;action=grant;vehicle=25608;role=host') and hg.S.granted[25608] == 1000,
+    'nobody else wants it: grant')
+hg.want, hg.age = 25608, 50
+hg.S.step(1200)
+check(hg.deny[1] and hg.deny[1][1] == 25608 and hg.deny[1][2] == 3000 and hg.has('event=seat;action=yield;vehicle=25608;role=host'),
+    'the host reaching for a vehicle it granted yields it (its own native deny)')
+check(#hg.notes == 1 and hg.notes[1][1] == 13 and hg.notes[1][2] == 7, 'the yield toast (NOTE 13 a=7)')
+hg.S.step(4600)
+check(hg.S.granted[25608] == nil, 'a grant lapses after 3 s without a new claim')
+hg.W.handlers[54]({2, 25608, 0, 1, 1})
+hg.W.handlers[54]({3, 25608, 0, 2, 2})
+check(#hg.tx == 1, 'the host answers only guest claims')
+
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

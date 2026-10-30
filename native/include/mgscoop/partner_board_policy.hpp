@@ -214,6 +214,29 @@ inline std::uint32_t PhaseOneDword(std::uint32_t dword, std::uint8_t imm) noexce
     return (dword & 0xFFFF00FFu) | (static_cast<std::uint32_t>(imm) << 8);
 }
 
+// --- M6 seat races (lab key partner_ride_race; docs/vehicles-companions-design.md 4 rule 3, 5 SEAT) ---
+// Before either player sits in an empty vehicle, each copy's pre-query (site A) records the vehicle its
+// player could take as the driver (a stock search that found seat 0 or 1: stock phase 1 makes both the
+// driver). The world SEAT op (lua/coop/world_ride_pose.lua) claims it for the guest; the host denies a
+// claim for a vehicle its own player wants or drives (ties go to the host) and grants the rest (the host
+// then yields that vehicle for a while). A live deny makes both wrappers answer 4 for that vehicle in the
+// stock verdict only (no ride icon, phase 1's no-seat exit): the loser stays on foot. Once the winner
+// drives, the peer-driver policy decides as before (the loser may still take a passenger seat).
+inline constexpr std::uint32_t kRaceDenyMaxMs = 5000;
+// A want needs the player beside the vehicle: within kRaceNearM (horizontal) of the record's origin
+// (unit+0x20; a truck's origin is its bed, about 3 m behind the cab doors).
+inline constexpr float kRaceNearM = 4.5f;
+inline constexpr std::size_t kUnitPos = 0x20;  // float x, y, z (partner_vehicle::kPos)
+inline bool RaceWantSeat(Verdict verdict, std::uint8_t result) noexcept { return verdict == Verdict::stock && result <= kFrontSeat; }
+inline bool RaceNear(const float* player, const float* vehicle) noexcept {
+    if (!player || !vehicle) return false;
+    const float dx = player[0] - vehicle[0], dz = player[2] - vehicle[2];
+    return dx * dx + dz * dz <= kRaceNearM * kRaceNearM;
+}
+inline bool RaceDenied(std::uint16_t deny_vehicle, std::uint32_t deny_until, std::uint32_t now_ms, std::uint16_t vehicle) noexcept {
+    return deny_vehicle != kVehicleUnknown && vehicle == deny_vehicle && static_cast<std::uint32_t>(deny_until - now_ms) <= kRaceDenyMaxMs;
+}
+
 // --- The local passenger report (sender) --------------------------------------
 // Lua reports a passenger as on foot (PlayerStatus.ON_VEHICLE is set only for
 // act 0x6F in UpdatePlayerInfo 0x12CE870), so native reads it: the local act is

@@ -612,6 +612,11 @@ struct LabConfig {
     bool partner_ride_front_given = false;
     bool partner_ride_cab = false;
     bool partner_ride_cab_given = false;
+    // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT; partner_board "seat races",
+    // lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an empty
+    // vehicle both players reach; the loser gets no ride icon and a toast. Off unless named, in lab and play.
+    bool partner_ride_race = false;
+    bool partner_ride_race_given = false;
     // G4 truck test levers (vehicle_door, docs/native-puppet.md "Truck test levers"): the native
     // door-spot receipt behind debug goto_vehicle truck / goto_partner_vehicle / vehicle_door
     // (three read-only game calls under SEH). Default 0 in lab and play with a _given flag; play

@@ -166,7 +166,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
     # G4 truck test levers: the native door spot (lab only, default 0)
     'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
-    'partner_ride_front=1','partner_ride_front=0','guest:partner_ride_cab=1','host:partner_ride_cab=0',
+    'partner_ride_front=1','partner_ride_front=0','guest:partner_ride_cab=1','host:partner_ride_cab=0','partner_ride_race=1',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
@@ -197,7 +197,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
     'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
-    'partner_ride_front=2','partner_ride_front=on','partner_ride_cab=','both:partner_ride_cab=1',
+    'partner_ride_front=2','partner_ride_front=on','partner_ride_cab=','both:partner_ride_cab=1','partner_ride_race=yes',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
@@ -220,7 +220,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
         'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
-        'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1',
+        'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1','labsetting partner_ride_race=1',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',

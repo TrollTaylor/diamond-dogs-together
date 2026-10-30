@@ -1000,8 +1000,8 @@ W5 full campaign/progression and W6 AI transforms remain design work.
 World op codes 0x1D-0x1F, 0x32, 0x35-0x37 and 0x3B onward are available (0x2A-0x2D are the
 ride ops, 0x2E/0x2F VEHICLE_GONE, section 16; 0x30/0x31/0x38/0x39 the companion ops, section 15; 0x33
 VEHICLE_STATE, section 17; 0x34 VEHICLE_SPAWN, the M3 sortie vehicle, docs/vehicles-companions-design.md 6.3;
-0x3A VEHICLE_DAMAGE, the guest's vehicle damage report, section 20;
-0x32 and 0x35-0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
+0x3A VEHICLE_DAMAGE, the guest's vehicle damage report, section 20; 0x36 SEAT, the M6 seat races, section 21;
+0x32, 0x35 and 0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
 section 5); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
@@ -1798,3 +1798,32 @@ partner and the builds before this review read the same bytes. Behaviour on the 
   `event=relief;...;step=prepair_lapsed`).
 - Worker: `titlecontinue <role> <s>` (the host's title Continue without pressing its next loading screen) for the
   pre-PAIRED window in `-Mode play`. Scenarios `vehicle-review-lab.txt`, `vehicle-review-play.txt`.
+
+## 21. Seat races (M6, docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 6.6)
+
+Op `0x36` SEAT (54, the code the design reserved for it), both directions, reliable, world queue, level 3, lab and
+play, never a request; 5 fields, 7 bytes: `seq` (u16 1..), `id` (u16 25600..26111, the sender's TppVehicle2 id),
+`seat` (u8 0..3; 0, the driver's, is the only one raced today), `role` (u8 1 host / 2 guest: the sender), `action`
+(u8 1 claim / 2 grant / 3 deny). Sent and applied by `lua/coop/world_ride_pose.lua` (`R.seat`) only while the
+native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs lab.ini `partner_ride_race=1` (off in lab
+and play unless named) and the board installed.
+
+- **Want.** The board's pre-query (site A, `native/partner_board.cpp` `RaceStep`) records the empty vehicle its
+  player could take as the driver: a stock search that found seat 0 or 1 (stock phase 1 makes both the driver),
+  with the player within 4.5 m (horizontal) of the record's origin.
+- **Guest.** Every 500 ms while its want is at most 600 ms old it sends `claim` for that vehicle
+  (`event=seat; action=claim; vehicle=..; role=guest; age=..`, the first 20 logged).
+- **Host.** On a claim it sends `deny` when its own player drives that vehicle (`why=host_drives`) or wants it within
+  the last 1000 ms (`why=host_first`: ties go to the host), else `grant`, and then yields that vehicle for 3 s
+  while the guest keeps claiming it: its own want for it sets a native deny (`action=yield`, NOTE 13 a=7).
+- **Deny.** The guest sets a 3 s native deny for the vehicle (`event=seat; action=deny; vehicle=..; role=guest;
+  set=1`, NOTE 13 a=6, one toast per 3 s): both board sites answer 4 for it in the stock verdict (no ride icon, phase
+  1's no-seat exit), so the loser stays on foot. Once the winner drives, the peer-driver policy decides as before
+  (passenger or block), so the loser can still take a passenger seat.
+- **Not covered.** A guest that presses within one round trip of its icon appearing while the host presses too can
+  still become a second driver (the existing `board_uncertain; reason=two_drivers` latch logs it); passenger seats
+  are not raced (the board never offers the peer's seat).
+
+**Compatibility.** A partner whose op table lacks 0x36 (0.14.4 and older) skips it by its length (`unknown_op`,
+section 3): the guest's claims go unanswered and nothing is denied (the stock behaviour). Play pairing refuses
+mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37 stay reserved; 0x3B onward are free.

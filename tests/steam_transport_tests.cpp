@@ -2584,8 +2584,15 @@ void TestHud() {
                   std::strcmp(sentence, "Only the host can order a loadout drop in co-op: it can carry a vehicle.") == 0 &&
                   std::strlen(sentence) < hud::kToastChars,
               "FormatWorldNote: the M3 vehicle refusal sentences");
+        // M6 seat races: a = 6 the guest lost the driver's seat to the host, 7 the host yields it to the guest.
+        Check(text::FormatWorldNote(13, 6, 0, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner is getting into the driver's seat: take another seat or wait.") == 0 &&
+                  text::FormatWorldNote(13, 7, 0, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner reached the driver's seat first: take another seat or wait.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "FormatWorldNote: the M6 seat race sentences");
         Check(!text::FormatWorldNote(13, 0, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0 &&
-                  !text::FormatWorldNote(13, 6, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
+                  !text::FormatWorldNote(13, 8, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: an unknown companion reason has no toast");
         Check(text::FormatWorldNote(16, 40010, 40050, 40050, 40010, sentence, sizeof(sentence)) &&
                   std::strcmp(sentence,

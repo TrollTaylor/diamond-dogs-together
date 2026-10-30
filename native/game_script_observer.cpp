@@ -1002,7 +1002,13 @@ const char* PartnerBoardInstall(void*) noexcept {
     mgscoop::partner_board::SeatOpts opts{};
     opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
     opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
-    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
+    const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
+    // M6 seat races (lab.ini partner_ride_race, off unless named): the pre-query's want and the SEAT deny.
+    if (!why && config.partner_ride_race && !mgscoop::partner_board::LiveRace()) {
+        mgscoop::partner_board::SetRace(true);
+        Log("partner_board=race; result=ok\r\n");
+    }
+    return why;
 }
 bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
 void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
@@ -4392,6 +4398,45 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
+// M6 seat races (lua/coop/world_ride_pose.lua SEAT op 54; lab.ini partner_ride_race=1; partner_board "seat races"):
+//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle 25600..26111> <ms 1..5000>
+//   -> return {ok=true,on=0}                                   (the key off or the board not installed)
+//   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>}
+//   -> return {ok=false,reason='request'}
+// Atomics only: the board wrappers read the deny, the pre-query writes the want.
+bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static constexpr char kPrefix[] = "return 'MGS_COOP_BOARD_SEAT_V1' -- ";
+    constexpr std::size_t prefix = sizeof(kPrefix) - 1;
+    if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, kPrefix, prefix) != 0) return false;
+    world_quiet = true;
+    static char reply[160]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    namespace pb = mgscoop::partner_board;
+    const char* text = buffer + prefix;
+    const std::size_t n = size - prefix;
+    if (!pb::LiveRace()) return finish("return {ok=true,on=0}");
+    if (n == 4 && std::memcmp(text, "poll", 4) == 0) {
+    } else if (n == 5 && std::memcmp(text, "clear", 5) == 0) {
+        pb::RaceDeny(pb::kVehicleUnknown, 0);
+    } else {
+        unsigned vehicle = 0, ms = 0;
+        char tail = 0;
+        char copy[40]{};
+        if (n >= sizeof(copy)) return finish("return {ok=false,reason='request'}");
+        std::memcpy(copy, text, n);
+        if (sscanf_s(copy, "deny %u %u%c", &vehicle, &ms, &tail, 1u) != 2 || vehicle < 25600 || vehicle > 26111 || ms < 1 ||
+            ms > pb::kRaceDenyMaxMs)
+            return finish("return {ok=false,reason='request'}");
+        pb::RaceDeny(static_cast<std::uint16_t>(vehicle), ms);
+    }
+    pb::RaceState rs{};
+    pb::ReadRace(rs);
+    const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
+    if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply), "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u}", unsigned(rs.want),
+                                age, unsigned(rs.deny), rs.deny_left_ms, rs.hits)))
+        return finish("return {ok=false,reason='format'}");
+    return finish(reply);
+}
 // M4 VEHICLE_STATE (lua/coop/world_vehicle_state.lua, docs/vehicles-companions-design.md 6.4; lab.ini
 // world_vehicle_state=1, lab and play): read-only body life and state words of this copy's TppVehicle2 pool.
 //   return 'MGS_COOP_VEHICLE_LIFE_V1' -- <first id 25600..26111> <n 1..32>
@@ -5137,6 +5182,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
+    if (SelectBoardSeatReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleLifeReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;

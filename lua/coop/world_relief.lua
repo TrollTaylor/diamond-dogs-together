@@ -297,7 +297,7 @@ function R.vehicles(a)
             if type(r) == "table" then for k = 1, 16 do if r[k] == nil then break end s[k] = num(r[k]) end end
             local p, x, y, z = send(id, {id = "GetPosition"})
             if p ~= nil then local ok; ok, x, y, z = pcall(function() return p:GetX(), p:GetY(), p:GetZ() end) end
-            W.log(fmt("event=vehicle_census; id=%d; type=%s; seats=%d; riders=%s; x=%s; y=%s; z=%s", id, num(t), #s,
+            W.log(fmt("event=vehicle_census;id=%d;type=%s;seats=%d;riders=%s;x=%s;y=%s;z=%s", id, num(t), #s,
                 #s > 0 and concat(s, ",") or "none", num(x, "%.1f"), num(y, "%.1f"), num(z, "%.1f")))
             found = found + 1
             if #o < 8 then o[#o + 1] = fmt("%d:%s:%d", id, num(t), #s) end
@@ -332,6 +332,14 @@ function R.run(a)
         return true, fmt("relief_seize=%s;hooks=%d;hook=%s", a[2], R.seizeHooks or 0, hook)
     elseif cmd == "relief_remove" and (#a == 2 or #a == 3 and a[3] == "quiet") and REMOVE[a[2]] then
         return R.remove(a[2], a[3] == "quiet")
+    elseif cmd == "relief_load" and #a == 4 and a[3] == "here" then
+        -- M6 (lab): relief_load <type> here <dist 3..30>: dist metres ahead of the player (vars.playerRotY, degrees),
+        -- 1 m up, facing the same way (rotY in radians).
+        local t, d = real(a[2], 1, 10), real(a[4], 3, 30)
+        local px, py, pz, ry = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ"), W.get(vars, "playerRotY")
+        if not (t and t == floor(t) and d and n(px) and n(py) and n(pz) and n(ry)) then return false, "relief_args" end
+        local yaw = math.rad(ry)
+        return R.load(t, px + d * math.sin(yaw), py + 1, pz + d * math.cos(yaw), yaw)
     elseif cmd == "relief_load" and #a == 6 then
         local t, x, y, z, r = real(a[2], 1, 10), real(a[3], -10000, 10000), real(a[4], -1000, 3000), real(a[5], -10000, 10000), real(a[6], -7, 7)
         if not (t and t == floor(t) and x and y and z and r) then return false, "relief_args" end

@@ -309,6 +309,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_cab_given = true;
         if (!ok) result.partner_ride_cab = false;
     }
+    else if (Equals(key, "partner_ride_race")) {
+        ok = ParseBool(value, result.partner_ride_race);
+        result.partner_ride_race_given = true;
+        if (!ok) result.partner_ride_race = false;
+    }
     else if (Equals(key, "debug_vehicle_door")) {
         // G4 truck test levers (lab only, default 0); a named value records _given.
         ok = ParseBool(value, result.debug_vehicle_door);
@@ -1675,6 +1680,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // and play, until a hidden-run FRAME on both copies and a -Mode play -WanSim bad rehearsal.
     if (!c.partner_ride_front_given) c.partner_ride_front = false;
     if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
+    // M6 seat races (SEAT op 54): off unless named, in lab and play, until a FRAME proof and a play rehearsal.
+    if (!c.partner_ride_race_given) c.partner_ride_race = false;
     // F2 cardboard box on body 1 follows the gun profile in lab and play (hidden
     // run 05cffdd1: the viewer saw the box model on the partner body, moving and
     // taken off, both directions, its own player never boxed); play admits it

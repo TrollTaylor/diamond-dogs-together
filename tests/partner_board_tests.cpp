@@ -614,6 +614,68 @@ void TestSeatOneInstall() {
     }
 }
 
+// M6 seat races (partner_ride_race): the pre-query's want and the SEAT deny, stock verdict only.
+void TestRace() {
+    unsigned char unit[0x80]{};
+    const std::uint16_t index = 8;  // 25608
+    std::memcpy(unit + pb::kUnitIndex, &index, 2);
+    unsigned char other[0x80]{};
+    const std::uint16_t index9 = 9;
+    std::memcpy(other + pb::kUnitIndex, &index9, 2);
+    const float pos[4]{1, 2, 3, 0};
+    Check(pb::RaceWantSeat(pb::Verdict::stock, 0) && pb::RaceWantSeat(pb::Verdict::stock, 1) && !pb::RaceWantSeat(pb::Verdict::stock, 2) &&
+              !pb::RaceWantSeat(pb::Verdict::stock, pb::kNoSeat) && !pb::RaceWantSeat(pb::Verdict::seats, 0),
+          "a want is a stock driver's seat (0, or 1 which phase 1 makes the driver)");
+    Check(pb::RaceDenied(25608, 4000, 1000, 25608) && !pb::RaceDenied(25608, 4000, 1000, 25609) && !pb::RaceDenied(25608, 999, 1000, 25608) &&
+              !pb::RaceDenied(pb::kVehicleUnknown, 4000, 1000, 0xFFFF) && !pb::RaceDenied(25608, 7000, 1000, 25608),
+          "a deny is that vehicle, inside its window (at most 5 s ahead)");
+    Bind();
+    pb::RaceState rs{};
+    pb::ReadRace(rs);
+    Check(!rs.on && rs.want == pb::kVehicleUnknown && rs.want_age_ms == 0xFFFFFFFFu && rs.deny == pb::kVehicleUnknown, "off, nothing wanted");
+    g.nearest_result = 0;
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "race off: stock");
+    pb::ReadRace(rs);
+    Check(rs.want == pb::kVehicleUnknown, "race off: no want recorded");
+    pb::SetRace(true);
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "race on, no deny: stock");
+    pb::ReadRace(rs);
+    Check(rs.on && rs.want == 25608 && rs.want_age_ms == 0, "the pre-query records the driver's seat it offers");
+    g.now = 1300;
+    pb::ReadRace(rs);
+    Check(rs.want_age_ms == 300, "the want ages");
+    const float away[4]{20, 2, 20, 0};
+    Check(pb::detail::SiteAForTest(unit, away, 0, 1) == 0, "a stock seat 28 m away");
+    pb::ReadRace(rs);
+    Check(rs.want == 25608 && rs.want_age_ms == 300, "is no want (the 4.5 m near gate)");
+    pb::RaceDeny(25608, 3000);
+    pb::ReadRace(rs);
+    Check(rs.deny == 25608 && rs.deny_left_ms == 3000, "the deny is live for 3 s");
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == pb::kNoSeat, "denied: no ride icon");
+    g.driver_result = 1;
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: phase 1 takes the no-seat exit");
+    Check(pb::detail::SiteAForTest(other, pos, 0, 1) == 0, "another vehicle is not denied");
+    pb::ReadRace(rs);
+    Check(rs.hits == 2 && rs.want == 25609, "two searches answered 4; the want follows the last offer");
+    Policy(pb::Mode::passenger, 25608);
+    g.type_value = 2; g.count_value = 4; g.nearest_result = 2;
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 2 && g.first == 2, "the winner drives: the passenger policy decides, no deny");
+    Policy(pb::Mode::off);
+    g.nearest_result = 0;
+    g.now = 4301;
+    Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "the deny expired");
+    pb::RaceDeny(25608, 60000);
+    pb::ReadRace(rs);
+    Check(rs.deny == 25608 && rs.deny_left_ms == pb::kRaceDenyMaxMs, "a deny is capped at 5 s");
+    pb::RaceDeny(pb::kVehicleUnknown, 0);
+    pb::ReadRace(rs);
+    Check(rs.deny == pb::kVehicleUnknown, "cleared");
+    pb::RaceDeny(0x2003, 1000);
+    pb::ReadRace(rs);
+    Check(rs.deny == pb::kVehicleUnknown, "a non-vehicle id is never denied");
+    pb::detail::ResetForTest();
+}
+
 void TestSeatOneLocalPassenger() {
     Memory m = Passenger();
     Lookup l;
@@ -663,6 +725,7 @@ int main() {
     TestSeatOneWrappers();
     TestSeatOneInstall();
     TestSeatOneLocalPassenger();
+    TestRace();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);
     return 0;

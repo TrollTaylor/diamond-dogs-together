@@ -45,6 +45,22 @@ using NowFn = std::uint64_t (*)() noexcept;
 const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts = {}) noexcept;
 // The seat-1 options that are live (both off until Install armed them).
 SeatOpts LiveSeatOpts() noexcept;
+// M6 seat races (partner_ride_race; partner_board_policy.hpp "seat races"): on, the pre-query records the
+// empty vehicle the local player could drive (want) and a live deny answers 4 for that vehicle in the
+// stock verdict at both sites. RaceDeny(vehicle, ms) sets it for ms (at most kRaceDenyMaxMs; 0 or 0xFFFF
+// clears). The wrappers only read u16 unit+0x78 for it (SEH).
+void SetRace(bool on) noexcept;
+bool LiveRace() noexcept;
+void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept;
+struct RaceState {
+    bool on;
+    std::uint16_t want;           // the last vehicle the pre-query offered as the driver's (0xFFFF none)
+    std::uint32_t want_age_ms;    // since then (0xFFFFFFFF none)
+    std::uint16_t deny;           // the denied vehicle while live (0xFFFF none)
+    std::uint32_t deny_left_ms;
+    std::uint32_t hits;           // searches answered 4 by the deny (process lifetime)
+};
+void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;
 const char* InstallRefusal() noexcept;
 // Both call sites still call our stubs (the driver checks it every tick).

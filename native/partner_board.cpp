@@ -46,6 +46,11 @@ std::atomic<std::uint64_t> g_policy{0};
 std::atomic<std::uint8_t> g_opts{0};
 detail::LimitFn g_limit = nullptr;
 std::atomic<std::uint32_t> g_seat_one{0};
+// M6 seat races: on, the want (vehicle | ms << 32), the deny (vehicle | until << 32), the deny hits.
+std::atomic<bool> g_race{false};
+std::atomic<std::uint64_t> g_want{kVehicleUnknown};
+std::atomic<std::uint64_t> g_deny{kVehicleUnknown};
+std::atomic<std::uint32_t> g_race_hits{0};
 std::atomic<std::uint32_t> g_calls[2]{}, g_block[2]{}, g_steer[2]{}, g_faults{0};
 std::atomic<std::uint32_t> g_last_seat[2]{};
 std::atomic<std::uint32_t> g_last_vehicle{kVehicleUnknown}, g_last_type{0xFF}, g_last_count{0xFF};
@@ -141,6 +146,37 @@ void Note(unsigned site, const Pick& k, std::uint8_t result) noexcept {
 // Site A 0x12458AC: the pre-query 0x1245820's nearest free seat (its own range).
 // The caller's last error is restored before the original runs (our reads and
 // getters never leak into it); Note only touches atomics.
+// M6 seat races: the stock verdict's want (site A) and deny (both sites). The index read is the
+// wrappers' own SEH read; an unreadable index leaves the stock result.
+// The record's origin (unit+0x20, three floats) under SEH.
+bool ReadUnitPos(void* unit, float (&out)[3]) noexcept {
+    if (!unit) return false;
+    __try {
+        const auto* p = reinterpret_cast<const volatile float*>(static_cast<const unsigned char*>(unit) + kUnitPos);
+        out[0] = p[0];
+        out[1] = p[1];
+        out[2] = p[2];
+        return true;
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+std::uint8_t RaceStep(void* unit, const float* pos, Verdict verdict, std::uint8_t result, bool record) noexcept {
+    if (!g_race.load(std::memory_order_acquire) || verdict != Verdict::stock || result == kNoSeat) return result;
+    std::uint16_t index = 0xFFFF;
+    if (!ReadIndex(unit, index) || index >= 0x200) return result;
+    const auto vehicle = static_cast<std::uint16_t>(kVehicleBase | index);
+    const std::uint32_t now = g_now ? static_cast<std::uint32_t>(g_now()) : 0u;
+    float at[3]{};
+    if (record && RaceWantSeat(verdict, result) && ReadUnitPos(unit, at) && RaceNear(pos, at))
+        g_want.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+    const std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+    if (RaceDenied(static_cast<std::uint16_t>(deny & 0xFFFFu), static_cast<std::uint32_t>(deny >> 32), now, vehicle)) {
+        g_race_hits.fetch_add(1, std::memory_order_relaxed);
+        return kNoSeat;
+    }
+    return result;
+}
 std::uint8_t SiteA(void* unit, const float* pos, std::uint8_t first, std::uint8_t last) noexcept {
     const DWORD error = GetLastError();
     const Pick k = Choose(unit);
@@ -148,6 +184,7 @@ std::uint8_t SiteA(void* unit, const float* pos, std::uint8_t first, std::uint8_
     std::uint8_t result = kNoSeat;
     if (k.verdict == Verdict::stock) result = g_nearest(unit, pos, first, last);
     else if (k.verdict == Verdict::seats) result = g_nearest(unit, pos, k.first, k.last);
+    result = RaceStep(unit, pos, k.verdict, result, true);
     Note(0, k, result);
     return result;
 }
@@ -162,6 +199,7 @@ std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     std::uint8_t result = kNoSeat;
     if (k.verdict == Verdict::stock) result = g_driver(unit, pos);
     else if (k.verdict == Verdict::seats) result = g_nearest(unit, pos, k.first, k.last);
+    result = RaceStep(unit, pos, k.verdict, result, false);
     if (g_opts.load(std::memory_order_acquire) && g_limit) {
         const std::uint8_t limit = PhaseOneLimit(k.verdict, result, true);
         const DWORD before = GetLastError();
@@ -297,6 +335,10 @@ void ResetForTest() noexcept {
     g_opts.store(0);
     g_limit = nullptr;
     g_seat_one.store(0);
+    g_race.store(false);
+    g_want.store(kVehicleUnknown);
+    g_deny.store(kVehicleUnknown);
+    g_race_hits.store(0);
     for (unsigned i = 0; i < 2; ++i) {
         g_calls[i].store(0);
         g_block[i].store(0);
@@ -417,6 +459,33 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, Se
 }
 
 SeatOpts LiveSeatOpts() noexcept { return UnpackOpts(g_opts.load(std::memory_order_acquire)); }
+
+void SetRace(bool on) noexcept { g_race.store(on, std::memory_order_release); }
+bool LiveRace() noexcept { return g_race.load(std::memory_order_acquire); }
+void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+    if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) {
+        g_deny.store(kVehicleUnknown, std::memory_order_release);
+        return;
+    }
+    const std::uint32_t now = g_now ? static_cast<std::uint32_t>(g_now()) : 0u;
+    const std::uint32_t until = now + (ms < kRaceDenyMaxMs ? ms : kRaceDenyMaxMs);
+    g_deny.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(until) << 32, std::memory_order_release);
+}
+void ReadRace(RaceState& out) noexcept {
+    out = RaceState{};
+    out.on = g_race.load(std::memory_order_acquire);
+    const std::uint32_t now = g_now ? static_cast<std::uint32_t>(g_now()) : 0u;
+    const std::uint64_t want = g_want.load(std::memory_order_acquire);
+    out.want = static_cast<std::uint16_t>(want & 0xFFFFu);
+    out.want_age_ms = out.want == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(want >> 32);
+    const std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+    const auto dv = static_cast<std::uint16_t>(deny & 0xFFFFu);
+    const auto du = static_cast<std::uint32_t>(deny >> 32);
+    const bool live = dv != kVehicleUnknown && static_cast<std::uint32_t>(du - now) <= kRaceDenyMaxMs;
+    out.deny = live ? dv : kVehicleUnknown;
+    out.deny_left_ms = live ? du - now : 0;
+    out.hits = g_race_hits.load(std::memory_order_relaxed);
+}
 
 bool Installed() noexcept { return g_installed != 0; }
 const char* InstallRefusal() noexcept { return g_refusal; }

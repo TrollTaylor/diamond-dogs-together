@@ -239,6 +239,14 @@ int main() {
         }
         const auto later = Lab("enabled=1\nrole=host\npartner_ride_cab=1\npartner_ride_cab=0\n");
         Check(!later.partner_ride_cab, "a later 0 turns the cab key off");
+        // The seat races key (SEAT op 54): the same rules.
+        Check(!LabConfig{}.partner_ride_race && !Lab(gun + "mode=play\n").partner_ride_race && !Lab(gun + "mode=lab\n").partner_ride_race,
+              "the race key defaults off in lab and play");
+        const auto race = Lab(gun + "mode=play\npartner_ride_race=1\n");
+        Check(race.partner_ride_race && race.partner_ride_race_given && race.invalid_values == 0 && race.play_refused == 0,
+              "a named race key runs in play");
+        const auto badRace = Lab("enabled=1\nrole=host\npartner_ride_race=maybe\n");
+        Check(!badRace.partner_ride_race && badRace.partner_ride_race_given && badRace.invalid_values == 1, "an invalid race value refuses");
         for (const char* value : {"2", "-1", "", "maybe"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_front=") + value + "\n");
             Check(!invalid.partner_ride_front && invalid.partner_ride_front_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,

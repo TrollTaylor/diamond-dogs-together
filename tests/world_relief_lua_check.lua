@@ -255,6 +255,21 @@ good, why = e:run('relief_load 9 805 343 1636.5 0')
 check(not good and why == 'relief_load;type=9;call=0;alive=0' and e:has('step=load;m=30010;write=1;call=0;before=0;ct=9;'),
     'a LoadCarry error is reported, not raised')
 
+-- M6 (lab): relief_load <type> here <dist>: dist metres ahead of the player (playerRotY degrees), 1 m up, same heading.
+c = Fixture(1, {alive = false, loadSpawns = true})
+c.env.vars.missionCode = 30010
+c.env.vars.playerRotY = 90
+ok, text = c:run('relief_load 4 here 8')
+check(ok and text == 'relief_load;type=4;call=1;alive=1' and math.abs(c.env.vars.reliefVehicleCarryAttitude[0] - 808) < 1e-6 and
+    math.abs(c.env.vars.reliefVehicleCarryAttitude[2] - 1630) < 1e-6 and c.env.vars.reliefVehicleCarryAttitude[1] == 344 and
+    math.abs(c.env.vars.reliefVehicleCarryAttitude[3] - math.pi / 2) < 1e-9, 'here: 8 m ahead (east), 1 m up, facing the same way')
+for _, bad in ipairs({'relief_load 4 here 2', 'relief_load 4 here 31', 'relief_load 4 there 8', 'relief_load 11 here 8'}) do
+    c = Fixture(1, {alive = false})
+    c.env.vars.playerRotY = 0
+    local good, why = c:run(bad)
+    check(not good and why == 'relief_args', 'strict here arguments: ' .. bad)
+end
+
 -- M3: relief_arm takes an optional paint (0..15 or fova0..fova2) for that type's preset (type 2: index 0).
 c = Fixture(1)
 c.env.Vehicle.paintType = {FOVA_0 = 0, FOVA_1 = 1, FOVA_2 = 2, NONE = 3}
@@ -283,7 +298,7 @@ check(ok and text == 'sync;relief_lab nonactive vehicle', 'relief_lab routed (th
 c = Fixture(2)
 ok, text = c:run('vehicle_census 0 4')
 check(ok and text == 'vehicle_census;first=0;n=4;found=1;25600:2:4', 'one live vehicle in 25600..25603: ' .. tostring(text))
-check(c:has('event=vehicle_census; id=25600; type=2; seats=4; riders=65535,65535,65535,65535; x=805.0; y=343.0; z=1636.5'),
+check(c:has('event=vehicle_census;id=25600;type=2;seats=4;riders=65535,65535,65535,65535;x=805.0;y=343.0;z=1636.5'),
     'one census line per live vehicle')
 for _, s in ipairs(c.sent) do
     check(s.cmd.id == 'GetVehicleType' or s.cmd.id == 'GetRiderId' or s.cmd.id == 'GetPosition', 'read-only commands only: ' .. tostring(s.cmd.id))

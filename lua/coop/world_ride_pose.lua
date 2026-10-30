@@ -413,6 +413,111 @@ W.handlers[FAST] = function(v)
     end
     R.trackPush(track, now, v[1], v[4], v[5], v[6], v[7])
 end
+-- M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT; lab.ini partner_ride_race=1 on both
+-- copies, lab and play, off unless named): SEAT (op 54: seq, TppVehicle2 id, seat 0, role 1 host / 2 guest,
+-- action 1 claim / 2 grant / 3 deny) keeps two players from both taking the driver's seat of one empty vehicle.
+-- The native board (MGS_COOP_BOARD_SEAT_V1) records the empty vehicle the local pre-query offers as the
+-- driver's (want) and answers 4 for a denied one (no ride icon, phase 1's no-seat exit). The guest claims its
+-- want every CLAIM_MS; the host denies a claim for a vehicle it drives or wants itself (its want within
+-- HOST_WANT_MS: ties go to the host) and grants the rest, then yields the granted vehicle for GRANT_MS (its own
+-- deny). A denied guest gets DENY_MS of deny and a toast (NOTE 13 a=6); the host yielding gets NOTE 13 a=7.
+-- A want needs the player within 4.5 m of the vehicle (the native board's near gate).
+-- Once the winner drives, the peer-driver policy decides (the loser may take a passenger seat). A partner
+-- without op 54 (0.14.4 and older) skips it by its length; the guest's claims then go unanswered (stock).
+local SEAT = 54
+W.OP.SEAT = SEAT
+local S = {seq = 0, next = 0, claimAt = {}, granted = {}, toastAt = 0, off = nil, n = {claim = 0, grant = 0, deny = 0, yield = 0}}
+R.seat = S
+local SEAT_TICK, CLAIM_MS, WANT_MS, HOST_WANT_MS, GRANT_MS, DENY_MS, TOAST_MS = 200, 500, 600, 1000, 3000, 3000, 3000
+S.CLAIM_MS, S.HOST_WANT_MS, S.GRANT_MS, S.DENY_MS = CLAIM_MS, HOST_WANT_MS, GRANT_MS, DENY_MS
+local CLAIM, GRANT, DENY = 1, 2, 3
+local function seatLog(text) if type(W.log) == "function" then pcall(W.log, "event=seat;" .. text) end end
+function S.board(cmd)
+    if type(W.receipt) ~= "function" then return nil end
+    local ok, r = pcall(W.receipt, "return 'MGS_COOP_BOARD_SEAT_V1' -- " .. cmd)
+    if ok and type(r) == "table" and r.ok == true then return r end
+end
+local function seatVehicle(id) return integer(id, 25600, 26111) end
+local function toast(a, now)
+    if now < S.toastAt then return end
+    S.toastAt = now + TOAST_MS
+    if type(W.note) == "function" then pcall(W.note, 13, a, 0) end
+end
+-- One SEAT op; the receiver checks the rest.
+function S.tx(vehicle, role, action)
+    S.seq = S.seq % 65535 + 1
+    return W.tx(SEAT, S.seq, vehicle, 0, role, action) == true
+end
+-- A fresh want of this copy (the native answer r).
+local function wants(r, vehicle, ms)
+    return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
+end
+-- The native answer is read once per pairing first: off (the key, or no board) stays off until the next pairing.
+function S.step(now)
+    if S.off or now < S.next then return end
+    S.next = now + SEAT_TICK
+    local r = S.board("poll")
+    if not r or r.on ~= 1 then
+        S.off = true
+        seatLog("state=off")
+        return
+    end
+    S.on = true
+    if W.host then
+        -- A vehicle granted to the guest stays yielded while the guest keeps claiming it.
+        for id, at in pairs(S.granted) do
+            if now - at > GRANT_MS then S.granted[id] = nil
+            elseif wants(r, id, HOST_WANT_MS) and r.deny ~= id then
+                S.board(string.format("deny %d %d", id, GRANT_MS))
+                S.n.yield = S.n.yield + 1
+                seatLog(string.format("action=yield;vehicle=%d;role=host", id))
+                toast(7, now)
+            end
+        end
+        return
+    end
+    -- Guest: claim the vehicle its pre-query offers as the driver's.
+    local id = r.want
+    if seatVehicle(id) and integer(r.age, 0, WANT_MS) and now - (S.claimAt[id] or -CLAIM_MS) >= CLAIM_MS and S.tx(id, 2, CLAIM) then
+        S.claimAt[id] = now
+        S.n.claim = S.n.claim + 1
+        if S.n.claim <= 20 then seatLog(string.format("action=claim;vehicle=%d;role=guest;age=%d", id, r.age)) end
+    end
+end
+W.handlers[SEAT] = function(v)
+    if not W.paired or not W.eff or W.eff < 3 or type(v) ~= "table" or #v ~= 5 then return end
+    local id, role, action = v[2], v[4], v[5]
+    if not seatVehicle(id) or v[3] ~= 0 then return end
+    local now = W.now and W.now() or 0
+    if W.host then
+        if role ~= 2 or action ~= CLAIM then return end
+        local r = S.board("poll")
+        if not r or r.on ~= 1 then return end
+        local why = R.localVehicle() == id and "host_drives" or wants(r, id, HOST_WANT_MS) and "host_first" or nil
+        if why then
+            S.tx(id, 1, DENY)
+            S.granted[id] = nil
+            S.n.deny = S.n.deny + 1
+            seatLog(string.format("action=deny;vehicle=%d;role=host;why=%s", id, why))
+        else
+            if not S.granted[id] then seatLog(string.format("action=grant;vehicle=%d;role=host", id)) end
+            S.tx(id, 1, GRANT)
+            S.granted[id] = now
+            S.n.grant = S.n.grant + 1
+        end
+        return
+    end
+    if role ~= 1 then return end
+    if action == DENY then
+        local r = S.board(string.format("deny %d %d", id, DENY_MS))
+        S.n.deny = S.n.deny + 1
+        seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d", id, r and r.deny == id and 1 or 0))
+        toast(6, now)
+    elseif action == GRANT and not S.grantLogged then
+        S.grantLogged = true
+        seatLog(string.format("action=grant;vehicle=%d;role=guest", id))
+    end
+end
 local tick = W.tick
 function W.tick(...)
     local now = W.now and W.now() or 0
@@ -422,6 +527,7 @@ function W.tick(...)
     end
     if tick then tick(...) end
     R.send(now)
+    if W.paired and W.eff and W.eff >= 3 then S.step(now) else S.off, S.granted = nil, {} end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)
