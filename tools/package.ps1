@@ -7,22 +7,28 @@
 # -Friend stages the player package, the Diamond Dogs Together drop-in zip
 # (0.14.0+): dist/DiamondDogsTogether-<version>-<UTC stamp>-<8 hex>/ holds
 #   DiamondDogsTogether-<version>.zip   the file players get
-#   package\                            exactly the zip's contents
-# The zip's ROOT is what goes into the MGSV game folder (next to mgsvtpp.exe):
+#   DDT-source-<version>.zip            the complete corresponding source (GPL)
+#   package\                            exactly the player zip's contents
+# Every release uploads BOTH zips to the same GitHub release (tag v<version>):
+# the GPL lets the source be offered "in the same way through the same place"
+# (GPLv3 section 6(d)) instead of inside every install. The source zip's name
+# never starts with DiamondDogsTogether- and contains "source", so the
+# launcher's update check never takes it for the update.
+# The player zip's ROOT is what goes into the MGSV game folder (next to mgsvtpp.exe):
 #   DiamondDogsTogether.exe             the launcher (setup, host/join, tools)
 #   dinput8.dll                         the loader
 #   mgs-coop\README.txt                 install, play, troubleshooting, uninstall
 #   mgs-coop\package.json               what the launcher checks (below)
 #   mgs-coop\THIRD_PARTY_NOTICES.md, DYNAMITE-LICENSE, MinHook-LICENSE.txt,
 #            ImGui-LICENSE.txt, tpp-mod-LICENSE
-#   mgs-coop\source.zip                 the complete corresponding source (GPL)
 # There are no .bat/.ps1/.psm1 files for players. Both the exe and the dll come
 # from one passing Invoke-WorkerChecks -Profile Release receipt (the stock46 gun
 # pieces, background worker OFF; the receipt hashes and keeps both).
 # package.json: product mgs-coop-local-package, version = the exe's X.Y.Z, the
 # pinned game hashes, one files[] row per file of the zip (exactly one with
 # target dinput8.dll; native/launcher/core/core_install.hpp ReadPackage) and the
-# runtime archive's target and hash.
+# runtime archive's target and hash, and source_archive (the source zip's name,
+# SHA-256 and file count).
 #
 # Without -Friend: the local development package of the owned installer
 # (install.bat, configure-role.bat, set-session-mode.ps1, payload\ and source\;
@@ -183,7 +189,9 @@ function Get-PackageSourceFiles {
         $files+=@(& rg --files docs -g '*.md')
         if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }
     } finally { Pop-Location }
-    $files+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
+    # docs/readme/logo.png: the launcher icon is generated from it
+    # (tools/launcher/make_launcher_assets.py), and its CTests read it.
+    $files+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs/readme/logo.png')
     if($Friend) {
         # rg skips the worktree's known MinHook junction. These paths were already
         # fingerprinted through the resolved dependency by the Release receipt;
@@ -250,7 +258,8 @@ if($Friend) {
     $readme=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'package-readme-player.txt')).Replace('@VERSION@',$version)
     if($readme.Contains('@')) { throw 'package-readme-player.txt has an unknown placeholder.' }
     Write-CrlfAscii (Join-Path $modDir 'README.txt') $readme
-    # The GPL source: one zip instead of a source folder, with its own hash list.
+    # The GPL source: its own zip next to the player zip (a release asset of
+    # its own), with its own hash list. Never inside the player zip.
     $sourceRows=@(Get-PackageSourceFiles)
     $sourceEntries=@()
     $sourceHashes=@()
@@ -262,11 +271,13 @@ if($Friend) {
     $sourceList=Join-Path $runRoot 'source-files.json'
     [IO.File]::WriteAllText($sourceList,($sourceHashes | ConvertTo-Json -Depth 3)+"`n",[Text.UTF8Encoding]::new($false))
     $sourceEntries+=@([pscustomobject]@{name='source-files.json';path=$sourceList})
-    $sourceZip=Join-Path $modDir 'source.zip'
+    $sourceZipName="DDT-source-$version.zip"
+    if($sourceZipName -match '^(DiamondDogsTogether-|mgs-coop-friend-)' -or $sourceZipName -notmatch 'source') { throw 'The source zip name could be taken for an update.' }
+    $sourceZip=Join-Path $runRoot $sourceZipName
     Write-PackageZip $sourceZip $sourceEntries $preparedUtc
     Assert-PackageZip $sourceZip $sourceEntries
     # package.json: one row per file of the zip (exactly one dinput8.dll row).
-    foreach($target in @($launcherName,'dinput8.dll') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name }) + @('mgs-coop/README.txt','mgs-coop/source.zip')) {
+    foreach($target in @($launcherName,'dinput8.dll') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name }) + @('mgs-coop/README.txt')) {
         $files+=@([ordered]@{source=$target;target=$target;sha256=(Get-Sha256Hex (Join-Path $contents $target))})
     }
     $manifest=[ordered]@{
@@ -275,6 +286,7 @@ if($Friend) {
         executable_sha256=$executableSha256;steam_dll_sha256=$steamDllSha256
         files=$files
         runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256;bytes=$archiveBytes;built_by=$launcherName}
+        source_archive=[ordered]@{name=$sourceZipName;sha256=(Get-Sha256Hex $sourceZip);files=$sourceRows.Count;where="the GitHub release v$version, next to DiamondDogsTogether-$version.zip"}
         scope='Diamond Dogs Together drop-in package: extract into the MGSV game folder and run DiamondDogsTogether.exe. Contains no game-derived files; the runtime archive is built on the player''s PC from their own game files. Steam online play only.'
         build=$buildInfo
     }
@@ -285,10 +297,10 @@ if($Friend) {
     if((Get-Sha256Hex (Join-Path $contents $launcherName)) -ine [string]$receipt.artifacts.launcher_sha256) { throw 'The staged launcher does not match the Release receipt.' }
     # Nothing for players to run but the exe: no scripts, no runtime archive, no link key.
     $staged=@(Get-ChildItem -LiteralPath $contents -File -Recurse -Force)
-    $refused=@($staged | Where-Object { $_.Extension -in @('.bat','.cmd','.ps1','.psm1','.dat') -or $_.Name -like 'link-secret*' -or $_.Name -like 'mgs-coop-player-runtime*' })
+    $refused=@($staged | Where-Object { $_.Extension -in @('.bat','.cmd','.ps1','.psm1','.dat') -or $_.Name -like 'link-secret*' -or $_.Name -like 'mgs-coop-player-runtime*' -or $_.Name -like '*source*' })
     if($refused.Count) { throw "The package would contain $($refused[0].Name)." }
     $entries=@()
-    foreach($target in @($launcherName,'dinput8.dll','mgs-coop/package.json','mgs-coop/README.txt') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name }) + @('mgs-coop/source.zip')) {
+    foreach($target in @($launcherName,'dinput8.dll','mgs-coop/package.json','mgs-coop/README.txt') + @($licenses | ForEach-Object { 'mgs-coop/' + $_.name })) {
         $entries+=@([pscustomobject]@{name=$target;path=(Join-Path $contents $target)})
     }
     if($entries.Count -ne $staged.Count) { throw 'The staged package holds files that are not listed.' }
@@ -297,6 +309,9 @@ if($Friend) {
     Assert-PackageZip $zipPath $entries
     Write-Output "Prepared: $zipPath"
     Write-Output ("SHA-256: " + (Get-Sha256Hex $zipPath) + "; loader " + $buildInfo.loader_sha256 + "; launcher " + $buildInfo.launcher_sha256)
+    Write-Output "Prepared source: $sourceZip"
+    Write-Output ("Source SHA-256: " + (Get-Sha256Hex $sourceZip) + "; files " + $sourceRows.Count)
+    Write-Output "Upload BOTH zips to the GitHub release v$version, then check it before publishing: pwsh -NoProfile -File tools/check-release.ps1 -Version $version -PackageDir `"$(Split-Path -Parent $zipPath)`""
     Write-Output 'No game installation, game launch or tests were performed.'
     return
 }

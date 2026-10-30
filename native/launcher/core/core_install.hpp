@@ -53,6 +53,8 @@ std::string CoreBuildId();   // X.Y.Z+<git hash> when known
 struct Settings {
     std::string character;   // story | ocelot | dd_male | dd_female | avatar ("" = not chosen)
     std::string hud;         // compact | full | off ("" = not chosen)
+    bool debug = false;      // Settings > Debug mode (developer tests)
+    std::string local_guest; // the local two-window test's second game folder ("" = none)
     json::Value raw = json::Value::Object();
 };
 bool LoadSettings(const InstancePaths& paths, Settings& out);

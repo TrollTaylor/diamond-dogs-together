@@ -9,6 +9,9 @@
 //   --write-session host|join  developer only: setup if needed, then the session
 //                              files exactly as Host / Join, without Steam
 //   --end-session              developer only: switch co-op off again
+//   --after-update <pid>       the window after a self-update: waits for the
+//                              old window <pid> to close, then opens
+//   --update-feed / --update-now  developer only: update from a loopback test feed
 // Rendering is event driven: a frame is drawn on input, and otherwise only on a
 // timer (1 s when idle, 4-10 Hz while setup or a game runs).
 #ifndef NOMINMAX
@@ -423,6 +426,29 @@ ddt::ShellServices MakeServices(bool interactive) {
         if (slash != std::wstring::npos && Exists(w.substr(0, slash), true))
             ShellExecuteW(g_app->hwnd, L"open", w.substr(0, slash).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     };
+    s.pick_folder = [](const std::string& title, std::string& out) {
+        IFileOpenDialog* dialog = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) || !dialog) return false;
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+        dialog->SetTitle(Wide(title).c_str());
+        bool ok = false;
+        if (SUCCEEDED(dialog->Show(g_app->hwnd))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&item)) && item) {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+                    out = Utf8(path);
+                    ok = true;
+                }
+                CoTaskMemFree(path);
+                item->Release();
+            }
+        }
+        dialog->Release();
+        return ok;
+    };
     s.pick_save_zip = [](std::string& out) {
         wchar_t file[MAX_PATH * 4] = {};
         std::wstring desktop;
@@ -535,11 +561,18 @@ std::uint64_t FolderHash() {
     return h;
 }
 
-HANDLE ClaimSingleInstance(std::uint64_t hash) {
+// wait_ms > 0 (the restart after an update): wait that long for the window that
+// holds the folder to release it before bringing it to the front instead.
+HANDLE ClaimSingleInstance(std::uint64_t hash, int wait_ms) {
     wchar_t name[96];
     swprintf_s(name, L"Local\\DiamondDogsTogether-ui-%016llx", static_cast<unsigned long long>(hash));
     HANDLE mutex = CreateMutexW(nullptr, TRUE, name);
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (wait_ms > 0) {
+            // Released (or abandoned by a process that exited): this window owns the folder now.
+            const DWORD r = WaitForSingleObject(mutex, static_cast<DWORD>(wait_ms));
+            if (r == WAIT_OBJECT_0 || r == WAIT_ABANDONED) return mutex;
+        }
         struct Find {
             std::uint64_t hash;
             HWND found;
@@ -582,16 +615,38 @@ int RunWindow(const Options& o) {
         model = std::move(mock);
     }
     const std::uint64_t hash = FolderHash();
-    HANDLE instance = ClaimSingleInstance(hash);
+    // After a self-update this window waits for the old one to close first
+    // (core_update.hpp "Restart after an update"); an updater before 0.14.4
+    // left DiamondDogsTogether.exe.old just now and exits by itself a moment
+    // later. A .old that stayed from long ago changes nothing.
+    const bool old_exe_recent = !o.mock && ddt::OldLauncherFromRecentUpdate(ExeDir());
+    const int claim_wait = ddt::ui::InstanceClaimWaitMs(o.after_update, old_exe_recent);
+    HANDLE instance = nullptr;
+    if (o.after_update && !o.mock) {
+        ddt::TakeOverAfterUpdate(o.after_update, [&](int ms) {
+            instance = ClaimSingleInstance(hash, ms > claim_wait ? ms : claim_wait);
+            return instance != nullptr;
+        });
+    } else {
+        instance = ClaimSingleInstance(hash, o.mock ? 0 : claim_wait);
+    }
     if (!instance) return 0;
     // After the single-instance claim: the real model reads (and tidies) the folder.
-    if (!model) model = ddt::MakeRealModel(ExeDir());
+    if (!model) {
+        ddt::ModelStart start;
+        start.after_update = o.after_update;
+        start.update_feed = Utf8(o.update_feed);
+        start.update_now = o.update_now;
+        start.old_exe_recent = old_exe_recent;
+        model = ddt::MakeRealModel(ExeDir(), start);
+    }
     App app;
     g_app = &app;
     if (!InitWindow(app, o, true)) {
         MessageBoxW(nullptr, L"Diamond Dogs Together could not open its window (Direct3D 11 is not available).",
                     kWindowTitle, MB_OK | MB_ICONERROR);
         Shutdown(app);
+        ReleaseMutex(instance);
         CloseHandle(instance);
         return 3;
     }
@@ -620,6 +675,8 @@ int RunWindow(const Options& o) {
         }
         if (done) break;
         app.model->tick();
+        // The updated launcher runs and waits for this window: close it.
+        if (ddt::ui::CloseForUpdate(app.model->update_info())) break;
         if (IsIconic(app.hwnd)) continue;
         if (app.gfx.occluded) {
             if (app.gfx.swap->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) continue;
@@ -627,10 +684,19 @@ int RunWindow(const Options& o) {
         }
         RenderFrame(app, true);
     }
+    // While an update downloads, installs or hands over, or the local test is
+    // still starting, that thread finishes before the folder is released (a new
+    // window must not tidy files it is replacing or switching over). Otherwise
+    // the folder is free as soon as the window is gone, and the model ends its
+    // threads afterwards: an update check that waits for the network must never
+    // make the next start close silently.
+    const bool hold = ddt::ui::HoldFolderWhileClosing(app.model->update_info(), app.model->local_test());
     Shutdown(app);
+    if (hold) app.model.reset();
     g_app = nullptr;
+    ReleaseMutex(instance);
     CloseHandle(instance);
-    return 0;
+    return 0;   // the App and (otherwise) the model end here
 }
 
 int RunScreenshots(const Options& o) {
@@ -696,6 +762,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     switch (o.mode) {
     case Options::Mode::help: Print(ddt::ui::UsageText()); return 0;
     case Options::Mode::watch: return ddt::RunWatch(o.watch_session);
+    case Options::Mode::local_watch: return ddt::RunLocalWatch(o.local_run);
     case Options::Mode::write_session: {
         std::string report;
         const int code = ddt::RunWriteSession(o.game_dir, o.write_host, o.write_code, o.write_character, report);

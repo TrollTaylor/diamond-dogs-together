@@ -8,6 +8,7 @@
 #include "launcher_entry.hpp"
 
 #include "core/core_model.hpp"
+#include "core/core_update.hpp"
 #include "core/core_util.hpp"
 #include "launcher_join_code.hpp"
 #include "launcher_model_mock.hpp"
@@ -39,6 +40,8 @@ int RunWatch(const std::wstring& session) {
     return core::RunWatch(ExeFolder(), core::Utf8(session));
 }
 
+int RunLocalWatch(const std::wstring& run) { return core::RunLocalWatchHelper(ExeFolder(), core::Utf8(run)); }
+
 namespace {
 std::wstring SessionFolder(const std::wstring& game_dir) {
     if (game_dir.empty()) return ExeFolder();
@@ -67,6 +70,14 @@ int RunWriteSession(const std::wstring& game_dir, bool host, const std::wstring&
 
 int RunEndSession(const std::wstring& game_dir, std::string& report) { return core::RunEndSession(SessionFolder(game_dir), report); }
 
+bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int)>& claim) {
+    core::PreviousLauncherOps ops = core::PreviousLauncherWin32(pid);
+    ops.claim = claim;
+    return core::TakeOverFromPreviousLauncher(ops, core::kPreviousLauncherWaitMs) != core::TakeOver::not_claimed;
+}
+
+bool OldLauncherFromRecentUpdate(const std::wstring& game_dir) { return core::OldExecutableFromRecentUpdate(game_dir); }
+
 int RunSelfTest(std::string& report) {
     int checks = 0, failures = 0;
     auto check = [&](bool ok, const char* what) {
@@ -82,8 +93,8 @@ int RunSelfTest(std::string& report) {
     MockModel m(MockOptions{});
     m.use_manual_clock(0.0);
     check(m.phase() == Phase::needs_setup, "mock starts in needs_setup");
-    m.start_setup();
-    check(m.phase() == Phase::setting_up, "setup starts");
+    m.tick();
+    check(m.phase() == Phase::setting_up, "setup starts by itself");
     m.advance(5.0);
     m.tick();
     const ui::SetupSummary mid = ui::SummarizeSetup(m.setup_steps());
@@ -113,7 +124,9 @@ int RunSelfTest(std::string& report) {
     check(m.collect_logs(path, error) && !path.empty(), "collect logs");
     check(m.restore_save(error), "restore");
     std::string uninstall;
-    check(m.uninstall(uninstall, error) && m.phase() == Phase::needs_setup, "uninstall");
+    check(m.uninstall(uninstall, error) && m.phase() == Phase::error, "uninstall");
+    m.tick();
+    check(m.phase() == Phase::error, "no automatic setup after an uninstall");
 
     report += "selftest: " + std::to_string(checks - failures) + "/" + std::to_string(checks) + " checks passed\n";
     // The real model's checks (wp/launcher-core): read-only for the game folder.

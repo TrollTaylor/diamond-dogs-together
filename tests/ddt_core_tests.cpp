@@ -6,16 +6,21 @@
 // activation (order and hash journal), hash-checked cleanup, the save handoff
 // (validation, claim, import, relaunch), Share save, setup on a fake game
 // folder with a fake Steam userdata, uninstall, Collect logs, the --watch
-// helper and the real model end to end. Everything runs in %TEMP% folders
+// helper, the real model end to end, and the developer's local two-window
+// test (Settings > Debug), also against tools/dev/Play-LocalCoop.ps1 in its
+// fixture mode (Windows PowerShell, no game). Everything runs in %TEMP% folders
 // with a fake Env (registry, processes, clock, shell, clipboard); the real
 // game, Steam and the real clipboard are never touched.
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <winsock2.h>
 #include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <functional>
 #include <map>
@@ -27,6 +32,7 @@
 #include "core_env.hpp"
 #include "core_install.hpp"
 #include "core_json.hpp"
+#include "core_localtest.hpp"
 #include "core_log.hpp"
 #include "core_model.hpp"
 #include "core_paths.hpp"
@@ -323,6 +329,12 @@ void InstallTestHooks() {
         }
         if (progress) progress(0.5f, "Building");
         return WriteAtomic(out, std::string("FAKE-RUNTIME"), true, error);
+    };
+    // Every model checks for updates when it opens: never the network in tests.
+    GetUpdateHooks().http_get = [](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[]";
+        status = 200;
+        return true;
     };
 }
 
@@ -1494,6 +1506,26 @@ bool PumpUntil(LauncherModel& m, FakeEnv& env, const std::function<bool()>& done
     return false;
 }
 
+// The second folder's check and Start local test run on their own threads; tick() picks their results up. These
+// wait in real time without moving the fake clock (the start's own waits use it).
+LocalTestCheck SettledLocalCheck(LauncherModel& m) {
+    for (int i = 0; i < 3000; ++i) {
+        m.tick();
+        const LocalTestCheck c = m.check_local_test();
+        if (!c.checking) return c;
+        Sleep(2);
+    }
+    return m.check_local_test();
+}
+bool WaitLocalStart(LauncherModel& m) {
+    for (int i = 0; i < 3000; ++i) {
+        m.tick();
+        if (!m.local_test().starting) return true;
+        Sleep(2);
+    }
+    return false;
+}
+
 void TestModel() {
     Fixture f(L"model");
     {
@@ -1501,7 +1533,7 @@ void TestModel() {
         CHECK(m->phase() == Phase::needs_setup && m->game_dir() == Utf8(f.game) && m->hud() == "compact");
         CHECK(m->setup_steps().size() == 4 && m->setup_steps()[0].label == "Check the game");
         std::string code, error;
-        CHECK(!m->host(code, error) && Has(error, "setup"));
+        CHECK(!m->host(code, error) && Has(error, "getting ready"));
         m->set_character(Character::avatar);
         m->start_setup();
         CHECK(m->phase() == Phase::setting_up);
@@ -1587,6 +1619,23 @@ void TestModel() {
         std::string report, error;
         CHECK(m->uninstall(report, error) && m->phase() == Phase::error && !IsFile(f.paths.loader));
     }
+    {
+        // Reopened after that Uninstall (2026-10-29 review): dinput8.dll is gone, so co-op is NOT set up again by
+        // itself; Play asks to extract the zip again. Once the zip's files are back, it gets ready by itself.
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::error && Has(m->last_error(), "dinput8.dll is missing") && Has(m->last_error(), "Extract"));
+        for (int i = 0; i < 10; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::error && !PathExists(f.paths.friend_install) && !IsFile(f.paths.loader));
+        WriteText(f.paths.loader, "FAKE-LOADER");   // the player extracts the zip again
+        m->recheck();
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+    }
     CHECK(f.RealSavesUntouched());
     // Not in a game folder: Steam's folder is offered.
     {
@@ -1600,6 +1649,171 @@ void TestModel() {
         auto m3 = MakeRealModelWithEnv(g.game, g.env);
         CHECK(m3->phase() == Phase::error && !m3->last_error().empty());
     }
+}
+
+// The setup runs by itself (2026-10-29: there is no Setup page and no button):
+// the model starts it on its own tick, again whenever it is needed (an update,
+// a missing runtime file), and stops after a failed attempt until Try again.
+void TestAutoSetup() {
+    {
+        Fixture f(L"auto-setup");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready);
+        if (m->phase() != Phase::ready) std::fprintf(stderr, "auto setup error: %s\n", m->last_error().c_str());
+        json::Value state;
+        CHECK(ReadInstallState(f.paths, state) && InstallIsCurrent(state) && ReadText(f.paths.archive) == "FAKE-RUNTIME");
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=auto"));
+        // Needed again after an update (the record names an older version): it runs by itself again.
+        state["version"] = "0.0.1";
+        std::string werr;
+        CHECK(WriteAtomic(f.paths.friend_install, json::Dump(state) + "\n", true, werr));
+        m->recheck();
+        CHECK(m->phase() == Phase::needs_setup);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && ReadInstallState(f.paths, state) && state.Str("version") == CoreVersion());
+        // The runtime file vanished before Host: Host says co-op is getting ready, and it does so by itself.
+        DeleteFileChecked(f.paths.archive);
+        std::string code, error;
+        CHECK(!m->host(code, error) && Has(error, "getting ready") && code.empty() && !PathExists(f.paths.marker));
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && ReadText(f.paths.archive) == "FAKE-RUNTIME");
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // A failing setup is tried once, then waits for Try again (start_setup): no retry loop.
+        Fixture f(L"auto-setup-fail");
+        const InstallHooks saved = Hooks();
+        int builds = 0;
+        Hooks().build_runtime = [&builds](const std::wstring&, const std::wstring&, const std::function<void(float, const std::string&)>&,
+                                          std::string& error) {
+            ++builds;
+            error = "The game's archives could not be read.";
+            return false;
+        };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::needs_setup && builds == 1 && Has(m->last_error(), "archives"));
+        const std::vector<SetupStep> steps = m->setup_steps();
+        CHECK(steps.size() == 4 && steps[3].state == SetupStep::State::failed && Has(steps[3].detail, "archives"));
+        for (int i = 0; i < 20; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && builds == 1);
+        Hooks() = saved;
+        m->start_setup();   // Try again
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        CHECK(m->phase() == Phase::ready && builds == 1);
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // The release gate's --write-session keeps its own explicit setup line (no automatic start).
+        Fixture f(L"auto-setup-write");
+        std::string out;
+        WriteSessionRequest host;
+        CHECK(RunWriteSessionWithEnv(f.game, f.env, host, out) == 0 && Has(out, "setup=start\n") && Has(out, "setup=done\n"));
+    }
+    {
+        // Uninstall that cannot delete the loader (something holds it open): co-op is NOT set up again by itself in
+        // this window; Play says what happened, and Check again is the player's own choice to set it up again.
+        Fixture f(L"auto-setup-uninstall");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        m->tick();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        HANDLE hold = CreateFileW(f.paths.loader.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(hold != INVALID_HANDLE_VALUE);
+        std::string report, error;
+        CHECK(m->uninstall(report, error) && Has(report, "could not be removed") && IsFile(f.paths.loader));
+        for (int i = 0; i < 20; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::error && !PathExists(f.paths.friend_install) && Has(m->last_error(), "Check again"));
+        const std::string log = ReadText(f.paths.launcher_log);
+        const std::size_t done_at = log.rfind("uninstall=done");
+        CHECK(done_at != std::string::npos && !Has(log.substr(done_at == std::string::npos ? 0 : done_at), "setup=auto"));
+        CloseHandle(hold);
+        m->recheck();   // Check again
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }));
+        CHECK(f.RealSavesUntouched());
+    }
+}
+
+// An update cannot start while co-op gets ready by itself (2026-10-29 review): applying it and restarting would cut
+// the setup off half-way (a pending install record, an unrecorded save backup).
+void TestUpdateDuringSetup() {
+    Fixture f(L"update-setup");
+    const UpdateHooks saved_update = GetUpdateHooks();
+    const InstallHooks saved = Hooks();
+    std::atomic<int> downloads{0};
+    std::atomic<bool> hold_download{false};
+    GetUpdateHooks().http_get = [](const std::string&, std::string& body, int& status, std::string&) {
+        body = R"([{"tag_name":"v99.0.0","name":"Diamond Dogs Together 99.0.0","draft":false,"body":"Test","html_url":"https://example.invalid/r",
+                    "assets":[{"name":"DiamondDogsTogether-99.0.0.zip","size":10,"browser_download_url":"https://example.invalid/DiamondDogsTogether-99.0.0.zip"},
+                               {"name":"DDT-source-99.0.0.zip","size":10,"browser_download_url":"https://example.invalid/DDT-source-99.0.0.zip"}]}])";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&downloads, &hold_download](const std::string&, const std::wstring&,
+                                                                  const std::function<void(const UpdateProgress&)>&, const std::atomic<bool>*,
+                                                                  std::string& error) {
+        ++downloads;
+        while (hold_download) Sleep(5);
+        error = "test: no download";
+        return false;
+    };
+    std::atomic<bool> release{false};
+    Hooks().build_runtime = [&](const std::wstring& game, const std::wstring& out, const std::function<void(float, const std::string&)>& progress,
+                                std::string& build_error) {
+        while (!release) Sleep(5);
+        return saved.build_runtime(game, out, progress, build_error);
+    };
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        for (int i = 0; i < 1000 && m->update_info().status != UpdateStatus::available; ++i) Sleep(5);
+        CHECK(m->update_info().status == UpdateStatus::available);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        m->start_update();   // Update now while co-op gets ready: nothing happens
+        Sleep(50);
+        CHECK(m->update_info().status == UpdateStatus::available && downloads == 0);
+        release = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        hold_download = true;
+        m->start_update();   // once co-op is ready it starts
+        CHECK(m->update_info().status == UpdateStatus::downloading);
+        // While it downloads (and installs), co-op does not get ready again by itself: the update replaces its files.
+        DeleteFileChecked(f.paths.archive);
+        m->recheck();
+        CHECK(m->phase() == Phase::needs_setup);
+        for (int i = 0; i < 5; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && !IsFile(f.paths.archive));
+        hold_download = false;
+        for (int i = 0; i < 1000 && m->update_info().status != UpdateStatus::error; ++i) Sleep(5);
+        CHECK(downloads == 1 && m->update_info().status == UpdateStatus::error);
+        m->tick();   // the update failed: co-op gets ready again by itself
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+    }
+    hold_download = false;
+    release = true;
+    Hooks() = saved;
+    GetUpdateHooks() = saved_update;
+    CHECK(f.RealSavesUntouched());
 }
 
 void StageForModel(Fixture& f, const std::string& xfer, std::uint32_t pid) {
@@ -1789,6 +2003,11 @@ void TestUpdater() {
             "name": "DiamondDogsTogether-0.14.3.zip",
             "size": 10485760,
             "browser_download_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/download/v0.14.3/DiamondDogsTogether-0.14.3.zip"
+          },
+          {
+            "name": "DDT-source-0.14.3.zip",
+            "size": 7547138,
+            "browser_download_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/download/v0.14.3/DDT-source-0.14.3.zip"
           }
         ]
       }
@@ -1852,7 +2071,7 @@ void TestUpdater() {
     // Build a mock update zip containing updated DiamondDogsTogether.exe and package.json
     ZipWriter zw;
     const std::string new_exe_content = "new updated exe content 0.14.3";
-    const std::string new_pkg_content = "{\"version\": \"0.14.3\"}";
+    const std::string new_pkg_content = "{\"product\": \"mgs-coop-local-package\", \"version\": \"0.14.3\"}";
     CHECK(zw.AddFile("DiamondDogsTogether.exe", new_exe_content.data(), new_exe_content.size(), err));
     CHECK(zw.AddFile("mgs-coop/package.json", new_pkg_content.data(), new_pkg_content.size(), err));
     std::vector<std::uint8_t> zip_bytes;
@@ -1880,7 +2099,7 @@ void TestUpdater() {
     CHECK_EQ(ReadText(test_game + L"\\mgs-coop\\package.json"), new_pkg_content);
 
     // 6. CleanOldExecutable
-    CleanOldExecutable(test_game);
+    CHECK(CleanOldExecutable(test_game));
     CHECK(!PathExists(old_exe_path));
 
     // Restore hooks
@@ -1888,15 +2107,2241 @@ void TestUpdater() {
     RemoveTree(test_game);
 }
 
+// ---- The developer's local two-window test (Settings > Debug, Play > Local test) -------------------
+// A real (graphics settings only) config written by mgsvtpp 1.0.15.4 (tests/lab_scripts_tests.ps1 $realConfig).
+const char kRealGraphics[] = R"({
+   "as" : "UzF+nvqVP+4=",
+   "graphics" : {
+      "quality_setting" : {
+         "depth_of_field" : "Enable",
+         "effect" : "ExtraHigh",
+         "lighting" : "ExtraHigh",
+         "model_detail" : "ExtraHigh",
+         "motion_blur_amount" : "Large",
+         "postprocess" : "ExtraHigh",
+         "shadow" : "ExtraHigh",
+         "ssao" : "ExtraHigh",
+         "texture" : "ExtraHigh",
+         "texture_filtering" : "ExtraHigh",
+         "volumetric_clouds" : "On"
+      },
+      "version" : 1,
+      "videoout_setting" : {
+         "display_index" : 0,
+         "framerate_control" : "Auto",
+         "height" : 1440,
+         "vsync" : "Enable",
+         "width" : 2560,
+         "window_mode" : "FullScreenWindowed"
+      }
+   },
+   "project" : "tpp"
+}
+)";
+
+std::string LocalDefaults() {
+    return "partner=1\npartner_stage=3\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_aset=qs\npartner_reset=n\n"
+           "partner_look=net\npartner_rate_hz=30\npartner_interp_ms=100\npartner_offset_cm=300\npartner_teardown=clear\n"
+           "partner_force_exists=0\npartner_policy_relax=0\npartner_anim_probe=0\npartner_dm=map\ncrash_probe=1\n"
+           "partner_input_send=1\n";
+}
+
+void TestLocalText() {
+    LocalLabParams p;
+    p.role = "host";
+    p.save_dir = "C:\\Games\\MGS_TPP\\mgs-coop\\local-test-saves";
+    p.host_steam = "76561197960278073";
+    std::string text, error;
+    CHECK(MakeLocalLabIniText(p, text, error));
+    CHECK_EQ(text, "# Generated by the MGS Co-op local two-window test\nenabled=1\nmode=lab\nrole=host\nloopback=1\nself_steamid=real\n"
+                   "peer_steamid=76561202255233008\nlisten_port=47810\npeer_port=47811\nsave_dir=C:\\Games\\MGS_TPP\\mgs-coop\\local-test-saves\n"
+                   "xinput=none\njoin_trigger=0\nnet=1\nnet_bind=loopback\nnet_listen_port=47820\nnet_peer_port=47821\npartner_interp=auto\n" +
+                       LocalDefaults() + "partner_native_profile=gun\nworld=3\n");
+    p.role = "guest";
+    p.save_dir = "D:\\G2\\mgs-coop\\local-test-saves";
+    p.partner = "clips";
+    p.world = 0;
+    CHECK(MakeLocalLabIniText(p, text, error));
+    CHECK_EQ(text, "# Generated by the MGS Co-op local two-window test\nenabled=1\nmode=lab\nrole=guest\nloopback=1\n"
+                   "self_steamid=76561202255233008\npeer_steamid=76561197960278073\nlisten_port=47811\npeer_port=47810\n"
+                   "save_dir=D:\\G2\\mgs-coop\\local-test-saves\nxinput=0\njoin_trigger=0\nnet=1\nnet_bind=loopback\nnet_listen_port=47821\n"
+                   "net_peer_port=47820\npartner_interp=auto\nself_name=Guest\nmutex_suffix=-guest\n" +
+                       LocalDefaults());
+    p.host_steam = "learn";
+    CHECK(MakeLocalLabIniText(p, text, error) && Has(text, "peer_steamid=learn\n"));
+    // Refusals: the guest's own identity, a relative save folder, clashing ports.
+    p.host_steam = kLocalGuestSteamId;
+    CHECK(!MakeLocalLabIniText(p, text, error) && !error.empty());
+    p.host_steam = "learn";
+    p.save_dir = "relative\\saves";
+    CHECK(!MakeLocalLabIniText(p, text, error));
+    p.save_dir = "C:\\S";
+    p.guest_port = 47810;
+    CHECK(!MakeLocalLabIniText(p, text, error));
+    p.guest_port = kLocalHostPort;
+    CHECK(!MakeLocalLabIniText(p, text, error));
+    // coop.ini: the Play-Coop header, the closed-port master URL, the character.
+    CHECK(MakeLocalCoopIniText("snake", "", text, error));
+    CHECK_EQ(text, std::string(kOldPlayHeader) + "\nmaster_url=http://127.0.0.1:47899/tppstm/gate\ncharacter=snake\ncharacter_fallback=dd_male\n");
+    CHECK(MakeLocalCoopIniText("quiet", "full", text, error) && EndsWith(text, "character=quiet\ncharacter_fallback=dd_male\nhud=full\n"));
+    CHECK(!MakeLocalCoopIniText("dog", "", text, error) && !MakeLocalCoopIniText("quiet", "huge", text, error));
+}
+
+void TestGraphicsConfig() {
+    const GraphicsInfo real = ReadGraphicsInfo(kRealGraphics);
+    CHECK(real.valid && real.computed_tag == "UzF+nvqVP+4=" && real.window_mode == "FullScreenWindowed" && real.width == 2560 && real.height == 1440);
+    std::string windowed, error;
+    CHECK(SetGraphicsWindowed(kRealGraphics, 1280, 720, windowed, error));
+    const GraphicsInfo after = ReadGraphicsInfo(windowed);
+    CHECK(after.valid && after.stored_tag == "a8ID1auvq+8=" && after.window_mode == "Windowed" && after.width == 1280 && after.height == 720);
+    CHECK(std::count(windowed.begin(), windowed.end(), '\n') == std::count(std::begin(kRealGraphics), std::end(kRealGraphics), '\n'));
+    std::string tampered = Replace(kRealGraphics, "\"width\" : 2560", "\"width\" : 2561");
+    CHECK(!ReadGraphicsInfo(tampered).valid && !SetGraphicsWindowed(tampered, 1280, 720, windowed, error) && Has(error, "does not verify"));
+    CHECK(!SetGraphicsWindowed("{\"as\":\"x\"}", 1280, 720, windowed, error));
+    CHECK(!SetGraphicsWindowed(kRealGraphics, 320, 200, windowed, error));
+    json::Value synthetic;
+    CHECK(json::Parse("{\"b\":1,\"a\":{\"z\":\"q\\\"\\\\\\n\",\"y\":-5},\"c\":true}", synthetic));
+    std::string fast;
+    CHECK(JsonCppFastText(synthetic, fast, true));
+    CHECK_EQ(fast, "{\"a\":{\"y\":-5,\"z\":\"q\\\"\\\\\\n\"},\"b\":1,\"c\":true}\n");
+    std::string tag;
+    CHECK(GraphicsTag(synthetic, tag) && tag == "vrSYXqLC+9k=");
+    json::Value dbl;
+    CHECK(json::Parse("{\"x\":1.5}", dbl) && !JsonCppFastText(dbl, fast));
+}
+
+void TestLocalLayout() {
+    LocalLayout l;
+    std::string error;
+    CHECK(ComputeLocalLayout(LocalRect{0, 0, 1920, 1080}, 96, l, error));
+    CHECK(!l.vertical && l.host.x == 0 && l.host.width == 956 && l.guest.x == 964 && l.guest.width == 956);
+    CHECK(l.host_client_width == 940 && l.host_client_height == 529 && l.host.height == 568 && l.host.y == 256 && l.guest.y == 256);
+    CHECK(l.guest_client_width == 940 && l.guest_client_height == 529);
+    // Too narrow for two side by side: one above the other.
+    CHECK(ComputeLocalLayout(LocalRect{100, 50, 1000, 1200}, 96, l, error));
+    CHECK(l.vertical && l.host.y == 50 && l.guest.y == l.host.y + l.host.height + 8 && l.host_client_height >= 480 && l.host.x >= 100);
+    // Scaled frames at 150 %.
+    CHECK(ComputeLocalLayout(LocalRect{0, 0, 3840, 2100}, 144, l, error) && !l.vertical && l.dpi == 144 && l.guest.x == l.host.width + 12);
+    // Never overlapping: too small is refused.
+    CHECK(!ComputeLocalLayout(LocalRect{0, 0, 800, 600}, 96, l, error) && Has(error, "too small"));
+}
+
+void TestLocalPlacement() {
+    const LocalRect target{0, 0, 956, 568};
+    LocalRect window{200, 200, 1280, 759};
+    const std::int64_t t0 = 1000000;
+    PlacementDecision d = DecidePlacement(nullptr, 7, window, target, t0, false, false, false);
+    CHECK(!d.place && d.reason == "window_settling");
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 350, false, false, false);
+    CHECK(d.place && d.reason == "initial");
+    // The game resizes itself back: at most two corrections, debounced.
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 600, false, false, false);
+    CHECK(!d.place && d.reason == "reset_debounce");
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 1300, false, false, false);
+    CHECK(d.place && d.reason == "startup_reset" && d.entry.corrections == 1);
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 2200, false, false, false);
+    CHECK(d.place && d.entry.corrections == 2);
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 3200, false, false, false);
+    CHECK(!d.place && d.reason == "settled");
+    // A drag is respected afterwards; Arrange (retile) places again.
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 9000, false, true, false);
+    CHECK(!d.place && d.reason == "user_moving" && d.entry.user_arranged);
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 9500, false, false, false);
+    CHECK(!d.place && d.reason == "user_arranged");
+    d = DecidePlacement(&d.entry, 7, window, target, t0 + 9600, true, false, false);
+    CHECK(d.place && d.reason == "retile" && !d.entry.user_arranged);
+    // A new window handle starts over.
+    d = DecidePlacement(&d.entry, 8, window, target, t0 + 9700, false, false, false);
+    CHECK(!d.place && d.reason == "window_settling");
+}
+
+void TestLocalEvidence() {
+    const std::string saves = "C:\\G\\mgs-coop\\local-test-saves";
+    const std::string early_host = "early=start; lab=1; role=host\r\nsaves=redirected; dir=" + saves + "\r\n";
+    const std::string steam = "master_server=redirected; method=x; url=http://127.0.0.1:47899/tppstm/gate\r\n";
+    CHECK(GetLocalLaunchEvidence("host", early_host, steam, "", saves, false).state == "ok");
+    CHECK(GetLocalLaunchEvidence("host", "early=start; lab=1; role=host\r\n", steam, "", saves, false).state == "pending");
+    LocalEvidence e = GetLocalLaunchEvidence("host", "early=start; lab=1; role=host\r\n", steam, "", saves, true);
+    CHECK(e.state == "unsafe" && e.reason == "startup_evidence_missing");
+    e = GetLocalLaunchEvidence("host", "early=start; lab=1; role=host\r\nsaves=unchanged\r\n", steam, "", saves, false);
+    CHECK(e.state == "unsafe" && e.reason == "saves_unchanged");
+    e = GetLocalLaunchEvidence("host", "early=start; lab=0; role=host\r\nsaves=redirected; dir=" + saves + "\r\n", steam, "", saves, false);
+    CHECK(e.state == "unsafe" && e.reason == "lab_role_mismatch");
+    const std::string early_guest = "early=start; lab=1; role=guest\r\nmutex=renamed; suffix=-guest\r\nidentity=fake; steamid=76561202255233008\r\n"
+                                    "saves=redirected; dir=" + saves + "\r\n";
+    CHECK(GetLocalLaunchEvidence("guest", early_guest, steam, "", saves, false).state == "ok");
+    e = GetLocalLaunchEvidence("guest", Replace(early_guest, "identity=fake", "identity=real"), steam, "", saves, false);
+    CHECK(e.state == "unsafe" && e.reason == "guest_identity_mismatch");
+    e = GetLocalLaunchEvidence("guest", Replace(early_guest, "mutex=renamed; suffix=-guest", "mutex=unchanged"), steam, "", saves, false);
+    CHECK(e.state == "unsafe" && e.reason == "guest_mutex_mismatch");
+    e = GetLocalLaunchEvidence("host", early_host, "master_server=refused\r\n", "", saves, false);
+    CHECK(e.state == "unsafe" && e.reason == "master_redirect_failed");
+}
+
+// A second game folder next to a fixture: <root>\Guest\MGS_TPP_guest with the fake game files.
+std::wstring MakeGuestFolder(Fixture& f, bool loader) {
+    const std::wstring guest = f.root + L"\\Guest\\MGS_TPP_guest";
+    CreateDirectories(guest);
+    WriteText(guest + L"\\mgsvtpp.exe", "FAKE-EXE");
+    WriteText(guest + L"\\steam_api64.dll", "FAKE-STEAMAPI");
+    if (loader) WriteText(guest + L"\\dinput8.dll", "FAKE-LOADER");
+    return guest;
+}
+
+// The host fixture after its setup, with a valid graphics config in its co-op copy.
+void MakeLocalHost(Fixture& f) {
+    bool ok = false;
+    std::string error;
+    RunSetupCollect(f, "story", ok, error);
+    CHECK(ok);
+    WriteText(f.paths.coop_saves + L"\\287700\\local\\TPP_GRAPHICS_CONFIG", kRealGraphics);
+}
+
+void TestLocalFolderCheck() {
+    Fixture f(L"local-folder");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, false);
+    LocalFolderCheck c = CheckLocalTestFolder(*f.env, f.game, L"");
+    CHECK(!c.ok && Has(c.message, "Choose"));
+    c = CheckLocalTestFolder(*f.env, f.game, f.root + L"\\Nowhere");
+    CHECK(!c.ok && Has(c.message, "does not exist"));
+    c = CheckLocalTestFolder(*f.env, f.game, f.desktop);
+    CHECK(!c.ok && Has(c.message, "mgsvtpp.exe"));
+    c = CheckLocalTestFolder(*f.env, f.game, f.game);
+    CHECK(!c.ok && Has(c.message, "separate"));
+    CreateDirectories(f.paths.mod + L"\\inner");
+    WriteText(f.paths.mod + L"\\inner\\mgsvtpp.exe", "FAKE-EXE");
+    c = CheckLocalTestFolder(*f.env, f.game, f.paths.mod + L"\\inner");
+    CHECK(!c.ok && Has(c.message, "separate"));
+    // A ready second copy: the loader and the runtime file are copied in at the start.
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(c.ok && Has(c.message, "copied"));
+    WriteText(guest + L"\\mgsvtpp.exe", "OTHER-EXE");
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "1.0.15.4"));
+    WriteText(guest + L"\\mgsvtpp.exe", "FAKE-EXE");
+    WriteText(guest + L"\\dinput8.dll", "SOMEONE-ELSES-LOADER");
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "dinput8.dll") && Has(c.message, "never replaced"));
+    WriteText(guest + L"\\mgs-coop\\probe-install.json", "{\"product\":\"mgs-coop-original-loader-probe\"}");
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "package-install.ps1"));
+    DeleteFileChecked(guest + L"\\mgs-coop\\probe-install.json");
+    WriteText(guest + L"\\dinput8.dll", "FAKE-LOADER");
+    f.env->AddGame(8100, guest + L"\\mgsvtpp.exe", f.env->NowMs());
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "running"));
+    f.env->Kill(8100);
+    WriteText(guest + L"\\mgs-coop\\worker.enabled", "x");
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "worker.enabled"));
+    DeleteFileChecked(guest + L"\\mgs-coop\\worker.enabled");
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(c.ok);
+    // The second copy's mgsvtpp.exe (166 MB for real) is hashed once: later checks reuse that while its size,
+    // write time and file stay the same, and hash it again after a change.
+    const std::wstring guest_exe = guest + L"\\mgsvtpp.exe";
+    WIN32_FILE_ATTRIBUTE_DATA before{};
+    CHECK(GetFileAttributesExW(guest_exe.c_str(), GetFileExInfoStandard, &before) != 0);
+    HANDLE h = CreateFileW(guest_exe.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(h != INVALID_HANDLE_VALUE);
+    DWORD written = 0;
+    CHECK(WriteFile(h, "BAD!-EXE", 8, &written, nullptr) && written == 8);
+    CHECK(SetFileTime(h, nullptr, nullptr, &before.ftLastWriteTime) != 0);
+    CloseHandle(h);
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(c.ok);   // not hashed again
+    ULARGE_INTEGER later{};
+    later.LowPart = before.ftLastWriteTime.dwLowDateTime;
+    later.HighPart = before.ftLastWriteTime.dwHighDateTime;
+    later.QuadPart += 20000000ull;   // 2 s later
+    FILETIME later_time{later.LowPart, later.HighPart};
+    h = CreateFileW(guest_exe.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(h != INVALID_HANDLE_VALUE && SetFileTime(h, nullptr, nullptr, &later_time) != 0);
+    CloseHandle(h);
+    c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(!c.ok && Has(c.message, "1.0.15.4"));
+    WriteText(guest_exe, "FAKE-EXE");
+    CHECK(CheckLocalTestFolder(*f.env, f.game, guest).ok);
+    CHECK(f.RealSavesUntouched());
+}
+
+std::wstring LocalPath(const std::wstring& root, const char* name) { return root + L"\\mgs-coop\\" + Wide(name); }
+
+// The second folder's install-backups\local-test-<stamp> ("" when there is none; the only one expected).
+std::wstring LocalBackupDir(const std::wstring& guest) {
+    const std::wstring root = guest + L"\\mgs-coop\\install-backups";
+    std::wstring found;
+    int count = 0;
+    for (const DirEntry& e : ListDirectory(root))
+        if (e.directory && StartsWith(Utf8(e.name), "local-test-")) {
+            found = root + L"\\" + e.name;
+            ++count;
+        }
+    CHECK(count == 1);
+    return found;
+}
+
+void TestLocalJournal() {
+    Fixture f(L"local-journal");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    CreateDirectories(guest + L"\\mgs-coop");
+    // The guest has earlier offline files of its own (they come back afterwards).
+    WriteText(LocalPath(guest, "lab.ini"), "enabled=1\nmode=lab\nrole=guest\n");
+    WriteText(LocalPath(guest, "script-observe.enabled"), "offline-v1\n");
+    const std::wstring run = LocalRunsRoot(f.game) + L"\\0123456789abcdef0123456789abcdef";
+    json::Value s;
+    std::string error;
+    CHECK(NewLocalSession(*f.env, f.game, guest, run, s, error));
+    if (!error.empty()) std::fprintf(stderr, "new local session: %s\n", error.c_str());
+    CHECK(s.Str("product") == kLocalSessionProduct && s.Str("state") == "prepared" && s.Find("pointers")->size() == 2);
+    CHECK(IsFile(LocalPath(f.game, "local-test-session.json")) && IsFile(LocalPath(guest, "local-test-session.json")));
+    CHECK_EQ(ReadText(run + L"\\.local-test-owner"), std::string("0123456789abcdef0123456789abcdef"));
+    // A second run while the pointer exists is refused.
+    json::Value s2;
+    CHECK(!NewLocalSession(*f.env, f.game, guest, LocalRunsRoot(f.game) + L"\\fedcba9876543210fedcba9876543210", s2, error));
+    for (const char* role : {"host", "guest"}) {
+        CHECK(SetLocalSessionFile(*f.env, s, role, "lab.ini", std::string("lab ") + role + "\n", error));
+        CHECK(SetLocalSessionFile(*f.env, s, role, "script-observe.enabled", "offline-v1\n", error));
+    }
+    CHECK(!SetLocalSessionFile(*f.env, s, "host", "lab.ini", "again\n", error));        // already journaled
+    CHECK(!SetLocalSessionFile(*f.env, s, "host", "dinput8.dll", "x", error));          // not an activation file
+    CHECK(s.Str("state") == "active" && s.Find("files")->size() == 4);
+    CHECK_EQ(ReadText(LocalPath(guest, "lab.ini")), std::string("lab guest\n"));
+    json::Value back;
+    CHECK(ReadLocalSession(run, back, error) && back.Find("files")->size() == 4 && back.Str("id") == "0123456789abcdef0123456789abcdef");
+    CHECK(!Has(ReadText(run + L"\\session.json"), "enabled=1\nmode=lab\nrole=guest"));   // originals only as base64
+    // Never under a running game.
+    f.env->AddGame(8200, guest + L"\\mgsvtpp.exe", f.env->NowMs());
+    LocalRestoreResult r;
+    CHECK(!RestoreLocalSession(*f.env, s, r, error) && Has(error, "exited"));
+    f.env->Kill(8200);
+    // A file changed afterwards is kept (and the pointers stay for the next recovery).
+    WriteText(LocalPath(f.game, "lab.ini"), "edited by hand\n");
+    CHECK(RestoreLocalSession(*f.env, s, r, error) && r.state == "partial" && r.kept.size() == 1 && r.kept[0] == "host/lab.ini");
+    CHECK(!PathExists(LocalPath(f.game, "script-observe.enabled")) && ReadText(LocalPath(guest, "lab.ini")) == "enabled=1\nmode=lab\nrole=guest\n");
+    CHECK(ReadText(LocalPath(guest, "script-observe.enabled")) == "offline-v1\n" && IsFile(LocalPath(guest, "local-test-session.json")));
+    // Recovery (the next start) refuses while the changed file is there, then finishes once it is back.
+    std::vector<std::string> recovered;
+    f.env->self = 4343;   // another launcher process (the first one is gone)
+    CHECK(!RecoverLocalSessions(*f.env, f.game, recovered, error) && Has(error, "lab.ini"));
+    WriteText(LocalPath(f.game, "lab.ini"), "lab host\n");
+    CHECK(RecoverLocalSessions(*f.env, guest, recovered, error) && recovered.size() == 1);
+    CHECK(!PathExists(LocalPath(f.game, "lab.ini")) && !PathExists(LocalPath(f.game, "local-test-session.json")) &&
+          !PathExists(LocalPath(guest, "local-test-session.json")));
+    CHECK(ReadLocalSession(run, back, error) && back.Str("state") == "off");
+    // A live owner blocks recovery.
+    f.env->self = 4242;
+    json::Value s3;
+    const std::wstring run3 = LocalRunsRoot(f.game) + L"\\fedcba9876543210fedcba9876543210";
+    CHECK(NewLocalSession(*f.env, f.game, guest, run3, s3, error));
+    f.env->self = 4343;
+    f.env->AddProcess(4242, f.env->self_start);
+    CHECK(!RecoverLocalSessions(*f.env, f.game, recovered, error) && Has(error, "still running"));
+    f.env->Kill(4242);
+    CHECK(RecoverLocalSessions(*f.env, f.game, recovered, error));
+    // Finished runs never block a later test, also when their second folder was moved or deleted since.
+    CHECK(ReadLocalSession(run3, back, error) && back.Str("state") == "off");
+    const std::wstring moved = guest + L"-moved";
+    CHECK(MoveFileW(guest.c_str(), moved.c_str()) != 0);
+    CHECK(RecoverLocalSessions(*f.env, f.game, recovered, error) && recovered.empty());
+    if (!error.empty()) std::fprintf(stderr, "recovery with a moved second folder: %s\n", error.c_str());
+    CHECK(MoveFileW(moved.c_str(), guest.c_str()) != 0);
+    f.env->self = 4242;
+    CHECK(f.RealSavesUntouched());
+}
+
+class FakeLocalHost final : public LocalHost {
+public:
+    explicit FakeLocalHost(FakeEnv* env) : env_(env) {}
+    FakeEnv* env_;
+    std::uint32_t next = 7000;
+    std::map<std::uint32_t, std::wstring> images;
+    std::map<std::uint32_t, LocalWindow> windows;
+    std::vector<std::wstring> started;
+    std::vector<std::string> helpers;
+    std::vector<std::pair<std::uint64_t, LocalRect>> placed;
+    std::vector<std::uint32_t> closed;
+    std::vector<int> busy_ports;
+    bool helper_ok = true;
+    bool second_image_wrong = false;   // the second game started reports another image (its start cannot be verified)
+    bool close_ignored = false;        // a game asked to close keeps running
+    LocalRect area{0, 0, 2560, 1400};
+    std::function<void()> on_start_game;   // runs first in StartGame (on the thread that starts the test)
+
+    bool StartGame(const std::wstring& exe, const std::wstring& dir, std::uint32_t& pid, std::int64_t& start_ms, std::string&) override {
+        if (on_start_game) on_start_game();
+        pid = next++;
+        start_ms = env_->NowMs();
+        env_->AddGame(pid, exe, start_ms);
+        images[pid] = second_image_wrong && started.size() % 2 == 1 ? std::wstring(L"C:\\Elsewhere\\mgsvtpp.exe") : exe;
+        windows[pid] = LocalWindow{pid * 16ull, LocalRect{50, 50, 1280, 759}, false};
+        started.push_back(dir);
+        return true;
+    }
+    std::wstring ProcessImage(std::uint32_t pid) override { return images.count(pid) ? images[pid] : std::wstring(); }
+    bool StartHelper(const std::wstring&, const std::string& run_id, std::uint32_t& pid, std::int64_t& start_ms) override {
+        if (!helper_ok) return false;
+        pid = next++;
+        start_ms = env_->NowMs();
+        env_->AddProcess(pid, start_ms);
+        helpers.push_back(run_id);
+        return true;
+    }
+    bool WorkArea(LocalRect& out, int& dpi) override {
+        out = area;
+        dpi = 96;
+        return true;
+    }
+    std::vector<LocalWindow> Windows(std::uint32_t pid) override {
+        std::int64_t s = 0;
+        if (!env_->ProcessStartMs(pid, s) || !windows.count(pid)) return {};
+        return {windows[pid]};
+    }
+    bool PlaceWindow(std::uint64_t handle, const LocalRect& rect) override {
+        placed.push_back({handle, rect});
+        for (auto& w : windows)
+            if (w.second.handle == handle) w.second.rect = rect;
+        return true;
+    }
+    void CloseGame(std::uint32_t pid, unsigned) override {
+        closed.push_back(pid);
+        if (!close_ignored) env_->Kill(pid);
+    }
+    void KillAll() {
+        for (const auto& image : images) env_->Kill(image.first);
+    }
+    bool PortFree(int port, bool) override { return std::find(busy_ports.begin(), busy_ports.end(), port) == busy_ports.end(); }
+};
+
+void WriteStartupLogs(const std::wstring& root, const std::string& role, const std::wstring& saves) {
+    std::string early = "early=start; lab=1; role=" + role + "\r\n";
+    if (role == "guest") early += "mutex=renamed; suffix=-guest\r\nidentity=fake; steamid=76561202255233008\r\n";
+    early += "saves=redirected; dir=" + Utf8(saves) + "\r\n";
+    WriteText(root + L"\\mgs-coop\\early.log", early);
+    WriteText(root + L"\\mgs-coop\\steam-observer.log", "master_server=redirected; method=x; url=http://127.0.0.1:47899/tppstm/gate\r\n");
+}
+
+void TestLocalRun() {
+    Fixture f(L"local-run");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, false);
+    WriteText(f.paths.lab_ini, "# Generated by tools/lab/Prepare-LabInstance.ps1\nenabled=1\n");   // a lab file of the host: kept aside and restored
+    // The second copy has no loader, but a package.json of an earlier Diamond Dogs Together (left by its Uninstall): kept in install-backups.
+    const std::string old_package = "{\"product\":\"mgs-coop-local-package\",\"version\":\"0.0.9\"}\n";
+    WriteText(guest + L"\\mgs-coop\\package.json", old_package);
+    const auto host_saves_before = HashManifest(f.paths.mod, {L"coop-saves"});
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    std::string error;
+    {
+        // Refusals change nothing: a busy port, Steam not signed in.
+        LocalTestRun run(f.env, lh);
+        LocalTestRequest req;
+        req.host_root = f.game;
+        req.guest_root = guest;
+        lh->busy_ports = {47820};
+        CHECK(!run.Start(req, error) && Has(error, "47820"));
+        lh->busy_ports.clear();
+        f.env->SetDword(L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser", 0);
+        CHECK(!run.Start(req, error) && Has(error, "Steam"));
+        f.env->SetDword(L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser", 12345);
+        // An incomplete local-test save copy of this (host) folder is kept and named; it never asks for another test folder.
+        CreateDirectories(f.paths.mod + L"\\local-test-saves\\287700\\local");
+        CHECK(!run.Start(req, error) && Has(error, "[host]") && Has(error, "incomplete") && Has(error, "move it") &&
+              !Has(error, "another test folder"));
+        RemoveTree(f.paths.mod + L"\\local-test-saves");
+        CHECK(!PathExists(LocalRunsRoot(f.game)) && ReadText(f.paths.lab_ini) == "# Generated by tools/lab/Prepare-LabInstance.ps1\nenabled=1\n");
+        CHECK(lh->started.empty() && lh->helpers.empty());
+    }
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    req.hud = "full";
+    CHECK(run.Start(req, error));
+    if (!error.empty()) std::fprintf(stderr, "local test start: %s\n", error.c_str());
+    // The mod was installed into the second copy from this package.
+    CHECK(ReadText(guest + L"\\dinput8.dll") == "FAKE-LOADER" && ReadText(guest + L"\\mgs-coop\\mgs-coop-player-runtime.dat") == "FAKE-RUNTIME");
+    CHECK(ReadText(guest + L"\\mgs-coop\\package.json") == ReadText(f.paths.package_json));
+    CHECK_EQ(ReadText(LocalBackupDir(guest) + L"\\package.json"), old_package);
+    // The helper first, then the host game, then the guest game, each from its own folder.
+    CHECK(lh->helpers.size() == 1 && lh->helpers[0] == run.run_id() && lh->started.size() == 2 && IEquals(lh->started[0], f.game) &&
+          IEquals(lh->started[1], guest));
+    // The activation files of both roles; the host plays Snake, the guest Quiet; one shared secret.
+    const std::string host_lab = ReadText(f.paths.lab_ini), guest_lab = ReadText(LocalPath(guest, "lab.ini"));
+    CHECK(StartsWith(host_lab, kLocalLabHeader) && Has(host_lab, "role=host\n") && Has(host_lab, "peer_steamid=76561202255233008\n"));
+    CHECK(Has(guest_lab, "role=guest\n") && Has(guest_lab, "peer_steamid=76561197960278073\n") && Has(guest_lab, "xinput=0\n"));
+    CHECK(Has(host_lab, "save_dir=" + Utf8(f.paths.mod) + "\\local-test-saves\n") && Has(guest_lab, "save_dir=" + Utf8(guest) + "\\mgs-coop\\local-test-saves\n"));
+    CHECK(Has(ReadText(f.paths.coop_ini), "character=snake\n") && Has(ReadText(LocalPath(guest, "coop.ini")), "character=quiet\n") &&
+          Has(ReadText(LocalPath(guest, "coop.ini")), "hud=full\n"));
+    const std::string secret = ReadText(f.paths.link_secret);
+    CHECK(secret.size() == 22 && IsCanonicalSecret(secret.substr(0, 20)) && secret == ReadText(LocalPath(guest, "link-secret.txt")));
+    CHECK(ReadText(f.paths.marker) == "offline-v1\n" && ReadText(LocalPath(guest, "script-observe.enabled")) == "offline-v1\n");
+    // Separate local-test save copies seeded from the co-op copy, windowed at the layout's size.
+    for (const std::wstring& root : {f.game, guest}) {
+        const std::wstring local = root + L"\\mgs-coop\\local-test-saves\\287700\\local";
+        CHECK_EQ(ReadText(local + L"\\TPP_GAME_DATA0"), "real-game-0");
+        const GraphicsInfo g = ReadGraphicsInfo(ReadText(local + L"\\TPP_GRAPHICS_CONFIG"));
+        CHECK(g.valid && g.window_mode == "Windowed" && g.width == run.layout().host_client_width && g.height == run.layout().host_client_height);
+    }
+    json::Value s;
+    CHECK(ReadLocalSession(run.run_dir(), s, error) && s.Str("state") == "active" && s.Find("files")->size() == 8 && s.Int("watchdog_pid") > 0);
+    CHECK(run.Status().active);
+    // Polls: both windows are placed side by side once they settled; the start-up evidence is checked.
+    WriteStartupLogs(f.game, "host", f.paths.mod + L"\\local-test-saves");
+    WriteStartupLogs(guest, "guest", guest + L"\\mgs-coop\\local-test-saves");
+    for (int i = 0; i < 6; ++i) {
+        f.env->Advance(500);
+        CHECK(run.Poll());
+    }
+    CHECK(lh->placed.size() >= 2);
+    bool host_placed = false, guest_placed = false;
+    for (const auto& p : lh->placed) {
+        if (p.second.x == run.layout().host.x && p.second.width == run.layout().host.width) host_placed = true;
+        if (p.second.x == run.layout().guest.x && p.second.width == run.layout().guest.width) guest_placed = true;
+    }
+    CHECK(host_placed && guest_placed && lh->closed.empty());
+    // One game exits: the files stay until BOTH have exited.
+    f.env->Kill(7001);
+    f.env->Advance(500);
+    CHECK(run.Poll() && IsFile(f.paths.marker));
+    f.env->Kill(7002);
+    f.env->Advance(500);
+    CHECK(!run.Poll());
+    CHECK(!run.Status().active && Has(run.Status().detail, "were put back") && Has(run.Status().detail, "second folder keeps"));
+    CHECK(ReadText(f.paths.lab_ini) == "# Generated by tools/lab/Prepare-LabInstance.ps1\nenabled=1\n" && !PathExists(f.paths.marker) &&
+          !PathExists(f.paths.coop_ini) && !PathExists(f.paths.link_secret) && !PathExists(LocalPath(guest, "lab.ini")) &&
+          !PathExists(LocalPath(guest, "local-test-session.json")) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+    CHECK(ReadLocalSession(run.run_dir(), s, error) && s.Str("state") == "off");
+    CHECK(CompareManifest(host_saves_before, HashManifest(f.paths.mod, {L"coop-saves"})).same);   // the ordinary co-op copy is untouched
+    CHECK(f.RealSavesUntouched());
+    {
+        // An unexpected game in a test folder stops only this test's own games; the files come back after both exit.
+        LocalTestRun second(f.env, lh);
+        CHECK(second.Start(req, error));
+        f.env->Advance(500);
+        CHECK(second.Poll());
+        f.env->AddGame(7999, guest + L"\\mgsvtpp.exe", f.env->NowMs());
+        f.env->Advance(500);
+        second.Poll();
+        CHECK(lh->closed.size() == 2 && second.Status().failed && Has(second.Status().detail, "unexpected"));
+        f.env->Kill(7999);
+        for (int i = 0; i < 4 && second.Poll(); ++i) f.env->Advance(500);
+        CHECK(!second.Poll() && !PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "script-observe.enabled")));
+    }
+    {
+        // Unsafe start-up evidence (the guest kept the real saves): both games are closed.
+        lh->closed.clear();
+        LocalTestRun third(f.env, lh);
+        CHECK(third.Start(req, error));
+        WriteText(guest + L"\\mgs-coop\\early.log", "early=start; lab=1; role=guest\r\nsaves=unchanged\r\n");
+        f.env->Advance(500);
+        third.Poll();
+        CHECK(lh->closed.size() == 2 && third.Status().failed && Has(third.Status().detail, "save"));
+        for (int i = 0; i < 4 && third.Poll(); ++i) f.env->Advance(500);
+        CHECK(!third.Poll() && !PathExists(f.paths.marker));
+    }
+    {
+        // The start fails after the host game started (the guest's process cannot be verified) and the host does not
+        // close: the run stays with the window, stopped, and puts both folders back once both games have exited.
+        lh->closed.clear();
+        lh->second_image_wrong = true;
+        lh->close_ignored = true;
+        LocalTestRun fourth(f.env, lh);
+        CHECK(!fourth.Start(req, error) && Has(error, "did not match") && Has(error, "Quit both games"));
+        CHECK(fourth.Status().active && fourth.Status().failed && IsFile(f.paths.marker) && lh->closed.size() == 1);
+        lh->second_image_wrong = false;
+        lh->close_ignored = false;
+        f.env->Advance(500);
+        CHECK(fourth.Poll() && IsFile(f.paths.marker) && Has(fourth.Status().detail, "did not match"));
+        lh->KillAll();
+        f.env->Advance(500);
+        CHECK(!fourth.Poll());
+        CHECK(!fourth.Status().active && fourth.Status().failed && Has(fourth.Status().detail, "were put back"));
+        CHECK(!PathExists(f.paths.marker) && !PathExists(f.paths.coop_ini) && !PathExists(LocalPath(guest, "lab.ini")) &&
+              !PathExists(LocalPath(guest, "local-test-session.json")) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+        CHECK(ReadText(f.paths.lab_ini) == "# Generated by tools/lab/Prepare-LabInstance.ps1\nenabled=1\n");
+    }
+    CHECK(f.RealSavesUntouched());
+}
+
+// The developer's own second copy (2026-10-29 review, D:\...\MGS_TPP_guest): an earlier Diamond Dogs Together
+// drag-and-drop install (its own package.json lists its loader and launcher) that the developer tools also
+// recorded in probe-install.json. Its loader and launcher are updated to this version's (the old ones kept in
+// mgs-coop\install-backups), probe-install.json is left exactly as it is; a loader that only the developer
+// tools own is still refused.
+void TestLocalOwnedGuest() {
+    Fixture f(L"local-owned");
+    MakeLocalHost(f);
+    auto package_text = [](const std::string& version, const std::string& loader, const std::string& launcher) {
+        json::Value p = json::Value::Object();
+        p["product"] = "mgs-coop-local-package";
+        p["version"] = version;
+        p["layout"] = "drop-in";
+        json::Value files = json::Value::Array();
+        for (const auto& row : {std::make_pair(std::string("dinput8.dll"), loader), std::make_pair(std::string("DiamondDogsTogether.exe"), launcher)}) {
+            json::Value r = json::Value::Object();
+            r["source"] = row.first;
+            r["target"] = row.first;
+            r["sha256"] = Sha256Hex(row.second);
+            files.Push(r);
+        }
+        p["files"] = files;
+        p["executable_sha256"] = kExeSha256;
+        p["steam_dll_sha256"] = kSteamApiSha256;
+        return json::Dump(p) + "\n";
+    };
+    WriteText(f.paths.package_json, package_text(DDT_CORE_VERSION, "FAKE-LOADER", "NEW-LAUNCHER"));
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "NEW-LAUNCHER");
+    const std::wstring guest = MakeGuestFolder(f, false);
+    WriteText(guest + L"\\dinput8.dll", "OLD-LOADER");
+    WriteText(guest + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    const std::string old_package = package_text("0.14.0", "OLD-LOADER", "OLD-LAUNCHER");
+    WriteText(guest + L"\\mgs-coop\\package.json", old_package);
+    json::Value record = json::Value::Object();
+    record["product"] = "mgs-coop-original-loader-probe";
+    record["version"] = "0.13.6";
+    record["game_directory"] = Utf8(guest);
+    record["dll_sha256"] = Sha256Hex(std::string("OLD-LOADER"));
+    record["rollback_id"] = "0123456789abcdef0123456789abcdef";
+    const std::string record_text = json::Dump(record) + "\n";
+    WriteText(guest + L"\\mgs-coop\\probe-install.json", record_text);
+    WriteText(guest + L"\\mgs-coop\\mgs-coop-player-runtime.dat", "FAKE-RUNTIME");
+    LocalFolderCheck c = CheckLocalTestFolder(*f.env, f.game, guest);
+    CHECK(c.ok && Has(c.message, "updated"));
+    if (!c.ok) std::fprintf(stderr, "owned guest check: %s\n", c.message.c_str());
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    std::string error;
+    CHECK(run.Start(req, error));
+    if (!error.empty()) std::fprintf(stderr, "owned guest start: %s\n", error.c_str());
+    CHECK(ReadText(guest + L"\\dinput8.dll") == "FAKE-LOADER" && ReadText(guest + L"\\DiamondDogsTogether.exe") == "NEW-LAUNCHER");
+    CHECK(ReadText(guest + L"\\mgs-coop\\package.json") == ReadText(f.paths.package_json));
+    CHECK_EQ(ReadText(guest + L"\\mgs-coop\\probe-install.json"), record_text);
+    const std::wstring kept = LocalBackupDir(guest);
+    CHECK(ReadText(kept + L"\\dinput8.dll") == "OLD-LOADER" && ReadText(kept + L"\\DiamondDogsTogether.exe") == "OLD-LAUNCHER");
+    CHECK_EQ(ReadText(kept + L"\\package.json"), old_package);
+    lh->KillAll();
+    f.env->Advance(500);
+    CHECK(!run.Poll() && !run.Status().active && Has(run.Status().detail, "second folder keeps"));
+    CHECK(CheckLocalTestFolder(*f.env, f.game, guest).ok && ReadText(guest + L"\\dinput8.dll") == "FAKE-LOADER");
+    // A loader only the developer tools own (their probe-install.json; no package.json lists it) is never replaced.
+    const std::wstring lab = f.root + L"\\Guest2\\MGS_TPP_guest";
+    WriteText(lab + L"\\mgsvtpp.exe", "FAKE-EXE");
+    WriteText(lab + L"\\steam_api64.dll", "FAKE-STEAMAPI");
+    WriteText(lab + L"\\dinput8.dll", "LAB-LOADER");
+    record["game_directory"] = Utf8(lab);
+    record["dll_sha256"] = Sha256Hex(std::string("LAB-LOADER"));
+    WriteText(lab + L"\\mgs-coop\\probe-install.json", json::Dump(record) + "\n");
+    c = CheckLocalTestFolder(*f.env, f.game, lab);
+    CHECK(!c.ok && Has(c.message, "package-install.ps1"));
+    // ... also when an unrelated package.json sits next to it.
+    WriteText(lab + L"\\mgs-coop\\package.json", package_text("0.14.0", "OTHER-LOADER", "OLD-LAUNCHER"));
+    c = CheckLocalTestFolder(*f.env, f.game, lab);
+    CHECK(!c.ok && Has(c.message, "package-install.ps1"));
+    CHECK(ReadText(lab + L"\\dinput8.dll") == "LAB-LOADER");
+    CHECK(f.RealSavesUntouched());
+}
+
+void TestLocalWatch() {
+    // The window closed during the test: the hidden helper restores both folders after BOTH games exit.
+    Fixture f(L"local-watch");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    std::string error;
+    CHECK(run.Start(req, error));
+    const std::string id = run.run_id();
+    f.env->self = 9100;   // this process is the helper now; the launcher (4242) is gone
+    f.env->self_start = f.env->NowMs();
+    int sleeps = 0;
+    f.env->on_sleep = [&]() {
+        ++sleeps;
+        if (sleeps == 3) f.env->Kill(7001);
+        if (sleeps == 6) {
+            CHECK(IsFile(f.paths.marker));   // one game still runs: nothing restored yet
+            f.env->Kill(7002);
+        }
+    };
+    CHECK(RunLocalWatch(*f.env, f.game, id) == 0);
+    f.env->on_sleep = nullptr;
+    CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")) && !PathExists(LocalPath(guest, "local-test-session.json")));
+    json::Value s;
+    CHECK(ReadLocalSession(run.run_dir(), s, error) && s.Str("state") == "off");
+    CHECK(RunLocalWatch(*f.env, f.game, "not-a-run") == 2 && RunLocalWatch(*f.env, f.game, id) == 0);
+    f.env->self = 4242;
+}
+
+void TestLocalThroughModel() {
+    // Settings > Debug mode (off by default, persisted), the second folder, and a run from Play.
+    Fixture f(L"local-model");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    std::string error;
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env, lh);
+        CHECK(m->phase() == Phase::ready && !m->debug() && m->local_test_folder().empty());
+        LocalTestCheck c = m->check_local_test();
+        CHECK(!c.ok && Has(c.message, "Debug"));
+        CHECK(!m->start_local_test(error) && !error.empty() && lh->started.empty());
+        m->set_debug(true);
+        c = m->check_local_test();
+        CHECK(!c.ok && Has(c.message, "Settings"));
+        m->set_local_test_folder(Utf8(f.game));
+        c = SettledLocalCheck(*m);
+        CHECK(!c.ok && Has(c.message, "separate"));
+        m->set_local_test_folder(Utf8(guest));
+        c = SettledLocalCheck(*m);
+        CHECK(c.ok);
+        if (!c.ok) std::fprintf(stderr, "local check: %s\n", c.message.c_str());
+    }
+    Settings settings;
+    CHECK(LoadSettings(f.paths, settings) && settings.debug && IEquals(Wide(settings.local_guest), guest));
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env, lh);   // reopened: the settings are back
+        CHECK(m->debug() && IEquals(Wide(m->local_test_folder()), guest) && SettledLocalCheck(*m).ok);
+        // The check is kept (it reads the second copy's game exe) and checked again when the Local test tab or
+        // Settings > Debug comes into view (refresh_local_test) and on Check again (recheck).
+        f.env->AddGame(8300, guest + L"\\mgsvtpp.exe", f.env->NowMs());
+        CHECK(m->check_local_test().ok);
+        m->refresh_local_test();
+        LocalTestCheck c = SettledLocalCheck(*m);
+        CHECK(!c.ok && Has(c.message, "running"));
+        f.env->Kill(8300);
+        m->recheck();
+        CHECK(m->phase() == Phase::ready && SettledLocalCheck(*m).ok);
+        CHECK(m->start_local_test(error));
+        if (!error.empty()) std::fprintf(stderr, "start_local_test: %s\n", error.c_str());
+        CHECK(WaitLocalStart(*m));
+        CHECK(m->phase() == Phase::in_game && m->local_test().active && m->session_role() == Role::host && m->join_code().empty());
+        CHECK(!m->check_local_test().ok && !m->link().headline.empty());
+        std::string code;
+        CHECK(!m->host(code, error) && f.env->UrlCount() == 0);   // no online session during the local test
+        CHECK(!PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::in_game; }, 6));
+        f.env->Kill(7001);
+        f.env->Kill(7002);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }));
+        CHECK(!m->local_test().active && Has(m->local_test().detail, "were put back") && !PathExists(f.paths.marker));
+        // A start that fails while a game it started keeps running: the window keeps the stopped run and puts both
+        // folders back itself once both games have exited (the helper only waits for the window to close).
+        CHECK(SettledLocalCheck(*m).ok);
+        lh->second_image_wrong = true;
+        lh->close_ignored = true;
+        CHECK(m->start_local_test(error) && WaitLocalStart(*m));
+        CHECK(Has(m->local_test().detail, "did not match") && Has(ReadText(f.paths.launcher_log), "local_test=start_failed"));
+        CHECK(m->phase() == Phase::in_game && m->local_test().active && m->local_test().failed && IsFile(f.paths.marker));
+        lh->second_image_wrong = false;
+        lh->close_ignored = false;
+        CHECK(!PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::in_game; }, 6));
+        lh->KillAll();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }));
+        CHECK(!m->local_test().active && m->local_test().failed && Has(m->local_test().detail, "were put back"));
+        CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+        m->set_debug(false);
+        CHECK(!m->check_local_test().ok);
+    }
+    CHECK(LoadSettings(f.paths, settings) && !settings.debug && IEquals(Wide(settings.local_guest), guest));
+    {
+        // A local run whose window was closed and whose helper still runs: this folder stays "not ready" (with a
+        // sentence) until the run's files are put back, instead of failing later at Host on its lab.ini.
+        LocalTestRun run(f.env, lh);
+        LocalTestRequest req;
+        req.host_root = f.game;
+        req.guest_root = guest;
+        req.fixture = true;   // activation only; its launcher is pid 4242
+        CHECK(run.Start(req, error));
+        f.env->self = 4343;
+        f.env->AddProcess(4242, f.env->self_start);
+        auto m = MakeRealModelWithEnv(f.game, f.env, lh);
+        CHECK(m->phase() == Phase::error && Has(m->last_error(), "local two-window test") && IsFile(f.paths.marker));
+        f.env->Kill(4242);
+        m->recheck();
+        CHECK(m->phase() == Phase::ready && !PathExists(f.paths.marker) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+        f.env->self = 4242;
+    }
+    CHECK(f.RealSavesUntouched());
+    {
+        // Debug mode switched on while the automatic setup runs (which saves the settings it read at its start) is kept.
+        Fixture g(L"local-model-setup");
+        std::atomic<bool> release{false};
+        const InstallHooks saved = Hooks();
+        Hooks().build_runtime = [&](const std::wstring& game, const std::wstring& out, const std::function<void(float, const std::string&)>& progress,
+                                    std::string& build_error) {
+            while (!release) Sleep(5);
+            return saved.build_runtime(game, out, progress, build_error);
+        };
+        auto m = MakeRealModelWithEnv(g.game, g.env, lh);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        m->set_debug(true);
+        m->set_local_test_folder(Utf8(guest));
+        release = true;
+        CHECK(PumpUntil(*m, *g.env, [&]() { return m->phase() != Phase::setting_up; }));
+        SettledLocalCheck(*m);   // its check thread reads Hooks() too
+        Hooks() = saved;
+        Settings kept;
+        CHECK(m->phase() == Phase::ready && m->debug() && !m->local_test_folder().empty());
+        CHECK(LoadSettings(g.paths, kept) && kept.debug && IEquals(Wide(kept.local_guest), guest) && kept.hud == "compact");
+    }
+}
+
+// Start local test and the second folder's check run on their own threads (2026-10-29 review): the start hashes and
+// copies files, takes both folders' play locks (each may wait up to 30 s) and waits for both games, and the check
+// reads the second copy's 166 MB game exe, so the window keeps drawing meanwhile ("Starting the local test...").
+void TestLocalStartOffThread() {
+    Fixture f(L"local-async");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    std::atomic<bool> release{false}, waited_out{false};
+    std::atomic<int> starts{0};
+    std::thread::id worker;
+    lh->on_start_game = [&]() {
+        if (starts++ == 0) worker = std::this_thread::get_id();
+        const ULONGLONG until = GetTickCount64() + 3000;
+        while (!release && GetTickCount64() < until) Sleep(2);
+        if (!release) waited_out = true;
+    };
+    auto m = MakeRealModelWithEnv(f.game, f.env, lh);
+    m->set_debug(true);
+    m->set_local_test_folder(Utf8(guest));
+    LocalTestCheck c = m->check_local_test();
+    CHECK(!c.ok && c.checking && Has(c.message, "Checking"));
+    c = SettledLocalCheck(*m);
+    CHECK(c.ok && !c.checking);
+    if (!c.ok) std::fprintf(stderr, "async check: %s\n", c.message.c_str());
+    std::string error;
+    CHECK(m->start_local_test(error) && error.empty());
+    CHECK(!waited_out);   // it returned while the start still waited for the first game
+    LocalTestView v = m->local_test();
+    CHECK(v.active && v.starting && !v.failed && Has(v.headline, "Starting"));
+    CHECK(m->phase() == Phase::in_game && m->session_role() == Role::host && !m->check_local_test().ok);
+    CHECK(Has(m->link().headline, "Starting"));
+    std::string report;
+    CHECK(!m->uninstall(report, error) && report.empty());
+    m->recheck();
+    m->arrange_local_test();   // nothing to place yet
+    CHECK(m->phase() == Phase::in_game && lh->placed.empty());
+    release = true;
+    CHECK(WaitLocalStart(*m));
+    CHECK(starts == 2 && !waited_out && worker != std::this_thread::get_id());
+    v = m->local_test();
+    CHECK(v.active && !v.starting && !v.failed && m->phase() == Phase::in_game && IsFile(f.paths.marker));
+    lh->KillAll();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }));
+    CHECK(!PathExists(f.paths.marker));
+    // A refusal the start finds on its own thread (a busy link port): nothing stays on, and Play's Local test tab says why.
+    lh->on_start_game = nullptr;
+    lh->busy_ports = {47810};
+    c = SettledLocalCheck(*m);
+    CHECK(c.ok);
+    CHECK(m->start_local_test(error));
+    CHECK(WaitLocalStart(*m));
+    v = m->local_test();
+    CHECK(!v.active && !v.starting && v.failed && Has(v.detail, "47810"));
+    CHECK(m->phase() == Phase::ready && !PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")));
+    CHECK(Has(ReadText(f.paths.launcher_log), "local_test=refused"));
+    lh->busy_ports.clear();
+    CHECK(f.RealSavesUntouched());
+}
+
+// ddt_core_tests --local-watch-process <DiamondDogsTogether.exe> (CTest ddt_local_watch_process): the local test's
+// Win32 seams with real processes, all hidden (2026-10-29 review: they were only compiled). The real helper process
+// "DiamondDogsTogether.exe --local-watch <run>", started hidden the way StartHelper starts it, puts a run's files back
+// once its launcher and games are gone; a helper still waiting for a live launcher is ended by CloseGame (no window:
+// the end after the wait); ProcessImage, PortFree and WorkArea answer for real. No game and no window is started.
+std::int64_t ThisProcessStartMs() {
+    FILETIME created{}, exited{}, kernel{}, user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return 0;
+    ULARGE_INTEGER u{};
+    u.LowPart = created.dwLowDateTime;
+    u.HighPart = created.dwHighDateTime;
+    return static_cast<std::int64_t>(u.QuadPart / 10000ULL) - 11644473600000LL;
+}
+
+bool StartHiddenHelper(const std::wstring& exe, const std::wstring& dir, const std::string& run_id, PROCESS_INFORMATION& pi) {
+    std::wstring cmd = L"\"" + exe + L"\" --local-watch " + Wide(run_id);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    pi = PROCESS_INFORMATION{};
+    return CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW, nullptr, dir.c_str(),
+                          &si, &pi) != 0;
+}
+
+void TestLocalWatchProcess(const std::wstring& launcher) {
+    Fixture f(L"local-watch-process");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    // The helper takes its own folder as the game folder: a copy of the launcher sits in the fake one.
+    const std::wstring helper = f.game + L"\\DiamondDogsTogether.exe";
+    CHECK(IsFile(launcher) && CopyFileW(launcher.c_str(), helper.c_str(), FALSE) != 0);
+    const std::shared_ptr<LocalHost> win = MakeWin32LocalHost();
+
+    // ProcessImage, PortFree and WorkArea, for real.
+    wchar_t self_path[MAX_PATH + 1]{};
+    GetModuleFileNameW(nullptr, self_path, MAX_PATH);
+    CHECK(IEquals(win->ProcessImage(GetCurrentProcessId()), FullPath(self_path)));
+    CHECK(win->ProcessImage(0).empty());
+    WSADATA wsa{};
+    CHECK(WSAStartup(MAKEWORD(2, 2), &wsa) == 0);
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int len = sizeof(addr);
+    CHECK(s != INVALID_SOCKET && bind(s, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0 &&
+          getsockname(s, reinterpret_cast<sockaddr*>(&addr), &len) == 0);
+    const int port = ntohs(addr.sin_port);
+    CHECK(port > 0 && !win->PortFree(port, false));
+    closesocket(s);
+    CHECK(win->PortFree(port, false));
+    WSACleanup();
+    LocalRect area;
+    int dpi = 0;
+    CHECK(win->WorkArea(area, dpi) && area.width > 0 && area.height > 0 && dpi >= 96);
+
+    // 1) The launcher (the fake env's pid 4242, started in 2026) and both games are gone: the real helper process
+    //    puts the run's files back and ends.
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    req.fixture = true;   // activation only
+    std::string error;
+    CHECK(run.Start(req, error));
+    CHECK(IsFile(f.paths.marker) && IsFile(LocalPath(guest, "lab.ini")));
+    PROCESS_INFORMATION pi{};
+    CHECK(StartHiddenHelper(helper, f.game, run.run_id(), pi));
+    DWORD code = 99;
+    if (pi.hProcess) {
+        CHECK(IEquals(win->ProcessImage(pi.dwProcessId), helper));
+        CHECK(win->Windows(pi.dwProcessId).empty());   // the helper has no window
+        const bool ended = WaitForSingleObject(pi.hProcess, 60000) == WAIT_OBJECT_0;
+        CHECK(ended);
+        if (!ended) TerminateProcess(pi.hProcess, 3);   // never leave it behind
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    CHECK(code == 0);
+    CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")) && !PathExists(LocalPath(f.game, "local-test-session.json")));
+    json::Value back;
+    CHECK(ReadLocalSession(run.run_dir(), back, error) && back.Str("state") == "off");
+    CHECK(Has(ReadText(f.paths.launcher_log), "local_watch=restored"));
+
+    // 2) Its launcher (this process) still runs: the helper waits. CloseGame asks its windows to close (it has none)
+    //    and ends it after the wait; the run is then put back here.
+    f.env->self = GetCurrentProcessId();
+    f.env->self_start = ThisProcessStartMs();
+    LocalTestRun run2(f.env, lh);
+    CHECK(run2.Start(req, error));
+    if (!error.empty()) std::fprintf(stderr, "second fixture run: %s\n", error.c_str());
+    CHECK(StartHiddenHelper(helper, f.game, run2.run_id(), pi));
+    if (pi.hProcess) {
+        CHECK(WaitForSingleObject(pi.hProcess, 4000) == WAIT_TIMEOUT);   // still waiting for this launcher
+        CHECK(IsFile(f.paths.marker));
+        win->CloseGame(pi.dwProcessId, 500);
+        const bool ended = WaitForSingleObject(pi.hProcess, 5000) == WAIT_OBJECT_0;
+        CHECK(ended);
+        if (!ended) TerminateProcess(pi.hProcess, 3);
+        code = 99;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CHECK(code == 1);   // ended by CloseGame after its wait
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    json::Value s2;
+    LocalRestoreResult r;
+    CHECK(ReadLocalSession(run2.run_dir(), s2, error) && RestoreLocalSession(*f.env, s2, r, error) && r.state == "off");
+    CHECK(!PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "lab.ini")));
+    f.env->self = 4242;
+    CHECK(f.RealSavesUntouched());
+    DeleteFileW(helper.c_str());
+}
+
+// ---- The native local test against tools/dev/Play-LocalCoop.ps1 (Windows PowerShell, fixture mode) ----
+bool RunPowerShell(const std::wstring& args, const std::wstring& log) {
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE out = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (out == INVALID_HANDLE_VALUE) return false;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = out;
+    si.hStdError = out;
+    si.hStdInput = nullptr;
+    PROCESS_INFORMATION pi{};
+    std::wstring cmd = L"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass " + args;
+    SetEnvironmentVariableW(L"MGS_COOP_TEST_NO_LAUNCH", L"1");
+    SetEnvironmentVariableW(L"MGS_COOP_TEST_NO_WATCHDOG", L"1");
+    SetEnvironmentVariableW(L"PSModulePath", nullptr);
+    const BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    SetEnvironmentVariableW(L"MGS_COOP_TEST_NO_LAUNCH", nullptr);
+    SetEnvironmentVariableW(L"MGS_COOP_TEST_NO_WATCHDOG", nullptr);
+    CloseHandle(out);
+    if (!ok) return false;
+    WaitForSingleObject(pi.hProcess, 240000);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+}
+
+std::map<std::string, const json::Value*> JournalFiles(const json::Value& session) {
+    std::map<std::string, const json::Value*> out;
+    if (const json::Value* files = session.Find("files"))
+        for (const json::Value& e : files->Elements()) out[e.Str("role") + "/" + e.Str("name")] = &e;
+    return out;
+}
+
+void TestLocalPowerShellInterop() {
+    Fixture f(L"local-ps");
+    MakeLocalHost(f);
+    const std::wstring guest = MakeGuestFolder(f, true);
+    WriteText(guest + L"\\mgs-coop\\mgs-coop-player-runtime.dat", "FAKE-RUNTIME");
+    // The guest's earlier offline files (both tools journal and restore them).
+    const std::string guest_lab = "# Generated by tools/lab/Prepare-LabInstance.ps1 - single-PC lab harness only.\nenabled=1\nmode=lab\nrole=guest\nloopback=1\n";
+    WriteText(LocalPath(guest, "lab.ini"), guest_lab);
+    WriteText(LocalPath(guest, "coop.ini"), "character=quiet\nmaster_url=http://127.0.0.1:47899/tppstm/gate\n");
+    // The PowerShell test's package folder: the same loader, its manifest naming the fixture's game hashes.
+    const std::wstring pkg = f.root + L"\\pspkg";
+    WriteText(pkg + L"\\dinput8.dll", "FAKE-LOADER");
+    json::Value p = json::Value::Object();
+    p["product"] = "mgs-coop-local-package";
+    p["version"] = DDT_CORE_VERSION;
+    json::Value files = json::Value::Array();
+    json::Value row = json::Value::Object();
+    row["source"] = "dinput8.dll";
+    row["target"] = "dinput8.dll";
+    row["sha256"] = Sha256Hex(std::string("FAKE-LOADER"));
+    files.Push(row);
+    p["files"] = files;
+    p["executable_sha256"] = Sha256Hex(std::string("FAKE-EXE"));
+    p["steam_dll_sha256"] = Sha256Hex(std::string("FAKE-STEAMAPI"));
+    json::Value ra = json::Value::Object();
+    ra["sha256"] = Sha256Hex(std::string("FAKE-RUNTIME"));
+    p["runtime_archive"] = ra;
+    WriteText(pkg + L"\\mgs-coop\\package.json", json::Dump(p) + "\n");
+    const std::wstring source = Wide(DDT_SOURCE_DIR);
+    const std::wstring log = f.root + L"\\ps.log";
+
+    // 1. Play-LocalCoop.ps1 in its fixture mode (activation checked and restored, no game).
+    const bool ps_ok = RunPowerShell(L"-File \"" + source + L"\\tools\\dev\\Play-LocalCoop.ps1\" -GameDirectory \"" + f.game +
+                                         L"\" -GuestDirectory \"" + guest + L"\" -PackageDirectory \"" + pkg + L"\" -NonInteractive",
+                                     log);
+    CHECK(ps_ok && Has(ReadText(log), "TEST: local two-window activation checked; no games launched."));
+    if (!ps_ok) std::fprintf(stderr, "Play-LocalCoop.ps1: %s\n", ReadText(log).c_str());
+    std::vector<DirEntry> runs = ListDirectory(LocalRunsRoot(f.game));
+    CHECK(runs.size() == 1);
+    if (runs.size() != 1) return;
+    json::Value ps;
+    std::string error;
+    // The native reader accepts the PowerShell journal.
+    CHECK(ReadLocalSession(JoinPath2(LocalRunsRoot(f.game), runs[0].name), ps, error) && ps.Str("state") == "off");
+    if (!error.empty()) std::fprintf(stderr, "read PowerShell journal: %s\n", error.c_str());
+    const auto ps_saves_host = HashManifest(f.paths.mod, {L"local-test-saves"});
+    const auto ps_saves_guest = HashManifest(guest + L"\\mgs-coop", {L"local-test-saves"});
+    CHECK(ps_saves_host.size() >= 3 && ps_saves_guest.size() >= 3);
+    CHECK_EQ(ReadText(LocalPath(guest, "lab.ini")), guest_lab);
+    RemoveTree(f.paths.mod + L"\\local-test-saves");
+    RemoveTree(guest + L"\\mgs-coop\\local-test-saves");
+
+    // 2. The native run on the same folders, same inputs (fixture: no Steam, 1920x1080, no games).
+    auto lh = std::make_shared<FakeLocalHost>(f.env.get());
+    LocalTestRun run(f.env, lh);
+    LocalTestRequest req;
+    req.host_root = f.game;
+    req.guest_root = guest;
+    req.fixture = true;
+    CHECK(run.Start(req, error));
+    if (!error.empty()) std::fprintf(stderr, "native fixture run: %s\n", error.c_str());
+    CHECK(lh->started.empty() && lh->helpers.empty());
+    json::Value native;
+    CHECK(ReadLocalSession(run.run_dir(), native, error) && native.Str("state") == "active");
+    const auto a = JournalFiles(ps), b = JournalFiles(native);
+    CHECK(a.size() == 8 && b.size() == 8);
+    for (const auto& kv : a) {
+        const auto it = b.find(kv.first);
+        CHECK(it != b.end());
+        if (it == b.end()) continue;
+        const json::Value& x = *kv.second;
+        const json::Value& y = *it->second;
+        CHECK(x.Bool("original_exists") == y.Bool("original_exists") && x.Str("original_sha256") == y.Str("original_sha256") &&
+              x.Str("original_base64") == y.Str("original_base64"));
+        if (EndsWith(kv.first, "/link-secret.txt")) continue;   // a new random secret each run
+        if (x.Str("written_sha256") != y.Str("written_sha256"))
+            std::fprintf(stderr, "PowerShell and native differ: %s\n", kv.first.c_str());
+        CHECK(x.Str("written_sha256") == y.Str("written_sha256"));
+    }
+    for (const auto& kv : ps.Items()) CHECK(native.Find(kv.first) != nullptr);   // the same journal fields
+    // DDT_LOCALTEST_EVIDENCE=<folder>: keep both journals and the native run's files for a reviewer.
+    wchar_t evidence[MAX_PATH + 1]{};
+    if (GetEnvironmentVariableW(L"DDT_LOCALTEST_EVIDENCE", evidence, MAX_PATH) && evidence[0]) {
+        const std::wstring ev = evidence;
+        CreateDirectories(ev);
+        std::string copy_error;
+        CopyFileChecked(JoinPath2(JoinPath2(LocalRunsRoot(f.game), runs[0].name), L"session.json"), ev + L"\\powershell-session.json", true,
+                        copy_error);
+        CopyFileChecked(run.run_dir() + L"\\session.json", ev + L"\\native-session.json", true, copy_error);
+        for (const std::pair<const wchar_t*, std::wstring>& role : {std::make_pair(L"host", f.game), std::make_pair(L"guest", guest)}) {
+            for (const wchar_t* name : {L"lab.ini", L"coop.ini", L"script-observe.enabled"})
+                CopyFileChecked(role.second + L"\\mgs-coop\\" + name, ev + L"\\native-" + role.first + L"-" + name, true, copy_error);
+            CopyFileChecked(role.second + L"\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GRAPHICS_CONFIG",
+                            ev + L"\\native-" + role.first + L"-TPP_GRAPHICS_CONFIG", true, copy_error);
+        }
+    }
+    CHECK(CompareManifest(ps_saves_host, HashManifest(f.paths.mod, {L"local-test-saves"})).same);
+    CHECK(CompareManifest(ps_saves_guest, HashManifest(guest + L"\\mgs-coop", {L"local-test-saves"})).same);
+
+    // 3. The PowerShell module restores the native run's journal.
+    const std::wstring out = f.root + L"\\ps-out.txt";
+    const std::wstring restore = f.root + L"\\restore.ps1";
+    WriteText(restore, "Import-Module '" + Utf8(source) + "\\tools\\dev\\LocalCoopSession.psm1' -Force -DisableNameChecking\r\n"
+                       "$s = Read-LocalCoopSession -RunDirectory '" + Utf8(run.run_dir()) + "'\r\n"
+                       "$r = Restore-LocalCoopSession -Session $s\r\n"
+                       "[IO.File]::WriteAllText('" + Utf8(out) + "', ($r.State + '|' + (@($r.Kept) -join ',')))\r\n");
+    CHECK(RunPowerShell(L"-File \"" + restore + L"\"", log));
+    CHECK_EQ(ReadText(out), "off|");
+    CHECK(ReadText(LocalPath(guest, "lab.ini")) == guest_lab && !PathExists(f.paths.marker) && !PathExists(LocalPath(guest, "script-observe.enabled")) &&
+          !PathExists(LocalPath(guest, "local-test-session.json")));
+
+    // 4. The native recovery restores a run the PowerShell module left switched on.
+    const std::wstring open = f.root + L"\\open.ps1";
+    WriteText(open, "Import-Module '" + Utf8(source) + "\\tools\\dev\\LocalCoopSession.psm1' -Force -DisableNameChecking\r\n"
+                    "$run = Join-Path '" + Utf8(LocalRunsRoot(f.game)) + "' ([Guid]::NewGuid().ToString('N'))\r\n"
+                    "$s = New-LocalCoopSession -HostRoot '" + Utf8(f.game) + "' -GuestRoot '" + Utf8(guest) + "' -RunDirectory $run\r\n"
+                    "$utf8 = New-Object Text.UTF8Encoding $false\r\n"
+                    "Set-LocalCoopSessionFile -Session $s -Role guest -Name 'coop.ini' -Bytes $utf8.GetBytes(\"ps-written`n\")\r\n"
+                    "Set-LocalCoopSessionFile -Session $s -Role host -Name 'script-observe.enabled' -Bytes $utf8.GetBytes(\"offline-v1`n\")\r\n"
+                    "[IO.File]::WriteAllText('" + Utf8(out) + "', $run)\r\n");
+    CHECK(RunPowerShell(L"-File \"" + open + L"\"", log));
+    CHECK(ReadText(LocalPath(guest, "coop.ini")) == "ps-written\n" && IsFile(f.paths.marker));
+    std::vector<std::string> recovered;
+    CHECK(RecoverLocalSessions(*f.env, guest, recovered, error) && recovered.size() == 1);
+    if (!error.empty()) std::fprintf(stderr, "native recovery of a PowerShell run: %s\n", error.c_str());
+    CHECK(ReadText(LocalPath(guest, "coop.ini")) == "character=quiet\nmaster_url=http://127.0.0.1:47899/tppstm/gate\n" && !PathExists(f.paths.marker));
+    CHECK(f.RealSavesUntouched());
+    std::printf("local test interop: %zu journal entries of Play-LocalCoop.ps1 compared with the native run (written bytes, "
+                "originals, save copies, graphics); each tool restored the other's run\n",
+                a.size());
+}
+
+// ---- Self-update: the release feed, the staged install, the restart ------------------------
+std::string FeedRelease(const std::string& tag, const std::vector<std::string>& assets) {
+    std::string a;
+    for (const std::string& name : assets) {
+        if (!a.empty()) a += ",";
+        a += "{\"name\":\"" + name + "\",\"size\":1234,\"browser_download_url\":\"http://127.0.0.1:1/" + name + "\"}";
+    }
+    return "{\"tag_name\":\"" + tag + "\",\"name\":\"Diamond Dogs Together " + tag + "\",\"draft\":false,\"assets\":[" + a + "]}";
+}
+
+// A fresh fixture needs the setup, and it runs by itself: Update now waits for it (as it does for a player). Pumps
+// until the update is offered and Update now may start (co-op is ready, or the folder has an error of its own).
+bool UpdateOffered(LauncherModel& m, FakeEnv& env) {
+    return PumpUntil(m, env, [&]() {
+        const Phase p = m.phase();
+        return m.update_info().status == UpdateStatus::available && p != Phase::needs_setup && p != Phase::setting_up;
+    });
+}
+
+void TestFeedSkipsSource() {
+    UpdateInfo info;
+    std::string err;
+    // The GPL source archive is published next to the player zip: never the update.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DDT-source-0.14.4.zip", "DiamondDogsTogether-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available);
+    CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
+    // Even a source archive named like the player zip, listed first.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4-source.zip", "DiamondDogsTogether-0.14.4.zip",
+                                                          "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-Source-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    // The player zip is the prefix and exactly this release's version: no other
+    // zip (a future "-resources" asset contains "source" but is not the source).
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-resources.zip", "DiamondDogsTogether-0.14.4-resources.zip",
+                                                          "DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]",
+                            "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available);
+    CHECK_EQ(info.asset_name, std::string("DiamondDogsTogether-0.14.4.zip"));
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4-resources.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    // A zip of another version under this tag would install that version and offer the update again: skipped.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    // GPL: a release is an update only when its source zip is published with it.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.3.zip"}) + "]", "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::up_to_date);
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DiamondDogsTogether-0.14.5.zip"}) + "," +
+                                FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip", "ddt-SOURCE-0.14.4.zip"}) + "]",
+                            "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available && info.latest_version == "v0.14.4");
+    // A newer release that holds only the source archive is not an update; the
+    // older one with a player zip still is.
+    CHECK(ParseReleasesFeed("[" + FeedRelease("v0.14.5", {"DDT-source-0.14.5.zip"}) + "," +
+                                FeedRelease("v0.14.4", {"DiamondDogsTogether-0.14.4.zip", "DDT-source-0.14.4.zip"}) + "]",
+                            "0.14.3", info, err));
+    CHECK(info.status == UpdateStatus::available && info.latest_version == "v0.14.4");
+    // The test feed of --update-feed replaces GitHub's.
+    UpdateHooks saved = GetUpdateHooks();
+    std::string asked;
+    GetUpdateHooks().http_get = [&](const std::string& url, std::string& body, int& status, std::string&) {
+        asked = url;
+        body = "[]";
+        status = 200;
+        return true;
+    };
+    CHECK(CheckForUpdates("0.14.3", info, err, "http://127.0.0.1:8123/releases.json") && asked == "http://127.0.0.1:8123/releases.json");
+    CHECK(CheckForUpdates("0.14.3", info, err) && Has(asked, "api.github.com/repos/TrollTaylor/diamond-dogs-together/releases"));
+    GetUpdateHooks() = saved;
+}
+
+// A player zip as the release packaging writes it (mgs-coop/package.json with its product).
+std::vector<std::uint8_t> PackageZip(const std::vector<std::pair<std::string, std::string>>& files, const std::string& version = "9.9.9") {
+    ZipWriter zw;
+    std::string err;
+    for (const auto& f : files) zw.AddFile(f.first, f.second.data(), f.second.size(), err);
+    bool has_package = false;
+    for (const auto& f : files) has_package = has_package || f.first == "mgs-coop/package.json";
+    if (!has_package) {
+        const std::string pkg = "{\"product\":\"mgs-coop-local-package\",\"version\":\"" + version + "\",\"layout\":\"drop-in\"}";
+        zw.AddFile("mgs-coop/package.json", pkg.data(), pkg.size(), err);
+    }
+    std::vector<std::uint8_t> bytes;
+    zw.Finish(bytes, err);
+    return bytes;
+}
+void WriteBytes(const std::wstring& path, const std::vector<std::uint8_t>& bytes) {
+    std::string error;
+    CreateDirectories(ParentOf(path));
+    if (!WriteAtomic(path, bytes.data(), bytes.size(), true, error)) {
+        std::fprintf(stderr, "test setup write failed: %s\n", error.c_str());
+        ++g_failures;
+    }
+}
+// The previous install's package.json with one files[] row per (target, content).
+void WriteOldPackage(const InstancePaths& paths, const std::vector<std::pair<std::string, std::string>>& rows) {
+    json::Value p = json::Value::Object();
+    p["product"] = "mgs-coop-local-package";
+    p["version"] = "0.14.3";
+    json::Value files = json::Value::Array();
+    for (const auto& r : rows) {
+        json::Value row = json::Value::Object();
+        row["source"] = r.first;
+        row["target"] = r.first;
+        row["sha256"] = Sha256Hex(r.second);
+        files.Push(row);
+    }
+    p["files"] = files;
+    WriteText(paths.package_json, json::Dump(p) + "\n");
+}
+std::vector<std::wstring> NamesWith(const std::wstring& dir, const std::wstring& part) {
+    std::vector<std::wstring> out;
+    for (const DirEntry& e : ListDirectory(dir))
+        if (e.name.find(part) != std::wstring::npos) out.push_back(e.name);
+    return out;
+}
+
+void TestApplyUpdate() {
+    const std::wstring game = g_root + L"\\apply-update";
+    RemoveTree(game);
+    const InstancePaths paths = GetInstancePaths(game);
+    const std::wstring exe = game + L"\\DiamondDogsTogether.exe", old_exe = exe + L".old", zip = paths.mod + L"\\update.zip";
+    std::string err;
+
+    // 1. The 0.14.3 install shipped mgs-coop/source.zip; the new package does not:
+    // the unchanged file is ours and goes, anything changed or not listed stays.
+    WriteText(exe, "old exe");
+    WriteText(paths.loader, "old loader");
+    WriteText(paths.mod + L"\\README.txt", "old readme");
+    WriteText(paths.mod + L"\\source.zip", "old source bundle");
+    WriteText(paths.mod + L"\\notes.zip", "changed by the player");
+    WriteText(paths.mod + L"\\launcher.log", "a log line");
+    WriteText(game + L"\\extra.txt", "listed outside mgs-coop");
+    WriteText(old_exe, "a leftover from an earlier update");
+    WriteOldPackage(paths, {{"DiamondDogsTogether.exe", "old exe"}, {"dinput8.dll", "old loader"}, {"mgs-coop/README.txt", "old readme"},
+                            {"mgs-coop/source.zip", "old source bundle"}, {"mgs-coop/notes.zip", "as shipped"}, {"extra.txt", "listed outside mgs-coop"},
+                            {"mgs-coop/../escape.txt", "x"}});
+    WriteBytes(zip, PackageZip({{"DiamondDogsTogether.exe", "new exe"}, {"dinput8.dll", "new loader"}, {"mgs-coop/README.txt", "new readme"}}));
+    ApplyReport report;
+    CHECK(ApplyUpdateZip(paths, zip, err, &report));
+    if (!err.empty()) std::fprintf(stderr, "apply: %s\n", err.c_str());
+    CHECK_EQ(ReadText(exe), std::string("new exe"));
+    CHECK_EQ(ReadText(old_exe), std::string("old exe"));   // the running exe was moved aside
+    CHECK_EQ(ReadText(paths.loader), std::string("new loader"));
+    CHECK_EQ(ReadText(paths.mod + L"\\README.txt"), std::string("new readme"));
+    CHECK(Has(ReadText(paths.package_json), "9.9.9"));
+    CHECK(!PathExists(paths.mod + L"\\source.zip"));                       // ours, unchanged, no longer shipped
+    CHECK(report.removed.size() == 1 && report.removed[0] == "mgs-coop/source.zip");
+    CHECK_EQ(ReadText(paths.mod + L"\\notes.zip"), std::string("changed by the player"));   // hash differs: kept
+    CHECK_EQ(ReadText(paths.mod + L"\\launcher.log"), std::string("a log line"));            // never listed: kept
+    CHECK(IsFile(game + L"\\extra.txt"));                                  // only mgs-coop/ is tidied
+    CHECK(!PathExists(zip) && report.files == 4);
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty());   // no staging leftovers
+
+    // 2. All or nothing: a target that cannot be replaced (held open without
+    // sharing) leaves every file as it was, the running exe included.
+    WriteText(exe, "running exe");
+    DeleteFileChecked(old_exe);
+    WriteText(paths.loader, "loader v1");
+    WriteText(paths.mod + L"\\README.txt", "readme v1");
+    const std::string package_before = ReadText(paths.package_json);
+    WriteBytes(zip, PackageZip({{"DiamondDogsTogether.exe", "exe v2"}, {"dinput8.dll", "loader v2"}, {"mgs-coop/README.txt", "readme v2"}}, "9.9.10"));
+    HANDLE held = CreateFileW((paths.mod + L"\\README.txt").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(held != INVALID_HANDLE_VALUE);
+    err.clear();
+    CHECK(!ApplyUpdateZip(paths, zip, err));
+    CloseHandle(held);
+    CHECK(Has(err, "README.txt"));
+    CHECK_EQ(ReadText(exe), std::string("running exe"));
+    CHECK(!PathExists(old_exe));
+    CHECK_EQ(ReadText(paths.loader), std::string("loader v1"));
+    CHECK_EQ(ReadText(paths.mod + L"\\README.txt"), std::string("readme v1"));
+    CHECK_EQ(ReadText(paths.package_json), package_before);
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty());
+
+    // 3. Only a Diamond Dogs Together package is installed (never the source
+    // archive or another zip); nothing is written.
+    ZipWriter other;
+    const std::string body = "int main() {}";
+    other.AddFile("CMakeLists.txt", body.data(), body.size(), err);
+    other.AddFile("DiamondDogsTogether.exe", body.data(), body.size(), err);
+    std::vector<std::uint8_t> other_bytes;
+    other.Finish(other_bytes, err);
+    WriteBytes(zip, other_bytes);
+    err.clear();
+    CHECK(!ApplyUpdateZip(paths, zip, err) && Has(err, "not a Diamond Dogs Together package"));
+    CHECK_EQ(ReadText(exe), std::string("running exe"));
+    CHECK(!IsFile(game + L"\\CMakeLists.txt"));
+    // A package.json of another product is refused as well.
+    WriteBytes(zip, PackageZip({{"mgs-coop/package.json", "{\"product\":\"something-else\"}"}, {"DiamondDogsTogether.exe", "x"}}));
+    CHECK(!ApplyUpdateZip(paths, zip, err) && Has(err, "not a Diamond Dogs Together package"));
+    CHECK_EQ(ReadText(exe), std::string("running exe"));
+    RemoveTree(game);
+}
+
+// The restart is part of the install: when the new exe does not start, the
+// running version comes back complete; a move another program blocks for a
+// moment is retried; a rollback that cannot finish says so.
+void TestApplyRollback() {
+    const std::wstring game = g_root + L"\\apply-rollback";
+    RemoveTree(game);
+    const InstancePaths paths = GetInstancePaths(game);
+    const std::wstring exe = game + L"\\DiamondDogsTogether.exe", old_exe = exe + L".old", zip = paths.mod + L"\\update.zip";
+    const std::wstring readme = paths.mod + L"\\README.txt", source = paths.mod + L"\\source.zip";
+    auto old_install = [&]() {
+        RemoveTree(game);
+        WriteText(exe, "old exe");
+        WriteText(paths.loader, "old loader");
+        WriteText(readme, "old readme");
+        WriteText(source, "old source bundle");
+        WriteOldPackage(paths, {{"DiamondDogsTogether.exe", "old exe"}, {"dinput8.dll", "old loader"}, {"mgs-coop/README.txt", "old readme"},
+                                {"mgs-coop/source.zip", "old source bundle"}});
+        WriteBytes(zip, PackageZip({{"DiamondDogsTogether.exe", "new exe"}, {"dinput8.dll", "new loader"}, {"mgs-coop/README.txt", "new readme"}}));
+    };
+    std::string err;
+
+    // 1. The new exe does not start: every file is the old one again, the
+    // running exe included (moved back from .old), and the stale source.zip too.
+    old_install();
+    const std::string package_before = ReadText(paths.package_json);
+    bool saw_new = false;
+    ApplyReport report;
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report, [&](std::string& e) {
+        saw_new = ReadText(exe) == "new exe" && ReadText(old_exe) == "old exe" && ReadText(paths.loader) == "new loader" && !PathExists(source);
+        e = "it closed right after it started (exit code 7)";
+        return false;
+    }));
+    CHECK(saw_new);   // the restart ran with the new files in place
+    CHECK(report.failure == ApplyFailure::restart_failed && report.restored && Has(err, "exit code 7"));
+    CHECK_EQ(ReadText(exe), std::string("old exe"));
+    CHECK(!PathExists(old_exe));
+    CHECK_EQ(ReadText(paths.loader), std::string("old loader"));
+    CHECK_EQ(ReadText(readme), std::string("old readme"));
+    CHECK_EQ(ReadText(source), std::string("old source bundle"));
+    CHECK_EQ(ReadText(paths.package_json), package_before);
+    CHECK(report.removed.empty());
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty());
+
+    // 2. The restart works: only then are the old files and the stale source.zip deleted.
+    old_install();
+    bool backups_kept = false;
+    report = ApplyReport{};
+    CHECK(ApplyUpdateZip(paths, zip, err, &report, [&](std::string&) {
+        backups_kept = IsFile(old_exe) && !NamesWith(paths.mod, L".ddt-old").empty();
+        return true;
+    }));
+    CHECK(backups_kept && report.failure == ApplyFailure::none);
+    CHECK(report.removed.size() == 1 && report.removed[0] == "mgs-coop/source.zip" && !PathExists(source));
+    CHECK_EQ(ReadText(exe), std::string("new exe"));
+    CHECK(NamesWith(game, L".ddt-").empty() && NamesWith(paths.mod, L".ddt-").empty() && !PathExists(zip));
+
+    // 3. Another program holds README.txt for a moment while the update installs: retried, installed.
+    old_install();
+    HANDLE held = CreateFileW(readme.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(held != INVALID_HANDLE_VALUE);
+    std::thread release_later([&]() {
+        Sleep(400);
+        CloseHandle(held);
+    });
+    report = ApplyReport{};
+    const bool installed = ApplyUpdateZip(paths, zip, err, &report);
+    release_later.join();
+    CHECK(installed && report.failure == ApplyFailure::none);
+    if (!installed) std::fprintf(stderr, "apply with a briefly held file: %s\n", err.c_str());
+    CHECK_EQ(ReadText(readme), std::string("new readme"));
+
+    // 4. The rollback cannot finish (the new README.txt stays held): reported, never "kept".
+    old_install();
+    HANDLE locked = INVALID_HANDLE_VALUE;
+    report = ApplyReport{};
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report, [&](std::string& e) {
+        locked = CreateFileW(readme.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        e = "it closed right after it started (exit code 7)";
+        return false;
+    }));
+    CHECK(locked != INVALID_HANDLE_VALUE);
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
+    CHECK(report.failure == ApplyFailure::restart_failed && !report.restored);
+    CHECK_EQ(ReadText(exe), std::string("old exe"));   // the other files did come back
+    CHECK_EQ(ReadText(paths.loader), std::string("old loader"));
+
+    // 5. Why it failed, for a plain sentence: a damaged download, another zip.
+    old_install();
+    WriteText(zip, "not a zip at all");
+    report = ApplyReport{};
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report) && report.failure == ApplyFailure::damaged && report.restored);
+    ZipWriter other;
+    const std::string body = "x";
+    other.AddFile("DiamondDogsTogether.exe", body.data(), body.size(), err);
+    std::vector<std::uint8_t> other_bytes;
+    other.Finish(other_bytes, err);
+    WriteBytes(zip, other_bytes);
+    CHECK(!ApplyUpdateZip(paths, zip, err, &report) && report.failure == ApplyFailure::not_ours);
+    CHECK_EQ(ReadText(exe), std::string("old exe"));
+    RemoveTree(game);
+}
+
+// An update whose process was ended half way: tidied when the window opens.
+void TestUpdateLeftovers() {
+    Fixture f(L"update-leftovers");
+    const std::wstring readme = f.paths.mod + L"\\README.txt";
+    auto leave = [&]() {
+        WriteText(f.paths.loader + L".ddt-new", "new loader, never moved in");
+        WriteText(f.paths.loader + L".ddt-old", "old loader, never deleted");
+        WriteText(readme + L".ddt-old", "old readme, moved aside");   // README.txt itself is missing
+        WriteText(f.paths.mod + L"\\notes.txt", "the player's own file");
+    };
+    leave();
+    CHECK(CleanUpdateLeftovers(f.paths) == 3);
+    CHECK_EQ(ReadText(f.paths.loader), std::string("FAKE-LOADER"));
+    CHECK_EQ(ReadText(readme), std::string("old readme, moved aside"));
+    CHECK(NamesWith(f.game, L".ddt-").empty() && NamesWith(f.paths.mod, L".ddt-").empty());
+    CHECK(IsFile(f.paths.mod + L"\\notes.txt"));
+    CHECK(CleanUpdateLeftovers(f.paths) == 0);
+    // The window does it when it opens.
+    DeleteFileChecked(readme);
+    leave();
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(NamesWith(f.game, L".ddt-").empty() && NamesWith(f.paths.mod, L".ddt-").empty());
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=leftovers_cleaned; count=3"));
+    }
+    // The process ended between two moves (the exe is first in the zip): the new
+    // exe is in, the other files are still old with their *.ddt-new beside them.
+    // The leftovers go, and the window refuses the mixed folder with what to do.
+    {
+        Fixture g(L"update-half-done");
+        g.WritePackage("0.0.1");   // package.json is still the other version's
+        WriteText(g.game + L"\\DiamondDogsTogether.exe", "NEW-LAUNCHER");
+        WriteText(g.game + L"\\DiamondDogsTogether.exe.old", "OLD-LAUNCHER");
+        WriteText(g.paths.loader + L".ddt-new", "new loader, never moved in");
+        WriteText(g.paths.package_json + L".ddt-new", "{\"product\":\"mgs-coop-local-package\",\"version\":\"9.9.9\"}");
+        auto m = MakeRealModelWithEnv(g.game, g.env);
+        CHECK(NamesWith(g.game, L".ddt-").empty() && NamesWith(g.paths.mod, L".ddt-").empty());
+        CHECK(m->phase() == Phase::error);
+        CHECK(Has(m->last_error(), "different Diamond Dogs Together versions") && Has(m->last_error(), "Extract the whole zip"));
+        CHECK(Has(ReadText(g.paths.launcher_log), "update=leftovers_cleaned; count=2"));
+    }
+}
+
+// The player reads one plain sentence; the detail goes to launcher.log.
+void TestUpdatePlainErrors() {
+    Fixture f(L"model-update-errors");
+    UpdateHooks saved = GetUpdateHooks();
+    std::string payload = "not a zip at all";
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>*, std::string&) {
+        WriteText(dest, payload);
+        return true;
+    };
+    GetUpdateHooks().relaunch = [](const std::wstring&, const std::vector<std::wstring>&, std::string&) { return true; };
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    auto status_is = [](LauncherModel& m, UpdateStatus s) { return m.update_info().status == s; };
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(UpdateOffered(*m, *f.env));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
+        const std::string error = m->update_info().error;
+        CHECK_EQ(error, std::string("The download was damaged. Try the update again."));
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=apply_failed; reason=damaged; error="));
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    }
+    // A file that stays locked: one sentence, no file names, no Windows error text.
+    {
+        WriteBytes(f.paths.mod + L"\\README.txt", std::vector<std::uint8_t>{'o', 'l', 'd'});
+        ZipWriter zw;
+        std::string err;
+        const std::string pkg = "{\"product\":\"mgs-coop-local-package\",\"version\":\"9.9.9\"}", exe = "NEW", readme = "new readme";
+        zw.AddFile("DiamondDogsTogether.exe", exe.data(), exe.size(), err);
+        zw.AddFile("mgs-coop/README.txt", readme.data(), readme.size(), err);
+        zw.AddFile("mgs-coop/package.json", pkg.data(), pkg.size(), err);
+        std::vector<std::uint8_t> bytes;
+        zw.Finish(bytes, err);
+        payload.assign(bytes.begin(), bytes.end());
+        HANDLE held = CreateFileW((f.paths.mod + L"\\README.txt").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        const std::string error = m->update_info().error;
+        CHECK_EQ(error, std::string("The update could not be installed, so your current version was kept. Try again in a minute."));
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=apply_failed; reason=install_failed; error=Could not replace mgs-coop/README.txt"));
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    }
+    GetUpdateHooks() = saved;
+}
+
+// A source bundle as tools/package.ps1 writes it: the files plus source-files.json.
+std::vector<std::uint8_t> SourceBundle(bool tamper) {
+    const std::vector<std::pair<std::string, std::string>> files = {
+        {"CMakeLists.txt", "project(mgs_coop)"}, {"THIRD_PARTY_NOTICES.md", "# notices"}, {"native/launcher/launcher_main.cpp", "int main() {}"}};
+    std::string list = "[";
+    for (const auto& f : files) {
+        if (list.size() > 1) list += ",";
+        list += "{\"path\":\"" + f.first + "\",\"sha256\":\"" + Sha256Hex(tamper && f.first == "CMakeLists.txt" ? std::string("other") : f.second) + "\"}";
+    }
+    list += "]";
+    ZipWriter zw;
+    std::string err;
+    for (const auto& f : files) zw.AddFile(f.first, f.second.data(), f.second.size(), err);
+    zw.AddFile("source-files.json", list.data(), list.size(), err);
+    std::vector<std::uint8_t> bytes;
+    zw.Finish(bytes, err);
+    return bytes;
+}
+
+void TestLeftoverSourceZip() {
+    Fixture f(L"leftover-source");   // package.json without a source.zip row (0.14.4+)
+    const std::wstring zip = f.paths.mod + L"\\source.zip";
+    CHECK(RemoveLeftoverSourceZip(f.paths) == LeftoverSource::none);
+    // Our bundle from 0.14.3, left by that version's updater: removed.
+    WriteBytes(zip, SourceBundle(false));
+    CHECK(RemoveLeftoverSourceZip(f.paths) == LeftoverSource::removed && !PathExists(zip));
+    // Not verifiable as ours (a hash that does not match, or not a zip): kept.
+    WriteBytes(zip, SourceBundle(true));
+    CHECK(RemoveLeftoverSourceZip(f.paths) == LeftoverSource::kept_unverified && IsFile(zip));
+    WriteText(zip, "not a zip at all");
+    CHECK(RemoveLeftoverSourceZip(f.paths) == LeftoverSource::kept_unverified && IsFile(zip));
+    // Still part of the installed package (0.14.3 and older): kept.
+    WriteBytes(zip, SourceBundle(false));
+    WriteOldPackage(f.paths, {{"dinput8.dll", "FAKE-LOADER"}, {"mgs-coop/source.zip", "x"}});
+    CHECK(RemoveLeftoverSourceZip(f.paths) == LeftoverSource::kept_listed && IsFile(zip));
+    // The window removes it at start once the package no longer lists it.
+    f.WritePackage(DDT_CORE_VERSION);
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(!PathExists(zip));
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=source_zip_removed"));
+    }
+}
+
+// The new exe takes over from the old one in this order: signal, wait, (stop), claim.
+void TestTakeOverOrder() {
+    std::vector<std::string> trace;
+    bool signal_ok = true, claim_ok = true, stop_ok = true;
+    int exits_after = 0;   // wait_exit calls that report "still running" first
+    PreviousLauncherOps ops;
+    ops.signal = [&]() { trace.push_back("signal"); return signal_ok; };
+    ops.wait_exit = [&](int ms) {
+        trace.push_back("wait " + std::to_string(ms));
+        return exits_after-- <= 0;
+    };
+    ops.stop = [&]() { trace.push_back("stop"); return stop_ok; };
+    ops.claim = [&](int ms) { trace.push_back("claim " + std::to_string(ms)); return claim_ok; };
+    auto joined = [&]() {
+        std::string s;
+        for (const std::string& t : trace) s += (s.empty() ? "" : ", ") + t;
+        return s;
+    };
+    CHECK(TakeOverFromPreviousLauncher(ops, kPreviousLauncherWaitMs) == TakeOver::claimed);
+    CHECK_EQ(joined(), std::string("signal, wait 15000, claim 5000"));
+    // A hung old launcher is ended, then the window claims.
+    trace.clear();
+    exits_after = 1;
+    CHECK(TakeOverFromPreviousLauncher(ops, kPreviousLauncherWaitMs) == TakeOver::claimed_after_stop);
+    CHECK_EQ(joined(), std::string("signal, wait 15000, stop, wait 2000, claim 5000"));
+    // No old launcher waits for us (it is already gone): never wait on a process id, just claim.
+    trace.clear();
+    signal_ok = false;
+    CHECK(TakeOverFromPreviousLauncher(ops, kPreviousLauncherWaitMs) == TakeOver::claimed);
+    CHECK_EQ(joined(), std::string("signal, claim 5000"));
+    // The claim fails (another window owns the folder): not claimed.
+    trace.clear();
+    signal_ok = true;
+    claim_ok = false;
+    CHECK(TakeOverFromPreviousLauncher(ops, 300) == TakeOver::not_claimed);
+    CHECK_EQ(joined(), std::string("signal, wait 300, claim 5000"));
+}
+
+// Child modes of this test exe (main): the old and the new launcher of a restart.
+std::wstring SelfExe() {
+    wchar_t path[MAX_PATH * 2] = {};
+    GetModuleFileNameW(nullptr, path, MAX_PATH * 2);
+    return path;
+}
+struct Child {
+    HANDLE process = nullptr;
+    std::uint32_t pid = 0;
+    ~Child() {
+        if (!process) return;
+        TerminateProcess(process, 99);
+        WaitForSingleObject(process, 5000);
+        CloseHandle(process);
+    }
+    bool Exited(DWORD* code = nullptr) const {
+        if (WaitForSingleObject(process, 0) != WAIT_OBJECT_0) return false;
+        if (code) GetExitCodeProcess(process, code);
+        return true;
+    }
+};
+bool SpawnSelf(const std::wstring& args, Child& child) {
+    std::wstring cmd = QuoteArgument(SelfExe()) + L" " + args;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(SelfExe().c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+    CloseHandle(pi.hThread);
+    child.process = pi.hProcess;
+    child.pid = pi.dwProcessId;
+    return true;
+}
+bool WaitForEvent(std::uint32_t pid) {
+    for (int i = 0; i < 500; ++i) {
+        HANDLE e = OpenEventW(SYNCHRONIZE, FALSE, UpdateHandoffEventName(pid).c_str());
+        if (e) {
+            CloseHandle(e);
+            return true;
+        }
+        Sleep(10);
+    }
+    return false;
+}
+
+int FakeLauncherMain(const std::wstring& mode, std::uint32_t parent) {
+    if (mode == L"old-exits" || mode == L"old-hangs") {
+        HANDLE e = CreateEventW(nullptr, FALSE, FALSE, UpdateHandoffEventName(GetCurrentProcessId()).c_str());
+        if (!e || WaitForSingleObject(e, 20000) != WAIT_OBJECT_0) return 3;
+        if (mode == L"old-hangs") Sleep(60000);
+        return 0;
+    }
+    if (mode == L"new-ready") {
+        HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, UpdateHandoffEventName(parent).c_str());
+        if (!e) return 4;
+        SetEvent(e);
+        Sleep(3000);
+        return 0;
+    }
+    if (mode == L"new-crash") return 7;
+    if (mode == L"new-silent") {
+        Sleep(3000);
+        return 0;
+    }
+    return 2;
+}
+
+void TestRestartProcesses() {
+    CHECK_EQ(Utf8(QuoteArgument(L"--after-update")), std::string("--after-update"));
+    CHECK_EQ(Utf8(QuoteArgument(L"C:\\Program Files\\x.exe")), std::string("\"C:\\Program Files\\x.exe\""));
+    CHECK_EQ(Utf8(QuoteArgument(L"a\"b")), std::string("\"a\\\"b\""));
+    CHECK_EQ(Utf8(QuoteArgument(L"C:\\dir with space\\")), std::string("\"C:\\dir with space\\\\\""));
+    CHECK_EQ(Utf8(QuoteArgument(L"")), std::string("\"\""));
+    const std::wstring self = SelfExe(), dir = ParentOf(SelfExe()), me = std::to_wstring(GetCurrentProcessId());
+    // A's side: the new exe signals (ready), exits at once (failed), stays silent, or is missing.
+    SuccessorStart s;
+    std::string err;
+    CHECK(StartSuccessor(self, {L"--fake-launcher", L"new-ready", me}, dir, 10000, s, err) && s.signalled && s.pid != 0);
+    CHECK(!StartSuccessor(self, {L"--fake-launcher", L"new-crash"}, dir, 10000, s, err) && Has(err, "closed right after it started") &&
+          Has(err, "7"));
+    const DWORD t0 = GetTickCount();
+    CHECK(StartSuccessor(self, {L"--fake-launcher", L"new-silent"}, dir, 300, s, err) && !s.signalled);
+    CHECK(GetTickCount() - t0 < 2500);   // A does not wait for B to finish, only up to the limit
+    CHECK(!StartSuccessor(dir + L"\\no-such-launcher.exe", {}, dir, 300, s, err) && Has(err, "could not start"));
+    // A second handoff from the same process works too (the event is reset).
+    CHECK(StartSuccessor(self, {L"--fake-launcher", L"new-ready", me}, dir, 10000, s, err) && s.signalled);
+
+    // B's side with real processes: an old launcher that exits once signalled.
+    {
+        Child old;
+        CHECK(SpawnSelf(L"--fake-launcher old-exits", old) && WaitForEvent(old.pid));
+        PreviousLauncherOps ops = PreviousLauncherWin32(old.pid);
+        bool exited_at_claim = false;
+        ops.claim = [&](int) {
+            exited_at_claim = old.Exited();
+            return true;
+        };
+        CHECK(TakeOverFromPreviousLauncher(ops, 10000) == TakeOver::claimed && exited_at_claim);
+        DWORD code = 0;
+        CHECK(old.Exited(&code) && code == 0);
+    }
+    // A hung old launcher is ended after the wait.
+    {
+        Child old;
+        CHECK(SpawnSelf(L"--fake-launcher old-hangs", old) && WaitForEvent(old.pid));
+        PreviousLauncherOps ops = PreviousLauncherWin32(old.pid);
+        bool exited_at_claim = false;
+        ops.claim = [&](int) {
+            exited_at_claim = old.Exited();
+            return true;
+        };
+        CHECK(TakeOverFromPreviousLauncher(ops, 300) == TakeOver::claimed_after_stop && exited_at_claim);
+    }
+    // A process that is not a waiting launcher (no handoff event) is never waited for or ended.
+    {
+        Child other;
+        CHECK(SpawnSelf(L"--fake-launcher new-silent", other));
+        Sleep(100);
+        PreviousLauncherOps ops = PreviousLauncherWin32(other.pid);
+        ops.claim = [](int) { return true; };
+        const DWORD t1 = GetTickCount();
+        CHECK(TakeOverFromPreviousLauncher(ops, 10000) == TakeOver::claimed);
+        CHECK(GetTickCount() - t1 < 2000 && !other.Exited());
+    }
+    // An unknown pid: claim at once.
+    PreviousLauncherOps gone = PreviousLauncherWin32(0xFFFFFFF0u);
+    gone.claim = [](int) { return true; };
+    CHECK(TakeOverFromPreviousLauncher(gone, 10000) == TakeOver::claimed);
+}
+
+// The update through the real model: refused while MGSV runs, staged install, handoff.
+void TestUpdateThroughModel() {
+    Fixture f(L"model-update");
+    UpdateHooks saved = GetUpdateHooks();
+    std::string feed_url;
+    int downloads = 0;
+    std::wstring relaunched_exe;
+    std::vector<std::wstring> relaunched_args;
+    bool relaunch_ok = true;
+    std::mutex hook_mutex;
+    GetUpdateHooks().http_get = [&](const std::string& url, std::string& body, int& status, std::string&) {
+        std::lock_guard<std::mutex> l(hook_mutex);
+        feed_url = url;
+        body = "[" + FeedRelease("v9.9.9", {"DDT-source-9.9.9.zip", "DiamondDogsTogether-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>*, std::string&) {
+        {
+            std::lock_guard<std::mutex> l(hook_mutex);
+            ++downloads;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}, {"mgs-coop/README.txt", "new readme"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring& exe, const std::vector<std::wstring>& args, std::string& error) {
+        std::lock_guard<std::mutex> l(hook_mutex);
+        relaunched_exe = exe;
+        relaunched_args = args;
+        if (!relaunch_ok) error = "Windows refused to start it (error 5).";
+        return relaunch_ok;
+    };
+    auto status_is = [](LauncherModel& m, UpdateStatus s) { return m.update_info().status == s; };
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(UpdateOffered(*m, *f.env));
+        CHECK(m->update_info().asset_name == "DiamondDogsTogether-9.9.9.zip");
+        // MGSV runs from this folder: refused, nothing downloaded.
+        f.env->AddGame(7100, f.GameExe(), f.env->NowMs());
+        m->start_update();
+        CHECK(status_is(*m, UpdateStatus::error) && Has(m->update_info().error, "Quit MGSV") && downloads == 0);
+        f.env->Kill(7100);
+        // Installed, then handed over to the new exe with this process id.
+        m->check_for_updates();
+        CHECK(UpdateOffered(*m, *f.env));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::ready_to_restart) || status_is(*m, UpdateStatus::error); }));
+        CHECK(status_is(*m, UpdateStatus::ready_to_restart));
+        if (!status_is(*m, UpdateStatus::ready_to_restart)) std::fprintf(stderr, "update error: %s\n", m->update_info().error.c_str());
+        CHECK(downloads == 1 && IEquals(relaunched_exe, f.game + L"\\DiamondDogsTogether.exe"));
+        CHECK(relaunched_args.size() == 2 && relaunched_args[0] == L"--after-update" && relaunched_args[1] == L"4242");
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("NEW-LAUNCHER"));
+        const std::string log = ReadText(f.paths.launcher_log);
+        CHECK(Has(log, "update=applied; version=v9.9.9") && Has(log, "update=handed_over"));
+    }
+    // The new exe does not start: the old window stays, the folder goes back to
+    // the version that runs (exe included), and the player is told so plainly.
+    {
+        WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+        DeleteFileChecked(f.game + L"\\DiamondDogsTogether.exe.old");
+        const std::string package_before = ReadText(f.paths.package_json);
+        relaunch_ok = false;
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error); }));
+        const std::string error = m->update_info().error;
+        CHECK(Has(error, "would not start") && Has(error, "current version was kept") && Has(error, "release page") &&
+              !Has(error, "error 5"));   // plain words for the player
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+        CHECK(!PathExists(f.game + L"\\DiamondDogsTogether.exe.old"));
+        CHECK_EQ(ReadText(f.paths.package_json), package_before);
+        // The reason, for Collect logs.
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=restart_failed; error=Windows refused to start it (error 5); restored=yes"));
+        relaunch_ok = true;
+    }
+    // The developer test feed: a found update installs at once, and the new exe keeps the feed.
+    {
+        WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+        DeleteFileChecked(f.game + L"\\DiamondDogsTogether.exe.old");
+        ModelStart start;
+        start.update_feed = "http://127.0.0.1:8123/releases.json";
+        start.update_now = true;
+        relaunched_args.clear();
+        auto m = MakeRealModelWithEnv(f.game, f.env, start);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::ready_to_restart); }));
+        CHECK(feed_url == "http://127.0.0.1:8123/releases.json");
+        CHECK(relaunched_args.size() == 4 && relaunched_args[2] == L"--update-feed" && relaunched_args[3] == L"http://127.0.0.1:8123/releases.json");
+    }
+    // The new exe after the handoff: the .old exe is deleted and the window says "Updated to".
+    {
+        WriteText(f.game + L"\\DiamondDogsTogether.exe.old", "OLD-LAUNCHER");
+        ModelStart start;
+        start.after_update = 4343;
+        auto m = MakeRealModelWithEnv(f.game, f.env, start);
+        CHECK(!PathExists(f.game + L"\\DiamondDogsTogether.exe.old"));
+        CHECK_EQ(m->update_info().updated_to, CoreVersion());
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::available); }));
+        CHECK_EQ(m->update_info().updated_to, CoreVersion());   // kept through the next check
+        CHECK(Has(ReadText(f.paths.launcher_log), "update=finished; from_pid=4343"));
+        auto plain = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(plain->update_info().updated_to.empty());
+    }
+    // An updater before 0.14.4 started this exe without --after-update; its
+    // .old exe is still held for a moment by the exiting old launcher.
+    {
+        const std::wstring old_exe = f.game + L"\\DiamondDogsTogether.exe.old";
+        WriteText(old_exe, "OLD-LAUNCHER");
+        HANDLE held = CreateFileW(old_exe.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(held != INVALID_HANDLE_VALUE);
+        int sleeps = 0;
+        f.env->on_sleep = [&]() {
+            if (++sleeps == 3 && held != INVALID_HANDLE_VALUE) {
+                CloseHandle(held);
+                held = INVALID_HANDLE_VALUE;
+            }
+        };
+        ModelStart start;
+        start.old_exe_recent = true;
+        auto m = MakeRealModelWithEnv(f.game, f.env, start);
+        f.env->on_sleep = nullptr;
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        CHECK(!PathExists(old_exe) && sleeps >= 3);
+        CHECK(m->update_info().updated_to.empty());
+    }
+    // A .old that stays from long ago (held by another program) never slows a normal start.
+    {
+        const std::wstring old_exe = f.game + L"\\DiamondDogsTogether.exe.old";
+        WriteText(old_exe, "OLD-LAUNCHER");
+        HANDLE held = CreateFileW(old_exe.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        int sleeps = 0;
+        f.env->on_sleep = [&]() { ++sleeps; };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        f.env->on_sleep = nullptr;
+        if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+        CHECK(sleeps == 0 && IsFile(old_exe));
+        DeleteFileChecked(old_exe);
+    }
+    GetUpdateHooks() = saved;
+}
+
+// While an update downloads, Host / Join are refused; Cancel goes back to "available".
+void TestUpdateBlocksSessions() {
+    Fixture f(L"model-update-busy");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<bool> release{false}, in_download{false};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>* cancel, std::string& error) {
+        WriteText(dest, "partial");
+        in_download = true;
+        while (!release && !(cancel && *cancel)) Sleep(5);
+        in_download = false;
+        if (cancel && *cancel) {
+            error = "Download cancelled";
+            return false;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [](const std::wstring&, const std::vector<std::wstring>&, std::string&) { return true; };
+    auto m = MakeRealModelWithEnv(f.game, f.env);
+    m->start_setup();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::available; }));
+    // Cancel: back to "available" (not an error), the partial download is gone.
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+    m->cancel_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return !in_download.load(); }));
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::available && m->update_info().error.empty(); }, 50));
+    CHECK(!PathExists(f.paths.mod + L"\\update.zip"));
+    // Downloading: Host and Join wait for the update.
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+    std::string code, error;
+    CHECK(!m->host(code, error) && Has(error, "updating"));
+    CHECK(!m->join("", error) && Has(error, "updating"));
+    CHECK(f.env->watchdog_sessions.empty() && f.env->UrlCount() == 0 && !PathExists(f.paths.marker));
+    release = true;
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::ready_to_restart; }));
+    m.reset();
+    GetUpdateHooks() = saved;
+}
+
+// The update and the setup never overlap: the setup (and Uninstall) cannot start
+// while an update downloads or installs, an update cannot start while the setup
+// runs, and just before installing the update checks the folder again.
+void TestUpdateBlocksSetup() {
+    Fixture f(L"model-update-setup");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<bool> release{false}, in_download{false};
+    std::atomic<int> relaunches{0};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>* cancel, std::string& error) {
+        in_download = true;
+        while (!release && !(cancel && *cancel)) Sleep(5);
+        in_download = false;
+        if (cancel && *cancel) {
+            error = "Download cancelled";
+            return false;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring&, const std::vector<std::wstring>&, std::string&) {
+        ++relaunches;
+        return true;
+    };
+    const std::wstring exe = f.game + L"\\DiamondDogsTogether.exe";
+    auto status_is = [](LauncherModel& m, UpdateStatus s) { return m.update_info().status == s; };
+    WriteText(exe, "OLD-LAUNCHER");
+    {
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        // Co-op gets ready by itself first; Update now waits for that.
+        CHECK(UpdateOffered(*m, *f.env) && m->phase() == Phase::ready);
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+        // The runtime file goes missing while the update downloads: co-op does not get ready again by itself, and
+        // Try again (or Uninstall) is refused with a sentence; nothing started.
+        DeleteFileChecked(f.paths.archive);
+        m->recheck();
+        m->tick();
+        CHECK(m->phase() == Phase::needs_setup);
+        m->start_setup();
+        CHECK(m->phase() == Phase::needs_setup && Has(m->last_error(), "updating"));
+        std::string report, error;
+        CHECK(!m->uninstall(report, error) && Has(error, "updating"));
+        CHECK(IsFile(f.paths.loader) && PathExists(f.paths.friend_install));
+        release = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::ready_to_restart) || status_is(*m, UpdateStatus::error); }));
+        CHECK(status_is(*m, UpdateStatus::ready_to_restart) && relaunches == 1 && m->phase() == Phase::needs_setup);
+        // Handed over: the window closes now; the setup stays refused (and does not start by itself) until then.
+        m->start_setup();
+        m->tick();
+        CHECK(m->phase() == Phase::needs_setup && !IsFile(f.paths.archive));
+    }
+    // MGSV, or co-op, was started while the update downloaded: refused just
+    // before the install, nothing replaced.
+    for (int i = 0; i < 2; ++i) {
+        release = false;
+        WriteText(exe, "OLD-LAUNCHER");
+        DeleteFileChecked(exe + L".old");
+        f.WritePackage(DDT_CORE_VERSION);   // the first part installed the 9.9.9 package
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(UpdateOffered(*m, *f.env));
+        m->start_update();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+        if (i == 0) {
+            f.env->AddGame(7300, f.GameExe(), f.env->NowMs());
+        } else {
+            f.env->AddProcess(7400, f.env->NowMs() - 1000);
+            WriteText(f.paths.play_session, "{\"v\":2,\"state\":\"active\",\"watchdog_pid\":7400}");
+        }
+        release = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return status_is(*m, UpdateStatus::error) || status_is(*m, UpdateStatus::ready_to_restart); }));
+        CHECK(status_is(*m, UpdateStatus::error) && Has(m->update_info().error, "Quit MGSV"));
+        CHECK_EQ(ReadText(exe), std::string("OLD-LAUNCHER"));
+        CHECK(relaunches == 1 && !PathExists(f.paths.mod + L"\\update.zip"));
+        f.env->Kill(i == 0 ? 7300 : 7400);
+        DeleteFileChecked(f.paths.play_session);
+    }
+    // While the setup runs (by itself), Update now waits for it: nothing starts and nothing fails (Tools and Play say
+    // "You can update once co-op is ready.", and their Update now buttons are off meanwhile).
+    {
+        std::atomic<bool> in_build{false}, finish_build{false};
+        InstallHooks& hooks = Hooks();
+        const auto saved_build = hooks.build_runtime;
+        hooks.build_runtime = [&](const std::wstring& a, const std::wstring& out, const std::function<void(float, const std::string&)>& progress,
+                                  std::string& error) {
+            in_build = true;
+            while (!finish_build) Sleep(5);
+            return saved_build(a, out, progress, error);
+        };
+        release = true;
+        WriteText(exe, "OLD-LAUNCHER");
+        DeleteFileChecked(f.paths.archive);   // co-op needs to get ready again
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return in_build.load() && status_is(*m, UpdateStatus::available); }) &&
+              m->phase() == Phase::setting_up);
+        m->start_update();
+        Sleep(50);
+        CHECK(status_is(*m, UpdateStatus::available) && m->update_info().error.empty() && !in_download.load());
+        finish_build = true;
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        CHECK(relaunches == 1);
+        hooks.build_runtime = saved_build;
+    }
+    GetUpdateHooks() = saved;
+}
+
+// Developer --update-now on a folder that needs the setup: co-op gets ready by itself first, then the update
+// installs (Update now waits for the automatic setup, as it does for a player; it used to be refused once and
+// never tried again).
+void TestUpdateNowAfterSetup() {
+    Fixture f(L"model-update-now-setup");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<int> downloads{0}, relaunches{0};
+    std::atomic<bool> archive_at_download{false};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>*, std::string&) {
+        ++downloads;
+        archive_at_download = IsFile(f.paths.archive);
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring&, const std::vector<std::wstring>&, std::string&) {
+        ++relaunches;
+        return true;
+    };
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    {
+        ModelStart start;
+        start.update_feed = "http://127.0.0.1:8123/releases.json";
+        start.update_now = true;
+        auto m = MakeRealModelWithEnv(f.game, f.env, start);
+        CHECK(m->phase() == Phase::needs_setup);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::ready_to_restart; }));
+        CHECK(downloads == 1 && relaunches == 1 && archive_at_download.load());
+        const std::string log = ReadText(f.paths.launcher_log);
+        const std::size_t setup_at = log.find("setup=auto"), update_at = log.find("update=auto; reason=update_now");
+        CHECK(setup_at != std::string::npos && update_at != std::string::npos && setup_at < update_at);
+        CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("NEW-LAUNCHER"));
+    }
+    GetUpdateHooks() = saved;
+}
+
+// Cancel, then Update now straight away: the cancelled download must stop and
+// never come back to life (it used to be un-cancelled and then installed).
+void TestUpdateCancelRace() {
+    Fixture f(L"model-update-cancel");
+    UpdateHooks saved = GetUpdateHooks();
+    std::atomic<bool> in_download{false}, notice_cancel{false};
+    std::atomic<int> downloads{0}, relaunches{0};
+    GetUpdateHooks().http_get = [&](const std::string&, std::string& body, int& status, std::string&) {
+        body = "[" + FeedRelease("v9.9.9", {"DiamondDogsTogether-9.9.9.zip", "DDT-source-9.9.9.zip"}) + "]";
+        status = 200;
+        return true;
+    };
+    GetUpdateHooks().http_download = [&](const std::string&, const std::wstring& dest, const std::function<void(const UpdateProgress&)>&,
+                                         const std::atomic<bool>* cancel, std::string& error) {
+        ++downloads;
+        in_download = true;
+        // Like WinHttp: the cancel is seen between two reads only (here: once
+        // notice_cancel is set); a download nobody cancels ends after 3 s.
+        for (int waited = 0; waited < 3000 && !(notice_cancel && cancel && *cancel); waited += 5) Sleep(5);
+        in_download = false;
+        if (cancel && *cancel) {
+            error = "Download cancelled";
+            return false;
+        }
+        WriteBytes(dest, PackageZip({{"DiamondDogsTogether.exe", "NEW-LAUNCHER"}}));
+        return true;
+    };
+    GetUpdateHooks().relaunch = [&](const std::wstring&, const std::vector<std::wstring>&, std::string&) {
+        ++relaunches;
+        return true;
+    };
+    WriteText(f.game + L"\\DiamondDogsTogether.exe", "OLD-LAUNCHER");
+    auto m = MakeRealModelWithEnv(f.game, f.env);
+    CHECK(UpdateOffered(*m, *f.env));
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return in_download.load(); }));
+    m->cancel_update();
+    // The download has not stopped yet: still downloading, now "cancelling", and Update now waits.
+    const UpdateInfo stopping = m->update_info();
+    CHECK(stopping.status == UpdateStatus::downloading && stopping.cancelling);
+    m->start_update();
+    notice_cancel = true;
+    CHECK(PumpUntil(*m, *f.env, [&]() {
+        const UpdateStatus s = m->update_info().status;
+        return s == UpdateStatus::available || s == UpdateStatus::ready_to_restart || s == UpdateStatus::error;
+    }, 1500));
+    const UpdateInfo after = m->update_info();
+    CHECK(after.status == UpdateStatus::available && !after.cancelling && after.error.empty());
+    CHECK(downloads == 1 && relaunches == 0);
+    CHECK_EQ(ReadText(f.game + L"\\DiamondDogsTogether.exe"), std::string("OLD-LAUNCHER"));
+    // Update now after the cancel has finished: a fresh download.
+    notice_cancel = false;
+    m->start_update();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->update_info().status == UpdateStatus::ready_to_restart; }));
+    CHECK(downloads == 2 && relaunches == 1);
+    m.reset();
+    GetUpdateHooks() = saved;
+}
+
+// The window waits for an exiting old launcher only right after an update.
+void TestRecentOldExe() {
+    const std::int64_t now = T(2026, 10, 29, 12, 0, 0);
+    CHECK(RecentUpdateTimes(now, now - 2000, 0));                       // the exe was just written (any updater)
+    CHECK(RecentUpdateTimes(now, now - 3600000, now - 1000));           // the .old was just renamed
+    CHECK(!RecentUpdateTimes(now, now - 3600000, now - 3600000));       // both from long ago
+    CHECK(!RecentUpdateTimes(now, 0, 0));                               // unknown
+    CHECK(!RecentUpdateTimes(now, now - kRecentUpdateMs - 1000, 0));
+    CHECK(RecentUpdateTimes(now, now + 30000, 0));                      // a clock a little off still counts
+    CHECK(!RecentUpdateTimes(now, now + 3600000, 0));
+
+    const std::wstring dir = g_root + L"\\recent-old-exe";
+    RemoveTree(dir);
+    const std::wstring exe = dir + L"\\DiamondDogsTogether.exe", old_exe = exe + L".old";
+    WriteText(exe, "NEW");
+    CHECK(!OldExecutableFromRecentUpdate(dir));   // no .old at all
+    WriteText(old_exe, "OLD");
+    CHECK(OldExecutableFromRecentUpdate(dir));    // just written
+    // Both files from an hour ago (written and renamed then).
+    auto age = [](const std::wstring& path) {
+        HANDLE h = CreateFileW(path.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        LARGE_INTEGER t;
+        t.LowPart = ft.dwLowDateTime;
+        t.HighPart = static_cast<LONG>(ft.dwHighDateTime);
+        t.QuadPart -= 3600LL * 10000000LL;
+        FILE_BASIC_INFO info{};
+        info.LastWriteTime = t;
+        info.ChangeTime = t;
+        const bool ok = SetFileInformationByHandle(h, FileBasicInfo, &info, sizeof(info)) != FALSE;
+        CloseHandle(h);
+        return ok;
+    };
+    CHECK(age(exe) && age(old_exe));
+    CHECK(!OldExecutableFromRecentUpdate(dir));
+    // The 0.14.3 updater renames the running exe to .old (the rename is recent).
+    DeleteFileChecked(old_exe);
+    CHECK(MoveFileExW(exe.c_str(), old_exe.c_str(), 0) != FALSE);
+    WriteText(exe, "NEW");
+    CHECK(age(exe));
+    CHECK(OldExecutableFromRecentUpdate(dir));
+    RemoveTree(dir);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // DDT_LOCALTEST_REAL_CHECK=<game folder>|<second folder>: only prints what Play > Local test says about two real
+    // folders (CheckLocalTestFolder with the real hooks; it reads files and lists processes, and changes nothing),
+    // then exits without running the tests.
+    {
+        wchar_t spec[2048]{};
+        if (GetEnvironmentVariableW(L"DDT_LOCALTEST_REAL_CHECK", spec, 2048) && spec[0]) {
+            const std::wstring both = spec;
+            const std::size_t bar = both.find(L'|');
+            if (bar == std::wstring::npos) {
+                std::printf("DDT_LOCALTEST_REAL_CHECK needs <game folder>|<second folder>\n");
+                return 2;
+            }
+            auto env = MakeWin32Env();
+            const LocalFolderCheck c = CheckLocalTestFolder(*env, both.substr(0, bar), both.substr(bar + 1));
+            std::printf("local test check: ok=%d\n%s\n", c.ok ? 1 : 0, c.message.c_str());
+            return 0;
+        }
+    }
+    // Child modes for TestRestartProcesses: --fake-launcher <mode> [parent pid].
+    {
+        int wargc = 0;
+        LPWSTR* wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+        if (wargv && wargc >= 3 && std::wstring(wargv[1]) == L"--fake-launcher") {
+            const std::wstring mode = wargv[2];
+            const std::uint32_t parent = wargc >= 4 ? static_cast<std::uint32_t>(_wtoi64(wargv[3])) : 0;
+            LocalFree(wargv);
+            return FakeLauncherMain(mode, parent);
+        }
+        if (wargv) LocalFree(wargv);
+    }
     wchar_t temp[MAX_PATH + 1]{};
     GetTempPathW(MAX_PATH, temp);
     g_root = FullPath(std::wstring(temp) + L"ddt-core-tests-" + std::to_wstring(GetCurrentProcessId()));
     RemoveTree(g_root);
     CreateDirectories(g_root);
     InstallTestHooks();
+
+    if (argc == 3 && std::string(argv[1]) == "--local-watch-process") {
+        TestLocalWatchProcess(FullPath(Wide(argv[2])));
+        RemoveTree(g_root);
+        std::printf("ddt_core_tests --local-watch-process: %u checks, %u failures\n", g_checks, g_failures);
+        return g_failures == 0 ? 0 : 1;
+    }
 
     TestJsonAndTime();
     TestCodes();
@@ -1914,10 +4359,39 @@ int main() {
     TestUninstallAndLogs();
     TestWatchdog();
     TestModel();
+    TestAutoSetup();
+    TestUpdateDuringSetup();
+    TestLocalText();
+    TestGraphicsConfig();
+    TestLocalLayout();
+    TestLocalPlacement();
+    TestLocalEvidence();
+    TestLocalFolderCheck();
+    TestLocalOwnedGuest();
+    TestLocalJournal();
+    TestLocalRun();
+    TestLocalWatch();
+    TestLocalThroughModel();
+    TestLocalStartOffThread();
+    TestLocalPowerShellInterop();
     TestHandoffThroughModel();
     TestWriteSession();
     TestSelfTest();
     TestUpdater();
+    TestFeedSkipsSource();
+    TestApplyUpdate();
+    TestApplyRollback();
+    TestUpdateLeftovers();
+    TestUpdatePlainErrors();
+    TestLeftoverSourceZip();
+    TestTakeOverOrder();
+    TestRestartProcesses();
+    TestUpdateThroughModel();
+    TestUpdateBlocksSessions();
+    TestUpdateBlocksSetup();
+    TestUpdateCancelRace();
+    TestUpdateNowAfterSetup();
+    TestRecentOldExe();
 
     RemoveTree(g_root);
     std::printf("ddt_core_tests: %u checks, %u failures\n", g_checks, g_failures);

@@ -32,7 +32,6 @@ ImU32 ToneColor(ui::Tone tone) {
 
 Icon PageIcon(Page page) {
     switch (page) {
-    case Page::setup: return Icon::setup;
     case Page::play: return Icon::play;
     case Page::in_game: return Icon::signal;
     case Page::tools: return Icon::tools;
@@ -76,11 +75,17 @@ void Message(Icon icon, ImU32 color, const std::string& text, float size = kSmal
     ImGui::PopStyleColor();
 }
 
-const char* PhaseStatus(Phase phase, const LinkView& link, ImU32& color) {
+const char* PhaseStatus(Phase phase, const LinkView& link, ui::SetupView setup, ImU32& color) {
     switch (phase) {
     case Phase::not_in_game_folder: color = col::kBad; return "Wrong folder";
-    case Phase::needs_setup: color = col::kWarn; return "Setup needed";
-    case Phase::setting_up: color = col::kAccent; return "Setting up";
+    case Phase::needs_setup:
+    case Phase::setting_up:
+        if (setup == ui::SetupView::failed) {
+            color = col::kBad;
+            return "Not ready";
+        }
+        color = col::kAccent;
+        return "Getting ready";
     case Phase::ready: color = col::kGood; return "Ready to play";
     case Phase::launching: color = col::kAccent; return "Starting the game";
     case Phase::in_game:
@@ -151,11 +156,24 @@ void LauncherUi::Frame(double time) {
     }
     if (!ui::PageEnabled(phase, page_)) page_ = ui::DefaultPage(phase);
     link_ = ui::SessionActive(phase) ? model_.link() : LinkView{};
-    if (phase == Phase::setting_up || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
+    setup_view_ = ui::GetSetupView(phase, ui::SummarizeSetup(model_.setup_steps()));
+    if (setup_view_ == ui::SetupView::preparing || phase == Phase::launching || phase == Phase::after_game || link_.handoff_active)
         animating_ = true;
     const UpdateInfo frame_uinfo = model_.update_info();
-    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading || frame_uinfo.status == UpdateStatus::applying)
+    if (frame_uinfo.status == UpdateStatus::checking || frame_uinfo.status == UpdateStatus::downloading ||
+        frame_uinfo.status == UpdateStatus::applying || frame_uinfo.status == UpdateStatus::ready_to_restart)
         animating_ = true;
+    // The local test's start and the second folder's check run on their own threads: keep drawing until they end.
+    if (model_.local_test().starting || (model_.debug() && model_.check_local_test().checking)) animating_ = true;
+    // The second folder's check is kept by the model (it reads that copy's game exe): check again whenever the
+    // Local test tab or Settings > Debug comes into view, so a game quit there or a fixed folder shows up.
+    {
+        const bool debug = model_.debug();
+        const bool shown = phase != Phase::not_in_game_folder &&
+                           ui::LocalCheckVisible(page_, ui::ShownPlayTab(play_tab_, debug, model_.local_test().active), debug);
+        if (shown && !local_check_shown_) model_.refresh_local_test();
+        local_check_shown_ = shown;
+    }
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
@@ -172,12 +190,15 @@ void LauncherUi::Frame(double time) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, Px(28.0f, 22.0f));
     ImGui::BeginChild("##page", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar(2);
-    switch (page_) {
-    case Page::setup: SetupPage(phase); break;
-    case Page::play: PlayPage(phase); break;
-    case Page::in_game: InGamePage(phase); break;
-    case Page::tools: ToolsPage(phase); break;
-    case Page::settings: SettingsPage(phase); break;
+    if (phase == Phase::not_in_game_folder) {
+        WrongFolderPage();   // a full-window message, not a page
+    } else {
+        switch (page_) {
+        case Page::play: PlayPage(phase); break;
+        case Page::in_game: InGamePage(phase); break;
+        case Page::tools: ToolsPage(phase); break;
+        case Page::settings: SettingsPage(phase); break;
+        }
     }
     ImGui::EndChild();
     Popups();
@@ -210,9 +231,9 @@ void LauncherUi::Sidebar(Phase phase) {
     ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + Px(22.0f) + logo_h + Px(20.0f)));
 
     // Navigation.
-    static const Page kPages[ui::kPageCount] = {Page::setup, Page::play, Page::in_game, Page::tools, Page::settings};
+    static const Page kPages[ui::kPageCount] = {Page::play, Page::in_game, Page::tools, Page::settings};
     for (Page page : kPages) {
-        if (!ui::PageVisible(phase, page, page_)) continue;
+        if (!ui::PageVisible(phase, page)) continue;
         const bool enabled = ui::PageEnabled(phase, page);
         const bool active = page == page_;
         const ImVec2 p(origin.x + Px(12.0f), ImGui::GetCursorScreenPos().y);
@@ -249,7 +270,7 @@ void LauncherUi::Sidebar(Phase phase) {
 
     // Status and version at the bottom.
     ImU32 status_color = col::kTextDim;
-    const char* status = PhaseStatus(phase, link_, status_color);
+    const char* status = PhaseStatus(phase, link_, setup_view_, status_color);
     const UpdateInfo side_uinfo = model_.update_info();
     const bool side_update_avail = (side_uinfo.status == UpdateStatus::available);
     const float bottom = origin.y + h - Px(side_update_avail ? 86.0f : 58.0f);
@@ -302,7 +323,7 @@ void LauncherUi::ResultLine(Result& result) {
     Message(result.ok ? Icon::check : Icon::warning, result.ok ? col::kGood : col::kBad, result.text);
 }
 
-// ---- Setup -----------------------------------------------------------------
+// ---- Wrong folder and the automatic setup ----------------------------------
 void LauncherUi::WrongFolderPage() {
     PageHeader("Move me to your game folder",
                "Diamond Dogs Together has to be in the same folder as MGSV (the folder with mgsvtpp.exe).");
@@ -337,114 +358,52 @@ void LauncherUi::WrongFolderPage() {
         model_.recheck();
 }
 
-void LauncherUi::SetupPage(Phase phase) {
-    if (phase == Phase::not_in_game_folder) {
-        WrongFolderPage();
+// The automatic setup on Play (there is no Setup page): a small line while
+// co-op gets ready, or a short banner when the last attempt failed.
+void LauncherUi::SetupStatus() {
+    // While an update downloads or installs the setup waits (the update replaces its files); the new window
+    // after the restart gets co-op ready by itself.
+    const UpdateInfo setup_uinfo = model_.update_info();
+    const bool updating = ui::UpdateInProgress(setup_uinfo);
+    if (setup_view_ == ui::SetupView::preparing) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(26.0f), p.y));
+        Text("Getting co-op ready...", col::kText, kBody, GetFonts().semibold, -1.0f);
+        ImGui::SameLine(0.0f, Px(10.0f));
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
+        Text(ui::PreparingNote(setup_uinfo).c_str(), col::kTextFaint, kSmall, nullptr, -1.0f);
+        Gap(4.0f);
         return;
     }
-    const std::vector<SetupStep> steps = model_.setup_steps();
-    const ui::SetupSummary sum = ui::SummarizeSetup(steps);
-    const bool done = phase == Phase::ready;
-    if (done)
-        PageHeader("All set", "Co-op is ready. You only had to do this once.");
-    else
-        PageHeader("Set up co-op", "A one-time setup. It takes about a minute and never changes your own saves.");
-
-    BeginCard("##steps");
-    for (std::size_t i = 0; i < steps.size(); ++i) {
-        const SetupStep& step = steps[i];
-        ImGui::PushID(static_cast<int>(i));
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        const float badge = Px(26.0f);
-        ImDrawList* d = ImGui::GetWindowDrawList();
-        const ImVec2 c(p.x + badge * 0.5f, p.y + badge * 0.5f);
-        switch (step.state) {
-        case SetupStep::State::pending: {
-            d->AddCircle(c, badge * 0.5f - Px(1.0f), col::kBorderStrong, 0, std::fmax(1.0f, Px(1.5f)));
-            const Font f(GetFonts().semibold, kSmall);
-            const std::string n = std::to_string(i + 1);
-            const ImVec2 ts = ImGui::CalcTextSize(n.c_str());
-            d->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), col::kTextFaint, n.c_str());
-            break;
-        }
-        case SetupStep::State::running: Spinner(c, 9.0f, col::kAccent, time_); break;
-        case SetupStep::State::done:
-            d->AddCircleFilled(c, badge * 0.5f, col::kGoodSoft);
-            DrawIcon(d, Icon::check, c, badge * 0.62f, col::kGood);
-            break;
-        case SetupStep::State::failed:
-            d->AddCircleFilled(c, badge * 0.5f, col::kBadSoft);
-            DrawIcon(d, Icon::cross, c, badge * 0.62f, col::kBad);
-            break;
-        }
-        ImGui::SetCursorScreenPos(ImVec2(p.x + badge + Px(14.0f), p.y + Px(2.0f)));
-        ImGui::BeginGroup();
-        const bool pending = step.state == SetupStep::State::pending;
-        const float text_w = ImGui::GetContentRegionAvail().x;
-        {
-            const Font f(GetFonts().semibold, kBody);
-            ImGui::PushStyleColor(ImGuiCol_Text, pending ? col::kTextDim : col::kText);
-            ImGui::TextUnformatted(step.label.c_str());
-            ImGui::PopStyleColor();
-            if (step.state == SetupStep::State::running) {
-                const std::string pct = std::to_string(ui::PercentOf(step.progress)) + "%";
-                const float pw = ImGui::CalcTextSize(pct.c_str()).x;
-                ImGui::SameLine(text_w - pw);
-                ImGui::PushStyleColor(ImGuiCol_Text, col::kAccent);
-                ImGui::TextUnformatted(pct.c_str());
-                ImGui::PopStyleColor();
-            }
-        }
-        if (!step.detail.empty()) {
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(6.0f));
-            Text(step.detail.c_str(), step.state == SetupStep::State::failed ? col::kBad : col::kTextDim, kSmall,
-                 nullptr, text_w);
-        }
-        if (step.state == SetupStep::State::running) {
-            Gap(0.0f);
-            ProgressBar(step.progress, text_w / Scale(), 4.0f, col::kAccent);
-        }
-        ImGui::EndGroup();
-        ImGui::PopID();
-        if (i + 1 < steps.size()) {
-            Gap(2.0f);
-            const ImVec2 lp = ImGui::GetCursorScreenPos();
-            d->AddLine(ImVec2(lp.x + badge + Px(14.0f), lp.y), ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y),
-                       col::kBorder);
-            Gap(8.0f);
-        }
+    if (setup_view_ != ui::SetupView::failed) return;
+    std::string why;
+    for (const SetupStep& step : model_.setup_steps())
+        if (step.state == SetupStep::State::failed && !step.detail.empty()) why = step.detail;
+    if (why.empty()) why = model_.last_error();
+    if (why.empty()) why = "Something went wrong while getting co-op ready.";
+    BeginCard("##setup_failed", 0.0f, col::kCard, col::Rgb(0xEB, 0x5D, 0x55, 0x90));
+    IconBadge(Icon::warning, col::kBad, col::kBadSoft, 30.0f);
+    ImGui::SameLine(0.0f, Px(12.0f));
+    ImGui::BeginGroup();
+    Text("Co-op couldn't get ready", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(4.0f));
+    Text(why.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+    if (updating) Text("Diamond Dogs Together is updating. Co-op gets ready again once it has restarted.", col::kTextDim, kSmall, nullptr, 0.0f);
+    if (Button("Try again##setup", ButtonKind::primary, ImVec2(0, 32.0f), !updating)) {
+        logs_result_ = Result{};
+        model_.start_setup();
     }
+    ImGui::SameLine();
+    if (Button("Collect logs##setup", ButtonKind::secondary, ImVec2(0, 32.0f), true, Icon::logs, true)) {
+        std::string path, error;
+        const bool ok = model_.collect_logs(path, error);
+        logs_result_ = Result{ok, ok ? "Saved to your Desktop: " + FileName(path) + ". Send it with your bug report." : error, path};
+    }
+    ImGui::EndGroup();
+    ResultLine(logs_result_);
     EndCard();
-    Gap(6.0f);
-
-    if (phase == Phase::setting_up) {
-        // Steps differ a lot in length, so the page names the step instead of an overall percentage.
-        const std::string text = "Setting up: step " + std::to_string(sum.current >= 0 ? sum.current + 1 : sum.done) +
-                                 " of " + std::to_string(sum.total);
-        Message(Icon::info, col::kTextDim, text, kBody);
-        Gap(0.0f);
-        Text("Keep this window open until it's done. Your own saves are only read, never changed.", col::kTextFaint,
-             kSmall, nullptr, 0.0f);
-    } else if (done) {
-        if (Button("Continue to Play", ButtonKind::primary, ImVec2(0, 42.0f), true, Icon::play, true))
-            Navigate(Page::play);
-    } else if (sum.failed) {
-        if (Button("Try again", ButtonKind::primary, ImVec2(0, 42.0f))) {
-            logs_result_ = Result{};
-            model_.start_setup();
-        }
-        ImGui::SameLine();
-        if (Button("Collect logs", ButtonKind::secondary, ImVec2(0, 42.0f), true, Icon::logs, true)) {
-            std::string path, error;
-            const bool ok = model_.collect_logs(path, error);
-            logs_result_ = Result{ok, ok ? "Saved to your Desktop: " + FileName(path) : error, path};
-        }
-        Gap(2.0f);
-        ResultLine(logs_result_);
-    } else {
-        if (Button("Set up co-op", ButtonKind::primary, ImVec2(0, 42.0f), phase == Phase::needs_setup))
-            model_.start_setup();
-    }
+    Gap(4.0f);
 }
 
 // ---- Play ------------------------------------------------------------------
@@ -470,54 +429,158 @@ void LauncherUi::PlayPage(Phase phase) {
         EndCard();
         return;
     }
-    PageHeader("Play together", "Host a game for your partner, or join theirs. You both need Steam running.");
+    PageHeader("Play together", model_.local_test().active ? "A local two-window test is running on this PC."
+                                                            : "Host a game for your partner, or join theirs. You both need Steam running.");
+    SetupStatus();
     const bool session = ui::SessionActive(phase);
     const UpdateInfo play_uinfo = model_.update_info();
-    if (play_uinfo.status == UpdateStatus::available) {
-        BeginCard("##play_update", 0.0f, col::kCard, col::kAccent);
-        IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
+    const ui::PlayBanner banner = ui::PlayBannerFor(play_uinfo);
+    if (banner == ui::PlayBanner::available || banner == ui::PlayBanner::failed) {
+        // An update to install, or one that was refused or did not go through: the reason, and Update now again.
+        // Not while co-op gets ready by itself (installing and restarting would cut the setup off).
+        const bool failed = banner == ui::PlayBanner::failed;
+        const bool can_update = ui::CanStartUpdate(phase, setup_view_);
+        const float play_bw = 120.0f;
+        BeginCard("##play_update", 0.0f, col::kCard, failed ? col::kBad : col::kAccent);
+        if (failed)
+            IconBadge(Icon::warning, col::kBad, col::kBadSoft, 28.0f);
+        else
+            IconBadge(Icon::download, col::kAccent, col::kAccentSoft, 28.0f);
         ImGui::SameLine(0.0f, Px(10.0f));
+        const float text_w = std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(play_bw + 20.0f));
         ImGui::BeginGroup();
         Text((play_uinfo.release_title + " is available!").c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
-        Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, 0.0f);
+        if (setup_view_ == ui::SetupView::preparing)
+            Text("You can update once co-op is ready.", col::kTextDim, kSmall, nullptr, text_w);
+        else if (failed)
+            Text(play_uinfo.error.c_str(), col::kBad, kSmall, nullptr, text_w);
+        else
+            Text("Update to play with the latest features and bug fixes.", col::kTextDim, kSmall, nullptr, text_w);
         ImGui::EndGroup();
-        const float play_bw = 120.0f;
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - Px(play_bw) + ImGui::GetStyle().WindowPadding.x);
-        if (Button("Update now##banner", ButtonKind::primary, ImVec2(play_bw, 32.0f), !session, Icon::download, true)) {
+        if (Button("Update now##banner", ButtonKind::primary, ImVec2(play_bw, 32.0f), can_update, Icon::download, true)) {
             model_.start_update();
         }
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::downloading) {
+    } else if (banner == ui::PlayBanner::downloading) {
         BeginCard("##play_downloading", 0.0f, col::kCard, col::kAccent);
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)",
-                 play_uinfo.latest_version.c_str(),
-                 play_uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 play_uinfo.download_size / (1024.0 * 1024.0),
-                 play_uinfo.progress * 100.0f);
+        if (play_uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading update %s: %.1f / %.1f MB (%.0f%%)", play_uinfo.latest_version.c_str(),
+                     play_uinfo.bytes_downloaded / (1024.0 * 1024.0), play_uinfo.download_size / (1024.0 * 1024.0),
+                     play_uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, GetFonts().semibold, -1.0f);
         Gap(2.0f);
         ProgressBar(play_uinfo.progress, 0.0f, 6.0f, col::kAccent);
         EndCard();
         Gap(4.0f);
-    } else if (play_uinfo.status == UpdateStatus::applying) {
+    } else if (banner == ui::PlayBanner::installing) {
         BeginCard("##play_applying", 0.0f, col::kCard, col::kGood);
         Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, -1.0f);
         EndCard();
         Gap(4.0f);
+    } else if (banner == ui::PlayBanner::updated) {
+        Message(Icon::check, col::kGood, ui::UpdatedNote(play_uinfo), kBody);
+        Gap(4.0f);
     }
-    static const char* const kTabs[2] = {"Host", "Join"};
-    int index = (session ? session_role_ : role_) == Role::host ? 0 : 1;
-    if (Segmented("##role", kTabs, 2, &index, 230.0f, !session)) {
-        role_ = index == 0 ? Role::host : Role::join;
+    // Host | Join, and Local test with Settings > Debug mode on (or while one runs).
+    const LocalTestView local = model_.local_test();
+    const bool debug = model_.debug();
+    ui::PlayTab tab = ui::ShownPlayTab(play_tab_, debug, local.active);
+    if (session && !local.active) tab = session_role_ == Role::host ? ui::PlayTab::host : ui::PlayTab::join;
+    static const char* const kTabs[3] = {ui::PlayTabLabel(ui::PlayTab::host), ui::PlayTabLabel(ui::PlayTab::join),
+                                         ui::PlayTabLabel(ui::PlayTab::local_test)};
+    const int tabs = ui::PlayTabCount(debug || local.active);
+    int index = static_cast<int>(tab);
+    if (Segmented("##role", kTabs, tabs, &index, tabs == 3 ? 360.0f : 230.0f, !session)) {
+        play_tab_ = static_cast<ui::PlayTab>(index);
         play_error_.clear();
     }
     Gap(4.0f);
-    if (index == 0)
-        HostTab(phase);
-    else
-        JoinTab(phase);
+    switch (tab) {
+    case ui::PlayTab::host: HostTab(phase); break;
+    case ui::PlayTab::join: JoinTab(phase); break;
+    case ui::PlayTab::local_test: LocalTab(phase, local); break;
+    }
+}
+
+// The second folder's check: ready, still checking (on its own thread), or what is needed first.
+void LauncherUi::LocalCheckMessage(const LocalTestCheck& check) {
+    switch (ui::LocalCheckTone(check)) {
+    case ui::CheckTone::ready: Message(Icon::check, col::kGood, check.message); break;
+    case ui::CheckTone::checking: {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        Spinner(ImVec2(p.x + Px(8.0f), p.y + Px(10.0f)), 5.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(22.0f), p.y));
+        Text(check.message.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
+        break;
+    }
+    case ui::CheckTone::needed: Message(Icon::warning, col::kWarn, check.message); break;
+    }
+}
+
+// Developer only (Settings > Debug mode): two MGSV copies on this PC.
+void LauncherUi::LocalTab(Phase phase, const LocalTestView& local) {
+    BeginCard("##localinfo");
+    IconBadge(Icon::tools, col::kAccent, col::kAccentSoft, 36.0f);
+    ImGui::SameLine(0.0f, Px(12.0f));
+    ImGui::BeginGroup();
+    Text("Local test (two windows)", col::kText, kBody, GetFonts().semibold, -1.0f);
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(8.0f));
+    Text("Two MGSV copies on this PC: this folder hosts as Snake, the second folder joins as Quiet. Keyboard and mouse control "
+         "the game you click; controller 0 controls the guest. Only separate local-test saves are used.",
+         col::kTextDim, kSmall, nullptr, 0.0f);
+    ImGui::EndGroup();
+    EndCard();
+    Gap(2.0f);
+    if (local.active) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        if (local.failed)
+            StatusDot(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 5.0f, col::kBad);
+        else
+            Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + Px(26.0f), p.y));
+        ImGui::BeginGroup();
+        Text(local.headline.c_str(), col::kText, kBody, GetFonts().semibold, -1.0f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - Px(6.0f));
+        Text(local.detail.c_str(), local.failed ? col::kBad : col::kTextDim, kSmall, nullptr, 0.0f);
+        ImGui::EndGroup();
+        Gap(4.0f);
+        if (Button("Arrange windows##local", ButtonKind::secondary, ImVec2(0, 38.0f), ui::CanArrangeLocal(local), Icon::sliders, true))
+            model_.arrange_local_test();
+        Gap(2.0f);
+        Text("Quit BOTH games normally to end the test. You can close this window: a hidden helper puts the test settings in "
+             "both folders back after both games have exited.",
+             col::kTextFaint, kSmall, nullptr, 0.0f);
+        return;
+    }
+    const LocalTestCheck check = model_.check_local_test();
+    const std::string folder = model_.local_test_folder();
+    SectionLabel("SECOND GAME FOLDER");
+    Text(folder.empty() ? "Not chosen yet" : folder.c_str(), folder.empty() ? col::kTextFaint : col::kTextDim, kSmall, GetFonts().mono, 0.0f);
+    LocalCheckMessage(check);
+    Gap(6.0f);
+    if (Button("Start local test", ButtonKind::primary, ImVec2(210.0f, 46.0f), ui::CanStartLocalTest(phase, check), Icon::play, true)) {
+        std::string error;
+        // A failed start that left a game running keeps the stopped run: its card says what happened.
+        if (model_.start_local_test(error) || model_.local_test().active) play_error_.clear();
+        else play_error_ = error;
+    }
+    ImGui::SameLine(0.0f, Px(10.0f));
+    if (Button("Check again##local", ButtonKind::secondary, ImVec2(0, 46.0f), !ui::SessionActive(phase))) {
+        play_error_.clear();
+        model_.refresh_local_test();
+    }
+    if (ui::LocalCheckTone(check) == ui::CheckTone::needed) {
+        ImGui::SameLine(0.0f, Px(10.0f));
+        if (Button("Open Settings##local", ButtonKind::secondary, ImVec2(0, 46.0f), true, Icon::sliders, true)) Navigate(Page::settings);
+    }
+    Gap(2.0f);
+    if (!local.detail.empty()) Message(local.failed ? Icon::warning : Icon::check, local.failed ? col::kWarn : col::kGood, local.detail);
+    Message(Icon::warning, col::kBad, play_error_);
 }
 
 void LauncherUi::CodeCard(bool compact) {
@@ -596,7 +659,7 @@ void LauncherUi::HostTab(Phase phase) {
         Message(Icon::warning, col::kWarn, "You joined a game. Close it before you host one.", kBody);
         return;
     }
-    if (Button("Host game", ButtonKind::primary, ImVec2(190.0f, 46.0f), phase == Phase::ready, Icon::play, true)) {
+    if (Button("Host game", ButtonKind::primary, ImVec2(190.0f, 46.0f), ui::CanStartSession(phase), Icon::play, true)) {
         std::string code, error;
         if (model_.host(code, error)) {
             hosted_code_ = code;
@@ -693,7 +756,7 @@ void LauncherUi::JoinTab(Phase phase) {
         }
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
-        if (enter && view.can_join && !wait_invite_) {
+        if (enter && view.can_join && !wait_invite_ && ui::CanStartSession(phase)) {
             std::string error;
             session_role_ = Role::join;
             if (!model_.join(text, error)) play_error_ = error; else play_error_.clear();
@@ -723,7 +786,8 @@ void LauncherUi::JoinTab(Phase phase) {
         if (Button("See the connection", ButtonKind::quiet, ImVec2(0, 34.0f), true, Icon::signal, true))
             Navigate(Page::in_game);
     } else {
-        if (Button("Join game", ButtonKind::primary, ImVec2(col_w / Scale(), 46.0f), view.can_join, Icon::play, true)) {
+        if (Button("Join game", ButtonKind::primary, ImVec2(col_w / Scale(), 46.0f), view.can_join && ui::CanStartSession(phase),
+                   Icon::play, true)) {
             std::string error;
             session_role_ = Role::join;
             if (!model_.join(wait_invite_ ? std::string() : text, error)) play_error_ = error;
@@ -745,11 +809,14 @@ void LauncherUi::InGamePage(Phase phase) {
         return;
     }
     const bool host = session_role_ == Role::host;
-    PageHeader("In game", host ? "You're hosting. Your partner joins you." : "You're joining your partner's game.");
+    const LocalTestView local = model_.local_test();
+    PageHeader("In game", local.active ? "The local two-window test on this PC (Debug mode)."
+                          : host       ? "You're hosting. Your partner joins you."
+                                       : "You're joining your partner's game.");
     const LinkView& l = link_;
 
     // Status.
-    const bool busy = phase == Phase::launching || (phase == Phase::after_game && l.detail.find("...") != std::string::npos);
+    const bool busy = phase == Phase::launching || local.starting || (phase == Phase::after_game && l.detail.find("...") != std::string::npos);
     ImU32 tone = l.connected ? col::kGood : col::kWarn;
     if (phase == Phase::after_game) tone = col::kTextDim;
     BeginCard("##status", 0.0f, col::kCard,
@@ -846,6 +913,15 @@ void LauncherUi::InGamePage(Phase phase) {
     }
     Message(Icon::warning, col::kBad, play_error_);
     Gap(4.0f);
+    if (local.active) {
+        if (Button("Arrange windows##ingame", ButtonKind::secondary, ImVec2(0, 36.0f), ui::CanArrangeLocal(local), Icon::sliders, true))
+            model_.arrange_local_test();
+        Gap(2.0f);
+        Message(Icon::info, col::kTextFaint,
+                "Quit BOTH games normally to end the local test. You can close this window: a hidden helper puts the test "
+                "settings in both folders back after both games have exited.");
+        return;
+    }
     Message(Icon::info, col::kTextFaint,
             phase == Phase::after_game
                 ? "You can close this window. The tidy-up finishes on its own."
@@ -873,7 +949,9 @@ void LauncherUi::ToolsPage(Phase phase) {
     Text("Diamond Dogs Together Updates", col::kText, kBody + 1.0f, GetFonts().semibold, -1.0f);
 
     if (uinfo.status == UpdateStatus::idle || uinfo.status == UpdateStatus::up_to_date) {
-        const std::string text = "You have the latest version (" + model_.version() + ").";
+        const std::string text = uinfo.updated_to.empty()
+                                     ? "You have the latest version (" + model_.version() + ")."
+                                     : "Updated to version " + uinfo.updated_to + ". You have the latest version.";
         Text(text.c_str(), col::kTextDim, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         const float bw = 150.0f;
@@ -897,7 +975,9 @@ void LauncherUi::ToolsPage(Phase phase) {
         }
         ImGui::EndGroup();
         Gap(4.0f);
-        if (Button("Update now##tools", ButtonKind::primary, ImVec2(140.0f, 34.0f), !ui::SessionActive(phase), Icon::download, true)) {
+        // Not while co-op gets ready by itself: the restart would cut the setup off.
+        const bool can_update = ui::CanStartUpdate(phase, setup_view_);
+        if (Button("Update now##tools", ButtonKind::primary, ImVec2(140.0f, 34.0f), can_update, Icon::download, true)) {
             model_.start_update();
         }
         if (!uinfo.html_url.empty()) {
@@ -906,31 +986,33 @@ void LauncherUi::ToolsPage(Phase phase) {
                 if (shell_.open_url) shell_.open_url(uinfo.html_url);
             }
         }
+        if (!can_update && setup_view_ == ui::SetupView::preparing) Text("You can update once co-op is ready.", col::kTextDim, kSmall, nullptr, 0.0f);
     } else if (uinfo.status == UpdateStatus::downloading) {
         char buf[128];
-        snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)",
-                 uinfo.latest_version.c_str(),
-                 uinfo.bytes_downloaded / (1024.0 * 1024.0),
-                 uinfo.download_size / (1024.0 * 1024.0),
-                 uinfo.progress * 100.0f);
+        if (uinfo.cancelling)
+            snprintf(buf, sizeof(buf), "Stopping the download...");
+        else
+            snprintf(buf, sizeof(buf), "Downloading %s: %.1f / %.1f MB (%.0f%%)", uinfo.latest_version.c_str(),
+                     uinfo.bytes_downloaded / (1024.0 * 1024.0), uinfo.download_size / (1024.0 * 1024.0), uinfo.progress * 100.0f);
         Text(buf, col::kText, kSmall, nullptr, 0.0f);
         ImGui::EndGroup();
         Gap(3.0f);
         ProgressBar(uinfo.progress, 0.0f, 6.0f, col::kAccent);
         Gap(3.0f);
-        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f))) {
+        if (Button("Cancel##update", ButtonKind::secondary, ImVec2(90.0f, 28.0f), !uinfo.cancelling)) {
             model_.cancel_update();
         }
-    } else if (uinfo.status == UpdateStatus::applying) {
-        Text("Installing update and restarting launcher...", col::kGood, kBody, GetFonts().semibold, 0.0f);
+    } else if (uinfo.status == UpdateStatus::applying || uinfo.status == UpdateStatus::ready_to_restart) {
+        Text("Installing update and restarting Diamond Dogs Together...", col::kGood, kBody, GetFonts().semibold, 0.0f);
         ImGui::EndGroup();
         Gap(4.0f);
         const ImVec2 c = ImGui::GetCursorScreenPos();
         Spinner(ImVec2(c.x + Px(20.0f), c.y + Px(10.0f)), 8.0f, col::kGood, time_);
     } else if (uinfo.status == UpdateStatus::error) {
-        Text(("Update check failed: " + uinfo.error).c_str(), col::kBad, kSmall, nullptr, 0.0f);
-        ImGui::EndGroup();
         const float bw = 150.0f;
+        // Wrapped short of the button on its right.
+        Text(uinfo.error.c_str(), col::kBad, kSmall, nullptr, std::max(Px(120.0f), ImGui::GetContentRegionAvail().x - Px(bw + 20.0f)));
+        ImGui::EndGroup();
         ImGui::SameLine(avail - Px(bw) + ImGui::GetStyle().WindowPadding.x);
         if (Button("Try again##tools", ButtonKind::secondary, ImVec2(bw, 32.0f), !ui::SessionActive(phase))) {
             model_.check_for_updates();
@@ -1056,6 +1138,40 @@ void LauncherUi::SettingsPage(Phase phase) {
                Icon::folder, true))
         if (shell_.open_folder) shell_.open_folder(dir);
     EndCard();
+
+    // Developer tests (off by default; players never need them).
+    Gap(10.0f);
+    SectionLabel("DEBUG");
+    bool debug = model_.debug();
+    if (Checkbox("Debug mode: shows developer tests##debug", &debug, phase != Phase::not_in_game_folder)) model_.set_debug(debug);
+    Text("For developers. Adds the local two-window test to Play.", col::kTextFaint, kSmall, nullptr, 0.0f);
+    if (debug) {
+        Gap(4.0f);
+        SectionLabel("LOCAL TEST: SECOND GAME FOLDER");
+        BeginCard("##guestfolder");
+        const std::string guest = model_.local_test_folder();
+        if (guest.empty())
+            Text("No folder chosen yet. Choose a second, separate MGSV install (a full copy of the game folder); the test copies "
+                 "this version's co-op files into it.",
+                 col::kTextFaint, kSmall, nullptr, 0.0f);
+        else
+            Text(guest.c_str(), col::kTextDim, kSmall, GetFonts().mono, 0.0f);
+        Gap(2.0f);
+        if (Button("Choose...##guest", ButtonKind::secondary, ImVec2(112.0f, 34.0f), !ui::SessionActive(phase), Icon::folder, true)) {
+            std::string picked;
+            if (shell_.pick_folder && shell_.pick_folder("Choose the second MGSV game folder (the local test's guest copy)", picked))
+                model_.set_local_test_folder(picked);
+        }
+        if (!guest.empty()) {
+            ImGui::SameLine(0.0f, Px(10.0f));
+            if (Button("Clear##guest", ButtonKind::quiet, ImVec2(82.0f, 34.0f), !ui::SessionActive(phase))) model_.set_local_test_folder("");
+            const LocalTestCheck check = model_.check_local_test();
+            Gap(2.0f);
+            LocalCheckMessage(check);
+        }
+        EndCard();
+    }
+    if (scroll_settings_down_) ImGui::SetScrollHereY(1.0f);
 }
 
 // ---- Popups ----------------------------------------------------------------
@@ -1180,12 +1296,15 @@ void LauncherUi::Popups() {
             Text(credit[1], col::kTextDim, kSmall, nullptr, -1.0f);
         }
         Gap(4.0f);
-        Text("The full licence texts and the source code (source.zip) are in the mgs-coop folder next to this "
-             "program.",
+        Text("The full licence texts are in the mgs-coop folder next to this program. The source code of this version "
+             "is on its release page.",
              col::kTextDim, kSmall, nullptr, 0.0f);
         Gap(8.0f);
-        if (Button("Open the mgs-coop folder##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
+        if (Button("Licences##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::folder, true))
             if (shell_.open_folder) shell_.open_folder(model_.game_dir() + "\\mgs-coop");
+        ImGui::SameLine(0.0f, Px(10.0f));
+        if (Button("Source code##about", ButtonKind::secondary, ImVec2(0, 38.0f), true, Icon::download, true))
+            if (shell_.open_url) shell_.open_url(ui::ReleasePageUrl(model_.version()));
         ImGui::SameLine();
         right_buttons(100.0f);
         if (Button("Close##about", ButtonKind::primary, ImVec2(100.0f, 38.0f))) ImGui::CloseCurrentPopup();
@@ -1195,26 +1314,18 @@ void LauncherUi::Popups() {
 
 // ---- Screenshot scenes -----------------------------------------------------
 namespace {
-const char* const kScenes[] = {
-    "01-setup-start",       "02-setup-progress",      "03-setup-failed",       "04-setup-done",
-    "05-wrong-folder",      "06-play-host",           "07-play-host-code",     "08-play-join",
-    "09-play-join-invalid", "10-play-join-valid",     "11-play-join-invite",   "12-play-error",
-    "13-ingame-launching",  "14-ingame-host-waiting", "15-ingame-connected",   "16-ingame-handoff",
-    "17-ingame-after-game", "18-tools",               "19-tools-result",       "20-tools-uninstall-confirm",
-    "21-tools-about",       "22-settings",            "23-tools-in-game",      "24-uninstall-report",
-};
-constexpr int kSceneCount = static_cast<int>(sizeof(kScenes) / sizeof(kScenes[0]));
 constexpr char kFixedSecret[] = "K7RD3WQ9MP2XVB6TZHN4";
 }  // namespace
 
-int LauncherUi::SceneCount() { return kSceneCount; }
-const char* LauncherUi::SceneName(int index) { return index >= 0 && index < kSceneCount ? kScenes[index] : ""; }
+int LauncherUi::SceneCount() { return ui::SceneCount(); }
+const char* LauncherUi::SceneName(int index) { return ui::SceneName(static_cast<ui::Scene>(index)); }
 
 void LauncherUi::PrepareScene(int index, MockModel& mock) {
     if (ImGui::GetCurrentContext() && ImGui::GetCurrentContext()->OpenPopupStack.Size > 0) ImGui::ClosePopupToLevel(0, false);
     // Reset the pages.
-    role_ = Role::host;
+    play_tab_ = ui::PlayTab::host;
     session_role_ = Role::host;
+    scroll_settings_down_ = false;
     code_buf_[0] = '\0';
     checked_text_.assign("\x01");
     wait_invite_ = false;
@@ -1224,79 +1335,81 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
     logs_result_ = tool_result_ = Result{};
     uninstall_report_.clear();
     popup_request_ = Popup::none;
+    mock.set_mock_update_info(UpdateInfo{});
     mock.use_manual_clock(1000.0);
     mock.set_character(Character::story);
     mock.set_hud("compact");
+    mock.set_debug(false);
+    mock.set_local_test_folder("");
+    mock.set_mock_checking(false);
     const std::string own_code = FormatJoinCode(kFixedSecret, MockModel::kOwnSteamId);
     auto copy_into = [&](const std::string& s) {
         strncpy_s(code_buf_, sizeof(code_buf_), s.c_str(), _TRUNCATE);
     };
     Page page = Page::play;
-    switch (index) {
-    case 0: mock.jump_to_phase(Phase::needs_setup); page = Page::setup; break;
-    case 1: mock.jump_to_setup(3, 0.45f, false); page = Page::setup; break;
-    case 2: mock.jump_to_setup(3, 0.62f, true); page = Page::setup; break;
-    case 3: mock.jump_to_phase(Phase::ready); page = Page::setup; break;
-    case 4: mock.jump_to_phase(Phase::not_in_game_folder); page = Page::setup; break;
-    case 5: mock.jump_to_phase(Phase::ready); break;
-    case 6:
+    switch (static_cast<ui::Scene>(index)) {
+    case ui::Scene::play_preparing: mock.jump_to_setup(1, 0.4f, false); break;
+    case ui::Scene::play_setup_failed: mock.jump_to_setup(3, 0.62f, true); break;
+    case ui::Scene::wrong_folder: mock.jump_to_phase(Phase::not_in_game_folder); break;
+    case ui::Scene::play_host: mock.jump_to_phase(Phase::ready); break;
+    case ui::Scene::play_host_code:
         mock.jump_to_session(Role::host, false, Phase::launching, 1.0);
         hosted_code_ = own_code;
         copied_until_ = 1e9;
         break;
-    case 7:
+    case ui::Scene::play_join:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         break;
-    case 8: {
+    case ui::Scene::play_join_invalid: {
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::ocelot);
         std::string bad = MockModel::PartnerCode();
         bad[bad.find('@') - 1] = bad[bad.find('@') - 1] == 'A' ? 'B' : 'A';
         copy_into(bad);
         break;
     }
-    case 9:
+    case ui::Scene::play_join_valid:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::dd_female);
         copy_into(MockModel::PartnerCode());
         break;
-    case 10:
+    case ui::Scene::play_join_invite:
         mock.jump_to_phase(Phase::ready);
-        role_ = Role::join;
+        play_tab_ = ui::PlayTab::join;
         mock.set_character(Character::avatar);
         wait_invite_ = true;
         break;
-    case 11: mock.jump_to_phase(Phase::error); break;
-    case 12:
+    case ui::Scene::play_error: mock.jump_to_phase(Phase::error); break;
+    case ui::Scene::ingame_launching:
         mock.jump_to_session(Role::join, false, Phase::launching, 1.5);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 13:
+    case ui::Scene::ingame_host_waiting:
         mock.jump_to_session(Role::host, false, Phase::in_game, 2.0);
         hosted_code_ = own_code;
         page = Page::in_game;
         break;
-    case 14:
+    case ui::Scene::ingame_connected:
         mock.jump_to_session(Role::join, false, Phase::in_game, 9.0);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 15:
+    case ui::Scene::ingame_handoff:
         mock.jump_to_session(Role::host, false, Phase::in_game, 21.0);
         hosted_code_ = own_code;
         page = Page::in_game;
         break;
-    case 16:
+    case ui::Scene::ingame_after_game:
         mock.jump_to_session(Role::join, false, Phase::after_game, 1.0);
         session_role_ = Role::join;
         page = Page::in_game;
         break;
-    case 17: mock.jump_to_phase(Phase::ready); page = Page::tools; break;
-    case 18: {
+    case ui::Scene::tools: mock.jump_to_phase(Phase::ready); page = Page::tools; break;
+    case ui::Scene::tools_result: {
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         std::string path, error;
@@ -1305,23 +1418,23 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
                               path};
         break;
     }
-    case 19:
+    case ui::Scene::tools_uninstall_confirm:
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         popup_request_ = Popup::uninstall_confirm;
         break;
-    case 20:
+    case ui::Scene::tools_about:
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         popup_request_ = Popup::about;
         break;
-    case 21: mock.jump_to_phase(Phase::ready); page = Page::settings; break;
-    case 22:
+    case ui::Scene::settings: mock.jump_to_phase(Phase::ready); page = Page::settings; break;
+    case ui::Scene::tools_in_game:
         mock.jump_to_session(Role::host, false, Phase::in_game, 9.0);
         hosted_code_ = own_code;
         page = Page::tools;
         break;
-    case 23: {
+    case ui::Scene::uninstall_report: {
         mock.jump_to_phase(Phase::ready);
         page = Page::tools;
         std::string report, error;
@@ -1332,7 +1445,112 @@ void LauncherUi::PrepareScene(int index, MockModel& mock) {
         popup_request_ = Popup::uninstall_report;
         break;
     }
-    default: break;
+    case ui::Scene::settings_debug_no_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        page = Page::settings;
+        scroll_settings_down_ = true;
+        break;
+    case ui::Scene::settings_debug_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        page = Page::settings;
+        scroll_settings_down_ = true;
+        break;
+    case ui::Scene::play_local_no_folder:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::play_local_ready:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::play_local_running:
+        mock.jump_to_local_test(30.0);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::ingame_local_test:
+        mock.jump_to_local_test(30.0);
+        page = Page::in_game;
+        break;
+    case ui::Scene::play_update_preparing: {
+        mock.jump_to_setup(1, 0.4f, false);
+        UpdateInfo update;
+        update.status = UpdateStatus::available;
+        update.current_version = model_.version();
+        update.latest_version = "v0.14.4";
+        update.release_title = "Diamond Dogs Together 0.14.4";
+        mock.set_mock_update_info(update);
+        break;
+    }
+    case ui::Scene::ingame_local_starting:
+        mock.jump_to_local_test(0.5);
+        page = Page::in_game;
+        break;
+    case ui::Scene::play_local_checking:
+        mock.jump_to_phase(Phase::ready);
+        mock.set_debug(true);
+        mock.set_local_test_folder(MockModel::kGuestDir);
+        mock.set_mock_checking(true);
+        play_tab_ = ui::PlayTab::local_test;
+        break;
+    case ui::Scene::play_updated_preparing:   // the new window right after a self-update: co-op gets ready once more
+    case ui::Scene::tools_updated:            // ... Tools, once co-op is ready again
+    case ui::Scene::play_updated: {           // ... Play
+        const ui::Scene scene = static_cast<ui::Scene>(index);
+        if (scene == ui::Scene::play_updated_preparing)
+            mock.jump_to_setup(1, 0.4f, false);
+        else
+            mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::up_to_date;
+        info.current_version = "0.14.4";
+        info.updated_to = "0.14.4";
+        mock.set_mock_update_info(info);
+        if (scene == ui::Scene::tools_updated) page = Page::tools;
+        break;
+    }
+    case ui::Scene::tools_update_refused: {   // Update now while MGSV runs from the folder
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
+        info.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+        mock.set_mock_update_info(info);
+        page = Page::tools;
+        break;
+    }
+    case ui::Scene::play_update_failed: {     // Update now on Play, and the new version would not start (the longest sentence)
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::error;
+        info.latest_version = "v0.14.4";
+        info.release_title = "Diamond Dogs Together 0.14.4";
+        info.download_url = "https://example.invalid/DiamondDogsTogether-0.14.4.zip";
+        info.error = "The new version would not start, so your current version was kept. Try again later, or get the latest zip "
+                     "from the release page.";
+        mock.set_mock_update_info(info);
+        break;
+    }
+    case ui::Scene::tools_update_cancelling: {   // Cancel pressed: the download is stopping
+        mock.jump_to_phase(Phase::ready);
+        UpdateInfo info;
+        info.status = UpdateStatus::downloading;
+        info.latest_version = "v0.14.4";
+        info.download_size = 2837248;
+        info.bytes_downloaded = 1134899;
+        info.progress = 0.4f;
+        info.cancelling = true;
+        mock.set_mock_update_info(info);
+        page = Page::tools;
+        break;
+    }
+    case ui::Scene::count: break;
     }
     first_frame_ = false;
     last_phase_ = mock.phase();

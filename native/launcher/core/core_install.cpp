@@ -148,6 +148,8 @@ bool LoadSettings(const InstancePaths& paths, Settings& out) {
     out.character = IsJoinerCharacter(c) ? c : std::string();
     const std::string h = v.Str("hud");
     out.hud = (h == "compact" || h == "full" || h == "off") ? h : std::string();
+    out.debug = v.Bool("debug", false);
+    out.local_guest = v.Str("local_test_guest");
     return true;
 }
 
@@ -161,6 +163,8 @@ bool SaveSettings(const InstancePaths& paths, Settings& s, std::string& error) {
     s.raw["v"] = 1;
     s.raw["character"] = s.character;
     s.raw["hud"] = s.hud;
+    s.raw["debug"] = s.debug;
+    s.raw["local_test_guest"] = s.local_guest;
     return WriteAtomic(paths.settings, json::Dump(s.raw) + "\n", true, error);
 }
 
@@ -624,16 +628,16 @@ bool Uninstall(Env& env, const InstancePaths& paths, std::string& report, std::s
         if (base.backups.empty() && !state.Str("latest_backup").empty()) base = SaveBaselines({Wide(state.Str("latest_backup"))});
     }
     if (base.backups.empty()) {
-        lines.push_back("No save backup from the setup was found, so your real saves could not be compared.");
+        lines.push_back("No backup of your real saves was found, so they could not be compared.");
     }
     for (const std::wstring& b : base.backups) {
         const RealSaveCheck check = CheckRealSavesAgainstBackup(b);
         if (!check.ok) continue;
         if (check.comparison.same) {
-            lines.push_back("Your real saves match the backup made during setup (checked by SHA-256).");
+            lines.push_back("Your real saves match the backup made when co-op was set up (checked by SHA-256).");
             continue;
         }
-        lines.push_back("Your real saves differ from the backup made during setup (" + std::to_string(check.comparison.changed.size()) +
+        lines.push_back("Your real saves differ from the backup made when co-op was set up (" + std::to_string(check.comparison.changed.size()) +
                         " changed, " + std::to_string(check.comparison.missing.size()) + " missing, " +
                         std::to_string(check.comparison.added.size()) + " new). That is expected if you played without co-op in between; "
                         "nothing was overwritten.");
@@ -775,9 +779,9 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
         for (const std::wstring& b : base.backups) {
             const RealSaveCheck c = CheckRealSavesAgainstBackup(b);
             if (!c.ok) results.push_back("check failed");
-            else if (c.comparison.same) results.push_back("UNCHANGED since the backup made during setup");
+            else if (c.comparison.same) results.push_back("UNCHANGED since the backup made when co-op was set up");
             else
-                results.push_back("DIFFERENT from the backup made during setup (changed=" + std::to_string(c.comparison.changed.size()) +
+                results.push_back("DIFFERENT from the backup made when co-op was set up (changed=" + std::to_string(c.comparison.changed.size()) +
                                   " missing=" + std::to_string(c.comparison.missing.size()) + " new=" + std::to_string(c.comparison.added.size()) + ")");
         }
         if (!base.missing.empty()) results.push_back("missing backups=" + std::to_string(base.missing.size()));

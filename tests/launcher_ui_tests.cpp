@@ -23,38 +23,55 @@ using namespace ddt;
 using ui::Page;
 
 void TestNavigation() {
-    Check(ui::DefaultPage(Phase::not_in_game_folder) == Page::setup, "wrong folder -> setup");
-    Check(ui::DefaultPage(Phase::needs_setup) == Page::setup, "needs setup -> setup");
+    // There is no Setup page any more (2026-10-29): the setup runs by itself and
+    // Play shows its progress. The pages are Play, In game, Tools and Settings.
+    Check(ui::kPageCount == 4, "four pages");
+    const Page all[] = {Page::play, Page::in_game, Page::tools, Page::settings};
+    for (Page p : all)
+        Check(std::string(ui::PageLabel(p)) != "" && std::string(ui::PageLabel(p)) != "Setup", "no Setup page in the navigation");
+
+    Check(ui::DefaultPage(Phase::not_in_game_folder) == Page::play, "wrong folder -> play (the wrong-folder screen covers it)");
+    Check(ui::DefaultPage(Phase::needs_setup) == Page::play, "needs setup -> play");
+    Check(ui::DefaultPage(Phase::setting_up) == Page::play, "setting up -> play");
     Check(ui::DefaultPage(Phase::ready) == Page::play, "ready -> play");
     Check(ui::DefaultPage(Phase::error) == Page::play, "error -> play");
     Check(ui::DefaultPage(Phase::in_game) == Page::in_game, "in game -> in game");
 
-    Check(!ui::PageEnabled(Phase::needs_setup, Page::play), "no Play before setup");
+    Check(ui::PageEnabled(Phase::needs_setup, Page::play) && ui::PageEnabled(Phase::setting_up, Page::play),
+          "Play shows the automatic setup");
     Check(!ui::PageEnabled(Phase::ready, Page::in_game), "In game only during a session");
     Check(ui::PageEnabled(Phase::launching, Page::in_game), "In game while launching");
-    Check(!ui::PageEnabled(Phase::not_in_game_folder, Page::tools), "no Tools in the wrong folder");
-    Check(!ui::PageEnabled(Phase::setting_up, Page::tools), "no Tools while setting up");
+    for (Page p : all) Check(!ui::PageEnabled(Phase::not_in_game_folder, p), "nothing to open in the wrong folder");
+    Check(ui::PageEnabled(Phase::setting_up, Page::tools) && ui::PageEnabled(Phase::setting_up, Page::settings),
+          "Tools and Settings stay open while co-op gets ready");
     Check(ui::PageEnabled(Phase::in_game, Page::tools), "Tools page visible in game (actions disabled)");
-    Check(!ui::PageEnabled(Phase::not_in_game_folder, Page::settings), "no Settings in the wrong folder");
 
-    Check(ui::PageVisible(Phase::needs_setup, Page::setup, Page::setup), "setup visible when needed");
-    Check(ui::PageVisible(Phase::ready, Page::setup, Page::setup), "setup stays while 'All set' is shown");
-    Check(!ui::PageVisible(Phase::ready, Page::setup, Page::play), "setup hidden afterwards");
-    Check(ui::PageVisible(Phase::ready, Page::in_game, Page::play), "In game always listed");
+    for (Page p : all) {
+        Check(!ui::PageVisible(Phase::not_in_game_folder, p), "the wrong-folder screen has no navigation");
+        Check(ui::PageVisible(Phase::ready, p) && ui::PageVisible(Phase::setting_up, p), "every page is listed otherwise");
+    }
 
     Check(ui::ToolsAllowed(Phase::ready) && ui::ToolsAllowed(Phase::error) && ui::ToolsAllowed(Phase::needs_setup),
           "tools allowed outside a session");
     Check(!ui::ToolsAllowed(Phase::in_game) && !ui::ToolsAllowed(Phase::launching) &&
               !ui::ToolsAllowed(Phase::after_game) && !ui::ToolsAllowed(Phase::setting_up),
           "tools refused during a session or setup");
+    Check(ui::CanStartSession(Phase::ready), "Host and Join once ready");
+    Check(!ui::CanStartSession(Phase::needs_setup) && !ui::CanStartSession(Phase::setting_up) &&
+              !ui::CanStartSession(Phase::error) && !ui::CanStartSession(Phase::in_game),
+          "Host and Join wait until co-op is ready");
 
-    // Setup flow.
-    Check(ui::PageAfterPhaseChange(Phase::needs_setup, Phase::setting_up, Page::setup, Role::host) == Page::setup,
-          "setting up stays on setup");
-    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::setup, Role::host) == Page::setup,
-          "'All set' stays on setup");
-    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::needs_setup, Page::setup, Role::host) == Page::setup,
-          "a failed setup stays on setup");
+    // Setup flow: it all happens on Play.
+    Check(ui::PageAfterPhaseChange(Phase::needs_setup, Phase::setting_up, Page::play, Role::host) == Page::play,
+          "setting up stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::play, Role::host) == Page::play,
+          "ready stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "a failed setup stays on Play");
+    Check(ui::PageAfterPhaseChange(Phase::setting_up, Phase::ready, Page::settings, Role::host) == Page::settings,
+          "the setup finishing does not pull the player off Settings");
+    Check(ui::PageAfterPhaseChange(Phase::not_in_game_folder, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "Check again from the wrong folder -> Play");
     // Host flow.
     Check(ui::PageAfterPhaseChange(Phase::ready, Phase::launching, Page::play, Role::host) == Page::play,
           "host keeps the code on Play while launching");
@@ -76,18 +93,175 @@ void TestNavigation() {
           "Tools stays when the game starts");
     Check(ui::PageAfterPhaseChange(Phase::after_game, Phase::ready, Page::settings, Role::host) == Page::settings,
           "Settings stays when the session ends");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::tools, Role::host) == Page::tools,
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::error, Page::tools, Role::host) == Page::tools,
           "uninstall report stays on Tools");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::play, Role::host) == Page::setup,
-          "needs setup from Play -> setup");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::tools, Role::host) == Page::tools,
+          "a new setup does not pull the player off Tools");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::needs_setup, Page::play, Role::host) == Page::play,
+          "needs setup from Play stays on Play");
     Check(ui::PageAfterPhaseChange(Phase::in_game, Phase::error, Page::in_game, Role::host) == Page::play,
           "error -> Play");
-    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::not_in_game_folder, Page::tools, Role::host) == Page::setup,
-          "wrong folder forces setup");
+    Check(ui::PageAfterPhaseChange(Phase::ready, Phase::not_in_game_folder, Page::tools, Role::host) == Page::play,
+          "wrong folder leaves the side pages");
     Check(ui::PageAfterPhaseChange(Phase::in_game, Phase::ready, Page::in_game, Role::host) == Page::play,
           "never left on a disabled page");
     Check(ui::PageAfterPhaseChange(Phase::ready, Phase::ready, Page::in_game, Role::host) == Page::play,
           "a disabled page falls back to the default");
+}
+
+void TestSetupView() {
+    // What Play shows about the automatic setup.
+    std::vector<SetupStep> steps(4);
+    ui::SetupSummary running_sum;
+    running_sum.running = true;
+    Check(ui::GetSetupView(Phase::setting_up, running_sum) == ui::SetupView::preparing, "setting up -> Getting co-op ready");
+    Check(ui::GetSetupView(Phase::needs_setup, ui::SummarizeSetup(steps)) == ui::SetupView::preparing,
+          "needed, about to start by itself -> Getting co-op ready");
+    steps[3].state = SetupStep::State::failed;
+    Check(ui::GetSetupView(Phase::needs_setup, ui::SummarizeSetup(steps)) == ui::SetupView::failed,
+          "a failed attempt -> the Try again banner");
+    Check(ui::GetSetupView(Phase::ready, ui::SummarizeSetup(steps)) == ui::SetupView::none, "ready -> nothing");
+    Check(ui::GetSetupView(Phase::error, ui::SummarizeSetup(steps)) == ui::SetupView::none, "error has its own card");
+    Check(ui::GetSetupView(Phase::in_game, ui::SummarizeSetup({})) == ui::SetupView::none, "in game -> nothing");
+    Check(ui::GetSetupView(Phase::not_in_game_folder, ui::SummarizeSetup({})) == ui::SetupView::none, "wrong folder -> nothing");
+}
+
+void TestDebugGating() {
+    // Settings > Debug mode adds "Local test (two windows)" to Play; nothing of it shows otherwise.
+    Check(ui::PlayTabCount(false) == 2 && ui::PlayTabCount(true) == 3, "the Local test tab only in Debug mode");
+    Check(std::string(ui::PlayTabLabel(ui::PlayTab::host)) == "Host" && std::string(ui::PlayTabLabel(ui::PlayTab::join)) == "Join" &&
+              std::string(ui::PlayTabLabel(ui::PlayTab::local_test)) == "Local test",
+          "tab labels");
+    Check(ui::ShownPlayTab(ui::PlayTab::local_test, false, false) == ui::PlayTab::host, "Debug off: never the Local test tab");
+    Check(ui::ShownPlayTab(ui::PlayTab::join, true, false) == ui::PlayTab::join, "Debug on: the chosen tab");
+    Check(ui::ShownPlayTab(ui::PlayTab::host, true, true) == ui::PlayTab::local_test &&
+              ui::ShownPlayTab(ui::PlayTab::join, false, true) == ui::PlayTab::local_test,
+          "a running local test is always shown");
+    const LocalTestCheck ok{true, "Ready."}, missing{false, "Choose the second game folder in Settings > Debug."};
+    Check(ui::CanStartLocalTest(Phase::ready, ok), "start when ready and the folder is fine");
+    Check(!ui::CanStartLocalTest(Phase::ready, missing) && !ui::CanStartLocalTest(Phase::setting_up, ok) &&
+              !ui::CanStartLocalTest(Phase::in_game, ok),
+          "no start without a folder, while getting ready or during a game");
+
+    // The mock model: Debug mode off by default; the folder is checked; a run ends by itself.
+    MockOptions o;
+    o.scenario = MockScenario::ready;
+    MockModel m(o);
+    m.use_manual_clock(0.0);
+    Check(!m.debug() && m.local_test_folder().empty() && !m.check_local_test().ok, "Debug mode is off by default");
+    std::string error;
+    Check(!m.start_local_test(error) && !error.empty(), "no local test with Debug mode off");
+    m.set_debug(true);
+    Check(m.debug() && m.check_local_test().message.find("Settings") != std::string::npos, "Debug on: choose the second folder");
+    m.set_local_test_folder(m.game_dir());
+    Check(!m.check_local_test().ok && m.check_local_test().message.find("separate") != std::string::npos, "not the same folder");
+    m.set_local_test_folder(MockModel::kGuestDir);
+    Check(m.check_local_test().ok, "a separate MGSV folder");
+    Check(m.start_local_test(error) && m.phase() == Phase::in_game && m.local_test().active && m.session_role() == Role::host,
+          "the local test runs");
+    Check(m.local_test().starting && m.local_test().headline.find("Starting the local test") != std::string::npos &&
+              m.link().headline.find("Starting the local test") != std::string::npos,
+          "mock: the start first gets both folders ready (on its own thread in the real model)");
+    Check(!m.check_local_test().ok && !m.check_local_test().checking, "not twice");
+    m.advance(5.0);
+    m.tick();
+    Check(m.local_test().active && !m.local_test().starting && !m.link().headline.empty(), "both games running");
+    m.advance(200.0);
+    m.tick();
+    Check(m.phase() == Phase::ready && !m.local_test().active && m.local_test().detail.find("were put back") != std::string::npos &&
+              m.local_test().detail.find("previous setup") == std::string::npos,
+          "both games closed: the test settings are put back (the copied co-op files stay)");
+    m.set_debug(false);
+    Check(!m.check_local_test().ok, "Debug off again");
+
+    // The check runs on its own thread: "Checking the second folder..." (no warning, no Open Settings) until it ends.
+    Check(ui::LocalCheckTone(LocalTestCheck{true, "Ready."}) == ui::CheckTone::ready &&
+              ui::LocalCheckTone(LocalTestCheck{false, "Checking the second folder...", true}) == ui::CheckTone::checking &&
+              ui::LocalCheckTone(LocalTestCheck{false, "Choose the second MGSV game folder in Settings > Debug."}) == ui::CheckTone::needed,
+          "the check shows ready, checking or what is needed");
+    // Arrange windows only once both games run (not while the test starts, not after a safety stop).
+    LocalTestView view;
+    view.active = true;
+    view.starting = true;
+    Check(!ui::CanArrangeLocal(view), "no Arrange windows while the test starts");
+    view.starting = false;
+    Check(ui::CanArrangeLocal(view), "Arrange windows while both games run");
+    view.failed = true;
+    Check(!ui::CanArrangeLocal(view) && !ui::CanArrangeLocal(LocalTestView{}), "no Arrange windows after a stop or without a test");
+
+    // The second folder's check is refreshed when the Local test tab or Settings > Debug comes into view.
+    Check(ui::LocalCheckVisible(Page::play, ui::PlayTab::local_test, true) && ui::LocalCheckVisible(Page::settings, ui::PlayTab::host, true),
+          "the Local test tab and Settings with Debug on show the check");
+    Check(!ui::LocalCheckVisible(Page::settings, ui::PlayTab::local_test, false) && !ui::LocalCheckVisible(Page::play, ui::PlayTab::host, true) &&
+              !ui::LocalCheckVisible(Page::tools, ui::PlayTab::local_test, true) && !ui::LocalCheckVisible(Page::in_game, ui::PlayTab::local_test, true),
+          "nowhere else");
+}
+
+void TestUpdateGate() {
+    // Update now waits while co-op gets ready by itself (the restart would cut the setup off) and during a game.
+    Check(ui::CanStartUpdate(Phase::ready, ui::SetupView::none) && ui::CanStartUpdate(Phase::error, ui::SetupView::none),
+          "update when ready, or when co-op can't start");
+    Check(ui::CanStartUpdate(Phase::needs_setup, ui::SetupView::failed), "update after a failed setup (it may fix it)");
+    Check(!ui::CanStartUpdate(Phase::setting_up, ui::SetupView::preparing) && !ui::CanStartUpdate(Phase::needs_setup, ui::SetupView::preparing),
+          "no update while co-op gets ready");
+    Check(!ui::CanStartUpdate(Phase::launching, ui::SetupView::none) && !ui::CanStartUpdate(Phase::in_game, ui::SetupView::none) &&
+              !ui::CanStartUpdate(Phase::after_game, ui::SetupView::none),
+          "no update during a game or a local test");
+    Check(!ui::CanStartUpdate(Phase::not_in_game_folder, ui::SetupView::none), "no update in the wrong folder");
+    // The mock model refuses it the same way.
+    MockOptions o;
+    o.scenario = MockScenario::first_run;
+    MockModel m(o);
+    m.use_manual_clock(0.0);
+    UpdateInfo available;
+    available.status = UpdateStatus::available;
+    available.latest_version = "99.0.0";
+    m.set_mock_update_info(available);
+    m.tick();
+    Check(m.phase() == Phase::setting_up, "the mock's setup runs by itself");
+    m.start_update();
+    Check(m.update_info().status == UpdateStatus::available, "mock: no update while co-op gets ready");
+}
+
+void TestScenes() {
+    // --screenshot-all renders every scene; the Setup page scenes are gone.
+    Check(ui::SceneCount() >= 20, "scene list");
+    bool preparing = false, failed = false, wrong = false;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        Check(name.size() > 3 && name.compare(3, 6, "setup-") != 0, "no Setup page scene");
+        Check(name.size() > 3 && name[0] >= '0' && name[0] <= '9' && name[1] >= '0' && name[1] <= '9' && name[2] == '-' &&
+                  std::stoi(name.substr(0, 2)) == i + 1,
+              "scenes are numbered in order");
+        if (name.find("play-preparing") != std::string::npos) preparing = true;
+        if (name.find("play-setup-failed") != std::string::npos) failed = true;
+        if (name.find("wrong-folder") != std::string::npos) wrong = true;
+    }
+    Check(preparing && failed && wrong, "Play while preparing, the failure banner and the wrong folder are rendered");
+    int debug_scenes = 0;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        if (name.find("settings-debug") != std::string::npos || name.find("play-local") != std::string::npos) ++debug_scenes;
+    }
+    Check(debug_scenes >= 4, "Settings with Debug on and Play's Local test are rendered");
+    bool starting = false, checking = false;
+    for (int i = 0; i < ui::SceneCount(); ++i) {
+        const std::string name = ui::SceneName(static_cast<ui::Scene>(i));
+        if (name.find("ingame-local-starting") != std::string::npos) starting = true;
+        if (name.find("play-local-checking") != std::string::npos) checking = true;
+    }
+    Check(starting && checking, "the local test starting and the second folder being checked are rendered");
+    // The mock can show the check still running (the screenshot of it).
+    MockOptions o;
+    o.scenario = MockScenario::ready;
+    MockModel m(o);
+    m.set_debug(true);
+    m.set_local_test_folder(MockModel::kGuestDir);
+    m.set_mock_checking(true);
+    Check(!m.check_local_test().ok && m.check_local_test().checking, "mock: the check still runs");
+    m.set_mock_checking(false);
+    Check(m.check_local_test().ok && !m.check_local_test().checking, "mock: the check ended");
+    Check(std::string(ui::SceneName(static_cast<ui::Scene>(ui::SceneCount()))).empty(), "out of range scene");
 }
 
 void TestCharactersAndHud() {
@@ -225,13 +399,132 @@ void TestCommandLine() {
     o = ui::ParseCommandLine({L"--end-session", L"--game-dir", L"D:\\G"});
     Check(o.error.empty() && o.mode == ui::Options::Mode::end_session && o.game_dir == L"D:\\G", "--end-session");
     Check(!ui::ParseCommandLine({L"--end-session", L"--write-session", L"host"}).error.empty(), "one session flag at a time");
+    o = ui::ParseCommandLine({L"--local-watch", L"0123456789abcdef0123456789abcdef"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::local_watch && o.local_run == L"0123456789abcdef0123456789abcdef",
+          "--local-watch (the local test's helper)");
+    Check(!ui::ParseCommandLine({L"--local-watch", L"../x"}).error.empty() && !ui::ParseCommandLine({L"--local-watch"}).error.empty(),
+          "--local-watch needs a run id");
     Check(!ui::ParseCommandLine({L"--write-session", L"host", L"--mock"}).error.empty(), "no simulated model for the session flags");
     Check(std::wstring(ui::UsageText()).find(L"Developer only") != std::wstring::npos &&
               std::wstring(ui::UsageText()).find(L"--end-session") != std::wstring::npos,
           "the usage text marks the session flags developer-only");
+
+    // The restart after a self-update: the old launcher passes its process id.
+    o = ui::ParseCommandLine({L"--after-update", L"4242"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::gui && o.after_update == 4242u && !o.mock, "--after-update <pid>");
+    o = ui::ParseCommandLine({L"--after-update", L"4294967295"});
+    Check(o.error.empty() && o.after_update == 4294967295u, "--after-update takes any 32-bit process id");
+    for (const wchar_t* bad : {L"", L"0", L"-1", L"12x", L"4294967296", L"99999999999999999999", L" 12"})
+        Check(!ui::ParseCommandLine({L"--after-update", bad}).error.empty(), "--after-update refuses a bad pid");
+    Check(!ui::ParseCommandLine({L"--after-update"}).error.empty(), "--after-update needs a pid");
+    Check(!ui::ParseCommandLine({L"--after-update", L"12", L"--selftest"}).error.empty(), "--after-update only with the window");
+    Check(!ui::ParseCommandLine({L"--after-update", L"12", L"--mock"}).error.empty(), "--after-update only on the real model");
+    // Developer flags for the update test: a loopback feed only.
+    o = ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:8123/releases.json", L"--update-now"});
+    Check(o.error.empty() && o.mode == ui::Options::Mode::gui && o.update_feed == L"http://127.0.0.1:8123/releases.json" && o.update_now,
+          "--update-feed with --update-now");
+    o = ui::ParseCommandLine({L"--update-feed", L"http://localhost:9/feed", L"--after-update", L"7"});
+    Check(o.error.empty() && o.update_feed == L"http://localhost:9/feed" && o.after_update == 7u && !o.update_now,
+          "the relaunched window keeps the test feed");
+    for (const wchar_t* bad : {L"https://api.github.com/repos/x/y/releases", L"http://127.0.0.1.evil.example/feed", L"http://10.0.0.1/feed",
+                               L"ftp://127.0.0.1/feed", L"127.0.0.1:80/feed", L"http://localhost@evil.example/feed", L""})
+        Check(!ui::ParseCommandLine({L"--update-feed", bad}).error.empty(), "--update-feed refuses anything but a loopback http feed");
+    Check(!ui::ParseCommandLine({L"--update-now"}).error.empty(), "--update-now needs --update-feed (never a silent GitHub install)");
+    Check(!ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:1/f", L"--mock"}).error.empty(), "--update-feed only on the real model");
+    Check(!ui::ParseCommandLine({L"--update-feed", L"http://127.0.0.1:1/f", L"--end-session"}).error.empty(), "--update-feed only with the window");
+    Check(std::wstring(ui::UsageText()).find(L"--update-feed") != std::wstring::npos, "the usage text lists the update test flags");
+
+    // How long the window waits for the single instance.
+    Check(ui::InstanceClaimWaitMs(0, false) == 0, "a normal start never waits: a second window brings the first forward");
+    Check(ui::InstanceClaimWaitMs(4242, false) > 0 && ui::InstanceClaimWaitMs(4242, true) > 0, "after an update the window waits");
+    Check(ui::InstanceClaimWaitMs(0, true) >= 5000, "an exe started by an older updater waits for it to exit");
+    UpdateInfo info;
+    Check(!ui::CloseForUpdate(info), "the window stays open normally");
+    info.status = UpdateStatus::ready_to_restart;
+    Check(ui::CloseForUpdate(info), "the window closes once the updated launcher took over");
+    info.status = UpdateStatus::applying;
+    Check(!ui::CloseForUpdate(info), "not while the update is being installed");
+
+    // While an update is busy the setup waits, and a closing window keeps the
+    // folder until the update has stopped; an update check never holds it.
+    for (UpdateStatus s : {UpdateStatus::downloading, UpdateStatus::applying, UpdateStatus::ready_to_restart}) {
+        info.status = s;
+        Check(ui::UpdateInProgress(info), "an update downloading, installing or handing over is in progress");
+    }
+    for (UpdateStatus s : {UpdateStatus::idle, UpdateStatus::checking, UpdateStatus::up_to_date, UpdateStatus::available, UpdateStatus::error}) {
+        info.status = s;
+        Check(!ui::UpdateInProgress(info), "checking, found or failed is not an update in progress");
+    }
+    // A closing window keeps the folder (its single-instance claim) until the model has ended its threads only when
+    // that matters: an update in progress, or a local test still starting (its thread is still switching both
+    // folders over; a window opened meanwhile would find a half-made test and put its files back).
+    LocalTestView local;
+    info.status = UpdateStatus::available;
+    Check(!ui::HoldFolderWhileClosing(info, local), "a normal close frees the folder at once");
+    info.status = UpdateStatus::downloading;
+    Check(ui::HoldFolderWhileClosing(info, local), "an update in progress holds it");
+    info.status = UpdateStatus::idle;
+    local.active = local.starting = true;
+    Check(ui::HoldFolderWhileClosing(info, local), "a local test still starting holds it");
+    local.starting = false;
+    Check(!ui::HoldFolderWhileClosing(info, local), "a running local test does not (its helper takes over)");
+
+    // The update card on Play.
+    UpdateInfo u;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "nothing to say");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.4.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an update to install");
+    u.status = UpdateStatus::error;
+    u.error = "MGSV is running from this folder. Quit MGSV first, then update.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::failed, "Update now was refused or failed: Play says why");
+    u.download_url.clear();
+    u.error = "Could not check for updates. Check your internet connection, then try again.";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::none, "a failed check (offline) stays on Tools, not on Play");
+    u.status = UpdateStatus::downloading;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::downloading, "the download");
+    u.status = UpdateStatus::applying;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the install");
+    u.status = UpdateStatus::ready_to_restart;
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::installing, "the restart");
+    u.status = UpdateStatus::up_to_date;
+    u.updated_to = "0.14.4";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::updated, "right after a self-update");
+    u.status = UpdateStatus::available;
+    u.download_url = "http://127.0.0.1:1/DiamondDogsTogether-0.14.5.zip";
+    Check(ui::PlayBannerFor(u) == ui::PlayBanner::available, "an even newer update comes first");
+
+    // "Updated to version X." on Play, where the new window opens, and on Tools. There is no setup for the player to
+    // do: Play's own "Getting co-op ready..." line (or its failure card) covers the automatic setup after an update.
+    UpdateInfo plain;
+    Check(ui::UpdatedNote(plain).empty(), "no note without an update");
+    u.status = UpdateStatus::up_to_date;
+    Check(ui::UpdatedNote(u) == "Updated to version 0.14.4.", "the same short note in every phase (no setup step to ask for)");
+    // The small line next to "Getting co-op ready...": what the wait is (no "the first time" right after an update).
+    UpdateInfo fresh;
+    Check(ui::PreparingNote(fresh) == "This takes about a minute the first time.", "the first start");
+    Check(ui::PreparingNote(u) == "This takes about a minute after an update.", "right after a self-update");
+    u.status = UpdateStatus::downloading;
+    Check(ui::PreparingNote(u) == "It continues once the update has finished.", "an update is in progress: the setup waits for it");
+    u.status = UpdateStatus::up_to_date;
+
+    // About > Source code: the release page of this version (both zips are there).
+    Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",
+          "the source of a build is its release");
+    Check(ui::ReleasePageUrl("0.14.4") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4", "a plain version");
+    for (const char* odd : {"", "dev", "0.14", "0.14.4.1", "0..4", "v0.14.4", "0.14.4-rc1"})
+        Check(ui::ReleasePageUrl(odd) == "https://github.com/TrollTaylor/diamond-dogs-together/releases", "anything else: the release list");
 }
 
 void TestMock() {
+    {
+        // The screenshot scenes after an update show the new version, like the real model.
+        MockModel m(MockOptions{});
+        UpdateInfo i;
+        i.updated_to = "0.14.4";
+        m.set_mock_update_info(i);
+        Check(m.version() == "0.14.4", "the mock runs the version it was updated to");
+    }
     MockScenario scenario{};
     Check(ParseMockScenario("partner-drops", scenario) && scenario == MockScenario::partner_drops, "scenario name");
     Check(!ParseMockScenario("nope", scenario), "unknown scenario");
@@ -242,7 +535,8 @@ void TestMock() {
         Check(m.phase() == Phase::needs_setup, "first run");
         std::string code, error;
         Check(!m.host(code, error) && !error.empty(), "no host before setup");
-        m.start_setup();
+        m.tick();   // nobody presses a button: the setup starts by itself
+        Check(m.phase() == Phase::setting_up, "the first tick starts the setup");
         m.advance(2.0);
         m.tick();
         std::vector<SetupStep> steps = m.setup_steps();
@@ -305,7 +599,13 @@ void TestMock() {
         m.set_character(Character::dd_female);
         Check(m.character() == Character::dd_female, "character stored");
         std::string report;
-        Check(m.uninstall(report, error) && !report.empty() && m.phase() == Phase::needs_setup, "uninstall");
+        // Like the real model: the loader is gone afterwards, so co-op can't start (and is not set up again behind the player's back).
+        Check(m.uninstall(report, error) && !report.empty() && m.phase() == Phase::error &&
+                  m.last_error().find("dinput8.dll") != std::string::npos,
+              "uninstall");
+        m.advance(5.0);
+        m.tick();
+        Check(m.phase() == Phase::error, "no automatic setup after an uninstall");
     }
     {   // Scenarios.
         MockOptions o;
@@ -316,6 +616,8 @@ void TestMock() {
               "wrong folder");
         m.recheck();
         Check(m.phase() == Phase::needs_setup, "recheck moves on");
+        m.tick();
+        Check(m.phase() == Phase::setting_up, "and then sets up by itself");
 
         o.scenario = MockScenario::error;
         MockModel e(o);
@@ -326,13 +628,21 @@ void TestMock() {
         o.scenario = MockScenario::setup_fails;
         MockModel f(o);
         f.use_manual_clock(0.0);
-        f.start_setup();
+        f.tick();
+        Check(f.phase() == Phase::setting_up, "the setup starts by itself");
         f.advance(30.0);
         f.tick();
         const ui::SetupSummary s = ui::SummarizeSetup(f.setup_steps());
         Check(f.phase() == Phase::needs_setup && s.failed && s.current == 3 && !f.last_error().empty(),
               "setup fails once");
-        f.start_setup();
+        Check(ui::GetSetupView(f.phase(), s) == ui::SetupView::failed, "the failure banner");
+        for (int i = 0; i < 5; ++i) {
+            f.advance(10.0);
+            f.tick();
+        }
+        Check(f.phase() == Phase::needs_setup && ui::SummarizeSetup(f.setup_steps()).failed,
+              "a failed setup waits for Try again (no retry loop)");
+        f.start_setup();   // Try again
         f.advance(30.0);
         f.tick();
         Check(f.phase() == Phase::ready, "second try works");
@@ -370,6 +680,10 @@ void TestMock() {
 
 int main() {
     TestNavigation();
+    TestSetupView();
+    TestScenes();
+    TestDebugGating();
+    TestUpdateGate();
     TestCharactersAndHud();
     TestJoinCode();
     TestJoinField();

@@ -6,16 +6,24 @@
 
 #include "core_env.hpp"
 #include "core_json.hpp"
+#include "core_localtest.hpp"
 #include "launcher_model.hpp"
 
 namespace ddt::core {
 
 // MakeRealModel(exe_dir) with injectable seams (tests).
-std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env);
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env,
+                                                    const ModelStart& start = ModelStart{});
+// ... with the local test's window / process seams too.
+std::unique_ptr<LauncherModel> MakeRealModelWithEnv(const std::wstring& exe_dir, std::shared_ptr<Env> env, std::shared_ptr<LocalHost> local,
+                                                    const ModelStart& start = ModelStart{});
 
 // DiamondDogsTogether.exe --watch <session_id>: the hidden helper for the game
 // folder `exe_dir` (the exe's own folder).
 int RunWatch(const std::wstring& exe_dir, const std::string& session_id);
+// DiamondDogsTogether.exe --local-watch <run_id>: the local test's hidden helper
+// (core_localtest.hpp RunLocalWatch) for the host folder `exe_dir`.
+int RunLocalWatchHelper(const std::wstring& exe_dir, const std::string& run_id);
 
 // ---- Developer flags (not for players; the release gate's hidden-worker runs) ----
 // DiamondDogsTogether.exe --write-session host|join [--code <code>] [--character <c>]
