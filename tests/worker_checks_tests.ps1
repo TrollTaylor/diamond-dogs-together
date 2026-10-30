@@ -11,7 +11,7 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
     'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
@@ -219,6 +219,15 @@ try {
     foreach ($left in @('ddt_runtime_dat_integration','ddt_launcher_screens','launcher_assets_current')) {
         Check ($release.tests -cnotcontains $left -and $release.excluded -ccontains $left) "excluded by name: $left"
     }
+    # Round 2: the preflight of every hidden game run (Normal/Research, Invoke-WorkerScenario) builds no launcher for a
+    # player, so it leaves out the launcher's real-process helper test (8-10 s, timing-sensitive) and its icon check;
+    # only the Release receipt (the packaged build) runs them. The sub-second loader and Lua fixtures run everywhere.
+    $launcherOnly=@('launcher_icon_tests','ddt_local_watch_process')
+    foreach ($plan in @($normal,$background,$research)) {
+        Check (@($launcherOnly | Where-Object { $plan.tests -ccontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight skips the launcher's helper-process and icon checks"
+        Check (@($shipped | Where-Object { $launcherOnly -cnotcontains $_ -and $plan.tests -cnotcontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight runs the shipped loader and Lua fixtures"
+    }
+    Check ($release.tests.Count -eq $normal.tests.Count + $launcherOnly.Count -and @($normal.tests | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'the Release receipt runs the preflight list plus the two launcher checks'
     $shipNames=@('ddt_local_watch_process','launcher_icon_tests','partner_dm_overlay_tests')
     $shipInventory=[pscustomobject]@{tests=@(
         [pscustomobject]@{name='ddt_local_watch_process';command=@((Join-Path $directory 'ddt_core_tests.exe'),'--local-watch-process',(Join-Path $directory 'DiamondDogsTogether.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=180})},

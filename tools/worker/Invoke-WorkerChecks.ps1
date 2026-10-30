@@ -96,14 +96,19 @@ function Get-WorkerTests {
         'ddt_archive_tests', 'ddt_core_tests', 'launcher_ui_tests', 'ddt_launcher_selftest',
         # 0.14.4 review: the fixtures of shipped code the receipt had left out. dinput8.dll: the dog guard, the act
         # census, the ammo-leak block, the overlay catalogue (read against partner_sync.lua) and the seated-rider patch
-        # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks;
-        # DiamondDogsTogether.exe: its embedded icon, and the local test's --local-watch helper as real hidden processes
-        # on temp folders (no game, no window, no input).
+        # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks.
+        # (DiamondDogsTogether.exe's two: Get-WorkerReleaseOnlyTests.)
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
-        'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check',
-        'launcher_icon_tests', 'ddt_local_watch_process'
+        'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check'
     )
+}
+# Only the Release receipt (the build tools/package.ps1 -Friend packages) runs these: DiamondDogsTogether.exe's embedded
+# icon, and the local test's --local-watch helper as real hidden processes on temp folders (no game, no window, no
+# input; 8-10 s). The preflight of a hidden game run (Normal/Research) packages no launcher, and a timing-sensitive
+# process test there would hold up every hidden run (0.14.4 review, round 2).
+function Get-WorkerReleaseOnlyTests {
+    return @('launcher_icon_tests', 'ddt_local_watch_process')
 }
 function Get-WorkerHash([string]$Text) {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text)))
@@ -197,7 +202,7 @@ function Get-WorkerPlan {
         schema = 1; profile = $SelectedProfile; configuration = $SelectedConfiguration; profile_key = $profileKey
         project = $Root; build_directory = $cache; flags = $flags
         coordinator_lock = 'Local\mgs-coop-checks-' + (Get-WorkerHash ([IO.Path]::GetFullPath($Root).ToUpperInvariant())).Substring(0, 16)
-        tests = @(Get-WorkerTests)
+        tests = @(Get-WorkerTests) + @(if ($SelectedProfile -ceq 'Release') { Get-WorkerReleaseOnlyTests })
         # Never run here, by name (Assert-WorkerCoverage refuses any other test the Release build registers): the
         # unsafe default flows; the runtime .dat build from the game folder's archives; the launcher's mock pages
         # rendered in a DX11 window; the Python check that the committed icon files are what the generator makes
