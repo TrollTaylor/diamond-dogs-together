@@ -244,12 +244,13 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 }
 
 // --- The aim camera (docs/vehicles-companions-design.md 8.25) ------------------
-// partner_pass_camera=off|connect|drop|aim (lab and play): off never connects (and clears our handle: the stock
-// collision for the whole ride); connect keeps the handle for the whole ride (0.14.4); drop keeps it except while the
-// local passenger aims and kAimHoldMs after: the stock collision then keeps the shoulder (aim) camera out of the jeep's
-// body, which with the handle stood outside the jeep and looked through it (8.22 / 8.24 frames, run 4f1a072f seat 2);
-// aim is drop plus the shot guard below. The lab lever "passcam off|connect|drop|aim|lab|status" overrides the key on
-// this copy (lab only).
+// partner_pass_camera=off|connect|aim|drop (lab and play): off never connects (and clears our handle: the stock
+// collision for the whole ride); connect keeps the handle for the whole ride (0.14.4); aim keeps it and adds the shot
+// guard below (the default); drop adds the guard too but drops the handle while the local passenger aims and
+// kAimHoldMs after, so the stock collision keeps the low seated aim camera out of the jeep's body: in seat 3 the view
+// stays clear, but in seat 2 the collision pulls the camera into the passenger (cam at the pivot, the aim target
+// 0-1 m away) and the gun refuses to fire (gun mode 15; runs 17fce0b7, 43e5b981), so drop is not the default. The lab
+// lever "passcam off|connect|aim|drop|lab|status" overrides the key on this copy (lab only).
 enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
 inline const char* ModeName(Mode m) noexcept {
     return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : "aim";
@@ -262,7 +263,8 @@ inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (n == 3 && std::memcmp(text, "aim", 3) == 0) { out = Mode::aim; return true; }
     return false;
 }
-inline bool DropsWhileAiming(Mode m) noexcept { return m == Mode::drop || m == Mode::aim; }
+inline bool DropsWhileAiming(Mode m) noexcept { return m == Mode::drop; }
+inline bool Guards(Mode m) noexcept { return m == Mode::aim || m == Mode::drop; }
 // The local gun aims: the qualified gun record's aim flag (rec+0x3C0 bit 18, partner_input GunFlag::Aiming) or its
 // current mode in the aim / fire / reload family (partner_seat_aim census, run 6fc3098b: RMB 6 / 7, RMB+LMB 9 / 10,
 // an empty magazine 11 / 12).
@@ -283,8 +285,8 @@ struct AimOut {
     bool want = true;          // the driver keeps (connects) the handle this tick
     AimEvent event = AimEvent::none;
 };
-// One tick of an armed boarding (`armed`: ArmFor granted it). Modes drop and aim drop the handle from the first aiming
-// tick until kAimHoldMs after the last one; connect and off never drop (off never arms). Not armed: the state resets (a
+// One tick of an armed boarding (`armed`: ArmFor granted it). Mode drop drops the handle from the first aiming tick
+// until kAimHoldMs after the last one; connect and aim keep it, off never arms. Not armed: the state resets (a
 // drop never outlives the boarding; the counters stay).
 inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint64_t now_ms) noexcept {
     AimOut o{};
@@ -324,7 +326,7 @@ struct View {
     float off[4]{}, piv[4]{}, sc[2]{};
     std::uint32_t flags = 0, requests = 0;
 };
-// --- The shot guard (mode aim; design 8.25) --------------------------------------
+// --- The shot guard (modes aim and drop; design 8.25) ----------------------------
 // [O] run 4f1a072f (trace, seats 3 and 2, the handle held or dropped alike): a seated passenger's shot (gun mode 9 / 10)
 // drives the camera's look pitch CAM+0x270 from the aimed value to the top of its range (-1.221 rad, 70 deg up) in
 // about 0.5 s (an exponential approach, also pulling the yaw CAM+0x274 by up to 0.3 rad per shot), and nothing brings

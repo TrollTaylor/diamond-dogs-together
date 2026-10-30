@@ -564,6 +564,14 @@ try {
             $file = Join-Path $fixture 'play-seat-gun-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_gun=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_gun'])|$($m['partner_seat_gun_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1|1|0x0|0/0' 'native: a named seat gun runs in play'
+            # Design 8.25 passenger camera: Play-Coop never names the key and play defaults it to aim (the handle and the
+            # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
+            Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
+                !$clipsIni.Contains('partner_pass_camera')) 'Play-Coop lab.ini never names partner_pass_camera'
+            Assert-Equal "$($n['partner_pass_camera'])|$($n['partner_pass_camera_given'])|$($n['partner_pass_camera_trace'])" 'aim|0|0' 'native: play defaults the passenger camera to aim'
+            $file = Join-Path $fixture 'play-pass-camera-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_pass_camera=connect`npartner_pass_camera_trace=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_pass_camera'])|$($m['partner_pass_camera_given'])|$($m['partner_pass_camera_trace'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'connect|1|0|0x0|0/0' 'native: a named connect runs in play, the trace is forced off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'

@@ -1,13 +1,15 @@
-# Design 8.25: the passenger aim camera in mode aim (named here: the candidate default) in the jeep's front
+# Design 8.25: the passenger aim camera in mode aim (named here; now the default) in the jeep's front
 # seat 1 (lab key partner_ride_front=1, the M6 seat-1 board; afgh-ledge, the Wakh Sind jeep, no dog in seat 1) and,
 # roles reversed, the host as the back-seat passenger (seat 2) with the guest driving. Each passenger aims the way a
 # player does right after boarding (RMB, the camera where boarding left it), fires three single shots, releases.
-# Expected (lab): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key; state=aim; event=drop and
-#   event=restore; state=guard; event=open / close; seat 1: partner_ride=board_passenger; ...; seat=1 and the driver's
+# Expected (lab): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key;
+#   state=guard; event=open / close; seat 1: partner_ride=board_passenger; ...; seat=1 and the driver's
 #   partner_ride_seat=confirmed; ...; seat=1.
 # Frames (look at them): f1-seated, f1-aim, f1-shot1..3, f1-after(2) on the guest; f1-drv-aim / -shot3 on the host;
 # r2-* for the reverse (the host's own view, the guest's driver view).
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+# Run 43e5b981 (lab, 082a155 with mode aim = drop + guard then): the guest got back seat 3 (the driver's policy
+# withdrew seat 1: seat1=none; flags=0x05) and its view held through three shots; the host's seat-2 gun was blocked.
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-camera-front.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
 labsetting partner_native_ride=seat
@@ -53,7 +55,6 @@ guest hold rmb 1500 nowait
 wait 700
 guest capture f1-aim
 host capture f1-drv-aim
-waitlog guest 'partner_ride=pass_camera; state=aim; event=drop; vehicle=256[0-9][0-9]; seat=1; mode=aim;' 3
 guest press lmb 120
 wait 300
 guest capture f1-shot1

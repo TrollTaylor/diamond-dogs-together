@@ -3171,9 +3171,9 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
                     static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
-    // The shot guard (mode aim): the look angles held near the aimed reference from the first firing tick until
+    // The shot guard (modes aim and drop): the look angles held near the aimed reference from the first firing tick until
     // kGuardHoldMs after the last one (partner_pass_camera_policy GuardStep).
-    const bool guard_on = armed && mode == pc::Mode::aim && h.pass_camera_view && h.pass_camera_angles;
+    const bool guard_on = armed && pc::Guards(mode) && h.pass_camera_view && h.pass_camera_angles;
     pc::View gv{};
     const bool gv_need = guard_on && (aiming || firing || c.guard.active || c.guard.last_fire_ms != 0);
     const bool gv_ok = gv_need && h.pass_camera_view(h.context, st, gv) && gv.ok;

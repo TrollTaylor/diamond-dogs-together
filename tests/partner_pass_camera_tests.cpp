@@ -315,9 +315,11 @@ void TestModeAndAim() {
     Check(static_cast<int>(pc::Mode::off) == 0 && static_cast<int>(pc::Mode::connect) == 1 && static_cast<int>(pc::Mode::aim) == 2 &&
               static_cast<int>(pc::Mode::drop) == 3,
           "the values the lab key and the lever share");
-    Check(pc::DropsWhileAiming(pc::Mode::drop) && pc::DropsWhileAiming(pc::Mode::aim) && !pc::DropsWhileAiming(pc::Mode::connect) &&
+    Check(pc::DropsWhileAiming(pc::Mode::drop) && !pc::DropsWhileAiming(pc::Mode::aim) && !pc::DropsWhileAiming(pc::Mode::connect) &&
               !pc::DropsWhileAiming(pc::Mode::off),
-          "drop and aim drop the handle while aiming");
+          "only drop drops the handle while aiming (runs 17fce0b7 / 43e5b981: seat 2's gun blocked without it)");
+    Check(pc::Guards(pc::Mode::aim) && pc::Guards(pc::Mode::drop) && !pc::Guards(pc::Mode::connect) && !pc::Guards(pc::Mode::off),
+          "aim and drop guard the shots; connect (0.14.4) and off do not");
     // ArmFor: mode off never arms (reported once a passenger is seated).
     pc::ArmIn in{};
     in.passenger_mode = true; in.installed = true; in.passenger = true; in.vehicle = 25608; in.seat = 2; in.off = true;
@@ -337,28 +339,28 @@ void TestModeAndAim() {
 
 void TestAimStep() {
     pc::AimDrop s{};
-    // aim: dropped from the first aiming tick until kAimHoldMs after the last one.
-    pc::AimOut o = pc::AimStep(s, pc::Mode::aim, true, false, 1000);
+    // drop: dropped from the first aiming tick until kAimHoldMs after the last one.
+    pc::AimOut o = pc::AimStep(s, pc::Mode::drop, true, false, 1000);
     Check(o.want && o.event == pc::AimEvent::none && !s.dropped, "seated, not aiming: the handle stays");
-    o = pc::AimStep(s, pc::Mode::aim, true, true, 1100);
+    o = pc::AimStep(s, pc::Mode::drop, true, true, 1100);
     Check(!o.want && o.event == pc::AimEvent::drop && s.dropped && s.drops == 1, "the aim drops the handle at once");
-    o = pc::AimStep(s, pc::Mode::aim, true, true, 1500);
+    o = pc::AimStep(s, pc::Mode::drop, true, true, 1500);
     Check(!o.want && o.event == pc::AimEvent::none, "still aiming: still dropped, no second event");
-    o = pc::AimStep(s, pc::Mode::aim, true, false, 1500 + pc::kAimHoldMs - 1);
+    o = pc::AimStep(s, pc::Mode::drop, true, false, 1500 + pc::kAimHoldMs - 1);
     Check(!o.want && o.event == pc::AimEvent::none, "within the hold after the aim: still dropped");
-    o = pc::AimStep(s, pc::Mode::aim, true, false, 1500 + pc::kAimHoldMs);
+    o = pc::AimStep(s, pc::Mode::drop, true, false, 1500 + pc::kAimHoldMs);
     Check(o.want && o.event == pc::AimEvent::restore && !s.dropped && s.restores == 1, "the hold over: restored");
-    o = pc::AimStep(s, pc::Mode::aim, true, false, 9000);
+    o = pc::AimStep(s, pc::Mode::drop, true, false, 9000);
     Check(o.want && o.event == pc::AimEvent::none, "idle again");
     // A shot inside the hold renews it.
-    pc::AimStep(s, pc::Mode::aim, true, true, 10000);
-    pc::AimStep(s, pc::Mode::aim, true, false, 10300);
-    o = pc::AimStep(s, pc::Mode::aim, true, true, 10500);
+    pc::AimStep(s, pc::Mode::drop, true, true, 10000);
+    pc::AimStep(s, pc::Mode::drop, true, false, 10300);
+    o = pc::AimStep(s, pc::Mode::drop, true, true, 10500);
     Check(!o.want && o.event == pc::AimEvent::none && s.drops == 2, "a new aim within the hold keeps the drop");
-    o = pc::AimStep(s, pc::Mode::aim, true, false, 10500 + pc::kAimHoldMs - 1);
+    o = pc::AimStep(s, pc::Mode::drop, true, false, 10500 + pc::kAimHoldMs - 1);
     Check(!o.want, "the hold counts from the last aiming tick");
     // Not armed (the get-off, a latch, mode off): the drop never outlives the boarding.
-    o = pc::AimStep(s, pc::Mode::aim, false, true, 11000);
+    o = pc::AimStep(s, pc::Mode::drop, false, true, 11000);
     Check(o.want && o.event == pc::AimEvent::none && !s.dropped && s.last_aim_ms == 0, "not armed: reset without an event");
     // connect (0.14.4) never drops.
     pc::AimDrop k{};
@@ -368,12 +370,12 @@ void TestAimStep() {
     }
     // A clock of 0 still counts as an aim.
     pc::AimDrop z{};
-    o = pc::AimStep(z, pc::Mode::aim, true, true, 0);
+    o = pc::AimStep(z, pc::Mode::drop, true, true, 0);
     Check(!o.want && z.last_aim_ms == 1, "an aim at clock 0");
-    // drop drops like aim.
-    pc::AimDrop dr{};
-    o = pc::AimStep(dr, pc::Mode::drop, true, true, 2000);
-    Check(!o.want && o.event == pc::AimEvent::drop, "drop: the aim drops the handle");
+    // aim (the default) keeps the handle while aiming, like connect.
+    pc::AimDrop ka{};
+    o = pc::AimStep(ka, pc::Mode::aim, true, true, 2000);
+    Check(o.want && o.event == pc::AimEvent::none && !ka.dropped, "aim: the handle stays while aiming");
 }
 
 // The shot guard (run 4f1a072f: a seated shot pulls the look pitch from 0.087 to -1.221 rad within 0.5 s).

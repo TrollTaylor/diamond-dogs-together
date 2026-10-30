@@ -5,7 +5,6 @@
 # drives a little and the host aims and fires once more while the jeep moves; the host gets off. Then the roles
 # reverse: the host drives, the guest boards back seat 3 from the right side and does the same.
 # Expected (play, -WanSim bad): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key;
-#   state=aim; event=drop at each aim and event=restore after it; state=guard; event=open at the first shot and
 #   event=close; writes=..; max_pull_mrad=..; the stock get-off releases the camera (state=release; reason=stock).
 # Frames (look at them): pass-aim, pass-shot1..3, pass-after (the passenger), drv-aim / drv-shot3 (the driver), the
 # moving shot (pass-move-NN), the get-off; the same with rev- for the reverse.
@@ -47,7 +46,6 @@ host hold rmb 1500 nowait
 wait 700
 host capture pass-aim
 guest capture drv-aim
-waitlog host 'partner_ride=pass_camera; state=aim; event=drop; vehicle=25608; seat=2; mode=aim;' 3
 host press lmb 120
 wait 300
 host capture pass-shot1
@@ -67,7 +65,6 @@ host release
 wait 1000
 host capture pass-after
 waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=2;' 3
-waitlog host 'partner_ride=pass_camera; state=aim; event=restore; vehicle=25608; seat=2; mode=aim;' 3
 wait 1000
 host capture pass-after2
 # A shot while the jeep moves.
@@ -113,7 +110,6 @@ guest hold rmb 1500 nowait
 wait 700
 guest capture rev-pass-aim
 host capture rev-drv-aim
-waitlog guest 'partner_ride=pass_camera; state=aim; event=drop; vehicle=25608; seat=3; mode=aim;' 3
 guest press lmb 120
 wait 300
 guest capture rev-pass-shot1

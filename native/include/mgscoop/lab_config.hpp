@@ -607,10 +607,10 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
-    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (connect unless
+    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (aim unless
     // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
     // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.25) is lab only, default 0.
-    PartnerPassCamera partner_pass_camera = PartnerPassCamera::connect;
+    PartnerPassCamera partner_pass_camera = PartnerPassCamera::aim;
     bool partner_pass_camera_given = false;
     bool partner_pass_camera_trace = false;
     // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with

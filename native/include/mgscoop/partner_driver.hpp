@@ -593,7 +593,7 @@ struct Settings {
     bool ride_front = false, ride_cab = false;
     // The passenger camera's mode (lab.ini partner_pass_camera, design 8.25; the lab lever passcam overrides it on a
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
-    PartnerPassCamera pass_camera = PartnerPassCamera::connect;
+    PartnerPassCamera pass_camera = PartnerPassCamera::aim;
     bool pass_camera_trace = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;

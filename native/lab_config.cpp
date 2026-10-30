@@ -1695,8 +1695,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
-    // The passenger camera (design 8.25): connect (0.14.4) unless named.
-    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::connect;
+    // The passenger camera (design 8.25): aim (the handle and the shot guard) unless named, in lab and play: the view
+    // held through a seated shot (lab 43e5b981) and back at the aim after it (lab 17fce0b7); see STATUS for the play
+    // rehearsal. A named connect is 0.14.4.
+    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::aim;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat): off unless named, in lab
     // and play, until a hidden-run FRAME on both copies and a -Mode play -WanSim bad rehearsal.
     if (!c.partner_ride_front_given) c.partner_ride_front = false;

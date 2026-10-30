@@ -21,7 +21,7 @@ mgscoop::CoopConfig Coop(const std::string& text) {
     return config;
 }
 // Design 8.25: the shipped passenger camera mode (an unnamed partner_pass_camera, lab and play).
-constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::connect;
+constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::aim;
 } // namespace
 
 int main() {
