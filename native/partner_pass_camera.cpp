@@ -224,6 +224,9 @@ bool ReadRaise(const void* base, std::uintptr_t P, RaiseView& out) noexcept {
     RaiseView v{};
     if (!ReadValue(cam + kCamVariant, v.variant)) return false;
     v.ok = true;
+    v.target_ok = true;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(cam + kCamAimTarget + 4u * i, v.target[i])) v.target_ok = false;
     const std::uintptr_t obj = AimObject(b, cam);
     if (obj) {
         // The ids of 0x23D4870 as the contract pinned them (the generator checks the file; the code sites reading them
@@ -251,6 +254,12 @@ bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float ra
     __try {
         auto* entry = reinterpret_cast<volatile float*>(e);
         auto* flag = reinterpret_cast<volatile std::uint8_t*>(obj + kAimFlag);
+        if (!on) {
+            // Only our own entry is written back (the teardown may run late: a reused object or another owner is left).
+            float now[6]{};
+            for (unsigned i = 0; i < 6; ++i) now[i] = entry[i];
+            if (*flag != 1 || !EntryRaised(now, raise)) return false;
+        }
         if (on) {
             // The entry first, then the flag: the aim module's update never adds a half-written entry.
             entry[0] = 0.0f;
@@ -280,8 +289,8 @@ const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float y
     if (!cam || !ReadValue(cam + kCamRequestFlags, d38) || !ReadValue(cam + kCamFlags, f204)) return "camera";
     if (const char* why = RequestGate(d38, f204)) return why;
     __try {
-        // 0x111A920's order: the flag word, then the six request fields.
-        *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequestFlags) = d38 | kRequestBit;
+        // The same fields as 0x111A920 (which writes the flag word first): here the six request fields first, then the
+        // request bit, so a camera update on another thread [U] never takes the bit with an older request's fields.
         auto* r = reinterpret_cast<volatile float*>(cam + kCamRequest);
         r[0] = interp;
         r[1] = kTurnSpeed;
@@ -289,6 +298,8 @@ const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float y
         *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequest + 0xC) = kTurnFlags;
         r[4] = pitch;
         r[5] = yaw;
+        auto* flags = reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequestFlags);
+        *flags = *flags | kRequestBit;
     } __except (ReadFilter(GetExceptionCode())) {
         g_faults.fetch_add(1, std::memory_order_relaxed);
         return "fault";

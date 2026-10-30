@@ -404,7 +404,7 @@ void TestLocalPassenger() {
         Lookup l;
         l.recs[25603] = kUnit;
         const pb::LocalPassenger lp = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
-        Check(lp.valid && lp.vehicle == 25603 && lp.seat == 2 && lp.via == 1 && Same(lp.reason, "ok"),
+        Check(lp.valid && lp.vehicle == 25603 && lp.seat == 2 && lp.via == 1 && Same(lp.reason, "ok") && lp.act == pb::kActPassenger,
               "act 0x6E, P+0x120 -> 0x6400|3, rider[2] == 0: passenger in seat 2");
         Riders(m, kUnit, 0xFFFF, 0xFFFF, 0xFFFF, 0);
         const pb::LocalPassenger r = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
@@ -423,7 +423,7 @@ void TestLocalPassenger() {
         l.recs[25603] = kUnit;
         m.Put<std::uint16_t>(kActs, 0x6F);
         const pb::LocalPassenger lp = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
-        Check(!lp.valid && Same(lp.reason, "act") && l.calls == 0, "act 0x6F (the driver): no report, no lookup");
+        Check(!lp.valid && Same(lp.reason, "act") && lp.act == 0x6F && l.calls == 0, "act 0x6F (the driver): no report, no lookup (the act kept)");
         m.Put<std::uint16_t>(kActs, 1);
         Check(!pb::ReadLocalPassenger(m, l, kP, kQ, 0).valid, "on foot: no report");
     }

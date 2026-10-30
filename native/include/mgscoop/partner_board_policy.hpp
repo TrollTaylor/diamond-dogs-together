@@ -419,6 +419,7 @@ struct LocalPassenger {
     std::uint8_t seat = kSeatUnknown;
     std::uint8_t via = 0;
     const char* reason = "unread";
+    std::uint16_t act = 0;  // the body's act as read (0: unread); with reason act, the act that ended the passenger act
 };
 inline bool SameReport(const LocalPassenger& a, const LocalPassenger& b) noexcept {
     return a.valid == b.valid && (!a.valid || (a.vehicle == b.vehicle && a.seat == b.seat));
@@ -442,6 +443,7 @@ LocalPassenger ReadLocalPassenger(Reader& r, Lookup& lookup, std::uintptr_t P, s
     std::uintptr_t acts = 0;
     std::uint16_t act = 0;
     if (!Get(r, Q + kQAct, acts) || !Get(r, acts + 2u * local, act)) { out.reason = "act_read"; return out; }
+    out.act = act;
     if (act != kActPassenger) { out.reason = "act"; return out; }
     std::uint16_t id = kVehicleUnknown;
     std::uintptr_t rec = 0;

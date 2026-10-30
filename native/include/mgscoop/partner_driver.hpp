@@ -793,6 +793,7 @@ struct Mission {
         // aim_cap).
         partner_pass_camera::Raise raise;
         const char* raise_logged;
+        std::uintptr_t raise_p;  // the player block P the raise was applied through (the teardown's restore uses it)
         partner_pass_camera::Turn turn;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the

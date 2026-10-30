@@ -623,11 +623,15 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
 // offset is blended into CAM+0x140 (PlayerCamera_SetRotationAndAngles 0x1121704), the offset the position solve 0x1121D30
 // turns by the camera's rotation. The constructor (0x12BB250) leaves every entry (0, 0, 0, 0, 0, 1.0) and the flag 0.
 // Mode view writes the entry of the current variant to (0, kRaiseM, 0, 0, 0, 1.0) and then the flag 1 while the local
-// passenger is seated (an armed boarding): the aim camera rises over the shoulder. It writes the constructor's values
-// back (the flag first) when the boarding ends, the mode changes, the variant changes or the mission terminates. Never
-// over a set flag or an entry that is not the constructor's (another owner: refused for the boarding).
-// [I] the parameter load rewrites CAM+0x150 every update (the stock add would grow otherwise); the lab trace's off field
-// (CAM+0x140) shows it.
+// passenger is seated in seat 1 or 2 (an armed boarding; seat 3 aims across the jeep and its view is clear): the aim
+// camera rises over the shoulder. It writes the constructor's values back (the flag first, only while the entry is still
+// ours) when the boarding ends, the mode changes or the variant changes (TickPassCamera, retried while the camera or the
+// module is not found), and at MissionEnd / Stop / MissionStart (the driver's RaiseRevert: the ticks stop before
+// TickPassCamera while a mission ends). Never over a set flag or an entry that is not the constructor's (another owner:
+// refused for the boarding). The aim module calls FUN_1412BBFE0 only while CAM+0x204 bit 2 is set (0x12BD4D4).
+// [I] the parameter load rewrites CAM+0x150 every update (the stock add would grow otherwise; the load's target is an
+// indirect call, unresolved): RaisePlan restores and refuses the boarding (reason grow) once |CAM+0x150 y| passes
+// kRaiseLimitM, and the lab trace's off field (CAM+0x140) shows it.
 inline constexpr std::size_t kAimObj = 0x20;
 inline constexpr std::size_t kAimFlag = 0x174;
 inline constexpr std::size_t kAimTable = 0x50, kAimStride = 0x20;
@@ -635,6 +639,11 @@ inline constexpr std::size_t kCamVariant = 0x344;
 inline constexpr std::uintptr_t kAimVariantsRva = 0x23D4870;
 inline constexpr unsigned kAimVariants = 9;
 inline constexpr float kRaiseM = 0.60f;
+inline constexpr float kRaiseLimitM = 2.5f;          // |CAM+0x150 y| past this while ours: the offset grows (restore)
+inline constexpr std::uint32_t kRaiseRetryMax = 600;  // failed restores (no camera / module / not ours) before giving up
+inline constexpr std::size_t kCamAimTarget = 0x150;  // the target offset (x, y, z, w) the entry is added to
+// The seats whose aim view is raised and whose get-off turns the camera: seat 1 (front) and seat 2 (left back).
+inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
 struct RaiseView {
     bool ok = false;            // the local PlayerCamera was read
     bool module = false;        // an aim module (kAimModuleVtableRva) is among CAM+0xBD0[0..5]
@@ -642,6 +651,8 @@ struct RaiseView {
     std::int32_t variant = -1;  // CAM+0x344
     int index = -1;             // its index in the stock list (-1: none)
     float entry[6]{};           // obj+0x50 + 0x20 index: offset x, y, z, w, distance, scale
+    bool target_ok = false;     // CAM+0x150..0x15C (the target offset the entry is added to) was read
+    float target[4]{};
 };
 inline bool EntryStock(const float* e) noexcept {
     return e && e[0] == 0.0f && e[1] == 0.0f && e[2] == 0.0f && e[3] == 0.0f && e[4] == 0.0f && e[5] == 1.0f;
@@ -660,16 +671,23 @@ enum class RaiseWrite : std::uint8_t { none, apply, restore };
 struct Raise {
     bool applied = false;
     int index = -1;                 // the entry written
-    const char* refused = nullptr;  // latched for the boarding (other_owner, entry, lost)
+    const char* refused = nullptr;  // latched for the boarding (other_owner, entry, lost, grow)
     std::uint32_t applies = 0, restores = 0;
+    std::uint32_t retries = 0;      // failed restores of the current ownership
+    std::uint32_t abandoned = 0;    // ownerships given up (kRaiseRetryMax failed restores, or the teardown's last try failed)
 };
 // One tick. `want`: mode view and an armed boarding (the local passenger seated). Reasons (static): end, camera, module,
-// variant, other_owner, entry, lost, held, apply, restore_variant, refused.
+// variant, other_owner, entry, lost, held, apply, restore_variant, refused, grow.
 inline RaiseWrite RaisePlan(Raise& r, bool want, const RaiseView& v, float raise, const char*& reason) noexcept {
     if (r.applied) {
         if (!want) { reason = "end"; return RaiseWrite::restore; }
         if (!v.ok || !v.module) { reason = "camera"; return RaiseWrite::none; }
         if (v.index != r.index) { reason = "restore_variant"; return RaiseWrite::restore; }
+        if (v.target_ok && !(v.target[1] <= kRaiseLimitM && v.target[1] >= -kRaiseLimitM)) {
+            // [I] guard: the target offset grows (the parameter load does not rewrite it): ours goes, the boarding refuses.
+            r.refused = reason = "grow";
+            return RaiseWrite::restore;
+        }
         if (v.flag == 0 || !EntryRaised(v.entry, raise)) {
             // Someone else changed the entry or the flag: ours is gone; nothing is written again this boarding.
             r.applied = false;
@@ -695,25 +713,48 @@ inline RaiseWrite RaisePlan(Raise& r, bool want, const RaiseView& v, float raise
     reason = "apply";
     return RaiseWrite::apply;
 }
-// The driver's bookkeeping after the write (ok: the native write succeeded). A restore is never retried (a failed one
-// is a fault: the driver latches the mission).
-inline void RaiseDone(Raise& r, RaiseWrite w, int index, bool ok) noexcept {
+// The driver's bookkeeping after the write (ok: the native write succeeded). A failed restore keeps the ownership and is
+// retried on later ticks (the camera or the module not found this tick, a death or swap camera [I]) up to kRaiseRetryMax;
+// then it is given up (abandoned). An SEH fault also latches the mission (the driver's fault check); MissionEnd / Stop /
+// MissionStart try once more (RaiseForget after). Returns true when this call gave the ownership up.
+inline bool RaiseDone(Raise& r, RaiseWrite w, int index, bool ok) noexcept {
     if (w == RaiseWrite::apply && ok) {
         r.applied = true;
         r.index = index;
+        r.retries = 0;
         ++r.applies;
     } else if (w == RaiseWrite::restore) {
-        r.applied = false;
-        r.index = -1;
-        if (ok) ++r.restores;
+        if (ok) {
+            r.applied = false;
+            r.index = -1;
+            r.retries = 0;
+            ++r.restores;
+        } else if (++r.retries >= kRaiseRetryMax) {
+            r.applied = false;
+            r.index = -1;
+            r.retries = 0;
+            ++r.abandoned;
+            return true;
+        }
     }
+    return false;
+}
+// The teardown's last try is done (ok or not): nothing is ours any more.
+inline void RaiseForget(Raise& r, bool ok) noexcept {
+    if (!r.applied) return;
+    r.applied = false;
+    r.index = -1;
+    r.retries = 0;
+    if (ok) ++r.restores; else ++r.abandoned;
 }
 
 // --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------
 // [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
 // driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close
-// to the driver with the player out of view; after seat 3 (299de3e1) it stays behind, looking forward. Mode view asks
-// once, after the boarding ended and the stock VehicleCamera is no longer the active module, for the stock camera
+// to the driver with the player out of view; after seat 3 (299de3e1) it stays behind, looking forward. Mode view arms
+// only on an observed get-off from seat 1 or 2 (the body's act kActGetOff 0x70 when the report ends: never on a death,
+// a lost report or a latch) and asks once, after the stock get-off let go (the stock clear of the handle, or the
+// VehicleCamera seen active and gone; no time fallback) and before kTurnMs, for the stock camera
 // rotation of RequestToSetCameraRotation (PlayerCamera vt+0xE0 0x111A920, pinned: unless CAM+0xD38 & 0x1001 or CAM+0x204
 // bit 9, CAM+0xD38 |= 2 and CAM+0xD80..0xD94 = {interp, 0.4, 0.8, 0x400126, pitch, yaw}) toward the vehicle's forward
 // (the vehicle record's yaw: forward = (sin, 0, cos), the camera's world yaw atan2(fx, fz)), kTurnPitch down (positive
@@ -721,13 +762,14 @@ inline void RaiseDone(Raise& r, RaiseWrite w, int index, bool ok) noexcept {
 inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
 inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
 inline constexpr std::uint32_t kTurnFlags = 0x400126;
-inline constexpr std::uint64_t kTurnWaitMs = 1500, kTurnMs = 6000, kTurnCheckMs = 900;
+inline constexpr std::uint64_t kTurnMs = 6000, kTurnCheckMs = 900;
 inline constexpr std::size_t kCamRequestFlags = 0xD38, kCamRequest = 0xD80;
 inline constexpr std::uint32_t kRequestBusy = 0x1001, kRequestBit = 2, kCamLockBit = 1u << 9;
 enum class TurnAct : std::uint8_t { none, request, expire, check };
 struct Turn {
     bool pending = false;
     bool seen_stock = false;     // the VehicleCamera was the active module since the boarding ended
+    bool stock_clear = false;    // the stock get-off cleared the handle (the release line's reason=stock)
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
     std::uint64_t since_ms = 0;
@@ -739,9 +781,22 @@ struct Turn {
 inline void TurnArm(Turn& t, std::uint16_t vehicle, std::uint8_t seat, std::uint64_t now_ms) noexcept {
     t.pending = true;
     t.seen_stock = false;
+    t.stock_clear = false;
     t.vehicle = vehicle;
     t.seat = seat;
     t.since_ms = now_ms ? now_ms : 1;
+}
+// The stock get-off cleared the handle: the get-off ran (the request follows once no VehicleCamera is active).
+inline void TurnStockClear(Turn& t) noexcept {
+    if (t.pending) t.stock_clear = true;
+}
+// The mode left view (the lab lever) or the mission latched: a pending turn is dropped. True when one was.
+inline bool TurnCancel(Turn& t) noexcept {
+    const bool was = t.pending;
+    t.pending = false;
+    t.check_ms = 0;
+    if (was) ++t.expired;
+    return was;
 }
 // One tick. Reasons (static): check, seated, timeout, wait, stock, request.
 inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason) noexcept {
@@ -757,7 +812,7 @@ inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t n
     if (age >= kTurnMs) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
     if (!cam.ok) { reason = "wait"; return TurnAct::none; }
     if (StockModule(cam)) { t.seen_stock = true; reason = "stock"; return TurnAct::none; }
-    if (!t.seen_stock && age < kTurnWaitMs) { reason = "wait"; return TurnAct::none; }
+    if (!t.seen_stock && !t.stock_clear) { reason = "wait"; return TurnAct::none; }
     reason = "request";
     return TurnAct::request;
 }

@@ -70,9 +70,12 @@ bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) no
 
 // Design 8.33 (mode view), the seated aim view: reads the aim module's variant entry for the local camera's variant
 // (RaiseView; reads only, under SEH; false when the camera is not the PlayerCamera) and writes it: on = the entry
-// (0, raise, 0, 0, 0, 1.0) then the flag 1; off = the flag 0 then the constructor's entry. The aim module is found among
-// CAM+0xBD0[0..5] by its vtable; `index` must be the variant's (checked again). False on a fault (counted in
-// Stats::faults: the driver latches the mission) or when the module or the index does not match. Counted in Stats::raises.
+// (0, raise, 0, 0, 0, 1.0) then the flag 1; off = the flag 0 then the constructor's entry, only while the flag is 1 and
+// the entry at `index` is still ours (EntryRaised; else nothing is written). The aim module is found among CAM+0xBD0[0..5]
+// by its vtable; `index` is only range-checked (CAM+0x344 is not read again: a restore writes the recorded index). False
+// on a fault (counted in Stats::faults: the driver latches the mission), when the camera, the module or our entry is not
+// found, or when the index is out of range (the driver retries a failed restore). Counted in Stats::raises. ReadRaise
+// also reads the target offset CAM+0x150..0x15C (RaiseView::target).
 bool ReadRaise(const void* base, std::uintptr_t P, RaiseView& out) noexcept;
 bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float raise) noexcept;
 // Design 8.33, the camera after a get-off: the stock rotation request of PlayerCamera vt+0xE0 0x111A920 (its fields and

@@ -1799,9 +1799,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
         if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
         // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
-        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28).
+        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981) and view (design 8.33/8.34: unproven in a FRAME and in a
+        // play rehearsal), which run as aim (design 8.28).
         c.partner_pass_camera_trace = false;
-        if (c.partner_pass_camera == PartnerPassCamera::drop) c.partner_pass_camera = PartnerPassCamera::aim;
+        if (c.partner_pass_camera == PartnerPassCamera::drop || c.partner_pass_camera == PartnerPassCamera::view)
+            c.partner_pass_camera = PartnerPassCamera::aim;
     }
 }
 

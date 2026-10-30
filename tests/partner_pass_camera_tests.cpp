@@ -857,6 +857,53 @@ void TestRaisePlan() {
     pc::Raise f{};
     pc::RaiseDone(f, pc::RaiseWrite::apply, 0, false);
     Check(!f.applied && f.applies == 0, "a failed apply is not applied");
+    // Design 8.34: a failed restore keeps the ownership (retried) up to kRaiseRetryMax, then gives it up once.
+    pc::Raise q{};
+    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
+    Check(!pc::RaiseDone(q, pc::RaiseWrite::restore, 2, false) && q.applied && q.index == 2 && q.retries == 1 && q.restores == 0,
+          "a failed restore is kept for a retry");
+    Check(!pc::RaiseDone(q, pc::RaiseWrite::restore, 2, true) && !q.applied && q.retries == 0 && q.restores == 1, "the retry lands");
+    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
+    bool gave_up = false;
+    for (std::uint32_t i = 0; i < pc::kRaiseRetryMax; ++i) gave_up = pc::RaiseDone(q, pc::RaiseWrite::restore, 2, false);
+    Check(gave_up && !q.applied && q.index == -1 && q.abandoned == 1, "given up after kRaiseRetryMax failed restores");
+    // The teardown's last try: forgotten either way.
+    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
+    pc::RaiseForget(q, false);
+    Check(!q.applied && q.abandoned == 2, "teardown: a failed last try is abandoned");
+    pc::RaiseDone(q, pc::RaiseWrite::apply, 2, true);
+    pc::RaiseForget(q, true);
+    Check(!q.applied && q.restores == 2, "teardown: restored");
+    pc::RaiseForget(q, true);
+    Check(q.restores == 2 && q.abandoned == 2, "teardown: nothing when nothing is ours");
+    // Design 8.34 [I] guard: the target offset grows past kRaiseLimitM while ours: restored, the boarding refused.
+    pc::Raise g{};
+    v = pc::RaiseView{};
+    v.ok = v.module = true;
+    v.index = 0;
+    std::memcpy(v.entry, stock, sizeof(stock));
+    v.target_ok = true;
+    v.target[1] = 0.7f;
+    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::apply, "grow: apply");
+    pc::RaiseDone(g, pc::RaiseWrite::apply, 0, true);
+    v.flag = 1;
+    std::memcpy(v.entry, raised, sizeof(raised));
+    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "held"), "grow: a sane offset is held");
+    v.target[1] = pc::kRaiseLimitM + 0.1f;
+    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "grow") && Same(g.refused, "grow"),
+          "grow: restored and refused");
+    pc::RaiseDone(g, pc::RaiseWrite::restore, 0, true);
+    v.flag = 0;
+    std::memcpy(v.entry, stock, sizeof(stock));
+    Check(pc::RaisePlan(g, true, v, pc::kRaiseM, why) == pc::RaiseWrite::none && Same(why, "refused"), "grow: not applied again this boarding");
+    v.target[1] = -1.0e9f;
+    pc::Raise gn{};
+    pc::RaiseDone(gn, pc::RaiseWrite::apply, 0, true);
+    v.flag = 1;
+    std::memcpy(v.entry, raised, sizeof(raised));
+    Check(pc::RaisePlan(gn, true, v, pc::kRaiseM, why) == pc::RaiseWrite::restore && Same(why, "grow"), "grow: either sign");
+    // Seats 1 and 2 are raised; seat 3 (clear view) and the driver never.
+    Check(pc::ViewSeat(1) && pc::ViewSeat(2) && !pc::ViewSeat(3) && !pc::ViewSeat(0) && !pc::ViewSeat(0xFF), "the view seats");
 }
 
 void TestTurnStep() {
@@ -879,13 +926,27 @@ void TestTurnStep() {
     Check(!t.pending && t.requests == 1 && t.check_ms == 1300 + pc::kTurnCheckMs, "spent; a check is due");
     Check(pc::TurnStep(t, false, cam, 1300 + pc::kTurnCheckMs, why) == pc::TurnAct::check && t.check_ms == 0, "the check line once");
     Check(pc::TurnStep(t, false, cam, 5000, why) == pc::TurnAct::none, "then nothing");
-    // No VehicleCamera seen: the request after kTurnWaitMs.
+    // Design 8.34: no VehicleCamera seen and no stock clear: no time fallback, it waits and then expires.
     pc::Turn w{};
     pc::TurnArm(w, 25608, 2, 2000);
-    Check(pc::TurnStep(w, false, cam, 2000 + pc::kTurnWaitMs - 1, why) == pc::TurnAct::none, "waits");
-    Check(pc::TurnStep(w, false, cam, 2000 + pc::kTurnWaitMs, why) == pc::TurnAct::request, "requests after the wait");
-    pc::TurnDone(w, false, 0.0f, 2000 + pc::kTurnWaitMs);
-    Check(!w.pending && w.expired == 1 && w.check_ms == 0, "a refused request is spent without a check");
+    Check(pc::TurnStep(w, false, cam, 3600, why) == pc::TurnAct::none && Same(why, "wait"), "no stock get-off seen: waits");
+    Check(pc::TurnStep(w, false, cam, 2000 + pc::kTurnMs, why) == pc::TurnAct::expire && Same(why, "timeout"), "and expires");
+    // The stock clear of the handle (the release line's reason=stock): the request follows.
+    pc::TurnArm(w, 25608, 2, 2000);
+    pc::TurnStockClear(w);
+    Check(w.stock_clear && pc::TurnStep(w, false, cam, 2100, why) == pc::TurnAct::request, "the stock clear: request");
+    pc::TurnDone(w, false, 0.0f, 2100);
+    Check(!w.pending && w.expired == 2 && w.check_ms == 0, "a refused request is spent without a check");
+    pc::TurnStockClear(w);
+    Check(pc::TurnStep(w, false, cam, 2200, why) == pc::TurnAct::none, "a stock clear without a pending turn requests nothing");
+    pc::TurnArm(w, 25608, 2, 2000);
+    Check(!w.stock_clear, "a new arm forgets the stock clear");
+    pc::TurnStockClear(w);
+    cam.mode = 3;
+    Check(pc::TurnStep(w, false, cam, 2100, why) == pc::TurnAct::none && Same(why, "stock"), "the stock clear still waits for the VehicleCamera");
+    cam.mode = 5;
+    // The mode left view: cancelled.
+    Check(pc::TurnCancel(w) && !w.pending && w.expired == 3 && !pc::TurnCancel(w), "cancelled once");
     // Seated again, or never let go: expired.
     pc::Turn s{};
     pc::TurnArm(s, 25608, 3, 100);
@@ -921,11 +982,21 @@ void TestRaiseAndTurnWrites() {
     Check(pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0 && pc::ReadRaise(k.Base(), k.P(), v) &&
               pc::EntryStock(v.entry),
           "restore: the flag cleared, the constructor's entry");
+    // Design 8.34: a restore writes only over our own entry (the teardown may run late).
+    Check(!pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0, "restore: nothing when the flag is not ours");
+    Check(pc::WriteRaise(k.Base(), k.P(), 3, true, pc::kRaiseM), "apply again");
+    Chain::Put<float>(aim_obj, pc::kAimTable + pc::kAimStride * 3 + 4, 0.25f);
+    Check(!pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 1, "restore: another owner's entry is left");
+    Chain::Put<float>(aim_obj, pc::kAimTable + pc::kAimStride * 3 + 4, pc::kRaiseM);
+    Check(pc::WriteRaise(k.Base(), k.P(), 3, false, pc::kRaiseM) && aim_obj[pc::kAimFlag] == 0, "restore: ours again, written back");
+    // The target offset CAM+0x150 is read with the entry.
+    Chain::Put<float>(k.cam, pc::kCamAimTarget + 4, 0.35f);
+    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.target_ok && v.target[1] == 0.35f, "the target offset is read");
     Check(!pc::WriteRaise(k.Base(), k.P(), 9, true, pc::kRaiseM) && !pc::WriteRaise(k.Base(), k.P(), -1, true, pc::kRaiseM),
           "an index outside the list is refused");
     pc::Stats st{};
     pc::ReadStats(st);
-    Check(st.raises == 2 && st.faults == 0 && st.writes == 0, "two entry writes counted");
+    Check(st.raises == 4 && st.faults == 0 && st.writes == 0, "four entry writes counted (the refused restores are not)");
     // No aim module: read ok, module false; write refused.
     Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 16, 0);
     Check(pc::ReadRaise(k.Base(), k.P(), v) && v.ok && !v.module && v.index == -1, "no aim module");
