@@ -679,7 +679,8 @@ Also two vtable slots (Exec at +0x80 of `0x23CBD88` / `0x23CBEA8`) and
 single callers). Contract 759 code sites / 195 vtable slots. Tests:
 `partner_seat_aim_tests` (also in `Get-WorkerTests`).
 
-**What a hidden run must show** (not yet run): the scenario
+**What a hidden run must show** (run 2026-10-30 as `6fc3098b`, the results in
+"Seat gun" below; the scenario now boots the africa-jeep seed): the scenario
 `coop-vehicle-seat-aim.txt` (written: the first two halves of
 `coop-vehicle-passenger.txt` with `labsetting partner_seat_aim=1`; the
 passenger holds RMB, then RMB+LMB, in the back seat, both directions).
@@ -700,6 +701,135 @@ passenger holds RMB, then RMB+LMB, in the back seat, both directions).
 - The driver's copy logs `partner_action_state; ... flags=0x1|0x3; ...
   act=110` while the remote passenger aims or fires. That is the signal design
   (A) would use; if it is missing, the sender drops aim in act 0x6E.
+
+### Seat gun
+
+M7 (`wp/seat-shoot`; docs/vehicles-companions-design.md 6.7, 8.20 and section 9
+M7): shooting as a back-seat passenger, and the partner's raised gun in its
+seat on the driver's screen. Key `partner_seat_gun=0|1` (`_given`): **off
+unless named, in lab and play** (a named 1 runs in play too, no refusal bit);
+the body-1 half needs `partner_native_gesture` (the hook). **Status: built and
+run (eight hidden runs, 8.20); the hold runs but the partner's gun does not
+show, and no seated shot was seen to land. Stays off.**
+
+**The local passenger (E8, run `6fc3098b` with the census).** A stock
+back-seat passenger raises and fires its own gun with no patch: once the seat
+loop runs the passenger phase clears flag 0xC3 (`armed=1; c3=0`), RMB gives
+upper act 2 with gun modes 6 / 7 (`posture=0`), a shot upper act 3 / mode 9,
+an empty magazine a reload (upper 5 / mode 11); the act stays 0x6E and the
+passenger camera handle `0x88000000000064xx`. The aim self-check never latches
+(`RideGate`). Found in the runs:
+- the seated body faces into the jeep (seat 2: the jeep's yaw - 90 deg, seat
+  3: + 90 deg), and the aim range (+-90 deg) is measured from it: a passenger
+  shoots across the jeep, forward or back, never out of its own side;
+- the aim camera sits behind the passenger: from seat 3 aiming left it is over
+  the passenger's head; from seat 2 aiming right it stood outside the jeep and
+  looked through its body (the passenger camera skips the jeep's collision);
+- the passenger camera keeps the direction the player faced when boarding,
+  and boarding needs the player to face the jeep;
+- at each shot the aim swung to the top of its range (sent pitch -74.7 deg,
+  `r5c` 0) and the camera to the sky (bursts in `d3409f57`, single shots in
+  `a3f7c4e1`); in `6fc3098b` the bursts put the camera inside the passenger's
+  own head. Cause [U];
+- no seated shot was seen to land on a sleeping guard 8-16 m away (`a3f7c4e1`:
+  the reticle red on him before the shots); the on-foot control of
+  `d7cf5a4b` missed too, so the test method is not reliable and a seated hit
+  is [U].
+
+**The partner (E9, design A).** On the driver's copy the DM seat chain owns
+body 1 (graph 0 `stateVehicle*Loop`; act 0x8B, upper act 0, flag 0xC3 set,
+stand-in gun 46 in hand) while the remote's live pose flags say Aiming /
+Firing (`partner_action_state; flags=0x1|0x3; act=110`). The driver
+(`TickSeatGun`, inside `TickGesture`; the seat-owned branch of the driver
+tick runs `TickGesture` too while the key is on):
+- gate (`partner_seat_gun::Gate`, in order): `key_off` (no gesture key),
+  `not_installed`, `uncertain` (the gesture latch), `not_seated` (the seat
+  flow not `seated`), `driver` (the remote's live ride is not a passenger
+  seat 1..3), `unrealized`, `carry` / `overlay` / `downed`, `busy`;
+- the remote aims: its live pose sample's Aiming flag, or its v5 input frame
+  (gun group valid and Aiming, at most 500 ms old; in the runs only the input
+  frame said so: `pose_aim=0; input_aim=1`);
+- a hold starts at once and ends 300 ms after the last Aiming, or at once when
+  the gate falls; after the hook ends or refuses a hold the next start waits
+  1 s;
+- while held, body 1's aim rates come from the remote's v6 direction against
+  body 1's seated yaw: `r5c = 0.5 + pitch / 150 deg`, `r60 = 0.5 - rel_yaw /
+  180 deg` (the inverse of `0x108EC55` for the default class), clamped.
+
+The hook (`partner_gesture`, body 1's motion update `0xB6C410` from
+`ActMotionStart`, the gesture pins and checks) has two local kinds, never on
+the wire (`Encode` / `Decode` refuse them):
+- `gun_start`: `SetCurrentNode(cs1, 1, 2, GunHoldStart 0x50130AE2E584, 0.0f,
+  0)`, the stock raise (`StateGunHoldStart` `0x1075A50`), only on body 1 in
+  the DM seat act 0x8B with Q+0x28 == 0 and no upper action of its own;
+- at the raise clip's motion end (vt+0x228, after 150 ms) it chains to
+  `gun_hold`: `SetCurrentNode(cs1, 1, 2, GunHold 0xAA0EA22A5E0E, 0.0f, 0)`
+  (the node the stock gun-hold enter `0x10721CB` requests), with the same
+  digest checks as a submission;
+- held with no deadline while `Command::hold_seq` names it; the driver's
+  release (`cause=release`) or a lost lease returns graph 2 to stateNull;
+  another owner of graph 2 or a waiting request ends it without a write;
+- while a gun kind runs it writes body 1's aim rates (+0x5C `r5c`, +0x60 `r60`
+  of body 1's own rate record `*(PS1+0x260)`: interface vtable `0x23AD380`,
+  record vtable `0x23AD2B0`, re-resolved every update; the fields `0x108E7D0`
+  stores) and puts the originals back when it ends. A record with another
+  vtable, a moved record or a non-finite rate is never written.
+
+Runs: `d40e4126` started no hold (the seat-owned branch returned before
+`TickGesture`; fixed). From `30a6a21a` on, 20 holds in five runs on both
+copies ran `hold` -> `submit; ...; kind=gun_start` -> `applied; ...; ok=1` ->
+`rates; ok=1` (read back on body 1) -> `release` -> `ended; via=end;
+cause=release; null=1`, with no `uncertain` or fault line. The raise never
+reached its motion end (up to 5.6 s), so `gun_hold` was never requested. **The
+frames show no change**: the seated partner keeps its gun on its back in the
+same pose during the holds (`30a6a21a-host-m7-partner-gun-01..03` against
+`m7-seated`, and in the later runs). A graph-2 node alone does not draw a
+raised gun on a DM-seated body; the missing piece (the upper layer under the
+DM clip, the weapon in hand, the aim IK controller StateGunHoldStart also
+drives) is [U] (design D16 in the design doc).
+
+**The sender.** With the key on, a back-seat passenger (the native passenger
+report) sends its seated aim direction on the v6 input frame
+(`partner_aim::GunDirSeated`: `GunDir` with the standing set in place of the
+seated stance byte), logged `aim_dir=valid; reason=seat`. The self-check
+(`CheckStep`) never runs while the local player rides, so a seated aim never
+latches it.
+
+**Pins.** `SEAT_GUN_SITES` (the gun-hold enter's +0x58 store and GunHold
+request, the other GunHold entry) and `seat_gun_assertions` (GunHoldStart's
+imm64 only at `0x1075A25`, GunHold's only at `0x1070B4C` / `0x10721CD`,
+`0x108E7D0`'s r60 / r5c stores, the 8.0f blend); header constants
+`seat_gun_node_start/hold`, `rate_hold_type`, `seat_gun_blocks`. Contract 818
+code sites / 206 vtable slots.
+
+**Lines** (`partner_seat_gun=`, 200 per mission): `configured; key=1;
+gesture=..; installed=..`, `hold; seq=..; vehicle=..; seat=..; pose_aim=..;
+input_aim=..; flags=0x..; starts=..`, `release; seq=..; cause=aim|gate;
+refusal=..; ms=..`, `refused; reason=..; seat_phase=..; ...` (once per change
+while the remote aims), `hook_ended; seq=..; stage=..; why=..`, `rates;
+seq=..; ok=..; r5c=..; r60=..; clamped=..; dir=..; remote_pitch_cdeg=..;
+remote_yaw_cdeg=..; body_yaw_cdeg=..; body_r5c=..; body_r60=..` (1 Hz while
+held); the hook's own `partner_gesture=submit|applied|ended` with
+`kind=gun_start|gun_hold`.
+
+**Test levers** (debug commands): `enemy_aim_nearest [height_m]` turns this
+copy's camera toward the nearest living soldier within 60 m (`height_m` above
+its position, default 1.1, from a 1.5 m eye; a seated passenger's playerPosY
+is 1.6 m over the ground, so 1.6 put the reticle on a sleeping guard) through
+the stock `Player.RequestToSetCameraRotation{rotX, rotY, interpTime = 0.2}`;
+`goto_vehicle jeep right` is the 1.9 m spot on the jeep's passenger side,
+facing it.
+
+**Tests:** `partner_seat_gun_tests` (the gate, the aim, the hold and its
+debounce, the rates and their clamp, the seated direction, the gesture
+policy's gun kinds and their end, the contract constants),
+`partner_gesture_hook_tests` (TestSeatGun on the fake bodies: the raise, the
+chain, no deadline, the rates written and restored, the refusals, a lost
+lease, another owner, a foreign record vtable), `lab_config_tests`,
+`lab_ini_check`, `worker_session_tests`, `friend_package_tests`,
+`debug_menu_lua_check` (the levers). Scenarios
+`coop-vehicle-seat-shoot.txt` (both role orders), `coop-vehicle-seat-shoot-play.txt`
+(the play rehearsal, not run), `coop-vehicle-seat-shoot-diag.txt`.
 
 ## Traversal icon
 
@@ -2584,6 +2714,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_mount` | off, hide (hide body 1 while the remote's act is a D-Horse / D-Walker act 121..126 and unrealize it through Lua's all-active mode, see "Mounts" and docs/mounts.md; acts only where `partner_native_ride` hides; default hide with the native gun profile in lab and play (hidden runs bfd6fcc4 / 2ab88411 lab, 5a044a4d play -WanSim bad), off otherwise; a named off opts out) |
 | `partner_native_unrealize_all` | 0, 1 (G5: the other ride hides (the heli acts 97..108 or a heli ride, a vehicle drawn hidden by `partner_native_ride=hide` or a refused / unavailable seat, a horse rider by its ride kind 3 when `partner_native_mount` is off) unrealize body 1 through Lua's all-active mode like the mount hide, and the link-quality rebase after a ride logs `partner_ride=net_rebased` (the rebase itself is always on), see "Ride hides"; acts only where `partner_native_ride` hides; default 0 in lab and play until a hidden-worker FRAME proves it, a named 1 runs in lab only (play forces it off); a named value records `partner_native_unrealize_all_given`) |
 | `partner_seat_aim` | 0, 1 (the read-only back-seat aim census, see "Seat aim": the local player in a vehicle ride act and body 1 in the seat flow, `partner_seat_aim=sample\|end\|status` lines; lab only, default 0 with or without the gun profile, play forces it off; a named value records `partner_seat_aim_given`) |
+| `partner_seat_gun` | 0, 1 (M7, see "Seat gun": the remote back-seat passenger's raised gun on the seated body 1 through the gesture hook (GunHoldStart on graph 2, body 1's aim rates) and this copy's seated v6 direction; off unless named in lab and play, a named 1 runs in play too; the hold runs but draws no raised gun, runs 30a6a21a..d7cf5a4b; a named value records `partner_seat_gun_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
@@ -2978,6 +3109,9 @@ Scenarios (hidden worker, the runtime phase): `body-safety-sea-death.txt`, `body
   and sends a probe every two seconds; older input versions remain supported.
   No valid aim direction means zero appended fields and the existing look fallback.
   0.13.6: no direction (and no convention self-check) while the local player rides ("Body safety").
+  M7 (`partner_seat_gun`, off by default): a back-seat passenger sends its seated direction, unchecked
+  (`aim_dir=valid; reason=seat`, "Seat gun"). No new field or op: a 0.14.4 receiver uses `AimDir` only in its
+  native drive, which the seat flow keeps disarmed while the sender rides [I].
 - Input frame v5 (legacy 116 bytes, payload 88): v4 plus `[84]` gun flags
   (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
   valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
