@@ -340,8 +340,9 @@ struct View {
 // vehicle's turn pass:
 //  - reference: while aiming (in the aim module) and not firing, the angle pitch and the world up-pitch and yaw of
 //    CAM+0x90 (the stock aim camera keeps its world yaw while the jeep turns: run a64c40d4);
-//  - the player's look input (the effective right stick, which carries the mouse) on a tick: for kLookLatchMs the
-//    references follow the camera and nothing is written;
+//  - the player's look input, per axis (the effective right stick, which carries the mouse: x the yaw, y the pitch):
+//    for kLookLatchMs that axis's references follow the camera, the other axis stays held (run 049aa5ed: following
+//    both axes for 150 ms after a mouse turn let the pull lift the view 20-23 deg);
 //  - window: from the first firing tick until kGuardHoldMs after the last one. The angle pitch going down moves its
 //    reference down (the player's aim), and the world reference by as much as the world also went down (a bump of the
 //    vehicle alone moves neither). An angle pitch more than kKickUp above its reference is written back to it
@@ -359,9 +360,10 @@ inline constexpr float kKickUp = 0.05f, kSettleUp = 0.01f;
 // 0.93 rad in a four-shot burst with the pitch held, run a64c40d4 host); a close settles it above kSettleYaw.
 inline constexpr float kKickYaw = 0.035f, kSettleYaw = 0.01f;
 // The player's own look input (the effective right stick, which carries the mouse: PP+0x474 / +0x47C with PP+0x488
-// bit 1, the PP update 0x1207157): above kLookInput on a tick, everything follows the camera for kLookLatchMs.
+// bit 1, the PP update 0x1207157; run 049aa5ed: look=-3600 milli on a mouse step of -60): above kLookInput on a tick,
+// that axis follows the camera for kLookLatchMs (a few ticks: the camera may apply the input a tick later).
 inline constexpr float kLookInput = 0.02f;
-inline constexpr std::uint64_t kLookLatchMs = 150;
+inline constexpr std::uint64_t kLookLatchMs = 60;
 inline constexpr std::uint64_t kGuardHoldMs = 350;
 // The aim camera module (CAM+0xBD0[2] while RMB is held: runs 4f1a072f..06aa3fc6 mvt=0x23d4d20; its CanActivate
 // 0x12BBAE0 reads the gun record's aim bit and the pad's aim button). Pinned in the contract (slots).
@@ -492,6 +494,14 @@ inline void GuardFollow(Guard& g, const GuardIn& in, bool rot_now, float up_now)
         g.ref_yaw = WorldYaw(in.rot);
     }
 }
+// The player's look input per axis: x moves the world yaw reference, y the pitch references (angle and world).
+inline void GuardFollowAxes(Guard& g, const GuardIn& in, bool rot_now, float up_now, bool x, bool y) noexcept {
+    if (y) {
+        g.ref_pitch = in.pitch;
+        if (rot_now && g.up_ok) g.ref_up = up_now;
+    }
+    if (x && rot_now && g.up_ok) g.ref_yaw = WorldYaw(in.rot);
+}
 } // namespace detail
 // One tick. Not on (another mode, not armed, the angles unread or not finite): the state resets (a window closes without
 // a line; the counters stay).
@@ -517,14 +527,19 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
         return o;
     }
     if (in.firing) g.last_fire_ms = in.now_ms ? in.now_ms : 1;
-    if (in.look_x || in.look_y) g.last_look_x_ms = in.now_ms ? in.now_ms : 1;  // v3 (both axes): replaced next commit
+    if (in.look_x) g.last_look_x_ms = in.now_ms ? in.now_ms : 1;
+    if (in.look_y) g.last_look_y_ms = in.now_ms ? in.now_ms : 1;
     const bool window = g.last_fire_ms != 0 && (in.firing || in.now_ms < g.last_fire_ms || in.now_ms - g.last_fire_ms < kGuardHoldMs);
-    const bool looking = g.last_look_x_ms != 0 && (in.now_ms < g.last_look_x_ms || in.now_ms - g.last_look_x_ms < kLookLatchMs);
+    const auto latched = [&](std::uint64_t at) noexcept { return at != 0 && (in.now_ms < at || in.now_ms - at < kLookLatchMs); };
+    const bool follow_x = latched(g.last_look_x_ms), follow_y = latched(g.last_look_y_ms);
     if (!window) {
         bool settled = false;
         if (g.active) {
             g.last_yaw = in.yaw;
-            if (g.ref_ok && !looking) detail::GuardCorrect(g, in, rot_now, up_now, kSettleUp, kSettleYaw, o);
+            if (g.ref_ok) {
+                detail::GuardFollowAxes(g, in, rot_now, up_now, follow_x, follow_y);
+                detail::GuardCorrect(g, in, rot_now, up_now, kSettleUp, kSettleYaw, o);
+            }
             settled = o.write || o.write_rot;
             if (settled) {
                 ++g.settles;
@@ -560,11 +575,10 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
         o.event = GuardEvent::open;
     }
     g.last_yaw = in.yaw;
-    if (looking) {
-        // The player's own look input: the camera is theirs; the references follow, nothing is written.
-        detail::GuardFollow(g, in, rot_now, up_now);
+    if (follow_x || follow_y) {
+        // The player's own look input: that axis follows the camera; the other stays held.
+        detail::GuardFollowAxes(g, in, rot_now, up_now, follow_x, follow_y);
         ++g.look_ticks;
-        return o;
     }
     const float pull = detail::GuardCorrect(g, in, rot_now, up_now, kKickUp, kKickYaw, o);
     if (pull > g.window_max) g.window_max = pull;

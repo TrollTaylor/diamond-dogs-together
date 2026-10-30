@@ -481,6 +481,7 @@ void TestGuard() {
           "aim up with input y: passes, the pitch references follow; the yaw is still held");
     // F2: the jeep turns without input: the stock aim camera keeps its world yaw (a64c40d4: CAM+0x90's yaw constant
     // while the body yaw turned 58 deg), the vehicle-relative angle yaw changes: nothing written.
+    r = Look(1.62f, 0.10f);
     for (std::uint64_t t = 1700; t <= 1850; t += 50) {
         const float rel = 2.19f - 0.002f * static_cast<float>(t - 1700);
         o = pc::GuardStep(g, Tick(true, true, -0.10f, rel, &r, t));
