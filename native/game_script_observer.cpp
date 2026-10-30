@@ -4521,7 +4521,7 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
 //   -> return {ok=true,on=0}                                   (the key off or site C not installed)
 //   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
 //              grant=<id|65535>,gleft=<ms>,holds=<n>,ref=<id|65535>,rage=<ms|-1>}
-//      (ref / rage: the vehicle site C last refused and how long ago, for the Lua Fulton guard; seats on)
+//      (ref / rage: the Fulton guard's vehicle and its age: a refused ride icon or the peer's vehicle; seats on)
 //   -> return {ok=false,reason='request'}
 // Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
 bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -4545,12 +4545,11 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     pb::RaceState rs{};
     pb::ReadRace(rs);
     const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
-    const long long rage =
-        rs.refused == pb::kVehicleUnknown || rs.refused_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.refused_age_ms);
+    const long long rage = rs.guard == pb::kVehicleUnknown || rs.guard_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.guard_age_ms);
     if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
                                 "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld}",
                                 unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
-                                rs.grant_left_ms, rs.holds, unsigned(rs.refused), rage)))
+                                rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage)))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }

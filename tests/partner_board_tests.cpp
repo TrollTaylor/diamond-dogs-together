@@ -787,21 +787,21 @@ void TestRace() {
     Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 0, "site A: the stock nearest search even while denied");
     pb::ReadRace(rs);
     Check(rs.deny == 25608 && rs.deny_left_ms == 3000 && rs.hits == 0, "the deny is live for 3 s");
-    Check(rs.refused == pb::kVehicleUnknown && rs.refused_age_ms == 0xFFFFFFFFu, "seats on: no refusal yet (no Fulton guard)");
+    Check(rs.guard == pb::kVehicleUnknown && rs.guard_age_ms == 0xFFFFFFFFu, "seats on: no refusal yet (no Fulton guard)");
     Check(!C(unit), "denied: site C answers false (no ride icon)");
     pb::ReadRace(rs);
     Check(rs.hits == 1 && rs.want == 25608, "counted; the denied player still wants it (host_first stays true for the host)");
-    Check(rs.refused == 25608 && rs.refused_age_ms == 0, "seats on: the refused vehicle and when (Lua withholds its Fulton)");
+    Check(rs.guard == 25608 && rs.guard_age_ms == 0, "seats on: the refused vehicle and when (Lua withholds its Fulton)");
     g.now = 1350;
     pb::ReadRace(rs);
-    Check(rs.refused == 25608 && rs.refused_age_ms == 50, "the refusal ages");
+    Check(rs.guard == 25608 && rs.guard_age_ms == 50, "the refusal ages");
     g.now = 1300;
     g.driver_result = 1;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: phase 1 takes the no-seat exit");
     Check(C(other), "another vehicle is not denied");
     pb::ReadRace(rs);
     Check(rs.hits == 2, "site B's deny counted");
-    Check(rs.refused == 25608, "a pass and site B's backstop leave the last site C refusal (the prompt is site C's)");
+    Check(rs.guard == 25608, "a pass and site B's backstop leave the last site C refusal (the prompt is site C's)");
     // The guest's hold (review R1): no driver's seat of an empty vehicle without the host's grant.
     pb::RaceDeny(pb::kVehicleUnknown, 0);
     pb::RaceHold(2000);
@@ -810,7 +810,7 @@ void TestRace() {
     Check(!C(unit), "held: no ride icon for an ungranted vehicle");
     pb::ReadRace(rs);
     Check(rs.holds == 1 && rs.want == 25608 && rs.hits == 2, "a hold is counted apart from the deny; the want is recorded");
-    Check(rs.refused == 25608 && rs.refused_age_ms == 0, "a hold refusal is a refusal too (the guest's Fulton is withheld)");
+    Check(rs.guard == 25608 && rs.guard_age_ms == 0, "a hold refusal is a refusal too (the guest's Fulton is withheld)");
     g.driver_result = 0;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "held: phase 1 never seats the guest as the driver of the wanted vehicle");
     Check(pb::detail::SiteBForTest(other, pos) == 0, "site B holds only the vehicle site C saw (no want for it: stock)");
@@ -837,9 +837,19 @@ void TestRace() {
     const std::uint32_t holds = rs.holds;
     g.now = 3400;
     pf.seat = 1;
+    pb::ReadRace(rs);
+    const std::uint32_t guard_age = rs.guard_age_ms;
     Check(C(unit) && seat == 1, "the peer drives it: a steered seat-1 passenger answer passes");
     pb::ReadRace(rs);
     Check(rs.holds == holds && rs.want_age_ms > 0, "and is neither held nor a want");
+    Check(guard_age > 0 && rs.guard == 25608 && rs.guard_age_ms == 0,
+          "seats on: at a door of the vehicle the peer drives the Fulton guard covers it too (its passenger ride icon shows)");
+    pf.ok = false;
+    g.now = 3450;
+    Check(!C(unit), "the pre-query refused at the peer's vehicle");
+    pb::ReadRace(rs);
+    Check(rs.guard_age_ms == 50, "no door answer: no new guard mark");
+    pf.ok = true;
     Policy(pb::Mode::off);
     pb::RaceHold(0);
     pf.seat = 0;

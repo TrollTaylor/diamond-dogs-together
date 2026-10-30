@@ -57,8 +57,12 @@ std::atomic<std::uint64_t> g_deny{kVehicleUnknown};
 std::atomic<std::uint64_t> g_grant{kVehicleUnknown};
 std::atomic<std::uint64_t> g_hold{0};
 std::atomic<std::uint32_t> g_race_hits{0}, g_hold_hits{0};
-// Seats on (8.21 R6): site C's last refusal (vehicle | ms << 32; the Fulton guard reads its age).
-std::atomic<std::uint64_t> g_refused{kVehicleUnknown};
+// Seats on (8.21 R6): the Fulton guard's last mark at site C (vehicle | ms << 32): a refused ride icon, or a door of
+// the vehicle the peer drives (ReadRace reports its age; Lua withholds the Fulton action while it is fresh).
+std::atomic<std::uint64_t> g_guard{kVehicleUnknown};
+void GuardMark(std::uint16_t vehicle, std::uint32_t now) noexcept {
+    g_guard.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+}
 volatile LONG g_race_tried = 0;
 const char* g_race_refusal = nullptr;
 void* g_stub_c = nullptr;
@@ -188,6 +192,16 @@ std::uint16_t RaceVehicle(void* unit, std::uint32_t now) noexcept {
     if (!ReadIndex(unit, index) || index >= 0x200) return kVehicleUnknown;
     return static_cast<std::uint16_t>(kVehicleBase | index);
 }
+// Seats on: the vehicle of a record the peer drives (a live peer-driver policy names it), kVehicleUnknown else.
+std::uint16_t PeerDriven(void* unit, std::uint32_t now) noexcept {
+    const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
+    if (p.mode == Mode::off || !LeaseLive(p.until_ms, now) || p.peer_seat != 0) return kVehicleUnknown;
+    std::uint16_t index = 0xFFFF;
+    const bool index_ok = ReadIndex(unit, index);
+    const char* reason = "off";
+    if (DecideVehicle(p, now, index_ok, index, reason) == Verdict::stock) return kVehicleUnknown;
+    return p.vehicle;
+}
 // Site B's backstop: a stock driver's seat (0, or 1 which stock phase 1 makes the driver) of a denied
 // vehicle, or of the vehicle site C wants while the guest holds it ungranted, takes the no-seat exit.
 std::uint8_t RaceStepB(void* unit, Verdict verdict, std::uint8_t result) noexcept {
@@ -238,9 +252,11 @@ bool SiteC(void* action, std::uint32_t body, void* unit, std::uint16_t id, char*
         const RaceVerdict v = RaceDecide(RaceFor(vehicle, now));
         if (v == RaceVerdict::deny) g_race_hits.fetch_add(1, std::memory_order_relaxed);
         if (v == RaceVerdict::hold) g_hold_hits.fetch_add(1, std::memory_order_relaxed);
-        if (v != RaceVerdict::pass)
-            g_refused.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+        if (v != RaceVerdict::pass) GuardMark(vehicle, now);
         result = v == RaceVerdict::pass;
+    } else if (const std::uint16_t peer = PeerDriven(unit, now); peer != kVehicleUnknown) {
+        // A door of the vehicle the peer drives: its passenger ride icon, and that vehicle's stock Fulton prompt.
+        GuardMark(peer, now);
     }
     SetLastError(error);
     return result;
@@ -427,7 +443,7 @@ void ResetForTest() noexcept {
     g_hold.store(0);
     g_race_hits.store(0);
     g_hold_hits.store(0);
-    g_refused.store(kVehicleUnknown);
+    g_guard.store(kVehicleUnknown);
     g_race_tried = 0;
     g_race_refusal = nullptr;
     g_stub_c = nullptr;
@@ -660,9 +676,9 @@ void ReadRace(RaceState& out) noexcept {
     out.hold_left_ms = out.hold ? hold_until - now : 0;
     out.hits = g_race_hits.load(std::memory_order_relaxed);
     out.holds = g_hold_hits.load(std::memory_order_relaxed);
-    const std::uint64_t refused = g_refused.load(std::memory_order_acquire);
-    out.refused = static_cast<std::uint16_t>(refused & 0xFFFFu);
-    out.refused_age_ms = out.refused == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(refused >> 32);
+    const std::uint64_t guard = g_guard.load(std::memory_order_acquire);
+    out.guard = static_cast<std::uint16_t>(guard & 0xFFFFu);
+    out.guard_age_ms = out.guard == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(guard >> 32);
 }
 
 bool Installed() noexcept { return g_installed != 0; }

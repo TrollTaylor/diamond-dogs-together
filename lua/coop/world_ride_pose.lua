@@ -450,8 +450,8 @@ end
 local function wants(r, vehicle, ms)
     return r and r.on == 1 and r.want == vehicle and integer(r.age, 0, ms)
 end
--- Seats on (8.21 R6): while site C refuses the ride icon, E offers only the vehicle's Fulton: FULTON is withheld while
--- it refused within GUARD_MS (receipt ref / rage, every tick); only a bit added here is removed (revive's rule).
+-- Seats on (8.21 R6): FULTON is withheld while site C marked a refused ride icon or a door of the peer's vehicle
+-- within GUARD_MS (receipt ref / rage, every tick); only a bit added here is removed (revive's rule).
 local GUARD_MS = 400
 local function fultonFlag(on)
     local ok, f, b = pcall(function() return vars.playerDisableActionFlag, PlayerDisableAction.FULTON end)
@@ -470,7 +470,7 @@ function S.guard()
     if S.n.fLog <= 20 then seatLog(string.format("action=fulton;on=%d;vehicle=%d", id and 1 or 0, id or S.fulton)) end
     S.fulton = id
 end
--- Unpaired, or the world link below level 3: no hold survives (it would keep the guest from any driver's seat).
+-- Unpaired, or the link below level 3: no hold (it would keep the guest from any driver's seat), no guard.
 function S.reset()
     if S.held then S.board("hold 0") end
     if S.fulton or S.fAdded then S.off = true; S.guard() end
