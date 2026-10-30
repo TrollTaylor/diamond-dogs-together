@@ -336,17 +336,22 @@ struct View {
 // (4f1a072f: within 0.2 deg of the aim target ray). While aiming, the look angles CAM+0x270 (pitch, negative looks up)
 // and +0x274 (yaw) are vehicle-relative and follow CAM+0x90 about a tick later (7e79996f). The pull goes up; the yaw
 // moved less than 1 deg per window while the pitch was held (7e79996f).
-// The guard holds only the pull UP, so the player's own yaw, the player's aim down and the vehicle's turn pass:
-//  - reference: while aiming (in the aim module) and not firing, the angle pitch and the world up-pitch of CAM+0x90;
+// The guard holds the pull (up and sideways) and lets the player's own look input, the player's aim down and the
+// vehicle's turn pass:
+//  - reference: while aiming (in the aim module) and not firing, the angle pitch and the world up-pitch and yaw of
+//    CAM+0x90 (the stock aim camera keeps its world yaw while the jeep turns: run a64c40d4);
+//  - the player's look input (the effective right stick, which carries the mouse) on a tick: for kLookLatchMs the
+//    references follow the camera and nothing is written;
 //  - window: from the first firing tick until kGuardHoldMs after the last one. The angle pitch going down moves its
 //    reference down (the player's aim), and the world reference by as much as the world also went down (a bump of the
 //    vehicle alone moves neither). An angle pitch more than kKickUp above its reference is written back to it
 //    (CAM+0x270 / +0x268); a world up-pitch more than kKickUp above its reference turns CAM+0x90 down about its own
-//    right axis by the excess (q * qx(excess): its yaw and roll stay);
+//    right axis by the excess (q * qx(excess)); a world yaw more than kKickYaw beside its reference turns CAM+0x90 back
+//    about the world vertical (qy * q). Run a64c40d4 (v2, yaw free): the pull turned a burst 0.93 rad sideways;
 //  - a window that ends with the hold settles a remaining climb above kSettleUp (no climb from shot to shot);
 //  - nothing is written outside the aim module (vtable kAimModuleVtableRva, CAM+0x340 index 2) or after the aim ends:
 //    an open window closes at once (end=aim_end).
-// [U] The player's own aim UP inside a window cannot be told from the pull without the input path: it is held too.
+// [U] Whether every mouse delta shows in the right stick on the tick the driver samples (the latch covers a tick of lag).
 inline constexpr std::size_t kCamPitch = 0x270, kCamYaw = 0x274, kCamPitchPrev = 0x268, kCamYawPrev = 0x26C;
 inline constexpr std::size_t kCamRotation = 0x90;
 inline constexpr float kKickUp = 0.05f, kSettleUp = 0.01f;
@@ -392,7 +397,13 @@ inline float WorldYaw(const float* q) noexcept {
 // and roll stay (exact without roll).
 // q turned by `turn` rad about the world vertical (qy(turn) * q, normalized): the world yaw grows by `turn`, the
 // up-pitch and roll stay.
-inline void YawTurn(const float* q, float, float* out) noexcept { for (unsigned i = 0; i < 4; ++i) out[i] = q[i]; }  // STUB
+inline void YawTurn(const float* q, float turn, float* out) noexcept {
+    const float s = std::sin(0.5f * turn), c = std::cos(0.5f * turn);
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float r[4] = {c * x + s * z, c * y + s * w, c * z - s * x, c * w - s * y};
+    const float n = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+    for (unsigned i = 0; i < 4; ++i) out[i] = n > 0.0f ? r[i] / n : q[i];
+}
 inline void PitchDown(const float* q, float down, float* out) noexcept {
     const float s = std::sin(0.5f * down), c = std::cos(0.5f * down);
     const float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -439,8 +450,9 @@ struct GuardOut {
     bool settle = false;             // close only: the hold's close wrote a remaining climb back
 };
 namespace detail {
-// One correction: follows the player's aim down, then writes back a pull up above `bound`. Returns the pull (rad).
-inline float GuardCorrect(Guard& g, const GuardIn& in, bool rot_now, float up_now, float bound, GuardOut& o) noexcept {
+// One correction: follows the player's aim down, then writes back a pull up above `up_bound` or sideways beyond
+// `yaw_bound`. Returns the largest pull (rad).
+inline float GuardCorrect(Guard& g, const GuardIn& in, bool rot_now, float up_now, float up_bound, float yaw_bound, GuardOut& o) noexcept {
     const float down = in.pitch - g.ref_pitch;  // > 0: the angle went below its reference (pitch negative looks up)
     if (down > 0.0f) {
         g.ref_pitch = in.pitch;
@@ -448,20 +460,37 @@ inline float GuardCorrect(Guard& g, const GuardIn& in, bool rot_now, float up_no
         if (g.up_ok && rot_now && world_down > 0.0f) g.ref_up -= world_down < down ? world_down : down;
     }
     // Each state against its own reference: the angles follow CAM+0x90 a tick late, so a rotation turned by the angles'
-    // (late) excess would overshoot down.
+    // (late) excess would overshoot.
     const float u_ang = g.ref_pitch - in.pitch;
-    const float u_rot = g.up_ok && rot_now ? up_now - g.ref_up : 0.0f;
-    if (u_ang > bound) {
+    const bool world = g.up_ok && rot_now;
+    const float u_rot = world ? up_now - g.ref_up : 0.0f;
+    const float dyaw = world ? WrapPi(WorldYaw(in.rot) - g.ref_yaw) : 0.0f;
+    if (u_ang > up_bound) {
         o.write = true;
         o.pitch = g.ref_pitch;
     }
-    if (g.up_ok && rot_now && u_rot > bound) {
+    const bool turn_up = world && u_rot > up_bound, turn_yaw = world && std::fabs(dyaw) > yaw_bound;
+    if (turn_up || turn_yaw) {
+        float down_q[4];
+        PitchDown(in.rot, turn_up ? u_rot : 0.0f, down_q);
+        YawTurn(down_q, turn_yaw ? -dyaw : 0.0f, o.rot);
         o.write_rot = true;
-        PitchDown(in.rot, u_rot, o.rot);
         ++g.rot_writes;
     }
     if (o.write || o.write_rot) ++g.writes;
-    return u_ang > u_rot ? u_ang : u_rot;
+    float pull = u_ang > u_rot ? u_ang : u_rot;
+    if (std::fabs(dyaw) > pull) pull = std::fabs(dyaw);
+    return pull;
+}
+// The references taken from this tick (the player's own aim).
+inline void GuardFollow(Guard& g, const GuardIn& in, bool rot_now, float up_now) noexcept {
+    g.ref_ok = true;
+    g.ref_pitch = in.pitch;
+    g.up_ok = rot_now;
+    if (rot_now) {
+        g.ref_up = up_now;
+        g.ref_yaw = WorldYaw(in.rot);
+    }
 }
 } // namespace detail
 // One tick. Not on (another mode, not armed, the angles unread or not finite): the state resets (a window closes without
@@ -470,7 +499,7 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
     GuardOut o{};
     if (!in.on || !in.ang_ok || !std::isfinite(in.pitch) || !std::isfinite(in.yaw)) {
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = 0;
+        g.last_fire_ms = g.last_look_ms = 0;
         g.active = false;
         return o;
     }
@@ -484,16 +513,18 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
             o.end = GuardEnd::aim_end;
         }
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = 0;
+        g.last_fire_ms = g.last_look_ms = 0;
         return o;
     }
     if (in.firing) g.last_fire_ms = in.now_ms ? in.now_ms : 1;
+    if (in.look) g.last_look_ms = in.now_ms ? in.now_ms : 1;
     const bool window = g.last_fire_ms != 0 && (in.firing || in.now_ms < g.last_fire_ms || in.now_ms - g.last_fire_ms < kGuardHoldMs);
+    const bool looking = g.last_look_ms != 0 && (in.now_ms < g.last_look_ms || in.now_ms - g.last_look_ms < kLookLatchMs);
     if (!window) {
         bool settled = false;
         if (g.active) {
             g.last_yaw = in.yaw;
-            if (g.ref_ok) detail::GuardCorrect(g, in, rot_now, up_now, kSettleUp, o);
+            if (g.ref_ok && !looking) detail::GuardCorrect(g, in, rot_now, up_now, kSettleUp, kSettleYaw, o);
             settled = o.write || o.write_rot;
             if (settled) {
                 ++g.settles;
@@ -505,30 +536,37 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
             o.end = GuardEnd::hold;
         }
         g.last_fire_ms = 0;
-        // The reference follows the player's aim (after a settle: the settled values).
-        if (!(settled && o.write)) g.ref_pitch = in.pitch;
-        if (!(settled && o.write_rot)) g.ref_up = up_now;
-        g.ref_ok = true;
-        g.up_ok = rot_now;
+        // The references follow the player's aim (after a settle: the settled values).
+        if (!settled) {
+            detail::GuardFollow(g, in, rot_now, up_now);
+        } else {
+            if (!o.write) g.ref_pitch = in.pitch;
+            if (!o.write_rot && rot_now) {
+                g.up_ok = true;
+                g.ref_up = up_now;
+                g.ref_yaw = WorldYaw(in.rot);
+            }
+        }
         return o;
     }
-    if (!g.ref_ok) {
-        // A shot with no aimed tick before it: its first tick is the reference.
-        g.ref_ok = true;
-        g.ref_pitch = in.pitch;
-        g.up_ok = rot_now;
-        g.ref_up = up_now;
-    }
+    if (!g.ref_ok) detail::GuardFollow(g, in, rot_now, up_now);  // a shot with no aimed tick: its first tick is the reference
     if (!g.active) {
         g.active = true;
         g.window_writes = 0;
         g.window_max = 0.0f;
+        g.look_ticks = 0;
         g.open_yaw = in.yaw;
         ++g.windows;
         o.event = GuardEvent::open;
     }
     g.last_yaw = in.yaw;
-    const float pull = detail::GuardCorrect(g, in, rot_now, up_now, kKickUp, o);
+    if (looking) {
+        // The player's own look input: the camera is theirs; the references follow, nothing is written.
+        detail::GuardFollow(g, in, rot_now, up_now);
+        ++g.look_ticks;
+        return o;
+    }
+    const float pull = detail::GuardCorrect(g, in, rot_now, up_now, kKickUp, kKickYaw, o);
     if (pull > g.window_max) g.window_max = pull;
     if (o.write || o.write_rot) ++g.window_writes;
     return o;

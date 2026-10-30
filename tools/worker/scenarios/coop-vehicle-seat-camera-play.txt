@@ -1,13 +1,17 @@
-# Design 8.25 play rehearsal: the back-seat passenger's aim camera at the shipped defaults (partner_pass_camera
-# unnamed = aim: the jeep's ignore-collision handle kept for the whole ride, and the shot guard). No labsetting
-# line. africa-jeep (30020, veh_lv_0000 = 25608). The guest drives; the host boards back seat 2 from the driver's side
-# and aims across the jeep the way a player does right after boarding, fires three single shots, releases; the guest
-# drives a little and the host aims and fires once more while the jeep moves; the host gets off. Then the roles
-# reverse: the host drives, the guest boards back seat 3 from the right side and does the same.
+# Design 8.25 / 8.26 play rehearsal: the back-seat passenger's aim camera at the shipped defaults (partner_pass_camera
+# unnamed = aim: the jeep's ignore-collision handle kept for the whole ride, and the shot guard, which since 8.26 holds
+# only the pull up, writes only in the aim camera and settles each window). No labsetting line. africa-jeep (30020,
+# veh_lv_0000 = 25608). The guest drives; the host boards back seat 2 from the driver's side and aims across the jeep
+# the way a player does right after boarding: a shot with a mouse turn inside its window, a shot with the mouse down,
+# a four-shot burst with a turn, three spaced shots, then shots while the guest steers through a curve; the host gets
+# off. Then the roles reverse: the host drives, the guest boards back seat 3 from the right side and does the same.
+# v1 of this file ran as 06aa3fc6 (8.25: three shots per seat and a straight moving shot). The mouse pulls down stay
+# small: a pull of 250 aimed the gun into the jeep in lab a64c40d4 (gun mode 15, no shots for ~20 s).
 # Expected (play, -WanSim bad): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key;
-#   event=close; writes=..; max_pull_mrad=..; the stock get-off releases the camera (state=release; reason=stock).
-# Frames (look at them): pass-aim, pass-shot1..3, pass-after (the passenger), drv-aim / drv-shot3 (the driver), the
-# moving shot (pass-move-NN), the get-off; the same with rev- for the reverse.
+#   state=guard; event=close; ...; end=..; ...; settle=..; yaw_mrad=..; the stock get-off releases the camera
+#   (state=release; reason=stock).
+# Frames (look at them): pass-aim, pass-yaw, pass-down, pass-burst-NN, pass-spaced, pass-turn-NN, pass-after (the
+# passenger), drv-* (the driver), the get-off; the same with rev- for the reverse.
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-camera-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
@@ -47,36 +51,63 @@ wait 700
 host capture pass-aim
 guest capture drv-aim
 host press lmb 120
-wait 300
-host capture pass-shot1
+wait 80
+host mouse 400 0
+wait 250
+host capture pass-yaw
 waitlog host 'partner_ride=pass_camera; state=guard; event=open; vehicle=25608; seat=2;' 3
 host hold rmb 1500 nowait
 wait 200
 host press lmb 120
-wait 300
-host capture pass-shot2
+wait 80
+host mouse 0 60
+wait 250
+host capture pass-down
+host hold rmb 1500 nowait
+wait 150
+host press lmb 90
+wait 120
+host press lmb 90
+wait 120
+host mouse -400 0
+host press lmb 90
+wait 120
+host press lmb 90
+host burst pass-burst 3 150
+guest capture drv-burst
 host hold rmb 1500 nowait
 wait 200
 host press lmb 120
-wait 300
-host capture pass-shot3
-guest capture drv-shot3
+wait 1100
+host hold rmb 1500 nowait
+host press lmb 120
+wait 1100
+host hold rmb 1500 nowait
+host press lmb 120
+wait 1100
+host capture pass-spaced
 host release
 wait 1000
 host capture pass-after
-waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=2;' 3
-wait 1000
-host capture pass-after2
-# A shot while the jeep moves.
-guest hold w 1500 nowait
+waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=2; end=' 3
+# Shots while the jeep moves through a curve.
+guest hold w+d 1500 nowait
+wait 400
 host hold rmb 1500 nowait
-wait 600
+wait 500
 host press lmb 120
-host burst pass-move 3 200
-guest capture drv-move
+host burst pass-turn 3 200
+guest capture drv-turn
+guest hold w+d 1500 nowait
+host hold rmb 1500 nowait
+wait 300
+host press lmb 120
+wait 200
+host press lmb 120
+host burst pass-turn2 2 200
 host release
 guest release
-guest hold s 600
+guest hold s 800
 guest release
 wait 2000
 host capture pass-stopped
@@ -111,25 +142,47 @@ wait 700
 guest capture rev-pass-aim
 host capture rev-drv-aim
 guest press lmb 120
-wait 300
-guest capture rev-pass-shot1
+wait 80
+guest mouse 400 0
+wait 250
+guest capture rev-pass-yaw
+guest hold rmb 1500 nowait
+wait 150
+guest press lmb 90
+wait 120
+guest press lmb 90
+wait 120
+guest mouse 0 60
+guest press lmb 90
+wait 120
+guest press lmb 90
+guest burst rev-pass-burst 3 150
+host capture rev-drv-burst
 guest hold rmb 1500 nowait
 wait 200
 guest press lmb 120
-wait 300
-guest capture rev-pass-shot2
+wait 1100
 guest hold rmb 1500 nowait
-wait 200
 guest press lmb 120
-wait 300
-guest capture rev-pass-shot3
-host capture rev-drv-shot3
+wait 1100
+guest capture rev-pass-spaced
 guest release
 wait 1000
 guest capture rev-pass-after
-waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=3;' 3
-wait 1000
-guest capture rev-pass-after2
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=3; end=' 3
+host hold w+a 1500 nowait
+wait 400
+guest hold rmb 1500 nowait
+wait 500
+guest press lmb 120
+guest burst rev-pass-turn 3 200
+host capture rev-drv-turn
+host release
+guest release
+host hold s 800
+host release
+wait 2000
+guest capture rev-pass-stopped
 guest press e 150
 guest burst rev-pass-off 3 400
 wait 2500

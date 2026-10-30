@@ -3189,6 +3189,15 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     gi.yaw = gv_ok ? gv.ang[3] : 0.0f;
     gi.rot = gv_ok ? gv.rot : nullptr;
     gi.now_ms = now;
+    // The player's own look input: the effective right stick (the mouse comes as PP+0x474 / +0x47C with PP+0x488 bit 1).
+    partner_input::PadRaw look_raw{};
+    float look_x = 0.0f, look_y = 0.0f;
+    if (gv_need && h.read_pad && h.read_pad(h.context, st, look_raw)) {
+        const partner_input::PadSnapshot look_pad = partner_input::Effective(look_raw);
+        look_x = std::isfinite(look_pad.rx) ? look_pad.rx : 0.0f;
+        look_y = std::isfinite(look_pad.ry) ? look_pad.ry : 0.0f;
+    }
+    gi.look = std::fabs(look_x) > pc::kLookInput || std::fabs(look_y) > pc::kLookInput;
     const pc::GuardOut go = pc::GuardStep(c.guard, gi);
     bool guard_written = false;
     if (go.write) guard_written = h.pass_camera_pitch(h.context, st, go.pitch);
@@ -3205,9 +3214,9 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     else if (go.event == pc::GuardEvent::close)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                     "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; end=%s; writes=%u; max_pull_mrad=%d; settle=%u; "
-                    "yaw_mrad=%d; total_writes=%u; rot_writes=%u\r\n",
+                    "yaw_mrad=%d; look_ticks=%u; total_writes=%u; rot_writes=%u\r\n",
                     unsigned(arm.vehicle), unsigned(arm.seat), pc::GuardEndName(go.end), c.guard.window_writes, mrad(c.guard.window_max),
-                    go.settle ? 1u : 0u, mrad(pc::WindowYaw(c.guard)), c.guard.writes, c.guard.rot_writes);
+                    go.settle ? 1u : 0u, mrad(pc::WindowYaw(c.guard)), c.guard.look_ticks, c.guard.writes, c.guard.rot_writes);
     if (aiming) c.trace_aim_ms = now ? now : 1;
     if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
         c.trace_ms = now ? now : 1;
@@ -3222,7 +3231,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         EmitNativeN(h, c.trace_cap, pc::kTraceCap, "partner_pass_camera_trace",
                     "partner_ride=pass_camera; state=trace; ms=%llu; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
                     "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; rot_mrad=%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
-                    "f204=0x%x; d38=0x%x; cmode=%d; mvt=0x%llx; gw=%u; off=%d,%d,%d,%d; piv=%d,%d,%d,%d; sc=%d,%d\r\n",
+                    "f204=0x%x; d38=0x%x; cmode=%d; mvt=0x%llx; gw=%u; look=%d,%d; off=%d,%d,%d,%d; piv=%d,%d,%d,%d; sc=%d,%d\r\n",
                     static_cast<unsigned long long>(now), unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u,
                     unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
                     cam.ok && cam.connect != 0 ? 1u : 0u, view_ok ? 1u : 0u, cm(v.pos[0] - body[0]), cm(v.pos[1] - body[1]),
@@ -3232,6 +3241,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     view_ok && pc::QuatOk(v.rot) ? milli(pc::WorldYaw(v.rot)) : INT32_MIN, cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
                     cm(apt[2] - v.pos[2]), aim_read.rate_ok[0] ? milli(aim_read.r5c[0]) : INT32_MIN,
                     aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode, mvt, guard_written ? 1u : 0u,
+                    milli(look_x), milli(look_y),
                     milli(v.off[0]), milli(v.off[1]), milli(v.off[2]), milli(v.off[3]), milli(v.piv[0]), milli(v.piv[1]), milli(v.piv[2]),
                     milli(v.piv[3]), milli(v.sc[0]), milli(v.sc[1]));
     }
