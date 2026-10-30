@@ -74,7 +74,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Buddies** (D-Dog, D-Horse, Quiet, D-Walker) are not shared yet: each PC keeps its own.
 - **Sortie vehicles:** a vehicle you bring from sortie prep (the helicopter's vehicle choice) doesn't appear on your partner's screen; they see you without it. Use world vehicles you find on the map to ride together.
 - **Supply drops:** only the host can order a LOADOUT or VEHICLES supply drop in co-op (both can bring a vehicle), also while the host's game is still loading after you travel together; the guest's iDroid says so.
-- **Mounts:** you can't shoot from a back seat, and a partner riding D-Horse or D-Walker is hidden.
+- **Mounts:** a partner riding D-Horse or D-Walker is hidden. In a jeep's back seat you can raise and fire your gun, but only across the jeep, your aim jumps up when you fire, and your partner does not see your gun raised; shooting from a vehicle is not supported yet.
 - **Look:** your custom character may look like Snake on your partner's screen.
 - **Players:** two only.
 

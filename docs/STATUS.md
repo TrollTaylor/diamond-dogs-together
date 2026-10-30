@@ -1,3 +1,49 @@
+## 2026-10-30: M7, shooting as a passenger (`wp/seat-shoot`, local only, not merged, not two-PC tested)
+
+Branch `wp/seat-shoot` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/companion-host`. The 0.13.5 seat-aim census
+(the uncommitted tree of `D:/mgs-coop-wt/seat-aim`) is committed on `wp/seat-aim` as `c87b270` and merged with a merge
+commit (`5e2ce28`); the partner contract was regenerated and re-pinned (816, then 818 code sites / 206 vtable slots).
+Details: docs/vehicles-companions-design.md 8.20, section 9 M7 and D16; docs/native-puppet.md "Seat gun". Marks: [O]
+observed in a run or test named here, [I] inferred, [U] unproven.
+
+**Verdict: M7 is not done.** Nothing flips: the new lab key `partner_seat_gun` stays off in lab and play.
+
+| Part | Built | Result |
+|---|---|---|
+| E8, the local passenger | Nothing to patch | [O] A stock back-seat passenger raises (upper act 2, modes 6/7) and fires (upper 3, mode 9) its own gun; the seated body faces into the jeep and the +-90 deg aim range is measured from it (seat 2 the right side, seat 3 the left); the aim swings to the top of its range at each shot. [O] No seated shot was seen to land in five runs; the on-foot control of the last run missed too, so a seated hit is [U] |
+| The aim self-check | `partner_aim::GunDirSeated`; with the key on the passenger sends its seated v6 direction unchecked | [O] Never latched: `aim_dir=refused; reason=ride; checks=0` (key off), `aim_dir=valid; reason=seat; checks=0` (key on); no `reason=convention` in any run |
+| E9, the partner's gun (design A) | `partner_seat_gun` (pure), two local kinds in the gesture hook (`gun_start` GunHoldStart, `gun_hold` GunHold; held while the driver names it, released with stateNull), body 1's aim rates written and restored, `TickSeatGun`; contract pins `SEAT_GUN_SITES` | [O] 20 holds in five runs, both copies: `hold` -> `submit; kind=gun_start` -> `applied; ok=1` -> `rates; ok=1` -> `release` -> `ended; cause=release; null=1`, no uncertain or fault. [O] **The frames show no raised gun** on the seated partner. The raise never reached its clip end, so GunHold was never requested |
+| Test tooling | Debug commands `enemy_aim_nearest [height_m]` (the camera to the nearest living soldier) and `goto_vehicle jeep right` | [O] Both work (`a3f7c4e1`: the reticle red on a sleeping guard; `03ceff68`: seat 3 boarded from `goto_vehicle jeep right`) |
+
+**Hidden runs** (research build, native gun stage, seed `africa-jeep`, lab; all Closed, BaselineRestored,
+RealSavesUnchanged; `Forced=True` in `d40e4126`, `30a6a21a`, `6e0edd8b`, `03ceff68`, `a3f7c4e1`; CPU 5-30 % before each).
+The budget of eight is spent; no play rehearsal ran. A first attempt stopped in its worker checks (a source file added
+during the checks) and never launched the game.
+- `6fc3098b28344e27afe917f36a600a72` (`coop-vehicle-seat-aim.txt`, the census): E8 above; the passenger camera kept the
+  boarding direction and every shot missed the guard ahead; while firing, the camera went into the passenger's head.
+- `d40e412636b04b58b5e4afeb40202dfa` (`coop-vehicle-seat-shoot.txt`): no hold started (the seat-owned branch of the driver
+  tick returned before `TickGesture`; fixed in `8c0d482`); from seat 2 aiming across, the camera looked through the
+  jeep's body.
+- `30a6a21a4c784049b79c259dd920977c`: the hold path on both copies; no visible change; seat 2's body faces right.
+- `6e0edd8b577f4df48f80b78cf3fd7541`: no boarding from the passenger side facing away (hence `goto_vehicle jeep right`).
+- `03ceff689ef24091a4194b0ab1a6fbe7`: seat 3's body faces left; aiming out of its own side clamps.
+- `d3409f579a724f5589113b0b69f1ce7f`: seat 3 across the jeep, the camera over the head; the lever's aim 7.5 deg low;
+  bursts climbed to the sky.
+- `a3f7c4e184d0490c833a4ee14a75beb1`: single shots with the reticle red on the sleeping guard; no hit recorded.
+- `d7cf5a4b4e3e4c6c82b136fdd088e4e2` (`coop-vehicle-seat-shoot-diag.txt`): driving, standing and first-person shots, then
+  an on-foot control; none hit.
+
+Slices in the session scratch `m6m7/shoot/slice-<run8>`, frames `complete/frames/shoot/<run8>-<role>-<label>.jpg`; run
+folders archived under `%USERPROFILE%\mgs-coop-run-archive\m6m7\<id>`.
+
+**Wire:** no new op or CFG index; with the key on the v6 input frame carries a seated direction, which a 0.14.4 receiver
+uses only in its native drive (disarmed while the sender rides) [I]. **Tests:** new `partner_seat_gun_tests`; additions
+to `partner_gesture_hook_tests`, `lab_config_tests`, `lab_ini_check`, `worker_session_tests`, `friend_package_tests`,
+`debug_menu_lua_check` (each failed first). Fast CTest 304/304; full CTest 320/320 (`tools/build.ps1`, after the docs).
+
+**Open (D16 in the design doc):** a static study of the gun plugin on a seated body and of the pitch jump at the shot,
+then design B with a new run budget; or park M7. The front seat and the truck bed depend on M6 (another track).
+
 ## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
 
 The three tracks that followed the 0.14.4 release are merged into `dev/oct7-continue` (from `01fd055`): `f1e80be`
