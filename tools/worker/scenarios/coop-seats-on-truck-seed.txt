@@ -1,7 +1,7 @@
 # Seats on (docs/vehicles-companions-design.md 8.25): the seed afgh-relief-trc for the truck cab's play rehearsal
 # (coop-seats-on-truck-play.txt). Play refuses the lab truck levers (relief_load, debug_vehicle_door) and free roam's
-# trucks carry soldiers, so the empty truck comes from the sortie: the host alone arms relief type 4 (the east truck) at
-# the ACC sortie to 30010 (goto_lz=1, enemyBase_S); its mission-start checkpoint save holds the choice (the LZ drop point
+# trucks carry soldiers, so the empty truck comes from the sortie: the host alone arms relief type 4 (the east truck) in
+# 30020 free roam (the lever needs gameplay; a boot into the ACC refused it: run f9d2482d) for the sortie to 30010 (goto_lz=1, enemyBase_S); its mission-start checkpoint save holds the choice (the LZ drop point
 # places it, 8.5 E2: AdjustFromDropPoint). The truck's two stock door spots are logged here (the lab door lever, then
 # position) for the play rehearsal's teleports. Lab, copied lab saves. After the run:
 #   pwsh -File tools/worker/Save-WorkerSeed.ps1 -RunDirectory <run> -Name afgh-relief-trc
@@ -11,8 +11,9 @@
 labsetting nametag=1
 labsetting debug_vehicle_door=1
 labsetting world_relief=1
-boot 40010
-wait 3000
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+wait 2000
 host run relief_arm 4 805 343 1636.5 0
 host expect ^relief_arm;type=4;hook=
 host worldtrigger goto=30010 goto_lz=1
