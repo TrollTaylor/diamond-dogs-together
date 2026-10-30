@@ -288,7 +288,11 @@ do
     check(r[2] == 1 and r[3]:find('^aim_nearest;ent=%d+;d=1%.0;rotY=90%.0;rotX=21%.8;') and cam[1] == 'camrot' and
         math.abs(cam[2].rotY - 90) < 1e-6 and math.abs(cam[2].rotX - math.deg(math.atan(0.4))) < 1e-6 and cam[2].interpTime == 0.2,
         'aim nearest: the camera request toward the nearest living soldier')
-    check(c:send('enemy_aim_nearest 5')[3] == 'enemy_args', 'aim nearest takes no argument')
+    check(c:send('enemy_aim_nearest 5')[3] == 'enemy_args' and c:send('enemy_aim_nearest x')[3] == 'enemy_args' and
+        c:send('enemy_aim_nearest 1 2')[3] == 'enemy_args', 'aim nearest: one height in metres, 0..2')
+    r = c:send('enemy_aim_nearest 0.3')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and math.abs(cam[2].rotX - math.deg(math.atan(1.2))) < 1e-6, 'aim nearest: a lying target 0.3 m up')
     local saved = c.env.Player.RequestToSetCameraRotation
     c.env.Player.RequestToSetCameraRotation = nil
     check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')
