@@ -6,8 +6,10 @@
 # before its first seated aim) and fires again without re-aiming. 66ad131f's aim at 1.1 m above the lying guard put
 # the reticle on the ground in front of him: 1.6 here (299de3e1 part B hit with 1.6).
 #   A. The host drives, the guest in back seat 3 aims at 2552560298: shot 1 with the lever seatshot off (the stock
-#      line: the jeep's life on the guest's copy drops, the guard is not hit), then seatshot lab (the key: on) and two
-#      shots on the same line (expected: the guard hit, the life unchanged on both copies).
+#      line: the jeep's life on the guest's copy drops; in 8a920ec8 the round also went through the jeep and put the guard
+#      to Dying), then seatshot lab (the key: on) and two shots on the same line (expected: the life unchanged on
+#      both copies; in 8a920ec8 these two did not hit the guard, already Dying). Keep every guard asleep: an awake one
+#      shooting the jeep confounds the life reads (8a920ec8 part B, cause [U]).
 #   B. A guard warped beside 2552560298's spot and asleep; the guest drives, the host in back seat 2 (left rear) aims
 #      once across the jeep at him and fires twice with the key (on): the guard hit, the life unchanged on both copies.
 # partner_ride_front=0 keeps a right-side passenger in back seat 3 (the play rehearsal runs the shipped defaults).
