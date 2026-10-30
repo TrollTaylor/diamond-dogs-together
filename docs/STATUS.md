@@ -1,6 +1,6 @@
 ## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
 
-**Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T010348Z-6cc0fbb5` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
+**Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T004356Z-a5bd9d1b` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
 
 | File | Bytes | SHA-256 |
 |---|---|---|
