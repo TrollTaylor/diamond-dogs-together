@@ -5,7 +5,10 @@
 over our own entry; seats 1 and 2 only (seat 3 was clear); the get-off turn arms only on an observed get-off (act 0x70
 plus the stock clear; no time fallback; dropped when the mode leaves view); the request bit after its fields; a grow
 guard on CAM+0x150 [I]; `view` runs as `aim` in play (a lab key until proven). Scenarios wait for the view/turn lines.
-fast CTest 304/304; hidden lab run: see below. **Players see no change** (default `aim`).
+Full CTest 336/336; contract `--check` 829 / 209. **Not proven:** both hidden lab runs (`79aee3fc`, `6395316d`,
+`m6m7c-aim-view.txt`) ended `IsolationFailed` (`child_exited_before_admission`, then `process_image_path`; the guest
+worker refused `required_hooks_or_private_desktop`), as every hidden run on the machine since 13:51; saves and
+baselines restored. **Players see no change** (default `aim`).
 
 ## 2026-10-30: the seated aim view and the camera after a get-off (branch `wp/aim-view`; built, not proven)
 

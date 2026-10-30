@@ -3112,7 +3112,8 @@ bit. (6) [I] guard: while ours, |CAM+0x150 y| > 2.5 m restores and refuses the b
 parameter load does not rewrite the offset. (7) `view` runs as `aim` in play until proven (lab key only). Scenarios now
 wait for the apply/restore and turn lines; the play rehearsal (africa jeep) cannot cover seat 1 (D-Dog sits there).
 Open [U]: whether the seated variant is listed, whether the request's yaw is world yaw after a seated aim (8.27 saw the
-look angles turn vehicle-relative while seated), the frames on both copies. The hidden run is listed in STATUS.
+look angles turn vehicle-relative while seated), the frames on both copies: both hidden lab runs (`79aee3fc`,
+`6395316d`) failed isolation before admission like every run on the machine since 13:51.
 
 ## 9. Milestones
 
