@@ -598,7 +598,7 @@ int main() {
             const auto off = Lab(gun + mode + "partner_ride_seat1_anchor=0\n");
             Check(!off.partner_ride_seat1_anchor && off.partner_ride_seat1_anchor_given, "a named seat-1 anchor 0 stays off");
         }
-        for (const char* value : {"2", "", "on"}) {
+        for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=") + value + "\n");
             Check(!invalid.partner_ride_seat1_anchor && !invalid.partner_ride_seat1_anchor_given && invalid.invalid_values == 1 &&
                       invalid.unknown_keys == 0,

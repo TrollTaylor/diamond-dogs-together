@@ -85,10 +85,22 @@ std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base |
 // The player's seat-1 clips (stateVehicle*FrontRight*) carry the driver-to-passenger offset: the stock seat matrix
 // 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
 // in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
-// jeep (design 8.33).
-std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix) noexcept { (void)seat1_driver_matrix; return seat == 1 ? 0 : seat; }
-void SetSeatOneAnchor(bool) noexcept {}
-bool SeatOneAnchor() noexcept { return false; }
+// jeep (design 8.33). Behind lab.ini partner_ride_seat1_anchor (off unless named) until its frame proof.
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix) noexcept { return seat1_driver_matrix && seat == 1 ? 0 : seat; }
+namespace {
+#ifdef _WIN32
+volatile LONG g_seat1_anchor = 0;
+#else
+bool g_seat1_anchor = false;
+#endif
+} // namespace
+#ifdef _WIN32
+void SetSeatOneAnchor(bool on) noexcept { InterlockedExchange(&g_seat1_anchor, on ? 1 : 0); }
+bool SeatOneAnchor() noexcept { return g_seat1_anchor != 0; }
+#else
+void SetSeatOneAnchor(bool on) noexcept { g_seat1_anchor = on; }
+bool SeatOneAnchor() noexcept { return g_seat1_anchor; }
+#endif
 
 const char* VerifyImage(const unsigned char* base, std::size_t span) noexcept {
     if (!base) return "base";
@@ -140,7 +152,7 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     // part way puts back exactly what this call wrote.
     std::uint32_t written_from[kSites]{};
     bool written[kSites]{};
-    const std::uint8_t anchor = AnchorSeat(seat, true);
+    const std::uint8_t anchor = AnchorSeat(seat, SeatOneAnchor());
     for (unsigned i = 0; i < kSites; ++i) {
         const Site& s = kSiteTable[i];
         const std::uint32_t current = ReadDword(image, s.rva);

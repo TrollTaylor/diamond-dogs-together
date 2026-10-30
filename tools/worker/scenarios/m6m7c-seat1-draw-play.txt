@@ -1,7 +1,7 @@
 # Seat 1 drawn in the seat on the driver's copy (docs/vehicles-companions-design.md 8.33, branch wp/seat1-draw): body 1's
 # seat DM anchors on the driver's seat matrix for seat 1 (partner_ride_seat::AnchorSeat; the stock rule for a player in
 # seat 1, 0xB79A3F), not seat 1's own matrix where the FrontRight clips drew it one seat further right, outside the jeep.
-# SHIPPED play defaults (no labsetting line), -Mode play -WanSim bad. Host seed afgh-quiet, guest seed afgh-horse (no dog
+# The play defaults plus the lab key partner_ride_seat1_anchor=1 (off unless named until this proof), -Mode play -WanSim bad. Host seed afgh-quiet, guest seed afgh-horse (no dog
 # in seat 1), the Wakh Sind jeep 25608 at its spawn pose (faces north; seat 1 door 574.36,1157.5 facing 96; seat 0 door
 # 577.20,1157.19 facing -84).
 #   A. The guest drives, the host takes seat 1: the guest's (driver's) copy parked, while the guest holds W, stopped;
@@ -14,6 +14,7 @@
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
 #        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
 # NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far.
+labsetting partner_ride_seat1_anchor=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120

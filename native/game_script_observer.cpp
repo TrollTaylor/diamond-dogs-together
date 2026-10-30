@@ -1003,6 +1003,8 @@ const char* PartnerBoardInstall(void*) noexcept {
     mgscoop::partner_board::SeatOpts opts{};
     opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
     opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
+    // Seat 1 on the driver's seat matrix (lab.ini partner_ride_seat1_anchor; design 8.33): the anchor immediate Arm writes.
+    mgscoop::partner_ride_seat::SetSeatOneAnchor(config.partner_ride_seat1_anchor);
     const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
     // M6 seat races (lab.ini partner_ride_race, off unless named; review R1/R2): site C, the pre-query's final
     // answer (the want), the guest's hold and the SEAT deny / grant. Logs partner_board=race once; a refusal
