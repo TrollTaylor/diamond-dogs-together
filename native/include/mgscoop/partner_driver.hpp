@@ -456,6 +456,9 @@ struct Hooks {
     void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
     bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
     int (*seat_shot_override)(void* context) noexcept = nullptr;
+    // The seated rider's confirmed GetOff (review of design 8.35; partner_ride_seat::ArmGetOff): the armed seat goes
+    // back to its own anchor, as the passenger's own copy plays it. May be null (the anchor stays until the revert).
+    void (*ride_seat_getoff)(void* context, std::uint8_t seat) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;

@@ -78,6 +78,13 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept;
 // partner_ride_seat=reverted; reason=..). Both are idempotent.
 bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t category = kCategoryUnknown) noexcept;
 void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcept;
+// The confirmed GetOff of an armed `seat` (review of design 8.35): the player's GetOff clips play on the seat's own
+// matrix (the passenger's own copy: rider[1] is cleared and its remap skip is back from act 112), so a seat-1 anchor
+// on seat 0 goes back to seat 1's own immediate; the driver's copy drew the get-off one seat to the left and corrected
+// 0.87 m at its end. Rewrites only the seat dword, logs partner_ride_seat_patch=getoff; seat=..; seat_dword=..;
+// anchor=..; was=.. when it wrote. False when `seat` is not the armed seat; true (nothing written) when it already
+// anchors on its own matrix. Revert restores it as any armed seat.
+bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
 bool Armed() noexcept;
 std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed
 

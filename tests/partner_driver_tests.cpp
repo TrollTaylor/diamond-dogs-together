@@ -186,7 +186,8 @@ struct Fake {
     bool peer_v6 = false;
     bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
-    unsigned seat_arms = 0, seat_reverts = 0;
+    unsigned seat_arms = 0, seat_reverts = 0, seat_getoffs = 0;
+    int seat_getoff_seat = -1;  // the seat the confirmed GetOff re-anchored (ride_seat_getoff)
     bool seat_arm_ok = true;
     int seat_armed = -1;
     int seat_arm_vehicle = -1;  // the vehicle id the seat arm named (the light-vehicle check of the seat-1 anchor)
@@ -6079,6 +6080,11 @@ void HookRideSeatRevert(void* context, const char* reason) noexcept {
     if (f.seat_armed >= 0) f.seat_revert_reason = reason ? reason : "";
     f.seat_armed = -1;
 }
+void HookRideSeatGetOff(void* context, std::uint8_t seat) noexcept {
+    Fake& f = F(context);
+    ++f.seat_getoffs;
+    f.seat_getoff_seat = seat;
+}
 struct SeatSession : Session {
     std::uint16_t ride_rev = 0;
     bool ride_sent = false;
@@ -6094,6 +6100,7 @@ struct SeatSession : Session {
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.ride_seat_getoff = HookRideSeatGetOff;
         hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
@@ -7972,14 +7979,18 @@ void TestRideSeat() {
               "advancing to entry 1 (Loop) logs the loop probe once");
         s.fake.sample.act = 112;
         Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next &&
-                  !s.driver.mission.seat.getoff_confirmed,
-              "act 112 advances to GetOff");
+                  !s.driver.mission.seat.getoff_confirmed && s.fake.seat_getoffs == 0,
+              "act 112 advances to GetOff (the anchor stays until the GetOff plays)");
         s.fake.dm.rec18 = 0xe59bbf7182faull;  // stateVehicleGetOffFrontRight
         s.fake.dm.rec1a0 = 2;
         Check(s.Step() && s.driver.mission.seat.getoff_confirmed &&
                   s.fake.Containing("partner_ride_seat=dm; when=getoff;") == 1 &&
                   s.fake.Containing("rec18=0xe59bbf7182fa; rec1a0=2;") == 1,
               "advancing to entry 2 (GetOff) logs the getoff probe once");
+        // Review of design 8.35: the GetOff plays on the seat's own matrix on the passenger's own copy, so the confirmed
+        // GetOff hands the armed seat back to its own anchor (ride_seat_getoff), once.
+        Check(s.fake.seat_getoffs == 1 && s.fake.seat_getoff_seat == 1, "the confirmed seat-1 GetOff re-anchors once");
+        Check(s.Step() && s.fake.seat_getoffs == 1, "the next tick does not re-anchor again");
 
         // Delayed seat resolution (initial seat=255 while hiding/re-showing, then usable seat=0 after 1600 ms)
         // still prepends GetOn because SeatObserveRide refreshes vehicle_since_ms when a usable seat first arrives.

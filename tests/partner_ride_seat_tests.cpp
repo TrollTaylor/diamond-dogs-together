@@ -162,8 +162,26 @@ void TestFixture() {
           "seat 1 of a light vehicle with the key arms the anchor immediate 0");
     Check(Logged("partner_ride_seat_patch=applied; seat=1; sites=") && Logged("; anchor=0; cat=1\r\n"),
           "the applied line names the anchor and the category at its end");
+    // The get-off (review of design 8.35): the passenger's own copy plays its GetOff on seat 1's own matrix (rider[1]
+    // cleared, the remap skip back at act 112), so the confirmed GetOff moves this copy's anchor back to seat 1's own
+    // immediate; without it the driver's copy drew the get-off one seat to the left and corrected 0.87 m at its end.
+    logged.clear();
+    Check(prs::ArmGetOff(image, kSpan, 1, Log) && prs::Armed() && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x01b04130u &&
+              Logged("partner_ride_seat_patch=getoff; seat=1; seat_dword=0x01b04130; anchor=1; was=0\r\n"),
+          "the seat-1 get-off re-anchors on seat 1's own matrix");
+    logged.clear();
+    Check(prs::ArmGetOff(image, kSpan, 1, Log) && !Logged("getoff") && Dword(image, c::ride_seat_rva) == 0x01b04130u,
+          "a second get-off call writes and logs nothing");
+    Check(!prs::ArmGetOff(image, kSpan, 2, Log) && Dword(image, c::ride_seat_rva) == 0x01b04130u, "another seat than the armed one is refused");
     prs::Revert(image, kSpan, Log, "seat1");
     Check(AllOriginal(image) && !prs::Armed(), "seat 1 reverted");
+    logged.clear();
+    Check(!prs::ArmGetOff(image, kSpan, 1, Log) && AllOriginal(image) && !Logged("getoff"), "the get-off writes nothing when not armed");
+    Check(prs::Arm(image, kSpan, 2, Log) && prs::ArmGetOff(image, kSpan, 2, Log) && Dword(image, c::ride_seat_rva) == 0x02b04130u &&
+              !Logged("patch=getoff"),
+          "a back seat already anchors on its own matrix: the get-off writes nothing");
+    prs::Revert(image, kSpan, Log, "seat2");
+    Check(AllOriginal(image) && !prs::Armed(), "seat 2 reverted after the get-off call");
     // The truck cab and an unknown category keep the immediate 1 with the key.
     for (const std::uint8_t cat : {std::uint8_t(3), std::uint8_t(4), prs::kCategoryUnknown}) {
         logged.clear();

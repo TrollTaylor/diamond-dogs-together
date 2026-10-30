@@ -209,6 +209,11 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
     if (wrote || was) EmitFormat(log, "partner_ride_seat_patch=reverted; reason=%s%s\r\n", reason ? reason : "unknown", "");
 }
 
+bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
+    (void)base; (void)span; (void)seat; (void)log;
+    return false;  // red stub
+}
+
 bool Armed() noexcept { return g_armed != 0; }
 std::uint8_t ArmedSeat() noexcept { return g_armed ? static_cast<std::uint8_t>(g_seat) : 0xFF; }
 #endif
