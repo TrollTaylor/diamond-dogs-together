@@ -1,6 +1,9 @@
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = 'Debug',
     [switch]$BuildOnly,
+    # The toolset environment and the CMake configure only: no compile, no checks (the worker checks' bootstrap,
+    # which configures its own profile next and compiles once).
+    [switch]$ConfigureOnly,
     # Package builds must override any ON values retained in the lab cache.
     [switch]$DisableLocalExperiments,
     # The friend/release loader (docs/two-pc-play.md "Release build"): every
@@ -19,6 +22,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Fast -and $BuildOnly) { throw '-Fast selects checks; -BuildOnly runs none.' }
+if ($ConfigureOnly -and ($BuildOnly -or $Fast)) { throw '-ConfigureOnly compiles nothing and runs no checks; it takes neither -BuildOnly nor -Fast.' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $nativeBuildDirectory = if ($BuildDirectory) {
     $requestedBuildDirectory = if ([IO.Path]::IsPathRooted($BuildDirectory)) { $BuildDirectory } else { Join-Path $projectRoot $BuildDirectory }
@@ -65,6 +69,7 @@ if ($DisableLocalExperiments -or $ReleaseGun) {
 }
 cmake @configureArguments
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed' }
+if ($ConfigureOnly) { return }
 if ($BuildOnly) {
     cmake --build $nativeBuildDirectory --target mgs_coop_probe --parallel
 } else {

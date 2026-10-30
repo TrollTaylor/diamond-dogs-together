@@ -457,6 +457,11 @@ if($LASTEXITCODE -ne 0) { throw 'nested native exit was not preserved' }
     Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $commandContext)
     & $child
     Check ($commandContext.receipt.commands.Count -eq 7 -and $commandContext.receipt.commands[-2].tag -ceq 'configure-bootstrap' -and $commandContext.receipt.commands[-1].tag -ceq 'build-loader-bootstrap') 'nested calls retain the owner receipt and both command identities'
+    # The bootstrap is a configure only (tools/build.ps1 -ConfigureOnly): a loader build there compiled every object twice
+    # per preflight (all OFF, then the profile's flags) although nothing had changed.
+    $bootstrap=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.CommandElements[0].Extent.Text -clike '*build.ps1*'},$true))
+    $bootstrapParameters=@($bootstrap|ForEach-Object{$_.CommandElements|Where-Object{$_ -is [Management.Automation.Language.CommandParameterAst]}|ForEach-Object{$_.ParameterName}})
+    Check ($bootstrap.Count -eq 1 -and $bootstrapParameters -ccontains 'ConfigureOnly' -and $bootstrapParameters -cnotcontains 'BuildOnly' -and $bootstrapParameters -ccontains 'DisableLocalExperiments') 'the worker checks bootstrap configures only (no OFF loader build before the profile build)'
     Check ([MgsCoopWorkerProcessFixture]::LastInfo.WorkingDirectory -ceq $fixture -and [MgsCoopWorkerProcessFixture]::LastInfo.FileName -ceq 'fixture-only.exe') 'nested lexical capture keeps owner executable and working directory'
     Check ([MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList.Count -eq 4 -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[1] -ceq 'literal cache space' -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[3] -ceq '3') 'nested build keeps literal paths and captured bounded jobs'
     Check (([IO.File]::ReadAllText($commandContext.receipt_path)|ConvertFrom-Json).commands.Count -eq 7 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 7) 'nested completion writes owner JSON and disposes both fake processes'

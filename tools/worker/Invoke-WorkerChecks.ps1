@@ -515,7 +515,9 @@ try {
     $receipt.source_dependencies = $sourceSnapshot.dependencies
     Write-WorkerJson $receiptPath $receipt
     Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $workerCommandContext)
-    & (Join-Path $projectRoot 'tools\build.ps1') -Configuration $Configuration -BuildOnly -DisableLocalExperiments -BuildDirectory $plan.build_directory
+    # The toolset and a configure only (-ConfigureOnly): a loader build here compiled every object twice per run, all
+    # OFF and then again with the profile's flags, even when nothing had changed.
+    & (Join-Path $projectRoot 'tools\build.ps1') -Configuration $Configuration -ConfigureOnly -DisableLocalExperiments -BuildDirectory $plan.build_directory
     # Configure every option explicitly; research/worker ON cannot leak from a
     # previous run and compilation below uses only this final profile.
     $flagArguments = @('-S', $projectRoot, '-B', $plan.build_directory) + @($plan.flags.Keys | ForEach-Object { '-D' + $_ + '=' + $plan.flags[$_] })

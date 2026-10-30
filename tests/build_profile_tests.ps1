@@ -27,7 +27,8 @@ function Assert-Cache([string]$Expected, [string]$Directory = (Join-Path $fixtur
         Assert-True ($cache -match "(?m)^${name}:BOOL=$Expected`r?$") "$name is $Expected in the real fixture cache"
     }
 }
-function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory, [switch]$Gun, [switch]$Fast, [int]$Jobs) {
+function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory, [switch]$Gun, [switch]$Fast, [int]$Jobs,
+    [switch]$ConfigureOnly, [switch]$AlsoBuildOnly) {
     $calls = [Collections.Generic.List[object]]::new()
     function cmake {
         $nativeArguments = @($args)
@@ -45,7 +46,8 @@ function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$Fai
         $global:LASTEXITCODE = 0
     }
     # NoWorkerWait: the inert fixture never waits on the machine's verify lock or game processes.
-    $parameters = @{ Configuration = 'Release'; BuildOnly = !$AllTargets; DisableLocalExperiments = $Disable.IsPresent; NoWorkerWait = $true }
+    $parameters = @{ Configuration = 'Release'; BuildOnly = (!$AllTargets -and !$ConfigureOnly) -or $AlsoBuildOnly; DisableLocalExperiments = $Disable.IsPresent; NoWorkerWait = $true }
+    if ($ConfigureOnly) { $parameters.ConfigureOnly = $true }
     if ($Gun) { $parameters.ReleaseGun = $true }
     if ($Fast) { $parameters.Fast = $true }
     if ($Jobs) { $parameters.Jobs = $Jobs }
@@ -147,6 +149,16 @@ try {
         (($fast.Calls[2].Arguments | Select-Object -Last 4) -join ' ') -ceq '-j 3 -L fast') '-Fast runs only the fast label, -Jobs sets ctest -j'
     $fastOnly = Invoke-FixtureBuild -Disable -Fast
     Assert-True ($null -ne $fastOnly.Failure -and $fastOnly.Failure.Exception.Message -match 'BuildOnly' -and $fastOnly.Calls.Count -eq 0) '-Fast with -BuildOnly is refused before any build'
+    # -ConfigureOnly (the worker checks' bootstrap, tools/worker/Invoke-WorkerChecks.ps1): the toolset and the configure
+    # only. The bootstrap's old loader-only build compiled every object twice per preflight (all OFF, then the profile).
+    $configured = Invoke-FixtureBuild -Disable -ConfigureOnly
+    Assert-True ($null -eq $configured.Failure -and $configured.Calls.Count -eq 1 -and $configured.Calls[0].Tool -eq 'cmake' -and
+        $configured.Calls[0].Arguments[0] -ceq '-S' -and $configured.Calls[0].Arguments -contains '-DMGS_BACKGROUND_WORKER=OFF') '-ConfigureOnly configures (with the explicit OFF options) and neither compiles nor runs CTest'
+    Assert-Cache 'OFF'
+    $configuredFast = Invoke-FixtureBuild -Disable -ConfigureOnly -Fast
+    Assert-True ($null -ne $configuredFast.Failure -and $configuredFast.Failure.Exception.Message -match 'ConfigureOnly' -and $configuredFast.Calls.Count -eq 0) '-ConfigureOnly with -Fast is refused before any call'
+    $configuredBoth = Invoke-FixtureBuild -Disable -ConfigureOnly -AlsoBuildOnly
+    Assert-True ($null -ne $configuredBoth.Failure -and $configuredBoth.Failure.Exception.Message -match 'ConfigureOnly' -and $configuredBoth.Calls.Count -eq 0) '-ConfigureOnly with -BuildOnly is refused before any call'
     $failed = Invoke-FixtureBuild -Disable -FailConfigure
     Assert-True ($null -ne $failed.Failure -and $failed.Failure.Exception.Message -eq 'CMake configuration failed' -and
         $failed.Calls.Count -eq 1) 'a failed configure cannot reach compilation or checks'
