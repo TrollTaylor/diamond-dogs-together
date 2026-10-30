@@ -1,0 +1,120 @@
+# The vehicle review fixes of 2026-10-29 in the lab (docs/vehicles-companions-design.md section 8.15), Africa,
+# africa-jeep seed (Masa Village; veh_lv_0000 = 25608 beside the boot spots; 25623 the unnamed soldier-crewed armoured
+# vehicle about 480 m east, side op "Eliminate the Armored Vehicle Unit 04"). Every vehicle key named (the lab keeps
+# them off unless named).
+#   A  VEHICLE_DAMAGE's host bound: the guest's lever drops its copy of 25608 to 600 (a stand-in for a hit on the
+#      guest's copy only; the seed's jeep starts near 2140) -> VEHICLE_DAMAGE -> the host takes at most half of its
+#      copy's life (applied ... cap=1) -> its VEHICLE_STATE (why=life) -> the guest's copy takes the host's life: both
+#      copies equal. Again to 300: half again. Both still equal past the host's 10 s refresh.
+#   B  D12 blast distance by type: the guest stands 35 m east of 25623 and breaks its own copy (the lever): its own
+#      copy's blast at 35 m on the guest (frames crew-blast35-*, the guest's downed_damage samples) -> REQ cause 4 ->
+#      the host holds it (break_hold why=crew_near near=partner blast_mm=50000: the guest within 50 m of the host's
+#      copy) -> the guest moves 65 m east -> the host judges it near and wrecks its copy (break_crew) with the host 60
+#      m west (frames crew-wreck-*: no knockdown on the host's screen) -> req_done; the explosion and the wreck on both
+#      screens; the host's driver ignores the players first (as in the play rehearsals).
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-review-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; break_safe or via=locator for 25623; a break_crew line before the guest's
+#        65 m teleport.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting world_vehicle_break=1
+labsetting world_vehicle_crew=1
+labsetting world_vehicle_damage=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=0; loadout=0; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=0; loadout=0; gone=1; crew=1' 30
+waitlog host 'event=vehicle_damage; step=on; mission=30020; role=host' 30
+waitlog guest 'event=vehicle_damage; step=on; mission=30020; role=guest' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+# A. The guest's lever drops on its copy of 25608, both players beside the jeep, the guards cleared.
+host debug clear_enemies 100
+wait 3000
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+both capture dmg-before
+logmark both
+guest run vehicle_life 25608 600
+guest expect vehicle_life;id=25608;life=600;was=[0-9]+;now=600;alive=1
+waitlog guest 'event=vehicle_damage; step=lever_hit' 5
+waitlog guest 'event=vehicle_damage; step=tx; id=25608; life=600; drop=[0-9]+; f=0; seq=[0-9]+' 5
+waitlog host 'event=vehicle_damage; step=applied; id=25608; from=25608; life=[0-9]+; was=[0-9]+; drop=[0-9]+; d_mm=[0-9]+; f=0; cap=1' 5
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=life;' 5
+waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608;' 5
+wait 2000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-cap1
+wait 2000
+logmark both
+guest run vehicle_life 25608 300
+guest expect vehicle_life;id=25608;life=300;was=[0-9]+;now=300;alive=1
+waitlog guest 'event=vehicle_damage; step=tx; id=25608; life=300; drop=[0-9]+; f=0; seq=[0-9]+' 5
+waitlog host 'event=vehicle_damage; step=applied; id=25608; from=25608; life=[0-9]+; was=[0-9]+; drop=[0-9]+; d_mm=[0-9]+; f=0; cap=1' 5
+waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608;' 5
+wait 2000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-cap2
+# Past the host's 10 s refresh: both copies keep the host's (capped) life.
+wait 14000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture dmg-later
+# B. D12 crew with the blast distance by type: 25623 (-374.85, -2.76, 489.18; the hull east-west, front east).
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+host debug teleport -386.85 0.50 489.18 90
+wait 3000
+host run enemy info nearest
+host run enemy ignore nearest
+wait 1500
+host debug teleport -434.85 4.00 489.18 90
+guest debug teleport -339.85 3.00 489.18 -90
+wait 4000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+guest expect vstate;id=25623;alive=1;
+both capture crew-before
+logmark both
+guest run vehicle_life 25623 0
+guest expect vehicle_life;id=25623;life=0;
+both burst crew-blast35 5 600
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25623' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25623; cause=4; sent=1' 10
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25623; cause=4' 10
+waitlog host 'event=vehicle_rules; step=break_hold; id=25623; rid=[0-9]+; why=crew_near; near=partner; d_mm=[0-9]+; crew=[1-4]; blast_mm=50000' 10
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;
+both capture crew-held
+wait 2000
+logmark both
+guest debug teleport -309.85 4.00 489.18 -90
+both burst crew-wreck 6 500
+waitlog host 'event=vehicle_rules; step=break_judge; id=25623; rid=[0-9]+; ok=1; why=near;' 15
+waitlog host 'event=vehicle_rules; step=break_crew; id=25623; rid=[0-9]+; crew=[1-4]' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25623; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25623; result=gone' 15
+wait 4000
+both burst crew-after 4 1000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=0;
+guest run vehicle_state_status 25623
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state
