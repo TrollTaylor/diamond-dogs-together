@@ -78,9 +78,6 @@ bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) no
 // also reads the target offset CAM+0x150..0x15C (RaiseView::target).
 bool ReadRaise(const void* base, std::uintptr_t P, RaiseView& out) noexcept;
 bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float raise) noexcept;
-// Design 8.35: the seated aim lift. on: CAM+0x154 = raise, only over the stock 0 (|y| < kLiftZeroM); off: CAM+0x154 = 0,
-// only while it still holds raise. False when the camera is not found, the value is not the expected one, or a fault.
-bool WriteLift(const void* base, std::uintptr_t P, bool on, float raise) noexcept;
 // Design 8.33, the camera after a get-off: the stock rotation request of PlayerCamera vt+0xE0 0x111A920 (its fields and
 // gate; no game function is called): nullptr when made, else camera / busy / locked / fault. Counted in Stats::turns.
 const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept;

@@ -961,96 +961,6 @@ void TestTurnStep() {
 }
 
 // The native writes on a synthetic camera: the aim module's object, the request fields.
-// Design 8.35 [O 89cfa402]: the seated aim lift (CAM+0x154 while the local passenger aims seated in the aim module with
-// CAM+0x204 bit 2 clear: the stock never adds the entry then).
-void TestLiftPlan() {
-    pc::Lift l{};
-    pc::LiftIn in{};
-    in.want = in.aiming = in.aim_module = in.flags_ok = in.target_ok = true;
-    in.flags = 0x63110u;
-    in.target_y = 0.0f;
-    const char* why = nullptr;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::lift && Same(why, "lift"), "lift: aiming seated, bit 2 clear, the target 0");
-    pc::LiftDone(l, pc::LiftWrite::lift, true);
-    Check(l.active && l.lifts == 1, "lift: active after the write");
-    in.target_y = pc::kRaiseM;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "held"), "lift: held");
-    in.target_y = 0.0f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::lift && Same(why, "rewrite") && l.rewrites == 1, "lift: the game wrote 0 back: lifted again");
-    pc::LiftDone(l, pc::LiftWrite::lift, true);
-    Check(l.lifts == 1 && l.active, "lift: a rewrite is not a new lift");
-    in.target_y = pc::kRaiseM;
-    in.aiming = false;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::drop && Same(why, "drop"), "lift: the aim ends: dropped while ours");
-    pc::LiftDone(l, pc::LiftWrite::drop, true);
-    Check(!l.active && l.drops == 1, "lift: dropped");
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "none"), "lift: nothing while not aiming");
-    in.aiming = true;
-    in.target_y = 0.0f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::lift, "lift: the next aim lifts again");
-    pc::LiftDone(l, pc::LiftWrite::lift, true);
-    in.aiming = false;
-    in.target_y = 0.7f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "gone") && !l.active, "lift: another target at the aim end is left alone");
-    in.aiming = true;
-    in.target_y = 0.0f;
-    in.flags = 0x63114u;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "params"), "lift: bit 2 set: the stock applies the entry itself");
-    in.flags = 0x63110u;
-    in.aim_module = false;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "none"), "lift: not the aim module");
-    in.aim_module = true;
-    in.target_y = 0.3f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "target") && !l.refused, "lift: a target that is not 0 waits (no latch)");
-    in.target_ok = false;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "camera"), "lift: the target unread");
-    in.target_ok = true;
-    in.target_y = 0.0f;
-    in.flags_ok = false;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "camera"), "lift: CAM+0x204 unread");
-    in.flags_ok = true;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::lift, "other: lift");
-    pc::LiftDone(l, pc::LiftWrite::lift, true);
-    in.target_y = 0.25f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "other") && !l.active && Same(l.refused, "other"),
-          "other: someone else's value while ours: refused");
-    in.target_y = 0.0f;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && Same(why, "other"), "other: latched for the boarding");
-    in.want = false;
-    Check(pc::LiftPlan(l, in, why) == pc::LiftWrite::none && !l.refused, "other: the boarding end clears the latch");
-    pc::Lift r{};
-    in.want = true;
-    Check(pc::LiftPlan(r, in, why) == pc::LiftWrite::lift, "cap: lift");
-    pc::LiftDone(r, pc::LiftWrite::lift, true);
-    for (std::uint32_t i = 0; i < pc::kLiftRewriteMax; ++i) pc::LiftDone(r, pc::LiftPlan(r, in, why), true);
-    Check(r.rewrites == pc::kLiftRewriteMax && r.active, "cap: lifted again up to the cap");
-    Check(pc::LiftPlan(r, in, why) == pc::LiftWrite::none && Same(why, "rewritten") && !r.active, "cap: then refused for the boarding");
-    pc::Lift f{};
-    Check(pc::LiftPlan(f, in, why) == pc::LiftWrite::lift, "fail: lift");
-    pc::LiftDone(f, pc::LiftWrite::lift, false);
-    Check(!f.active && f.lifts == 0, "fail: a failed lift is not active (tried again next tick)");
-}
-
-void TestLiftWrites() {
-    pc::detail::ResetForTest();
-    Chain k;
-    pc::RaiseView v{};
-    Chain::Put<std::uint32_t>(k.cam, pc::kCamFlags, 0x63110u);
-    Check(pc::ReadRaise(k.Base(), k.P(), v) && v.flags_ok && v.flags == 0x63110u, "CAM+0x204 is read with the raise view");
-    Check(pc::WriteLift(k.Base(), k.P(), true, pc::kRaiseM), "lift over the stock 0");
-    float y = 0.0f;
-    std::memcpy(&y, k.cam + pc::kCamAimTarget + 4, 4);
-    Check(y == pc::kRaiseM, "CAM+0x154 = the raise");
-    Check(!pc::WriteLift(k.Base(), k.P(), true, pc::kRaiseM), "no lift over a value that is not 0");
-    Check(pc::WriteLift(k.Base(), k.P(), false, pc::kRaiseM), "drop ours");
-    std::memcpy(&y, k.cam + pc::kCamAimTarget + 4, 4);
-    Check(y == 0.0f, "CAM+0x154 = 0 again");
-    Chain::Put<float>(k.cam, pc::kCamAimTarget + 4, 0.7f);
-    Check(!pc::WriteLift(k.Base(), k.P(), false, pc::kRaiseM), "no drop over another value");
-    std::memcpy(&y, k.cam + pc::kCamAimTarget + 4, 4);
-    Check(y == 0.7f, "another value is left alone");
-}
-
 void TestRaiseAndTurnWrites() {
     pc::detail::ResetForTest();
     Chain k;
@@ -1137,7 +1047,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 19,
+    Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 18,
           "eighteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.33: the aim module's "
           "variant entry and the rotation request)");
     bool pinned = false, solve = false, collision = false;
@@ -1170,7 +1080,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=19"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=18"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }
@@ -1212,8 +1122,6 @@ int main() {
     TestRaisePlan();
     TestTurnStep();
     TestRaiseAndTurnWrites();
-    TestLiftPlan();
-    TestLiftWrites();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

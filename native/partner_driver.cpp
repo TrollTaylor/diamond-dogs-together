@@ -3164,20 +3164,6 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
 void RaiseRevert(Driver& d, const Hooks& h, const char* reason) noexcept {
     namespace pc = partner_pass_camera;
     auto& c = d.mission.pass_camera;
-    // Design 8.35: the seated aim lift (CAM+0x154) is written back the same way (only while it is still ours).
-    if (c.lift.active) {
-        bool lok = false;
-        if (h.pass_camera_lift && c.lift_p) {
-            pp::State st{};
-            st.P = c.lift_p;
-            lok = h.pass_camera_lift(h.context, st, false, pc::kRaiseM);
-        }
-        pc::LiftDone(c.lift, pc::LiftWrite::drop, lok);
-        c.lift_p = 0;
-        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                    "partner_ride=pass_camera; state=lift; event=drop; reason=%s; ok=%u; lifts=%u; drops=%u; rewrites=%u\r\n", reason,
-                    lok ? 1u : 0u, c.lift.lifts, c.lift.drops, c.lift.rewrites);
-    }
     if (!c.raise.applied) return;
     const int index = c.raise.index;
     bool ok = false;
@@ -3299,44 +3285,6 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                         c.raise.applies, c.raise.restores, c.raise.retries, c.raise.abandoned);
         }
         if (!raise_want) c.raise_logged = nullptr;
-    }
-    // Design 8.35 [O 89cfa402]: in the seated aim CAM+0x204 bit 2 stays clear, so the stock never adds the entry above;
-    // the lift writes the raise into the target offset's y (CAM+0x154) while the local passenger aims seated in the aim
-    // module, and writes 0 back when the aim ends (partner_pass_camera_policy LiftPlan).
-    if (d.pass_camera_installed && h.pass_camera_raise_read && h.pass_camera_lift && (raise_want || c.lift.active)) {
-        pc::RaiseView lv{};
-        const bool lv_ok = h.pass_camera_raise_read(h.context, st, lv) && lv.ok;
-        pc::LiftIn li{};
-        li.want = raise_want;
-        li.aiming = aiming;
-        li.aim_module = h.pass_camera_mvt && h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva;
-        li.flags_ok = lv_ok && lv.flags_ok;
-        li.flags = lv.flags;
-        li.target_ok = lv_ok && lv.target_ok && std::isfinite(lv.target[1]);
-        li.target_y = lv.target[1];
-        li.raise = pc::kRaiseM;
-        const char* why = "none";
-        const pc::LiftWrite lw = pc::LiftPlan(c.lift, li, why);
-        bool ok = false;
-        if (lw != pc::LiftWrite::none) ok = h.pass_camera_lift(h.context, st, lw == pc::LiftWrite::lift, pc::kRaiseM);
-        pc::LiftDone(c.lift, lw, ok);
-        if (lw == pc::LiftWrite::lift && ok) c.lift_p = st.P;
-        if (lw == pc::LiftWrite::drop) c.lift_p = 0;
-        const bool rewrite = std::strcmp(why, "rewrite") == 0;
-        const bool refusal = std::strcmp(why, "params") == 0 || std::strcmp(why, "target") == 0 || std::strcmp(why, "other") == 0 ||
-                             std::strcmp(why, "rewritten") == 0 || std::strcmp(why, "gone") == 0;
-        // Writes are logged (a rewrite once: the first, with its count in the later lines), a refusal once per reason.
-        if ((lw != pc::LiftWrite::none && (!rewrite || c.lift.rewrites == 1)) || (refusal && why != c.lift_logged)) {
-            if (refusal) c.lift_logged = why;
-            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
-                        "partner_ride=pass_camera; state=lift; event=%s; vehicle=%u; seat=%u; reason=%s; ok=%u; y_cm=%d; f204=0x%x; lifts=%u; "
-                        "drops=%u; rewrites=%u\r\n",
-                        lw == pc::LiftWrite::lift ? "lift" : lw == pc::LiftWrite::drop ? "drop" : "refused", unsigned(lp.vehicle),
-                        unsigned(lp.seat), why, ok ? 1u : 0u,
-                        li.target_ok && std::fabs(li.target_y) < 2.0e7f ? static_cast<int>(li.target_y * 100.0f) : INT32_MIN,
-                        unsigned(lv.flags), c.lift.lifts, c.lift.drops, c.lift.rewrites);
-        }
-        if (!raise_want && !c.lift.active) c.lift_logged = nullptr;
     }
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",

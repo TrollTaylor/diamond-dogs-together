@@ -461,8 +461,6 @@ struct Hooks {
     bool (*pass_camera_raise_read)(void* context, const partner_player::State& state, partner_pass_camera::RaiseView& out) noexcept = nullptr;
     bool (*pass_camera_raise_write)(void* context, const partner_player::State& state, int index, bool on, float raise) noexcept = nullptr;
     const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
-    // Design 8.35: the seated aim lift (partner_pass_camera::WriteLift). Null: no lift.
-    bool (*pass_camera_lift)(void* context, const partner_player::State& state, bool on, float raise) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -797,10 +795,6 @@ struct Mission {
         const char* raise_logged;
         std::uintptr_t raise_p;  // the player block P the raise was applied through (the teardown's restore uses it)
         partner_pass_camera::Turn turn;
-        // Design 8.35: the seated aim lift (CAM+0x154), the P it was written through, its last refusal logged.
-        partner_pass_camera::Lift lift;
-        std::uintptr_t lift_p;
-        const char* lift_logged;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).
