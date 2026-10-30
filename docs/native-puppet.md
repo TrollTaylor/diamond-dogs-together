@@ -933,7 +933,7 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 
 ### Seat shot (S1)
 
-M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30). Key `partner_seat_shot=0|1` (`_given`):
+M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31). Key `partner_seat_shot=0|1` (`_given`):
 **off unless named, in lab and play** (built and tested; it showed no effect in the runs, so nothing flips). Lab
 lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
@@ -941,23 +941,29 @@ lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that 
 light vehicle, seat 1 of a truck) and the fire filter's RequestBullet hook is live, the driver tick publishes the ridden
 vehicle's record (position, yaw; the class from its category `+0x6C >> 4`), the seat, the owner and this copy's aim
 target `Q+0x10[local]` through a seqlock (`partner_fire_filter::PublishSeatShot`). The hook (`Hook`, slot 0 of
-`0x2337DE8` / `0x2337D18`), for a request of that owner and a publication at most 500 ms old, forwards a COPY of the
+`0x2337DE8` / `0x2337D18`), for a request of that owner and a publication at most 50 ms old, forwards a COPY of the
 record (0x34 bytes, what RequestBullet's slot copy `0xD32690` reads) whose start (`+0x00`) moves along its own direction
-(`+0x10`) to where the line leaves the vehicle's box, +5 cm, never closer than 0.3 m to the target. The caller's record
+(`+0x10`) to where the line leaves the vehicle's box, +5 cm, never closer than 0.3 m to the target; a start outside
+the box is never moved (`result=outside`: the seated muzzle is always inside, so the pose is stale or wrong). The caller's record
 is never written: the shot handler `0x1302F50` re-uses it for every pellet (`0x130342E`). Boxes in the vehicle frame
 (forward `(sin yaw, 0, cos yaw)`, right `(-cos yaw, 0, sin yaw)`, origin the record, near the ground): light vehicle
-centre 0.2 m back and 1.0 m up, half extents 2.5 x 1.15 x 1.25 m; truck centre 0.5 m back and 1.6 m up, 4.2 x 1.45 x
-1.9 m. Local only (the shooter's copy decides hits; world sync carries them); no wire change.
+centre 0.2 m back and 1.0 m up, half extents 2.2 x 1.0 x 1.25 m (the jeep, ~4.2 x 1.9 m [I], plus ~5 cm a side: a
+bigger box would let the start skip a wall the jeep stands against; 8.31); truck centre 0.5 m back and 1.6 m up, 4.2 x
+1.45 x 1.9 m. Local only (the shooter's copy decides hits; world sync carries them); no wire change.
 
 **Why.** The reticle and the shot's target come from the camera's look ray (`Q+0x10[local]`, written at `0x111931C`),
 which skips the ridden jeep while the passenger camera's handle is set; the bullet starts at the muzzle on the seated
 body (`0x1044FF0`, low in the cabin) and the hit loop skips only the shooter's own character (`0xD2DC60`), never a
-vehicle [O code]. So a line from the muzzle that crosses the jeep's body would end at the jeep [I]. Contract:
-`SEAT_SHOT_SITES` (`tools/generate_partner_contract.py`).
+vehicle [O code]. So a line from the muzzle that crosses the jeep's body would end at the jeep [I]. Contract
+(`tools/generate_partner_contract.py`): `SEAT_SHOT_SITES` (in the partner's all-or-nothing code gate) holds only what
+the hook relies on, the record copy `0xD32690` and the pellet store `0x130342E`; the static facts above
+(`SEAT_SHOT_FACTS`: `0xD2DC60`, `0x108B0FC`, `0x11192C5`, `0x1119314`, `0x1041214`) are checked by the generator
+against the executable and never gated. `seat_shot_assertions` reads the pellet loop from the executable: the store
+runs straight into the slot call `0x130343C` and the loop jumps back above it.
 
 **Lines.** `partner_seat_shot=configured; key=..; play=..` once; `published; vehicle=..; seat=..; class=light|truck;
 cat=..; apply=0|1; source=key|lever; veh_cm=..; yaw_mrad=..; body_cm=..; target=..` on each change; one `shot;
-result=shift|census|clear|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
+result=shift|census|outside|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
 o_cm=..; d_milli=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
 only) and `withdrawn; reason=..`. Off on a lab copy still plans every seated shot (`result=census`, nothing moved); off
 in play publishes nothing.

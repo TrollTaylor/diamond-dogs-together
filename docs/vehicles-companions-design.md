@@ -2984,14 +2984,20 @@ bullet start past the ridden vehicle's box (a copy of the record; lab lever `sea
 ones). Hidden runs (frames looked at; session scratch `complete/frames/m6m7b-shoot2/`, archives
 `%USERPROFILE%\mgs-coop-run-archive\m6m7b\<id>`):
 
-- [O] `0af9baa3` (lab, africa-jeep; every expectation met, Forced=True). On-foot control: the guest's shot put a guard
-  lying 6.8 m away to Dying (`event=req` / host `commit ... actor=guest`). Guest in back seat 3, the host driving: the
-  reticle red on that dying guard 8.6 m out across the jeep, and the FIRST shot with S1 off killed him (`obs; m=Dead;
-  att=local` right after the census line); a second, awake guard (the sleep lever had taken the nearest, dying one)
-  then died to the first S1-on shot (frames `a-on-aim`: the reticle on his chest; `a-on-1`: knocked down). Roles
-  reversed (the host in seat 3, the guest driving), a sleeping guard 9.4 m out died to one shot (S1 on; host `commit
-  ... actor=host`, guest `apply`). Census: the muzzle on the jeep's centre line 1.37-1.45 m above its record, the line
-  7 deg down, exit from the box 1.12 m: such a line clears the far side.
+- [O] `0af9baa3` (lab, africa-jeep, the build before the `7a9a334` merge; every expectation met, Forced=True).
+  On-foot control: the guest's shot put a guard lying 6.8 m away to Dying on the guest's copy (`event=req` / host
+  `commit ... actor=guest`); on the host the Dying apply failed (`apply; state=4; result=fail; readback=2`), so he
+  stayed asleep there. Guest in back seat 3, the host driving: the reticle red on that dying guard 8.6 m out across
+  the jeep, and the FIRST shot with S1 off killed him (`obs; m=Dead; att=local` right after the census line). Part A's
+  sleep lever had taken that same guard again (still asleep on the host), so the new guard 2 stayed awake: he shot at
+  the guest and walked 12.7 m off before a correction warp; he then died to the first S1-on shot (frames `a-on-aim`:
+  the reticle on his back; `a-on-1`: knocked down). The S1-off and S1-on kills were therefore at different kinds of
+  target (a dying, lying guard; an awake, standing one): not a controlled A/B. Roles reversed (the host in seat 3, the
+  guest driving), a sleeping guard 9.4 m out died to one shot (S1 on; host `commit` state 4 then state 5, one Dead
+  commit per kill; guest `apply`); only the first of the host's three shots fired. Frames show the target and the kill
+  on the shooter's copy only: the driver's copy faced away (the jeep and a watchtower), so there each kill is proven by
+  the `commit` / `apply` lines. Census: the muzzle on the jeep's centre line 1.37-1.45 m above its record, the line 7
+  deg down, exit from the box 1.12 m: such a line clears the far side.
 - `3d452714` (lab): stopped before any shot: since the seats-on merge the race gives the empty jeep to a guest standing
   at the driver's door, and the host yielded (`host require vehicle;id=` failed); the scenarios step the guest away now.
 - [O] `a9d0af0f` (lab; Forced=False; 3 expect misses, no shot): from back seat 2 aiming steeply across the jeep at a
@@ -3004,7 +3010,8 @@ ones). Hidden runs (frames looked at; session scratch `complete/frames/m6m7b-sho
   jeep's life 2260 before and after; `partner_seat_shot=refused; reason=key_off` once per boarding; no fault. No target:
   play refuses the lab soldier warp and the route spot was 175 m away (`enemy sleep` found none), so no kill in play
   (6 expect misses: the two sleep levers and the four kill lines).
-- **Verdict.** Seated shots land where the reticle is in both role orders [O]. S1 changed nothing that the runs could
+- **Verdict.** Seated shots land where the reticle is in both role orders [O: back seat 3, lab, a stopped jeep, 8.5-9.4
+  m, frames on the shooter's copy; seat 2 and play had no hit, see 8.31]. S1 changed nothing that the runs could
   see: one S1-off shot hit, and the lines into the jeep were refused by the stock gun. The earlier misses (8.22) fit
   the camera's swing to the sky at the shot, fixed since 8.27 / 8.28 and on in play [I strong]. `partner_seat_shot`
   stays off in lab and play (a lab key and safeguard); a line the gun accepts but the jeep's body stops is [U].

@@ -1,8 +1,10 @@
 ## 2026-10-30: seated shots land; the bullet-start fix S1 built, kept off (branch `wp/seat-shoot2`)
 
-**Shooting from a back seat hits [O]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, the first shot killed a
-guard 8.5-9.4 m out across the jeep in both role orders (guest: `event=req` + host `commit actor=guest`; host: one
-`commit actor=host`), frames on both copies; on-foot control in the same run. One of those kills came with S1 off: the
+**Shooting from the right back seat hits [O, lab]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, a stopped
+jeep, the first shot killed a guard 8.5-9.4 m out across the jeep in both role orders (guest: `event=req` + host `commit
+actor=guest`; host: `commit` state 4 then state 5, one Dead commit per kill), frames on the shooter's copy (on the other
+copy the kill by its `commit` / `apply` lines); on-foot control in the same run (Dying on the guest's copy only: the
+host's apply failed, readback 2). One of those kills came with S1 off: the
 earlier misses (8.22) fit the camera's sky swing, fixed by `partner_pass_camera=aim` (on in play since 8.27) [I].
 Built: `partner_seat_shot` (S1: the RequestBullet hook moves a seated passenger's bullet start past the ridden
 vehicle's box; lab lever `seatshot`; contract `SEAT_SHOT_SITES`, 829 sites / 209 slots; failing first `bbe8160` ->
