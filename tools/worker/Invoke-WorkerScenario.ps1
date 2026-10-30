@@ -16,6 +16,11 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
 
   title [timeoutSec]               press Enter on each role until it reports gameplay ready
   title <host|guest> [timeoutSec]  the same for one role only (the other stays where it is)
+  titlecontinue <host|guest> <timeoutSec>
+                                   after titlemenu: Enter every 3 s only while that role's title runs (loading.json
+                                   phase running for 40010/40020/40050; its menu takes it as Continue) and stop once
+                                   its loading.json names another mission, so its next loading screen is never
+                                   pressed (then waitmission <other> <m> <s> only: the partner in game first)
   titlemenu <host|guest|both> <timeoutSec>
                                    press Enter every 3 s only while the role is still at the boot
                                    screens (state.json mission 0 or 1, or no state yet) and stop once
@@ -313,6 +318,7 @@ foreach($line in $steps){
         '^title$' {$t.Count -eq 1 -or ($t.Count -eq 2 -and $t[1] -cmatch '^[0-9]{1,3}$' -and [int]$t[1] -ge 5 -and [int]$t[1] -le 400) -or
             ($t.Count -in 2,3 -and $t[1] -cin 'host','guest' -and ($t.Count -eq 2 -or ($t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400)))}
         '^titlemenu$' {$t[0] -ceq 'titlemenu' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest','both' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
+        '^titlecontinue$' {$t[0] -ceq 'titlecontinue' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
         '^logmark$' {$t[0] -ceq 'logmark' -and $t.Count -eq 2 -and $t[1] -cin 'host','guest','both'}
         '^waitlog$' {$t[0] -ceq 'waitlog' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and $t[-1] -cmatch '^[0-9]{1,3}$' -and [int]$t[-1] -ge 1 -and [int]$t[-1] -le 400 -and
             $null -ne (ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)]))}
@@ -968,7 +974,7 @@ function Get-ScenarioStepRoles([string[]]$Tokens){
     if($t[0] -ceq 'title'){if($t.Count -ge 2 -and $t[1] -cin 'host','guest'){return @($t[1])};return @('host','guest')}
     if($t[0] -ceq 'boot'){return @('host','guest')}
     if($t[0] -ceq 'titlemenu'){if($t[1] -ceq 'both'){return @('host','guest')};return @($t[1])}
-    if($t[0] -cin 'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall'){return @($t[1])}
+    if($t[0] -cin 'waitmission','waitgameplay','stance','resetpose','waitexit','expectstate','stall','titlecontinue'){return @($t[1])}
     if($t[0] -cin 'placebehind','heldcapture','aimturn'){return @($t[1],$t[2])}
     if($t[0] -ceq 'both'){return @('host','guest')}
     return @($t[0])
@@ -1017,6 +1023,32 @@ function Invoke-ScenarioTitleMenu([string[]]$Roles,[int]$TimeoutSec){
         }
         if(!$pending.Count){return}
         if((Get-ScenarioTick) -ge $limit){throw "[$($pending -join ',')] did not reach a title (40010/40020/40050) within $TimeoutSec s."}
+        Start-Sleep -Milliseconds 3000
+    }
+}
+# titlecontinue, one role at its title: 'press' while its title mission (40010/40020/40050) runs (loading.json phase
+# running: the title menu takes the Enter as Continue), 'wait' while the title is still loading or already ending (or
+# nothing owned is known), 'done' once its loading.json or state.json names another mission (the Continue's
+# allocation): its next loading screen is never pressed, so 'waitmission <other> <mission> <s> only' can bring the
+# partner in game first (D11 before PAIRED in -Mode play, the vehicle review of 2026-10-29).
+function Get-ScenarioTitleContinueAction([string]$Role,$State,$Loading){
+    $titles=@(40010,40020,40050)
+    $stateOk=$State -is [Collections.IDictionary] -and $State['run_id'] -ceq $runId -and $State['role'] -ceq $Role
+    $loadingOk=$Loading -is [Collections.IDictionary] -and $Loading['run_id'] -ceq $runId -and $Loading['role'] -ceq $Role
+    $stateMission=if($stateOk){[int64]$State['mission']}else{[int64]-1}
+    $loadingMission=if($loadingOk){[int64]$Loading['mission']}else{[int64]-1}
+    if($loadingOk -and $loadingMission -notin $titles -and $loadingMission -notin 0,1){return 'done'}
+    if($stateOk -and $stateMission -notin $titles -and $stateMission -notin 0,1){return 'done'}
+    if($loadingOk -and $loadingMission -in $titles -and [string]$Loading['phase'] -ceq 'running'){return 'press'}
+    return 'wait'
+}
+function Invoke-ScenarioTitleContinue([string]$Role,[int]$TimeoutSec){
+    $limit=(Get-ScenarioTick)+1000*$TimeoutSec
+    while($true){
+        $action=Get-ScenarioTitleContinueAction $Role (Read-RoleRaw $Role) (Read-RoleLoadingRaw $Role)
+        if($action -ceq 'done'){Write-Host "  $Role left its title (Continue)";return}
+        if($action -ceq 'press'){$null=Send-Step $Role @{Operation='press';Keys='enter';DurationMs=120}}
+        if((Get-ScenarioTick) -ge $limit){throw "[$Role] did not leave its title within $TimeoutSec s."}
         Start-Sleep -Milliseconds 3000
     }
 }
@@ -1356,6 +1388,7 @@ try {
             continue
         }
         if($t[0] -ceq 'titlemenu'){Invoke-ScenarioTitleMenu @(Get-ScenarioStepRoles $t) ([int]$t[2]);continue}
+        if($t[0] -ceq 'titlecontinue'){Invoke-ScenarioTitleContinue $t[1] ([int]$t[2]);continue}
         if($t[0] -ceq 'logmark'){foreach($r in @(if($t[1] -ceq 'both'){'host','guest'}else{$t[1]})){Set-ScenarioLogMark $r};continue}
         if($t[0] -ceq 'waitlog'){
             $pattern=ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)])
