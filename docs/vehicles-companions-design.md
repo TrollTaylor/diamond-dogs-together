@@ -3075,7 +3075,7 @@ both copies, frames looked at (session scratch `complete/frames/m6m7b-integrate2
 - Never seen: `step=error`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`, two Dead commits for
   one guard. Not proven: a moving jeep, two PCs, a 0.14.4 partner; design B (the driver sees the raised gun).
 
-### 8.33 Results: S1 on, a seated passenger's shots no longer hit their own jeep (2026-10-30, branch `wp/self-hit`)
+### 8.33 Results: S1 on in lab, a seated passenger's shots start past their own jeep (2026-10-30, branch `wp/self-hit`)
 
 The user saw shots toward the shooter's own jeep damage it (8.32; `37b94432` burned). S1 (8.30 / 8.31, docs/native-puppet.md
 "Seat shot (S1)") follows the native gun profile in lab and play since `50e97a0` (failing first `c1465ce`: `lab_config`
@@ -3100,6 +3100,20 @@ changed (contract 824 / 209). Hidden runs (archives `D:\mgs-coop-run-archive\m6m
   killed a guard 8 m out (shot 1), seat 2 one 22 m out across the jeep (shots 1-2); `shift` exits 0.44-1.62 m; life 2300
   on both copies before, after and parked; no never-line. Not discriminating (review): neither line was shown to hit the
   jeep in stock (seat 3's 8 m line killed in `299de3e1` without, by arithmetic, damaging it).
+
+**Review round (same branch).** Code [O]: the hook judged freshness on a fixed 50 ms window read with GetTickCount64
+(15.6 ms steps) while the driver publishes once per tick, so a 25-30 fps copy could judge a parked seated shot stale and
+send the stock shot [I]. Now `MaxAgeMs` allows 1 m of drift at the vehicle's speed from the driver's last two
+publications (50 ms at 20 m/s and over or speed unknown, up to 250 ms parked) on a QueryPerformanceCounter clock; a stale
+shot logs `result=stale` and every shot line carries `age_ms` / `max_ms` (failing first `4300b51`, fix `5e1873c`;
+unit-tested, no hidden run). The discriminating play run `m6m7c-self-hit-play2.txt` (four shots each on stock-hit lines:
+the host in seat 2 across the jeep to the right, the guest in seat 3 at the front-right guard) could not run: both
+attempts (`ca49439f`, `eb4d3a3e`) ended IsolationFailed with `child_exited_before_admission` (the guest worker refused
+`required_hooks_or_private_desktop`; every hidden run on this machine from 14:04 ended the same). So the play default is
+back OFF (`fbf6328`, failing first `e6d06b8`): S1 follows the gun profile in lab and runs in play only with a named 1.
+Flip it once that run passes on both copies. Not proven: seat 1 and the truck cab, a moving jeep, launchers and thrown
+items (S1 moves only RequestBullet's bullets), two PCs, a 0.14.4 partner (local only, no wire change [I]). `c1465ce`'s
+message calls `66ad131f`'s S1 shots "the same line": they were on the rear-left re-aim line.
 
 ## 9. Milestones
 
@@ -3593,8 +3607,8 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   **Merged (8.32, `e694c92`): a seated kill in play** (`299de3e1`, seat 3, one Dead commit); seat 1 and seat 2 hit to
   Dying in play; shots toward the jeep's own body damage it (S1's case, S1 off). Not met: `m7-partner-gun`, a moving
   jeep, the truck cab, two-PC.
-  **S1 on (8.33, `wp/self-hit`): shots no longer hit the shooter's own jeep** (lab A/B `8a920ec8` on one line: 702 life
-  lost with S1 off, none with S1; play `41dcbf22`: both back seats killed, the life unchanged on both copies).
+  **S1 on in lab only (8.33, `wp/self-hit`)**: the lab A/B `8a920ec8` on one line (702 life lost with S1 off, none with
+  S1); play waits for the discriminating run `m6m7c-self-hit-play2.txt` (`41dcbf22` fired on no stock-hit line).
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

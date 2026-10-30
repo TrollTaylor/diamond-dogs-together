@@ -1,19 +1,18 @@
-## 2026-10-30: a seated passenger's shots no longer hit their own jeep (branch `wp/self-hit`, local only)
+## 2026-10-30: a seated passenger's shots start past their own jeep, lab only (branch `wp/self-hit`, local only)
 
-**Play default flipped:** S1 (`partner_seat_shot`: a seated passenger's bullet starts where its line leaves the ridden
-jeep's box) is **on with the native gun profile in lab and play** (`50e97a0`, failing first `c1465ce`); a named 0 opts
-out. No wire change, no new patch site (contract 824 / 209, `--check` ok). Design 8.33.
-**Why [O]:** lab `8a920ec8` (back seat 3, the same line, a guard 22 m front-right): one stock shot (lever `seatshot off`)
-put him to Dying AND took 702 life off the shooter's copy of the jeep (2300 -> 1598; the host's copy kept 2300 and
-resent it); two S1 shots on that line left 1598. [O] After the first seated aim the test lever's camera request is
-taken relative to the jeep (`66ad131f`), which is how `299de3e1`'s later shots were turned into the jeep [I strong].
-**Proof [O, both copies, frames looked at]:** play rehearsal `41dcbf22` (`-Mode play -WanSim bad`, shipped defaults; RTT
-177-183 ms, loss 2.4-3.7 %): back seat 3 (guest) killed a sleeping guard 8 m out with its first shot (guest `req` state
-5, host `commit actor=guest`), back seat 2 (host) killed one 22 m out across the jeep (host `commit` 4 then 5
-`actor=host`, guest `apply` 5 ok); every shot `result=shift`; the jeep's life 2300 before and after on both copies, parked
-intact. Lab `8a920ec8`: seat 2 put a guard 22 m out to Dying, the life unchanged on both copies. All Closed, Baseline,
-RealSaves; play Forced=False; no never-line. **Not proven:** seat 1 and the truck cab (S1 covers them; not run), a moving
-jeep, two PCs, a 0.14.4 partner (local only: unaffected [I]); cover within ~10 cm of the jeep is skipped [I, the box].
+**Play defaults: unchanged.** S1 (`partner_seat_shot`: a seated passenger's bullet starts where its line leaves the ridden
+jeep's box) follows the native gun profile **in lab**; play runs it only with a named 1 (`fbf6328`, failing first
+`e6d06b8`; it takes back the play half of `50e97a0`). No wire change, no new patch site (824 / 209).
+**Why [O]:** lab `8a920ec8`, back seat 3, one line (a guard 22 m front-right): one stock shot cost the shooter's copy of
+the jeep 702 life; two S1 shots on that line cost none (they did not hit the guard, already Dying). `66ad131f`'s 702 came
+from ONE of two stock shots (which one [U]); whether the lever's jeep-relative re-aim caused `299de3e1`'s damage is [U]
+(the front-right line itself costs 702 a hit). Play `41dcbf22` (shipped defaults then, `-WanSim bad`) shifted every shot
+and kept the life 2300 on both copies, but fired on no line shown to hit the jeep in stock (review): not a proof.
+**Review fix:** S1's freshness window follows the vehicle's speed (50-250 ms, QPC clock; `result=stale`, `age_ms` /
+`max_ms` on the shot line; `5e1873c`, failing first `4300b51`; unit-tested). **Blocked:** the discriminating play run
+`m6m7c-self-hit-play2.txt` failed twice before admission (IsolationFailed, `child_exited_before_admission`; every hidden
+run on this machine from 14:04 ended the same). **Next:** run it; flip S1 on in play if the life holds on both copies.
+**Not proven:** seat 1, truck cab, a moving jeep, launchers / thrown items, two PCs, a 0.14.4 partner.
 
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
 
