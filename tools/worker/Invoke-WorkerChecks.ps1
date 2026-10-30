@@ -17,8 +17,11 @@ programs come from one checked build of one source snapshot.
 The audited tests run with ctest -j -TestJobs (default half the logical
 processors, at most 16); cmake/test_labels.cmake keeps -j safe.
 -Reuse (what Invoke-WorkerScenario.ps1 asks for): when the profile's newest receipt passed for the identical
-source snapshot, flags, tests and built programs (Get-WorkerReuseRefusal), print that receipt and stop: nothing
-is configured, built or run. Never for -Profile Release (tools/package.ps1 -CheckReceipt needs a fresh receipt).
+source snapshot, test inputs (every file under cmake, native, lua, tests and tools: fixtures and scenarios too),
+flags, tests, cache options and built programs (Get-WorkerReusableReceipt), print that receipt and stop: nothing
+is configured, built or run. Never for -Profile Release: the release gate always runs in full (tools/package.ps1
+-Friend runs it without -Reuse; -CheckReceipt takes an existing passing Release receipt whose source and programs
+still match).
 #>
 [CmdletBinding()]
 param(
@@ -435,11 +438,36 @@ function Get-WorkerBuildArtifacts([string]$Directory) {
     }
     return $artifacts
 }
+# What the audited tests read beyond the compiled source snapshot (test-speed review): every file, whatever its extension,
+# under cmake, native, lua, tests and tools, plus CMakeLists.txt. That takes in tests/fixtures/*.json (save_handoff_*,
+# steam_transport_tests, ddt_core_tests), the worker scenarios (worker_session_tests pins each one) and the generators.
+# Python caches are left out. One digest, so a receipt stays small; $null when a file cannot be read.
+function Get-WorkerReuseInputs([string]$Root) {
+    $files = [Collections.Generic.List[string]]::new()
+    $top = Join-Path $Root 'CMakeLists.txt'
+    if (Test-Path -LiteralPath $top -PathType Leaf) { $files.Add($top) }
+    foreach ($folder in @('cmake', 'native', 'lua', 'tests', 'tools')) {
+        $path = Join-Path $Root $folder
+        if (!(Test-Path -LiteralPath $path -PathType Container)) { continue }
+        foreach ($file in Get-ChildItem -LiteralPath $path -Recurse -File -Force) {
+            if ($file.Extension -ieq '.pyc' -or $file.FullName -match '[\\/]__pycache__[\\/]') { continue }
+            $files.Add($file.FullName)
+        }
+    }
+    $lines = [Collections.Generic.List[string]]::new()
+    try {
+        foreach ($file in $files) {
+            $lines.Add([IO.Path]::GetRelativePath($Root, $file) + "`t" + [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($file))))
+        }
+    } catch { return $null }
+    $lines.Sort([StringComparer]::Ordinal)
+    return [ordered]@{ sha256 = Get-WorkerHash ($lines -join "`n"); files = $lines.Count }
+}
 # Why a receipt cannot stand for this preflight, or $null when it can: it passed, for the same profile, flags,
 # configuration, build directory, audited and excluded tests, the identical source snapshot (every file, none added or
-# removed, the same MinHook target) and the same built programs. A Release receipt is never reused: tools/package.ps1
-# -CheckReceipt needs a fresh one.
-function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts) {
+# removed, the same MinHook target), the same test inputs (Get-WorkerReuseInputs) and the same built programs. A Release
+# receipt is never reused: the release gate always runs in full.
+function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts, $Inputs) {
     if ($Plan.profile -ceq 'Release') { return 'release' }
     if (!$Artifacts) { return 'no_artifacts' }
     if ($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or !$Receipt.plan) { return 'not_passed' }
@@ -453,6 +481,8 @@ function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts) {
     if ($Receipt.source_hashes -isnot [Collections.IDictionary] -or $Receipt.source_dependencies -isnot [Collections.IDictionary]) { return 'source' }
     try { Assert-WorkerSourceUnchanged ([pscustomobject]@{ hashes = $Receipt.source_hashes; dependencies = $Receipt.source_dependencies }) $Snapshot }
     catch { return 'source' }
+    if (!$Receipt.Contains('reuse_inputs') -or $Receipt.reuse_inputs -isnot [Collections.IDictionary] -or !$Inputs -or
+        [string]$Receipt.reuse_inputs.sha256 -cne [string]$Inputs.sha256 -or [int]$Receipt.reuse_inputs.files -ne [int]$Inputs.files) { return 'reuse_inputs' }
     if ($Receipt.artifacts -isnot [Collections.IDictionary]) { return 'artifacts' }
     foreach ($name in @($Artifacts.Keys)) {
         if (!$Receipt.artifacts.Contains($name) -or [string]$Receipt.artifacts[$name] -cne [string]$Artifacts[$name]) { return 'artifact_' + $name }
@@ -461,7 +491,7 @@ function Get-WorkerReuseRefusal($Receipt, $Plan, $Snapshot, $Artifacts) {
 }
 # The receipt this preflight may reuse, or $null: only the newest receipt of the plan's profile counts (a newer failed
 # or changed run never lets an older pass stand in).
-function Find-WorkerReusableReceipt([string]$RunRoot, $Plan, $Snapshot, $Artifacts) {
+function Find-WorkerReusableReceipt([string]$RunRoot, $Plan, $Snapshot, $Artifacts, $Inputs) {
     if (!(Test-Path -LiteralPath $RunRoot -PathType Container)) { return $null }
     $pattern = '"profile_key"\s*:\s*"' + [regex]::Escape([string]$Plan.profile_key) + '"'
     foreach ($directory in @(Get-ChildItem -LiteralPath $RunRoot -Directory | Sort-Object Name -Descending)) {
@@ -471,11 +501,26 @@ function Find-WorkerReusableReceipt([string]$RunRoot, $Plan, $Snapshot, $Artifac
         if ($text -cnotmatch $pattern) { continue }
         $receipt = $null
         try { $receipt = $text | ConvertFrom-Json -AsHashtable } catch { return $null }
-        $refusal = Get-WorkerReuseRefusal $receipt $Plan $Snapshot $Artifacts
+        $refusal = Get-WorkerReuseRefusal $receipt $Plan $Snapshot $Artifacts $Inputs
         if ($refusal) { Write-Host "Worker check reuse refused ($refusal): $path"; return $null }
         return $path
     }
     return $null
+}
+# The -Reuse entry point (the caller holds the coordinator lock): the receipt that stands for this preflight, or $null
+# (the full checks run). The cache must still carry the plan's options (a reconfigure that was not rebuilt changes the
+# next build) and belong to this profile; then the profile's newest receipt must pass Get-WorkerReuseRefusal against
+# the current source snapshot, test inputs and built programs.
+function Get-WorkerReusableReceipt($Plan, [string]$ProjectRoot, [string]$RunRoot) {
+    if ($Plan.profile -ceq 'Release') { return $null }
+    if (!(Test-Path -LiteralPath (Join-Path $Plan.build_directory 'CMakeCache.txt') -PathType Leaf)) { return $null }
+    try {
+        Assert-WorkerCache $Plan.build_directory $Plan.flags
+        $owner = [IO.File]::ReadAllText((Join-Path $Plan.build_directory '.worker-check-profile.json')) | ConvertFrom-Json
+        if ([string]$owner.project -ine [string]$Plan.project -or [string]$owner.profile_key -cne [string]$Plan.profile_key -or
+            [string]$owner.configuration -cne [string]$Plan.configuration) { throw 'the cache belongs to another profile or checkout' }
+    } catch { Write-Host "Worker check reuse refused (cache): $($_.Exception.Message)"; return $null }
+    return Find-WorkerReusableReceipt $RunRoot $Plan (Get-WorkerSourceHashes $ProjectRoot) (Get-WorkerBuildArtifacts $Plan.build_directory) (Get-WorkerReuseInputs $ProjectRoot)
 }
 function Write-WorkerJson([string]$Path, $Value) {
     $tmp = $Path + '.tmp'
@@ -534,7 +579,7 @@ function New-WorkerCmakeOverride($Context) {
 
 $projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 $plan = Get-WorkerPlan $projectRoot $Profile $Configuration $EnableExperiment $EnableBackgroundWorker.IsPresent $BuildDirectory
-if ($Reuse -and $plan.profile -ceq 'Release') { throw 'A Release receipt is never reused: tools/package.ps1 -CheckReceipt needs a fresh one (run without -Reuse).' }
+if ($Reuse -and $plan.profile -ceq 'Release') { throw 'A Release receipt is never reused: the release gate always runs in full (run without -Reuse).' }
 if ($PlanOnly) { $plan | ConvertTo-Json -Depth 8; return }
 Assert-WorkerOptions $projectRoot
 $cmakePath = (Get-Command cmake -CommandType Application -ErrorAction Stop).Source
@@ -549,20 +594,13 @@ if ($Reuse) {
         try { $reuseOwned = $reuseMutex.WaitOne([TimeSpan]::FromSeconds($LockTimeoutSec)) }
         catch [Threading.AbandonedMutexException] { $reuseMutex.ReleaseMutex(); throw 'Previous coordinator abandoned its lock; audit leftover build processes before retrying' }
         if (!$reuseOwned) { throw 'Worker check coordinator lock timed out' }
-        $reused = $null
-        if (Test-Path -LiteralPath (Join-Path $plan.build_directory 'CMakeCache.txt') -PathType Leaf) {
-            $cacheMatches = $true
-            try { Assert-WorkerCache $plan.build_directory $plan.flags } catch { $cacheMatches = $false }
-            if ($cacheMatches) {
-                $reused = Find-WorkerReusableReceipt $runRoot $plan (Get-WorkerSourceHashes $projectRoot) (Get-WorkerBuildArtifacts $plan.build_directory)
-            }
-        }
+        $reused = Get-WorkerReusableReceipt $plan $projectRoot $runRoot
     } finally {
         if ($reuseOwned) { $reuseMutex.ReleaseMutex() }
         $reuseMutex.Dispose()
     }
     if ($reused) {
-        Write-Host "Worker check reuse: the source, flags, tests and built programs are unchanged since $reused"
+        Write-Host "Worker check reuse: the source, test inputs, flags, tests and built programs are unchanged since $reused"
         Write-Output "Worker check receipt: $reused"
         return
     }
@@ -574,7 +612,7 @@ $null = New-Item -ItemType Directory -Path $runDirectory
 $receiptPath = Join-Path $runDirectory 'receipt.json'
 $receipt = [ordered]@{ schema=1; run_id=$runId; plan=$plan; status='waiting_for_coordinator';
     started_utc=[DateTime]::UtcNow.ToString('o'); finished_utc=$null; failure=$null;
-    commands=[Collections.Generic.List[object]]::new(); source_hashes=[ordered]@{}; artifacts=[ordered]@{} }
+    commands=[Collections.Generic.List[object]]::new(); source_hashes=[ordered]@{}; reuse_inputs=$null; artifacts=[ordered]@{} }
 [IO.File]::WriteAllText((Join-Path $runDirectory '.worker-owner'), $runId, [Text.UTF8Encoding]::new($false))
 Write-WorkerJson $receiptPath $receipt
 $workerCommandContext = [pscustomobject]@{
@@ -598,6 +636,9 @@ try {
     $sourceSnapshot = Get-WorkerSourceHashes $projectRoot
     $receipt.source_hashes = $sourceSnapshot.hashes
     $receipt.source_dependencies = $sourceSnapshot.dependencies
+    # What a later -Reuse compares besides the snapshot (Get-WorkerReuseInputs); checked again at the end.
+    $reuseInputs = Get-WorkerReuseInputs $projectRoot
+    $receipt.reuse_inputs = $reuseInputs
     Write-WorkerJson $receiptPath $receipt
     Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $workerCommandContext)
     # The toolset and a configure only (-ConfigureOnly): a loader build here compiled every object twice per run, all
@@ -630,6 +671,13 @@ try {
     Assert-WorkerCache $plan.build_directory $plan.flags
     $finalSnapshot = Get-WorkerSourceHashes $projectRoot
     Assert-WorkerSourceUnchanged $sourceSnapshot $finalSnapshot
+    # A test input that changed while the tests ran (a scenario edited meanwhile): the receipt still passed, but it can
+    # never stand for a later preflight.
+    $finalInputs = Get-WorkerReuseInputs $projectRoot
+    if (!$reuseInputs -or !$finalInputs -or [string]$finalInputs.sha256 -cne [string]$reuseInputs.sha256) {
+        $receipt.reuse_inputs = $null
+        Write-Host 'Worker check: the test inputs changed during the checks; this receipt is never reused.'
+    }
     $loader = Join-Path $plan.build_directory 'dinput8.dll'
     $receipt.artifacts.loader_sha256 = (Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash
     [IO.File]::Copy($loader, (Join-Path $runDirectory 'dinput8.dll'), $false)

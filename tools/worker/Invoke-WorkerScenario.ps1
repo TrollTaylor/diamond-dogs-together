@@ -180,8 +180,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    default 0; docs/vehicles-companions-design.md 6.3)
 
 Preflight: without -CheckReceipt the run first runs tools/worker/Invoke-WorkerChecks.ps1 for its profile with -Reuse:
-when the profile's newest receipt passed for the identical source snapshot, flags, tests and built programs, that
-receipt is used again and nothing is rebuilt or rerun (seconds instead of about 1.5 min). -FreshChecks always runs
+when the profile's newest receipt passed for the identical source snapshot, test inputs (fixtures and scenarios
+too), flags, tests and built programs, that receipt is used again and nothing is rebuilt or rerun (seconds instead of about 1.5 min). -FreshChecks always runs
 the full checks.
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),

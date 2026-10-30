@@ -50,10 +50,12 @@ registered suites have finished (no new one starts while the lock is held).
 
 Preflight reuse: `Invoke-WorkerChecks.ps1 -Reuse` (what `Invoke-WorkerScenario.ps1` asks for unless
 `-FreshChecks`) prints the profile's newest receipt and stops when that receipt passed for the identical source
-snapshot (every hashed file, none added or removed), flags, configuration, audited and excluded tests and built
-programs (`dinput8.dll`, `DiamondDogsTogether.exe`, `worker_supervisor.exe`, `worker_probe.exe`). Anything else
-runs the full checks. `-Profile Release -Reuse` is refused: `tools/package.ps1 -CheckReceipt` needs a fresh
-Release receipt.
+snapshot (every hashed file, none added or removed), test inputs (a digest of every file under `cmake/`, `native/`,
+`lua/`, `tests/` and `tools/`, so `tests/fixtures/*.json` and the scenarios count; `reuse_inputs` in the receipt),
+flags, configuration, build directory, audited and excluded tests, the cache's options and owner, and built programs
+(`dinput8.dll`, `DiamondDogsTogether.exe`, `worker_supervisor.exe`, `worker_probe.exe`). Anything else runs the full
+checks. `-Profile Release -Reuse` is refused: the release gate always runs in full (`tools/package.ps1 -Friend` runs
+it without `-Reuse`; `-CheckReceipt` accepts an existing passing Release receipt whose source and programs match).
 
 ## Coordinator protocol
 
