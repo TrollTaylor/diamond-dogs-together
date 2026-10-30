@@ -487,6 +487,15 @@ function S.step(now)
         S.hitsSeen = hits
         return
     end
+    -- Guest: the native hold refused the ride icon (site C / B): logged with the live deny and grant, so a run
+    -- shows a refusal before any answer existed (at most once a second, 20 lines per pairing).
+    local holds = tonumber(r.holds) or 0
+    if S.holdsSeen and holds > S.holdsSeen and now - (S.holdLogAt or -1000) >= 1000 and (S.n.holdLog or 0) < 20 then
+        S.holdLogAt, S.n.holdLog = now, (S.n.holdLog or 0) + 1
+        seatLog(string.format("action=hold;vehicle=%d;holds=%d;deny=%d;grant=%d", tonumber(r.want) or 65535, holds,
+            tonumber(r.deny) or 65535, tonumber(r.grant) or 65535))
+    end
+    S.holdsSeen = holds
     -- Guest: a claim the host left unanswered for ANSWER_MS: stock until an answer comes.
     if not S.silent and S.ask and now - S.ask.at >= ANSWER_MS then
         S.silent = true

@@ -976,8 +976,12 @@ g.D.vehicle = {handles = {goto_partner_vehicle = true, vehicle_door = true}, run
 check(g:send('goto_vehicle truck passenger 30')[3] == 'door_stub' and g.truckArgs[1] == 'truck' and g.truckArgs[2] == 'passenger' and
     g.truckArgs[3] == '30' and g.truckArgs[4] == g.id - 1 and g:count('warp') == 0, 'goto_vehicle truck delegates to gotoTruck with its id')
 check(g:send('goto_vehicle truck')[3] == 'door_stub', 'a bare truck delegates too')
-check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep 60')[3] == 'command_args',
-    'only truck and sortie take up to two door arguments')
+check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep a b c')[3] == 'command_args',
+    'truck, sortie and jeep take at most two door arguments')
+-- M6 review runs: "jeep driver|passenger [cm]" (lab.ini debug_vehicle_door=1): the stock door spot of the nearest veh_lv_.
+check(g:send('goto_vehicle jeep 60')[3] == 'goto_vehicle_args' and g:send('goto_vehicle jeep driver 151')[3] == 'goto_vehicle_args' and
+    g:send('goto_vehicle jeep front')[3] == 'goto_vehicle_args' and g:count('warp') == 0, 'M6: jeep door arguments are strict (before any search)')
+check(tostring(g:send('goto_vehicle jeep passenger 40')[3]):find('^vehicle_none') ~= nil, 'M6: jeep door arguments pass the door guard (no jeep here)')
 check(g:send('goto_vehicle sortie a b c')[3] == 'command_args', 'M6: sortie takes at most two door arguments')
 check(tostring(g:send('goto_vehicle sortie driver')[3]):find('^vehicle_none') ~= nil, 'M6: sortie door arguments pass the door guard (no unnamed vehicle here)')
 g.D.vehicle.gotoTruck = function() return false, 'door_lab_only' end

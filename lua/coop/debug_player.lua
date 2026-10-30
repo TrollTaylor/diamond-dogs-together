@@ -158,7 +158,7 @@ do
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=get_position;walker=%.2f,%.2f,%.2f", msg, t[1], t[2], t[3])
     elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie" or a[2] == "truck")) or
-        ((a[2] == "truck" or a[2] == "sortie") and #a <= 4)) then
+        ((a[2] == "truck" or a[2] == "sortie" or a[2] == "jeep") and #a <= 4)) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
       -- "jeep" / "truck": only the veh_lv_ / veh_trc_ locators (F1 vehicles: the
       -- truck half of coop-vehicle-passenger.txt);
@@ -173,7 +173,14 @@ do
         local ok3, msg3 = V.gotoTruck(a, id)
         if ok3 ~= nil then return ok3, msg3 end
       end
-      if #a > 2 and a[2] ~= "sortie" then return false, "door_unavailable" end
+      if #a > 2 and a[2] ~= "sortie" and a[2] ~= "jeep" then return false, "door_unavailable" end
+      -- M6 (6.6, review runs): "sortie|jeep driver|passenger [cm]": the door arguments are checked before any search.
+      local doorSeat, doorCm = nil, nil
+      if #a > 2 then
+        doorSeat = a[3] == "driver" and 0 or a[3] == "passenger" and 1 or nil
+        doorCm = a[4] and a[4]:match("^%d%d?%d?$") and tonumber(a[4]) or (a[4] == nil and 60 or nil)
+        if not doorSeat or not doorCm or doorCm > 150 then return false, "goto_vehicle_args" end
+      end
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
       if a[2] == "sortie" then
@@ -218,12 +225,10 @@ do
         return false, "vehicle_none;alive_unnamed=" .. (#ids > 0 and table.concat(ids, ",") or "none")
       end
       local W = e.MgsCoopWorld
-      -- M6 (docs/vehicles-companions-design.md 6.6): "sortie driver|passenger [cm]" with lab.ini debug_vehicle_door=1:
-      -- the stock door spot of that unnamed vehicle (the native door receipt by id), as goto_vehicle truck does.
-      if a[2] == "sortie" and #a > 2 then
-        local seat = a[3] == "driver" and 0 or a[3] == "passenger" and 1 or nil
-        local cm = a[4] and a[4]:match("^%d%d?%d?$") and tonumber(a[4]) or (a[4] == nil and 60 or nil)
-        if not seat or not cm or cm > 150 then return false, "goto_vehicle_args" end
+      -- M6 (docs/vehicles-companions-design.md 6.6): "sortie|jeep driver|passenger [cm]" with lab.ini debug_vehicle_door=1:
+      -- the stock door spot of that vehicle (the native door receipt by id; lab only), as goto_vehicle truck does.
+      if doorSeat then
+        local seat, cm = doorSeat, doorCm
         local r = A.receipt(fmt("return 'MGS_COOP_VEHICLE_DOOR_V1' -- %d %d %d", best[5], seat, cm))
         if type(r) ~= "table" or r.ok ~= true then return false, "door_" .. tostring(type(r) == "table" and r.reason or "receipt") end
         if type(W) == "table" and type(W.log) == "function" then

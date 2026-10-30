@@ -1,0 +1,114 @@
+# M6 review fixes, play rehearsal (docs/vehicles-companions-design.md 8.21): -Mode play -WanSim bad, the shipped play
+# defaults plus the M6 keys named (partner_ride_front=1, partner_ride_cab=1, partner_ride_race=1: lab and play keys,
+# off unless named). Play refuses the lab levers (boot, debug_vehicle_door, relief_load), so the players reach the
+# Wakh Sind jeep (25608) at its spawn pose by teleports to the stock door spots the lab measured (run 3c748d46: seat 1
+# door stand 574.36,1157.5 facing 96 deg; seat 0 door stand 577.20,1157.19 facing -84 deg); the truck cab needs the
+# sortie truck (lab only) and is not rehearsed here.
+#   A  the race inside one round trip (RTT about 180 ms): both at the two front doors, both press E at once: the guest's
+#      hold refuses its icon before any answer (event=seat; action=hold; ...; deny=65535; grant=65535), the host drives,
+#      no board_uncertain two_drivers on either copy.
+#   B  the host beside the jeep (debug goto_vehicle jeep, no usable door): the guest's claim is granted, the guest drives.
+#   C  the host boards beside the guest's driving: seat 1 only if the guest's copy has seat 1 free (seat_ext_tx flags);
+#      frames on both copies with the driver's own copy moving (the gap of run 65277fb8).
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-review-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed afgh-ledge
+labsetting partner_ride_front=1
+labsetting partner_ride_cab=1
+labsetting partner_ride_race=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+# --- A: the race inside one round trip ------------------------------------------------------------------------------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+guest debug teleport 574.36 320.2 1157.5 96
+wait 1200
+both press e 150
+wait 4500
+waitlog guest 'world_lua=event=seat; action=hold; vehicle=25608; holds=[0-9]+; deny=65535; grant=65535' 3
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest;' 3
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(first|drives)' 5
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture m6v-race1
+host press e 150
+wait 4000
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- B: the host beside the jeep without a usable door: the guest's claim is granted --------------------------------
+guest debug teleport 600.0 320.5 1157.5 -90
+host debug goto_vehicle jeep
+wait 4500
+logmark both
+guest debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+waitlog host 'world_lua=event=seat; action=grant; vehicle=25608; role=host' 5
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 5
+both capture m6v-grant-before
+guest press e 150
+wait 4000
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host press e 150
+wait 2500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture m6v-grant
+# --- C: the host boards beside the guest's driving (the seat-1 handshake) -------------------------------------------
+logmark both
+waitlog guest 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x0[37];' 10
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=' 10
+host debug teleport 574.36 320.2 1157.5 96
+wait 3000
+both capture m6v-jeep-beside
+host press e 150
+wait 4500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=[123]; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[123]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[123];' 10
+wait 1000
+both capture m6v-jeep-seated
+guest run vehicle_seats
+guest hold s 1500 nowait
+guest burst m6v-jeep-drive-g 6 150
+guest release
+guest hold w 1500 nowait
+host burst m6v-jeep-drive-h 6 150
+guest release
+guest hold w 1500 nowait
+both burst m6v-jeep-drive-both 4 200
+guest release
+wait 1500
+both capture m6v-jeep-stopped
+host press e 150
+host burst m6v-jeep-exit 6 300
+wait 3000
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[123]; state=off' 5
+both capture m6v-jeep-exited
+guest press e 150
+wait 3500
+state

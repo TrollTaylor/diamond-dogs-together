@@ -441,7 +441,7 @@ local function seatEnv(host)
         if h then c.hold = tonumber(h) end
         if c.on ~= 1 then return {ok = true, on = 0} end
         return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
-            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = 0}
+            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -467,9 +467,12 @@ gs.S.step(1200)
 check(#gs.tx == 1 and gs.tx[1][1] == 54 and gs.tx[1][2] == 1 and gs.tx[1][3] == 25608 and gs.tx[1][4] == 0 and gs.tx[1][5] == 2 and
     gs.tx[1][6] == 1, 'the guest claims the driver seat its pre-query offers: seq 1, id, seat 0, role guest, claim')
 check(gs.has('event=seat;action=claim;vehicle=25608;role=guest;age=100'), 'the claim line')
+gs.holds = 3
 gs.S.step(1300)
 gs.S.step(1500)
 check(#gs.tx == 1, 'one claim per 500 ms (and one step per 200 ms)')
+check(gs.has('event=seat;action=hold;vehicle=25608;holds=3;deny=65535;grant=65535'),
+    'the native hold refused the ride icon before any answer: logged with the live deny and grant (none)')
 check(gs.count('hold 2000') >= 3, 'the hold lease is refreshed every step')
 gs.S.step(1700)
 check(#gs.tx == 2 and gs.tx[2][2] == 2, 'the claim repeats while the want lasts')
