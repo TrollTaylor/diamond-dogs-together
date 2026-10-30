@@ -1,3 +1,20 @@
+## 2026-10-30: the passenger aim camera (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.25, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
+off|connect|aim|drop` (lab and play) with a shot guard that holds the back-seat passenger's camera (look angles and
+rotation CAM+0x90) within ~3 deg of the aim through each shot; lab lever `passcam`, lab trace
+`partner_pass_camera_trace`, Lua lever `enemy_cam_turn`. **Play default: `aim` (ON)**: fixes the view swinging to
+the sky at each shot and the view stuck pitched up after the aim. Proof: lab `7e79996f` (africa-jeep; guest seats 3
+and 2, host seat 3; three shots each, every expectation met, frames on both copies), the A/B and trace runs
+`4f1a072f`, `17fce0b7`, `43e5b981` (afgh-ledge), play rehearsal `06aa3fc6` (`-Mode play -WanSim bad`, shipped
+defaults, RTT ~180 ms, loss up to 12.9 %: every expectation met, Forced=False; host seat 2 and guest seat 3 held the
+view through three shots and a shot while moving, normal after the release, the drivers' views unchanged).
+All Closed, BaselineRestored, RealSavesUnchanged (Forced=True in the lab runs). Archives `%USERPROFILE%\mgs-coop-run-
+archive\m6m7b\<id>` (`17fce0b7` under `D:\mgs-coop-run-archive\m6m7b`, C: was below 1 GB then).
+Not fixed / not proven: seat 2's aim camera still looks through the jeep's side panel (dropping our collision
+handle, mode `drop`, blocks seat 2's gun instead); the 90 deg aim range around the seated facing; whether a seated
+shot lands; seat 1 (not reached in `43e5b981`); two-PC. Contract 822 code sites / 207 slots; full CTest 321/321.
+
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
 Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):

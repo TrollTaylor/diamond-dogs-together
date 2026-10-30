@@ -2790,6 +2790,35 @@ No `step=error`, `event=error`, `viewer_changed`, non-zero `faults=`, `board_unc
 truck cab, the seat race, the seat gun; a seated shot at a target; D14's Fulton; two-PC. No defect found beyond the
 known M7 camera behaviour.
 
+### 8.25 Results: the passenger aim camera (2026-10-30, branch `wp/seat-shoot2`)
+
+The four defects of a back-seat passenger's aim (8.22, 8.24): (1) from seat 2 the aim camera looks through the jeep,
+(2) each shot swings the view to the sky, (3) the view stays pitched up after the aim, (4) the aim range covers only
+the far side. Hidden runs (research build; Closed, BaselineRestored, RealSavesUnchanged): lab `4f1a072f` (the trace and
+a connect / off / drop A/B), `17fce0b7` (the angle guard), `43e5b981` (afgh-ledge, the rotation hold), `7e79996f`
+(the default, both copies as shooters, every expectation met), play `06aa3fc6` (`-WanSim bad`, the shipped defaults).
+Frames looked at for every claim (`complete/frames/m6m7b-camera`); numbers from the lab trace
+(`partner_pass_camera_trace=1`). Handoff for the shooting work: the session scratch `m6m7b/shoot2/CAMERA-HANDOFF.md`.
+
+- (2), (3) **fixed** [O]: a seated shot (gun mode 9) turns the camera's rotation CAM+0x90 to the top of the look range
+  (70 deg up) in ~0.5 s, with our handle held or dropped alike (`4f1a072f`), and nothing turns it back. The shot guard
+  (mode `aim`, now the default in lab and play) holds the look angles and CAM+0x90 within ~3 deg of the aimed
+  reference from the first firing tick until 350 ms after the last: three shots in seats 3 and 2 (guest) and seat 3
+  (host) kept the view (`7e79996f` frames `s3-shot1..3`, `s2-shot1..3`, `r3-shot1..3`; guard windows 111-128 mrad at
+  most), and the view is back at the seated camera after the release (`s3-after`, `s2-after`). Holding the angles
+  alone did not hold the view during a shot (`17fce0b7`). Source of the pull [U]; [I] the aim camera follows the gun,
+  which a seated body keeps on its back.
+- (1) **not fixed** [O]: the seated aim camera sits ~1.2 m behind and ~0.1 m above the body root (the panel's
+  height). With our handle it looks through seat 2's side panel (`7e79996f` `s2-aim`); dropping the handle while
+  aiming (mode `drop`) pulls it into the passenger and the gun refuses to fire (gun mode 15; `17fce0b7`, `43e5b981`),
+  so the default keeps the handle. A fix needs the aim camera raised while seated [U].
+- (4) **not fixed** [O `17fce0b7`]: the camera turns out of the own side, the gun clamps at 90 deg (`r60` 0.998), the
+  stock posture-0 range around the seated facing (GunAimReferenceRotation 0x1043C80, limits FUN_141058890).
+- Built: `partner_pass_camera=off|connect|aim|drop` (lab and play, default `aim`; `connect` is 0.14.4), lab lever
+  `passcam`, the lab trace, the Lua lever `enemy_cam_turn` (wrong after the first aim: the look angles turn
+  vehicle-relative). Wire unchanged (local camera only). Contract 822 code sites / 207 slots (13 pass camera blocks).
+  Seat 1 was not reached (`43e5b981`: the driver's policy withdrew seat 1, the guest got seat 3) [U].
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3250,6 +3279,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   **Merged** into `dev/oct7-continue` (`5a18d3b`, 2026-10-30; 8.24), unreleased, `partner_seat_gun` off in play. The
   combined play smoke `a6830b7c` (shipped defaults) saw the stock passenger aim and fire in play (`checks=0`, the
   magazine down) with the camera inside the jeep's body and pitched up after the shots; it aimed at no target.
+  **The aim camera (8.25, `wp/seat-shoot2`): the shot's swing to the sky and the view stuck up after the aim are
+  fixed and on in lab and play** (`partner_pass_camera=aim`, the shot guard; lab `7e79996f`, play `06aa3fc6`, frames on
+  both copies, seats 2 and 3); seat 2's aim view through the side panel, the 90 deg range and seated hits remain.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

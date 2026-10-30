@@ -464,7 +464,7 @@ act 0x70 selects the VehicleCamera, whose Deactivate (and FinishState) clear the
 field; if our handle is still there 8 s after the report ended, the driver
 clears it (`ReleasePlan`: only our own handle, never under the VehicleCamera).
 No code or vtable is patched and no game function is called; the install
-(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, once
+(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, 13 since 8.25, once
 per process after the code gate) only verifies the pinned blocks. A write
 fault latches the mission (`state=refused; reason=fault; latch=mission`), as
 does the board's `board_uncertain`; nothing is written while the mission
@@ -516,6 +516,32 @@ modules take over; the handle stays set, so their collision skips the jeep
 too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
+
+**The aim camera (design 8.25).** Key `partner_pass_camera=off|connect|aim|drop`
+(lab and play; **default aim**): connect is the behaviour above (0.14.4); aim
+keeps it and adds the shot guard; drop adds the guard but drops the handle
+while aiming (+600 ms); off never connects. Lab lever `debug passcam
+off|connect|aim|drop|lab|status`; lab trace `partner_pass_camera_trace=1`
+(`state=trace` lines every 100 ms while aiming). The guard
+(`partner_pass_camera_policy.hpp` GuardStep, `TickPassCamera`): while the local
+back-seat passenger aims and does not fire, the look angles (CAM+0x270 pitch,
++0x274 yaw, copies +0x268 / +0x26C) and the rotation CAM+0x90 are its
+reference; from the first firing tick (gun mode 9 / 10) until 350 ms after the
+last, a pitch more than 0.05 rad up (0.03 down) or a yaw 0.035 rad aside is
+written back to that bound, and a rotation more than 0.06 rad away is written
+back to the reference (`WriteAngles` / `WriteRotation`, SEH, PlayerCamera
+vtable checked, a fault latches the mission). Lines: `state=guard;
+event=open|close; ...; max_pull_mrad=..; rot_writes=..`. Why: a seated shot
+turns CAM+0x90 to the top of the look range (70 deg up) in ~0.5 s and nothing
+turns it back (runs `4f1a072f`, `17fce0b7`; source [U]); with the guard the
+view stays within a few degrees through three shots in seats 2 and 3 on both
+copies and is back at the aim after the release (`43e5b981`, `7e79996f`, play
+`06aa3fc6`). Not fixed: from seat 2 the aim camera (~1.2 m behind, ~0.1 m above the
+seated root) still looks through the jeep's side panel; drop keeps it out of the
+body but the collision then pulls it into the passenger and the gun refuses to
+fire (gun mode 15), so drop is not the default. Pins: the look-at update's angle
+writes 0x111FCB1, vt+0x88's angle and rotation writes 0x112106E, the aim-point
+solve's eye 0x109705C, slot vt+0xF0 (13 pass camera blocks).
 
 ### Truck test levers
 
