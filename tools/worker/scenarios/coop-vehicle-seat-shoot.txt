@@ -14,8 +14,9 @@
 # 5 m in front of it, 8.9 m out on the left (debug_soldier_warp=1, notice restricted); enemy sleep nearest puts him to
 # sleep so he does not walk off (a host commit the guest applies). The passenger boards from goto_vehicle jeep right
 # (1.9 m out on the right, facing the jeep; facing away boarded nothing in run 6e0edd8b): back seat 3, its camera
-# already toward the guard. The lever enemy_aim_nearest 0.3 refines the camera before and during each burst (Player.
-# RequestToSetCameraRotation) while the driver reverses.
+# already toward the guard. The lever enemy_aim_nearest 1.6 turns the camera to him (Player.RequestToSetCameraRotation;
+# 1.6 m above him because a seated passenger's playerPosY is 1.6 m above the ground: with 0.3 the reticle sat 7.5 deg
+# low in run d3409f57) before each single shot (held RMB+LMB bursts climbed to the sky there) while the driver reverses.
 # Expected (lab): partner_seat_gun=configured; key=1 on both; the passenger's aim_dir=valid; reason=seat (never
 # reason=convention); the driver's copy partner_seat_gun=hold; seq=..; vehicle=25608; seat=3 -> partner_gesture=submit;
 # ...; kind=gun_start -> applied; ok=1 -> partner_seat_gun=rates; ok=1 -> release -> partner_gesture=ended; via=end;
@@ -71,7 +72,7 @@ wait 1500
 both capture m7-seated
 logmark both
 # The guest aims at the sleeping guard: its own view, then the driver's view of the partner's gun.
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.6
 guest expect ^aim_nearest;ent=\d+;
 wait 600
 heldcapture guest guest rmb m7-seat-aim 2
@@ -82,42 +83,64 @@ waitlog host 'partner_gesture=submit; graph=2; node=0x50130ae2e584; exist=1; kin
 waitlog host 'partner_seat_gun=rates; seq=[0-9]+; ok=1;' 5
 # The kill while the host drives (reverse): re-aim before and during each burst.
 host hold s 1500 nowait
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.6
 guest hold rmb 1500 nowait
-wait 500
-guest run enemy_aim_nearest 0.3
-guest hold rmb+lmb 1500 nowait
-guest run enemy_aim_nearest 0.3
+wait 600
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
 guest capture m7-fire-guest-1
 host capture m7-fire-host-1
-guest run enemy_aim_nearest 0.3
-wait 600
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 400
 guest release
 host release
-waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 4
 host hold s 1500 nowait
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.6
 guest hold rmb 1500 nowait
-wait 500
-guest run enemy_aim_nearest 0.3
-guest hold rmb+lmb 1500 nowait
-guest run enemy_aim_nearest 0.3
-guest capture m7-fire-guest-2
-guest run enemy_aim_nearest 0.3
 wait 600
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+guest capture m7-fire-guest-2
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 400
 guest release
 host release
-waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 4
 host hold w 1500 nowait
-guest run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 1.6
 guest hold rmb 1500 nowait
-wait 500
-guest run enemy_aim_nearest 0.3
-guest hold rmb+lmb 1500 nowait
-guest run enemy_aim_nearest 0.3
-guest capture m7-fire-guest-3
-guest run enemy_aim_nearest 0.3
 wait 600
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+guest capture m7-fire-guest-3
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 1.6
+wait 300
+guest press lmb 120
+wait 400
 guest release
 host release
 waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
@@ -161,36 +184,51 @@ waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; st
 waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=[23];' 10
 wait 1500
 both capture m7-rev-seated
-host run enemy_aim_nearest 0.3
+host run enemy_aim_nearest 1.6
 host expect ^aim_nearest;ent=\d+;
 wait 600
 heldcapture host host rmb m7-rev-seat-aim 2
 heldcapture host guest rmb m7-rev-partner-gun 3
 waitlog guest 'partner_seat_gun=hold; seq=[0-9]+; vehicle=256[0-9][0-9]; seat=[23];' 5
 guest hold s 1500 nowait
-host run enemy_aim_nearest 0.3
+host run enemy_aim_nearest 1.6
 host hold rmb 1500 nowait
-wait 500
-host run enemy_aim_nearest 0.3
-host hold rmb+lmb 1500 nowait
-host run enemy_aim_nearest 0.3
+wait 600
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
 host capture m7-rev-fire-host-1
 guest capture m7-rev-fire-guest-1
-host run enemy_aim_nearest 0.3
-wait 600
+wait 300
+host hold rmb 1500 nowait
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
+wait 300
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
+wait 400
 host release
 guest release
-waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[345]; .*actor=host;' 4
-guest hold s 1500 nowait
-host run enemy_aim_nearest 0.3
+guest hold w 1500 nowait
+host run enemy_aim_nearest 1.6
 host hold rmb 1500 nowait
-wait 500
-host run enemy_aim_nearest 0.3
-host hold rmb+lmb 1500 nowait
-host run enemy_aim_nearest 0.3
-host capture m7-rev-fire-host-2
-host run enemy_aim_nearest 0.3
 wait 600
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
+host capture m7-rev-fire-host-2
+wait 300
+host hold rmb 1500 nowait
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
+wait 300
+host run enemy_aim_nearest 1.6
+wait 300
+host press lmb 120
+wait 400
 host release
 guest release
 waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[345]; .*actor=host;' 6
