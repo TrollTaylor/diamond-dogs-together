@@ -3089,10 +3089,10 @@ Built (`bd6f0cf`; `native/partner_pass_camera.cpp`, `partner_pass_camera_policy.
 0x20 k, flag obj+0x174; FUN_1412BBFE0 adds it to CAM+0x150 after every parameter load) set to 0.60 m up while the local
 passenger is seated, restored at the end; (2) one stock rotation request (the fields of PlayerCamera vt+0xE0
 0x111A920) toward the jeep's forward yaw after the get-off. Five pinned sites, the variant ids generator-checked;
-310 unit checks (four mutants of the new rules each fail a check); no wire change. **Not proven:** all three hidden
-runs (`1b597e17`, `62af662d`, `cf8111c4`, scenario `m6m7c-aim-view.txt`) ended `IsolationFailed`
+310 unit checks (four mutants of the new rules each fail a check); no wire change. **Not proven:** all four hidden
+runs (`1b597e17`, `62af662d`, `cf8111c4`, `f3fbeefd`, scenario `m6m7c-aim-view.txt`) ended `IsolationFailed`
 (`child_exited_before_admission`: the guest's worker refused `required_hooks_or_private_desktop`), like every other
-hidden run on the machine since 13:51. The default stays `aim`; `view` is behind the key. Next: the lab run, then
+hidden run on the machine from 13:51 to 14:16. The default stays `aim`; `view` is behind the key. Next: the lab run, then
 `m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`) after the default flips.
 
 ## 9. Milestones

@@ -5,9 +5,10 @@ shoulder from seats 1-3 (the stock aim module's own variant offset, obj+0x174 / 
 a variant change, the latch and terminate) + one stock camera rotation request toward the jeep's forward after a
 get-off (seat 1's get-off camera ends on the driver's side looking across the jeep [O frames 37b94432]; the exit itself
 goes out of the right door). Five new pinned sites (contract 829 code sites / 209 slots), 310 unit checks, four mutants
-caught. **Not proven, default unchanged (`aim`):** the three hidden runs `1b597e17`, `62af662d`, `cf8111c4` ended
+caught. **Not proven, default unchanged (`aim`):** the four hidden runs `1b597e17`, `62af662d`, `cf8111c4`, `f3fbeefd` ended
 `IsolationFailed` / `child_exited_before_admission` (guest `required_hooks_or_private_desktop`), as every hidden run on
-the machine since 13:51 [O supervisor.json]. Players see no change. Next: `m6m7c-aim-view.txt` (lab), then flip the
+the machine from 13:51 to 14:16 [O supervisor.json]. Full CTest 335/336 (`lab_scripts_tests_1` failed once under
+load, passed alone; the plain lab suite 1692 checks pass). Players see no change. Next: `m6m7c-aim-view.txt` (lab), then flip the
 default and `m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`).
 
 ## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
