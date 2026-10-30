@@ -19,7 +19,7 @@
 --       after 120 s); then applied only when the guest's player (its DOWNED_STATUS position, world_downed.lua, at most
 --       3 s old: the closer of the one when the request arrived and the current one) stands within 300 m of the pose the
 --       guest reported (a launcher or rifle range), or the host's own copy is down to a quarter of the highest body life
---       it read; held while no position is known; at most 4 applied per 20 s, more wait; an unnamed copy (no Despawn
+--       it read by its own damage (never by the guest's reported drops); held while no position is known; at most 4 applied per 20 s, more wait; an unnamed copy (no Despawn
 --       outside Mother Base) is held (blast_near) while a player stands within its blast distance. Applied: the host's copy
 --       becomes the same wreck (SetBodyLife 0, the engine's own destruction; read back, the Despawn if it does not
 --       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within the blast
@@ -159,7 +159,11 @@ function VR.plausible(q, t)
     if d == nil or da < d then d = da end
   end
   local life, peak = VR.life(q.id)
-  local heavy = life ~= nil and peak ~= nil and peak > 0 and life * 4 <= peak
+  -- Heavy counts this copy's own damage only: the guest's reported drops (world_vehicle_damage.lua D.given) never make
+  -- a far request plausible (the review of 2026-10-29).
+  local Dm = W.vehicleDamage
+  local given = type(Dm) == "table" and type(Dm.given) == "table" and Dm.given[q.id] or 0
+  local heavy = life ~= nil and peak ~= nil and peak > 0 and (life + given) * 4 <= peak
   if d ~= nil and d <= BREAK_MM then return true, "near", d, life, peak end
   if heavy then return true, "heavy", d, life, peak end
   if d ~= nil then return false, "guest_far", d, life, peak end

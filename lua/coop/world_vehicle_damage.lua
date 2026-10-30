@@ -21,9 +21,14 @@
 --   host:  applies a report only while linked, to the copy VEHICLE_STATE's match names (the locator hash, or the same
 --          unnamed id near the pose; never index 0), never an LRRP truck, one it lost or watches, or the vehicle its own
 --          player rides (its copy takes its own damage), and only while the guest's DOWNED_STATUS position (at most
---          FRESH_MS old, as D12's judge) lies within NEAR_MM of its copy. The life becomes max(reported life, here -
---          drop, 1) when that is lower than here: the lower life wins (a hit both copies took counts once), never more
---          than the guest's own drop, never 0. SetBodyLife; VEHICLE_STATE then sends that life at once (why=life).
+--          FRESH_MS old, as D12's judge) lies within NEAR_MM of its copy, at most HOST_N reports per vehicle and
+--          HOST_ALL_N over all vehicles per second (more: refused, rate; the guest's own limits are the guest's). The
+--          life becomes max(reported life, here - drop, here - floor(here / 2), 1) when that is lower than here: never
+--          more than the guest's own drop, at most half of this copy's life per report (logged cap=1: a guard's hit
+--          inside the guest's fire window is reported too), never 0. The lower life wins only when this copy's own
+--          hit came first; AI fire on the two copies is separate rounds and adds up (run 846c1147), which is why the
+--          key is off in play unless named. SetBodyLife; VEHICLE_STATE then sends that life at once (why=life). What
+--          the host took is counted (D.given): D12's heavy rule (world_vehicle_rules.lua) counts own damage only.
 -- A partner without op 58 (0.14.4 and older) skips it by its length; a host without the key ignores it (logged once),
 -- and the guest takes the host's life again after HOLD_MS, as before.
 do
@@ -37,7 +42,9 @@ local OP = 58
 W.OP.VEHICLE_DAMAGE = OP
 local fmt, floor, sqrt, max, min, H = string.format, math.floor, math.sqrt, math.max, math.min, W.handlers
 local TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS, FIRE_MS = 250, 500, 3000, 8, 300000, 3000, 3000
+local HOST_N, HOST_ALL_N = 3, 16
 D.TICK_MS, D.GAP_MS, D.HOLD_MS, D.RATE_N, D.NEAR_MM, D.FRESH_MS, D.FIRE_MS = TICK_MS, GAP_MS, HOLD_MS, RATE_N, NEAR_MM, FRESH_MS, FIRE_MS
+D.HOST_N, D.HOST_ALL_N = HOST_N, HOST_ALL_N
 local function L(...)
   local ok, text = pcall(fmt, ...)
   if ok and type(W.log) == "function" then pcall(W.log, "event=vehicle_damage;" .. text) end
@@ -45,7 +52,7 @@ end
 local function now() return W.now() end
 local function role() return W.host and "host" or "guest" end
 function D.reset()
-  D.known, D.pend, D.lastTx, D.sent, D.why, D.refusedWhy = {}, {}, {}, {}, {}, {}
+  D.known, D.pend, D.lastTx, D.sent, D.why, D.refusedWhy, D.given, D.took, D.tookAll = {}, {}, {}, {}, {}, {}, {}, {}, {}
   D.seq, D.nextTick, D.failed, D.offLogged, D.fireAt = 0, 0, false, false, nil
   D.st = {tx = 0, keep = 0, rx = 0, applied = 0, same = 0, refused = 0}
 end
@@ -183,7 +190,13 @@ local function guestPos(t)
   local x, z = r.pos[1], r.pos[3]
   if type(x) == "number" and type(z) == "number" then return x, z end
 end
--- "applied" | "same" | "refused", why, this copy's id, the guest's distance (mm), the life here before, the life now.
+-- The host's own window: true while id (or all vehicles) took its limit in the last second.
+local function recent(list, t)
+  local keep = {}
+  for _, at in ipairs(list or {}) do if t - at < 1000 then keep[#keep + 1] = at end end
+  return keep
+end
+-- "applied" | "same" | "refused", why, this copy's id, the guest's distance (mm), the life here before, the life now, cap.
 function D.apply(q, t)
   if not linked() then return "refused", "unpaired" end
   local id, why = S.match(q)
@@ -198,16 +211,22 @@ function D.apply(q, t)
   if not gx then return "refused", "guest_unknown", id end
   local d = hdist(gx, gz, x, z)
   if d > NEAR_MM then return "refused", "guest_far", id, d end
+  D.took[id], D.tookAll = recent(D.took[id], t), recent(D.tookAll, t)
+  if #D.took[id] >= HOST_N or #D.tookAll >= HOST_ALL_N then return "refused", "rate", id, d end
   local here = lifeOf(S.readLife(id, 1), id)
   if not here then return "refused", "not_alive", id, d end
-  local life = max(q.life, here - q.drop, 1)
+  local half = here - floor(here / 2)
+  local life = max(q.life, here - q.drop, half, 1)
   if life >= here then return "same", nil, id, d, here, q.life end
+  local took = D.took[id]
   local a = W.api
   if type(a) ~= "table" or type(a.send) ~= "function" or not pcall(a.send, id, {id = "SetBodyLife", life = life}) then
     return "refused", "send_error", id, d
   end
   S.dirty[id] = true
-  return "applied", nil, id, d, here, lifeOf(S.readLife(id, 1), id) or life
+  took[#took + 1], D.tookAll[#D.tookAll + 1] = t, t
+  D.given[id] = (D.given[id] or 0) + here - life
+  return "applied", nil, id, d, here, lifeOf(S.readLife(id, 1), id) or life, life == half and max(q.life, here - q.drop) < half
 end
 H[OP] = guarded(function(v)
   if not W.host or type(v) ~= "table" or #v < 10 then return end
@@ -218,7 +237,7 @@ H[OP] = guarded(function(v)
   D.st.rx = D.st.rx + 1
   if not S.named and (not S.namesAt or now() - S.namesAt >= 5000) then S.buildNames() end
   local q = {seq = v[1], id = v[2], hash = v[3], vtype = v[4], flags = v[5], life = v[6], drop = v[7], x = v[8], y = v[9], z = v[10]}
-  local verdict, why, id, d, was, life = D.apply(q, now())
+  local verdict, why, id, d, was, life, cap = D.apply(q, now())
   if verdict == "refused" then
     D.st.refused = D.st.refused + 1
     local key = id or q.id
@@ -230,7 +249,7 @@ H[OP] = guarded(function(v)
   end
   D.refusedWhy[id] = nil
   if verdict == "same" then D.st.same = D.st.same + 1 else D.st.applied = D.st.applied + 1 end
-  L("step=%s;id=%d;from=%d;life=%d;was=%d;drop=%d;d_mm=%d;f=%d", verdict, id, q.id, life, was, q.drop, d, q.flags)
+  L("step=%s;id=%d;from=%d;life=%d;was=%d;drop=%d;d_mm=%d;f=%d%s", verdict, id, q.id, life, was, q.drop, d, q.flags, cap and ";cap=1" or "")
 end)
 
 W.startHooks[#W.startHooks + 1] = guarded(function()

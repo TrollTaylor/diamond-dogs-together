@@ -381,10 +381,14 @@ h = host1()
 report(h, 500, 300)
 check(h.pool[25608].life == 2000 and h:has('step=applied;id=25608;from=25608;life=2000;was=2300;drop=300'),
     'reported life 500 after a 300 drop, the host at 2300: 2000 (the guest\'s drop, not its life)')
--- Never 0 (a destruction is D12's).
+-- Never 0 (a destruction is D12's); at most half of the host copy's life per report (the review of 2026-10-29).
 h = host1()
 report(h, 1, 65535)
-check(h.pool[25608].life == 1 and h.pool[25608].alive, 'a drop to 1: life 1, never the wreck')
+check(h.pool[25608].life == 1150 and h.pool[25608].alive, 'a drop to 1: at most half (1150), never the wreck')
+h = host1()
+h.pool[25608].life = 1
+report(h, 1, 1)
+check(h.pool[25608].life == 1 and h.pool[25608].alive and h:has('step=same;id=25608'), 'a host copy at 1: same, never 0')
 -- Refusals (logged once per vehicle and reason).
 local function refused(h2, reason) return h2:has('event=vehicle_damage;step=refused;id=25608;reason=' .. reason) end
 h = host1()
@@ -438,6 +442,49 @@ h.W.ridePose.fast.tracks[25608] = {}
 report(h, 1500, 800, nil, nil, nil, nil, 1)
 check(h.pool[25608].life == 1500 and h:has('step=applied;id=25608;from=25608;life=1500;was=2300;drop=800;d_mm=3000;f=1'),
     'the guest\'s own ride (flag 1): applied')
+-- Host-side bounds (review of 2026-10-29, finding damage-host-trusts-drop): the guest's limits (one report per vehicle
+-- per 500 ms, 8 per second) run on the guest only, and a guard's hit inside the guest's fire window is reported too. The
+-- host takes at most half of its copy's life per report, at most HOST_N reports per vehicle and HOST_ALL_N over all
+-- vehicles per second (more: refused, rate), and reported drops never make a far destruction request plausible
+-- (D12's heavy rule counts the host copy's own damage only).
+h = host1()
+check(h.D.HOST_N == 3 and h.D.HOST_ALL_N == 16, 'host bounds: 3 reports per vehicle and 16 over all per second')
+report(h, 100, 2200)
+check(h.pool[25608].life == 1150 and h:has('event=vehicle_damage;step=applied;id=25608;from=25608;life=1150;was=2300;drop=2200;d_mm=3000;f=0;cap=1'),
+    'a drop to 100 at 2300: 1150 (at most half per report), logged cap=1')
+report(h, 100, 1050)
+report(h, 100, 475)
+check(h.pool[25608].life == 288 and h.D.given[25608] == 2012, 'half again twice within the second (575, 288); the host counts what it took')
+report(h, 200, 88)
+check(h.pool[25608].life == 288 and h:has('event=vehicle_damage;step=refused;id=25608;reason=rate;d_mm=3000;life=200;drop=88'),
+    'a fourth report on the vehicle within one second: refused (rate)')
+h:poll(1000)
+report(h, 200, 88)
+check(h.pool[25608].life == 200 and h:has('step=applied;id=25608;from=25608;life=200;was=288;drop=88;d_mm=3000;f=0') and
+    not h:has('life=200;was=288;drop=88;d_mm=3000;f=0;cap=1'), 'a second later: applied again (no cap needed)')
+local many = {}
+for i = 0, 16 do many[#many + 1] = {25610 + i, -653 + i, 877.7} end
+h = Fixture('host', {pool = many})
+h:guestAt(-650, 877.7)
+for i = 0, 16 do report(h, 1500, 800, 25610 + i, 0, -653 + i, 877.7) end
+check(h.pool[25625].life == 1500 and h.pool[25626].life == 2300 and h:has('step=refused;id=25626;reason=rate'),
+    'sixteen vehicles in one second applied, the seventeenth refused (rate)')
+-- D12's heavy rule: a far request is plausible when the host's copy is down to a quarter of its highest life by its own
+-- damage, never by the guest's reported drops.
+h = host1()
+for _ = 1, 3 do report(h, 100, 2200); h:poll(400) end
+check(h.pool[25608].life == 288, 'three reports took the host copy to 288 (an eighth of 2300)')
+h:guestAt(-653, 1300)
+h.H[47]({9, 25608, 4, 1, -653000, 1000, 877700})
+check(h:has('event=vehicle_rules;step=break_judge;id=25608;rid=9;ok=0;why=guest_far;d_mm=422300;life=288;peak=2300') and
+    h.pool[25608].alive and h:sent(4)[1][4] == 8, 'reported drops alone: a far request is refused (guest_far), never heavy')
+h = host1()
+h.S.readLife(25608, 1)
+h.pool[25608].life = 500
+h:guestAt(-653, 1300)
+h.H[47]({9, 25608, 4, 1, -653000, 1000, 877700})
+check(h:has('event=vehicle_rules;step=break_judge;id=25608;rid=9;ok=1;why=heavy') and not h.pool[25608].alive,
+    'the host copy\'s own damage to 500 of 2300: heavy, applied as before')
 -- The guest never handles op 58; the host never scans.
 g = Fixture('guest', {pool = {JEEP}})
 report(g, 1500, 800)
