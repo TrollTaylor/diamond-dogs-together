@@ -3173,6 +3173,58 @@ expectation met; zero `step=error`, faults, `viewer_changed`, `board_uncertain`,
   camera angle (the stock get-off camera faces the driver up close, as without the key) is inconclusive [U]. The aim
   view from seat 1 (the own leg, problem 2) was not exercised with the own-view fix [U].
 
+### 8.36 Review fixes for the seat-1 get-off (2026-10-30, branch `wp/seat1-draw`)
+
+- **The get-off anchor** (both reviews, major) [O logs, `086d8043` guest]: at the start of the host's seat-1 get-off the
+  ride wire turns `kind=0` (foot), the driver's copy sends the GetOff advance (`exit_request; ...; reason=foot;
+  via=getoff`), the GetOff entry plays at once (`dm; when=getoff; ... rec1a0=2`) for about 1.7 s, still on anchor 0;
+  only the revert after DM End handed seat 1 back, and the body was corrected by 869 mm. **Fix** (`0248647` red ->
+  `d2bc44f`): once the GetOff entry plays, the driver calls `ride_seat_getoff`; `partner_ride_seat::ArmGetOff` rewrites
+  only the seat dword to the armed seat's own immediate (`partner_ride_seat_patch=getoff; seat=1;
+  seat_dword=0x01b04130; anchor=1; was=0`). Seats 0, 2, 3 and the key off write nothing; no new patch site.
+- **`54a885b2`** (`m6m7d-seat1-getoff-play.txt`, `-Mode play -WanSim bad`, afgh-quiet / afgh-horse, key named; Closed,
+  BaselineRestored, RealSavesUnchanged, IsolationFailed=False; zero `step=error`, faults, `viewer_changed`,
+  `board_uncertain`, `two_drivers`, `seat_far`, `seat_patch=refused`, `pass_camera; state=refused` on both copies)
+  [O logs]: guest driving, the host's seat-1 get-off: on the guest's copy `exit_request; ...; seat=1; reason=foot;
+  via=getoff`, `dm; when=getoff; ... rec1a0=2`, then `partner_ride_seat_patch=getoff; seat=1; seat_dword=0x01b04130;
+  anchor=1; was=0` on the next line; the end-of-get-off correction is **29 mm** (`869` in `f58eebf7` / `086d8043`;
+  16-89 mm without the key). [O frames] `guest-a-parked`: the partner in the front right seat; `guest-a-getoff-01..08`
+  and `a-exited`: the partner standing at the right front wheel, but the runner's `both burst` takes the host's burst
+  first, so the guest's frames start 1.3 s after its GetOff ended: the get-off itself was not caught on that copy.
+  Part C did not board (the guest's E at the right door logged `board_passenger; seat=1; site=prequery` then
+  `world_lua=event=seat; action=fulton; on=1` / `on=0`; it boarded only at the later E), so no host-driving get-off.
+  **The seat-1 aim view with the key** [O frame `host-a-aim-right`, 0.8 s after RMB, `pass_camera` mode aim, seat shot
+  key off]: the jeep's side panel fills most of the view at close range, the player's own leg in the cabin at the
+  right, a red (blocked) reticle: the own-view fix puts the passenger's own body in the seat, so the aim camera now
+  sits against the jeep (the problem-2 picture of the back left seat, now from seat 1). `host-a-aim-left` (after a
+  mouse turn) is a wide outside view of the jeep, not an aim view. The flip must wait for a seat-1 aim camera proven
+  with this key on (the camera track).
+- **`01174cfd`** (`m6m7d-seat1-getoff-host-play.txt`: part A with the roles swapped; same flags and seeds; Closed,
+  BaselineRestored, RealSavesUnchanged, IsolationFailed=False; NEVER lines 0 on both copies; one failed wait, the
+  host's seat-grant line, whose name differs for the host, and the host drove) [O logs]: the host's copy logs the
+  `getoff` line right after `dm; when=getoff`; end correction **27 mm**. [O frames, host = driver's copy, taken during
+  the GetOff (295338.2-295339.9 s)] `c-getoff-01`: the partner still in the front right seat, starting to rise;
+  `-02`: rising over the right side; `-03`: jumping down outside the right side; `-04..06`: standing at the right front
+  wheel. One continuous get-off out of the right side, never on the driver's side, no snap. `guest-c-aim-right`: the
+  guest's own seat-1 aim view is the jeep's panel as in `54a885b2` (both roles).
+- **Corrections to 8.35** [O logs/frames, reviews]: (a) the passenger's own remap skip returns at the START of its
+  get-off (`local_passenger; ... state=off; reason=act`, then `board_remap; state=skip`), not after it; the old get-off
+  bursts began 250-290 ms later and could not show a jump at that switch. (b) In `b4c10e6b` the guest's policy first
+  read `seat1=front; flags=0x01` and `seat1=none; flags=0x05` only once the host's `rider1=9728` arrived (about one round
+  trip). A board inside that window is not exercised; [I code] the driver's copy would draw the peer in a free back seat
+  (`DrawSeat` reason `dog`) and the guest's copy has no host dog (`no_host_dog`); the window is the v4 handshake's, not
+  the key's. (c) Problem 4 (the camera faces the driver up close after the get-off) was identical without the own-view
+  fix for the host role only; the guest's `c-exited` differed (behind the walking player in `086d8043`). It stays with
+  the camera track. (d) The host-driving corrections (2116 / 1519 mm) are mostly a vehicle split after the host's drive:
+  the host driver's own seat-0 get-off in the same part was corrected 1770 / 1587 mm on the guest's copy. The key's own
+  effect was about 0.87 m (part A, where the seat-0 get-off agrees to 105-114 mm). The split is open for the
+  vehicle-state work.
+- **Still open** [U]: the passenger's own boarding view ends pressed against the hood (`086d8043` host `a-geton-03`,
+  guest `c-geton-03`; a back-seat boarding keeps a wide view); no key-off seat-1 boarding burst exists to say whether it
+  is new. Seat-1 shots with the key (the own body and muzzle now sit in the cabin), a mission end while seated in seat
+  1, the truck cab, category-1 vehicles and two PCs were not run; the combined rehearsal must fire from seat 1 in both
+  roles with this key and the shipped camera/shot keys.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
