@@ -339,6 +339,12 @@ $script:LabPartnerKeys = @(
     # debug goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only: the loader defaults it off in lab and
     # forces it off in play; written only when set).
     @{ Key = 'debug_vehicle_door'; Json = 'debug_vehicle_door'; Kind = 'bool' },
+    # M6 seat 1 (docs/vehicles-companions-design.md 6.6): with the passenger board, the light vehicle's front seat and
+    # the truck cab seat (the loader defaults both off in lab and play; written only when set).
+    @{ Key = 'partner_ride_front'; Json = 'ride_front'; Kind = 'bool' },
+    @{ Key = 'partner_ride_cab'; Json = 'ride_cab'; Kind = 'bool' },
+    # M6 seat races (the SEAT op): the host decides an empty vehicle's driver seat (off in lab and play unless set).
+    @{ Key = 'partner_ride_race'; Json = 'ride_race'; Kind = 'bool' },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;

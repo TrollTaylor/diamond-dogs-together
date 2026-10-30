@@ -6745,6 +6745,154 @@ mgscoop::partner_ride_wire::Packet BoardSent(const Session& s) {
     return out;
 }
 
+// M6 review R3: the v4 seat addendum (the driver's copy draws a seat-1 passenger; its seat 1 is taken).
+struct SeatRiderFake {
+    unsigned reads = 0;
+    bool ok = true;
+    std::uint16_t vehicle = 25608, rider1 = 0xFFFF;
+} g_rider;
+bool HookSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    ++g_rider.reads;
+    out = 0xFFFF;
+    if (!g_rider.ok || seat != 1 || id != g_rider.vehicle) return false;
+    out = g_rider.rider1;
+    return true;
+}
+unsigned SeatExtCount(const Session& s, mgscoop::partner_ride_wire::SeatExt& last) {
+    namespace rw = mgscoop::partner_ride_wire;
+    unsigned n = 0;
+    for (const auto& item : s.fake.reliable_sent)
+        if (rw::IsSeatExt(item.data(), item.size()) && rw::DecodeSeatExt(item.data(), item.size(), last)) ++n;
+    return n;
+}
+void PushSeatExt(Session& s, std::uint8_t flags, std::uint16_t revision, std::uint16_t vehicle, std::uint32_t ms) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::SeatExt e{};
+    e.flags = flags; e.revision = revision; e.vehicle = vehicle; e.sender_ms = ms;
+    std::uint8_t bytes[rw::kSeatExtSize]{};
+    Check(rw::EncodeSeatExt(e, bytes), "seat addendum encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+}
+// Review R4: the driver tick's remap (skip while seat 1 may be in use, before the policy offers it).
+std::vector<int> g_remap_calls;  // 1 skip, 0 stock, in order; -1 marks a publish
+bool g_remap_ok = true;
+bool HookBoardRemap(void*, bool skip) noexcept {
+    g_remap_calls.push_back(skip ? 1 : 0);
+    return g_remap_ok;
+}
+void HookBoardPublishMarked(void*, std::uint64_t word) noexcept {
+    g_board.published.push_back(word);
+    g_remap_calls.push_back(-1);
+}
+void TestBoardRemap() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    Session s(0);
+    BoardSetup(s, PartnerRideBoard::passenger);
+    s.hooks.board_remap = HookBoardRemap;
+    s.hooks.board_publish = HookBoardPublishMarked;
+    g_remap_calls.clear();
+    g_remap_ok = true;
+    s.driver.settings.ride_front = true;
+    s.ride_suffix = " ride=0";
+    Check(s.Tick(0) && g_remap_calls.empty(), "installed; nothing of seat 1 in use: no remap write");
+    std::uint16_t rev = 0;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 1) == g_remap_calls.end(),
+          "a peer driver without the handshake: still stock");
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 7000);
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.size() == 2 && g_remap_calls[0] == 1 && g_remap_calls[1] == -1 && pb::Unpack(BoardLast()).front_ok &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=1") == 1,
+          "the remap is skipped before the policy that offers seat 1 is published");
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.empty(), "no change: no write");
+    // A seat-1 steer happened (site B's counter), then the peer walks off: the policy goes, the remap stays
+    // skipped for the hold after that steer, then goes back to stock.
+    g_board.stats.seat_one = 1;
+    Check(s.Tick(0) && g_remap_calls.empty(), "a seat-1 steer: still skipped");
+    BoardRide(s, rev, rw::Kind::foot, 0xFF, 0xFFFF);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 0) == g_remap_calls.end(), "inside the hold: still skipped");
+    Check(s.Tick(0, pb::kRemapHoldMs) && g_remap_calls.back() == 0 &&
+              s.fake.Containing("partner_ride=board_remap; state=stock; why=idle; ok=1") == 1,
+          "the hold ran out: the stock jne is back");
+    // A failed skip never publishes seat 1.
+    g_remap_ok = false;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 9000);
+    Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok && pb::Unpack(BoardLast()).mode == pb::Mode::passenger &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=0") == 1,
+          "the skip failed: the policy offers the back seats only");
+}
+
+void TestBoardSeatExt() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    {
+        // The passenger's copy: seat 1 only with the driver's live seat addendum for this exact ride.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.driver.settings.ride_front = s.driver.settings.ride_cab = true;
+        s.hooks.board_remap = HookBoardRemap;
+        g_remap_ok = true;
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "installed");
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::passenger && !pb::Unpack(BoardLast()).front_ok &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x00") == 1,
+              "a driver without the seat addendum (0.14.4, its key off): no seat 1");
+        PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 7000);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).front_ok && !pb::Unpack(BoardLast()).cab_ok &&
+                  s.fake.Containing("partner_ride=seat_ext_rx; rev=1; vehicle=25608; flags=0x01;") == 1 &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01") == 1,
+              "the driver draws a light vehicle's seat-1 passenger and its seat 1 is free: front_ok");
+        PushSeatExt(s, rw::SeatFlag::Front | rw::SeatFlag::OneTaken, rev, 25608, 7100);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x05") == 1,
+              "its D-Dog took seat 1 on the driver's copy: no seat 1 (the back seats stay)");
+        PushSeatExt(s, rw::SeatFlag::Front | rw::SeatFlag::Cab, rev, 25608, 7200);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).front_ok && pb::Unpack(BoardLast()).cab_ok, "both classes");
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok, "a newer ride revision the addendum does not describe: no seat 1");
+        PushSeatExt(s, rw::SeatFlag::Front, rev, 25609, 7300);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok, "an addendum for another vehicle: no seat 1");
+    }
+    {
+        // The driver's copy: sent only with a seat-1 key in passenger mode; rider[1] read while it drives.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.hooks.seat_rider = HookSeatRider;
+        g_rider = SeatRiderFake{};
+        s.ride_suffix = " ride=2 veh=25608 seat=0";
+        rw::SeatExt last{};
+        Check(s.Tick(0) && s.Tick(0) && SeatExtCount(s, last) == 0 && g_rider.reads == 0, "no seat-1 key: no seat addendum, no read");
+        s.driver.settings.ride_front = true;
+        g_rider.rider1 = 9728;
+        Check(s.Tick(0) && SeatExtCount(s, last) == 1 && last.vehicle == 25608 && last.flags == (rw::SeatFlag::Front | rw::SeatFlag::OneTaken) &&
+                  last.revision == BoardSent(s).revision && g_rider.reads == 1,
+              "driving with its D-Dog in seat 1: Front | OneTaken for the ride it describes");
+        Check(s.fake.Containing("partner_ride=seat_ext_tx; rev=1; vehicle=25608; flags=0x05; rider1=9728; read=1;") == 1, "the tx line");
+        Check(s.Tick(0) && SeatExtCount(s, last) == 1 && g_rider.reads == 1, "unchanged and inside 250 ms: nothing sent, nothing read");
+        g_rider.rider1 = 0xFFFF;
+        Check(s.Tick(0, 300) && SeatExtCount(s, last) == 2 && last.flags == rw::SeatFlag::Front && g_rider.reads == 2,
+              "the dog left the seat: sent at once without OneTaken");
+        g_rider.ok = false;
+        Check(s.Tick(0, 300) && SeatExtCount(s, last) == 3 && last.flags == (rw::SeatFlag::Front | rw::SeatFlag::OneTaken),
+              "an unread rider[1] counts as taken");
+        g_rider.ok = true;
+        s.ride_suffix = " ride=0";
+        const unsigned reads = g_rider.reads;
+        Check(s.Tick(0) && SeatExtCount(s, last) == 4 && last.vehicle == rw::kVehicleUnknown && last.flags == rw::SeatFlag::Front &&
+                  g_rider.reads == reads, "on foot: the capability alone, no read");
+        s.driver.settings.ride_board = PartnerRideBoard::block;
+        const unsigned sent = SeatExtCount(s, last);
+        Check(s.Tick(0, 3000) && SeatExtCount(s, last) == sent, "block mode never draws a seat-1 passenger: no addendum");
+    }
+}
+
 void TestBoardDriver() {
     namespace rw = mgscoop::partner_ride_wire;
     namespace pb = mgscoop::partner_board;
@@ -8898,6 +9046,8 @@ int main() {
     TestRideSeatAbsent();
     TestRideExtAndCensus();
     TestBoardDriver();
+    TestBoardSeatExt();
+    TestBoardRemap();
     TestRidePeerVehicle();
     TestPassCameraDriver();
     TestBoardSeatGates();

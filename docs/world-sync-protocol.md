@@ -1000,8 +1000,8 @@ W5 full campaign/progression and W6 AI transforms remain design work.
 World op codes 0x1D-0x1F, 0x32, 0x35-0x37 and 0x3B onward are available (0x2A-0x2D are the
 ride ops, 0x2E/0x2F VEHICLE_GONE, section 16; 0x30/0x31/0x38/0x39 the companion ops, section 15; 0x33
 VEHICLE_STATE, section 17; 0x34 VEHICLE_SPAWN, the M3 sortie vehicle, docs/vehicles-companions-design.md 6.3;
-0x3A VEHICLE_DAMAGE, the guest's vehicle damage report, section 20;
-0x32 and 0x35-0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
+0x3A VEHICLE_DAMAGE, the guest's vehicle damage report, section 20; 0x36 SEAT, the M6 seat races, section 21;
+0x32, 0x35 and 0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
 section 5); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
@@ -1798,3 +1798,51 @@ partner and the builds before this review read the same bytes. Behaviour on the 
   `event=relief;...;step=prepair_lapsed`).
 - Worker: `titlecontinue <role> <s>` (the host's title Continue without pressing its next loading screen) for the
   pre-PAIRED window in `-Mode play`. Scenarios `vehicle-review-lab.txt`, `vehicle-review-play.txt`.
+
+## 21. Seat races (M6, docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 6.6)
+
+Op `0x36` SEAT (54, the code the design reserved for it), both directions, reliable, world queue, level 3, lab and
+play, never a request; 5 fields, 7 bytes: `seq` (u16 1..), `id` (u16 25600..26111, the sender's TppVehicle2 id),
+`seat` (u8 0..3; 0, the driver's, is the only one raced today), `role` (u8 1 host / 2 guest: the sender), `action`
+(u8 1 claim / 2 grant / 3 deny). Sent and applied by `lua/coop/world_ride_pose.lua` (`R.seat`) only while the
+native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs lab.ini `partner_ride_race=1` (off in lab
+and play unless named), the board installed and its site C live (`partner_board=race; result=ok; c=0x1246a4f`).
+The wire format did not change in the review round of 2026-10-30 (design 8.21); the rules below did.
+
+- **Want (review R2).** Site C, RideVehicle CanExec's call of the ride pre-query `0x1245820` at `0x1246A4F`
+  (`native/partner_board.cpp` `SiteC`, retargeted only with the key), records the vehicle whose driver's seat the
+  pre-query's **final** answer offers: true with seat 0 or 1 (stock phase 1 makes both the driver), after the
+  pre-query's door bits and its line check, for a vehicle without a peer-driver policy. A player beside a vehicle
+  without a usable door has no want (the earlier site-A want counted it within 4.5 m: run `65277fb8`).
+- **Hold (review R1).** The guest refreshes a 2 s native hold lease (`hold 2000`) every 200 ms while paired: site C
+  answers false for the driver's seat of any empty vehicle that holds no live grant (no ride icon), and site B (phase
+  1) answers 4 for the vehicle site C wants (the backstop). So the guest never drives an empty vehicle before the host
+  answered, however fast it presses (`event=seat; action=hold; vehicle=..; holds=..; deny=..; grant=..`, at most once
+  a second). Unpaired, the hold is dropped at once (`hold 0`).
+- **Guest.** Every 500 ms while its want is at most 600 ms old it sends `claim` for that vehicle (`event=seat;
+  action=claim; vehicle=..; role=guest; age=..`, the first 20 logged). A `grant` sets a 3 s native grant for that
+  vehicle (`action=grant; ...; role=guest; set=1`: its ride icon comes back); a `deny` a 3 s native deny (`action=deny;
+  ...; set=1`, NOTE 13 a=6, one toast per 3 s). A deny withdraws a grant of the same vehicle and the other way round.
+- **Host.** On a claim it sends `deny` when its own player drives that vehicle (`why=host_drives`) or, unless it
+  granted that vehicle within the last 3 s, wants it within the last 1000 ms (`why=host_first`: ties go to the host);
+  else `grant`, and it yields at once: its own 3 s native deny for that vehicle, refreshed by every claim
+  (`action=grant` and `action=yield` the first time). A live grant sticks while the guest keeps claiming, even when the
+  host then reaches a door. A host that tries a yielded vehicle gets NOTE 13 a=7.
+- **Silence.** A claim left unanswered for 1.5 s (a 0.14.4 host skips the op, or its key is off) drops the guest's
+  hold (`state=silent; vehicle=..`, `hold 0`: stock) until any answer comes (`state=answered`).
+- **Loser.** Once the winner drives, the peer-driver policy decides as before (passenger or block), so the loser can
+  still take a passenger seat.
+- **Not covered.** A deny or a hold leaves the vehicle's stock Fulton prompt (holding E there can Fulton the vehicle;
+  never seen in the runs [I]); passenger seats are not raced (the board never offers the peer's seat); a CanExec check
+  after the pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was
+  recorded [I].
+
+`MGS_COOP_BOARD_SEAT_V1` (`native/game_script_observer.cpp`, parser `partner_board::ParseSeatRequest`, unit-tested):
+`poll | clear | deny <id> <ms> | grant <id> <ms> | hold <ms>` (id 25600..26111, deny / grant 1..5000 ms, hold
+0..5000 ms, single spaces, digits only); answer `{ok=true,on=1,want=,age=,deny=,left=,hits=,hold=,grant=,gleft=,
+holds=}` or `{ok=true,on=0}`.
+
+**Compatibility.** A partner whose op table lacks 0x36 (0.14.4 and older) skips it by its length (`unknown_op`,
+section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
+behaviour). Play pairing refuses mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37
+stay reserved; 0x3B onward are free.

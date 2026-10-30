@@ -429,6 +429,13 @@ struct Hooks {
     // == 1, Stop/GoNext only without the viewer's own DM); returns the bits
     // cleared. May be null (nothing is cleared).
     std::uint8_t (*dm_clear_stale)(void* context, std::uint8_t mask) noexcept = nullptr;
+    // M6 review R3 (partner_ride_front / partner_ride_cab): rider[seat] of this copy's vehicle `id` (u16;
+    // 0xFFFF empty), read only (partner_vehicle::ReadLive and the record's rider words). False: unread
+    // (the seat addendum then reports seat 1 taken). May be null.
+    bool (*seat_rider)(void* context, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept = nullptr;
+    // M6 review R4: the seat-1 remap skip (partner_board::SetRemapSkip), from this tick only. May be null
+    // (seat 1 is then never offered).
+    bool (*board_remap)(void* context, bool skip) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -567,6 +574,9 @@ struct Settings {
     // F1 vehicles (lab.ini partner_ride_board; docs/native-puppet.md "Vehicle boarding"):
     // the board block / passenger hook and the local passenger report. Off by default; play forces off.
     PartnerRideBoard ride_board;
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
+    // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
+    bool ride_front = false, ride_cab = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -1424,6 +1434,17 @@ struct Driver {
     std::uint32_t ride_ext_tx_epoch;
     std::uint64_t ride_ext_tx_ms;
     bool ride_ext_logged;
+    // M6 review R3: the v4 seat addendum (the peer draws a seat-1 passenger; the seat 1 of the vehicle it
+    // drives is taken on its copy), received and sent (link-session scoped), and this copy's rider[1] read
+    // of the vehicle its player drives (every kSeatRiderMs while it drives).
+    partner_ride_wire::SeatExtStore ride_seat_ext;
+    partner_ride_wire::SeatExt ride_seat_ext_tx;
+    bool ride_seat_ext_tx_have;
+    std::uint32_t ride_seat_ext_tx_epoch;
+    std::uint64_t ride_seat_ext_tx_ms;
+    std::uint16_t seat_rider_vehicle, seat_rider_value;
+    bool seat_rider_read;
+    std::uint64_t seat_rider_ms;
     std::uint16_t local_vehicle;
     // F1 vehicles: the local player as a stock back-seat passenger (the native
     // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
@@ -1432,6 +1453,11 @@ struct Driver {
     // The board hook's lazy install (once per process) and its result.
     bool board_install_tried, board_installed;
     const char* board_refusal;
+    // Review R4 (process scoped, like the remap dword): whether this tick has the seat-1 remap skipped,
+    // a failed remap write (seat 1 is then never offered again), the seat-1 steer count seen and its time.
+    bool board_remap_skip, board_remap_failed;
+    std::uint32_t board_seat_one_seen;
+    std::uint64_t board_seat_one_ms;
     // The passenger camera's lazy install (once per process, passenger mode) and its result.
     bool pass_camera_install_tried, pass_camera_installed;
     const char* pass_camera_refusal;

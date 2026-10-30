@@ -1,3 +1,49 @@
+## 2026-10-30: M6 seats, the review fixes (branch `wp/seats`, lab keys, unreleased, not two-PC tested)
+
+An independent review of `wp/seats` (`e2a7451`) raised three major and five minor findings; all eight were real and
+are fixed or documented on `wp/seats` (local only: nothing pushed, tagged, merged or released). Results and evidence:
+`docs/vehicles-companions-design.md` 8.21 (and the corrections to 8.20's summaries); the SEAT rules:
+`docs/world-sync-protocol.md` section 21; the mechanism: `docs/native-puppet.md` "Seat 1 and seat races (M6)"; the v4
+seat addendum: `docs/vehicle-ws3.md`. Marks: [O] observed in a run or test named here, [I] inferred, [U] unproven.
+
+| Item | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| Seat race inside one round trip (R1) | The guest holds every empty vehicle's driver's seat until the host's SEAT grant (a 2 s native lease Lua refreshes; site C answers false, site B 4); a claim unanswered for 1.5 s drops the hold; the host yields at grant time and a live grant sticks | **Off** (`partner_ride_race`, D17) | [O] lab `43473119`, `f115a2b3`, play `56322b36` (`-WanSim bad`): the guest's icon refused before any answer (`action=hold; ...; deny=65535; grant=65535`), the host drives, the guest on foot, no `two_drivers`; frames on both copies | The silence fallback in a run (Lua test only); two-PC |
+| The want after the door check (R2) | Site C `0x1246A4F` (CanExec's call of the pre-query `0x1245820`, pinned, only with the race key): the want is the pre-query's final answer; site A no longer races | **Off** | [O] lab `f115a2b3`, play `56322b36`: a host at the jeep's rear (inside the old 4.5 m gate) has no want, the guest is granted and drives; frames on both copies | A CanExec check after the pre-query (a tilted vehicle) can refuse an icon whose want was recorded [I] |
+| Seat-1 handshake (R3, D16 (a)) | Ride addendum v4 from the driver's copy (Front / Cab accepted, `rider[1]` taken); the passenger's board offers seat 1 only with it | **Off** (`partner_ride_front`, `partner_ride_cab`) | [O] lab `43473119` (the host's dog jumped in: seat 1 withdrawn live), `f115a2b3` and play `56322b36` (the driver's dog in seat 1: the passenger in the back right seat, frames on both copies, the driver's own copy moving); truck cab `0f145a4e` (flags 0x03, seat 1 offered) | The seat-1 path itself in play with this code; a dog that jumps in after the passenger sat down [I]; two-PC |
+| Remap scope (R4) | The seat-1 remap `jmp` only while seat 1 may be in use (the driver tick, its only writer) | (with seat 1) | [O] `board_remap; state=skip; why=policy` / `state=stock; why=idle` in `43473119`, `0f145a4e`, `56322b36`; unit tests | The other callers of `0xB7AF90` while the skip is live [I] |
+| Phase-1 immediates / verify (R5), parser (R8) | Restored to 2 once site B is lost; `VerifyImage` strict; `ParseSeatRequest` tested; every rule run red first | - | [O] unit tests | Site B actually lost in a run (never happened) |
+| Truck cab, both roles | (unchanged) | **Off** | [O] lab `0f145a4e`: every expectation met, moving frames on both copies in both roles, both stock get-offs with the camera release (the step `73af7206` missed) | Play rehearsal (lab-only levers); two-PC |
+| Fulton prompt during a deny / hold (R6) | Documented (protocol 21, native-puppet, design 8.21) | - | - | Holding E there could Fulton the vehicle [I] |
+| Summaries (R7) | Corrected: 8.20's play and truck "moving on both copies" claims, the lab "race" of `b66c7031` | - | - | - |
+
+Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\`): `43473119725643e9855a31b08e1da97a`, `f115a2b3cf874d9eb4cdb7470e03d46b`,
+`0f145a4e19094fc4a0b0ecd2fcb0b755` (lab), `56322b362f96467194ad08b765e3dd9b` (`-Mode play -WanSim bad`). No play default
+flipped (D16, D17 wait for the user). Fast CTest after each change; the full CTest passed 318 of 318 with these docs (`tools/build.ps1`).
+
+## 2026-10-30: M6 more passenger seats (branch `wp/seats`, lab keys, unreleased, not two-PC tested)
+
+Branch `wp/seats` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/vehicle-state`; local only (nothing pushed,
+tagged, merged or released). Results, the E6 / E7 static reads and the evidence: `docs/vehicles-companions-design.md`
+8.20; the SEAT op: `docs/world-sync-protocol.md` section 21; the mechanism: `docs/native-puppet.md` "Seat 1 and seat
+races (M6)". Marks: [O] observed in a run or test named here, [I] inferred, [U] unproven.
+
+| Item | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| Jeep front seat (1) | Lab key `partner_ride_front`: site B sets both phase-1 `cmp al,imm8` immediates (`0x1251834`, `0x1251894`) to 1 only for the call it steers to seat 1; the seat matrix's seat-1 remap (`0xB79A43`) is a `jmp` for the process (scoped to seat-1 use since the review fixes, above); contract pins; the passenger report, the receiver gate and the passenger camera take seat 1 | **Off** (D16) | [O] lab `f49c167d`, `3c748d46`: both roles, logs on both copies, FRAMES on both copies while moving, the stock GetOffFrontRight; play `65277fb8` (`-WanSim bad`, keys named): both roles passed the seat-1 lines, seated frames on both copies, but moving frames on the passenger's own copy only (the driver's copy burst was stationary; review R7) | The driver's own D-Dog rides in that seat on the driver's copy and the passenger is drawn over it (D16; fixed by the handshake above); two-PC |
+| Truck cab (1) | Lab key `partner_ride_cab`, the same mechanism for trucks (types 3 / 4: seat 1 only, never 2 / 3) | **Off** | [O] lab `b66c7031` (the guest as passenger), `73af7206` (both roles; moving frames on both copies for the guest-as-passenger role, on the host's own copy only for the host-as-passenger role; the guest's stock get-off) | The host's get-off from the cab (the worker lost its input desktop at that press, `73af7206`); a play rehearsal (the test truck needs the lab-only sortie lever); free roam's LRRP trucks carry soldiers; two-PC |
+| Seat race | Lab key `partner_ride_race`; world op SEAT `0x36` (54, both directions; a 0.14.4 partner skips it by its length); the board's pre-query want (within 4.5 m) and a native deny (`MGS_COOP_BOARD_SEAT_V1`); NOTE 13 a 6 / 7 | **Off** (D17) | [O] lab `b66c7031`: the guest denied at the truck's cab doors, the host driving, the guest on foot, FRAMES on both copies; incidental denies in `3c748d46`; play `65277fb8`: the deny and the toast drawn, but the host did not board (no ride icon at its spot) | The want is taken from the pre-query's nearest search before its door check, so a host that cannot use a door still wins a tie (`65277fb8`); presses within one round trip of the guest's icon; two-PC |
+| Truck bed (E7) | Not built (static reads only: the hide states live in the RideVehicle action; no bed anchor) | - | - | Everything |
+| APC / tank crew | Not built; census: the wheeled armoured vehicle has one seat | - | [O] census `b66c7031` | The tank's seat count; everything else |
+
+Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\`): `f49c167d318744178e60aac5efbe3d58`, `3c748d4691964b7b90d7d35811e40d0b`,
+`b66c703192e84214aa2d31f905489040`, `73af720692b5416a8cbbae651b4002f3` (lab), `65277fb83b1649ba85e9ef4c1e61f3de` (`-Mode play
+-WanSim bad`; its first form `11fe8abd92924c1da1a2904f0d68d41c` stopped at a harness check before the seats).
+An earlier start of the first run stopped inside the worker checks (the tree was edited while they ran; no game).
+Fast CTest after each change; the full CTest passed 318 of 318 at `c0387d6` with these docs (`tools/build.ps1`).
+
 ## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
 
 The three tracks that followed the 0.14.4 release are merged into `dev/oct7-continue` (from `01fd055`): `f1e80be`

@@ -874,6 +874,8 @@ BOARD_SITES = [
      '0x125AD00: (*(P+0x120))[body] = the ridden unit (the local passenger report)'),
     (0x12CF42F, '498b85e00000000fb70c706641898c2410010000',
      'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
+    (0x1245847, '4c8ba424400100004d8bf04c8be941c6042404',
+     'the pre-query 0x1245820: r12 = its 5th argument (the seat pointer, [rsp+0x140]); *seat = 4 first (the refusal site C returns)'),
 ]
 SITES += BOARD_SITES
 # --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
@@ -2458,6 +2460,45 @@ def board_assertions():
         inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
         need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
     need(any(f[0] == 0x1245820 and f[1] > 0x12458C2 for f in funcs), 'the pre-query 0x1245820 runs through site A')
+    # M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): site B sets the two phase-1 `cmp al,imm8` immediates to 1
+    # for a steered seat 1 (TryToRide gets seat 1, the next phase is 2, the passenger phase 0x1250CF0); the seat-1 remap
+    # of the seat matrix 0xB799C0 (seat 1 -> 0 while rider[1] is a player id) becomes a jmp.
+    need(rd(0x1251832, 14) == bytes.fromhex('240f3c0272080fb6c183e00feb03') and rd(0x1251840, 3) == bytes.fromhex('418bc7'),
+         'phase 1 seat pass: and al,0xf; cmp al,2 (0x1251834); jb 0x1251840 (mov eax,r15d = 0); else the seat')
+    need(call_target(0x1251851) == 0xCB9470 and rd(0x1251847, 3) == bytes.fromhex('0fb6d0'),
+         'phase 1 passes the chosen seat (dl = al) to TryToRide 0xCB9470')
+    need(rd(0x1251892, 12) == bytes.fromhex('240f3c020f92c00402884355'),
+         'phase 1 phase select: and al,0xf; cmp al,2 (0x1251894); setb al; add al,2; mov [rbx+0x55],al')
+    need(rd(0x1250E96, 32)[-8:] == bytes.fromhex('6e00000066890c78'), 'the passenger phase writes act 0x6E')
+    need(rd(0xB79A3F, 6) == bytes.fromhex('4080ff017515'), 'the seat matrix remap: cmp dil,1; jne 0xB79A5A (0xB79A43)')
+    need(0xB79A45 + 0x15 == 0xB79A5A and rd(0xB79A57, 3) == bytes.fromhex('0f44f9'),
+         'the remap jne skips exactly the cmove that maps seat 1 to 0')
+    for site in (0x1251834, 0x1251894, 0xB79A40):
+        need((site & 63) + 4 <= 64, f'seat-1 dword {site:#x} inside one cache line')
+    for site, lo, hi in ((0x1251834, 0x1251835, 0x1251836), (0x1251894, 0x1251895, 0x1251896), (0xB79A40, 0xB79A40, 0xB79A44)):
+        owner = [f for f in funcs if f[0] <= site < f[1]]
+        need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
+        local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+        inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    # M6 review R1/R2 (seat races): site C 0x1246A4F, RideVehicle CanExec's call of the pre-query 0x1245820(action rcx,
+    # body edx, unit r8, id r9w, char* seat [rsp+0x20]) -> bool, retargeted only with partner_ride_race. Its final answer
+    # (true and *seat 0/1 after the door bits and the line check) is the race's want; a hold or deny returns false with
+    # *seat = 4 (the stock 'no seat' it starts from), so CanExec returns false (no ride icon) through 0x1246A56.
+    need(rd(0x1246A4F, 1) == b'\xe8' and call_target(0x1246A4F) == 0x1245820 and
+         struct.unpack('<I', rd(0x1246A50, 4))[0] == 0xFFFFEDCC, 'board site C: E8 rel32 0xFFFFEDCC -> 0x1245820')
+    need(rd(0x1246A3F, 16) == bytes.fromhex('488d442440418bd7488bce4889442420'),
+         'site C: lea rax,[rsp+0x40]; mov edx,r15d; mov rcx,rsi; mov [rsp+0x20],rax (the seat out pointer)')
+    need(rd(0x1246A54, 8) == bytes.fromhex('84c00f8417040000'), 'site C: test al,al; je 0x1246E73 (false: CanExec false)')
+    need(rd(0x1245820, 6) == bytes.fromhex('6644894c2420') and
+         rd(0x1245847, 19) == bytes.fromhex('4c8ba424400100004d8bf04c8be941c6042404'),
+         'the pre-query 0x1245820: the 5th argument (r12 = [rsp+0x140], the seat pointer) starts at 4 (0x1245855)')
+    need((0x1246A50 & 63) + 4 <= 64, 'board site C dword 0x1246a50 inside one cache line')
+    owner = [f for f in funcs if f[0] <= 0x1246A4F < f[1]]
+    need(len(owner) == 1, f'one runtime function covers 0x1246a4f: {owner}')
+    local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+    inside = branch_refs(0x1246A50, 0x1246A54) + [t for t in local if 0x1246A50 <= t < 0x1246A54]
+    need(inside == [], f'no branch into 0x1246a50..0x1246a54: {[hex(x) for x in inside]}')
     return out
 
 
@@ -3336,12 +3377,25 @@ w('inline constexpr std::uint32_t board_a_rel32_orig=0x00005aef;  // -> 0x124b3a
 w('inline constexpr std::uintptr_t board_b_site=0x1251479, board_b_next_ip=0x125147e, board_b_block_rva=0x125145c;')
 w('inline constexpr std::uint32_t board_b_rel32_orig=0xffff9ee2;  // -> 0x124b360')
 w('inline constexpr std::uintptr_t board_nearest_rva=0x124b3a0, board_driver_rva=0x124b360, board_type_rva=0x55e7f0, board_count_rva=0xa27cc0;')
+w('// M6 review R1/R2 (seat races, partner_ride_race only): site C, RideVehicle CanExec 0x1246650 calls the pre-query')
+w('// 0x1245820(action, body, unit, id, char* seat) -> bool at 0x1246a4f; false: CanExec false (no ride icon).')
+w('inline constexpr std::uintptr_t board_c_site=0x1246a4f, board_c_next_ip=0x1246a54, board_c_block_rva=0x1246a3f, board_prequery_rva=0x1245820;')
+w('inline constexpr std::uint32_t board_c_rel32_orig=0xffffedcc;  // -> 0x1245820')
 w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
 w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
 w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')
 w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
 w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
 w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
+w('// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the phase-1 dwords site B sets to `cmp al,1` for a steered')
+w('// seat 1 only (0x1251834: TryToRide gets seat 1; 0x1251894: the passenger phase 2), and the seat matrix 0xB799C0\'s')
+w('// seat-1 remap dword (0xB79A40: `cmp dil,1; jne` -> `jmp`, so a player in rider[1] is drawn at seat 1).')
+w(f'inline constexpr std::uintptr_t board_seat1_pass_rva=0x1251834, board_seat1_phase_rva=0x1251894, board_remap_rva=0xb79a40;')
+w(f'inline constexpr std::uint32_t board_seat1_pass_orig=0x{struct.unpack("<I", rd(0x1251834, 4))[0]:08x}, '
+  f'board_seat1_phase_orig=0x{struct.unpack("<I", rd(0x1251894, 4))[0]:08x}, '
+  f'board_remap_orig=0x{struct.unpack("<I", rd(0xB79A40, 4))[0]:08x}, '
+  f'board_remap_skip=0x{(struct.unpack("<I", rd(0xB79A40, 4))[0] & 0x00FFFFFF) | 0xEB000000:08x};')
+w('inline constexpr std::uintptr_t board_seat1_blocks[]={0x1251822,0x125188e,0xb79a3f};')
 w('// --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera") ------------------------')
 w('// The VehicleCamera module (live vtable 0x23d67f0, base 0x23d6720): CanActivate 0x12d0f60 at slot +0x18 of both, true')
 w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six modules at CAM+0xbd0, the mode at +0x340')

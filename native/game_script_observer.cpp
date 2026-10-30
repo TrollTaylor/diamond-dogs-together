@@ -997,9 +997,25 @@ const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::S
 // only (ReadProcessMemory) and resolves the vehicle through partner_vehicle::ReadLive.
 const char* PartnerBoardInstall(void*) noexcept {
     if (!game_base || !partner_gate_ok) return "gate";
-    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab, passenger mode only; off unless named).
+    const auto& config = mgscoop::GetLabConfig();
+    mgscoop::partner_board::SeatOpts opts{};
+    opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
+    opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
+    const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
+    // M6 seat races (lab.ini partner_ride_race, off unless named; review R1/R2): site C, the pre-query's final
+    // answer (the want), the guest's hold and the SEAT deny / grant. Logs partner_board=race once; a refusal
+    // leaves the race off and the board as it is.
+    if (!why && config.partner_ride_race) mgscoop::partner_board::InstallRace();
+    return why;
 }
-bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
+bool PartnerBoardLive(void*) noexcept {
+    if (!game_base) return false;
+    const bool live = mgscoop::partner_board::PatchLive(game_base);
+    // Review R5: site B lost with a phase-1 immediate left at 1 (seat 1): back to the stock 2.
+    if (!live && mgscoop::partner_board::RestorePhaseOneIfBLost(game_base)) Log("partner_board=phase_one_restored; reason=site_b_lost\r\n");
+    return live;
+}
 void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
 void PartnerBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { mgscoop::partner_board::ReadStats(out); }
 bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board::LocalPassenger& out) noexcept {
@@ -1014,7 +1030,25 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
         mgscoop::partner_vehicle::ReadLive(game_base, id, r);
         return !r.refusal && r.unit.id == id ? r.unit.rec : 0;
     };
-    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local);
+    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local,
+                                                     mgscoop::partner_board::SeatOne(mgscoop::partner_board::LiveSeatOpts()));
+    return true;
+}
+// M6 review R4: the seat-1 remap skip, from the driver tick only.
+bool PartnerBoardRemap(void*, bool skip) noexcept { return game_base && mgscoop::partner_board::SetRemapSkip(skip); }
+// M6 review R3: rider[seat] of this copy's vehicle `id` for the v4 seat addendum (ReadProcessMemory only).
+bool PartnerSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    out = 0xFFFF;
+    if (!game_base || !partner_gate_ok || seat > 3) return false;
+    mgscoop::partner_vehicle::Read r{};
+    mgscoop::partner_vehicle::ReadLive(game_base, id, r);
+    if (r.refusal || r.unit.id != id || !r.unit.rec) return false;
+    std::uint16_t value = 0xFFFF;
+    SIZE_T read = 0;
+    const auto at = r.unit.rec + mgscoop::partner_board::kUnitRiders + 2u * seat;
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), &value, sizeof(value), &read) || read != sizeof(value))
+        return false;
+    out = value;
     return true;
 }
 // F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):
@@ -1132,7 +1166,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
+    PartnerSeatRider, PartnerBoardRemap};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -4386,6 +4421,42 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
+// M6 seat races (lua/coop/world_ride_pose.lua SEAT op 54; lab.ini partner_ride_race=1; partner_board "seat races"):
+//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>
+//     (partner_board::ParseSeatRequest: vehicle 25600..26111, deny / grant ms 1..5000, hold ms 0..5000; review R8)
+//   -> return {ok=true,on=0}                                   (the key off or site C not installed)
+//   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
+//              grant=<id|65535>,gleft=<ms>,holds=<n>}
+//   -> return {ok=false,reason='request'}
+// Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
+bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static constexpr char kPrefix[] = "return 'MGS_COOP_BOARD_SEAT_V1' -- ";
+    constexpr std::size_t prefix = sizeof(kPrefix) - 1;
+    if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, kPrefix, prefix) != 0) return false;
+    world_quiet = true;
+    static char reply[200]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    namespace pb = mgscoop::partner_board;
+    const pb::SeatRequest request = pb::ParseSeatRequest(buffer + prefix, size - prefix);
+    if (!pb::LiveRace()) return finish("return {ok=true,on=0}");
+    switch (request.cmd) {
+    case pb::SeatCmd::poll: break;
+    case pb::SeatCmd::clear: pb::RaceDeny(pb::kVehicleUnknown, 0); pb::RaceGrant(pb::kVehicleUnknown, 0); pb::RaceHold(0); break;
+    case pb::SeatCmd::deny: pb::RaceDeny(request.vehicle, request.ms); break;
+    case pb::SeatCmd::grant: pb::RaceGrant(request.vehicle, request.ms); break;
+    case pb::SeatCmd::hold: pb::RaceHold(request.ms); break;
+    default: return finish("return {ok=false,reason='request'}");
+    }
+    pb::RaceState rs{};
+    pb::ReadRace(rs);
+    const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
+    if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
+                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u}",
+                                unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
+                                rs.grant_left_ms, rs.holds)))
+        return finish("return {ok=false,reason='format'}");
+    return finish(reply);
+}
 // M4 VEHICLE_STATE (lua/coop/world_vehicle_state.lua, docs/vehicles-companions-design.md 6.4; lab.ini
 // world_vehicle_state=1, lab and play): read-only body life and state words of this copy's TppVehicle2 pool.
 //   return 'MGS_COOP_VEHICLE_LIFE_V1' -- <first id 25600..26111> <n 1..32>
@@ -5131,6 +5202,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
+    if (SelectBoardSeatReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleLifeReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;

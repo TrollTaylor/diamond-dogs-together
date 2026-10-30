@@ -602,6 +602,24 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with
+    // partner_ride_board=passenger, partner_ride_front=1 also offers the light
+    // vehicle's front seat 1 and partner_ride_cab=1 the truck cab seat 1 of a vehicle
+    // the partner drives (the two phase-1 immediates per steered call, the seat-1
+    // remap skipped by the driver tick while seat 1 is in use), only where the driver's
+    // copy says that seat is free (the v4 seat addendum, design 8.21). Off unless named,
+    // in lab and play, until a FRAME proof on both copies and a play rehearsal; an
+    // invalid value refuses (named, off).
+    bool partner_ride_front = false;
+    bool partner_ride_front_given = false;
+    bool partner_ride_cab = false;
+    bool partner_ride_cab_given = false;
+    // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
+    // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
+    // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
+    // and a toast. Off unless named, in lab and play.
+    bool partner_ride_race = false;
+    bool partner_ride_race_given = false;
     // G4 truck test levers (vehicle_door, docs/native-puppet.md "Truck test levers"): the native
     // door-spot receipt behind debug goto_vehicle truck / goto_partner_vehicle / vehicle_door
     // (three read-only game calls under SEH). Default 0 in lab and play with a _given flag; play

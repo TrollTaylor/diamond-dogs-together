@@ -1,0 +1,153 @@
+# M6 more passenger seats (docs/vehicles-companions-design.md 6.6, E6 and section 9 M6): the extension of
+# coop-vehicle-passenger.txt for seat 1, the light vehicle's front seat (partner_ride_front=1) and the truck cab
+# seat (partner_ride_cab=1), both roles. A session has one lab.ini, so seat 1 runs in its own file: with the front
+# key on, the passenger search covers seats 1..3 and the back-seat halves of coop-vehicle-passenger.txt would get
+# seat 1. Afghanistan (30010, afgh-ledge seed): the Wakh Sind jeep (4 seats) and veh_trc_0000 near it (2 seats).
+#
+# E6 first: vehicle_census on both copies (GetVehicleType, GetRiderId seat count and riders of every live
+# TppVehicle2, one world_lua line each), then the seat-1 board with both phase-1 immediates per steered call and
+# the seat-1 remap of 0xB799C0 skipped (partner_board=seat_one; result=ok).
+#
+# Expected (jeep, the guest boards seat 1 behind the host's driving; then the reverse):
+#   both   partner_board=seat_one; result=ok; reason=none; front=1; cab=1; remap=0xb79a40; ...
+#   guest  partner_ride=board_passenger; vehicle=256xx; seat=1; site=phase1; ...; type=1|2; seats=4
+#          partner_ride=local_passenger; vehicle=256xx; seat=1; state=on; partner_ride=board_seated; ...; seat=1
+#          partner_ride=pass_camera; state=connect; vehicle=256xx; seat=1; reason=handle
+#   host   partner_ride_seat=confirmed; vehicle=256xx; seat=1; state=.. (stateVehicleFrontRightLoop 0x4470e2406e9d)
+#   frames m6-jeep-1-seated / m6-jeep-1-drive-NN: the guest in the front right seat on both copies (not in the
+#          driver's seat: the remap skip), the jeep moving; m6-jeep-1-exit-NN: the stock GetOffFrontRight.
+#   Fail signs: board_uncertain (seat_mismatch / steer_unconfirmed), the guest drawn in the driver's seat
+#          (the remap), the guest a second driver (vehicle_seats localSeat=1 on the guest, st=0x400).
+# Truck (G4 door levers, labsetting debug_vehicle_door=1): the host at veh_trc_000N's driver door boards and drives
+#   a few metres; the guest at this copy's passenger door of that truck (goto_partner_vehicle passenger) presses E:
+#   guest  partner_ride=board_passenger; vehicle=256xx; seat=1; site=phase1; ...; type=3|4; seats=2 and
+#          local_passenger; seat=1; state=on; host partner_ride_seat=confirmed; vehicle=256xx; seat=1;
+#   frames m6-truck-1-seated / m6-truck-1-drive-NN: the guest in the cab's right seat on both copies. The stock
+#   passenger phase plays stateTruckGetOnFrontRight but 0x14124B2D0 has no truck loop state: the frames show
+#   what the graph does after the GetOn (E6).
+# The truck cab, the seat race and the WAV / tank census are coop-vehicle-passenger-m6-truck.txt.
+# Seat race (SEAT op 54, labsetting partner_ride_race=1; here incidental: the guest beside the jeep the host takes): both copies at the empty sortie truck's two cab doors; the guest's
+#   pre-query wants its driver's seat and claims it, the host wants it too (ties go to the host) and denies:
+#   guest  world_lua=event=seat; action=claim; vehicle=25600; role=guest; ... then event=seat; action=deny; vehicle=25600;
+#          role=guest; set=1 (a 3 s native deny: no ride icon, the toast); host event=seat; action=deny; ...; why=host_first.
+#   Both press E: the host drives (vehicle_seats vehicle;id=25600), the guest stays on foot (vehicle_not_riding), m6-race.
+# The truck halves use the sortie truck (relief type 4, east truck, index 0 = 25600, labsetting world_relief=1: the guest's
+#   copy loads it from the host's VEHICLE_SPAWN): free roam's LRRP trucks carry two soldiers each (vehicle_census
+#   riders=1194,1195 ...), and run f49c167d's truck coasted 23 m after clear_enemies took its driver (gate=far).
+# Run 3c748d46 (wp/seats 387c6b0): both jeep halves passed again, with the jeep moving in both (frames on both
+#   copies), and the guest beside the jeep the host took was denied by SEAT (event=seat; action=deny; ...;
+#   why=host_first, then host_drives) before it boarded seat 1 under the passenger policy. Its truck part stopped at
+#   goto_vehicle sortie (door_unavailable: fixed) after the guest's copy loaded the sortie truck 10 s after the census.
+# Run f49c167d (wp/seats 0c9f93f): both jeep halves passed (seat 1 boarded, confirmed, camera connect/release, the stock
+#   GetOffFrontRight); the first half's jeep did not move under the host's W (its drive frames are stationary); the
+#   truck half stopped at the host's goto (gate=far). This revision backs the jeep out first and uses the sortie truck.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=1
+labsetting partner_ride_cab=1
+labsetting nametag=1
+labsetting debug_vehicle_door=1
+labsetting partner_ride_race=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 3000
+host run vehicle_census 0 48
+guest run vehicle_census 0 48
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host press e 150
+wait 2500
+host run vehicle_seats
+host require vehicle;id=
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest run goto_partner_vehicle passenger 60
+guest require warp_(position_readback|readback_timeout)
+wait 2500
+both capture m6-jeep-1-beside
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=1;' 10
+wait 1000
+both capture m6-jeep-1-seated
+host run vehicle_seats
+host hold s 1500 nowait
+both burst m6-jeep-1-back 4 200
+host release
+host hold w 1500 nowait
+both burst m6-jeep-1-drive 6 150
+host release
+host hold w+a 1500 nowait
+guest burst m6-jeep-1-drive-g 6 150
+host release
+wait 1500
+both capture m6-jeep-1-stopped
+guest press e 150
+guest burst m6-jeep-1-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=off' 5
+both capture m6-jeep-1-exited
+host press e 150
+wait 2500
+state
+both debug heal
+both debug godmode 1
+wait 1000
+host debug clear_enemies 100
+guest debug goto_vehicle jeep
+wait 2000
+placebehind host guest 10 0
+wait 4000
+guest press e 150
+wait 2500
+guest run vehicle_seats
+guest require vehicle;id=
+guest hold s 1500
+guest release
+wait 1500
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host run goto_partner_vehicle passenger 60
+host require warp_(position_readback|readback_timeout)
+wait 2500
+host debug clear_enemies 100
+host press e 150
+wait 3500
+waitlog host 'partner_ride=board_passenger; vehicle=256[0-9][0-9]; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=1;' 10
+wait 1000
+both capture m6-jeep-1r-seated
+guest hold w 1500 nowait
+both burst m6-jeep-1r-drive 6 150
+guest release
+guest hold w+d 1500 nowait
+host burst m6-jeep-1r-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst m6-jeep-1r-exit 6 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=1; state=off' 5
+both capture m6-jeep-1r-exited
+guest press e 150
+wait 2500
+state
+both debug heal
+wait 1000
+host debug clear_enemies 100
+state
