@@ -1,0 +1,106 @@
+# Seats on (docs/vehicles-companions-design.md 8.25): the truck cab in play at the shipped seat defaults. -Mode play
+# -WanSim bad, seed afgh-relief-trc for both roles (run b68844fc: the host's 30010 enemyBase_S checkpoint holds relief
+# type 4, the east truck 25600, which the LZ drop point places at -348.0,763.5; the guest's holds none). world_relief=1
+# is named only so the guest's copy gets the host's sortie truck (M3 stays off in play by default): it is the vehicle
+# source, not the seat path. Door spots (the lab door lever, run b68844fc): the right (seat 1) door
+# -346.147,317.008,764.219 facing -128 (the ride icon shows there; the left door spot on this slope showed none). Stock
+# phase 1 makes a player entering by the right door of an empty truck its driver.
+#   T1 the host drives (in by the right door; the guest kept 12 m away), the guest boards the cab seat 1 beside it;
+#      frames while the host holds the throttle, on both copies; the guest's stock get-off.
+#   T2 the guest drives (granted, the host kept 12 m away), the host boards the cab beside it; frames while the guest
+#      holds the throttle, on both copies; the host's stock get-off.
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-seats-on-truck-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed afgh-relief-trc
+labsetting world_relief=1
+title 200
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=4;' 120
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=4;' 150
+host debug clear_enemies 100
+guest run vehicle_census 0 2
+guest expect vehicle_census;first=0;n=2;found=1;25600:4:2
+# --- T1: the guest in the cab beside the host's driving -------------------------------------------------------------
+logmark both
+placebehind guest host 12 0
+wait 2000
+host debug teleport -346.147 317.008 764.219 -128
+wait 2500
+host capture s3-t1-door-h
+host press e 150
+wait 4000
+host run vehicle_seats
+host require vehicle;id=25600
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x03; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+guest debug teleport -346.147 317.008 764.219 -128
+wait 2500
+guest capture s3-t1-door-g
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture s3-t1-seated
+host hold s 1500 nowait
+host burst s3-t1-drive-h 6 150
+host release
+host hold w 1500 nowait
+guest burst s3-t1-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+guest burst s3-t1-exit 4 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture s3-t1-exited
+# --- T2: the host in the cab beside the guest's driving -------------------------------------------------------------
+logmark both
+placebehind host guest 12 0
+wait 3500
+waitlog host 'world_lua=event=seat; action=grant; vehicle=25600; role=host' 8
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25600; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25600
+waitlog guest 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x03; rider1=65535; read=1;' 10
+waitlog host 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+host debug teleport -346.147 317.008 764.219 -128
+wait 2500
+host capture s3-t2-door-h
+host press e 150
+wait 4500
+waitlog host 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture s3-t2-seated
+guest hold s 1500 nowait
+guest burst s3-t2-drive-g 6 150
+guest release
+guest hold w 1500 nowait
+host burst s3-t2-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst s3-t2-exit 4 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+guest press e 150
+wait 3000
+both capture s3-t2-exited
+state
