@@ -92,7 +92,7 @@ marked *in*; the others need the user's word (decision D6) because they depend o
 | Different buddy types per copy | Each copy can hold a different buddy type locally: run `87a5ce1e` had the guest summon D-Horse (F9) while the host kept D-Dog. Neither copy showed the other's companion. | [O] tag `archive/research-2026-10-23` `docs/evidence/horse-recall-actual-87a-2026-10-11.json` |
 | Quiet | The guest's Quiet character falls back to a DD soldier when the guest's **own** `vars.buddyType` is Quiet at Gather, or in 10050/11050/10260. Nothing stops the host deploying Quiet while the guest plays her. No Quiet sync exists; the guest treats host kind 4 as `no_host_dog`. Mother Base has a separate cell Quiet (`TppMbQuiet`, `f30050_sequence.lua:2004-2009`, gated by `TppStory.CanArrivalQuietInMB`). | [O] `lua/coop/character.lua:79-86, 121-124`; `docs/characters.md` table; `world_buddy.lua:254-256`; extracted f30050 script |
 | F9 summon | Release F9 "Summon D-Horse": with no buddy loaded, stock `ReserveCallBuddy` + `Load` and a `vars.buddyType` write (`deployHorse`); with a block active, `W.api.buddyCall` (CallBuddy bound at hook time) and no var write. Creates a horse on one copy only; the 2026-10-23 host horse was invisible to the guest. | [O] `lua/coop/debug_buddy.lua:43-84, 200-215`; `world_buddy.lua:37`; `docs/two-pc-test-2026-10-23.md:16, 109` |
-| Seated aim | The 2026-10-22 two-PC session found that aiming while seated, including as a back-seat passenger, produced aim samples that latched the aim self-check (diag #7). Run `637b47ea` (lab) had the back-seat guest hold aim: `aim_dir=refused; reason=ride` while seated, frame label `aim-seated`. So a stock passenger enters aim; whether the gun raises visibly and fires is [U]. A seat-aim census is an uncommitted tree in `D:/mgs-coop-wt/seat-aim` on 0.13.5 `cc973a8`. | [O] `docs/STATUS.md:785-789, 850-852`; `tools/worker/scenarios/coop-vehicle-seated-aim.txt:1-20`; `git status` of the seat-aim tree |
+| Seated aim | The 2026-10-22 session's latch (diag #7) is fixed since 0.13.6: the sender runs no self-check while the local player rides (`aim_dir=refused; reason=ride; checks=0`, also in every M7 run). A stock back-seat passenger raises and fires its own gun (upper act 2, gun modes 6/7; fire upper 3 / mode 9; the magazine goes down), but its body faces into the jeep (seat 2 the right side, seat 3 the left) and its aim range is +-90 deg around that, and no seated shot was seen to land in 8 hidden runs (8.20). The partner's raised gun on the driver's screen (design A) does not show (8.20). | [O] runs `6fc3098b`, `30a6a21a`, `03ceff68`, `a3f7c4e1`, `d7cf5a4b` (8.20); `native/partner_driver.cpp` `SenderV6` |
 
 ## 3. Game mechanics
 
@@ -285,7 +285,10 @@ AI follows the guest, which is why `world_buddy.lua` holds the guest's dog [O].
 No retail player state combines a vehicle seat with aiming [O, bounded search]. A stock back-seat passenger does enter
 aim: the 2026-10-22 diag #7 and run `637b47ea` (section 2) [O]. Static reading adds that it can raise and fire: Ride Exec
 stage 0 sets no-weapon flag 0xC3 at `0x12473A2`, the passenger phase clears it at `0x1250FF8`, and EnableCheck
-`0x103E010` refuses only on 0xC3/0xC2 [I]. Whether the gun shows and a shot lands is [U] (E8). Retail also seats the
+`0x103E010` refuses only on 0xC3/0xC2 [I]. Measured (8.20): the clear happens once the seat loop runs (`armed=1; c3=0`),
+RMB gives upper act 2 / modes 6-7 and a shot upper act 3 / mode 9 with the standing upper-body set (`posture=0`) [O];
+the seated body's root faces into the jeep (seat 2: the jeep's yaw - 90 deg, seat 3: + 90 deg) and the aim range is
++-90 deg around it [O]; no seated shot was seen to land [O, 8.20]. Retail also seats the
 player in an NPC-driven jeep's back seat by a scripted direct motion (`s10150_sequence.lua:1765-1800`,
 `stateDirectPlayRideRearLeftSeatOnVehicle`) [O].
 
@@ -558,6 +561,10 @@ which parts of "completely" wait (section 10).
   (`0xAA0EA22A5E0E`) pose on the DM-seated body 1, plus letting the aim mirror run for a seated partner
   (`partner_aim::RideGate` refuses today) [O design, U runtime: E9].
 - Hits: the shooter's own copy decides, as on foot (REQ_OUTCOME) [O].
+- **Status (2026-10-30, `wp/seat-shoot`, 8.20):** the census is ported (merge commit, contract re-pinned); the seated
+  aim never latches the check [O]; design A is built behind the lab key `partner_seat_gun` and its hold runs, but the
+  partner's gun does not show [O]; no seated shot was seen to land [O]. M7 is not done; the next step is design B or a
+  native passenger-aim study (D16).
 
 ### 6.8 F8: AI-driven, reinforcement and side-op vehicles (M8)
 
@@ -2337,6 +2344,85 @@ passed [O].
 Not in this smoke: D12's crew rule (its rehearsals at the shipped defaults are `34d5744d` and `98d84a21`), the D11 window
 before PAIRED, a dog death, the launcher. No defect found.
 
+### 8.20 Results: M7, shooting as a passenger (2026-10-30, branch `wp/seat-shoot`)
+
+Branch `wp/seat-shoot` from `dev/oct7-continue` `60e0d13`, in `D:/mgs-coop-wt/companion-host`; local only. The 0.13.5
+seat-aim census (`D:/mgs-coop-wt/seat-aim`, left uncommitted on 2026-10-22) is committed there as `c87b270` and merged
+with a merge commit (`5e2ce28`: both sides' keys, allow-lists, tests and docs kept; the partner contract regenerated).
+Hidden runs (research build, native gun stage, seed `africa-jeep`, lab; every one Closed, BaselineRestored,
+RealSavesUnchanged; `Forced=True` in five of them): `6fc3098b28344e27afe917f36a600a72` (E8/E9 census),
+`d40e412636b04b58b5e4afeb40202dfa`, `30a6a21a4c784049b79c259dd920977c`, `6e0edd8b577f4df48f80b78cf3fd7541`,
+`03ceff689ef24091a4194b0ab1a6fbe7`, `d3409f579a724f5589113b0b69f1ce7f`, `a3f7c4e184d0490c833a4ee14a75beb1`
+(`coop-vehicle-seat-shoot.txt` as it changed) and `d7cf5a4b4e3e4c6c82b136fdd088e4e2` (`coop-vehicle-seat-shoot-diag.txt`).
+The budget of eight runs is spent; no play rehearsal ran. Slices in the session scratch `m6m7/shoot/slice-<run8>`,
+frames `complete/frames/shoot/<run8>-<role>-<label>.jpg` (looked at for every claim below); run folders archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\<id>`.
+
+**E8, the local passenger.**
+- [O] A stock back-seat passenger raises and fires its own gun with no patch (`6fc3098b`, census on): once the seat loop
+  runs the passenger phase clears flag 0xC3 (`partner_seat_aim=sample; who=local; k=0; act=0x6e; ... armed=1; c2=0;
+  c3=0`); RMB gives upper act 2 with gun modes 6 / 7 (`posture=0`, the standing upper-body set), RMB+LMB upper act 3 /
+  mode 9, an empty magazine upper 5 / mode 11 (reload). The magazine went 8 -> 1 on the HUD; the act stayed 0x6E and the
+  passenger camera handle `0x8800000000006408` throughout. Frame `aim-seated` of `637b47ea` (archived as
+  `complete/frames/0136-safety/seated-aim-637b47ea-lab-seated-and-on-foot.jpg`) shows the gun on the guest's back: it was
+  captured after the RMB holds ended, so it never showed an aim.
+- [O] The aim self-check never latched: `aim_dir=refused; reason=ride; checks=0; misses=0` while seated in `6fc3098b`,
+  and with `partner_seat_gun` on `aim_dir=valid; reason=seat; checks=0; misses=0` (below) in every later run. No
+  `reason=convention` in any run. Nothing needed fixing: the 0.13.6 `RideGate` already skips the check while riding.
+- [O] The seated body faces into the jeep: body 1's yaw on the driver's copy was 62.6 deg in seat 2 (`30a6a21a`) and
+  -117.4 deg in seat 3 (`03ceff68`, `d3409f57`) with the jeep at 152.6 deg, and the passenger's own sent directions lie
+  within +-90 deg of the same values. The stock aim range (`0x108E7D0`, the default class: 75 deg pitch, 90 deg yaw) is
+  measured from that root, so a passenger aims across the jeep, forward or back, never out of its own side: aiming out
+  of the left of seat 2 (`30a6a21a`) or the right of seat 3 (`03ceff68`) clamped (`r60` 0 or 1).
+- [O] The aim camera sits behind the passenger: from seat 2 aiming across to the right it stood outside the left side
+  and looked through the jeep's body (frames `d40e4126-guest-m7-seat-aim-*`: the wheel arch and panel; the passenger
+  camera skips the jeep's collision); from seat 3 aiming across to the left it sits over the passenger's head with a
+  clear view (`6fc3098b`, `d3409f57`, `a3f7c4e1`). The passenger camera keeps the direction the player faced when it
+  boarded.
+- [O] At the shot the aim swung up: with the bursts of `d3409f57` the sent pitch reached -74.7 deg (`r5c` 0, the top of
+  the range) and frames `m7-fire-guest-1/2` show the camera at the sky under the passenger's head; in `a3f7c4e1` single
+  shots (LMB taps under a held RMB) did the same in each post-shot frame. In `6fc3098b` the held bursts put the camera
+  inside the passenger's own head (`seat-fire-guest-02..04`). Cause [U] (recoil applied to the standing set over a
+  seated root is the guess [I]).
+- [O] No seated shot was seen to land: the targets were a guard warped 9-16 m away and put to sleep (`enemy sleep
+  nearest`), aimed at with the new lever `enemy_aim_nearest` (below). In `a3f7c4e1` the reticle was red on the
+  sleeping guard right before the shots (frame `m7-seat-aim-02`), 7 fire samples followed (gun mode 9; the HUD
+  magazine 8 -> 3), and the guest's copy logged no
+  Damage or Dead for him and no REQ_OUTCOME. In `d7cf5a4b` (the diagnostic: shots while driving, standing still and in
+  first person, then on foot) the pre-shot frames did not show the guard under the reticle, and the on-foot control
+  missed as well, so the test method itself is not reliable: whether a seated shot can land is [U].
+- [O] The board needs the player to face the jeep: from 1.9 m out on the passenger side facing away neither copy
+  boarded (`6e0edd8b`); the debug command `goto_vehicle jeep right` (new) gives the passenger-side spot facing it, and
+  seat 3 boarded from there (`03ceff68` and later).
+
+**E9, the partner's gun on the driver's copy (design A).**
+- [O] Baseline (`6fc3098b`): body 1 in the seat flow has act 0x8B, upper act 0, flag 0xC3 set and the stand-in gun 46 in
+  hand, and stays seated with its gun on its back while the remote aims and fires (frames `seat-aim-host-*`,
+  `seat-fire-host-*`); the remote's live pose flags say so (`partner_action_state; flags=0x1|0x3; act=110`).
+- Built (lab key `partner_seat_gun`, off in lab and play; docs/native-puppet.md "Seat gun"): the gesture hook puts
+  graph 2 of the DM-seated body 1 on GunHoldStart while the remote passenger aims, would chain to GunHold at the raise
+  clip's end, writes body 1's aim rates from the remote's seated direction and returns stateNull when the aim stops.
+- [O] Its first run (`d40e4126`) started no hold at all: the driver tick returns from the seat-owned branch before
+  `TickGesture`; fixed (`8c0d482`).
+- [O] From `30a6a21a` on, every aim ran the whole path on the driver's copy (the host's in the guest-shoots order, the
+  guest's in the reverse order; 20 holds in five runs, each ended by its release): `partner_seat_gun=hold; seq=..;
+  vehicle=25608; seat=2|3` -> `partner_gesture=submit; graph=2; node=0x50130ae2e584; exist=1; kind=gun_start; ...;
+  body_act=139` -> `applied; ...; current=0x50130ae2e584; ok=1` -> `partner_seat_gun=rates; ok=1` (the written `r5c` /
+  `r60` read back on body 1) -> `release; cause=aim` -> `partner_gesture=ended; via=end; cause=release; ...; null=1`;
+  no `uncertain`, `viewer_changed` or fault line. The raise never reached its motion end (vt+0x228 stayed false for up
+  to 5.6 s), so GunHold was never requested.
+- [O] **No visible change:** the driver's frames during the holds (`30a6a21a-host-m7-partner-gun-01..03` against
+  `m7-seated`, cropped at full size; the same in `03ceff68`, `d3409f57`, `a3f7c4e1`) show the seated partner with its gun
+  on its back in the same pose. A graph-2 node alone does not draw a raised gun on a DM-seated body [O]; why (the upper
+  layer's weight under the DM clip, the weapon not in hand, the aim IK controller that StateGunHoldStart also drives
+  through `*(*(ctx+0x48)+0x18)` vt+0x38/+0x80/+0x48) is [U].
+- The seated direction (sender, key on): `aim_dir=valid; reason=seat` [O]; with the hold showing nothing it has no
+  visible use yet.
+
+**Defaults and wire.** Nothing flips: `partner_seat_gun` stays off in lab and play, `partner_seat_aim` stays lab-only.
+No op and no CFG index were added. A 0.14.4 peer receiving the seated v6 direction uses it only in its native drive,
+which the seat flow keeps disarmed [I]. The front seat and the truck bed depend on M6 and were not tried.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -2754,6 +2840,16 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   drives -> `waitlog guest 'world_lua=event=req; rid=.*; ent='`, `waitlog host 'world_lua=event=commit; ent=.*;
   actor=guest;'`; `guest capture m7-seat-aim` (gun raised), `host capture m7-partner-gun` (the partner's gun raised in
   the seat); no `reason=convention`. Rehearsal `-Mode play -WanSim bad`.
+- **Status (2026-10-30, `wp/seat-shoot`; section 8.20): not done.** [O] The seated aim never latches the self-check
+  (`checks=0` in every run). [O] A stock back-seat passenger raises and fires its gun (`6fc3098b`). [O] Design A is built
+  behind the lab key `partner_seat_gun` (off in lab and play): the driver's copy holds the seated partner's graph 2 on
+  GunHoldStart for every aim (`30a6a21a`, `03ceff68`, `d3409f57`, `a3f7c4e1`), but its frames show no raised gun.
+  [O] No seated shot was seen to land on a sleeping guard 8-16 m away in five runs, and in the last one (`d7cf5a4b`) the
+  on-foot control missed too, so whether a seated shot can land is still [U]. Not met: the kill lines (REQ_OUTCOME
+  and the host's `actor=guest` commit), the reversed order's kill, `m7-partner-gun` (no raised gun on the driver's
+  screen), the play rehearsal (the hidden-run budget was spent; nothing flips). The shooter's own `m7-seat-aim`
+  frames show the reticle over its head (red on the guard in `a3f7c4e1`) but not the gun itself. The front seat and
+  the truck bed wait for M6. Next: D16.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 
@@ -2942,6 +3038,15 @@ The original questions:
   where the host's copy stopped once the guest stands 3.5 m clear. Accept, or hold VEHICLE_STATE longer after a
   guest's get-off? **Decided 2026-10-29: accepted for now; check it in the two-PC session.** Nothing changed (the
   guest's bail was not run in the hidden worker).
+- **D16 (new, M7, 2026-10-30). Shooting as a passenger: how to continue** (8.20). A back-seat passenger can already
+  raise and fire its gun on its own screen, but in eight hidden runs no seated shot was seen to land, its aim covers only
+  the half of the world on the far side of the jeep (the seated body faces inward), the camera can end up behind or
+  inside the jeep's body, and the partner's raised gun does not show on the driver's screen with the cheap design (a
+  graph-2 pose only). Options: (a) a static study first (no runs): what the gun plugin needs on a seated body (the aim
+  IK controller, the weapon in hand, flag 0xC3 on body 1) and what makes the passenger's aim pitch jump at each shot,
+  then design B (body 1's own gun plugin while seated) with a new run budget; (b) park M7 and move on (M8, M9-M11),
+  keeping the lab key and the census; (c) a smaller goal: the passenger may aim and fire on its own screen (as today),
+  with no partner gun on the driver's screen and no promise that it hits. **Recommended: (a).**
 
 **The user's decisions of 2026-10-29, as integrated (`dev/oct7-continue`: `4e3d0e5` merges `wp/dog-guard`, `92c4f9f`
 merges `wp/vehicle-decisions`; unreleased, nothing pushed, not two-PC tested).** D7 and D11-D15 are all decided by the
