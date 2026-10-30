@@ -558,24 +558,29 @@ rotation writes 0x112106E, the aim-point solve's eye 0x109705C, slot vt+0xF0,
 the aim module's slots +0x18 / +0x20 (13 pass camera blocks).
 
 **The seated aim view and the camera after a get-off (design 8.33; built, not
-proven, default off).** Mode `partner_pass_camera=view` (lab and play key,
-not the default; lever `debug passcam view`) is aim plus two camera changes.
-(1) While the local passenger is seated (an armed boarding, seats 1-3) it
+proven, default off; review fixes 8.34).** Mode `partner_pass_camera=view`
+(a lab key: play runs it as aim until proven; lever `debug passcam view`) is
+aim plus two camera changes.
+(1) While the local passenger is seated (an armed boarding, seats 1 and 2) it
 uses the stock aim module's own variant offset: the module object (module -
 0x20) holds a flag +0x174 and nine entries at +0x50 (stride 0x20: offset[4],
 distance +0x10, scale +0x14) for the variants CAM+0x344 listed at 0x23D4870;
-after its parameter load (0xB8A0BF169F98) every update, FUN_1412BBFE0 adds the
-entry of the current variant to the target offset CAM+0x150, which
+FUN_1412BBFE0 (called by the aim module's update only while CAM+0x204 bit 2
+is set, 0x12BD4D4) loads the parameter set 0xB8A0BF169F98 and then adds the
+entry of the current variant to the target offset CAM+0x150 ([I] the load
+rewrites CAM+0x150 each call; a guard restores if |y| passes 2.5 m), which
 SetRotationAndAngles 0x1121704 blends into CAM+0x140 for the position solve.
 `WriteRaise` writes the entry (0, 0.60, 0, 0, 0, 1.0) then the flag, and
-writes the constructor's values back (flag first) at the boarding end, a
-variant change, the mission latch and terminate; never over a set flag or a
-foreign entry (`state=view; event=apply|restore|refused` lines). (2) After the
-boarding ends and the VehicleCamera let go, one stock rotation request
+writes the constructor's values back (flag first, only while the entry is
+still ours; a failed restore is retried) at the boarding end, a variant
+change and the mission latch, and from MissionEnd / Stop / MissionStart
+(`RaiseRevert`); never over a set flag or a foreign entry (`state=view;
+event=apply|restore|refused|abandon` lines). (2) After an observed get-off
+(act 0x70, seats 1 and 2) and the stock clear of the handle, one stock rotation request
 (`RequestTurn`: the fields and gate of PlayerCamera vt+0xE0 0x111A920, which
 RequestToSetCameraRotation calls) toward the vehicle's forward yaw, 0.12 rad
-down (`state=turn; event=request|refused|expire|check`). No game function is
-called. Pins: 0x12BD4D4, 0x12BC015, 0x12BC049, 0x111A920, 0x111A948 (18
+down (`state=turn; event=request|refused|expire|check|skip`); the request's
+fields are written before its bit. No game function is called. Pins: 0x12BD4D4, 0x12BC015, 0x12BC049, 0x111A920, 0x111A948 (18
 blocks) and the variant ids (generator-checked). [U] whether the seated
 variant is in the list, whether +y is up in the solve's frame, and the frames:
 the hidden runs of 8.33 never started (worker isolation failures).

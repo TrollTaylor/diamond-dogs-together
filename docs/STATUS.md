@@ -1,8 +1,17 @@
+## 2026-10-30: aim view review fixes (branch `wp/aim-view`; built, not proven)
+
+**Fixed** (design 8.34; red `f4f080e`, fix `c58b065`): the raise is written back by MissionEnd / Stop / MissionStart
+(8.33's "restored at terminate" was false: that branch never ran); a failed restore is retried and a restore writes only
+over our own entry; seats 1 and 2 only (seat 3 was clear); the get-off turn arms only on an observed get-off (act 0x70
+plus the stock clear; no time fallback; dropped when the mode leaves view); the request bit after its fields; a grow
+guard on CAM+0x150 [I]; `view` runs as `aim` in play (a lab key until proven). Scenarios wait for the view/turn lines.
+fast CTest 304/304; hidden lab run: see below. **Players see no change** (default `aim`).
+
 ## 2026-10-30: the seated aim view and the camera after a get-off (branch `wp/aim-view`; built, not proven)
 
 **Built** (`bd6f0cf`, design 8.33): `partner_pass_camera=view` = aim + the seated aim camera raised 0.60 m over the
 shoulder from seats 1-3 (the stock aim module's own variant offset, obj+0x174 / +0x50, restored at the boarding end,
-a variant change, the latch and terminate) + one stock camera rotation request toward the jeep's forward after a
+a variant change and the latch; the terminate restore was dead code, fixed in 8.34) + one stock camera rotation request toward the jeep's forward after a
 get-off (seat 1's get-off camera ends on the driver's side looking across the jeep [O frames 37b94432]; the exit itself
 goes out of the right door). Five new pinned sites (contract 829 code sites / 209 slots), 310 unit checks, four mutants
 caught. **Not proven, default unchanged (`aim`):** the four hidden runs `1b597e17`, `62af662d`, `cf8111c4`, `f3fbeefd` ended
