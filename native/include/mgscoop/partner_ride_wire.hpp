@@ -119,6 +119,40 @@ bool ExtLive(const ExtStore&, std::uint32_t epoch, std::uint64_t now) noexcept;
 // unless a live addendum describes that exact revision, vehicle and seat.
 std::uint8_t RemoteCategory(const ExtStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept;
 
+// Version 4 seat addendum (M6 seat 1, review R3; docs/vehicles-companions-design.md 8.21): 12 bytes, the
+// same magic, sent NEXT TO the v1/v2 packet (never instead of it) and only while partner_ride_front or
+// partner_ride_cab is on with partner_ride_board=passenger. It tells the peer whether this copy draws a
+// seat-1 passenger (its receiver gate accepts seat 1) and, while this copy's player drives, whether seat 1
+// of this copy's vehicle is taken (its D-Dog rides there, a soldier). The peer's board offers seat 1 only
+// with a live addendum that describes the ride it sees, accepts that class and has seat 1 free. An older
+// receiver (0.14.4 and the v3 builds) drops it as an invalid ride packet (version 4; one
+// partner_ride=refused; reason=packet_or_session line) and keeps its stored state.
+//   [0] 0x52 [1] 4 [2] flags (SeatFlag) [3] 0 [4..5] the v1/v2 ride revision it describes (LE16, never 0)
+//   [6..7] the vehicle this copy's player drives (LE16, kVehicleUnknown otherwise) [8..11] sender_ms (LE32)
+inline constexpr std::uint8_t kVersionSeat = 4;
+inline constexpr std::size_t kSeatExtSize = 12;
+namespace SeatFlag {
+inline constexpr std::uint8_t Front = 1 << 0;     // draws a light vehicle's seat-1 passenger (partner_ride_front)
+inline constexpr std::uint8_t Cab = 1 << 1;       // draws a truck cab's seat-1 passenger (partner_ride_cab)
+inline constexpr std::uint8_t OneTaken = 1 << 2;  // rider[1] of this copy's `vehicle` is not empty (needs a vehicle)
+inline constexpr std::uint8_t Known = 0x07;
+}
+struct SeatExt {
+    std::uint8_t flags{};
+    std::uint16_t revision{}, vehicle=kVehicleUnknown;
+    std::uint32_t sender_ms{};
+};
+inline bool IsSeatExt(const std::uint8_t* b, std::size_t n) noexcept { return b && n==kSeatExtSize && b[0]==kMagic && b[1]==kVersionSeat; }
+inline bool SameSeatExt(const SeatExt& a, const SeatExt& b) noexcept { return a.flags==b.flags && a.revision==b.revision && a.vehicle==b.vehicle; }
+bool EncodeSeatExt(const SeatExt&, std::uint8_t (&)[kSeatExtSize]) noexcept;
+bool DecodeSeatExt(const std::uint8_t*, std::size_t, SeatExt&) noexcept;
+struct SeatExtStore { bool have{}; SeatExt ext{}; std::uint32_t epoch{}; std::uint64_t received_ms{}; unsigned received{}, invalid{}, stale{}; };
+// Newer sender_ms of the same epoch (or a new epoch) replaces the stored seat addendum.
+bool AcceptSeatExt(SeatExtStore&, const std::uint8_t*, std::size_t, std::uint32_t epoch, std::uint64_t now) noexcept;
+// The flags for the stored ride packet: 0 unless a live seat addendum (same epoch, inside the lease)
+// describes that exact revision and vehicle of a vehicle ride.
+std::uint8_t SeatFlagsFor(const SeatExtStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept;
+
 // What the existing partner transform stream can drive for a mount.
 // That stream is the other player's position, heading and optional animation.
 // It has no horse-body transform, no vehicle-body transform and no walker arm.

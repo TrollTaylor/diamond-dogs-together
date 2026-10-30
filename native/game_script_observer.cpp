@@ -1034,6 +1034,21 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
                                                      mgscoop::partner_board::SeatOne(mgscoop::partner_board::LiveSeatOpts()));
     return true;
 }
+// M6 review R3: rider[seat] of this copy's vehicle `id` for the v4 seat addendum (ReadProcessMemory only).
+bool PartnerSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    out = 0xFFFF;
+    if (!game_base || !partner_gate_ok || seat > 3) return false;
+    mgscoop::partner_vehicle::Read r{};
+    mgscoop::partner_vehicle::ReadLive(game_base, id, r);
+    if (r.refusal || r.unit.id != id || !r.unit.rec) return false;
+    std::uint16_t value = 0xFFFF;
+    SIZE_T read = 0;
+    const auto at = r.unit.rec + mgscoop::partner_board::kUnitRiders + 2u * seat;
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), &value, sizeof(value), &read) || read != sizeof(value))
+        return false;
+    out = value;
+    return true;
+}
 // F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):
 // the pinned-block check runs lazily from the driver tick behind the code gate (like the board;
 // nothing is patched); the connect writes only the local camera's ignore-collision handle, on
@@ -1149,7 +1164,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
+    PartnerSeatRider};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

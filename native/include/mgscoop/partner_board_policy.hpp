@@ -95,17 +95,24 @@ struct Policy {
     std::uint8_t peer_seat = kSeatUnknown;
     Mode mode = Mode::off;
     std::uint32_t until_ms = 0;  // low 32 bits of the driver clock (partner_net::NowMs)
+    // Review R3: the peer driver's copy draws a seat-1 passenger of that class and its seat 1 is free
+    // (its live v4 seat addendum for this ride); the mode byte's bits 6 / 7.
+    bool front_ok = false, cab_ok = false;
 };
 inline std::uint64_t Pack(const Policy& p) noexcept {
+    const auto mode = static_cast<std::uint8_t>(static_cast<std::uint8_t>(p.mode) | (p.front_ok ? 0x40u : 0u) | (p.cab_ok ? 0x80u : 0u));
     return static_cast<std::uint64_t>(p.vehicle) | static_cast<std::uint64_t>(p.peer_seat) << 16 |
-           static_cast<std::uint64_t>(static_cast<std::uint8_t>(p.mode)) << 24 | static_cast<std::uint64_t>(p.until_ms) << 32;
+           static_cast<std::uint64_t>(mode) << 24 | static_cast<std::uint64_t>(p.until_ms) << 32;
 }
 inline Policy Unpack(std::uint64_t word) noexcept {
     Policy p{};
     p.vehicle = static_cast<std::uint16_t>(word & 0xFFFFu);
     p.peer_seat = static_cast<std::uint8_t>((word >> 16) & 0xFFu);
-    const auto mode = static_cast<std::uint8_t>((word >> 24) & 0xFFu);
+    const auto byte = static_cast<std::uint8_t>((word >> 24) & 0xFFu);
+    const auto mode = static_cast<std::uint8_t>(byte & 0x3Fu);
     p.mode = mode == 1 ? Mode::block : mode == 2 ? Mode::passenger : Mode::off;
+    p.front_ok = (byte & 0x40u) != 0;
+    p.cab_ok = (byte & 0x80u) != 0;
     p.until_ms = static_cast<std::uint32_t>(word >> 32);
     return p;
 }
@@ -119,6 +126,9 @@ inline bool LeaseLive(std::uint32_t until_ms, std::uint32_t now_ms) noexcept {
 // and the peer's ride is live (same link epoch, inside the lease), of kind
 // vehicle, in a known seat of a vehicle-type id. The mission-scoped uncertain
 // latch degrades passenger to block.
+// Review R3: the peer's v4 seat addendum flags (partner_ride_wire::SeatFlag, the same values; a
+// static_assert in partner_driver.cpp keeps them equal).
+inline constexpr std::uint8_t kSeatFlagFront = 1, kSeatFlagCab = 2, kSeatFlagOneTaken = 4;
 struct PublishIn {
     Mode mode = Mode::off;
     bool uncertain = false;
@@ -127,6 +137,7 @@ struct PublishIn {
     std::uint8_t seat = kSeatUnknown;
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint64_t received_ms = 0;
+    std::uint8_t seat_flags = 0;  // partner_ride_wire::SeatFlagsFor the peer's stored ride (0: none live)
 };
 inline Policy PolicyFor(const PublishIn& in) noexcept {
     Policy p{};
@@ -137,6 +148,10 @@ inline Policy PolicyFor(const PublishIn& in) noexcept {
     p.peer_seat = in.seat;
     p.mode = in.mode == Mode::passenger && in.uncertain ? Mode::block : in.mode;
     p.until_ms = static_cast<std::uint32_t>(in.received_ms + kLeaseMs);
+    // Seat 1 next to a peer driver only where the driver's copy draws that seat-1 passenger and has seat 1 free.
+    const bool one_free = p.mode == Mode::passenger && in.seat == 0 && !(in.seat_flags & kSeatFlagOneTaken);
+    p.front_ok = one_free && (in.seat_flags & kSeatFlagFront) != 0;
+    p.cab_ok = one_free && (in.seat_flags & kSeatFlagCab) != 0;
     return p;
 }
 
@@ -174,9 +189,11 @@ struct Range {
 inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int count, SeatOpts opts = {}) noexcept {
     Range r{};
     if (!facts_ok) { r.reason = "facts_read"; return r; }
-    // M6: the truck cab seat 1 (never a seat index 2 or 3 of a truck: its bed is not a seat).
+    // M6: the truck cab seat 1 (never a seat index 2 or 3 of a truck: its bed is not a seat). Review R3:
+    // only with the driver's handshake (cab_ok), else the truck blocks as without the key.
     if (opts.cab && type >= kTruckFirst && type <= kTruckLast) {
         if (count < kCabSeatsMin || count > kPassengerSeatsMax) { r.reason = "seats"; return r; }
+        if (!p.cab_ok) { r.reason = "cab_peer"; return r; }
         if (p.peer_seat == kFrontSeat) { r.reason = "no_seat"; return r; }
         r.ok = true;
         r.first = r.last = kFrontSeat;
@@ -185,7 +202,9 @@ inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int 
     }
     if (type < kLightFirst || type > kLightLast) { r.reason = "type"; return r; }
     // M6: the light vehicle's front seat 1 joins the back seats (a 2-seat light vehicle offers seat 1 only).
-    if (opts.front) {
+    // Review R3: only with the driver's handshake (front_ok); without it the back seats as without the key.
+    if (opts.front && !p.front_ok && count < kPassengerSeatsMin) { r.reason = "front_peer"; return r; }
+    if (opts.front && p.front_ok) {
         if (count < kFrontSeatsMin || count > kPassengerSeatsMax) { r.reason = "seats"; return r; }
         std::uint8_t first = kFrontSeat;
         std::uint8_t last = static_cast<std::uint8_t>(count - 1 < kBackLast ? count - 1 : kBackLast);

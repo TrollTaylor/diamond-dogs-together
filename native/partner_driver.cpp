@@ -2585,6 +2585,18 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             }
             continue;
         }
+        // M6 review R3: the seat addendum (v4, 12 bytes) shares the ride magic (before IsRide, which takes any 0x52).
+        if (partner_ride_wire::IsSeatExt(message, size)) {
+            const bool had = d.ride_seat_ext.have && d.ride_seat_ext.epoch == epoch;
+            const partner_ride_wire::SeatExt before = d.ride_seat_ext.ext;
+            if (partner_ride_wire::AcceptSeatExt(d.ride_seat_ext, message, size, epoch, now)) {
+                const auto& e = d.ride_seat_ext.ext;
+                if (!had || !partner_ride_wire::SameSeatExt(before, e))
+                    EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=seat_ext_rx; rev=%u; vehicle=%u; flags=0x%02x; epoch=%u\r\n",
+                               unsigned(e.revision), unsigned(e.vehicle), unsigned(e.flags), epoch);
+            }
+            continue;
+        }
         if (partner_ride_wire::IsRide(message, size)) {
             if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
                 // Heartbeats repeat the revision: only a new state or revision is logged.
@@ -2780,6 +2792,58 @@ void SendRideExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     d.ride_ext_tx_ms = now;
 }
 
+// M6 review R3: the v4 seat addendum next to the v1/v2 packet while partner_ride_front or partner_ride_cab is
+// on in passenger mode: this copy draws a seat-1 passenger of those classes (the receiver gate) and, while
+// its player drives, whether rider[1] of its copy of that vehicle is taken (its D-Dog, a soldier; unread
+// counts as taken). The peer's board offers seat 1 only with it (partner_board_policy.hpp PolicyFor). On a
+// change at once (rider[1] read every kSeatRiderMs while driving), else a 2 s heartbeat.
+constexpr std::uint64_t kSeatRiderMs = 250;
+partner_board::Mode BoardMode(PartnerRideBoard value) noexcept;
+static_assert(partner_board::kSeatFlagFront == partner_ride_wire::SeatFlag::Front && partner_board::kSeatFlagCab == partner_ride_wire::SeatFlag::Cab &&
+                  partner_board::kSeatFlagOneTaken == partner_ride_wire::SeatFlag::OneTaken, "the seat addendum flags");
+void SendSeatExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    const Settings& set = d.settings;
+    if (BoardMode(set.ride_board) != partner_board::Mode::passenger || (!set.ride_front && !set.ride_cab) || !d.ride_tx_have ||
+        !h.send_reliable_append)
+        return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch || !(h.link_live && h.link_live(h.context))) return;
+    rw::SeatExt want{};
+    want.flags = static_cast<std::uint8_t>((set.ride_front ? rw::SeatFlag::Front : 0) | (set.ride_cab ? rw::SeatFlag::Cab : 0));
+    want.revision = d.ride_tx.revision;
+    const bool driving = d.ride_tx.kind == rw::Kind::vehicle && d.ride_tx.seat == 0 && d.ride_tx.vehicle != rw::kVehicleUnknown &&
+                         d.ride_tx.vehicle == d.local_vehicle;
+    want.vehicle = driving ? d.ride_tx.vehicle : rw::kVehicleUnknown;
+    if (driving) {
+        if (d.seat_rider_vehicle != want.vehicle || !d.seat_rider_ms || now < d.seat_rider_ms || now - d.seat_rider_ms >= kSeatRiderMs) {
+            std::uint16_t rider = 0xFFFF;
+            d.seat_rider_read = h.seat_rider && h.seat_rider(h.context, want.vehicle, 1, rider);
+            d.seat_rider_value = d.seat_rider_read ? rider : 0xFFFF;
+            d.seat_rider_vehicle = want.vehicle;
+            d.seat_rider_ms = now ? now : 1;
+        }
+        if (!d.seat_rider_read || d.seat_rider_value != 0xFFFF) want.flags = static_cast<std::uint8_t>(want.flags | rw::SeatFlag::OneTaken);
+    } else {
+        d.seat_rider_vehicle = rw::kVehicleUnknown;
+        d.seat_rider_ms = 0;
+    }
+    const bool same = d.ride_seat_ext_tx_have && rw::SameSeatExt(d.ride_seat_ext_tx, want);
+    if (same && d.ride_seat_ext_tx_epoch == epoch && now >= d.ride_seat_ext_tx_ms && now - d.ride_seat_ext_tx_ms < rw::kExtHeartbeatMs) return;
+    want.sender_ms = static_cast<std::uint32_t>(now);
+    std::uint8_t bytes[rw::kSeatExtSize]{};
+    if (!rw::EncodeSeatExt(want, bytes) || !h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) return;
+    if (!same)
+        EmitCapped(d.mission.ride_cap, h, "partner_ride",
+                   "partner_ride=seat_ext_tx; rev=%u; vehicle=%u; flags=0x%02x; rider1=%u; read=%u; epoch=%u\r\n", unsigned(want.revision),
+                   unsigned(want.vehicle), unsigned(want.flags), driving ? unsigned(d.seat_rider_value) : 0xFFFFu,
+                   driving && d.seat_rider_read ? 1u : 0u, epoch);
+    d.ride_seat_ext_tx = want;
+    d.ride_seat_ext_tx_have = true;
+    d.ride_seat_ext_tx_epoch = epoch;
+    d.ride_seat_ext_tx_ms = now;
+}
+
 // WS3 step 0 (partner_ride_census=1, lab only): one read-only census line per
 // ridden vehicle every kRideCensusMs: the local player's vehicle (who=local:
 // the driver's own record) and the remote's (who=remote: this copy of the
@@ -2972,13 +3036,17 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     in.seat = d.ride_rx.packet.seat;
     in.vehicle = d.ride_rx.packet.vehicle;
     in.received_ms = d.ride_rx.received_ms;
+    // Review R3: the driver's seat-1 handshake for this exact ride (v4 seat addendum).
+    in.seat_flags = rw::SeatFlagsFor(d.ride_seat_ext, d.ride_rx.packet, epoch, now);
     const pb::Policy p = pb::PolicyFor(in);
     BoardPublish(d, h, p.mode == pb::Mode::off ? 0 : pb::Pack(p));
-    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat) {
+    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat ||
+        p.front_ok != b.logged.front_ok || p.cab_ok != b.logged.cab_ok) {
         b.policy_logged = true;
         b.logged = p;
-        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s\r\n", unsigned(p.vehicle), unsigned(p.peer_seat),
-                  pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none");
+        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s; seat1=%s; flags=0x%02x\r\n", unsigned(p.vehicle),
+                  unsigned(p.peer_seat), pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none",
+                  p.front_ok && p.cab_ok ? "front,cab" : p.front_ok ? "front" : p.cab_ok ? "cab" : "none", unsigned(in.seat_flags));
     }
 }
 
@@ -6358,6 +6426,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickPassCamera(d, h, st, now, terminating);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
+    SendSeatExt(d, h, now);
     TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};

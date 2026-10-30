@@ -151,6 +151,66 @@ void TestExt() {
     Check(rw::RemoteCategory(s, ride, 7, 2401 + rw::kLeaseMs) == rw::kCategoryUnknown, "an expired addendum: unknown");
 }
 
+// M6 review R3: the v4 seat addendum (the driver's copy accepts a seat-1 passenger; its seat 1 is taken).
+void TestSeatExt() {
+    rw::SeatExt e{};
+    e.flags = rw::SeatFlag::Front | rw::SeatFlag::OneTaken; e.revision = 9; e.vehicle = 25608; e.sender_ms = 0x01020304;
+    std::uint8_t b[rw::kSeatExtSize]{};
+    Check(rw::kSeatExtSize == 12 && rw::kVersionSeat == 4, "12 bytes, version 4");
+    Check(rw::EncodeSeatExt(e, b) && rw::IsSeatExt(b, sizeof(b)) && b[0] == rw::kMagic && b[1] == 4 && b[2] == 5 && b[3] == 0 &&
+              b[4] == 9 && b[5] == 0 && b[6] == (25608 & 0xFF) && b[7] == (25608 >> 8) && b[8] == 4 && b[11] == 1,
+          "seat addendum layout: magic, 4, flags, 0, revision, vehicle, sender_ms");
+    rw::SeatExt out{};
+    Check(rw::DecodeSeatExt(b, sizeof(b), out) && out.flags == e.flags && out.revision == 9 && out.vehicle == 25608 &&
+              out.sender_ms == 0x01020304u, "seat addendum round trip");
+    rw::Packet probe{};
+    Check(!rw::Decode(b, sizeof(b), probe), "an older receiver's v1/v2 decoder refuses it (version 4): dropped as an invalid ride packet");
+    Check(!rw::IsExt(b, sizeof(b)), "and it is not the v3 addendum");
+    std::uint8_t c[rw::kSeatExtSize]{};
+    std::memcpy(c, b, sizeof(c));
+    c[3] = 1;
+    Check(!rw::DecodeSeatExt(c, sizeof(c), out), "a non-zero reserved byte refused");
+    std::memcpy(c, b, sizeof(c));
+    c[2] = 0x08;
+    Check(!rw::DecodeSeatExt(c, sizeof(c), out), "an unknown flag refused");
+    Check(!rw::DecodeSeatExt(b, sizeof(b) - 1, out) && !rw::IsSeatExt(b, 16), "the size is exact");
+    rw::SeatExt bad = e;
+    bad.revision = 0;
+    Check(!rw::EncodeSeatExt(bad, b), "revision 0 refused");
+    bad = e; bad.vehicle = 6656;
+    Check(!rw::EncodeSeatExt(bad, b), "a non-vehicle id refused");
+    bad = e; bad.vehicle = rw::kVehicleUnknown; bad.flags = rw::SeatFlag::Cab;
+    Check(rw::EncodeSeatExt(bad, b), "no driven vehicle: the capability alone");
+    bad.flags = rw::SeatFlag::OneTaken;
+    Check(!rw::EncodeSeatExt(bad, b), "seat 1 taken needs a vehicle");
+    // The store and the flags for the peer's stored ride.
+    rw::SeatExtStore s{};
+    Check(rw::EncodeSeatExt(e, b) && rw::AcceptSeatExt(s, b, sizeof(b), 7, 2400) && s.have, "stored");
+    rw::Packet ride{};
+    ride.kind = rw::Kind::vehicle; ride.revision = 9; ride.seat = 0; ride.vehicle = 25608;
+    Check(rw::SeatFlagsFor(s, ride, 7, 2500) == (rw::SeatFlag::Front | rw::SeatFlag::OneTaken), "the flags for the described ride");
+    ride.revision = 10;
+    Check(rw::SeatFlagsFor(s, ride, 7, 2500) == 0, "another revision: none (the driver's newer ride is not described yet)");
+    ride.revision = 9; ride.vehicle = 25609;
+    Check(rw::SeatFlagsFor(s, ride, 7, 2500) == 0, "another vehicle: none");
+    ride.vehicle = 25608;
+    Check(rw::SeatFlagsFor(s, ride, 8, 2500) == 0, "another link epoch: none");
+    Check(rw::SeatFlagsFor(s, ride, 7, 2401 + rw::kLeaseMs) == 0, "an expired addendum: none");
+    ride.kind = rw::Kind::foot;
+    Check(rw::SeatFlagsFor(s, ride, 7, 2500) == 0, "a ride that is no vehicle: none");
+    ride.kind = rw::Kind::vehicle;
+    rw::SeatExt older = e;
+    older.sender_ms = 0x01020300;
+    older.flags = rw::SeatFlag::Front;
+    Check(rw::EncodeSeatExt(older, b) && !rw::AcceptSeatExt(s, b, sizeof(b), 7, 2600) && s.stale == 1, "an older sender_ms is stale");
+    rw::SeatExt newer = e;
+    newer.sender_ms = 0x01020400;
+    newer.flags = rw::SeatFlag::Front;
+    Check(rw::EncodeSeatExt(newer, b) && rw::AcceptSeatExt(s, b, sizeof(b), 7, 2700) &&
+              rw::SeatFlagsFor(s, ride, 7, 2800) == rw::SeatFlag::Front, "a newer one replaces it (the dog left the seat)");
+    Check(!rw::AcceptSeatExt(s, b, sizeof(b), 0, 2700) && s.invalid == 1, "no link epoch: refused");
+}
+
 void TestVisibility() {
     rw::In in{};
     in.fresh = in.time_valid = in.anim_valid = in.body_anim_valid = in.lease_live = true;
@@ -210,6 +270,7 @@ int main() {
     TestVersionsAndCodec();
     TestStore();
     TestExt();
+    TestSeatExt();
     TestVisibility();
     std::printf("%u partner ride wire checks passed: versions 1/2 (seat 0..3, no role bit), store, WS3 addendum, seated and hidden "
                 "visibility (horse and walker hide)\n",

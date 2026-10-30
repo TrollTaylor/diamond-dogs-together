@@ -36,6 +36,15 @@ void TestPackAndLease() {
     Check(q.vehicle == 25603 && q.peer_seat == 0 && q.mode == pb::Mode::passenger && q.until_ms == 0xFEDCBA98u, "pack round trip");
     Check(pb::Unpack(0).mode == pb::Mode::off, "word 0 is off");
     Check(pb::Unpack(pb::Pack(p) | (0xFFull << 24)).mode == pb::Mode::off, "an unknown mode byte reads as off");
+    // Review R3: the peer driver's seat-1 handshake rides in the mode byte's top bits.
+    Check(!q.front_ok && !q.cab_ok, "no seat-1 handshake by default");
+    pb::Policy f = p;
+    f.front_ok = true;
+    pb::Policy u = pb::Unpack(pb::Pack(f));
+    Check(u.front_ok && !u.cab_ok && u.mode == pb::Mode::passenger && u.vehicle == 25603 && u.until_ms == 0xFEDCBA98u, "front_ok packs");
+    f.front_ok = false; f.cab_ok = true;
+    u = pb::Unpack(pb::Pack(f));
+    Check(!u.front_ok && u.cab_ok && u.mode == pb::Mode::passenger, "cab_ok packs");
     Check(pb::LeaseLive(1000, 900) && pb::LeaseLive(1000, 1000) && !pb::LeaseLive(1000, 1001), "the lease ends at until");
     Check(pb::LeaseLive(6000, 1000) && !pb::LeaseLive(6001, 1000), "a lease further than 5 s ahead is a foreign clock");
     Check(pb::LeaseLive(3, 0xFFFFFFF0u) && !pb::LeaseLive(0xFFFFFFF0u, 3), "the lease is wrap-safe");
@@ -65,6 +74,20 @@ void TestPolicyFor() {
     Check(pb::PolicyFor(x).mode == pb::Mode::block, "the uncertain latch degrades passenger to block");
     x = in; x.seat = 2;
     Check(pb::PolicyFor(x).peer_seat == 2 && pb::PolicyFor(x).mode == pb::Mode::block, "a peer passenger is published with its seat");
+    // Review R3: seat 1 only where the driver's copy said it draws a seat-1 passenger and its seat 1 is empty.
+    x = in; x.mode = pb::Mode::passenger;
+    Check(!pb::PolicyFor(x).front_ok && !pb::PolicyFor(x).cab_ok, "no seat addendum from the driver: no seat 1");
+    x.seat_flags = pb::kSeatFlagFront;
+    Check(pb::PolicyFor(x).front_ok && !pb::PolicyFor(x).cab_ok, "the driver's copy draws a light vehicle's seat 1: front_ok");
+    x.seat_flags = pb::kSeatFlagCab;
+    Check(!pb::PolicyFor(x).front_ok && pb::PolicyFor(x).cab_ok, "the truck cab: cab_ok");
+    x.seat_flags = pb::kSeatFlagFront | pb::kSeatFlagCab | pb::kSeatFlagOneTaken;
+    Check(!pb::PolicyFor(x).front_ok && !pb::PolicyFor(x).cab_ok, "seat 1 taken on the driver's copy (its D-Dog): neither");
+    x.seat_flags = pb::kSeatFlagFront;
+    x.seat = 2;
+    Check(!pb::PolicyFor(x).front_ok, "only for a peer driver");
+    x.seat = 0; x.uncertain = true;
+    Check(pb::PolicyFor(x).mode == pb::Mode::block && !pb::PolicyFor(x).front_ok, "block never offers seat 1");
 }
 
 void TestDecide() {
@@ -136,9 +159,10 @@ void Bind() {
     g = Fakes{};
     pb::detail::BindForTest(&FakeNearest, &FakeDriver, &FakeType, &FakeCount, &FakeNow);
 }
-void Policy(pb::Mode mode, std::uint16_t vehicle = 25603, std::uint8_t seat = 0, std::uint32_t until = 4000) {
+void Policy(pb::Mode mode, std::uint16_t vehicle = 25603, std::uint8_t seat = 0, std::uint32_t until = 4000, bool one_ok = false) {
     pb::Policy p{};
     p.vehicle = vehicle; p.peer_seat = seat; p.mode = mode; p.until_ms = until;
+    p.front_ok = p.cab_ok = one_ok;
     pb::Publish(mode == pb::Mode::off ? 0 : pb::Pack(p));
 }
 
@@ -460,6 +484,18 @@ void TestSeatOneDecide() {
     front.front = true; cab.cab = true; both.front = both.cab = true;
     Check(!pb::SeatOne(none) && pb::SeatOne(front) && pb::SeatOne(cab) && pb::PackOpts(both) == 3 && pb::UnpackOpts(2).cab &&
               !pb::UnpackOpts(2).front, "the seat-1 options pack");
+    // Review R3: without the driver's handshake (an older driver, its key off, its seat 1 taken) seat 1 is never offered.
+    pb::Range h = pb::DecideSeats(p, true, 2, 4, front);
+    Check(h.ok && h.first == 2 && h.last == 3 && Same(h.reason, "back_seats"), "front key, no handshake: the back seats only");
+    h = pb::DecideSeats(p, true, 1, 2, front);
+    Check(!h.ok && Same(h.reason, "front_peer"), "front key, no handshake, a 2-seat light vehicle: blocked (front_peer)");
+    h = pb::DecideSeats(p, true, 4, 2, cab);
+    Check(!h.ok && Same(h.reason, "cab_peer"), "cab key, no handshake: the truck blocks (cab_peer)");
+    pb::Policy only_cab = p;
+    only_cab.cab_ok = true;
+    h = pb::DecideSeats(only_cab, true, 2, 4, both);
+    Check(h.ok && h.first == 2 && Same(h.reason, "back_seats"), "the driver accepts the cab seat only: a light vehicle's back seats");
+    p.front_ok = p.cab_ok = true;
     pb::Range r = pb::DecideSeats(p, true, 2, 4, front);
     Check(r.ok && r.first == 1 && r.last == 3 && Same(r.reason, "front_seat"), "front: seats 1..3 of a 4-seat light vehicle");
     r = pb::DecideSeats(p, true, 1, 2, front);
@@ -519,7 +555,7 @@ void TestSeatOneWrappers() {
         g_limits.clear();
         g_limit_ok = true;
         pb::detail::BindSeatOneForTest(front, &FakeLimit);
-        Policy(pb::Mode::passenger);
+        Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         g.type_value = 2; g.count_value = 4; g.nearest_result = 1;
         Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 3, "site B searches 1..3 and steers seat 1");
         Check(g_limits.size() == 1 && g_limits[0] == 1, "both phase-1 immediates go to 1 for this call");
@@ -534,7 +570,7 @@ void TestSeatOneWrappers() {
               "policy off: the stock driver search, stock 2 (a right-door driver stays a driver)");
         g.nearest_result = 1;
         g.first = g.last = 0xEE;
-        Policy(pb::Mode::passenger);
+        Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         Check(pb::detail::SiteAForTest(unit, pos, 0, 1) == 1 && g.first == 1 && g.last == 3 && g_limits.size() == 3,
               "site A offers seat 1 too and never touches the immediates");
         g_limit_ok = false;
@@ -549,7 +585,7 @@ void TestSeatOneWrappers() {
         // Seat 1 off: the wrappers never call the writer and never offer seat 1.
         Bind();
         g_limits.clear();
-        Policy(pb::Mode::passenger);
+        Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         g.type_value = 2; g.count_value = 4; g.nearest_result = 2;
         Check(pb::detail::SiteBForTest(unit, pos) == 2 && g.first == 2 && g.last == 3 && g_limits.empty(), "off: back seats, no writer");
         pb::detail::ResetForTest();
@@ -562,7 +598,7 @@ void TestSeatOneWrappers() {
         pb::SeatOpts cab{};
         cab.cab = true;
         pb::detail::BindSeatOneForTest(cab, &FakeLimit);
-        Policy(pb::Mode::passenger);
+        Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         g.type_value = 4; g.count_value = 2; g.nearest_result = 1;
         Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 1 && g_limits.size() == 1 && g_limits[0] == 1,
               "cab: truck seat 1 with both immediates at 1");

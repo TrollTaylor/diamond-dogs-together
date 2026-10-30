@@ -429,6 +429,10 @@ struct Hooks {
     // == 1, Stop/GoNext only without the viewer's own DM); returns the bits
     // cleared. May be null (nothing is cleared).
     std::uint8_t (*dm_clear_stale)(void* context, std::uint8_t mask) noexcept = nullptr;
+    // M6 review R3 (partner_ride_front / partner_ride_cab): rider[seat] of this copy's vehicle `id` (u16;
+    // 0xFFFF empty), read only (partner_vehicle::ReadLive and the record's rider words). False: unread
+    // (the seat addendum then reports seat 1 taken). May be null.
+    bool (*seat_rider)(void* context, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -1427,6 +1431,17 @@ struct Driver {
     std::uint32_t ride_ext_tx_epoch;
     std::uint64_t ride_ext_tx_ms;
     bool ride_ext_logged;
+    // M6 review R3: the v4 seat addendum (the peer draws a seat-1 passenger; the seat 1 of the vehicle it
+    // drives is taken on its copy), received and sent (link-session scoped), and this copy's rider[1] read
+    // of the vehicle its player drives (every kSeatRiderMs while it drives).
+    partner_ride_wire::SeatExtStore ride_seat_ext;
+    partner_ride_wire::SeatExt ride_seat_ext_tx;
+    bool ride_seat_ext_tx_have;
+    std::uint32_t ride_seat_ext_tx_epoch;
+    std::uint64_t ride_seat_ext_tx_ms;
+    std::uint16_t seat_rider_vehicle, seat_rider_value;
+    bool seat_rider_read;
+    std::uint64_t seat_rider_ms;
     std::uint16_t local_vehicle;
     // F1 vehicles: the local player as a stock back-seat passenger (the native
     // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
