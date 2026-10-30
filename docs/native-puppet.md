@@ -667,7 +667,10 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   player's FrontRight clips carry the driver-to-passenger offset (the stock remap hands a player in seat 1 the driver's
   matrix), so seat 1's own matrix drew the body one seat further right, outside the jeep. With the same key the passenger's own copy keeps
   the stock remap while it sits in a light vehicle's seat 1 (`partner_board::OwnSeatOneStock`; `board_remap;
-  state=stock; why=seated_own`), so it draws itself in the seat too (design 8.35).
+  state=stock; why=seated_own`), so it draws itself in the seat too (design 8.35). The GetOff plays on seat 1's own
+  matrix on the passenger's own copy (its skip is back from act 112), so once body 1's GetOff entry plays the driver's
+  copy hands the seat dword back to seat 1's own immediate (`partner_ride_seat::ArmGetOff`; `partner_ride_seat_patch=getoff;
+  seat=1; seat_dword=0x01b04130; anchor=1; was=0`; design 8.36).
 - `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query
   `0x1245820(action, body, unit, id, char* seat)`; pinned: `board_c_*`, the pre-query's `*seat = 4` start
   `0x1245847`), logged `partner_board=race; result=ok; c=0x1246a4f`. Site C records the want from the pre-query's
