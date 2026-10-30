@@ -1,0 +1,197 @@
+# The vehicle fixes of 2026-10-29 in the lab (docs/vehicles-companions-design.md section 8.14; the user approved them on
+# 2026-10-29), Africa, africa-jeep seed (Masa Village; veh_lv_0000 = 25608 beside the boot spots; 25623 the unnamed
+# soldier-crewed patrol jeep about 480 m east that VEHICLE_STATE skips as occupied, run 0f3f00f1). Every vehicle key
+# named (the lab keeps them off unless named), the HUD on (the D11 toast is drawn).
+#   A  the guest's vehicle damage report (world_vehicle_damage): the guest's lever drops its copy of 25608 to 1500 (a
+#      stand-in for a hit on the guest's copy only) -> VEHICLE_DAMAGE -> the host applies 1500 -> its VEHICLE_STATE
+#      (why=life) -> both copies 1500, still 1500 past the 10 s refresh (it used to go back to 2300, 3585869d). A2 the
+#      guest's real rifle rounds at 25608 from its goto spot: reported, applied, both copies equal after the refresh.
+#      A3 the host's own lever drop to 1000: VEHICLE_STATE to the guest as before, never reported back.
+#   B  D12 crew (world_vehicle_crew): both players 25-30 m from the crewed patrol jeep 25623; the guest's lever breaks
+#      its copy (its crew dies there unattributed) -> REQ cause 4 -> the host judges it near and, the crew being the
+#      only hold, wrecks its copy at once (break_crew; no hold, no REJECT 9) -> req_done; the explosion and the wreck on
+#      both screens; the crew's fate on the host (obs Dead, commit) and on the guest (its local death, the host's
+#      outcome applied once) from the logs; enemy_list before and after.
+#   C  D11 pre-pair gap: the host's lab goto to 30010 (through the ACC, both resumed there); only the guest's 30010
+#      loading screen is resumed (waitmission ... only), so the guest is in game before PAIRED (the host waits on its tips screen): both drop items inactive
+#      (guard lines for 30010 before the PAIRED line), the guest's real iDroid path to LOADOUT refused with its toast,
+#      frames on both screens; then the host's loading is resumed and the pair forms.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-fixes2-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; event=vehicle_damage step=tx after A3's logmark; a step=hold or
+#        hold_timeout for 25623 in B; a vehicle_rules guard line for 30010 after the guest's PAIRED line only.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting world_vehicle_break=1
+labsetting world_vehicle_crew=1
+labsetting world_vehicle_damage=1
+labsetting world_loadout_block=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=0; loadout=1; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=0; loadout=1; gone=1; crew=1' 30
+waitlog host 'event=vehicle_damage; step=on; mission=30020; role=host' 30
+waitlog guest 'event=vehicle_damage; step=on; mission=30020; role=guest' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+# A. The guest's lever drop on its copy of 25608 (its copy only), both players beside the jeep.
+wait 3000
+host run position
+guest run position
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*life=2300;.*name=veh_lv_0000
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*life=2300;.*name=veh_lv_0000
+both capture dmg-before
+logmark both
+guest run vehicle_life 25608 1500
+guest expect vehicle_life;id=25608;life=1500;was=2300;now=1500;alive=1
+waitlog guest 'event=vehicle_damage; step=tx; id=25608; life=1500; drop=800; f=0; seq=[0-9]+' 5
+waitlog host 'event=vehicle_damage; step=applied; id=25608; from=25608; life=1500; was=2300; drop=800; d_mm=[0-9]+; f=0' 5
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=life; d_mm=[0-9-]+; life=1500;' 5
+wait 2000
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*life=1500;
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*life=1500;
+both capture dmg-applied
+# Past the host's 10 s refresh: it carries 1500 now, so nothing goes back up.
+wait 14000
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*life=1500;
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*life=1500;
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# A2. The guest's real rounds at 25608 from its goto spot; the host stands 8 m behind it.
+guest debug goto_vehicle jeep
+wait 2500
+placebehind host guest 8 -4
+wait 2000
+guest run vehicle_state_status 25608
+host run vehicle_state_status 25608
+both capture shots-before
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+wait 250
+guest press lmb 120
+guest release
+guest run vehicle_state_status 25608
+waitlog guest 'event=vehicle_damage; step=tx; id=25608; life=[0-9]+; drop=[0-9]+; f=[0-9]; seq=[0-9]+' 10
+waitlog host 'event=vehicle_damage; step=(applied|same); id=25608; from=25608;' 10
+both capture shots-after
+wait 14000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture shots-later
+# A3. The host's own drop to 1000 (its lever): VEHICLE_STATE to the guest as before, never reported back.
+logmark both
+host run vehicle_life 25608 1000
+host expect vehicle_life;id=25608;life=1000;
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=life; d_mm=[0-9-]+; life=1000;' 5
+waitlog guest 'event=vehicle_state; step=applied; id=25608; from=25608; moved=0; .*life=1000;' 5
+wait 3000
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*life=1000;
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*life=1000;
+both capture host-damage
+# B. D12 crew: the soldier-crewed patrol jeep 25623 (unnamed, 0f3f00f1: -374.85, -2.76, 489.18), guards not cleared.
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+host debug teleport -374.85 0.50 501.18 180
+wait 3000
+host run position
+host run enemy info nearest
+host run enemy ignore nearest
+host run enemy_list 60
+guest run enemy_list 600
+host debug teleport -374.85 0.50 519.18 180
+guest debug teleport -349.85 0.50 489.18 -90
+wait 3000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+guest expect vstate;id=25623;alive=1;
+both capture crew-before
+logmark both
+guest run vehicle_life 25623 0
+guest expect vehicle_life;id=25623;life=0;
+both burst crew-blast 5 600
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25623' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25623; cause=4; sent=1' 10
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25623; cause=4' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=25623; rid=[0-9]+; ok=1; why=near; d_mm=[0-9]+;' 10
+waitlog host 'event=vehicle_rules; step=break_crew; id=25623; rid=[0-9]+; crew=[1-4]' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25623; via=wreck; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25623; result=gone' 15
+both burst crew-wreck 4 1000
+wait 6000
+both burst crew-after 3 1000
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=0;
+guest run vehicle_state_status 25623
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run enemy_list 60
+guest run enemy_list 60
+wait 5000
+host run enemy_list 60
+guest run enemy_list 60
+# C. D11 before PAIRED: the host's lab goto to 30010, only the guest's loading resumed.
+logmark both
+host worldtrigger goto=30010 goto_lz=0
+# Through the ACC (both resumed: the host's sortie waits for the guest there), then only the guest's 30010 load.
+waitmission host 40020 240
+waitmission guest 30010 240 only
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30010' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30010' 5
+expectstate guest world_paired ^(False|false|0)$
+expectstate guest mission ^30010$
+host capture d11p-host-waiting
+guest capture d11p-guest-ingame
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11p-guest-loadout
+guest press enter
+wait 500
+guest capture d11p-guest-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+expectstate guest world_paired ^(False|false|0)$
+host capture d11p-host-still-waiting
+wait 1500
+guest press tab
+wait 2500
+waitmission host 30010 240
+waitlog guest 'event=paired; epoch=[0-9]+; eff=3;' 60
+waitlog host 'event=paired; epoch=[0-9]+; eff=3;' 60
+wait 3000
+both capture d11p-paired
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state
