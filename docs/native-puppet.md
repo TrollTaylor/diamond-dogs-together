@@ -660,7 +660,10 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   checks the blocks (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`); `VerifyImage` accepts
   only 1 / 2 at the immediates. The local passenger report, the receiver's `local_vehicle` gate and the passenger
   camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`, `board_seat1_blocks`; `vehicle_door`
-  accepts the remap's `jmp`.
+  accepts the remap's `jmp`. Since 8.33 the driver's copy anchors body 1's seat-1 DM on seat 0's matrix
+  (`partner_ride_seat::AnchorSeat`, the anchor immediate 0; `partner_ride_seat_patch=applied; seat=1; anchor=0;`): the
+  player's FrontRight clips carry the driver-to-passenger offset (the stock remap hands a player in seat 1 the driver's
+  matrix), so seat 1's own matrix drew the body one seat further right, outside the jeep.
 - `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query
   `0x1245820(action, body, unit, id, char* seat)`; pinned: `board_c_*`, the pre-query's `*seat = 4` start
   `0x1245847`), logged `partner_board=race; result=ok; c=0x1246a4f`. Site C records the want from the pre-query's
