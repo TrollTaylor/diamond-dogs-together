@@ -1,3 +1,24 @@
+## 2026-10-30: developer test loop, faster (`wp/test-speed`; tests and tooling only, no product code changed)
+
+**Built [O]:** long fixtures run as parallel CTest shards (`cmake/test_shards.cmake`): `ddt_core_tests_1..5` (cases with
+costs, `tests/test_cases.hpp`), `link_udp_tests_1..2` (a port lock per case that also passes through the old whole-range
+lock, so a branch still on the old code is never overlapped), `worker_session_tests_1..2`, `local_coop_session_tests_1..2`,
+`lab_scripts_tests_1..7`, `friend_package_tests_1..2` (parts with costs, `tests/TestShards.psm1`; plain runs keep their
+counts). `tests/test_timer_resolution.hpp`: Windows 11 drops a windowless process's 1 ms timer after ~2.5 s (`Sleep(2)` =
+15.4 ms). The preflight's bootstrap only configures (`tools/build.ps1 -ConfigureOnly`). A hidden run's preflight reuses
+the profile's newest passed receipt when the source snapshot, the test inputs (`reuse_inputs`: every file under `cmake/`,
+`native/`, `lua/`, `tests/`, `tools/`, JSON fixtures and scenarios included), flags, cache options and built programs are
+unchanged (`-FreshChecks` opts out; never Release: the release gate always runs in full).
+**Measured [O]** (`-j 16`): full CTest 111-115 s -> 51 s (59-62 s while another checkout's suite runs); fast 12.4 s ->
+9.0 s; Research preflight 102 s -> 29 s fresh (38-57 s after a change), 1.0 s reused (receipt `20261030-153053`; an
+added `tests/fixtures` file refused live). Hidden run `13d9ff4d1af14149a3e3da2b1bc600ab` (`boot-30020.txt`) started from
+that reused receipt: both copies at gameplay in 30020, frames on both, saves and baseline restored.
+**Rules (AGENTS.md):** iterate with the affected tests (`ctest -R`, `--case`, `-Part`, `-Fast`), the full suite once
+before merging; a lab-script change also runs the plain `tests/lab_scripts_tests.ps1` once (only it chains the dry parts
+through a real Start/Stop; at the current costs install and e2e share shard 7). **Not reached:** the full suite under
+45 s: the lab and friend shards take 28 turns (~46 s) of the machine-wide test install mutex; lower needs a per-fixture
+installer mutex (`tools/package-install.ps1`, not changed). Merging the ~250 test executables was measured, not done.
+
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
 Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):
@@ -1597,7 +1618,8 @@ Branch `wp/fast-tests` from `dev/oct7-continue` `ba7bb62`. Tests and tooling onl
   worktrees run at the same time. Hidden-worker runs, worker checks, packaging and installs keep taking the lock; after
   taking it, `Wait-CtestReaders` waits for suites that were already running (`tools/worker/README.md`).
   `tools/build.ps1 -NoWorkerWait` skips the wait (the `build_profile_tests` fixture). `Invoke-WorkerChecks.ps1` is
-  unchanged (`-j 1`).
+  unchanged (`-j 1`). (Superseded 2026-10-30: parallel preflight tests, sharded suites and preflight reuse; see the
+  top section "developer test loop, faster".)
 
 ## October 23, 2026: developer test boot (`lab_fast_boot`, `lab_boot`, save-seed library, low graphics preset)
 

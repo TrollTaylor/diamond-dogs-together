@@ -12,7 +12,7 @@
 # contacts the network. The developer scripts run as child processes under
 # Windows PowerShell 5.1 (what Play-Offline-Coop.bat starts).
 [CmdletBinding()]
-param([string]$IniCheck, [string]$FakeProcess)
+param([string]$IniCheck, [string]$FakeProcess, [string]$Shard = '', [string]$Part = '')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -189,7 +189,13 @@ $null = New-Item -ItemType Directory -Path $fixture
 $steamRunningFile = Join-Path $fixture 'steam-running.txt'
 [IO.File]::WriteAllText($steamRunningFile, "0`n")
 $env:MGS_COOP_TEST_STEAM_RUNNING_FILE = $steamRunningFile
+# CTest runs this suite as friend_package_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# parts dealt to it by their cost (ms, measured alone). The installed-game fixtures the later parts share stay outside
+# the parts; the local two-window test copies the package the package part builds, so both are one part. -Part pure.
+Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ pure = 4800; package = 30700; handoff = 12700 })
 try {
+    if (Test-TestPart 'pure') {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
     $steamKeys = $false
@@ -261,7 +267,9 @@ try {
         Assert-Equal "$($r.Status)|$($r.HostName)|$($r.Port)" "$($v[1])|$($v[2])|$($v[3])" "join code vector $($v[0])"
         if ($v[1] -eq 'ok') { Assert-Equal $r.Secret $(if ($v[0].Contains('C00PC')) { 'C00PC00PC00PC00PC00P' } else { '7K3QZ9M2XWD4HT8RVN6B' }) "secret of $($v[0])" }
     }
+    }
     $s7 = '7K3QZ9M2XWD4HT8RVN6B'
+    if (Test-TestPart 'pure') {
     Assert-Equal (Get-CoopCodeCheck -Secret '7K3QZ9M2XWD4HT8RVN6C' -HostName '203.0.113.7' -Port 47830) 'PY' 'check of the altered secret (PY)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '203.0.113.8' -Port 47830) '2Q' 'check of 203.0.113.8 (2Q)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '192.168.1.20' -Port 47831) 'BB' 'check of port 47831 (BB)'
@@ -1061,6 +1069,8 @@ try {
     Assert-True ($friendCommonText.Contains("'-EncodedCommand', (ConvertTo-CoopEncodedCommand -Script `$Script)") -and $friendCommonText.Contains('-Verb RunAs')) 'Invoke-CoopElevated uses RunAs with -EncodedCommand'
     Assert-True ($friendCommonText.Contains('Start-Job') -and $friendCommonText.Contains('Wait-Job -Job $job -Timeout $TimeoutSec') -and $friendCommonText.Contains("if (`$null -eq `$maps) { return 'unavailable|' }")) 'UPnP runs in a job with a timeout and handles a missing mapping collection'
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the Diamond Dogs Together package (tools/package.ps1 -Friend)
     # The drop-in zip: its root is what goes into the game folder. Inert loader and
     # launcher bytes with a synthetic passing Release receipt; nothing is built,
@@ -1507,6 +1517,7 @@ try {
     Assert-True ($offlineBatText.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev\Start-LocalCoop.ps1" %*') -and $offlineBatText.Contains('set "PSModulePath="') -and
         $offlineBatText.Contains("`r`n") -and $offlineBatText.Contains('pause')) 'Play-Offline-Coop.bat: the developer local test in tools\dev with Windows PowerShell and all arguments'
 
+    }
     # ------------------------------------------------------------ installed-game fixtures (in process)
     # Steam fixture: account 7 with saves (only ever compared, never written);
     # a lab-staged package with fixture hashes for the owned installer.
@@ -1551,6 +1562,7 @@ try {
         return $gp
     }
 
+    if (Test-TestPart 'handoff') {
     # ------------------------------------------------------------ the import core with a save handoff stage (Import-CoopProgressFiles, P2-18)
     $kp = New-InstalledGame 'handoff-core'
     $coreGame = $kp.Game
@@ -1926,6 +1938,8 @@ try {
         if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
     }
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the developer's local two-window test (tools/dev; never shipped)
     # A drop-in package as tools/package.ps1 -Friend stages it, with fixture game
     # hashes and a newer inert loader; dedicated inert copies; MGS_COOP_TEST_NO_LAUNCH
@@ -2075,7 +2089,9 @@ try {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
     }
-    Write-Output "friend package tests passed: $script:checks checks (the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
+    }
+    Assert-TestPartsAsked
+    Write-Output "friend package tests passed: $script:checks checks (parts: $((Get-TestPartsSelected) -join ', '); the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
 } finally {
     Start-Sleep -Milliseconds 300
     Remove-Item Env:MGS_COOP_TEST_STEAM_RUNNING_FILE -ErrorAction SilentlyContinue

@@ -14,7 +14,7 @@ $scriptPath = Join-Path $repo 'tools\worker\Invoke-WorkerChecks.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
-$pure = @('Get-WorkerExperiments', 'Get-WorkerReleaseExperiments', 'Get-WorkerTests', 'Get-WorkerReleaseOnlyTests', 'Get-WorkerHash',
+$pure = @('Get-WorkerExperiments', 'Get-WorkerReleaseExperiments', 'Get-WorkerTests', 'Get-WorkerShardedTests', 'Get-WorkerExcludedShardedTests', 'Get-WorkerShardNames', 'Get-WorkerReleaseOnlyTests', 'Get-WorkerHash',
     'Test-WorkerUnder', 'Assert-WorkerPath', 'Get-WorkerPlan', 'Assert-WorkerCoverage')
 foreach ($name in $pure) {
     $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))

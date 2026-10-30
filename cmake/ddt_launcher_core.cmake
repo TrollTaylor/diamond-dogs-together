@@ -33,5 +33,5 @@ target_link_libraries(ddt_core_tests PRIVATE ddt_core)
 target_compile_definitions(ddt_core_tests PRIVATE "DDT_CORE_VERSION=\"${PROJECT_VERSION}\""
                            "DDT_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"")
 target_compile_options(ddt_core_tests PRIVATE /W4 /WX /utf-8)
-add_test(NAME ddt_core_tests COMMAND ddt_core_tests)
-set_tests_properties(ddt_core_tests PROPERTIES TIMEOUT 300)
+# Five parallel shards (tests/test_cases.hpp): ddt_core_tests_1 .. _5, about 9 s each instead of one 45 s run.
+mgs_add_test_shards(ddt_core_tests 5 TIMEOUT 300 COMMAND ddt_core_tests)
