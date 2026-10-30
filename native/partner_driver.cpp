@@ -3231,7 +3231,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
     else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing || c.turn.pending))
         h.pass_camera_read(h.context, st, cam);
-    // Design 8.33 / 8.37 (mode view): the get-off camera turn below.
+    // Design 8.38 / 8.42 (mode view): the get-off camera turn below.
     const bool view = pc::Views(mode);
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
@@ -3329,7 +3329,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     const std::uint16_t episode_vehicle = c.episode.vehicle;
     const std::uint8_t episode_seat = c.episode.seat;
     pc::StepOut out = pc::Step(c.episode, in);
-    // Design 8.33 / 8.34 (mode view): an observed get-off from seat 1 or 2 (the report ended on the get-off act 0x70; never
+    // Design 8.38 / 8.39 (mode view): an observed get-off from seat 1 or 2 (the report ended on the get-off act 0x70; never
     // a death, a lost report or a latch): the camera is turned behind the player once the stock get-off let go
     // (partner_pass_camera_policy TurnStep). Another end of the boarding is logged and not armed.
     if (episode_was_active && !c.episode.active && view && h.pass_camera_turn && d.pass_camera_installed && !c.uncertain &&
@@ -3367,7 +3367,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                   cam.vehicle_mode, writes);
         break;
     case pc::Event::release:
-        // The stock get-off cleared the handle: a pending get-off turn may follow (design 8.34).
+        // The stock get-off cleared the handle: a pending get-off turn may follow (design 8.39).
         if (out.reason && std::strcmp(out.reason, "stock") == 0) pc::TurnStockClear(c.turn);
         if (out.clear) {
             // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
@@ -3384,7 +3384,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     }
     if (c.turn.pending || c.turn.check_ms) {
-        // Design 8.36 / 8.37: the player's own camera input while the turn is pending (on foot): the effective right stick
+        // Design 8.41 / 8.42: the player's own camera input while the turn is pending (on foot): the effective right stick
         // or mouse above kLookInput (as the shot guard reads it) drops the turn; the local gun aiming holds it, and after
         // the aim the request waits while the aim camera module is still the mode.
         bool turn_look = false, turn_aim = false, turn_aim_cam = false;
@@ -3420,7 +3420,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                         c.turn.seen_stock ? 1u : 0u, static_cast<int>(std::lround(yaw * 1000.0f)),
                         static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests, c.turn.aimed ? 1u : 0u);
         } else if (ta == pc::TurnAct::hold) {
-            // Design 8.37: the player aims on foot: the turn waits for the aim's end (once per pending turn).
+            // Design 8.42: the player aims on foot: the turn waits for the aim's end (once per pending turn).
             EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                         "partner_ride=pass_camera; state=turn; event=hold; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
                         unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);

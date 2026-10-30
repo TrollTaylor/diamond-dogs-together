@@ -1110,7 +1110,7 @@ std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
     if (!game_base || !partner_gate_ok) return 0;
     return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
 }
-// Design 8.33 / 8.37 (partner_pass_camera=view): the get-off camera request.
+// Design 8.38 / 8.42 (partner_pass_camera=view): the get-off camera request.
 const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, float yaw, float interp) noexcept {
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
     return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);

@@ -65,7 +65,7 @@ inline constexpr float kExitPadM = 0.05f;     // the start lands this far past t
 inline constexpr float kTargetGapM = 0.3f;    // and never closer than this to the aim target
 inline constexpr float kMaxShiftM = 9.0f;     // no exit of these boxes is farther (sanity)
 inline constexpr std::uint64_t kFreshMs = 50;  // the floor of the freshness window (20 m/s is 1 m in 50 ms)
-// The freshness window grows as the ridden vehicle slows (review of 8.33: at 25-30 fps a 50 ms window on a 15.6 ms clock
+// The freshness window grows as the ridden vehicle slows (review of 8.37: at 25-30 fps a 50 ms window on a 15.6 ms clock
 // judged parked shots stale, and a stale shot is the stock one that hits the jeep): the pose may drift at most kDriftM, the
 // window is never under kFreshMs nor over kMaxAgeMs (a driver tick that stopped). Speed unknown (< 0): kFreshMs.
 inline constexpr std::uint64_t kMaxAgeMs = 250;

@@ -223,7 +223,7 @@ enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard),
 // drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
 // blocks the seat-2 gun; play runs it as aim). Values equal partner_pass_camera::Mode.
-// view (design 8.33 / 8.37; the default in lab and play): aim plus the camera turned behind the player after a seat-1 or
+// view (design 8.38 / 8.42; the default in lab and play): aim plus the camera turned behind the player after a seat-1 or
 // seat-2 get-off (held through an on-foot aim, dropped by a look).
 enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the

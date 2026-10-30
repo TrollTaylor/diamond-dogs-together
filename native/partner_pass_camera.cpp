@@ -30,7 +30,7 @@ static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c:
 static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.28)");
 static_assert(c::pass_cam_request_flags == kCamRequestFlags && c::pass_cam_request == kCamRequest && c::pass_cam_lock_bit == kCamLockBit &&
                   c::pass_cam_request_busy == kRequestBusy && c::pass_cam_request_flags_value == kTurnFlags,
-              "the get-off camera request (design 8.33)");
+              "the get-off camera request (design 8.38)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;

@@ -251,9 +251,9 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 // stays clear, but in seat 2 the collision pulls the camera into the passenger (cam at the pivot, the aim target
 // 0-1 m away) and the gun refuses to fire (gun mode 15; runs 17fce0b7, 43e5b981), so drop is not the default. The lab
 // lever "passcam off|connect|aim|drop|lab|status" overrides the key on this copy (lab only).
-// view (design 8.33 / 8.37) is aim plus the camera turned behind the player after a get-off from seat 1 or 2 (the end of
-// this file). The seated aim raise of 8.33 was inert in game (8.35: the aim module's parameter record rewrites
-// CAM+0x150..0x15C every tick) and is gone (8.37).
+// view (design 8.38 / 8.42) is aim plus the camera turned behind the player after a get-off from seat 1 or 2 (the end of
+// this file). The seated aim raise of 8.38 was inert in game (8.40: the aim module's parameter record rewrites
+// CAM+0x150..0x15C every tick) and is gone (8.42).
 enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 inline const char* ModeName(Mode m) noexcept {
     return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : m == Mode::view ? "view" : "aim";
@@ -618,7 +618,7 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
 // seat) leaves the camera behind the player, looking forward (299de3e1).
 inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
 
-// --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------
+// --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------
 // [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
 // driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close
 // to the driver with the player out of view; after seat 3 (299de3e1) it stays behind, looking forward. Mode view arms
@@ -633,7 +633,7 @@ inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
 inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
 inline constexpr std::uint32_t kTurnFlags = 0x400126;
 inline constexpr std::uint64_t kTurnMs = 6000, kTurnCheckMs = 900;
-// Design 8.37: an on-foot aim while the turn is pending holds it; after the aim the request waits kTurnSettleMs (and while
+// Design 8.42: an on-foot aim while the turn is pending holds it; after the aim the request waits kTurnSettleMs (and while
 // the aim camera module is still the mode), within kTurnAfterAimMs of the aim's end (past kTurnMs if need be); an aim
 // still held kTurnAimMaxMs after the get-off drops it.
 inline constexpr std::uint64_t kTurnSettleMs = 300, kTurnAfterAimMs = 3000, kTurnAimMaxMs = 20000;
@@ -649,7 +649,7 @@ struct Turn {
     std::uint64_t since_ms = 0;
     std::uint64_t check_ms = 0;  // a request was made: its check line is due then (0: none)
     float yaw = 0.0f;            // the requested world yaw
-    bool aimed = false;          // the player aimed on foot while the turn was pending (design 8.37)
+    bool aimed = false;          // the player aimed on foot while the turn was pending (design 8.42)
     std::uint64_t aim_end_ms = 0;  // the first tick after that aim (0: aiming, or no aim)
     std::uint32_t requests = 0, expired = 0;
 };
@@ -678,9 +678,9 @@ inline bool TurnCancel(Turn& t) noexcept {
 }
 // One tick. Reasons (static): check, seated, timeout, look, aiming, settle, wait, stock, request. look: the player's own
 // camera input this tick (the effective right stick or mouse above kLookInput); aiming: the local gun aiming on foot;
-// aim_cam: the aim camera module is the camera's mode (read while settling after an aim). Design 8.36: a look while the
+// aim_cam: the aim camera module is the camera's mode (read while settling after an aim). Design 8.41: a look while the
 // turn is pending (under the stock get-off or after it, aiming or not) gives the player the camera: the turn is dropped.
-// Design 8.37: an aim holds it (hold on the first aiming tick, never a request while aiming); after the aim, the request
+// Design 8.42: an aim holds it (hold on the first aiming tick, never a request while aiming); after the aim, the request
 // follows kTurnSettleMs later once the aim module let go, with the stock get-off's own conditions, within kTurnAfterAimMs
 // of the aim's end. A re-boarding drops it first.
 inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason, bool look = false,

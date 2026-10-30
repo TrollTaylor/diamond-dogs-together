@@ -454,7 +454,7 @@ inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_c
 inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;
 // Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.
 inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;
-// Design 8.33 / 8.37 (mode view): the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94
+// Design 8.38 / 8.42 (mode view): the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94
 // unless CAM+0xd38 & 0x1001 or
 // CAM+0x204 bit 9; the Lua binding 0x9daf90 passes the flags 0x400126.
 inline constexpr std::size_t pass_cam_request_flags=0xd38, pass_cam_request=0xd80;

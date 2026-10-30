@@ -85,7 +85,7 @@ std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base |
 // The player's seat-1 clips (stateVehicle*FrontRight*) carry the driver-to-passenger offset: the stock seat matrix
 // 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
 // in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
-// jeep (design 8.33). Behind lab.ini partner_ride_seat1_anchor (off unless named) until its frame proof. A light
+// jeep (design 8.33). lab.ini partner_ride_seat1_anchor follows the gun profile in lab and play (8.43). A light
 // vehicle only (category 1, 2: partner_seat_shot::ClassFor): the truck cab plays the light FrontRight loop as a guess
 // (kTruck[1]) and has no frame proof, and an unknown category keeps seat 1's own matrix (review, design 8.34).
 std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t category) noexcept {

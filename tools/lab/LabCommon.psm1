@@ -345,7 +345,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_ride_cab'; Json = 'ride_cab'; Kind = 'bool' },
     # M6 seat races (the SEAT op): the host decides an empty vehicle's driver seat (off in lab and play unless set).
     @{ Key = 'partner_ride_race'; Json = 'ride_race'; Kind = 'bool' },
-    # Seat 1 on the driver's seat matrix (design 8.33): lab and play, off unless set; written only when set.
+    # Seat 1 on the driver's seat matrix (design 8.33): follows the gun profile in lab and play (8.43); written only when set.
     @{ Key = 'partner_ride_seat1_anchor'; Json = 'ride_seat1_anchor'; Kind = 'bool' },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },

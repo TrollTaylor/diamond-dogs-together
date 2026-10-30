@@ -285,7 +285,7 @@ int main() {
         // older than that is metres off on a moving jeep.
         Check(ss::kLightBox.half_side == 1.0f && ss::kLightBox.half_fwd == 2.2f && ss::kFreshMs <= 50,
               "S1 box: the light box hugs the jeep (4.4 x 2.0 m); fresh for 50 ms");
-        // The freshness window follows the vehicle's speed (review of 8.33): a parked jeep's pose stays good for 250 ms, so a
+        // The freshness window follows the vehicle's speed (review of 8.37): a parked jeep's pose stays good for 250 ms, so a
         // 25-30 fps copy (33-40 ms ticks on a 15.6 ms clock) never judges a parked shot stale; at 20 m/s and over it is
         // 50 ms (1 m of drift); unknown speed is 50 ms.
         Check(ss::MaxAgeMs(-1.0f) == 50 && ss::MaxAgeMs(std::numeric_limits<float>::quiet_NaN()) == 50 && ss::MaxAgeMs(0.0f) == 250 &&

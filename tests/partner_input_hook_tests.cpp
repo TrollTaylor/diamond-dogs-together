@@ -387,7 +387,7 @@ void TestSeatShotHook() {
     fill(0);
     Check(fn(reinterpret_cast<void*>(0x1234), record) && g_forwarded_record == record && ff::ReadSeatShot(st) && st.stale == 2,
           "S1 hook: a stale publication: untouched");
-    // The window follows the speed (review of 8.33): parked (speed 0), 120 ms old is still fresh and moved (a 25 fps copy);
+    // The window follows the speed (review of 8.37): parked (speed 0), 120 ms old is still fresh and moved (a 25 fps copy);
     // at 20 m/s, 60 ms old is stale and the last plan says so with its age (the line carries age_ms / max_ms).
     p.speed = 0.0f;
     ff::PublishSeatShot(p);

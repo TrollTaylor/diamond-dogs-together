@@ -767,7 +767,7 @@ void TestWritePitchAndModeVtable() {
     pc::detail::ResetForTest();
 }
 
-// --- Design 8.33 (mode view): the seated aim view and the camera after a get-off -----------------------------------
+// --- Design 8.38 (mode view): the seated aim view and the camera after a get-off -----------------------------------
 void TestViewMode() {
     pc::Mode m{};
     Check(pc::ParseMode("view", 4, m) && m == pc::Mode::view && Same(pc::ModeName(pc::Mode::view), "view") &&
@@ -810,7 +810,7 @@ void TestTurnStep() {
     Check(!t.pending && t.requests == 1 && t.check_ms == 1300 + pc::kTurnCheckMs, "spent; a check is due");
     Check(pc::TurnStep(t, false, cam, 1300 + pc::kTurnCheckMs, why) == pc::TurnAct::check && t.check_ms == 0, "the check line once");
     Check(pc::TurnStep(t, false, cam, 5000, why) == pc::TurnAct::none, "then nothing");
-    // Design 8.34: no VehicleCamera seen and no stock clear: no time fallback, it waits and then expires.
+    // Design 8.39: no VehicleCamera seen and no stock clear: no time fallback, it waits and then expires.
     pc::Turn w{};
     pc::TurnArm(w, 25608, 2, 2000);
     Check(pc::TurnStep(w, false, cam, 3600, why) == pc::TurnAct::none && Same(why, "wait"), "no stock get-off seen: waits");
@@ -831,7 +831,7 @@ void TestTurnStep() {
     cam.mode = 5;
     // The mode left view: cancelled.
     Check(pc::TurnCancel(w) && !w.pending && w.expired == 3 && !pc::TurnCancel(w), "cancelled once");
-    // Design 8.36: a look while the turn is pending (alone or while aiming), under the stock get-off or after it: the
+    // Design 8.41: a look while the turn is pending (alone or while aiming), under the stock get-off or after it: the
     // player has the camera; the turn is dropped and never requested later.
     for (int which = 0; which < 4; ++which) {
         pc::Turn p{};
@@ -868,7 +868,7 @@ void TestTurnStep() {
 }
 
 // The native write on a synthetic camera: the request fields.
-// Design 8.37: an aim on foot while the turn is pending holds it (never requested during the aim); when the aim ends
+// Design 8.42: an aim on foot while the turn is pending holds it (never requested during the aim); when the aim ends
 // without a look, the request follows kTurnSettleMs later, once the aim camera module let go, within kTurnAfterAimMs of
 // the aim's end (the window grows past kTurnMs); never after a re-boarding, never past kTurnAimMaxMs of aiming.
 void TestTurnThroughAim() {
@@ -1023,8 +1023,8 @@ bool Logged(const char* part) {
 
 void TestVerifyAndInstall() {
     Check(sizeof(c::pass_camera_blocks) / sizeof(c::pass_camera_blocks[0]) == 15,
-          "fifteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.33: the rotation "
-          "request; 8.37: the aim module's variant entry is no longer pinned)");
+          "fifteen passenger camera blocks are pinned (8.27: the look angles, the eye, the rotation; 8.38: the rotation "
+          "request; 8.42: the aim module's variant entry is no longer pinned)");
     bool pinned = false, solve = false, collision = false;
     for (const auto& s : c::vtable_slots)
         if (s.vtable_rva == c::cam_vtable_rva && s.offset == 0xA8 && s.target_rva == 0x1121D30) solve = true;

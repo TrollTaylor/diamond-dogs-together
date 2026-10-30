@@ -7456,7 +7456,7 @@ void TestSeatShotDriver() {
               "S1 driver: one line per new plan");
         Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot;") == 1, "S1 driver: the same plan is not logged again");
         // The shot line carries the publication's age and window; the publication carries the vehicle's speed from the
-        // last two publications (review of 8.33): unknown on the first, then 0.33 m in 33 ms = 10 m/s.
+        // last two publications (review of 8.37): unknown on the first, then 0.33 m in 33 ms = 10 m/s.
         g_ss.stats.seq = 2;
         g_ss.stats.age_ms = 7;
         g_ss.stats.max_ms = 100;
@@ -7533,7 +7533,7 @@ void TestSeatShotDriver() {
     }
 }
 
-// Design 8.33 / 8.37 (mode view): the get-off camera turn's driver wiring (the seated raise is gone, 8.37).
+// Design 8.38 / 8.42 (mode view): the get-off camera turn's driver wiring (the seated raise is gone, 8.42).
 struct PassViewFake {
     std::vector<float> turns;
 } g_raise;
@@ -7556,7 +7556,7 @@ std::uint64_t pc_handle(std::uint16_t vehicle) { return mgscoop::partner_pass_ca
 void TestPassCameraViewDriver() {
     namespace pb = mgscoop::partner_board;
     {
-        // Design 8.37: no aim-module entry is written any more; MissionEnd / Stop / MissionStart log no view restore.
+        // Design 8.42: no aim-module entry is written any more; MissionEnd / Stop / MissionStart log no view restore.
         Session s(0);
         ViewSetup(s);
         g_board.lp = BoardPassenger(25608, 2);
@@ -7565,7 +7565,7 @@ void TestPassCameraViewDriver() {
         Check(s.fake.Containing("state=view;") == 0, "view: no raise lines");
     }
     {
-        // Design 8.34: the get-off turn arms only on an observed get-off (act 0x70) from seat 1 or 2, waits for the stock
+        // Design 8.39: the get-off turn arms only on an observed get-off (act 0x70) from seat 1 or 2, waits for the stock
         // clear of the handle (no time fallback), and is dropped when the mode leaves view.
         Session s(0);
         ViewSetup(s);
@@ -7620,7 +7620,7 @@ void TestPassCameraViewDriver() {
               "cancel: the mode left view, no request");
     }
     {
-        // Design 8.36: a look while the turn is pending drops it (no request). Design 8.37: an aim on foot holds it (one
+        // Design 8.41: a look while the turn is pending drops it (no request). Design 8.42: an aim on foot holds it (one
         // hold line); the request follows the aim's end once the aim camera module let go (kTurnSettleMs).
         for (int which = 0; which < 3; ++which) {
             Session s(0);
