@@ -4,7 +4,9 @@
 // stock ABI), the readback, the end (clip, speed, deadline, override, lease,
 // epoch) with the stateNull return, the refusals, the viewer digest latch,
 // another owner's waiting graph-2 request (pending), the window close
-// (Shutdown) and the SEH fault latch. No hook is installed and no game code runs.
+// (Shutdown) and the SEH fault latch. M7: the seated gun hold (gun_start chained to
+// gun_hold, held with no deadline while the command names it, the release, body 1's
+// aim rates written and restored). No hook is installed and no game code runs.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -12,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <vector>
 #include "mgscoop/partner_gesture.hpp"
 
@@ -29,7 +32,8 @@ void Check(bool value, const char* what) {
 
 constexpr std::size_t kImageSpan = 0x2A84000;
 constexpr std::uint64_t kNull = gp::kStateNull, kPickup = 0x1E904603EB7DULL, kSignGo = 0xE74E11BABA4BULL, kOther = 0x91A5B8AC42F8ULL;
-const std::uint64_t kCodes[] = {kNull, kPickup, kSignGo, kOther, 0x82E84B26E4CEULL};
+constexpr std::uint64_t kGunStart = 0x50130AE2E584ULL, kGunHold = 0xAA0EA22A5E0EULL;  // M7: GunHoldStart / GunHold
+const std::uint64_t kCodes[] = {kNull, kPickup, kSignGo, kOther, 0x82E84B26E4CEULL, kGunStart, kGunHold};
 
 std::uintptr_t image = 0;
 unsigned char* w = nullptr;  // the fake world
@@ -43,6 +47,8 @@ constexpr std::size_t P = 0x0, Q = 0x400, ACT = 0x480, UPPER = 0x490, Q28 = 0x4A
 constexpr std::size_t BLOCKS = 0x1000, PS0 = 0x2000, PS1 = 0x2800, CS0 = 0x3000, CS1 = 0x3100, ENTRY0 = 0x3200, ENTRY1 = 0x3300;
 constexpr std::size_t GRAPHS0 = 0x3400, GRAPHS1 = 0x3600, LOWER0 = 0x3800, UPPER0 = 0x3A00, LOWER1 = 0x3C00, UPPER1 = 0x3E00;
 constexpr std::size_t BANK = 0x4000, DESC = 0x4100, NODES = 0x4400, CODES = 0x4A00, BLEND_A = 0x4C00, BLEND_B = 0x4D00, BLEND_C = 0x4E00;
+constexpr std::size_t RATE_SP = 0x5000, RATE_RECS = 0x5100;  // M7: body 1's rate service and records (stride 0x88)
+std::uintptr_t Rate1() { return reinterpret_cast<std::uintptr_t>(w) + RATE_RECS + 0x88; }
 std::uintptr_t Buffer(unsigned k) { return W(k ? GRAPHS1 : GRAPHS0) + 0x20; }
 std::uintptr_t Node(unsigned i) { return W(NODES) + i * 0x48; }
 std::uintptr_t NodeFor(std::uint64_t code) {
@@ -119,6 +125,17 @@ void BuildWorld() {
     Put<std::uintptr_t>(W(BLEND_B) + 0xf8 + 3 * 8, W(BLEND_C));
     // The cs vtable slots the calls go through.
     for (const pg::Slot& s : pg::kSlots) Put<std::uintptr_t>(image + s.vtable_rva + s.offset, image + s.target_rva);
+    // M7: the rate service of body 1's PS (*(PS1+0x260)) and its records; record 1 holds r5c 0.3, r60 0.6.
+    Put<std::uintptr_t>(W(PS1) + 0x260, W(RATE_SP));
+    Put<std::uintptr_t>(W(RATE_SP), image + 0x23ad380);
+    Put<std::uint32_t>(W(RATE_SP) + 8, 0);
+    Put<std::uint32_t>(W(RATE_SP) + 0xc, 2);
+    Put<std::uintptr_t>(W(RATE_SP) + 0x10, W(RATE_RECS));
+    Put<std::uintptr_t>(W(RATE_RECS), image + 0x23ad2b0);
+    Put<std::uintptr_t>(Rate1(), image + 0x23ad2b0);
+    Put<float>(Rate1() + 0x5c, 0.3f);
+    Put<float>(Rate1() + 0x60, 0.6f);
+    Put<float>(W(RATE_RECS) + 0x5c, 0.9f);  // body 0's record: never written
 }
 
 // --- Fake methods (the stock ABI), recording every call.
@@ -615,6 +632,142 @@ void TestShutdown() {
           "closing during the exist query: refused (shutdown), never submitted");
 }
 
+// M7: the seated gun hold on body 1 (act 0x8B).
+pg::Command GunCmd(std::uint32_t seq, std::uint32_t hold, bool rates, float r5c, float r60) {
+    pg::Command c = Cmd(seq, gp::Kind::gun_start, kGunStart, gp::Method::set_current, 0.0f);
+    c.hold_seq = hold;
+    c.rates_valid = rates;
+    c.r5c = r5c;
+    c.r60 = r60;
+    return c;
+}
+void TestSeatGun() {
+    Reset();
+    Put<std::uint16_t>(W(ACT) + 2, 0x8b);  // body 1 seated by the DM chain
+    Step(GunCmd(11, 11, true, 0.5f, 0.25f));
+    now += 16;
+    Body1(now);
+    Check(calls.size() == 2 && calls[0].what == 'e' && calls[0].node == kGunStart && calls[1].what == 's' && calls[1].node == kGunStart &&
+              calls[1].blend == 0.0f && calls[1].cs == W(CS1) && calls[1].graph == 2,
+          "gun: SetCurrentNode(cs1, 1, 2, GunHoldStart, 0.0, 0) on the seated body");
+    Check(Get<float>(Rate1() + 0x5c) == 0.5f && Get<float>(Rate1() + 0x60) == 0.25f, "gun: body 1's aim rates written with the submission");
+    Check(Get<float>(W(RATE_RECS) + 0x5c) == 0.9f, "gun: body 0's rate record untouched");
+    pg::Status s = Step(GunCmd(11, 11, true, 0.5f, 0.25f));
+    const pg::Receipt* sub = Find(s, pg::Stage::submit);
+    Check(sub && sub->seq == 11 && sub->kind == gp::Kind::gun_start && sub->body_act == 0x8b, "gun: submit receipt, kind gun_start");
+    Check(s.active && s.active_seq == 11 && s.rate_writes == 1, "gun: active, one rate write");
+    // The raise clip: no chain before kMinPlayMs, then vt+0x228 ends it and GunHold follows.
+    calls.clear();
+    motion_end_result = true;
+    now += 16;
+    Body1(now);
+    Check(calls.empty(), "gun: no clip test before the minimum play time");
+    now += 200;
+    calls.clear();
+    Step(GunCmd(11, 11, true, 0.45f, 0.3f));
+    Body1(now);
+    Check(calls.size() == 3 && calls[0].what == 'm' && calls[0].graph == 2 && calls[1].what == 'e' && calls[1].node == kGunHold &&
+              calls[2].what == 's' && calls[2].node == kGunHold && calls[2].blend == 0.0f,
+          "gun: the raise's motion end chains SetCurrentNode(cs1, 1, 2, GunHold, 0.0, 0)");
+    Check(Get<std::uintptr_t>(W(UPPER1) + 0x1a0) == NodeFor(kGunHold), "gun: the update applied GunHold");
+    Check(Get<float>(Rate1() + 0x5c) == 0.45f && Get<float>(Rate1() + 0x60) == 0.3f, "gun: the rates follow the command");
+    s = Step(GunCmd(11, 11, true, 0.45f, 0.3f));
+    const pg::Receipt* chain = Find(s, pg::Stage::submit);
+    const pg::Receipt* app = Find(s, pg::Stage::applied);
+    Check(chain && chain->kind == gp::Kind::gun_hold && chain->node == kGunHold && chain->seq == 11, "gun: the chain's submit receipt");
+    Check(app && app->ok && app->current == kGunHold, "gun: applied, graph 2 shows GunHold");
+    // Held: no deadline, no clip test on the loop.
+    calls.clear();
+    for (int i = 0; i < 4; ++i) {
+        now += 2000;
+        Step(GunCmd(11, 11, i != 2, 0.6f, 0.7f));
+        Body1(now);
+    }
+    s = Step(GunCmd(11, 11, true, 0.6f, 0.7f));
+    Check(s.active && !Find(s, pg::Stage::ended), "gun: 8 s held, still active");
+    Check(calls.empty(), "gun: the held loop makes no game call");
+    Check(Get<float>(Rate1() + 0x60) == 0.7f, "gun: the last valid rates stay");
+    // A non-finite rate is never written (the last pose stays).
+    Step(GunCmd(11, 11, true, std::numeric_limits<float>::quiet_NaN(), 0.2f));
+    now += 16;
+    Body1(now);
+    Check(Get<float>(Rate1() + 0x5c) == 0.6f && Get<float>(Rate1() + 0x60) == 0.7f, "gun: a non-finite rate is not written");
+    // The release: stateNull, the originals back.
+    pg::Command rel = GunCmd(11, 0, true, 0.6f, 0.7f);
+    Step(rel);
+    now += 16;
+    calls.clear();
+    Body1(now);
+    Check(calls.size() == 1 && calls[0].what == 's' && calls[0].node == kNull, "gun: the release writes stateNull");
+    Check(Get<float>(Rate1() + 0x5c) == 0.3f && Get<float>(Rate1() + 0x60) == 0.6f, "gun: the original rates are restored");
+    s = Step(rel);
+    const pg::Receipt* end = Find(s, pg::Stage::ended);
+    Check(end && end->via == gp::Via::end && !std::strcmp(end->cause, "release") && end->null_sent && end->kind == gp::Kind::gun_hold,
+          "gun: ended; via=end; cause=release; null=1");
+    Check(!s.active && s.rate_restores == 1, "gun: idle, one restore");
+    // Refusals: a request the driver no longer holds; a body on foot; a pickup on the seated body.
+    Step(GunCmd(12, 0, false, 0.5f, 0.5f));
+    now += 16;
+    calls.clear();
+    Body1(now);
+    s = Step(GunCmd(12, 0, false, 0.5f, 0.5f));
+    const pg::Receipt* ref = Find(s, pg::Stage::refused);
+    Check(ref && !std::strcmp(ref->reason, "released") && calls.empty(), "gun: refused; reason=released");
+    Put<std::uint16_t>(W(ACT) + 2, 1);
+    Step(GunCmd(13, 13, false, 0.5f, 0.5f));
+    now += 16;
+    Body1(now);
+    s = Step(GunCmd(13, 13, false, 0.5f, 0.5f));
+    ref = Find(s, pg::Stage::refused);
+    Check(ref && !std::strcmp(ref->reason, "body_act") && ref->body_act == 1, "gun: refused on a body that is not DM-seated");
+    Put<std::uint16_t>(W(ACT) + 2, 0x8b);
+    Step(Cmd(14));
+    now += 16;
+    Body1(now);
+    s = Step(Cmd());
+    ref = Find(s, pg::Stage::refused);
+    Check(ref && !std::strcmp(ref->reason, "body_act") && ref->kind == gp::Kind::pickup, "gun: a pickup is still refused on the seated body");
+    // A lost lease while holding: stateNull and the restore (the command disabled).
+    Reset();
+    Put<std::uint16_t>(W(ACT) + 2, 0x8b);
+    Step(GunCmd(21, 21, true, 0.2f, 0.8f));
+    Body1(now);
+    Check(Get<float>(Rate1() + 0x60) == 0.8f, "gun: written");
+    pg::Command off = GunCmd(21, 21, true, 0.2f, 0.8f);
+    off.enabled = false;
+    Step(off);
+    now += 16;
+    calls.clear();
+    Body1(now);
+    s = Step(off);
+    end = Find(s, pg::Stage::ended);
+    Check(end && !std::strcmp(end->cause, "lease") && end->null_sent && Get<float>(Rate1() + 0x60) == 0.6f,
+          "gun: a lost lease returns stateNull and restores");
+    // Another owner takes graph 2 during the hold: ended without a write, rates restored (the record is still body 1's).
+    Reset();
+    Put<std::uint16_t>(W(ACT) + 2, 0x8b);
+    Step(GunCmd(31, 31, true, 0.2f, 0.8f));
+    Body1(now);
+    now += 400;
+    Put<std::uintptr_t>(W(UPPER1) + 0x1a0, NodeFor(kOther));
+    Step(GunCmd(31, 31, true, 0.2f, 0.8f));
+    calls.clear();
+    Body1(now);
+    s = Step(GunCmd(31, 31, true, 0.2f, 0.8f));
+    end = Find(s, pg::Stage::ended);
+    Check(end && !std::strcmp(end->cause, "node") && !end->null_sent && calls.empty(), "gun: another owner of graph 2: no write");
+    Check(Get<float>(Rate1() + 0x60) == 0.6f, "gun: restored after the override");
+    // A rate record with another vtable: never written.
+    Reset();
+    Put<std::uint16_t>(W(ACT) + 2, 0x8b);
+    Put<std::uintptr_t>(Rate1(), image + 0x23ad260);  // the base vtable (constructed / destroyed)
+    Step(GunCmd(41, 41, true, 0.2f, 0.8f));
+    Body1(now);
+    s = Step(GunCmd(41, 41, true, 0.2f, 0.8f));
+    Check(Get<float>(Rate1() + 0x60) == 0.6f && s.rate_writes == 0 && s.rate_refusal && !std::strcmp(s.rate_refusal, "rate_rec_vtable"),
+          "gun: a record with another vtable is never written");
+}
+
 void TestFault() {
     Reset();
     pg::detail::Calls c = Fakes();
@@ -652,6 +805,7 @@ int main() {
     TestUncertain();
     TestPending();
     TestShutdown();
+    TestSeatGun();
     TestFault();
     pg::detail::ResetForTest();
     std::printf("partner_gesture_hook_tests: %u checks passed\n", checks);
