@@ -224,6 +224,7 @@ bool ReadRaise(const void* base, std::uintptr_t P, RaiseView& out) noexcept {
     RaiseView v{};
     if (!ReadValue(cam + kCamVariant, v.variant)) return false;
     v.ok = true;
+    v.flags_ok = ReadValue(cam + kCamFlags, v.flags);
     v.target_ok = true;
     for (unsigned i = 0; i < 4; ++i)
         if (!ReadValue(cam + kCamAimTarget + 4u * i, v.target[i])) v.target_ok = false;
@@ -284,11 +285,26 @@ bool WriteRaise(const void* base, std::uintptr_t P, int index, bool on, float ra
 }
 
 bool WriteLift(const void* base, std::uintptr_t P, bool on, float raise) noexcept {
-    (void)base;
-    (void)P;
-    (void)on;
-    (void)raise;
-    return false;
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    __try {
+        auto* y = reinterpret_cast<volatile float*>(cam + kCamAimTarget + 4u);
+        const float now = *y;
+        if (on) {
+            // Only over the stock seated aim target (0): never over another module's offset.
+            if (!(now < kLiftZeroM && now > -kLiftZeroM)) return false;
+            *y = raise;
+        } else {
+            // Only our own value is written back.
+            if (now != raise) return false;
+            *y = 0.0f;
+        }
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_raises.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {

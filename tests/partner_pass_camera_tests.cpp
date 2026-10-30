@@ -1170,7 +1170,7 @@ void TestVerifyAndInstall() {
         g_lines.clear();
         Image img;
         Check(pc::Install(img.base, img.span, &Log) == nullptr && pc::Installed(), "installed on the synthetic image");
-        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=18"), "the install line");
+        Check(Logged("partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=19"), "the install line");
         Check(pc::Install(img.base, img.span, &Log) == nullptr && g_lines.size() == 1, "a second install is a no-op");
         pc::detail::ResetForTest();
     }

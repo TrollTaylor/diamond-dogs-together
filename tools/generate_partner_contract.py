@@ -942,6 +942,11 @@ PASS_CAMERA_SITES = [
      'CAM+0xD38 |= 2'),
     (0x111A948, '8b028981800d00008b42048981840d00008b42088981880d00008b420c89818c0d00008b42108981900d00008b42148981940d0000',
      'PlayerCamera vt+0xE0: CAM+0xD80..0xD94 = the six request fields (interp, 0.4, 0.8, 0x400126, pitch, yaw)'),
+    # Design 8.35 (the seated aim lift, [O 89cfa402]): the target offset CAM+0x150 the lift writes is blended into the
+    # offset CAM+0x140 the position solve turns by the camera's rotation.
+    (0x1121704, '0f28b7500100000f5c7587ff5028f6870c040000100fc6c0000f59f00f2845870f58f074030f28f00f29b740010000',
+     'PlayerCamera vt+0x88 0x1120B00: CAM+0x140 = src + (CAM+0x150 - src) * w (the blender CAM+0x4D0 vt+0x20 / +0x28), '
+     'unless CAM+0x40C & 0x10'),
 ]
 SITES += PASS_CAMERA_SITES
 # Design 8.33: the aim module's variant ids (CAM+0x344 values, .rdata 0x23D4870, read by 0x12BC024), checked here.

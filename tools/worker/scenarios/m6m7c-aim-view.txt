@@ -14,7 +14,12 @@
 # get-off; the trace's off= stays bounded across the aim ticks (the grow guard otherwise restores: reason=grow); the gun
 # fires (magazine down, the guard window opens); vehicle_state_status before and after the shots (the own jeep's
 # health); the drivers' copies unchanged. A refusal (reason=variant) ends the run at its waitlog: read the slices.
-# NEVER: pass_camera; state=refused; state=view; event=refused / abandon; reason=grow; faults.
+# NEVER: pass_camera; state=refused; state=view; event=abandon; reason=grow; state=lift; event=refused (but params,
+# target); faults.
+# Design 8.35 (run 89cfa402): the entry above is never applied while seated (CAM+0x204 bit 2 clear, f204=0x63110), the
+# game resets it after the aim (state=view; event=refused; reason=lost; flag=0; the next apply finds the stock entry);
+# the lift writes CAM+0x154 itself while aiming seated: state=lift; event=lift at each seated aim (seats 1 and 2),
+# event=drop at each aim end, never for seat 3; the trace's off= y reads ~600 while aiming (0 before the fix).
 # Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7c-aim-view.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
@@ -70,6 +75,7 @@ guest hold rmb 1500 nowait
 wait 700
 guest capture s1-aim
 host capture s1-aim-drv
+waitlog guest 'partner_ride=pass_camera; state=lift; event=lift; vehicle=25608; seat=1; reason=lift; ok=1;' 3
 guest press lmb 120
 wait 300
 guest capture s1-shot1
@@ -82,11 +88,11 @@ host capture s1-shot2-drv
 guest release
 wait 1000
 guest capture s1-aim-end
+waitlog guest 'partner_ride=pass_camera; state=lift; event=drop; vehicle=25608; seat=1; reason=drop; ok=1;' 3
 guest press e 150
 guest burst s1-exit 3 300
 wait 2500
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
-waitlog guest 'partner_ride=pass_camera; state=view; event=restore;' 5
 waitlog guest 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;' 8
 wait 1200
 waitlog guest 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=1;' 5
@@ -100,7 +106,7 @@ guest release
 wait 1000
 # --- 1b. The host still drives; the guest in back seat 3 (right rear): no raise, no turn -----------------------------
 logmark both
-guest debug goto_vehicle jeep right
+guest debug teleport 574.25 320.2 1156.51 96
 wait 3000
 guest press e 150
 wait 3500
@@ -160,6 +166,7 @@ host hold rmb 1500 nowait
 wait 700
 host capture k2-aim
 guest capture k2-drv-aim
+waitlog host 'partner_ride=pass_camera; state=lift; event=lift; vehicle=25608; seat=2; reason=lift; ok=1;' 3
 host press lmb 120
 wait 300
 host capture k2-shot-1
@@ -172,11 +179,11 @@ guest capture k2-drv-shot
 host release
 wait 1000
 host capture k2-aim-end
+waitlog host 'partner_ride=pass_camera; state=lift; event=drop; vehicle=25608; seat=2; reason=drop; ok=1;' 3
 host press e 150
 host burst k2-exit 3 300
 wait 2500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
-waitlog host 'partner_ride=pass_camera; state=view; event=restore;' 5
 waitlog host 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=2; reason=made;' 8
 wait 1200
 waitlog host 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=2;' 5
@@ -202,6 +209,7 @@ host hold rmb 1500 nowait
 wait 700
 host capture h1-aim
 guest capture h1-drv-aim
+waitlog host 'partner_ride=pass_camera; state=lift; event=lift; vehicle=25608; seat=1; reason=lift; ok=1;' 3
 host press lmb 120
 wait 300
 host capture h1-shot-1
@@ -214,11 +222,11 @@ guest capture h1-drv-shot
 host release
 wait 1000
 host capture h1-aim-end
+waitlog host 'partner_ride=pass_camera; state=lift; event=drop; vehicle=25608; seat=1; reason=drop; ok=1;' 3
 host press e 150
 host burst h1-exit 3 300
 wait 2500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 10
-waitlog host 'partner_ride=pass_camera; state=view; event=restore;' 5
 waitlog host 'partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;' 8
 wait 1200
 waitlog host 'partner_ride=pass_camera; state=turn; event=check; vehicle=25608; seat=1;' 5

@@ -782,16 +782,69 @@ struct LiftIn {
 };
 // One tick. Reasons (static): none, lift, rewrite, held, drop, gone, camera, params, target, other, rewritten.
 inline LiftWrite LiftPlan(Lift& l, const LiftIn& in, const char*& reason) noexcept {
-    (void)l;
-    (void)in;
-    reason = "none";
-    return LiftWrite::none;
+    if (!in.want) l.refused = nullptr;  // the boarding ended: the next one starts clean
+    const bool ours = in.target_ok && in.target_y == in.raise;
+    const bool zero = in.target_ok && in.target_y < kLiftZeroM && in.target_y > -kLiftZeroM;
+    const bool aim = in.want && in.aiming && in.aim_module;
+    const bool params = in.flags_ok && (in.flags & kCamParamsBit) != 0;
+    if (!aim || params || !in.flags_ok || !in.target_ok) {
+        if (l.active) {
+            if (ours) {
+                reason = "drop";
+                return LiftWrite::drop;
+            }
+            if (!in.target_ok) {
+                reason = "camera";  // not readable this tick: tried again
+                return LiftWrite::none;
+            }
+            // The next camera module set its own target: ours is gone, nothing to write back.
+            l.active = false;
+            reason = "gone";
+            return LiftWrite::none;
+        }
+        reason = !aim ? "none" : params ? "params" : "camera";
+        return LiftWrite::none;
+    }
+    if (l.refused) {
+        reason = l.refused;
+        return LiftWrite::none;
+    }
+    if (l.active) {
+        if (ours) {
+            reason = "held";
+            return LiftWrite::none;
+        }
+        if (zero) {
+            if (l.rewrites >= kLiftRewriteMax) {
+                l.active = false;
+                l.refused = reason = "rewritten";
+                return LiftWrite::none;
+            }
+            ++l.rewrites;
+            reason = "rewrite";
+            return LiftWrite::lift;
+        }
+        l.active = false;
+        l.refused = reason = "other";
+        return LiftWrite::none;
+    }
+    if (!zero) {
+        reason = "target";  // not the stock 0 (yet): wait, no latch
+        return LiftWrite::none;
+    }
+    reason = "lift";
+    return LiftWrite::lift;
 }
-// The driver's bookkeeping after the write (ok: the native write succeeded).
+// The driver's bookkeeping after the write (ok: the native write succeeded). A failed lift stays inactive (tried again
+// on the next tick); a drop gives the value up either way (the next module sets its own target, [O] 89cfa402).
 inline void LiftDone(Lift& l, LiftWrite w, bool ok) noexcept {
-    (void)l;
-    (void)w;
-    (void)ok;
+    if (w == LiftWrite::lift) {
+        if (ok && !l.active) ++l.lifts;
+        if (ok) l.active = true;
+    } else if (w == LiftWrite::drop) {
+        if (ok) ++l.drops;
+        l.active = false;
+    }
 }
 
 // --- The camera after a get-off (mode view; design 8.33) ------------------------------------------------------------
