@@ -1,0 +1,57 @@
+# Seats on, review fixes (docs/vehicles-companions-design.md 8.26): the Fulton guard at a vehicle the partner drives
+# where this player gets no seat. With the truck cab off in play (8.26) the passenger policy blocks a truck, so the
+# guest's pre-query refuses at the host-driven truck's door and only the stock Fulton prompt was left there (run
+# 84e3db0e frame pass-truck-blocked). Site C now marks the peer's vehicle whatever the pre-query answered.
+# -Mode play -WanSim bad, seed afgh-relief-trc for both roles (run b68844fc: the host's sortie truck 25600 at the
+# enemyBase_S LZ; right door spot -346.147,317.008,764.219 facing -128). world_relief=1 is named only so the guest's
+# copy gets the host's truck; the seat keys run at the shipped play defaults (cab=0).
+#   The host drives in by the right door; the guest at the same door: board_block (no seat), event=seat;
+#   action=fulton; on=1; vehicle=25600; frame: no Fulton prompt; E held twice for 1500 ms: the truck is still there on
+#   the guest's copy and nobody else rides it.
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-seats-on-truck-guard.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed afgh-relief-trc
+labsetting world_relief=1
+title 200
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=4;' 120
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=4;' 150
+host debug clear_enemies 100
+guest run vehicle_census 0 2
+guest expect vehicle_census;first=0;n=2;found=1;25600:4:2
+logmark both
+placebehind guest host 12 0
+wait 2000
+host debug teleport -346.147 317.008 764.219 -128
+wait 2500
+host press e 150
+wait 4000
+host run vehicle_seats
+host require vehicle;id=25600
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x01; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+logmark guest
+guest debug teleport -346.147 317.008 764.219 -128
+wait 3000
+waitlog guest 'world_lua=event=seat; action=fulton; on=1; vehicle=25600' 5
+guest capture s4-truck-door
+heldcapture guest guest e s4-truck-hold 2
+wait 1500
+waitlog guest 'partner_ride=board_block; vehicle=25600;' 5
+guest run vehicle_seats
+guest expect vehicle_not_riding
+guest run vehicle_census 0 2
+guest expect vehicle_census;first=0;n=2;found=1;25600:4:2
+host run vehicle_seats
+host expect vehicle;id=25600
+both capture s4-truck-after
+guest debug teleport -330.0 317.0 775.0 -128
+wait 3000
+waitlog guest 'world_lua=event=seat; action=fulton; on=0; vehicle=25600' 5
+state
