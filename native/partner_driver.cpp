@@ -3197,7 +3197,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         look_x = std::isfinite(look_pad.rx) ? look_pad.rx : 0.0f;
         look_y = std::isfinite(look_pad.ry) ? look_pad.ry : 0.0f;
     }
-    gi.look = std::fabs(look_x) > pc::kLookInput || std::fabs(look_y) > pc::kLookInput;
+    gi.look_x = std::fabs(look_x) > pc::kLookInput;
+    gi.look_y = std::fabs(look_y) > pc::kLookInput;
     const pc::GuardOut go = pc::GuardStep(c.guard, gi);
     bool guard_written = false;
     if (go.write) guard_written = h.pass_camera_pitch(h.context, st, go.pitch);

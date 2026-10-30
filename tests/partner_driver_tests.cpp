@@ -7334,6 +7334,14 @@ void TestPassCameraGuardDriver() {
         s.fake.pad.kb_f[1] = 0.6f;
         GuardView(0.10f, 1.17f, -2.4f, -0.10f);
         Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "a mouse turn inside the window: not written");
+        GuardView(-0.30f, 1.17f, -2.4f, 0.30f);
+        Check(s.Tick(0, 20) && g_guard.pitch_writes.size() == 1 && g_guard.pitch_writes[0] == 0.10f && g_guard.rot_writes.size() == 1 &&
+                  std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f &&
+                  std::fabs(pc::UpPitch(g_guard.rot_writes[0].data()) + 0.10f) < 1e-3f,
+              "the mouse x input moves the yaw only: the pull up on the same ticks is written back");
+        g_guard.rot_writes.clear();
+        g_guard.pitch_writes.clear();
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
         s.fake.pad.kb_f[1] = 0.0f;
         s.Tick(0, 200);
         GuardView(0.10f, 1.07f, -2.5f, -0.10f);

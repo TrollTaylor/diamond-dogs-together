@@ -417,7 +417,7 @@ struct GuardIn {
     bool firing = false;      // GunFires
     bool aim_module = false;  // the active camera module is the aim camera (kAimModuleVtableRva)
     bool ang_ok = false;      // the look angles were read
-    bool look = false;        // the player's own look input this tick (right stick / mouse above kLookInput)
+    bool look_x = false, look_y = false;  // the player's own look input this tick: the right stick / mouse x (yaw), y (pitch)
     float pitch = 0.0f, yaw = 0.0f;  // CAM+0x270 / +0x274
     const float* rot = nullptr;      // CAM+0x90 (null: unread)
     std::uint64_t now_ms = 0;
@@ -429,7 +429,7 @@ struct Guard {
     float ref_up = 0.0f;      // the world up-pitch reference of CAM+0x90
     float open_yaw = 0.0f, last_yaw = 0.0f;  // the angle yaw at the window's open and its last tick
     float ref_yaw = 0.0f;     // the world yaw reference of CAM+0x90 (with ref_up)
-    std::uint64_t last_look_ms = 0;   // the last tick with the player's look input
+    std::uint64_t last_look_x_ms = 0, last_look_y_ms = 0;  // the last tick with the player's look input per axis
     std::uint32_t look_ticks = 0;     // window ticks that followed the player's input (the open window)
     std::uint64_t last_fire_ms = 0;
     bool active = false;              // a shot window is open
@@ -499,7 +499,7 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
     GuardOut o{};
     if (!in.on || !in.ang_ok || !std::isfinite(in.pitch) || !std::isfinite(in.yaw)) {
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = g.last_look_ms = 0;
+        g.last_fire_ms = g.last_look_x_ms = g.last_look_y_ms = 0;
         g.active = false;
         return o;
     }
@@ -513,13 +513,13 @@ inline GuardOut GuardStep(Guard& g, const GuardIn& in) noexcept {
             o.end = GuardEnd::aim_end;
         }
         g.ref_ok = g.up_ok = false;
-        g.last_fire_ms = g.last_look_ms = 0;
+        g.last_fire_ms = g.last_look_x_ms = g.last_look_y_ms = 0;
         return o;
     }
     if (in.firing) g.last_fire_ms = in.now_ms ? in.now_ms : 1;
-    if (in.look) g.last_look_ms = in.now_ms ? in.now_ms : 1;
+    if (in.look_x || in.look_y) g.last_look_x_ms = in.now_ms ? in.now_ms : 1;  // v3 (both axes): replaced next commit
     const bool window = g.last_fire_ms != 0 && (in.firing || in.now_ms < g.last_fire_ms || in.now_ms - g.last_fire_ms < kGuardHoldMs);
-    const bool looking = g.last_look_ms != 0 && (in.now_ms < g.last_look_ms || in.now_ms - g.last_look_ms < kLookLatchMs);
+    const bool looking = g.last_look_x_ms != 0 && (in.now_ms < g.last_look_x_ms || in.now_ms - g.last_look_x_ms < kLookLatchMs);
     if (!window) {
         bool settled = false;
         if (g.active) {
