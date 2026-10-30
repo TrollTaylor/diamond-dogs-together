@@ -58,7 +58,7 @@ session scratch, looked at for every line below; run and probe folders archived 
   arrival), a dog death, the launcher.
 
 **Checks.** `pwsh -File tools/build.ps1 -Fast` 302/302 after each merge; full `pwsh -File tools/build.ps1` (Debug)
-318/318 at `416b2fa`; `worker_session_tests` with the new scenario; the five contract checks
+318/318 at `416b2fa` and again at the docs commit `6ac6a86`; `worker_session_tests` with the new scenario; the five contract checks
 (`generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
 `generate_nametag_contract.py`, `generate_downed_damage_contract.py`, each with `--check`) pass.
 
