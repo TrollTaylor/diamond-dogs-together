@@ -14,6 +14,8 @@ background worker OFF. tools/package.ps1 -Friend packages its loader and its
 launcher: a passing receipt keeps dinput8.dll and DiamondDogsTogether.exe of
 this build (artifacts.loader_sha256 / launcher_sha256), so the player zip's two
 programs come from one checked build of one source snapshot.
+The audited tests run with ctest -j -TestJobs (default half the logical
+processors, at most 16); cmake/test_labels.cmake keeps -j safe.
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +28,7 @@ param(
     [ValidateRange(1, 7200)][int]$CommandTimeoutSec = 1200,
     [ValidateRange(1, 600)][int]$TestTimeoutSec = 120,
     [ValidateRange(1, 64)][int]$BuildJobs = 8,
+    [ValidateRange(1, 64)][int]$TestJobs = [Math]::Max(1, [Math]::Min(16, [int][Math]::Floor([Environment]::ProcessorCount / 2))),
     [switch]$PlanOnly
 )
 Set-StrictMode -Version Latest
@@ -497,7 +500,7 @@ try {
         throw 'CTest selected an unexpected test/dependency set'
     }
     Write-WorkerJson (Join-Path $runDirectory 'ctest-selected.json') $selected
-    $null = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '-R', $regex, '--output-on-failure', '-j', '1',
+    $null = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '-R', $regex, '--output-on-failure', '-j', "$TestJobs",
         '--timeout', "$TestTimeoutSec", '--output-junit', (Join-Path $runDirectory 'ctest-results.xml')) 'ctest-audited' $CommandTimeoutSec
     $null = Invoke-WorkerCommand $workerCommandContext $pwshPath @('-NoProfile', '-NonInteractive', '-File', (Join-Path $projectRoot 'tests\lab_scripts_tests.ps1'), '-InputOnly') 'pure-input-fixture' $TestTimeoutSec
     $null = Invoke-WorkerCommand $workerCommandContext $pwshPath @('-NoProfile', '-NonInteractive', '-File', (Join-Path $projectRoot 'tests\worker_checks_tests.ps1')) 'worker-policy-fixture' $TestTimeoutSec
