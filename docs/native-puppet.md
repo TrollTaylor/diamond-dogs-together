@@ -978,14 +978,18 @@ the jeep's life 2260 before and after): the stock gun refuses a muzzle line into
 [I: the blocked gun mode 15], so S1 never sees it. A line that the gun accepts but the jeep's body stops further out
 was not found [U]. The earlier seated misses (8.22) fit the camera's swing to the sky at the shot, fixed since 8.27 /
 8.28 [I]. Play rehearsal `381880b8` (shipped defaults, S1 off, `-WanSim bad`): seat 3 fired in both
-role orders with no fault and no jeep damage; it had no target in range (no kill in play).
+role orders with no fault and no jeep damage; it had no target in range (no kill in play). [O] `881b37e6` (lab, the
+merged build after the review fixes, 8.31): with S1 off, back seat 3 (guest) and back seat 2 (host, aiming through the
+side-panel view) each killed a guard 8.5-9.3 m out at the second shot; with the lever on, the fixed box moved the
+start 1.02 m (exit 0.97 m, `inside=1`, `stale=0`).
 
 **Tests.** `partner_seat_gun_tests` (the pure part: classes, frame, slab test, plan, lever, the contract's
 `seat_shot_blocks`), `partner_input_hook_tests` `TestSeatShotHook` (the hook forwards a moved copy for the published
 owner only, never writes the caller's record, pellets, census, stale, miss, withdrawn), `partner_driver_tests`
 `TestSeatShotDriver`, `lab_config_tests`, `lab_ini_check`, `worker_session_tests`. Failing first: `bbe8160` (stubs)
--> `acfd916`. Scenarios `coop-vehicle-seat-shot-s1.txt`, `coop-vehicle-seat-shot-ab.txt`,
-`coop-vehicle-seat-shot-play.txt` (the play rehearsal at the shipped defaults, S1 off).
+-> `acfd916`; the review fixes `19c55b5` -> `50389fb` (outside, the box, 50 ms, the gate pins). Scenarios
+`coop-vehicle-seat-shot-s1.txt`, `coop-vehicle-seat-shot-ab.txt`, `coop-vehicle-seat-shot-play.txt` (the play
+rehearsal at the shipped defaults, S1 off), `coop-vehicle-seat-shot-fix.txt` (8.31: seats 3 and 2 on the merged build).
 
 ## Traversal icon
 

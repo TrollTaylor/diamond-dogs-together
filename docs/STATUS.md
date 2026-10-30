@@ -1,3 +1,21 @@
+## 2026-10-30: the seated-shot review fixed; both back seats hit on the merged build (branch `wp/seat-shoot2`)
+
+**Built:** the review of 8.30 (design 8.31). S1 (`partner_seat_shot`, still off in lab and play) never moves a start
+outside the vehicle's box, its jeep box hugs the jeep (4.4 x 2.0 m) and a pose is fresh for 50 ms; only the two pins
+S1 relies on join the partner's code gate (the five static facts are generator checks, `SEAT_SHOT_FACTS`); the pellet
+assertion reads the executable. Contract 824 code sites / 209 slots. Failing first `19c55b5` -> `50389fb`. The 8.30 /
+README claims corrected (seat 3 only; frames on the shooter's copy; two commits per kill; the on-foot control Dying on
+the guest only).
+**Play default:** unchanged (no flip): seated firing with the aim camera was already on; S1 stays off.
+**Proof:** lab `881b37e6` (merged build, africa-jeep; every expectation met; Closed, BaselineRestored,
+RealSavesUnchanged, Forced=True): back seat 3 (the guest shooting, the host driving) killed a guard 8.5 m out at
+shot 2; back seat 2 (the host shooting through the known side-panel view, the reticle red) killed one 9.3 m out at
+shot 2, and the guest's driver view framed that kill; every held-aim shot fired (3/3, 2/2, 3/3); with the lever on
+the fixed box moved the start 1.02 m (`stale=0`). S1 off in both kills. README Seats line: either back seat hits.
+**Not proven:** a kill in play or from a moving jeep, longer range, two PCs; the driver's camera cannot be aimed by
+the scenario (part A's kill on the driver's copy by lines only); the partner's Dying state still fails to apply on
+the other copy (readback 2; Dead follows). Full CTest 336/336.
+
 ## 2026-10-30: seated shots land; the bullet-start fix S1 built, kept off (branch `wp/seat-shoot2`)
 
 **Shooting from the right back seat hits [O, lab]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, a stopped

@@ -72,6 +72,13 @@ guest release
 waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
 waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 8
 both capture f0-after
+# The Part 0 guard is Dying on the guest's copy but still asleep on the host's (the apply fails, readback 2: run
+# 0af9baa3), so Part A's sleep lever took him again: finish him off first (design 8.30). The guest steps 10 m back from
+# the driver's door: since the seats-on merge the seat race gives a guest standing there the empty jeep (run 3d452714).
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;
+guest debug forward -10
+wait 2500
 # --- Part A: the guest in seat 3 shoots, the host drives -------------------------------------------------------------
 host debug goto_vehicle jeep
 wait 2500

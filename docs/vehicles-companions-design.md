@@ -3011,7 +3011,7 @@ ones). Hidden runs (frames looked at; session scratch `complete/frames/m6m7b-sho
   play refuses the lab soldier warp and the route spot was 175 m away (`enemy sleep` found none), so no kill in play
   (6 expect misses: the two sleep levers and the four kill lines).
 - **Verdict.** Seated shots land where the reticle is in both role orders [O: back seat 3, lab, a stopped jeep, 8.5-9.4
-  m, frames on the shooter's copy; seat 2 and play had no hit, see 8.31]. S1 changed nothing that the runs could
+  m, frames on the shooter's copy; seat 2 and the merged build: 8.31]. S1 changed nothing that the runs could
   see: one S1-off shot hit, and the lines into the jeep were refused by the stock gun. The earlier misses (8.22) fit
   the camera's swing to the sky at the shot, fixed since 8.27 / 8.28 and on in play [I strong]. `partner_seat_shot`
   stays off in lab and play (a lab key and safeguard); a line the gun accepts but the jeep's body stops is [U].
@@ -3020,6 +3020,39 @@ ones). Hidden runs (frames looked at; session scratch `complete/frames/m6m7b-sho
   upper act 0, gun mode 0, flag 0xC3 set (`partner_seat_aim` census in `0af9baa3`); next is B1p (posture 3 for the
   seated acts, wrapping the only call of UpdateAttackType at 0x10541B9), then B1. `partner_seat_gun` and
   `partner_seat_aim` stay off. (3) Seat 1 (its gun does not fire, 8.29) and the truck cab were not run.
+### 8.31 Results: the review of 8.30, fixed; both back seats hit on the merged build (2026-10-30, branch `wp/seat-shoot2`)
+
+Review findings and fixes (failing first `19c55b5` -> `50389fb`, scenario `d7b181f`, docs `0ad34e7`):
+- README / STATUS overclaimed (seat 3 only, frames on the shooter's copy only, two commits per kill) and 8.30's on-foot
+  control was Dying on the guest's copy only: corrected in 8.30, STATUS and README.
+- S1 hardened (still off in lab and play): a start outside the box is never moved (`result=outside`), the light box
+  hugs the jeep (4.4 x 2.0 x 2.5 m, was 5.0 x 2.3), a publication is fresh for 50 ms (was 500). The partner's code gate
+  holds only the two pins the hook relies on (`SEAT_SHOT_SITES`: `0xD32690`, `0x130342E`); the five static facts are
+  generator checks (`SEAT_SHOT_FACTS`). The pellet assertion reads the executable (it compared two constants; a byte
+  mutation of the store, the slot call or the loop's back edge now fails it). Contract 824 code sites / 209 slots.
+- Stale references (8.27 / 8.29, "Seat shot") point to 8.30 / "Seat shot (S1)".
+
+Run [O] `881b37e6` (lab, africa-jeep, the merged build at `d7b181f`, `coop-vehicle-seat-shot-fix.txt`; every
+expectation met; Closed, BaselineRestored, RealSavesUnchanged, Forced=True; no fault or error on either copy). Each
+part's sleep lever took the guard just placed (`guard_here` ent = `enemy_sleep` ent); every held-aim shot fired (3/3,
+2/2, 3/3: a 700 ms re-aim before each shot).
+- A, the guest in back seat 3, the host driving, S1 off (census: `inside=1`, exit 0.97-0.98 m): the reticle red on the
+  sleeping guard 8.5 m out across the jeep; he sat up at shot 1 and died at shot 2 (guest `obs; m=Dead; att=local`,
+  `event=req`; host `commit; state=5; actor=guest`, `obs Dead`, `apply ... result=ok`). Frames: guest `a-aim` /
+  `a-shot-1` / `a-shot-2`; the host's `a-seated` shows that guard lying beyond the jeep and the guest's body in seat 3.
+  The driver's camera could not be aimed: the mouse turned it away and `enemy_aim_nearest` did not move it, so the
+  kill on the host's copy is proven by its lines. With `seatshot on`, two shots: `result=shift`, exit 97 cm, move 102
+  cm, `stale=0` (the fixed box in game).
+- B, the host in back seat 2 (left rear), the guest driving, S1 off (census `inside=1`, exit 0.93 m, the muzzle 1.40 m
+  up on the centre line): the aim view shows the jeep's side panel (the known seat 2 view) but the reticle is red; shot
+  1 put the guard 9.3 m out to Dying, shot 2 killed him (host `commit` state 4 then 5, `actor=host`; guest `apply`
+  state 4 failed with readback 2, then state 5 ok). The guest's driver view shows him asleep, sitting up at the shot,
+  then lying dead (`b-drv-look1` / `b-drv-shot` / `b-drv-after`): a frame of the kill on the non-shooter's copy.
+- Verdict: from either back seat of a stopped jeep, shots at 8-11 m hit what the red reticle marks, in both role
+  orders, on the merged build [O lab]. Not proven: a kill in play (no target in range, 8.30), a moving jeep, longer
+  range, two PCs; the Dying state of a partner's kill still fails to apply on the other copy (readback 2: an older
+  world-sync gap; Dead follows ~0.6-2 s later). Frames: session scratch `complete/frames/m6m7b-shoot/best-*`.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3503,8 +3536,10 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   `commit actor=host` / guest `apply`), one of them with S1 off. The bullet-start move S1 (`partner_seat_shot`) is
   built but showed no effect (a steep line into the jeep is refused by the stock gun, `a9d0af0f`) and stays off. Play
   rehearsal `381880b8` (shipped defaults): seat 3 fires in both role orders without fault or jeep damage, but had no
-  target in range (no kill in play). Not met: `m7-partner-gun` (design B not attempted; B1p next), seat 1, the
-  truck cab, two-PC.
+  target in range (no kill in play). **8.31:** the review's fixes (S1 hardened, still off; two gate pins); on the
+  merged build both back seats hit (`881b37e6`: seat 3 guest shooter, seat 2 host shooter, S1 off; the seat 2 kill
+  framed on the driver's copy too). Not met: `m7-partner-gun` (design B not attempted; B1p next), seat 1, the truck
+  cab, a kill in play, a moving jeep, two-PC.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 
