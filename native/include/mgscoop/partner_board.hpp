@@ -38,13 +38,19 @@ using NowFn = std::uint64_t (*)() noexcept;
 //
 // M6 seat 1 (opts.front / opts.cab, partner_board_policy.hpp): after both sites
 // are live, the seat-1 blocks (board_seat1_blocks: the two phase-1 sites and the
-// seat matrix's seat-1 remap) are checked and the remap `jne` becomes a `jmp`
-// (one locked dword, never reverted; logged partner_board=seat_one). A refusal
-// there keeps the back seats (opts stay off). Site B then sets both phase-1
-// immediates for each call it makes (1 only for a steered seat 1).
+// seat matrix's seat-1 remap) are checked (logged partner_board=seat_one). A
+// refusal there keeps the back seats (opts stay off). Site B then sets both
+// phase-1 immediates for each call it makes (1 only for a steered seat 1, and
+// only while the remap is skipped: review R4, SetRemapSkip).
 const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts = {}) noexcept;
 // The seat-1 options that are live (both off until Install armed them).
 SeatOpts LiveSeatOpts() noexcept;
+// Review R4: the seat-1 remap (seat matrix 0xB799C0 maps seat 1 to 0 while rider[1] holds a player id)
+// is skipped (jne -> jmp at 0xB79A43, one locked dword) only while the driver tick says seat 1 may be in
+// use (partner_board_policy.hpp RemapWanted). True when the dword is in the asked state; false when seat 1
+// is not armed, the dword is foreign or the write failed. The driver tick is its only caller (one writer).
+bool SetRemapSkip(bool skip) noexcept;
+bool RemapSkipped() noexcept;
 // M6 seat races (partner_ride_race; partner_board_policy.hpp "seat races", review R1/R2): InstallRace
 // retargets site C 0x1246A4F (RideVehicle CanExec's call of the pre-query 0x1245820) after Install
 // succeeded, and turns the race on: nullptr, or "board" (not installed), c_<RetargetCall reason> (the
@@ -97,6 +103,7 @@ struct Stats {
     std::uint32_t faults;         // SEH-caught index reads / getter calls; failed phase-1 immediate writes
     const char* last_reason;      // the last non-stock decision's reason (static)
     std::uint32_t seat_one;       // M6: phase-1 calls steered to seat 1 with both immediates at 1
+    std::uint32_t remap_refused;  // review R4: seat-1 steers refused (4) because the remap was stock
 };
 void ReadStats(Stats& out) noexcept;
 
@@ -118,6 +125,9 @@ void BindForTest(NearestFn nearest, DriverFn driver, TypeFn type, CountFn count,
 // (the live writer patches the two image dwords; false: not written).
 using LimitFn = bool (*)(std::uint8_t limit) noexcept;
 void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept;
+// Review R4: whether the remap is skipped (the live reader reads the image dword).
+using RemapFn = bool (*)() noexcept;
+void BindRemapForTest(RemapFn remap) noexcept;
 std::uint8_t SiteAForTest(void* unit, const float* pos, std::uint8_t first, std::uint8_t last) noexcept;
 std::uint8_t SiteBForTest(void* unit, const float* pos) noexcept;
 // Review R1/R2: the pre-query 0x1245820(action, body, unit, id, char* seat) bound without an install.

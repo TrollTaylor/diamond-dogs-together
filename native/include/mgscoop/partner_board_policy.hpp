@@ -36,7 +36,8 @@
 // rider[1] holds a player id (0xB79A3F); with seat 1 on, its `jne` (0xB79A43) is
 // a `jmp` for the process (no stock path seats a player in rider[1]: phase 1
 // passes seat 0), so the stock passenger phase places the viewer at the front
-// right seat (0x141259B80 -> 0xB7AF90(unit, out, seat)). The passenger phase
+// right seat (0x141259B80 -> 0xB7AF90(unit, out, seat)). Review R4: the jmp is
+// live only while seat 1 may be in use (RemapWanted below; the driver tick). The passenger phase
 // plays GetOn for seat 1 of both classes (stateVehicleGetOnFrontRight,
 // stateTruckGetOnFrontRight) and the light loop for a light vehicle; a truck
 // gets no loop state from 0x14124B2D0 (E6 reads what the graph does).
@@ -222,6 +223,24 @@ inline Range DecideSeats(const Policy& p, bool facts_ok, std::uint8_t type, int 
     r.ok = true;
     r.reason = "back_seats";
     return r;
+}
+// Review R4: the seat matrix's seat-1 remap (0xB79A43 jne -> jmp) is no longer skipped for the process.
+// The driver tick (the only writer of that dword) skips it while seat 1 may be in use: a published policy
+// that offers seat 1 (applied before that policy is published), the local player in seat 1, a seat-1
+// steer not yet confirmed, or kRemapHoldMs after the last seat-1 steer; else the stock jne is back.
+// Site B steers seat 1 only while the skip is live (else 4, counted remap_refused).
+inline constexpr std::uint64_t kRemapHoldMs = 5000;
+struct RemapIn {
+    bool armed = false;            // seat 1 installed (partner_ride_front / partner_ride_cab, the board's seat_one ok)
+    bool policy_one = false;       // the policy about to be published offers seat 1 (front_ok or cab_ok)
+    bool local_seat_one = false;   // the local passenger report says seat 1
+    bool steer_pending_one = false;
+    std::uint64_t last_seat_one_ms = 0, now_ms = 0;
+};
+inline bool RemapWanted(const RemapIn& in) noexcept {
+    if (!in.armed) return false;
+    if (in.policy_one || in.local_seat_one || in.steer_pending_one) return true;
+    return in.last_seat_one_ms && in.now_ms >= in.last_seat_one_ms && in.now_ms - in.last_seat_one_ms < kRemapHoldMs;
 }
 // M6: the phase-1 immediate the site B wrapper wants for this call: 1 only when
 // it steered the viewer to seat 1 with the option installed, else stock 2.

@@ -46,6 +46,9 @@ std::atomic<std::uint64_t> g_policy{0};
 std::atomic<std::uint8_t> g_opts{0};
 detail::LimitFn g_limit = nullptr;
 std::atomic<std::uint32_t> g_seat_one{0};
+// Review R4: the remap reader (live: the image dword) and the seat-1 steers it refused.
+detail::RemapFn g_remap_read = nullptr;
+std::atomic<std::uint32_t> g_remap_refused{0};
 // M6 seat races: on, the want (vehicle | ms << 32), the deny and the grant (vehicle | until << 32), the
 // guest's hold lease (1 | until << 32; 0 off) and the refusal counts. Review R1/R2: site C.
 std::atomic<bool> g_race{false};
@@ -261,7 +264,14 @@ std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     else if (k.verdict == Verdict::seats) result = g_nearest(unit, pos, k.first, k.last);
     result = RaceStepB(unit, k.verdict, result);
     if (g_opts.load(std::memory_order_acquire) && g_limit) {
-        const std::uint8_t limit = PhaseOneLimit(k.verdict, result, true);
+        std::uint8_t limit = PhaseOneLimit(k.verdict, result, true);
+        // Review R4: seat 1 only while the driver tick has the remap skipped (else the passenger would be
+        // placed at the driver's matrix): the no-seat exit, the immediates stay stock.
+        if (limit == kPhaseOneSeatOne && !(g_remap_read && g_remap_read())) {
+            g_remap_refused.fetch_add(1, std::memory_order_relaxed);
+            result = kNoSeat;
+            limit = kPhaseOneStock;
+        }
         const DWORD before = GetLastError();
         const bool written = g_limit(limit);
         SetLastError(before);
@@ -373,6 +383,7 @@ void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept {
     g_opts.store(PackOpts(opts), std::memory_order_release);
     g_limit = limit;
 }
+void BindRemapForTest(RemapFn remap) noexcept { g_remap_read = remap; }
 void BindForTest(NearestFn nearest, DriverFn driver, TypeFn type, CountFn count, NowFn now) noexcept {
     g_nearest = nearest;
     g_driver = driver;
@@ -403,6 +414,8 @@ void ResetForTest() noexcept {
     g_opts.store(0);
     g_limit = nullptr;
     g_seat_one.store(0);
+    g_remap_read = nullptr;
+    g_remap_refused.store(0);
     g_race.store(false);
     g_want.store(kVehicleUnknown);
     g_deny.store(kVehicleUnknown);
@@ -429,8 +442,8 @@ void ResetForTest() noexcept {
 } // namespace detail
 
 namespace {
-// M6: the seat-1 blocks against the image (the owned bytes accepted in either state), then the
-// remap jne -> jmp. nullptr when seat 1 is live.
+// M6: the seat-1 blocks against the image (the owned bytes accepted in either state). nullptr when
+// seat 1 is live. Review R4: the remap is no longer skipped here (the driver tick's SetRemapSkip).
 const char* InstallSeatOne(std::size_t span) noexcept {
     const auto* image = reinterpret_cast<const unsigned char*>(g_base);
     for (const std::uintptr_t rva : c::board_seat1_blocks) {
@@ -450,14 +463,21 @@ const char* InstallSeatOne(std::size_t span) noexcept {
         }
         if (!same) return "bytes";
     }
-    auto* remap = reinterpret_cast<unsigned char*>(g_base + c::board_remap_rva);
     std::uint32_t current = 0;
-    std::memcpy(&current, remap, sizeof(current));
-    if (current == c::board_remap_skip) return nullptr;
-    if (current != c::board_remap_orig) return "remap";
-    const char* why = near_code::PatchDword(remap, c::board_remap_orig, c::board_remap_skip);
-    if (why && std::strcmp(why, "protect_restore") != 0) return "remap_write";
+    std::memcpy(&current, reinterpret_cast<const void*>(g_base + c::board_remap_rva), sizeof(current));
+    if (current != c::board_remap_skip && current != c::board_remap_orig) return "remap";
     return nullptr;
+}
+// The live remap state: the image dword is the skip (jmp).
+bool RemapSkippedLive() noexcept {
+    if (!g_base) return false;
+    std::uint32_t current = 0;
+    __try {
+        std::memcpy(&current, reinterpret_cast<const void*>(g_base + c::board_remap_rva), sizeof(current));
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+    return current == c::board_remap_skip;
 }
 } // namespace
 
@@ -521,6 +541,7 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, Se
         const char* why = InstallSeatOne(span);
         if (!why) {
             g_limit = &SetPhaseOneLimitLive;
+            g_remap_read = &RemapSkippedLive;
             g_opts.store(PackOpts(opts), std::memory_order_release);
         }
         LogFormat("partner_board=seat_one; result=%s; reason=%s; front=%u; cab=%u; remap=0x%llx; sites=0x%llx,0x%llx\r\n",
@@ -533,6 +554,26 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, Se
 }
 
 SeatOpts LiveSeatOpts() noexcept { return UnpackOpts(g_opts.load(std::memory_order_acquire)); }
+
+bool SetRemapSkip(bool skip) noexcept {
+    if (!g_installed || !g_base || !g_opts.load(std::memory_order_acquire) || g_remap_read != &RemapSkippedLive) return false;
+    auto* remap = reinterpret_cast<unsigned char*>(g_base + c::board_remap_rva);
+    std::uint32_t current = 0;
+    __try {
+        std::memcpy(&current, remap, sizeof(current));
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+    const std::uint32_t want = skip ? c::board_remap_skip : c::board_remap_orig;
+    const std::uint32_t from = skip ? c::board_remap_orig : c::board_remap_skip;
+    if (current == want) return true;
+    if (current != from) return false;
+    const DWORD error = GetLastError();
+    const char* why = near_code::PatchDword(remap, from, want);
+    SetLastError(error);
+    return !why || std::strcmp(why, "protect_restore") == 0;
+}
+bool RemapSkipped() noexcept { return g_remap_read && g_remap_read(); }
 
 const char* InstallRace() noexcept {
     if (!g_installed || !g_base) return "board";
@@ -661,6 +702,7 @@ void ReadStats(Stats& out) noexcept {
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.last_reason = g_last_reason.load(std::memory_order_relaxed);
     out.seat_one = g_seat_one.load(std::memory_order_relaxed);
+    out.remap_refused = g_remap_refused.load(std::memory_order_relaxed);
 }
 
 } // namespace mgscoop::partner_board

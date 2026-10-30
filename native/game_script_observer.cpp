@@ -1034,6 +1034,8 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
                                                      mgscoop::partner_board::SeatOne(mgscoop::partner_board::LiveSeatOpts()));
     return true;
 }
+// M6 review R4: the seat-1 remap skip, from the driver tick only.
+bool PartnerBoardRemap(void*, bool skip) noexcept { return game_base && mgscoop::partner_board::SetRemapSkip(skip); }
 // M6 review R3: rider[seat] of this copy's vehicle `id` for the v4 seat addendum (ReadProcessMemory only).
 bool PartnerSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
     out = 0xFFFF;
@@ -1165,7 +1167,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
-    PartnerSeatRider};
+    PartnerSeatRider, PartnerBoardRemap};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

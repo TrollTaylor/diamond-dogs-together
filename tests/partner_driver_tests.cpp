@@ -6773,6 +6773,59 @@ void PushSeatExt(Session& s, std::uint8_t flags, std::uint16_t revision, std::ui
     Check(rw::EncodeSeatExt(e, bytes), "seat addendum encodes");
     s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
 }
+// Review R4: the driver tick's remap (skip while seat 1 may be in use, before the policy offers it).
+std::vector<int> g_remap_calls;  // 1 skip, 0 stock, in order; -1 marks a publish
+bool g_remap_ok = true;
+bool HookBoardRemap(void*, bool skip) noexcept {
+    g_remap_calls.push_back(skip ? 1 : 0);
+    return g_remap_ok;
+}
+void HookBoardPublishMarked(void*, std::uint64_t word) noexcept {
+    g_board.published.push_back(word);
+    g_remap_calls.push_back(-1);
+}
+void TestBoardRemap() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    Session s(0);
+    BoardSetup(s, PartnerRideBoard::passenger);
+    s.hooks.board_remap = HookBoardRemap;
+    s.hooks.board_publish = HookBoardPublishMarked;
+    g_remap_calls.clear();
+    g_remap_ok = true;
+    s.driver.settings.ride_front = true;
+    s.ride_suffix = " ride=0";
+    Check(s.Tick(0) && g_remap_calls.empty(), "installed; nothing of seat 1 in use: no remap write");
+    std::uint16_t rev = 0;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 1) == g_remap_calls.end(),
+          "a peer driver without the handshake: still stock");
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 7000);
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.size() == 2 && g_remap_calls[0] == 1 && g_remap_calls[1] == -1 && pb::Unpack(BoardLast()).front_ok &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=1") == 1,
+          "the remap is skipped before the policy that offers seat 1 is published");
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.empty(), "no change: no write");
+    // A seat-1 steer happened (site B's counter), then the peer walks off: the policy goes, the remap stays
+    // skipped for the hold after that steer, then goes back to stock.
+    g_board.stats.seat_one = 1;
+    Check(s.Tick(0) && g_remap_calls.empty(), "a seat-1 steer: still skipped");
+    BoardRide(s, rev, rw::Kind::foot, 0xFF, 0xFFFF);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 0) == g_remap_calls.end(), "inside the hold: still skipped");
+    Check(s.Tick(0, pb::kRemapHoldMs) && g_remap_calls.back() == 0 &&
+              s.fake.Containing("partner_ride=board_remap; state=stock; why=idle; ok=1") == 1,
+          "the hold ran out: the stock jne is back");
+    // A failed skip never publishes seat 1.
+    g_remap_ok = false;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 9000);
+    Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok && pb::Unpack(BoardLast()).mode == pb::Mode::passenger &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=0") == 1,
+          "the skip failed: the policy offers the back seats only");
+}
+
 void TestBoardSeatExt() {
     namespace rw = mgscoop::partner_ride_wire;
     namespace pb = mgscoop::partner_board;
@@ -6781,6 +6834,9 @@ void TestBoardSeatExt() {
         // The passenger's copy: seat 1 only with the driver's live seat addendum for this exact ride.
         Session s(0);
         BoardSetup(s, PartnerRideBoard::passenger);
+        s.driver.settings.ride_front = s.driver.settings.ride_cab = true;
+        s.hooks.board_remap = HookBoardRemap;
+        g_remap_ok = true;
         s.ride_suffix = " ride=0";
         Check(s.Tick(0), "installed");
         std::uint16_t rev = 0;
@@ -8991,6 +9047,7 @@ int main() {
     TestRideExtAndCensus();
     TestBoardDriver();
     TestBoardSeatExt();
+    TestBoardRemap();
     TestRidePeerVehicle();
     TestPassCameraDriver();
     TestBoardSeatGates();

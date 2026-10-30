@@ -3038,7 +3038,30 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     in.received_ms = d.ride_rx.received_ms;
     // Review R3: the driver's seat-1 handshake for this exact ride (v4 seat addendum).
     in.seat_flags = rw::SeatFlagsFor(d.ride_seat_ext, d.ride_rx.packet, epoch, now);
-    const pb::Policy p = pb::PolicyFor(in);
+    pb::Policy p = pb::PolicyFor(in);
+    // Review R4: the seat-1 remap is skipped only while seat 1 may be in use, and before a policy that
+    // offers seat 1 is published; a failed write never offers seat 1 again (process scoped).
+    if (stats.seat_one != d.board_seat_one_seen) {
+        d.board_seat_one_seen = stats.seat_one;
+        d.board_seat_one_ms = now ? now : 1;
+    }
+    pb::RemapIn ri{};
+    ri.armed = (d.settings.ride_front || d.settings.ride_cab) && mode == pb::Mode::passenger && h.board_remap && !d.board_remap_failed;
+    ri.policy_one = p.front_ok || p.cab_ok;
+    ri.local_seat_one = lp.valid && lp.seat == pb::kFrontSeat;
+    ri.steer_pending_one = b.steer_pending && b.steer_seat == pb::kFrontSeat;
+    ri.last_seat_one_ms = d.board_seat_one_ms;
+    ri.now_ms = now;
+    const bool remap_want = pb::RemapWanted(ri);
+    if (remap_want != d.board_remap_skip && h.board_remap && (remap_want || !d.board_remap_failed || d.board_remap_skip)) {
+        const bool ok = h.board_remap(h.context, remap_want);
+        const char* why = !remap_want ? "idle" : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
+        EmitBoard(m, h, "partner_ride=board_remap; state=%s; why=%s; ok=%u; steers=%u\r\n", remap_want ? "skip" : "stock", why, ok ? 1u : 0u,
+                  stats.seat_one);
+        if (ok) d.board_remap_skip = remap_want;
+        else if (remap_want) d.board_remap_failed = true;
+    }
+    if (!d.board_remap_skip) p.front_ok = p.cab_ok = false;
     BoardPublish(d, h, p.mode == pb::Mode::off ? 0 : pb::Pack(p));
     if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat ||
         p.front_ok != b.logged.front_ok || p.cab_ok != b.logged.cab_ok) {

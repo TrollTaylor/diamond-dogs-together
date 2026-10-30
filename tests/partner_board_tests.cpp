@@ -543,6 +543,8 @@ bool FakeLimit(std::uint8_t limit) noexcept {
     g_limits.push_back(limit);
     return g_limit_ok;
 }
+bool g_remap = true;
+bool FakeRemap() noexcept { return g_remap; }
 void TestSeatOneWrappers() {
     unsigned char unit[0x80]{};
     const std::uint16_t index = 3;  // 25603
@@ -557,11 +559,21 @@ void TestSeatOneWrappers() {
         pb::detail::BindSeatOneForTest(front, &FakeLimit);
         Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         g.type_value = 2; g.count_value = 4; g.nearest_result = 1;
+        // Review R4: seat 1 only while the driver tick has the remap skipped.
+        g_remap = false;
+        pb::detail::BindRemapForTest(&FakeRemap);
+        Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat && g_limits.size() == 1 && g_limits[0] == 2,
+              "the remap still stock: site B never steers seat 1 (the immediates stay 2)");
+        pb::Stats s0{};
+        pb::ReadStats(s0);
+        Check(s0.remap_refused == 1 && s0.seat_one == 0, "counted as a remap refusal");
+        g_limits.clear();
+        g_remap = true;
         Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 3, "site B searches 1..3 and steers seat 1");
         Check(g_limits.size() == 1 && g_limits[0] == 1, "both phase-1 immediates go to 1 for this call");
         pb::Stats s{};
         pb::ReadStats(s);
-        Check(s.seat_one == 1 && s.steer[1] == 1 && s.last_seat[1] == 1 && s.faults == 0, "counted as a seat-1 steer");
+        Check(s.seat_one == 1 && s.steer[1] == 1 && s.last_seat[1] == 1 && s.faults == 0 && s.remap_refused == 1, "counted as a seat-1 steer");
         g.nearest_result = 2;
         Check(pb::detail::SiteBForTest(unit, pos) == 2 && g_limits.size() == 2 && g_limits[1] == 2, "a back seat: stock 2");
         Policy(pb::Mode::off);
@@ -598,6 +610,8 @@ void TestSeatOneWrappers() {
         pb::SeatOpts cab{};
         cab.cab = true;
         pb::detail::BindSeatOneForTest(cab, &FakeLimit);
+        g_remap = true;
+        pb::detail::BindRemapForTest(&FakeRemap);
         Policy(pb::Mode::passenger, 25603, 0, 4000, true);
         g.type_value = 4; g.count_value = 2; g.nearest_result = 1;
         Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1 && g.last == 1 && g_limits.size() == 1 && g_limits[0] == 1,
@@ -616,9 +630,17 @@ void TestSeatOneInstall() {
         Check(img.base[0xB79A43] == 0x75 && img.base[0x1251835] == 2 && img.base[0x1251895] == 2, "the stock seat-1 bytes");
         Check(pb::Install(img.base, img.span, &FakeNow, &Log, front) == nullptr && pb::LiveSeatOpts().front && !pb::LiveSeatOpts().cab,
               "installed with seat 1");
-        Check(img.base[0xB79A43] == 0xEB && img.base[0x1251835] == 2 && img.base[0x1251895] == 2, "the remap is a jmp; phase 1 still stock");
+        // Review R4: the install no longer skips the remap for the process; the driver tick does it while seat 1 is in use.
+        Check(img.base[0xB79A43] == 0x75 && img.base[0x1251835] == 2 && img.base[0x1251895] == 2 && !pb::RemapSkipped(),
+              "installed: the remap and phase 1 still stock");
         Check(Logged("partner_board=seat_one; result=ok; reason=none; front=1; cab=0; remap=0xb79a40; sites=0x1251834,0x1251894"),
               "the seat_one line");
+        Check(pb::SetRemapSkip(true) && img.base[0xB79A43] == 0xEB && pb::RemapSkipped(), "the tick skips the remap (jmp)");
+        Check(pb::SetRemapSkip(true) && img.base[0xB79A43] == 0xEB, "again: no change");
+        Check(pb::SetRemapSkip(false) && img.base[0xB79A43] == 0x75 && !pb::RemapSkipped(), "and puts the stock jne back");
+        img.base[0xB79A43] = 0x74;
+        Check(!pb::SetRemapSkip(true) && img.base[0xB79A43] == 0x74, "a foreign remap opcode is never written");
+        img.base[0xB79A43] = 0x75;
         std::uintptr_t mismatch = 0;
         img.base[0x1251835] = 1;
         Check(pb::detail::VerifyImage(img.base, img.span, mismatch) == nullptr, "a phase-1 immediate at 1 still verifies");
@@ -676,6 +698,7 @@ void TestSeatOneInstall() {
         Image img;
         Check(pb::Install(img.base, img.span, &FakeNow, &Log) == nullptr && img.base[0xB79A43] == 0x75 && !Logged("partner_board=seat_one"),
               "no options: no seat-1 install");
+        Check(!pb::SetRemapSkip(true) && img.base[0xB79A43] == 0x75, "no options: the remap is never skipped");
         pb::detail::ResetForTest();
     }
 }
@@ -869,6 +892,25 @@ void TestRaceInstall() {
     }
 }
 
+// Review R4: the driver tick skips the seat-1 remap only while seat 1 may be in use.
+void TestRemapWanted() {
+    pb::RemapIn in{};
+    in.armed = true; in.now_ms = 10000;
+    Check(!pb::RemapWanted(in), "nothing of seat 1 in use: the stock remap");
+    pb::RemapIn x = in; x.policy_one = true;
+    Check(pb::RemapWanted(x), "a published policy that offers seat 1 (before the wrappers can steer it)");
+    x = in; x.local_seat_one = true;
+    Check(pb::RemapWanted(x), "the local player sits in seat 1");
+    x = in; x.steer_pending_one = true;
+    Check(pb::RemapWanted(x), "a seat-1 steer not yet confirmed");
+    x = in; x.last_seat_one_ms = 10000 - pb::kRemapHoldMs + 1;
+    Check(pb::RemapWanted(x), "a seat-1 steer inside the hold");
+    x.last_seat_one_ms = 10000 - pb::kRemapHoldMs;
+    Check(!pb::RemapWanted(x), "the hold ran out");
+    x = in; x.policy_one = true; x.armed = false;
+    Check(!pb::RemapWanted(x), "seat 1 not armed: never");
+}
+
 // Review R8: the MGS_COOP_BOARD_SEAT_V1 request parser (game_script_observer.cpp SelectBoardSeatReceipt).
 pb::SeatRequest Req(const char* text) { return pb::ParseSeatRequest(text, std::strlen(text)); }
 void TestSeatRequest() {
@@ -951,6 +993,7 @@ int main() {
     TestSeatOneLocalPassenger();
     TestRace();
     TestRaceInstall();
+    TestRemapWanted();
     TestSeatRequest();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);
