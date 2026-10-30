@@ -1,6 +1,6 @@
 #pragma once
-// Diamond Dogs Together: the GUI pages (Setup, Play, In game, Tools, Settings)
-// drawn with Dear ImGui over a LauncherModel. The Win32/DX11 shell
+// Diamond Dogs Together: the GUI pages (Play, In game, Tools, Settings; the
+// setup runs by itself and shows on Play) drawn with Dear ImGui over a LauncherModel. The Win32/DX11 shell
 // (launcher_main.cpp) owns the window and calls Frame() once per redraw.
 #include <functional>
 #include <string>
@@ -19,6 +19,8 @@ struct ShellServices {
     std::function<void(const std::string& utf8_file)> reveal_file;
     // Shows an "Open" dialog for a .zip; false when cancelled.
     std::function<bool(std::string& utf8_path_out)> pick_save_zip;
+    // Shows a folder picker (Settings > Debug: the local test's second game folder); false when cancelled.
+    std::function<bool(const std::string& utf8_title, std::string& utf8_folder_out)> pick_folder;
     std::function<void(const std::string& utf8_url)> open_url;
 };
 
@@ -56,11 +58,13 @@ private:
 
     void Sidebar(Phase phase);
     void PageHeader(const char* title, const char* subtitle);
-    void SetupPage(Phase phase);
+    void SetupStatus();
     void WrongFolderPage();
     void PlayPage(Phase phase);
     void HostTab(Phase phase);
     void JoinTab(Phase phase);
+    void LocalTab(Phase phase, const LocalTestView& local);
+    void LocalCheckMessage(const LocalTestCheck& check);
     void CodeCard(bool compact);
     void InGamePage(Phase phase);
     void ToolsPage(Phase phase);
@@ -78,8 +82,10 @@ private:
     bool first_frame_ = true;
 
     Phase last_phase_ = Phase::needs_setup;
-    ui::Page page_ = ui::Page::setup;
-    Role role_ = Role::host;
+    ui::Page page_ = ui::Page::play;
+    ui::SetupView setup_view_ = ui::SetupView::none;   // this frame's automatic setup view
+    ui::PlayTab play_tab_ = ui::PlayTab::host;   // the chosen Play tab
+    bool local_check_shown_ = false;             // last frame showed the second folder's check
     Role session_role_ = Role::host;
 
     // Play
@@ -95,9 +101,10 @@ private:
 
     // Tools
     Result tool_result_;   // the last Tools action
-    Result logs_result_;   // Collect logs from the Setup / error screens
+    Result logs_result_;   // Collect logs from the setup failure banner / error card
     std::string uninstall_report_;
     Popup popup_request_ = Popup::none;
+    bool scroll_settings_down_ = false;   // the screenshot driver shows the Debug section
 };
 
 }  // namespace ddt

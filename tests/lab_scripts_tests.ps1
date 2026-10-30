@@ -565,6 +565,20 @@ try {
     # 0.13.6 online-vehicle-gone: world_vehicle_gone is a LabCommon bool (-PartnerSetting / the worker's labsetting).
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 0)" '1/0' 'world_vehicle_gone values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_gone -Value 2 } '' 'world_vehicle_gone=2 refused'
+    # M3 sortie vehicle: world_relief is a LabCommon bool too.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_relief -Value 1)/$(ConvertTo-LabPartnerValue -Key world_relief -Value 0)" '1/0' 'world_relief values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_relief -Value 2 } '' 'world_relief=2 refused'
+    # M4: world_vehicle_state likewise.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 0)" '1/0' 'world_vehicle_state values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_state -Value 2 } '' 'world_vehicle_state=2 refused'
+    # M4 review: world_vehicle_wreck (VEHICLE_GONE's wreck parity) likewise.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
+    # The vehicle decisions of 2026-10-29: D11 world_loadout_block, D12 world_vehicle_break, D14 world_vehicle_credit likewise.
+    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit')) {
+        Assert-Equal "$(ConvertTo-LabPartnerValue -Key $vk -Value 1)/$(ConvertTo-LabPartnerValue -Key $vk -Value 0)" '1/0' "$vk values"
+        Assert-Throws { ConvertTo-LabPartnerValue -Key $vk -Value 2 } '' "$vk=2 refused"
+    }
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
@@ -1049,6 +1063,41 @@ try {
         $file = Join-Path $fixture 'vehicle-gone-guest-lab.ini'; [IO.File]::WriteAllText($file, $vgIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_gone'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_gone=1 parses'
+        # M3 sortie vehicle: off in a default lab.ini (off again since the review of 2026-10-29); a LabCommon-written
+        # world_relief=1 parses natively.
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_relief'])" '0' 'native: world_relief defaults off'
+        $reOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_relief=1') -Role guest
+        $reIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $reOverrides)
+        Assert-Equal ((ConvertFrom-IniText $reIni)['world_relief']) '1' 'LabCommon writes world_relief=1'
+        $file = Join-Path $fixture 'relief-guest-lab.ini'; [IO.File]::WriteAllText($file, $reIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_relief'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_relief=1 parses'
+        # M4: world_vehicle_state likewise (off by default; LabCommon writes it; native parses it).
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_vehicle_state'])" '0' 'native: world_vehicle_state defaults off'
+        $vsOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_state=1') -Role host
+        $vsIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vsOverrides)
+        Assert-Equal ((ConvertFrom-IniText $vsIni)['world_vehicle_state']) '1' 'LabCommon writes world_vehicle_state=1'
+        $file = Join-Path $fixture 'vehicle-state-host-lab.ini'; [IO.File]::WriteAllText($file, $vsIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_state'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_state=1 parses'
+        # M4 review: world_vehicle_wreck likewise (off by default; LabCommon writes it; native parses it).
+        Assert-Equal "$((Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini'))['world_vehicle_wreck'])" '0' 'native: world_vehicle_wreck defaults off'
+        $vwOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_wreck=1') -Role guest
+        $vwIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vwOverrides)
+        Assert-Equal ((ConvertFrom-IniText $vwIni)['world_vehicle_wreck']) '1' 'LabCommon writes world_vehicle_wreck=1'
+        $file = Join-Path $fixture 'vehicle-wreck-guest-lab.ini'; [IO.File]::WriteAllText($file, $vwIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_wreck'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_vehicle_wreck=1 parses'
+        # The vehicle decisions of 2026-10-29 (D11, D12, D14): off by default; LabCommon writes each; native parses it.
+        $vdDefault = Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini')
+        Assert-Equal "$($vdDefault['world_loadout_block'])$($vdDefault['world_vehicle_break'])$($vdDefault['world_vehicle_credit'])" '000' 'native: the D11 / D12 / D14 keys default off'
+        $vdOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_loadout_block=1', 'world_vehicle_break=1', 'world_vehicle_credit=1') -Role guest
+        $vdIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vdOverrides)
+        $vdText = ConvertFrom-IniText $vdIni
+        Assert-Equal "$($vdText['world_loadout_block'])$($vdText['world_vehicle_break'])$($vdText['world_vehicle_credit'])" '111' 'LabCommon writes the D11 / D12 / D14 keys'
+        $file = Join-Path $fixture 'vehicle-decisions-guest-lab.ini'; [IO.File]::WriteAllText($file, $vdIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_loadout_block'])$($n['world_vehicle_break'])$($n['world_vehicle_credit'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '111|lab|0x0|0/0' 'native: the D11 / D12 / D14 keys parse'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')

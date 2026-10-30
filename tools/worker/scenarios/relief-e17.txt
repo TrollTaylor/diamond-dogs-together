@@ -1,0 +1,66 @@
+# M3 experiment E17 method variants (docs/vehicles-companions-design.md section 8). Companion of relief-e2.txt (E2,
+# route A emulated, E18 with the guest's seize skipped, E17 Instant on the guest: hidden run fafd3fdd showed Instant
+# still runs the Fulton credit path, Fulton -> FultonInfo -> TppTerminal.OnFulton -> OnFultonVehicle ->
+# AddTempResource 13, on the receiver).
+# Arrival 1 (30020, relief type 1 on both copies, lever relief_arm at the ACC sortie): the guest's copy removes its
+#     index 0 with Seize {"FadeOut"} (no DirectAccount / CheckFultonType): alive, credit lines, resources, 20 s later.
+# Mission end: the host's stock seize credits once (its copy still has index 0); the guest's copy has none left.
+# Arrival 2 (30010, relief type 2 on both): the guest's copy removes index 0 with Seize {"Instant"} and quiet (its
+#     TppTerminal.OnFulton for 25600 skipped: no Mother Base credit); the host's copy with Seize {"Fulton"}.
+# Captures face the vehicle in place (relief_face); nothing warps the players.
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-e17.txt -SaveSeed lab
+labsetting nametag=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+wait 2000
+host run relief_arm 1 -650 2.0 870 0
+guest run relief_arm 1 -650 2.0 870 0
+host run relief_seize stock
+guest run relief_seize stock
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+host debug time 43200
+wait 6000
+host run relief_census arrival1
+guest run relief_census arrival1
+host run relief_face
+guest run relief_face
+wait 3000
+both capture relief-e17-fadeout-before
+guest run relief_remove fadeout
+wait 8000
+guest run relief_census fadeout
+host run relief_census fadeout
+both capture relief-e17-fadeout-after
+wait 12000
+guest run relief_census fadeout20
+host run relief_arm 2 805 343 1636.5 0
+guest run relief_arm 2 805 343 1636.5 0
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+host debug time 43200
+wait 6000
+host run relief_census arrival2
+guest run relief_census arrival2
+host run relief_face
+guest run relief_face
+wait 3000
+both capture relief-e17-quiet-before
+guest run relief_remove instant quiet
+host run relief_remove fulton
+wait 8000
+guest run relief_census removed
+host run relief_census removed
+both capture relief-e17-quiet-after
+wait 12000
+guest run relief_census removed20
+host run relief_census removed20
+state

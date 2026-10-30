@@ -1,0 +1,53 @@
+# M3 follow-up experiments, round 2, part 2 (docs/vehicles-companions-design.md section 8.5).
+# (a) Seed afgh-relief-lv (run 612afff7): both copies Continue into the 30010 enemyBase_S LZ checkpoint; the host's
+#     save holds relief type 2 (east LV), the guest's none: the situation of a host who continues (or a guest who
+#     joins) with a sortie vehicle already out, as in the 2026-10-23 two-PC session in Africa.
+# (b) M3 item 6: the guest's copy loads the host's choice mid mission with relief_load and the host's saved carry
+#     values (ct low byte 2, cp=-347.97,321.89,763.57,2.488 in run 612afff7), as a pairing seed would send them.
+# (c) Route A beyond route B: both copies arm type 9 (west tank) at the ACC sortie to Africa 30020 (goto_lz=0,
+#     savannahEast_N); free roam loads no tank body anywhere, so only the relief pack can draw it. The 30010 mission
+#     end runs with index 0 alive on both copies: the host's stock seize, the guest's skipped.
+# Coordinator only, hidden worker (never visible), copied seed saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-continue.txt -SaveSeed afgh-relief-lv
+labsetting nametag=1
+boot fast
+both debug godmode 1
+host debug time 43200
+wait 4000
+host run relief_census continue
+guest run relief_census continue
+host run relief_face
+wait 3000
+both capture relief-continue
+guest run relief_load 2 -347.97 321.89 763.57 2.488
+wait 8000
+guest run relief_census load8
+wait 10000
+guest run relief_census load18
+host run relief_census load18
+guest run relief_face
+host run relief_face
+wait 3000
+both capture relief-continue-load
+host run relief_seize stock
+guest run relief_seize skip
+host run relief_arm 9 1227.17 25.84 -127.05 -1.571
+guest run relief_arm 9 1227.17 25.84 -127.05 -1.571
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+host debug time 43200
+wait 8000
+host run relief_census tank
+guest run relief_census tank
+host run relief_face
+guest run relief_face
+wait 3000
+both capture relief-tank
+wait 10000
+host run relief_census tank18
+guest run relief_census tank18
+state

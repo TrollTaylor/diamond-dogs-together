@@ -34,6 +34,7 @@ public:
     bool is_string() const { return type_ == Type::string; }
     bool is_number() const { return type_ == Type::number; }
     bool is_bool() const { return type_ == Type::boolean; }
+    bool is_integer() const { return type_ == Type::number && is_int_; }   // a number without fraction or exponent
 
     // Lenient readers in the PowerShell tools' manner ([int] / [string] casts).
     bool AsBool(bool fallback = false) const;

@@ -1158,8 +1158,40 @@ try {
     $zipPath = Join-Path $runs[0].FullName "DiamondDogsTogether-$packageVersion.zip"
     Assert-True (Test-Path -LiteralPath $zipPath -PathType Leaf) 'the player zip is DiamondDogsTogether-<version>.zip'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -Force | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'DiamondDogsTogether.exe,dinput8.dll,mgs-coop' 'the package root: the exe, the loader and the mgs-coop folder'
-    $modFiles = @('DYNAMITE-LICENSE', 'ImGui-LICENSE.txt', 'MinHook-LICENSE.txt', 'package.json', 'README.txt', 'source.zip', 'THIRD_PARTY_NOTICES.md', 'tpp-mod-LICENSE')
-    Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'mgs-coop') -Force | ForEach-Object { $_.Name } | Sort-Object)) -join ',') (($modFiles | Sort-Object) -join ',') 'mgs-coop: the licences, notices, README.txt, package.json and source.zip'
+    $modFiles = @('DYNAMITE-LICENSE', 'ImGui-LICENSE.txt', 'MinHook-LICENSE.txt', 'package.json', 'README.txt', 'THIRD_PARTY_NOTICES.md', 'tpp-mod-LICENSE')
+    Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'mgs-coop') -Force | ForEach-Object { $_.Name } | Sort-Object)) -join ',') (($modFiles | Sort-Object) -join ',') 'mgs-coop: the licences, notices, README.txt and package.json (no source.zip)'
+    # The GPL source is its own release asset next to the player zip, never inside it.
+    $sourceZipPath = Join-Path $runs[0].FullName "DDT-source-$packageVersion.zip"
+    Assert-True (Test-Path -LiteralPath $sourceZipPath -PathType Leaf) 'the source zip DDT-source-<version>.zip is written next to the player zip'
+    Assert-Equal ((@(Get-ChildItem -LiteralPath $runs[0].FullName -File -Filter '*.zip' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') "DDT-source-$packageVersion.zip,DiamondDogsTogether-$packageVersion.zip" 'two release assets: the player zip and the source zip'
+    $sourceAssetName = [IO.Path]::GetFileName($sourceZipPath)
+    Assert-True ($sourceAssetName -cnotmatch '^(DiamondDogsTogether-|mgs-coop-friend-)') 'no updater takes the source zip for the update (the 0.14.3 prefix rule; from 0.14.4 the exact names, core_update.cpp)'
+    # tools/check-release.ps1 (read only): a GitHub release is ready only with both zips, as built.
+    # A saved `gh release view --json tagName,isDraft,assets` answer stands in for GitHub here.
+    $checkRelease = Join-Path $projectRoot 'tools/check-release.ps1'
+    $releaseFx = Join-Path $fixture 'release-check'
+    $null = New-Item -ItemType Directory -Path $releaseFx -Force
+    $playerAsset = [ordered]@{ name = "DiamondDogsTogether-$packageVersion.zip"; size = (Get-Item -LiteralPath $zipPath).Length; digest = 'sha256:' + (Get-Sha256 $zipPath).ToLowerInvariant() }
+    $sourceAsset = [ordered]@{ name = $sourceAssetName; size = (Get-Item -LiteralPath $sourceZipPath).Length; digest = 'sha256:' + (Get-Sha256 $sourceZipPath).ToLowerInvariant() }
+    function Write-ReleaseAnswer([string]$Name, [string]$Tag, [object[]]$Assets) {
+        $path = Join-Path $releaseFx "$Name.json"
+        [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject ([ordered]@{ tagName = $Tag; isDraft = $true; assets = @($Assets) }) -Depth 5), [Text.UTF8Encoding]::new($false))
+        return $path
+    }
+    $tagName = "v$packageVersion"
+    $okAnswer = Write-ReleaseAnswer 'both' $tagName @($sourceAsset, $playerAsset)
+    $okText = (& $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson $okAnswer) -join ' '
+    Assert-True ($okText.Contains("DiamondDogsTogether-$packageVersion.zip") -and $okText.Contains($sourceAssetName) -and $okText.Contains('matching the local files')) 'check-release: both zips as built, the release is ready'
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'player-only' $tagName @($playerAsset)) } "$sourceAssetName is not attached" 'check-release: the player zip alone is refused (no source offered)'
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'source-only' $tagName @($sourceAsset)) } "DiamondDogsTogether-$packageVersion.zip is not attached" 'check-release: the source zip alone is refused'
+    $short = [ordered]@{ name = $playerAsset.name; size = $playerAsset.size - 1; digest = $playerAsset.digest }
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'short' $tagName @($short, $sourceAsset)) } 'bytes' 'check-release: an upload of another size is refused'
+    $otherHash = [ordered]@{ name = $sourceAsset.name; size = $sourceAsset.size; digest = 'sha256:' + ('0' * 64) }
+    Assert-Throws { & $checkRelease -Version $packageVersion -PackageDir $runs[0].FullName -ReleaseJson (Write-ReleaseAnswer 'hash' $tagName @($playerAsset, $otherHash)) } 'SHA-256' 'check-release: an upload with another SHA-256 is refused'
+    $decoy = [ordered]@{ name = "DiamondDogsTogether-$packageVersion-debug.zip"; size = 1 }
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'decoy' $tagName @($playerAsset, $sourceAsset, $decoy)) } 'looks like a player zip too' 'check-release: a second DiamondDogsTogether-*.zip is refused (the 0.14.3 updater might take it)'
+    Assert-Throws { & $checkRelease -Version $packageVersion -ReleaseJson (Write-ReleaseAnswer 'tag' 'v0.0.1' @($playerAsset, $sourceAsset)) } "not $tagName" 'check-release: another tag is refused'
+    Assert-Equal @(Get-ChildItem -LiteralPath $pkg -File -Recurse -Force | Where-Object { $_.Name -like '*source*' }).Count 0 'the player package holds no source archive'
     Assert-Equal (Get-Sha256 (Join-Path $pkg 'DiamondDogsTogether.exe')) (Get-Sha256 $fakeLauncher) 'the receipt launcher is packaged'
     Assert-Equal (Get-Sha256 (Join-Path $pkg 'dinput8.dll')) (Get-Sha256 $fakeLoader) 'the receipt loader is packaged'
     $licenseSources = [ordered]@{ 'DYNAMITE-LICENSE' = 'third_party/dynamite/LICENSE'; 'MinHook-LICENSE.txt' = 'third_party/minhook/LICENSE.txt'; 'ImGui-LICENSE.txt' = 'third_party/imgui/LICENSE.txt'
@@ -1173,6 +1205,9 @@ try {
     Assert-Equal "$($manifest.runtime_archive.target)|$($manifest.runtime_archive.sha256)|$($manifest.runtime_archive.bytes)" 'mgs-coop/mgs-coop-player-runtime.dat|87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96|16333824' 'runtime archive referenced by hash and size only'
     $rows = @($manifest.files)
     $wantTargets = @('DiamondDogsTogether.exe', 'dinput8.dll') + @($modFiles | Where-Object { $_ -cne 'package.json' } | ForEach-Object { "mgs-coop/$_" })
+    Assert-Equal @($rows | Where-Object { $_.target -like '*source*' }).Count 0 'files[] lists no source archive'
+    Assert-Equal "$($manifest.source_archive.name)|$($manifest.source_archive.sha256)" "DDT-source-$packageVersion.zip|$(Get-Sha256 $sourceZipPath)" 'package.json names the source zip and its hash'
+    Assert-True ([string]$manifest.source_archive.where -match "v$([regex]::Escape($packageVersion))") 'package.json says where the source is (the release of this version)'
     Assert-Equal ((@($rows | ForEach-Object { $_.target }) | Sort-Object) -join ',') (($wantTargets | Sort-Object) -join ',') 'files[]: one row per file of the zip (package.json itself excepted)'
     Assert-Equal @($rows | Where-Object { $_.target -ceq 'dinput8.dll' }).Count 1 'exactly one dinput8.dll row'
     foreach ($row in $rows) {
@@ -1197,6 +1232,7 @@ try {
     } finally { $zip.Dispose() }
     $wantEntries = @('DiamondDogsTogether.exe', 'dinput8.dll') + @($modFiles | ForEach-Object { "mgs-coop/$_" })
     Assert-Equal (($zipNames | Sort-Object) -join ',') (($wantEntries | Sort-Object) -join ',') 'the zip root is the game folder: the exe, the loader and mgs-coop/...'
+    Assert-Equal @($zipNames | Where-Object { $_.ToLowerInvariant().Contains('source') }).Count 0 'the player zip holds no source archive'
     Assert-Equal @($zipNames | Where-Object { $_.Contains('\') }).Count 0 'zip entry names use forward slashes'
     Assert-Equal @($zipNames | Where-Object { [IO.Path]::GetExtension($_).ToLowerInvariant() -in @('.bat', '.cmd', '.ps1', '.psm1') }).Count 0 'no .bat, .ps1 or .psm1 for players'
     $gameExtensions = @('.dat', '.fpk', '.fpkd', '.fox2', '.mtar', '.qar', '.ftex', '.fmdl', '.subp', '.lng', '.lng2', '.sbp', '.gani', '.frig', '.fv2', '.fsm', '.fpkl')
@@ -1209,12 +1245,12 @@ try {
     $readme = [Text.Encoding]::ASCII.GetString($readmeBytes)
     Assert-True ($readme.Contains("`r`n") -and !($readme -replace "`r`n", '').Contains("`n")) 'README.txt has CRLF line endings'
     foreach ($needle in "Diamond Dogs Together $packageVersion", 'DiamondDogsTogether.exe', 'mgsvtpp.exe', 'dinput8.dll', 'Host game', 'Join game', 'Wait for a Steam invite',
-            'Tools > Share save', 'Tools > Collect logs', 'Uninstall', 'source.zip', 'THIRD_PARTY_NOTICES.md', '1.0.15.4', 'Failed to log in') {
+            'Tools > Share save', 'Tools > Collect logs', 'Uninstall', "DDT-source-$packageVersion.zip", 'github.com/TrollTaylor/diamond-dogs-together/releases', "v$packageVersion", 'THIRD_PARTY_NOTICES.md', '1.0.15.4', 'Failed to log in') {
         Assert-True $readme.Contains($needle) "README.txt mentions $needle"
     }
-    foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
-    # source.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
-    $sourceZip = [IO.Compression.ZipFile]::OpenRead((Join-Path $pkg 'mgs-coop/source.zip'))
+    foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64', 'mgs-coop\source.zip') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
+    # DDT-source-<version>.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
+    $sourceZip = [IO.Compression.ZipFile]::OpenRead($sourceZipPath)
     try {
         $sourceNames = @($sourceZip.Entries | ForEach-Object { $_.FullName })
         $reader = [IO.StreamReader]::new($sourceZip.GetEntry('source-files.json').Open())
@@ -1223,20 +1259,22 @@ try {
                 'native/launcher/runtime_dat.cpp', 'native/launcher/core/core_model.cpp', 'native/launcher/assets/mgs_coop_four_player_controller.fpkd.bin',
                 'native/launcher/assets/mgs_coop_two_player_scarf_controller.fpkd.bin', 'native/launcher/resources/ddt_launcher.rc', 'native/launcher/resources/ddt_launcher.ico',
                 'lua/coop/character.lua', 'cmake/launcher_gui.cmake', 'third_party/imgui/imgui.cpp', 'third_party/dynamite/LICENSE', 'tools/package.ps1', 'tools/dev/Play-LocalCoop.ps1',
-                'tests/fixtures/partner-lab/e0-host.log', 'tools/archive_probe/main.go', 'tools/archive_probe/go.mod', 'tools/archive_probe/go.sum') + $incSources) {
-            Assert-True ($sourceNames -ccontains $relative) "source.zip holds $relative"
+                'tests/fixtures/partner-lab/e0-host.log', 'tools/archive_probe/main.go', 'tools/archive_probe/go.mod', 'tools/archive_probe/go.sum',
+                # The icon's source image: tools/launcher/make_launcher_assets.py and the launcher icon CTests read it.
+                'docs/readme/logo.png') + $incSources) {
+            Assert-True ($sourceNames -ccontains $relative) "the source zip holds $relative"
             $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
             Assert-True ($row.Count -eq 1 -and $row[0].sha256 -ceq (Get-Sha256 (Join-Path $projectRoot $relative))) "source-files.json lists $relative with its hash"
         }
         foreach ($relative in @('third_party/minhook/CMakeLists.txt', 'third_party/minhook/include/MinHook.h', 'third_party/minhook/src/hook.c')) {
-            Assert-True ($sourceNames -ccontains $relative) "source.zip includes the checked dependency $relative"
+            Assert-True ($sourceNames -ccontains $relative) "the source zip includes the checked dependency $relative"
             $row = @($sourceRows | Where-Object { $_.path -ceq $relative })
             Assert-Equal $row[0].sha256 $currentSource.hashes[$relative.Replace('/', '\')] "source dependency matches the Release snapshot $relative"
         }
-        Assert-Equal @($sourceNames | Where-Object { $_.Contains('\') -or $_ -like '*mgs-coop-player-runtime*' -or $_ -match '(^|/)link-secret' -or [IO.Path]::GetExtension($_) -in @('.exe', '.dll', '.obj') }).Count 0 'source.zip: forward slashes, no binaries, no runtime archive, no link secret'
-        Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'source.zip: no retired player scripts, no build output'
+        Assert-Equal @($sourceNames | Where-Object { $_.Contains('\') -or $_ -like '*mgs-coop-player-runtime*' -or $_ -match '(^|/)link-secret' -or [IO.Path]::GetExtension($_) -in @('.exe', '.dll', '.obj') }).Count 0 'the source zip: forward slashes, no binaries, no runtime archive, no link secret'
+        Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'the source zip: no retired player scripts, no build output'
         Assert-Equal @($sourceNames | Where-Object { [IO.Path]::GetExtension($_) -in @('.log', '.go', '.mod', '.sum') -and
-            $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'source.zip: logs and Go files only at their exact places'
+            $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'the source zip: logs and Go files only at their exact places'
     } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.
@@ -1246,11 +1284,11 @@ try {
         $dependency = Join-Path $fixture 'junction-package-dependency'
         $junction = Join-Path $linkedRoot 'third_party\minhook'
         foreach ($path in @($linkedRoot, $dependency, $junction)) { Assert-InFixture $path }
-        foreach ($dir in @('native','lua','tests','tools\worker','third_party','cmake','docs')) {
+        foreach ($dir in @('native','lua','tests','tools\worker','third_party','cmake','docs\readme')) {
             $null = New-Item -ItemType Directory -Path (Join-Path $linkedRoot $dir) -Force
         }
         $null = New-Item -ItemType Directory -Path (Join-Path $dependency 'src'), (Join-Path $dependency 'include') -Force
-        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1')) {
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs\readme\logo.png','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1')) {
             [IO.File]::Copy((Join-Path $projectRoot $file), (Join-Path $linkedRoot $file), $false)
         }
         [IO.File]::WriteAllText((Join-Path $linkedRoot 'docs\fixture.md'), '# Owned source-only package fixture', $utf8)
@@ -1280,7 +1318,8 @@ try {
             $null = & (Join-Path $linkedRoot 'tools\package.ps1') -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
             $linkedRuns = @(Get-ChildItem -LiteralPath $dist -Directory)
             Assert-Equal $linkedRuns.Count 1 'junction fixture stages exactly one package'
-            $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $linkedRuns[0].FullName 'package\mgs-coop\source.zip'))
+            Assert-True (!(Test-Path -LiteralPath (Join-Path $linkedRuns[0].FullName 'package\mgs-coop\source.zip'))) 'junction fixture: no source.zip in the player package'
+            $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $linkedRuns[0].FullName "DDT-source-$packageVersion.zip"))
             try {
                 $reader = [IO.StreamReader]::new($zip.GetEntry('source-files.json').Open())
                 try { $linkedRows = @($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
@@ -1293,12 +1332,12 @@ try {
                     Assert-Equal $rows.Count 1 "source manifest includes linked dependency once $relative"
                     Assert-Equal $rows[0].sha256 $expected "source manifest hash matches linked dependency $relative"
                     $entries = @($zip.Entries | Where-Object { $_.FullName -ceq $name })
-                    Assert-Equal $entries.Count 1 "source.zip includes linked dependency once $relative"
+                    Assert-Equal $entries.Count 1 "the source zip includes linked dependency once $relative"
                     $stream = $entries[0].Open()
                     $sha = [Security.Cryptography.SHA256]::Create()
                     try { $hash = [Convert]::ToHexString($sha.ComputeHash($stream)) }
                     finally { $sha.Dispose(); $stream.Dispose() }
-                    Assert-Equal $hash $expected "source.zip bytes match linked dependency $relative"
+                    Assert-Equal $hash $expected "the source zip bytes match linked dependency $relative"
                 }
             } finally { $zip.Dispose() }
         } finally {

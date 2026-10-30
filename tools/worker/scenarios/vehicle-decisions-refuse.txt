@@ -1,0 +1,76 @@
+# D12's refusal, live (docs/vehicles-companions-design.md section 8.11): the host sits in the Masa Village jeep
+# (veh_lv_0000 = 25608, africa-jeep seed) while the guest breaks its own copy of that jeep (lab lever vehicle_life 25608
+# 0: the engine's own destruction on the guest's copy only, no attribution). The host must refuse at once (someone rides
+# its copy: break_judge; ok=0; why=ridden), REJECT 8 ends the guest's request (req_done; result=reject; reason=8), and
+# the guest logs break_refused; here=wreck. Frames show what each copy then has: the guest's wreck, the host's intact
+# jeep with the host in it, and both again after the host gets out and 25 s later (the guest's wreck leaving its pool;
+# VEHICLE_STATE refuses the host's states for it there: absent, the named jeep is not alive on the guest's copy).
+# Since the D12 review fixes (2026-10-29) only the host's own player in the seat is refused at once (another filled
+# seat, D-Dog or a soldier, is held: vehicle-decisions-review-lab.txt), and the request is cause 4.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-refuse.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; a host step=applied for 25608; a host wreck of 25608.
+# Passed: 09333f05 (build 73313b0, every expectation met; the guest's wreck left its pool 25 s later, the host's jeep
+#   stayed intact). 243ae269 stopped at a placebehind behind the seated host (fixed in 73313b0).
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting world_vehicle_break=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=0; loadout=0; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=0; loadout=0; gone=1' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+# The host boards 25608 (its goto door spot, E); the guest stays at its lab boot spot beside the jeep, facing it (run
+# 243ae269 stopped at a placebehind behind the seated host: a seated partner is no landing pose).
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 4000
+host run vehicle_seats
+host expect vehicle;id=25608
+waitlog host 'event=vehicle_state; step=skip; reason=local_rider; id=25608' 15
+guest debug teleport -652.93 1.20 879.33 -117
+wait 3000
+waitlog guest 'partner_ride_seat=(byid|confirmed); vehicle=25608;' 20
+both capture refuse-before
+logmark both
+guest run vehicle_life 25608 0
+guest expect vehicle_life;id=25608;life=0;
+both burst refuse-wreck 3 700
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25608' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=4; sent=1' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=0; why=ridden; by=local_rider' 10
+waitlog host 'event=vehicle_gone; step=refused; id=25608; src=req; reason=ridden' 5
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=reject; reason=8' 10
+waitlog guest 'event=vehicle_rules; step=break_refused; id=25608; rid=[0-9]+; reason=8; here=wreck' 5
+wait 1500
+both capture refuse-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# The host gets out; its copy stays intact, the guest's keeps the wreck (VEHICLE_STATE refuses it there).
+logmark both
+host press e 150
+wait 5000
+waitlog host 'event=vehicle_state; step=resume; id=25608; was=(local_rider|occupied)' 20
+waitlog guest 'event=vehicle_state; step=refused; id=25608; reason=absent' 20
+both capture refuse-host-out
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+wait 25000
+both capture refuse-later
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+state

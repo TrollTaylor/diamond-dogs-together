@@ -2,7 +2,8 @@
 -- REQ_VEHICLE_GONE op 47, docs/world-sync-protocol.md section 16). Vehicles are not
 -- world-synced: in the 2026-10-22 two-PC session the guest Fultoned jeep 25603, the
 -- host drove his copy of it, the guest's seat-by-id read failed (local_read) and hid
--- him. With lab.ini world_vehicle_gone=1 (CFG r[15]; default off) on both copies:
+-- him. With lab.ini world_vehicle_gone=1 (CFG r[15] bit 1; off in the lab, on in play unless named, M4) on both copies
+-- (30010, 30020; Mother Base 30050 in the lab only until a hidden run covers it, M4 review):
 --   host:     a vehicle its copy loses (Fulton/FultonInfo, Dead, VehicleBroken, then
 --             IsAlive read back false within 30 s) is announced as VEHICLE_GONE.
 --   guest:    one it loses by its own hand (FultonInfo or Dead by the local player,
@@ -10,7 +11,8 @@
 --             REQ_VEHICLE_GONE; the host removes its copy and announces it (actor 1,
 --             the rid and the guest's id), or answers REJECT (1 not a vehicle, 8 far,
 --             type, not nearest, ambiguous, index 0, no locator; 9 still held after
---             120 s, 11 off).
+--             120 s, 11 off). D12 (world_vehicle_rules.lua): an unattributed break is
+--             requested as cause 4, which a host without its own break key refuses (11).
 --   receiver: removes its copy (TppVehicle2 Despawn by the authored locator, else by
 --             the pool index at Mother Base only) only for a live vehicle within 40 m
 --             of the reported position that is the nearest of its type there (or the
@@ -35,7 +37,7 @@ local NULL, FAR_MM, MATCH_MM, TRUST_MM, NEAR_M, SCAN = 65535, 40000, 5000, 1000,
 local WATCH_MS, POLL_MS, HOLD_MS, HIT_MS, ACK_MS, REQ_MS, READ_MS = 30000, 250, 120000, 10000, 5000, 150000, 2000
 local RIDE_MS, SETTLE_MS = 10000, 10000
 V.FAR_MM, V.MATCH_MM, V.HOLD_MS, V.WATCH_MS, V.ACK_MS, V.RIDE_MS, V.SETTLE_MS = FAR_MM, MATCH_MM, HOLD_MS, WATCH_MS, ACK_MS, RIDE_MS, SETTLE_MS
-local FULTON, DESTROYED, LAB = 1, 2, 3
+local FULTON, DESTROYED, LAB, UNATTRIBUTED = 1, 2, 3, 4
 local MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
 local function integer(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 local function L(...)
@@ -50,7 +52,9 @@ function V.reset()
   V.seq, V.nextPoll, V.failed, V.offLogged = 0, 0, false, false
 end
 V.reset()
-function V.on() return W.vehicleGoneOn == true and W.active == true and MISSIONS[W.mission] == true and not V.failed end
+-- Mother Base only in the lab (mode 1): no hidden run has covered 30050 (its index Despawn, the M4 review).
+function V.mission() return MISSIONS[W.mission] == true and (W.mission ~= 30050 or W.mode == 1) end
+function V.on() return W.vehicleGoneOn == true and W.active == true and V.mission() and not V.failed end
 local function fail(err)
   V.failed = true
   L("event=vehicle_gone;step=error;msg=%s", string.sub(tostring(err), 1, 100))
@@ -149,15 +153,28 @@ end
 -- unnamed sortie / supply vehicles): for a named record the index form erases its name
 -- binding (Kill 0xB2F850, then the empty hash re-inserted), so elsewhere a vehicle outside
 -- the scanned locator families is refused as no_locator.
-function V.remove(id)
+-- M4 wreck parity (E5, hidden run d407f115): with the wreck key on (CFG r[15] bit 4, lab key
+-- world_vehicle_wreck, off in lab and play unless named: the receiver's blast was never measured
+-- with live guards, M4 review), a destroyed vehicle (cause 2) becomes a wreck here instead: the
+-- instance command SetBodyLife{life=0} runs the engine's own destruction (VehicleBroken, explosion,
+-- IsAlive false, the wreck in the pool), read back like a Despawn (via=wreck; still alive after
+-- READ_MS: the Despawn below instead). Index 0 is refused first, wreck or not (M3 / E17).
+function V.remove(id, cause)
   local a = W.api
   if type(a) ~= "table" or type(a.send) ~= "function" then return false, "binding" end
+  if id % 512 == 0 then return false, "index0" end
+  if cause == DESTROYED and W.vehicleWreckOn == true then
+    if not pcall(a.send, id, {id = "SetBodyLife", life = 0}) then return false, "send_error" end
+    return true, "wreck"
+  end
+  return V.despawn(id)
+end
+function V.despawn(id)
   local name, cmd, via = V.locator(id), nil, nil
   if name then cmd, via = {id = "Despawn", locator = name}, "locator"
-  elseif id % 512 == 0 then return false, "index0"
   elseif W.mission ~= 30050 then return false, "no_locator"
   else cmd, via = {id = "Despawn", index = id % 512}, "index" end
-  if not pcall(a.send, {type = "TppVehicle2"}, cmd) then return false, "send_error" end
+  if not pcall(W.api.send, {type = "TppVehicle2"}, cmd) then return false, "send_error" end
   return true, via
 end
 -- Live vehicles within r_mm of q's position (the same type when both are known), nearest
@@ -263,8 +280,16 @@ local function readback(id, t)
   if not q then return end
   local alive = V.alive(id)
   if alive and t - q.at < READ_MS then return end
-  V.reads[id] = nil
   L("event=vehicle_gone;step=applied;id=%d;via=%s;src=%s;ok=%d;ms=%d", id, q.via, q.src, alive and 0 or 1, floor(t - q.at))
+  if alive and (q.via == "wreck" or q.via == "seize") then
+    -- A wreck (or D14's Seize Instant, world_vehicle_rules.lua) that did not take: the Despawn, read back again
+    -- (the entry stays); with no Despawn form this copy has not lost it (a re-sent announcement retries it).
+    local ok, via = V.despawn(id)
+    L("event=vehicle_gone;step=fallback;id=%d;from=%s;via=%s;ok=%d", id, q.via, via, ok and 1 or 0)
+    if ok then q.via, q.at = via, t; return end
+    V.gone[id] = nil
+  end
+  V.reads[id] = nil
 end
 -- One received item (src rx: the host's VEHICLE_GONE on the guest; req: the guest's
 -- request on the host). Held items come back here every poll until done; nothing is
@@ -297,7 +322,7 @@ function V.consider(q, t)
     answer(q)
     return
   end
-  local ok, via = V.remove(q.id)
+  local ok, via = V.remove(q.id, q.cause)
   if not ok then
     L("event=vehicle_gone;step=refused;id=%d;src=%s;reason=%s;d_mm=%d", q.id, q.src, via, q.d or -1)
     reject(q, 8)
@@ -326,7 +351,8 @@ function V.observe(kind, id, att)
   if not W.host then
     local hit = V.hit[id]
     local mine = (kind == "FultonInfo" or kind == "Dead") and att == "local" or kind == "VehicleBroken" and hit ~= nil and t - hit <= HIT_MS
-    if not mine then return end
+    -- D12 (world_vehicle_rules.lua, key world_vehicle_break): a break with no attribution is requested too; the host judges it.
+    if not mine and not (kind == "VehicleBroken" and V.unattributed and V.unattributed(id, t)) then return end
   end
   if not isVehicle(id) then return end
   local x, y, z = V.pose(id)
@@ -389,16 +415,25 @@ H[GONE] = guarded(function(v)
   if V.gone[id] or V.held[id] then return end
   V.consider({id = id, cause = v[3], actor = v[4], rid = rid, vtype = v[6], x = v[7], y = v[8], z = v[9], src = "rx"}, t)
 end)
+-- Cause 4 (D12 review, world_vehicle_rules.lua): a destruction the guest's copy could not attribute. It is handled as a
+-- destruction (cause 2, so the announcement back stays in VEHICLE_GONE's 1..3) only while this copy's own break key
+-- runs (V.breakOn, world_vehicle_rules.lua); without it REJECT 11, so a host without the key never applies one unjudged.
 H[REQ] = guarded(function(v)
   if not W.host or type(v) ~= "table" or #v < 7 then return end
   local t, rid, id = now(), v[1], v[2]
-  local q = {id = id, cause = v[3], actor = 1, rid = rid, vtype = v[4], x = v[5], y = v[6], z = v[7], src = "req"}
+  local unatt = v[3] == UNATTRIBUTED
+  local q = {id = id, cause = unatt and DESTROYED or v[3], unatt = unatt or nil, actor = 1, rid = rid, vtype = v[4], x = v[5], y = v[6],
+    z = v[7], src = "req"}
   L("event=vehicle_gone;step=rx_req;rid=%d;id=%d;cause=%d", rid, id, v[3])
   if not V.on() then
     L("event=vehicle_gone;step=refused;id=%d;src=req;reason=off;d_mm=-1", id)
     return reject(q, 11)
   end
   if V.gone[id] or V.reqGone[id] then return V.broadcast(id, q, 1, rid) end
+  if unatt and not (type(V.breakOn) == "function" and V.breakOn() == true) then
+    L("event=vehicle_gone;step=refused;id=%d;src=req;reason=break_off;d_mm=-1", id)
+    return reject(q, 11)
+  end
   if V.held[id] then V.held[id].rid = rid; return end
   V.consider(q, t)
 end)
@@ -434,13 +469,16 @@ also(W.OP.RIDE_BODY, function(v)
 end)
 W.startHooks[#W.startHooks + 1] = guarded(function()
   V.reset()
+  if W.vehicleGoneOn == true and W.active == true and MISSIONS[W.mission] and not V.mission() then
+    L("event=vehicle_gone;step=off;mission=%d;reason=mb_lab_only", W.mission)
+  end
   if not V.on() then return end
   local M, str32 = W.M, type(W.api) == "table" and W.api.str32
   if type(M) == "table" and type(W.kind) == "table" and type(str32) == "function" then
     local ok, h = pcall(str32, "VehicleBroken")
     if ok and type(h) == "number" then M.VehicleBroken = h; W.kind[h] = "VehicleBroken" end
   end
-  L("event=vehicle_gone;step=on;mission=%d;role=%s", W.mission, W.host and "host" or "guest")
+  L("event=vehicle_gone;step=on;mission=%d;role=%s;wreck=%d", W.mission, W.host and "host" or "guest", W.vehicleWreckOn == true and 1 or 0)
 end)
 W.pairedHooks[#W.pairedHooks + 1] = guarded(function(epochChanged)
   if not V.on() then return end

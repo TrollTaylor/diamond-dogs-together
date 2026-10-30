@@ -139,6 +139,10 @@ void ReadLive(const void* image, std::uint16_t id, Read& out) noexcept {
     ReadVehicle(reader, reinterpret_cast<std::uintptr_t>(image), id, out);
 }
 
+void ReadLifeLive(const Read& read, Life& out) noexcept {
+    auto reader = [](std::uintptr_t address, void* buffer, std::size_t size) noexcept { return LiveRead(address, buffer, size); };
+    ReadLife(reader, read, out);
+}
 const char* VerifyImage(const void* image, std::size_t span) noexcept {
     const auto* base = static_cast<const unsigned char*>(image);
     if (!base) return "base";

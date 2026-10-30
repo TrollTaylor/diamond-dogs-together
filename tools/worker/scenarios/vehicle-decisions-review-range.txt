@@ -1,0 +1,87 @@
+# D12 review, the two cases the review asked to see live (docs/vehicles-companions-design.md section 8.12), lab, Africa,
+# africa-jeep seed (Masa Village; veh_lv_0000 = 25608 beside the boot spots, veh_lv_0015 = 25623 the patrol jeep that
+# VEHICLE_STATE skips as occupied in every run of this seed). Keys named (the lab keeps them off unless named).
+#   K  a soldier-crewed vehicle: before any guard is cleared, the guest's lever breaks its copy of 25623
+#      (vehicle_life 25623 0) -> REQ cause 4 -> the host's verdict is logged as it comes (VEHICLE_GONE's hold while a
+#      soldier sits in its copy, REJECT 9 after 120 s, or the judge); seats and state of both copies before and after.
+#      Informative: the expectation accepts any host outcome line for 25623.
+#   R  a break 60-300 m from the guest (the review's launcher range): the host at 25608's door, the guest placed 40 m
+#      behind it, the host 40 m behind the guest, the guest 40 m behind the host again (about 120 m from the jeep, the
+#      host about 80 m: nobody within 15 m); the guest's lever breaks its copy of 25608 -> the host's judge
+#      ok=1; why=near; d_mm 60000-299999 -> the wreck (via=wreck, no break_safe) -> req_done. Positions read back.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-decisions-review-range.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; break_safe for 25608 in R.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting world_vehicle_break=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=0; loadout=0; gone=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=0; loadout=0; gone=1' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+# K. The crewed patrol jeep, guards not cleared (godmode on).
+wait 5000
+host run vehicle_state_status 25623
+guest run vehicle_state_status 25623
+host run vehicle_seats veh_lv_0015
+guest run vehicle_seats veh_lv_0015
+host run position
+guest run position
+logmark both
+guest run vehicle_life 25623 0
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25623; cause=4; sent=1' 15
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25623; cause=4' 10
+waitlog host 'event=vehicle_(gone|rules); step=(hold|break_judge|break_hold|refused|absent|applied); id=25623' 10
+wait 3000
+host run vehicle_state_status 25623
+guest run vehicle_state_status 25623
+host run vehicle_seats veh_lv_0015
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# R. 60-300 m: the placebehind chain away from 25608.
+host debug clear_enemies 100
+wait 1500
+host debug goto_vehicle jeep
+wait 3000
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+placebehind guest host 40 0
+wait 2000
+placebehind host guest 40 0
+wait 2000
+placebehind guest host 40 0
+wait 3000
+host run position
+guest run position
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+both capture range-before
+logmark both
+guest run vehicle_life 25608 0
+guest expect vehicle_life;id=25608;life=0;
+both burst range-wreck 4 700
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25608' 10
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25608; cause=4; sent=1' 10
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25608; cause=4' 10
+waitlog host 'event=vehicle_rules; step=break_judge; id=25608; rid=[0-9]+; ok=1; why=near; d_mm=([6-9][0-9]{4}|[12][0-9]{5});' 10
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=wreck; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25608; result=gone' 15
+wait 2000
+both capture range-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# K's outcome: VEHICLE_GONE's hold cap is 120 s after the request.
+wait 60000
+host run vehicle_state_status 25623
+guest run vehicle_state_status 25623
+host run vehicle_gone_status
+guest run vehicle_gone_status
+both capture range-later
+state

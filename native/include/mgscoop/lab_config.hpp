@@ -699,9 +699,67 @@ struct LabConfig {
     WorldProbe world_probe = WorldProbe::none;
     // world_vehicle_gone=0|1 (0.13.6 online-vehicle-gone, docs/world-sync-protocol.md
     // section 16): the host-authoritative VEHICLE_GONE world op for Fultoned and
-    // destroyed vehicles, CFG r[15] for Lua. Lab and play (not a play refusal);
-    // default off until hidden-run frames prove the receiver's Despawn.
+    // destroyed vehicles, CFG r[15] bit 1 for Lua. Lab and play (not a play refusal).
+    // M4: off in the lab unless named (scenarios name it), on in play unless named
+    // (lab FRAMEs 92720b75 / 0edadbe2; play rehearsal e44516d7, -WanSim bad: each
+    // player's own Fulton removed the jeep on both copies); a named value records _given.
     bool world_vehicle_gone = false;
+    bool world_vehicle_gone_given = false;
+    // world_vehicle_state=0|1 (M4, docs/vehicles-companions-design.md 6.4): the
+    // host-authoritative VEHICLE_STATE world op for parked / pushed / left vehicles
+    // and their body life, CFG r[15] bit 2 for Lua. Lab and play (not a play
+    // refusal); off in the lab unless named, on in play unless named (lab FRAMEs
+    // d407f115 / 0edadbe2; play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
+    bool world_vehicle_state = false;
+    bool world_vehicle_state_given = false;
+    // world_vehicle_wreck=0|1 (M4 review): VEHICLE_GONE's wreck parity, CFG r[15] bit 4
+    // for Lua: a destroyed vehicle (cause 2) becomes a wreck on the receiver through
+    // SetBodyLife{life=0} (the engine's own destruction, blast included) instead of a
+    // Despawn. Lab and play (not a play refusal), off in both unless named: its only
+    // play rehearsal (e235bda6) never destroyed the jeep, and the receiver's blast was
+    // never measured with live guards. Lab FRAME 0edadbe2.
+    bool world_vehicle_wreck = false;
+    // The user's vehicle decisions of 2026-10-29 (docs/vehicles-companions-design.md section 10;
+    // lua/coop/world_vehicle_rules.lua), lab and play (no refusal bit), CFG r[15] bits 8 / 16 / 32
+    // for Lua; off in the lab unless named, on in play unless named (lab FRAME c0203fdd, play
+    // rehearsal 70146170 with -WanSim bad; after the review FRAME f729d7f4 / 33a7fa6e and the play
+    // rehearsal 33a7fa6e); a named value (an invalid one too, which counts as
+    // off) records _given.
+    // world_vehicle_break=0|1 (D12, bit 8): a vehicle that breaks on the guest's copy without
+    // attribution is requested as a destruction (REQ_VEHICLE_GONE cause 4); the host applies it (its
+    // copy wrecked) only when plausible (the guest within 300 m, or its copy heavily damaged; never
+    // under its own player, held while another seat is filled; 4 per 20 s, more wait), as a Despawn
+    // instead of the wreck while a player stands within 15 m of its copy (the blast rule, run
+    // 7762536a). A host without the key answers cause 4 with REJECT 11.
+    bool world_vehicle_break = false;
+    bool world_vehicle_break_given = false;
+    // world_vehicle_credit=0|1 (D14, bit 16): the receiver of a Fultoned world vehicle removes its
+    // copy with the stock Seize Instant, so its own engine credits the vehicle once (never index 0).
+    bool world_vehicle_credit = false;
+    bool world_vehicle_credit_given = false;
+    // world_loadout_block=0|1 (D11, bit 32): the guest's iDroid LOADOUT and VEHICLES supply drops
+    // are inactive in co-op (a toast on selecting one), whatever world_relief says; the host's are
+    // untouched.
+    bool world_loadout_block = false;
+    bool world_loadout_block_given = false;
+    // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's
+    // buddy is the session's one companion. The follow seeds carry the host's buddy vars
+    // and the guest loads them (its own are kept for its saves); guest buddy calls, the
+    // call menu and the F9 summon are refused; a guest playing Quiet locks the host's
+    // buddy Quiet. CFG r[16] for Lua. Default off in lab and play until a hidden-run
+    // FRAME and a play rehearsal prove it (project rule); a named value wins.
+    bool companion_host_owned = false;
+    bool companion_host_owned_given = false;
+    // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
+    // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
+    // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN
+    // gives a late or continuing guest the host's vehicle; the guest's mission-end seize is
+    // skipped; VEHICLE_GONE removes index 0 on the receiver without a credit; a guest-side loss of
+    // index 0 is a request the host answers with its own (credited) Fulton; the guest's iDroid
+    // vehicle drop is refused. CFG r[17] for Lua. Off in lab and play unless named (on from 5a6bac8
+    // until the review of 2026-10-29; ResolveWeaponDefaults); a named value wins.
+    bool world_relief = false;
+    bool world_relief_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is

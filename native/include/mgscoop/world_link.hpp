@@ -35,6 +35,24 @@ struct Config {
     // 0.13.6 online-vehicle-gone: lab.ini world_vehicle_gone (lab and play): CFG
     // r[15] = 1 turns on the Lua VEHICLE_GONE module (lua/coop/world_vehicle.lua).
     bool vehicle_gone = false;
+    // M1 host-owned companion: lab.ini companion_host_owned (lab and play): CFG r[16] = 1
+    // turns on the Lua companion module (lua/coop/world_companion.lua).
+    bool companion = false;
+    // M3 sortie vehicle: lab.ini world_relief (lab and play): CFG r[17] = 1 turns on the Lua
+    // relief module (lua/coop/world_relief_sync.lua).
+    bool relief = false;
+    // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
+    // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
+    bool vehicle_state = false;
+    // M4 review: lab.ini world_vehicle_wreck (lab and play): CFG r[15] bit 4, VEHICLE_GONE's
+    // wreck parity for a destroyed vehicle (else a Despawn).
+    bool vehicle_wreck = false;
+    // The user's vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua), lab and play:
+    // CFG r[15] bit 8 world_vehicle_break (D12), bit 16 world_vehicle_credit (D14), bit 32
+    // world_loadout_block (D11).
+    bool vehicle_break = false;
+    bool vehicle_credit = false;
+    bool loadout_block = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

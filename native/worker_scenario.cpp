@@ -13,8 +13,10 @@
 
 namespace mgscoop::worker_scenario {
 namespace {
-constexpr std::uint8_t scans[] = {0x11,0x1e,0x1f,0x20,0x1c,0x39,0x01,0x12,0x13,0x2a,0x1d,0x02,0x03,0x21,0x2e,0x10,0x2d,0x2c,0x0f,0,0};
-constexpr const char* names[] = {"w","a","s","d","enter","space","escape","e","r","shift","ctrl","1","2","f","c","q","x","z","tab","lmb","rmb"};
+// "3" (scan 0x04) stays before the mouse buttons, which are last. It is the call menu's "Get it" while CALL q is
+// held (M2), and it opens the iDroid MISSIONS tab (M3, hidden run 612afff7: tabs switch with keys 1 and 3).
+constexpr std::uint8_t scans[] = {0x11,0x1e,0x1f,0x20,0x1c,0x39,0x01,0x12,0x13,0x2a,0x1d,0x02,0x03,0x21,0x2e,0x10,0x2d,0x2c,0x0f,0x04,0,0};
+constexpr const char* names[] = {"w","a","s","d","enter","space","escape","e","r","shift","ctrl","1","2","f","c","q","x","z","tab","3","lmb","rmb"};
 static_assert(sizeof(scans) == static_cast<unsigned>(Key::count) && sizeof(names) / sizeof(names[0]) == static_cast<unsigned>(Key::count));
 bool Number(const char* text, std::uint64_t& value) noexcept {
     value=0; if(!text || !*text) return false;

@@ -1,0 +1,131 @@
+# D7 review fixes, frames (2026-10-29; docs/vehicles-companions-design.md 8.10): run 7fe2845e proved the one-shot
+# DOG-bit repair and the hook's pass-through in logs, but the host's dog stood about 30 m away, so no frame showed a dog.
+# Here the guest stands 6 m behind and 6 m to the left of the host, facing it, and the host's dog is called 5 m in
+# front of the host before each part: (1) the lab kill restore with the dog in view; (2) the host's dog down (mirrored
+# on the guest's copy) and the host's re-call, both under the one-shot repair (buddyCommonFlag left to the game);
+# (3) E19 with the guard off: the guest prone, its copy held in the line of a guard's fire, the hits through the
+# installed hook to the stock damage handler, a real death and the restore, with the host's own dog in front of the
+# host on the host's screen.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-guard-review-frames.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# Expected: rv-before/rv-dead/rv-back (the copy beside the host, carried off, back) with ONE step=vars why=death and
+# back; rv-down ('D-Dog Near Death' on both) then step=recalled and rv-recall (the dog beside Snake on both); pv-shield
+# (the copy over the prone guest, guarded), then with the guard off a Dead att=other, pv-dead, step=back, pv-back.
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting debug_soldier_warp=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run godmode 1
+guest run godmode 1
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 6 -6
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+waitlog guest 'world_lua=event=dog_guard; role=guest; step=armed; reason=ok; byte=(129|1[3-5][0-9]);' 30
+# --- (1) the kill restore with the dog in view ------------------------------------------------------------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+host expect ^call_here;kind=dog;
+wait 5000
+guest run companion_lab mark restore3
+both capture rv-before
+logmark both
+guest run companion_lab kill_mirror
+guest expect ^kill_mirror;queued=1
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=alive;' 20
+wait 400
+both capture rv-dead
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=vars; why=death; dead=[0-9]+_[0-9]+; ok=1;' 10
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=back; ms=[0-9]+;' 60
+wait 2500
+both capture rv-back
+wait 2000
+guest capture rv-back-2
+guest run buddy_status
+guest expect kdog
+# --- (2) the host's dog down (mirrored), then the host's re-call -----------------------------------------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+wait 5000
+guest run companion_lab mark down3
+logmark both
+host run companion_lab dog_life 0
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=down;' 15
+wait 1000
+both capture rv-down
+wait 3000
+both capture rv-down-2
+wait 22000
+logmark both
+host run companion_lab recall
+host expect ^recall;
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=recalled;' 60
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+wait 4000
+both capture rv-recall
+guest run buddy_status
+guest expect kdog
+host run buddy_status
+host expect kdog
+# --- (3) E19 with the guard off: the hits reach the stock damage handler through the hook ----------------------------
+host run teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 1 7
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+guest run companion_lab near_guard on
+guest expect ^near_guard;on=1
+wait 10000
+host run cp_phase nearest alert
+host expect ^submitted_phase;
+wait 8000
+stance guest prone
+guest run companion_lab near_guard shield
+guest expect ^near_guard;on=shield
+host run companion_lab call_here dog
+wait 6000
+both capture pv-shield
+guest run companion_lab mark passthrough3
+logmark both
+guest run companion_lab guard off
+guest expect ^guard;on=0
+waitlog guest 'world_lua=event=obs; m=Dead; ent=0; id=9728; att=other;' 150
+wait 400
+both capture pv-dead
+guest run companion_lab near_guard off
+guest run companion_lab guard on
+guest expect ^guard;on=1
+host run cp_phase nearest sneak
+stance guest stand
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=alive;' 5
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=back; ms=[0-9]+;' 60
+wait 3000
+both capture pv-back
+guest run companion_lab dog_state
+guest expect ;armed=1;life=[1-9][0-9]*;max=[1-9][0-9]*;stun=[0-9]+;state=0;
+host run companion_lab dog_state
+host run companion_status
+guest run companion_status
+state

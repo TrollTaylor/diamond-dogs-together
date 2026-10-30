@@ -17,10 +17,11 @@ INSTALL (drag and drop)
 3. Copy everything from this zip into that folder: DiamondDogsTogether.exe,
    dinput8.dll and the mgs-coop folder. Replace the files if Windows asks.
 4. Start DiamondDogsTogether.exe from the game folder.
-5. The first start runs a short setup: it checks the game files, backs up
-   your real saves (they are only read), makes a co-op copy of your save,
-   and builds mgs-coop\mgs-coop-player-runtime.dat from your own game files.
-   Nothing is downloaded.
+5. The first start gets co-op ready by itself (about a minute, nothing to
+   click): it checks the game files, backs up your real saves (they are
+   only read), makes a co-op copy of your save, and builds
+   mgs-coop\mgs-coop-player-runtime.dat from your own game files.
+   Nothing is downloaded. If that fails, Play says why and has Try again.
 
 Starting MGSV from Steam on its own is still your normal game on your real
 saves. Co-op is on only for a game started from Diamond Dogs Together.
@@ -79,4 +80,7 @@ LICENCES AND SOURCE
 mgs-coop\THIRD_PARTY_NOTICES.md lists the third-party code: Dynamite
 (GPLv3 with the Commons Clause), tpp-mod (GPLv3), MinHook (BSD 2-clause)
 and Dear ImGui (MIT); the full licence texts are next to it. The complete
-source code of this version is mgs-coop\source.zip.
+source code of this version is DDT-source-@VERSION@.zip: download it from
+the same release page as this zip (release v@VERSION@ on
+https://github.com/TrollTaylor/diamond-dogs-together/releases). The tag
+v@VERSION@ of that repository holds the same source.

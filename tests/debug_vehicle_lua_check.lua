@@ -154,6 +154,17 @@ ok,msg=lever(c,"vehicle_gone_status");check(ok and msg=="vgone;on=1" and #calls=
 for _,bad in ipairs({"vehicle_remove","vehicle_remove 25603","vehicle_remove nearest now","vehicle_remove nearest sync 1","vehicle_remove nearest fulton sync","vehicle_gone_status x"})do
  ok,msg=lever(c,bad);check(not ok and msg=="vehicle_args" and #calls==3,"strict vehicle-gone arguments: "..bad)
 end
+-- M4 VEHICLE_STATE: vehicle_push / vehicle_life / vehicle_state_status route to lua/coop/world_vehicle_state.lua
+-- (W.vehicleState, which checks the arguments: world_vehicle_state_lua_check).
+c=G();check(c.V.handles.vehicle_push and c.V.handles.vehicle_life and c.V.handles.vehicle_state_status,"the vehicle-state levers are handled here")
+ok,msg=lever(c,"vehicle_push 25608 3 0");check(not ok and msg=="vehicle_state_unavailable" and c.reads==0,"no module: refused, nothing read")
+local sargs={}
+c=G();c.W.vehicleState={lever=function(a)sargs[#sargs+1]=table.concat(a," ");return true,"vstate"end}
+ok,msg=lever(c,"vehicle_push 25608 3 0");check(ok and msg=="vstate" and sargs[1]=="vehicle_push 25608 3 0","vehicle_push <id> <dx> <dz>")
+ok,msg=lever(c,"vehicle_push nearest -2.5 1");check(ok and sargs[2]=="vehicle_push nearest -2.5 1","vehicle_push nearest with signed metres")
+ok,msg=lever(c,"vehicle_life 25608 0");check(ok and sargs[3]=="vehicle_life 25608 0","vehicle_life <id> <life>")
+ok,msg=lever(c,"vehicle_state_status");check(ok and sargs[4]=="vehicle_state_status","vehicle_state_status")
+ok,msg=lever(c,"vehicle_state_status 25608");check(ok and sargs[5]=="vehicle_state_status 25608","vehicle_state_status <id>")
 -- G4 truck test levers (docs/native-puppet.md "Truck test levers"): goto_vehicle truck (gotoTruck), goto_partner_vehicle
 -- and vehicle_door over a stubbed MGS_COOP_VEHICLE_DOOR_V1 receipt (lab.ini debug_vehicle_door=1; doorOff = its refusal).
 -- The stub's door: point (99, 2, 2) m, outward axis +x, the stand spot cm further out at y 1.5, facing the seat (-x).
@@ -246,4 +257,12 @@ c=H();ok,msg=c.V.run({"vehicle_door","veh_trc_0009"},7);check(not ok and msg=="v
 for _,bad in ipairs({{"bogus"},{"partner","left"},{"partner","driver","x"},{"12345"}})do
  c=H();ok,msg=c.V.run({"vehicle_door",unpack(bad)},7);check(not ok and msg=="vehicle_door_args" and #c.doors==0,"strict report arguments: "..table.concat(bad," "))
 end
+-- M3 experiments E2/E17/E18: relief_* route to lua/coop/world_relief.lua (W.relief), whole argument list, nothing read here.
+c=G();for _,k in ipairs({"relief_census","relief_arm","relief_seize","relief_remove","relief_face","relief_load","relief_status","relief_lab"})do check(c.V.handles[k],"handled here: "..k)end
+ok,msg=lever(c,"relief_census");check(not ok and msg=="relief_unavailable" and c.reads==0 and c.lookups==0,"no world module: refused, nothing read")
+local got={}
+c=G();c.W.relief={run=function(a)got[#got+1]=table.concat(a," ");return true,"relief;m=30010"end}
+ok,msg=lever(c,"relief_census arrival");check(ok and msg=="relief;m=30010" and got[1]=="relief_census arrival","census routes with its tag")
+ok,msg=lever(c,"relief_arm 2 805 343 1636.5 0");check(ok and got[2]=="relief_arm 2 805 343 1636.5 0" and c.reads==0,"arm routes its five arguments")
+ok,msg=lever(c,"relief_unknown");check(ok and got[3]=="relief_unknown","any relief_ word goes to the module, which checks it")
 print("debug_vehicle_lua_check: "..checks.." checks PASS")

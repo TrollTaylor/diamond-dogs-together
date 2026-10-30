@@ -62,6 +62,11 @@ int main(){
     command.expires=3001;Check(!admission.Accept(command,1000),"maxfuturettl");command.expires=3000;command.duration=2001;Check(!admission.Accept(command,1000),"maxhold");
     command.duration=2000;Check(admission.Accept(command,1000),"inclusiveholdboundary");command.sequence=4097;Check(!admission.Accept(command,1000),"runcommandbudget");
     admission.Clear();admission.Keyboard(keys);Check(keys[0x11]==0&&admission.Mouse(true).buttons[0]==0,"clearrevokesheldstate");
+    // M2 (call menu "3:Get it"): the digit 3 is a keyboard key (scan 0x04), held together with CALL (q); the mouse
+    // buttons keep their own device after it.
+    w::Scenario call;auto getIt=Parse("hold q+3 500 0");Check(call.Accept(getIt,1000),"callmenudigit3accepted");
+    call.Keyboard(keys);Check(keys[0x10]==0x80&&keys[0x04]==0x80&&keys[0x03]==0,"callmenudigit3scan04withq");
+    auto fire=Parse("hold lmb 500 0");fire.sequence=2;Check(call.Accept(fire,1000)&&call.Mouse(false).buttons[0]==0x80,"mousebuttonsafterdigit3");
     w::Scenario late;auto delayed=Parse("mouse 50 -70 0");delayed.expires=1200;
     Check(late.Accept(delayed,1000),"unconsumedmoveaccepted");late.Tick(1199);Check(late.Mouse(false).x==50,"pendingmovebeforeexpiry");
     late.Tick(1200);Check(late.Mouse(true).x==0&&late.Mouse(true).y==0,"pendingmousestateexpireswithoutmouseconsumer");
@@ -139,5 +144,8 @@ int main(){
     Check(keys[0x11]==0x80&&keys[0x39]==0,"loadingrevocationdoesnotclearunrelatedordinaryinput");
     simultaneous.SetLoading({w::LoadingPhase::initialized,30020,10},1003);
     Check(!simultaneous.Accept(resume,1003),"oldresumecannotreviveafterallocationchange");
+    // M3: "3" (scan 0x04) is the iDroid MISSIONS tab key.
+    {w::Scenario three;auto c3=Parse("hold 3 100 0");Check(three.Accept(c3,1000),"acceptkey3");std::uint8_t k3[256]{};three.Keyboard(k3);
+     Check(k3[0x04]==0x80&&k3[0x05]==0&&k3[0x0f]==0,"key3isscan04");}
     std::printf("worker_scenario checks=%u failures=%u compiled=%u\n",checks,failures,w::Compiled()?1u:0u);return failures?1:0;
 }

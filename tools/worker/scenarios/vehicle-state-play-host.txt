@@ -1,0 +1,136 @@
+# M4 play rehearsal of VEHICLE_STATE's pose path and VEHICLE_GONE's destruction Despawn as they ship (no vehicle
+# labsetting: the play defaults alone; docs/vehicles-companions-design.md section 9 M4, docs/world-sync-protocol.md
+# sections 16-17), mode=play over the -WanSim bad link, no lab lever (play refuses them). After the M4 review no play
+# run had moved a vehicle (every play apply was moved=0: the guest's drive and leave agrees through RIDE_FAST), and
+# the guest's camera had turned away from the C4 destruction (4bbbfde4). Two parts:
+#   bail   the HOST boards J1 and dives out while it still rolls (E pressed with the throttle held, about 2 s after the start). The host's copy rolls on with
+#          nobody in it; the guest's copy stops where RIDE_FAST last put it (the exit RIDE_BODY ends the track and
+#          V.busy's partner_ride latch). The host skips its own vehicle while it rides (step=skip; reason=local_rider,
+#          never logged by a host before), resumes, sends its pose (step=tx; why=moved) and the guest moves its copy
+#          to where the host's came to rest: step=applied; ...; moved=1 (a real divergence, not the lab lever).
+#          Frames play-bail-drive-NN (guest), play-bailed, play-bail-left and play-bail-both (both cameras on J1).
+#   loss   the host's two C4 charges destroy J1 (a real destruction) -> VEHICLE_GONE cause 2 -> a Despawn on the
+#          guest's copy (wreck=0 in play); the guest stands 22 m behind the host's goto spot, its camera on J1:
+#          frames play-c4-placed (J1 on both screens) and play-destroyed (the wreck on the host's, nothing on the
+#          guest's).
+# Wakh Sind (30010, lab seed), J1 = veh_lv_0000 = 25608 in every run so far.
+# Coordinator only, hidden worker (never visible), copied lab saves, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-state-play-host.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -Mode play -WanSim bad
+# NEVER: step=error, viewer_changed, faults, a guest step=applied for J1 while the host rides it, via=wreck in play,
+#   a guest step=hold; reason=player_near that never ends.
+# Passed: b31a1b65 (play -WanSim bad, build 5b7522a, every expectation met: guest applied; moved=1; d_mm=7970 after the
+#   host's bail; the C4 destruction framed on both screens). The guest's 18 m spot faced a wall during the bail.
+labsetting partner_native_ride=seat
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_state; step=on; mission=30010; role=host; named=[0-9]+; lrrp=6' 30
+waitlog guest 'event=vehicle_state; step=on; mission=30010; role=guest; named=[0-9]+; lrrp=6' 30
+waitlog host 'event=vehicle_gone; step=on; mission=30010; role=host; wreck=0' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30010; role=guest; wreck=0' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status
+host expect vstate;on=1;role=host;
+guest run vehicle_state_status
+guest expect vstate;on=1;role=guest;
+# Bail: the host at J1's door, the guest 18 m behind it facing J1. J1 is about 800 m from the start spot: both go to
+# it first (run e20f76bc stopped here when only the host had warped: the guest's partner was not realized yet).
+guest debug goto_vehicle jeep
+wait 3000
+host debug goto_vehicle jeep
+wait 5000
+placebehind guest host 18 0
+wait 2500
+host debug clear_enemies 100
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture play-bail-before
+logmark both
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog host 'event=vehicle_state; step=skip; reason=local_rider; id=256[0-9][0-9]' 10
+host hold w 1500
+host hold w 1500 nowait
+wait 400
+host press e 150
+guest burst play-bail-drive 4 300
+host release
+wait 1500
+both capture play-bailed
+host run vehicle_seats
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+waitlog host 'event=vehicle_state; step=resume; id=256[0-9][0-9]; was=(local_rider|occupied)' 25
+waitlog host 'event=vehicle_state; step=tx; id=256[0-9][0-9]; why=moved;' 10
+waitlog guest 'event=vehicle_state; step=applied; id=256[0-9][0-9]; from=256[0-9][0-9]; moved=1;' 30
+wait 4000
+both capture play-bail-left
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host debug goto_vehicle jeep
+wait 2500
+placebehind guest host 9 -2
+wait 3000
+both capture play-bail-both
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_state_status
+guest run vehicle_state_status
+# Loss: the host's two C4 charges on J1 from its goto spot; the guest 22 m behind, its camera on J1.
+host debug goto_vehicle jeep
+wait 2500
+host debug clear_enemies 100
+placebehind guest host 22 0
+wait 2500
+host debug slot support 2
+wait 2000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+wait 1500
+host release
+wait 1000
+host hold rmb 1500 nowait
+wait 300
+host hold lmb 300 nowait
+wait 1500
+host release
+host hold s 1500
+host hold s 1500
+host hold s 1500
+wait 1000
+both capture play-c4-placed
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host press e
+host release
+waitlog guest 'event=vehicle_gone; step=applied; id=256[0-9][0-9]; via=locator; src=rx; ok=1' 25
+both capture play-destroyed
+waitlog host 'event=vehicle_gone; step=watch; id=256[0-9][0-9]; m=(VehicleBroken|Dead);' 5
+waitlog host 'event=vehicle_gone; step=tx; id=256[0-9][0-9]; cause=2;' 5
+wait 2500
+both capture play-destroyed-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_state_status
+guest run vehicle_state_status
+state

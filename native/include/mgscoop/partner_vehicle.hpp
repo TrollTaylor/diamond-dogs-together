@@ -44,6 +44,20 @@ inline constexpr std::uint16_t kVehicleType = 50;  // GameObject type (id >> 9)
 inline constexpr std::uint8_t kNotRealized = 0xFF, kCategoryUnknown = 0xFF;
 // |angle| bound of the tilt sanity gate (just under pi/2, in milliradians).
 inline constexpr std::int32_t kTiltMaxMrad = 1570;
+// M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): the record state words and the
+// body life block. rec+0x70 (u32; IsAlive 0xB2C0D3 tests & 0x800004, GetState 0xB2BED6 & 0x18000)
+// and rec+0x7C (u16) feed the engine's own ene_veh_state encoding (StoreToSVars 0xB35BC0,
+// 0xB35C90..0xB35D62). The life block: SetBodyLife (instance command 0x3BA5A795, handler
+// 0xB2BC69) and StoreToSVars (ene_veh_life, 0xB35F60..0xB35FBD) reach it through the object's
+// vt+0x98 = 0xB2DD00: *(object+0x150) + index*0x18, 12 u16; word 0 the body life (SetBodyLife
+// writes it), words 1..11 the other parts (StoreToSVars copies all 12; Spawn's wheelLife sets them).
+inline constexpr std::size_t kFlags70 = 0x70, kFlags7C = 0x7C;
+inline constexpr std::uintptr_t kLifeFnRva = 0xB2DD00;
+inline constexpr std::size_t kLifeSlot = 0x98, kLifeBase = 0x150, kLifeStride = 0x18;
+inline constexpr unsigned kLifeWords = 12;
+// 0xB2DD00: movzx eax,dx; lea edx,[rax+rax*2]; mov rax,[rcx+0x150]; shl edx,2; movsxd r8,edx; lea rax,[rax+r8*2]; ret
+inline constexpr unsigned char kLifeFnBytes[24] = {0x0F, 0xB7, 0xC2, 0x8D, 0x14, 0x40, 0x48, 0x8B, 0x81, 0x50, 0x01, 0x00,
+                                                   0x00, 0xC1, 0xE2, 0x02, 0x4C, 0x63, 0xC2, 0x4A, 0x8D, 0x04, 0x40, 0xC3};
 
 struct Unit {
     std::uint16_t id = 0xFFFF;
@@ -52,6 +66,8 @@ struct Unit {
     std::uint8_t type = 0, realized = kNotRealized, slot = 0;
     float pos[4]{};  // x, y, z, yaw (rec+0x20..+0x2C)
     float a44 = 0, a48 = 0;
+    std::uint32_t flags70 = 0;  // rec+0x70
+    std::uint16_t flags7c = 0;  // rec+0x7C
 };
 struct Body {
     std::uintptr_t v = 0, v_vt = 0, rb = 0, rb_vt = 0, cats = 0, cat = 0, cat_vt = 0, cat_fn = 0, slots = 0, body = 0;
@@ -119,6 +135,8 @@ void ReadVehicle(Reader& r, std::uintptr_t image, std::uint16_t id, Read& out) n
     u.realized = rec[kRealized];
     u.slot = rec[kSlot];
     std::memcpy(&u.index78, rec + kIndex, sizeof(u.index78));
+    std::memcpy(&u.flags70, rec + kFlags70, sizeof(u.flags70));
+    std::memcpy(&u.flags7c, rec + kFlags7C, sizeof(u.flags7c));
     out.refusal = nullptr;
     // The realized body (0x16FBEC0 -> 0x16FDDC0 -> cat vt+0x1F0 -> [cat+0x1C8][slot]).
     Body& b = out.body;
@@ -144,6 +162,50 @@ void ReadVehicle(Reader& r, std::uintptr_t image, std::uint16_t id, Read& out) n
     std::memcpy(&b.a44, body + kA44, sizeof(b.a44));
     std::memcpy(&b.a48, body + kA48, sizeof(b.a48));
     out.body_refusal = nullptr;
+}
+
+// M4 VEHICLE_STATE: the engine's ene_veh_state word for a record in the pool (StoreToSVars
+// 0xB35C90..0xB35D62): bit 0 not (rec+0x70 & 0xC0000), bit 1 rec+0x7C bit 14, bit 2 rec+0x70
+// bit 3, bits 4..9 rec+0x70 bits 9..14 (bit 3 unused).
+inline std::uint16_t SvState(std::uint32_t f70, std::uint16_t f7c) noexcept {
+    std::uint16_t s = (f70 & 0xC0000u) ? 0 : 1;
+    if (f7c & 0x4000u) s |= 2;
+    if (f70 & 0x8u) s |= 4;
+    for (unsigned b = 9; b <= 14; ++b)
+        if (f70 & (1u << b)) s = static_cast<std::uint16_t>(s | (1u << (b - 5)));
+    return s;
+}
+struct Life {
+    const char* refusal = "unread";  // nullptr: words valid
+    std::uint16_t words[kLifeWords]{};
+    std::uint16_t zero = 0;   // bits 1..11: words 1..11 that read 0
+    std::uint8_t parts = 0;   // words 1..11 above 0
+    std::uint16_t state = 0;  // SvState of the unit
+};
+// Reads the life block of an already read unit (read.refusal == nullptr): the object's
+// vt+0x98 must be 0xB2DD00 with its pinned bytes (kLifeFnBytes); never writes.
+template <class Reader>
+void ReadLife(Reader& r, const Read& read, Life& out) noexcept {
+    using detail::Get;
+    out = Life{};
+    if (read.refusal) { out.refusal = read.refusal; return; }
+    const Unit& u = read.unit;
+    const std::uintptr_t image = read.image;
+    std::uintptr_t vt = 0, fn = 0, base = 0;
+    if (!image || !Get(r, u.object, vt) || !vt || !Get(r, vt + kLifeSlot, fn) || fn != image + kLifeFnRva) { out.refusal = "life_fn"; return; }
+    unsigned char code[sizeof(kLifeFnBytes)]{};
+    if (!r(fn, code, sizeof(code)) || std::memcmp(code, kLifeFnBytes, sizeof(code)) != 0) { out.refusal = "life_code"; return; }
+    if (!Get(r, u.object + kLifeBase, base) || !base) { out.refusal = "life_base"; return; }
+    const std::uintptr_t at = base + std::uintptr_t(u.id & 0x1FFu) * kLifeStride;
+    std::uint16_t words[kLifeWords]{};
+    if (!detail::Range(at, sizeof(words)) || !r(at, words, sizeof(words))) { out.refusal = "life_read"; return; }
+    std::memcpy(out.words, words, sizeof(words));
+    for (unsigned i = 1; i < kLifeWords; ++i) {
+        if (out.words[i] == 0) out.zero = static_cast<std::uint16_t>(out.zero | (1u << i));
+        else ++out.parts;
+    }
+    out.state = SvState(u.flags70, u.flags7c);
+    out.refusal = nullptr;
 }
 
 // The same object and the same fields twice (a write is gated on two equal reads).
@@ -184,6 +246,7 @@ std::size_t FormatCensus(const char* who, const Read& read, char* out, std::size
 #ifdef _WIN32
 // Live reads (ReadProcessMemory; never faults).
 void ReadLive(const void* image, std::uint16_t id, Read& out) noexcept;
+void ReadLifeLive(const Read& read, Life& out) noexcept;
 // The contract blocks this module relies on (code_sites rvas of the chain and
 // the move thresholds); nullptr when they match, else "block_0x...".
 const char* VerifyImage(const void* image, std::size_t span) noexcept;

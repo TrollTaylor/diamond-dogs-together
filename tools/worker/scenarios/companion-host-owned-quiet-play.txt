@@ -1,0 +1,32 @@
+# M1 play rehearsal of run B (the Quiet lock, late-join path; -Mode play -WanSim bad). The host's save deploys Quiet
+# (afgh-quiet), the guest plays Quiet. Play's title Continue lands both in the helicopter (40010) with the host's Quiet
+# out: on pairing she is sent away there (delete_buddy) and the type disabled; the continue into 30010 rewrites the
+# sortie (sortie_rewrite) so the seeds carry none; the host's save keeps its Quiet (D8 b), so 30010 loads her again on
+# the host and the first tick sends her away (delete_buddy, start_rewrite). Run de43726a. The key is named; its play
+# default stays off.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-host-owned-quiet-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-ledge
+#        -Mode play -WanSim bad
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=companion; role=host; step=character; guest_code=6; guest_char=quiet;' 120
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=disable_type; guest_char=quiet;' 60
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=delete_buddy; guest_char=quiet;' 90
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=start_rewrite; guest_char=quiet;' 30
+waitlog host 'world_lua=event=companion; role=host; step=quiet_lock; via=sortie_rewrite; guest_char=quiet;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=none; source=seed; mission=30010;' 90
+wait 4000
+# No buddy, so no buddy block in 30010 (buddy_block_inactive): vars_type=0 on both, the host's own Quiet kept.
+host run buddy_status
+host expect vars_type=0_own=3
+guest run buddy_status
+guest expect vars_type=0
+host run companion_status
+guest run companion_status
+both capture m1p-quiet-sent-away
+host capture m1p-quiet-toast
+state

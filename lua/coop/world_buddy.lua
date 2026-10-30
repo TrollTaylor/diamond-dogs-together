@@ -1,11 +1,24 @@
 -- Original host-led D-Dog mirror; ride yield clears its typed held target.
+-- M2 (design 6.2, 6.12; lab key companion_host_owned): the host streams its dog in COMPANION_POSE (57, 10 Hz moving,
+-- 2 Hz idle); the guest holds its copy there every 100 ms and answers COMPANION_ACK (49, 1 Hz). That dog is never
+-- released to the guest's AI; a host without a dog is world_companion.lua's reconcile (DeleteBuddy). The M2 code
+-- (B.hostCompanion, B.guestCompanion and the E3/E19 levers) is in world_companion_dog.lua.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" then
-local B, floor, sqrt, min = {}, math.floor, math.sqrt, math.min
+local B, floor, sqrt, min, fmt = {}, math.floor, math.sqrt, math.min, string.format
 W.buddy = B
 W.OP.BUDDY_STATE, W.OP.BUDDY_ACK = 39, 40
 local STATE, ACK = 39, 40
+local CPOSE, CACK = 57, 49
+W.OP.COMPANION_POSE, W.OP.COMPANION_ACK = CPOSE, CACK
+-- The host-owned companion runs only when both copies run its key (C.live; review 2026-10-29).
+local function companion()
+ local C = W.companion
+ local f = type(C) == "table" and (C.live or C.on)
+ return type(f) == "function" and f() == true
+end
+B.companion = companion
 local function finite(n, bound)
 return type(n) == "number" and n == n and n >= -bound and n <= bound
 end
@@ -31,6 +44,8 @@ if t == a.buddyWalker then return 3 end
 if t == a.buddyQuiet then return 4 end
 return 0
 end
+-- For the M2 hold (world_companion_dog.lua).
+B.lib = {finite = finite, integer = integer, vector = vector, yaw = yaw, mm = mm, kind = kind}
 W.bindHooks[#W.bindHooks + 1] = function(a, fn, num)
 a.buddyType = fn(TppBuddy2BlockController, "TppBuddy2BlockController", "GetActiveBuddyType", true)
 a.buddyBlock = fn(TppBuddy2BlockController, "TppBuddy2BlockController", "IsBlockActive", true)
@@ -120,6 +135,8 @@ s.owned, s.original, s.id, s.pending, s.nextRelease, s.ownedMission, s.ownedEpoc
 end
 function B.yieldForRide()
 local s,a=B.s,W.api;if not s then return false end
+-- M2: the guest copy's dog is the host's; its hold is never cleared for a ride lever.
+if companion() and not W.host then return false end
 if s.owned and s.aiHeld then
  if s.ownedMission~=W.mission or s.ownedEpoch~=W.epoch or not B.guard(true) then return false end
  local id=B.dog(true)
@@ -147,6 +164,8 @@ end
 function B.release(cleanup)
 local s, a, now = B.s, W.api, W.now()
 if not s or not s.owned then return true end
+-- M2: the host's dog on the guest's copy is never released to the guest's AI (its native hold stays).
+if companion() and not W.host then B.clearOwnership(s); return true end
 if not B.guard(not cleanup) then return false end
 if s.nextRelease and now < s.nextRelease then return false end
 local t = a.buddyType()
@@ -322,7 +341,10 @@ return string.format("buddy:%s a%d p%d k%s v%d r%s e%d H=%s@%s L=%s@%s d%d",
  W.host and "H" or "G", live and 1 or 0, W.paired and 1 or 0, nativeKind,
  W.host and s.seq or s.rxSeq or 0, string.sub((not live and (ok and contextReason or "context_error"))
   or (s.probe and s.probe.reason ~= "ok" and s.probe.code) or s.reason or "idle", 1, 22), errorCm,
- hp, ha, lp, la, B.disabled and 1 or 0)
+ hp, ha, lp, la, B.disabled and 1 or 0) .. (W.companion and W.companion.tail() or "") .. (companion() and
+ fmt(" m2 %s w%d tx%d rx%d ack%s/%s near%s s3=%d hurt%d eng%d", B.holdMode, s.warps or 0, s.poseTx or 0, s.cposeN or 0, tostring(s.cackResult or s.remoteResult),
+  tostring(s.remoteError or "-"), tostring(s.watch and s.watch.min or "-"), s.watch and floor(s.watch.s3) or 0, s.hurt or 0,
+  W.mirrorCount or 0) or "")
 end
 function B.tick(now)
 if B.disabled then pcall(B.cleanupPending); return end
@@ -336,6 +358,10 @@ end
 end
 function B.update(now)
 if not B.context() then return end
+if companion() then
+ if W.paired and W.eff >= 3 then if W.host then B.hostCompanion(now) else B.guestCompanion(now) end end
+ return
+end
 if B.s.releaseOnly then
  if not B.release() then return end
  B.s.releaseOnly = nil

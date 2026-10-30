@@ -237,8 +237,47 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
 // the gun profile in lab and play).
 bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexcept {
     if (Equals(key, "partner_ride_census")) ok = ParseBool(value, result.partner_ride_census);
-    // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play, default off).
-    else if (Equals(key, "world_vehicle_gone")) ok = ParseBool(value, result.world_vehicle_gone);
+    // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op (lab and play; off in the lab, on in play unless named).
+    else if (Equals(key, "world_vehicle_gone")) {
+        ok = ParseBool(value, result.world_vehicle_gone);
+        if (ok) result.world_vehicle_gone_given = true;
+    }
+    // M4: the VEHICLE_STATE world op (lab and play; off in the lab, on in play unless named).
+    else if (Equals(key, "world_vehicle_state")) {
+        ok = ParseBool(value, result.world_vehicle_state);
+        if (ok) result.world_vehicle_state_given = true;
+    }
+    // M4 review: VEHICLE_GONE's wreck parity (lab and play; off in both unless named).
+    else if (Equals(key, "world_vehicle_wreck")) ok = ParseBool(value, result.world_vehicle_wreck);
+    // The user's vehicle decisions of 2026-10-29 (lab and play, off unless named; see the defaults
+    // below). An invalid value refuses: it counts as named, off.
+    else if (Equals(key, "world_vehicle_break")) {
+        ok = ParseBool(value, result.world_vehicle_break);
+        result.world_vehicle_break_given = true;
+        if (!ok) result.world_vehicle_break = false;
+    }
+    else if (Equals(key, "world_vehicle_credit")) {
+        ok = ParseBool(value, result.world_vehicle_credit);
+        result.world_vehicle_credit_given = true;
+        if (!ok) result.world_vehicle_credit = false;
+    }
+    else if (Equals(key, "world_loadout_block")) {
+        ok = ParseBool(value, result.world_loadout_block);
+        result.world_loadout_block_given = true;
+        if (!ok) result.world_loadout_block = false;
+    }
+    // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
+    else if (Equals(key, "companion_host_owned")) {
+        ok = ParseBool(value, result.companion_host_owned);
+        if (ok) result.companion_host_owned_given = true;
+    }
+    // M3 sortie vehicle on both copies (lab and play, off unless named; see the defaults below).
+    // An invalid value refuses: it counts as named, off.
+    else if (Equals(key, "world_relief")) {
+        ok = ParseBool(value, result.world_relief);
+        result.world_relief_given = true;
+        if (!ok) result.world_relief = false;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -890,6 +929,28 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     // 5. The weapons keys follow the native gun profile unless named (last:
     // after any expansion that sets partner_drive / partner_native_gun).
     ResolveWeaponDefaults(result);
+    // 6. M4 vehicles (docs/vehicles-companions-design.md section 9 M4): VEHICLE_GONE and
+    // VEHICLE_STATE run in play unless named (lab FRAMEs on both copies; play rehearsals
+    // e44516d7 and d9b48fcb with -WanSim bad); the lab keeps them off unless named, so a
+    // lab scenario opts in (labsetting world_vehicle_gone=1 / world_vehicle_state=1).
+    // world_vehicle_wreck has no play default (off unless named, M4 review); the Lua
+    // modules run at Mother Base only in the lab (no hidden run covered 30050).
+    if (result.mode == LabMode::play) {
+        if (!result.world_vehicle_gone_given) result.world_vehicle_gone = true;
+        if (!result.world_vehicle_state_given) result.world_vehicle_state = true;
+    }
+    // 7. The vehicle decisions of 2026-10-29 (D11 world_loadout_block, D12 world_vehicle_break,
+    // D14 world_vehicle_credit): on in play unless named (each has its FRAME proof on both copies,
+    // lab run c0203fdd, and a passing -Mode play -WanSim bad rehearsal, 70146170; after the review
+    // of 2026-10-29, D11 with VEHICLES and D12 with its fixes and the blast rule again: FRAME
+    // f729d7f4 and 33a7fa6e, rehearsal 33a7fa6e at the shipped defaults); the lab keeps them off
+    // unless named, like the other vehicle modules. D12 and D14 act only where VEHICLE_GONE runs
+    // (30010 / 30020 in play).
+    if (result.mode == LabMode::play) {
+        if (!result.world_loadout_block_given) result.world_loadout_block = true;
+        if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
+        if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
+    }
     out = result;
     return true;
 }
@@ -1593,6 +1654,15 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // body while the partner rode a D-Walker or D-Horse, the body back after the
     // dismount, its own player unchanged); a named off opts out.
     if (!c.partner_native_mount_given) c.partner_native_mount = gun ? PartnerNativeMount::hide : PartnerNativeMount::off;
+    // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
+    // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
+    if (!c.companion_host_owned_given) c.companion_host_owned = false;
+    // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
+    // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
+    // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
+    // credited twice with VEHICLE_GONE off (fixed since), and the guest's LOADOUT block (D11) is the
+    // user's open decision. It flips again only after a FRAME proof and a play rehearsal of those lines.
+    if (!c.world_relief_given) c.world_relief = false;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

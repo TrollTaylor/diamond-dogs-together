@@ -1,0 +1,60 @@
+# M4 diagnostic (docs/vehicles-companions-design.md 8.8): does the game post a GameObject "Damage" message for a
+# TppVehicle2 hit, and which argument names the attacker? VEHICLE_GONE asks the host for a guest's destroyed vehicle
+# only when a local Damage on it came within 10 s before VehicleBroken (lua/coop/world_vehicle.lua V.observe, a2 the
+# attacker, as for soldiers). Hidden run 5179b50b: the guest's five rounds hit veh_lv_0000 (life 2260 -> 2230), but
+# its lever break 2 s later logged no watch (VehicleBroken att=none, no local hit recorded). The WS4 attacker census
+# (lab key partner_placed_census=1) logs every Damage message's raw arguments with their classes (event=obs_att),
+# unmapped ids included. Lab, Africa (30020, africa-jeep seed), both copies at their boot spots by the jeep.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-damage-census.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Read: event=obs_att; m=Damage; ent=0; id=25608; a1=; c1=; a2=; c2=; a3=; c3= on the shooting copy (or none at all),
+# and the life readbacks (vehicle_state_status 25608) before and after each burst.
+labsetting world_vehicle_state=1
+labsetting world_vehicle_gone=1
+labsetting partner_placed_census=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host debug clear_enemies 100
+wait 1500
+guest run vehicle_state_status 25608
+both capture vd-before
+# The guest fires five rounds into the jeep from its boot spot.
+guest hold rmb 1500 nowait
+wait 800
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+wait 300
+guest press lmb 120
+guest release
+wait 1000
+guest run vehicle_state_status 25608
+waitlog guest 'event=obs_att; m=Damage; ent=0; id=25608;' 5
+# The host fires five rounds into the same jeep from its boot spot.
+host hold rmb 1500 nowait
+wait 800
+host press lmb 120
+wait 300
+host press lmb 120
+wait 300
+host press lmb 120
+wait 300
+host press lmb 120
+wait 300
+host press lmb 120
+host release
+wait 1000
+host run vehicle_state_status 25608
+waitlog host 'event=obs_att; m=Damage; ent=0; id=25608;' 5
+both capture vd-after
+guest run vehicle_state_status 25608
+state

@@ -46,7 +46,7 @@ if($context.Count -ne 7 -or $context[0] -cne 'MGSWORKERCTX1' -or $context[1] -cn
    $context[3] -cne [string]$game.Id -or $context[4] -cne [string]$owned[0].creation_filetime -or $context[5] -cne $status.desktop -or
    $context[6] -cne 'admitted'){throw 'Native role context does not match its supervisor lease.'}
 if($Operation -in @('press','hold')) {
-    $known=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','lmb','rmb')
+    $known=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','3','lmb','rmb')
     $tokens=$Keys.Split('+')
     if(!$tokens.Count -or @($tokens|Where-Object{$known -cnotcontains $_}).Count -or @($tokens|Sort-Object -Unique).Count -ne $tokens.Count){throw 'Unknown or duplicated typed worker key.'}
 }

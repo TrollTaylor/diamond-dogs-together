@@ -8,15 +8,23 @@
 // NUL-free, at most max_receipt bytes):
 //   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
 //        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>,<session>,
-//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>
-//        (15 values; r[9..11] are the partner's mission and world level, 0
+//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>,<companion>,<relief>
+//        (17 values; r[9..11] are the partner's mission and world level, 0
 //        unknown, and the raw pair-wait code world::pair_wait 0..10; r[12] is
 //        the save handoff code save_handoff_state::LuaCode 0..6 and r[13] the
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
 //        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
 //        partner_placed_census, lab only), also from HandleCfg; r[15] the
-//        0.13.6 VEHICLE_GONE module 0|1 (lab key world_vehicle_gone, lab and
-//        play), also from HandleCfg; Lua treats a missing value as 0)
+//        vehicle modules bitmask 0..63 (lab and play), also from HandleCfg:
+//        bit 1 the 0.13.6 VEHICLE_GONE module (lab key world_vehicle_gone),
+//        bit 2 the M4 VEHICLE_STATE module (lab key world_vehicle_state),
+//        bit 4 VEHICLE_GONE's wreck parity (lab key world_vehicle_wreck, M4
+//        review), bits 8 / 16 / 32 the vehicle decisions of 2026-10-29 (lab keys
+//        world_vehicle_break D12, world_vehicle_credit D14, world_loadout_block
+//        D11); r[16] the M1 host-owned companion module 0|1 (lab key
+//        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
+//        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
+//        HandleCfg; Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -79,6 +87,15 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
 // (see the grammar above). Outputs only on success.
 bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
                std::uint32_t& d, std::uint32_t& e) noexcept;
+
+// r[15] (CfgReply::vehicle_gone): bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE, bit 4 the wreck parity; the
+// vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16
+// D14 world_vehicle_credit, bit 32 D11 world_loadout_block.
+constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool brk = false, bool credit = false,
+                                      bool loadout = false) noexcept {
+    return static_cast<std::uint8_t>((gone ? 1 : 0) | (state ? 2 : 0) | (wreck ? 4 : 0) | (brk ? 8 : 0) | (credit ? 16 : 0) |
+                                     (loadout ? 32 : 0));
+}
 
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;

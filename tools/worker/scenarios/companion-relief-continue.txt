@@ -1,0 +1,82 @@
+# M3 proof, lab, the continue / late-join case (docs/vehicles-companions-design.md section 9 M3, section 8.5).
+# Seed afgh-relief-lv (run 612afff7): both copies Continue into the 30010 enemyBase_S LZ checkpoint; the host's save
+# holds relief type 2 (east LV) with the vehicle out, the guest's holds none. The host sends VEHICLE_SPAWN; the
+# guest's copy, whose mission started without index 0, writes the host's carry and calls Vehicle.LoadCarry mid
+# mission (step=load; why=host_has), or gets it through the continue seeds (source=seed): either way the same vehicle
+# at the host's x/z (-347.97, 763.60) on both copies (frames m3-relief-continue).
+# Then the guest's real iDroid path (run 25b9c0ae: key 3 opens MISSIONS with SUPPLY DROP first): Enter opens the
+# supply drop list; S moves down to the vehicle item (BULLET, WEAPON, LOADOUT, VEHICLE is the MBDVCMENU order [I]);
+# Enter on the inactive item -> MbDvcActSelectNonActiveMenu -> step=refused; path=idroid_drop_... and the toast.
+# Then a non-zero paint preset: the host arms type 2 with paint fova1 (Vehicle.paintType.FOVA_1 = 5, run 25b9c0ae)
+# for its sortie to Africa (30020 savannahEast_N); the seeds carry the preset; both copies log arrived ... paint=5.
+# Coordinator only, hidden worker (never visible), copied seed saves, MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-continue.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-relief-lv
+labsetting world_relief=1
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot fast
+wait 10000
+waitmission guest 30010 150
+waitgameplay guest 120
+waitgameplay host 60
+both debug godmode 1
+host debug time 43200
+waitlog host 'world_lua=event=relief; role=host; step=state_tx; alive=1; type=2;' 60
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2;' 90
+host run relief_census continue
+guest run relief_census continue
+host run relief_status
+guest run relief_status
+guest expect relief_sync;on=1;role=guest;type=2;.*;v0=1;
+host run relief_face
+guest run relief_face
+wait 3000
+both capture m3-relief-continue
+guest press tab
+wait 2500
+guest press 3
+wait 2000
+guest press enter
+wait 2000
+guest capture m3-idroid-supply
+guest press s
+wait 800
+guest capture m3-idroid-s1
+guest press s
+wait 800
+guest capture m3-idroid-s2
+guest press s
+wait 800
+guest capture m3-idroid-s3
+guest press enter
+wait 500
+guest capture m3-idroid-select
+wait 1200
+guest capture m3-idroid-select2
+waitlog guest 'world_lua=event=relief; role=guest; step=refused; path=idroid_drop_(vehicle|loadout); via=menu_inactive;' 5
+guest press tab
+wait 2500
+guest capture m3-idroid-closed
+host run relief_arm 2 1227.17 25.84 -127.05 -1.571 fova1
+host expect relief_arm;type=2
+logmark both
+host worldtrigger goto=30020 goto_lz=0
+waitmission host 30020 300
+waitmission guest 30020 180
+waitgameplay host 150
+waitgameplay guest 150
+both debug godmode 1
+host debug time 43200
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=2; vt=2; paint=5;' 40
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2; vt=2; paint=5;' 40
+host run relief_census paint
+guest run relief_census paint
+host run relief_face
+guest run relief_face
+wait 3000
+both capture m3-relief-paint
+state

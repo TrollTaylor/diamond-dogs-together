@@ -52,7 +52,8 @@ if not t.announced then
     log(fmt("step=tx;id=%.0f;src=%d;next=%d;kind=%d", t[1], t[3], t[4], t[2]))
 end
 if not t.values then return end
-for _ = 1, 32 do
+-- 128 per frame (M1 added 40 buddy values): a seed stream still ends within two frames.
+for _ = 1, 128 do
     local v = t.values[t.i]
     if not v then
         if not W.tx(OP.SEEDS_END, t[1], t[4], #t.values, t.digest) then return end
@@ -137,9 +138,17 @@ end
 function F.applySeeds(t)
 local s = F.seeds[t[1]]
 if not s or not s.ready or s.mission ~= t[4] then return false end
+-- M1 (world_companion.lua): the host's buddy keys only with companion_host_owned; the guest's
+-- own buddy vars are kept first (its saves write them).
+local C = W.companion
+local buddy = C and C.applies and C.applies() and C.keep("seed")
+-- M3 (world_relief_sync.lua): the host's relief carry and paint keys only with world_relief; the
+-- guest's own are kept first (its saves write them).
+local R = W.reliefSync
+local relief = R and R.applies and R.applies() and R.keep("seed")
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
-    if not key[5] then
+    if not key[5] and (key[6] == nil or key[6] == "buddy" and buddy or key[6] == "relief" and relief) then
     local data = S.data(key)
     if key[2] then
         local array = W.get(data, key[1])
@@ -150,6 +159,8 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
+if buddy then C.seeded(t[4], t[2]) end
+if relief then R.seeded(t[4], t[2]) end
 return true
 end
 -- F.hostDeploy is not cleared here: F.tick owns the held sortie.
@@ -227,8 +238,11 @@ local ok, ready = pcall(F.applySeeds, F.current)
 if not ok then W.fail(ready) end
 return ok and ready
 end
--- The held host sortie: released when paired, when nobody can come, after 120 s,
--- or when world sync stops (LEVEL 0, W.fail: world_sync calls this while inactive).
+-- The companion module's wait for the partner's character (world_companion.lua F.waitPeer).
+local function waiting(now) return type(F.waitPeer) == "function" and F.waitPeer(now) == true end
+-- The held host sortie: released when paired (and the partner's companion character is in, at
+-- most 10 s), when nobody can come, after 120 s, or when world sync stops (LEVEL 0, W.fail:
+-- world_sync calls this while inactive).
 function F.hold(now)
 local hd = F.hostDeploy
 if not hd then return end
@@ -236,7 +250,7 @@ now = now or W.now()
 if hd.mission ~= W.mission or not W.host then
     F.hostDeploy = nil
     log(fmt("step=deploy_held;reason=stale;mission=%s", tostring(hd.mission)))
-elseif W.paired or not F.enabled or not W.active then
+elseif (W.paired and not waiting(now)) or not F.enabled or not W.active then
     F.hostDeploy = nil
     local live = W.active and F.enabled
     F.deploying = live and W.paired and W.eff >= 3 or false
@@ -431,9 +445,11 @@ if type(vanillaDeploy) == "function" then
                 why, p = F.alone()
                 if why then solo(why, target); return F.originalDeploy(...) end
             end
-            if not W.paired or W.eff < 3 then
+            local character = W.paired and W.eff >= 3 and waiting(now)
+            if not W.paired or W.eff < 3 or character then
                 F.hostDeploy = {n = select("#", ...), mission = W.mission, target = target or 0, at = now, checkAt = now, notedAt = now, ...}
-                log(fmt("step=deploy_wait;reason=ready;target=%s;partner=%s", tostring(target or 0), p and tostring(p.mission) or "nil"))
+                log(fmt("step=deploy_wait;reason=%s;target=%s;partner=%s", character and "character" or "ready", tostring(target or 0),
+                    p and tostring(p.mission) or "nil"))
                 if not W.paired then note(2, target or 0, 0) end
                 return
             end
@@ -482,6 +498,16 @@ end
 local load, loadCheck = W.get(TppMission, "Load"), W.get(TppMission, "LoadWithChunkCheck")
 if type(load) == "function" then
     TppMission.Load = function(nextMission, ...)
+        -- M1: the host's Quiet lock rewrite before its seeds; a guest's own buddy back on a solo load.
+        if W.companion then
+            local ok, err = pcall(W.companion.load, nextMission, on() and (W.host or F.current ~= nil))
+            if not ok then W.log("event=companion;step=error;at=load;msg=" .. string.sub(tostring(err), 1, 80)) end
+        end
+        -- M3: the host's relief seed line; a guest's own relief vars back on a solo load.
+        if W.reliefSync then
+            local ok, err = pcall(W.reliefSync.load, nextMission, on() and (W.host or F.current ~= nil))
+            if not ok then W.log("event=relief;step=error;at=load;msg=" .. string.sub(tostring(err), 1, 80)) end
+        end
         if on() and W.host then
             local ok, ready = pcall(F.sendSeeds, nextMission)
             if not ok then W.fail(ready); return end

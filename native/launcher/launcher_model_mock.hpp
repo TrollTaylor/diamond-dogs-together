@@ -6,7 +6,8 @@
 // closing, the Tools results and errors. It never touches the disk, Steam,
 // the registry or the game.
 //
-// Timeline at speed 1 (seconds): setup 1.2 + 1.8 + 1.0 + 6.0; the game starts
+// Timeline at speed 1 (seconds): setup 1.2 + 1.8 + 1.0 + 6.0 (it starts by
+// itself on the first tick while needed, like the real model); the game starts
 // 4 s after Host/Join; the partner connects 5 s into the game; a save handoff
 // runs from 14 s to 26 s; the game closes by itself after 90 s; tidying up
 // takes 5 s, then the launcher is ready again.
@@ -19,10 +20,10 @@
 namespace ddt {
 
 enum class MockScenario {
-    first_run,       // needs_setup (the default)
+    first_run,       // needs_setup (the default); the first tick starts the setup
     ready,           // already set up
     wrong_folder,    // not_in_game_folder; "Check again" moves on to needs_setup
-    setup_fails,     // the last setup step fails once; the second try works
+    setup_fails,     // the last setup step fails once (it waits for Try again); the second try works
     error,           // error phase; "Check again" fixes it
     steam_offline,   // Host and Join fail with the Steam sentence
     partner_drops,   // the partner leaves 34 s into the game
@@ -71,6 +72,24 @@ public:
     void cancel_update() override;
     void set_mock_update_info(const UpdateInfo& info);
 
+    // ---- Debug mode and the local two-window test ----------------------------
+    // The second folder is accepted when it is kGuestDir (or another folder
+    // named like an MGSV copy); a run lasts 120 s of the simulated clock.
+    bool debug() const override;
+    void set_debug(bool on) override;
+    std::string local_test_folder() const override;
+    void set_local_test_folder(const std::string& folder) override;
+    LocalTestCheck check_local_test() const override;
+    void refresh_local_test() override;   // nothing to do: the mock computes its check live
+    bool start_local_test(std::string& error_out) override;
+    LocalTestView local_test() const override;
+    void arrange_local_test() override;
+    static constexpr const char kGuestDir[] = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\MGS_TPP_guest";
+    // A local test `seconds` after Start local test.
+    void jump_to_local_test(double seconds);
+    // The second folder's check still running (the real model checks on its own thread).
+    void set_mock_checking(bool on);
+
     // ---- Hooks for tests and the screenshot driver -------------------------
     // The player's own (synthetic) SteamID64 and a valid partner code.
     static constexpr std::uint64_t kOwnSteamId = 76561197960265728ull + 104729ull;
@@ -113,6 +132,12 @@ private:
     std::string last_error_;
     bool has_previous_save_ = true;
     UpdateInfo update_info_;
+    bool debug_ = false;
+    bool mock_checking_ = false;
+    std::string local_folder_;
+    bool local_active_ = false;
+    double local_start_ = 0.0;
+    LocalTestView local_last_;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel(const MockOptions& options);

@@ -250,8 +250,45 @@ foreach($ok in @('world_vehicle_gone=1','world_vehicle_gone=0','host:world_vehic
 foreach($bad in @('world_vehicle_gone=2','world_vehicle_gone=','world_vehicle_gone=on','both:world_vehicle_gone=1','world_vehicle_gones=1')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
+# M3 sortie vehicle: world_relief=0|1 (lab and play) in both -LabSetting allow-lists and the scenario line.
+foreach($ok in @('world_relief=1','world_relief=0','host:world_relief=1','guest:world_relief=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('world_relief=2','world_relief=','world_relief=on','both:world_relief=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting world_relief=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting world_relief=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_relief=0|1 only'
 Assert-True ('labsetting world_vehicle_gone=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_gone=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_gone=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_gone=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_gone=0|1 only'
+# M4: world_vehicle_state=0|1 (the VEHICLE_STATE world op, lab and play) likewise (vehicle-state.txt).
+foreach($ok in @('world_vehicle_state=1','world_vehicle_state=0','host:world_vehicle_state=1','guest:world_vehicle_state=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('world_vehicle_state=2','world_vehicle_state=','world_vehicle_state=on','both:world_vehicle_state=1','world_vehicle_states=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting world_vehicle_state=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting host world_vehicle_state=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting world_vehicle_state=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_state=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_state=0|1 only'
+# M4 review: world_vehicle_wreck=0|1 (VEHICLE_GONE's wreck parity, lab and play, off unless named) likewise (vehicle-state.txt).
+foreach($ok in @('world_vehicle_wreck=1','world_vehicle_wreck=0','host:world_vehicle_wreck=1','guest:world_vehicle_wreck=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('world_vehicle_wreck=2','world_vehicle_wreck=','world_vehicle_wreck=on','both:world_vehicle_wreck=1','world_vehicle_wrecks=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting world_vehicle_wreck=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_wreck=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting world_vehicle_wreck=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_wreck=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_wreck=0|1 only'
+# The vehicle decisions of 2026-10-29: world_loadout_block (D11), world_vehicle_break (D12), world_vehicle_credit (D14), each 0|1.
+foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit')){
+    foreach($ok in @("$vk=1","$vk=0","host:$vk=1","guest:$vk=0")){
+        Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+    }
+    foreach($bad in @("$vk=2","$vk=","$vk=on","both:$vk=1","${vk}s=1")){
+        Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+    }
+    Assert-True ("labsetting $vk=1" -cmatch $lineMatch.Groups[1].Value -and "labsetting guest $vk=0" -cmatch $lineMatch.Groups[1].Value -and
+        "labsetting $vk=2" -cnotmatch $lineMatch.Groups[1].Value -and "labsetting both $vk=1" -cnotmatch $lineMatch.Groups[1].Value) "scenario labsetting $vk=0|1 only"
+}
 Assert-True ('labsetting partner_placed_census=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses an invalid placed census bool'
 Assert-True ('labsetting partner_native_placed=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting partner_native_arm=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid WS4 v1 bools'
 Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and
@@ -822,16 +859,26 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
     foreach($step in @('titlemenu both 240','titlemenu host 5','titlemenu guest 400','title guest 200','title host','title','title 240',
         'waitlog host ^save_handoff= 30',"waitlog guest 'save_handoff=exit; how=wm_close' 60","waitlog host 'save_handoff=offer; ' 60",
         'expectstate guest handoff ^staged$','expectstate guest mission ^40050$','expectstate host travel_unlocked ^0$','expectstate guest handoff_pct ^(100|[1-9]?[0-9])$',
-        'waitexit guest 90','waitexit host 5','applyhandoff guest')){
+        'waitexit guest 90','waitexit host 5','applyhandoff guest','logmark host','logmark guest','logmark both')){
         $steps=@($step);$failure=$null;try{& $validator}catch{$failure=$_.Exception.Message}
         Assert-True (!$failure) ('phase-2 step admitted: '+$step+' '+$failure)
     }
     foreach($step in @('title both','title both 240','title guest 1','title guest x','titlemenu guest 1','titlemenu guest','titlemenu guest 401','titlemenu all 240',
         'TITLEMENU both 240','waitexit both 60','waitexit guest 4','waitexit guest','applyhandoff host','applyhandoff both','applyhandoff','applyhandoff guest now',
         'expectstate guest secret x','expectstate both mission 1','expectstate guest mission','expectstate guest mission (','expectstate guest Mission 1',
-        'waitlog both x 30','waitlog host x','waitlog host ( 30',"waitlog host '' 30",'waitlog host x 401','waitlog host x 0','waitlog host x y')){
+        'waitlog both x 30','waitlog host x','waitlog host ( 30',"waitlog host '' 30",'waitlog host x 401','waitlog host x 0','waitlog host x y',
+        'logmark','logmark all','logmark host 5','LOGMARK host','host logmark')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('phase-2 step refused: '+$step)
+    }
+    # logmark (M4 review): one role or both, nothing else.
+    foreach($step in @('logmark host','logmark guest','logmark both')){
+        $steps=@($step);$failure=$null;try{& $validator}catch{$failure=$_.Exception.Message}
+        Assert-True (!$failure) ('logmark admitted: '+$step+' '+$failure)
+    }
+    foreach($step in @('logmark','logmark all','logmark host 5','LOGMARK both','host logmark')){
+        $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
+        Assert-True $failed ('logmark refused: '+$step)
     }
     foreach($name in @('handoff-stage.txt','handoff-restart.txt','handoff-after-restart.txt','travel-lock.txt')){
         Assert-True (@($scenarioFiles|Where-Object{$_.Name -ceq $name}).Count -eq 1) ('shipped phase-2 scenario '+$name)
@@ -1602,7 +1649,7 @@ try {
     # Invoke-WorkerScenario: waitlog, expectstate, waitexit and applyhandoff helper bodies.
     & {
         foreach($name in @('Add-ScenarioExpectation','Get-ScenarioStepRoles','ConvertFrom-ScenarioPatternTokens','New-ScenarioLogCursor','Read-ScenarioLogLines',
-            'Wait-ScenarioLog','Get-ScenarioStateValue','Get-ScenarioRoleLease','Wait-ScenarioRoleExit','Get-ScenarioHandoffSlots','Get-ScenarioHandoffSetSha256',
+            'Wait-ScenarioLog','Set-ScenarioLogMark','Get-ScenarioStateValue','Get-ScenarioRoleLease','Wait-ScenarioRoleExit','Get-ScenarioHandoffSlots','Get-ScenarioHandoffSetSha256',
             'ConvertTo-ScenarioUtc','Test-ScenarioHandoffStage','Get-ScenarioSaveHashes','Test-ScenarioSameMap','Format-ScenarioMap','New-ScenarioHandoffApply','Invoke-ScenarioHandoffApply')){
             $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
             Assert-True ($definition.Count -eq 1) ('actual phase-2 scenario helper '+$name)
@@ -1613,11 +1660,11 @@ try {
             $scenarioText.Contains("foreach(`$role in 'host','guest'){if(!`$exitedRoles.ContainsKey(`$role)){Release-RoleFinally `$role}}") -and
             $scenarioText.Contains('if($stop -and $stop.Closed){$pendingHandoff=Invoke-ScenarioHandoffApply $pendingHandoff}')) 'the runner fails fast on an exited role and applies only after a closed Stop'
         $expectations=[Collections.Generic.List[string]]::new();$expectFailures=[Collections.Generic.List[string]]::new()
-        $runId=$id;$exitedRoles=@{};$clock=[pscustomobject]@{now=[int64]1000000};$repo=$RepoRoot
+        $runId=$id;$exitedRoles=@{};$scenarioLogMarks=@{};$clock=[pscustomobject]@{now=[int64]1000000};$repo=$RepoRoot
         function Get-ScenarioTick{return $clock.now}
         function Start-Sleep([int]$Milliseconds){$clock.now+=$Milliseconds}
         # Step roles: a role that left through waitexit may only be read (waitlog) or applied.
-        foreach($case in @(@('wait 100',''),@('state',''),@('waitlog guest x 5',''),@('applyhandoff guest',''),@('title','host,guest'),@('title 200','host,guest'),
+        foreach($case in @(@('wait 100',''),@('state',''),@('waitlog guest x 5',''),@('logmark both',''),@('logmark guest',''),@('applyhandoff guest',''),@('title','host,guest'),@('title 200','host,guest'),
             @('title guest 200','guest'),@('titlemenu both 240','host,guest'),@('titlemenu host 240','host'),@('waitmission guest 30010 300','guest'),
             @('expectstate guest mission x','guest'),@('waitexit guest 90','guest'),@('placebehind host guest 6','host,guest'),
             @('heldcapture host guest w lbl 1','host,guest'),@('both press enter','host,guest'),@('guest press enter','guest'),@('host run status','host'))){
@@ -1649,6 +1696,36 @@ try {
         [IO.File]::AppendAllText($log,"; how=wm_close`r`n")
         Assert-True ((@(Read-ScenarioLogLines $cursor) -join '|') -ceq 'partial save_handoff=exit; how=wm_close') 'a completed partial line is read whole'
         Assert-True ((Wait-ScenarioLog 'host' 'save_handoff=exit; how=wm_close' 1) -ceq 'partial save_handoff=exit; how=wm_close') 'waitlog matches anywhere in the line'
+        # logmark (review of 2026-10-29: a phase's pattern matched an earlier phase's line): later waitlogs of that
+        # role read from the mark, the other role still from the session start; a mark never moves back.
+        [IO.File]::AppendAllText($log,"relief; step=remove; why=vehicle_gone; phase=D`r`n")
+        Set-ScenarioLogMark 'host'
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'step=remove; why=vehicle_gone;' 1)) 'after a mark an earlier phase line never matches'
+        [IO.File]::AppendAllText($log,"relief; step=remove; why=vehicle_gone; phase=E`r`n")
+        Assert-True ((Wait-ScenarioLog 'host' 'step=remove; why=vehicle_gone;' 1) -ceq 'relief; step=remove; why=vehicle_gone; phase=E') 'waitlog reads from the mark'
+        Assert-True ((Wait-ScenarioLog 'host' '^save_handoff=offer; ' 1) -eq $null) 'the session start lines are before the mark'
+        [IO.File]::AppendAllText($log,"partial relief; step=placed")
+        Set-ScenarioLogMark 'host'
+        [IO.File]::AppendAllText($log,"; why=far`r`n")
+        Assert-True ((Wait-ScenarioLog 'host' 'step=placed; why=far' 1) -ceq 'partial relief; step=placed; why=far') 'a mark stays at the last complete line'
+        $guestLog=Join-Path $guestGame 'mgs-coop\script-observer.log'
+        [IO.File]::WriteAllText($guestLog,"guest phase=A`r`n")
+        Assert-True ((Wait-ScenarioLog 'guest' 'phase=A' 1) -ceq 'guest phase=A') 'the other role still reads from the session start'
+        Remove-Item -LiteralPath $guestLog
+        $scenarioLogMarks=@{}
+        # logmark (M4 review: post-event expectations were met by lines written before the event): later waitlog
+        # steps of that role read only lines completed after the mark (it sits at the last complete line's end).
+        [IO.File]::AppendAllText($log,"world_lua=event=vehicle_state; step=tx; why=moved; seq=16`r`npartial world_lua=event=vehicle_state; step=tx; why")
+        Assert-True ((Wait-ScenarioLog 'host' 'why=moved; seq=16' 1) -ceq 'world_lua=event=vehicle_state; step=tx; why=moved; seq=16') 'before a mark waitlog reads from the session offset'
+        Set-ScenarioLogMark 'host'
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'why=moved' 1) -and $null -eq (Wait-ScenarioLog 'host' 'save_handoff=offer' 1)) 'after logmark the earlier lines no longer meet a waitlog'
+        [IO.File]::AppendAllText($log,"=moved; seq=57`r`n")
+        Assert-True ((Wait-ScenarioLog 'host' 'why=moved' 1) -ceq 'partial world_lua=event=vehicle_state; step=tx; why=moved; seq=57') 'a line completed after the mark meets it'
+        Set-ScenarioLogMark 'host'
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'seq=57' 1)) 'a second mark moves the start on'
+        $scenarioLogMarks['host']=[long]0
+        Assert-True ($null -eq (Wait-ScenarioLog 'host' 'xfer=OLD' 1) -and $null -ne (Wait-ScenarioLog 'host' 'seq=16' 1)) 'a mark never reads before the session offset'
+        $scenarioLogMarks=@{}
         [IO.File]::WriteAllText($log,"short`r`n")
         Assert-Throws {Read-ScenarioLogLines $cursor} 'a log truncated below the cursor refuses'
         $sessionRecord.roles.host.log_offsets['script-observer.log'].path=Join-Path $fixture 'elsewhere.log'

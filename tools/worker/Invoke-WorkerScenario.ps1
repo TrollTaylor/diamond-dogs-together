@@ -23,9 +23,12 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    title mission ends the presses before an Enter could become Continue
   waitlog <host|guest> <regex> <timeoutSec>
                                    wait for a complete script-observer.log line of this session (from
-                                   session.json roles.<role>.log_offsets) matching the case-sensitive
-                                   regex; wrap it in single quotes when it holds spaces; nonfatal
-                                   (a timeout is listed in ExpectFailures)
+                                   session.json roles.<role>.log_offsets, or the role's latest logmark)
+                                   matching the case-sensitive regex; wrap it in single quotes when it
+                                   holds spaces; nonfatal (a timeout is listed in ExpectFailures)
+  logmark <host|guest|both>        later waitlog steps of the role read only lines completed after this
+                                   point (the end of its last complete script-observer.log line now), so
+                                   a line an earlier step caused cannot meet a post-event expectation
   expectstate <host|guest> <field> <regex>
                                    the role's fresh state.json field (mission, generation, gameplay_ready,
                                    terminating, world_level, world_paired, world_effective,
@@ -43,7 +46,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    run\guest-saves, keeping the old copy in run\guest-saves-replaced;
                                    the before/after hashes and checks go to scenario.json HandoffApply
   <role> press <keys> [ms]         keys joined by +: w a s d enter space escape e r shift ctrl 1 2 f
-                                   c q x z tab lmb rmb (c = crouch, hold c ~0.3 s = prone)
+                                   c q x z tab 3 lmb rmb (c = crouch, hold c ~0.3 s = prone; 3 = the
+                                   iDroid MISSIONS tab)
   <role> hold <keys> <ms> [nowait] hold for 1..1500 ms (repeat the step for longer holds);
                                    nowait continues at once (e.g. to capture mid-movement)
   <role> mouse <dx> <dy>           relative mouse move, each -1500..1500
@@ -141,8 +145,20 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    0.13.6 online-net-epoch: link_session_skew=0..999, the copy's link-session
                                    counter starts there (lab and the play rehearsal only; play refuses it), so
                                    one hidden session reproduces the counters of a relaunched peer;
-                                   0.13.6 online-vehicle-gone: world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play,
-                                   default 0; docs/world-sync-protocol.md section 16)
+                                   0.13.6 online-vehicle-gone: world_vehicle_gone=0|1, the host-authoritative VEHICLE_GONE world op (lab and play;
+                                   docs/world-sync-protocol.md section 16);
+                                   M4: world_vehicle_state=0|1, the host-authoritative VEHICLE_STATE world op (parked /
+                                   pushed / left vehicles and body life; lab and play, section 17); since M4 both are off in the lab
+                                   unless named and on in play unless named (Mother Base 30050 in the lab only);
+                                   M4 review: world_vehicle_wreck=0|1, VEHICLE_GONE's wreck parity for a destroyed vehicle
+                                   (SetBodyLife 0 on the receiver instead of a Despawn; lab and play, off unless named);
+                                   the decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; off in the lab unless named,
+                                   on in play unless named):
+                                   world_vehicle_break=0|1 (D12), world_vehicle_credit=0|1 (D14), world_loadout_block=0|1 (D11);
+                                   M1: companion_host_owned=0|1, the host's buddy is the session's companion (lab and
+                                   play, default 0; docs/vehicles-companions-design.md 6.1);
+                                   M3: world_relief=0|1, the host's sortie vehicle on both copies (lab and play,
+                                   default 0; docs/vehicles-companions-design.md 6.3)
 
 Save seeds: -SaveSeed real|lab for both copies, -HostSaveSeed / -GuestSaveSeed for one ('' = -SaveSeed),
 or -GuestSaveSeedRun <runId>: the guest copy of an earlier closed run (the second session of the
@@ -188,7 +204,7 @@ param(
     # copies, docs/test-boot.md), preserve in the play rehearsal.
     [ValidateSet('','preserve','low')][string]$GraphicsQuality='',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|lab_fast_boot=[01]|lab_boot=(off|(30010|30020|30050)( -?[0-9]{1,6}(\.[0-9]{1,3})?){3} -?[0-9]{1,3}(\.[0-9]{1,3})?( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?|(30010|30020|30050|40010|40020|40050)( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?))$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(off|(30010|30020|30050)( -?[0-9]{1,6}(\.[0-9]{1,3})?){3} -?[0-9]{1,3}(\.[0-9]{1,3})?( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?|(30010|30020|30050|40010|40020|40050)( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?))$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -249,7 +265,7 @@ if($bootLines.Count){
 }
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|debug_vehicle_door=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -270,7 +286,7 @@ if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_na
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')
-$keyNames=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','lmb','rmb')
+$keyNames=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','3','lmb','rmb')
 function Test-ScenarioKeys([string]$Keys){
     $parts=$Keys.Split('+')
     return $parts.Count -gt 0 -and @($parts|Where-Object{$keyNames -cnotcontains $_}).Count -eq 0 -and
@@ -293,6 +309,7 @@ foreach($line in $steps){
         '^title$' {$t.Count -eq 1 -or ($t.Count -eq 2 -and $t[1] -cmatch '^[0-9]{1,3}$' -and [int]$t[1] -ge 5 -and [int]$t[1] -le 400) -or
             ($t.Count -in 2,3 -and $t[1] -cin 'host','guest' -and ($t.Count -eq 2 -or ($t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400)))}
         '^titlemenu$' {$t[0] -ceq 'titlemenu' -and $t.Count -eq 3 -and $t[1] -cin 'host','guest','both' -and $t[2] -cmatch '^[0-9]{1,3}$' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
+        '^logmark$' {$t[0] -ceq 'logmark' -and $t.Count -eq 2 -and $t[1] -cin 'host','guest','both'}
         '^waitlog$' {$t[0] -ceq 'waitlog' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and $t[-1] -cmatch '^[0-9]{1,3}$' -and [int]$t[-1] -ge 1 -and [int]$t[-1] -le 400 -and
             $null -ne (ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)]))}
         '^expectstate$' {$t[0] -ceq 'expectstate' -and $t.Count -ge 4 -and $t[1] -cin 'host','guest' -and
@@ -928,6 +945,8 @@ function Reset-ScenarioPose([string]$Role){
 # ---- Join-fix phase 2 steps (docs/join-fix-phase2-spec.md P2-19, track E): titles,
 # log and state checks, an exit of one role and the coordinator's save handoff apply.
 $exitedRoles=@{}
+# logmark: role -> the script-observer.log byte offset later waitlog steps start from.
+$scenarioLogMarks=@{}
 $pendingHandoff=$null
 # A nonfatal check, recorded like expect: "<role> <verb> <pattern> <- <actual>".
 function Add-ScenarioExpectation([string]$Role,[string]$Verb,[string]$Pattern,[string]$Actual,[bool]$Met){
@@ -940,7 +959,7 @@ function Add-ScenarioExpectation([string]$Role,[string]$Verb,[string]$Pattern,[s
 # only waitlog (its log stays readable) and applyhandoff afterwards; state only reads.
 function Get-ScenarioStepRoles([string[]]$Tokens){
     $t=@($Tokens)
-    if($t[0] -cin 'wait','state','waitlog','applyhandoff'){return @()}
+    if($t[0] -cin 'wait','state','waitlog','logmark','applyhandoff'){return @()}
     if($t[0] -ceq 'title'){if($t.Count -ge 2 -and $t[1] -cin 'host','guest'){return @($t[1])};return @('host','guest')}
     if($t[0] -ceq 'boot'){return @('host','guest')}
     if($t[0] -ceq 'titlemenu'){if($t[1] -ceq 'both'){return @('host','guest')};return @($t[1])}
@@ -1009,7 +1028,8 @@ function Invoke-ScenarioTitle([string[]]$Roles,[int]$TimeoutSec){
 }
 # waitlog reads the role's script-observer.log from this session's start offset
 # (session.json roles.<role>.log_offsets, recorded by Start-WorkerSession), so a
-# line written before the step began still counts. Complete lines only.
+# line written before the step began still counts, unless a logmark step moved the
+# role's start on (never before the session offset). Complete lines only.
 function New-ScenarioLogCursor([string]$Role){
     $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
     if($owned['run_id'] -cne $runId){throw 'Worker log session ownership differs.'}
@@ -1019,7 +1039,15 @@ function New-ScenarioLogCursor([string]$Role){
     if($path -ine [IO.Path]::GetFullPath((Join-Path (Join-Path ([string]$row['game']) 'mgs-coop') 'script-observer.log'))){throw "[$Role] log path differs from its owned game folder."}
     $offset=[long]$source['offset']
     if($offset -lt 0){throw "[$Role] invalid script-observer.log offset."}
+    if($scenarioLogMarks.ContainsKey($Role) -and [long]$scenarioLogMarks[$Role] -gt $offset){$offset=[long]$scenarioLogMarks[$Role]}
     return [pscustomobject]@{role=$Role;path=$path;position=$offset;carry=[byte[]]::new(0);read=[long]0}
+}
+# logmark: the end of the role's last complete line now (the reader's own bounds and checks).
+function Set-ScenarioLogMark([string]$Role){
+    $cursor=New-ScenarioLogCursor $Role
+    do{$before=$cursor.position;$null=Read-ScenarioLogLines $cursor}while($cursor.position -gt $before)
+    $scenarioLogMarks[$Role]=[long]($cursor.position-$cursor.carry.Length)
+    Write-Host "  $Role log mark at $($scenarioLogMarks[$Role])"
 }
 function Read-ScenarioLogLines($Cursor){
     if(!(Test-Path -LiteralPath $Cursor.path -PathType Leaf)){return @()}
@@ -1323,6 +1351,7 @@ try {
             continue
         }
         if($t[0] -ceq 'titlemenu'){Invoke-ScenarioTitleMenu @(Get-ScenarioStepRoles $t) ([int]$t[2]);continue}
+        if($t[0] -ceq 'logmark'){foreach($r in @(if($t[1] -ceq 'both'){'host','guest'}else{$t[1]})){Set-ScenarioLogMark $r};continue}
         if($t[0] -ceq 'waitlog'){
             $pattern=ConvertFrom-ScenarioPatternTokens @($t[2..($t.Count-2)])
             $matched=Wait-ScenarioLog $t[1] $pattern ([int]$t[-1])

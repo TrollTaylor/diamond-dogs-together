@@ -1,0 +1,73 @@
+# M3 play rehearsal of the configuration a default flip would ship (-Mode play -WanSim bad; docs/vehicles-companions-design.md
+# section 9 M3): world_relief named 1 (its default is off again since the review of 2026-10-29; run 98e4af59 ran this with no
+# key named while it was on from 5a6bac8) and world_vehicle_gone NOT named, so VEHICLE_GONE runs at its default (off).
+# It covers the arrival and the refusal only: play refuses worldtrigger and the Fulton levers, so a drive, a mission end
+# and a removal in play need the worker to drive the real paths first (section 9 M3). The host's save is the launcher's co-op save copy (seed
+# coop-relief-30020, decision D10: a real sortie-prep choice, type 2 east LV, saved in Africa 30020 with the vehicle out);
+# the guest's is africa-jeep (a lab save in Africa, no relief vehicle), so both titles land in the Africa helicopter
+# (40020) and pair there (run b7d65be9 paired neither: its guest save was in Afghanistan). The host's continue into 30020
+# is a co-op travel: the guest's copy gets the host's relief vehicle through the follow seeds (step=seed_apply, then
+# arrived; source=seed) or through VEHICLE_SPAWN and a mid-mission LoadCarry (step=load; why=host_has; source=load).
+# Then the guest's real iDroid vehicle request (refused, with the toast). No lab levers (play refuses them).
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-relief-play-default.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed coop-relief-30020
+#        -GuestSaveSeed africa-jeep -Mode play -WanSim bad
+# Since the D11 review (2026-10-29) world_loadout_block (on in play) owns the guest's VEHICLES item, whatever world_relief
+# says: its guard and refusal lines are event=vehicle_rules then (world_vehicle_rules.lua); either module's lines match.
+labsetting world_relief=1
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=relief; role=host; step=arrived; type=2;' 120
+waitlog host 'world_lua=event=relief; role=host; step=state_tx; alive=1; type=2;' 120
+waitlog guest 'world_lua=event=relief; role=guest; step=arrived; type=2;' 150
+waitlog guest 'world_lua=event=(relief; role=guest|vehicle_rules); step=guard; path=idroid_drop(_vehicle)?; via=menu_inactive;' 60
+wait 3000
+host run relief_census play
+guest run relief_census play
+host run relief_status
+host expect relief_sync;on=1;role=host;type=2;.*;v0=1;
+guest run relief_status
+guest expect relief_sync;on=1;role=guest;type=2;.*;v0=1;
+host run position
+guest run position
+both capture m3d-relief
+host mouse 500 0
+guest mouse 500 0
+wait 800
+both capture m3d-relief-2
+host mouse 500 0
+guest mouse 500 0
+wait 800
+both capture m3d-relief-3
+host mouse 500 0
+guest mouse 500 0
+wait 800
+both capture m3d-relief-4
+# The guest's real vehicle request (run 1914e76c): iDroid, key 3 (MISSIONS), Enter (SUPPLY DROP), S S S (VEHICLES,
+# inactive), Enter -> step=refused; path=idroid_drop_vehicle and the toast.
+guest press tab
+wait 2500
+guest press 3
+wait 2000
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture m3d-idroid-vehicles
+guest press enter
+wait 500
+guest capture m3d-request-refused
+waitlog guest 'world_lua=event=(relief; role=guest|vehicle_rules); step=refused; path=idroid_drop_vehicle; via=menu_inactive;' 5
+guest press tab
+wait 2500
+wait 10000
+host run relief_census play2
+guest run relief_census play2
+state

@@ -121,6 +121,13 @@ int main(int argc, char** argv) {
         std::printf("world=%u\nworld_probe=%s\n", c.world, mgscoop::WorldProbeName(c.world_probe));
         // 0.13.6 online-vehicle-gone: the VEHICLE_GONE world op key (lab and play, default 0).
         std::printf("world_vehicle_gone=%d\n", c.world_vehicle_gone ? 1 : 0);
+        std::printf("companion_host_owned=%d\n", c.companion_host_owned ? 1 : 0);
+        std::printf("world_relief=%d\n", c.world_relief ? 1 : 0);
+        std::printf("world_vehicle_state=%d\n", c.world_vehicle_state ? 1 : 0);
+        std::printf("world_vehicle_wreck=%d\n", c.world_vehicle_wreck ? 1 : 0);
+        // The vehicle decisions of 2026-10-29 (D11, D12, D14), lab and play.
+        std::printf("world_loadout_block=%d\nworld_vehicle_break=%d\nworld_vehicle_credit=%d\n", c.world_loadout_block ? 1 : 0,
+                    c.world_vehicle_break ? 1 : 0, c.world_vehicle_credit ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),

@@ -1,6 +1,7 @@
 # Diamond Dogs Together launcher core (component B, launcher spec 2026-10-23):
 # the real LauncherModel (setup, sessions, save handoff, tools, the --watch
-# helper) on top of the archive utilities, plus its unit tests.
+# helper, the developer's local two-window test and its --local-watch helper)
+# on top of the archive utilities, plus its unit tests.
 if(NOT (WIN32 AND MSVC))
   return()
 endif()
@@ -9,6 +10,8 @@ add_library(ddt_core STATIC
   native/launcher/core/core_env_win32.cpp
   native/launcher/core/core_install.cpp
   native/launcher/core/core_json.cpp
+  native/launcher/core/core_localtest.cpp
+  native/launcher/core/core_localtest_win32.cpp
   native/launcher/core/core_log.cpp
   native/launcher/core/core_model.cpp
   native/launcher/core/core_paths.cpp
@@ -20,7 +23,7 @@ add_library(ddt_core STATIC
   native/launcher/core/core_util.cpp
   native/launcher/launcher_join_code.cpp)
 target_include_directories(ddt_core PUBLIC native native/launcher native/launcher/core)
-target_link_libraries(ddt_core PUBLIC ddt_archive mgs_coop_core shell32 ole32 user32 advapi32 winhttp)
+target_link_libraries(ddt_core PUBLIC ddt_archive mgs_coop_core shell32 ole32 user32 advapi32 winhttp ws2_32)
 # The program version (package.json must name the same X.Y.Z) and the build id.
 target_compile_definitions(ddt_core PRIVATE "DDT_CORE_VERSION=\"${PROJECT_VERSION}\"" "DDT_CORE_BUILD_ID=\"${MGS_COOP_BUILD_ID}\"")
 target_compile_options(ddt_core PRIVATE /W4 /WX /utf-8)

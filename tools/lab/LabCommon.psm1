@@ -425,8 +425,24 @@ $script:LabPartnerKeys = @(
             'remote_area_kill', 'kill_near', 'sleep_near', 'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
             'shared_death', 'host_continue', 'shared_checkpoint') },
     # 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): the host-authoritative
-    # VEHICLE_GONE world op (lab and play, default 0; written only when set).
+    # VEHICLE_GONE world op (lab and play, written only when set; M4: off in the lab, on in play unless named).
     @{ Key = 'world_vehicle_gone'; Json = 'world_vehicle_gone'; Kind = 'bool' },
+    # M1 host-owned companion (docs/vehicles-companions-design.md 6.1): the host's buddy is the
+    # session's one companion (lab and play, default 0 until proven; written only when set).
+    @{ Key = 'companion_host_owned'; Json = 'companion_host_owned'; Kind = 'bool' },
+    # M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): the host's relief vehicle on both
+    # copies (lab and play, default 0: on from 5a6bac8 until the review of 2026-10-29; written only when set).
+    @{ Key = 'world_relief'; Json = 'world_relief'; Kind = 'bool' },
+    # M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4; lab and play, off in the lab, on in play unless named).
+    @{ Key = 'world_vehicle_state'; Json = 'world_vehicle_state'; Kind = 'bool' },
+    # M4 review: VEHICLE_GONE's wreck parity (lab and play, off in both unless named).
+    @{ Key = 'world_vehicle_wreck'; Json = 'world_vehicle_wreck'; Kind = 'bool' },
+    # The user's vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua; lab and play: off in the lab unless named,
+    # on in play unless named): D12 the guest's unattributed break judged by the host, D14 the receiver's Fulton credit, D11
+    # the guest's LOADOUT and VEHICLES drop block.
+    @{ Key = 'world_vehicle_break'; Json = 'world_vehicle_break'; Kind = 'bool' },
+    @{ Key = 'world_vehicle_credit'; Json = 'world_vehicle_credit'; Kind = 'bool' },
+    @{ Key = 'world_loadout_block'; Json = 'world_loadout_block'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

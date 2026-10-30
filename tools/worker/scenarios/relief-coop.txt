@@ -1,0 +1,44 @@
+# M3 experiments E2 (a real sortie-prep choice), E18 control and E17 (FadeOut) with the launcher co-op save copy
+# (decision D10, 2026-10-28): seed coop-relief-30020 holds the host's 2026-10-23 two-PC save, written in Africa
+# (30020) while the relief vehicle 25600 he chose in sortie prep existed. Both roles start from the same copy, so
+# both copies Continue into the same checkpoint with their own index 0 restored (the route A situation).
+# E2:  census continue: vars.reliefVehicleCarryType (low byte) must name the pack of the restored 25600
+#      (GetVehicleType / the frames), and the sortie loadout slot bytes are logged for the vehicle id.
+# E18 control: both copies run the stock mission-end seize (relief_seize stock) at the 30020 mission end; the credit
+#      lines (TppTerminal OnFultonVehicle / AddTempResource) and the resources show whether both copies credit it.
+# E17: at the 30010 arrival (relief type 2 armed on both) the guest's copy removes index 0 with Seize {"FadeOut"}.
+# Coordinator only, hidden worker (never visible), MGS_GAME_LUA_DIR unset, under the shared verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/relief-coop.txt -SaveSeed coop-relief-30020
+labsetting nametag=1
+boot fast
+both debug godmode 1
+wait 3000
+host run relief_census continue
+guest run relief_census continue
+host run relief_face
+guest run relief_face
+wait 4000
+both capture relief-coop-continue
+host run relief_seize stock
+guest run relief_seize stock
+host run relief_arm 2 805 343 1636.5 0
+guest run relief_arm 2 805 343 1636.5 0
+host worldtrigger goto=30010 goto_lz=1
+waitmission host 30010 300
+waitmission guest 30010 180
+waitgameplay host 150
+waitgameplay guest 150
+wait 6000
+host run relief_census arrival
+guest run relief_census arrival
+host run relief_face
+guest run relief_face
+wait 4000
+both capture relief-coop-arrival
+guest run relief_remove fadeout
+wait 5000
+guest run relief_census removed
+host run relief_census removed
+both capture relief-coop-e17
+state

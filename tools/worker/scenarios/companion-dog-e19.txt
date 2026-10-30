@@ -1,0 +1,132 @@
+# M2 follow-up to run d937191f (docs/vehicles-companions-design.md 8.2): E19 with the protection lever held the whole
+# time, the D8 (b) save of the guest's own dead-buddy flags after the mirror died, and a second try at the host's dog
+# taking a guard down (kill commit/apply).
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-e19.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# Run d937191f: the call menu's "3: Get it" was selected (frame) while the host's dog stood 30 m away and nothing was
+# taken down; here the host's dog is called 5 m in front of the host (companion_lab call_here), onto the guard warped
+# there, before CALL + 3 (once after an aim, once while aiming). Then guard G2 and an alert: the guest prone, its copy
+# of the dog held 1 m from it toward the nearest soldier (near_guard shield) with SetDisableDamage sent (protect) for
+# the whole window, until the dog's Dead message on the guest's copy (run d937191f: 76 s of fire, deadBuddyType 0 -> 4,
+# buddyCommonFlag 32 -> 0). Then the dog back at the host's side on the guest's screen, and a host checkpoint: the
+# guest's save writes its own flags (save_own ... own_dead=0; live_dead=4).
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting debug_soldier_warp=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run godmode 1
+guest run godmode 1
+host run teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 1 7
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+host run teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 1 7
+wait 3000
+# --- kill (M2 commit/apply): G1 5 m in front of the host, the host's dog called onto it, CALL + 3 ---------------------
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+guest run companion_lab near_guard on
+guest expect ^near_guard;on=1
+guest run companion_lab mark kill
+host run companion_lab call_here
+host expect ^call_here;kind=dog;result=true;warp=1
+wait 2500
+both capture e19-dog-by-guard
+host run enemy mark nearest
+host hold rmb 1500 nowait
+wait 1400
+host hold rmb 1500 nowait
+wait 1400
+host release
+wait 300
+host hold q 1500 nowait
+wait 700
+host hold q 1500 nowait
+wait 300
+host press 3
+wait 300
+host capture e19-getit-pick
+wait 400
+host release
+wait 4000
+both capture e19-kill-1
+wait 6000
+host hold rmb 1500 nowait
+wait 700
+host hold rmb+q 1500 nowait
+wait 700
+host hold rmb+q 1500 nowait
+wait 300
+host capture e19-getit-aim-menu
+host press 3
+wait 300
+host capture e19-getit-aim-pick
+wait 400
+host release
+wait 4000
+both capture e19-kill-2
+waitlog host 'world_lua=event=obs; m=[A-Za-z]+; ent=[1-9][0-9]*; id=[0-9]+; att=buddy' 20
+waitlog host 'world_lua=event=commit; ent=[1-9][0-9]*; state=[1-9]; .*actor=host;' 10
+waitlog guest 'world_lua=event=apply; ent=[1-9][0-9]*; state=[1-9]; .*src=outcome;' 15
+both capture e19-kill-3
+host run buddy_status
+guest run buddy_status
+guest expect kdog
+# --- E19: G2, an alert, the guest prone behind its protected copy of the dog until the dog's Dead message ------------
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+host run cp_phase nearest alert
+host expect ^submitted_phase;
+wait 8000
+stance guest prone
+guest run companion_lab protect
+guest expect ^protect;on=1;
+guest run companion_lab near_guard shield
+guest expect ^near_guard;on=shield
+guest run companion_lab mark shield_prot
+wait 10000
+both capture e19-shield-1
+waitlog guest 'world_lua=event=companion_hurt; role=guest; msg=Dead;' 110
+guest capture e19-shield-dead
+wait 2500
+guest capture e19-shield-dead-2
+guest run buddy_status
+guest run companion_lab near_guard off
+guest run companion_lab mark after_dead
+stance guest stand
+wait 5000
+both capture e19-after-dead
+wait 3000
+guest mouse 1500 0
+wait 600
+guest capture e19-after-dead-2
+guest run buddy_status
+guest expect kdog
+# --- D8 (b): a host checkpoint; the guest's save writes its own dead-buddy flags ------------------------------------
+host run cp_phase nearest sneak
+wait 5000
+host worldtrigger world_probe=shared_checkpoint
+waitlog guest 'world_lua=event=companion; role=guest; step=save_own; slot=[0-9]+; own=horse; live=dog; n=([4-9]|[1-9][0-9]+); own_dead=0; live_dead=4;' 60
+host run buddy_status
+guest run buddy_status
+host run companion_status
+guest run companion_status
+host run world_status
+guest run world_status
+state

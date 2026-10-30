@@ -76,3 +76,31 @@ constexpr char world_place_guest_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_SOURCE@
 )MGS_WORLD";
+// M4 VEHICLE_STATE (after world_vehicle.lua whose helpers it uses).
+constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_STATE_SOURCE@
+)MGS_WORLD";
+// The user's vehicle decisions of 2026-10-29 (D11, D12, D14; CFG r[15] bits 8 / 16 / 32).
+constexpr char world_vehicle_rules_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_RULES_SOURCE@
+)MGS_WORLD";
+// M1 host-owned companion (lab key companion_host_owned, CFG r[16]).
+constexpr char world_companion_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_SOURCE@
+)MGS_WORLD";
+// M2 D-Dog hold and the companion lab levers (split from world_buddy.lua and world_companion.lua).
+constexpr char world_companion_dog_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_DOG_SOURCE@
+)MGS_WORLD";
+// D7 dog guard: the guest's copy of the host's D-Dog cannot be hurt, follows the host dog's state, restore fallback.
+constexpr char world_companion_guard_source[] = R"MGS_WORLD(
+@MGS_WORLD_COMPANION_GUARD_SOURCE@
+)MGS_WORLD";
+// M3 experiments E2/E17/E18: the sortie (relief) vehicle lab levers and census (spliced last).
+constexpr char world_relief_source[] = R"MGS_WORLD(
+@MGS_WORLD_RELIEF_SOURCE@
+)MGS_WORLD";
+// M3 sortie vehicle on both copies (route A; lab key world_relief, CFG r[17]).
+constexpr char world_relief_sync_source[] = R"MGS_WORLD(
+@MGS_WORLD_RELIEF_SYNC_SOURCE@
+)MGS_WORLD";

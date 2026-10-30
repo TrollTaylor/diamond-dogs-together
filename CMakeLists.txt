@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.14.3 LANGUAGES CXX)
+project(mgs_coop VERSION 0.14.4 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER "Private copied-save worker: observe native actor reactivation completion" OFF)
 if(MGS_LOCAL_NATIVE_ACTIVATION_OBSERVER AND (NOT MGS_BACKGROUND_WORKER OR NOT MGS_LOCAL_OFFLINE_EQUIPMENT_TEST OR NOT MGS_LOCAL_STOCK46_PRELOAD_TEST OR NOT MGS_LOCAL_STOCK46_WRITER_TEST))
@@ -126,7 +126,7 @@ if(MSVC)
   target_compile_options(heap_trial_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME heap_trial_tests COMMAND heap_trial_tests)
-add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/downed_damage_policy.cpp native/downed_player_policy.cpp native/buddy_pose.cpp native/partner_reload.cpp native/partner_slots.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_ride_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp native/partner_aim.cpp native/save_handoff_wire.cpp native/save_handoff_core.cpp native/save_handoff_state.cpp native/lab_boot.cpp)
+add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/downed_damage_policy.cpp native/downed_player_policy.cpp native/buddy_pose.cpp native/dog_guard_policy.cpp native/partner_reload.cpp native/partner_slots.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_ride_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp native/partner_aim.cpp native/save_handoff_wire.cpp native/save_handoff_core.cpp native/save_handoff_state.cpp native/lab_boot.cpp)
 target_include_directories(mgs_coop_core PUBLIC native/include)
 # The hidden worker's one-PC play rehearsal (lab_config LabParseOptions):
 # only background-worker builds let GetLabConfig accept play_rehearsal=1.
@@ -199,7 +199,7 @@ foreach(_mgs_handoff_test save_handoff_wire_tests save_handoff_core_tests)
   add_test(NAME ${_mgs_handoff_test} COMMAND ${_mgs_handoff_test})
 endforeach()
 # Offline partner spike (docs/offline-partner-spike-plan.md): portable receipts, input logic and interpolation.
-foreach(_mgs_partner_test buddy_pose_tests partner_receipt_tests partner_input_tests partner_native_tests partner_equip_wire_tests partner_ride_wire_tests partner_recon_tests partner_dmmap_tests pose_interp_tests partner_source_turns_tests partner_action_events_tests partner_action_link_tests partner_upper_pipeline_tests)
+foreach(_mgs_partner_test buddy_pose_tests dog_guard_tests partner_receipt_tests partner_input_tests partner_native_tests partner_equip_wire_tests partner_ride_wire_tests partner_recon_tests partner_dmmap_tests pose_interp_tests partner_source_turns_tests partner_action_events_tests partner_action_link_tests partner_upper_pipeline_tests)
   add_executable(${_mgs_partner_test} tests/${_mgs_partner_test}.cpp)
   target_link_libraries(${_mgs_partner_test} PRIVATE mgs_coop_core)
   if(MSVC)
@@ -419,7 +419,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # World sync (docs/world-sync-protocol.md): each chunk at most 32000 bytes
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at a line break, so each literal stays under the MSVC literal limit.
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")
@@ -563,7 +563,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
   add_test(NAME steam_identity_tests COMMAND steam_identity_tests)
   # Offline partner spike: guarded player-instance access and the log-only crash probe.
-  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/vehicle_door.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp native/partner_ui_filter.cpp native/partner_gesture_lever.cpp)
+  add_library(mgs_partner_player STATIC native/partner_player.cpp native/coop_carry.cpp native/coop_passenger.cpp native/coop_vehicle_mirror.cpp native/vehicle_native_protection.cpp native/horse_physical_probe_glue.cpp native/horse_cargo_flow_probe.cpp native/coop_sleep.cpp native/carry_info.cpp native/sleep_info.cpp native/sleep_partner_test.cpp native/vehicle_info.cpp native/downed_player.cpp native/downed_damage.cpp native/dog_guard.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_support_guard.cpp native/partner_support_equip.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_ride_seat.cpp native/partner_vehicle.cpp native/partner_board.cpp native/vehicle_door.cpp native/partner_pass_camera.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp native/partner_placed_census.cpp native/partner_icon.cpp native/partner_gesture.cpp native/partner_ui_filter.cpp native/partner_gesture_lever.cpp)
   target_include_directories(mgs_partner_player PUBLIC native/include PRIVATE native)
   target_compile_options(mgs_partner_player PRIVATE /W4 /WX)
   if(MGS_BACKGROUND_WORKER)

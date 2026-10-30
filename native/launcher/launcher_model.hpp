@@ -63,6 +63,20 @@ enum class UpdateStatus {
     error
 };
 
+// The developer's local two-window test (Settings > Debug mode, Play > Local test).
+struct LocalTestCheck {
+    bool ok = false;        // Start local test can be pressed
+    std::string message;    // what starting does, or what is needed first
+    bool checking = false;  // the second folder is being checked (on its own thread)
+};
+struct LocalTestView {
+    bool active = false;    // a local test owns both games (until they exit and the folders are restored)
+    bool failed = false;    // stopped by a safety check
+    bool starting = false;  // Start local test is preparing both folders and starting both games (its own thread)
+    std::string headline;   // "" when there was no local test in this window
+    std::string detail;     // the status of both games; after a test, how it ended
+};
+
 struct UpdateInfo {
     UpdateStatus status = UpdateStatus::idle;
     std::string current_version;
@@ -75,7 +89,9 @@ struct UpdateInfo {
     std::uint64_t download_size = 0;
     std::uint64_t bytes_downloaded = 0;
     float progress = 0.0f;
-    std::string error;
+    std::string error;                // a sentence for the player
+    std::string updated_to;           // right after a self-update: the version now running ("" otherwise)
+    bool cancelling = false;          // downloading: Cancel was pressed, the download is stopping
 };
 
 class LauncherModel {
@@ -128,9 +144,50 @@ public:
     virtual void check_for_updates() = 0;
     virtual void start_update() = 0;
     virtual void cancel_update() = 0;
+
+    // ---- Debug mode and the local two-window test (2026-10-29) ---------------
+    // Settings > Debug mode shows developer tests (off by default, persisted
+    // with the launcher settings). With it on, Play offers the local test: two
+    // MGSV copies on this PC (this folder hosts as Snake, the second folder
+    // joins as Quiet), the PowerShell tools/dev/Play-LocalCoop.ps1 test natively.
+    virtual bool debug() const = 0;
+    virtual void set_debug(bool on) = 0;
+    // The second game folder ("" = none chosen), persisted.
+    virtual std::string local_test_folder() const = 0;
+    virtual void set_local_test_folder(const std::string& folder) = 0;
+    // The last check of the second folder (kept: it reads that copy's 166 MB game
+    // exe); refresh_local_test() checks again (the Local test tab or Settings >
+    // Debug coming into view, Check again on the tab). recheck() refreshes it too.
+    // The check runs on its own thread: `checking` until tick() has its result.
+    virtual LocalTestCheck check_local_test() const = 0;
+    virtual void refresh_local_test() = 0;
+    // Starts the test on its own thread (it hashes and copies files, takes the
+    // play locks and waits for both games): true once it is under way, false
+    // with `error_out` when the check refuses it. The phase is in_game
+    // (session_role() host) from then until both games have exited and the test
+    // files in both folders are put back. While it starts, local_test() is
+    // active and starting. A refusal found then ends it: local_test() is not
+    // active, failed, and its detail says why. A failed start that leaves a game
+    // running keeps the stopped run (local_test() active and failed).
+    virtual bool start_local_test(std::string& error_out) = 0;
+    virtual LocalTestView local_test() const = 0;
+    virtual void arrange_local_test() = 0;   // places both game windows again
+};
+
+// How the window was started (launcher_main.cpp): the restart after a
+// self-update and the developer flags of the update test.
+struct ModelStart {
+    std::uint32_t after_update = 0;   // --after-update <pid>: this exe replaced that launcher
+    std::string update_feed;          // --update-feed <url> (developer): this release feed instead of GitHub's
+    bool update_now = false;          // --update-now (developer): install a found update at once
+    // An updater before 0.14.4 just started this exe without --after-update
+    // (core_update.hpp OldExecutableFromRecentUpdate): the old launcher is still
+    // exiting, so its DiamondDogsTogether.exe.old may need a moment to delete.
+    bool old_exe_recent = false;
 };
 
 std::unique_ptr<LauncherModel> MakeMockModel();
 std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir);   // B
+std::unique_ptr<LauncherModel> MakeRealModel(const std::wstring& exe_dir, const ModelStart& start);
 
 }  // namespace ddt
