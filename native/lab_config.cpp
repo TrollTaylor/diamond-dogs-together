@@ -266,8 +266,8 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_loadout_block_given = true;
         if (!ok) result.world_loadout_block = false;
     }
-    // The vehicle fixes of 2026-10-29 (lab and play, off in both unless named until their FRAME proof and
-    // play rehearsal): D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
+    // The vehicle fixes of 2026-10-29 (lab and play, off in both unless named; see the defaults, step 8):
+    // D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
     else if (Equals(key, "world_vehicle_crew")) {
         ok = ParseBool(value, result.world_vehicle_crew);
         result.world_vehicle_crew_given = true;
@@ -963,16 +963,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
         if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
     }
-    // 8. The vehicle fixes of 2026-10-29, on in play unless named, off in the lab unless named:
-    // world_vehicle_damage (the guest's vehicle damage report; lab FRAME ac0f7656 on both copies; play rehearsal
-    // 247a4eed with -WanSim bad: the guest's round reported, applied 117 ms later and kept on both copies past the
-    // refresh; it acts only where VEHICLE_STATE runs) and world_vehicle_crew (D12, a soldier-crewed host copy wrecked at
-    // once; lab FRAME ac0f7656; play rehearsal 8995e351 with -WanSim bad, the guest's real C4, frames on both copies;
-    // it acts only with world_vehicle_break, where VEHICLE_GONE runs).
-    if (result.mode == LabMode::play) {
-        if (!result.world_vehicle_damage_given) result.world_vehicle_damage = true;
-        if (!result.world_vehicle_crew_given) result.world_vehicle_crew = true;
-    }
+    // 8. The vehicle fixes of 2026-10-29 (world_vehicle_damage, world_vehicle_crew) stay off in lab and play unless
+    // named (the review of 2026-10-29 turned their play defaults off again: the damage report's fire gate was never run
+    // against live AI fire, and the crew rule's per-type blast distance changed the path its play rehearsals proved).
     out = result;
     return true;
 }

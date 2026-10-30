@@ -1534,12 +1534,13 @@ int main() {
                 Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
                       (n + "=1 parses in play with no refusal bit").c_str());
             }
-            // Play defaults: world_vehicle_damage on in play unless named (lab FRAME ac0f7656 on both copies; the play
-            // rehearsal 247a4eed, -WanSim bad); world_vehicle_crew on in play unless named (lab FRAME ac0f7656; the play
-            // rehearsal 8995e351, -WanSim bad, frames on both copies; 247a4eed never reached the rule).
-            Check(vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
-                  "world_vehicle_damage defaults on in play");
-            Check(vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults on in play");
+            // Play defaults (review of 2026-10-29): both off in play unless named again. world_vehicle_damage: its fire gate
+            // was never run against live AI fire (every damage run after 846c1147 cleared the guards first), and each
+            // copy's guards hit vehicles on their own copy. world_vehicle_crew: the per-type blast distance (50 m for every
+            // type but the light vehicles, after ac0f7656's 25 m knockdown) changed the path its play rehearsals proved.
+            Check(!vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
+                  "world_vehicle_damage defaults off in play");
+            Check(!vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults off in play");
             const auto crewOff = Lab(play + "world_vehicle_crew=0\n");
             Check(crewOff.mode == mgscoop::LabMode::play && !crewOff.world_vehicle_crew && crewOff.world_vehicle_crew_given,
                   "a named world_vehicle_crew=0 keeps it off in play");
