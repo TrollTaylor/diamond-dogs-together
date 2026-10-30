@@ -1,0 +1,122 @@
+# Seat 1 drawn in the seat on the driver's copy (docs/vehicles-companions-design.md 8.33, branch wp/seat1-draw): body 1's
+# seat DM anchors on the driver's seat matrix for seat 1 (partner_ride_seat::AnchorSeat; the stock rule for a player in
+# seat 1, 0xB79A3F), not seat 1's own matrix where the FrontRight clips drew it one seat further right, outside the jeep.
+# SHIPPED play defaults (no labsetting line), -Mode play -WanSim bad. Host seed afgh-quiet, guest seed afgh-horse (no dog
+# in seat 1), the Wakh Sind jeep 25608 at its spawn pose (faces north; seat 1 door 574.36,1157.5 facing 96; seat 0 door
+# 577.20,1157.19 facing -84).
+#   A. The guest drives, the host takes seat 1: the guest's (driver's) copy parked, while the guest holds W, stopped;
+#      the host's own view of itself in seat 1.
+#   B. The host takes back seat 2 (left side): the guest's (driver's) copy draws it there (no regression).
+#   C. The roles swapped: the host drives, the guest takes seat 1 from the right side: the host's (driver's) copy
+#      parked, while the host holds W, stopped; the guest's own view.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7c-seat1-draw-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+# NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+both capture start
+# --- A. The guest drives, the host in seat 1 -----------------------------------------------------------------------
+logmark both
+guest debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host debug teleport 574.36 320.2 1157.5 96
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+host press e 150
+wait 4500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat_patch=applied; seat=1; anchor=0;' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 2500
+both capture a-parked
+guest hold w 2500 nowait
+wait 600
+guest burst a-drive 4 300
+host capture a-drive-p
+guest release
+wait 2500
+both capture a-stopped
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- B. The host in back seat 2 (left side) -------------------------------------------------------------------------
+logmark both
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 1500
+both capture b-back
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=off' 5
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+# --- C. The host drives, the guest in seat 1 (right side) -----------------------------------------------------------
+logmark both
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 4500
+host run vehicle_seats
+host expect vehicle;id=25608
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat_patch=applied; seat=1; anchor=0;' 10
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 2500
+both capture c-parked
+host hold w 2500 nowait
+wait 600
+host burst c-drive 4 300
+guest capture c-drive-p
+host release
+wait 2500
+both capture c-stopped
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+both capture c-exited
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture end
