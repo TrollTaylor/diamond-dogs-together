@@ -7,6 +7,10 @@
 #   A. The host drives, the GUEST in back seat 3 aims at the next nearest guard (2552560298, 21 m front-right): the
 #      8a920ec8 stock line (one stock shot cost the guest's copy 702; 299de3e1's re-aimed seat-3 shots cost 2106). If the
 #      host's D-Dog does not board this time the guest gets the front seat (seat 1, ON in play): the lines accept 1 or 3.
+# RESULT bd6b36c6 (m6m7d): NOT discriminating. From seat 2 the lever measured 4158955462 at 3.7 m (seat 3: 8.1 m), turned
+#   the host's camera into the rear wheel arch and the host never fired; the guest then hit 4158955462 (the nearest), a
+#   line not shown to hit in stock. Before a rerun: seat 2 on a line shown to hit in stock (lab 76bc4a1c: diagonal at
+#   rotY ~92, front-left at rotY ~-172) with a natural guard there, and the guest at 2552560298 with its first shot level.
 # Expected: S1 configured key=1 play=1, published (apply=1; source=key) on the seated shooter's copy, a shift line per
 # shot (age_ms, max_ms on it), a kill in each part and the jeep's life 2300 on BOTH copies after every shot and parked.
 # NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; two_drivers; pass_camera
