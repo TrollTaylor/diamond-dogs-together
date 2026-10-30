@@ -1,12 +1,12 @@
 # The play rehearsal of the vehicle review fixes of 2026-10-29 (docs/vehicles-companions-design.md section 8.15) in
-# mode=play over -WanSim bad, Africa, africa-jeep seed, no lab lever (play refuses them). world_vehicle_crew named (off
-# in play unless named since the review); every other vehicle key at its play default (world_vehicle_damage off).
+# mode=play over -WanSim bad, Africa, africa-jeep seed, no lab lever (play refuses them), no vehicle key named: every
+# vehicle key at its play default (world_vehicle_crew on again since 3929a6c, world_vehicle_damage off).
 #   1. D11 before PAIRED in play: both reach their titles (40020, paired there); the host's title Continue
 #      (titlecontinue: Enter only while its title runs) is followed by the guest; only the guest's loading screen is
 #      resumed (waitmission guest ... only), so the guest is in game unpaired while the host waits on its tips screen.
-#      The arrival marks the mission co-op: guard lines for 30020 before PAIRED, the guest's real iDroid path to
-#      LOADOUT and VEHICLES refused with both toasts (frames), the host's tips screen (frames); then the host's loading
-#      is resumed and the pair forms.
+#      The arrival marks the mission co-op: guard lines for 30020 before PAIRED; the guest moves 70 m west of the
+#      armoured vehicle, away from the alerted Masa Village guards; its real iDroid path to LOADOUT and VEHICLES refused
+#      with both toasts (frames), the host's tips screen (frames); then the host's loading is resumed and the pair forms.
 #   2. D12 crew with the blast distance by type: the guest's real C4 on the soldier-crewed armoured vehicle 25623 from
 #      behind (the host's copy's driver set to ignore the players first), detonated from 26 m: the host holds the
 #      request (break_hold why=crew_near near=partner blast_mm=50000), the guest moves 70 m away, the host stands 60 m
@@ -15,9 +15,13 @@
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-review-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# History: c6db67b8 (build 3d2fc8b, world_vehicle_crew named): part 1 met every expectation up to LOADOUT (refused with
+#   its toast 25.5 s after the guest's arrival, PAIRED 54.9 s after it) but the VEHICLES refusal: the seed's Masa Village
+#   guards were in combat at the guest's arrival (night) and their hits closed its iDroid; part 2 met every expectation
+#   (the hold at 24.7 m, the wreck once the guest stood 70 m away, frames on both). Now no key is named, the guest moves
+#   away from Masa Village before its iDroid, and VEHICLES follows LOADOUT after 3.5 s (the toasts have separate limits).
 # NEVER: step=error, viewer_changed, faults; an event=paired line for 30020 before the guest's refusals; break_safe or
 #        via=locator for 25623; a break_crew line before the guest's 70 m teleport; event=vehicle_damage step=on.
-labsetting world_vehicle_crew=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
 titlemenu both 240
@@ -40,8 +44,11 @@ guest debug godmode 1
 expectstate guest world_paired ^(False|false|0)$
 guest run position
 guest capture d11p-guest-onfoot
-# The arrival popups first (run d3f5ca56: a Tab during them opened the iDroid only after the last step).
+# Away from the alerted Masa Village guards (c6db67b8), 70 m west of the armoured vehicle (ground read in c0a385a5 and
+# c6db67b8); the arrival popups first (run d3f5ca56: a Tab during them opened the iDroid only after the last step).
+guest debug teleport -442.94 1.00 496.49 110
 wait 12000
+guest run position
 expectstate guest world_paired ^(False|false|0)$
 guest press tab
 wait 3000
@@ -60,7 +67,7 @@ wait 500
 guest capture d11p-guest-loadout-refused
 waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
 waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
-wait 10500
+wait 3500
 guest press s
 wait 800
 guest capture d11p-guest-vehicles
