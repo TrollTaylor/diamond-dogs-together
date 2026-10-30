@@ -75,6 +75,7 @@ host press e 150
 wait 3500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
 waitlog guest 'partner_ride_seat_patch=reverted;' 10
+both capture a-exited
 host run vehicle_seats
 host expect vehicle_not_riding
 # --- B. The host in a back seat (2 or 3) ---------------------------------------------------------------------------
