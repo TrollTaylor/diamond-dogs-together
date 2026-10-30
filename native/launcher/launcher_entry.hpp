@@ -41,4 +41,18 @@ bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int wait_ms
 // OldExecutableFromRecentUpdate): the window waits for that old launcher.
 bool OldLauncherFromRecentUpdate(const std::wstring& game_dir);
 
+// One launcher window per game folder (launcher_main.cpp ClaimSingleInstance):
+// claims the folder's single-instance mutex `name` and returns it owned (a
+// HANDLE), or nullptr when another window keeps the folder (the caller exits).
+// When another process holds it: waits up to wait_ms for it (the restart after
+// an update), then calls bring_forward(), which puts the window that holds the
+// folder in front and says whether it found one. When it found none, the
+// folder's last window is closing (0.14.4 review, round 2: a window closed
+// during setup is gone at once, but its process holds the folder until it has
+// ended its setup, about 50 ms) or the next one is still opening: it waits up
+// to no_window_wait_ms for the folder, then looks for that window once more.
+// A mutex abandoned by a process that ended counts as released.
+constexpr int kInstanceNoWindowWaitMs = 2000;
+void* ClaimFolderInstance(const std::wstring& name, int wait_ms, int no_window_wait_ms, const std::function<bool()>& bring_forward);
+
 }  // namespace ddt

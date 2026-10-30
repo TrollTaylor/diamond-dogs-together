@@ -1,13 +1,23 @@
 // Diamond Dogs Together launcher (C0): headless tests of the pure GUI logic
 // (navigation, character picker, HUD, Join field, code display, setup summary,
 // redraw pacing, command line), the join-code check and the mock model.
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "launcher_entry.hpp"
 #include "launcher_join_code.hpp"
 #include "launcher_model_mock.hpp"
 #include "launcher_ui_logic.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace {
 unsigned checks{}, failures{};
@@ -684,9 +694,132 @@ void TestMock() {
         Check(m.phase() == Phase::ready && ui::SummarizeSetup(m.setup_steps()).done == 4, "jump to ready");
     }
 }
+// One window per folder (ClaimFolderInstance, the claim launcher_main.cpp makes before its window opens), with real
+// named mutexes; the "other window" is a thread of this process that holds the folder's mutex.
+void TestFolderInstance() {
+    static int serial = 0;
+    auto unique_name = []() {
+        return L"Local\\ddt-ui-tests-instance-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++serial);
+    };
+    using Clock = std::chrono::steady_clock;
+    auto ms_since = [](Clock::time_point t) {
+        return static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t).count());
+    };
+    // The other window: holds the mutex until told to let go, then releases it (or ends without releasing: abandoned).
+    struct Holder {
+        std::wstring name;
+        bool release_on_end = true;
+        std::atomic<bool> held{false}, end{false};
+        std::thread thread, timer;
+        void start() {
+            thread = std::thread([this]() {
+                HANDLE h = CreateMutexW(nullptr, TRUE, name.c_str());
+                held = h != nullptr;
+                while (!end) Sleep(2);
+                if (h && release_on_end) ReleaseMutex(h);
+                if (h) CloseHandle(h);
+            });
+            for (int i = 0; i < 1000 && !held; ++i) Sleep(1);
+        }
+        void stop_after(int ms) {
+            timer = std::thread([this, ms]() {
+                Sleep(static_cast<DWORD>(ms));
+                end = true;
+            });
+        }
+        void stop() {
+            end = true;
+            if (timer.joinable()) timer.join();
+            if (thread.joinable()) thread.join();
+        }
+    };
+    auto drop = [](void* owned) {
+        if (!owned) return;
+        ReleaseMutex(static_cast<HANDLE>(owned));
+        CloseHandle(static_cast<HANDLE>(owned));
+    };
+
+    {   // A free folder: claimed at once, nobody is brought forward.
+        int asked = 0;
+        void* h = ClaimFolderInstance(unique_name(), 0, 1500, [&]() { ++asked; return true; });
+        Check(h != nullptr && asked == 0, "a free folder is claimed at once");
+        drop(h);
+    }
+    {   // The folder's window is open: it is brought forward and this start exits at once (no wait).
+        Holder other;
+        other.name = unique_name();
+        other.start();
+        int asked = 0;
+        const auto t0 = Clock::now();
+        void* h = ClaimFolderInstance(other.name, 0, 1500, [&]() { ++asked; return true; });
+        Check(h == nullptr && asked == 1 && ms_since(t0) < 1000, "an open window is brought forward and the second start exits at once");
+        other.stop();
+    }
+    {   // 0.14.4 review, round 2: the window was closed during setup and is gone, but its process holds the folder for
+        // about 50 ms while it ends its setup. A start in that gap waits for it and opens (it used to exit silently).
+        Holder other;
+        other.name = unique_name();
+        other.start();
+        other.stop_after(150);
+        int asked = 0;
+        const auto t0 = Clock::now();
+        void* h = ClaimFolderInstance(other.name, 0, 1500, [&]() { ++asked; return false; });
+        const long long took = ms_since(t0);
+        Check(h != nullptr && asked == 1, "a start while the closed window's process ends waits for the folder and opens");
+        Check(took >= 100 && took < 1400, "it waits only until the folder is free");
+        drop(h);
+        other.stop();
+    }
+    {   // The same when that process ends without releasing the mutex (abandoned).
+        Holder other;
+        other.name = unique_name();
+        other.release_on_end = false;
+        other.start();
+        other.stop_after(150);
+        int asked = 0;
+        void* h = ClaimFolderInstance(other.name, 0, 1500, [&]() { ++asked; return false; });
+        Check(h != nullptr && asked == 1, "a folder abandoned by a process that ended is claimed");
+        drop(h);
+        other.stop();
+    }
+    {   // No window and the folder stays held (a process that hangs while it holds it): exits after the short wait,
+        // having looked for the window twice.
+        Holder other;
+        other.name = unique_name();
+        other.start();
+        int asked = 0;
+        const auto t0 = Clock::now();
+        void* h = ClaimFolderInstance(other.name, 0, 300, [&]() { ++asked; return false; });
+        const long long took = ms_since(t0);
+        Check(h == nullptr && asked == 2 && took >= 250 && took < 1500, "a folder that stays held without a window: exit after the short wait");
+        other.stop();
+    }
+    {   // The window that holds the folder was still opening: found on the second look and brought forward.
+        Holder other;
+        other.name = unique_name();
+        other.start();
+        int asked = 0;
+        void* h = ClaimFolderInstance(other.name, 0, 300, [&]() { return ++asked >= 2; });
+        Check(h == nullptr && asked == 2, "a window that was still opening is brought forward after the short wait");
+        other.stop();
+    }
+    {   // The restart after an update waits wait_ms first and takes the folder as the old window lets go.
+        Holder other;
+        other.name = unique_name();
+        other.start();
+        other.stop_after(100);
+        int asked = 0;
+        void* h = ClaimFolderInstance(other.name, 5000, 1500, [&]() { ++asked; return true; });
+        Check(h != nullptr && asked == 0, "after an update the folder is taken as the old window lets go");
+        drop(h);
+        other.stop();
+    }
+    Check(kInstanceNoWindowWaitMs >= 500 && kInstanceNoWindowWaitMs <= 5000, "the no-window wait covers a setup's end (about 50 ms) and stays short");
+}
 }  // namespace
 
 int main() {
+    TestFolderInstance();
     TestNavigation();
     TestSetupView();
     TestScenes();
