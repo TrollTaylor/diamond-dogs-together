@@ -1,0 +1,183 @@
+# Design 8.26 (docs/vehicles-companions-design.md): the review fixes of the passenger aim camera at the default mode
+# aim (partner_pass_camera unnamed). africa-jeep (veh_lv_0000 = 25608). The host drives, the guest rides back seat 3:
+# a shot with a mouse turn and a shot with a mouse pull down inside the shot window (the yaw and the aim down pass), a
+# five-shot burst with a turn (one window), six spaced shots (no climb: each window settles), the rifle (key 1) with
+# the trigger held and a turn, a shot while the driver steers through a curve (the rotation keeps the vehicle's yaw).
+# Then the roles reverse: the guest drives, the host rides seat 3 and fires with a mouse turn and a burst.
+# partner_pass_camera_trace=1 logs the camera every 100 ms while aiming (rot_mrad: the world up-pitch / yaw of CAM+0x90).
+# Expected (lab): each passenger's state=guard; event=close; ...; end=hold|aim_end; ...; settle=..; yaw_mrad=.. lines;
+#   no guard write while the module is not the aim camera (trace gw=0 with cmode!=2).
+# Frames (look at them): s3-aim, s3-yaw, s3-down, s3-burst-NN, s3-spaced, s3-auto-NN, s3-turn-NN, s3-after (the guest),
+#   drv-* (the host driving); r3-* the host as the passenger, rdrv-* the guest driving.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-camera-fix.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_pass_camera_trace=1
+labsetting nametag=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+host debug clear_enemies 100
+waitlog host 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=1' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=1' 30
+wait 2000
+# --- The host drives; the guest rides seat 3 ----------------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=on' 5
+wait 1000
+both capture s3-seated
+# A shot, then a mouse turn right inside its window: the view turns, it does not go to the sky.
+guest hold rmb 1500 nowait
+wait 700
+guest capture s3-aim
+guest press lmb 120
+wait 80
+guest mouse 400 0
+wait 250
+guest capture s3-yaw
+waitlog guest 'partner_ride=pass_camera; state=guard; event=open; vehicle=256[0-9][0-9]; seat=3;' 3
+# A shot, then the mouse down inside its window: the view goes down (the reference follows).
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 80
+guest mouse 0 250
+wait 250
+guest capture s3-down
+host capture drv-s3-down
+# A five-shot burst with a turn left in the middle: one window, the yaw passes.
+guest hold rmb 1500 nowait
+wait 150
+guest press lmb 90
+wait 120
+guest press lmb 90
+wait 120
+guest mouse -400 0
+guest press lmb 90
+wait 120
+guest press lmb 90
+wait 120
+guest press lmb 90
+guest burst s3-burst 3 150
+# Six spaced shots (each window ends with the hold and settles: the reference never climbs).
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest capture s3-spaced
+guest release
+wait 1500
+guest capture s3-after
+# The rifle (key 1), the trigger held with a turn right: one long window.
+guest press 1 120
+wait 2500
+guest capture s3-rifle
+guest hold rmb 1500 nowait
+wait 700
+guest hold rmb+lmb 1500 nowait
+wait 300
+guest mouse 300 0
+wait 200
+guest burst s3-auto 3 250
+guest release
+wait 1500
+# A shot while the driver steers through a curve: the view turns with the jeep, the pitch is held.
+host hold w+a 1500 nowait
+wait 400
+guest hold rmb 1500 nowait
+wait 500
+guest press lmb 120
+guest burst s3-turn 3 200
+host capture drv-turn
+host hold w+a 1500 nowait
+guest hold rmb 1500 nowait
+wait 300
+guest press lmb 120
+wait 200
+guest press lmb 120
+guest burst s3-turn2 2 200
+host release
+guest release
+host hold s 800
+host release
+wait 2500
+guest capture s3-after2
+host capture drv-after
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=256[0-9][0-9]; seat=3; end=' 3
+guest press e 150
+wait 4000
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=off' 10
+host press e 150
+wait 3500
+# --- Reverse: the guest drives; the host rides seat 3 -------------------------------------------------------------
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=
+host debug goto_vehicle jeep right
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=[23]; state=on' 5
+wait 1000
+both capture r3-seated
+host hold rmb 1500 nowait
+wait 700
+host capture r3-aim
+host press lmb 120
+wait 80
+host mouse 400 0
+wait 250
+host capture r3-yaw
+guest capture rdrv-yaw
+host hold rmb 1500 nowait
+wait 150
+host press lmb 90
+wait 120
+host press lmb 90
+wait 120
+host mouse 0 200
+host press lmb 90
+wait 120
+host press lmb 90
+host burst r3-burst 3 150
+host release
+wait 1500
+host capture r3-after
+guest capture rdrv-after
+waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=256[0-9][0-9]; seat=[23]; end=' 3
+host press e 150
+wait 4000
+both capture end
+state
