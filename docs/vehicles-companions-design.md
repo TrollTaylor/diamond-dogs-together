@@ -2798,7 +2798,7 @@ run red (compile failures or failed checks: session scratch `m6m7b/seats-on/red/
 
 - **Fulton guard (8.21 R6).** [O] The stock jeep prompt shows `[E]` Fulton beside `[E]` ride; with the ride icon
   refused only the Fulton is left. Site C now marks a refused icon (deny or hold) and a door of the vehicle the peer
-  drives (`RaceState::guard`, receipt `ref` / `rage`); `R.seat.guard` (every tick) withholds
+  drives (`RaceState::guard`, receipt `ref` / `rage`); `R.seat.guard` (every tick; since 8.26 only while hot) withholds
   `PlayerDisableAction.FULTON` while a mark is under 400 ms old and removes only a bit it added
   (`event=seat; action=fulton; on=1|0`).
 - **The dog after the passenger (D16 residual).** [O static] The driver's copy draws the partner by the DM seat chain,
@@ -2811,7 +2811,7 @@ run red (compile failures or failed checks: session scratch `m6m7b/seats-on/red/
   a grant 3 s); no second driver, no Fulton, the toast says why. A CanExec wrapper (vtable slots `0x23CBD90`,
   `0x23CBEB0` hold `0x141246650`) would close it; not built.
 - **Flip.** `partner_ride_front`, `_cab`, `_race` = the gun profile in lab and play (`lab_config_tests`,
-  `friend_package_tests` on Play-Coop's resolved config).
+  `friend_package_tests` on Play-Coop's resolved config). The review took the cab back to lab-only in play (8.26).
 
 | Run | Scenario | Result |
 |---|---|---|
@@ -2826,22 +2826,27 @@ All closed with the baseline restored and the real saves unchanged; frames in th
 
 - **A0 (`92f2d2f9`).** [O] The host at the driver's door, the guest at the right door: guest `event=seat;
   action=fulton; on=1; vehicle=25608`, denies every claim; frame `s1-guard-hold-01`: the toast, no ride icon, no
-  Fulton prompt while E is held about 3 s; then `vehicle_census` 25608 still there, nobody riding; `on=0` after both
-  left.
+  Fulton prompt during two 1500 ms E holds about 0.5 s apart (review: not one 3 s hold); then `vehicle_census` 25608
+  still there, nobody riding; `on=0` after both left.
 - **A, the race (`92f2d2f9`).** [O] Both arrived and pressed E at once: the guest's hold line (`deny=65535;
-  grant=65535`) before the host's deny (`why=host_drives`, about 500 ms later); the host drove
+  grant=65535`) before the host's denies (`why=host_first` +364 ms, then `why=host_drives` +715 ms); the host drove
   (`riders=0,65535,65535,65535`), the guest stayed on foot (frame `s1-race` on the host: the guest outside).
 - **B, the guest in seat 1 (`92f2d2f9`).** [O] `seat_ext_tx; ...; flags=0x03; rider1=65535`, `seat1=front,cab`,
   frame `s1-peer-door`: only the ride icon at the partner's jeep; `board_passenger; seat=1; site=phase1`, host
-  `confirmed; seat=1`; frames `s1-b-drive-h-NN` / `-g-NN` change scenery while the host holds the throttle; the stock
-  get-off and camera release.
+  `confirmed; seat=1`. The host reversed (`hold s`): its frames `s1-b-drive-h-NN` move, but the guest's own frames
+  `-g-NN` show no world (review, [O]): the camera against the jeep's right front wheel, then inside the water tank the
+  jeep backed onto. The stock get-off logged the camera release (`ok=1`), but the frames after it face the driver up
+  close with the player out of view [O] (`s1-b-exited`). Both are passenger-camera defects (8.26).
 - **C, the host in seat 1 (`d55e5159`).** [O] The guest granted (`action=grant` / `yield`), drove; the host boarded
   seat 1 (`confirmed; seat=1` on the guest); frames `s2-c-drive-g-NN` (the guest at the wheel, the host in front right)
-  and `s2-c-drive-h-NN` move; the host's stock get-off.
+  and `s2-c-drive-h-NN` move; the host's stock get-off, after which its camera faces the driver up close [O]
+  (`s2-c-exited`).
 - **Truck cab (`8d61a33a`).** [O] The guest's copy got the host's sortie truck (`event=relief; role=guest;
   step=arrived; type=4`); the host drove in by the right door, the guest boarded the cab (`board_passenger;
   vehicle=25600; seat=1; site=phase1`, host `confirmed; seat=1; state=0x8a991a913969`); frames `s3-t1-drive-h-NN` and
-  `-g-NN` move on both copies; the guest's stock get-off. The host-in-cab role stays lab-only (`0f145a4e`).
+  `-g-NN` move on both copies; the guest's stock get-off. Not at the shipped defaults: `world_relief=1` was named to
+  get the truck onto the guest's copy, and the host-in-cab role stays lab-only (`0f145a4e`), so the cab is lab-only in
+  play again (8.26).
 - **The dog (`8d61a33a`).** [O] The host drove the jeep; its dog was in seat 1 within one addendum (`flags=0x03` then
   `0x07; rider1=9728`); the guest at the right door got `seat1=none` and the back right seat (`board_passenger;
   seat=3`, host `confirmed; seat=3`); frames `s3-j-seated`, `s3-j-drive-h-NN`: the dog in front, the guest behind,

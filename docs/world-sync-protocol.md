@@ -1835,11 +1835,15 @@ The wire format did not change in the review round of 2026-10-30 (design 8.21); 
   still take a passenger seat.
 - **Fulton guard (seats on, design 8.25).** Site C marks the vehicle whose ride icon it refuses (a deny or a hold),
   and a door of the vehicle the peer drives (its passenger icon shows there beside the stock Fulton prompt of the
-  vehicle the partner sits in). While a mark is under 400 ms old (`ref` / `rage` of the receipt, polled every tick)
-  `R.seat.guard` withholds the Fulton action (`vars.playerDisableActionFlag` gains `PlayerDisableAction.FULTON`;
-  only a bit it added is removed again, as `world_revive_input.lua` does): `event=seat; action=fulton; on=1|0;
-  vehicle=..`. Play `92f2d2f9`: no Fulton prompt while denied (E held about 3 s, the jeep still there) and none beside
-  the ride icon at the host-driven jeep.
+  vehicle the partner sits in; since 8.26 whatever the pre-query answered there, so a block vehicle, full back seats
+  or a taken cab are covered too). While a mark is under 400 ms old (`ref` / `rage` of the receipt: read at each 200 ms
+  seat step, and every tick while hot, i.e. withheld or a mark under 1 s old) `R.seat.guard` withholds the Fulton action
+  (`vars.playerDisableActionFlag` gains `PlayerDisableAction.FULTON`; only a bit it added is removed again, as
+  `world_revive_input.lua` does, so a mission lock set while it is withheld is removed with it [I]): `event=seat;
+  action=fulton; on=1|0; vehicle=..`. A stop hook gives the bit back when the world stops (`W.fail`, LEVEL 0, the end).
+  Claim, hold and guard lines: at most 50 per pairing, claim and hold lines at most one a second. Play `92f2d2f9`: no
+  Fulton prompt while denied (two 1500 ms E holds, the jeep still there) and none beside the ride icon at the
+  host-driven jeep.
 - **Not covered.** Passenger seats are not raced (the board never offers the peer's seat); a CanExec check after the
   pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was recorded
   [I]: the other player is then denied (or the host yields) while that player stays there, at most about 1 s (the

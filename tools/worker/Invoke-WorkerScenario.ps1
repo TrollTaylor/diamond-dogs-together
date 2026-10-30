@@ -124,7 +124,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    debug_vehicle_door=0|1, G4 truck test levers: the native door spot behind debug
                                    goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only, default 0);
                                    partner_ride_front=0|1 / partner_ride_cab=0|1, M6 seat 1: the light vehicle's front
-                                   seat / the truck cab seat for a passenger (default on with the gun profile, lab and play);
+                                   seat / the truck cab seat for a passenger (default on with the gun profile; the cab
+                                   in lab only, a named 1 runs it in play);
                                    partner_ride_race=0|1, M6 seat races: the host decides an empty vehicle's
                                    driver seat (SEAT op 54; default on with the gun profile, lab and play);
                                    partner_placed_census=0|1, the read-only WS4 C4 / bionic-arm census (lab only);
