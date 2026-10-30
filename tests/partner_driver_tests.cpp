@@ -7344,7 +7344,7 @@ void TestPassCameraGuardDriver() {
         GuardView(0.10f, 1.17f, -2.4f, -0.10f);
         s.fake.pad.kb_f[1] = 0.0f;
         s.Tick(0, 200);
-        GuardView(0.10f, 1.07f, -2.5f, -0.10f);
+        GuardView(0.10f, 1.13f, -2.44f, -0.10f);
         Check(s.Tick(0) && g_guard.rot_writes.size() == 1 && std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f,
               "without input the sideways pull is held at the player's last aim");
     }

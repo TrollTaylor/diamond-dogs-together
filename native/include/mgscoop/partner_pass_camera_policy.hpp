@@ -364,6 +364,9 @@ inline constexpr float kKickYaw = 0.035f, kSettleYaw = 0.01f;
 // that axis follows the camera for kLookLatchMs (a few ticks: the camera may apply the input a tick later).
 inline constexpr float kLookInput = 0.02f;
 inline constexpr std::uint64_t kLookLatchMs = 60;
+// A world yaw jump bigger than any pull in one tick (the pull moved it at most ~0.03 rad per tick: a64c40d4, d60dbb48)
+// counts as the player's input (a mouse frame the driver's tick did not sample).
+inline constexpr float kYawJump = 0.05f;
 inline constexpr std::uint64_t kGuardHoldMs = 350;
 // The aim camera module (CAM+0xBD0[2] while RMB is held: runs 4f1a072f..06aa3fc6 mvt=0x23d4d20; its CanActivate
 // 0x12BBAE0 reads the gun record's aim bit and the pad's aim button). Pinned in the contract (slots).
@@ -431,6 +434,8 @@ struct Guard {
     float ref_up = 0.0f;      // the world up-pitch reference of CAM+0x90
     float open_yaw = 0.0f, last_yaw = 0.0f;  // the angle yaw at the window's open and its last tick
     float ref_yaw = 0.0f;     // the world yaw reference of CAM+0x90 (with ref_up)
+    bool prev_ok = false;
+    float prev_yaw = 0.0f;    // the world yaw CAM+0x90 had after the last tick (as written, or as read)
     std::uint64_t last_look_x_ms = 0, last_look_y_ms = 0;  // the last tick with the player's look input per axis
     std::uint32_t look_ticks = 0;     // window ticks that followed the player's input (the open window)
     std::uint64_t last_fire_ms = 0;

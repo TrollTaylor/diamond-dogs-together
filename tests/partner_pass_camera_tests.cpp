@@ -453,49 +453,54 @@ void TestGuard() {
     Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.1f),
           "the pull: the angle pitch and the rotation back at the references");
     Check(g.window_writes == 1 && g.rot_writes == 1 && Near(g.window_max, 0.35f), "counted, the pull measured");
-    // The pull sideways alone (a64c40d4): held.
-    r = Look(1.2f, -0.10f);
+    // The pull sideways alone (a64c40d4: at most ~0.03 rad per tick): held.
+    r = Look(1.14f, -0.10f);
     o = pc::GuardStep(g, Tick(true, true, 0.10f, 1.70f, &r, 1200));
     Check(!o.write && o.write_rot && Near(pc::WorldYaw(o.rot), 1.1f) && Near(pc::UpPitch(o.rot), -0.10f), "the pull sideways: held");
     // F1: the player's own turn (look input x) passes inside the window, and the yaw reference follows it.
     r = Look(1.6f, -0.10f);
     o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.17f, &r, 1250, true, true, false));
     Check(!o.write && !o.write_rot && Near(g.ref_yaw, 1.6f) && g.look_ticks == 1, "a mouse turn of 0.5 rad inside the window: nothing written");
-    // Within kLookLatchMs of the turn the yaw is still the player's, but the pitch is not: the pull up is held (run
-    // 049aa5ed: following both axes for 150 ms let the pull lift the view 20-23 deg after a mouse turn).
-    r = Look(1.62f, 0.15f);
-    o = pc::GuardStep(g, Tick(true, true, -0.15f, 2.19f, &r, 1250 + pc::kLookLatchMs - 10));
-    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.62f) &&
-              Near(g.ref_yaw, 1.62f) && g.look_ticks == 2,
-          "within the latch of a mouse turn: the yaw follows, the pull up is held");
-    // The latch over: the pull is held at the player's new aim.
-    r = Look(1.62f, 0.20f);
-    o = pc::GuardStep(g, Tick(true, true, -0.20f, 2.19f, &r, 1250 + pc::kLookLatchMs + 1));
-    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.62f),
+    // The next tick, without input: the pull takes the turn back and lifts the view (run d60dbb48: with a 60 ms latch
+    // the pull took back each mouse step of a burst; 049aa5ed: following both axes let it lift the view 20-23 deg):
+    // the turn is kept, the pull held.
+    r = Look(1.56f, 0.15f);
+    o = pc::GuardStep(g, Tick(true, true, -0.15f, 2.19f, &r, 1268));
+    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.6f) &&
+              Near(g.ref_yaw, 1.6f) && g.look_ticks == 1,
+          "the tick after a mouse turn: the turn kept, the pull back and up held");
+    // A yaw jump without input bigger than any pull (a mouse frame the tick did not sample): the player's.
+    r = Look(1.9f, -0.10f);
+    o = pc::GuardStep(g, Tick(true, true, 0.10f, 2.19f, &r, 1286));
+    Check(!o.write && !o.write_rot && Near(g.ref_yaw, 1.9f) && g.look_ticks == 2, "a 0.3 rad yaw jump in one tick: followed");
+    // After it: the pull held at the player's new aim.
+    r = Look(1.9f, 0.20f);
+    o = pc::GuardStep(g, Tick(true, true, -0.20f, 2.19f, &r, 1304));
+    Check(o.write && o.pitch == 0.10f && o.write_rot && Near(pc::UpPitch(o.rot), -0.10f) && Near(pc::WorldYaw(o.rot), 1.9f),
           "after the input: the pull held at the player's new aim");
     // F1: the player's aim UP with input y passes too; a sideways pull on that tick is still held.
-    r = Look(1.66f, 0.10f);
+    r = Look(1.94f, 0.10f);
     o = pc::GuardStep(g, Tick(true, true, -0.10f, 2.19f, &r, 1500, true, false, true));
-    Check(!o.write && o.write_rot && Near(pc::WorldYaw(o.rot), 1.62f) && Near(pc::UpPitch(o.rot), 0.10f) && g.ref_pitch == -0.10f &&
+    Check(!o.write && o.write_rot && Near(pc::WorldYaw(o.rot), 1.9f) && Near(pc::UpPitch(o.rot), 0.10f) && g.ref_pitch == -0.10f &&
               Near(g.ref_up, 0.10f),
           "aim up with input y: passes, the pitch references follow; the yaw is still held");
     // F2: the jeep turns without input: the stock aim camera keeps its world yaw (a64c40d4: CAM+0x90's yaw constant
     // while the body yaw turned 58 deg), the vehicle-relative angle yaw changes: nothing written.
-    r = Look(1.62f, 0.10f);
+    r = Look(1.9f, 0.10f);
     for (std::uint64_t t = 1700; t <= 1850; t += 50) {
         const float rel = 2.19f - 0.002f * static_cast<float>(t - 1700);
         o = pc::GuardStep(g, Tick(true, true, -0.10f, rel, &r, t));
         Check(!o.write && !o.write_rot, "a turning jeep: the world-stable aim camera needs no write");
     }
     // The hold's close settles a remaining climb and yaw under the kick bounds.
-    r = Look(1.64f, 0.13f);
+    r = Look(1.92f, 0.13f);
     o = pc::GuardStep(g, Tick(true, false, -0.13f, 1.89f, &r, 1850 + pc::kGuardHoldMs - 1));
     Check(!o.write && !o.write_rot && g.active, "within kGuardHoldMs: 0.02 rad aside and 0.03 rad up stay");
     o = pc::GuardStep(g, Tick(true, false, -0.13f, 1.89f, &r, 1850 + pc::kGuardHoldMs));
     Check(o.event == pc::GuardEvent::close && o.end == pc::GuardEnd::hold && o.settle && o.write && o.pitch == -0.10f && o.write_rot &&
-              Near(pc::UpPitch(o.rot), 0.10f) && Near(pc::WorldYaw(o.rot), 1.62f) && !g.active && g.settles == 1,
+              Near(pc::UpPitch(o.rot), 0.10f) && Near(pc::WorldYaw(o.rot), 1.9f) && !g.active && g.settles == 1,
           "the hold's close settles the remaining climb and yaw");
-    Check(g.ref_pitch == -0.10f && Near(g.ref_up, 0.10f) && Near(g.ref_yaw, 1.62f), "the settled references");
+    Check(g.ref_pitch == -0.10f && Near(g.ref_up, 0.10f) && Near(g.ref_yaw, 1.9f), "the settled references");
     // The next aimed tick: the references follow the player again.
     r = Look(1.7f, 0.05f);
     o = pc::GuardStep(g, Tick(true, false, -0.05f, 1.9f, &r, 2400));
@@ -503,8 +508,8 @@ void TestGuard() {
           "after the window: follows again");
     Check(pc::GunFires(true, 9) && pc::GunFires(true, 10) && !pc::GunFires(true, 7) && !pc::GunFires(false, 9), "firing is gun mode 9 / 10");
     Check(pc::kKickUp <= 0.06f && pc::kKickYaw <= 0.04f && pc::kSettleUp < pc::kKickUp && pc::kSettleYaw < pc::kKickYaw &&
-              pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600 && pc::kLookLatchMs >= 30 && pc::kLookLatchMs <= 80,
-          "at most about 3 deg of kick, a hold shorter than a shot cycle, an input latch of a few ticks");
+              pc::kGuardHoldMs >= 200 && pc::kGuardHoldMs <= 600 && pc::kYawJump > pc::kKickYaw && pc::kYawJump <= 0.06f,
+          "at most about 3 deg of kick, a hold shorter than a shot cycle, a yaw jump above the kick");
 }
 
 // A burst without input (a64c40d4 host: the yaw pulled 0.93 rad in 1.2 s): every tick's pull sideways and up is held.
