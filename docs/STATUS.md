@@ -23,6 +23,19 @@ Same branch and worktree as the section below; still not merged, pushed, tagged 
 
 **Checks** [O]: `pwsh -File tools/build.ps1 -Fast` 301/301 at `8db0313`; full CTest (Debug) 317/317 at `8db0313`; `tests/worker_checks_tests.ps1` 154 checks; `friend_package_tests` passed with an untracked file in the tree.
 
+**Release checks and a new local package** [O] (a check of the tooling, built and audited only; nothing uploaded; it still says 0.14.4 and must not be released as such). Under the verify lock (D: had 5.9 GB free): receipt `20261030-031742-378e13becd5542889d9257d250299f32` passed with 311 audited tests; its run folder is archived under `%USERPROFILE%\mgs-coop-run-archive\next2\20261030-031742-378e13becd5542889d9257d250299f32`. `tools/package.ps1 -Friend -CheckReceipt` with that receipt, from the clean tree at `205b13c`, into the session scratch `next2/launcher/r2/dist/DiamondDogsTogether-0.14.4-20261030T032122Z-38459f1b`:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.4.zip` | 3,081,001 | `8C08872381AEB5753E8CB0DDAB63C06970974BD30E924A3B724E60C7676622DE` |
+| `DDT-source-0.14.4.zip` (1,410 source files plus `source-files.json`) | 8,344,719 | `ADB69998EFA2C0BF9D42CC5B1E97FB00840D7627D5A073B8134F1085746AC2A0` |
+| `DiamondDogsTogether.exe` | 2,370,048 | `604BFC6EF745D4C9BA1662A10304403D8218EF7CEDA4B51C63B473CCE34043E0` |
+| `dinput8.dll` | 7,060,992 | `51CBC61378F9872561BFB2BA32EDABC894A958F822B627D00EA3628E3C81A4EC` |
+
+- Audit 26/26 [O] (`next2/launcher/r2/audit-r2.py` in the session scratch): the new wording in the packaged README and notices, with each left-out kind named; `build.audited_tests` 311, including both launcher checks; `source_commit` `205b13c`, `source_dirty` false; the exe and dll are the receipt's, build id `0.14.4+205b13c` in both.
+- Against `205b13c` [O]: the 16 tracked files the zip leaves out are all of the kinds the notices name; the 21 zip files git does not track are MinHook's; the other 1,389 zip files equal their blobs at that commit (line endings aside: the checkout writes CRLF).
+- This STATUS record is written after the package, so it is one of the later commits the texts describe.
+
 ## October 29, 2026: the 0.14.4 review's launcher and package findings fixed (`wp/launcher-fixes2`, unreleased)
 
 Branch `wp/launcher-fixes2` from `dev/oct7-continue` `01fd055`, in the worktree `D:/mgs-coop-wt/launcher-setup`; not merged, pushed, tagged or released. It fixes the five non-blocking launcher and package findings of the 0.14.4 pre-release review. None changes play, the wire or a lab key. Marks: [O] observed in a run or test named here, [I] inferred from code, [U] not run.
