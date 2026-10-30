@@ -287,8 +287,8 @@ host run enemy_aim_nearest 1.6
 host expect ^aim_nearest;ent=
 wait 800
 logmark both
-guest hold w 4000 nowait
-wait 1200
+guest hold w 1500 nowait
+wait 600
 host hold rmb 1500 nowait
 wait 700
 host press lmb 120
@@ -297,6 +297,8 @@ host capture mv-1
 guest capture mv-drv-1
 host release
 wait 400
+guest hold w 1500 nowait
+wait 600
 host hold rmb 1500 nowait
 wait 700
 host press lmb 120
