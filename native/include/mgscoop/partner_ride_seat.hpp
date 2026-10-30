@@ -23,8 +23,10 @@
 //
 // Seat 1 caveat (0xB79A3F..0xB79A57): 0xB799C0 maps seat 1 to seat 0 only when
 // rider[1] (word unit+0x32) holds a player id ((word & 0xFE00) == 0); on an
-// empty receiver copy (rider[1] == 0xFFFF) seat 1 is drawn front-right. Nothing
-// here writes rider[] (re-vehicle.md 3.4; the earlier wording had it inverted).
+// empty receiver copy (rider[1] == 0xFFFF) the anchor reads seat 1's own matrix,
+// where the player's FrontRight clips (authored on the driver's matrix) drew body 1
+// one seat further right, outside the jeep: Arm writes AnchorSeat(seat), 0 for seat
+// 1 (design 8.33). Nothing here writes rider[] (re-vehicle.md 3.4).
 //
 // Arm only while no DM runs on either body, only in 30010/30020 and only for
 // the seat DM's lifetime; revert once DM End ran (body act != 0x8B), and at

@@ -82,7 +82,11 @@ const Site& SiteFor(SiteId id) noexcept {
 
 std::uint32_t SeatDword(std::uint8_t seat) noexcept { return c::ride_seat_base | (static_cast<std::uint32_t>(seat & 3u) << 24); }
 
-std::uint8_t AnchorSeat(std::uint8_t seat) noexcept { return seat; }
+// The player's seat-1 clips (stateVehicle*FrontRight*) carry the driver-to-passenger offset: the stock seat matrix
+// 0xB799C0 answers seat 0's matrix for seat 1 while a player sits in rider[1] (0xB79A3F). The partner's body 1 is never
+// in rider[], so the anchor names seat 0 itself; on the seat-1 matrix the body sat one seat further right, outside the
+// jeep (design 8.33).
+std::uint8_t AnchorSeat(std::uint8_t seat) noexcept { return seat == 1 ? 0 : seat; }
 
 const char* VerifyImage(const unsigned char* base, std::size_t span) noexcept {
     if (!base) return "base";
@@ -134,14 +138,15 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     // part way puts back exactly what this call wrote.
     std::uint32_t written_from[kSites]{};
     bool written[kSites]{};
+    const std::uint8_t anchor = AnchorSeat(seat);
     for (unsigned i = 0; i < kSites; ++i) {
         const Site& s = kSiteTable[i];
         const std::uint32_t current = ReadDword(image, s.rva);
-        const std::uint32_t want = i == 0 ? SeatDword(seat) : s.patched;
+        const std::uint32_t want = i == 0 ? SeatDword(anchor) : s.patched;
         if (current == want) continue;
         if (const char* why = near_code::PatchDword(image + s.rva, current, want)) {
             for (unsigned k = i; k-- > 0;)
-                if (written[k]) near_code::PatchDword(image + kSiteTable[k].rva, k == 0 ? SeatDword(seat) : kSiteTable[k].patched, written_from[k]);
+                if (written[k]) near_code::PatchDword(image + kSiteTable[k].rva, k == 0 ? SeatDword(anchor) : kSiteTable[k].patched, written_from[k]);
             EmitFormat(log, "partner_ride_seat_patch=refused; reason=patch_%s_%s\r\n", s.name, why);
             return false;
         }
@@ -152,8 +157,8 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     InterlockedExchange(&g_armed, 1);
     char line[192]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
-            "partner_ride_seat_patch=applied; seat=%u; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x%08x\r\n",
-            unsigned(seat), SeatDword(seat)))) Emit(log, line);
+            "partner_ride_seat_patch=applied; seat=%u; anchor=%u; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x%08x\r\n",
+            unsigned(seat), unsigned(anchor), SeatDword(anchor)))) Emit(log, line);
     return true;
 }
 
