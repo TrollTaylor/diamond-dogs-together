@@ -210,8 +210,22 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
 }
 
 bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
-    (void)base; (void)span; (void)seat; (void)log;
-    return false;  // red stub
+    auto* image = static_cast<unsigned char*>(base);
+    (void)span;
+    if (!image || seat > 3 || !Armed() || ArmedSeat() != seat) return false;
+    if (StateOf(image, SiteId::seat) == SiteState::other) return false;  // seat 2 armed is the retail dword itself
+    const Site& s = kSiteTable[0];
+    const std::uint32_t current = ReadDword(image, s.rva);
+    const std::uint32_t want = SeatDword(seat);
+    if (current == want) return true;
+    if (const char* why = near_code::PatchDword(image + s.rva, current, want)) {
+        EmitFormat(log, "partner_ride_seat_patch=refused; reason=getoff_%s%s\r\n", why, "");
+        return false;
+    }
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_ride_seat_patch=getoff; seat=%u; seat_dword=0x%08x; anchor=%u; was=%u\r\n",
+            unsigned(seat), want, unsigned(seat), unsigned(current >> 24)))) Emit(log, line);
+    return true;
 }
 
 bool Armed() noexcept { return g_armed != 0; }

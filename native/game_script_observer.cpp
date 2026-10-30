@@ -941,6 +941,10 @@ bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t vehicle) noexcep
 void PartnerRideSeatRevert(void*, const char* reason) noexcept {
     if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
 }
+// The confirmed GetOff: the armed seat back on its own matrix (review of design 8.35).
+void PartnerRideSeatGetOff(void*, std::uint8_t seat) noexcept {
+    if (game_base) mgscoop::partner_ride_seat::ArmGetOff(game_base, game_span, seat, Log);
+}
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
@@ -1211,7 +1215,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
-    PartnerSeatShotOverride};
+    PartnerSeatShotOverride, PartnerRideSeatGetOff};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
