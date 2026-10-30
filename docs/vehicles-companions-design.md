@@ -2436,7 +2436,7 @@ which the seat flow keeps disarmed [I]. The front seat and the truck bed depend 
 
 The independent review of `wp/seat-shoot` at `c4d1bf0` gave **fix first** (three major, four minor findings; section 11
 has the table). Each finding was checked against the code, the slices and the frames before anything changed. No runtime
-behaviour changed, so no hidden run was needed and none ran; nothing flips (`partner_seat_gun` stays off in lab and
+behaviour changed, so no hidden game run was needed and none ran (one worker check, no game, below); nothing flips (`partner_seat_gun` stays off in lab and
 play).
 
 - [O] **The Release receipt** (`fb71ab7`): `partner_seat_gun_tests` was registered but neither audited
@@ -2445,8 +2445,10 @@ play).
   `ctest-test-names.txt` at configure, and the new slow CTest `worker_coverage_tests` (PowerShell, the audited
   six-argument form, itself in `Get-WorkerTests`) requires each one to be audited or excluded by the Release plan; it
   failed first naming `partner_seat_gun_tests` and passes with it (321 tests). The research worker build's own
-  inventory (320 tests before this round) is fully classified as well, so the hidden-run preflight keeps passing [O, by
-  the same comparison; no worker check or hidden run ran].
+  inventory (320 tests before this round) is fully classified as well. The hidden-run preflight itself passed with the
+  change: `Invoke-WorkerChecks -Profile Research` (the M7 runs' three experiments, background worker on; no game), run
+  under the verify lock, receipt `20261030-110552-f8f0879750314da0a876b8eacab98aad`: `passed`, 313 audited tests with
+  0 failures, `worker_coverage_tests` and `partner_seat_gun_tests` among them [O].
 - [O] **Driver-level tests** (`e5c5739`, `partner_driver_tests` `TestSeatGunDriver`, `TestSeatGunSender`): the
   seat-owned branch runs the gesture step only with the key and starts the `gun_start` hold there (fails with the
   parent of `8c0d482`'s `partner_driver.cpp`: the regression test of run `d40e4126`); the command stays enabled while

@@ -53,7 +53,9 @@ then design B with a new run budget; or park M7. The front seat and the truck be
 - `fb71ab7`: `partner_seat_gun_tests` was in neither the Release receipt's audited list nor its excluded list, so
   `tools/package.ps1 -Friend` would have thrown; it is audited now. New slow CTest `worker_coverage_tests` compares
   every registered test (`ctest-test-names.txt`, written at configure) with the Release plan; it failed first naming
-  `partner_seat_gun_tests`. The research worker build's inventory (320 tests) is fully classified too.
+  `partner_seat_gun_tests`. The research worker build's inventory (320 tests) is fully classified too, and the
+  hidden-run preflight passes with it: `Invoke-WorkerChecks -Profile Research` (no game, under the verify lock),
+  receipt `20261030-110552-f8f0879750314da0a876b8eacab98aad`, `passed`, 313 audited tests, 0 failures.
 - `e5c5739`: driver-level tests (`TestSeatGunDriver`, `TestSeatGunSender`): the seat-owned branch's gesture step and
   hold (fails on the parent of `8c0d482`), the command and `hold_seq`, the hook's end and the retry, the unanswered
   request, the aim's and the seat's release, the driver's seat refused, and the sender's seated direction only with
@@ -63,7 +65,7 @@ then design B with a new run budget; or park M7. The front seat and the truck be
   the on-foot kill of `6e0edd8b` and the invalid control of `d7cf5a4b`, "not checked" for the seated direction, the
   rate restore's exceptions (epoch, uncertain, fault), the camera attribution [I]/[U] and the boarding cause [I].
 - No runtime behaviour changed (the `PassengerSeat` refactor is the same test), so no hidden run was needed for it;
-  nothing flips. Full CTest after the round: see the design doc 8.21.
+  nothing flips. Fast CTest 304/304 after each step; full CTest 321/321 after the docs.
 
 ## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
 
