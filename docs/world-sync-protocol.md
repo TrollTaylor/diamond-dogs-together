@@ -1806,26 +1806,43 @@ play, never a request; 5 fields, 7 bytes: `seq` (u16 1..), `id` (u16 25600..2611
 `seat` (u8 0..3; 0, the driver's, is the only one raced today), `role` (u8 1 host / 2 guest: the sender), `action`
 (u8 1 claim / 2 grant / 3 deny). Sent and applied by `lua/coop/world_ride_pose.lua` (`R.seat`) only while the
 native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs lab.ini `partner_ride_race=1` (off in lab
-and play unless named) and the board installed.
+and play unless named), the board installed and its site C live (`partner_board=race; result=ok; c=0x1246a4f`).
+The wire format did not change in the review round of 2026-10-30 (design 8.21); the rules below did.
 
-- **Want.** The board's pre-query (site A, `native/partner_board.cpp` `RaceStep`) records the empty vehicle its
-  player could take as the driver: a stock search that found seat 0 or 1 (stock phase 1 makes both the driver),
-  with the player within 4.5 m (horizontal) of the record's origin.
-- **Guest.** Every 500 ms while its want is at most 600 ms old it sends `claim` for that vehicle
-  (`event=seat; action=claim; vehicle=..; role=guest; age=..`, the first 20 logged).
-- **Host.** On a claim it sends `deny` when its own player drives that vehicle (`why=host_drives`) or wants it within
-  the last 1000 ms (`why=host_first`: ties go to the host), else `grant`, and then yields that vehicle for 3 s
-  while the guest keeps claiming it: its own want for it sets a native deny (`action=yield`, NOTE 13 a=7).
-- **Deny.** The guest sets a 3 s native deny for the vehicle (`event=seat; action=deny; vehicle=..; role=guest;
-  set=1`, NOTE 13 a=6, one toast per 3 s): both board sites answer 4 for it in the stock verdict (no ride icon, phase
-  1's no-seat exit), so the loser stays on foot. Once the winner drives, the peer-driver policy decides as before
-  (passenger or block), so the loser can still take a passenger seat.
-- **Not covered.** The want is site A's nearest-seat search, taken before the pre-query's door check: a host within
-  4.5 m of a vehicle whose doors it cannot use still wins a tie (the play rehearsal `65277fb8`: neither boarded). A
-  guest that presses within one round trip of its icon appearing while the host presses too can
-  still become a second driver (the existing `board_uncertain; reason=two_drivers` latch logs it); passenger seats
-  are not raced (the board never offers the peer's seat).
+- **Want (review R2).** Site C, RideVehicle CanExec's call of the ride pre-query `0x1245820` at `0x1246A4F`
+  (`native/partner_board.cpp` `SiteC`, retargeted only with the key), records the vehicle whose driver's seat the
+  pre-query's **final** answer offers: true with seat 0 or 1 (stock phase 1 makes both the driver), after the
+  pre-query's door bits and its line check, for a vehicle without a peer-driver policy. A player beside a vehicle
+  without a usable door has no want (the earlier site-A want counted it within 4.5 m: run `65277fb8`).
+- **Hold (review R1).** The guest refreshes a 2 s native hold lease (`hold 2000`) every 200 ms while paired: site C
+  answers false for the driver's seat of any empty vehicle that holds no live grant (no ride icon), and site B (phase
+  1) answers 4 for the vehicle site C wants (the backstop). So the guest never drives an empty vehicle before the host
+  answered, however fast it presses (`event=seat; action=hold; vehicle=..; holds=..; deny=..; grant=..`, at most once
+  a second). Unpaired, the hold is dropped at once (`hold 0`).
+- **Guest.** Every 500 ms while its want is at most 600 ms old it sends `claim` for that vehicle (`event=seat;
+  action=claim; vehicle=..; role=guest; age=..`, the first 20 logged). A `grant` sets a 3 s native grant for that
+  vehicle (`action=grant; ...; role=guest; set=1`: its ride icon comes back); a `deny` a 3 s native deny (`action=deny;
+  ...; set=1`, NOTE 13 a=6, one toast per 3 s). A deny withdraws a grant of the same vehicle and the other way round.
+- **Host.** On a claim it sends `deny` when its own player drives that vehicle (`why=host_drives`) or, unless it
+  granted that vehicle within the last 3 s, wants it within the last 1000 ms (`why=host_first`: ties go to the host);
+  else `grant`, and it yields at once: its own 3 s native deny for that vehicle, refreshed by every claim
+  (`action=grant` and `action=yield` the first time). A live grant sticks while the guest keeps claiming, even when the
+  host then reaches a door. A host that tries a yielded vehicle gets NOTE 13 a=7.
+- **Silence.** A claim left unanswered for 1.5 s (a 0.14.4 host skips the op, or its key is off) drops the guest's
+  hold (`state=silent; vehicle=..`, `hold 0`: stock) until any answer comes (`state=answered`).
+- **Loser.** Once the winner drives, the peer-driver policy decides as before (passenger or block), so the loser can
+  still take a passenger seat.
+- **Not covered.** A deny or a hold leaves the vehicle's stock Fulton prompt (holding E there can Fulton the vehicle;
+  never seen in the runs [I]); passenger seats are not raced (the board never offers the peer's seat); a CanExec check
+  after the pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was
+  recorded [I].
+
+`MGS_COOP_BOARD_SEAT_V1` (`native/game_script_observer.cpp`, parser `partner_board::ParseSeatRequest`, unit-tested):
+`poll | clear | deny <id> <ms> | grant <id> <ms> | hold <ms>` (id 25600..26111, deny / grant 1..5000 ms, hold
+0..5000 ms, single spaces, digits only); answer `{ok=true,on=1,want=,age=,deny=,left=,hits=,hold=,grant=,gleft=,
+holds=}` or `{ok=true,on=0}`.
 
 **Compatibility.** A partner whose op table lacks 0x36 (0.14.4 and older) skips it by its length (`unknown_op`,
-section 3): the guest's claims go unanswered and nothing is denied (the stock behaviour). Play pairing refuses
-mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37 stay reserved; 0x3B onward are free.
+section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
+behaviour). Play pairing refuses mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37
+stay reserved; 0x3B onward are free.

@@ -33,11 +33,12 @@
 // 2 for every other call (both sites run only after site B in the same call,
 // on the same thread), so a stock seat 1 (the driver entering by the right door)
 // keeps its stock meaning. The seat matrix 0xB799C0 maps seat 1 to seat 0 while
-// rider[1] holds a player id (0xB79A3F); with seat 1 on, its `jne` (0xB79A43) is
-// a `jmp` for the process (no stock path seats a player in rider[1]: phase 1
-// passes seat 0), so the stock passenger phase places the viewer at the front
-// right seat (0x141259B80 -> 0xB7AF90(unit, out, seat)). Review R4: the jmp is
-// live only while seat 1 may be in use (RemapWanted below; the driver tick). The passenger phase
+// rider[1] holds a player id (0xB79A3F); with seat 1 in use its `jne` (0xB79A43)
+// is a `jmp` (review R4: only while seat 1 may be in use, RemapWanted below; the
+// driver tick is its only writer; only a steered phase 1 seats a player in
+// rider[1]), so the stock passenger phase places the viewer at the front right
+// seat (0x141259B80 -> 0xB7AF90(unit, out, seat)). Review R3: seat 1 is offered
+// only with the peer driver's v4 seat addendum (front_ok / cab_ok). The passenger phase
 // plays GetOn for seat 1 of both classes (stateVehicleGetOnFrontRight,
 // stateTruckGetOnFrontRight) and the light loop for a light vehicle; a truck
 // gets no loop state from 0x14124B2D0 (E6 reads what the graph does).

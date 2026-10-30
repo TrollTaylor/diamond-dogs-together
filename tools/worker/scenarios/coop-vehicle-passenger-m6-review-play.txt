@@ -80,7 +80,6 @@ host run vehicle_seats
 host expect vehicle_not_riding
 both capture m6v-grant
 # --- C: the host boards beside the guest's driving (the seat-1 handshake) -------------------------------------------
-logmark both
 waitlog guest 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x0[37];' 10
 waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=' 10
 host debug teleport 574.36 320.2 1157.5 96

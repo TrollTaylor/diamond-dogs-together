@@ -595,23 +595,40 @@ run has used it yet.
 
 ### Seat 1 and seat races (M6)
 
-M6 (`wp/seats`, docs/vehicles-companions-design.md 6.6 and 8.20), each behind its own lab key, off unless named in
-lab and play:
+M6 (`wp/seats`, docs/vehicles-companions-design.md 6.6, 8.20 and the review fixes 8.21), each behind its own lab key,
+off unless named in lab and play:
 
 - `partner_ride_front=1` / `partner_ride_cab=1` (with `partner_ride_board=passenger`): the passenger search also
-  offers seat 1, the light vehicle's front seat (seats 1..3) or the truck cab's (seat 1 only, never 2 / 3 of a truck).
+  offers seat 1, the light vehicle's front seat (seats 1..3) or the truck cab's (seat 1 only, never 2 / 3 of a truck),
+  **only with the driver's handshake** (review R3): the driver's copy sends the ride addendum v4 (12 bytes, magic
+  `0x52`, version 4: flags Front / Cab = its receiver gate draws that seat-1 passenger, OneTaken = `rider[1]` of its
+  copy of the vehicle it drives is not empty, e.g. its D-Dog; unread counts as taken; `partner_ride=seat_ext_tx` /
+  `seat_ext_rx`), and the passenger's policy carries `front_ok` / `cab_ok` only for a live addendum describing that
+  exact ride (`board_policy; ...; seat1=front|cab|front,cab|none; flags=0x..`). Without them a light vehicle offers the
+  back seats and a truck blocks (`front_peer`, `cab_peer`). 0.14.4 drops v4 as an invalid ride packet (one
+  `partner_ride=refused; reason=packet_or_session` line).
   Stock phase 1 maps seat 1 to the driver twice (`0x1251834` the seat passed to TryToRide, `0x1251894` the next phase);
   site B sets both `cmp al,imm8` immediates to 1 for exactly the call it steers to seat 1 and back to 2 for every other
-  call, and the install turns the seat matrix's seat-1 remap (`0xB79A43`, seat 1 -> 0 while a player sits in
-  `rider[1]`) into a `jmp` for the process (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`). A
-  failed immediate write answers 4 for seat 1 (never a second driver). The local passenger report, the receiver's
-  `local_vehicle` gate and the passenger camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`,
-  `board_seat1_blocks`; `vehicle_door` accepts the remap's `jmp`.
-- `partner_ride_race=1`: the pre-query records the empty vehicle its player could drive (`RaceStep`, within 4.5 m of
-  the record), and the native receipt `MGS_COOP_BOARD_SEAT_V1` (`poll`, `deny <id> <ms>`, `clear`) lets the world SEAT
-  op (54, `lua/coop/world_ride_pose.lua`, protocol section 21) deny it: both sites answer 4 for a denied vehicle in the
-  stock verdict only.
-- Lab levers for the proofs: `goto_vehicle sortie driver|passenger [cm]` (the door spot of an unnamed vehicle by id),
+  call; a failed write answers 4 for seat 1 (never a second driver), and once site B is no longer ours the driver tick
+  puts both back to 2 (`partner_board=phase_one_restored`; review R5). The seat matrix's seat-1 remap (`0xB79A43`,
+  seat 1 -> 0 while a player sits in `rider[1]`) is a `jmp` **only while seat 1 may be in use** (review R4): the driver
+  tick, its only writer, skips it before it publishes a policy that offers seat 1, while the local player sits in seat
+  1, while a seat-1 steer is unconfirmed and for 5 s after the last one, and else puts the stock `jne` back
+  (`partner_ride=board_remap; state=skip|stock; why=policy|seated|steer|hold|idle; ok=..`); site B steers seat 1 only
+  while the skip is live (else 4, `remap_refused`), and a failed write never offers seat 1 again. The install only
+  checks the blocks (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`); `VerifyImage` accepts
+  only 1 / 2 at the immediates. The local passenger report, the receiver's `local_vehicle` gate and the passenger
+  camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`, `board_seat1_blocks`; `vehicle_door`
+  accepts the remap's `jmp`.
+- `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query
+  `0x1245820(action, body, unit, id, char* seat)`; pinned: `board_c_*`, the pre-query's `*seat = 4` start
+  `0x1245847`), logged `partner_board=race; result=ok; c=0x1246a4f`. Site C records the want from the pre-query's
+  final answer (true, seat 0/1, no peer-driver policy for the vehicle; review R2) and answers false for a live deny or,
+  on the guest, an ungranted hold (review R1); site B answers 4 for them (the backstop); site A no longer races. The
+  native receipt `MGS_COOP_BOARD_SEAT_V1` (`poll`, `clear`, `deny <id> <ms>`, `grant <id> <ms>`, `hold <ms>`; the
+  tested `ParseSeatRequest`) is driven by the world SEAT op (54, `lua/coop/world_ride_pose.lua`, protocol section 21).
+  A deny or hold leaves the stock Fulton prompt for that vehicle [I].
+- Lab levers for the proofs: `goto_vehicle sortie|jeep driver|passenger [cm]` (the stock door spot by id, lab only),
   `relief_load <type> here <dist>`, `vehicle_census [first] [n]`.
 
 ## Traversal icon
@@ -2490,9 +2507,9 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
-| `partner_ride_front` | 0, 1 (M6: with `partner_ride_board=passenger`, a passenger may also take a light vehicle's front seat 1, see "Seat 1 and seat races (M6)"; default 0 in lab and play, a named 1 runs in both; FRAME lab `f49c167d`, `3c748d46`) |
-| `partner_ride_cab` | 0, 1 (M6: the truck cab seat 1 for a passenger, the same mechanism; default 0 in lab and play) |
-| `partner_ride_race` | 0, 1 (M6: the host decides an empty vehicle's driver seat, SEAT op 54; default 0 in lab and play) |
+| `partner_ride_front` | 0, 1 (M6: with `partner_ride_board=passenger`, a passenger may also take a light vehicle's front seat 1 where the driver's copy says that seat is free (the v4 seat addendum, review R3), see "Seat 1 and seat races (M6)"; default 0 in lab and play, a named 1 runs in both; FRAME lab `f49c167d`, `3c748d46`, the handshake `f115a2b3`) |
+| `partner_ride_cab` | 0, 1 (M6: the truck cab seat 1 for a passenger, the same mechanism and handshake; default 0 in lab and play; FRAME lab `0f145a4e` both roles) |
+| `partner_ride_race` | 0, 1 (M6: the host decides an empty vehicle's driver seat, SEAT op 54; site C, the guest's hold until the host's grant (review R1/R2); default 0 in lab and play; lab `43473119`, `f115a2b3`) |
 | `debug_vehicle_door` | 0, 1 (the G4 truck test levers' native door-spot receipt behind `debug goto_vehicle truck`, `goto_partner_vehicle` and `vehicle_door`, see "Truck test levers"; default 0 in lab and play, lab only: play forces it off and the receipt refuses outside mode=lab with offline and redirected saves; a named value records `debug_vehicle_door_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_ui_filter` | 0, 1 (G1, 0.13.6: body 1's HUD hint requests, e.g. the ladder "C" slide hint, swallowed inside its drain job by MinHooks on the UiControllerImpl hint-queue leaves vt+0x240..+0x260, see "Partner HUD hints"; default 0 in lab and play, also with the gun profile; a named 1 is lab only, play forces it off; no hidden-worker FRAME yet) |

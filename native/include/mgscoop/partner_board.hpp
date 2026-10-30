@@ -19,7 +19,9 @@
 //
 // Lazy install from the driver after the partner code gate passed (the observer
 // glue refuses without it), once per process; never reverted (with the policy
-// off both wrappers are the stock calls).
+// off both wrappers are the stock calls). M6 review R1/R2: with partner_ride_race
+// a third call site, C 0x1246A4F (RideVehicle CanExec's call of the pre-query
+// 0x1245820), is retargeted by InstallRace (its rel32 masked the same way).
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_board_policy.hpp"
