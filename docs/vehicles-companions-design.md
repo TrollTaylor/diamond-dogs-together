@@ -1914,8 +1914,9 @@ soldier-crewed vehicle the guest destroys is wrecked on the host's PC at once), 
   its tips screen), which holds the pair off for the D11 proof.
 
 Hidden runs (research build, native gun stage, copied saves, `africa-jeep` seed, low graphics; each Closed,
-BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; `Forced=True` at shutdown as in
-the earlier runs). Slices in the session scratch `next2/vehicles/slice-<run8>`, runs archived under
+BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; `Forced=True` at shutdown for
+`846c1147`, `ac0f7656` and `247a4eed`, `Forced=False` for `d3f5ca56`, `8995e351`, `251adcb6` and `34d5744d`; corrected
+by the review, section 8.15, which said `Forced=True` for all). Slices in the session scratch `next2/vehicles/slice-<run8>`, runs archived under
 `%USERPROFILE%\mgs-coop-run-archive\next2\<id>`, frames as JPEG in `complete/frames/next2-vehicles/`
 (`<run8>-<role>-<label>.jpg`; sheets `next2/vehicles/g-*.jpg`), looked at for every frame claim below.
 
@@ -1967,8 +1968,10 @@ the earlier runs). Slices in the session scratch `next2/vehicles/slice-<run8>`, 
 - Not covered [I/U]: who hit the vehicle is still not known: a guard's round in the 3 s after the guest fired is
   reported too [I]; explosives short of a destruction (a grenade, a C4 that does not break it) are not GUN_FIRE and are
   not reported [I]; the guest's collisions while it drives are not reported [I]; parts and wheels are not synced (only
-  body life, as M4); two copies hit by the same round within one report window count once (the lower life wins), so
-  simultaneous damage by both players can be undercounted by the smaller share [I]; a two-PC session.
+  body life, as M4); a drop is counted once (the lower life wins) only when the host copy's own hit came before the
+  report, so simultaneous damage by both players can be undercounted by the smaller share [I], and AI fire on the two
+  copies is separate rounds that add up whenever the report comes first (`846c1147`; corrected by the review, 8.15)
+  [O]; a two-PC session.
 
 **D12 crew.**
 - *`ac0f7656`, lab* [O, logs of both copies; frames `ac0f7656-*-crew-*`, sheet `g-ac0-crew`]. 25623 is the side-op
@@ -2040,9 +2043,14 @@ the earlier runs). Slices in the session scratch `next2/vehicles/slice-<run8>`, 
 - *`247a4eed`, play* [O]: the session's own follow (title -> ACC -> 30020): the guest's `arrived` then PAIRED 1.3 s
   later (the host was first, as in every play run), the guard at PAIRED; the guest's real iDroid path: LOADOUT refused,
   `hud=toast;code=13;a=5;on=1` (frame `247a4eed-guest-d11-guest-refused`: LOADOUT selected, the toast at the top).
-  The pre-pair window itself does not occur in the play worker (the host always pairs first there).
+  The pre-pair window itself does not occur in the play worker (the host always pairs first there). **Corrected by the
+  review (8.15):** in `247a4eed`, `8995e351` and `34d5744d` the guest's first guard line has the same millisecond as
+  its `event=paired` (`34d5744d`: arrived 229023182, paired 229024232, guard 229024233), so these runs show the old
+  paired refusal, not the fix; the pre-pair path was rehearsed in play only in 8.15.
 
-**Play defaults.** Both new keys are on in play unless named and off in the lab unless named, like the other vehicle
+**Play defaults** (superseded by the review, section 8.15: both keys are off in play unless named again, and the
+claims below that the damage FRAME shows the shared life and that the D11 fix ran in play are refuted there). Both
+new keys were on in play unless named and off in the lab unless named, like the other vehicle
 modules. `world_vehicle_damage` (`9538f86`): FRAME on both copies `ac0f7656` (lab) and the play rehearsal `247a4eed`
 (keys named); `world_vehicle_crew` (`f6823b9`): FRAME `ac0f7656` (lab) and `8995e351` (play, frames on both) and the
 play rehearsal `8995e351` (crew named). Both again at the shipped defaults with no key named in `34d5744d` (every

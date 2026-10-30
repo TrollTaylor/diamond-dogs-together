@@ -1717,9 +1717,9 @@ invalid value counts as named and off):
 | 64 | `world_vehicle_crew` | D12 crew: a crewed host copy wrecked at once | `world_vehicle_break` (and VEHICLE_GONE) on the host |
 | 128 | `world_vehicle_damage` | the guest's vehicle damage report | VEHICLE_STATE on both copies (30010 / 30020; Mother Base lab only) |
 
-Both keys are **on in play unless named** (`9538f86` and `f6823b9`, after each had its FRAME on both copies and a
-passing `-Mode play -WanSim bad` rehearsal; docs/STATUS.md for the runs) and off in the lab unless named, like the
-other vehicle modules. The keys are read per PC: a guest with `world_vehicle_damage` against a host without it sends
+Both keys are **off in lab and play unless named** (the review of 2026-10-29 turned off the play defaults of `9538f86`
+and `f6823b9`: the damage report's fire gate was never run against live AI fire, and the crew rule's blast distance
+by type changed the path its play rehearsals proved; the review subsection below and docs/STATUS.md). The keys are read per PC: a guest with `world_vehicle_damage` against a host without it sends
 reports the host ignores (logged once), so the 0.14.4 behaviour stays (the host's life wins at its next state); a guest
 without it never sends; a host without `world_vehicle_crew` holds a crewed vehicle as before (REJECT 9 after 120 s).
 
@@ -1741,9 +1741,12 @@ without it never sends; a host without `world_vehicle_crew` holds a crewed vehic
   copy VEHICLE_STATE's match names (the locator hash within 40 m, or the same unnamed id that is the nearest of its
   type; never index 0), never an LRRP truck, a vehicle it lost or watches, or the one its own player rides, and only
   while the guest's DOWNED_STATUS position (at most 3 s old) lies within 300 m of its copy. The new life is
-  `max(life, here - drop, 1)` when that is below `here`: the lower life wins, so a hit both copies took (a thrown
-  grenade replayed on both, the guards' fire) counts once, it is never more than the guest's own drop (a guest copy
-  that was lower before its hit does not drag the host's down), and never 0. `SetBodyLife`, read back, and the id is
+  `max(life, here - drop, here - floor(here / 2), 1)` when that is below `here` (the half bound since the review):
+  it is never more than the guest's own drop (a guest copy that was lower before its hit does not drag the host's
+  down), at most half of the host copy's life per report, and never 0. The lower life wins only when the host copy's
+  own hit came before the report; the guards' fire on the two copies is separate rounds, so their hits add up
+  whenever the report comes first (hidden run `846c1147`), and a thrown grenade replayed on both copies counts once
+  or twice depending on which copy's hit is first. `SetBodyLife`, read back, and the id is
   marked dirty so VEHICLE_STATE sends it at once (`why=life`). Lines `step=applied|same;id=<host id>;from=<guest
   id>;life=;was=;drop=;d_mm=;f=` and `step=refused;id=;reason=unpaired|no_locator|absent|far|no_match|not_nearest|
   index0|lrrp|gone_here|own_watch|local_rider|pose_unreadable|guest_unknown|guest_far|not_alive|send_error;d_mm=;
@@ -1755,15 +1758,17 @@ without it never sends; a host without `world_vehicle_crew` holds a crewed vehic
   the judge at once (`step=break_judge`, then `step=break_crew;id=;rid=;crew=<seats>`) and is applied through the
   normal path: the host's wreck (`SetBodyLife 0`, `via=wreck`). The engine's blast decides the crew on the host's
   copy; their deaths are host outcomes, sent by the existing enemy sync (on the guest's copy they already died
-  unattributed, so the host's outcome finds them dead there). While a player stands within the blast distance (15 m)
-  of the host's copy, or a position cannot be read, it is held instead (`step=break_hold;why=crew_near;near=;d_mm=;
-  crew=`; a Despawn under seated soldiers is untested), VEHICLE_GONE's 120 s cap still applies. D-Dog, a buddy, an
+  unattributed, so the host's outcome finds them dead there). While a player stands within the blast distance of the
+  host's copy (15 m for a light vehicle, 50 m for any other type since the review), or a position cannot be read, it
+  is held instead (`step=break_hold;why=crew_near;near=;d_mm=;crew=;blast_mm=`; a Despawn under seated soldiers is
+  untested), VEHICLE_GONE's 120 s cap still applies. D-Dog, a buddy, an
   unknown rider, the partner's ride and the host's own player keep the old hold or refusal.
 - **D11 before PAIRED** (no key: part of `world_loadout_block`). `world_follow.lua` records the mission a start
   replays the host's transition into (`F.arrivedMission`, at `step=arrived`; nil for every other start).
   `world_vehicle_rules.lua` and `world_relief_sync.lua` then mark that mission co-op on the guest at its start
   (`VR.coop` / `RS.coop` = mission, `stopped` = nil), so the guard greys the drop items as soon as the guest is in
-  game, before PAIRED; a solo load leaves them active.
+  game, before PAIRED; a solo load leaves them active. Since the review the mark lapses 300 s after the arrival
+  without PAIRED (`step=prepair_lapsed;mission=;ms=300000`, once; the host's game failed or quit while loading).
 
 Tests: `world_vehicle_damage_lua_check` (in the worker gate), `world_vehicle_rules_lua_check` (crew, D11 before
 PAIRED), `world_relief_sync_lua_check` and `world_follow_lua_check` (the arrival), `world_vehicle_lua_check` (r[15]
