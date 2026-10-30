@@ -1731,9 +1731,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
-    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab and play since the
-    // self-hit round (design 8.33: the lab A/B and the play rehearsal at these defaults, -WanSim bad: a seated passenger's
-    // shots no longer hit their own jeep and still hit the guard); a named 0 opts out.
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab since the self-hit round
+    // (design 8.33: the lab A/B 8a920ec8 on one line); play forces it off below unless named; a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
@@ -1799,6 +1798,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         // M6 truck cab seat 1: lab-only by default (review of 8.25: its play rehearsal named world_relief=1 for the
         // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
         if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
+        // M7 S1: lab-only by default (review of 8.33: the play rehearsal 41dcbf22 fired on no line shown to hit the jeep in
+        // stock; the discriminating play run m6m7c-self-hit-play2.txt has not run); a named 1 runs in play.
+        if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
         // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
         // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28).
         c.partner_pass_camera_trace = false;
