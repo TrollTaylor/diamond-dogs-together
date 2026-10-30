@@ -42,7 +42,7 @@ inline const char* ClassName(Class c) noexcept {
     }
 }
 // The vehicle category (record +0x6C >> 4): 1, 2 light vehicles, 3, 4 trucks, as GetVehicleType 0x55E7F0 (cat+0x1B6)
-// [O for 25603 cat 1 / type 1 and 25608 cat 2 / type 2; I for the trucks]. A truck seats a passenger only in its cab
+// [O: 25603 and the africa jeep 25608 log cat 1 (runs 66ad131f, 8a920ec8, 41dcbf22); cat 2 and the trucks are I]. A truck seats a passenger only in its cab
 // (seat 1); a light vehicle in 1 (front, M6) and the back seats 2 / 3. Anything else: none (no shift).
 inline Class ClassFor(std::uint8_t category, std::uint8_t seat) noexcept {
     if (seat < 1 || seat > 3) return Class::none;
@@ -89,8 +89,11 @@ struct Pub {
 };
 // The longest a publication stays fresh at this speed, ms.
 inline std::uint64_t MaxAgeMs(float speed) noexcept {
-    (void)speed;
-    return kFreshMs;  // STUB (red step)
+    if (!std::isfinite(speed) || speed < 0.0f) return kFreshMs;
+    const float ms = speed > 1e-3f ? kDriftM / speed * 1000.0f : static_cast<float>(kMaxAgeMs);
+    if (!(ms > static_cast<float>(kFreshMs))) return kFreshMs;
+    if (ms >= static_cast<float>(kMaxAgeMs)) return kMaxAgeMs;
+    return static_cast<std::uint64_t>(ms);
 }
 inline bool Fresh(std::uint64_t now, std::uint64_t ms, float speed) noexcept { return now >= ms && now - ms <= MaxAgeMs(speed); }
 
