@@ -1731,9 +1731,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
-    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): off unless named, in lab and play, until a FRAME proof
-    // on both copies and a play rehearsal; a named 1 runs in play too.
-    if (!c.partner_seat_shot_given) c.partner_seat_shot = false;
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab and play since the
+    // self-hit round (design 8.33: the lab A/B and the play rehearsal at these defaults, -WanSim bad: a seated passenger's
+    // shots no longer hit their own jeep and still hit the guard); a named 0 opts out.
+    if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
