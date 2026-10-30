@@ -222,7 +222,7 @@ add_test(NAME partner_ammo_leak_tests COMMAND partner_ammo_leak_tests)
 target_sources(mgs_coop_core PRIVATE native/partner_act_log.cpp native/partner_dm_overlay.cpp native/partner_traverse.cpp)
 # Gestures (docs/native-puppet.md "Gestures"): the pure sender, wire, node tables and decisions,
 # and the gesture lab lever's grammar, admission, preconditions and formats.
-target_sources(mgs_coop_core PRIVATE native/partner_gesture_policy.cpp native/partner_gesture_lever_policy.cpp)
+target_sources(mgs_coop_core PRIVATE native/partner_gesture_policy.cpp native/partner_gesture_lever_policy.cpp native/partner_seat_gun.cpp)
 # 0.13.6 body safety and bounded log budgets (docs/native-puppet.md "Body safety"): pure decisions.
 target_sources(mgs_coop_core PRIVATE native/partner_body_safety.cpp native/log_budget.cpp)
 foreach(_mgs_safety_test partner_body_safety_tests log_budget_tests)
@@ -276,6 +276,14 @@ if(MSVC)
   target_compile_options(partner_seat_aim_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME partner_seat_aim_tests COMMAND partner_seat_aim_tests)
+# M7: the partner's raised gun on the seated body 1 (pure policy and the gesture kinds).
+add_executable(partner_seat_gun_tests tests/partner_seat_gun_tests.cpp)
+target_include_directories(partner_seat_gun_tests PRIVATE native/include native)
+target_link_libraries(partner_seat_gun_tests PRIVATE mgs_coop_core)
+if(MSVC)
+  target_compile_options(partner_seat_gun_tests PRIVATE /W4 /WX)
+endif()
+add_test(NAME partner_seat_gun_tests COMMAND partner_seat_gun_tests)
 # The overlay catalogue must match partner_sync.lua OVERLAY (order and strings).
 add_test(NAME partner_dm_overlay_tests COMMAND partner_dm_overlay_tests "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/partner_sync.lua")
 add_executable(client_reset_tests tests/client_reset_tests.cpp)
