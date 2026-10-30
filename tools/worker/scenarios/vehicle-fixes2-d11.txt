@@ -1,0 +1,71 @@
+# D11 before PAIRED, on foot (docs/vehicles-companions-design.md section 8.14; the 0.14.4 review finding
+# game-d11-prepair-gap), lab, africa-jeep seed, world_loadout_block named, the HUD on (the toast is drawn).
+# The host's lab goto to 30010 (through the ACC, both resumed there); only the guest's 30010 loading screen is resumed
+# (waitmission ... only), so the host waits on its tips screen and the pair cannot form; the guest gets out of the
+# helicopter at the LZ (waitgameplay presses E for the verified helicopter state), opens its iDroid (Tab, 3 MISSIONS,
+# Enter SUPPLY DROP, S S LOADOUT, Enter; S VEHICLES, Enter): both items inactive, each refused with its toast, while
+# unpaired. Then the host's loading is resumed and the pair forms.
+# History: ac0f7656 (vehicle-fixes2-lab.txt part C) logged both guard lines 29 s before PAIRED with the host on its tips
+#   screen, but the guest was still riding the helicopter in and its iDroid did not open there.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-fixes2-d11.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, viewer_changed, faults; an event=paired line for 30010 before the guest's refusals.
+labsetting world_loadout_block=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=0; credit=0; loadout=1; gone=0' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+wait 3000
+logmark both
+host worldtrigger goto=30010 goto_lz=0
+waitmission host 40020 240
+waitmission guest 30010 240 only
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30010' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 30
+expectstate guest world_paired ^(False|false|0)$
+host capture d11f-host-waiting
+waitgameplay guest 150
+expectstate guest world_paired ^(False|false|0)$
+guest run position
+guest capture d11f-guest-onfoot
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11f-guest-loadout
+guest press enter
+wait 500
+guest capture d11f-guest-loadout-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 10500
+guest press s
+wait 800
+guest capture d11f-guest-vehicles
+guest press enter
+wait 500
+guest capture d11f-guest-vehicles-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_vehicle; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=4;' 5
+expectstate guest world_paired ^(False|false|0)$
+host capture d11f-host-still-waiting
+wait 1500
+guest press tab
+wait 2500
+waitmission host 30010 240
+waitlog guest 'event=paired; epoch=[0-9]+; eff=3;' 60
+waitlog host 'event=paired; epoch=[0-9]+; eff=3;' 60
+wait 3000
+both capture d11f-paired
+state
