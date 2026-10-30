@@ -1962,6 +1962,54 @@ void TestSetupElsewhere() {
         CHECK(Has(ReadText(f.paths.launcher_log), "setup=auto"));
         CHECK(f.RealSavesUntouched());
     }
+    // 0.14.4 review, round 2: the other setup's process ended without releasing the lock (a window closed during setup
+    // ends its process with the setup thread still holding it). While anyone else has the lock open (a window waiting
+    // for it), the lock is then abandoned, and the next setup takes it at once (WAIT_ABANDONED counts as taken).
+    {
+        // RunSetup itself is the first to wait on the abandoned lock.
+        Fixture f(L"setup-elsewhere-abandoned");
+        HANDLE keep = nullptr;   // stays open, so the mutex outlives its owner as it does while another window holds it open
+        std::thread owner([&]() { keep = CreateMutexW(nullptr, TRUE, SetupMutexName(f.game).c_str()); });   // ends holding it
+        owner.join();
+        CHECK(keep != nullptr);
+        std::string error;
+        const bool ran = RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error);
+        CHECK(ran && error.empty() && PathExists(f.paths.friend_install));
+        const std::string log = ReadText(f.paths.launcher_log);
+        CHECK(!Has(log, "setup=refused") && Has(log, "setup=start"));
+        CHECK(!SetupRunningElsewhere(f.game));   // RunSetup let it go again
+        if (keep) CloseHandle(keep);
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // The window waits while the other setup runs; its process then ends holding the lock: this window sets up.
+        Fixture f(L"setup-elsewhere-abandoned-model");
+        std::atomic<bool> held{false}, end{false};
+        HANDLE keep = nullptr;
+        std::thread owner([&]() {
+            keep = CreateMutexW(nullptr, TRUE, SetupMutexName(f.game).c_str());
+            held = keep != nullptr;
+            while (!end) Sleep(5);
+        });   // no ReleaseMutex: abandoned when the thread ends
+        for (int i = 0; i < 1000 && !held; ++i) Sleep(5);
+        CHECK(held && SetupRunningElsewhere(f.game));
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        for (int i = 0; i < 3; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && Has(ReadText(f.paths.launcher_log), "setup=waiting; reason=other_setup"));
+        end = true;
+        owner.join();
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        const std::string log = ReadText(f.paths.launcher_log);
+        CHECK(Has(log, "setup=auto") && !Has(log, "setup=refused") && PathExists(f.paths.friend_install));
+        CHECK(!SetupRunningElsewhere(f.game));
+        if (keep) CloseHandle(keep);
+        CHECK(f.RealSavesUntouched());
+    }
     // Two folders never share the lock name; one folder's name ignores case and a trailing backslash.
     CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") == SetupMutexName(L"c:\\games\\mgs_tpp\\"));
     CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") != SetupMutexName(L"D:\\Games\\MGS_TPP"));
