@@ -933,9 +933,11 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 
 ### Seat shot (S1)
 
-M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31). Key `partner_seat_shot=0|1` (`_given`):
-**off unless named, in lab and play** (built and tested; it showed no effect in the runs, so nothing flips). Lab
-lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
+M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31, on since 8.33). Key
+`partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab and play** since `wp/self-hit` (8.33: a
+stock seated shot cost the shooter's copy of the jeep 702 life, S1 shots on the same line none; the play rehearsal
+`41dcbf22` killed from both back seats with the jeep's life unchanged on both copies); a named 0 opts out. Lab lever
+`seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
 **What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a
 light vehicle, seat 1 of a truck) and the fire filter's RequestBullet hook is live, the driver tick publishes the ridden
