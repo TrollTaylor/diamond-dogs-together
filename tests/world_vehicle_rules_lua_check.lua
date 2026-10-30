@@ -52,6 +52,9 @@ local function Fixture(role, opts)
     W.byId = {[4321] = 1856151639, [4322] = 1856151640}
     env.TppGameObject = {GAME_OBJECT_TYPE_SOLDIER2 = 2}
     env.GameObject = {GetTypeIndex = function(id) return (id == 1500 or id == 4321 or id == 4322) and 2 or 19 end}
+    -- The retail Vehicle.type names (the values are the fixture's own; the module compares by name).
+    env.Vehicle = {type = {EASTERN_LIGHT_VEHICLE = 0, WESTERN_LIGHT_VEHICLE = 1, EASTERN_TRUCK = 2, WESTERN_TRUCK = 3,
+        EASTERN_WHEELED_ARMORED_VEHICLE = 4, WESTERN_WHEELED_ARMORED_VEHICLE = 5, EASTERN_TRACKED_TANK = 6, WESTERN_TRACKED_TANK = 7}}
     W.now = function() return c.clock end
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.get = function(t, k)
@@ -480,6 +483,90 @@ h:guestAt(-675, 889)
 hostReq(h, 25623, 9, 4, -375, 489)
 check(h:has('step=break_judge;id=25623;rid=9;ok=0;why=guest_far') and h.pool[25623].alive and h:sent(4)[1][4] == 8 and
     not h:has('break_crew'), 'the guest 500 m away: refused (guest_far), never wrecked')
+-- The blast distance by type (review of 2026-10-29, finding crew-blast-15m): the armoured vehicle's own destruction threw
+-- the guest flat 25 m away (lab run ac0f7656, frames crew-blast-01/02), so only the light vehicles keep BLAST_MM (the
+-- jeep, run 7762536a); every other type, an unknown type or a missing Vehicle.type binding uses HEAVY_BLAST_MM, for
+-- crew_near and for break_safe alike. The fixture's types: 0/1 light, 2/3 truck, 4/5 wheeled armoured, 6/7 tank.
+local function typedReq(x, id, t, xm, zm) x.H[47]({9, id, 4, t, xm * 1000, 1000, zm * 1000}) end
+h = Fixture('host', {brk = true, crew = true})
+check(h.R.HEAVY_BLAST_MM == 50000 and h.R.BLAST_MM == 15000, 'blast: 15 m for a light vehicle, 50 m for every other type')
+h:add(25623, -375, 489, 4, nil, {riders = {4321}})
+h:guestAt(-375, 514)
+typedReq(h, 25623, 4, -375, 489)
+check(h.V.held[25623] and h:has('event=vehicle_rules;step=break_hold;id=25623;rid=9;why=crew_near;near=partner;d_mm=25000;crew=1;blast_mm=50000') and
+    h.pool[25623].alive and #h.lifeSet == 0 and #h.despawns == 0, 'a crewed armoured vehicle, the partner 25 m away: held (crew_near, 50 m)')
+h:guestAt(-375, 538.9)
+h:polls(4)
+check(h.V.held[25623] and h:count('step=break_hold;id=25623') == 1 and h.pool[25623].alive, '49.9 m: still held, logged once')
+h:guestAt(-375, 540)
+h:poll()
+check(h:has('step=break_judge;id=25623;rid=9;ok=1;why=near') and h:has('step=break_crew;id=25623;rid=9;crew=1') and
+    not h.pool[25623].alive and #h.lifeSet == 1 and h.lifeSet[1].life == 0 and #h.despawns == 0 and h.V.held[25623] == nil,
+    '51 m: judged near and wrecked')
+h = Fixture('host', {brk = true, crew = true})
+h:add(25623, -375, 489, 6, nil, {riders = {4321}})
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -405, 489
+h:guestAt(-375, 600)
+typedReq(h, 25623, 6, -375, 489)
+check(h.V.held[25623] and h:has('step=break_hold;id=25623;rid=9;why=crew_near;near=host;d_mm=30000;crew=1;blast_mm=50000') and
+    h.pool[25623].alive, "a crewed tank, the host's own player 30 m away: held")
+h = Fixture('host', {brk = true, crew = true})
+h:add(25624, -375, 489, 0, nil, {riders = {4321}})
+h:guestAt(-375, 509)
+typedReq(h, 25624, 0, -375, 489)
+check(h:has('step=break_crew;id=25624;rid=9;crew=1') and not h.pool[25624].alive and #h.lifeSet == 1 and not h:has('crew_near'),
+    'a crewed light vehicle, the partner 20 m away: wrecked (15 m)')
+-- break_safe, no crew: a named truck or armoured vehicle with the host 30 m away -> the Despawn (by its locator).
+for _, v in ipairs({{2, 'veh_trc_0000'}, {5, 'veh_wav_0000'}}) do
+    h = Fixture('host', {brk = true})
+    h:add(25625, -375, 489, v[1], v[2])
+    h.env.vars.playerPosX, h.env.vars.playerPosZ = -405, 489
+    h:guestAt(-375, 600)
+    typedReq(h, 25625, v[1], -375, 489)
+    check(h:has('step=break_judge;id=25625;rid=9;ok=1;why=near') and
+        h:has('event=vehicle_rules;step=break_safe;id=25625;near=host;d_mm=30000;form=despawn;blast_mm=50000') and #h.lifeSet == 0 and
+        #h.despawns == 1 and h.despawns[1].locator == v[2], 'type ' .. v[1] .. ', the host 30 m away: the Despawn (50 m)')
+end
+-- An unnamed copy (no Despawn outside Mother Base: VEHICLE_GONE would refuse it as no_locator, REJECT 8, and the copies
+-- would differ) with a player within the blast: held (blast_near, re-checked every poll; REJECT 9 after 120 s), then
+-- the wreck once everybody is clear.
+h = Fixture('host', {brk = true})
+h:add(25625, -375, 489, 5)
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -405, 489
+h:guestAt(-375, 600)
+typedReq(h, 25625, 5, -375, 489)
+check(h.V.held[25625] and h:has('event=vehicle_rules;step=break_hold;id=25625;rid=9;why=blast_near;near=host;d_mm=30000;blast_mm=50000') and
+    h.pool[25625].alive and #h.lifeSet == 0 and #h.despawns == 0 and not h:has('break_judge') and #h:sent(4) == 0,
+    'an unnamed armoured copy, the host 30 m away: held (blast_near), not refused')
+h:polls(4)
+check(h:count('step=break_hold;id=25625') == 1 and h.V.held[25625], 'logged once, still held')
+h.env.vars.playerPosX = -430
+h:poll()
+check(h:has('step=break_judge;id=25625;rid=9;ok=1;why=near') and not h.pool[25625].alive and #h.lifeSet == 1 and h.lifeSet[1].life == 0 and
+    #h.despawns == 0 and h.V.held[25625] == nil and #h:sent(46) == 1, 'the host 55 m away now: the wreck, answered gone')
+h = Fixture('host', {brk = true})
+h:add(25625, -375, 489, 5)
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -405, 489
+h:guestAt(-375, 600)
+typedReq(h, 25625, 5, -375, 489)
+h:polls(401)
+check(h:has('step=hold_timeout;id=25625;src=req;reason=blast_near') and h:sent(4)[1][4] == 9 and h.pool[25625].alive,
+    "a player who stays: REJECT 9 after 120 s (VEHICLE_GONE's hold cap)")
+-- An unknown type (GetVehicleType unreadable) or no Vehicle.type binding: 50 m too, never the jeep's 15 m unchecked.
+h = Fixture('host', {brk = true})
+h:add(25625, -375, 489, 255)
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -395, 489
+h:guestAt(-375, 600)
+typedReq(h, 25625, 255, -375, 489)
+check(h:has('step=break_hold;id=25625;rid=9;why=blast_near;near=host;d_mm=20000;blast_mm=50000') and #h.lifeSet == 0, 'an unknown type: 50 m')
+h = Fixture('host', {brk = true})
+h.env.Vehicle = nil
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000')
+h.env.vars.playerPosX, h.env.vars.playerPosZ = -673, 877.7
+h:guestAt(-653, 1000)
+hostReq(h)
+check(h:has('step=break_safe;id=25608;near=host;d_mm=20000;form=despawn;blast_mm=50000') and #h.lifeSet == 0,
+    'no Vehicle.type binding: a jeep gets 50 m too')
 -- ... and a copy that broke on the host too is answered as gone.
 h = Fixture('host', {brk = true})
 h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {riders = {4321}})

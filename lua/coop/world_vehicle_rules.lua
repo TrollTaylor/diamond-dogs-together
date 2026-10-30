@@ -19,11 +19,15 @@
 --       after 120 s); then applied only when the guest's player (its DOWNED_STATUS position, world_downed.lua, at most
 --       3 s old: the closer of the one when the request arrived and the current one) stands within 300 m of the pose the
 --       guest reported (a launcher or rifle range), or the host's own copy is down to a quarter of the highest body life
---       it read; held while no position is known; at most 4 applied per 20 s, more wait. Applied: the host's copy
+--       it read; held while no position is known; at most 4 applied per 20 s, more wait; an unnamed copy (no Despawn
+--       outside Mother Base) is held (blast_near) while a player stands within its blast distance. Applied: the host's copy
 --       becomes the same wreck (SetBodyLife 0, the engine's own destruction; read back, the Despawn if it does not
---       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within 15 m of the
---       host's copy, or a position cannot be read: then a Despawn, logged break_safe (run 7762536a: the wreck's later
---       explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). Refused: REJECT 8; the
+--       take), unless the host's own player or the partner (its DOWNED_STATUS position) stands within the blast
+--       distance of the host's copy, or a position cannot be read: then a Despawn, logged break_safe (run 7762536a: the
+--       wreck's later explosion, about 8 s after SetBodyLife 0, hit the host beside it for 3500 of 7800 life). The blast
+--       distance (VR.blastMm) is BLAST_MM for a light vehicle (that jeep) and HEAVY_BLAST_MM for every other type, an
+--       unknown type or a missing Vehicle.type binding (run ac0f7656: the armoured vehicle's own destruction threw the
+--       guest flat 25 m away; the review of 2026-10-29). Refused: REJECT 8; the
 --       guest's copy keeps its wreck (no engine command undoes one: SetBodyLife writes the life word only, IsAlive
 --       reads rec+0x70 bits nothing clears), logged break_refused.
 --       D12 crew (world_vehicle_crew, bit 64; the user's pick of 2026-10-29: wreck at once): a hold whose only reason is
@@ -31,7 +35,7 @@
 --       buddy or the partner's ride) is judged at once and applied as the wreck, so both copies end with one; the
 --       engine's blast decides the crew on the host's copy (their deaths are host outcomes, synced as usual; on the
 --       guest's copy they died unattributed already, so nothing counts twice). Held (crew_near) while a player stands
---       within BLAST_MM of the host's copy: a Despawn under seated soldiers is untested. Logged break_crew.
+--       within the blast distance of the host's copy: a Despawn under seated soldiers is untested. Logged break_crew.
 --   D14 world_vehicle_credit (bit 16; with VEHICLE_GONE): the receiver of a Fulton loss (cause 1) removes its copy with
 --       the stock Seize {"Instant"} instead of a Despawn, so its own engine runs TppTerminal.OnFulton ->
 --       OnFultonVehicle -> AddTempResource (E17: no GMP charged, the temporary resource commits at the mission end) and
@@ -46,8 +50,8 @@ local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, ASK_MS, QUEUE_N = 300000, 3000, 4, 20000, 6, 60000, 32
 local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED, BLAST_MM = 5000, 10000, 2000, 3000, 130000, 4, 15000
 VR.BREAK_MM, VR.FRESH_MS, VR.RATE_N, VR.RATE_MS, VR.ASK_N, VR.QUEUE_N, VR.CREDIT_MS = BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, QUEUE_N, CREDIT_MS
-local PREPAIR_MS = 300000
-VR.UNATTRIBUTED, VR.BLAST_MM, VR.PREPAIR_MS = UNATTRIBUTED, BLAST_MM, PREPAIR_MS
+local PREPAIR_MS, HEAVY_BLAST_MM = 300000, 50000
+VR.UNATTRIBUTED, VR.BLAST_MM, VR.HEAVY_BLAST_MM, VR.PREPAIR_MS = UNATTRIBUTED, BLAST_MM, HEAVY_BLAST_MM, PREPAIR_MS
 -- The guest's iDroid drop items this module sets inactive: name, NOTE 13 a (the toast), log path.
 local ITEMS = {{"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}, {"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
 local function L(...)
@@ -215,8 +219,8 @@ G.decide = function(q, ...)
   if verdict == "hold" and why == "occupied" and VR.crewOn() then
     local n = VR.crew(q.id)
     if n then
-      local who, d = VR.nearBlast(q.id, now())
-      if who then held(q, "crew_near", fmt(";near=%s;d_mm=%d;crew=%d", who, d or -1, n)); return "hold", "crew_near" end
+      local who, d, b = VR.nearBlast(q.id, now())
+      if who then held(q, "crew_near", fmt(";near=%s;d_mm=%d;crew=%d;blast_mm=%d", who, d or -1, n, b)); return "hold", "crew_near" end
       q.crew, verdict = n, "apply"
     end
   end
@@ -229,6 +233,13 @@ G.decide = function(q, ...)
     if not ok then judged(q, false); return "refuse", pwhy end
   end
   if not q.ok then return "refuse", q.pwhy end
+  -- An unnamed copy has no Despawn outside Mother Base (VEHICLE_GONE: no_locator, REJECT 8): a player within the blast
+  -- holds it (blast_near) until clear, never the break_safe Despawn that cannot run (index 0 is VEHICLE_GONE's refusal).
+  if q.named == nil then q.named = G.locator(q.id) ~= nil or W.mission == 30050 end
+  if not q.named and q.id % 512 ~= 0 then
+    local who, d, b = VR.nearBlast(q.id, t)
+    if who then held(q, "blast_near", fmt(";near=%s;d_mm=%d;blast_mm=%d", who, d or -1, b)); return "hold", "blast_near" end
+  end
   VR.applied = window(VR.applied, t, RATE_MS)
   if #VR.applied >= RATE_N then held(q, "rate", fmt(";n=%d", #VR.applied)); return "hold", "rate" end
   VR.applied[#VR.applied + 1], VR.st.applied = t, VR.st.applied + 1
@@ -237,21 +248,30 @@ G.decide = function(q, ...)
   return "apply"
 end
 
--- D12, host: who stands within BLAST_MM of this copy of id now: "host" (its own player), "partner" (the guest's fresh
--- DOWNED_STATUS position: the host's blast can reach body 1 too), "unknown" (the copy's or the host's position cannot be
--- read), or nil (nobody: the wreck is safe to run).
+-- D12, host: the blast distance of this copy of id (mm): BLAST_MM for a light vehicle (Vehicle.type EASTERN_ or
+-- WESTERN_LIGHT_VEHICLE, compared by name), HEAVY_BLAST_MM for any other type, an unknown one or no binding.
+function VR.blastMm(id)
+  local types, t = W.get(W.get(_G, "Vehicle"), "type"), G.vtype(id)
+  if type(types) == "table" and type(t) == "number" and t ~= 255 and
+    (t == W.get(types, "EASTERN_LIGHT_VEHICLE") or t == W.get(types, "WESTERN_LIGHT_VEHICLE")) then return BLAST_MM end
+  return HEAVY_BLAST_MM
+end
+-- D12, host: who stands within the blast distance of this copy of id now: "host" (its own player), "partner" (the
+-- guest's fresh DOWNED_STATUS position: the host's blast can reach body 1 too), "unknown" (the copy's or the host's
+-- position cannot be read), or nil (nobody: the wreck is safe to run); then the distance and the blast distance used.
 function VR.nearBlast(id, t)
+  local b = VR.blastMm(id)
   local x, _, z = G.pose(id)
-  if type(x) ~= "number" or type(z) ~= "number" then return "unknown", -1 end
+  if type(x) ~= "number" or type(z) ~= "number" then return "unknown", -1, b end
   local q = {x = x, z = z}
   local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
-  if type(px) ~= "number" or type(pz) ~= "number" then return "unknown", -1 end
+  if type(px) ~= "number" or type(pz) ~= "number" then return "unknown", -1, b end
   local d = dist(px * 1000, pz * 1000, q)
-  if d <= BLAST_MM then return "host", d end
+  if d <= b then return "host", d, b end
   local gx, gz = VR.guestPos(t)
   if gx then
     d = dist(gx, gz, q)
-    if d <= BLAST_MM then return "partner", d end
+    if d <= b then return "partner", d, b end
   end
 end
 -- Removal forms (both keys need VEHICLE_GONE on). The id is marked gone before the command: the engine's own
@@ -274,9 +294,9 @@ G.remove = function(id, cause, ...)
   -- D12: the host applies a guest's destruction as the same wreck on its own copy, or as a Despawn while a player
   -- stands within the blast (break_safe).
   if cause == 2 and W.host and VR.breakOn() then
-    local who, d = VR.nearBlast(id, t)
+    local who, d, b = VR.nearBlast(id, t)
     if who then
-      L("step=break_safe;id=%d;near=%s;d_mm=%d;form=despawn", id, who, d or -1)
+      L("step=break_safe;id=%d;near=%s;d_mm=%d;form=despawn;blast_mm=%d", id, who, d or -1, b)
       return G.despawn(id)
     end
     return form(id, {id = "SetBodyLife", life = 0}, "wreck", cause, ...)
