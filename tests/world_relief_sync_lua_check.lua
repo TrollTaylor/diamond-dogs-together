@@ -486,6 +486,27 @@ for _, arrive in ipairs({true, false}) do
         check(c.F.arrivedMission == nil and #c.menus == 0, 'a solo load after the final stop: untouched')
     end
 end
+-- The pre-pair mark lapses (review of 2026-10-29, finding d11-prepair-unbounded): 300 s after the arrival without PAIRED
+-- (the host's game failed or quit while loading) the vehicle drop is active again, logged once; a late PAIRED makes the
+-- mission co-op again.
+c = Fixture(2)
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.tick()
+for _, f in ipairs(c.W.stopHooks) do f(true) end
+c.W.paired = false
+follow(c, hostSeeds(), 30010)
+c.env.vars.missionCode, c.W.mission = 30010, 30010
+c.menus = {}
+for _, f in ipairs(c.W.startHooks) do f() end
+c.run(290000, 1000)
+check(menu(c, 'MSN_DROP_VEHICLE') == false and not c.find('prepair_lapsed'), 'still inactive 290 s after the arrival, unpaired')
+c.run(12000, 1000)
+check(menu(c, 'MSN_DROP_VEHICLE') == true and c.count('event=relief;role=guest;step=prepair_lapsed;mission=30010;ms=300000;') == 1,
+    'no PAIRED within 300 s: active again (prepair_lapsed, once)')
+c.W.paired = true
+for _, f in ipairs(c.W.pairedHooks) do f(false) end
+c.run(3000)
+check(menu(c, 'MSN_DROP_VEHICLE') == false and c.count('prepair_lapsed') == 1, 'a late PAIRED: inactive again')
 -- A solo load ends the co-op mission: active again too.
 c = Fixture(2)
 for _, f in ipairs(c.W.pairedHooks) do f(false) end

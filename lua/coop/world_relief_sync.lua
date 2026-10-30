@@ -24,7 +24,8 @@
 --            guest's copy is loaded again from VEHICLE_SPAWN.
 --   end      the guest skips TppMission.SeizeReliefVehicleOn* (E18): one Mother Base credit.
 --   refusal  the guest's iDroid vehicle drop (MSN_DROP_VEHICLE) is inactive in a co-op free-roam
---            mission (paired, or unpaired inside the mission it shares); selecting it logs the
+--            mission (paired, or unpaired inside the mission it shares; a follow arrival before
+--            PAIRED marks it, a mark that lapses PREPAIR_MS later without PAIRED); selecting it logs the
 --            refusal and shows a toast (NOTE 13 a 4; D1 a). The LOADOUT drop, whose delivery can carry
 --            a vehicle, is the user's decision D11 (2026-10-29: blocked in co-op): world_vehicle_rules.lua,
 --            key world_loadout_block, whatever world_relief says; this module never touches that item.
@@ -44,7 +45,7 @@ local FREE = {[30010] = true, [30020] = true, [30050] = true}
 local PAINT = {1, 0, 3, 2, 5, 7, 4, 6, 9, 8}
 local SEIZE = {"SeizeReliefVehicleOnAbort", "SeizeReliefVehicleOnClear", "SeizeReliefVehicleOnForceGoToMb"}
 local MENUS = {{"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
-RS.RID, RS.PAINT, RS.MENUS = RID, PAINT, MENUS
+RS.RID, RS.PAINT, RS.MENUS, RS.PREPAIR_MS = RID, PAINT, MENUS, 300000
 local function L(text) W.log("event=relief;role=" .. (W.host and "host" or "guest") .. ";" .. text) end
 local function note(a) if type(W.note) == "function" then pcall(W.note, 13, a, 0) end end
 local function n(v) return type(v) == "number" and v == v and v > -1e12 and v < 1e12 end
@@ -413,6 +414,11 @@ function RS.unguard()
  L("step=unguard;path=idroid_drop;")
 end
 local function guard(now)
+ -- The pre-pair mark (a follow arrival without PAIRED yet) lapses after PREPAIR_MS: the guest plays alone.
+ if RS.prepairAt and now - RS.prepairAt >= RS.PREPAIR_MS then
+  RS.prepairAt = nil
+  if not W.paired then RS.stopped = true; L(fmt("step=prepair_lapsed;mission=%d;ms=%d;", W.mission or 0, RS.PREPAIR_MS)) end
+ end
  if owned() then return end
  if not (W.inGame() and FREE[W.mission] and (W.paired or RS.coop == W.mission and not RS.stopped)) then RS.unguard(); return end
  if now < (RS.greyAt or 0) then return end
@@ -580,7 +586,10 @@ W.startHooks[#W.startHooks + 1] = function()
  readKey(W.cfg(W.mission, 0))
  -- D11 pre-pair gap (0.14.4 review): a host-led follow into this mission (world_follow.lua) is co-op before PAIRED.
  local F = W.follow
- if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then RS.coop, RS.stopped = W.mission, nil end
+ RS.prepairAt = nil
+ if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then
+  RS.coop, RS.stopped, RS.prepairAt = W.mission, nil, not W.paired and W.now() or nil
+ end
  RS.hostState, RS.diffAt, RS.fixAt, RS.fixes, RS.places, RS.gaveUp, RS.txAt, RS.txAlive, RS.txLogged = nil, nil, nil, 0, 0, nil, nil, nil, nil
  RS.nextTick, RS.greyAt, RS.greyed, RS.skipLogged, RS.busyLogged, RS.quiet, RS.seen, RS.arrive, RS.reload = nil, nil, nil, nil, nil, nil, nil, nil, nil
  RS.lostReq, RS.removedAt, RS.last = nil, nil, nil
@@ -598,12 +607,12 @@ W.startHooks[#W.startHooks + 1] = function()
  end
 end
 W.pairedHooks[#W.pairedHooks + 1] = function()
- RS.txAt, RS.stopped = nil, nil
+ RS.txAt, RS.stopped, RS.prepairAt = nil, nil, nil
  if not W.host and RS.on() then RS.coop = W.mission end
 end
 -- The final stop ends the co-op mission for the refusal guard (RS.coop stays: the mission-end seize of
 -- a vehicle the host's seeds gave is still skipped); D8 (b) live vars come back at the next solo Load.
-W.stopHooks[#W.stopHooks + 1] = function(final) if final then RS.stopped = true; pcall(RS.unguard) end end
+W.stopHooks[#W.stopHooks + 1] = function(final) if final then RS.stopped, RS.prepairAt = true, nil; pcall(RS.unguard) end end
 
 -- debug relief_status (read only, any mode), relief_lab nonactive vehicle (lab: the refusal path of the
 -- selected inactive vehicle drop item) and relief_lab forget (lab, guest; below). The LOADOUT block of

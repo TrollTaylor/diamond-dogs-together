@@ -685,6 +685,34 @@ g = Fixture('guest', {loadout = true})
 nextMission(g, 30010, 30010)
 for _, f in ipairs(g.W.stopHooks) do f(true) end
 check(g:menu('MSN_DROP_LOADOUT') == true and g:menu('MSN_DROP_VEHICLE') == true, 'its final stop activates them again')
+-- The pre-pair mark lapses (review of 2026-10-29, finding d11-prepair-unbounded): a host whose game fails or quits while
+-- loading never pairs, and the guest then plays the mission alone. PREPAIR_MS after the arrival without PAIRED the items
+-- are active again (logged once); PAIRED before that ends the lapse (the mission is co-op until its final stop, as before).
+g = Fixture('guest', {loadout = true})
+check(g.R.PREPAIR_MS == 300000, 'the pre-pair mark lapses 300 s after the arrival')
+nextMission(g, 30010, 30010)
+g:polls(10, 29000)
+check(g:menu('MSN_DROP_LOADOUT') == false and not g:has('prepair_lapsed'), 'still inactive 290 s after the arrival, unpaired')
+g:polls(2, 6000)
+check(g:menu('MSN_DROP_LOADOUT') == true and g:menu('MSN_DROP_VEHICLE') == true and
+    g:count('event=vehicle_rules;step=prepair_lapsed;mission=30010;ms=300000') == 1 and
+    g:has('step=unguard;path=idroid_drop_loadout;mission=30010'), 'no PAIRED within 300 s: active again (prepair_lapsed, once)')
+g:polls(10)
+check(g:count('prepair_lapsed') == 1 and g:menu('MSN_DROP_LOADOUT') == true, 'and stays active')
+g.W.paired = true
+for _, f in ipairs(g.W.pairedHooks) do f(false) end
+g:polls(10)
+check(g:menu('MSN_DROP_LOADOUT') == false, 'a late PAIRED makes the mission co-op again')
+g = Fixture('guest', {loadout = true})
+nextMission(g, 30010, 30010)
+g:polls(4, 20000)
+g.W.paired = true
+for _, f in ipairs(g.W.pairedHooks) do f(false) end
+g:polls(4)
+g.W.paired = false
+g:polls(20, 30000)
+check(g:menu('MSN_DROP_LOADOUT') == false and not g:has('prepair_lapsed'),
+    'PAIRED within the 300 s: no lapse; across a later link drop the mission stays co-op until its final stop')
 -- The host's iDroid is never touched (its loadout drop works), whatever the key.
 h = Fixture('host', {loadout = true})
 h:polls(20)

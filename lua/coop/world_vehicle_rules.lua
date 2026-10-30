@@ -5,7 +5,9 @@
 --   D11 world_loadout_block (bit 32): the guest's iDroid supply drops that can bring a vehicle, LOADOUT
 --       (MSN_DROP_LOADOUT, NOTE 13 a 5) and, since the user's pick of the review (only the host picks vehicles), VEHICLES
 --       (MSN_DROP_VEHICLE, NOTE 13 a 4), are inactive while the guest is paired in co-op (any mission world sync runs),
---       and inside that mission across a link drop until its final stop; selecting one logs the refusal and shows its
+--       and inside that mission across a link drop until its final stop; a host-led follow's arrival (world_follow.lua)
+--       marks the mission co-op before PAIRED, a mark that lapses PREPAIR_MS later without PAIRED (logged
+--       prepair_lapsed: the host's game failed or quit while loading); selecting one logs the refusal and shows its
 --       toast. Whatever world_relief says: this module then owns the VEHICLES item (VR.ownsVehicleDrop) and
 --       world_relief_sync.lua leaves it alone. The host's iDroid and every other item stay as they are.
 --   D12 world_vehicle_break (bit 8; with VEHICLE_GONE): a vehicle that breaks on the guest's copy without attribution
@@ -44,7 +46,8 @@ local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, ASK_MS, QUEUE_N = 300000, 3000, 4, 20000, 6, 60000, 32
 local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED, BLAST_MM = 5000, 10000, 2000, 3000, 130000, 4, 15000
 VR.BREAK_MM, VR.FRESH_MS, VR.RATE_N, VR.RATE_MS, VR.ASK_N, VR.QUEUE_N, VR.CREDIT_MS = BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, QUEUE_N, CREDIT_MS
-VR.UNATTRIBUTED, VR.BLAST_MM = UNATTRIBUTED, BLAST_MM
+local PREPAIR_MS = 300000
+VR.UNATTRIBUTED, VR.BLAST_MM, VR.PREPAIR_MS = UNATTRIBUTED, BLAST_MM, PREPAIR_MS
 -- The guest's iDroid drop items this module sets inactive: name, NOTE 13 a (the toast), log path.
 local ITEMS = {{"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}, {"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
 local function L(...)
@@ -368,6 +371,11 @@ function VR.unguard()
   for _, it in ipairs(ITEMS) do L("step=unguard;path=%s;mission=%d", it[3], W.mission or 0) end
 end
 local function guard(t)
+  -- The pre-pair mark (an arrival without PAIRED yet) lapses after PREPAIR_MS: the guest plays this mission alone.
+  if VR.prepairAt and t - VR.prepairAt >= PREPAIR_MS then
+    VR.prepairAt = nil
+    if W.paired ~= true then VR.stopped = true; L("step=prepair_lapsed;mission=%d;ms=%d", W.mission or 0, PREPAIR_MS) end
+  end
   if not (VR.loadoutOn() and W.inGame() and VR.coopNow()) then VR.unguard(); return end
   if t < (VR.greyAt or 0) then return end
   VR.greyAt = t + GREY_MS
@@ -425,7 +433,10 @@ W.startHooks[#W.startHooks + 1] = function()
   -- D11 pre-pair gap (0.14.4 review): a host-led follow into this mission (world_follow.lua's arrival) makes it co-op at
   -- once, so the guest's items are inactive before PAIRED; the last mission's final stop no longer carries over.
   local F = W.follow
-  if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then VR.coop, VR.stopped = W.mission, nil end
+  VR.prepairAt = nil
+  if not W.host and type(F) == "table" and F.arrivedMission ~= nil and F.arrivedMission == W.mission then
+    VR.coop, VR.stopped, VR.prepairAt = W.mission, nil, W.paired ~= true and now() or nil
+  end
   local s = type(W.api) == "table" and W.api.str32
   if type(s) == "function" then
     local ok, ids = pcall(function()
@@ -442,9 +453,9 @@ W.startHooks[#W.startHooks + 1] = function()
       VR.creditOn() and 1 or 0, W.vehicleLoadoutOn == true and 1 or 0, G.on() and 1 or 0, W.vehicleCrewOn == true and ";crew=1" or "")
   end
 end
-W.pairedHooks[#W.pairedHooks + 1] = function() VR.coop, VR.stopped = W.mission, nil end
+W.pairedHooks[#W.pairedHooks + 1] = function() VR.coop, VR.stopped, VR.prepairAt = W.mission, nil, nil end
 W.stopHooks[#W.stopHooks + 1] = function(final)
-  if final then VR.stopped, VR.queue = true, {}; pcall(VR.unguard) end
+  if final then VR.stopped, VR.queue, VR.prepairAt = true, {}, nil; pcall(VR.unguard) end
 end
 -- debug vehicle_gone_status (read only) carries this module's counters too: vr=<break><credit><loadout><greyed>,
 -- j judged, a applied, r refused (host), q asked (guest), s Seize credits sent, c credits seen after them. The base
