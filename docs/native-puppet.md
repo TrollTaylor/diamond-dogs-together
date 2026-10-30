@@ -464,7 +464,7 @@ act 0x70 selects the VehicleCamera, whose Deactivate (and FinishState) clear the
 field; if our handle is still there 8 s after the report ended, the driver
 clears it (`ReleasePlan`: only our own handle, never under the VehicleCamera).
 No code or vtable is patched and no game function is called; the install
-(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, once
+(`partner_pass_camera=installed; mode=connect; field=0x1f0; blocks=10`, 13 since 8.27, once
 per process after the code gate) only verifies the pinned blocks. A write
 fault latches the mission (`state=refused; reason=fault; latch=mission`), as
 does the board's `board_uncertain`; nothing is written while the mission
@@ -516,6 +516,46 @@ modules take over; the handle stays set, so their collision skips the jeep
 too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
+
+**The aim camera (design 8.27, review fixes 8.28).** Key `partner_pass_camera=off|connect|aim|drop`
+(lab and play; **default aim**): connect is the behaviour above (0.14.4); aim
+keeps it and adds the shot guard; drop adds the guard but drops the handle
+while aiming (+600 ms; a lab option, it blocks the seat-2 gun: play runs it as
+aim); off never connects. Lab lever `debug passcam
+off|connect|aim|drop|lab|status`; lab trace `partner_pass_camera_trace=1`
+(`state=trace` lines every 100 ms while aiming; `rot_mrad` = the world
+up-pitch and yaw of CAM+0x90, `look` = the right stick). The guard
+(`partner_pass_camera_policy.hpp` GuardStep, `TickPassCamera`) runs only for
+the armed local back-seat passenger while it aims in the aim camera module
+(vtable 0x23D4D20, CAM+0x340 index 2). Aimed and not firing, the look pitch
+CAM+0x270 (vehicle-relative while aiming) and the world up-pitch and yaw of
+the rotation CAM+0x90 (a Hamilton quaternion, forward = q (0,0,1) q*) are its
+references. From the first firing tick (gun mode 9 / 10) until 350 ms after
+the last, without the player's look input a pitch more than 0.05 rad above its
+reference is written back (the angle pitch to +0x270 / +0x268 with
+`WritePitch`; CAM+0x90 turned down about its own right axis) and a world yaw
+more than 0.035 rad aside is turned back about the vertical (`WriteRotation`;
+SEH, PlayerCamera vtable checked, a fault latches the mission). The player's
+look input (the effective right stick, which carries the mouse: PP+0x474 /
++0x47C with PP+0x488 bit 1, `read_pad`) moves its own axis's references for
+60 ms (x the yaw, y the pitch; the other axis stays held), so the player turns
+and aims inside a window. The stock aim
+camera keeps its world yaw while the jeep turns, so a turn needs no write. The
+hold's close settles a remaining climb or yaw above 0.01 rad; an aim end
+closes the window without a write. Lines: `state=guard; event=open; ...;
+ref_mrad=..; up_mrad=..` and `event=close; ...; end=hold|aim_end; writes=..;
+max_pull_mrad=..; settle=..; yaw_mrad=..; look_ticks=..; ...; rot_writes=..`.
+Why: a seated shot turns CAM+0x90 to the top of the look range (70 deg up) in
+~0.5 s and nothing turns it back (runs `4f1a072f`, `17fce0b7`); with the pitch
+held, the pull turns it sideways instead (0.93 rad in a four-shot burst,
+`a64c40d4`); its source is [U]. Not fixed: from seat 2 the seated aim camera
+(~1.2 m behind, ~0.1 m above the seated root: its pivot is low) looks through
+the jeep's side panel; without our handle the collision pulls it into the
+passenger and the gun refuses to fire (gun mode 15), so the handle stays.
+Aiming down into the jeep's body also refuses the gun (gun mode 15, stock).
+Pins: the look-at update's angle writes 0x111FCB1, vt+0x88's angle and
+rotation writes 0x112106E, the aim-point solve's eye 0x109705C, slot vt+0xF0,
+the aim module's slots +0x18 / +0x20 (13 pass camera blocks).
 
 ### Truck test levers
 

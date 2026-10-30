@@ -20,6 +20,8 @@ mgscoop::CoopConfig Coop(const std::string& text) {
     Check(mgscoop::ParseCoopConfig(text.data(), text.size(), config), "coop parse usable");
     return config;
 }
+// Design 8.27: the shipped passenger camera mode (an unnamed partner_pass_camera, lab and play).
+constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::aim;
 } // namespace
 
 int main() {
@@ -259,6 +261,44 @@ int main() {
             Check(!invalid.partner_ride_front && invalid.partner_ride_front_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
                   "an invalid front value refuses (named, off)");
         }
+    }
+    // Design 8.27: the passenger camera's mode partner_pass_camera=off|connect|aim (lab and play; the default below) and
+    // its read-only lab trace partner_pass_camera_trace (lab only, default 0, play forces it off).
+    {
+        using mgscoop::PartnerPassCamera;
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        Check(!LabConfig{}.partner_pass_camera_given && !LabConfig{}.partner_pass_camera_trace, "the camera keys start unnamed, no trace");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_pass_camera == kPassCameraDefault && !profile.partner_pass_camera_given && !profile.partner_pass_camera_trace,
+                  "the shipped camera mode in lab and play, no trace");
+            for (const char* value : {"off", "connect", "drop", "aim"}) {
+                const auto named = Lab(gun + mode + "partner_pass_camera=" + value + "\npartner_pass_camera_trace=1\n");
+                // Design 8.28: drop is a lab option (it blocks the seat-2 gun: runs 17fce0b7, 43e5b981); play runs aim.
+                const char* want = !lab && std::strcmp(value, "drop") == 0 ? "aim" : value;
+                Check(std::strcmp(mgscoop::PartnerPassCameraName(named.partner_pass_camera), want) == 0 && named.partner_pass_camera_given &&
+                          named.partner_pass_camera_trace == lab && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                          named.play_refused == 0,
+                      "a named camera mode runs in lab and play (drop runs as aim in play); the trace in the lab only");
+            }
+        }
+        for (const char* value : {"", "on", "1", "Aim", "connected"}) {
+            const auto invalid = Lab(gun + "mode=play\npartner_pass_camera=" + value + "\n");
+            Check(invalid.partner_pass_camera == kPassCameraDefault && invalid.partner_pass_camera_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid camera mode refuses (named, the default kept)");
+        }
+        const auto later = Lab("enabled=1\nrole=host\npartner_pass_camera=off\npartner_pass_camera=aim\n");
+        Check(later.partner_pass_camera == PartnerPassCamera::aim, "a later camera mode wins");
+        const auto badTrace = Lab("enabled=1\nrole=host\npartner_pass_camera_trace=2\n");
+        Check(!badTrace.partner_pass_camera_trace && badTrace.invalid_values == 1, "an invalid trace value refuses");
+        PartnerPassCamera p{};
+        Check(mgscoop::ParsePartnerPassCamera("aim", 3, p) && p == PartnerPassCamera::aim && !mgscoop::ParsePartnerPassCamera("x", 1, p) &&
+                  std::strcmp(mgscoop::PartnerPassCameraName(PartnerPassCamera::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerPassCameraName(PartnerPassCamera::connect), "connect") == 0,
+              "camera mode parse and names");
     }
     // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
     // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link

@@ -917,6 +917,16 @@ PASS_CAMERA_SITES = [
     (0x1121D8F, '488b81f0010000488bf948b90000000000000080440f29bc24d0000000488bf241be000700004885c1740d488987200c000041be00078000',
      'PlayerCamera vt+0xA8 0x1121D30 (the position solve every module ends in): CAM+0x1F0 with bit 63 set is the ignored '
      'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
+    # Design 8.27 (the aim camera): the look angles the shot guard writes back and the eye the lab trace reads.
+    (0x111FCB1, 'f30f1045c7f30f1075cff30f588374020000f30f58b370020000f30f11b370020000f30f118374020000e81097fbfef30f118374020000'
+     'f30f11b3680200008b837402000089836c020000',
+     'PlayerCamera vt+0xF0 0x111F830 (the look-at update): adds its deltas to CAM+0x270 (pitch) and CAM+0x274 (yaw, '
+     'wrapped by 0xD93F0), then copies them to CAM+0x268 / +0x26C (the shot guard writes the four the same way)'),
+    (0x109705C, '488b81b8000000440f2890e0000000',
+     'GunAimPointSolve 0x1096F90: the eye the gun aim point rec+0x150 is measured from is CAM+0xE0 (CAM = *(P+0xB8))'),
+    (0x112106E, 'f30f1187700200000f28c7e88c4f8e00410f28e8410f28c8410f28d9410fc6c8c9410fc6e8d2f30f118774020000440f298f90000000',
+     'PlayerCamera vt+0x88 0x1120B00: writes the look pitch CAM+0x270 and yaw +0x274 (atan2 of its direction) with the '
+     'rotation CAM+0x90 (the shot guard holds the rotation too)'),
 ]
 SITES += PASS_CAMERA_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
@@ -1624,6 +1634,10 @@ SLOTS += [
     (0x23D6720, 0x18, 0x12D0F60, 'VehicleCamera base vt+0x18 = CanActivate'),
     (0x23B8250, 0x50, 0x1111C50, 'PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])'),
     (0x23B8250, 0xA8, 0x1121D30, 'PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)'),
+    (0x23B8250, 0xF0, 0x111F830, 'PlayerCamera vt+0xF0 = the look-at update (writes the look angles CAM+0x268..0x274)'),
+    # Design 8.28: the shot guard writes only while this module (the aim camera, CAM+0x340 index 2) is active.
+    (0x23D4D20, 0x18, 0x12BBAE0, 'aim camera module vt+0x18 = CanActivate (the gun record aim bit, the pad aim button)'),
+    (0x23D4D20, 0x20, 0x12BD4D0, 'aim camera module vt+0x20 = update'),
 ]
 # F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
 # per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
@@ -3524,6 +3538,11 @@ w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six m
 w('// (the previous one at +0x33c); the module + 8 is its CAM and CAM+0x348 is P (the act index is u32 P+0x218).')
 w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam_module_vtable_rva=0x23d67f0, pass_cam_module_base_vtable_rva=0x23d6720;')
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
+w('// Design 8.27: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot')
+w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.')
+w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
+w('// Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.')
+w('inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')

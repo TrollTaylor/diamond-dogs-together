@@ -296,7 +296,19 @@ do
     local saved = c.env.Player.RequestToSetCameraRotation
     c.env.Player.RequestToSetCameraRotation = nil
     check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')
+    -- Design 8.27 lever: the camera to the player's own facing (playerRotY -60) plus the degrees given, pitch 0 or given.
+    check(c:send('enemy_cam_turn 180')[3] == 'camera_unavailable', 'cam turn: no camera API, no fake success')
     c.env.Player.RequestToSetCameraRotation = saved
+    r = c:send('enemy_cam_turn 180')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and r[3] == 'cam_turn;rotY=120.0;rotX=0.0;rel=180.0' and cam[1] == 'camrot' and math.abs(cam[2].rotY - 120) < 1e-6 and
+        cam[2].rotX == 0 and cam[2].interpTime == 0.2, 'cam turn: the facing plus 180 degrees, level')
+    r = c:send('enemy_cam_turn -150 -20')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and math.abs(cam[2].rotY - 150) < 1e-6 and cam[2].rotX == -20, 'cam turn: wrapped to -180..180, a pitch given')
+    check(c:send('enemy_cam_turn')[3] == 'enemy_args' and c:send('enemy_cam_turn 181')[3] == 'enemy_args' and
+        c:send('enemy_cam_turn 0 61')[3] == 'enemy_args' and c:send('enemy_cam_turn x')[3] == 'enemy_args' and
+        c:send('enemy_cam_turn 0 0 0')[3] == 'enemy_args', 'cam turn: -180..180 and an optional pitch -60..60')
 end
 check(c:send('enemy_kill_nearest')[3]:find('dead_readback=1', 1, true) and c.life[5] == 3, 'nearest soldier exact dead enum/readback')
 check(c.life[7] == 255, 'unknown soldier not mutated')

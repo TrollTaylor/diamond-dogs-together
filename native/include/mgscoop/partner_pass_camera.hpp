@@ -48,8 +48,29 @@ struct Stats {
     std::uint32_t writes;   // handle writes (set)
     std::uint32_t clears;   // our handle cleared
     std::uint32_t faults;   // SEH-caught writes
+    std::uint32_t angles;   // shot-guard angle writes (design 8.27)
 };
 void ReadStats(Stats& out) noexcept;
+
+// Design 8.27: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
+// +0x268..0x274, +0x204, +0xD38). Reads only, under SEH; false when the camera is not the PlayerCamera.
+bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
+// The current mode's module vtable rva (CAM+0xBD0[CAM+0x340]; 0 when unread): the trace's mvt.
+std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
+
+// Design 8.27 / 8.28, the shot guard (modes aim and drop): writes the local camera's look pitch to CAM+0x270 and its
+// copy +0x268 (the stock look update's order; the yaw is never written). Only to the PlayerCamera (vtable checked), under
+// SEH; false on a fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in
+// Stats::angles.
+bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept;
+// The shot guard's rotation write: CAM+0x90..0x9C (x, y, z, w). Same checks and counters as WritePitch.
+bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept;
+
+// The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
+// override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills
+// `result` and sets ok (false outside the lab or for bad arguments; nothing changes then).
+int Override() noexcept;
+bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept;
 
 namespace detail {
 // The pinned blocks against an image of at least `span` bytes: nullptr or

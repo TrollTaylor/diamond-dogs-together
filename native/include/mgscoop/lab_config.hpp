@@ -218,6 +218,12 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // passenger with the native gun profile in lab and play (ResolveWeaponDefaults),
 // off without it.
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
+// The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.27 / 8.28), with
+// partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
+// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard; the default),
+// drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
+// blocks the seat-2 gun; play runs it as aim). Values equal partner_pass_camera::Mode.
+enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
 // foot), hide (the viewer also hides body 1 while the remote's act is a horse
@@ -602,6 +608,12 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (aim unless
+    // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
+    // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.27) is lab only, default 0.
+    PartnerPassCamera partner_pass_camera = PartnerPassCamera::aim;
+    bool partner_pass_camera_given = false;
+    bool partner_pass_camera_trace = false;
     // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with
     // partner_ride_board=passenger, partner_ride_front=1 also offers the light
     // vehicle's front seat 1 and partner_ride_cab=1 the truck cab seat 1 of a vehicle
@@ -893,6 +905,7 @@ const char* PartnerNativeMountName(PartnerNativeMount value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
 const char* PartnerRideBoardName(PartnerRideBoard value) noexcept;
+const char* PartnerPassCameraName(PartnerPassCamera value) noexcept;
 const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
@@ -959,6 +972,7 @@ bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMo
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
 bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept;
+bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept;
 bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.

@@ -2884,6 +2884,75 @@ Also corrected in 8.25: "E held about 3 s" (two 1500 ms holds), the deny timing 
 Both closed with the baseline restored and the real saves unchanged; frames in the session scratch
 `complete/frames/m6m7b-seats-fix/<run8>-*`, looked at for every claim here.
 
+### 8.27 Results: the passenger aim camera (2026-10-30, branch `wp/seat-shoot2`)
+
+The four defects of a back-seat passenger's aim (8.22, 8.24): (1) from seat 2 the aim camera looks through the jeep,
+(2) each shot swings the view to the sky, (3) the view stays pitched up after the aim, (4) the aim range covers only
+the far side. Hidden runs (research build; Closed, BaselineRestored, RealSavesUnchanged): lab `4f1a072f` (the trace and
+a connect / off / drop A/B), `17fce0b7` (the angle guard), `43e5b981` (afgh-ledge, the rotation hold), `7e79996f`
+(the default, both copies as shooters, every expectation met), play `06aa3fc6` (`-WanSim bad`, the shipped defaults).
+Frames looked at for every claim (`complete/frames/m6m7b-camera`); numbers from the lab trace
+(`partner_pass_camera_trace=1`). Handoff for the shooting work: the session scratch `m6m7b/shoot2/CAMERA-HANDOFF.md`.
+
+- (2), (3) **fixed** [O]: a seated shot (gun mode 9) turns the camera's rotation CAM+0x90 to the top of the look range
+  (70 deg up) in ~0.5 s, with our handle held or dropped alike (`4f1a072f`), and nothing turns it back. The shot guard
+  (mode `aim`, now the default in lab and play) writes the look angles and CAM+0x90 back toward the aimed reference
+  each tick (pulls up to ~7 deg; 8.28) from the first firing tick until 350 ms after the last: three shots in seats 3 and 2 (guest) and seat 3
+  (host) kept the view (`7e79996f` frames `s3-shot1..3`, `s2-shot1..3`, `r3-shot1..3`; guard windows 111-128 mrad at
+  most), and the view is back at the seated camera after the release (`s3-after`, `s2-after`). Holding the angles
+  alone did not hold the view during a shot (`17fce0b7`). Source of the pull [U]; [I] the aim camera follows the gun,
+  which a seated body keeps on its back.
+- (1) **not fixed** [O]: the seated aim camera sits ~1.2 m behind and ~0.1 m above the body root (the panel's
+  height). With our handle it looks through seat 2's side panel (`7e79996f` `s2-aim`); dropping the handle while
+  aiming (mode `drop`) pulls it into the passenger and the gun refuses to fire (gun mode 15; `17fce0b7`, `43e5b981`),
+  so the default keeps the handle. A fix needs the aim camera raised while seated [U].
+- (4) **not fixed** [O `17fce0b7`]: the camera turns out of the own side, the gun clamps at 90 deg (`r60` 0.998), the
+  stock posture-0 range around the seated facing (GunAimReferenceRotation 0x1043C80, limits FUN_141058890).
+- Built: `partner_pass_camera=off|connect|aim|drop` (lab and play, default `aim`; `connect` is 0.14.4), lab lever
+  `passcam`, the lab trace, the Lua lever `enemy_cam_turn` (wrong after the first aim: the look angles turn
+  vehicle-relative). Wire unchanged (local camera only). Contract 822 code sites / 207 slots (13 pass camera blocks).
+  Seat 1 was not reached (`43e5b981`: the driver's policy withdrew seat 1, the guest got seat 3) [U].
+
+### 8.28 Results: the aim camera's review fixes (2026-10-30, branch `wp/seat-shoot2`)
+
+The review of 8.27 found the shot guard clamping the player's own mouse inside a shot window (+-2 deg yaw, +3 / -1.7
+deg pitch, ~0.85 s per shot or a whole burst), a world-rotation hold untested in a turn, writes allowed after the aim
+ended, a ~3 deg climb per shot, `drop` accepted in play and no driver-level tests. Now (`partner_pass_camera_policy.hpp`
+GuardStep, `TickPassCamera`; tests failing first in `10ed98a`, `31e5a8a`, `fdadbb7`, `fb662ad`):
+
+- Without the player's look input the pull is held up (the angle pitch, and CAM+0x90 turned about its own right axis)
+  and sideways (CAM+0x90 turned about the vertical). The player's input (the effective right stick, which carries the
+  mouse: `look=-3600` milli on a mouse step of -60 [O `049aa5ed`]) moves its own axis's references on its tick; a yaw
+  jump above 0.05 rad in one tick counts as input. Aim down passes; a jeep bump moves no reference.
+- The stock aim camera keeps its world yaw while the jeep turns (CAM+0x90's yaw constant while the body turned 58 deg,
+  no write) [O `a64c40d4`], so the yaw hold agrees with it; a shot during a 42 deg turn stayed within 3 deg.
+- Writes only while aiming in the aim camera module (vtable 0x23D4D20, pinned: 822 sites / 209 slots); an aim end
+  closes the window without a write [O: no write with another module in any run]. The hold's close settles a climb or
+  yaw above 0.01 rad. Play runs a named `drop` as `aim`. Driver tests (play ignores the lever, armed only, off releases
+  only a seated passenger's handle, a fault latches) each caught a mutation.
+- Lab runs (hidden worker, both copies shooters, Closed / BaselineRestored / RealSavesUnchanged, every expectation met):
+  `a64c40d4` (yaw free: a four-shot burst without input turned the view 0.93 rad sideways), `049aa5ed` (both axes
+  followed 150 ms after an input: the pull lifted the view 20-23 deg), `d60dbb48` (per-axis, 60 ms: every aim frame on
+  both copies level, no climb over the spaced shots (refs -15 / -18 / -17 mrad), a no-input burst 26 mrad sideways;
+  but the latch let the pull take back each mouse step of a burst).
+- **Play rehearsal `d946a420`** (`-Mode play -WanSim bad`, the shipped defaults, no labsetting; RTT ~180 ms, loss up
+  to 14.2 %; Closed, BaselineRestored, RealSavesUnchanged, Forced=False, IsolationFailed=False, every expectation met)
+  at the shipped code (same-tick input): the host in seat 2 and the guest in seat 3 each fired a shot with a mouse turn
+  (kept: yaw -362 / -361 mrad, `look_ticks=1`), a burst, spaced shots (references -21 / -3 / -3 and -97 / -82 / -85
+  mrad: no climb, `settle=1`) and shots while the other steered through a curve (the vehicle-relative yaw moved
+  690-839 mrad with the jeep, no sky); seat 3's aim frames on the guest are level and outward through every step,
+  seat 2's on the host show no sky (but the panel, defect 1); the drivers' views are unchanged; stock get-offs released
+  the camera. Slow mouse tracking through a burst at the same-tick input is covered by tests only [U in a run].
+- [O] Aiming down into the jeep's own body refuses the gun (gun mode 15, ~20 s in `a64c40d4` after a 0.2 rad mouse
+  pull down from seat 3) [I: stock]. [O] After seated shots something beside the jeep exploded in three runs
+  (`a64c40d4`, `d60dbb48` frames `r3-burst-03` / `r3-after`, `d946a420` `rev-pass-stopped`; no vehicle damage line)
+  [U: what], for the shooting work.
+
+Corrections of 8.27: the view was held at pulls of up to ~7 deg written back each tick (max_pull 111-128 mrad), not
+"within ~3 deg"; seat 2's "held" frames show only that the sky swing is gone (they look at the wheel arch); the seated
+camera after the release kept the climbed pitch (-114 against 9 mrad, `7e79996f`); defect 1's cause is the seated aim
+camera's low pivot, our handle only picks which broken view (the 8.27 "off" run still held the handle).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3353,6 +3422,11 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
   Seats-on (8.25) did not touch M7: shooting stays as the stock passenger aim. The
   combined play smoke `a6830b7c` (shipped defaults) saw the stock passenger aim and fire in play (`checks=0`, the
   magazine down) with the camera inside the jeep's body and pitched up after the shots; it aimed at no target.
+  **The aim camera (8.27, `wp/seat-shoot2`): the shot's swing to the sky and the view stuck up after the aim are
+  fixed and on in lab and play** (`partner_pass_camera=aim`, the shot guard; lab `7e79996f`, play `06aa3fc6`, frames on
+  both copies, seats 2 and 3). Since 8.28 the player's own mouse / stick turns and aims inside a shot window, the
+  pull is held up and sideways, nothing climbs from shot to shot (lab `d60dbb48`, play `d946a420`). Seat 2's aim view
+  through the side panel, the 90 deg range and seated hits remain.
 
 ### M8. AI-driven, reinforcement and side-op vehicles
 

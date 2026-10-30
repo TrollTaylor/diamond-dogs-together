@@ -582,6 +582,14 @@ try {
             $file = Join-Path $fixture 'play-seats-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_front=0`npartner_ride_cab=0`npartner_ride_race=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_ride_front'])|$($m['partner_ride_cab'])|$($m['partner_ride_race'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0|0x0|0/0' 'native: each seat key named 0 turns it off in play'
+            # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to aim (the handle and the
+            # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
+            Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
+                !$clipsIni.Contains('partner_pass_camera')) 'Play-Coop lab.ini never names partner_pass_camera'
+            Assert-Equal "$($n['partner_pass_camera'])|$($n['partner_pass_camera_given'])|$($n['partner_pass_camera_trace'])" 'aim|0|0' 'native: play defaults the passenger camera to aim'
+            $file = Join-Path $fixture 'play-pass-camera-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_pass_camera=connect`npartner_pass_camera_trace=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_pass_camera'])|$($m['partner_pass_camera_given'])|$($m['partner_pass_camera_trace'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'connect|1|0|0x0|0/0' 'native: a named connect runs in play, the trace is forced off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
             Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])" '1|0|1' 'native: play guest defaults the front seat and the race on, the cab off'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'

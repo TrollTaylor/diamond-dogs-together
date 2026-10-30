@@ -40,6 +40,44 @@ while the host reversed onto it (`92f2d2f9`), and after each seat-1 get-off it f
 player out of view (`92f2d2f9`, `d55e5159`, `1be0769e`). Not proven: the dog jumping in after the passenger sat down,
 live (driver test only) [I]; two-PC. While moving, the driver's screen can draw the passenger up to 2.6 m beside its
 seat (`1be0769e`), back in the seat at rest, as before. Full CTest 321/321 (`tools/build.ps1`) at `43534d9` with these docs.
+## 2026-10-30: the aim camera's review fixes (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.28, `docs/native-puppet.md` "Passenger camera"): the shot guard of
+`partner_pass_camera=aim` now holds a seated shot's pull up and sideways only while the player gives no look input;
+the mouse / right stick moves its own axis freely inside a shot window; it writes only while aiming in the aim camera
+(an aim end closes the window without a write); each window settles a remaining climb (no climb from shot to shot);
+play runs a named `drop` as `aim`. **Play default: `aim` stays ON**, re-proven at the shipped code: play rehearsal
+`d946a420` (`-WanSim bad`, shipped defaults, every expectation met, Forced=False; host seat 2 and guest seat 3 as
+shooters, frames on both copies: mouse turns kept, no sky, no climb, the drivers' views unchanged).
+Fix runs (lab, both copies as shooters, every expectation met): `a64c40d4` (yaw free: a four-shot burst without input
+turned 0.93 rad sideways), `049aa5ed` (both axes followed 150 ms after a mouse turn: the pull lifted the view 20 deg),
+`d60dbb48` (per-axis input: every aim frame level on both copies, no climb, a no-input burst 26 mrad sideways, but a
+60 ms input latch let the pull take back each mouse step). Tests failing first (`10ed98a`, `31e5a8a`, `fdadbb7`,
+`fb662ad`), driver wiring tests each caught a mutation; contract 822 sites / 209 slots; full CTest 321/321.
+Corrections of 8.27: the view was held at pulls up to ~7 deg written back each tick, not "within ~3 deg"; seat 2's
+frames show only that the sky swing is gone (they look at the wheel arch); defect 1's cause is the seated aim
+camera's low pivot, our handle only picks which broken view.
+Not fixed / not proven: seat 2's view through the side panel; the 90 deg range; aiming down into the jeep's body
+stops the gun (gun mode 15, stock [I]); whether seated shots hit enemies; an explosion beside the jeep after seated
+shots (`a64c40d4`, `d60dbb48`, `d946a420`; source [U]); slow mouse tracking through a burst (tests only); a
+held-trigger automatic burst; seat 1; two-PC.
+
+## 2026-10-30: the passenger aim camera (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.27, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
+off|connect|aim|drop` (lab and play) with a shot guard that writes the back-seat passenger's camera (look angles and
+rotation CAM+0x90) back toward the aim each tick through each shot (pulls up to ~7 deg; see the review fixes above); lab lever `passcam`, lab trace
+`partner_pass_camera_trace`, Lua lever `enemy_cam_turn`. **Play default: `aim` (ON)**: fixes the view swinging to
+the sky at each shot and the view stuck pitched up after the aim. Proof: lab `7e79996f` (africa-jeep; guest seats 3
+and 2, host seat 3; three shots each, every expectation met, frames on both copies), the A/B and trace runs
+`4f1a072f`, `17fce0b7`, `43e5b981` (afgh-ledge), play rehearsal `06aa3fc6` (`-Mode play -WanSim bad`, shipped
+defaults, RTT ~180 ms, loss up to 12.9 %: every expectation met, Forced=False; host seat 2 and guest seat 3 held the
+view through three shots and a shot while moving, normal after the release, the drivers' views unchanged).
+All Closed, BaselineRestored, RealSavesUnchanged (Forced=True in the lab runs). Archives `%USERPROFILE%\mgs-coop-run-
+archive\m6m7b\<id>` (`17fce0b7` under `D:\mgs-coop-run-archive\m6m7b`, C: was below 1 GB then).
+Not fixed / not proven: seat 2's aim camera still looks through the jeep's side panel (dropping our collision
+handle, mode `drop`, blocks seat 2's gun instead); the 90 deg aim range around the seated facing; whether a seated
+shot lands; seat 1 (not reached in `43e5b981`); two-PC. Contract 822 code sites / 207 slots; full CTest 321/321.
 
 ## 2026-10-30: M6 seats and M7 passenger shooting
 

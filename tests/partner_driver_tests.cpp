@@ -2,6 +2,7 @@
 // deterministic timelines with fake effects. No game, no files, no network:
 // every read, guarded write, trigger, pose sample and log line goes through a
 // recording Hooks implementation (the observer wires the real ones).
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -7312,6 +7313,226 @@ void TestSeatDraw() {
     }
 }
 
+// Design 8.27 / 8.28 (review fixes): the shot guard's driver wiring in TickPassCamera. The guard writes only for the
+// armed local back-seat passenger (never on foot, never seat 1 unless named, never in mode connect), only while the
+// aim camera module is active; in play the lab lever's override is ignored; mode off releases our handle only for a
+// seated passenger; a write fault latches the mission.
+struct PassGuardFake {
+    mgscoop::partner_pass_camera::View view{};
+    unsigned view_reads = 0;
+    std::vector<float> pitch_writes;
+    std::vector<std::array<float, 4>> rot_writes;
+    bool pitch_ok = true;
+    std::uintptr_t mvt = mgscoop::partner_pass_camera::kAimModuleVtableRva;
+    int override_mode = -1;
+};
+PassGuardFake g_guard;
+bool HookPassView(void*, const pp::State&, mgscoop::partner_pass_camera::View& out) noexcept {
+    ++g_guard.view_reads;
+    out = g_guard.view;
+    return out.ok;
+}
+bool HookPassPitch(void*, const pp::State&, float pitch) noexcept {
+    if (!g_guard.pitch_ok) {
+        ++g_pass.stats.faults;  // the real WritePitch counts its SEH fault
+        return false;
+    }
+    g_guard.pitch_writes.push_back(pitch);
+    return true;
+}
+bool HookPassRotation(void*, const pp::State&, const float (&rot)[4]) noexcept {
+    g_guard.rot_writes.push_back({rot[0], rot[1], rot[2], rot[3]});
+    return true;
+}
+std::uintptr_t HookPassMvt(void*, const pp::State&) noexcept { return g_guard.mvt; }
+int HookPassOverride(void*) noexcept { return g_guard.override_mode; }
+// The look angles (+0x270 pitch, +0x274 yaw) and the rotation CAM+0x90 for a world yaw / up-pitch (no roll).
+void GuardView(float pitch, float yaw, float world_yaw, float up) {
+    auto& v = g_guard.view;
+    v = mgscoop::partner_pass_camera::View{};
+    v.ok = true;
+    v.ang[0] = v.ang[2] = pitch;
+    v.ang[1] = v.ang[3] = yaw;
+    const float sy = std::sin(0.5f * world_yaw), cy = std::cos(0.5f * world_yaw), sx = std::sin(-0.5f * up), cx = std::cos(-0.5f * up);
+    v.rot[0] = cy * sx; v.rot[1] = sy * cx; v.rot[2] = -sy * sx; v.rot[3] = cy * cx;
+}
+void GuardGun(Session& s, std::uint8_t mode) {
+    s.fake.aim_read_ok = true;
+    s.fake.aim_read.gun_ok[0] = true;
+    s.fake.aim_read.gun_state[0] = mode;
+    s.fake.aim_read.gun_flags[0] = mode ? (1u << 18) : 0u;
+}
+void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPassCamera::aim) {
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    AddPassCameraHooks(s.hooks);
+    g_guard = PassGuardFake{};
+    s.hooks.read_aim = HookReadAim;
+    s.hooks.pass_camera_view = HookPassView;
+    s.hooks.pass_camera_pitch = HookPassPitch;
+    s.hooks.pass_camera_rotation = HookPassRotation;
+    s.hooks.pass_camera_mvt = HookPassMvt;
+    s.hooks.pass_camera_override = HookPassOverride;
+    s.driver.settings.pass_camera = mode;
+    s.ride_suffix = " ride=0";
+}
+
+void TestPassCameraGuardDriver() {
+    namespace pc = mgscoop::partner_pass_camera;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerPassCamera;
+    {
+        // The armed back-seat passenger in the aim module: the pull up of a shot is written back (pitch and rotation),
+        // the yaw never; the open line names the references.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && g_guard.view_reads >= 1, "aimed: read, nothing written");
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.size() == 1 && g_guard.pitch_writes[0] == 0.10f && g_guard.rot_writes.size() == 1,
+              "the shot's pull up: the pitch and the rotation written back");
+        const auto& q = g_guard.rot_writes[0];
+        Check(std::fabs(pc::UpPitch(q.data()) + 0.10f) < 1e-3f && std::fabs(pc::WorldYaw(q.data()) + 1.97f) < 1e-3f,
+              "the rotation back at the aimed pitch with the current yaw");
+        Check(s.fake.Containing("partner_ride=pass_camera; state=guard; event=open; vehicle=25608; seat=3; gun=9; ref_mrad=100; up_mrad=-100;") == 1,
+              "the open line");
+        // The aim ends (RMB up, the gun out of the fire modes): closed at once, nothing written.
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_guard.pitch_writes.size() == 1 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=3; end=aim_end; writes=1;") == 1,
+              "the aim end closes the window (end=aim_end)");
+    }
+    {
+        // The player's own look input (the effective right stick, which carries the mouse: PP+0x474 with PP+0x488 bit 1)
+        // inside a window: the camera follows it, nothing is written; without it the sideways pull is held.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        s.fake.pad.kb_flags = 2;
+        s.fake.pad.kb_f[1] = 0.6f;
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "a mouse turn inside the window: not written");
+        GuardView(-0.30f, 1.17f, -2.4f, 0.30f);
+        Check(s.Tick(0, 20) && g_guard.pitch_writes.size() == 1 && g_guard.pitch_writes[0] == 0.10f && g_guard.rot_writes.size() == 1 &&
+                  std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f &&
+                  std::fabs(pc::UpPitch(g_guard.rot_writes[0].data()) + 0.10f) < 1e-3f,
+              "the mouse x input moves the yaw only: the pull up on the same ticks is written back");
+        g_guard.rot_writes.clear();
+        g_guard.pitch_writes.clear();
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
+        s.fake.pad.kb_f[1] = 0.0f;
+        s.Tick(0, 200);
+        GuardView(0.10f, 1.13f, -2.44f, -0.10f);
+        Check(s.Tick(0) && g_guard.rot_writes.size() == 1 && std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f,
+              "without input the sideways pull is held at the player's last aim");
+    }
+    {
+        // F3: firing while the active module is not the aim camera (the seated fallback): nothing written, no window.
+        Session s(0);
+        GuardSetup(s);
+        g_guard.mvt = 0x23B29E0;
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0, 5);
+        GuardGun(s, 7);
+        GuardView(0.10f, -1.57f, 1.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, -1.57f, 1.0f, 0.30f);
+        Check(s.Tick(0) && s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && s.fake.Containing("state=guard") == 0,
+              "outside the aim module: never written");
+    }
+    {
+        // On foot (no local passenger report; the driver's seat too): the camera is not even read for the guard.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        GuardGun(s, 9);
+        GuardView(-0.30f, 0.0f, 0.0f, 0.30f);
+        Check(s.Tick(0) && s.Tick(0) && g_guard.view_reads == 0 && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(),
+              "on foot / the driver: no guard");
+        // Seat 1 without partner_ride_front / _cab: not armed, no guard.
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        GuardView(0.10f, 0.0f, 0.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, 0.0f, 0.0f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "seat 1 unnamed: no guard");
+    }
+    {
+        // Mode connect (0.14.4): the handle only, no guard.
+        Session s(0);
+        GuardSetup(s, PartnerPassCamera::connect);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && PassConnects() >= 1, "connect: the handle, no guard");
+    }
+    {
+        // The lab lever's override: honoured in the lab, ignored in play.
+        Session lab(0);
+        GuardSetup(lab);
+        g_guard.override_mode = static_cast<int>(pc::Mode::off);
+        Check(lab.Tick(0) && lab.fake.Containing("partner_ride=pass_camera; state=mode; mode=off; source=lever;") == 1, "lab: the lever wins");
+        Session play(0);
+        GuardSetup(play);
+        play.driver.settings.play_mode = true;
+        g_guard.override_mode = static_cast<int>(pc::Mode::off);
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0);
+        Check(play.Tick(0) && play.fake.Containing("partner_ride=pass_camera; state=mode; mode=aim; source=key;") == 1 &&
+                  play.fake.Containing("source=lever") == 0 && PassConnects() == 1,
+              "play: the lever's override is ignored (the key's mode, connected)");
+    }
+    {
+        // Mode off: our handle released (ReleasePlan) only while a passenger is seated; nothing on foot.
+        Session s(0);
+        GuardSetup(s, PartnerPassCamera::off);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && g_pass.calls.empty(), "off, on foot: nothing");
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(pc::ConnectHandle(25608), 1);
+        Check(s.Tick(0) && g_pass.calls.size() == 1 && !g_pass.calls[0].on && g_pass.cam.connect == 0, "off, seated: our handle released");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && g_pass.calls.size() == 1, "off, after the ride: nothing");
+    }
+    {
+        // A guard write fault latches the mission: nothing connected or written again.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        g_guard.pitch_ok = false;
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        s.Tick(0);
+        const std::size_t rot_before = g_guard.rot_writes.size();
+        const std::size_t calls_before = g_pass.calls.size();
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=3; reason=fault; latch=mission; faults=1") == 1,
+              "the fault latches the mission");
+        GuardView(-0.40f, 1.60f, -1.97f, 0.40f);
+        Check(s.Tick(0) && g_guard.rot_writes.size() == rot_before && g_pass.calls.size() == calls_before && g_guard.pitch_writes.empty(),
+              "latched: no write, no connect");
+    }
+}
+
 void TestBoardSeatGates() {
     namespace rw = mgscoop::partner_ride_wire;
     using mgscoop::PartnerRideBoard;
@@ -9343,6 +9564,7 @@ int main() {
     TestBoardRemap();
     TestRidePeerVehicle();
     TestPassCameraDriver();
+    TestPassCameraGuardDriver();
     TestBoardSeatGates();
     TestSeatDraw();
     TestHiddenLocalSender();
