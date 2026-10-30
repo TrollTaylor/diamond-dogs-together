@@ -12,8 +12,8 @@
 # puts a player 1.9 m out on the driver's side facing the jeep; forward 7 carries the host through to 5.1 m out on the
 # passenger side, facing away; spawn_enemy here warps a guard 5 m further (10.1 m out; debug_soldier_warp=1, notice
 # restricted); enemy sleep nearest puts him to sleep so he does not walk off (a host commit the guest applies). The
-# passenger goes to the driver's door and 3.8 m on through the jeep (1.9 m out on the passenger side, facing away) and
-# boards: back seat 3, its camera toward the guard. The lever enemy_aim_nearest 0.3 turns its camera to the sleeping
+# passenger boards from goto_vehicle jeep right (1.9 m out on the passenger side, facing the jeep; facing away boarded
+# nothing in run 6e0edd8b): back seat 3. The lever enemy_aim_nearest 0.3 turns its camera to the sleeping
 # guard before and during each burst (Player.RequestToSetCameraRotation) while the driver reverses.
 # Expected (lab): partner_seat_gun=configured; key=1 on both; the passenger's aim_dir=valid; reason=seat (never
 # reason=convention); the driver's copy partner_seat_gun=hold; seq=..; vehicle=25608; seat=3 -> partner_gesture=submit;
@@ -57,11 +57,9 @@ host press e 150
 wait 3500
 host run vehicle_seats
 host require vehicle;id=
-# The guest boards back seat 3 from the passenger side (goto_vehicle, then 3.8 m on through the jeep: 1.9 m out on the
-# passenger side, facing away from the jeep, the camera facing the guard).
-guest debug goto_vehicle jeep
-wait 2500
-guest debug forward 3.8
+# The guest boards back seat 3 from the passenger side (goto_vehicle jeep right: 1.9 m out, facing the jeep; run
+# 6e0edd8b boarded nothing from the same spot facing away).
+guest debug goto_vehicle jeep right
 wait 3000
 waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 guest press e 150
@@ -153,9 +151,7 @@ guest press e 150
 wait 3500
 guest run vehicle_seats
 guest require vehicle;id=
-host debug goto_vehicle jeep
-wait 2500
-host debug forward 3.8
+host debug goto_vehicle jeep right
 wait 3000
 waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 host press e 150

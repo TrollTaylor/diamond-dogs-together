@@ -1014,5 +1014,19 @@ local tr = g:send('goto_vehicle truck')
 local tw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
 check(tr[3]:find('vehicle=veh_trc_0001;id=25603', 1, true) and g:count('warp') == 1 and math.abs(tw.pos[1] - 41.9) < 1e-6 and
     tw.pos[3] == 50, 'a nil gotoTruck keeps the old 1.9 m truck spot ' .. tostring(tr[3]))
+-- M7: goto_vehicle jeep right, the 1.9 m spot on the jeep's passenger side (rotation 0: x - 1.9), facing the jeep.
+-- (A fresh fixture: the truck warp above is still waiting for its readback.)
+g = fixture(); g.vehicleIds = {veh_lv_0000 = 25608}; g.positions[25608] = {40, 2, 50}
+local jr = g:send('goto_vehicle jeep right')
+local jw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(jr[3]:find('vehicle=veh_lv_0000;id=25608', 1, true) and math.abs(jw.pos[1] - 38.1) < 1e-6 and math.abs(jw.pos[3] - 50) < 1e-6 and
+    math.abs(jw.rotY - 90) < 1e-6, 'goto_vehicle jeep right: the other side, facing the jeep ' .. tostring(jr[3]))
+g = fixture(); g.vehicleIds = {veh_lv_0000 = 25608}; g.positions[25608] = {40, 2, 50}
+local jl = g:send('goto_vehicle jeep')
+jw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(math.abs(jw.pos[1] - 41.9) < 1e-6 and math.abs(jw.rotY + 90) < 1e-6, 'goto_vehicle jeep keeps the driver side ' .. tostring(jl[3]))
+g = fixture()
+check(g:send('goto_vehicle jeep left')[3] == 'command_args' and g:send('goto_vehicle truck right')[3] == 'door_unavailable',
+    'only jeep right is new')
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

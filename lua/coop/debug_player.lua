@@ -158,7 +158,7 @@ do
       local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok2, fmt("%s;via=get_position;walker=%.2f,%.2f,%.2f", msg, t[1], t[2], t[3])
     elseif cmd == "goto_vehicle" and (#a == 1 or (#a == 2 and (a[2] == "jeep" or a[2] == "sortie" or a[2] == "truck")) or
-        (a[2] == "truck" and #a <= 4)) then
+        (a[2] == "truck" and #a <= 4) or (#a == 3 and a[2] == "jeep" and a[3] == "right")) then
       -- 3 m beside the nearest authored free-roam vehicle (TppVehicle2 GetPosition);
       -- "jeep" / "truck": only the veh_lv_ / veh_trc_ locators (F1 vehicles: the
       -- truck half of coop-vehicle-passenger.txt);
@@ -173,7 +173,9 @@ do
         local ok3, msg3 = V.gotoTruck(a, id)
         if ok3 ~= nil then return ok3, msg3 end
       end
-      if #a > 2 then return false, "door_unavailable" end
+      -- "jeep right" (M7 tests): the same spot on the jeep's other (passenger) side, still facing it.
+      local right = a[2] == "jeep" and a[3] == "right"
+      if #a > 2 and not right then return false, "door_unavailable" end
       local me, best, bestD, bestName = A.pose(), nil, nil, nil
       local names = {}
       if a[2] == "sortie" then
@@ -217,7 +219,7 @@ do
         for _, entry in ipairs(names) do ids[#ids + 1] = tostring(entry[2]) end
         return false, "vehicle_none;alive_unnamed=" .. (#ids > 0 and table.concat(ids, ",") or "none")
       end
-      local s = best[4] + math.pi / 2
+      local s = best[4] + (right and -1 or 1) * math.pi / 2
       local x, z = best[1] + 1.9 * math.sin(s), best[3] + 1.9 * math.cos(s)
       local W = e.MgsCoopWorld
       if type(W) == "table" and type(W.log) == "function" then pcall(W.log, fmt("goto_vehicle;name=%s;id=%d;dist=%.0f", bestName, best[5], math.sqrt(bestD))) end

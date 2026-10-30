@@ -39,9 +39,7 @@ host press e 150
 wait 3500
 host run vehicle_seats
 host require vehicle;id=
-guest debug goto_vehicle jeep
-wait 2500
-guest debug forward 3.8
+guest debug goto_vehicle jeep right
 wait 3000
 waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 guest press e 150
@@ -100,9 +98,7 @@ guest press e 150
 wait 3500
 guest run vehicle_seats
 guest require vehicle;id=
-host debug goto_vehicle jeep
-wait 2500
-host debug forward 3.8
+host debug goto_vehicle jeep right
 wait 3000
 waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
 host press e 150
