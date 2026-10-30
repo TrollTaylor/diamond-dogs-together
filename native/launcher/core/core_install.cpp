@@ -425,8 +425,45 @@ void FillState(json::Value& s, Env& env, const InstancePaths& paths, const std::
 }
 }  // namespace
 
+namespace {
+// The folder's setup lock (SetupMutexName), held by the thread that runs RunSetup. A process that ends abandons it, and
+// the next setup takes it at once.
+class SetupLock {
+public:
+    explicit SetupLock(const std::wstring& game_root) : handle_(CreateMutexW(nullptr, FALSE, SetupMutexName(game_root).c_str())) {}
+    ~SetupLock() {
+        if (locked_) ReleaseMutex(handle_);
+        if (handle_) CloseHandle(handle_);
+    }
+    SetupLock(const SetupLock&) = delete;
+    SetupLock& operator=(const SetupLock&) = delete;
+    bool Lock(DWORD timeout_ms) {
+        if (!handle_) return false;
+        const DWORD r = WaitForSingleObject(handle_, timeout_ms);
+        locked_ = r == WAIT_OBJECT_0 || r == WAIT_ABANDONED;
+        return locked_;
+    }
+
+private:
+    HANDLE handle_ = nullptr;
+    bool locked_ = false;
+};
+// A setup that closes with its window ends within moments; another one runs for up to a few minutes.
+constexpr DWORD kSetupLockWaitMs = 3000;
+}  // namespace
+
 bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character_in, const std::string& hud, const SetupCallback& report,
               const std::atomic<bool>* cancel, std::string& error) {
+    // One setup at a time per game folder (0.14.4 review): two at once would each back up the saves, seed the co-op
+    // copy and write the install record, and clear each other's temporary files.
+    SetupLock folder_lock(paths.game);
+    if (!folder_lock.Lock(kSetupLockWaitMs)) {
+        error = "Co-op is being set up by another Diamond Dogs Together window for this game folder. Wait until it has "
+                "finished (or close that window), then press Try again.";
+        if (report) report(StepReport{0, StepState::failed, error, 0.0f});
+        LauncherLog(env, paths, "setup=refused; reason=other_setup");
+        return false;
+    }
     const std::string character = JoinerCharacter(character_in);
     auto step = [&](int index, StepState state, const std::string& detail, float progress) {
         if (report) report(StepReport{index, state, detail, progress});
@@ -560,6 +597,16 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
     LauncherLog(env, paths, "setup=done");
     step(3, StepState::done, "Built and checked.", 1.0f);
     return true;
+}
+
+bool SetupRunningElsewhere(const std::wstring& game_root) {
+    HANDLE h = CreateMutexW(nullptr, FALSE, SetupMutexName(game_root).c_str());
+    if (!h) return false;
+    const DWORD r = WaitForSingleObject(h, 0);
+    const bool taken = r == WAIT_OBJECT_0 || r == WAIT_ABANDONED;
+    if (taken) ReleaseMutex(h);
+    CloseHandle(h);
+    return !taken;
 }
 
 // ---- Uninstall --------------------------------------------------------------------------

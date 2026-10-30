@@ -21,7 +21,7 @@ Get `DiamondDogsTogether-<version>.zip` from [Releases](https://github.com/Troll
 
 The launcher updates itself: when a new version is out, **Update now** downloads it, installs it and restarts Diamond Dogs Together.
 
-The complete source code of each version is `DDT-source-<version>.zip` on the same release page (and the tag `v<version>` of this repository). You do not need it to play.
+The complete source code of each version from 0.14.4 on is `DDT-source-<version>.zip` on the same release page; older packages carry it as `mgs-coop/source.zip`. It is made from the commit of this repository that `mgs-coop/package.json` names (`build.source_commit`), with MinHook's source in place of its submodule link and without the files the programs are not built from (README pictures, git settings, developer notes and scripts, evidence files; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them). The tag `v<version>` can sit on a later commit: at least the record of that package in `docs/STATUS.md` is written after it is built. You do not need it to play. The launcher's only network access is that update check against this repository's releases and, on **Update now**, the download of the new zip.
 
 ## Requirements
 

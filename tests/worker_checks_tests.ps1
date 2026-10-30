@@ -11,9 +11,9 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
-    'Assert-WorkerInventory','Write-WorkerJson','New-WorkerCmakeOverride')
+    'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
     $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
     if ($definitions.Count -ne 1) { throw "Missing or duplicate pure boundary: $name" }
@@ -208,6 +208,58 @@ try {
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
     $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
+
+    # 0.14.4 review (package-release-receipt-omits-new-shipped-tests): the Release receipt audits the fixture of every
+    # module that ships in dinput8.dll or DiamondDogsTogether.exe (and the Lua it carries), and refuses a registered
+    # test it neither runs nor excludes by name, so a new fixture is never silently left out of the receipt.
+    $shipped=@('dog_guard_tests','partner_act_log_tests','partner_ammo_leak_tests','partner_dm_overlay_tests','partner_ride_seat_tests',
+        'world_outcome_attclass_lua_check','world_companion_lua_check','world_buddy_companion_lua_check','world_companion_guard_lua_check',
+        'world_relief_lua_check','world_relief_sync_lua_check','launcher_icon_tests','ddt_local_watch_process')
+    Check (@($shipped | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits every shipped module''s fixture (dog guard, companion/relief/outcome Lua, act log, ammo leak, overlay, ride seat, launcher icon, local-watch helper)'
+    foreach ($left in @('ddt_runtime_dat_integration','ddt_launcher_screens','launcher_assets_current')) {
+        Check ($release.tests -cnotcontains $left -and $release.excluded -ccontains $left) "excluded by name: $left"
+    }
+    # Round 2: the preflight of every hidden game run (Normal/Research, Invoke-WorkerScenario) builds no launcher for a
+    # player, so it leaves out the launcher's real-process helper test (8-10 s, timing-sensitive) and its icon check;
+    # only the Release receipt (the packaged build) runs them. The sub-second loader and Lua fixtures run everywhere.
+    $launcherOnly=@('launcher_icon_tests','ddt_local_watch_process')
+    foreach ($plan in @($normal,$background,$research)) {
+        Check (@($launcherOnly | Where-Object { $plan.tests -ccontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight skips the launcher's helper-process and icon checks"
+        Check (@($shipped | Where-Object { $launcherOnly -cnotcontains $_ -and $plan.tests -cnotcontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight runs the shipped loader and Lua fixtures"
+    }
+    Check ($release.tests.Count -eq $normal.tests.Count + $launcherOnly.Count -and @($normal.tests | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'the Release receipt runs the preflight list plus the two launcher checks'
+    $shipNames=@('ddt_local_watch_process','launcher_icon_tests','partner_dm_overlay_tests')
+    $shipInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='ddt_local_watch_process';command=@((Join-Path $directory 'ddt_core_tests.exe'),'--local-watch-process',(Join-Path $directory 'DiamondDogsTogether.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=180})},
+        [pscustomobject]@{name='launcher_icon_tests';command=@((Join-Path $directory 'launcher_icon_tests.exe'),(Join-Path $fixture 'native\launcher\resources\ddt_launcher.ico'),(Join-Path $fixture 'native\launcher\resources\ddt_logo.png'),(Join-Path $fixture 'docs\readme\logo.png'),(Join-Path $directory 'DiamondDogsTogether.exe'));properties=@()},
+        [pscustomobject]@{name='partner_dm_overlay_tests';command=@((Join-Path $directory 'partner_dm_overlay_tests.exe'),(Join-Path $fixture 'lua\coop\partner_sync.lua'));properties=@()}
+    )}
+    function Copy-ShipInventory { return ($shipInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json) }
+    Assert-WorkerInventory $shipInventory $fixture $directory $shipNames
+    Check $true 'the local-watch helper, icon and overlay fixtures are accepted with their exact arguments'
+    $bad=Copy-ShipInventory;$bad.tests[0].command[1]='--write-session'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[0].command[2]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[0].command=@($bad.tests[0].command[0..1])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command[4]=Join-Path $fixture 'other.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command[2]=Join-Path $fixture 'other.png'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command+=@('--extra')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[2].command[1]=Join-Path $fixture 'lua\coop\other.lua'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'overlay fixture'
+    $bad=Copy-ShipInventory;$bad.tests[2].command=@($bad.tests[2].command[0])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'overlay fixture'
+    $coverage=[pscustomobject]@{tests=@(@($release.tests)+@($release.excluded) | ForEach-Object { [pscustomobject]@{name=$_;command=@('x.exe');properties=@()} })}
+    Assert-WorkerCoverage $coverage $release
+    Check $true 'a Release inventory of exactly the audited and the excluded tests is accepted'
+    $coverage.tests += [pscustomobject]@{name='new_module_tests';command=@('x.exe');properties=@()}
+    Refuses {Assert-WorkerCoverage $coverage $release} 'neither audits nor excludes: new_module_tests'
+    Assert-WorkerCoverage $coverage $normal
+    Check $true 'only the Release receipt (the packaged build) refuses an unclassified test'
 
     # Local session fixtures additionally require the one parser in this exact
     # owned build directory. No fixture can introduce runtime flags or a foreign tool.

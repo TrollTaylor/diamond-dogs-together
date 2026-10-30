@@ -1150,7 +1150,28 @@ try {
     Assert-Throws { & $packageScript -Friend -CheckReceipt $stalePath -OutputRoot $distFx } 'Release source does not match check receipt' 'real package admission rejects stale source receipt'
     Assert-True (-not (Test-Path -LiteralPath $distFx)) 'every refusal comes before staging'
 
-    $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx
+    # The real tree's package must not depend on what the developer has left untracked (0.14.4 review, round 2: full
+    # CTest went red while a new scenario or test file was not yet committed). For this one run, the child gits (2.31+,
+    # GIT_CONFIG_COUNT/KEY/VALUE) take an excludes file of this fixture that names exactly the tree's untracked files in
+    # the published folders, so package.ps1 does not refuse them; tools/package.ps1 itself has no way around its
+    # refusal, which the git fixture below checks.
+    function Invoke-IgnoringTreeUntracked([scriptblock]$Body) {
+        $exclude = Join-Path $fixture 'real-tree-untracked.exclude'
+        [IO.File]::WriteAllText($exclude, '')
+        $saved = [ordered]@{}
+        foreach ($name in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+        try {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.excludesFile'; $env:GIT_CONFIG_VALUE_0 = $exclude
+            $untracked = @(& git -C $projectRoot -c core.quotepath=off ls-files --others --exclude-standard -- native lua tools tests third_party cmake docs CMakeLists.txt README.md THIRD_PARTY_NOTICES.md 2>$null)
+            $patterns = @($untracked | Where-Object { $_ } | ForEach-Object { '/' + ($_ -replace '([\\*?\[\]!#])', '\$1') })
+            [IO.File]::WriteAllText($exclude, (($patterns -join "`n") + "`n"))
+            if ($patterns.Count) { Write-Host "friend_package_tests: the real tree's package run ignores $($patterns.Count) untracked file(s), e.g. $($untracked[0])" }
+            & $Body
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+    Invoke-IgnoringTreeUntracked { $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx }
     $runs = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $runs.Count 1 'one package run folder'
     Assert-True ($runs[0].Name -cmatch ('^DiamondDogsTogether-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) "package run folder name: $($runs[0].Name)"
@@ -1249,6 +1270,13 @@ try {
         Assert-True $readme.Contains($needle) "README.txt mentions $needle"
     }
     foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64', 'mgs-coop\source.zip') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
+    # 0.14.4 review, round 2: the source zip is compared with the commit package.json names, never with the tag (the
+    # tag can sit on a later commit, and the repository holds MinHook only as a link).
+    $notices = [IO.File]::ReadAllText((Join-Path $pkg 'mgs-coop/THIRD_PARTY_NOTICES.md'))
+    foreach ($text in @($readme, $notices)) {
+        Assert-True ($text.Contains('source_commit') -and $text.Contains('source_dirty') -and $text.Contains('later commit')) 'README.txt and the notices name source_commit as the zip''s commit; the tag can be later'
+        Assert-True (!$text.Contains('holds the same code') -and !$text.Contains('differs only') -and !$text.Contains('differs from the source zip only')) 'README.txt and the notices no longer say the tag equals the zip'
+    }
     # DDT-source-<version>.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
     $sourceZip = [IO.Compression.ZipFile]::OpenRead($sourceZipPath)
     try {
@@ -1275,6 +1303,22 @@ try {
         Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'the source zip: no retired player scripts, no build output'
         Assert-Equal @($sourceNames | Where-Object { [IO.Path]::GetExtension($_) -in @('.log', '.go', '.mod', '.sum') -and
             $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'the source zip: logs and Go files only at their exact places'
+        # THIRD_PARTY_NOTICES.md names every kind of tracked file the zip leaves out (0.14.4 review, round 2: it had said
+        # the tag differs only by docs/STATUS.md). A tracked file of any other kind left out fails here, so that text
+        # stays exact. Files deleted in the working tree are not counted (that tree is dirty anyway).
+        $tracked = @(& git -C $projectRoot -c core.quotepath=off ls-files 2>$null)
+        $trackedOk = $LASTEXITCODE -eq 0
+        $deleted = @(& git -C $projectRoot -c core.quotepath=off ls-files --deleted 2>$null)
+        if ($trackedOk -and $LASTEXITCODE -eq 0 -and $tracked.Count) {
+            $inZip = [Collections.Generic.HashSet[string]]::new([string[]]$sourceNames, [StringComparer]::Ordinal)
+            $leftOut = @($tracked | Where-Object { !$inZip.Contains($_) -and $deleted -cnotcontains $_ })
+            $namedPattern = '^(\.gitignore|\.gitmodules|AGENTS\.md|Play-Offline-Coop\.bat|third_party/minhook|(.+/)?\.git(ignore|attributes)|docs/readme/[^/]+\.(jpg|png)|docs/evidence/[^/]+)$'
+            Assert-Equal (@($leftOut | Where-Object { $_ -cnotmatch $namedPattern }) -join ', ') '' 'the source zip leaves out only the kinds of tracked file THIRD_PARTY_NOTICES.md names'
+            Assert-True ($leftOut -ccontains 'third_party/minhook' -and $leftOut -ccontains 'AGENTS.md') 'the check sees the left-out files (the MinHook link, AGENTS.md)'
+            foreach ($named in '`.gitignore`', '`.gitmodules`', '`.gitattributes`', '`AGENTS.md`', '`Play-Offline-Coop.bat`', '`docs/evidence`', '`docs/readme`') {
+                Assert-True $notices.Contains($named) "THIRD_PARTY_NOTICES.md names $named among the files the zip leaves out"
+            }
+        }
     } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.
@@ -1353,6 +1397,91 @@ try {
         }
         Assert-True (Test-Path -LiteralPath (Join-Path $dependency 'src\hook.c') -PathType Leaf) 'junction removal preserves owned dependency files'
     }
+    # 0.14.4 review (package-untracked-files-published-in-source-zip): the public source zip never carries a file git
+    # neither tracks nor ignores (a scratch note, a run's JSON with a join code or a local path). package.ps1 refuses
+    # it by name before anything is written, and build.source_dirty counts untracked files too. A git checkout of its
+    # own (inside the ignored build folder); MinHook is untracked there, as the real submodule's files are to the
+    # repository, and stays in the zip (the Release receipt pins it).
+    & {
+        $gitRoot = Join-Path $fixture 'git-package-source'
+        Assert-InFixture $gitRoot
+        foreach ($dir in @('native','lua','tests','tools\worker','third_party\minhook\src','cmake','docs\readme')) {
+            $null = New-Item -ItemType Directory -Path (Join-Path $gitRoot $dir) -Force
+        }
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs\readme\logo.png','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1',
+                'third_party\dynamite\LICENSE','third_party\imgui\LICENSE.txt','third_party\tpp-mod\LICENSE')) {
+            $destination = Join-Path $gitRoot $file
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force
+            [IO.File]::Copy((Join-Path $projectRoot $file), $destination, $false)
+        }
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'native\fixture.cpp'), '// owned package-source fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'docs\fixture.md'), '# Owned git package-source fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\CMakeLists.txt'), '# Owned MinHook CMake fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\src\hook.c'), '/* Owned MinHook C source fixture */', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\LICENSE.txt'), 'Owned fixture license', $utf8)
+        function Invoke-FixtureGit([string[]]$GitArgs) {
+            $out = @(& git -C $gitRoot -c user.name=fixture -c user.email=fixture@example.invalid @GitArgs 2>$null)
+            if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') failed: $($out -join ' ')" }
+            return $out
+        }
+        $null = Invoke-FixtureGit @('init', '-q')
+        $null = Invoke-FixtureGit @('add', '--', 'CMakeLists.txt', 'README.md', 'THIRD_PARTY_NOTICES.md', 'docs', 'tools', 'native', 'third_party/dynamite', 'third_party/imgui', 'third_party/tpp-mod')
+        $null = Invoke-FixtureGit @('commit', '-q', '-m', 'fixture')
+        $gitScript = Join-Path $gitRoot 'tools\package.ps1'
+        function Get-FixtureRun([string]$Dist) {
+            $made = @(Get-ChildItem -LiteralPath $Dist -Directory)
+            Assert-Equal $made.Count 1 "one package run in $Dist"
+            $pkgJson = Get-Content -LiteralPath (Join-Path $made[0].FullName 'package\mgs-coop\package.json') -Raw | ConvertFrom-Json
+            $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $made[0].FullName "DDT-source-$packageVersion.zip"))
+            try { $names = @($zip.Entries | ForEach-Object { $_.FullName }) } finally { $zip.Dispose() }
+            return [pscustomobject]@{ package=$pkgJson; names=$names }
+        }
+        # Clean: packaged, not dirty; the untracked MinHook dependency files are still in the zip.
+        $receipt = New-FixtureReceipt $receiptFx 'git-clean.json' $bothArtifacts (Get-WorkerSourceHashes $gitRoot)
+        $dist = Join-Path $fixture 'git-package-dist-clean'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $clean = Get-FixtureRun $dist
+        Assert-True ($clean.package.build.source_commit -cmatch '^[0-9a-f]{40}$' -and $clean.package.build.source_dirty -eq $false) 'a clean git checkout packages with source_dirty false'
+        Assert-True ($clean.names -ccontains 'native/fixture.cpp' -and $clean.names -ccontains 'third_party/minhook/src/hook.c' -and $clean.names -ccontains 'third_party/minhook/LICENSE.txt') 'tracked source and the MinHook dependency are in the source zip'
+        # An untracked note: refused by name before anything is staged.
+        $note = Join-Path $gitRoot 'tools\notes.txt'
+        [IO.File]::WriteAllText($note, 'scratch: a join code and C:\Users\someone\path', $utf8)
+        $dist = Join-Path $fixture 'git-package-dist-untracked'
+        Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist } 'Untracked file would be published in the source zip: tools\notes.txt' 'an untracked file under a published folder is refused by name'
+        Assert-True (!(Test-Path -LiteralPath $dist) -or @(Get-ChildItem -LiteralPath $dist -Force).Count -eq 0) 'the refusal comes before anything is staged'
+        $code = Join-Path $gitRoot 'native\scratch_probe.cpp'
+        [IO.File]::WriteAllText($code, '// untracked experiment', $utf8)
+        $receiptCode = New-FixtureReceipt $receiptFx 'git-code.json' $bothArtifacts (Get-WorkerSourceHashes $gitRoot)
+        Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptCode -OutputRoot $dist } 'Untracked file would be published in the source zip: native\scratch_probe.cpp' 'untracked code is refused too, even when the receipt hashed it'
+        Remove-Item -LiteralPath $code
+        # Tracked (added, not committed): published, and the package says the tree differed from the commit.
+        $null = Invoke-FixtureGit @('add', '--', 'tools/notes.txt')
+        $dist = Join-Path $fixture 'git-package-dist-added'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $added = Get-FixtureRun $dist
+        Assert-True ($added.names -ccontains 'tools/notes.txt' -and $added.package.build.source_dirty -eq $true) 'a tracked, uncommitted file is published and marks source_dirty'
+        $null = Invoke-FixtureGit @('rm', '-q', '--cached', '--', 'tools/notes.txt')
+        Remove-Item -LiteralPath $note
+        # An untracked file that is never published (a log): not refused, not in the zip, but the tree is not clean.
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'tools\run.log'), 'local log', $utf8)
+        $dist = Join-Path $fixture 'git-package-dist-log'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $logged = Get-FixtureRun $dist
+        Assert-True ($logged.names -cnotcontains 'tools/run.log' -and $logged.package.build.source_dirty -eq $true) 'an untracked unpublished file is left out and counts as dirty'
+        # 0.14.4 review, round 2: the refusal fails closed. A git checkout (a .git entry at the root) whose git cannot be
+        # run (here: not on PATH) packages nothing, rather than publishing an untracked note without a word.
+        [IO.File]::WriteAllText($note, 'scratch: a join code and C:\Users\someone\path', $utf8)
+        $savedPath = $env:PATH
+        try {
+            $env:PATH = (@($savedPath.Split([IO.Path]::PathSeparator) | Where-Object { $_ -and !(Test-Path -LiteralPath (Join-Path $_ 'git.exe') -PathType Leaf) }) -join [IO.Path]::PathSeparator)
+            Assert-True ($null -eq (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) 'the fixture hides git'
+            $dist = Join-Path $fixture 'git-package-dist-no-git'
+            Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist } 'This is a git checkout, but git could not be run' 'a git checkout without a working git packages nothing (no silent untracked file)'
+            Assert-True (!(Test-Path -LiteralPath $dist) -or @(Get-ChildItem -LiteralPath $dist -Force).Count -eq 0) 'that refusal comes before anything is staged'
+        } finally { $env:PATH = $savedPath }
+        Remove-Item -LiteralPath $note
+    }
+
     # The repository keeps no player scripts: the PowerShell player tooling was
     # retired in 0.14.0 (DiamondDogsTogether.exe replaces it, tests/ddt_core_tests).
     foreach ($retired in @('tools/friend', 'Play-Coop.bat', 'Play-World-Coop.bat')) {
