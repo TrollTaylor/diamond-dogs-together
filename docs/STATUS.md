@@ -25,7 +25,7 @@ renumbered). Op codes stay unique (SEAT `0x36` is the only new one); no CFG inde
 regenerated once after both merges (819 code sites, 206 vtable slots) and `generate_partner_contract.py`,
 `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`, `generate_nametag_contract.py` and
 `generate_downed_damage_contract.py --check` all pass. Fast CTest 304/304 at `5a18d3b`; full CTest 321/321
-(`tools/build.ps1`) at `5a18d3b`.
+(`tools/build.ps1`) at `5a18d3b` and again at the docs head `22bbec8`.
 
 **Combined hidden smoke** (one run, design 8.24): `a6830b7cd9714aecb4c8ecef7ba0df52` (probe `848b1b832b3f40f5844dcca1d01ee73c`),
 `tools/worker/scenarios/m6m7-smoke-play.txt` at `57d2cd7` (`wp/m6m7-smoke` in `D:/mgs-coop-wt/relief`, research build),
