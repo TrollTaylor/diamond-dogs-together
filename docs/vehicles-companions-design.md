@@ -2856,6 +2856,34 @@ All closed with the baseline restored and the real saves unchanged; frames in th
 - **Speed.** 5 hidden runs (one refused before gameplay, one lost part D to the scenario); preflights ran in parallel.
   Full CTest 321/321 (`tools/build.ps1`) at `e191414`.
 
+### 8.26 Results: the seats-on review fixes (2026-10-30, branch `wp/seats-on`)
+
+The review of 8.25 (verdict fix_first) listed nine findings; each was checked against the code, logs and frames
+first. Tests ran red first (session scratch `m6m7b/seats-on/red-fix/`).
+
+| Finding | Outcome |
+|---|---|
+| The guest's seat-1 view while the host reversed (`92f2d2f9`): against the wheel, then inside a water tank | Confirmed [O]; 8.25 corrected. Recaptured driving forward (`1be0769e`): the guest's own view follows the moving jeep, the street in view [O]. The reversing clip stays a passenger-camera defect |
+| No stop hook for the Fulton guard | Fixed: a stop hook resets the seat state (the bit and the native hold go back); the W.tick wrapper skips the seat step once `W.active` is false (a LEVEL 0 inside the drain) |
+| The truck cab on in play without a play rehearsal at the shipped defaults | Confirmed: `partner_ride_cab` is lab-only by default again. A world-truck play run needs door spots after a drive (the door lever is lab-only; `placebehind` fails beside a seated partner, `11fe8abd`), and free roam's trucks carry crews and sit differently on each copy (`59cfc415`, `f49c167d`) |
+| Site C returned before the peer-driven mark when the pre-query refused | Fixed: the peer's vehicle is marked whatever the pre-query answered. At the host-driven truck where the guest gets no seat (the cab off: `board_block`): `289615b8`, `on=1`, no ride icon and no Fulton prompt through two E holds, the truck still there (the pre-fix run `84e3db0e` showed the Fulton prompt there) A spot 2 m in front of the host's jeep (`1be0769e` A1) is out of the ride action's range: no site C call, no mark, and no Fulton prompt there either |
+| Log caps per Lua lifetime | Fixed: 50 lines per pairing (reset by a new epoch), claim and hold lines at most one a second; `1be0769e` logs the race's claim |
+| A mission's Fulton lock set while the guard holds the bit is removed with it | Accepted and documented (revive's rule) [I] |
+| The guard polled every frame | Fixed: it takes the 200 ms seat step's receipt and polls every tick only while hot; `1be0769e`: `on=1` in the same tick as the first hold line, no Fulton prompt in the hold frames |
+| `world_ride_pose.lua`'s second literal at 15975 of 16000 bytes | Fixed in CMake: a chunk over 16000 bytes splits at the last line break in its first 16000 bytes (now 15996 + 15325 of 31321; the 32000-byte chunk limit stays) |
+| The camera after a seat-1 get-off faces the driver up close | Confirmed [O] (`92f2d2f9`, `d55e5159`, again `1be0769e`); for the camera work, not fixed here |
+
+Also corrected in 8.25: "E held about 3 s" (two 1500 ms holds), the deny timing (`host_first` +364 ms, `host_drives`
++715 ms), the cab's "shipped defaults" (`world_relief=1` was named); the README's dog sentence is gone (driver test only).
+
+| Run | Scenario | Result |
+|---|---|---|
+| `1be0769e` | `coop-seats-on-play-review.txt`, play `-WanSim bad`, host `afgh-quiet`, guest `afgh-horse`, build `8fc40ae` | Every expectation but A1's guard line (the spot was out of range); `cab=0` and seat flags `0x01` on both copies |
+| `289615b8` | `coop-seats-on-truck-guard.txt`, play `-WanSim bad`, seed `afgh-relief-trc`, `world_relief=1` (the truck source only) | Every expectation met: `board_block; reason=type; type=4`, `action=fulton; on=1; vehicle=25600`, no Fulton prompt in the door and hold frames, `vehicle_census` 25600 still there, `on=0` after the guest left; the game was closed forced at the end (baseline and real saves verified) |
+
+Both closed with the baseline restored and the real saves unchanged; frames in the session scratch
+`complete/frames/m6m7b-seats-fix/<run8>-*`, looked at for every claim here.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
@@ -3296,6 +3324,9 @@ copy) stands in for `afgh-walker`; the last two are not boot-checked yet. `afgh-
     defaults: the race and the jeep's seat 1 in both roles (`92f2d2f9`, `d55e5159`), the cab with the guest as passenger
     and the dog case (`8d61a33a`), frames on both copies while moving. Not live: the host in the cab (lab `0f145a4e`),
     the dog jumping in after the passenger; two-PC.
+  - **Review (8.26):** the cab is lab-only again in play (no play rehearsal at the shipped defaults); the front seat
+    and the race stay on in play, re-run after the fixes (`1be0769e`, the guest's seat-1 view driving forward). The
+    passenger camera's clip while reversing and its framing after a seat-1 get-off are camera defects.
 
 ### M7. Shooting as a passenger
 
@@ -3537,7 +3568,7 @@ here.
   play rehearsal of the seat-1 path itself with the 8.21 code (no dog in seat 1); (b) keep it a lab key; (c) on the
   driver's copy, make the dog leave the seat (no game API found). Residual: a dog that jumps in after the passenger sat
   down is not undone (the next boarding sees it) [I]. Recommendation: (a'). **Done (a'), 8.25:** on in play; that
-  residual is now drawn in a back seat on the driver's copy (`DrawSeat`).
+  residual is now drawn in a back seat on the driver's copy (`DrawSeat`; driver test only, never seen live [I]).
 - **D17 (M6). Who wins the driver's seat of an empty vehicle.** (`partner_ride_race=1`) Rule as built since 8.21: the
   host decides; the guest's ride icon for an empty vehicle's driver's seat waits for the host's grant (about one round
   trip plus up to 0.2 s: 67 ms in the lab, 234 ms in play at 178 ms RTT); a guest claim loses when the host drives that

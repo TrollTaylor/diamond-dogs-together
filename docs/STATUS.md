@@ -1,23 +1,24 @@
-## 2026-10-30: seats on in play (branch `wp/seats-on`, local, unreleased, not two-PC tested)
+## 2026-10-30: seats on in play: the jeep front seat and the seat race (branch `wp/seats-on`, local, unreleased, not two-PC tested)
 
-The jeep's front seat, the truck cab and the driver's-seat race are **on in play** (`partner_ride_front`, `_cab`,
-`_race` follow the native gun profile in lab and play; each named 0 is an off switch). Before the flip: no Fulton while
-a race refuses the ride icon or at a door of the vehicle the partner drives (the Fulton action is withheld, only the
-bit the mod added is removed); the driver's copy draws a seat-1 partner in a free back seat if its own D-Dog takes seat 1
-afterwards. Details: `docs/vehicles-companions-design.md` 8.25. [O] observed, [I] inferred.
+The jeep's front seat and the driver's-seat race are **on in play** (`partner_ride_front`, `partner_ride_race` follow
+the native gun profile in lab and play; a named 0 is the off switch). The truck cab (`partner_ride_cab`) is **on in lab
+only** after the review: its play rehearsal named `world_relief=1` for the truck and the host-in-cab role ran only in
+the lab (a named 1 runs it in play). No Fulton while a race refuses the ride icon or at a vehicle the partner drives
+(since the review also where it offers no seat); the guard's bit is given back when the world stops. Details:
+`docs/vehicles-companions-design.md` 8.25 and the review fixes 8.26. [O] observed, [I] inferred.
 
 | Path | Proof (`-Mode play -WanSim bad`, shipped seat defaults, RTT 172-188 ms) |
 |---|---|
-| Fulton guard | [O] `92f2d2f9`: denied at the door, E held about 3 s: no Fulton prompt, jeep still there; at the partner's jeep only the ride icon |
-| Race inside one round trip | [O] `92f2d2f9`: the guest's hold refused its icon before any answer, the host drove, the guest stayed on foot, no `two_drivers` |
-| Jeep seat 1, both roles | [O] `92f2d2f9` (guest in seat 1), `d55e5159` (host in seat 1): frames on both copies while the driver holds the throttle |
-| Truck cab | [O] `8d61a33a` (seed `afgh-relief-trc`, `world_relief=1` named as the truck source): guest in the cab, frames on both copies while moving, stock get-off. The host-in-cab role: lab `0f145a4e` only |
-| D-Dog in seat 1 | [O] `8d61a33a`: the dog in front, the guest steered to the back right seat, frames on both copies while moving |
+| Fulton guard | [O] `92f2d2f9`, again `1be0769e` after the fixes: denied at the door, two 1500 ms E holds, no Fulton prompt, the jeep stays; at the partner's jeep only the ride icon. At the host-driven truck where the guest gets no seat (the cab off: `board_block`): `289615b8`, `on=1`, no ride icon and no Fulton prompt through two E holds, the truck still there (the pre-fix run `84e3db0e` showed the Fulton prompt there) |
+| Race inside one round trip | [O] `92f2d2f9`, `1be0769e`: the guest's hold refused its icon before any answer, the host drove, the guest stayed on foot |
+| Jeep seat 1, both roles | [O] guest `1be0769e` (the host drives forward: the guest's own view follows the moving jeep down the street, frames on both copies); host `d55e5159` |
+| D-Dog in seat 1 | [O] `8d61a33a`: the dog in front, the guest in the back right seat, moving |
 
-Not proven: the dog jumping in after the passenger sat down, live (the dog was always first; driver test only) [I];
-two-PC. Seen in every moving frame set: the partner's body can lag beside its seat on the driver's screen while
-moving (up to 1.8-3.0 m, back in the seat at rest), as before. Runs `f9d2482d` (seed attempt refused in the ACC) and
-`b68844fc` (lab, made seed `afgh-relief-trc`). Fast CTest green after every change; full CTest 321/321 (`tools/build.ps1`) at `e191414`.
+Camera defects seen, not fixed here (for the camera work): in seat 1 the guest's own camera ended inside a water tank
+while the host reversed onto it (`92f2d2f9`), and after each seat-1 get-off it faces the driver up close with the
+player out of view (`92f2d2f9`, `d55e5159`, `1be0769e`). Not proven: the dog jumping in after the passenger sat down,
+live (driver test only) [I]; two-PC. While moving, the driver's screen can draw the passenger up to 2.6 m beside its
+seat (`1be0769e`), back in the seat at rest, as before. Full CTest 321/321 (`tools/build.ps1`) at `43534d9` with these docs.
 
 ## 2026-10-30: M6 seats and M7 passenger shooting
 
