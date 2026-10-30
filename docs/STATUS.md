@@ -1,3 +1,42 @@
+## 2026-10-29: the heroism of a dog copy's death given back on the guest (`wp/dog-heroism`, unmerged, lab only)
+
+The user approved it on 2026-10-29: when the guest's copy of the host's D-Dog dies on the guest's PC, the stock game
+took 30 heroism and 2 bond points on the guest's PC ("D-Dog Near Death [Heroism -30]", run `9fa48400`) for
+a death that is not real. Branch `wp/dog-heroism` (from `dev/oct7-continue` `01fd055`, in the worktree
+`D:/mgs-coop-wt/companion-host`; commits `85ba7ec`, `159ae49`, `e905f99`, `2885155` and this one; nothing merged,
+pushed, tagged or released). Details: `docs/vehicles-companions-design.md` 8.14.
+
+- **Where the penalty is** [O, static, capstone]: native, not Lua. The dog's life update calls the buddy service's
+  dying handler (`BuddyServiceImpl` slot `0x258`, `0x140A4F440`) just before its `Dead` message: unless the DOG bit of
+  `deadBuddyType` is already set it takes 30 heroism and 20 raw bond (`vars.buddyFriendlyPoint`, 2 of
+  `GetFriendlyPoint`'s 100), or 60 heroism, 100 raw bond and +150 demon points when a player (id 0..511) made the kill,
+  then sets the bit. The notice comes from the same native code.
+- **Built:** `lua/coop/world_companion_guard.lua` (guest only, under `companion_host_owned`'s peer agreement): each copy
+  death gets back exactly what the stock penalty took, once, measured against the last 100 ms sample before it and
+  never more than the stock amount (`AddHeroicPoint`, the raw bond written back, `SubOgrePoint`; log `event=dog_hero`).
+  `world_sync.lua` hands the raw attacker id on. Lab levers `companion_lab hero` (both roles, play too: read only) and
+  `kill_own` (guest: the native kill on the guest's own dog when the session is not host-owned). No wire or receipt
+  change (protocol section 15). Fixture `world_companion_guard_lua_check` 115 -> 149 checks, red first.
+- **Proven in the lab** [O]: run `c7fdfdbfb73f41d8860cef055d88aaa7` (key on, `afgh-ledge` / `afgh-horse`, every
+  expectation met): the lab kill (`h=244995:244965:244995; b=1000:980:1000; give=30,20,0`), the host's dog down (the
+  host's own -30 / -20 raw kept on the host; the guest's mirrored copy given back) and a real death by guard fire
+  (`att=1206`, given back); the guest's readbacks equal before and after each death, the host's unchanged by the
+  guest's copy deaths, no `dog_hero` line on the host; FRAME: the stock notice "D-Dog Near Death [Heroism -30]" on the
+  guest's screen while the host's dog stands beside Snake on the host's (`c7fd-*-hr-dead-2`), and on both screens at the
+  mirrored down (`c7fd-*-hr-down`). Control run `2243bbc624ad4f0bb141837b40c40ed0` (the key on the guest only, so the
+  session is not host-owned and the guest's dog is its own; every expectation met): `kill_own` -> the guest lost 30
+  heroism and 20 raw bond and kept the loss (`applies=0`, no `dog_hero`), the host unchanged, the notice on the guest's
+  screen (`2243-guest-hc-dead-2`). A first control by the guest's own C4 with both keys off
+  (`a7f00043c6a64466915a6ee99342a73b`) **failed**: the blast missed the dog and downed the host through the friendly hit.
+  Runs archived under `%USERPROFILE%\mgs-coop-run-archive\next2\<run>` with their probe folders (`7a5e7417...`,
+  `4c3b3c64...`, `a2d998d8...`); frames in the session scratch `complete/frames/dog/`.
+- **Defaults: unchanged.** `companion_host_owned` stays **off in lab and play**, so nothing of this runs in a default
+  session. Unproven: a play rehearsal (play refuses the levers that kill the copy), the by-player branch in a run
+  (fixture only), the give-back reaching the guest's save at a checkpoint or mission end [I], both keys off with the
+  guest's dog dying (fixture and code only [I]), Mother Base, two-PC.
+- **Checks:** `pwsh -File tools/build.ps1 -Fast` 301/301 after each change; full `pwsh -File tools/build.ps1` (Debug)
+  317/317 before the last commit.
+
 ## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
 
 **Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T004356Z-a5bd9d1b` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
