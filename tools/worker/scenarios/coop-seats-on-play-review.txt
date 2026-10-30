@@ -1,0 +1,119 @@
+# Seats on, review fixes (docs/vehicles-companions-design.md 8.26): the play rehearsal at the SHIPPED play defaults
+# after the fix round: the Fulton guard polls only while hot and has a stop hook, the seat log caps are per pairing,
+# site C marks the peer's vehicle whatever the pre-query answered, the truck cab is off in play (seat flags 0x01).
+# -Mode play -WanSim bad. Host seed afgh-quiet (Quiet), guest seed afgh-horse (D-Horse): seat 1 of the Wakh Sind jeep
+# (25608) stays empty on each driver's copy. The jeep at its spawn pose faces north (+z; yaw 107 mrad, run 3c748d46);
+# seat 1 door 574.36,1157.5 facing 96; seat 0 door 577.20,1157.19 facing -84.
+#   A0 the guard while denied (as 92f2d2f9): event=seat; action=fulton; on=1; held E: no Fulton prompt, the jeep stays.
+#   A  the race inside one round trip; the guest's claim line is logged now (caps per pairing, one a second).
+#   A1 in front of the host-driven jeep (no door there): site C marks the peer's vehicle all the same
+#      (action=fulton; on=1); frame: no Fulton prompt. No E press there.
+#   B  the guest in seat 1 while the host drives FORWARD (north, the open street; 92f2d2f9 reversed into a water tank and
+#      the guest's camera ended inside it): the guest's own view while moving, frames on both copies; its stock get-off
+#      and the camera after it.
+# Run (play):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-seats-on-play-review.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+# --- A0: the Fulton guard while denied ------------------------------------------------------------------------------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+wait 1500
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+waitlog guest 'world_lua=event=seat; action=fulton; on=1; vehicle=25608' 5
+guest capture s1-guard-denied
+heldcapture guest guest e s1-guard-hold 2
+wait 1500
+guest run vehicle_census 8 1
+guest expect vehicle_census;first=8;n=1;found=1;25608:2:4
+guest run vehicle_seats
+guest expect vehicle_not_riding
+host run vehicle_seats
+host expect vehicle_not_riding
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 5000
+waitlog guest 'world_lua=event=seat; action=fulton; on=0; vehicle=25608' 5
+# --- A: the race inside one round trip ------------------------------------------------------------------------------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+guest debug teleport 574.36 320.2 1157.5 96
+wait 150
+both press e 150
+guest capture s1-race-press
+wait 4500
+waitlog guest 'world_lua=event=seat; action=hold; vehicle=25608; holds=[0-9]+; deny=65535; grant=65535' 3
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest;' 3
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(first|drives)' 5
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture s1-race
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x01; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+# --- A1: in front of the host's jeep, no door: the peer's vehicle is marked all the same ----------------------------
+logmark guest
+guest debug teleport 575.9 320.5 1161.6 180
+wait 3000
+waitlog guest 'world_lua=event=seat; action=fulton; on=1; vehicle=25608' 5
+guest capture s1-front
+guest run vehicle_seats
+guest expect vehicle_not_riding
+# --- B: the guest in seat 1 while the host drives forward ----------------------------------------------------------
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest capture s1-peer-door
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+both capture s1-b-seated
+host hold w 1500 nowait
+guest burst s1-b-drive-g 6 150
+host release
+host hold w 1500 nowait
+host burst s1-b-drive-h 6 150
+host release
+wait 2000
+both capture s1-b-stopped
+guest press e 150
+guest burst s1-b-exit 4 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25608; seat=1; reason=stock; ok=1' 10
+both capture s1-b-exited
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+state

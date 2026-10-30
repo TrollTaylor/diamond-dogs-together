@@ -435,7 +435,8 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   configure_file(native/partner_sync_source.hpp.in generated/partner_sync_source.hpp @ONLY)
   # World sync (docs/world-sync-protocol.md): each chunk at most 32000 bytes
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
-  # split at a line break, so each literal stays under the MSVC literal limit.
+  # split at the last line break in its first 16000 bytes, so each stays at most
+  # 16000 bytes, under the MSVC literal limit (16380).
   foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
@@ -447,10 +448,10 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
       message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua is ${_mgs_world_length} bytes; the limit is 32000")
     endif()
     if(_mgs_world_length GREATER 16000)
-      string(SUBSTRING "${_mgs_world_text}" 0 15000 _mgs_world_head)
+      string(SUBSTRING "${_mgs_world_text}" 0 16000 _mgs_world_head)
       string(FIND "${_mgs_world_head}" "\n" _mgs_world_split REVERSE)
       if(_mgs_world_split LESS 1)
-        message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua has no line break in its first 15000 bytes")
+        message(FATAL_ERROR "lua/coop/world_${_mgs_world_file}.lua has no line break in its first 16000 bytes")
       endif()
       math(EXPR _mgs_world_split "${_mgs_world_split} + 1")
       string(SUBSTRING "${_mgs_world_text}" 0 ${_mgs_world_split} _mgs_world_a)

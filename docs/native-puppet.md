@@ -595,8 +595,9 @@ run has used it yet.
 
 ### Seat 1 and seat races (M6)
 
-M6 (`wp/seats`, docs/vehicles-companions-design.md 6.6, 8.20 and the review fixes 8.21), each behind its own lab key,
-off unless named in lab and play:
+M6 (`wp/seats`, docs/vehicles-companions-design.md 6.6, 8.20 and the review fixes 8.21), each behind its own key;
+since the seats-on round (8.25) they follow the native gun profile (on), the front seat and the race in lab and play,
+the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one off:
 
 - `partner_ride_front=1` / `partner_ride_cab=1` (with `partner_ride_board=passenger`): the passenger search also
   offers seat 1, the light vehicle's front seat (seats 1..3) or the truck cab's (seat 1 only, never 2 / 3 of a truck),
@@ -627,7 +628,12 @@ off unless named in lab and play:
   on the guest, an ungranted hold (review R1); site B answers 4 for them (the backstop); site A no longer races. The
   native receipt `MGS_COOP_BOARD_SEAT_V1` (`poll`, `clear`, `deny <id> <ms>`, `grant <id> <ms>`, `hold <ms>`; the
   tested `ParseSeatRequest`) is driven by the world SEAT op (54, `lua/coop/world_ride_pose.lua`, protocol section 21).
-  A deny or hold leaves the stock Fulton prompt for that vehicle [I].
+  Seats on (8.25): site C also marks the Fulton guard (`RaceState::guard`, the receipt's `ref` / `rage`) for a ride
+  icon it refuses and for a door of the vehicle the peer drives; Lua withholds the Fulton action while a mark is
+  under 400 ms old (8.26: polled every tick only while hot, a stop hook gives the bit back; the peer's vehicle is
+  marked whatever the pre-query answered). The driver's copy draws a peer's seat-1 ride in a free back seat (3, then 2; latched for the
+  ride) while its own D-Dog sits in `rider[1]` (`partner_board::DrawSeat`, `partner_ride=seat_draw; vehicle=..;
+  from=1; to=..; reason=dog`): the dog that jumps in after the passenger sat down.
 - Lab levers for the proofs: `goto_vehicle sortie|jeep driver|passenger [cm]` (the stock door spot by id, lab only),
   `relief_load <type> here <dist>`, `vehicle_census [first] [n]`.
 
@@ -2761,9 +2767,9 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
-| `partner_ride_front` | 0, 1 (M6: with `partner_ride_board=passenger`, a passenger may also take a light vehicle's front seat 1 where the driver's copy says that seat is free (the v4 seat addendum, review R3), see "Seat 1 and seat races (M6)"; default 0 in lab and play, a named 1 runs in both; FRAME lab `f49c167d`, `3c748d46`, the handshake `f115a2b3`) |
-| `partner_ride_cab` | 0, 1 (M6: the truck cab seat 1 for a passenger, the same mechanism and handshake; default 0 in lab and play; FRAME lab `0f145a4e` both roles) |
-| `partner_ride_race` | 0, 1 (M6: the host decides an empty vehicle's driver seat, SEAT op 54; site C, the guest's hold until the host's grant (review R1/R2); default 0 in lab and play; lab `43473119`, `f115a2b3`) |
+| `partner_ride_front` | 0, 1 (M6: with `partner_ride_board=passenger`, a passenger may also take a light vehicle's front seat 1 where the driver's copy says that seat is free (the v4 seat addendum, review R3), see "Seat 1 and seat races (M6)"; on with the native gun profile in lab and play since 8.25, a named 0 turns it off; FRAME lab `f49c167d`, `3c748d46`, the handshake `f115a2b3`, play `92f2d2f9`) |
+| `partner_ride_cab` | 0, 1 (M6: the truck cab seat 1 for a passenger, the same mechanism and handshake; on with the native gun profile in lab, off in play unless named (8.26: its play rehearsal named `world_relief=1` and the host-in-cab role is lab-only); a named 0 turns it off; FRAME lab `0f145a4e` both roles) |
+| `partner_ride_race` | 0, 1 (M6: the host decides an empty vehicle's driver seat, SEAT op 54; site C, the guest's hold until the host's grant (review R1/R2); on with the native gun profile in lab and play since 8.25, a named 0 turns it off; lab `43473119`, `f115a2b3`, play `56322b36`, `92f2d2f9`) |
 | `debug_vehicle_door` | 0, 1 (the G4 truck test levers' native door-spot receipt behind `debug goto_vehicle truck`, `goto_partner_vehicle` and `vehicle_door`, see "Truck test levers"; default 0 in lab and play, lab only: play forces it off and the receipt refuses outside mode=lab with offline and redirected saves; a named value records `debug_vehicle_door_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_ui_filter` | 0, 1 (G1, 0.13.6: body 1's HUD hint requests, e.g. the ladder "C" slide hint, swallowed inside its drain job by MinHooks on the UiControllerImpl hint-queue leaves vt+0x240..+0x260, see "Partner HUD hints"; default 0 in lab and play, also with the gun profile; a named 1 is lab only, play forces it off; no hidden-worker FRAME yet) |

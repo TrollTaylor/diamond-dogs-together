@@ -215,20 +215,26 @@ int main() {
                   "an invalid door value refuses");
         }
     }
-    // M6 seat 1 (partner_ride_front / partner_ride_cab, docs/vehicles-companions-design.md 6.6): off in lab and play
-    // unless named (with or without the gun profile); a named 1 runs in either mode (a play rehearsal names it); an
-    // invalid value refuses and counts as named, off.
+    // M6 seat 1 (partner_ride_front / partner_ride_cab, docs/vehicles-companions-design.md 6.6) and the seat races:
+    // since the seats-on round (8.25) they follow the native gun profile (on, not named), off without it; the truck cab
+    // only in lab (8.26: no play rehearsal at the shipped defaults yet), a named 1 runs it in play. A named 0 is the off
+    // switch in either mode, a named 1 runs in either mode; an invalid value refuses and counts as named, off.
     {
         Check(!LabConfig{}.partner_ride_front && !LabConfig{}.partner_ride_front_given && !LabConfig{}.partner_ride_cab &&
                   !LabConfig{}.partner_ride_cab_given && !Lab("").partner_ride_front && !Lab("").partner_ride_cab,
-              "the seat-1 keys default off");
+              "the seat-1 keys default off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_ride_front && !profile.partner_ride_cab && !profile.partner_ride_front_given &&
-                      !profile.partner_ride_cab_given && profile.partner_ride_board == PartnerRideBoard::passenger,
-                  "the gun profile leaves seat 1 off (the back seats stay passenger) in lab and play");
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            Check(profile.partner_ride_front && profile.partner_ride_cab == !play && profile.partner_ride_race && !profile.partner_ride_front_given &&
+                      !profile.partner_ride_cab_given && !profile.partner_ride_race_given &&
+                      profile.partner_ride_board == PartnerRideBoard::passenger && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "seats on: the gun profile turns the front seat and the seat race on in lab and play, the truck cab in lab only");
+            const auto offAll = Lab(gun + mode + "partner_ride_front=0\npartner_ride_cab=0\npartner_ride_race=0\n");
+            Check(!offAll.partner_ride_front && !offAll.partner_ride_cab && !offAll.partner_ride_race && offAll.partner_ride_race_given,
+                  "each seat key stays an off switch under the gun profile");
             const auto named = Lab(gun + mode + "partner_ride_front=1\npartner_ride_cab=1\n");
             Check(named.partner_ride_front && named.partner_ride_cab && named.partner_ride_front_given && named.partner_ride_cab_given &&
                       named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
@@ -240,8 +246,9 @@ int main() {
         const auto later = Lab("enabled=1\nrole=host\npartner_ride_cab=1\npartner_ride_cab=0\n");
         Check(!later.partner_ride_cab, "a later 0 turns the cab key off");
         // The seat races key (SEAT op 54): the same rules.
-        Check(!LabConfig{}.partner_ride_race && !Lab(gun + "mode=play\n").partner_ride_race && !Lab(gun + "mode=lab\n").partner_ride_race,
-              "the race key defaults off in lab and play");
+        Check(!LabConfig{}.partner_ride_race && !Lab("enabled=1\nrole=host\nmode=play\n").partner_ride_race &&
+                  Lab(gun + "mode=play\n").partner_ride_race && Lab(gun + "mode=lab\n").partner_ride_race,
+              "the race key: off without the gun profile, on with it in lab and play");
         const auto race = Lab(gun + "mode=play\npartner_ride_race=1\n");
         Check(race.partner_ride_race && race.partner_ride_race_given && race.invalid_values == 0 && race.play_refused == 0,
               "a named race key runs in play");
