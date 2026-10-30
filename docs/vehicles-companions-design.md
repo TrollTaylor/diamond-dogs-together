@@ -3115,6 +3115,19 @@ Flip it once that run passes on both copies. Not proven: seat 1 and the truck ca
 items (S1 moves only RequestBullet's bullets), two PCs, a 0.14.4 partner (local only, no wire change [I]). `c1465ce`'s
 message calls `66ad131f`'s S1 shots "the same line": they were on the rear-left re-aim line.
 
+**Proof round (m6m7d, same branch; STATUS top).** [O] `76bc4a1c` (lab, `m6m7d-self-hit-ab2.txt`, S1 arm first then the
+stock arm on one aim, life on both copies after every shot): the HOST in back seat 2 on two lines (a warped guard 27 m
+at rotY 92.5, look ray ended 5.1 m out; a warped guard 9 m front-left at rotY -172.3): S1 6 shots (`shift`, exit
+0.91-1.11 m) cost nothing; stock 4 shots (`census`) cost the host's copy 702 three times (the guest's copy kept 2300
+until the resend). A -70 between the arms came with guard 1068 firing (`downed_damage`) [O]. The GUEST in seat 3 on the
+`8a920ec8` line (`o_cm` -79,66,141, `d_milli` 754,655,-50): S1 4 shots, shot 1 put the guard to Dying, 2260 on both
+copies; the two stock shots after them climbed (`d_milli` z +102 / +134; guard `up_mrad` +37 a shot) and cost nothing,
+so the line costs 702 only when level (`8a920ec8`). Not discriminating: `d1e9e028` (lab) and `bd6b36c6` (play,
+`-WanSim bad`, named key): `enemy_aim_nearest` from seat 2 measured 4158955462 at 3.7 m (seat 3: 8.1 m) and turned the
+camera into the rear wheel arch; that seat never fired [O]; why the seated pose reads 3.7 m is [U]. Seat 3 killed him in
+play with 4 S1 shots, 2300 on both copies, on a line not shown to hit in stock. Still needed for the play flip: a play run
+with seat 2 on a stock-hit line at a natural guard and the guest's first shot level.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

@@ -1,3 +1,26 @@
+## 2026-10-30: S1 proven against the self-hit in the lab, not yet in play (branch `wp/self-hit`, local only)
+
+**Play defaults: unchanged** (S1 `partner_seat_shot` stays lab-only; nothing flipped). Three hidden runs (archives
+`D:\mgs-coop-run-archive\m6m7d\<id>`, frames session scratch `complete/frames/m6m7d-hit/`, looked at; design 8.33):
+- `76bc4a1c` lab A/B (`m6m7d-self-hit-ab2.txt`; each seat aims once, the S1 arm first, then the stock arm with the lever
+  `seatshot off` on the same aim, the jeep's life read on both copies after every shot). **Host as the seated shooter**
+  (back seat 2, the authoritative copy), two lines: S1 6 shots, life unchanged; stock 4 shots on the same lines, 3 cost
+  the host's copy 702 each (2300 -> 1598; 2230 -> 1528 -> 826). Those targets were not hit (one line ended at an
+  obstacle 5 m out, the other aimed 1.6 m over a lying guard). **Guest** (back seat 3, the `8a920ec8` front-right line):
+  S1 4 shots, the guard down on shot 1 (`req` / `commit actor=guest`), life 2260 on both copies; the 2 stock shots after
+  them cost nothing because the aim had climbed with recoil (~2 deg a shot): this line's stock cost is `8a920ec8`'s level
+  first shot (702).
+- `d1e9e028` (lab try 1) and `bd6b36c6` (**play** `-WanSim bad`, named `partner_seat_shot=1`, `key=1; play=1`): not
+  discriminating. In both the lever aimed back seat 2 at a guard it measured 3.7 m away, turned the camera into the rear
+  wheel arch, and the host's gun never fired. Seat 3 hit a guard 8 m right (play: killed on shot 1, 4 shift shots, life
+  2300 on both copies after every shot), a line not shown to hit the jeep in stock. In `d1e9e028` awake guards fired at the
+  riders (`downed_damage`) while the jeep lost non-702 amounts.
+- Never seen: `step=error`, `viewer_changed`, faults, `board_uncertain`, `two_drivers`, `pass_camera state=refused`,
+  `result=stale`. Play RTT 178-181 ms.
+**Verdict:** S1 stops the 702 self-hit in the lab for the host (6 S1 shots vs 3 of 4 stock hits) and keeps the guest's
+front-right shots from costing life while still downing the guard. No play run yet on a line that hits in stock, so no
+flip. **Next:** that play run (seat 2 at a natural guard on the diagonal or front-left line; the guest's first shot level).
+
 ## 2026-10-30: a seated passenger's shots start past their own jeep, lab only (branch `wp/self-hit`, local only)
 
 **Play defaults: unchanged.** S1 (`partner_seat_shot`: a seated passenger's bullet starts where its line leaves the ridden
