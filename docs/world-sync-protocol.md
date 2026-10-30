@@ -1820,7 +1820,9 @@ and play unless named) and the board installed.
   set=1`, NOTE 13 a=6, one toast per 3 s): both board sites answer 4 for it in the stock verdict (no ride icon, phase
   1's no-seat exit), so the loser stays on foot. Once the winner drives, the peer-driver policy decides as before
   (passenger or block), so the loser can still take a passenger seat.
-- **Not covered.** A guest that presses within one round trip of its icon appearing while the host presses too can
+- **Not covered.** The want is site A's nearest-seat search, taken before the pre-query's door check: a host within
+  4.5 m of a vehicle whose doors it cannot use still wins a tie (the play rehearsal `65277fb8`: neither boarded). A
+  guest that presses within one round trip of its icon appearing while the host presses too can
   still become a second driver (the existing `board_uncertain; reason=two_drivers` latch logs it); passenger seats
   are not raced (the board never offers the peer's seat).
 

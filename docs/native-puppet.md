@@ -593,6 +593,27 @@ run has used it yet.
   60 cm are the lab's guesses: the answer line logs the seat and door points,
   so a run can pick another `cm` without a build.
 
+### Seat 1 and seat races (M6)
+
+M6 (`wp/seats`, docs/vehicles-companions-design.md 6.6 and 8.20), each behind its own lab key, off unless named in
+lab and play:
+
+- `partner_ride_front=1` / `partner_ride_cab=1` (with `partner_ride_board=passenger`): the passenger search also
+  offers seat 1, the light vehicle's front seat (seats 1..3) or the truck cab's (seat 1 only, never 2 / 3 of a truck).
+  Stock phase 1 maps seat 1 to the driver twice (`0x1251834` the seat passed to TryToRide, `0x1251894` the next phase);
+  site B sets both `cmp al,imm8` immediates to 1 for exactly the call it steers to seat 1 and back to 2 for every other
+  call, and the install turns the seat matrix's seat-1 remap (`0xB79A43`, seat 1 -> 0 while a player sits in
+  `rider[1]`) into a `jmp` for the process (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`). A
+  failed immediate write answers 4 for seat 1 (never a second driver). The local passenger report, the receiver's
+  `local_vehicle` gate and the passenger camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`,
+  `board_seat1_blocks`; `vehicle_door` accepts the remap's `jmp`.
+- `partner_ride_race=1`: the pre-query records the empty vehicle its player could drive (`RaceStep`, within 4.5 m of
+  the record), and the native receipt `MGS_COOP_BOARD_SEAT_V1` (`poll`, `deny <id> <ms>`, `clear`) lets the world SEAT
+  op (54, `lua/coop/world_ride_pose.lua`, protocol section 21) deny it: both sites answer 4 for a denied vehicle in the
+  stock verdict only.
+- Lab levers for the proofs: `goto_vehicle sortie driver|passenger [cm]` (the door spot of an unnamed vehicle by id),
+  `relief_load <type> here <dist>`, `vehicle_census [first] [n]`.
+
 ## Traversal icon
 
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research
@@ -2469,6 +2490,9 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 | `partner_native_traverse` | 0, 1 (the ladder / pipe / wall-climb / step-on replay through body 1's action icon, see "Traversal" and "Traversal icon"; default 1 with the native gun profile in lab and play (user decision 2026-10-22; step-on proven in hidden runs 104e9a47 lab / 04d3511f play, the Mother Base ladder in 8f27806d lab / 2596f6ae play, pipe / wall climb unproven), otherwise 0; a named 0 opts out; a named value records `partner_native_traverse_given`) |
 | `partner_ride_board` | off, block, passenger (the board hook at a vehicle the partner drives, see "Vehicle boarding"; default passenger with the native gun profile in lab and play (hidden runs 495e7c3a lab, de949f80 play; block: 0348c4d8, fad26e25), otherwise off; passenger includes the passenger camera, see "Passenger camera", and blocks at trucks and the rest; a named value runs as named and records `partner_ride_board_given`) |
+| `partner_ride_front` | 0, 1 (M6: with `partner_ride_board=passenger`, a passenger may also take a light vehicle's front seat 1, see "Seat 1 and seat races (M6)"; default 0 in lab and play, a named 1 runs in both; FRAME lab `f49c167d`, `3c748d46`) |
+| `partner_ride_cab` | 0, 1 (M6: the truck cab seat 1 for a passenger, the same mechanism; default 0 in lab and play) |
+| `partner_ride_race` | 0, 1 (M6: the host decides an empty vehicle's driver seat, SEAT op 54; default 0 in lab and play) |
 | `debug_vehicle_door` | 0, 1 (the G4 truck test levers' native door-spot receipt behind `debug goto_vehicle truck`, `goto_partner_vehicle` and `vehicle_door`, see "Truck test levers"; default 0 in lab and play, lab only: play forces it off and the receipt refuses outside mode=lab with offline and redirected saves; a named value records `debug_vehicle_door_given`) |
 | `partner_native_gesture` | 0, 1 (the remote's pickup / hand signs / knock on body 1's graph 2 and this copy's upper-act sender, see "Gestures"; default 1 with the native gun profile in lab and play since runs 0e343f72 lab / 75a7e7dc play, else 0; a named 0 opts out) |
 | `partner_native_ui_filter` | 0, 1 (G1, 0.13.6: body 1's HUD hint requests, e.g. the ladder "C" slide hint, swallowed inside its drain job by MinHooks on the UiControllerImpl hint-queue leaves vt+0x240..+0x260, see "Partner HUD hints"; default 0 in lab and play, also with the gun profile; a named 1 is lab only, play forces it off; no hidden-worker FRAME yet) |

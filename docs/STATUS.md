@@ -1,3 +1,25 @@
+## 2026-10-30: M6 more passenger seats (branch `wp/seats`, lab keys, unreleased, not two-PC tested)
+
+Branch `wp/seats` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/vehicle-state`; local only (nothing pushed,
+tagged, merged or released). Results, the E6 / E7 static reads and the evidence: `docs/vehicles-companions-design.md`
+8.20; the SEAT op: `docs/world-sync-protocol.md` section 21; the mechanism: `docs/native-puppet.md` "Seat 1 and seat
+races (M6)". Marks: [O] observed in a run or test named here, [I] inferred, [U] unproven.
+
+| Item | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| Jeep front seat (1) | Lab key `partner_ride_front`: site B sets both phase-1 `cmp al,imm8` immediates (`0x1251834`, `0x1251894`) to 1 only for the call it steers to seat 1; the seat matrix's seat-1 remap (`0xB79A43`) is a `jmp` for the process; contract pins; the passenger report, the receiver gate and the passenger camera take seat 1 | **Off** (D16) | [O] lab `f49c167d`, `3c748d46`: both roles, logs on both copies, FRAMES on both copies while moving, the stock GetOffFrontRight; play `65277fb8` (`-WanSim bad`, keys named): both roles passed, frames on both copies | The driver's own D-Dog rides in that seat on the driver's copy and the passenger is drawn over it (D16); two-PC |
+| Truck cab (1) | Lab key `partner_ride_cab`, the same mechanism for trucks (types 3 / 4: seat 1 only, never 2 / 3) | **Off** | [O] lab `b66c7031` (the guest as passenger), `73af7206` (both roles, FRAMES while moving, the guest's stock get-off) | The host's get-off from the cab (the worker lost its input desktop at that press, `73af7206`); a play rehearsal (the test truck needs the lab-only sortie lever); free roam's LRRP trucks carry soldiers; two-PC |
+| Seat race | Lab key `partner_ride_race`; world op SEAT `0x36` (54, both directions; a 0.14.4 partner skips it by its length); the board's pre-query want (within 4.5 m) and a native deny (`MGS_COOP_BOARD_SEAT_V1`); NOTE 13 a 6 / 7 | **Off** (D17) | [O] lab `b66c7031`: the guest denied at the truck's cab doors, the host driving, the guest on foot, FRAMES on both copies; incidental denies in `3c748d46`; play `65277fb8`: the deny and the toast drawn, but the host did not board (no ride icon at its spot) | The want is taken from the pre-query's nearest search before its door check, so a host that cannot use a door still wins a tie (`65277fb8`); presses within one round trip of the guest's icon; two-PC |
+| Truck bed (E7) | Not built (static reads only: the hide states live in the RideVehicle action; no bed anchor) | - | - | Everything |
+| APC / tank crew | Not built; census: the wheeled armoured vehicle has one seat | - | [O] census `b66c7031` | The tank's seat count; everything else |
+
+Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\`): `f49c167d318744178e60aac5efbe3d58`, `3c748d4691964b7b90d7d35811e40d0b`,
+`b66c703192e84214aa2d31f905489040`, `73af720692b5416a8cbbae651b4002f3` (lab), `65277fb83b1649ba85e9ef4c1e61f3de` (`-Mode play
+-WanSim bad`; its first form `11fe8abd92924c1da1a2904f0d68d41c` stopped at a harness check before the seats).
+An earlier start of the first run stopped inside the worker checks (the tree was edited while they ran; no game).
+Fast CTest after each change; the full CTest passed 318 of 318 at `c0387d6` with these docs (`tools/build.ps1`).
+
 ## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
 
 The three tracks that followed the 0.14.4 release are merged into `dev/oct7-continue` (from `01fd055`): `f1e80be`
