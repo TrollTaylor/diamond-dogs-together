@@ -11,16 +11,22 @@
 #      both copies first), the guest 25 m away and the host 30 m away when it goes off -> REQ cause 4 -> the host judges
 #      it near and wrecks its copy at once (break_crew) -> req_done; the wreck on both screens; the crew's fate in the
 #      logs of both copies. 25623 is the side-op armoured vehicle ("Eliminate the Armored Vehicle Unit 04") with one
-#      soldier aboard (lab run ac0f7656: crew=1, the wreck on both screens); the guest places its charges from 3 m east
-#      of its centre (the hull lies north-south).
+#      soldier aboard (lab run ac0f7656: crew=1, the wreck on both screens); the guest places its charges from 5 m
+#      behind its centre (west; the hull lies east-west, front east).
 # Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
 # Run:
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-fixes2-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# History: 247a4eed (build d8497c5, both new keys named): 1 and 2 passed (the guest's round 2020 -> 1990 reported,
+#   applied 117 ms later, both copies 1990 past the refresh); the host's own rounds from its boot spot missed; in 3 the
+#   guest placed its charges from 3 m east, in front of the armoured vehicle's driver: the vehicle entered combat and
+#   drove apart on the two copies (50 m), so VEHICLE_GONE refused the request as far before the crew rule acted. Now
+#   world_vehicle_damage runs at its play default (on since 9538f86, not named), the host fires from the guest's spot,
+#   and in 3 the host asks the ignore from 12 m and both approach from behind (west; the hull lies east-west, front
+#   east).
 # NEVER: step=error, viewer_changed, faults; event=vehicle_damage step=tx after part 2's host logmark; a step=hold or
 #        hold_timeout for 25623.
 labsetting world_vehicle_crew=1
-labsetting world_vehicle_damage=1
 labsetting partner_native_ride=seat
 labsetting nametag=1
 title 200
@@ -95,11 +101,11 @@ wait 14000
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
 both capture dmg-later
-# The host's own rounds from its boot spot (facing the jeep): VEHICLE_STATE to the guest as before, never reported back
-# (the guest has not fired since part 2's rounds, more than 3 s ago).
-host debug teleport -656.01 1.20 877.73 62
-wait 2500
-placebehind guest host 10 0
+# The host's own rounds from the guest's spot (the jeep 1.5 m in front): VEHICLE_STATE to the guest as before, never
+# reported back (the guest has not fired since part 2's rounds, more than 3 s ago).
+guest debug teleport -641.93 1.20 884.33 -117
+wait 2000
+host debug teleport -652.93 1.20 879.33 -117
 wait 2500
 logmark both
 host hold rmb 1500 nowait
@@ -122,12 +128,13 @@ both capture host-damage
 host run vehicle_state_status 25623
 host expect vstate;id=25623;alive=1;.*busy=occupied
 guest run vehicle_state_status 25623
-host debug teleport -374.85 0.50 494.18 180
+host debug teleport -386.85 0.50 489.18 90
 wait 3000
 host run enemy info nearest
 host run enemy ignore nearest
 wait 1500
-guest debug teleport -371.85 0.50 489.18 -90
+host debug teleport -404.85 0.50 489.18 90
+guest debug teleport -379.85 0.50 489.18 90
 wait 3000
 guest run position
 guest run vehicle_state_status 25623
@@ -151,8 +158,7 @@ guest hold lmb 300 nowait
 wait 1500
 guest release
 wait 1000
-guest debug teleport -349.85 0.50 489.18 -90
-host debug teleport -374.85 0.50 519.18 180
+guest debug teleport -399.85 0.50 497.18 110
 wait 3000
 host run position
 guest run position
