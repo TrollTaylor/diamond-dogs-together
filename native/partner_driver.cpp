@@ -3125,6 +3125,19 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         EmitBoard(m, h, "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; latch=mission; faults=%u\r\n",
                   unsigned(lp.vehicle), unsigned(lp.seat), c.uncertain, stats.faults - c.seen.faults);
     }
+    // Design 8.25: the effective mode (the key; on a lab copy the passcam lever's override wins).
+    pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
+    const char* mode_source = "key";
+    const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::aim)) {
+        mode = static_cast<pc::Mode>(override_mode);
+        mode_source = "lever";
+    }
+    if (c.mode_logged != static_cast<std::uint8_t>(mode) + 1u) {
+        c.mode_logged = static_cast<std::uint8_t>(static_cast<unsigned>(mode) + 1u);
+        EmitBoard(m, h, "partner_ride=pass_camera; state=mode; mode=%s; source=%s; trace=%u\r\n", pc::ModeName(mode), mode_source,
+                  d.settings.pass_camera_trace ? 1u : 0u);
+    }
     pc::ArmIn ai{};
     ai.passenger_mode = true;
     ai.installed = d.pass_camera_installed;
@@ -3133,12 +3146,49 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     ai.vehicle = lp.vehicle;
     ai.seat = lp.seat;
     ai.seat_one = d.settings.ride_front || d.settings.ride_cab;
+    ai.off = mode == pc::Mode::off;
     const char* arm_reason = "none";
     const pc::Arm arm = pc::ArmFor(ai, arm_reason);
+    // The local gun (k = 0) while seated: the aim drop's input and the trace's.
+    const bool trace = d.settings.pass_camera_trace && !d.settings.play_mode && h.pass_camera_view != nullptr;
+    pp::AimRead aim_read{};
+    const bool aim_ok = lp.valid && (arm.armed || trace) && h.read_aim && h.read_aim(h.context, st, aim_read);
+    const bool aiming = aim_ok && pc::GunAims(aim_read.gun_ok[0], aim_read.gun_state[0], aim_read.gun_flags[0]);
+    const pc::AimOut aim_out = pc::AimStep(c.aim, mode, arm.armed && d.pass_camera_installed, aiming, now);
     pc::Camera cam{};
     const char* plan = "none";
-    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, true, cam);
+    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, aim_out.want, cam);
     else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    if (aim_out.event != pc::AimEvent::none)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=aim; event=%s; vehicle=%u; seat=%u; mode=%s; gun=%u; f3c0=0x%x; plan=%s; cam1f0=0x%llx; "
+                    "cam200=%u; cmode=%d; drops=%u; restores=%u\r\n",
+                    pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
+                    unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
+                    static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
+    if (aiming) c.trace_aim_ms = now ? now : 1;
+    if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
+        c.trace_ms = now ? now : 1;
+        pc::View v{};
+        const bool view_ok = h.pass_camera_view(h.context, st, v) && v.ok;
+        const auto cm = [](float a) noexcept { return std::isfinite(a) && a > -2.0e7f && a < 2.0e7f ? static_cast<int>(a * 100.0f) : INT32_MIN; };
+        const auto milli = [](float a) noexcept { return std::isfinite(a) && a > -2.0e6f && a < 2.0e6f ? static_cast<int>(a * 1000.0f) : INT32_MIN; };
+        const float* body = aim_read.body[0];
+        const float* tgt = aim_read.q10[0];
+        const float* apt = aim_read.aimpt[0];
+        EmitNativeN(h, c.trace_cap, pc::kTraceCap, "partner_pass_camera_trace",
+                    "partner_ride=pass_camera; state=trace; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
+                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; rot=%d,%d,%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
+                    "f204=0x%x; d38=0x%x; cmode=%d\r\n",
+                    unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u, unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
+                    cam.ok && cam.connect != 0 ? 1u : 0u, view_ok ? 1u : 0u, cm(v.pos[0] - body[0]), cm(v.pos[1] - body[1]),
+                    cm(v.pos[2] - body[2]), cm(body[0]), cm(body[1]), cm(body[2]),
+                    aim_read.body_ok[0] ? static_cast<int>(aim_read.body_yaw[0] * 5729.578f) : INT32_MIN, milli(v.ang[0]), milli(v.ang[1]),
+                    milli(v.ang[2]), milli(v.ang[3]), milli(v.rot[0]), milli(v.rot[1]), milli(v.rot[2]), milli(v.rot[3]),
+                    cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
+                    cm(apt[2] - v.pos[2]), aim_read.rate_ok[0] ? milli(aim_read.r5c[0]) : INT32_MIN,
+                    aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode);
+    }
     pc::StepIn in{};
     in.passenger = lp.valid;
     in.vehicle = lp.vehicle;
@@ -6033,6 +6083,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
     // lab and play; with it the passenger camera).
     d.settings.ride_board = lab.partner_ride_board;
+    // Design 8.25: the passenger camera's mode (lab and play) and its trace (lab only).
+    d.settings.pass_camera = lab.partner_pass_camera;
+    d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
     d.local_passenger = partner_board::LocalPassenger{};

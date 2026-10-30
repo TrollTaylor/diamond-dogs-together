@@ -82,11 +82,13 @@ struct ArmIn {
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
     bool seat_one = false;                  // M6: partner_ride_front / partner_ride_cab (seat 1 is a passenger seat)
+    bool off = false;                       // partner_pass_camera=off (the stock collision for the whole ride)
 };
 inline Arm ArmFor(const ArmIn& in, const char*& reason) noexcept {
     Arm a{};
     if (!in.passenger_mode) { reason = "mode"; return a; }
     if (!in.passenger) { reason = "not_passenger"; return a; }
+    if (in.off) { reason = "off"; return a; }
     if (!in.installed) { reason = "install"; return a; }
     if (in.uncertain) { reason = "uncertain"; return a; }
     if ((in.seat < kBackFirst || in.seat > kBackLast) && !(in.seat_one && in.seat == 1)) { reason = "seat"; return a; }
@@ -238,6 +240,86 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
         out.ms = ClampMs(in.now_ms - e.start_ms);
     }
     return out;
+}
+
+// --- The aim camera (docs/vehicles-companions-design.md 8.25) ------------------
+// partner_pass_camera=off|connect|aim (lab and play): off never connects (the stock collision for the whole ride, the
+// A/B baseline); connect keeps the handle for the whole ride (0.14.4); aim keeps it except while the local passenger
+// aims and kAimHoldMs after: the stock collision then keeps the shoulder (aim) camera out of the jeep's body, which with
+// the handle stood outside the jeep and looked through it (8.22 / 8.24 frames). The lab lever "passcam
+// off|connect|aim|lab|status" overrides the key on this copy (lab only).
+enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2 };
+inline const char* ModeName(Mode m) noexcept { return m == Mode::off ? "off" : m == Mode::connect ? "connect" : "aim"; }
+inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
+    if (!text) return false;
+    if (n == 3 && std::memcmp(text, "off", 3) == 0) { out = Mode::off; return true; }
+    if (n == 7 && std::memcmp(text, "connect", 7) == 0) { out = Mode::connect; return true; }
+    if (n == 3 && std::memcmp(text, "aim", 3) == 0) { out = Mode::aim; return true; }
+    return false;
+}
+// The local gun aims: the qualified gun record's aim flag (rec+0x3C0 bit 18, partner_input GunFlag::Aiming) or its
+// current mode in the aim / fire / reload family (partner_seat_aim census, run 6fc3098b: RMB 6 / 7, RMB+LMB 9 / 10,
+// an empty magazine 11 / 12).
+inline constexpr std::uint32_t kGunAimBit = 1u << 18;
+inline bool GunAims(bool gun_ok, std::uint8_t mode, std::uint32_t flags3c0) noexcept {
+    if (!gun_ok) return false;
+    return (flags3c0 & kGunAimBit) != 0 || mode == 6 || mode == 7 || mode == 9 || mode == 10 || mode == 11 || mode == 12;
+}
+inline constexpr std::uint64_t kAimHoldMs = 600;
+enum class AimEvent : std::uint8_t { none, drop, restore };
+inline const char* AimEventName(AimEvent e) noexcept { return e == AimEvent::drop ? "drop" : e == AimEvent::restore ? "restore" : "none"; }
+struct AimDrop {
+    bool dropped = false;
+    std::uint64_t last_aim_ms = 0;
+    std::uint32_t drops = 0, restores = 0;
+};
+struct AimOut {
+    bool want = true;          // the driver keeps (connects) the handle this tick
+    AimEvent event = AimEvent::none;
+};
+// One tick of an armed boarding (`armed`: ArmFor granted it). Mode aim drops the handle from the first aiming tick
+// until kAimHoldMs after the last one; connect and off never drop (off never arms). Not armed: the state resets (a
+// drop never outlives the boarding; the counters stay).
+inline AimOut AimStep(AimDrop& s, Mode mode, bool armed, bool aiming, std::uint64_t now_ms) noexcept {
+    AimOut o{};
+    if (!armed) {
+        s.dropped = false;
+        s.last_aim_ms = 0;
+        return o;
+    }
+    if (aiming) s.last_aim_ms = now_ms ? now_ms : 1;
+    const bool hold = mode == Mode::aim && s.last_aim_ms != 0 && (aiming || now_ms < s.last_aim_ms || now_ms - s.last_aim_ms < kAimHoldMs);
+    if (hold && !s.dropped) {
+        s.dropped = true;
+        ++s.drops;
+        o.event = AimEvent::drop;
+    } else if (!hold && s.dropped) {
+        s.dropped = false;
+        ++s.restores;
+        o.event = AimEvent::restore;
+    }
+    o.want = !s.dropped;
+    return o;
+}
+
+// --- The lab trace (partner_pass_camera_trace=1, lab only; design 8.25) -------
+// Read only: the local camera's position CAM+0xE0 (the eye GunAimPointRelAngles 0x1042F80 and the aim-point solve
+// 0x1097710 measure from), its rotation CAM+0x90 (that solve's fallback forward), the look angles CAM+0x268..0x274
+// (written by the look updates, e.g. vt+0xF0 0x111F830 adds to +0x270 / +0x274 and copies them to +0x268 / +0x26C),
+// the flag words CAM+0x204 and CAM+0xD38 (bit 2: a pending recoil request, vt+0xF8 0x111A710 -> CAM+0xDB0).
+inline constexpr std::size_t kCamRot = 0x90, kCamPos = 0xE0, kCamAngles = 0x268, kCamFlags = 0x204, kCamRequests = 0xD38;
+struct View {
+    bool ok = false;
+    float pos[3]{}, rot[4]{}, ang[4]{};
+    std::uint32_t flags = 0, requests = 0;
+};
+inline constexpr std::uint64_t kTraceAimMs = 100, kTraceIdleMs = 1000, kTraceAfterMs = 4000;
+inline constexpr unsigned kTraceCap = 1500;
+// The cadence: every kTraceAimMs while aiming or within kTraceAfterMs after, else every kTraceIdleMs while seated.
+inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aiming, std::uint64_t now_ms) noexcept {
+    const bool fast = aiming || (last_aim_ms && now_ms >= last_aim_ms && now_ms - last_aim_ms < kTraceAfterMs);
+    const std::uint64_t every = fast ? kTraceAimMs : kTraceIdleMs;
+    return !last_ms || now_ms < last_ms || now_ms - last_ms >= every;
 }
 
 } // namespace mgscoop::partner_pass_camera

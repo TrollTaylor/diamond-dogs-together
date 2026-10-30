@@ -51,6 +51,16 @@ struct Stats {
 };
 void ReadStats(Stats& out) noexcept;
 
+// Design 8.25: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
+// +0x268..0x274, +0x204, +0xD38). Reads only, under SEH; false when the camera is not the PlayerCamera.
+bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
+
+// The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
+// override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills
+// `result` and sets ok (false outside the lab or for bad arguments; nothing changes then).
+int Override() noexcept;
+bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept;
+
 namespace detail {
 // The pinned blocks against an image of at least `span` bytes: nullptr or
 // base / contract / span / read / bytes, with that block's rva in mismatch_rva.

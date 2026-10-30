@@ -301,6 +301,126 @@ void TestReadCamera() {
     Check(!pc::ReadCamera(k.Base(), 0x10, cam) && !cam.ok, "an unreadable P: unread");
 }
 
+// --- Design 8.25: the aim camera ----------------------------------------------------
+void TestModeAndAim() {
+    pc::Mode m{};
+    Check(pc::ParseMode("off", 3, m) && m == pc::Mode::off && pc::ParseMode("connect", 7, m) && m == pc::Mode::connect &&
+              pc::ParseMode("aim", 3, m) && m == pc::Mode::aim,
+          "the three modes parse");
+    for (const char* bad : {"", "on", "Aim", "aim2", "connected", "lab"})
+        Check(!pc::ParseMode(bad, std::strlen(bad), m), "anything else refuses");
+    Check(Same(pc::ModeName(pc::Mode::off), "off") && Same(pc::ModeName(pc::Mode::connect), "connect") &&
+              Same(pc::ModeName(pc::Mode::aim), "aim"),
+          "mode names");
+    Check(static_cast<int>(pc::Mode::off) == 0 && static_cast<int>(pc::Mode::connect) == 1 && static_cast<int>(pc::Mode::aim) == 2,
+          "the values the lab key and the lever share");
+    // ArmFor: mode off never arms (reported once a passenger is seated).
+    pc::ArmIn in{};
+    in.passenger_mode = true; in.installed = true; in.passenger = true; in.vehicle = 25608; in.seat = 2; in.off = true;
+    const char* why = nullptr;
+    Check(!pc::ArmFor(in, why).armed && Same(why, "off"), "partner_pass_camera=off: never connected");
+    in.passenger = false;
+    Check(!pc::ArmFor(in, why).armed && Same(why, "not_passenger"), "off says nothing until a passenger is seated");
+    // GunAims: the aim flag or a mode of the aim / fire / reload family; nothing without the gun read.
+    Check(pc::GunAims(true, 0, pc::kGunAimBit) && pc::GunAims(true, 7, 0) && pc::GunAims(true, 6, 0) && pc::GunAims(true, 9, 0) &&
+              pc::GunAims(true, 10, 0) && pc::GunAims(true, 11, 0) && pc::GunAims(true, 12, 0),
+          "the aim flag and the aim, fire and reload modes aim");
+    Check(!pc::GunAims(true, 0, 0) && !pc::GunAims(true, 1, 0) && !pc::GunAims(true, 8, 0) && !pc::GunAims(true, 13, 0) &&
+              !pc::GunAims(false, 7, pc::kGunAimBit),
+          "idle, a weapon change, an unread gun: not aiming");
+    Check(pc::kGunAimBit == 0x40000u, "rec+0x3C0 bit 18");
+}
+
+void TestAimStep() {
+    pc::AimDrop s{};
+    // aim: dropped from the first aiming tick until kAimHoldMs after the last one.
+    pc::AimOut o = pc::AimStep(s, pc::Mode::aim, true, false, 1000);
+    Check(o.want && o.event == pc::AimEvent::none && !s.dropped, "seated, not aiming: the handle stays");
+    o = pc::AimStep(s, pc::Mode::aim, true, true, 1100);
+    Check(!o.want && o.event == pc::AimEvent::drop && s.dropped && s.drops == 1, "the aim drops the handle at once");
+    o = pc::AimStep(s, pc::Mode::aim, true, true, 1500);
+    Check(!o.want && o.event == pc::AimEvent::none, "still aiming: still dropped, no second event");
+    o = pc::AimStep(s, pc::Mode::aim, true, false, 1500 + pc::kAimHoldMs - 1);
+    Check(!o.want && o.event == pc::AimEvent::none, "within the hold after the aim: still dropped");
+    o = pc::AimStep(s, pc::Mode::aim, true, false, 1500 + pc::kAimHoldMs);
+    Check(o.want && o.event == pc::AimEvent::restore && !s.dropped && s.restores == 1, "the hold over: restored");
+    o = pc::AimStep(s, pc::Mode::aim, true, false, 9000);
+    Check(o.want && o.event == pc::AimEvent::none, "idle again");
+    // A shot inside the hold renews it.
+    pc::AimStep(s, pc::Mode::aim, true, true, 10000);
+    pc::AimStep(s, pc::Mode::aim, true, false, 10300);
+    o = pc::AimStep(s, pc::Mode::aim, true, true, 10500);
+    Check(!o.want && o.event == pc::AimEvent::none && s.drops == 2, "a new aim within the hold keeps the drop");
+    o = pc::AimStep(s, pc::Mode::aim, true, false, 10500 + pc::kAimHoldMs - 1);
+    Check(!o.want, "the hold counts from the last aiming tick");
+    // Not armed (the get-off, a latch, mode off): the drop never outlives the boarding.
+    o = pc::AimStep(s, pc::Mode::aim, false, true, 11000);
+    Check(o.want && o.event == pc::AimEvent::none && !s.dropped && s.last_aim_ms == 0, "not armed: reset without an event");
+    // connect (0.14.4) never drops.
+    pc::AimDrop k{};
+    for (std::uint64_t t = 1000; t < 3000; t += 100) {
+        o = pc::AimStep(k, pc::Mode::connect, true, true, t);
+        Check(o.want && o.event == pc::AimEvent::none && !k.dropped, "connect keeps the handle while aiming");
+    }
+    // A clock of 0 still counts as an aim.
+    pc::AimDrop z{};
+    o = pc::AimStep(z, pc::Mode::aim, true, true, 0);
+    Check(!o.want && z.last_aim_ms == 1, "an aim at clock 0");
+}
+
+void TestTraceDue() {
+    Check(pc::TraceDue(0, 0, false, 5000), "the first line is due");
+    Check(!pc::TraceDue(5000, 0, false, 5000 + pc::kTraceIdleMs - 1) && pc::TraceDue(5000, 0, false, 5000 + pc::kTraceIdleMs),
+          "idle: every kTraceIdleMs");
+    Check(!pc::TraceDue(5000, 0, true, 5000 + pc::kTraceAimMs - 1) && pc::TraceDue(5000, 0, true, 5000 + pc::kTraceAimMs),
+          "aiming: every kTraceAimMs");
+    Check(pc::TraceDue(5000, 4900, false, 5100) && !pc::TraceDue(5000, 4900 - pc::kTraceAfterMs, false, 5100),
+          "fast for kTraceAfterMs after the aim");
+    Check(pc::TraceDue(9000, 0, false, 5000), "a clock that went back: due");
+}
+
+void TestReadViewAndLever() {
+    Chain k;
+    const float pos[3] = {-650.5f, 3.25f, 880.75f}, rot[4] = {0.1f, 0.2f, 0.3f, 0.9f}, ang[4] = {0.25f, -1.5f, 0.3f, -1.25f};
+    for (unsigned i = 0; i < 3; ++i) Chain::Put<float>(k.cam, pc::kCamPos + 4u * i, pos[i]);
+    for (unsigned i = 0; i < 4; ++i) {
+        Chain::Put<float>(k.cam, pc::kCamRot + 4u * i, rot[i]);
+        Chain::Put<float>(k.cam, pc::kCamAngles + 4u * i, ang[i]);
+    }
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamFlags, 0x400001u);
+    Chain::Put<std::uint32_t>(k.cam, pc::kCamRequests, 4u);
+    pc::View v{};
+    Check(pc::ReadView(k.Base(), k.P(), v) && v.ok && v.pos[0] == pos[0] && v.pos[2] == pos[2] && v.rot[3] == rot[3] &&
+              v.ang[1] == ang[1] && v.ang[3] == ang[3] && v.flags == 0x400001u && v.requests == 4u,
+          "the trace reads the position, rotation, look angles and flag words");
+    Check(pc::kCamPos == 0xE0 && pc::kCamRot == 0x90 && pc::kCamAngles == 0x268 && pc::kCamFlags == 0x204 && pc::kCamRequests == 0xD38,
+          "the trace offsets");
+    Chain::Put<std::uintptr_t>(k.cam, 0, Chain::kBase + 0x10);
+    Check(!pc::ReadView(k.Base(), k.P(), v) && !v.ok, "not a PlayerCamera: unread");
+    Check(!pc::ReadView(k.Base(), 0x10, v) && !v.ok, "an unreadable P: unread");
+    // The lever: lab only, three modes, lab clears, status reports; any other text is not a passcam command.
+    pc::detail::ResetForTest();
+    char r[160]{};
+    bool ok = true;
+    Check(!pc::HandleCommand("aimpt off", true, r, sizeof(r), ok) && !ok, "another command is not ours");
+    Check(!pc::HandleCommand("passcamx aim", true, r, sizeof(r), ok), "a longer word is not ours");
+    Check(pc::Override() == -1, "no override at first");
+    Check(pc::HandleCommand("passcam aim", false, r, sizeof(r), ok) && !ok && std::strstr(r, "reason=lab_only") && pc::Override() == -1,
+          "refused outside the lab, nothing changes");
+    Check(pc::HandleCommand("passcam off", true, r, sizeof(r), ok) && ok && pc::Override() == 0 && std::strstr(r, "passcam=off; override=set"),
+          "off");
+    Check(pc::HandleCommand("passcam connect", true, r, sizeof(r), ok) && ok && pc::Override() == 1, "connect");
+    Check(pc::HandleCommand("passcam aim", true, r, sizeof(r), ok) && ok && pc::Override() == 2, "aim");
+    Check(pc::HandleCommand("passcam status", true, r, sizeof(r), ok) && ok && pc::Override() == 2 && std::strstr(r, "passcam=aim"),
+          "status keeps the override");
+    Check(pc::HandleCommand("passcam bogus", true, r, sizeof(r), ok) && !ok && std::strstr(r, "reason=args") && pc::Override() == 2,
+          "bad arguments refuse");
+    Check(pc::HandleCommand("passcam", true, r, sizeof(r), ok) && !ok, "no argument refuses");
+    Check(pc::HandleCommand("passcam lab", true, r, sizeof(r), ok) && ok && pc::Override() == -1 && std::strstr(r, "passcam=lab; override=none"),
+          "lab clears the override");
+    pc::detail::ResetForTest();
+}
+
 // --- The pinned blocks and the install on a synthetic image -----------------------
 struct Image {
     unsigned char* base = nullptr;
@@ -380,6 +500,10 @@ int main() {
     TestEpisode();
     TestConnect();
     TestReadCamera();
+    TestModeAndAim();
+    TestAimStep();
+    TestTraceDue();
+    TestReadViewAndLever();
     TestVerifyAndInstall();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;

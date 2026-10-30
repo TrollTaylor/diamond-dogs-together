@@ -1072,6 +1072,13 @@ bool PartnerPassCameraRead(void*, const pp::State& state, mgscoop::partner_pass_
     if (!game_base || !partner_gate_ok) return false;
     return mgscoop::partner_pass_camera::ReadCamera(game_base, state.P, out);
 }
+// Design 8.25: the lab trace's camera read (reads only) and the passcam lever's override.
+bool PartnerPassCameraView(void*, const pp::State& state, mgscoop::partner_pass_camera::View& out) noexcept {
+    out = mgscoop::partner_pass_camera::View{};
+    if (!game_base || !partner_gate_ok) return false;
+    return mgscoop::partner_pass_camera::ReadView(game_base, state.P, out);
+}
+int PartnerPassCameraOverride(void*) noexcept { return mgscoop::partner_pass_camera::Override(); }
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1168,7 +1175,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
     PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
-    PartnerSeatRider, PartnerBoardRemap};
+    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -2698,6 +2705,16 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if (mgscoop::partner_aim_point::HandleCommand(pending.text, tag_result, sizeof(tag_result), tag_ok)) {
                 debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
                 LogFormat("debug_menu=aimpt; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
+            // "passcam off|connect|aim|lab|status" (the passenger camera's live A/B switch, lab only;
+            // docs/native-puppet.md "Passenger camera", design 8.25) is handled natively too.
+            if (mgscoop::partner_pass_camera::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,
+                                                            tag_result, sizeof(tag_result), tag_ok)) {
+                debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                LogFormat("debug_menu=passcam; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
                 replacement = {reply, std::strlen(reply)};
                 debug_quiet = true;
                 return true;

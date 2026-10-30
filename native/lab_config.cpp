@@ -298,6 +298,15 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
+    else if (Equals(key, "partner_pass_camera")) {
+        // The passenger camera's mode off|connect|aim (lab and play; design 8.25); an invalid value refuses (named,
+        // the default kept).
+        PartnerPassCamera mode{};
+        ok = ParsePartnerPassCamera(value.data, value.size, mode);
+        result.partner_pass_camera_given = true;
+        if (ok) result.partner_pass_camera = mode;
+    }
+    else if (Equals(key, "partner_pass_camera_trace")) ok = ParseBool(value, result.partner_pass_camera_trace);
     // M6 seat 1 (lab and play, off unless named; see the defaults below).
     else if (Equals(key, "partner_ride_front")) {
         ok = ParseBool(value, result.partner_ride_front);
@@ -1686,6 +1695,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
+    // The passenger camera (design 8.25): connect (0.14.4) unless named.
+    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::connect;
     // M6 seat 1 (the light vehicle's front seat, the truck cab seat): off unless named, in lab
     // and play, until a hidden-run FRAME on both copies and a -Mode play -WanSim bad rehearsal.
     if (!c.partner_ride_front_given) c.partner_ride_front = false;
@@ -1773,6 +1784,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.debug_vehicle_door = false;
         // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
         c.partner_native_unrealize_all = false;
+        // The passenger camera's trace is a lab measurement (read-only); its mode runs in play.
+        c.partner_pass_camera_trace = false;
     }
 }
 
@@ -1883,6 +1896,20 @@ bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard&
     if (Equals(s, "off")) out = PartnerRideBoard::off;
     else if (Equals(s, "block")) out = PartnerRideBoard::block;
     else if (Equals(s, "passenger")) out = PartnerRideBoard::passenger;
+    else return false;
+    return true;
+}
+
+const char* PartnerPassCameraName(PartnerPassCamera value) noexcept {
+    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : "connect";
+}
+
+bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerPassCamera::off;
+    else if (Equals(s, "connect")) out = PartnerPassCamera::connect;
+    else if (Equals(s, "aim")) out = PartnerPassCamera::aim;
     else return false;
     return true;
 }

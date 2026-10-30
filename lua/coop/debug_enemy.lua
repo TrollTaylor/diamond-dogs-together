@@ -261,6 +261,14 @@ do
       local yaw, pitch = math.deg(math.atan2(dx, dz)), math.deg(math.atan2(-dy, math.sqrt(dx * dx + dz * dz)))
       call(Player, "RequestToSetCameraRotation", {rotX = pitch, rotY = yaw, interpTime = 0.2})
       return true, fmt("aim_nearest;ent=%.0f;d=%.1f;rotY=%.1f;rotX=%.1f;%s", target.hash, math.sqrt(target.distance), yaw, pitch, A.sync("enemy"))
+    elseif cmd == "enemy_cam_turn" then
+      -- 8.25 lever: camera to playerRotY + a[2] deg, pitch a[3] (0) via RequestToSetCameraRotation
+      local r, p = number(a[2], -180, 180), #a == 3 and number(a[3], -60, 60) or #a == 2 and 0
+      if not r or not p then return false, "enemy_args" end
+      if type(get(Player, "RequestToSetCameraRotation")) ~= "function" then return false, "camera_unavailable" end
+      local y = (pose()[4] + r + 180) % 360 - 180
+      call(Player, "RequestToSetCameraRotation", {rotX = p, rotY = y, interpTime = 0.2})
+      return true, fmt("cam_turn;rotY=%.1f;rotX=%.1f;rel=%.1f", y, p, r)
     elseif cmd == "enemy_nearest" or cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" or cmd == "enemy_kill_nearest" or cmd == "clear_enemies" then
       if cmd == "clear_enemies" then
         if #a ~= 2 then return false, "radius_args" end

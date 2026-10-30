@@ -437,6 +437,10 @@ struct Hooks {
     // M6 review R4: the seat-1 remap skip (partner_board::SetRemapSkip), from this tick only. May be null
     // (seat 1 is then never offered).
     bool (*board_remap)(void* context, bool skip) noexcept = nullptr;
+    // Design 8.25: the passenger camera's lab trace (partner_pass_camera::ReadView; reads only) and the lab lever's
+    // mode override (partner_pass_camera::Override: -1 none). Either may be null (no trace; no override).
+    bool (*pass_camera_view)(void* context, const partner_player::State& state, partner_pass_camera::View& out) noexcept = nullptr;
+    int (*pass_camera_override)(void* context) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -483,6 +487,8 @@ inline constexpr unsigned kRideCensusCap = 400;
 // other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
+// Design 8.25: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
+inline constexpr unsigned kPassCameraAimCap = 120;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
 // unrealized here (Mother Base by id: absent, local_read, unrealized; free roam:
@@ -578,6 +584,10 @@ struct Settings {
     // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
     // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
     bool ride_front = false, ride_cab = false;
+    // The passenger camera's mode (lab.ini partner_pass_camera, design 8.25; the lab lever passcam overrides it on a
+    // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
+    PartnerPassCamera pass_camera = PartnerPassCamera::connect;
+    bool pass_camera_trace = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -748,6 +758,11 @@ struct Mission {
         bool seen_have;
         const char* uncertain;
         bool uncertain_logged;
+        // Design 8.25: the aim drop (mode aim), its lines (aim_cap) and the lab trace (trace_cap, its last line).
+        partner_pass_camera::AimDrop aim;
+        LogCap aim_cap, trace_cap;
+        std::uint64_t trace_ms, trace_aim_ms;
+        std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
     } pass_camera;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).

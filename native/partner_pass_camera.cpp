@@ -30,6 +30,7 @@ volatile LONG g_installed = 0;
 const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
 std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0};
+volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
 
 void LogFormat(const char* format, ...) noexcept {
     if (!g_log) return;
@@ -108,6 +109,7 @@ void ResetForTest() noexcept {
     g_writes.store(0);
     g_clears.store(0);
     g_faults.store(0);
+    g_override = -1;
 }
 } // namespace detail
 
@@ -182,6 +184,49 @@ void ReadStats(Stats& out) noexcept {
     out.writes = g_writes.load(std::memory_order_relaxed);
     out.clears = g_clears.load(std::memory_order_relaxed);
     out.faults = g_faults.load(std::memory_order_relaxed);
+}
+
+bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
+    out = View{};
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    View v{};
+    for (unsigned i = 0; i < 3; ++i)
+        if (!ReadValue(cam + kCamPos + 4u * i, v.pos[i])) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(cam + kCamRot + 4u * i, v.rot[i]) || !ReadValue(cam + kCamAngles + 4u * i, v.ang[i])) return false;
+    if (!ReadValue(cam + kCamFlags, v.flags) || !ReadValue(cam + kCamRequests, v.requests)) return false;
+    v.ok = true;
+    out = v;
+    return true;
+}
+
+int Override() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_override, 0, 0)); }
+
+bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept {
+    ok = false;
+    if (!text || std::strncmp(text, "passcam", 7) != 0 || (text[7] != '\0' && text[7] != ' ')) return false;
+    const char* arg = text[7] ? text + 8 : "";
+    const std::size_t n = std::strlen(arg);
+    Mode mode{};
+    const bool status = n == 6 && std::memcmp(arg, "status", 6) == 0;
+    const bool clear = n == 3 && std::memcmp(arg, "lab", 3) == 0;
+    const bool set = ParseMode(arg, n, mode);
+    const char* refusal = !lab ? "lab_only" : !(status || clear || set) ? "args" : nullptr;
+    if (!refusal && clear) InterlockedExchange(&g_override, -1);
+    if (!refusal && set) InterlockedExchange(&g_override, static_cast<LONG>(mode));
+    const int value = Override();
+    if (result && capacity) {
+        if (refusal)
+            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|aim|lab|status", refusal);
+        else
+            StringCchPrintfA(result, capacity, "passcam=%s; override=%s; writes=%u; clears=%u; faults=%u",
+                             value < 0 ? "lab" : ModeName(static_cast<Mode>(value)), value < 0 ? "none" : "set",
+                             g_writes.load(std::memory_order_relaxed), g_clears.load(std::memory_order_relaxed),
+                             g_faults.load(std::memory_order_relaxed));
+    }
+    ok = refusal == nullptr;
+    return true;
 }
 
 } // namespace mgscoop::partner_pass_camera
