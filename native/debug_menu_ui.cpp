@@ -532,9 +532,10 @@ void Player(const Snapshot& s) noexcept {
     Wrapped("Refill and drop use the gun already equipped in that slot. Payload changes the dropped item's contents; it does not create more pickups.");
     Heading("Character (you)");
     Rows({"character_snake", "character_dd_male", "character_dd_female", "character_avatar"}, s);
-    Rows({"character_ocelot", "character_quiet", "character_default"}, s);
+    Rows({"character_default"}, s);
+    // Ocelot/Quiet in place are not run-proven (docs/debug-menu.md "Character"): off the page, launcher pick only.
     Wrapped("Switches you right away and for the rest of this session; your partner sees the new look. "
-        "Ocelot and Quiet only if you joined as Ocelot, Quiet or Story.");
+        "Ocelot and Quiet: pick them in the launcher.");
     // Arms (docs/debug-menu.md "Give weapon"): the guns the game loaded in this mission, then the support items.
     Heading("Give weapon");
     const auto arms = mgscoop::debug_arms::Get();
