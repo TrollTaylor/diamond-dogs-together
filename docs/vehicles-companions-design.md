@@ -3915,6 +3915,77 @@ working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a 
   Existing, not from these branches: a teardown AV at the close (`crash_probe=av; rva=0xbf421a` after
   `partner_shutdown=hooks_off; teardown=other_thread`) in `8567f888`'s host and `e6ef6e4d`'s guest.
 
+### 8.57 The tie's seats and the door message (2026-10-31, branch `wp/seat-tie`, m6m7j)
+
+Two leftovers of 8.55. (1) In a tie with the host's D-Dog out (africa-jeep) the guest's held press ended `end=peer` the
+moment the host's ride arrived, while the host's v4 seat addendum still said seat 1 free (`flags=0x01`); the guest took
+seat 1 on its copy, the dog jumped into seat 1 on the host's copy about 250 ms later, and DrawSeat (8.25) drew the guest
+in back seat 3 there (`23c7f305`, `caaf743f`). (2) A host that only stood at the driver's door while the guest got in saw
+NOTE 13 a=7: site C refused the host's ride icon for its own yield every frame and those refusals were the `hits`
+Lua's a=7 rule reads.
+
+- **Tie fix (native, site D).** The driver's copy re-reads rider[1] every 250 ms (`kSeatRiderMs`) and sends a changed
+  addendum at once; its OneTaken bit reaches the guest's published peer-driver policy as `front_ok` / `cab_ok` false.
+  PressDecide gains two verdicts for a pending press whose vehicle the partner now drives: `settle` (idle, phase 1
+  returns this frame) while the policy still offers seat 1, at most `kSeatSettleMs` 700 ms after site D first saw the
+  partner drive it (`g_press_peer`); then `peer` (end 4, the gate's own answer; the passenger policy picks). With the
+  dog: OneTaken arrives (~300 ms after the ride in `caaf743f`) and the press takes a back seat, which DrawSeat leaves
+  where it is (it moves only a seat-1 ride). Without a dog seat 1 stays offered and the press boards seat 1 after the
+  700 ms, drawn in seat 1 on the driver's copy (rider[1] empty). No seat-1 offer (a 0.14.4 driver, no addendum, the
+  front/cab keys off, OneTaken already set) ends it at once as before; key off (`partner_ride_race` 0) has no site D.
+  A grant or deny during the settle does not end it. A new press at a vehicle the partner already drives is stock as
+  before (d). Cap: 700 ms after the partner's ride, so at most `kPressWaitMs` + 700 = 1.7 s after the press. Residual: a
+  dog that needs longer than 700 ms to reach seat 1 is 8.25's case again (the stock seats the dog at once even from
+  335 m, 8.56 part C).
+- **The a=6 toast after end 4.** Lua no longer trusts end 4 as a seat: the board receipt carries `lpv` (the vehicle the
+  local passenger report names, 65535 none). A deny when this player sits (driver or `lpv`) shows nothing (`seated=1`);
+  a deny while the press for that vehicle is still held or ended as peer waits (`S.dq`, at most `DQ_MS` 1.5 s after the
+  deny, or until the press ended any other way) and logs `event=seat; action=deny_end; vehicle=; seated=0|1`; no seat
+  (every passenger seat full) shows a=6. A deny with nothing pending toasts at once as before.
+- **Door fix (native, site C).** RaceGrantIf marks its deny word as the host's own yield (bit 16, masked off by every
+  reader); site C no longer refuses the ride icon for that yield (RaceIconRefused), so standing at the door counts no
+  hit and marks no Fulton guard. An E press there runs phase 1, and site B's backstop refuses the yielded vehicle (the
+  no-seat exit) and counts the hit: Lua's existing rule (hits rising for a vehicle it granted) shows a=7 for that press
+  only. Chosen over a Lua ACTION-button edge (a 200 ms seat step can miss a tap and cannot tell which vehicle it was
+  for) and a site D press record on the host (no press reaches phase 1 while the icon is refused). The guest's deny
+  (the host's press won) still refuses the guest's icon. Lua unchanged for the door; world_ride_pose.lua trimmed first
+  (`185ae270`, 31985 -> 30858 LF bytes; the a=6 change above brings it to 31364).
+- Failing first `114bbb87` -> `76d7b3c7`; scenario `m6m7j-seat-tie-play.txt` (`3f42bbcc`).
+- **Run** `4a891af9` (hidden worker at `3f42bbcc`, `m6m7j-seat-tie-play.txt`, play, `-WanSim bad`, africa-jeep for both,
+  shipped defaults; both copies; no expect failure, closed, baselines and real saves unchanged, not forced). c) both
+  pressed: the host drove (`commit`, `deny; why=host_drives`); on the guest the host's ride came with `flags=0x01`, the
+  press waited, the deny was held back, `flags=0x05` came, the guest took seat 3 (`local_passenger; seat=3`),
+  `end=peer; wait_ms=367`, `deny_end; seated=1`; the host confirmed the guest in seat 3 (`partner_ride_seat=confirmed;
+  seat=3`, no `seat_draw`) [O logs]. Frames: the host's dog jumping into the front seat (`host-c-press-04`), the guest
+  in a back seat by the spare wheel on the host's screen (`host-c-after-3`) and in the back right seat on its own
+  (`guest-c-after`), no toast [O frames; the side from the frames is I]. The guest's screen shows no dog in the front
+  seat (the host's dog is not drawn there) [O]. b) the host stood at the driver's door while the guest's press was
+  granted (`wait_ms=234`) and it drove: no a=7 (no `hud=toast` line [O]; the host frames are from before the press and
+  3.5 s / 5 s after the grant, so the log is the proof). b2) the host
+  pressed E right after the guest's E: `hud=toast; code=13; a=7` once, 300 ms after its yield, and the host stayed on
+  foot (frame `host-b2-host-press-02`, `-b2-toast-zoom`) [O]. a) and d) as before (no claim while the guest stood; d
+  seat 2 on both) [O]. NEVER lines 0 on both copies. Sheet `best-sheet-4a891af9.jpg` in the run archive's
+  `m6m7j/frames/tie/`. That the press waited because of `settle` is read from the log order (no line names the verdict)
+  [I].
+- **Not shown in a game:** the no-dog tie (seat 1 after 700 ms; unit-tested: `partner_board_tests`, also with the host's
+  deny live at site B); there the guest stands at the door the whole 700 ms plus the ride's arrival (about 0.8-1.0 s)
+  [U]. The deny with every passenger seat full (unit-tested: `world_ride_pose_lua_check`). A dog slower than 700 ms (the
+  one sample had about 450 ms of margin under `-WanSim bad`).
+- Full `tools/build.ps1` at `3f42bbcc`: CTest 336/336; contract `--check` 838 / 213.
+- **Review (integrate).** Two hardenings, no change at the play defaults: the settle needs an offer this copy's own keys
+  take (`SettleSeatOne`: `front_ok` with `partner_ride_front`, `cab_ok` with `partner_ride_cab`; a front offer with only
+  the cab key on no longer idles 700 ms for a seat DecideSeats never gives), and RaceGrantIf stores the yield deny with
+  its `kDenyYield` bit in one store (site C reads `g_deny` without `g_arb`; with two threads a host standing at the
+  door could have counted one hit). Failing first `8a34103c` -> `21b0a888`. Residuals (unchanged code paths, not run):
+  1) near-tie: a guest press made after the host's ride reached the guest's copy but before the dog's OneTaken (about
+  250-500 ms) is a new press at a partner-driven vehicle (stock), takes seat 1 and is drawn in seat 3 on the host's
+  copy (8.25); a follow-up could settle a new press for `kSeatSettleMs` after the ride first appears. 2) deny-first: if
+  the host's `why=host_pressed` deny reaches the guest before the host's ride, the press ends as deny (end 2), site B
+  gives no seat, a=6 shows and the guest presses again (possibly into 1). 3) in the dog case the guest's own screen
+  shows an empty front seat while it sits in the back (the host's dog is not drawn there), and seat 3 has no automatic
+  first person (8.56: seats 1 and 2). 4) Lua's `seated` check takes any `lpv` / `R.localVehicle()`, not only the denied
+  vehicle (as before for `localVehicle`).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

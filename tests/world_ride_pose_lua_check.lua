@@ -450,7 +450,7 @@ local function seatEnv(host)
         return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
             hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0, ref = c.ref or 65535, rage = c.rage or -1,
             press = c.press, pseq = c.pseq, page = 0, pend = c.pend, touts = c.touts, gi = gi, commit = c.commit or 65535,
-            dend = c.dend or 0, dveh = c.dveh or 65535}
+            dend = c.dend or 0, dveh = c.dveh or 65535, lpv = c.lpv or 65535}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -530,15 +530,38 @@ check(#gr.notes == 0 and gr.deny[1][1] == 25608, 'a deny while the guest already
 -- passenger seat (native end 4, peer) before the deny came: no "getting into the driver's seat" toast for it.
 local gp = seatEnv(false)
 gp.ready()
-gp.pend, gp.dend, gp.dveh = 0, 4, 25608
+gp.pend, gp.dend, gp.dveh, gp.lpv = 0, 4, 25608, 25608
 gp.W.handlers[54]({1, 25608, 0, 1, 3})
 check(#gp.notes == 0 and gp.deny[1][1] == 25608 and gp.has('event=seat;action=deny;vehicle=25608;role=guest;set=1;seated=1'),
-    'a deny after the press already took another seat: no toast (logged seated=1)')
+    'a deny after the press already took a passenger seat (native lpv): no toast (logged seated=1)')
+-- 8.57: end 4 alone is no seat (every passenger seat full): the deny waits for a seat, then a=6.
+local gf = seatEnv(false)
+gf.ready()
+gf.pend, gf.dend, gf.dveh = 0, 4, 25608
+gf.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gf.notes == 0, 'a deny after a peer-ended press with no seat yet: no toast yet')
+gf.S.step(1600)
+check(#gf.notes == 0, 'still waiting for the seat')
+gf.S.step(2600)
+check(#gf.notes == 1 and gf.notes[1][2] == 6 and gf.has('event=seat;action=deny_end;vehicle=25608;seated=0'),
+    'no seat 1.5 s after the deny (every passenger seat full): the a=6 toast')
+-- The tie's press still held when the deny comes (8.57: it waits for the driver's seats): no toast once it sits.
+local gt = seatEnv(false)
+gt.ready()
+gt.pseq, gt.press, gt.pend = 1, 25608, 1
+gt.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gt.notes == 0, 'a deny while the press is still held: no toast yet')
+gt.pend, gt.dend, gt.dveh, gt.lpv = 0, 4, 25608, 25608
+gt.S.step(1300)
+check(#gt.notes == 0 and gt.has('event=seat;action=deny_end;vehicle=25608;seated=1'), 'the press took a passenger seat: no toast')
 local gq = seatEnv(false)
 gq.ready()
-gq.pend, gq.dend, gq.dveh = 1, 4, 25608
+gq.pend, gq.press, gq.dend, gq.dveh = 1, 25608, 4, 25608
 gq.W.handlers[54]({1, 25608, 0, 1, 3})
-check(#gq.notes == 1, 'a new press held when the deny comes: the toast')
+check(#gq.notes == 0, 'a new press held when the deny comes: wait for its end')
+gq.pend, gq.dend = 0, 2
+gq.S.step(1200)
+check(#gq.notes == 1 and gq.notes[1][2] == 6, 'it ended on foot (the deny): the toast')
 -- READY lapses (the host stopped answering): the guest goes stock.
 local sl = seatEnv(false)
 sl.ready()

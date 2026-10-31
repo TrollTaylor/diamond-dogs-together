@@ -947,6 +947,37 @@ void TestPress() {
     Check(pb::PressDecide(x) == pb::PressVerdict::start, "a press unseen for 250 ms ended (another action ended it): the next is new");
     x = in; x.vehicle = 25609;
     Check(pb::PressDecide(x) == pb::PressVerdict::start, "another vehicle: a new press");
+    // 8.57 (runs 23c7f305 / caaf743f, both pressed, the host's D-Dog out): the partner's ride reached the held press
+    // before the driver's copy said whether its dog took seat 1. The press stays idle while the partner-driver policy
+    // still offers seat 1, at most kSeatSettleMs after site D first saw the partner drive it.
+    x = in; x.peer_drives = true; x.seat_one = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "tie: the partner drives it and still offers seat 1: wait for its seats");
+    x.peer_seen = true; x.peer_since = x.now_ms - 100;
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "100 ms later: still settling");
+    x.granted = true; x.denied = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "a grant or a deny does not end the settle (the passenger policy decides)");
+    x.granted = x.denied = false;
+    x.peer_since = x.now_ms - pb::kSeatSettleMs;
+    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "seat 1 stayed free for kSeatSettleMs (no dog): end as peer (seat 1)");
+    x.peer_since = x.now_ms - 100; x.seat_one = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "the driver's copy says seat 1 is taken (its dog): end as peer at once (back seats)");
+    x = in; x.peer_drives = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "no seat-1 offer (a 0.14.4 driver, no addendum, the front key off): end as peer at once");
+    x = in; x.open = false; x.peer_drives = true; x.seat_one = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "a new press at a vehicle the partner already drives: stock (boarding after it drives)");
+    Check(pb::kSeatSettleMs >= 500 && pb::kSeatSettleMs <= 1000, "the settle covers the driver's 250 ms rider read, the dog's jump and one way");
+    {
+        pb::Policy sp{};
+        sp.front_ok = true;
+        pb::SeatOpts so{};
+        so.front = true;
+        Check(pb::SettleSeatOne(sp, so), "a front offer the front key takes: settle");
+        so.front = false; so.cab = true;
+        Check(!pb::SettleSeatOne(sp, so), "a front offer, only the cab key on: no settle (DecideSeats never gives it)");
+        sp.cab_ok = true;
+        Check(pb::SettleSeatOne(sp, so), "a cab offer the cab key takes: settle");
+        Check(!pb::SettleSeatOne(sp, pb::SeatOpts{}), "both keys off or the remap skip not in (opts 0): no settle");
+    }
     // Site D with bound fakes.
     unsigned char unit[0x80]{};
     const std::uint16_t index8 = 8;  // 25608
@@ -1054,6 +1085,86 @@ void TestPress() {
     g.now = 7000 + pb::kPressGapMs + 1;
     pb::ReadRace(rs);
     Check(!rs.pend, "phase 1 aborted (site D unseen for kPressGapMs): no longer pending");
+    // 8.57: the tie with the driver's D-Dog. Its ride arrives with seat 1 still offered (the dog not seated yet): the
+    // press waits; the dog's OneTaken withdraws the offer: the press ends as peer and takes a back seat, which the
+    // driver's copy draws where it is (DrawSeat moves only a seat-1 ride).
+    pb::SeatOpts fo{};  // the guest's front key is on (play)
+    fo.front = true;
+    g_limits.clear();
+    g_limit_ok = true;
+    g_remap = true;
+    pb::detail::BindSeatOneForTest(fo, &FakeLimit);
+    pb::detail::BindRemapForTest(&FakeRemap);
+    g.now = 7500;
+    pb::RaceHold(2000);
+    Check(D(0), "tie: a press, idle");
+    pb::ReadRace(rs);
+    const std::uint32_t seq0 = rs.done_seq;
+    g.now = 7590;
+    Policy(pb::Mode::passenger, 25608, 0, 11000, true);
+    Check(D(0), "tie: the driver's ride arrived, seat 1 still offered: idle while its seats settle");
+    pb::ReadRace(rs);
+    Check(rs.pend && rs.done_seq == seq0, "still pending, not ended");
+    g.now = 7800;
+    Check(D(0), "210 ms later: still idle");
+    g.now = 7900;
+    Policy(pb::Mode::passenger, 25608, 0, 11000, false);
+    Check(!D(0), "the driver's copy says its dog took seat 1: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 400 && rs.done_seq == seq0 + 1, "ended as peer 400 ms after the press");
+    g.nearest_result = 2;
+    const std::uint8_t tie_seat = pb::detail::SiteBForTest(unit, pos);
+    Check(tie_seat == 2 && g.first == 2 && g.last == 3, "the passenger policy offers the back seats only: the guest takes a back seat");
+    pb::DrawSeatIn ds{};
+    ds.vehicle_ride = true; ds.vehicle = 25608; ds.seat = tie_seat; ds.local_drives = true; ds.riders_ok = true;
+    ds.rider[1] = 0x2600;  // the driver's D-Dog
+    Check(pb::DrawSeat(ds).seat == tie_seat, "tie with a dog: the driver's copy draws the guest in the seat it took (both screens agree)");
+    // No dog: seat 1 stays offered; the press boards kSeatSettleMs after the driver's ride, in seat 1 on both copies.
+    g.now = 8500;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Check(D(0), "no dog: a press, idle");
+    g.now = 8600;
+    Policy(pb::Mode::passenger, 25608, 0, 12000, true);
+    Check(D(0), "no dog: the driver's ride arrived with seat 1 offered: idle");
+    for (std::uint32_t t = 8700; t < 8600 + pb::kSeatSettleMs; t += 100) {
+        g.now = t;
+        pb::RaceHold(2000);
+        Check(D(0), "no dog: settling");
+    }
+    g.now = 8600 + pb::kSeatSettleMs;
+    Check(!D(0), "seat 1 stayed free for kSeatSettleMs: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 100 + pb::kSeatSettleMs && rs.done_seq == seq0 + 2, "ended as peer");
+    // Review (8.57): the host's deny (why=host_drives) is live by then; the partner drives it, so site B's deny
+    // backstop is skipped and the passenger policy seats the guest in seat 1.
+    pb::RaceDeny(25608, 3000);
+    g.nearest_result = 1; g.type_value = 1; g.count_value = 4;
+    Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1, "no dog, a live host deny: site B still gives seat 1");
+    pb::RaceDeny(25608, 0);
+    pb::Policy one{};
+    one.vehicle = 25608; one.peer_seat = 0; one.mode = pb::Mode::passenger; one.until_ms = 12000; one.front_ok = true;
+    const pb::Range rr = pb::DecideSeats(one, true, 1, 4, fo);
+    Check(rr.ok && rr.first == 1, "no dog: seat 1 is offered to the guest (front key)");
+    ds.seat = 1; ds.rider[1] = pb::kRiderEmpty;
+    Check(pb::DrawSeat(ds).seat == 1, "no dog: the driver's copy draws the guest in seat 1 (rider[1] empty)");
+    // Review (8.57): a seat-1 offer this copy's own keys never take (front offered, only the cab key on) is no reason
+    // to wait: the press ends as peer at once (the back seats).
+    pb::SeatOpts co{};
+    co.cab = true;
+    pb::detail::BindSeatOneForTest(co, &FakeLimit);
+    g.now = 9600;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Check(D(0), "cab key only: a press, idle");
+    g.now = 9700;
+    pb::Policy fp{};
+    fp.vehicle = 25608; fp.peer_seat = 0; fp.mode = pb::Mode::passenger; fp.until_ms = 13000; fp.front_ok = true;
+    pb::Publish(pb::Pack(fp));
+    Check(!D(0), "a front offer with only the cab key on: no settle, phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 100 && rs.done_seq == seq0 + 3, "ended as peer at once");
+    Policy(pb::Mode::off);
     unsigned char empty[0x100]{};
     Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
     pb::RaceHold(0);
@@ -1082,6 +1193,17 @@ void TestArbiter() {
     Check(rs.deny == 25609 && rs.deny_left_ms == 3000, "and yielded (the host's own deny)");
     g.now = 1000 + pb::kHostCommitMs + 1;
     Check(pb::RaceGrantIf(25608, 3000), "the host's press lapsed: granted");
+    // 8.57 door message: the host standing at the door of the vehicle it yielded never counts (a=7 is a press only).
+    pf = PreFake{};
+    pb::detail::BindPrequeryForTest(&FakePrequery);
+    char seat = 4;
+    pb::ReadRace(rs);
+    const std::uint32_t idle = rs.hits;
+    Check(pb::detail::SiteCForTest(nullptr, 0, unit, 7, &seat) && seat == 0, "the host at the door of a yielded vehicle: its ride icon shows");
+    pb::ReadRace(rs);
+    Check(rs.hits == idle && rs.guard == pb::kVehicleUnknown, "standing there counts nothing (no a=7 toast) and marks no Fulton guard");
+    Check(pb::RaceIconRefused(pb::RaceVerdict::deny, false) && !pb::RaceIconRefused(pb::RaceVerdict::deny, true) &&
+              !pb::RaceIconRefused(pb::RaceVerdict::pass, false), "a deny refuses the icon, the host's own yield does not");
     pb::ReadRace(rs);
     const std::uint32_t hits = rs.hits;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "the host's press on a yielded vehicle: the no-seat exit");
