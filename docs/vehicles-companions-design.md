@@ -3664,6 +3664,11 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   (`clear=0x2`); every host get-off came after `aim_end` (`clear=0x0`). 8.50's stock damage was on the host's copy, the
   passenger's; that the host copy decides the jeep's life is [I], and a guest passenger's stock damage is untested.
   8.50 ran with `seat_fpv on=0`, so it measures the shoulder aim.
+- **Overlay** (`5ccbcda` -> `b0e7fb1`): S_OK with no object -> `address=null`; the path join's HRESULT.
+- **Runs** (two tries, none admitted): `4948b052` and `c9da9862` at the merged build; the guest's overlay both times
+  `step=device; detail=D3D11CreateDeviceAndSwapChain; hr=0x8007000E` while the host's installed; d3dprobe hr=0 right
+  before each and after each (it had failed with 0x8007000E on both NVIDIA adapters at 22:14 with nothing of ours up).
+  The cause of the guest's E_OUTOFMEMORY is [U]; the mode-15 revert is not shown in play at this head.
 - **Scenarios:** `m6m7f-seat-ftap-play.txt` and `m6m7f-seat-fpv-probe.txt` measure the stock F tap, so they now name
   `partner_seat_fpv=0` (at the new default an F tap there is the opt-out).
 - **Open:** a first-person seat shot on a standing guard; a host get-off with the bit set; death / Fulton / mission end

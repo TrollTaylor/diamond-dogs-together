@@ -13,6 +13,19 @@ over-the-shoulder view instead of a first-person view with the rifle body across
   first-person scope was about three quarters covered (`ff4134f4-host-k2-aim`); a get-off with our bit set was seen
   only for the guest (seat 1, `clear=0x2`); S1's stock damage was on the passenger's (host's) copy only, the host-copy
   authority is [I]. The m6m7f F-tap scenarios now name `partner_seat_fpv=0`. Design 8.51.
+- **Overlay** (failing first `5ccbcda` -> `b0e7fb1`): a create call that returns S_OK with no object now refuses with
+  `address=null` (was `hr=0x00000000`), and a failed path join in `system_directory` logs its HRESULT.
+- **Runs: none admitted.** Two tries of `m6m7g-seat-fpv-play.txt` (play, `-WanSim bad`, shipped defaults) at the merged
+  build were refused before admission; both times the host's overlay installed (`worker_render_ready`) and the guest's
+  logged `overlay=refused; reason=graphics_or_input_hook; step=device; detail=D3D11CreateDeviceAndSwapChain;
+  hr=0x8007000E` (E_OUTOFMEMORY, the new diagnostics' first real line). `4948b0528a85486f8586c6b5f7767058` (22:16,
+  supervisor `child_exited_before_admission` 1067): the probe at 22:14 had failed the same way on both NVIDIA adapters
+  with no lock held and no game up, then passed at 22:16; after the refusal it passed again, so the one retry ran.
+  `c9da986256c74f57bb61d40cbdebe02b` (22:18, supervisor `process_image_path` 5): the same guest refusal; probe hr=0
+  after it. tasklist found no snipping / screenclip / obs / gamebar process; commit free 30-33 GB; nvidia-smi 5.3-7.8
+  of 16 GB. Closed, baseline restored, real saves unchanged; overlay tails in `<archive>/<id>/refusal/`. So the
+  mode-15 revert is shown only by lab `61384aab` (the same FpvReady), not in play at this head.
+- Full `tools/build.ps1` at `b0e7fb1` plus these docs: CTest 336/336; contract `--check` 836 / 213.
 - **Open:** a first-person seat shot hitting a guard; a host get-off while our bit is set; death / Fulton / mission
   end / a checkpoint during a first-person seat aim (driver tests only); the S1 x1 / d lines with first person on;
   a moving jeep; guest `4adc1005` stopping at `pair_wait; local_loading` [U].
@@ -30,8 +43,9 @@ player's own F tap goes back to the shoulder for that ride. Still open: whether 
 - **Runs** (all admitted; d3dprobe hr=0, tasklist clean before each): lab `61384aabd1b84482965526e0e12db744` (the
   lever), lab `2a394a64d48a4072844f832959ea3f31` (the key named), play `ff4134f40c324a3880658d15eaf209e8`
   (`m6m7g-seat-fpv-play.txt`, `-WanSim bad`, no key named, no F pressed): `seat_fpv` on with `source=key` on both copies;
-  set in all four seat/role pairs (mode 7; at 15 in seat 1 before `2c43bf6`), cleared at the aim end, stopped at the get-off (get-off
-  turn checked; a get-off with the bit set only for the guest); first-person shots (S1 `shift`) keep the scope on the aim at +350 / +650 ms; seat 3 never set;
+  set in all four seat/role pairs (mode 7; at 15 in seat 1 before `2c43bf6`), cleared at the aim end, stopped at the
+  get-off (get-off turn checked; a get-off with the bit set only for the guest); first-person shots (S1 `shift`) keep
+  the scope on the aim at +350 / +650 ms; seat 3 never set;
   `opt_outs=0` without F, one opt-out for the lab F tap; never-lines 0. Aimed into the jeep (mode 15) the rifle covers
   the lower half of the first-person view and the gun stays blocked. Landing run `4adc100597f1422ea69296ac58a28a3d`
   (`m6m7g-seat-fpv-land.txt`): the guest's lab boot never reached gameplay (log stops at `pair_wait; local_loading`),
