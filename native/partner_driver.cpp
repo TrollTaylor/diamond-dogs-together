@@ -5050,23 +5050,40 @@ void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clo
     if (po.capped_now) EmitFormat(h, "partner_pad_dropped=capped; limit=%u\r\n", pal::kPadLineCap);
 }
 
-// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): the local player's CQC strike (act 113 / 114)
-// that reaches body 1 (shown on this copy, not range- or ride-hidden) hands one friendly hit, cause sleep, to the downed
-// owner's queue; the partner's own copy applies it (FRIENDLY_HIT, the stock player sleep). One line per strike edge.
+// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): the local player's CQC combo finisher (act 114
+// straight out of a 113 jab) that reaches body 1 (shown on this copy, on foot: not range- or ride-hidden, not seated or
+// riding) hands one friendly hit, cause sleep, to the downed owner's queue; the partner's own copy applies it
+// (FRIENDLY_HIT, the stock player sleep). One line per strike edge (a jab logs verdict=jab and queues nothing).
+// fb1031 review: body 1's position is its drawn body (read_body): the slot stays at the boarding spot while seated.
 void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool anim_ok, const pp::Anim& anim,
-               bool local_body, float local_body_yaw) noexcept {
+               const sync::AnimState& remote_anim, bool local_body, float local_body_yaw) noexcept {
     Mission& m = d.mission;
     namespace pm = partner_melee;
+    namespace rw = partner_ride_wire;
     pm::In in{};
     in.enabled = d.settings.melee && !terminating;
     in.local_valid = anim_ok && st.slots_ok && st.local == 0;
     in.act = anim_ok ? anim.act[0] : 0;
     in.now_ms = clock.now_ms;
     if (st.slots_ok) {
-        for (unsigned i = 0; i < 3; ++i) { in.pos0[i] = st.slot[0][i]; in.pos1[i] = st.slot[1][i]; }
+        for (unsigned i = 0; i < 3; ++i) in.pos0[i] = st.slot[0][i];
         in.yaw0 = local_body ? local_body_yaw : st.slot[0][3];
     }
-    in.body_valid = st.slots_ok && pp::Realized(st, partner::partner_index) && !m.range_hidden && !m.visibility.hidden;
+    in.remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    in.remote_act = remote_anim.act;
+    in.remote_stance = remote_anim.stance;
+    // The body readback and the ride checks run only while the local act is a strike act (an edge may be pending).
+    if (in.local_valid && pm::StrikeAct(in.act) && st.slots_ok && pp::Realized(st, partner::partner_index) && !m.range_hidden &&
+        !m.visibility.hidden && !m.visibility.seated && !m.ride_seated && m.seat.phase == SeatPhase::idle && !m.vehicle_job) {
+        const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+        const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == epoch && rw::Live(d.ride_rx, epoch, clock.now_ms);
+        const bool riding = (ride_live && d.ride_rx.packet.kind != rw::Kind::foot) || VehicleAttached(h, st);
+        float body_pos[4]{}, body_quat[4]{};
+        if (!riding && h.read_body && h.read_body(h.context, st, body_pos, body_quat)) {
+            in.body_valid = true;
+            for (unsigned i = 0; i < 3; ++i) in.pos1[i] = body_pos[i];
+        }
+    }
     const pm::Out o = pm::Step(m.melee, in);
     if (o.verdict == pm::Verdict::none) return;
     const bool queued = o.queue && h.melee_hit && h.melee_hit(h.context, st.P);
@@ -7408,7 +7425,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickActLog(d, h, st, clock, anim_ok, anim, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live,
                set.input_mask);
     // Melee on the partner: the local strike that reaches body 1 (one friendly hit for the partner's copy).
-    TickMelee(d, h, st, clock, terminating, anim_ok, anim, local_body, local_body_yaw);
+    TickMelee(d, h, st, clock, terminating, anim_ok, anim, remote_anim, local_body, local_body_yaw);
     const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
     const bool vehicle_attached=VehicleAttached(h,st);
     if(m.vehicle_job&&!vehicle_job){
