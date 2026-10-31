@@ -72,6 +72,10 @@ std::atomic<bool> g_pend{false};
 // 8.57: when the held press first saw the partner drive its vehicle (kPeerSeen | low 32 ms; 0 not yet).
 inline constexpr std::uint64_t kPeerSeen = 1ull << 32;
 std::atomic<std::uint64_t> g_press_peer{0};
+// 8.58: when the published policy first named the vehicle the partner drives (vehicle | ms << 32; Publish), and the
+// presses that joined that ride's settle (PressDecide join).
+std::atomic<std::uint64_t> g_policy_since{kVehicleUnknown};
+std::atomic<std::uint32_t> g_joins{0};
 std::atomic<std::uint64_t> g_commit{kVehicleUnknown};
 // The last press that ended (vehicle | end << 16 (1 grant, 2 deny, 3 timeout, 4 peer) | wait ms << 32), the ended count and
 // the host's commit count (game_script_observer logs 'partner_board=press' from the receipt, never from the hook).
@@ -318,6 +322,9 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
     const std::uint64_t peer = g_press_peer.load(std::memory_order_acquire);
     in.peer_seen = (peer & kPeerSeen) != 0;
     in.peer_since = static_cast<std::uint32_t>(peer);
+    const std::uint64_t since = g_policy_since.load(std::memory_order_acquire);
+    in.ride_seen = in.peer_drives && static_cast<std::uint16_t>(since & 0xFFFFu) == in.vehicle;
+    in.ride_since = static_cast<std::uint32_t>(since >> 32);
     const std::uint64_t press = g_press.load(std::memory_order_acquire);
     in.open = g_pend.load(std::memory_order_acquire);
     in.pend_vehicle = static_cast<std::uint16_t>(press & 0xFFFFu);
@@ -340,6 +347,16 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
         result = true;
         break;
     }
+    case PressVerdict::join:
+        // 8.58 near-tie: a new press just after the partner's ride appeared, seat 1 still offered: the same settle as a
+        // held press, timed from the ride's first appearance; no claim (no pseq: the partner already drives it).
+        g_press.store(static_cast<std::uint64_t>(in.vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+        g_press_seen.store(now, std::memory_order_release);
+        g_press_peer.store(kPeerSeen | in.ride_since, std::memory_order_release);
+        g_pend.store(true, std::memory_order_release);
+        g_joins.fetch_add(1, std::memory_order_relaxed);
+        result = true;
+        break;
     case PressVerdict::wait:
         g_press_seen.store(now, std::memory_order_release);
         result = true;
@@ -613,6 +630,8 @@ void ResetForTest() noexcept {
     g_timeouts.store(0);
     g_pend.store(false);
     g_press_peer.store(0);
+    g_policy_since.store(kVehicleUnknown);
+    g_joins.store(0);
     g_commit.store(kVehicleUnknown);
     g_done.store(kVehicleUnknown);
     g_done_seq.store(0);
@@ -893,6 +912,7 @@ void ReadRace(RaceState& out) noexcept {
     out.done_end = static_cast<std::uint8_t>((done >> 16) & 0xFFu);
     out.done_wait_ms = static_cast<std::uint32_t>(done >> 32);
     out.commits = g_commits.load(std::memory_order_relaxed);
+    out.joins = g_joins.load(std::memory_order_relaxed);
 }
 
 bool Installed() noexcept { return g_installed != 0; }
@@ -924,7 +944,14 @@ bool RestorePhaseOneIfBLost(const void* base) noexcept {
     return SetPhaseOneLimitLive(kPhaseOneStock);
 }
 
-void Publish(std::uint64_t policy) noexcept { g_policy.store(policy, std::memory_order_release); }
+void Publish(std::uint64_t policy) noexcept {
+    // 8.58: stamp the first publication naming a vehicle the partner drives before the policy itself (a reader that sees
+    // the new policy sees its stamp; the stamp carries the vehicle, so an older one never matches another ride).
+    const Policy after = Unpack(policy);
+    if (NewlyDriven(Unpack(g_policy.load(std::memory_order_acquire)), after))
+        g_policy_since.store(static_cast<std::uint64_t>(after.vehicle) | static_cast<std::uint64_t>(NowLow()) << 32, std::memory_order_release);
+    g_policy.store(policy, std::memory_order_release);
+}
 std::uint64_t Published() noexcept { return g_policy.load(std::memory_order_acquire); }
 
 void ReadStats(Stats& out) noexcept {

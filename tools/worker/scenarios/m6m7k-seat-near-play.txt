@@ -1,0 +1,167 @@
+# m6m7k: the two split-second ties 8.57 left open (design 8.58) at the SHIPPED play defaults (no labsetting line),
+# -WanSim bad, seed africa-jeep for both (30020, the jeep veh_lv_0000 = 25608, the host's D-Dog out: it jumps into seat 1
+# about 250 ms after its driver; the driver's door spot -656.01 1.20 877.73 facing 62). Built from m6m7j-seat-tie-play.
+#   n1, n2) near-tie: the host presses E at the driver's door ('hold e 150 nowait': no 250 ms step sleep); the guest
+#      (right door) waits for its board_policy line naming the host's ride with seat1=front (the host's ride reached the
+#      guest's copy, the dog's OneTaken not yet) and presses E at once (waitlog polls every 50 ms). 8.58: the new press
+#      joins the settle (partner_board=press ... end=peer ... joins=N rising, no claim) and takes the seat the driver's copy
+#      draws: the guest's local_passenger seat == the host's partner_ride_seat=confirmed seat, no seat_draw on the host.
+#      If the guest's press lands before the ride (a tie, c's path) or after flags=0x05 (d's path), the log says so.
+#   f) deny-first attempt: the guest presses E first ('hold e 150 nowait'), the host right after: the claim reaches the
+#      host while it boards (why=host_pressed). 8.58: a deny that reaches the held press before the host's ride keeps
+#      holding (kDenyRideMs 1 s after the press) and the ride's settle seats it: no a=6. At -WanSim bad the host's ride
+#      (one way ~75 ms) usually beats the claim round trip (~230 ms), so the order is read from the guest log.
+#   c) both press E at once (the same-moment tie, 8.57 regression): one driver, the same seat on both copies, no toast.
+#   d) the host drives, the guest presses E at the driver's door: a passenger seat (unchanged).
+# Needs at head: partner_board=race; ...; d=0x1251366 on both copies and the host's READY.
+# NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
+#   partner_ride_seat_patch=refused; pass_camera state=refused; partner_board=race; result=refused.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7k-seat-near-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+guest debug teleport -633.5 3.0 867.8 -117
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog host 'world_lua=event=seat; action=ready; role=host' 30
+waitlog guest 'world_lua=event=seat; state=ready' 30
+host debug teleport -633.5 3.0 871.8 0
+wait 8000
+host run vehicle_seats
+both capture start
+# --- n1) near-tie: the guest presses E right after the host's ride reached its copy ----------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug goto_vehicle jeep right
+wait 4000
+both capture n1-before
+logmark both
+host hold e 150 nowait
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front' 3
+guest press e 150
+guest burst n1-press 3 200
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+wait 800
+both capture n1-after
+wait 2000
+both capture n1-after-2
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+guest run vehicle_seats
+host run vehicle_seats
+# --- n2) near-tie: the guest presses E right after the host's ride reached its copy ----------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug goto_vehicle jeep right
+wait 4000
+both capture n2-before
+logmark both
+host hold e 150 nowait
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front' 3
+guest press e 150
+guest burst n2-press 3 200
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+wait 800
+both capture n2-after
+wait 2000
+both capture n2-after-2
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+guest run vehicle_seats
+host run vehicle_seats
+# --- f) deny-first attempt: the guest presses E first, the host right after ---------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug goto_vehicle jeep right
+wait 4000
+both capture f-before
+logmark both
+guest hold e 150 nowait
+host press e 150
+host burst f-host-press 2 250
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest; pseq=' 3
+waitlog host 'world_lua=event=seat; action=(deny|grant); vehicle=25608; role=host' 5
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+wait 800
+both capture f-after
+wait 2000
+both capture f-after-2
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+guest run vehicle_seats
+host run vehicle_seats
+# --- c) Both press E at once (8.57 regression) ---------------------------------------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug goto_vehicle jeep right
+wait 4000
+both capture c-before
+logmark both
+both press e 150
+both burst c-press 3 250
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest; pseq=' 3
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+wait 800
+both capture c-after
+wait 2000
+both capture c-after-2
+# --- d) The host drives; the guest presses E at the driver's door (a passenger, unchanged) --------------------------
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+logmark both
+guest debug teleport -656.01 1.20 877.73 62
+wait 2500
+guest press e 150
+guest burst d-geton 2 400
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 8
+wait 1500
+guest run vehicle_seats
+host run vehicle_seats
+both capture d-seated
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+guest run vehicle_seats
+host run vehicle_seats
+state

@@ -4686,9 +4686,9 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     static std::uint32_t logged_done = 0, logged_commits = 0;
     if (rs.done_seq != logged_done) {
         logged_done = rs.done_seq;
-        LogFormat("partner_board=press; role=guest; vehicle=%u; end=%s; wait_ms=%u; presses=%u; timeouts=%u\r\n", unsigned(rs.done_vehicle),
+        LogFormat("partner_board=press; role=guest; vehicle=%u; end=%s; wait_ms=%u; presses=%u; timeouts=%u; joins=%u\r\n", unsigned(rs.done_vehicle),
                   rs.done_end == 1 ? "grant" : rs.done_end == 2 ? "deny" : rs.done_end == 4 ? "peer" : "timeout", rs.done_wait_ms, rs.pseq,
-                  rs.timeouts);
+                  rs.timeouts, rs.joins);
     }
     if (rs.commits != logged_commits) {
         logged_commits = rs.commits;

@@ -338,24 +338,33 @@ struct PressIn {
     bool ride_seen = false;        // 8.58: the published peer-driver policy first named this vehicle at ride_since
     std::uint32_t ride_since = 0;
 };
-// 8.58: the policy newly names a vehicle the partner drives (another vehicle or none before).
-inline bool NewlyDriven(const Policy&, const Policy&) noexcept { return false; }
+// 8.58: the policy newly names a vehicle the partner drives (another vehicle or none before; a republished lease or
+// changed seat flags of the same ride are not new). Publish stamps when (g_policy_since).
+inline bool PartnerDrives(const Policy& p) noexcept { return p.mode != Mode::off && p.peer_seat == 0 && p.vehicle != kVehicleUnknown; }
+inline bool NewlyDriven(const Policy& before, const Policy& after) noexcept {
+    return PartnerDrives(after) && !(PartnerDrives(before) && before.vehicle == after.vehicle);
+}
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
 // (a grant, a deny or the timeout ended the wait; site B decides). The partner drives the held press's vehicle:
 // settle: idle while its seats settle (8.57); peer: the gate's own answer, the press ends as 'peer' (end 4; the
-// passenger policy seats it). A new press at a vehicle the partner drives is stock (the passenger policy decides).
+// passenger policy seats it). A new press at a vehicle the partner drives is stock (the passenger policy decides),
+// except 8.58's near-tie: join (record it without a claim and settle) while seat 1 is still offered and the policy
+// first named that vehicle under kSeatSettleMs ago. 8.58 deny-first: a deny ends a held press only kDenyRideMs after it
+// (the host pressed or drives it, so its ride is due; once it comes the settle / peer path seats the press).
+// Worst case after one press: kDenyRideMs (= kPressWaitMs) then kSeatSettleMs after the ride = 1.7 s; a join < 0.7 s.
 inline PressVerdict PressDecide(const PressIn& in) noexcept {
     if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType)
         return PressVerdict::stock;
     const bool same = in.open && in.pend_vehicle == in.vehicle && in.now_ms - in.pend_seen <= kPressGapMs;
     if (in.peer_drives) {
-        if (!same) return PressVerdict::stock;
+        if (!same) return in.seat_one && in.ride_seen && in.now_ms - in.ride_since < kSeatSettleMs ? PressVerdict::join : PressVerdict::stock;
         const bool settling = in.seat_one && (!in.peer_seen || in.now_ms - in.peer_since < kSeatSettleMs);
         return settling ? PressVerdict::settle : PressVerdict::peer;
     }
     if (!same) return in.denied ? PressVerdict::stock : PressVerdict::start;
-    if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
-    return PressVerdict::wait;
+    if (in.granted) return PressVerdict::go;
+    if (in.denied) return in.now_ms - in.pend_start < kDenyRideMs ? PressVerdict::wait : PressVerdict::go;
+    return in.now_ms - in.pend_start >= kPressWaitMs ? PressVerdict::go : PressVerdict::wait;
 }
 // PressIn::seat_one: the driver's offer is one this copy's own seat-1 keys can take (8.57 review: waiting for an
 // offer DecideSeats never gives only delays the press).

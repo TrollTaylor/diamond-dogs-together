@@ -1062,20 +1062,28 @@ void TestPress() {
     Check(rs.pseq == 2 && rs.grant == pb::kVehicleUnknown, "counted; a grant from before the press is withdrawn (single use)");
     pb::RaceDeny(25608, 3000);
     g.now = 1700;
-    Check(!D(0), "the host's deny: phase 1 goes on");
+    // 8.58: a deny before the host's ride keeps the press (its ride is due) until kDenyRideMs after the press.
+    for (std::uint32_t t = 1700; t < 1600 + pb::kDenyRideMs; t += 200) {
+        g.now = t;
+        pb::RaceHold(2000);
+        Check(D(0), "the host's deny, no ride yet: still idle");
+    }
+    g.now = 1600 + pb::kDenyRideMs;
+    Check(!D(0), "the host's deny and no ride within kDenyRideMs: phase 1 goes on");
     const std::uint32_t hits = (pb::ReadRace(rs), rs.hits);
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: site B's no-seat exit (the guest stays on foot)");
     pb::ReadRace(rs);
     Check(rs.hits == hits + 1, "the deny refusal is counted");
     pb::RaceDeny(pb::kVehicleUnknown, 0);
-    g.now = 2500;
+    g.now = 3000;
+    pb::RaceHold(2000);
     Check(D(0), "another press");
-    for (std::uint32_t t = 2700; t < 3500; t += 200) {
+    for (std::uint32_t t = 3200; t < 4000; t += 200) {
         g.now = t;
         pb::RaceHold(2000);
         Check(D(0), "no answer yet: idle");
     }
-    g.now = 3500;
+    g.now = 4000;
     Check(!D(0), "no answer for 1 s: phase 1 goes on");
     pb::ReadRace(rs);
     Check(rs.pseq == 3 && rs.timeouts == 1 && !rs.pend, "the timeout is counted");
@@ -1274,14 +1282,15 @@ void TestPress() {
     g.now = 13300;
     Policy(pb::Mode::passenger, 25608, 0, 17000, true);
     Check(D(0), "deny-first: the host's ride arrived with seat 1 offered: settle");
-    g.now = 13560;
+    g.now = 13500;
     Policy(pb::Mode::passenger, 25608, 0, 17000, false);
     Check(!D(0), "deny-first: the dog took seat 1: phase 1 goes on");
     pb::ReadRace(rs);
-    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 560 && rs.done_seq == seq2 + 1, "deny-first: ended as peer (seated), not as deny");
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 500 && rs.done_seq == seq2 + 1, "deny-first: ended as peer (seated), not as deny");
     g.nearest_result = 3;
     Check(pb::detail::SiteBForTest(unit, pos) == 3, "deny-first: site B seats it in a back seat (the deny's backstop is skipped)");
     // Deny-first with no ride (the host's own press failed): the press ends as deny kDenyRideMs after it; no seat (a=6).
+    pb::RaceDeny(25608, 0);
     g.now = 14000;
     Policy(pb::Mode::off);
     pb::RaceHold(2000);
