@@ -1,3 +1,28 @@
+## 2026-10-30: the seat checks at the shipped defaults; S1 shown to stop real self-hits online (review m6m7g, branch `wp/seat-checks2`, local only)
+
+**Players see no new behaviour** (no default changed). What changed for them is known now: on the Afghanistan jeep two
+seated shot lines cost the jeep 702 of its 2300 life each without the seat-shot fix (S1) and nothing with it, online.
+The README's seat-shot note says so.
+- **Runs** (play, `-WanSim bad`, native gun, research; all three admitted; d3dprobe hr=0 on every adapter, no
+  snipping / screenclip / obs / gamebar process; [O] lines sliced from both copies, frames looked at):
+  - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults): the guest boarded back seat 3 beside the
+    host's D-Dog in seat 1 and the host's copy drew it there (`confirmed; seat=3`, anchor `configured; on=1`); the
+    seat-3 aim view was clear; five seated shots, S1 `result=shift` each (targets 8-18 m), the jeep 2300 on both copies.
+    No guard was hit: the reticle sat white on the grass by the sleeping guard 8.2 m out (no `req` / `commit`). Part B:
+    the host boarded the guest-driven jeep from the right into seat 3 (the guest's D-Dog in seat 1), drawn there on the
+    guest's copy, aim view clear. Part C did not run: the host's E 2.5 s after a 39 m warp did not board, the guest's E
+    then took the driver's seat, and the scenario's `require` stopped it; the worker closed with the guest driving
+    (`Forced`, baseline restored, real saves unchanged). Never-lines 0 on both.
+  - `663b270c2171429089a565b473fdb07e` (`m6m7e-seat-shot-stock-play.txt`, `-LabSetting partner_seat_shot=0`, afgh-quiet / afgh-horse; `key=0` on
+    both): the host rode, the guest drove the east jeep (`cat=2`). On the host's copy (the life that counts while
+    ridden) seat-1 line x1 (back-left across the cabin) 2300 -> 1598 and seat-2 line d (back and down past the tail)
+    1598 -> 896; seat-2 lines a, b, c fired and cost nothing; x2 and x3 showed the red mark and did not fire. The
+    driver's copy stayed 2300 while ridden.
+  - `ce0233f4d044461f8af25db8dc8ffb02` (the same scenario at the shipped defaults, `key=1`): every fired line `result=shift` (x1 exit 1.37 m, d 0.26 m),
+    the jeep 2300 on both copies after every shot.
+- **Open:** a guard hit by a seated shot (this aim pointed at the grass); the D-Dog arriving after the partner and a
+  teardown with a seated partner (part C; its warp now waits 4 s, `89b1dea`). Design 8.50.
+
 ## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
 
 **Players see no new behaviour** (no default changed); the README Seats tip now says what the online run showed: the F

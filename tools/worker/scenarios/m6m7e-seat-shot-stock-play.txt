@@ -17,6 +17,10 @@
 # m6m7g: x3 (seat 1, rel 40 pitch 18) and d (seat 2, rel -90 pitch 22) aim at the ground just beyond the body, so the
 #   camera line clears the jeep and the lower muzzle line crosses it (the self-hit S1 is for). Positive pitch is down
 #   (enemy_aim_nearest's sign). In the stock arm (key 0 in play) no shot line is logged, so those waitlogs only warn.
+# Measured (m6m7g, 663b270c stock / ce0233f4 S1; S1 d_milli fwd,right,up): x1 back-left level (-0.86,-0.52,0): stock
+#   -702; x2 and x3 never fire (red mark); a forward-left, b forward-right, c back (-0.99,0.13,0.08): no stock damage;
+#   d back and 33 deg down past the tail (-0.82,0.21,-0.54): stock -702. So from seat 2 rel -90 points BACKWARD, not across
+#   the jeep (the C and d notes below are the intent, not the result). S1: every fired line shift, life unchanged.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, D: at least 3 GB free):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7e-seat-shot-stock-play.txt

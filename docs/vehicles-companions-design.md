@@ -3550,6 +3550,52 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Open:** a first-person seat shot aimed at a standing or body-height target (does it land, does the other copy see
   the hit); the scenario's sleep list (add 1194 / 1195 / 1296); why the toggle stuck in the lab and not here.
 
+### 8.50 The seat checks at the shipped defaults; S1's play benefit (2026-10-30, branch `wp/seat-checks2`)
+
+- **Runs** (play, `-WanSim bad`, native gun, research, all admitted; d3dprobe hr=0, no snipping / screenclip / obs /
+  gamebar; slices and frames in `C:/Users/taylo/mgs-coop-run-archive/m6m7g/<id>`):
+  - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults; configured S1 `key=1`, `mode=view` on both).
+    A [O]: guest in back seat 3 (`local_passenger; seat=3`), host's copy `partner_ride_seat=confirmed; seat=3`,
+    `seat_patch=applied; seat=3; anchor=3`, the host's D-Dog in seat 1 (frame `host-a-seated`); seat-3 aim view clear;
+    S1 published `seat=3; cat=1` and five `shot; result=shift` (`t_cm` 108-110, `dist_cm` 820 / 998 / 1249 / 1430 /
+    1834, magazine 8 -> 3); `vstate` 2300 on both copies after. No hit on the sleeping guard (`aim_nearest` 1.6 / 1.1 /
+    0.5 / 0.3 m, 8.2 m out): the reticle stayed white on the grass, no `req` / `commit`; the shot targets moved from
+    8 to 18 m out while each new aim was commanded lower [U why]. Get-off: `release; reason=stock; ok=1`, seat patch reverted
+    `foot`. B [O]: guest drives, host boards right -> seat 3 on both copies (the guest's D-Dog in seat 1), host's aim
+    view clear, get-off normal. C [O]: the host's E 2.5 s after `goto_vehicle` from 39 m did not board; the guest's
+    claim was granted the driver's seat (host `grant` + `yield`); `host require` stopped the run, so the D-Dog after
+    the partner and a teardown with a seated partner were not tested. The worker closed (forced) with the guest driving
+    and the host's seat-0 patch live: `partner_shutdown=hooks_off; teardown=other_thread`, no revert line, baseline
+    restored, real saves unchanged. Never-lines 0 (`step=error`, faults, `board_uncertain`, `two_drivers`, `seat_far`,
+    `seat_patch=refused`, `pass_camera state=refused`, turn `refused`, `result=stale`, `seat_fpv event=set`).
+  - `663b270c2171429089a565b473fdb07e` (`m6m7e-seat-shot-stock-play.txt`, `-LabSetting partner_seat_shot=0`; `configured; key=0; play=1` on both)
+    and `ce0233f4d044461f8af25db8dc8ffb02` (the same at the shipped defaults, `key=1`): the guest drives the east jeep (`cat=2`), the host rides and
+    shoots; `vstate` life after every shot [O]:
+
+    | line (seat, `enemy_cam_turn`) | direction (S1 `d_milli`, fwd/right/up) | stock (host copy) | S1 |
+    |---|---|---|---|
+    | x1 (1, 148.1 / -1) | back-left, level (-0.86, -0.52, 0.00) | 2300 -> 1598 | `shift` exit 1.37 m, 2300 |
+    | x2 (1, 55.2 / -1), x3 (1, 40 / 18) | - | red mark, did not fire | did not fire |
+    | a (2, 124.8 / -1) | forward-left (0.81, -0.59, 0.01) | fired, 1598 | `shift`, 2300 |
+    | b (2, 31.9 / 0) | forward-right (0.63, 0.78, 0.02) | fired, 1598 | `shift`, 2300 |
+    | c (2, -90 / -3) | back (-0.99, 0.13, 0.08) | fired, 1598 | `shift` exit 0.21 m, 2300 |
+    | d (2, -90 / 22) | back, 33 deg down (-0.82, 0.21, -0.54) | 1598 -> 896 | `shift` exit 0.26 m (target 2.0 m), 2300 |
+
+    The driver's copy read 2300 throughout in both arms (the host's copy counts while ridden). Frames: the x1 and d aim
+    views look into the jeep's own panel and seat in both arms; stock `d-shot` shows a spark next to the camera [I: on the jeep]. The pass
+    camera guard opened and closed `aim_end` on each line in both arms (`max_pull_mrad` 95-101); the get-off turns
+    checked `view=1`. The S1 `x1-shot` frame shows the normal ride camera, not the aim: [I] the 1.5 s hold had ended
+    (19 guard writes there against 26 in the stock arm). Never-lines 0 in both.
+- **Verdict:** S1 prevents real self-hits in play on the east jeep [O, two lines, 702 each in stock, none with S1],
+  correcting 8.44's "no harm, benefit [U]". The `rel -90` seat-2 lines point backward, not across the jeep: the
+  scenario's notes now carry the measured directions.
+- **Scenario fixes** (no behaviour change): -b shot 5 at 0.3 m (`0881098`); B waits for its own seat patch (the anchor's
+  configured line is per copy and came in A); C waits 4 s after the driver's warp before E (`89b1dea`). Stock scenario:
+  x3 and d added, measured directions noted.
+- **Open:** a seated shot that hits a guard (aim at a standing or body-height target); C (the D-Dog after the partner,
+  teardown with a seated partner, whether the seat patch is reverted at a forced close); why the seat-3 shot targets
+  drifted up with each aim.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
