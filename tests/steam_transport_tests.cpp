@@ -2577,12 +2577,13 @@ void TestHud() {
                 {30010, 4, "Bringing your partner to you."},
                 {30010, 5, "Your partner cannot travel right now (riding, carried, downed, in a cutscene or already travelling)."},
                 {30020, 6, "Travel stopped: the trip did not finish in time. Use the helicopter instead."},
+                {30050, 7, "Your partner is in another area: use Go to first."},
             };
             for (const auto& t : travel)
                 Check(text::FormatWorldNote(14, t.a, t.b, 0, 30050, sentence, sizeof(sentence)) && std::strcmp(sentence, t.sentence) == 0,
                       "FormatWorldNote: the debug menu Travel sentences");
             Check(!text::FormatWorldNote(14, 30010, 0, 0, 30050, sentence, sizeof(sentence)) &&
-                      !text::FormatWorldNote(14, 30010, 7, 0, 30050, sentence, sizeof(sentence)),
+                      !text::FormatWorldNote(14, 30010, 8, 0, 30050, sentence, sizeof(sentence)),
                   "FormatWorldNote: unknown Travel kinds have no toast");
         }
         Check(!text::FormatWorldNote(1, 40010, 0, 0, 40010, sentence, sizeof(sentence)) && sentence[0] == 0,

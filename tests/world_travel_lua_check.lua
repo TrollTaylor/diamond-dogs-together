@@ -28,6 +28,7 @@ local function setup(host)
     ReserveMissionClearOnRideOnHelicopter = call("ride_heli"), ReserveMissionClear = call("clear"),
     Load = function(n, cur, o) c.calls[#c.calls + 1] = {"load", n, o} end}
   TppPlayer = {SetInitialPosition = call("initial"), Warp = call("warp")}
+  Player = {RequestToSetCameraRotation = call("camera")}
   TppDemo = {SetNextMBDemo = call("mb_demo")}
   f30050_sequence = {ReserveMissionClear = call("f30050_clear")}
   DemoDaemon = {IsDemoPlaying = function() return c.demo end}
@@ -80,6 +81,9 @@ check(i and math.abs(i[2][1] + 656.01) < 1e-6 and math.abs(i[2][2] - 1.70) < 1e-
 vars.playerPosX, vars.playerPosY, vars.playerPosZ = -655.5, 1.2, 878
 c.tick(200); c.tick(1600)
 check(c.T.job == nil and c.logs[#c.logs]:find("step=arrived;mission=30020", 1, true), "arrived and logged")
+-- fb1031-on: the camera turns behind the landed player (run 5e166b4c: the host's camera faced Snake from the front).
+local cam = c.find("camera")
+check(cam and cam[2].rotY == 90 and cam[2].rotX == 0, "arrival: Player.RequestToSetCameraRotation behind the player's own yaw")
 TppMission.Load(30010, 30020, {})
 check(c.find("load")[3].waitOnLoadingTipsEnd == nil, "loads after travel are untouched")
 
@@ -138,6 +142,7 @@ c.rx(5, 3, 30050, 10000, 800, -40000, 90000, 0)
 w = c.find("warp")
 check(w and math.abs(w[2].pos[1] - 13) < 1e-6 and math.abs(w[2].pos[3] + 40) < 1e-6 and w[2].rotY == 270, "receiver warps beside the caller")
 check(c.lasttx()[3] == 4 and c.lasttx()[9] == 0 and c.notes[#c.notes][3] == 3, "answer accepted, note: brought you here")
+check(c.find("camera") and c.find("camera")[2].rotY == 270, "the brought player's camera turns behind it (facing the caller)")
 -- Refusals: riding, cutscene, downed.
 c = setup(false); c.foot = false
 c.rx(6, 3, 30050, 0, 0, 0, 0, 0)
@@ -153,44 +158,53 @@ c = setup(true)
 c.rx(7, 4, 30050, 0, 0, 0, 0, 3)
 check(c.notes[#c.notes][1] == 14 and c.notes[#c.notes][3] == 5, "a refused answer: note 5")
 
--- Bring partner here across missions: a guest in Africa is brought by the host in Mother Base (it leads its own hops).
+-- fb1031-on: Bring partner here across missions refuses (never run in a game; nobody is stranded): Go to first.
+c = setup(true); c.peer = {mission = 30020, level = 3, linked = true}
+ok, msg = c.T.command({"bring_partner"})
+check(not ok and msg == "bring_refused;reason=other_area" and #c.tx == 0, "caller: the partner is in another mission, nothing sent")
+check(c.notes[#c.notes][1] == 14 and c.notes[#c.notes][2] == 30050 and c.notes[#c.notes][3] == 7, "caller note 7: another area, use Go to")
 c = setup(false)
 vars.missionCode = 30020; c.W.paired = false
 c.rx(8, 3, 30050, 22610, 1800, -15550, 0, 0)
-check(c.T.job and c.T.job.target == 30050 and c.T.job.lead and c.lasttx()[9] == 0, "guest elsewhere: leads its own travel to the caller")
+check(not c.T.job and not c.find("warp") and c.lasttx()[3] == 4 and c.lasttx()[9] == 8, "receiver elsewhere: refused (8 other_area), nothing moves")
+c = setup(true)
+c.rx(9, 4, 30050, 0, 0, 0, 0, 8)
+check(c.notes[#c.notes][3] == 7 and c.logs[#c.logs]:find("reason=other_area", 1, true), "answer reason 8: the caller's note 7")
+c = setup(true); c.peer = {mission = 0, level = 3, linked = true}
+ok, msg = c.T.command({"bring_partner"})
+check(ok and c.lasttx()[3] == 3, "an unread partner mission (0): the receiver decides")
+-- The guest's own Go to while unlinked still bypasses the follow guard (F.token) and restores it.
+c = setup(false); c.peer = {mission = 0, level = 0, linked = false}
+vars.missionCode = 30020; c.W.paired = false
+c.T.command({"travel", "30050"})
 c.W.follow.token = "outer"
 TppMission.ReserveMissionClearOnRideOnHelicopter = function() c.tokenSeen = c.W.follow.token end
 c.tick()
-check(c.tokenSeen == true and c.W.follow.token == "outer", "the guest's own hop bypasses the follow guard (F.token) and restores it")
-check(c.T.job.hop1, "hop 1 recorded")
-vars.missionCode = 30050
-e.ReservePlayerLoadingPosition(1)
-i = c.find("initial")
-check(i and math.abs(i[2][3] - (-15.55 + 3)) < 1e-6, "lands 3 m in front of the caller")
+check(c.tokenSeen == true and c.W.follow.token == "outer" and c.T.job.hop1, "the guest's own hop bypasses the follow guard and restores it")
 
 -- fb1031 travel-4: a travelling caller cannot bring; crossing brings: the host keeps its own, the guest yields.
 c = setup(true)
 c.T.command({"travel", "30020"})
 ok, msg = c.T.command({"bring_partner"})
 check(not ok and msg == "bring_refused;reason=travelling", "a travelling caller cannot bring")
-c = setup(true); c.W.paired = false
+c = setup(true)
 ok = c.T.command({"bring_partner"})
-c.rx(12, 3, 30020, -656010, 1200, 877730, 62000, 0)
-check(ok and not c.T.job and c.lasttx()[3] == 4 and c.lasttx()[9] == 1, "crossing brings: the host keeps its own and refuses (1)")
-c = setup(false); vars.missionCode = 30020; c.W.paired = false
+c.rx(12, 3, 30050, 22610, 1800, -15550, 0, 0)
+check(ok and not c.find("warp") and c.lasttx()[3] == 4 and c.lasttx()[9] == 1, "crossing brings: the host keeps its own and refuses (1)")
+c = setup(false)
 ok = c.T.command({"bring_partner"})
 c.rx(13, 3, 30050, 22610, 1800, -15550, 0, 0)
-check(ok and c.T.job and c.T.job.target == 30050 and c.lasttx()[9] == 0, "crossing brings: the guest yields to the host's bring")
-c = setup(true); c.W.paired = false
+check(ok and c.find("warp") and c.lasttx()[9] == 0, "crossing brings: the guest yields to the host's bring")
+c = setup(true)
 c.T.command({"bring_partner"})
 c.rx(14, 4, 30050, 0, 0, 0, 0, 0)
-c.rx(15, 3, 30020, -656010, 1200, 877730, 62000, 0)
-check(c.T.job and c.T.job.target == 30020, "after the partner answered, a later bring is accepted")
-c = setup(true); c.W.paired = false
+c.rx(15, 3, 30050, 22610, 1800, -15550, 0, 0)
+check(c.find("warp") and c.lasttx()[9] == 0, "after the partner answered, a later bring is accepted")
+c = setup(true)
 c.T.command({"bring_partner"})
 c.tick(30001)
-c.rx(16, 3, 30020, -656010, 1200, 877730, 62000, 0)
-check(c.T.job and c.T.job.target == 30020, "an unanswered bring stops counting after 30 s")
+c.rx(16, 3, 30050, 22610, 1800, -15550, 0, 0)
+check(c.find("warp") and c.lasttx()[9] == 0, "an unanswered bring stops counting after 30 s")
 c = setup(true)
 c.rx(17, 4, 30020, 0, 0, 0, 0, 7)
 check(c.notes[#c.notes][3] == 5 and c.logs[#c.logs]:find("reason=off", 1, true), "answer reason 7: the partner has Travel off")
