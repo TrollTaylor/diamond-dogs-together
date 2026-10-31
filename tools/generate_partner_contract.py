@@ -935,6 +935,36 @@ PASS_CAMERA_SITES = [
      'PlayerCamera vt+0xE0: CAM+0xD80..0xD94 = the six request fields (interp, 0.4, 0.8, 0x400126, pitch, yaw)'),
 ]
 SITES += PASS_CAMERA_SITES
+# Design 8.46 (lab.ini partner_seat_fpv; docs/native-puppet.md "Seat first person"): the stock F tap of a seated aim is
+# answered by the gun plugin's PollingForSubjectiveCamera 0x1053E80 (its poller sub-object's vt[0], vtable 0x23B3DA0):
+# while the gun hold gate is open it returns bit m of the subjective camera impl+0x60 (m from the hand slot rec+0x3DA),
+# which ToggleAimFpvModeOnPad 0x12A0580 flips on pad button 10. partner_pass_camera sets that bit while the local passenger
+# aims from seat 1 or 2 and clears the bits it set afterwards; the seat trace reads the module's answer. No code patched.
+SEAT_FPV_SITES = [
+    (0x129EA00, '40534883ec20488b4108488bd94883c1e08b9084030000899100010000e89e1a0000',
+     'subjective camera module CanActivate 0x129EA00 (vt+0x18 of 0x23D1F00): impl = module - 0x20; calls UpdateCameraMode '
+     '0x12A04C0 and is true when impl+0x48 != 0'),
+    (0x12A04E1, '488d4140488bf94889442420488b4128',
+     'UpdateCameraMode 0x12A04C0: each poller gets ctx = {impl+0x40, CAM = impl+0x28}'),
+    (0x12A04F1, '44897948458d670a418bef418d5f0148894424284c8d7178',
+     'UpdateCameraMode: impl+0x48 = 0, first index 10 (none), the ten pollers at impl+0x78'),
+    (0x12A0530, 'ff1084c0740e095f48',
+     'UpdateCameraMode: poller vt+0 (PollingForSubjectiveCamera) true -> impl+0x48 |= its bit'),
+    (0x12A0560, '4489674c4c89bfc8000000',
+     'UpdateCameraMode: impl+0x4C = the first answering index, impl+0xC8 = that poller'),
+    (0x12A05AF, 'c1e80aa80174568b53208bcf41b801000000418bc0d3e08bca85d07421f7d023c8400fb6c63bca894b20410f45c0488b5c2430488b7424'
+     '384883c4205fc30bc8400fb6c63bca894b20410f45',
+     'ToggleAimFpvModeOnPad 0x12A0580 (impl+0x40 vt+0x60): pad button 10 (F) flips bit m of ctx+0x20 = impl+0x60'),
+    (0x1053F96, '410fb680da03000083f8067776488d1556c0fafe8b8c82304005014803caffe1',
+     'gun PollingForSubjectiveCamera 0x1053E80: the hand slot rec+0x3DA (0..6) through the table 0x1054030'),
+    (0x1053FB6, '33dbeb21bb01000000eb1abb02000000eb13bb08000000eb0cbb03000000eb05bb04000000',
+     'gun PollingForSubjectiveCamera: the table targets set bit m = 0, 1, 2, 8, 3, 4'),
+    (0x1053FDB, '498b068bd3498bceff5060418b4e200fa3d90f92c384c074',
+     'gun PollingForSubjectiveCamera: ToggleAimFpvModeOnPad(ctx, m) (impl+0x40 vt+0x60); answers bit m of ctx+0x20 = impl+0x60'),
+    (0x1054030, 'b63f0501ba3f0501c13f0501d63f050119400501cf3f0501c83f0501',
+     'its slot table: slot 0 -> bit 0, 1 -> 1, 2 -> 2, 3 -> 4, 4 none, 5 -> 3, 6 -> 8'),
+]
+SITES += SEAT_FPV_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
 # vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
 # 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
@@ -1667,6 +1697,11 @@ SLOTS += [
     # Design 8.28: the shot guard writes only while this module (the aim camera, CAM+0x340 index 2) is active.
     (0x23D4D20, 0x18, 0x12BBAE0, 'aim camera module vt+0x18 = CanActivate (the gun record aim bit, the pad aim button)'),
     (0x23D4D20, 0x20, 0x12BD4D0, 'aim camera module vt+0x20 = update'),
+    # Design 8.46: the subjective camera module (first person, CAM+0x340 index 1) and the gun plugin's poller.
+    (0x23D1F00, 0x00, 0x129E2A0, 'subjective camera module vt+0x00 = Activate (status bit 12: the gun record bit 13)'),
+    (0x23D1F00, 0x08, 0x129E690, 'subjective camera module vt+0x08 = Deactivate'),
+    (0x23D1F00, 0x18, 0x129EA00, 'subjective camera module vt+0x18 = CanActivate (any poller answers)'),
+    (0x23B3DA0, 0x00, 0x1053E80, 'gun plugin subjective poller vt[0] = PollingForSubjectiveCamera (the F tap toggle)'),
 ]
 # F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
 # per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
@@ -3602,6 +3637,13 @@ w('inline constexpr std::size_t pass_cam_request_flags=0xd38, pass_cam_request=0
 w('inline constexpr std::uint32_t pass_cam_request_busy=0x1001, pass_cam_lock_bit=0x200, pass_cam_request_flags_value=0x400126;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
+w('// Design 8.46 (partner_seat_fpv): the subjective camera module (live vtable 0x23d1f00; impl = module - 0x20): the pollers answer')
+w('// mask impl+0x48, the first answering index impl+0x4c (10: none), that poller impl+0xc8, the ten pollers impl+0x78, the')
+w('// per-slot first-person toggles impl+0x60 (the F tap; slot -> bit mask 0x11f) and the started mask impl+0xe0 (trace).')
+w('inline constexpr std::uintptr_t pass_subj_module_vtable_rva=0x23d1f00, pass_subj_can_activate_rva=0x129ea00, pass_subj_gun_poller_rva=0x1053e80;')
+w('inline constexpr std::size_t pass_subj_impl=0x20, pass_subj_mask=0x48, pass_subj_first=0x4c, pass_subj_first_poller=0xc8, pass_subj_pollers=0x78, pass_subj_count=10, pass_subj_toggles=0x60, pass_subj_started=0xe0;')
+w('inline constexpr std::uint32_t pass_subj_toggle_mask=0x11f;')
+w('inline constexpr std::uintptr_t seat_fpv_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_FPV_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
 w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
 w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')

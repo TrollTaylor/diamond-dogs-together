@@ -1072,6 +1072,196 @@ void TestVerifyAndInstall() {
         pc::detail::ResetForTest();
     }
 }
+
+// --- Design 8.46: seat first person (partner_seat_fpv) -----------------------------------------------------------------
+pc::FpvIn FIn(bool aiming, std::uint32_t toggles, std::uint8_t seat = 1, std::uint8_t slot = 2, bool seated = true, bool want = true) {
+    pc::FpvIn in{};
+    in.want = want;
+    in.seated = seated;
+    in.vehicle = 25608;
+    in.seat = seat;
+    in.aiming = aiming;
+    in.read_ok = true;
+    in.toggles = toggles;
+    in.slot_ok = true;
+    in.slot = slot;
+    return in;
+}
+void TestFpvBitsAndContract() {
+    Check(pc::FpvBit(0) == 0 && pc::FpvBit(1) == 1 && pc::FpvBit(2) == 2 && pc::FpvBit(3) == 4 && pc::FpvBit(4) == -1 &&
+              pc::FpvBit(5) == 3 && pc::FpvBit(6) == 8 && pc::FpvBit(7) == -1 && pc::FpvBit(0xFF) == -1,
+          "the gun poller's slot map (table 0x1054030)");
+    Check(c::pass_subj_toggle_mask == pc::kFpvSlotMask && pc::kFpvSlotMask == 0x11F && c::pass_subj_toggles == pc::kSubjToggles &&
+              c::pass_subj_impl == pc::kSubjImpl && c::pass_subj_module_vtable_rva == pc::kSubjModuleVtableRva,
+          "the toggle offsets and the module vtable match the contract");
+    Check(pc::FpvSeat(1) && pc::FpvSeat(2) && !pc::FpvSeat(0) && !pc::FpvSeat(3) && !pc::FpvSeat(pc::kSeatUnknown),
+          "seats 1 and 2 only (seat 3 and the driver unchanged)");
+    bool slot_pinned = false, poller_pinned = false;
+    for (const auto& s : c::vtable_slots) {
+        if (s.vtable_rva == c::pass_subj_module_vtable_rva && s.offset == 0x18 && s.target_rva == c::pass_subj_can_activate_rva) slot_pinned = true;
+        if (s.vtable_rva == 0x23B3DA0 && s.offset == 0 && s.target_rva == c::pass_subj_gun_poller_rva) poller_pinned = true;
+    }
+    Check(slot_pinned && poller_pinned, "the subjective CanActivate and the gun poller slots are pinned");
+    Check(sizeof(c::seat_fpv_blocks) / sizeof(c::seat_fpv_blocks[0]) == 10, "ten seat first-person blocks are pinned");
+}
+void TestFpvStep() {
+    pc::Fpv s{};
+    // On foot / off: nothing.
+    Check(pc::FpvStep(s, FIn(true, 0, 1, 2, false)).event == pc::FpvEvent::none && !s.active, "on foot: nothing");
+    Check(pc::FpvStep(s, FIn(true, 0, 1, 2, true, false)).event == pc::FpvEvent::none && !s.active, "the switch off: nothing");
+    Check(pc::FpvStep(s, FIn(true, 0, 3)).event == pc::FpvEvent::none && !s.active, "seat 3: nothing");
+    Check(pc::FpvStep(s, FIn(true, 0, 0)).event == pc::FpvEvent::none && !s.active, "the driver: nothing");
+    // Seat 1: armed; nothing set until the aim.
+    pc::FpvOut o = pc::FpvStep(s, FIn(false, 0));
+    Check(o.event == pc::FpvEvent::arm && s.active && s.vehicle == 25608 && s.seat == 1 && o.set == 0 && o.clear == 0,
+          "seat 1 boarding: armed, nothing written outside an aim");
+    o = pc::FpvStep(s, FIn(false, 0));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "seated, not aiming: nothing");
+    // The aim: the slot's bit (slot 2 -> bit 2).
+    o = pc::FpvStep(s, FIn(true, 0));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && o.clear == 0 && s.ours == 0x4 && s.sets == 1 && s.aims == 1 && Same(o.reason, "aim"),
+          "an aim from seat 1 sets the slot's toggle bit");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "set and held: nothing more");
+    // The aim ends: our bit cleared.
+    o = pc::FpvStep(s, FIn(false, 0x4));
+    Check(o.event == pc::FpvEvent::restore && o.clear == 0x4 && o.set == 0 && s.ours == 0 && Same(o.reason, "aim_end") && s.restores == 1,
+          "the aim end clears the bit we set");
+    o = pc::FpvStep(s, FIn(false, 0));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "cleared: nothing more");
+    // A player's own sticky bit (set before) is never cleared and never counted as ours.
+    o = pc::FpvStep(s, FIn(true, 0x1, 1, 0));
+    Check(o.event == pc::FpvEvent::none && o.set == 0 && s.ours == 0, "slot 0 already on (the player's own toggle): nothing set");
+    o = pc::FpvStep(s, FIn(false, 0x1, 1, 0));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "the player's own bit stays at the aim end");
+    // A slot the poller never answers (4): nothing.
+    o = pc::FpvStep(s, FIn(true, 0, 1, 4));
+    Check(o.set == 0 && s.ours == 0, "slot 4: nothing");
+    o = pc::FpvStep(s, FIn(false, 0, 1, 4));
+    // The player's own F tap during our first person: the bit goes clear while aiming -> opt out for the boarding.
+    o = pc::FpvStep(s, FIn(true, 0));
+    Check(o.set == 0x4 && s.ours == 0x4, "the next aim sets it again");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    o = pc::FpvStep(s, FIn(true, 0));
+    Check(o.event == pc::FpvEvent::opt_out && o.set == 0 && o.clear == 0 && s.opt_out && s.ours == 0 && Same(o.reason, "tap") &&
+              s.opt_outs == 1,
+          "the player's F tap (our bit cleared mid-aim): opt out, nothing written");
+    o = pc::FpvStep(s, FIn(true, 0));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "opted out: the shoulder view stays");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    o = pc::FpvStep(s, FIn(false, 0x4));
+    Check(o.clear == 0 && o.event == pc::FpvEvent::none, "the player's second tap (bit on again) is theirs: kept at the aim end");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    Check(o.set == 0, "opted out for the rest of the boarding");
+    // The get-off: stop (ours empty here), the next boarding starts fresh.
+    o = pc::FpvStep(s, FIn(false, 0x4, 1, 2, false));
+    Check(o.event == pc::FpvEvent::stop && !s.active && !s.opt_out && Same(o.reason, "get_off") && o.clear == 0, "the get-off ends the boarding");
+    o = pc::FpvStep(s, FIn(false, 0, 2));
+    Check(o.event == pc::FpvEvent::arm && s.seat == 2 && !s.opt_out, "a new seat 2 boarding: armed again");
+    o = pc::FpvStep(s, FIn(true, 0, 2, 1));
+    Check(o.set == 0x2 && s.ours == 0x2, "seat 2: slot 1 -> bit 1");
+    // A get-off while aiming in our first person: our bit cleared.
+    o = pc::FpvStep(s, FIn(true, 0x2, 2, 1, false));
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x2 && s.ours == 0 && !s.active && Same(o.reason, "get_off"),
+          "a get-off while aiming clears our bit");
+    // A seat change (2 -> 3) while aiming, the switch turned off while aiming.
+    pc::FpvStep(s, FIn(false, 0, 2));
+    pc::FpvStep(s, FIn(true, 0, 2, 5));
+    Check(s.ours == 0x8, "slot 5 -> bit 3");
+    o = pc::FpvStep(s, FIn(true, 0x8, 3, 5));
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x8 && Same(o.reason, "seat"), "a seat change ends the boarding and clears");
+    pc::FpvStep(s, FIn(false, 0, 1));
+    pc::FpvStep(s, FIn(true, 0, 1, 6));
+    Check(s.ours == 0x100, "slot 6 -> bit 8");
+    o = pc::FpvStep(s, FIn(true, 0x100, 1, 6, true, false));
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x100 && Same(o.reason, "off"), "the switch off clears");
+    // An unread module: nothing set; a stop still clears what is ours.
+    pc::FpvStep(s, FIn(false, 0, 1));
+    pc::FpvIn un = FIn(true, 0);
+    un.read_ok = false;
+    o = pc::FpvStep(s, un);
+    Check(o.set == 0 && o.event == pc::FpvEvent::none, "the module unread: nothing set");
+    pc::FpvStep(s, FIn(true, 0));
+    un = FIn(true, 0, 1, 2, false);
+    un.read_ok = false;
+    o = pc::FpvStep(s, un);
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x4, "unread at the get-off: our bits are still cleared");
+    // A weapon change mid-aim (slot 2 -> 0): the new slot's bit too; both cleared at the aim end.
+    pc::FpvStep(s, FIn(false, 0, 1));
+    pc::FpvStep(s, FIn(true, 0, 1, 2));
+    pc::FpvStep(s, FIn(true, 0x4, 1, 2));
+    o = pc::FpvStep(s, FIn(true, 0x4, 1, 0));
+    Check(o.set == 0x1 && s.ours == 0x5, "a slot change mid-aim sets that slot's bit");
+    o = pc::FpvStep(s, FIn(false, 0x5, 1, 0));
+    Check(o.clear == 0x5 && s.ours == 0, "both cleared at the aim end");
+}
+void TestFpvReadWrite() {
+    pc::detail::ResetForTest();
+    Chain k;
+    unsigned char subj[0x200]{};
+    unsigned char poller[0x10]{};
+    unsigned char poller_vt[0x10]{};
+    Chain::Put<std::uintptr_t>(poller_vt, 0, Chain::kBase + c::pass_subj_gun_poller_rva);
+    Chain::Put<std::uintptr_t>(poller, 0, Chain::A(poller_vt));
+    // The module at subj + 0x20 (impl = module - 0x20), registered at index 1.
+    unsigned char* module = subj + pc::kSubjImpl;
+    Chain::Put<std::uintptr_t>(module, 0, Chain::kBase + c::pass_subj_module_vtable_rva);
+    Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 8, Chain::A(module));
+    Chain::Put<std::uint32_t>(subj, c::pass_subj_mask, 0x8);
+    Chain::Put<std::int32_t>(subj, c::pass_subj_first, 3);
+    Chain::Put<std::uintptr_t>(subj, c::pass_subj_first_poller, Chain::A(poller));
+    Chain::Put<std::uintptr_t>(subj, c::pass_subj_pollers + 8 * 3, Chain::A(poller));
+    Chain::Put<std::uint32_t>(subj, c::pass_subj_toggles, 0x1);
+    Chain::Put<std::uint32_t>(subj, c::pass_subj_started, 0x8);
+    pc::Subj sj{};
+    Check(pc::ReadSubjective(k.Base(), k.P(), sj) && sj.ok && sj.index == 1 && sj.mask == 0x8 && sj.first == 3 &&
+              sj.first_fn == c::pass_subj_gun_poller_rva && sj.toggles == 0x1 && sj.started == 0x8,
+          "the subjective module read: index, answer mask, first poller, toggles, started");
+    std::uintptr_t rvas[10]{};
+    Check(pc::ReadSubjectivePollers(k.Base(), k.P(), rvas) && rvas[3] == c::pass_subj_gun_poller_rva && rvas[0] == 0 && rvas[9] == 0,
+          "the pollers line: slot 3 is the gun poller");
+    std::uint32_t after = 0;
+    std::uint32_t now = 0;
+    Check(pc::WriteFpvToggles(k.Base(), k.P(), 0x4, 0, after) && after == 0x5 &&
+              (std::memcpy(&now, subj + c::pass_subj_toggles, 4), now == 0x5),
+          "set: bit 2 joins the player's bit 0");
+    Check(pc::WriteFpvToggles(k.Base(), k.P(), 0, 0x4, after) && after == 0x1, "clear: only bit 2 goes");
+    Check(!pc::WriteFpvToggles(k.Base(), k.P(), 0x200, 0, after) && (std::memcpy(&now, subj + c::pass_subj_toggles, 4), now == 0x1),
+          "a bit outside the slot mask: refused, nothing written");
+    pc::Stats st{};
+    pc::ReadStats(st);
+    Check(st.fpv == 2 && st.faults == 0, "two toggle writes counted");
+    // No subjective module: nothing read or written.
+    Chain::Put<std::uintptr_t>(module, 0, Chain::kBase + 0x23B29E0);
+    Check(!pc::ReadSubjective(k.Base(), k.P(), sj) && !sj.ok, "no module with the subjective vtable: unread");
+    Check(!pc::WriteFpvToggles(k.Base(), k.P(), 0x4, 0, after) && (std::memcpy(&now, subj + c::pass_subj_toggles, 4), now == 0x1),
+          "no module: nothing written");
+    pc::detail::ResetForTest();
+}
+void TestFpvLeverAndVerify() {
+    pc::detail::ResetForTest();
+    char out[256]{};
+    bool ok = false;
+    Check(pc::FpvOverride() == pc::kFpvKey, "the lever starts at the key");
+    Check(pc::HandleCommand("passcam seatfpv on", true, out, sizeof(out), ok) && ok && pc::FpvOverride() == 1 &&
+              std::strstr(out, "seatfpv=on") != nullptr,
+          "passcam seatfpv on");
+    Check(pc::HandleCommand("passcam seatfpv off", true, out, sizeof(out), ok) && ok && pc::FpvOverride() == 0, "passcam seatfpv off");
+    Check(pc::HandleCommand("passcam seatfpv key", true, out, sizeof(out), ok) && ok && pc::FpvOverride() == pc::kFpvKey,
+          "passcam seatfpv key");
+    Check(pc::HandleCommand("passcam seatfpv on", false, out, sizeof(out), ok) && !ok && pc::FpvOverride() == pc::kFpvKey,
+          "outside the lab: refused");
+    Check(pc::HandleCommand("passcam seatfpv maybe", true, out, sizeof(out), ok) && !ok && pc::FpvOverride() == pc::kFpvKey, "bad args");
+    Check(pc::Override() == -1, "the mode lever untouched");
+    Image img;
+    std::uintptr_t mismatch = 1;
+    Check(pc::detail::VerifyFpvImage(img.base, img.span, mismatch) == nullptr && mismatch == 0, "the pinned blocks match");
+    img.base[0x12A05B8] ^= 1;  // the toggle's [rbx+0x20] displacement
+    Check(Same(pc::detail::VerifyFpvImage(img.base, img.span, mismatch), "bytes") && mismatch == 0x12A05AF, "a changed toggle refuses");
+    img.base[0x12A05B8] ^= 1;
+    Check(pc::FpvInstall(img.base, img.span) == nullptr && pc::FpvInstall(nullptr, 0) == nullptr, "installed once for the process");
+    pc::detail::ResetForTest();
+}
 } // namespace
 
 int main() {
@@ -1099,6 +1289,10 @@ int main() {
     TestTurnThroughAim();
     TestTurnWrites();
     TestVerifyAndInstall();
+    TestFpvBitsAndContract();
+    TestFpvStep();
+    TestFpvReadWrite();
+    TestFpvLeverAndVerify();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);
     return 0;
 }

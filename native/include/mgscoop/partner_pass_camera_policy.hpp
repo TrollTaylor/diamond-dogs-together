@@ -618,6 +618,76 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
 // seat) leaves the camera behind the player, looking forward (299de3e1).
 inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
 
+// --- Seat first person (lab.ini partner_seat_fpv; design 8.46) -------------------------------------------------------
+// [O] 9a0c1f27: from seats 1 and 2 the stock seated aim looks into the panel, the own leg or the roll bar; the stock F tap
+// gives the first-person view (the subjective camera module, CAM+0x340 = 1) with a clear view. [S] The tap is answered by
+// the gun plugin's PollingForSubjectiveCamera 0x1053E80: while the gun hold gate is open (flag 0x19 or rec+0x3C0 bit 14)
+// it returns bit m of the subjective camera impl+0x60 (m from the hand slot rec+0x3DA: FpvBit), which
+// ToggleAimFpvModeOnPad 0x12A0580 flips on pad button 10 (F); the bit is sticky per slot (the next aim with that slot
+// starts in first person). FpvStep sets the slot's bit while the local passenger aims from seat 1 or 2 and clears the
+// bits it set when the aim ends, at the get-off, a seat change and the key's end; a bit seen set during an aim that goes
+// clear while the aim goes on is the player's own F tap: no more bits are set for the rest of that boarding (the stock
+// toggle stays the player's).
+inline constexpr std::uint32_t kFpvSlotMask = 0x11F;
+inline constexpr std::size_t kSubjImpl = 0x20, kSubjToggles = 0x60;  // impl = module - 0x20; the toggles impl+0x60
+inline constexpr std::uintptr_t kSubjModuleVtableRva = 0x23D1F00;
+// The gun poller's slot map (table 0x1054030): slot rec+0x3DA -> toggle bit; -1: a slot the poller never answers.
+inline int FpvBit(std::uint8_t slot) noexcept {
+    switch (slot) {
+    case 0: return 0;
+    case 1: return 1;
+    case 2: return 2;
+    case 3: return 4;
+    case 5: return 3;
+    case 6: return 8;
+    default: return -1;
+    }
+}
+// Seats 1 (front) and 2 (left back); seat 3 aims clear over the shoulder and the driver is stock.
+inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
+enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop };
+inline const char* FpvEventName(FpvEvent e) noexcept {
+    switch (e) {
+    case FpvEvent::arm: return "arm";
+    case FpvEvent::set: return "set";
+    case FpvEvent::opt_out: return "opt_out";
+    case FpvEvent::restore: return "restore";
+    case FpvEvent::stop: return "stop";
+    default: return "none";
+    }
+}
+struct Fpv {
+    bool active = false;    // a seat 1 / 2 boarding with the switch on
+    bool opt_out = false;   // the player's own F tap this boarding: nothing more is set
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    std::uint32_t ours = 0;  // the toggle bits this switch set and has not cleared
+    std::uint32_t seen = 0;  // the bits seen set during this aim
+    bool aim = false;        // the last tick aimed
+    std::uint32_t sets = 0, restores = 0, aims = 0, opt_outs = 0;
+};
+struct FpvIn {
+    bool want = false;     // the key (or the lab lever) on, the hooks there, nothing latched
+    bool seated = false;   // the local passenger report
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    bool aiming = false;   // GunAims of the local gun
+    bool read_ok = false;  // the subjective module was found
+    std::uint32_t toggles = 0;  // impl+0x60
+    bool slot_ok = false;
+    std::uint8_t slot = 0;      // rec+0x3DA
+};
+struct FpvOut {
+    FpvEvent event = FpvEvent::none;
+    std::uint32_t set = 0, clear = 0;  // the toggle bits to set / clear (never both)
+    const char* reason = "none";
+};
+inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
+    (void)s;
+    (void)in;
+    return FpvOut{};
+}
+
 // --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------
 // [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
 // driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close

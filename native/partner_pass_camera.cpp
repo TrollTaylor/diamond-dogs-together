@@ -110,6 +110,13 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
     return nullptr;
 }
 
+const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
+    (void)base;
+    (void)span;
+    mismatch_rva = 0;
+    return "stub";
+}
+
 void ResetForTest() noexcept {
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
@@ -280,6 +287,34 @@ bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
 }
 
 int Override() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_override, 0, 0)); }
+
+// --- Design 8.46: seat first person ----------------------------------------------------------------------------------
+bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept {
+    (void)base;
+    (void)P;
+    out = Subj{};
+    return false;
+}
+bool ReadSubjectivePollers(const void* base, std::uintptr_t P, std::uintptr_t (&rvas)[10]) noexcept {
+    (void)base;
+    (void)P;
+    for (auto& r : rvas) r = 0;
+    return false;
+}
+bool WriteFpvToggles(const void* base, std::uintptr_t P, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    (void)base;
+    (void)P;
+    (void)set;
+    (void)clear;
+    after = 0;
+    return false;
+}
+const char* FpvInstall(const void* base, std::size_t span) noexcept {
+    (void)base;
+    (void)span;
+    return "stub";
+}
+int FpvOverride() noexcept { return kFpvKey; }
 
 bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept {
     ok = false;
