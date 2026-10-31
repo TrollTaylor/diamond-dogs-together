@@ -22,6 +22,8 @@ do
   return name
  end
  local function coop()return get(Tpp,"MgsCoop")end
+ -- The lab readback compares against characterStatus.expect: its change line then shows the native type.
+ local function expect(t)local st=get(coop(),"characterStatus");if type(st)=="table" then st.expect=t end end
  local function report(C,kind,id)
   pcall(C.Log,"REPORT",fmt("switch;mission=%s;id=%.0f;pick=%s;result=%s;type=%s;parts=%s;camo=%s;face=%s",tostring(get(vars,"missionCode")),id,
    tostring(get(coop(),"characterPick")or"default"),kind,tostring(get(vars,"playerType")),tostring(get(vars,"playerPartsType")),
@@ -56,7 +58,7 @@ do
   if target=="own" then
    if get(gvars,"ply_isUsingTempPlayerType")~=true then report(C,"kept",id);return true,"character_kept;own" end
    call(TppPlayer,"RestoreTemporaryPlayerType")
-   report(C,"switched",id);wait(C,get(vars,"playerType"),id)
+   expect(get(vars,"playerType"));report(C,"switched",id);wait(C,get(vars,"playerType"),id)
    return true,"character_switched;own"
   end
   if (target=="ocelot" or target=="quiet") and A.receipt("return 'MGS_COOP_CHARACTER_BYPASS_ON_V1'")~=true then
@@ -72,7 +74,7 @@ do
   if temp.handEquip then vars.handEquip=temp.handEquip end
   if face then vars.playerFaceId=face end
   vars.playerType=temp.playerType
-  report(C,"switched",id);wait(C,temp.playerType,id)
+  expect(temp.playerType);report(C,"switched",id);wait(C,temp.playerType,id)
   return true,"character_switched;"..target
  end
  -- Merge-friendly dispatch: debug_menu.lua routes D.player's handles to D.player.run.
