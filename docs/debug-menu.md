@@ -238,7 +238,13 @@ every button; nothing on them is host only. **Off unless `lab.ini` names `debug_
   `22.61 1.80 -15.55` yaw 0 (the command platform deck ladder).
 - **Bring partner here** puts the partner 3 m in front of you, facing you. When the
   partner is in another mission (another free roam, Mother Base or the helicopter), the
-  partner's copy travels to your mission the same way and lands there.
+  partner's copy travels to your mission the same way and lands there. The caller must be
+  free to travel itself (`bring_refused;reason=travelling|on_foot|...`). When both players
+  press it at once (or before the first one is answered, 30 s at most), the host's Bring
+  wins: the host's copy refuses the guest's (answer 1) and the guest's copy goes to the host.
+- A copy whose own `lab.ini` has Travel off never sends TRAVEL and answers every partner
+  ask, go or bring with "Your partner cannot travel right now" (answer reason 7 `off`):
+  nothing moves on it.
 - On screen: "Travelling to <place> with your partner." when a trip starts, "Your partner
   brought you to <place>." / "Your partner brought you here." for the moved player,
   "Bringing your partner to you." for the caller, and "Your partner cannot travel right
