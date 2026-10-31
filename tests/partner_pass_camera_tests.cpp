@@ -9,6 +9,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -664,6 +665,85 @@ void TestTraceDue() {
     Check(pc::TraceDue(5000, 4900, false, 5100) && !pc::TraceDue(5000, 4900 - pc::kTraceAfterMs, false, 5100),
           "fast for kTraceAfterMs after the aim");
     Check(pc::TraceDue(9000, 0, false, 5000), "a clock that went back: due");
+}
+
+// fb1031 (design 8.59): the ride camera census. A camera 5 m behind the body that follows it rigidly measures no lag; one
+// whose eye trails the vehicle by 100 ms measures speed * 0.1 m along the forward axis and ~100 ms.
+void TestRideCamCensus() {
+    const float q_id[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float cs[3]{};
+    const float fwd[3] = {0.0f, 0.0f, 5.0f};
+    pc::CameraSpace(q_id, fwd, cs);
+    Check(cs[0] == 0.0f && cs[1] == 0.0f && cs[2] == 5.0f, "identity: camera space is world space");
+    const float half = 0.70710678f;
+    const float q_yaw[4] = {0.0f, half, 0.0f, half};  // 90 deg about up: forward = +x
+    const float px[3] = {5.0f, 0.0f, 0.0f};
+    pc::CameraSpace(q_yaw, px, cs);
+    Check(std::fabs(cs[2] - 5.0f) < 1e-4f && std::fabs(cs[0]) < 1e-4f, "yawed camera: +x is forward");
+    float local[3]{};
+    pc::YawSpace(1.5707963f, px, local);
+    Check(std::fabs(local[2] - 5.0f) < 1e-4f && std::fabs(local[0]) < 1e-4f, "vehicle yaw 90 deg: +x is the vehicle's forward");
+    for (int trail = 0; trail < 2; ++trail) {
+        pc::Census c{};
+        pc::CensusOut last{}, end{};
+        unsigned frames = 0, lines = 0;
+        const float speed_max = 15.0f;
+        float z = 0.0f, v = 0.0f;
+        std::uint64_t t = 100000;
+        for (int i = 0; i < 600; ++i, t += 16) {
+            // 1 s at rest, 4 s accelerating to 15 m/s along +z, then a stop.
+            if (i >= 60 && i < 300) v = std::fmin(speed_max, v + 0.07f);
+            else if (i >= 300) v = 0.0f;
+            z += v * 0.016f;
+            pc::CensusIn in{};
+            in.ok = true;
+            in.vehicle = 25608;
+            in.seat = 3;
+            in.veh[2] = z;
+            in.body[0] = -1.0f;
+            in.body[1] = 1.2f;
+            in.body[2] = z - 1.0f;
+            for (unsigned k = 0; k < 4; ++k) in.rot[k] = q_id[k];
+            in.eye[0] = -1.5f;
+            in.eye[1] = 2.5f;
+            in.eye[2] = z - 6.0f - (trail ? v * 0.1f : 0.0f);
+            in.now_ms = t;
+            const pc::CensusOut o = pc::CensusStep(c, in);
+            if (o.event == pc::CensusEvent::frame) ++frames;
+            if (o.event == pc::CensusEvent::line) ++lines;
+            if (o.event == pc::CensusEvent::end) end = o;
+            if ((o.event == pc::CensusEvent::frame || o.event == pc::CensusEvent::line) && o.d[2] > last.d[2]) last = o;
+        }
+        Check(frames == pc::kCensusFrameTicks && lines > 0, "per-tick lines at the episode's start, then 250 ms lines");
+        Check(end.event == pc::CensusEvent::end && end.episode == 1 && end.vehicle == 25608 && end.seat == 3, "the stop ends episode 1");
+        Check(end.max_speed > 14.0f && end.max_speed < 16.0f, "the vehicle's speed from its positions");
+        Check(end.max_drift < 0.01f, "a body fixed in the vehicle: no drift");
+        if (!trail) {
+            Check(end.max_lag < 0.01f && end.lag_ms >= 0.0f && end.lag_ms < 1.0f, "a rigid camera: no lag");
+        } else {
+            Check(std::fabs(end.max_lag - 1.5f) < 0.05f, "a 100 ms trail at 15 m/s: 1.5 m");
+            Check(end.lag_ms > 95.0f && end.lag_ms < 105.0f, "a 100 ms trail: ~100 ms");
+            Check(last.d[2] > 0.0f, "the body runs ahead of a trailing camera (camera-space forward, at its most)");
+        }
+    }
+    // A seat change or a read gap ends an open episode; a gap with no episode open says nothing.
+    pc::Census c{};
+    pc::CensusIn in{};
+    in.ok = true;
+    in.vehicle = 25608;
+    in.seat = 3;
+    in.rot[3] = 1.0f;
+    in.eye[2] = -5.0f;
+    std::uint64_t t = 1000;
+    for (int i = 0; i < 30; ++i, t += 16) { in.now_ms = t; pc::CensusStep(c, in); }
+    for (int i = 0; i < 10; ++i, t += 16) { in.veh[2] += 0.1f; in.body[2] += 0.1f; in.eye[2] += 0.1f; in.now_ms = t; pc::CensusStep(c, in); }
+    Check(c.moving, "moving at ~6 m/s");
+    in.seat = 1;
+    in.now_ms = t;
+    Check(pc::CensusStep(c, in).event == pc::CensusEvent::end && !c.moving && c.have && c.seat == 1, "a seat change ends the episode");
+    pc::CensusIn none{};
+    none.now_ms = t + 16;
+    Check(pc::CensusStep(c, none).event == pc::CensusEvent::none && !c.have, "the ride's end with no episode: nothing");
 }
 
 void TestReadViewAndLever() {
@@ -1465,6 +1545,7 @@ int main() {
     TestGuardAimGate();
     TestGuardEdges();
     TestTraceDue();
+    TestRideCamCensus();
     TestReadViewAndLever();
     TestWritePitchAndModeVtable();
     TestViewMode();

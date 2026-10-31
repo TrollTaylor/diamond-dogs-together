@@ -521,6 +521,8 @@ inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
+// fb1031: the ride camera census caps per mission (per-tick lines; 250 ms lines and episode summaries).
+inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400;
 // Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
 inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
@@ -816,6 +818,10 @@ struct Mission {
         std::uint8_t fpv_mode_logged;
         std::uint64_t fpv_trace_key, fpv_trace_ms;
         bool pollers_logged;
+        // fb1031 (design 8.59): the ride camera census (lab and play), its per-tick lines at an episode's start
+        // (census_frame_cap), the 250 ms lines and the episode summaries (census_cap).
+        partner_pass_camera::Census census;
+        LogCap census_cap, census_frame_cap;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).

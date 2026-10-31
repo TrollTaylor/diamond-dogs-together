@@ -1,0 +1,126 @@
+# fb1031 camera: the ride camera census (design 8.59) at the SHIPPED play defaults (no labsetting line), -WanSim bad,
+# seed africa-jeep for both (30020, veh_lv_0000 = 25608; the host's D-Dog jumps into seat 1 with its driver). The user's
+# report: "camera lags behind when getting in and moving". Each leg rests 3 s (the census's rest value), then the driver
+# accelerates from standstill (w, 4 x 1.5 s), turns (w+d, 2 x 1.5 s) and stops; partner_ride_cam=frame/line/episode
+# lines on both copies give the body's camera-space shift (lag_cm, d_cm), the speed and the body's drift in the vehicle.
+#   A) the host drives, the guest boards from the right door (seat 3, the user's case);
+#   B) the host drives, the guest boards from the left door (seat 2; seat 1 is the host's dog's);
+#   C) the guest drives, the host boards from the right door.
+# Frames: <leg>-rest, <leg>-acc-NN (both copies while accelerating), <leg>-turn-NN, <leg>-stop.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-ride-camera-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+guest debug teleport -633.5 3.0 867.8 -117
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+host debug time 43200
+host debug weather sunny
+waitlog host 'world_lua=event=seat; action=ready; role=host' 60
+waitlog guest 'world_lua=event=seat; state=ready' 30
+# --- A) the host drives, the guest rides seat 3 -------------------------------------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+wait 2500
+guest debug goto_vehicle jeep right
+wait 3000
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 10
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 10
+host run vehicle_seats
+guest run vehicle_seats
+wait 3000
+both capture a-rest
+logmark both
+host hold w 1500 nowait
+both burst a-acc 4 150
+host hold w 1500 nowait
+both burst a-acc2 3 200
+host hold w 1500 nowait
+wait 1400
+host hold w 1500 nowait
+both burst a-fast 3 200
+host hold w+d 1500 nowait
+both burst a-turn 3 200
+host hold w+d 1500 nowait
+wait 1400
+host hold s 1500
+wait 2500
+both capture a-stop
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=[0-9];' 5
+waitlog host 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=0;' 5
+# --- B) the host drives, the guest rides the left back seat --------------------------------------------------------
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=off' 8
+guest debug goto_vehicle jeep left
+wait 3000
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 10
+host run vehicle_seats
+guest run vehicle_seats
+wait 3000
+both capture b-rest
+logmark both
+host hold w 1500 nowait
+both burst b-acc 4 150
+host hold w 1500 nowait
+wait 1400
+host hold w 1500 nowait
+wait 1400
+host hold w+a 1500 nowait
+both burst b-turn 3 200
+host hold s 1500
+wait 2500
+both capture b-stop
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=[0-9];' 5
+# --- C) the guest drives, the host rides --------------------------------------------------------------------------
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+host run vehicle_seats
+guest run vehicle_seats
+guest debug goto_vehicle jeep
+wait 3000
+guest press e 150
+waitlog guest 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+wait 2500
+host debug goto_vehicle jeep right
+wait 3000
+host press e 150
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[0-9];' 10
+host run vehicle_seats
+guest run vehicle_seats
+wait 3000
+both capture c-rest
+logmark both
+guest hold w 1500 nowait
+both burst c-acc 4 150
+guest hold w 1500 nowait
+both burst c-acc2 3 200
+guest hold w 1500 nowait
+wait 1400
+guest hold w+d 1500 nowait
+both burst c-turn 3 200
+guest hold s 1500
+wait 2500
+both capture c-stop
+waitlog host 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=[0-9];' 5
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=0;' 5
+host press e 150
+wait 3500
+guest press e 150
+wait 3500
+host run vehicle_seats
+guest run vehicle_seats
+state

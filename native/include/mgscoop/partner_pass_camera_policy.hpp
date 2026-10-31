@@ -993,4 +993,168 @@ inline const char* RequestGate(std::uint32_t d38, std::uint32_t f204) noexcept {
     return nullptr;
 }
 
+// --- fb1031: the ride camera census (lab and play; design 8.59) ----------------------------------------------------
+// Per driver tick while the local player rides a vehicle (driver or passenger): the local body B (aim read body[0]), the
+// camera eye C and its rotation q (CAM+0xE0, CAM+0x90) and the vehicle V (unit pos, yaw). The body's camera-space
+// position cs = (r.(B-C), u.(B-C), f.(B-C)) stays put while the camera orbits the body rigidly (a look turn included)
+// and moves when the camera's follow point trails the body: at rest (speed < kCensusRestSpeed for kCensusRestMs) cs0
+// is kept; once the vehicle moves (>= kCensusMoveSpeed) an episode measures lag = |cs - cs0| (m), lag / speed (ms) and
+// the body's drift in the vehicle frame (B - V turned by -yaw, against its rest value). Read only.
+inline constexpr float kCensusRestSpeed = 0.3f, kCensusMoveSpeed = 1.0f, kCensusMsSpeed = 3.0f;
+inline constexpr std::uint64_t kCensusRestMs = 300, kCensusEndMs = 600, kCensusLineMs = 250, kCensusGapMs = 500;
+inline constexpr unsigned kCensusFrameTicks = 90, kCensusFrameEpisodes = 4;
+struct CensusIn {
+    bool ok = false;  // every read below succeeded this tick
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+    float veh[3]{}, yaw = 0.0f, body[3]{}, eye[3]{}, rot[4]{};
+    std::uint64_t now_ms = 0;
+};
+struct Census {
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+    bool have = false;
+    float last_veh[3]{};
+    std::uint64_t last_ms = 0;
+    bool rest_have = false;
+    std::uint64_t rest_since = 0;
+    float cs0[3]{}, local0[3]{};
+    bool moving = false;
+    std::uint64_t start_ms = 0, still_since = 0, line_ms = 0;
+    unsigned ticks = 0, episodes = 0;
+    float max_lag = 0.0f, max_speed = 0.0f, max_drift = 0.0f, ms_sum = 0.0f;
+    unsigned ms_n = 0;
+};
+enum class CensusEvent : std::uint8_t { none, frame, line, end };
+struct CensusOut {
+    CensusEvent event = CensusEvent::none;
+    float cs[3]{}, d[3]{};
+    float lag = 0.0f, drift = 0.0f, speed = 0.0f;
+    // end: the episode's summary (the state is reset after it).
+    unsigned episode = 0, ticks = 0;
+    std::uint64_t dur_ms = 0;
+    float max_lag = 0.0f, max_speed = 0.0f, max_drift = 0.0f, lag_ms = -1.0f;
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+};
+// v in the camera frame of q (Hamilton x, y, z, w): right q(1,0,0)q*, up q(0,1,0)q*, forward q(0,0,1)q*.
+inline void CameraSpace(const float* q, const float* v, float* out) noexcept {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float r[3] = {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)};
+    const float u[3] = {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)};
+    const float f[3] = {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)};
+    out[0] = r[0] * v[0] + r[1] * v[1] + r[2] * v[2];
+    out[1] = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    out[2] = f[0] * v[0] + f[1] * v[1] + f[2] * v[2];
+}
+// v in the vehicle frame of yaw (the body yaw convention: forward (sin, 0, cos), right (cos, 0, -sin)).
+inline void YawSpace(float yaw, const float* v, float* out) noexcept {
+    const float s = std::sin(yaw), c = std::cos(yaw);
+    out[0] = c * v[0] - s * v[2];
+    out[1] = v[1];
+    out[2] = s * v[0] + c * v[2];
+}
+inline float Norm3(const float* v) noexcept { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+inline CensusOut CensusEnd(Census& c) noexcept {
+    CensusOut o{};
+    o.event = CensusEvent::end;
+    o.episode = c.episodes;
+    o.ticks = c.ticks;
+    o.dur_ms = c.last_ms >= c.start_ms ? c.last_ms - c.start_ms : 0;
+    o.max_lag = c.max_lag;
+    o.max_speed = c.max_speed;
+    o.max_drift = c.max_drift;
+    o.lag_ms = c.ms_n ? c.ms_sum / static_cast<float>(c.ms_n) : -1.0f;
+    o.vehicle = c.vehicle;
+    o.seat = c.seat;
+    c.moving = false;
+    c.rest_have = false;
+    c.rest_since = 0;
+    return o;
+}
+inline CensusOut CensusStep(Census& c, const CensusIn& in) noexcept {
+    const bool same = in.ok && c.have && in.vehicle == c.vehicle && in.seat == c.seat && in.now_ms > c.last_ms &&
+                      in.now_ms - c.last_ms <= kCensusGapMs;
+    if (!same) {
+        // A new ride, a seat change, a read gap or the ride's end: an open episode ends with what it measured.
+        CensusOut o{};
+        if (c.moving) o = CensusEnd(c);
+        const unsigned episodes = c.episodes;
+        c = Census{};
+        c.episodes = episodes;
+        if (in.ok) {
+            c.have = true;
+            c.vehicle = in.vehicle;
+            c.seat = in.seat;
+            for (unsigned i = 0; i < 3; ++i) c.last_veh[i] = in.veh[i];
+            c.last_ms = in.now_ms;
+        }
+        return o;
+    }
+    CensusOut o{};
+    const float dv[3] = {in.veh[0] - c.last_veh[0], in.veh[1] - c.last_veh[1], in.veh[2] - c.last_veh[2]};
+    const float speed = Norm3(dv) * 1000.0f / static_cast<float>(in.now_ms - c.last_ms);
+    for (unsigned i = 0; i < 3; ++i) c.last_veh[i] = in.veh[i];
+    c.last_ms = in.now_ms;
+    const float rel[3] = {in.body[0] - in.eye[0], in.body[1] - in.eye[1], in.body[2] - in.eye[2]};
+    const float bv[3] = {in.body[0] - in.veh[0], in.body[1] - in.veh[1], in.body[2] - in.veh[2]};
+    float cs[3]{}, local[3]{};
+    CameraSpace(in.rot, rel, cs);
+    YawSpace(in.yaw, bv, local);
+    if (!std::isfinite(speed) || !std::isfinite(cs[0] + cs[1] + cs[2]) || !std::isfinite(local[0] + local[1] + local[2])) return o;
+    o.speed = speed;
+    for (unsigned i = 0; i < 3; ++i) o.cs[i] = cs[i];
+    if (speed < kCensusRestSpeed) {
+        if (!c.rest_since) c.rest_since = in.now_ms;
+        if (c.moving) {
+            if (!c.still_since) c.still_since = in.now_ms;
+            if (in.now_ms - c.still_since >= kCensusEndMs) return CensusEnd(c);
+        } else if (in.now_ms - c.rest_since >= kCensusRestMs) {
+            c.rest_have = true;
+            for (unsigned i = 0; i < 3; ++i) {
+                c.cs0[i] = cs[i];
+                c.local0[i] = local[i];
+            }
+        }
+    } else {
+        c.rest_since = 0;
+        c.still_since = 0;
+    }
+    if (!c.moving && c.rest_have && speed >= kCensusMoveSpeed) {
+        c.moving = true;
+        c.start_ms = in.now_ms;
+        c.line_ms = 0;
+        c.ticks = 0;
+        ++c.episodes;
+        c.max_lag = c.max_speed = c.max_drift = c.ms_sum = 0.0f;
+        c.ms_n = 0;
+    }
+    if (!c.moving) return o;
+    float dl[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        o.d[i] = cs[i] - c.cs0[i];
+        dl[i] = local[i] - c.local0[i];
+    }
+    o.lag = Norm3(o.d);
+    o.drift = Norm3(dl);
+    ++c.ticks;
+    if (o.lag > c.max_lag) c.max_lag = o.lag;
+    if (speed > c.max_speed) c.max_speed = speed;
+    if (o.drift > c.max_drift) c.max_drift = o.drift;
+    if (speed >= kCensusMsSpeed) {
+        c.ms_sum += o.lag * 1000.0f / speed;
+        ++c.ms_n;
+    }
+    o.episode = c.episodes;
+    o.ticks = c.ticks;
+    o.dur_ms = in.now_ms - c.start_ms;
+    if (c.ticks <= kCensusFrameTicks && c.episodes <= kCensusFrameEpisodes) {
+        o.event = CensusEvent::frame;
+    } else if (!c.line_ms || in.now_ms - c.line_ms >= kCensusLineMs) {
+        c.line_ms = in.now_ms;
+        o.event = CensusEvent::line;
+    }
+    return o;
+}
+
 } // namespace mgscoop::partner_pass_camera

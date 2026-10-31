@@ -3735,6 +3735,67 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the
 // seatshot lever's override wins) decides apply: off on a lab copy still plans every seated shot (census lines, nothing
 // moved); off in play publishes nothing. One line per planned shot (the hook's last plan), capped per mission.
+// fb1031 (design 8.59): the ride camera census, lab and play, read only. While the local player rides a vehicle (the
+// local passenger report, else the vehicle it drives), the body's camera-space position against
+// its rest value (partner_pass_camera::CensusStep): per-tick lines for the first ticks of an episode (accelerating
+// from standstill), then one line every 250 ms, and a summary when the vehicle stops or the ride ends.
+void TickRideCamCensus(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& c = d.mission.pass_camera;
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    pc::CensusIn in{};
+    in.now_ms = now;
+    if (lp.valid) {
+        in.vehicle = lp.vehicle;
+        in.seat = lp.seat;
+    } else if (d.local_vehicle != partner_ride_wire::kVehicleUnknown) {
+        in.vehicle = d.local_vehicle;  // the vehicle this copy's player drives (Lua's ON_VEHICLE)
+        in.seat = 0;
+    }
+    pc::View v{};
+    pp::AimRead ar{};
+    partner_vehicle::Read vr{};
+    if (in.vehicle != partner_ride_wire::kVehicleUnknown && h.vehicle_read && h.read_aim && h.pass_camera_view) {
+        h.vehicle_read(h.context, in.vehicle, vr);
+        const bool veh_ok = !vr.refusal && vr.unit.id == in.vehicle && std::isfinite(vr.unit.pos[0]) && std::isfinite(vr.unit.pos[1]) &&
+                            std::isfinite(vr.unit.pos[2]) && std::isfinite(vr.unit.pos[3]);
+        const bool body_ok = veh_ok && h.read_aim(h.context, st, ar) && ar.body_ok[0] && std::isfinite(ar.body[0][0]) &&
+                             std::isfinite(ar.body[0][1]) && std::isfinite(ar.body[0][2]);
+        const bool view_ok = body_ok && h.pass_camera_view(h.context, st, v) && v.ok && pc::QuatOk(v.rot);
+        if (view_ok) {
+            in.ok = true;
+            for (unsigned i = 0; i < 3; ++i) {
+                in.veh[i] = vr.unit.pos[i];
+                in.body[i] = ar.body[0][i];
+                in.eye[i] = v.pos[i];
+            }
+            in.yaw = vr.unit.pos[3];
+            for (unsigned i = 0; i < 4; ++i) in.rot[i] = v.rot[i];
+        }
+    }
+    if (!in.ok && !c.census.have) return;
+    const pc::CensusOut o = pc::CensusStep(c.census, in);
+    if (o.event == pc::CensusEvent::none) return;
+    const auto cm = [](float a) noexcept { return std::isfinite(a) && a > -2.0e7f && a < 2.0e7f ? static_cast<int>(std::lround(a * 100.0f)) : INT32_MIN; };
+    pc::Camera cam{};
+    if (h.pass_camera_read) h.pass_camera_read(h.context, st, cam);
+    if (o.event == pc::CensusEvent::end) {
+        EmitNativeN(h, c.census_cap, kRideCamCap, "partner_ride_cam",
+                    "partner_ride_cam=episode; ep=%u; vehicle=%u; seat=%u; ticks=%u; ms=%llu; max_spd_cms=%d; max_lag_cm=%d; lag_ms=%d; "
+                    "max_drift_cm=%d; cmode=%d\r\n",
+                    o.episode, unsigned(o.vehicle), unsigned(o.seat), o.ticks, static_cast<unsigned long long>(o.dur_ms), cm(o.max_speed),
+                    cm(o.max_lag), o.lag_ms < 0.0f ? -1 : static_cast<int>(std::lround(o.lag_ms)), cm(o.max_drift), cam.ok ? cam.mode : -1);
+        return;
+    }
+    EmitNativeN(h, o.event == pc::CensusEvent::frame ? c.census_frame_cap : c.census_cap,
+                o.event == pc::CensusEvent::frame ? kRideCamFrameCap : kRideCamCap, "partner_ride_cam",
+                "partner_ride_cam=%s; t=%llu; ep=%u; n=%u; vehicle=%u; seat=%u; spd_cms=%d; lag_cm=%d; d_cm=%d,%d,%d; drift_cm=%d; "
+                "cs_cm=%d,%d,%d; cmode=%d\r\n",
+                o.event == pc::CensusEvent::frame ? "frame" : "line", static_cast<unsigned long long>(now), o.episode, o.ticks,
+                unsigned(in.vehicle), unsigned(in.seat), cm(o.speed), cm(o.lag), cm(o.d[0]), cm(o.d[1]), cm(o.d[2]), cm(o.drift),
+                cm(o.cs[0]), cm(o.cs[1]), cm(o.cs[2]), cam.ok ? cam.mode : -1);
+}
+
 void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
@@ -7171,6 +7232,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickBoard(d, h, st, now, terminating, ride_tick);
     TickPassCamera(d, h, st, now, terminating);
     TickSeatShot(d, h, st, now, terminating);
+    if (!terminating) TickRideCamCensus(d, h, st, now);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     SendSeatExt(d, h, now);
