@@ -6,8 +6,10 @@
 #      nearest guard (S1 published for seat 3; the hit); the stock get-off (seat 3 never arms the turn).
 #   B. The guest drives (after the host's grant), the host boards from the right: the seat it gets is recorded; the
 #      host's aim view from that seat; the get-off.
-#   C. Teardown while seated: the guest boards seat 3 again and the run ends with the guest seated (the worker's
-#      close and restore while a seat patch is applied).
+#   C. The D-Dog after the partner, then teardown while seated: the host first steps 40 m away from the jeep (its
+#      D-Dog follows on foot), then is warped to the jeep and drives; the guest boards from the right at once, so it
+#      can sit in seat 1 before the dog arrives; the dog's arrival is waited for and captured on both copies; the run
+#      ends with the guest seated (the worker's close and restore while a seat patch is applied).
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
 #   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -71,6 +73,7 @@ host capture a-drv-aim
 guest press lmb 120
 wait 300
 guest capture a-shot-1
+waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=3;' 3
 guest hold rmb 1500 nowait
 wait 700
 guest press lmb 120
@@ -144,8 +147,14 @@ guest run vehicle_seats
 guest expect vehicle_not_riding
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
-# --- C. Teardown while seated ---------------------------------------------------------------------------------------
+# --- C. The D-Dog after the partner, then teardown while seated ---------------------------------------------------
 logmark both
+host debug teleport -656.01 1.20 877.73 62
+wait 1500
+host debug forward -40
+wait 9000
+host run buddy_status
+host capture c-far
 host debug goto_vehicle jeep
 wait 2500
 host press e 150
@@ -156,8 +165,14 @@ guest debug goto_vehicle jeep right
 wait 3000
 guest press e 150
 wait 4500
-waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
-waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
-wait 1000
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[13];' 10
+both capture c-seated
+host run vehicle_seats
+wait 9000
+host run vehicle_seats
+host run buddy_status
+both capture c-dog
+wait 4000
 both capture c-seated-end
 state
