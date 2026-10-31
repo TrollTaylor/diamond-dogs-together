@@ -26,8 +26,6 @@ host debug time 43200
 host debug weather sunny
 waitlog host 'partner_seat_shot=configured; key=1; play=1' 30
 waitlog guest 'partner_seat_shot=configured; key=1; play=1' 30
-waitlog host 'partner_ride_seat1_anchor=configured; on=1' 30
-waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 30
 waitlog host 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
 waitlog guest 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
 guest debug teleport -652.93 1.20 879.33 -117
@@ -53,6 +51,8 @@ wait 2300
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
 waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
 waitlog guest 'partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=[12]; apply=1;' 5
+# The anchor's configured line is logged once, at this copy's first seat patch (PartnerRideSeatArm), not at load.
+waitlog host 'partner_ride_seat1_anchor=configured; on=1' 5
 wait 1000
 both capture a-seated
 guest hold rmb 1500 nowait
@@ -125,6 +125,7 @@ host press e 150
 wait 4500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[13];' 10
+waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 5
 wait 1000
 both capture b-seated
 host hold rmb 1500 nowait
