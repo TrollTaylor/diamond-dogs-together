@@ -15,6 +15,9 @@ frames].
 - **Part C** (`8567f888`, play): the driver's D-Dog boarded seat 1 with the driver even from 335 m away, so the guest
   got the back seat again; the dog arriving after the partner sits in seat 1 needs the partner to board first [U].
 - Runs `859964ce`, `1bd4419a`, `8567f888` (archive `C:/Users/taylo/mgs-coop-run-archive/m6m7i`); never-lines 0.
+- Full `tools/build.ps1` at `e4fed94`: CTest 336/336; contract `--check` 836 / 213.
+- **Open:** the partner in seat 1 before the driver boards with its dog (8.25's DrawSeat in a game); the in-aim rearm
+  of first person after a fall in a game; a checkpoint reload with a seated partner reaching play on both screens.
 
 ## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
 
