@@ -32,6 +32,7 @@ do
  -- Waits for the engine's parts reload (PlayerStatus.PARTS_ACTIVE, as s10151's mid-mission
  -- swap does) before the final result; the vars must still hold the new type.
  local function wait(C,want,id)
+  if not want then return end
   D.pending={kind="character",id=id,mission=D.mission,frames=0,poll=function()
    local q=D.pending
    if get(vars,"playerType")~=want then D.pending=nil;report(C,"reverted",q.id);A.note(q.id,false,"character_reverted;type="..tostring(get(vars,"playerType")));return end
@@ -51,22 +52,31 @@ do
   if type(configured)~="string" or configured=="MGS_COOP_CHARACTER_V1" then configured="" end
   local target,why=S.Resolve(a[2],configured)
   if not target then return false,why end
-  -- The pick holds for later mission loads; "default" hands back to coop.ini.
-  M.characterPick=a[2]~="default" and a[2] or nil
+  -- The pick holds for later mission loads ("default" hands back to coop.ini); stored
+  -- only once the switch went through (a throwing binding leaves none).
+  local function done(kind,r,want)
+   M.characterPick=a[2]~="default" and a[2] or nil
+   report(C,kind,id);wait(C,want,id);return true,r
+  end
   local x=C.Gather(target)
   if target=="story" then target=C.Story(x.quiet) end
+  -- The Quiet rules win in place as at load (C.Decide).
+  if target=="quiet" and (C.QUIET_CONFLICT[x.mission] or x.buddyQuiet) then
+   return false,"character_quiet_unavailable;reason="..(C.QUIET_CONFLICT[x.mission] and "quiet_conflict" or "buddy_quiet")
+  end
+  -- The bypass is switched on only while a mission loads: else applied at the next load.
+  local function off()return A.receipt("return 'MGS_COOP_CHARACTER_BYPASS_ON_V1'")~=true end
   if target=="own" then
-   if get(gvars,"ply_isUsingTempPlayerType")~=true then report(C,"kept",id);return true,"character_kept;own" end
+   if get(gvars,"ply_isUsingTempPlayerType")~=true then return done("kept","character_kept;own") end
+   local own,E=get(gvars,"ply_lastPlayerTypeUsingTemp"),C.Enums().PlayerType
+   if (own==E.OCELOT or own==E.QUIET) and off() then return done("next_load","character_next_load;own") end
    call(TppPlayer,"RestoreTemporaryPlayerType")
-   expect(get(vars,"playerType"));report(C,"switched",id);wait(C,get(vars,"playerType"),id)
-   return true,"character_switched;own"
+   expect(get(vars,"playerType"))
+   return done("switched","character_switched;own",get(vars,"playerType"))
   end
-  if (target=="ocelot" or target=="quiet") and A.receipt("return 'MGS_COOP_CHARACTER_BYPASS_ON_V1'")~=true then
-   -- The bypass is switched on only while a mission loads: applied at the next load.
-   report(C,"next_load",id);return true,"character_next_load;"..target
-  end
+  if (target=="ocelot" or target=="quiet") and off() then return done("next_load","character_next_load;"..target) end
   local temp,face=C.Plan(target,{sortie=x.sortie},C.Enums())
-  if vars.playerType==temp.playerType and vars.playerPartsType==temp.partsType then report(C,"kept",id);return true,"character_kept;"..target end
+  if vars.playerType==temp.playerType and vars.playerPartsType==temp.partsType then return done("kept","character_kept;"..target) end
   -- Your own appearance is kept once (the game's SaveCurrentPlayerType), then the vars the
   -- type setting writes; the engine reloads the parts from them.
   call(TppPlayer,"SaveCurrentPlayerType")
@@ -74,8 +84,8 @@ do
   if temp.handEquip then vars.handEquip=temp.handEquip end
   if face then vars.playerFaceId=face end
   vars.playerType=temp.playerType
-  expect(temp.playerType);report(C,"switched",id);wait(C,temp.playerType,id)
-  return true,"character_switched;"..target
+  expect(temp.playerType)
+  return done("switched","character_switched;"..target,temp.playerType)
  end
  -- Merge-friendly dispatch: debug_menu.lua routes D.player's handles to D.player.run.
  local P=D.player
