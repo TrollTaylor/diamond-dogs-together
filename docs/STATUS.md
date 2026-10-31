@@ -138,6 +138,9 @@ person), is [U]: no run has fired one.
   reason=graphics_or_input_hook`); SnippingTool.exe (PID 124620) runs in the console session; the other track's run at
   19:45 failed the same way; `debug_overlay_tests` then failed "hardware DX11 fixture creation" with 36 GB commit free.
   No retry. Next: run `m6m7f-seat-fpv-probe.txt` once the worker admits again.
+- Full CTest 335/336 (`debug_overlay_tests`: "hardware DX11 fixture creation", environment: it passed at this code at
+  19:48 and 19:57, failed from 19:58 on; the overlay files are unchanged since 0.14.0); lab scripts suite 1692 checks;
+  contract `--check` 836 / 213.
 
 ## 2026-10-30: the get-off camera turn ON for players (branch `wp/aim-view`; `partner_pass_camera=view` default)
 
