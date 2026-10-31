@@ -459,6 +459,9 @@ enum class FailKind : unsigned { none = 0, hr = 1, mh = 2, win32 = 3, null_addre
 struct InstallFailure { const char* step; const char* detail; FailKind kind; long code; };
 InstallFailure install_failure{};
 char install_line[256]{};
+// A create call (DirectInput8Create, CreateDevice, D3D11CreateDeviceAndSwapChain): a failed HRESULT is recorded as such;
+// a success that handed back no object is a null address, not hr=0.
+FailKind CreatedKind(HRESULT hr, bool got) noexcept { return FAILED(hr) ? FailKind::hr : got ? FailKind::none : FailKind::null_address; }
 void Fail(const char* step, const char* detail, FailKind kind, long code) noexcept {
     if (!install_failure.step) install_failure = {step, detail, kind, code};
 }
@@ -954,17 +957,18 @@ DWORD WINAPI Pad(DWORD index, XINPUT_STATE* state) noexcept {
 }
 bool InputHooks() noexcept {
     wchar_t input_path[MAX_PATH]{};
-    if (!GetSystemDirectoryW(input_path, ARRAYSIZE(input_path)) ||
-        FAILED(StringCchCatW(input_path, ARRAYSIZE(input_path), L"\\dinput8.dll"))) {
+    if (!GetSystemDirectoryW(input_path, ARRAYSIZE(input_path))) {
         Fail("input", "system_directory", FailKind::win32, static_cast<long>(GetLastError())); return false;
     }
+    const HRESULT joined = StringCchCatW(input_path, ARRAYSIZE(input_path), L"\\dinput8.dll");
+    if (FAILED(joined)) { Fail("input", "system_directory", FailKind::hr, joined); return false; }
     const HMODULE input_module = LoadLibraryExW(input_path, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!input_module) { Fail("input", "dinput8_load", FailKind::win32, static_cast<long>(GetLastError())); return false; }
     const auto create = reinterpret_cast<InputCreateFn>(GetProcAddress(input_module, "DirectInput8Create"));
     if (!create) { Fail("input", "DirectInput8Create_export", FailKind::win32, static_cast<long>(GetLastError())); return false; }
     IDirectInput8W* input = nullptr;
     const HRESULT made_input = create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8W, reinterpret_cast<void**>(&input), nullptr);
-    if (FAILED(made_input) || !input) { Fail("input", "DirectInput8Create", FailKind::hr, made_input); return false; }
+    if (FAILED(made_input) || !input) { Fail("input", "DirectInput8Create", CreatedKind(made_input, input), FAILED(made_input) ? made_input : 0); return false; }
     const GUID* identifiers[] = {&GUID_SysKeyboard, &GUID_SysMouse};
     const char* const device_names[] = {"CreateDevice_keyboard", "CreateDevice_mouse"};
     const char* const state_names[] = {"keyboard_GetDeviceState", "mouse_GetDeviceState"};
@@ -977,7 +981,9 @@ bool InputHooks() noexcept {
     for (unsigned i = 0; i < ARRAYSIZE(identifiers) && ok; ++i) {
         IDirectInputDevice8W* object = nullptr;
         const HRESULT made_device = input->CreateDevice(*identifiers[i], &object, nullptr);
-        if (FAILED(made_device) || !object) { Fail("input", device_names[i], FailKind::hr, made_device); ok = false; break; }
+        if (FAILED(made_device) || !object) {
+            Fail("input", device_names[i], CreatedKind(made_device, object), FAILED(made_device) ? made_device : 0); ok = false; break;
+        }
         void** methods = *reinterpret_cast<void***>(object);
         if (i == 0 || methods[9] != state_hooks[0].target)
             ok = StepHook("input", state_names[i], state_hooks[i], methods[9], reinterpret_cast<void*>(&DeviceState));
@@ -1875,7 +1881,7 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
     const HRESULT created = hidden ? D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
         nullptr, 0, D3D11_SDK_VERSION, &desc, &dummy, &dummy_device, nullptr, &dummy_context) : E_FAIL;
     bool ok = SUCCEEDED(created) && dummy;
-    if (hidden && !ok) Fail("device", "D3D11CreateDeviceAndSwapChain", FailKind::hr, created);
+    if (hidden && !ok) Fail("device", "D3D11CreateDeviceAndSwapChain", CreatedKind(created, dummy), FAILED(created) ? created : 0);
     if (ok) {
         void** methods = *reinterpret_cast<void***>(dummy);
         ok = StepHook("present_hook", "IDXGISwapChain_Present", present_hook, methods[8], reinterpret_cast<void*>(&Present)) &&
@@ -1978,6 +1984,7 @@ bool RefusalLineForTest(const char* step, const char* detail, unsigned kind, lon
 bool InstallLineForTest(char* out, std::size_t capacity) noexcept {
     return install_line[0] && out && SUCCEEDED(StringCchCopyA(out, capacity, install_line));
 }
+unsigned CreatedFailKindForTest(long hr, bool got) noexcept { return static_cast<unsigned>(CreatedKind(static_cast<HRESULT>(hr), got)); }
 void SetMouseHeldForTest(bool value) noexcept { test_mouse_held.store(value, std::memory_order_release); }
 void SetOpenForTest(bool value) noexcept { ChangeOpen(value); }
 void SetForegroundForTest(bool value) noexcept { test_foreground.store(value); }
