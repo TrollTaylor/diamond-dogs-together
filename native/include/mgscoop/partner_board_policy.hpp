@@ -288,8 +288,11 @@ struct RaceIn {
     std::uint32_t grant_until = 0;
 };
 // A deny first; then a live hold unless this vehicle holds a live grant; else pass.
+// 8.57 door message: the host's own yield (RaceGrantIf; bit 16 of the deny word, which every reader masks off) no
+// longer refuses its ride icon at site C: standing at that door counts nothing, and an E press there reaches site B,
+// whose backstop refuses it and counts the hit Lua turns into NOTE 13 a=7. Any other deny refuses the icon as before.
 inline constexpr std::uint64_t kDenyYield = 1ull << 16;
-inline bool RaceIconRefused(RaceVerdict v, bool) noexcept { return v == RaceVerdict::deny; }
+inline bool RaceIconRefused(RaceVerdict v, bool yield) noexcept { return v == RaceVerdict::deny && !yield; }
 inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
     if (RaceDenied(in.deny_vehicle, in.deny_until, in.now_ms, in.vehicle)) return RaceVerdict::deny;
     const bool held = in.hold_on && static_cast<std::uint32_t>(in.hold_until - in.now_ms) <= kRaceDenyMaxMs;
@@ -308,6 +311,12 @@ inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
 inline constexpr std::uint32_t kPressWaitMs = 1000;
 inline constexpr std::uint32_t kPressGapMs = 250;     // a pending press unseen this long is over (the next one is new)
 inline constexpr std::uint32_t kHostCommitMs = 3000;  // the host's own press owns the vehicle this long
+// 8.57 (the tie, runs 23c7f305 / caaf743f): the partner's ride reached a held press before the driver's copy said
+// whether its D-Dog took seat 1 (it re-reads rider[1] every 250 ms and sends a change at once; the dog jumps in about
+// 250 ms after its driver). While the peer-driver policy still offers seat 1 (the driver's v4 addendum: Front / Cab
+// and not OneTaken) the press stays idle, at most kSeatSettleMs after site D first saw the partner drive it; then
+// the passenger policy picks: the back seats once OneTaken arrived, seat 1 when it stayed free. Without an offer
+// (a 0.14.4 driver, no addendum, the seat-1 keys off, OneTaken already) it ends at once as before.
 inline constexpr std::uint32_t kSeatSettleMs = 700;
 enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer };
 struct PressIn {
@@ -320,16 +329,23 @@ struct PressIn {
     std::uint16_t pend_vehicle = kVehicleUnknown;
     std::uint32_t pend_start = 0, pend_seen = 0, now_ms = 0;
     bool granted = false, denied = false;  // a live grant / deny for this vehicle
-    bool seat_one = false;
-    bool peer_seen = false;
+    bool seat_one = false;         // 8.57: the live peer-driver policy for it offers seat 1 (front_ok / cab_ok)
+    bool peer_seen = false;        // this press already saw the partner drive it, at peer_since
     std::uint32_t peer_since = 0;
 };
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
-// (a grant, a deny or the timeout ended the wait; site B decides).
+// (a grant, a deny or the timeout ended the wait; site B decides). The partner drives the held press's vehicle:
+// settle: idle while its seats settle (8.57); peer: the gate's own answer, the press ends as 'peer' (end 4; the
+// passenger policy seats it). A new press at a vehicle the partner drives is stock (the passenger policy decides).
 inline PressVerdict PressDecide(const PressIn& in) noexcept {
-    if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType || in.peer_drives)
+    if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType)
         return PressVerdict::stock;
     const bool same = in.open && in.pend_vehicle == in.vehicle && in.now_ms - in.pend_seen <= kPressGapMs;
+    if (in.peer_drives) {
+        if (!same) return PressVerdict::stock;
+        const bool settling = in.seat_one && (!in.peer_seen || in.now_ms - in.peer_since < kSeatSettleMs);
+        return settling ? PressVerdict::settle : PressVerdict::peer;
+    }
     if (!same) return in.denied ? PressVerdict::stock : PressVerdict::start;
     if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
     return PressVerdict::wait;

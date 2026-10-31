@@ -4654,6 +4654,7 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
 //   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
 //              grant=<id|65535>,gleft=<ms>,holds=<n>,ref=<id|65535>,rage=<ms|-1>}
 //      (ref / rage: the Fulton guard's vehicle and its age: a refused ride icon or the peer's vehicle; seats on)
+//      (8.57: lpv the vehicle this player sits in as a passenger, 65535 none: Lua's deny toast waits for it)
 //   -> return {ok=false,reason='request'}
 // Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
 bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -4695,10 +4696,11 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     }
     if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
                                 "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld,"
-                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d,dend=%u,dveh=%u}",
+                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d,dend=%u,dveh=%u,lpv=%u}",
                                 unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
                                 rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage, unsigned(rs.press), page, rs.pseq, rs.pend ? 1u : 0u,
-                                rs.timeouts, unsigned(rs.commit), gi, unsigned(rs.done_end), unsigned(rs.done_vehicle))))
+                                rs.timeouts, unsigned(rs.commit), gi, unsigned(rs.done_end), unsigned(rs.done_vehicle),
+                                partner_driver.local_passenger.valid ? unsigned(partner_driver.local_passenger.vehicle) : 0xFFFFu)))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }

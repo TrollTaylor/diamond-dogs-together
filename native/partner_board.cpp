@@ -69,6 +69,9 @@ void GuardMark(std::uint16_t vehicle, std::uint32_t now) noexcept {
 std::atomic<std::uint64_t> g_press{kVehicleUnknown};
 std::atomic<std::uint32_t> g_press_seen{0}, g_pseq{0}, g_timeouts{0};
 std::atomic<bool> g_pend{false};
+// 8.57: when the held press first saw the partner drive its vehicle (kPeerSeen | low 32 ms; 0 not yet).
+inline constexpr std::uint64_t kPeerSeen = 1ull << 32;
+std::atomic<std::uint64_t> g_press_peer{0};
 std::atomic<std::uint64_t> g_commit{kVehicleUnknown};
 // The last press that ended (vehicle | end << 16 (1 grant, 2 deny, 3 timeout, 4 peer) | wait ms << 32), the ended count and
 // the host's commit count (game_script_observer logs 'partner_board=press' from the receipt, never from the hook).
@@ -311,6 +314,10 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
     }
     const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
     in.peer_drives = p.mode != Mode::off && LeaseLive(p.until_ms, now) && p.peer_seat == 0 && p.vehicle == in.vehicle;
+    in.seat_one = in.peer_drives && (p.front_ok || p.cab_ok);
+    const std::uint64_t peer = g_press_peer.load(std::memory_order_acquire);
+    in.peer_seen = (peer & kPeerSeen) != 0;
+    in.peer_since = static_cast<std::uint32_t>(peer);
     const std::uint64_t press = g_press.load(std::memory_order_acquire);
     in.open = g_pend.load(std::memory_order_acquire);
     in.pend_vehicle = static_cast<std::uint16_t>(press & 0xFFFFu);
@@ -320,12 +327,6 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
     in.denied = WordNames(g_deny.load(std::memory_order_acquire), in.vehicle, now);
     bool result = ok;
     const PressVerdict verdict = PressDecide(in);
-    if (verdict == PressVerdict::stock && in.open && in.peer_drives && in.pend_vehicle == in.vehicle) {
-        // The partner's ride arrived while this press was held (both pressed, run 23c7f305): the passenger policy seats
-        // it now, so it ends as 'peer' (end 4; Lua shows no deny toast for it).
-        g_pend.store(false, std::memory_order_release);
-        StoreDone(in.vehicle, 4u, now - in.pend_start);
-    }
     switch (verdict) {
     case PressVerdict::start: {
         // A grant from before this press never lets it board (single use).
@@ -333,6 +334,7 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
         if (static_cast<std::uint16_t>(grant & 0xFFFFu) == in.vehicle) g_grant.compare_exchange_strong(grant, kVehicleUnknown, std::memory_order_acq_rel);
         g_press.store(static_cast<std::uint64_t>(in.vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
         g_press_seen.store(now, std::memory_order_release);
+        g_press_peer.store(0, std::memory_order_release);
         g_pend.store(true, std::memory_order_release);
         g_pseq.fetch_add(1, std::memory_order_acq_rel);
         result = true;
@@ -349,6 +351,18 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
         StoreDone(in.vehicle, end, now - in.pend_start);
         break;
     }
+    case PressVerdict::settle:
+        // 8.57: the partner drives it and still offers seat 1: idle until its seats settle (PressDecide).
+        if (!in.peer_seen) g_press_peer.store(kPeerSeen | now, std::memory_order_release);
+        g_press_seen.store(now, std::memory_order_release);
+        result = true;
+        break;
+    case PressVerdict::peer:
+        // The partner's ride arrived while this press was held (both pressed, run 23c7f305): the passenger policy seats
+        // it now, so it ends as 'peer' (end 4; Lua shows no deny toast once it sits).
+        g_pend.store(false, std::memory_order_release);
+        StoreDone(in.vehicle, 4u, now - in.pend_start);
+        break;
     case PressVerdict::stock: break;
     }
     SetLastError(error);
@@ -380,13 +394,16 @@ bool SiteC(void* action, std::uint32_t body, void* unit, std::uint16_t id, char*
     bool result = ok;
     if (vehicle != kVehicleUnknown) {
         g_want.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
-        // E press only (8.55): a hold never refuses the icon (standing at a door claims nothing); a deny does.
+        // E press only (8.55): a hold never refuses the icon (standing at a door claims nothing); a deny does, except
+        // the host's own yield (8.57: its press is refused at site B, so a=7 answers a press, never standing there).
         const RaceVerdict v = RaceDecide(RaceFor(vehicle, now));
-        if (v == RaceVerdict::deny) {
+        const std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+        const bool refused = RaceIconRefused(v, (deny & kDenyYield) != 0 && WordNames(deny, vehicle, now));
+        if (refused) {
             g_race_hits.fetch_add(1, std::memory_order_relaxed);
             GuardMark(vehicle, now);
         }
-        result = v != RaceVerdict::deny;
+        result = !refused;
     } else if (const std::uint16_t peer = PeerDriven(unit, now); peer != kVehicleUnknown) {
         // A door of the vehicle the peer drives: its passenger ride icon, and that vehicle's stock Fulton prompt.
         GuardMark(peer, now);
@@ -595,6 +612,7 @@ void ResetForTest() noexcept {
     g_pseq.store(0);
     g_timeouts.store(0);
     g_pend.store(false);
+    g_press_peer.store(0);
     g_commit.store(kVehicleUnknown);
     g_done.store(kVehicleUnknown);
     g_done_seq.store(0);
@@ -796,7 +814,10 @@ bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept {
     if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) return false;
     AcquireSRWLockExclusive(&g_arb);
     const bool owned = WordNames(g_commit.load(std::memory_order_acquire), vehicle, NowLow());
-    if (!owned) RaceDeny(vehicle, ms);
+    if (!owned) {
+        RaceDeny(vehicle, ms);
+        g_deny.fetch_or(kDenyYield, std::memory_order_acq_rel);  // the host's own yield (8.57: site C shows its icon)
+    }
     ReleaseSRWLockExclusive(&g_arb);
     return !owned;
 }

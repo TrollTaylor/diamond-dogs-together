@@ -409,7 +409,7 @@ W.OP.SEAT = SEAT
 local S = {seq = 0, next = 0, granted = {}, gotGrant = {}, toastAt = 0, off = nil, n = {}, at = {}}
 R.seat = S
 local SEAT_TICK, WANT_MS, GRANT_MS, DENY_MS, TOAST_MS, OFF_MS = 200, 600, 3000, 3000, 3000, 10000
-local HOLD_MS, READY_MS, READY_TICK, READY_ID = 2000, 12000, 4000, 25600
+local HOLD_MS, READY_MS, READY_TICK, READY_ID, DQ_MS = 2000, 12000, 4000, 25600, 1500
 S.GRANT_MS, S.DENY_MS, S.HOLD_MS, S.READY_MS, S.READY_TICK = GRANT_MS, DENY_MS, HOLD_MS, READY_MS, READY_TICK
 local CLAIM, GRANT, DENY, READY = 1, 2, 3, 4
 -- k: a capped kind, 50 lines per pairing (8.26); with now, at most one a second.
@@ -426,6 +426,7 @@ function S.board(cmd)
     if ok and type(r) == "table" and r.ok == true then return r end
 end
 local function seatVehicle(id) return integer(id, 25600, 26111) end
+function S.sat(r) return R.localVehicle() or r and seatVehicle(r.lpv) end
 local function toast(a, now)
     if now < S.toastAt then return end
     S.toastAt = now + TOAST_MS
@@ -463,7 +464,7 @@ end
 function S.reset(keep)
     if S.held then S.board("hold 0") end
     if S.fulton or S.fAdded then S.off = true; S.guard() end
-    S.hot, S.off, S.granted, S.gotGrant, S.next, S.held, S.hitsSeen = nil, nil, {}, {}, 0, nil, nil
+    S.hot, S.off, S.granted, S.gotGrant, S.next, S.held, S.hitsSeen, S.dq = nil, nil, {}, {}, 0, nil, nil, nil
     S.readyAt, S.readyNext, S.readySaid, S.pseqSeen, S.toutsSeen = keep and S.readyAt or nil, nil, nil, nil, nil
 end
 -- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
@@ -489,7 +490,7 @@ function S.step(now)
         for id, at in pairs(S.granted) do
             if now - at > GRANT_MS then S.granted[id] = nil end
         end
-        -- The host tried a vehicle it yielded (its own deny refused it): NOTE 13 a=7.
+        -- The host pressed E at a vehicle it yielded (site B refused it; 8.57: a press only): NOTE 13 a=7.
         local hits = tonumber(r.hits) or 0
         if S.hitsSeen and hits > S.hitsSeen and S.granted[r.deny] then toast(7, now) end
         S.hitsSeen = hits
@@ -513,6 +514,14 @@ function S.step(now)
         seatLog("state=stock")
     end
     S.toutsSeen = touts
+    if S.dq then
+        local id, sat = S.dq, S.sat(r)
+        if sat or r.pend ~= 1 and (r.dend ~= 4 or r.dveh ~= id or now - S.dqAt >= DQ_MS) then
+            if not sat then toast(6, now) end
+            seatLog(string.format("action=deny_end;vehicle=%d;seated=%d", id, sat and 1 or 0))
+            S.dq = nil
+        end
+    end
     -- Each new E press site D held (pseq) is claimed at once, only while held (READY heard).
     local pseq = tonumber(r.pseq)
     if pseq then
@@ -565,10 +574,11 @@ W.handlers[SEAT] = function(v)
     if action == DENY then
         local r = S.board(string.format("deny %d %d", id, DENY_MS))
         S.gotGrant[id] = nil
-        -- The press took another seat (native end 4: the host's ride came first): no toast.
-        local seated = r and tonumber(r.pend) == 0 and r.dveh == id and r.dend == 4
-        seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d%s", id, r and r.deny == id and 1 or 0, seated and ";seated=1" or ""))
-        if not R.localVehicle() and not seated then toast(6, now) end
+        local sat = S.sat(r)
+        seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d%s", id, r and r.deny == id and 1 or 0, sat and ";seated=1" or ""))
+        -- 8.57: a press still held or ended as peer (end 4) waits up to DQ_MS for its seat; a=6 if none came.
+        if sat then return end
+        if r and (r.pend == 1 and r.press == id or r.dend == 4 and r.dveh == id) then S.dq, S.dqAt = id, now else toast(6, now) end
     elseif action == GRANT then
         local r = S.board(string.format("grant %d %d", id, GRANT_MS))
         if not S.gotGrant[id] or now - S.gotGrant[id] > GRANT_MS then
