@@ -1,3 +1,35 @@
+## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
+
+**Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
+`partner_melee=1` on both PCs: one CQC jab never puts the other player to sleep; a second jab in reach within 2 s, or the
+combo's finisher, does (the stock sleep on the other player's own copy, 30 s auto wake or a revive).
+
+- **Review fixes (red `0273a47d`, green `1da831bf`):** melee-seated-stale-slot (the reach test reads body 1's drawn
+  position, `read_body`, and a seated or riding partner is `verdict=no_body`); melee-114-is-soldier-takedown (a 114
+  without a 113 within 600 ms is `verdict=takedown`); melee-soldier-adjacent-false-positive (a partner in a CQC hold,
+  box/toilet, ladder/pipe or ledge act is `verdict=busy`, prone is `verdict=prone`). Driver tests now cover the seat
+  phase, `ride_seated`, the body readback and the facing cone.
+- **Coordinator decision (vanilla CQC feel):** one jab logs `verdict=jab` and never queues. The 0.14.5 census showed the
+  finisher as 113 -> 114 on one tick, but hidden run `af0b88b6` gave two 113 edges 1.6 s apart and no 114 for four
+  scripted presses (case a), so two jabs in reach within 2 s land too (red `6270e419`, green `b872e35b`).
+- **Run `af0b88b6`** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, named `partner_melee=1`; both
+  copies admitted and in gameplay at 30010): [O] every strike edge was logged on the striker's own copy, but the
+  geometry was wrong. Players placed 1 m apart read 21 cm, and with the partner visibly ahead in the frames the cone read
+  175-180 degrees, so no hit landed in a or b. In case c (placed 3 m apart) the guest's 113 -> 114 logged
+  `verdict=land; dist_cm=83`, and the host's copy applied the stock sleep (`friendly_hit=owner;...;cause=2;applied=1;
+  down=1`; host frame ASLEEP "Teammate 3 m"). So the chain from a landed strike to the stock sleep works [O], but that
+  land was false: the attacker's position came from the local slot S+0x20[0], stale after the worker's teleports [I].
+  The +pi facing of `b872e35b` was a wrong reading of the same data. Red `ed13d848`, green `5266fddc`: the attacker's
+  position and facing come from `read_local_body`, and the +pi is gone. Sheet
+  `fb1031/frames/melee/best-sheet-af0b88b6.jpg`.
+- **Run 2:** not started. C: had 5.60 GB free (16:27, 16:29, 16:31), under the 6 GB floor, until the time box ended (nothing
+  was deleted); the waiting helper held no lock and was stopped.
+- **Decision:** not proven at head, so `partner_melee` stays off unless named in lab and play. There is no README line.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `5266fddc`; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** whether the local body readback gives the right distance and cone in a game; whether the finisher (114)
+  or the jab pair is what players will trigger; the striker's animation on the victim's screen (still not drawn); the
+  low-severity note that the range-hide and terminating gates have no driver test.
+
 ## 2026-10-31: debug menu Travel proof round (`wp/integ-fb1031`, local only) -- Travel ON by default in lab and play
 
 **Players get:** F9 > World > **Go to Africa** / **Go to Mother Base** takes both players there with no helicopter ride
