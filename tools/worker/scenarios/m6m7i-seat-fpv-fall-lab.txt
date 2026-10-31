@@ -1,0 +1,196 @@
+# m6m7i (design 8.56): the front-seat downward aim after the fall back (fccba00). Setup as m6m7i-seat-fpv-ab-lab.txt
+# (the host drives, the guest boards seat 1, the host gets off, warps the one awake guard ~11 m front-right of seat 1
+# and steps back to the driver's door; the camp sleeps, 'enemy ignore' on all).
+# Run 859964ce (the A/B v2): an in-aim enemy_cam_turn does not move the stock shoulder aim (OFF: the same frames and the
+# same S1 direction before and after it), so the shoulder view is compared with the turn made BEFORE the raise. There
+# (PRE, the key on) the shoulder raise reached gun mode 7 at 8 deg down, the set took the gun to 15 within 17 ms and it
+# stayed 15 (rifle across, nothing fired).
+#   FALL (the key, as shipped at fccba00): cam_turn -40 8 before the raise; expected: set at 7, 15, then
+#        'seat_fpv; event=fallback; reason=blocked' after 100 ms and the shoulder view; presses 1 and 2.
+#   OFF  (lab lever 'passcam seatfpv off', the stock shoulder view): the same pre-raise turn; presses 3 and 4.
+#   MID  (the key): raise at -40 2 (set at 7, first person), then the in-aim turn to -40 8 (15 in 859964ce): the fall
+#        back in the middle of an aim; press 5.
+# The gun mode at each press: labsetting partner_pass_camera_trace=1 (lab-only logging); 'guest debug passcam status'
+# right before each press marks it in the guest's log. No flicker: per aim at most the set and the fall (no rearm
+# without a raise of the shoulder aim; the scenario turns nothing after the fall).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7i-seat-fpv-fall-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+labsetting debug_soldier_warp=1
+labsetting partner_pass_camera_trace=1
+boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+host run enemy ignore 1084844745
+host run enemy ignore 1927090184
+host run enemy ignore 1791272719
+host run enemy ignore 2112392286
+host run enemy ignore 347113222
+host run enemy ignore 1113151945
+host run enemy ignore 1004648379
+host run enemy ignore 1856151639
+host run enemy ignore 2507222959
+host run enemy ignore 1626377522
+host run enemy ignore 2077341861
+host run enemy ignore 3439362210
+host run enemy ignore 2035351939
+host run enemy ignore 208831908
+host run enemy ignore 1445674198
+host run enemy ignore 3030732661
+host run enemy sleep 1927090184
+host run enemy sleep 1791272719
+host run enemy sleep 2112392286
+host run enemy sleep 347113222
+host run enemy sleep 1113151945
+host run enemy sleep 1004648379
+host run enemy sleep 1856151639
+host run enemy sleep 2507222959
+host run enemy sleep 1626377522
+host run enemy sleep 2077341861
+host run enemy sleep 3439362210
+host run enemy sleep 2035351939
+host run enemy sleep 208831908
+host run enemy sleep 1445674198
+host run enemy sleep 3030732661
+host run cp_phase nearest sneak
+stance host stand
+stance guest stand
+wait 1500
+both capture start
+# --- B. The host drives; the guest in seat 1 -----------------------------------------------------------------------
+host debug teleport 577.20 320.2 1157.19 -84
+wait 2500
+host press e 150
+wait 4500
+host run vehicle_seats
+host require vehicle;id=25608
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1;' 5
+both capture b-seated
+guest run vehicle_state_status 25608
+host run vehicle_state_status 25608
+host press e 150
+wait 3000
+host debug teleport 565.5 320.5 1171.7 146
+wait 2000
+logmark both
+host run spawn_enemy here
+host expect ^guard_here;
+wait 2500
+guest run spawn_sync
+host debug teleport 578.5 320.2 1155.5 -84
+# --- FALL: the key; 8 deg down before the raise --------------------------------------------------------------------
+logmark both
+guest run enemy_cam_turn -40 8
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 4
+wait 60
+guest capture fall-set
+guest hold rmb 1500 nowait
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=fallback; vehicle=25608; seat=1; reason=blocked;' 3
+wait 700
+both capture fall-aim
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p1-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p1-350
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p2-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p2-350
+guest hold rmb 1500 nowait
+guest release
+wait 1500
+both capture fall-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+# --- OFF: the stock shoulder view (lab lever), the same pre-raise turn --------------------------------------------
+guest debug passcam seatfpv off
+wait 500
+logmark both
+guest run enemy_cam_turn -40 8
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+wait 900
+both capture off-aim
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p3-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p3-350
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture p4-050
+guest hold rmb 1500 nowait
+wait 300
+guest capture p4-350
+guest hold rmb 1500 nowait
+guest release
+wait 1500
+both capture off-after
+# --- MID: the key; set at -40 2, then the in-aim turn down ---------------------------------------------------------
+guest debug passcam seatfpv key
+wait 500
+logmark both
+guest run enemy_cam_turn -40 2
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 4
+wait 400
+guest capture mid-set
+guest hold rmb 1500 nowait
+guest run enemy_cam_turn -40 8
+guest expect ^cam_turn;
+guest hold rmb 1500 nowait
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=fallback; vehicle=25608; seat=1; reason=blocked;' 3
+wait 700
+both capture mid-aim
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p5-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p5-350
+guest hold rmb 1500 nowait
+guest release
+wait 1500
+both capture mid-after
+guest run vehicle_state_status 25608
+host run vehicle_state_status 25608
+host run enemy_list
+state
