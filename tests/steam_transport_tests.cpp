@@ -2563,10 +2563,28 @@ void TestHud() {
             Check(text::FormatWorldNote(note.code, note.a, note.b, note.partner, note.local, sentence, sizeof(sentence)) &&
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
-        // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion); 14..15 stay reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{14}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
+        // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
+        // menu Travel (TRAVEL{a=mission, b=kind}); 15 stays reserved.
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
+        {
+            struct TravelNote { std::uint32_t a, b; const char* sentence; };
+            const TravelNote travel[] = {
+                {30020, 1, "Travelling to Africa free roam with your partner."},
+                {30050, 2, "Your partner brought you to Mother Base."},
+                {30010, 3, "Your partner brought you here."},
+                {30010, 4, "Bringing your partner to you."},
+                {30010, 5, "Your partner cannot travel right now (riding, carried, downed, in a cutscene or already travelling)."},
+                {30020, 6, "Travel stopped: the trip did not finish in time. Use the helicopter instead."},
+            };
+            for (const auto& t : travel)
+                Check(text::FormatWorldNote(14, t.a, t.b, 0, 30050, sentence, sizeof(sentence)) && std::strcmp(sentence, t.sentence) == 0,
+                      "FormatWorldNote: the debug menu Travel sentences");
+            Check(!text::FormatWorldNote(14, 30010, 0, 0, 30050, sentence, sizeof(sentence)) &&
+                      !text::FormatWorldNote(14, 30010, 7, 0, 30050, sentence, sizeof(sentence)),
+                  "FormatWorldNote: unknown Travel kinds have no toast");
+        }
         Check(!text::FormatWorldNote(1, 40010, 0, 0, 40010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: PROGRESS without the story start has no toast");
         // M1 host-owned companion: code 13 COMPANION{a = 1 orders, 2 call refused, 3 Quiet locked}.
