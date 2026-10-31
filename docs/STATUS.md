@@ -39,7 +39,8 @@ sleep now; a second press in reach within 2 s does.
 - **Checks:** `pwsh -File tools/build.ps1` 339/339 at `01bbeadc` (the scenario fix); at `2e81dc09` (the code head)
   338/339: `partner_defer_tests` check 185 (a drain-window timing check, untouched here) failed under the parallel
   load and passes alone; fast 307/307 and `partner_melee_tests` / `partner_driver_tests` / `lab_config_tests` pass at
-  `9dd5dcaa`. `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+  `9dd5dcaa`; 339/339 again at `226a2846` (this entry's commit). `tools/generate_partner_contract.py --check` passes
+  (850 sites, 213 vtable slots).
 
 ## 2026-10-31: rider camera proof round (`wp/integ-fb1031`, local only) -- `partner_ride_follow` stays OFF unless named
 
