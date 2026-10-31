@@ -4053,6 +4053,52 @@ Lua's a=7 rule reads.
 - Full `tools/build.ps1` at `a2b9f5ab`: CTest 336/336; at `d15fb340` (review): CTest 336/336; contract `--check`
   838 / 213 at both.
 
+### 8.59 The rider's camera trails a jeep that drives off (2026-10-31, branch `wp/ride-camera`, fb1031)
+
+The user's two-PC report on 0.14.5 (Mother Base, the guest riding while the host drove): "camera lags behind when
+getting in and moving".
+
+- **What the logs show.** The guest boarded natively (`local_passenger seat=3 via=p120`); the passenger camera connected
+  with `mode=5; prev=2` (the fallback module took over from another module: a camera transition at the get-in), later
+  `mode=5; prev=3` after a get-off's VehicleCamera and `mode=0; prev=5` in seat 1. On the guest's copy the host-driven
+  jeep is placed every frame by RIDE_FAST while it moves. The host body's seat error on the guest's copy (`err_mm` up
+  to 868) is the partner's drawn body, not the guest's camera.
+- **Cause [O static: the pinned bytes; I: that a get-in and an aim's end start a blend, not run-observed].** The fallback camera module (live vtable `0x23B2AB0`,
+  the on-foot player's and a seated passenger's camera; update `0x101D950`) writes its follow point
+  `CAM+0x170 = S + alpha * (T - S)`: T follows the body, S and alpha belong to a timed blend object (`module+0x30`,
+  vtable `0x23B7EC0`, made by `CAM vt+0x218` `0x1113F60`): `reset(dur)` sets `+0x18 = dur`, `+0x1C = +0x20 = 0`, `set(S)`
+  `+0x30`, `step(dt)` grows the elapsed time to `dur` and alpha (`+0x20`) to 1 along a curve. The update resets it on the
+  module's flag (P+0x48 object `+0x2C4` bit 1) with `S = CAM+0x100` and `dur` = that object's `+0x284`. S is a fixed
+  world point, so a jeep that drives off during a blend leaves the camera `(1 - alpha) x` the distance driven behind and
+  it catches up as alpha reaches 1. Outside a blend (alpha 1) the camera follows the body rigidly: the lab traces of
+  m6m7b (`049aa5ed`, `a64c40d4`, `d60dbb48`) kept the eye 5.05 m from the seated body at 2.5-4.4 m/s.
+- **Fix: the follow carry** (`partner_ride_follow`, **off unless named** in lab and play until a hidden run proves it;
+  it rides on the passenger camera, so it also needs that, and `partner_pass_camera=off` turns it off). Each driver tick while the local
+  passenger rides and the active module's blend runs (`0 < elapsed < dur`, alpha < 1), `TickFollowCarry` moves S
+  rigidly with the ridden vehicle (its position and yaw since the last tick, pure `CarryStep`), so the blend happens in
+  the vehicle's frame: the camera still eases from where it was, but no longer falls behind the moving jeep. Never at
+  alpha 1 (S unused), never across a vehicle step over 5 m (a warp) or a pose older than 200 ms, never under another
+  module (aim, VehicleCamera, first person), never when S changed since the read (a stock reset in between wins). No
+  code patched, no game function called; 12 pinned blocks (`ride_follow_blocks`: the update's blend use and reset, the
+  blend object's maker and its five methods, the module's init) are verified once per process
+  (`partner_pass_camera=follow; result=installed; blocks=12`). Lines: `partner_ride=pass_camera; state=follow;
+  event=open|close` (the blend's duration, its writes and the distance carried).
+- **The census** (`partner_ride_cam=frame|line|episode`, lab and play, read only): while the local player rides (a
+  passenger, or the vehicle it drives), the body's position in the camera's view against its value at rest (`lag_cm`,
+  `d_cm`: a camera that follows rigidly keeps it, one that trails moves it), the vehicle's speed, the body's drift in
+  the vehicle and the blend (`blend=alpha,elapsed,dur` in milli; `carry=` writes): per-tick lines for the first 90
+  ticks of an episode (the vehicle leaving standstill), then every 250 ms, and a summary when it stops.
+- Failing first `ca1c11b1` -> `fb298535` (the carry), `599b14df` -> `f20616a0` (off unless named); scenarios
+  `fb1031-ride-camera-play.txt` (names the key 1) and `-play-off.txt` (the shipped default: the 0.14.5 camera), the same
+  legs: the host drives off as soon as the guest reports its seat (3, then 2), the guest aims while driven and lets go,
+  then the guest drives off with the host aboard.
+- **Not run-proven.** Both hidden runs were refused before admission (`d671ace6` with the census only, `4232a7bd` the
+  -off scenario at `fb298535`): the host copy was admitted, the guest copy's overlay could not create its DX11 device
+  (`overlay=refused; reason=graphics_or_input_hook; step=device; detail=D3D11CreateDeviceAndSwapChain; hr=0x8007000E`,
+  worker `refused; reason=required_hooks_or_private_desktop`); the machine's hardware D3D11 probe failed the same way
+  from 13:00 to 13:33. Next: run the -off and on scenarios (before / after: `partner_ride_cam` lag and
+  `state=follow` lines, frames `a-in-NN` on both copies), then turn the key on by default.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

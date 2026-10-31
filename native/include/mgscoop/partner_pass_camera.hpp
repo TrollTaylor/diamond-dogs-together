@@ -51,6 +51,7 @@ struct Stats {
     std::uint32_t angles;   // shot-guard angle writes (design 8.27)
     std::uint32_t turns;    // get-off camera rotation requests made (design 8.38)
     std::uint32_t fpv;      // seat first-person toggle writes (design 8.46)
+    std::uint32_t follow;   // follow carry writes (design 8.59)
 };
 void ReadStats(Stats& out) noexcept;
 
@@ -106,6 +107,14 @@ const char* FpvInstall(const void* base, std::size_t span) noexcept;
 // The lab lever "passcam seatfpv on|off|key": kFpvKey (-1, the key's choice), 0 off, 1 on.
 inline constexpr int kFpvKey = -1;
 int FpvOverride() noexcept;
+// fb1031 (design 8.59): the follow carry. FollowInstall verifies the pinned ride_follow_blocks once per process (nullptr,
+// or why not). ReadFollow reads the follow blend of the local camera's ACTIVE module when it is the fallback module
+// (vtable 0x23B2AB0) and its blend object carries the blend vtable (0x23B7EC0); false otherwise. WriteFollowStart writes S
+// (+0x30..+0x38) only when the same chain still ends in `blend` and S still equals `expect` (a stock reset in between
+// wins); SEH guarded, the last error kept.
+const char* FollowInstall(const void* base, std::size_t span) noexcept;
+bool ReadFollow(const void* base, std::uintptr_t P, Follow& out) noexcept;
+bool WriteFollowStart(const void* base, std::uintptr_t P, std::uintptr_t blend, const float (&expect)[3], const float (&start)[3]) noexcept;
 
 // The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
 // override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills
@@ -118,6 +127,7 @@ namespace detail {
 // base / contract / span / read / bytes, with that block's rva in mismatch_rva.
 const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
+const char* VerifyFollowImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 void ResetForTest() noexcept;
 } // namespace detail
 

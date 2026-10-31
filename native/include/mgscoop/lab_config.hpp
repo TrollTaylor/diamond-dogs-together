@@ -641,6 +641,12 @@ struct LabConfig {
     // lever passcam seatfpv overrides it.
     bool partner_seat_fpv = false;
     bool partner_seat_fpv_given = false;
+    // fb1031 follow carry (docs/vehicles-companions-design.md 8.59): while the local passenger rides, the fallback camera's
+    // follow blend leaves from a point carried with the vehicle (no trailing after getting in or an aim's end). Off
+    // unless named, in lab and play, until a hidden run proves it (it rides on the passenger camera, so it needs
+    // that too); a named 1 turns it on; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_follow = false;
+    bool partner_ride_follow_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon

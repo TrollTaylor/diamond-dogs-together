@@ -1117,6 +1117,18 @@ const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, fl
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
     return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);
 }
+// fb1031 (design 8.59): the follow carry's read (after the blocks' one-time check) and write.
+bool PartnerRideFollowRead(void*, const pp::State& state, mgscoop::partner_pass_camera::Follow& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    out = pc::Follow{};
+    if (!game_base || !partner_gate_ok || pc::FollowInstall(game_base, game_span)) return false;
+    return pc::ReadFollow(game_base, state.P, out);
+}
+bool PartnerRideFollowWrite(void*, const pp::State& state, std::uintptr_t blend, const float (&expect)[3], const float (&start)[3]) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok || pc::FollowInstall(game_base, game_span)) return false;
+    return pc::WriteFollowStart(game_base, state.P, blend, expect, start);
+}
 // Design 8.46 (lab.ini partner_seat_fpv): the seat first person's read (the subjective module after its blocks' one-time
 // check, the local gun's hand slot rec+0x3DA, the local flag record's words 0 and 3), its toggle write, the pollers and
 // the passcam seatfpv lever.
@@ -1272,7 +1284,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
-    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit};
+    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
+    PartnerRideFollowRead, PartnerRideFollowWrite};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
