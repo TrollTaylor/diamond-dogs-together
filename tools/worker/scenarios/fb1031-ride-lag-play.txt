@@ -9,7 +9,7 @@
 #   F) the host drives; the guest boards the FRONT seat 1; the host drives off as soon as the guest's copy reports the
 #      seat (the get-in camera still active), turns, stops; frames on the guest while it drives off and turns, then
 #      on the host;
-#   R) the guest gets off, boards the rear seat from the left door (seat 2), the host drives off at once; frames again.
+#   R) the guest gets off, boards a back seat from the driver-side door, the host drives off at once; frames again.
 # Census rows partner_ride_cam=frame|line|episode on both copies (cmode, lag_cm, veh_cm and eye_cm: the vehicle and
 # the camera eye in world space, so the rider copy's jeep can be set against the driver's own on the same clock).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -70,7 +70,7 @@ guest press e 150
 wait 3500
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 8
 wait 2000
-guest debug goto_vehicle jeep left
+guest debug goto_vehicle jeep
 wait 3000
 logmark both
 guest press e 150

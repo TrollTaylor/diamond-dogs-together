@@ -1158,11 +1158,49 @@ struct GetInCutOut {
     float moved = 0.0f;  // m since the anchor
     std::uint64_t ms = 0;  // since module 0 was first seen active
 };
-// Red (failing first): not implemented yet.
+// One driver tick. Module 0 not active, not seated or the key off: the get-in episode is over (the mission counts stay).
+// The first tick with module 0 active while seated anchors the vehicle's position; from then on a vehicle that moved
+// kGetInCutMove asks for the cut every tick module 0 is still active, at most kGetInCutMaxWrites times (then gave_up). An
+// unread vehicle keeps the episode as it is.
 inline GetInCutOut GetInCutStep(GetInCut& c, const GetInCutIn& in) noexcept {
-    (void)c;
-    (void)in;
-    return GetInCutOut{};
+    GetInCutOut o{};
+    if (!in.on || !in.seated || !in.getin) {
+        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
+        c = GetInCut{};
+        c.cuts = cuts;
+        c.gave_up = gave_up;
+        return o;
+    }
+    if (!in.veh_ok || !std::isfinite(in.veh[0]) || !std::isfinite(in.veh[1]) || !std::isfinite(in.veh[2])) return o;
+    if (!c.have || c.vehicle != in.vehicle) {
+        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
+        c = GetInCut{};
+        c.cuts = cuts;
+        c.gave_up = gave_up;
+        c.have = true;
+        c.vehicle = in.vehicle;
+        for (unsigned i = 0; i < 3; ++i) c.anchor[i] = in.veh[i];
+        c.since_ms = in.now_ms;
+        return o;
+    }
+    if (c.done) return o;
+    const float dx = in.veh[0] - c.anchor[0], dy = in.veh[1] - c.anchor[1], dz = in.veh[2] - c.anchor[2];
+    o.moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+    o.ms = in.now_ms >= c.since_ms ? in.now_ms - c.since_ms : 0;
+    if (!(o.moved >= kGetInCutMove)) return o;
+    if (c.writes >= kGetInCutMaxWrites) {
+        c.done = true;
+        ++c.gave_up;
+        o.event = GetInCutEvent::gave_up;
+        return o;
+    }
+    o.write = true;
+    if (c.writes == 0) {
+        o.event = GetInCutEvent::cut;
+        ++c.cuts;
+    }
+    ++c.writes;
+    return o;
 }
 
 // --- fb1031: the ride camera census (lab and play; design 8.59) ----------------------------------------------------

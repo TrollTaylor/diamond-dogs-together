@@ -3784,6 +3784,51 @@ void TickFollowCarry(Driver& d, const Hooks& h, const pp::State& st, std::uint64
                     static_cast<int>(std::lround(o.carried * 100.0f)), c.carry.warps, c.carry.writes);
 }
 
+// fb1031 ride lag (design 8.60, lab.ini partner_ride_getin_cut): the get-in camera cut (partner_pass_camera::GetInCutStep).
+// While the local passenger sits with the passenger camera on (any mode but off; installed; no latch) and camera module 0
+// (the front-seat get-in camera, which holds the view where the get-in began) is the active module, a ridden vehicle
+// that has moved kGetInCutMove since module 0 was first seen ends module 0 (its active bit and request word cleared; the
+// stock selection deactivates it and the fallback follows the seated body). One line per cut, one when it gives up.
+void TickGetInCut(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& c = d.mission.pass_camera;
+    if (terminating || BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
+    const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::view)) mode = static_cast<pc::Mode>(override_mode);
+    pc::GetInCutIn in{};
+    in.now_ms = now;
+    in.on = d.settings.ride_getin_cut && d.pass_camera_installed && mode != pc::Mode::off && !c.uncertain && !d.mission.board.uncertain &&
+            h.ride_getin_active && h.ride_getin_cut && h.vehicle_read;
+    in.seated = lp.valid;
+    in.vehicle = lp.vehicle;
+    if (in.on && in.seated) {
+        in.getin = h.ride_getin_active(h.context, st);
+        if (in.getin) {
+            partner_vehicle::Read vr{};
+            h.vehicle_read(h.context, lp.vehicle, vr);
+            in.veh_ok = !vr.refusal && vr.unit.id == lp.vehicle;
+            for (unsigned i = 0; i < 3; ++i) in.veh[i] = vr.unit.pos[i];
+        }
+    }
+    if (!(in.on && in.seated && in.getin) && !c.getin.have) return;
+    const pc::GetInCutOut o = pc::GetInCutStep(c.getin, in);
+    const char* why = nullptr;
+    if (o.write) why = h.ride_getin_cut(h.context, st);
+    const auto cm = [](float m) noexcept { return std::isfinite(m) && m > -2.0e6f && m < 2.0e6f ? static_cast<int>(std::lround(m * 100.0f)) : -1; };
+    if (o.event == pc::GetInCutEvent::cut)
+        EmitNativeN(h, c.getin_cap, kRideGetInCutCap, "partner_ride_getin_cut",
+                    "partner_ride=pass_camera; state=getin_cut; event=cut; vehicle=%u; seat=%u; moved_cm=%d; ms=%llu; result=%s; "
+                    "cuts=%u\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), cm(o.moved), static_cast<unsigned long long>(o.ms), why ? why : "ok",
+                    c.getin.cuts);
+    else if (o.event == pc::GetInCutEvent::gave_up)
+        EmitNativeN(h, c.getin_cap, kRideGetInCutCap, "partner_ride_getin_cut",
+                    "partner_ride=pass_camera; state=getin_cut; event=gave_up; vehicle=%u; seat=%u; moved_cm=%d; ms=%llu; writes=%u\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), cm(o.moved), static_cast<unsigned long long>(o.ms), c.getin.writes);
+}
+
 // fb1031 (design 8.59): the ride camera census, lab and play, read only. While the local player rides a vehicle (the
 // local passenger report, else the vehicle it drives), the body's camera-space position against
 // its rest value (partner_pass_camera::CensusStep): per-tick lines for the first ticks of an episode (accelerating
@@ -6763,6 +6808,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.seat_fpv = lab.partner_seat_fpv;
     d.settings.ride_follow = lab.partner_ride_follow;
+    d.settings.ride_getin_cut = lab.partner_ride_getin_cut;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
     d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
@@ -7338,6 +7384,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickPassCamera(d, h, st, now, terminating);
     TickSeatShot(d, h, st, now, terminating);
     TickFollowCarry(d, h, st, now, terminating);
+    TickGetInCut(d, h, st, now, terminating);
     if (!terminating) TickRideCamCensus(d, h, st, now);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);

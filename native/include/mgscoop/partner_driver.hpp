@@ -480,6 +480,11 @@ struct Hooks {
     bool (*ride_follow_read)(void* context, const partner_player::State& state, partner_pass_camera::Follow& out) noexcept = nullptr;
     bool (*ride_follow_write)(void* context, const partner_player::State& state, std::uintptr_t blend, const float (&expect)[3],
                               const float (&start)[3]) noexcept = nullptr;
+    // fb1031 ride lag (design 8.60): whether the local camera's active module is the get-in camera (module 0,
+    // partner_pass_camera::GetInActive after GetInCutInstall) and the cut (CutGetIn): nullptr when written, else why
+    // not. Null: no cut.
+    bool (*ride_getin_active)(void* context, const partner_player::State& state) noexcept = nullptr;
+    const char* (*ride_getin_cut)(void* context, const partner_player::State& state) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -531,7 +536,7 @@ inline constexpr unsigned kBoardLogCap = 200;
 // Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
 // fb1031: the ride camera census caps per mission (per-tick lines; 250 ms lines and episode summaries).
-inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400, kRideFollowCap = 200;
+inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400, kRideFollowCap = 200, kRideGetInCutCap = 100;
 // Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
 inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
@@ -641,6 +646,8 @@ struct Settings {
     bool seat_fpv = false;
     // lab.ini partner_ride_follow (design 8.59): the follow carry while the local passenger rides.
     bool ride_follow = false;
+    // lab.ini partner_ride_getin_cut (design 8.60): the get-in camera cut while the local passenger rides.
+    bool ride_getin_cut = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -839,6 +846,9 @@ struct Mission {
         // fb1031 (design 8.59): the follow carry and its open / close lines.
         partner_pass_camera::Carry carry;
         LogCap carry_cap;
+        // fb1031 ride lag (design 8.60): the get-in camera cut and its lines.
+        partner_pass_camera::GetInCut getin;
+        LogCap getin_cap;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).
