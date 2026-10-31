@@ -695,7 +695,8 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   copy hands the seat dword back to seat 1's own immediate (`partner_ride_seat::ArmGetOff`; `partner_ride_seat_patch=getoff;
   seat=1; seat_dword=0x01b04130; anchor=1; was=0`; design 8.36). When the game window closes, `partner_ride_seat::Close`
   (PartnerShutdown, on any thread, before its other_thread return) reverts the patch (`reverted; reason=shutdown`) and
-  blocks every later Arm (`skipped; reason=closing`). The MissionEnd revert never ran on that path (design 8.53).
+  blocks every later Arm (`skipped; reason=closing`). The MissionEnd revert never ran on that path (design 8.53). One lock covers Arm, Revert, the get-off
+  rewrite and Close, so a mission-thread write in progress finishes before the close reverts (design 8.54).
 - `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query
   `0x1245820(action, body, unit, id, char* seat)`; pinned: `board_c_*`, the pre-query's `*seat = 4` start
   `0x1245847`), logged `partner_board=race; result=ok; c=0x1246a4f`. Site C records the want from the pre-query's

@@ -1555,7 +1555,7 @@ void PartnerShutdown() noexcept {
     mgscoop::steam_online::Shutdown();
     // The seated rider's four code dwords (design 8.53): the window thread is not the mission thread, so the
     // MissionEnd revert below never ran on the other_thread return (run 1d9fd748: no revert line). One locked
-    // compare-exchange per dword, re-verified like Arm; no Arm after this. Logs reverted; reason=shutdown when live.
+    // compare-exchange per patched dword under the seat lock (design 8.54); no Arm after this. Logs reverted; reason=shutdown when live.
     if (game_base) mgscoop::partner_ride_seat::Close(game_base, game_span, Log);
     if (!partner_on || !partner_mission) return;
     // Thread-safe first: no deferral, no window, no mirror write from here on.

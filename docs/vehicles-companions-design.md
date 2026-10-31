@@ -3685,7 +3685,8 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Shown online** (`ecb5f08d`, play, `-WanSim bad`, shipped defaults) [O lines on both copies + frames]: seat-1
   first-person shots fire in both roles (S1 `shift` each, magazine down), also during the turn (scope level at +50 /
   +350 ms); a raise at rel +55 stays over the shoulder (red mark, no set) and a mouse turn right in the same aim gives
-  `set reason=ready gun=7` and first person, so 15 -> 7 does happen within one aim (8.51's [U]); a host get-off with the
+  `set reason=ready gun=7` and first person, so the turn does switch to first person (mode 15 read from the red mark, no `gun=15` line; one
+  continuous aim [I]; 8.54); a host get-off with the
   bit set clears it (`clear=0x2 ok=1`), the get-off turn runs, the next on-foot aim is over the shoulder.
 - **Not shown:** a hit. The guest's two seat-1 shots hit a post 10.4 m out (dist_cm 1044 / 1119) in front of a moving
   guard 30-44 m away; the host's went into a wall 15.9 m out (the re-aim chose a sleeping guard 45 m behind). Lab
@@ -3710,7 +3711,8 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   higher ground 40 m back, fell, and went down (WOUNDED). This happened in `1d9fd748` (frame `1d9fd748-host-c-far`;
   host.log `downed_damage=intercept;cause=lethal`, `event=downed; step=entered`) and again in `d462df5d`
   (`d462df5d-host-c-far`). A downed host cannot board, so the guest's E took the driver's seat (guest copy
-  `riders=0,9728`: the guest with its own D-Dog). 89b1dea's longer wait did not touch the cause. The scenario now uses
+  `riders=0,9728`: the guest with its own D-Dog). 89b1dea's longer wait did not touch the cause. In `d462df5d` the guest's spawn claim had
+  also locked the host out 10.7 s before the fall (8.54). The scenario now uses
   a ground spot 23 m away (-633.5 3.0 871.8). In `23032c72` the host stood there on its feet, and its D-Dog followed it
   within 8 s (`23032c72-host-c-far`; buddy at -633.53, 0.70, 871.77) [O]. `waitlog` only warns; `require` stops.
 - **A guest standing at an empty jeep keeps its driver's seat** [O `23032c72`]: the guest never pressed E. Standing
@@ -3728,9 +3730,9 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   guest followed (`follow; step=replay; src=30020; next=30020; kind=4`) and reloaded. The patch was reverted by the
   terminating stop, so the MissionEnd revert found nothing and logged no `reason=mission_end` line. After the load the
   guest copy waited at "Space Resume Game" with the raw clock held (`d462df5d-guest-c2-loading`). The host copy showed
-  MISSION FAILED (`d462df5d-host-c2-loading` and its last frame): that host had been down since the fall, and its
-  downed controls timed out under the pause menu (`event=downed; step=refused; reason=controls_timeout`). Whether a
-  host who is not down reaches gameplay after this reload, and the frames after Space, are [U]. The run hit the
+  MISSION FAILED (`d462df5d-host-c2-loading`): not the earlier fall, but guards killing it while it ran unpaired at
+  full life after the reload with no downed intercept (8.54). A reload with a seated partner reaching play again on
+  both screens, and the frames after Space, are [U]. The run hit the
   worker's session limit (`worker_timeout`, about 10 min after admission) while waiting there.
 - **The close** [O source and unit test]: PartnerShutdown runs on the thread that delivers WM_CLOSE. Every shutdown
   line here (`d462df5d` host, `23032c72` both; `d462df5d`'s guest logged none) and in 1d9fd748 said
@@ -3742,7 +3744,7 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   `partner_ride_seat::Close` runs in PartnerShutdown before the thread split. It sets a one-way flag, so later Arms
   log `partner_ride_seat_patch=skipped; reason=closing`, the get-off rewrite writes nothing, and an Arm that raced
   the close takes its own write back. It then reverts with `reverted; reason=shutdown` (one locked compare-exchange
-  per dword, re-verified like Arm). `partner_ride_seat_tests` TestClose covers it. Neither run closed with a live
+  per dword that reads patched; 8.54 adds the lock against a racing get-off rewrite or revert). `partner_ride_seat_tests` TestClose covers it. Neither run closed with a live
   patch (`d462df5d`: reverted at the reload's stop; `23032c72`: nobody seated), so that line in a game is [U].
 - The seat first-person bit (impl+0x60) is still released only by MissionEnd, so a close during a seated first-person
   aim leaves it set until the process ends. Whether the game saves it then is [U].
@@ -3751,6 +3753,38 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - Runs: `d462df5d971e4ed19c3d2eb8cb997c30` (`e4a0d53`), `23032c7227864813832e644dfba4cbd2` (`c14a920`; it read the
   scenario before `0eeda98`). Sheets `best-sheet-d462df5d.jpg`, `best-sheet-23032c72.jpg` under
   `C:/Users/taylo/mgs-coop-run-archive/m6m7h/frames/partc/`.
+
+### 8.54 m6m7h integrated: the seat lock, review corrections (2026-10-31, branch `wp/seat-proof3`, review m6m7h)
+
+- **Merge.** `wp/seat-checks3` merged into `wp/seat-proof3` (`bc82b85`); docs conflicts kept both sides.
+- **Seat lock** (failing first `c4327f1` -> `08a67c3`). 8.53's Close runs on the window thread while the mission
+  thread can be in Arm, Revert or ArmGetOff. Three faults, all only in a closing process: ArmGetOff checked Closed()
+  only on entry, so a Close between its checks and its write left 0x01B04130 in reverted code with nothing armed
+  (8.53's "the get-off rewrite writes nothing" held only for a call that started after the flag); two Reverts at once
+  lost a compare-exchange and logged `partner_ride_seat_patch=refused; reason=revert_*_changed`, a NEVER line;
+  near_code::PatchDword's unlocked VirtualProtect pairs on the two seat pages (0x1198000, 0x1199000) could interleave
+  and leave a page read-only for the other thread's write. One SRW lock now covers each call's checks and writes;
+  Arm's post-write Closed() re-check is gone (the flag cannot change under the lock). Close with nothing armed and no
+  site patched writes and logs nothing (8.53 logged `revert_site_seat` refused at every close on a build whose bytes
+  differ). Revert does not rerun VerifyImage; it writes only sites that read exactly patched (8.53's "re-verified like
+  Arm" was loose). Test seams: a pause at ArmGetOff after its checks and in Revert before its first write, and
+  ResetForTest. Other modules' writes to the same pages are not under this lock [U].
+- **Corrections to 8.52 / 8.53** (from the slices, no new run). `d462df5d`: after the checkpoint reload the host copy
+  came back at life 7800, unpaired (`pair_wait; reason=remote_loading`, never `world=paired`) while the guest sat at
+  "Space Resume Game" (last boundary `initialization_returned`). Soldiers 1080 / 1210 hit it about 25 times, twice
+  for 2600 (life 996), with no `downed_damage=intercept` (the downed intercept needs a pair [I]): MISSION FAILED.
+  Its earlier `controls_timeout` was before the reload. The guest's spawn claim (t 341497253; host grant + yield at
+  341497368) had locked the host out 10.7 s before the fall (downed at 341508093), so part C had two blockers there.
+  8.52's blocked raise: no `gun=15` line in any m6m7h run; mode 15 is read from the red mark, and one continuous aim
+  (overlapping `hold rmb`, no restore between) is [I]. `best-sheet-23032c72.jpg`: the panel labelled after the host's
+  E was frame sequence 33 (tick 342259031, the c-far moment); relabelled, so the host's lock-out is [O log] only.
+- **Part C scenario** (`6dc7d93`, not run): the guest teleports to a ground spot 4 m from the host's C1 spot right
+  after each boot, no `guest debug forward`, godmode again after the reload, and C3 sends the guest to the door only
+  after the host's `ext_tx` and `host require vehicle;id=25608`.
+- **Open:** downed protection between a checkpoint reload and the pair re-forming (a host can die unpaired while the
+  guest loads); the front-seat first-person aim down at a guard about 11 m away (rotX 8.3, rifle across, no fire in
+  `ffc0411d` and `30007c04`) against the shoulder view at the same aim (`partner_seat_fpv=0`); a first-person seat hit;
+  part C (a); a close or checkpoint during a seated first-person aim (impl+0x60 still released only by MissionEnd).
 
 ## 9. Milestones
 

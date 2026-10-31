@@ -1,3 +1,27 @@
+## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
+
+**Players get** nothing new they can see: no default changed. The close fix (8.53) now also holds when the window
+closes while the mission thread is in the middle of a seat write (design 8.54). No hidden run this round.
+- **Seat lock** (failing first `c4327f1` -> `08a67c3`): Arm, Revert, the get-off rewrite and Close take one lock.
+  A get-off rewrite that passed its checks just before the close finished after Close's revert and left a seat
+  dword in the code with nothing armed; two reverts at once logged `partner_ride_seat_patch=refused` (a NEVER line);
+  the two threads' VirtualProtect pairs on the seat pages could interleave. A close with nothing of ours live is now
+  silent (no refusal line on a build whose bytes differ). `partner_ride_seat_tests` 110 checks.
+- **Review corrections** (no new run): `d462df5d`'s MISSION FAILED after the checkpoint reload was not the earlier
+  fall. The host came back at life 7800 but unpaired (`pair_wait; reason=remote_loading`, never `world=paired`)
+  while the guest sat at the load screen, and two guards shot it dead with no downed intercept [O host.log]. So a
+  reload with a seated partner reaching play again on both screens is [U]. In `d462df5d` the guest's spawn claim
+  had also locked the host out 10.7 s before the fall [O]. ecb5f08d's blocked raise: mode 15 is read from the red
+  mark (no `gun=15` line in any run) and one continuous aim is [I]. The `best-sheet-23032c72.jpg` panel after the
+  host's E was the c-far frame; relabelled.
+- **Part C scenario** (`6dc7d93`, not run): the guest leaves the jeep right after each boot, no `guest debug
+  forward`, godmode again after the reload, and C3's guest goes to the door only after the host drives.
+- **Open:** the downed protection between a checkpoint reload and the pair re-forming (`d462df5d`); a front-seat
+  first-person aim down at a guard about 11 m away left the rifle across the view and the gun did not fire (2 of 2
+  lab runs): an A/B with `partner_seat_fpv=0` at the same aim decides whether first person is worse than the
+  shoulder view there; a seated first-person shot hitting a guard; part C (a); a checkpoint or death during a seated
+  first-person aim.
+
 ## 2026-10-31: front-seat first-person shots tested online (review m6m7h track shots, branch `wp/seat-proof3`, local only)
 
 **Players see no new behaviour** (no code or default changed). What is now shown online at the shipped defaults: from
@@ -11,7 +35,7 @@ shown: a seated first-person shot hitting a guard (the test's own re-aim moved t
   never-lines 0 on both). In play the soldier warp is refused, so the driver turned the jeep instead (w+a 2.5 s).
   - Blocked raise: the guest in seat 1 raised at rel +55 (across the windscreen frame and the driver): shoulder view
     into the jeep's side, red mark, no set (frame +900 ms); a mouse turn right in the same aim: `set reason=ready
-    gun=7` and the scope [O].
+    gun=7` and the scope [O]. Mode 15 is read from the red mark (no `gun=15` line) and one continuous aim is [I].
   - Moving: during the left turn the guest's seat-1 aim set at gun 7 and its shot fired (S1 `shift`, 24.4 m); the
     scope stayed level at +50 / +350 ms [O]. The jeep: 2300 on the guest's copy, 2295 on the host's (cause [U]).
   - Stopped: guest seat 1 (set at 7, two shots, S1 `shift`, magazine 7 -> 5) and host seat 1 (set at 7, two shots,
@@ -54,17 +78,20 @@ shown: a seated first-person shot hitting a guard (the test's own re-aim moved t
 - **Why -b part C never ran** [O]: `debug forward -40` keeps the seed spot's height (0.75 m). 40 m back the ground is
   higher, so the host landed under it, fell, and went down (WOUNDED). This happened in both `1d9fd748` and `d462df5d`
   (frames `*-host-c-far`; `downed_damage=intercept;cause=lethal`). A downed host cannot board, so the guest took the
-  driver's seat. The cause was the fall, not the 2.5 s wait.
+  driver's seat. Not the 2.5 s wait. In `d462df5d` the guest's claim at spawn (t 341497253) had also locked the host
+  out 10.7 s before the fall; `1d9fd748` began with `deny; why=host_first`, so the fall alone stopped that one.
 - **The guest's claim** [O `23032c72`]: a guest standing at an empty jeep claims its driver's seat every ~1.2 s, without
   pressing E. In that run the host's copy granted and yielded, and showed the host "Your partner reached the driver's
   seat first: take another seat or wait." The host's E beside the driver's door then did not board.
 - **Checkpoint reload with a seated partner** [O `d462df5d`, guest driving, host copy drawing it in seat 0]: the host
   chose Escape, CHECKPOINT, then 'a' + Enter (the confirm preselects NO). The host copy logged
   `partner_ride_seat_patch=reverted; reason=stop` at MISSION_TERMINATING. Both copies reloaded 30020 (the guest by the
-  kind-4 follow). The guest copy then waited at "Space Resume Game"; the host copy showed MISSION FAILED, because
-  that host had been down since the fall, so a reload by a host who is not down is [U].
+  kind-4 follow). The guest copy then waited at "Space Resume Game" (no `runtime_enter`). The host copy came back at
+  life 7800 but unpaired (`pair_wait; reason=remote_loading`, never `world=paired`), and soldiers 1080 / 1210 shot it
+  dead with no downed intercept: MISSION FAILED (review m6m7h; not the earlier fall). A reload with a seated partner
+  reaching play on both screens is [U].
 - **Not shown:** where the D-Dog goes when it arrives after the partner sits in seat 1 [U]; neither run seated the
-  guest in seat 1. Scenario `m6m7h-seat-partc-play.txt` (`0eeda98`, not run) fixes the three causes above.
+  guest in seat 1. Scenario `m6m7h-seat-partc-play.txt` (`0eeda98`, then `6dc7d93`; not run) fixes the causes above.
 - Runs `d462df5d971e4ed19c3d2eb8cb997c30`, `23032c7227864813832e644dfba4cbd2`. NEVER lines are 0 on both copies.
   Full `tools/build.ps1` at `c14a920` and again at `6f28764`: CTest 336/336; contract `--check` 836 / 213. Design 8.53.
 
