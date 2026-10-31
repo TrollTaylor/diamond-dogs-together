@@ -42,7 +42,8 @@ Base** take both players there with no helicopter ride, menus or loading-tips ke
 the Partner page) puts the partner 3 m in front of the caller, or makes the partner's copy travel to the caller's
 mission. Both players can use every button: a guest's Go to asks the host, who leads; world follow carries the guest,
 which lands 4 m in front of the host. Spots: Afghanistan `828.18 338.20 1630.51` yaw 95, Africa `-656.01 1.20 877.73`
-yaw 62, Mother Base `22.61 1.80 -15.55` (the afgh-ledge, africa-jeep and mb-ladder seeds). On by default (no key).
+yaw 62, Mother Base `22.61 1.80 -15.55` (the afgh-ledge, africa-jeep and mb-ladder seeds). **Off unless `lab.ini` names
+`debug_travel=1`** (lab and play, `dd0331c3`) until a hidden run proves it; `travel-play.txt` names it on both copies.
 - **How:** `lua/coop/world_goto.lua` "Travel" reuses the lab goto's and test boot's stock calls without their lab gates
   (free roam helicopter clear or `f30050_sequence.ReserveMissionClear` -> the ACC's on-foot route-0 sortie once it is in
   its main game -> `TppPlayer.SetInitialPosition` at the target's reserve, `waitOnLoadingTipsEnd=false`, the MB demo

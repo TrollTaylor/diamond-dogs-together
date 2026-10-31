@@ -221,7 +221,9 @@ scene), otherwise `sync=none`.
 At the top of the World page: **Go to Afghanistan** (`travel 30010`), **Go to Africa**
 (`travel 30020`), **Go to Mother Base** (`travel 30050`) and **Bring partner here**
 (`bring_partner`, also next to Go to partner on the Partner page). Both players can use
-every button; nothing on them is host only.
+every button; nothing on them is host only. **Off unless `lab.ini` names `debug_travel=1`**
+(lab and play) until a hidden run on both copies proves it; off, native answers
+`travel=refused;reason=off` and nothing moves.
 
 - **Go to X** takes both players there with the game's own calls and no helicopter
   ride or menus: the current free roam leaves through its helicopter clear (Mother Base
