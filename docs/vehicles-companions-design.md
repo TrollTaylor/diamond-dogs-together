@@ -3602,7 +3602,7 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 ### 8.50 The seat checks at the shipped defaults; S1's play benefit (2026-10-30, branch `wp/seat-checks2`)
 
 - **Runs** (play, `-WanSim bad`, native gun, research, all admitted; d3dprobe hr=0, no snipping / screenclip / obs /
-  gamebar; slices and frames in `C:/Users/taylo/mgs-coop-run-archive/m6m7g/<id>`):
+  gamebar; slices and frames in the run archive's `m6m7g/<id>`):
   - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults; configured S1 `key=1`, `mode=view` on both).
     A [O]: guest in back seat 3 (`local_passenger; seat=3`), host's copy `partner_ride_seat=confirmed; seat=3`,
     `seat_patch=applied; seat=3; anchor=3`, the host's D-Dog in seat 1 (frame `host-a-seated`); seat-3 aim view clear;
@@ -3752,7 +3752,7 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   close with a live seat patch in a game. NEVER lines were 0 on both copies in both runs.
 - Runs: `d462df5d971e4ed19c3d2eb8cb997c30` (`e4a0d53`), `23032c7227864813832e644dfba4cbd2` (`c14a920`; it read the
   scenario before `0eeda98`). Sheets `best-sheet-d462df5d.jpg`, `best-sheet-23032c72.jpg` under
-  `C:/Users/taylo/mgs-coop-run-archive/m6m7h/frames/partc/`.
+  the run archive's `m6m7h/frames/partc/`.
 
 ### 8.54 m6m7h integrated: the seat lock, review corrections (2026-10-31, branch `wp/seat-proof3`, review m6m7h)
 
@@ -3897,7 +3897,7 @@ working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a 
   (godmode) and the host's buddy killed it (`att=buddy`).
 - Runs: `859964ce2b3242058b22bd700b616012` (`m6m7i-seat-fpv-ab-lab.txt` v2, `36eb7da`),
   `1bd4419ad5be4ee4bf83fb938f6ef527` (`m6m7i-seat-fpv-fall-lab.txt`, `81eead9`). Sheets `best-sheet-859964ce.jpg`,
-  `best-sheet-1bd4419a.jpg` under `C:/Users/taylo/mgs-coop-run-archive/m6m7i/frames/checks/`.
+  `best-sheet-1bd4419a.jpg` under the run archive's `m6m7i/frames/checks/`.
 - **Part C, the D-Dog after the partner** (`8567f888`, play, `-WanSim bad`, africa-jeep for both, shipped defaults;
   scenario `626993e`): the host waited 15 s at the 30020 fail-safe spot (~335 m off) and its dog followed it there
   (`buddy` at -511.80, 3.92, 1181.40) [O]. The host warped back and pressed E: the first `vehicle_seats` after it read
