@@ -2,13 +2,18 @@
 # roles) at the SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both (30020, the jeep
 # veh_lv_0000 = 25608; the driver's door spot -656.01 1.20 877.73 facing 62, used in m6m7h part C).
 #   a) The guest stands at the empty jeep's driver's door and never presses E (m6m7h 23032c72: it held the driver's
-#      seat and the host's E did nothing, "Your partner reached the driver's seat first"). The host comes beside it
-#      and presses E: the host drives; no claim, no grant, no yield, no toast.
-#   d) After a): the guest boards as a passenger at the right door as before (any passenger seat).
-#   b) The mirror: the host stands at the door without E, the guest presses E: site D holds the guest's press until
-#      the host's grant (partner_board=press; end=grant; wait_ms= the press-to-answer time), then the guest drives.
-#   c) Both press E at the same door at once: the host's press commits natively first, the guest's claim is denied
-#      (host_pressed or host_drives), its press ends on foot with the toast (a=6) and no Fulton prompt; one driver.
+#      seat and the host's E did nothing, "Your partner reached the driver's seat first"). The host goes to the right
+#      front door (an empty jeep's right door also takes the driver's seat) and presses E: the host drives; no claim,
+#      no grant, no yield, no toast.
+#   d) After a): the guest, still at the driver's door, presses E and boards as a passenger (any passenger seat).
+#   b) The mirror: the host stands at the driver's door without E, the guest presses E at the right door: site D holds
+#      the guest's press until the host's grant (partner_board=press; end=grant; wait_ms= the press-to-answer time),
+#      then the guest drives.
+#   c) Both press E at once (host at the driver's door, guest at the right door): the host's press commits natively
+#      first, the guest's claim is denied (host_pressed or host_drives), its press ends on foot with the toast (a=6)
+#      and no Fulton prompt; one driver.
+# Run 1beffd8f (v1): placebehind 1 m behind / 1.2 m beside the door spot put the second player out of the ride icon's
+#   range (no E icon in host-a-host-beside), so a), b) and c)'s second press never started a ride; v2 uses the doors.
 # Needs at head: partner_board=race; ...; d=0x1251366 on both copies and the host's READY (world_lua=event=seat;
 #   action=ready; role=host / the guest's state=ready).
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
@@ -42,8 +47,8 @@ logmark both
 guest debug teleport -656.01 1.20 877.73 62
 wait 4500
 both capture a-guest-at-door
-placebehind host guest 1 1.2
-wait 1500
+host debug goto_vehicle jeep right
+wait 2500
 both capture a-host-beside
 host press e 150
 host burst a-host-press 4 300
@@ -56,8 +61,8 @@ wait 1500
 both capture a-host-drives
 # --- d) The guest boards as a passenger ---------------------------------------------------------------------------
 logmark both
-guest debug goto_vehicle jeep right
-wait 1500
+guest debug teleport -656.01 1.20 877.73 62
+wait 2000
 guest press e 150
 guest burst d-geton 3 400
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
@@ -77,7 +82,7 @@ host expect vehicle_not_riding
 # --- b) The host at the door without E; the guest presses E -----------------------------------------------------
 host debug teleport -656.01 1.20 877.73 62
 wait 3000
-placebehind guest host 1 1.2
+guest debug goto_vehicle jeep right
 wait 3000
 both capture b-host-at-door
 logmark both
@@ -101,7 +106,7 @@ guest expect vehicle_not_riding
 # --- c) Both press E at the same door at once ---------------------------------------------------------------------
 host debug teleport -656.01 1.20 877.73 62
 wait 3000
-placebehind guest host 1 1.2
+guest debug goto_vehicle jeep right
 wait 4000
 both capture c-before
 logmark both
