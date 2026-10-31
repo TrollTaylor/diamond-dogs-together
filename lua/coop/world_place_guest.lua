@@ -71,7 +71,8 @@ do
                 fix = div.n >= 2 and P.state(en) == 0 and not (cp and cp.localPhase >= 3) and div.fixes < 10 and
                     c.at - div.at >= 5000 and #P.q < 8
             end
-            L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d", c.seq, c.h, d / 1000, div.n, fix and 1 or 0)
+            L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d;host_xz=%.1f,%.1f;here_xz=%.1f,%.1f", c.seq, c.h, d / 1000,
+                div.n, fix and 1 or 0, c.x / 1000, c.z / 1000, x / 1000, z / 1000)
             if fix then
                 div.n, div.fixes, div.at = 0, div.fixes + 1, c.at
                 P.q[#P.q + 1] = c
