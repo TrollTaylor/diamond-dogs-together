@@ -21,7 +21,9 @@ new look, and the choice holds for later missions of that game session.
   later load (story-forced missions and the Quiet rules still win). Ocelot/Quiet only where the existing bypass allows
   (launcher pick Ocelot, Quiet or Story); otherwise refused, or `character_next_load` while the bypass is off. No wire
   op, no lab key, no new patch or read site: the look frames already resend on change.
-- **Scenario (not run):** `tools/worker/scenarios/character-switch-play.txt`.
+- **Scenario (not run):** `tools/worker/scenarios/character-switch-play.txt` (`-Mode play -WanSim bad -PartnerProfile
+  native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder`).
+- **Checks:** `pwsh -File tools/build.ps1` 340/340 at `fa5848fe`; `tools/generate_partner_contract.py --check` passes.
 - **Open [U]:** that writing the type vars mid-mission reloads the parts with the partner body present; that the
   partner's copy draws each look (DD faces, Quiet); that a switch saved at a checkpoint restores the own character at
   the next mission without an override.
