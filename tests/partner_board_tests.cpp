@@ -1076,6 +1076,13 @@ void TestPress() {
     // 8.57: the tie with the driver's D-Dog. Its ride arrives with seat 1 still offered (the dog not seated yet): the
     // press waits; the dog's OneTaken withdraws the offer: the press ends as peer and takes a back seat, which the
     // driver's copy draws where it is (DrawSeat moves only a seat-1 ride).
+    pb::SeatOpts fo{};  // the guest's front key is on (play)
+    fo.front = true;
+    g_limits.clear();
+    g_limit_ok = true;
+    g_remap = true;
+    pb::detail::BindSeatOneForTest(fo, &FakeLimit);
+    pb::detail::BindRemapForTest(&FakeRemap);
     g.now = 7500;
     pb::RaceHold(2000);
     Check(D(0), "tie: a press, idle");
@@ -1117,14 +1124,34 @@ void TestPress() {
     Check(!D(0), "seat 1 stayed free for kSeatSettleMs: phase 1 goes on");
     pb::ReadRace(rs);
     Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 100 + pb::kSeatSettleMs && rs.done_seq == seq0 + 2, "ended as peer");
+    // Review (8.57): the host's deny (why=host_drives) is live by then; the partner drives it, so site B's deny
+    // backstop is skipped and the passenger policy seats the guest in seat 1.
+    pb::RaceDeny(25608, 3000);
+    g.nearest_result = 1; g.type_value = 1; g.count_value = 4;
+    Check(pb::detail::SiteBForTest(unit, pos) == 1 && g.first == 1, "no dog, a live host deny: site B still gives seat 1");
+    pb::RaceDeny(25608, 0);
     pb::Policy one{};
     one.vehicle = 25608; one.peer_seat = 0; one.mode = pb::Mode::passenger; one.until_ms = 12000; one.front_ok = true;
-    pb::SeatOpts fo{};
-    fo.front = true;
     const pb::Range rr = pb::DecideSeats(one, true, 1, 4, fo);
     Check(rr.ok && rr.first == 1, "no dog: seat 1 is offered to the guest (front key)");
     ds.seat = 1; ds.rider[1] = pb::kRiderEmpty;
     Check(pb::DrawSeat(ds).seat == 1, "no dog: the driver's copy draws the guest in seat 1 (rider[1] empty)");
+    // Review (8.57): a seat-1 offer this copy's own keys never take (front offered, only the cab key on) is no reason
+    // to wait: the press ends as peer at once (the back seats).
+    pb::SeatOpts co{};
+    co.cab = true;
+    pb::detail::BindSeatOneForTest(co, &FakeLimit);
+    g.now = 9600;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Check(D(0), "cab key only: a press, idle");
+    g.now = 9700;
+    pb::Policy fp{};
+    fp.vehicle = 25608; fp.peer_seat = 0; fp.mode = pb::Mode::passenger; fp.until_ms = 13000; fp.front_ok = true;
+    pb::Publish(pb::Pack(fp));
+    Check(!D(0), "a front offer with only the cab key on: no settle, phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 100 && rs.done_seq == seq0 + 3, "ended as peer at once");
     Policy(pb::Mode::off);
     unsigned char empty[0x100]{};
     Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
