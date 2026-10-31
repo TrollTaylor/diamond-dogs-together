@@ -1137,5 +1137,45 @@ do
     b.native.act, b.native.pos = 44, {0, 800, 6000}
     b.now = b.now + 100; b.D.tick(b.now)
     check(#b.warps == 0, 'no warp to a stale carrier position')
+
+    -- The session's own copy never left the carried act: the streamed act stayed 43 while the
+    -- carrier's replica played its put-down (act 39, peer) and the body slid 4.7 m and fell.
+    a, b = pair()
+    carry(a, b, {16536, 800, 30661}, {16540, 1700, 30600})
+    for _ = 1, 10 do step(a, b, 100) end
+    b.native.peer, b.native.pos = 39, {16550, 1500, 31600}
+    step(a, b, 100)
+    check(#b.warps == 0, 'the carrier\'s put-down with the body still at the carrier: no warp')
+    b.native.pos = {16683, 830, 35410}
+    step(a, b, 100)
+    w = lastWarp(b)
+    check(w ~= nil, 'carried act 43 under the carrier\'s put-down, body 4.7 m away: warped back')
+    p = w and w.command.pos or {0, 0, 0}
+    dx, dz = p[1] - 16.536, p[3] - 30.661
+    check(dx * dx + dz * dz <= 1.0 and p[3] < 30.661, 'the warp lands at the carrier\'s feet, away from the slide')
+
+    -- The pickup also plays the carrier's act 39: the first second of a carry is never a put-down.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    a.native.pos = {0, 800, 0}
+    b.native.carry, b.native.act, b.native.peer, b.native.pos = 2, 42, 39, {0, 800, 2600}
+    for _ = 1, 5 do step(a, b, 100) end
+    check(#b.warps == 0, 'the pickup (carrier act 39 within the first second) never warps')
+
+    -- A carried body lagging on a lagging carrier copy (runaway, 3 m) is left to the attachment;
+    -- a carried body far away (more than 5 m) or 2 m below the carrier is not on the shoulder: warp.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 3000})
+    for _ = 1, 15 do step(a, b, 100) end
+    check(#b.warps == 0, 'a carried body 3 m from the carrier\'s reported spot is never warped')
+    b.native.pos = {0, 1700, 5600}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a carried body more than 5 m from the carrier is warped back')
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 500})
+    for _ = 1, 15 do step(a, b, 100) end
+    b.native.pos = {0, -1500, 900}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a carried body 2 m below the carrier\'s feet is warped back')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')
