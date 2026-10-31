@@ -1402,7 +1402,7 @@ int main() {
     Check(worldSeven.world == 0 && worldSeven.invalid_values == 1, "invalid world keeps 0");
     const char* probes[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
                             "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
-                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart"};
+                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "host_target_dead"};
     static_assert(sizeof(probes) / sizeof(probes[0]) == kWorldProbeMax + 1u);
     for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
         const auto c = Lab(std::string("enabled=1\nrole=guest\nworld=2\nworld_probe=") + probes[i] + "\n");
@@ -1416,9 +1416,13 @@ int main() {
               !ParseWorldProbe("race_kill ", 10, unchanged) && unchanged == WorldProbe::p1,
           "ParseWorldProbe is exact");
     WorldProbe restart = WorldProbe::none;
-    Check(kWorldProbeMax == 19 && ParseWorldProbe("guest_restart", 13, restart) && static_cast<unsigned>(restart) == 19 &&
+    Check(ParseWorldProbe("guest_restart", 13, restart) && static_cast<unsigned>(restart) == 19 &&
               std::strcmp(WorldProbeName(restart), "guest_restart") == 0,
           "probe 19 is guest_restart (fb1031 arrival: the guest's pause-menu Restart)");
+    WorldProbe fail = WorldProbe::none;
+    Check(kWorldProbeMax == 20 && ParseWorldProbe("host_target_dead", 16, fail) && static_cast<unsigned>(fail) == 20 &&
+              std::strcmp(WorldProbeName(fail), "host_target_dead") == 0,
+          "probe 20 is host_target_dead (fb1031 mbgo: the host's stock TARGET_DEAD Game Over)");
     Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(kWorldProbeMax + 1)), "?") == 0, "out-of-range probe name");
     const auto badProbe = Lab("enabled=1\nrole=host\nworld_probe=p2\n");
     Check(badProbe.world_probe == WorldProbe::none && badProbe.invalid_values == 1, "unknown probe invalid");
