@@ -56,7 +56,8 @@ local function fixture(role, level)
         ReturnToMission = function() record('return') end,
         GameOverReturnToTitle = function() record('title') end}
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {},
-        level = level or 3, role = role, host = role == 1, active = true, mission = 30050, epoch = 7, paired = true, eff = 3}
+        level = level or 3, role = role, host = role == 1, active = true, mission = 30050, epoch = 7, paired = true, eff = 3,
+        probe = {handlers = {}, NAMES = {}}}
     env.e.MgsCoopWorld = W
     W.get = function(t, k) return t and t[k] end
     W.cfg = function() return {c.configLevel or W.level, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55} end
@@ -889,6 +890,39 @@ do
     over.env.svars.mis_isDefiniteGameOver = true
     over.env.TppMission.RestartMission()
     check(called(over, 'restart_menu') == 0 and over.tx[1].op == OP.REQ_MISSION, 'a game over keeps the host_only rule')
+end
+do
+    -- Lab probe guest_restart (id 19): the guest's pause-menu Restart as the engine sends it (UI PauseMenuRestart
+    -- through TppMission.OnMessage, whose table holds the wrapped RestartMission), lab mode and guest only.
+    local function menu(c)
+        c.W.api = {str32 = function(s) return 'h:' .. s end}
+        c.env.TppMission.OnMessage = function(cls, msg)
+            c.calls[#c.calls + 1] = 'on_message'
+            if cls == 'h:UI' and msg == 'h:PauseMenuRestart' then c.env.TppMission.RestartMission() end
+        end
+        return c
+    end
+    local lab = menu(mbApis(fixture(2)))
+    lab.W.mode, lab.env.vars.playerVehicleGameObjectId = 1, 77
+    check(lab.W.probe.NAMES[19] == 'guest_restart' and type(lab.W.probe.handlers.guest_restart) == 'function', 'probe 19 is guest_restart')
+    lab.W.probe.handlers.guest_restart({name = 'guest_restart'})
+    check(called(lab, 'on_message') == 1 and called(lab, 'restart_menu') == 1 and #lab.tx == 0 and
+        count(lab, 'step=local_restart;fn=RestartMission;why=heli') == 1 and count(lab, 'event=probe;id=guest_restart;step=done;result=ok') == 1,
+        'lab probe: the menu Restart message takes the way out')
+    local play = menu(mbApis(fixture(2)))
+    play.W.mode, play.env.vars.playerVehicleGameObjectId = 0, 77
+    play.W.probe.handlers.guest_restart({name = 'guest_restart'})
+    check(called(play, 'on_message') == 0 and #play.tx == 0 and count(play, 'id=guest_restart;step=done;result=refused') == 1,
+        'play mode: the probe does nothing')
+    local host = menu(mbApis(fixture(1)))
+    host.W.mode = 1
+    host.W.probe.handlers.guest_restart({name = 'guest_restart'})
+    check(called(host, 'on_message') == 0 and count(host, 'id=guest_restart;step=done;result=refused') == 1, 'the host never runs it')
+    local walking = menu(mbApis(fixture(2)))
+    walking.W.mode = 1
+    walking.W.probe.handlers.guest_restart({name = 'guest_restart'})
+    check(called(walking, 'restart_menu') == 0 and walking.tx[1].op == OP.REQ_MISSION and
+        count(walking, 'id=guest_restart;step=done;result=refused') == 1, 'on foot: the message keeps the host_only rule (probe refused)')
 end
 do
     -- fb1031 review (default): a linked guest's helicopter arrival at Mother Base stays vanilla (the 0.14.5 arrival

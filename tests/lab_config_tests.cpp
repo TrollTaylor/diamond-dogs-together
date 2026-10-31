@@ -1305,6 +1305,10 @@ int main() {
     Check(!ParseWorldProbe("P1", 2, unchanged) && !ParseWorldProbe("p2", 2, unchanged) && !ParseWorldProbe("", 0, unchanged) &&
               !ParseWorldProbe("race_kill ", 10, unchanged) && unchanged == WorldProbe::p1,
           "ParseWorldProbe is exact");
+    WorldProbe restart = WorldProbe::none;
+    Check(kWorldProbeMax == 19 && ParseWorldProbe("guest_restart", 13, restart) && static_cast<unsigned>(restart) == 19 &&
+              std::strcmp(WorldProbeName(restart), "guest_restart") == 0,
+          "probe 19 is guest_restart (fb1031 arrival: the guest's pause-menu Restart)");
     Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(kWorldProbeMax + 1)), "?") == 0, "out-of-range probe name");
     const auto badProbe = Lab("enabled=1\nrole=host\nworld_probe=p2\n");
     Check(badProbe.world_probe == WorldProbe::none && badProbe.invalid_values == 1, "unknown probe invalid");

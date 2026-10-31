@@ -330,6 +330,9 @@ void Triggers() {
                   canonical == std::string("world_probe=") + names[i],
               "probe names round trip");
     }
+    Check(Trigger("world_probe=guest_restart", t, canonical, reason) && static_cast<unsigned>(t.probe) == 19 &&
+              canonical == "world_probe=guest_restart",
+          "guest_restart trigger round trips");
 }
 // Guest spawn sync: "<seq> <goId>", strict integers, nothing else.
 void Warp() {
