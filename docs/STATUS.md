@@ -18,7 +18,8 @@ unproven on screen.
   toast says so). In play W1 is off at 30050, so a partner's shot never reaches the other save; with W1 (lab) a
   partner's kill lands as a knockout (spareStaff). Staff reactions, morale and alert with lethal weapons: [U].
 - **Checks:** red `dd19df1f` / green `c764c31d` (debug_rules_lua_check, world_wire_tests RulesOp, debug_menu_tests);
-  scenario red `1c13acbd` / green `630c4a0b` (worker_session_tests). Full CTest: see the next commit's message.
+  scenario red `1c13acbd` / green `630c4a0b` (worker_session_tests); the composed TppMain check knows the new chunk
+  (`aec3dd7b`). `pwsh -File tools/build.ps1` 340/340 at `aec3dd7b`; `tools/generate_partner_contract.py --check` passes.
 - **Open [U]:** whether the wormhole level is the only switch (the Fulton draws the balloon); what the partner's copy
   draws for a mirrored Fulton (its own level, RequestForceFulton); whether the lethal weapons and HUD come back live at
   Mother Base; which seed has the wormhole developed (the scenario's `seen=1`). Run `tools/worker/scenarios/rules-play.txt`
