@@ -1,3 +1,33 @@
+## 2026-10-31: debug menu Give weapon and Friendly fire (`wp/give-weapons`, local only) -- not run-proven yet
+
+**Players would get:** F9 > Player > **Give weapon**: a list of the guns the game loaded in the area (the soldiers',
+yours, your partner's) and the stock support items; each comes with full ammo, in hand at once (host and guest, each
+for itself). F9 > Partner > **Friendly fire: ON / OFF**: the host decides for both (a guest's press asks the host);
+OFF, the partner's bullets, explosives and melee never hurt or down you. A toast on both screens. Default ON. **No
+hidden run yet**: built and unit-tested only.
+
+- **Report** (the 10-31 friend session): "weapon spawning ... should be an option as well as disabling friendly fire".
+- **Cause** (code, static): the Player rows only refilled or dropped the gun already in a slot (`weapon_not_resident`
+  for anything else: TppEquip has no readiness query, and a mid-mission `RequestLoadToEquipMissionBlock` is an
+  unverified lifecycle). Every partner hit (bullets on the replica, `partner_melee`) goes through one queue ->
+  FRIENDLY_HIT with no switch.
+- **Give weapon** (`lua/coop/debug_arms.lua`, new 10 KB fragment): guns only from the equip writer's last census of
+  the mission (protected stock entries, `MGS_COOP_ARMS_RESIDENT_V1` copies its status: no new read site), named from
+  TppEquip; the retail `Player.ChangeEquip` (s10260.GetRocketLuncher) with GetAmmoInfo's full ammo, active, the old
+  gun dropped like a stock pickup swap; support items into a free sub. Development is not checked (decision: like a
+  gun taken from a soldier). vars readback, a timeout is a refusal. The partner's puppet keeps the gun its copy bound
+  for that slot (same gun or the weapons4 stand-in) until the next area load; no mid-mission writer change.
+- **Friendly fire**: new wire op ARMS `0x3F` (control, both, paired; 1 ask, 2 state; the host repeats on pairing);
+  `world_friendly.lua` drops hits at the shooter (consumed, never sent) and the target (never queued or applied)
+  while `W.arms.ff` is false. World note 18. Rows `arms_give` (end of Player), `arms_friendly_fire` (end of Partner).
+- **Tests (failing first):** red `ef670f07`, `cda94ef5`; green `41fa70e7`: `debug_arms_lua_check` (new),
+  `world_downed_lua_check` (off at both ends, queued hits flushed, on again), `debug_arms_tests` (new: rows, reply,
+  state, text, ARMS spec, note 18), `world_wire_tests` (63 ops).
+- **Scenario (not run):** `tools/worker/scenarios/arms-give-ff-play.txt` (play, afgh-ledge, native gun profile).
+- **Open [U]:** whether ChangeEquip of a census gun shows and fires in hand on both screens; the support items'
+  count (no table count: 8); whether the census is there in every area (it needs the partner's body); the guest's
+  menu state before its first pairing.
+
 ## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
 
 **Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
