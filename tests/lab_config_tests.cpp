@@ -724,18 +724,23 @@ int main() {
             Check(!late.partner_ride_follow && late.invalid_values == 1, "an invalid follow carry value after a valid 1 turns it off");
         }
     }
-    // Get-in camera cut (partner_ride_getin_cut, design 8.60): off unless named in lab and play until a hidden run proves
-    // it; a named 1 runs in lab and play; a named 0 stays off; an invalid value is named and off, also after a valid 1.
+    // Get-in camera cut (partner_ride_getin_cut, design 8.60): follows the gun profile in lab and play (hidden runs c54aae04
+    // before / f71126c0 after, play, -WanSim bad); a named 1 runs in lab and play; a named 0 turns it off; an invalid value
+    // is named and off, also after a valid 1.
     {
         Check(!LabConfig{}.partner_ride_getin_cut && !LabConfig{}.partner_ride_getin_cut_given && !Lab("").partner_ride_getin_cut,
-              "get-in cut defaults off");
+              "get-in cut defaults off without a profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string noprofile = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                      "partner_apply=xform\npartner_anim=off\npartner_dm=map\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto bare = Lab(noprofile + mode);
+            Check(!bare.partner_ride_getin_cut && !bare.partner_ride_getin_cut_given, "get-in cut stays off without the gun profile");
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_ride_getin_cut && !profile.partner_ride_getin_cut_given && profile.invalid_values == 0 &&
+            Check(profile.partner_ride_getin_cut && !profile.partner_ride_getin_cut_given && profile.invalid_values == 0 &&
                       profile.play_refused == 0,
-                  "the gun profile leaves the get-in cut off in lab and play (not named; not run-proven)");
+                  "the gun profile turns the get-in cut on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_ride_getin_cut=1\n");
             Check(named.partner_ride_getin_cut && named.partner_ride_getin_cut_given && named.invalid_values == 0 &&
                       named.unknown_keys == 0 && named.play_refused == 0,
