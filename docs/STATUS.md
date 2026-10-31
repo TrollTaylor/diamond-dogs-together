@@ -1,3 +1,31 @@
+## 2026-10-31: seat checks part C on its own (review m6m7h track partc, branch `wp/seat-checks3`, local only)
+
+**Players get** no visible change. The fix below only matters while a closing game process is still running.
+- **Close fix** (failing first `140abca` -> `ad609fe`): when the game window closes on a thread other than the
+  mission's (every shutdown line in these runs said `partner_shutdown=hooks_off; teardown=other_thread`), PartnerShutdown
+  returned before PartnerMissionEnd. So the seat patch revert never ran: it was missing, not only unlogged. The patch
+  covers the four seat dwords, the seat-1 anchor included. `partner_ride_seat::Close` now runs before the thread
+  split. It blocks every later Arm (`skipped; reason=closing`) and reverts at once (`reverted; reason=shutdown`).
+  Neither run closed with a live patch, so that line in a game is [U]. The process ends soon after the close (the
+  host copy logged a few more stats lines, then the worker's job termination), so the stale patch had no visible
+  effect [I].
+- **Why -b part C never ran** [O]: `debug forward -40` keeps the seed spot's height (0.75 m). 40 m back the ground is
+  higher, so the host landed under it, fell, and went down (WOUNDED). This happened in both `1d9fd748` and `d462df5d`
+  (frames `*-host-c-far`; `downed_damage=intercept;cause=lethal`). A downed host cannot board, so the guest took the
+  driver's seat. The cause was the fall, not the 2.5 s wait.
+- **The guest's claim** [O `23032c72`]: a guest standing at an empty jeep claims its driver's seat every ~1.2 s, without
+  pressing E. In that run the host's copy granted and yielded, and showed the host "Your partner reached the driver's
+  seat first: take another seat or wait." The host's E beside the driver's door then did not board.
+- **Checkpoint reload with a seated partner** [O `d462df5d`, guest driving, host copy drawing it in seat 0]: the host
+  chose Escape, CHECKPOINT, then 'a' + Enter (the confirm preselects NO). The host copy logged
+  `partner_ride_seat_patch=reverted; reason=stop` at MISSION_TERMINATING. Both copies reloaded 30020 (the guest by the
+  kind-4 follow). The guest copy then waited at "Space Resume Game"; the host copy showed MISSION FAILED, because
+  that host had been down since the fall, so a reload by a host who is not down is [U].
+- **Not shown:** where the D-Dog goes when it arrives after the partner sits in seat 1 [U]; neither run seated the
+  guest in seat 1. Scenario `m6m7h-seat-partc-play.txt` (`0eeda98`, not run) fixes the three causes above.
+- Runs `d462df5d971e4ed19c3d2eb8cb997c30`, `23032c7227864813832e644dfba4cbd2`. NEVER lines are 0 on both copies.
+  Full `tools/build.ps1` at `c14a920`: CTest 336/336; contract `--check` 836 / 213. Design 8.53.
+
 ## 2026-10-30: the seat branches integrated, review m6m7g closed (branch `wp/seat-proof` with `wp/seat-checks2` merged, local only)
 
 **Players get** the automatic first person from the jeep's front seat and left back seat (on since the fpv section
