@@ -1,3 +1,16 @@
+## 2026-10-31: Mother Base staff outcomes, proof round (`wp/integ-fb1031`, local only, design 7.7) -- W1 at 30050 back to lab only in play
+
+**Players get:** at Mother Base in play, nothing changes from 0.14.5 (W1 off there). In the lab, W1 runs at 30050, and a partner's kill, dying or Fulton of a staff member lands on the other copy as a knockout, never a kill or a Fulton.
+
+- **Review mb-1 (fixed):** stock `f30050_sequence.lua` reserves `TARGET_DEAD` / `PLAYER_KILL_DD` on any non-player Dead or Dying, so a guest's staff kill mirrored as ChangeLifeState DEAD/DYING failed the host's mission. `W.MISSIONS[30050].spareStaff`: `E.applyOne` applies a partner's state 4, 5 or 6 as FAINT (`event=spare; state=N; as=3`). Red `e7908f12`, green `842aa344`. What the stock own-staff Fulton does to the roster is [U] (`TppTerminal.lua` is not in the extracted sources), so a mirrored Fulton is a knockout too.
+- **Review mb-2 (fixed):** `mb-soldiers-play.txt` has no host kill step (stock rule: the acting copy's own mission fails) and expects the spare knockout for the mirrored Fulton (`65bc581a`); `b627c437` waits out a stock Mother Base cutscene. **mb-3:** design 7.7 corrected (the guest may keep its own save; the slots match, the staff may not). mb-4 and mb-5 not changed.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder; both Closed, BaselineRestored, RealSavesUnchanged):
+  - `1bc18e9c`: [O] W1 came on at 30050 (host `align; step=ready; w1=1`; guest `step=accepted; soldiers=126; cps=7; unknown=0; divergence=0; w1=1`). Then a stock cutscene (Ocelot, D-Dog) on both copies (frames `best-sheet-1bc18e9c.jpg`); every debug command was refused `gameplay` and the scenario stopped at `placebehind`.
+  - `1d949f8c`: [O] the logs on both copies. Host `enemy_sleep` -> `commit; state=2; actor=host` -> guest `apply; state=2; src=outcome; result=ok; readback=2`. Host `enemy_fulton` -> `commit; state=6; actor=host` -> guest `spare; state=6; as=3` and `apply; state=3; result=noop; readback=2` (still asleep, no RequestForceFulton). No game over, error or bad_op line. [O] **No frame shows the staff member** on either copy (`best-sheet-1d949f8c.jpg`): `enemy_aim_nearest` did not bring them into view. [O] The guest's two rifle shots made no request (step 3 failed).
+- **Decision:** the outcome is not shown on screen, so W1 at 30050 is lab only in play (`W.MISSIONS[30050].enemiesLab`, red `c59a18aa`, green `c4fdb3bf`). The allCp and spareStaff code stays.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339; `tools/generate_partner_contract.py --check` passes.
+- **Open:** a run whose frames show the staff member asleep / knocked out on both copies (aim the cameras by position, or place the players next to a staff member); the guest's real shot at a staff member.
+
 ## 2026-10-31: Mother Base staff outcomes (branch `wp/mb-soldiers`, local only, design 7.7) -- not run-proven yet
 
 **Players would get:** at Mother Base, a staff member knocked out, put to sleep, killed or Fultoned by either player shows the same on the partner's screen (W1, the outcome sync free roam already has). **No hidden run reached gameplay**, so this is unproven and must not land before a run on both copies.
