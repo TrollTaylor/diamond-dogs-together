@@ -146,6 +146,7 @@ mgs_add_lua_check(world_vehicle_damage_lua_check "${_mgs_coop}/world_vehicle_dam
   "${_mgs_coop}/world_vehicle_state.lua" "${_mgs_coop}/world_vehicle_rules.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
+mgs_add_lua_check(debug_character_lua_check "${_mgs_coop}/debug_character.lua" "${_mgs_coop}/character.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
 mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")

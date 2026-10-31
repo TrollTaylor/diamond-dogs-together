@@ -96,6 +96,7 @@ is local to the PC that sends it.
 | Save / Go to bookmark, slot grid | `bookmark n`, `return n` (0..7, this mission only) |
 | Read inventory, Refill hip/back/secondary | `inventory`, `weapon hip current`, ... |
 | Drop hip/back/secondary gun | `drop_item current_hip n` (payload 1..10) |
+| **Character (you)** (U): Snake, DD soldier (male), DD soldier (female), My avatar, Ocelot, Quiet, Back to my default | `character snake\|dd_male\|dd_female\|avatar\|ocelot\|quiet\|default`. Host and guest, each for their own character: right away and at every later mission load of this game session. The partner sees the new look (an avatar as Snake). Ocelot/Quiet only with a launcher pick of Ocelot, Quiet or Story (else `character_needs_launcher_pick`); `character_next_load` when it can only apply at the next load. Default: your coop.ini character (the host: Snake), else your save's own. See [characters.md](characters.md#switch-in-game-f9). |
 
 ### Enemies
 

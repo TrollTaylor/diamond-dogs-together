@@ -683,6 +683,30 @@ int main() {
               "Travel rows: guest too, no partner pose needed (the partner may be elsewhere), fixed text");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
+    // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,
+    // one contiguous block closing the Player rows; the partner sees the look through partner_look.
+    {
+        const char* ids[] = {"character_snake", "character_dd_male", "character_dd_female", "character_avatar",
+                             "character_ocelot", "character_quiet", "character_default"};
+        const char* texts[] = {"character snake", "character dd_male", "character dd_female", "character avatar",
+                               "character ocelot", "character quiet", "character default"};
+        std::size_t first = action_count, last_player = 0;
+        for (std::size_t i = 0; i < action_count; ++i) {
+            if (!std::strcmp(actions[i].id, ids[0])) first = i;
+            if (actions[i].category == act::Category::player) last_player = i;
+        }
+        for (int i = 0; i < 7; ++i) {
+            const auto* a = act::FindAction(ids[i]);
+            Check(a && a->category == act::Category::player && a->command && !std::strcmp(a->command, texts[i]) &&
+                      !(a->flags & (act::kHostOnly | act::kSyncs | act::kParam | act::kNeedsPartner | act::kConfirm)) &&
+                      first < action_count && a == &actions[first + i],
+                  "character rows: both players, local, fixed text, in order");
+        }
+        Check(first + 6 == last_player, "character rows close the Player list");
+        Check(act::SearchActions("character", found, 32) == 7, "search character lists the seven rows");
+        debug::Snapshot guest{}; guest.enabled = guest.gameplay_ready = true; guest.host = false;
+        Check(act::DisabledReason(*act::FindAction("character_dd_female"), guest, false) == nullptr, "a guest can press them");
+    }
     Check(std::strcmp(act::FindAction("buddy_horse_spawn")->command, "horse_spawn") == 0 &&
           std::strcmp(act::FindAction("buddy_horse_status")->command, "horse_status") == 0, "normal-release horse commands in F9 registry");
     auto n = act::SearchActions("horse", found, 32);
