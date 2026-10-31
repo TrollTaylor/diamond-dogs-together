@@ -96,6 +96,11 @@ std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed
 // teardown=other_thread). Idempotent; a later Revert finds nothing.
 void Close(void* base, std::size_t span, LogFn log) noexcept;
 bool Closed() noexcept;
+// Tests only (design 8.54): a pause inside ArmGetOff after its checks (point 1) and inside Revert before its first
+// write (point 2), so a test can close from another thread at that moment; and a reset of the one-way close.
+using PauseFn = void (*)(int point);
+void SetPauseForTest(PauseFn fn) noexcept;
+void ResetForTest() noexcept;
 
 // --- The seated state table (StrCode64 of the MOG state names, verified
 // present in TppPlayer2_layers.mog; critic_work/mogcheck.py). class 0 = light
