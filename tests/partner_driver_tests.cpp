@@ -7685,6 +7685,118 @@ void TestPassCameraViewDriver() {
     }
 }
 
+// Design 8.46 (partner_seat_fpv): the seat first person in TickPassCamera with fake read / write hooks.
+struct SeatFpvFake {
+    std::uint32_t toggles = 0;
+    std::uint8_t slot = 2;
+    bool module = true;
+    int lever = -1;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> writes;  // (set, clear)
+};
+SeatFpvFake g_fpv;
+bool HookFpvRead(void*, const mgscoop::partner_player::State&, mgscoop::partner_pass_camera::FpvRead& out) noexcept {
+    out = mgscoop::partner_pass_camera::FpvRead{};
+    out.subj.ok = g_fpv.module;
+    out.subj.toggles = g_fpv.toggles;
+    out.slot_ok = true;
+    out.slot = g_fpv.slot;
+    return g_fpv.module;
+}
+bool HookFpvWrite(void*, const mgscoop::partner_player::State&, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    g_fpv.writes.push_back({set, clear});
+    g_fpv.toggles = (g_fpv.toggles | set) & ~clear;
+    after = g_fpv.toggles;
+    return true;
+}
+int HookFpvLever(void*) noexcept { return g_fpv.lever; }
+void FpvSetup(Session& s, bool key) {
+    ViewSetup(s);
+    g_fpv = SeatFpvFake{};
+    s.hooks.seat_fpv_read = HookFpvRead;
+    s.hooks.seat_fpv_write = HookFpvWrite;
+    s.hooks.seat_fpv_override = HookFpvLever;
+    s.driver.settings.seat_fpv = key;
+    s.driver.settings.ride_front = true;
+}
+void TestSeatFpvDriver() {
+    namespace pb = mgscoop::partner_board;
+    {
+        // Seat 1, the key on: the slot's bit while aiming, cleared at the aim end; again at the next aim; the get-off
+        // while aiming clears it.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        Check(s.Tick(0) && g_fpv.writes.empty() &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=key; hooks=1") == 1 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1; reason=seat;") == 1,
+              "fpv: armed on the seat-1 boarding, nothing written");
+        GuardGun(s, 6);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=aim; set=0x4;") == 1,
+              "fpv: the aim sets the slot's bit");
+        GuardGun(s, 7);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1, "fpv: held");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "fpv: the aim end clears it");
+        GuardGun(s, 7);
+        Check(s.Tick(0) && g_fpv.toggles == 0x4, "fpv: the next aim sets it again");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=get_off; set=0x0; clear=0x4; ok=1;") == 1,
+              "fpv: the get-off while aiming clears it");
+        Check(s.Tick(0, 100) && g_fpv.writes.size() == 4, "fpv: on foot, nothing more");
+    }
+    {
+        // Seat 3 and the key off: never written. Play: the lever is ignored.
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            FpvSetup(s, which != 1);
+            if (which == 2) {
+                s.driver.settings.play_mode = true;
+                s.driver.settings.seat_fpv = false;
+                g_fpv.lever = 1;
+            }
+            g_board.lp = BoardPassenger(25608, which == 0 ? 3 : 2);
+            Check(s.Tick(0), "fpv off: seated");
+            GuardGun(s, 7);
+            for (int i = 0; i < 3; ++i) Check(s.Tick(0), "fpv off: aiming");
+            Check(g_fpv.writes.empty() && s.fake.Containing("state=seat_fpv; event=set") == 0, "fpv off: never written");
+        }
+    }
+    {
+        // The lab lever turns it on over a key that is off; the mission end during a seated first-person aim clears it.
+        Session s(0);
+        FpvSetup(s, false);
+        g_fpv.lever = 1;
+        g_board.lp = BoardPassenger(25608, 2);
+        GuardGun(s, 7);
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=lever; hooks=1") == 1,
+              "lever: on, set while aiming from seat 2");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=2; reason=mission_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "lever: the mission end clears the bit");
+    }
+    {
+        // The player's own F tap (the bit cleared by the game mid-aim): opt out, nothing more this boarding.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        Check(s.Tick(0) && s.Tick(0) && s.Tick(0) && g_fpv.toggles == 0x4, "tap: set");
+        g_fpv.toggles = 0;  // the game's toggle on the F tap
+        Check(s.Tick(0) && s.fake.Containing("state=seat_fpv; event=opt_out; vehicle=25608; seat=1; reason=tap;") == 1, "tap: opt out");
+        for (int i = 0; i < 3; ++i) Check(s.Tick(0) && g_fpv.toggles == 0, "tap: not set again");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1, "tap: nothing cleared at the aim end (not ours)");
+    }
+}
+
 void TestPassCameraGuardDriver() {
     namespace pc = mgscoop::partner_pass_camera;
     namespace pb = mgscoop::partner_board;
@@ -9880,6 +9992,7 @@ int main() {
     TestPassCameraDriver();
     TestPassCameraGuardDriver();
     TestPassCameraViewDriver();
+    TestSeatFpvDriver();
     TestSeatShotDriver();
     TestBoardSeatGates();
     TestSeatDraw();
