@@ -1,3 +1,40 @@
+## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
+
+**Players get:** **Go to Afghanistan** in the F9 debug menu takes both players to the Afghanistan free roam in about
+14-17 s, like Go to Africa and Go to Mother Base (Travel stays ON by default). After every Travel landing and after a
+Bring, the camera now sits behind your own character instead of facing it. **Bring partner here** works when you are both
+in the same area; when your partner is in another mission it no longer tries to fly them over (never run in a game) and
+says "Your partner is in another area: use Go to first." instead, so nobody gets stranded.
+
+- **Code:** red `d28f9c1e`, green `c109796f` (`lua/coop/world_goto.lua` Travel): the caller refuses a Bring when the
+  partner's mission (CFG r[9], nonzero) differs (`bring_refused;reason=other_area`, `event=travel; step=bring_other_area`,
+  world note 14 b=7); a receiver in another mission answers reason 8 `other_area` (the caller shows b=7); the
+  cross-mission travel path of `brought()` is gone. `arrive()` and the Bring warp call the stock
+  `Player.RequestToSetCameraRotation{rotX=0, rotY=player yaw}` (wrapped to -180..180). Native: the b=7 sentence in
+  `coop_text::FormatWorldNote`; the Bring button texts. No wire change (reason is a free u8). Scenario
+  `tools/worker/scenarios/travel-afgh-play.txt` (`1bb20c7b`).
+- **Run** `2ed8f9e8` (hidden worker, play, shipped defaults, `-WanSim bad`, native gun research, mb-ladder; 18:03, C:
+  133.23 GB, D: 16.32 GB, commit 18.69 GB, nvidia-smi 4227 MiB 9 %, d3dprobe HARDWARE hr=0; admitted, not refused;
+  Closed / BaselineRestored / RealSavesUnchanged True; ExpectFailures none).
+- [O] **Go to Afghanistan, both copies:** host `step=start; target=30010; from=30050; lead=1` -> `hop1 from=30050 ok=1`
+  -> `hop2 from=40050; target=30010; ok=1` -> `arrived; mission=30010; err_m=0.00; ms=13909`; guest `start; target=30010;
+  lead=0; by=partner` -> `arrived; mission=30010; err_m=0.18; ms=16725` (one 4 m warp) with toast b=2 "Your partner
+  brought you to Afghanistan free roam." Frames: host Snake from behind on the rock shelf, the partner landed ahead on
+  the rocks facing the host; guest screen from behind its own character with that toast.
+- [O] **Bring in Afghanistan:** the guest placed 10 m behind the host; host `bring_sent;mission=30010`; guest `step=brought;
+  mission=30010; x=831.17; z=1630.25` (3 m in front of the host's 828.18 / 1630.51 at yaw 95); toasts "Bringing your
+  partner to you." (host) and "Your partner brought you here." (guest) on screen.
+- [O] **Bring pressed the moment the host landed** (guest still landing, already in 30010): the guest answered reason 1
+  `travelling`, nothing moved (host `refused_by_partner; reason=travelling`, note b=5). [U] whether that b=5 toast
+  showed on the host's screen (no `hud=toast` line for it; the frame still shows "Bringing your partner to you.").
+- [O] **Guest Go to Mother Base:** `travel_asked` -> host leads (`by=partner`), both `arrived; mission=30050` (host
+  ms=16035, guest err 1.16 ms=18719); frames from behind each player at the deck ladder.
+- [O] camera behind the player in every landing frame on both copies (Afghanistan, the Bring, Mother Base); [I] that this
+  is the new `RequestToSetCameraRotation` call (no log line for it; the 5e166b4c host frame faced Snake).
+- [U] **Cross-mission Bring in a game:** no scenario way to hold the copies in different missions (a paired guest is
+  carried by world follow; a linked guest's Go to asks the host); the refusal is proven by `world_travel_lua_check`
+  only. Sheet `fb1031-on/frames/travel/best-sheet-2ed8f9e8.jpg` (run archive).
+
 ## 2026-10-31: Mother Base staff outcomes, run round (`wp/fb1031-on`, local only, design 7.7) -- W1 at 30050 stays lab only in play
 
 **Players get:** nothing new in play: at Mother Base each player's staff knockouts and Fultons stay on their own screen,
