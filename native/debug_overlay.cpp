@@ -31,6 +31,7 @@
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/coop_hud.hpp"
 #include "mgscoop/steam_online_state.hpp"
+#include "mgscoop/window_close.hpp"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -389,10 +390,32 @@ void RawText(const RAWKEYBOARD& key) noexcept {
 }
 std::atomic<ShutdownFn> shutdown_handler{nullptr};
 std::atomic<bool> shutdown_fired{false};
+// The WM_CLOSE held for the partner's mission-thread teardown (window_close.hpp) and its fallback timer.
+std::atomic<HWND> held_close{nullptr};
+constexpr UINT_PTR kCloseHoldTimer = 0x4D47434CU;  // 'MGCL'
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
     const WNDPROC previous = original_wndproc.load(std::memory_order_acquire);
     if ((id == WM_CLOSE || id == WM_DESTROY || (id == WM_ENDSESSION && wp)) && !shutdown_fired.exchange(true, std::memory_order_acq_rel))
         if (const ShutdownFn fn = shutdown_handler.load(std::memory_order_acquire)) fn();
+    // The game must not see the close before the mission thread has torn the partner down: hold it (the mission
+    // thread or the timer posts it again); WM_DESTROY / WM_ENDSESSION cannot wait.
+    if (id == WM_CLOSE && window_close::OnClose(GetTickCount64()) == window_close::Close::hold) {
+        if (!held_close.exchange(hwnd, std::memory_order_acq_rel)) {
+            const bool timer = SetTimer(hwnd, kCloseHoldTimer, static_cast<UINT>(window_close::kHoldMs), nullptr) != 0;
+            Log(timer ? "overlay=close_held; wait=mission_thread\r\n" : "overlay=close_held; wait=mission_thread; timer=refused\r\n");
+        }
+        return 0;
+    }
+    if (id == WM_DESTROY || (id == WM_ENDSESSION && wp)) window_close::OnDestroy();
+    if (id == WM_TIMER && wp == kCloseHoldTimer) {
+        const window_close::Timer timer = window_close::OnTimer(GetTickCount64());
+        if (timer != window_close::Timer::wait) KillTimer(hwnd, kCloseHoldTimer);
+        if (timer == window_close::Timer::release) {
+            Log("overlay=close_released; by=timeout\r\n");
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        return 0;
+    }
     if (worker_scenario::Requested() && InputMessage(id)) {
 #if MGS_BACKGROUND_WORKER
         if (id == WM_INPUT && SyntheticToken(static_cast<std::uintptr_t>(lp)) && previous)
@@ -1918,6 +1941,10 @@ bool WorkerVirtualPadState(unsigned index,void* output,std::size_t bytes) noexce
     SetLastError(error);return supplied;
 }
 void SetShutdownHandler(ShutdownFn fn) noexcept { shutdown_handler.store(fn, std::memory_order_release); }
+bool PostHeldClose() noexcept {
+    const HWND hwnd = held_close.load(std::memory_order_acquire);
+    return hwnd && PostMessageW(hwnd, WM_CLOSE, 0, 0) != FALSE;
+}
 
 bool CapturingInput() noexcept {
     if (worker_scenario::Requested()) return false;

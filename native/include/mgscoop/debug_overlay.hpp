@@ -11,6 +11,9 @@ void Install() noexcept;
 // native hooks can disarm before the engine tears its objects down.
 using ShutdownFn = void (*)() noexcept;
 void SetShutdownHandler(ShutdownFn fn) noexcept;
+// A WM_CLOSE that window_close held for the partner's mission-thread teardown goes on: posts it to the window
+// it was held on. Any thread; false when nothing was held or the post failed (the window is already gone).
+bool PostHeldClose() noexcept;
 // Also available to game-owned input wrappers. False on normal launches.
 bool CapturingInput() noexcept;
 // Process-local virtual controller provider, shared by the early IAT wrapper

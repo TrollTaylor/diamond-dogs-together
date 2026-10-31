@@ -1,0 +1,45 @@
+# Teardown AV at close (native/include/mgscoop/window_close.hpp): the worker closes both copies while the host drives
+# the africa jeep (30020, veh_lv_0000 = 25608) and the guest sits in a passenger seat, as part C of 8567f888 did when
+# the host copy faulted at rva 0xbf421a. SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep.
+# After the script the worker posts WM_CLOSE to each copy. Each copy must then log, in this order:
+#   partner_shutdown=hooks_off; teardown=mission_thread (the window thread hands the teardown over),
+#   overlay=close_held; wait=mission_thread (debug-overlay.log: the WM_CLOSE waits),
+#   partner_stop; cleared=1; teardown=clear and partner_bits=cleared (the mission thread's terminating stop),
+#   partner_shutdown=teardown; ...; close=posted (the held WM_CLOSE goes on),
+# and exit 0, with no crash_probe=av after the shutdown line and no forced job termination (stop.json).
+# NEVER: crash_probe=av after partner_shutdown; teardown=other_thread; close=post_failed; overlay=close_released; by=timeout.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/teardown-av-close-seated-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+# Both seeds start beside the jeep: the guest steps away until the host drives.
+guest debug teleport -633.5 3.0 867.8 -117
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog host 'world_lua=event=seat; action=ready; role=host' 30
+waitlog guest 'world_lua=event=seat; state=ready' 30
+host debug goto_vehicle jeep right
+wait 2500
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+wait 1500
+guest debug teleport -656.01 1.20 877.73 62
+wait 2000
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+wait 2000
+guest run vehicle_seats
+host run vehicle_seats
+both capture seated
+wait 3000
+both capture before-close

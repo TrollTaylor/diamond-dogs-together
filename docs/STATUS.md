@@ -29,6 +29,40 @@ dog in the front seat. Nothing else changes for players: the deny-first change w
 - Full `tools/build.ps1` at `d15fb340`: CTest 336/336; contract `--check` 838 / 213. Both runs' shutdowns were forced
   (`forced_job_termination`, as in 3 of 8 m6m7i runs; the close crash is `wp/teardown-av`'s) [I].
 
+## 2026-10-31: Teardown AV at close (branch `wp/teardown-av`, merged into `dev/oct7-continue`, local only)
+
+**Players get:** closing the game during a co-op mission (Alt+F4, the window's X, the worker's close) first tears the
+partner down on the mission thread, as a natural mission end does. It is meant to stop the crash that hit one copy in
+about one close in eight. The close waits for one partner tick, at most 1 s.
+- **Cause:** `crash_probe=av; rva=0xbf421a` (read 0, then `0x1be23eb`) in 7 archived runs (`8567f888` host, `e6ef6e4d`
+  guest, `30007c04` both, 3 in m6m7b, 1 in next2), all in 30010/30020 with `realized=1`. It is the game's own GameObject
+  SendCommand (`0xbf3a80` -> `0xbf4200` -> `0xbf9a10`) reading the registry `*(0x2c389a0)` after the GameObject module's
+  finalize (`0xbf36c0`, the only code that nulls it) had run. The call comes from a player-position resolver (`0xa11e30`,
+  type 0 goes through SendCommand; called only by `0xa12440`). The mod frames are incidental: `mod+0x13955f` is
+  `PoseCarryDispatch` calling that original through the passive native_pose_early hook. `mod+0xdba53` and `+0x1cb205`
+  are stale ReadProcessMemory census-reader frames. The mod's part: WM_CLOSE arrives on the window thread, so
+  PartnerShutdown always took `teardown=other_thread` (208 of 208 archived closes). The engine then tore the mission down
+  with the partner's realize bits still set and its drive armed, which a natural MISSION_TERMINATING stop clears first.
+- **Fix** (failing first `b43b4472`): `window_close` (`native/window_close.cpp`). PartnerShutdown hands the teardown to
+  the mission thread (`teardown=mission_thread`) and the overlay holds the WM_CLOSE (`overlay=close_held`). The next
+  partner tick runs the terminating stop (always `clear`) and the mission end, then posts the WM_CLOSE
+  (`partner_shutdown=teardown; close=posted`). With no tick, a 1 s timer posts it (`overlay=close_released; by=timeout`).
+  WM_DESTROY and WM_ENDSESSION never wait. CFG is refused while closing (`window_closing`).
+- `window_close_tests`; full CTest 337/337; contract `--check` 838 / 213. Scenario `teardown-av-close-seated-play.txt`.
+- **Shown** (hidden worker at `24120e20`, run `f32b567e`, play, `-WanSim bad`, seed africa-jeep; host driving the jeep,
+  guest in seat 2 at the close; archive `teardown-av/` in the run archive): on both copies
+  `teardown=mission_thread` -> `overlay=close_held` -> `partner_dm=reverted` -> `partner_bits=cleared` ->
+  `partner_stop; cleared=1` -> `partner_shutdown=teardown; close=posted`; no `crash_probe=av` on either copy. The guest
+  exited 0. The worker force-terminated the host after its 5 s wait (exit 1223), as in 13 of 23 m6m7g-i runs.
+  Expectations all met; real saves unchanged.
+- **Open:** one clean run cannot prove a 1-in-8 crash gone [U], and a host the worker terminates never reaches the
+  engine's teardown. Closes that bypass the overlay's WndProc (an overlay refused at install, the game's own exit) are
+  unchanged.
+- **Merged** into `dev/oct7-continue` after 8.57 / 8.58 (only this file conflicted): full `tools/build.ps1` CTest
+  337/337; `generate_partner_contract.py --check` 838 / 213, and every other `--check` generator passes (carry_info and
+  sleep_plugin with `--output native/<name>.hpp`, their default is `tools/`; vehicle_controller with `--executable`;
+  native_ui and teammate_targeting match their headers, their local `docs/evidence` reports are absent here).
+
 ## 2026-10-31: the tie's seats and the door message (branch `wp/seat-tie`, local only, design 8.57)
 
 **Players get:** when both press E at an empty jeep at once and the host's D-Dog is out, the guest now sits in the same
