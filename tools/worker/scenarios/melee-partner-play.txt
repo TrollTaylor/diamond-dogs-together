@@ -1,6 +1,10 @@
-# fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the SHIPPED play defaults
-# (no labsetting line: partner_melee follows the gun profile), -WanSim bad, seed afgh-ledge for both (30010; the
-# friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
+# fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the play defaults, -WanSim
+# bad, seed afgh-ledge for both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
+# Written for partner_melee on with the gun profile (f07b3c8c). Since f0b7e720 the key is off unless named (both fb1031
+# runs were refused before admission): to run this, either add partner_melee=[01] to the worker's labsetting allow-lists
+# (Invoke-WorkerScenario.ps1 -LabSetting and its scenario line check, Start-WorkerSession.ps1) and add
+# "labsetting partner_melee=1" below, or run it at a build whose default is on again (the default-on flip under test).
+# Not run yet: 52fdd178 and its retry 79487b41 were refused (the guest's D3D11 device, E_OUTOFMEMORY).
 #   a) the guest stands 1 m behind the host, facing it, and presses LMB (no RMB: CQC). The guest's copy: local act 113
 #      (the strike) -> partner_melee=strike; ...; verdict=land; queued=1. The host's copy applies one friendly hit, cause
 #      sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep on the
