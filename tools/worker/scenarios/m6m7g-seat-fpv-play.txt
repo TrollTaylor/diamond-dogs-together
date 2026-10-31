@@ -8,6 +8,8 @@
 #   3. The guest drives; the host in seat 2: aim + a shot; get-off while aiming; an aim on foot.
 #   4. The guest still drives; the host in seat 1: aim + a shot; release; get-off.
 #   5. The host drives again; the guest in seat 2: aim + a shot; get-off while aiming; an aim on foot.
+# Each seat-1 / seat-2 aim also re-aims at the nearest guard WHILE aiming in first person (enemy_aim_nearest 0.3; lab
+# runs 61384aab / 2a394a64: issued before the seated aim, the turn lands jeep-relative, not on the guard) before the shot.
 # Read: state=seat_fpv (mode on=1 source=key, arm / set / restore / stop, opt_outs=0), partner_seat_shot lines, world_lua
 # obs m=Dead / event=req after the shots, the turn lines, the frames on both copies. NEVER: step=error; faults;
 # pass_camera state=refused; turn event=refused; seat_fpv event=opt_out.
@@ -66,9 +68,12 @@ host run enemy sleep nearest
 guest run enemy_aim_nearest 0.25
 guest expect ^aim_nearest;ent=\d+;
 wait 600
-guest hold rmb 1500 nowait
+guest hold rmb 3000 nowait
 wait 900
 guest capture s1-aim
+guest run enemy_aim_nearest 0.3
+wait 700
+guest capture s1-aim-t
 host capture s1-aim-drv
 waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
 guest press lmb 120
@@ -152,9 +157,12 @@ host run enemy sleep nearest
 host run enemy_aim_nearest 0.25
 host expect ^aim_nearest;ent=\d+;
 wait 600
-host hold rmb 1500 nowait
+host hold rmb 3000 nowait
 wait 900
 host capture k2-aim
+host run enemy_aim_nearest 0.3
+wait 700
+host capture k2-aim-t
 guest capture k2-aim-drv
 waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready;' 3
 host press lmb 120
@@ -195,9 +203,12 @@ both capture h1-seated
 host run enemy sleep nearest
 host run enemy_aim_nearest 0.25
 wait 600
-host hold rmb 1500 nowait
+host hold rmb 3000 nowait
 wait 900
 host capture h1-aim
+host run enemy_aim_nearest 0.3
+wait 700
+host capture h1-aim-t
 guest capture h1-aim-drv
 waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
 host press lmb 120
@@ -242,9 +253,12 @@ wait 1000
 host run enemy sleep nearest
 guest run enemy_aim_nearest 0.25
 wait 600
-guest hold rmb 1500 nowait
+guest hold rmb 3000 nowait
 wait 900
 guest capture g2-aim
+guest run enemy_aim_nearest 0.3
+wait 700
+guest capture g2-aim-t
 host capture g2-aim-drv
 waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready;' 3
 guest press lmb 120
