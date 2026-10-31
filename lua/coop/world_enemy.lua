@@ -338,7 +338,11 @@ do
                 end
                 if s.qHead > #q then s.queue, s.qHead = later, 1
                 else for _, a in ipairs(later) do q[#q + 1] = a end end
-                E.recheck(now, false)
+                -- Mother Base (allCp): no area change re-checks the ledger, so every 10 s all of it
+                -- (an apply that failed while the staff member's platform was not loaded here).
+                local all = W.feature and W.feature.allCp and now >= (s.allAt or 0)
+                if all then s.allAt = now + 10000 end
+                E.recheck(now, all)
             end
         end
 
