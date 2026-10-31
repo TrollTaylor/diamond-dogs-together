@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_character_source[] = R"MGS_DCHAR(
+@MGS_DEBUG_CHARACTER_SOURCE@
+)MGS_DCHAR";

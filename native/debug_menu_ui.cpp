@@ -512,6 +512,11 @@ void Player(const Snapshot& s) noexcept {
     ImGui::SetNextItemWidth(220); ImGui::SliderInt("Drop payload", &ui.payload, 1, 10);
     Rows({"player_drop_hip", "player_drop_back", "player_drop_secondary"}, s);
     Wrapped("Refill and drop use the gun already equipped in that slot. Payload changes the dropped item's contents; it does not create more pickups.");
+    Heading("Character (you)");
+    Rows({"character_snake", "character_dd_male", "character_dd_female", "character_avatar"}, s);
+    Rows({"character_ocelot", "character_quiet", "character_default"}, s);
+    Wrapped("Switches you right away and for the rest of this session; your partner sees the new look. "
+        "Ocelot and Quiet only if you joined as Ocelot, Quiet or Story.");
 }
 const char* StateName(std::uint32_t code) noexcept { return act::LifeCodeName(code); }
 void NearbyTable(const Snapshot& s) noexcept {
