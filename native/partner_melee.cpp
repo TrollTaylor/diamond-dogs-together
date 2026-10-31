@@ -77,10 +77,20 @@ Out Step(State& s, const In& in) noexcept {
     if (dist > 1e-6 && cosine < kConeCos) { o.verdict = Verdict::angle; return o; }
     if (in.remote_valid && PartnerBusyAct(in.remote_act)) { o.verdict = Verdict::busy; return o; }
     if (in.remote_valid && in.remote_stance == 3) { o.verdict = Verdict::prone; return o; }
-    if (!finisher) { o.verdict = Verdict::jab; return o; }  // one jab never puts the partner to sleep
+    if (!finisher) {
+        // One jab never puts the partner to sleep; a second jab in reach within kPairMs does (run af0b88b6).
+        const bool pair = s.jab_reach && in.now_ms >= s.jab_reach_ms && in.now_ms - s.jab_reach_ms <= kPairMs;
+        if (!pair) {
+            s.jab_reach = true;
+            s.jab_reach_ms = in.now_ms;
+            o.verdict = Verdict::jab;
+            return o;
+        }
+    }
     if (s.landed && in.now_ms >= s.last_land_ms && in.now_ms - s.last_land_ms < kRepeatMs) { o.verdict = Verdict::repeat; return o; }
     s.landed = true;
     s.last_land_ms = in.now_ms;
+    s.jab_reach = false;
     ++s.lands;
     o.verdict = Verdict::land;
     o.queue = true;

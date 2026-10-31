@@ -5067,7 +5067,10 @@ void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& cloc
     in.now_ms = clock.now_ms;
     if (st.slots_ok) {
         for (unsigned i = 0; i < 3; ++i) in.pos0[i] = st.slot[0][i];
-        in.yaw0 = local_body ? local_body_yaw : st.slot[0][3];
+        // The game's yaw (body quaternion or vars) points the model's back: hidden run af0b88b6 logged angle_deg 175-180
+        // for every strike with the partner visibly in front on both copies. The cone wants the facing.
+        const float yaw = local_body ? local_body_yaw : st.slot[0][3];
+        in.yaw0 = yaw + 3.14159265f;
     }
     in.remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     in.remote_act = remote_anim.act;
