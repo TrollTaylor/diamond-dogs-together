@@ -1,3 +1,30 @@
+## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
+
+**Players get:** a guest who presses E a moment after the host started getting into the jeep (before the host's D-Dog
+jumped in) now waits at the door about a tenth of a second until the dog is in and then gets into a back seat, the same
+seat on both screens. Before, that press took the front seat on the guest's screen while the host's screen showed the
+guest behind the dog. Nothing else changes for players.
+- **How:** native only (site D). The published peer-driver policy is stamped when it first names the vehicle the
+  partner drives; a new guest press within `kSeatSettleMs` (700 ms) of that, while seat 1 is still offered, joins the
+  8.57 settle without a claim (`joins=` on the press line). A held press the host denied before its ride reached the
+  guest keeps waiting for that ride up to 1 s after the press (`kDenyRideMs`), then the settle seats it; no ride: on
+  foot with a=6 as before. Worst-case hold after one press stays 1.7 s. The worker's `waitlog` polls every 50 ms.
+  Failing first `bcd60d42` -> `a2b9f5ab`; scenario `m6m7k-seat-near-play.txt`.
+- **Shown** (hidden worker `3ac51dfa`, shipped play defaults, `-WanSim bad`, africa-jeep, both copies): n1) the host's
+  ride reached the guest's copy with seat 1 still offered, the guest's E joined (`joins=1`, no claim), the dog's
+  OneTaken came, the guest took seat 3 (`end=peer; wait_ms=122`) and the host confirmed seat 3, no `seat_draw` [O
+  logs]; frames show the guest in a back seat on both screens and the dog in front on the host's [O]. c) the same-moment
+  tie and d) boarding after the host drives: unchanged (seat 3 / seat 2 on both copies) [O]. No toast, NEVER lines 0 on
+  both copies. Sheet `m6m7k/frames/near/best-sheet-3ac51dfa.jpg` in the run archive.
+- **Not shown in a game:** the deny-first order. In the run the guest pressed first (f) but the host's ride still
+  reached the guest before the deny (ride at most ~30 ms one way, the SEAT op ~100-116 ms, and the host's Lua said
+  `host_drives` ~120 ms after its press), so it took the tie's path (seat 3 on both, no toast); by these numbers the
+  order needs a lost or late ride packet and cannot be set up by timing [I]. Unit tests only (`partner_board_tests`).
+  n2) missed the near-tie window (the dog's OneTaken came ~100 ms after the ride, before the press): a stock boarding,
+  seat 3 on both [O].
+- Full `tools/build.ps1` at `a2b9f5ab`: CTest 336/336; contract `--check` 838 / 213. The run's shutdown was forced
+  (`forced_job_termination`, as in 3 of 8 m6m7i runs; the close crash is `wp/teardown-av`'s) [I].
+
 ## 2026-10-31: the tie's seats and the door message (branch `wp/seat-tie`, local only, design 8.57)
 
 **Players get:** when both press E at an empty jeep at once and the host's D-Dog is out, the guest now sits in the same
