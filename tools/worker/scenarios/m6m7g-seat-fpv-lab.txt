@@ -13,11 +13,15 @@
 # Read: state=seat_fpv (arm / set / restore / opt_out / stop; opt_outs=0 until part 1's F), state=fpv_trace (f19,
 # f3c0, tog, ours), partner_seat_shot lines, world_lua obs m=Dead / event=req after each shot, the turn lines, frames.
 # NEVER: step=error; faults; pass_camera state=refused; turn event=refused; seat_fpv result=refused.
+# Targets (run 2): before each seat-1 / seat-2 boarding the host warps a guard ~6 m out on that seat's side of the jeep
+# (goto_vehicle jeep [right], forward -11, spawn_enemy here: lab key debug_soldier_warp) and puts it to sleep; the
+# guest's copy follows (spawn_sync). Run 1's guard 1084844745 lay ~22 m out behind rock from the seats.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7g-seat-fpv-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
 labsetting partner_pass_camera_trace=1
 labsetting partner_seat_fpv=1
+labsetting debug_soldier_warp=1
 boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
 both debug godmode 1
 both debug infinite_ammo 1
@@ -44,6 +48,16 @@ wait 2000
 both capture start
 logmark both
 # --- 1. The host drives; the guest in seat 1 -----------------------------------------------------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w1-guard
 host debug teleport 577.20 320.2 1157.19 -84
 wait 2500
 host press e 150
@@ -60,7 +74,7 @@ waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=2560
 wait 1000
 both capture s1-seated
 host run enemy sleep nearest
-guest run enemy_aim_nearest 0.25
+guest run enemy_aim_nearest 0.3
 guest expect ^aim_nearest;ent=\d+;
 wait 600
 guest hold rmb 1500 nowait
@@ -86,7 +100,7 @@ waitlog host 'world_lua=event=obs; m=Dead;' 3
 guest debug slot secondary 0
 wait 1500
 host run enemy sleep nearest
-guest run enemy_aim_nearest 0.25
+guest run enemy_aim_nearest 0.3
 wait 600
 guest hold rmb 1500 nowait
 wait 900
@@ -135,7 +149,7 @@ wait 3500
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
 wait 1000
 host run enemy sleep nearest
-guest run enemy_aim_nearest 0.25
+guest run enemy_aim_nearest 0.3
 wait 600
 guest hold rmb 1500 nowait
 wait 900
@@ -154,6 +168,16 @@ wait 3500
 host run vehicle_seats
 host expect vehicle_not_riding
 # --- 3. The guest drives; the host in seat 2 -----------------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w3-guard
 host debug teleport 597.0 320.5 1157.5 -90
 wait 2500
 logmark both
@@ -174,7 +198,7 @@ waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608
 wait 1000
 both capture k2-seated
 host run enemy sleep nearest
-host run enemy_aim_nearest 0.25
+host run enemy_aim_nearest 0.3
 host expect ^aim_nearest;ent=\d+;
 wait 600
 host hold rmb 1500 nowait
@@ -207,6 +231,16 @@ host capture b2-foot-aim
 host release
 wait 1000
 # --- 4. The guest still drives; the host in seat 1 ------------------------------------------------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w4-guard
 logmark both
 host debug teleport 574.36 320.2 1157.5 96
 wait 3000
@@ -218,7 +252,7 @@ waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608
 wait 1000
 both capture b1-seated
 host run enemy sleep nearest
-host run enemy_aim_nearest 0.25
+host run enemy_aim_nearest 0.3
 wait 600
 host hold rmb 1500 nowait
 wait 900
@@ -251,6 +285,16 @@ wait 1000
 guest press e 150
 wait 3500
 # --- 5. The host drives again; the guest in seat 2 -----------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w5-guard
 logmark both
 host debug goto_vehicle jeep
 wait 3000
@@ -266,7 +310,7 @@ waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
 waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=2;' 5
 wait 1000
 host run enemy sleep nearest
-guest run enemy_aim_nearest 0.25
+guest run enemy_aim_nearest 0.3
 wait 600
 guest hold rmb 1500 nowait
 wait 900
