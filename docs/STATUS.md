@@ -1,3 +1,40 @@
+## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
+
+**Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `f8eba06` with Release receipt `20261031-160809-324523450267433b85ad21a2a5966831` (passed, 324 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.5+f8eba06` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.4.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.5.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,141,087 | `64437CDE63D17ED8C8A3BBCA1E6AA6F11FDEA7A019F9D8C77E61695594FFAB30` |
+| `DDT-source-0.14.5.zip` (1,498 source files plus `source-files.json`) | 8,908,393 | `D20C2E64AFE3E6A310977E5CBCB59C978AEBD150D82AA77BB7942578FE60839F` |
+| `DiamondDogsTogether.exe` | 2,370,048 | `6E5CE0F001C78742AB6DBEB546943664EF8C5C5B11C64DCA6E22E67A57DB964D` |
+| `dinput8.dll` | 7,193,600 | `CA638B48DCE9975907979FD8BB50B85C81DC35EEF2CC85E2B93E8CC696D0EC35` |
+
+- **Package audit:** 34/34 (both zips present; the player zip holds exactly its 9 files and no source or script; exe and dll are the receipt's; `package.json` version 0.14.5, `source_commit` `f8eba06`, `source_dirty` false, every `files[]` hash and `source_archive` match; every source file is in the source zip with its hash and matches the tree; `tools/check-release.ps1` accepts a simulated draft release carrying both zips). Against the git tree at `f8eba06`: no tracked file the package rules select is missing; beside the receipt's 18 MinHook files the zip adds MinHook's `AUTHORS.txt`, `README.md` and `build/MinGW/make.bat`. Build id strings `0.14.5+f8eba06` in both programs; no profile path, checkout path, e-mail or persona name in either zip.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.58.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** `git grep` at `296b72a6` for a Windows profile path (both slash styles) and the persona name: no hits (the four run-archive paths were reworded in `120c3c7c`). Older commits still hold that text in history; history was not rewritten.
+- **To release:** upload **both** zips to the GitHub release `v0.14.5`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.14.5 -PackageDir dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+Branch `dev/oct7-continue`. Releases everything since 0.14.4 (`01fd055`), with `wp/teardown-av` merged (`f1c52a34`); `wp/seat-fpv` (research) is not in it. None of it is two-PC tested yet; the proof runs (hidden worker, two copies on one PC, `-Mode play -WanSim bad` at the shipped defaults) are in the sections below.
+
+| What players get | Play default (gun profile, a named 0 opts out) | Section below |
+|---|---|---|
+| A jeep's front passenger seat (seat 1), drawn in the seat on both screens | **On** (`partner_ride_front`, `partner_ride_seat1_anchor`) | seats on in play; seat 1 drawn in the seat; the seat fixes merged |
+| Only an E press takes an empty jeep's driver's seat; a guest's press waits about one round trip; both at once: the host drives, the guest gets a back seat (with the host's D-Dog out), the same seat on both screens; a guest press just after the host starts getting in joins that tie | **On** (`partner_ride_race`, sites B, C, D) | 8.55, 8.57, 8.58 |
+| Shots from a seat start past the rider's own jeep (S1) | **On** (`partner_seat_shot`) | S1 shown to stop real self-hits online |
+| Automatic first person while aiming from the front seat and the left back seat; a blocked first person falls back over the shoulder | **On** (`partner_seat_fpv`) | the automatic first person ON; m6m7i seat checks |
+| The camera turns behind the player after a seat-1 / seat-2 get-off | **On** (`partner_pass_camera=view`) | the get-off camera turn ON |
+| D12 crew: a vehicle the guest destroys with only soldiers aboard is wrecked on the host's PC (held while a player is within the blast distance by type) | **On** (`world_vehicle_crew`, where `world_vehicle_break` runs: 30010, 30020) | fixes after 0.14.4 |
+| D11 before PAIRED: the guest's LOADOUT and VEHICLES drops refused from its arrival after a host-led follow | **On** (with `world_loadout_block`) | fixes after 0.14.4 |
+| The partner torn down on the mission thread before the game sees the window's close (the close crash) | **On** (no key) | Teardown AV at close |
+| Launcher: one setup at a time per game folder, a window closed during setup ends its setup | Always | the 0.14.4 review's launcher findings |
+| The guest's vehicle damage reported to the host (VEHICLE_DAMAGE `0x3A`) | **Off** (`world_vehicle_damage`, named in play to use it) | fixes after 0.14.4 |
+| The heroism and bond of a dog copy's death given back on the guest | **Off** (under `companion_host_owned`) | fixes after 0.14.4 |
+| Truck cab seat; the partner's raised gun on the seated body (M7 seat gun); M1/M2 companion; M3 sortie vehicle | Lab only / **Off** | as before |
+
+- **Not two-PC tested;** open seat items: the guest's own screen does not show the host's D-Dog in the front seat; a host deny that reaches the guest before the host's ride leaves the guest on foot (press E again; rare in testing); one clean close run cannot prove the 1-in-8 close crash gone.
+- **Version.** 0.14.5 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.5 and still 0.14.4; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.6", "0.14.5")`. The launcher's mock screenshot scenes keep their 0.14.4 strings, as the 0.14.4 bump left theirs.
+- **Checks at the bump commit `f8eba06`:** `pwsh -File tools/build.ps1 -Fast` 305/305; `pwsh -File tools/build.ps1` (Debug) 337/337; the Release receipt above (324 audited tests).
+
 ## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
 
 **Players get:** a guest who presses E a moment after the host started getting into the jeep (the host's ride already
