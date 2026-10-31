@@ -1283,12 +1283,13 @@ do
     check(F.callCount(mbG, 'SetEnabled:sol_b3:') == 1 and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 0
         and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b3')) .. ';state=6;as=7'),
         '30050: a partner Fulton disables the staff member on this copy (gone), never a knockout or a Fulton')
-    -- Play at Mother Base: W1 on, as in the lab (fb1031-on mb run).
+    -- Play at Mother Base: W1 stays off (lab only). Runs 3781890d / 8ce9d986 (fb1031-on) showed the sleep and the
+    -- Fulton-as-disable lines on both copies and the host's screen, but no guest frame showed the staff member.
     local mbPlayEnv, mbPlay = fixture({role = 1, mission = 30050, mode = 2})
     F.start(mbPlayEnv, mbPlay)
     F.pair(mbPlayEnv, mbPlay, 3)
-    check(mbPlay.W.w1 and mbPlay.W.feature.enemies == true and mbPlay.W.feature.allCp == true
-        and mbPlay.W.feature.spareStaff == true, '30050 in play: W1 on with the staff rules (allCp, spareStaff)')
+    check(not mbPlay.W.w1 and mbPlay.W.feature.enemies == nil and mbPlay.W.feature.allCp == true
+        and mbPlay.W.feature.spareStaff == true, '30050 in play: W1 off until a run shows both screens (lab only)')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
