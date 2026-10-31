@@ -22,7 +22,9 @@ hidden run yet**: built and unit-tested only.
   while `W.arms.ff` is false. World note 18. Rows `arms_give` (end of Player), `arms_friendly_fire` (end of Partner).
 - **Tests (failing first):** red `ef670f07`, `cda94ef5`; green `41fa70e7`: `debug_arms_lua_check` (new),
   `world_downed_lua_check` (off at both ends, queued hits flushed, on again), `debug_arms_tests` (new: rows, reply,
-  state, text, ARMS spec, note 18), `world_wire_tests` (63 ops).
+  state, text, ARMS spec, note 18), `world_wire_tests` (63 ops). Red `731f2c6e`, green `bbb19c61`: the NOTE_V1
+  grammar admitted 1..15 only, so note 18 never reached the screen; the host repeats an OFF switch every 600 updates.
+- **Checks:** `pwsh -File tools/build.ps1` 341/341 at `bbb19c61`; `tools/generate_partner_contract.py --check` passes.
 - **Scenario (not run):** `tools/worker/scenarios/arms-give-ff-play.txt` (play, afgh-ledge, native gun profile).
 - **Open [U]:** whether ChangeEquip of a census gun shows and fires in hand on both screens; the support items'
   count (no table count: 8); whether the census is there in every area (it needs the partner's body); the guest's
