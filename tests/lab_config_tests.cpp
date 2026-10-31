@@ -576,7 +576,7 @@ int main() {
             const auto off = Lab(gun + mode + "debug_travel=0\n");
             Check(!off.debug_travel && off.debug_travel_given && off.play_refused == 0, "a named debug_travel 0 stays off");
         }
-        for (const char* value : {"2", "", "on"}) {
+        for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\ndebug_travel=") + value + "\n");
             Check(!invalid.debug_travel && !invalid.debug_travel_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
                   "an invalid debug_travel value refuses");
