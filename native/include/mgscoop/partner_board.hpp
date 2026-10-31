@@ -108,6 +108,8 @@ struct RaceState {
     std::uint8_t done_end;
     std::uint32_t done_wait_ms;
     std::uint32_t commits;
+    // 8.58: new presses that joined the settle of a ride that had just appeared (no claim; they end as peer).
+    std::uint32_t joins;
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;

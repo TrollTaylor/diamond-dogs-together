@@ -318,7 +318,10 @@ inline constexpr std::uint32_t kHostCommitMs = 3000;  // the host's own press ow
 // the passenger policy picks: the back seats once OneTaken arrived, seat 1 when it stayed free. Without an offer
 // (a 0.14.4 driver, no addendum, the seat-1 keys off, OneTaken already) it ends at once as before.
 inline constexpr std::uint32_t kSeatSettleMs = 700;
-enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer };
+// 8.58 deny-first: a held press the host denied before its ride reached this copy waits for that ride this long after
+// the press (a deny for a held press means the host pressed or drives it); then site B decides as before.
+inline constexpr std::uint32_t kDenyRideMs = 1000;
+enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer, join };
 struct PressIn {
     bool hold = false;       // the guest's hold lease is live
     bool local = false;      // the record is the local player's (P+0x218)
@@ -332,7 +335,11 @@ struct PressIn {
     bool seat_one = false;         // 8.57: the live peer-driver policy for it offers seat 1 (front_ok / cab_ok)
     bool peer_seen = false;        // this press already saw the partner drive it, at peer_since
     std::uint32_t peer_since = 0;
+    bool ride_seen = false;        // 8.58: the published peer-driver policy first named this vehicle at ride_since
+    std::uint32_t ride_since = 0;
 };
+// 8.58: the policy newly names a vehicle the partner drives (another vehicle or none before).
+inline bool NewlyDriven(const Policy&, const Policy&) noexcept { return false; }
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
 // (a grant, a deny or the timeout ended the wait; site B decides). The partner drives the held press's vehicle:
 // settle: idle while its seats settle (8.57); peer: the gate's own answer, the press ends as 'peer' (end 4; the

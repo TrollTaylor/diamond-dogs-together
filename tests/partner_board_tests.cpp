@@ -939,7 +939,16 @@ void TestPress() {
     x = in; x.granted = true;
     Check(pb::PressDecide(x) == pb::PressVerdict::go, "a grant: go on");
     x = in; x.denied = true;
-    Check(pb::PressDecide(x) == pb::PressVerdict::go, "a deny: go on (site B's no-seat exit)");
+    Check(pb::PressDecide(x) == pb::PressVerdict::wait, "8.58 deny-first: a deny before the partner's ride: keep holding for the ride");
+    x.now_ms = 1000 + pb::kDenyRideMs - 1; x.pend_seen = x.now_ms - 16;
+    Check(pb::PressDecide(x) == pb::PressVerdict::wait, "deny-first: still holding just under kDenyRideMs after the press");
+    x.now_ms = 1000 + pb::kDenyRideMs;
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "deny-first, no ride within kDenyRideMs (the host's press failed): go on (site B's no-seat exit, a=6)");
+    x = in; x.denied = true; x.peer_drives = true; x.seat_one = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "deny-first, the host's ride arrived with seat 1 offered: settle (the tie's path)");
+    x.seat_one = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "deny-first, the host's ride arrived, its dog in seat 1: end as peer (a back seat)");
+    Check(pb::kDenyRideMs <= pb::kPressWaitMs && pb::kDenyRideMs + pb::kSeatSettleMs <= 1700, "the worst-case hold after one press stays 1.7 s");
     x = in; x.now_ms = 1000 + pb::kPressWaitMs;
     x.pend_seen = x.now_ms - 16;
     Check(pb::PressDecide(x) == pb::PressVerdict::go, "no answer for 1 s: go on (site B's no-seat exit)");
@@ -965,6 +974,33 @@ void TestPress() {
     Check(pb::PressDecide(x) == pb::PressVerdict::peer, "no seat-1 offer (a 0.14.4 driver, no addendum, the front key off): end as peer at once");
     x = in; x.open = false; x.peer_drives = true; x.seat_one = true;
     Check(pb::PressDecide(x) == pb::PressVerdict::stock, "a new press at a vehicle the partner already drives: stock (boarding after it drives)");
+    // 8.58 near-tie (8.57 residual 1): a NEW press after the partner's ride appeared on this copy but before the driver's
+    // OneTaken (its dog) joins the settle while seat 1 is still offered, at most kSeatSettleMs after the ride appeared.
+    x.ride_seen = true; x.ride_since = x.now_ms - 100;
+    Check(pb::PressDecide(x) == pb::PressVerdict::join, "near-tie: a new press 100 ms after the partner's ride appeared, seat 1 offered: join the settle");
+    x.ride_since = x.now_ms - pb::kSeatSettleMs;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "near-tie after the settle window: stock as before");
+    x.ride_since = x.now_ms - 100; x.seat_one = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "seat 1 already taken or not offered (0.14.4 driver, keys off): stock");
+    x.seat_one = true; x.hold = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no hold (the host, no READY, key off): stock");
+    x.hold = true; x.ride_seen = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no first-seen stamp for it: stock");
+    {
+        pb::Policy before{}, after{};
+        after.vehicle = 25608; after.peer_seat = 0; after.mode = pb::Mode::passenger; after.front_ok = true;
+        Check(pb::NewlyDriven(before, after), "off -> the partner drives 25608: newly driven");
+        before = after; before.front_ok = false; before.until_ms = 99;
+        Check(!pb::NewlyDriven(before, after), "the same ride republished (lease, seat flags): not new");
+        before.vehicle = 25609;
+        Check(pb::NewlyDriven(before, after), "another vehicle: new");
+        before = after; before.peer_seat = 3;
+        Check(pb::NewlyDriven(before, after), "the partner moved from a back seat to the driver's seat: new");
+        after.peer_seat = 2;
+        Check(!pb::NewlyDriven(pb::Policy{}, after), "a partner passenger: not driven");
+        after.peer_seat = 0; after.mode = pb::Mode::off;
+        Check(!pb::NewlyDriven(pb::Policy{}, after), "policy off: not driven");
+    }
     Check(pb::kSeatSettleMs >= 500 && pb::kSeatSettleMs <= 1000, "the settle covers the driver's 250 ms rider read, the dog's jump and one way");
     {
         pb::Policy sp{};
@@ -1167,6 +1203,102 @@ void TestPress() {
     Policy(pb::Mode::off);
     unsigned char empty[0x100]{};
     Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
+    // 8.58 near-tie with the driver's dog: the host's ride appears at 10000 with seat 1 offered; the guest presses 150 ms
+    // later (a new press): it joins the settle (no claim), the dog's OneTaken ends it as peer and it takes a back seat.
+    pb::detail::BindSeatOneForTest(fo, &FakeLimit);
+    pb::ReadRace(rs);
+    const std::uint32_t pseq0 = rs.pseq, seq1 = rs.done_seq, joins0 = rs.joins;
+    g.now = 10000;
+    pb::RaceHold(2000);
+    Policy(pb::Mode::passenger, 25608, 0, 14000, true);
+    g.now = 10150;
+    Check(D(0), "near-tie: a new press 150 ms after the ride appeared, seat 1 still offered: idle (joins the settle)");
+    pb::ReadRace(rs);
+    Check(rs.pend && rs.press == 25608 && rs.pseq == pseq0 && rs.joins == joins0 + 1, "near-tie: pending, counted as a join, no claim (no pseq)");
+    g.now = 10300;
+    Policy(pb::Mode::passenger, 25608, 0, 14100, true);
+    Check(D(0), "near-tie: the same ride republished: still settling");
+    g.now = 10350;
+    Policy(pb::Mode::passenger, 25608, 0, 14100, false);
+    Check(!D(0), "near-tie: the driver's dog took seat 1: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 200 && rs.done_seq == seq1 + 1, "near-tie: ended as peer 200 ms after the press");
+    g.nearest_result = 3; g.type_value = 1; g.count_value = 4;
+    const std::uint8_t near_seat = pb::detail::SiteBForTest(unit, pos);
+    Check(near_seat == 3 && g.first == 2 && g.last == 3, "near-tie: the passenger policy offers the back seats only");
+    ds.seat = near_seat; ds.rider[1] = 0x2600;
+    Check(pb::DrawSeat(ds).seat == near_seat, "near-tie with a dog: the driver's copy draws the guest where it sits (no redraw)");
+    // Near-tie without a dog: seat 1 stays offered; the press boards seat 1 kSeatSettleMs after the ride appeared.
+    g.now = 11000;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Policy(pb::Mode::passenger, 25608, 0, 15000, true);
+    g.now = 11400;
+    Check(D(0), "near-tie, no dog: a new press 400 ms after the ride appeared: joins the settle");
+    g.now = 11600;
+    Check(D(0), "near-tie, no dog: settling");
+    g.now = 11000 + pb::kSeatSettleMs;
+    Check(!D(0), "near-tie, no dog: seat 1 stayed free kSeatSettleMs after the ride appeared: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == pb::kSeatSettleMs - 400, "near-tie, no dog: ended as peer (seat 1)");
+    // A press after the settle window (the same ride, republished): stock as before.
+    g.now = 11000 + pb::kSeatSettleMs + 100;
+    Policy(pb::Mode::passenger, 25608, 0, 15100, true);
+    Check(!D(0), "a new press after the settle window: stock (boarding after it drives)");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.pseq == pseq0, "no press recorded, no claim");
+    // A vehicle the partner already drives with no free seat (block; the host's deny live): unchanged, no wait.
+    g.now = 12000;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Policy(pb::Mode::block, 25608, 0, 16000);
+    pb::RaceDeny(25608, 3000);
+    g.now = 12100;
+    Check(!D(0), "a partner-driven vehicle with no free seat, a deny live: stock (site B blocks), no wait");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.pseq == pseq0, "no press recorded");
+    pb::RaceDeny(25608, 0);
+    // 8.58 deny-first: the host's deny (why=host_pressed) reaches the held press before the host's ride: the press keeps
+    // holding; the ride arrives (seat 1 offered, then the dog): it ends as peer and the passenger policy seats it.
+    g.now = 13000;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Check(D(0), "deny-first: a press, idle (claimed)");
+    pb::ReadRace(rs);
+    const std::uint32_t seq2 = rs.done_seq;
+    g.now = 13230;
+    pb::RaceDeny(25608, 3000);
+    Check(D(0), "deny-first: the deny came before the host's ride: still idle");
+    pb::ReadRace(rs);
+    Check(rs.pend && rs.done_seq == seq2, "deny-first: pending, not ended");
+    g.now = 13300;
+    Policy(pb::Mode::passenger, 25608, 0, 17000, true);
+    Check(D(0), "deny-first: the host's ride arrived with seat 1 offered: settle");
+    g.now = 13560;
+    Policy(pb::Mode::passenger, 25608, 0, 17000, false);
+    Check(!D(0), "deny-first: the dog took seat 1: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 560 && rs.done_seq == seq2 + 1, "deny-first: ended as peer (seated), not as deny");
+    g.nearest_result = 3;
+    Check(pb::detail::SiteBForTest(unit, pos) == 3, "deny-first: site B seats it in a back seat (the deny's backstop is skipped)");
+    // Deny-first with no ride (the host's own press failed): the press ends as deny kDenyRideMs after it; no seat (a=6).
+    g.now = 14000;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    Check(D(0), "no ride: a press, idle");
+    g.now = 14230;
+    pb::RaceDeny(25608, 3000);
+    for (std::uint32_t t = 14230; t < 14000 + pb::kDenyRideMs; t += 100) {
+        g.now = t;
+        pb::RaceHold(2000);
+        Check(D(0), "no ride: holding for the host's ride");
+    }
+    g.now = 14000 + pb::kDenyRideMs;
+    Check(!D(0), "no ride within kDenyRideMs: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 2 && rs.done_wait_ms == pb::kDenyRideMs, "no ride: ended as deny");
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "no ride: site B's no-seat exit (Lua shows a=6)");
+    pb::RaceDeny(25608, 0);
     pb::RaceHold(0);
     Check(!D(0), "hold 0: stock");
     pb::detail::ResetForTest();
