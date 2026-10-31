@@ -303,6 +303,9 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
                    'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial'):
         if needle not in body.replace('\r\n', '\n'):
             failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
+    # Play (spawn_warp) admits only the spawn placement (kind 1): patrol/combat corrections (kind 3) stay lab only.
+    if 'labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp' not in body:
+        failures.append('GuestWarpReceipt: play must refuse every grant but the spawn placement (kind 1)')
 
 if failures:
     print('\n'.join(failures))

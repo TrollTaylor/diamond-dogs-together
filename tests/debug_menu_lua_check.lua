@@ -806,6 +806,16 @@ for _, case in ipairs({
 end
 sp = fill8(guardsFixture()); sp.positions[102] = {10, 20, 179}
 check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp.D.enemy.used.old_2, 'a placed guard 149 m away still holds his place')
+-- A freed guard's placement is released: his force-realize goes off and his area pin is dropped, so the
+-- force-realized and pinned guards stay bounded by the pool after many recycled presses.
+sp = fill8(guardsFixture()); sp.life[101], sp.life[102] = 3, 3
+sp.env.e.MgsCoopWorld = {pinned = {[71] = true, [72] = true, [73] = true}, ent = {[71] = {name = 'old_1'}, [72] = {name = 'old_2'}, [73] = {name = 'old_3'}}}
+sp:send('spawn_enemy here')
+local released = {}
+for _, v in ipairs(sp.calls) do if v[1] == 'SetForceRealize' and v[3].forceRealize == false then released[v[2]] = (released[v[2]] or 0) + 1 end end
+check(released[101] == 1 and released[102] == 1 and released[103] == nil, 'freed placed guards have their force-realize released, held ones keep it')
+local pins = sp.env.e.MgsCoopWorld.pinned
+check(pins[71] == nil and pins[72] == nil and pins[73] == true, 'freed placed guards are unpinned, held ones stay pinned')
 sp = guardsFixture(); sp.D.enemy.used.sol_a = true; sp.positions[5] = {10, 20, 230}; sp.life[6], sp.life[9] = 3, 3
 check(sp:send('spawn_enemy here')[3]:find('submitted_guard_here;ent=4294967295;', 1, true) == 1, 'an awake placed guard who walked away is placed again')
 sp = fill8(guardsFixture({host = false})); sp.life[101] = 3
@@ -859,6 +869,14 @@ final = sp.logs[#sp.logs][3]
 check(final:find('guard_here;ent=4294967295;d=5.0;', 1, true) == 1 and final:find(';mode=warp;come=1;sync=none;why=world_off;frames=2;leaf=engine', 1, true),
     'come warp final: ' .. final)
 check(forced(sp, false) == 1 and sp:count('SetDiscoveryPlayer') == 1, 'force realize released, then discovery')
+-- A guard more than 250 m away is never sent the native warp (an unrealized far guard can answer r=0 h=0, which
+-- latches the warp off for the process): he goes to the nearest patrol route instead (why=far).
+sp = warpFixture({{r = 0, h = 0, leaf = 'engine'}}); sp.positions[5], sp.positions[6], sp.positions[9] = {300, 20, 30}, {320, 20, 30}, {400, 20, 30}
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=far' and sp.warps == nil and forced(sp, true) == 0,
+    'far guard: route snap, no native warp request')
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';far=1;mode=route;why=far;', 1, true), 'far route final keeps why=far')
+sp = warpFixture({{r = 0, h = 1, leaf = 'engine'}}); sp.positions[5] = {240, 20, 30}
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=warp' and #sp.warps == 1, 'a guard within 250 m is still warped')
 sp = warpFixture({{r = -1, h = 0}, {refused = 'dispatch'}})
 sp:send('spawn_enemy here'); sp:tick()
 check(sp.logs[#sp.logs][3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=dispatch' and sp.logs[#sp.logs][2] == 2,

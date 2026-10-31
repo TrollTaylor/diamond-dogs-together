@@ -273,6 +273,14 @@ int main() {
     bridge::Result(command.id, 1, "position=1,2,3;yaw=0");
     Check(present(1) && bridge::GetSnapshot().receipts[0].id == command.id && bridge::GetSnapshot().receipts[0].status == 0,
         "result receipt reaches the footer source");
+    {
+        // Spawn enemy here: the default press brings a soldier that keeps spawn sync (not "come", whose two copies each
+        // chase their own player and are never corrected); "He comes at me" stays opt-in.
+        Check(mui::BeginPress("spawn_enemy_here") && present(3) && mui::TakePressResult(press, sizeof(press)) &&
+            !std::strncmp(press, "pressed;action=spawn_enemy_here;command=spawn_enemy here;queued_id=", 67), "default spawn press is not come");
+        bridge::Command spawn{};
+        Check(bridge::Pop(spawn) && !std::strcmp(spawn.text, "spawn_enemy here"), "default spawn command text");
+    }
     // Partner / Co-op > Shared save (automatic save handoff; docs/debug-menu.md):
     // copied save_handoff_state only, UI-only rows, real mouse clicks.
     {

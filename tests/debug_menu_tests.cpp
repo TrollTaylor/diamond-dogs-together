@@ -807,6 +807,10 @@ int main() {
         Check(std::strstr(plain("guard_here;ent=1;d=119.7;moved=0.2;far=1;mode=route;why=disabled;come=0;sync=world;seq=1;route=r"),
                           "patrol route") != nullptr, "a route snap says he went to a patrol route");
         Check(std::strstr(plain("submitted_guard_here;ent=1;scope=local;mode=warp"), "Bringing") != nullptr, "the interim reads as bringing");
+        Check(std::strstr(plain("guard_here;ent=1;d=300.0;moved=0.2;far=1;mode=route;why=far;come=0;sync=world;seq=1;route=r"),
+                          "over 250 m") != nullptr, "a far guard says why he went to a route");
+        Check(std::strstr(plain("guard_here;ent=1;d=300.0;moved=0.2;far=1;mode=route;why=latched;come=0;sync=world;seq=1;route=r"),
+                          "until the game restarts") != nullptr, "a latched warp says it is off until a restart");
         Check(std::strstr(plain("spawn_context;why=mission"), "mission") != nullptr, "context refusal in plain words");
         Check(act::ResultText("position=1,2,3;yaw=0") == nullptr && act::ResultText(nullptr) == nullptr && act::ResultText("") == nullptr,
               "other results keep their raw text");
