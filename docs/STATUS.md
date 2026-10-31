@@ -15,6 +15,9 @@ and Friendly fire. Each entry's scenario is still unrun.
 - **Checks:** `pwsh -File tools/build.ps1` 343/343 at `abf34792`; `tools/generate_partner_contract.py --check` and
   `tools/generate_soldier_warp_contract.py --check` pass. Lua (LF bytes): `debug_arms` 10670, `debug_rules` 9649,
   `debug_character` 5308, `debug_spawn_play` 2064 (limit 16000); `character` 15436, `world_friendly` 4035 (32000).
+- **Worker preflight (checks only, no game started):** the research hidden run's call
+  (`Invoke-WorkerChecks.ps1 -Profile Research -EnableBackgroundWorker -Reuse`, stock46 experiments) passed at `9bf49907`
+  under the verify lock: 328/328 audited tests (full checks, no older receipt to reuse).
 
 ## 2026-10-31: debug menu Give weapon and Friendly fire (`wp/give-weapons`, local only) -- not run-proven yet
 
