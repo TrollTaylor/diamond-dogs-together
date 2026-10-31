@@ -228,6 +228,8 @@ bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexc
     return true;
 }
 
+void Close(void* base, std::size_t span, LogFn log) noexcept { (void)base; (void)span; (void)log; }
+bool Closed() noexcept { return false; }
 bool Armed() noexcept { return g_armed != 0; }
 std::uint8_t ArmedSeat() noexcept { return g_armed ? static_cast<std::uint8_t>(g_seat) : 0xFF; }
 #endif

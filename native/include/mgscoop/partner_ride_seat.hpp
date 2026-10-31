@@ -87,6 +87,14 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
 bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
 bool Armed() noexcept;
 std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed
+// The game window is closing (PartnerShutdown, on whatever thread delivers WM_CLOSE / WM_DESTROY / WM_ENDSESSION;
+// design 8.53). One-way for the process: from here on Arm and ArmGetOff write nothing (Arm logs
+// partner_ride_seat_patch=skipped; reason=closing and returns false), then the live patch is reverted at once (logs
+// partner_ride_seat_patch=reverted; reason=shutdown when it wrote or was armed). The window thread is not the mission
+// thread, so the MissionEnd revert never ran there (run 1d9fd748: no revert line after partner_shutdown=hooks_off;
+// teardown=other_thread). Idempotent; a later Revert finds nothing.
+void Close(void* base, std::size_t span, LogFn log) noexcept;
+bool Closed() noexcept;
 
 // --- The seated state table (StrCode64 of the MOG state names, verified
 // present in TppPlayer2_layers.mog; critic_work/mogcheck.py). class 0 = light
