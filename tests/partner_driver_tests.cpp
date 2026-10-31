@@ -7400,12 +7400,18 @@ void MeleeSetup(Session& s, bool key) {
     s.fake.anim_ok = true;
     s.fake.anim.act[0] = 1;
     s.fake.state.slot[0][0] = 10.f; s.fake.state.slot[0][1] = 2.f; s.fake.state.slot[0][2] = -5.f; s.fake.state.slot[0][3] = 0.f;
-    // The game's yaw points the model's back (run af0b88b6: angle_deg 177-180 with the partner in front on both copies):
-    // at yaw 0 the player faces -z, so the partner 1 m in front is at z - 1.
-    s.fake.state.slot[1][0] = 10.f; s.fake.state.slot[1][1] = 2.f; s.fake.state.slot[1][2] = -6.f; s.fake.state.slot[1][3] = 3.14f;
+    s.fake.state.slot[1][0] = 10.f; s.fake.state.slot[1][1] = 2.f; s.fake.state.slot[1][2] = -4.f; s.fake.state.slot[1][3] = 3.14f;
     // Body 1's drawn position (read_body): the reach test reads it, never the slot (stale while seated, fb1031 review).
     s.fake.body_ok = true;
-    s.fake.body_pos[0] = 10.f; s.fake.body_pos[1] = 2.f; s.fake.body_pos[2] = -6.f; s.fake.body_pos[3] = 1.f;
+    s.fake.body_pos[0] = 10.f; s.fake.body_pos[1] = 2.f; s.fake.body_pos[2] = -4.f; s.fake.body_pos[3] = 1.f;
+    // The local body readback (read_local_body): position and facing (identity quat: yaw 0, forward +z). Run af0b88b6:
+    // right after a teleport the local slot S+0x20[0] read 21 cm from body 1 with the players 1 m apart, so the slot is
+    // never used: it is set to a stale spot here.
+    s.hooks.read_local_body = HookReadLocalBody;
+    s.fake.local_body_ok = true;
+    s.fake.local_body_pos[0] = 10.f; s.fake.local_body_pos[1] = 2.f; s.fake.local_body_pos[2] = -5.f; s.fake.local_body_pos[3] = 1.f;
+    s.fake.local_body_quat[0] = 0.f; s.fake.local_body_quat[1] = 0.f; s.fake.local_body_quat[2] = 0.f; s.fake.local_body_quat[3] = 1.f;
+    s.fake.state.slot[0][0] = 30.f; s.fake.state.slot[0][2] = 30.f; s.fake.state.slot[0][3] = 2.f;
 }
 void TestMeleeDriver() {
     {
@@ -7423,8 +7429,8 @@ void TestMeleeDriver() {
         Check(s.Tick(0) && s.Tick(0) && g_melee_hits.size() == 1 && s.fake.Containing("partner_melee=") == 2, "melee driver: a held finisher is one hit");
         s.fake.anim.act[0] = 1;
         Check(s.Tick(0, 2000), "melee driver: idle");
-        s.fake.state.slot[1][2] = -7.5f;
-        s.fake.body_pos[2] = -7.5f;
+        s.fake.state.slot[1][2] = -2.5f;
+        s.fake.body_pos[2] = -2.5f;
         s.fake.anim.act[0] = 113;
         Check(s.Tick(0), "melee driver: a jab out of reach");
         s.fake.anim.act[0] = 114;
@@ -7438,7 +7444,7 @@ void TestMeleeDriver() {
         Session s(0);
         MeleeSetup(s, true);
         Check(s.Tick(0), "melee driver: idle before the body test");
-        s.fake.body_pos[2] = -25.f;
+        s.fake.body_pos[2] = 15.f;
         s.fake.anim.act[0] = 113;
         Check(s.Tick(0), "melee driver: a jab at the stale slot");
         s.fake.anim.act[0] = 114;
@@ -7504,16 +7510,25 @@ void TestMeleeDriver() {
               "melee driver: no realized body 1, no finisher hit");
     }
     {
-        // Run af0b88b6: the partner behind the attacker's back (z + 1 at yaw 0) is outside the cone.
+        // The partner behind the attacker's back (z - 1 at yaw 0) is outside the cone.
         Session s(0);
         MeleeSetup(s, true);
-        s.fake.state.slot[1][2] = -4.f;
-        s.fake.body_pos[2] = -4.f;
+        s.fake.state.slot[1][2] = -6.f;
+        s.fake.body_pos[2] = -6.f;
         Check(s.Tick(0), "melee driver: idle before the facing test");
         s.fake.anim.act[0] = 113;
         Check(s.Tick(0) && g_melee_hits.empty() &&
                   s.fake.Containing("partner_melee=strike; act=113; verdict=angle; queued=0; dist_cm=100; dy_cm=0; angle_deg=180;") == 1,
               "melee driver: the partner at the attacker's back is outside the cone");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.local_body_ok = false;
+        Check(s.Tick(0), "melee driver: idle without a local body readback");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=no_local; queued=0;") == 1,
+              "melee driver: no local body readback, no strike judged");
     }
 }
 
