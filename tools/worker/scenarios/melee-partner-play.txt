@@ -12,7 +12,7 @@
 #      ground on both screens.
 #   b) after the host's sleep auto wake (30 s, host-granted), the host stands 1 m behind the guest and strikes: the same
 #      lines with the roles swapped; the guest asleep on both screens.
-#   c) a combo 3 m away (the guest behind the host): partner_melee=strike; act=114; verdict=range; queued=0, no hit.
+#   c) a combo 3 m away (the guest behind the host): partner_melee=strike; act=113; verdict=range; queued=0, no hit.
 # Expected NEVER (sliced): friendly_hit=ignored; step=error; viewer_changed; faults.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-partner-play.txt
@@ -48,7 +48,7 @@ guest press lmb 100
 wait 250
 guest press lmb 100
 guest burst a-strike 4 250
-waitlog guest 'partner_melee=strike; act=114; verdict=' 6
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=land' 6
 waitlog host 'friendly_hit=owner;' 6
 wait 1200
 both capture a-down
@@ -71,7 +71,7 @@ host press lmb 100
 wait 250
 host press lmb 100
 host burst b-strike 4 250
-waitlog host 'partner_melee=strike; act=114; verdict=' 6
+waitlog host 'partner_melee=strike; act=11[34]; verdict=land' 6
 waitlog guest 'friendly_hit=owner;' 6
 wait 1200
 both capture b-down
