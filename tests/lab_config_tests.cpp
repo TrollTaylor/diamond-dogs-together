@@ -581,6 +581,29 @@ int main() {
                   "an invalid debug_travel value refuses");
         }
     }
+    // Spawn enemy here for players (spawn_warp, docs/debug-menu.md "Spawn enemy here"): the engine set-transform
+    // placement in play mode, on unless named 0 (lab keeps debug_soldier_warp, which play still refuses).
+    {
+        Check(LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp on by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
+            const auto plain = Lab(base);
+            Check(plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp on when not named (lab and play)");
+            const auto named = Lab(base + "spawn_warp=1\n");
+            Check(named.spawn_warp && named.spawn_warp_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named spawn_warp 1 runs in lab and play");
+            const auto off = Lab(base + "spawn_warp=0\n");
+            Check(!off.spawn_warp && off.spawn_warp_given && off.play_refused == 0, "a named spawn_warp 0 stays off");
+        }
+        const auto play = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\ndebug_soldier_warp=1\n");
+        Check(!play.debug_soldier_warp && play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
+              "play still refuses the lab key; spawn_warp stays on");
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\nspawn_warp=") + value + "\n");
+            Check(!invalid.spawn_warp && !invalid.spawn_warp_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid spawn_warp value refuses");
+        }
+    }
     // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
     // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
     // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs

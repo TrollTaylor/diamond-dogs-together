@@ -743,6 +743,24 @@ int main() {
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "settling: partner_pose");
     avail.world_pair_wait = 9; avail.world_partner_mission = 30050;
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "the same mission: partner_pose");
+    // Spawn enemy here: the row's result chip says what happened in plain words (the raw result stays in the tooltip).
+    {
+        const auto plain = [](const char* result) { const char* t = act::ResultText(result); return t ? t : ""; };
+        Check(std::strstr(plain("spawn_mother_base"), "Mother Base") != nullptr, "Mother Base refusal in plain words");
+        Check(std::strstr(plain("spawn_pool_limit_8"), "8 spawned soldiers") != nullptr, "pool refusal in plain words");
+        Check(std::strstr(plain("spawn_no_guard"), "500 m") != nullptr, "no guard in range in plain words");
+        Check(std::strstr(plain("guard_here;ent=1;d=5.0;moved=40.0;far=0;mode=warp;come=1;sync=world;seq=1;frames=0;leaf=engine"),
+                          "in front of you") != nullptr, "a warp placement reads as in front of you");
+        Check(std::strstr(plain("guard_here;ent=1;d=119.7;moved=0.2;far=1;mode=route;why=disabled;come=0;sync=world;seq=1;route=r"),
+                          "patrol route") != nullptr, "a route snap says he went to a patrol route");
+        Check(std::strstr(plain("submitted_guard_here;ent=1;scope=local;mode=warp"), "Bringing") != nullptr, "the interim reads as bringing");
+        Check(std::strstr(plain("spawn_context;why=mission"), "mission") != nullptr, "context refusal in plain words");
+        Check(act::ResultText("position=1,2,3;yaw=0") == nullptr && act::ResultText(nullptr) == nullptr && act::ResultText("") == nullptr,
+              "other results keep their raw text");
+        for (const char* r : {"spawn_mother_base", "spawn_pool_limit_8", "spawn_no_guard", "spawn_context;why=command",
+                              "spawn_terminal_unknown", "spawn_position_timeout", "spawn_no_route;why=x", "spawn_binding_error"})
+            Check(act::ResultText(r) && std::strlen(act::ResultText(r)) < 96, "spawn results fit the chip");
+    }
     avail.world_partner_mission = 0;
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "an unknown partner mission: partner_pose");
     avail.world_partner_mission = 30010; avail.world_paired = true;

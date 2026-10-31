@@ -264,6 +264,10 @@ const char* LifeCodeName(std::uint32_t code) noexcept {
     default: return "unknown";
     }
 }
+const char* ResultText(const char* result) noexcept {
+    (void)result;
+    return nullptr;
+}
 bool IsMenuText(const char* text) noexcept {
     return text && std::strncmp(text, "menu ", 5) == 0;
 }
