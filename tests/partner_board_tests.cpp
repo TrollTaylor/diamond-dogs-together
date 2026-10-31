@@ -1026,6 +1026,22 @@ void TestPress() {
     Policy(pb::Mode::off);
     pb::ReadRace(rs);
     Check(rs.pseq == 3, "none of them is a press");
+    // Run 23c7f305 (both pressed): the partner's ride arrived while the press was held, so the passenger policy seats
+    // it; the press ends as 'peer' (end 4), and Lua shows no deny toast for a press that already took another seat.
+    g.now = 6000;
+    pb::RaceHold(2000);
+    Check(D(0), "a press: idle");
+    g.now = 6100;
+    Policy(pb::Mode::passenger, 25608, 0, 9000);
+    Check(!D(0), "the partner's ride arrived mid-wait: phase 1 goes on (the passenger policy decides)");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_vehicle == 25608 && rs.done_end == 4 && rs.done_wait_ms == 100 && rs.timeouts == 1,
+          "ended as peer 100 ms after the press (not a timeout)");
+    g.now = 6116;
+    Check(!D(0), "the next frame: stock");
+    pb::ReadRace(rs);
+    Check(rs.done_seq == 4, "one end per press");
+    Policy(pb::Mode::off);
     unsigned char empty[0x100]{};
     Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
     pb::RaceHold(0);

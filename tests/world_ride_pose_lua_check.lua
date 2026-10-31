@@ -449,7 +449,8 @@ local function seatEnv(host)
         if c.on ~= 1 then return {ok = true, on = 0} end
         return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
             hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0, ref = c.ref or 65535, rage = c.rage or -1,
-            press = c.press, pseq = c.pseq, page = 0, pend = c.pend, touts = c.touts, gi = gi, commit = c.commit or 65535}
+            press = c.press, pseq = c.pseq, page = 0, pend = c.pend, touts = c.touts, gi = gi, commit = c.commit or 65535,
+            dend = c.dend or 0, dveh = c.dveh or 65535}
     end
     local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
     env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
@@ -516,6 +517,19 @@ gr.ready()
 gr.drive(25609)
 gr.W.handlers[54]({1, 25608, 0, 1, 3})
 check(#gr.notes == 0 and gr.deny[1][1] == 25608, 'a deny while the guest already rides (another seat): no toast')
+-- Run 23c7f305 (both pressed): the host's ride reached the guest's copy during its held press, so the press took a
+-- passenger seat (native end 4, peer) before the deny came: no "getting into the driver's seat" toast for it.
+local gp = seatEnv(false)
+gp.ready()
+gp.pend, gp.dend, gp.dveh = 0, 4, 25608
+gp.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gp.notes == 0 and gp.deny[1][1] == 25608 and gp.has('event=seat;action=deny;vehicle=25608;role=guest;set=1;seated=1'),
+    'a deny after the press already took another seat: no toast (logged seated=1)')
+local gq = seatEnv(false)
+gq.ready()
+gq.pend, gq.dend, gq.dveh = 1, 4, 25608
+gq.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gq.notes == 1, 'a new press held when the deny comes: the toast')
 -- READY lapses (the host stopped answering): the guest goes stock.
 local sl = seatEnv(false)
 sl.ready()
