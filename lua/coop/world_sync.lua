@@ -13,7 +13,8 @@ do
   e.MgsCoopWorld = W
   W.MISSIONS = {[30010] = {enemies = true, clock = true, weather = "all", areaEnemy = "f30010_enemy"},
     [30020] = {enemies = true, clock = true, weather = "nofog", areaEnemy = "f30020_enemy"},
-    [30050] = {clock = true, weather = "all"}}
+    -- Mother Base: staff outcomes too; no area trap there (allCp: every CP counts as loaded), no patrol corrections yet.
+    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, patrol = false}}
   local fmt, floor, sub, gsub, concat = string.format, math.floor, string.sub, string.gsub, table.concat
   local PRE = "return 'MGS_COOP_WORLD_"
   local function index(t, k) return t[k] end
