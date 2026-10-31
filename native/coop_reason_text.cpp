@@ -318,7 +318,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
                     first);
     case 13:  // COMPANION{a=1 orders | 2 call refused | 3 Quiet locked} (M1, docs/vehicles-companions-design.md 6.1);
               // M3 (6.3): a=4 vehicle drop refused | 5 loadout drop refused (it can carry a vehicle);
-              // M6 seat races: a=6 the guest lost the driver's seat | 7 the host yielded it
+              // M6 seat races: a=6 the guest lost the driver's seat | 7 the host yielded it;
+              // fb1031: a=8 the partner rides a vehicle this copy lacks (hidden until they get out)
         switch (a) {
         case 1: return Put(out, capacity, "Only the host gives companion orders in co-op: your call menu is off.");
         case 2: return Put(out, capacity, "Only the host can call, change or send away the companion in co-op.");
@@ -330,6 +331,9 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         // the driver's seat to the guest, who reached it first.
         case 6: return Put(out, capacity, "Your partner is getting into the driver's seat: take another seat or wait.");
         case 7: return Put(out, capacity, "Your partner reached the driver's seat first: take another seat or wait.");
+        // fb1031 (world_vehicle.lua): the partner's vehicle is gone on this copy (Fultoned or destroyed here, or the
+        // host's relief vehicle); the native seat hides them for that ride instead of drawing them without it.
+        case 8: return Put(out, capacity, "Your partner's vehicle isn't on your screen. You'll see them again when they get out.");
         default: return false;
         }
     case 14:  // TRAVEL{a=mission, b=1 travelling | 2 brought there | 3 brought here | 4 bringing | 5 refused | 6 stopped

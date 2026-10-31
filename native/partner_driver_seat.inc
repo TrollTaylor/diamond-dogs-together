@@ -26,10 +26,12 @@
 //   kSeatFallbackRetryMs. Only there: a vehicle that exists here is never
 //   Warped into, nor is the viewer's own vehicle.
 // Africa fix (the two-PC test of 2026-10-23, bug 2): an id this copy lacks
-// (absent: the by-id read refused live or index) takes the same fallback in
-// free roam too (SeatFallbackHere): the host's relief vehicle 25600 existed
-// only on his copy, and the named path (Lua no_name -> lua_refused) hid him
-// for the whole ride.
+// (absent: the by-id read refused live or index) took the same fallback in
+// free roam too: the host's relief vehicle 25600 existed only on his copy, and
+// the named path (Lua no_name -> lua_refused) hid him for the whole ride.
+// fb1031 (2026-10-31): that fallback drew a standing partner gliding with no
+// vehicle; absent is now refused at once in every mission (SeatAbsentHides:
+// hidden for the ride) and Lua's toast (world note 13 a=8) says why.
 
 namespace prs = mgscoop::partner_ride_seat;
 
@@ -46,15 +48,22 @@ bool SeatTransient(const char* reason) noexcept {
 bool LinkLeaveReason(const char* reason) noexcept {
     return reason && (std::strcmp(reason, "lease") == 0 || std::strcmp(reason, "ride_stale") == 0);
 }
-// The by-id gate reasons that mean "this copy has no usable vehicle with that
-// id right now" (absent: no such vehicle here, it was Fultoned or despawned
-// here or never spawned, like the other player's relief vehicle; local_read:
-// the read failed elsewhere; unrealized: not realized): body 1 is shown
-// without a seat (SeatPhase::fallback) instead of hidden.
+// The by-id gate reasons that mean "this copy may have the vehicle but cannot
+// use it right now" (local_read: the read failed elsewhere; unrealized: not
+// realized): body 1 is shown without a seat (SeatPhase::fallback) instead of
+// hidden where SeatFallbackHere allows it.
 bool SeatFallbackReason(const char* reason) noexcept {
-    return reason && (std::strcmp(reason, "absent") == 0 || std::strcmp(reason, "local_read") == 0 ||
-                      std::strcmp(reason, "unrealized") == 0);
+    return reason && (std::strcmp(reason, "local_read") == 0 || std::strcmp(reason, "unrealized") == 0);
 }
+// absent: no vehicle with that id on this copy (Fultoned or despawned here, or
+// never spawned, like the host's relief vehicle 25600 on a guest). fb1031 (the
+// two-PC session of 2026-10-31): the 0.13.6 / Africa fallback Warped body 1
+// along the remote's streamed seat pose, but nothing seats it there, so players
+// saw a standing partner glide along with no vehicle (25600 twice, ~6 s each;
+// Mother Base 25603 / 25604, ~13 s). Now absent is refused and latched in every
+// mission (hidden until the remote's ride leaves that seat: the proven ride
+// hide) and Lua says why (world note 13 a=8, world_vehicle.lua).
+bool SeatAbsentHides(const char* reason) noexcept { return reason && std::strcmp(reason, "absent") == 0; }
 // partner_vehicle::ReadVehicle's refusals that mean "no vehicle with that id on
 // this copy": live (the index's pool bit *(object+0x28) is clear) and index (the
 // index is past the pool count). The engine's own id lookup 0xA272A0, which the
@@ -90,13 +99,12 @@ bool SeatByIdOnlyMission(std::uint32_t mission) noexcept { return mission == 300
 bool SeatCapableMission(std::uint32_t mission, bool seat_id) noexcept {
     return SeatMission(mission) || (seat_id && SeatByIdOnlyMission(mission));
 }
-// Where a by-id refusal shows body 1 without a seat (SeatPhase::fallback). Mother
-// Base (only the id can seat): every fallback reason. Free roam (30010/30020):
-// only an absent vehicle (no named seat can anchor there either: the Africa
-// relief vehicle 25600 of 2026-10-23, an authored jeep removed on one copy, hidden
-// run 075c1ea4 part B); any other refusal keeps the proven named path.
+// Where a by-id refusal shows body 1 without a seat (SeatPhase::fallback): Mother
+// Base (only the id can seat), for every fallback reason. Free roam (30010/30020)
+// keeps the proven named path for them; an absent vehicle hides everywhere
+// (SeatAbsentHides; the Africa fix's free-roam fallback for it is gone).
 bool SeatFallbackHere(std::uint32_t mission, const char* reason) noexcept {
-    return SeatFallbackReason(reason) && (!SeatMission(mission) || std::strcmp(reason, "absent") == 0);
+    return SeatFallbackReason(reason) && !SeatMission(mission);
 }
 
 // The (vehicle, seat) a refusal or a get-off ended stays unseated (it hides)
@@ -513,10 +521,12 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         // 0.13.6: a vehicle this copy lacks (local_read: Fultoned here, the
         // 2026-10-22 session) or has unrealized keeps body 1 visible without a
         // seat once the release ran (SeatPhase::fallback), not hidden.
-        // The Africa fix: in free roam too for an absent vehicle (SeatFallbackHere: the
-        // 2026-10-23 Africa relief vehicle); there any other refusal keeps the
-        // named path (Lua plays the locator name).
-        if (!s.byid && SeatFallbackHere(m.mission_code, s.byid_reason)) s.fallback_want = s.byid_reason;
+        // fb1031: an absent vehicle (none with that id here) is refused in every
+        // mission (latched: hidden until the ride leaves that seat), never drawn
+        // without it; in free roam any other refusal keeps the named path (Lua
+        // plays the locator name).
+        if (!s.byid && SeatAbsentHides(s.byid_reason)) SeatRefuse(m, h, s.byid_reason, now);
+        else if (!s.byid && SeatFallbackHere(m.mission_code, s.byid_reason)) s.fallback_want = s.byid_reason;
         else if (!SeatMission(m.mission_code) && !s.byid) SeatRefuse(m, h, s.byid_reason ? s.byid_reason : "byid", now);
         // F1 vehicles: the remote in the viewer's own back seat (a named vehicle never reaches
         // SeatByIdGate): refused before anything is armed (latched, it hides).
@@ -706,10 +716,10 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (s.byid && !s.manual && !s.target_done && body_dm && dm.rec_ok && prs::IsSeatState(dm.rec18, s.seat)) {
             if (const char* target_why = SeatTarget(d, h, now)) {
                 SeatRefuse(m, h, target_why, now);
-                // 0.13.6: where only the id can seat (Mother Base), a copy that vanished or
+                // 0.13.6: where only the id can seat (Mother Base), a copy that is unreadable or
                 // unrealized since the offer is not latched: the next episode shows body 1
-                // without a seat (fallback) instead of hiding it. The Africa fix: in free roam too
-                // for a copy that vanished (absent; SeatFallbackHere).
+                // without a seat (fallback) instead of hiding it. fb1031: a copy that vanished
+                // (absent) stays latched, hidden for that ride, in every mission.
                 if (SeatFallbackHere(m.mission_code, target_why)) s.latch_exit = false;
                 break;
             }
