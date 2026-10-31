@@ -164,6 +164,11 @@ local function fixture(host)
         if c.maskDelay then c.maskReleaseAt = c.now + c.maskDelay else c.mask = false end
     end
     env.TppUiCommand = {AnnounceLogView = function(text) c.announces[#c.announces + 1] = text end}
+    c.warps = {}
+    env.GameObject = {SendCommand = function(target, command)
+        c.warps[#c.warps + 1] = {target = target, command = command, at = c.now}
+        return true
+    end}
     env.e.MgsCoopWorld = W
     local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
     chunk = assert(loadfile(assert(arg[3], 'partner sleep adapter argument required'))); setfenv(chunk, env); chunk()
@@ -1053,5 +1058,84 @@ do
     check(r.down and not h.D.acceptStatus(status(r.sequence % 65535 + 1, r.generation, false, 0), 2, h.now),
         'standing up under the same generation still needs the grant')
     check(h.D.records[2].down, 'the refused stand-up leaves the downed record')
+end
+
+-- Put-down clamp on the carried player's own copy (10-31 Steam session: a
+-- running carrier put the sleeping partner down, the released body slid 4.7 m
+-- past the carrier off the Mother Base deck and the sea kill ended the run).
+do
+    local function carry(a, b, carrierPos, ownPos)
+        down(b); step(a, b, 100); step(a, b, 100)
+        a.native.pos = carrierPos
+        b.native.pos, b.native.carry, b.native.act = ownPos, 2, 43
+        for _ = 1, 5 do step(a, b, 100) end
+        b.warps = {}
+    end
+    local function lastWarp(c)
+        local w = c.warps[#c.warps]
+        return w and w.command and w.command.id == 'Warp' and w.target.type == 'TppPlayer2' and w.target.index == 0 and w or nil
+    end
+    -- The session's slide: carrier at z 30.66 m, own body put down at z 35.41 m.
+    local a, b = pair()
+    carry(a, b, {16536, 800, 30661}, {16540, 1700, 30600})
+    check(#b.warps == 0, 'a carried body on the carrier is never warped')
+    b.native.act, b.native.pos = 44, {16600, 1500, 31400}
+    step(a, b, 100)
+    check(#b.warps == 0, 'a put-down within 2 m of the carrier is left to the stock animation')
+    b.native.pos = {16683, 830, 35410}
+    step(a, b, 100)
+    local w = lastWarp(b)
+    check(w ~= nil, 'a put-down body that slides more than 2 m past the carrier is warped back')
+    local p = w and w.command.pos or {0, 0, 0}
+    local dx, dz = p[1] - 16.536, p[3] - 30.661
+    check(dx * dx + dz * dz <= 1.0 and p[2] >= 0.8 and p[2] <= 1.3,
+        'the warp lands at the carrier\'s feet, at the carrier\'s height')
+    check(p[3] < 30.661, 'the warp lands on the carrier\'s side away from the slide (ground the carrier walked)')
+    local n = #b.warps
+    step(a, b, 100)
+    check(#b.warps == n, 'warps are spaced (no warp every tick)')
+    for _ = 1, 30 do step(a, b, 100) end
+    check(#b.warps <= 6, 'an episode warps at most six times')
+    local found = false
+    for _, text in ipairs(b.logs) do if text:find('step=putdown_place', 1, true) then found = true end end
+    check(found, 'each put-down placement is logged')
+    -- After the window the sea-death policy is unchanged: no warp.
+    n = #b.warps; b.native.pos = {16683, -9000, 38000}
+    step(a, b, 100)
+    check(#b.warps == n, 'outside the put-down window a fall is not rescued (sea death stays)')
+
+    -- A body put down at the edge that drops more than 1 m is warped back too.
+    a, b = pair()
+    carry(a, b, {1000, 800, 2000}, {1000, 1700, 2000})
+    b.native.act, b.native.pos = 44, {1000, 800, 3100}
+    step(a, b, 100)
+    check(#b.warps == 0, 'a normal put-down in front of the carrier is untouched')
+    b.native.pos = {1000, -900, 3300}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a put-down body falling more than 1 m below the carrier is warped back')
+
+    -- No carry first: an own put-down act or a fall alone never warps.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    a.native.pos = {0, 800, 0}
+    b.native.act, b.native.pos = 44, {0, 800, 9000}
+    for _ = 1, 3 do step(a, b, 100) end
+    check(#b.warps == 0, 'no warp without an observed carry')
+
+    -- Loaded onto a horse or a vehicle as cargo: never pulled back.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    b.native.carry, b.native.act, b.native.pos = 4, 44, {0, 800, 5000}
+    for _ = 1, 3 do step(a, b, 100) end
+    check(#b.warps == 0, 'cargo on a horse or vehicle is never warped')
+
+    -- A stale carrier position is not a safe spot.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    b.native.carry, b.native.act, b.native.pos = 2, 43, {0, 1700, 0}
+    for _ = 1, 15 do b.now = b.now + 100; b.D.tick(b.now); b.tx = {} end
+    b.native.act, b.native.pos = 44, {0, 800, 6000}
+    b.now = b.now + 100; b.D.tick(b.now)
+    check(#b.warps == 0, 'no warp to a stale carrier position')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')
