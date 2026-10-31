@@ -103,6 +103,7 @@ check(v.playerType==PT.DD_FEMALE and v.playerPartsType==PARTS.NORMAL and v.playe
 check(g.ply_isUsingTempPlayerType==true and g.ply_lastPlayerTypeUsingTemp==PT.SNAKE and g.ply_lastPlayerFaceIdUsingTemp==77,
  "own Snake kept in the save's temporary-type gvars")
 check(c.M.characterPick=="dd_female","the pick holds for later loads")
+check(c.M.characterStatus.expect==PT.DD_FEMALE,"the lab readback now expects the new type (its change line shows raw0)")
 check(c.D.pending and c.D.pending.kind=="character" and c.D.pending.id==11,"waits for the parts reload")
 check(hasReport(c,"switch;mission=30050;id=11;pick=dd_female;result=switched;type=2;parts=0;camo=1;face=350"),"switch reported")
 c.partsActive=true;c:poll(29);check(c.D.pending~=nil and #c.notes==0,"no final result before 30 frames")
