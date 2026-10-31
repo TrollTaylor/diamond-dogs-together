@@ -69,6 +69,35 @@ int main() {
     Check(SUCCEEDED(chain->Present(0, 0)), "real Present forwards");
     Check(ui::StatsForTest().initialized && ui::StatsForTest().frames == 0, "first Present initializes closed menu");
     Check(!ui::CapturingInput(), "closed menu passes input");
+    {
+        // Review m6m7g: a refused install names the failing step and its code after the kept prefix.
+        char line[256]{};
+        Check(ui::InstallLineForTest(line, sizeof(line)) &&
+            std::strcmp(line, "overlay=installed; api=dx11; toggle=F9; graphics=Present_ResizeBuffers\r\n") == 0, "install logs the installed line");
+        Check(ui::RefusalLineForTest("device", "D3D11CreateDeviceAndSwapChain", 1, static_cast<long>(0x887A0004u), line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=device; detail=D3D11CreateDeviceAndSwapChain; hr=0x887A0004\r\n") == 0,
+            "device refusal names the step and HRESULT");
+        Check(ui::RefusalLineForTest("input", "CreateDevice_mouse", 1, static_cast<long>(0x8007000Eu), line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=input; detail=CreateDevice_mouse; hr=0x8007000E\r\n") == 0,
+            "input refusal names the sub-step and HRESULT");
+        Check(ui::RefusalLineForTest("enable_hooks", "apply_queued", 2, 10, line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=enable_hooks; detail=apply_queued; mh=MH_ERROR_MEMORY_PROTECT(10)\r\n") == 0,
+            "MinHook refusal names its MH_STATUS");
+        Check(ui::RefusalLineForTest("present_hook", "IDXGISwapChain_Present", 2, 7, line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=present_hook; detail=IDXGISwapChain_Present; mh=MH_ERROR_NOT_EXECUTABLE(7)\r\n") == 0,
+            "present hook refusal names its MH_STATUS");
+        Check(ui::RefusalLineForTest("window", "CreateWindowExW", 3, 1400, line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=window; detail=CreateWindowExW; error=1400\r\n") == 0,
+            "window refusal names the Win32 error");
+        Check(ui::RefusalLineForTest("input", "SetCursorPos", 4, 0, line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=input; detail=SetCursorPos; address=null\r\n") == 0,
+            "missing export names the hook");
+        Check(ui::RefusalLineForTest(nullptr, nullptr, 0, 0, line, sizeof(line)) &&
+            std::strcmp(line, "overlay=refused; reason=graphics_or_input_hook; step=unknown\r\n") == 0,
+            "unrecorded refusal keeps the prefix");
+        char tiny[16]{};
+        Check(!ui::RefusalLineForTest("device", "x", 1, 0, tiny, sizeof(tiny)), "refusal line that does not fit is refused");
+    }
 
     std::array<void*, 16> methods{};
     methods[9] = reinterpret_cast<void*>(&DebugFixtureState); methods[10] = reinterpret_cast<void*>(&DebugFixtureData);

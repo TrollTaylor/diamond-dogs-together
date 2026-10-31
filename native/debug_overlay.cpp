@@ -452,6 +452,54 @@ bool AddHook(Hook& hook, void* address, void* replacement) noexcept {
     hook.target = address;
     return true;
 }
+// Review m6m7g: the first failing install step, its sub-step and code, appended to the refusal line after
+// the kept prefix 'overlay=refused; reason=graphics_or_input_hook' (InstallOnce runs once under
+// install_once; the test fixtures' AddHook calls never record).
+enum class FailKind : unsigned { none = 0, hr = 1, mh = 2, win32 = 3, null_address = 4 };
+struct InstallFailure { const char* step; const char* detail; FailKind kind; long code; };
+InstallFailure install_failure{};
+char install_line[256]{};
+void Fail(const char* step, const char* detail, FailKind kind, long code) noexcept {
+    if (!install_failure.step) install_failure = {step, detail, kind, code};
+}
+bool RefusalLine(const InstallFailure& failure, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const char* const prefix = "overlay=refused; reason=graphics_or_input_hook";
+    HRESULT written = S_OK;
+    if (!failure.step) {
+        written = StringCchPrintfA(out, capacity, "%s; step=unknown\r\n", prefix);
+    } else {
+        char code[80] = "";
+        switch (failure.kind) {
+        case FailKind::hr: StringCchPrintfA(code, ARRAYSIZE(code), "; hr=0x%08lX", static_cast<unsigned long>(failure.code)); break;
+        case FailKind::mh: StringCchPrintfA(code, ARRAYSIZE(code), "; mh=%s(%ld)", MH_StatusToString(static_cast<MH_STATUS>(failure.code)), failure.code); break;
+        case FailKind::win32: StringCchPrintfA(code, ARRAYSIZE(code), "; error=%lu", static_cast<unsigned long>(failure.code)); break;
+        case FailKind::null_address: StringCchCopyA(code, ARRAYSIZE(code), "; address=null"); break;
+        default: break;
+        }
+        written = failure.detail ? StringCchPrintfA(out, capacity, "%s; step=%s; detail=%s%s\r\n", prefix, failure.step, failure.detail, code)
+                                 : StringCchPrintfA(out, capacity, "%s; step=%s%s\r\n", prefix, failure.step, code);
+    }
+    if (FAILED(written)) { out[0] = 0; return false; }
+    return true;
+}
+// AddHook for an install step: a null address or a MinHook failure is recorded with its name and MH_STATUS.
+bool StepHook(const char* step, const char* detail, Hook& hook, void* address, void* replacement) noexcept {
+    if (!address) { Fail(step, detail, FailKind::null_address, 0); return false; }
+    const MH_STATUS status = MH_CreateHook(address, replacement, &hook.original);
+    if (status != MH_OK) { Fail(step, detail, FailKind::mh, status); return false; }
+    hook.target = address;
+    return true;
+}
+bool QueueHook(const Hook& hook, const char* detail, bool required) noexcept {
+    if (!hook.target) {
+        if (required) Fail("enable_hooks", detail, FailKind::null_address, 0);
+        return !required;
+    }
+    const MH_STATUS status = MH_QueueEnableHook(hook.target);
+    if (status != MH_OK) { Fail("enable_hooks", detail, FailKind::mh, status); return false; }
+    return true;
+}
 void RemoveHook(Hook& hook) noexcept {
     if (hook.target) { MH_DisableHook(hook.target); MH_RemoveHook(hook.target); }
     hook = {};
@@ -473,23 +521,25 @@ void RemoveHooks() noexcept {
 #endif
 }
 bool EnableHooks() noexcept {
-    Hook* hooks[] = {&present_hook, &resize_hook, &state_hooks[0], &state_hooks[1],
+    const Hook* hooks[] = {&present_hook, &resize_hook, &state_hooks[0], &state_hooks[1],
                     &data_hooks[0], &data_hooks[1], &cursor_hook, &clip_hook, &keyboard_hook, &pad_hook};
-    for (const auto* hook : hooks)
-        if (hook->target && MH_QueueEnableHook(hook->target) != MH_OK) return false;
+    const char* const names[] = {"Present", "ResizeBuffers", "keyboard_GetDeviceState", "mouse_GetDeviceState",
+                    "keyboard_GetDeviceData", "mouse_GetDeviceData", "SetCursorPos", "ClipCursor", "GetKeyboardState", "XInputGetState"};
+    static_assert(ARRAYSIZE(hooks) == ARRAYSIZE(names), "one name per hook");
+    for (unsigned i = 0; i < ARRAYSIZE(hooks); ++i)
+        if (!QueueHook(*hooks[i], names[i], false)) return false;
 #if MGS_BACKGROUND_WORKER
     if (worker_scenario::Requested()) {
-        for (const auto& hook : format_hooks) if (hook.target && MH_QueueEnableHook(hook.target) != MH_OK) return false;
-        for (const auto& hook : coop_hooks) if (hook.target && MH_QueueEnableHook(hook.target) != MH_OK) return false;
-        if (!async_hook.target || MH_QueueEnableHook(async_hook.target) != MH_OK) return false;
-        if (!key_state_hook.target || MH_QueueEnableHook(key_state_hook.target) != MH_OK) return false;
-        if (!raw_hook.target || MH_QueueEnableHook(raw_hook.target) != MH_OK) return false;
-        if (!raw_buffer_hook.target || MH_QueueEnableHook(raw_buffer_hook.target) != MH_OK) return false;
-        if (!foreground_hook.target || MH_QueueEnableHook(foreground_hook.target) != MH_OK) return false;
-        if (!get_cursor_hook.target || MH_QueueEnableHook(get_cursor_hook.target) != MH_OK) return false;
+        if (!QueueHook(format_hooks[0], "keyboard_SetDataFormat", false) || !QueueHook(format_hooks[1], "mouse_SetDataFormat", false) ||
+            !QueueHook(coop_hooks[0], "keyboard_SetCooperativeLevel", false) || !QueueHook(coop_hooks[1], "mouse_SetCooperativeLevel", false) ||
+            !QueueHook(async_hook, "GetAsyncKeyState", true) || !QueueHook(key_state_hook, "GetKeyState", true) ||
+            !QueueHook(raw_hook, "GetRawInputData", true) || !QueueHook(raw_buffer_hook, "GetRawInputBuffer", true) ||
+            !QueueHook(foreground_hook, "GetForegroundWindow", true) || !QueueHook(get_cursor_hook, "GetCursorPos", true)) return false;
     }
 #endif
-    return MH_ApplyQueued() == MH_OK;
+    const MH_STATUS applied = MH_ApplyQueued();
+    if (applied != MH_OK) { Fail("enable_hooks", "apply_queued", FailKind::mh, applied); return false; }
+    return true;
 }
 template<class Function>
 Function DeviceOriginal(IDirectInputDevice8W* self, unsigned index, const Hook (&hooks)[2]) noexcept {
@@ -905,44 +955,60 @@ DWORD WINAPI Pad(DWORD index, XINPUT_STATE* state) noexcept {
 bool InputHooks() noexcept {
     wchar_t input_path[MAX_PATH]{};
     if (!GetSystemDirectoryW(input_path, ARRAYSIZE(input_path)) ||
-        FAILED(StringCchCatW(input_path, ARRAYSIZE(input_path), L"\\dinput8.dll"))) return false;
+        FAILED(StringCchCatW(input_path, ARRAYSIZE(input_path), L"\\dinput8.dll"))) {
+        Fail("input", "system_directory", FailKind::win32, static_cast<long>(GetLastError())); return false;
+    }
     const HMODULE input_module = LoadLibraryExW(input_path, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    const auto create = input_module ? reinterpret_cast<InputCreateFn>(GetProcAddress(input_module, "DirectInput8Create")) : nullptr;
+    if (!input_module) { Fail("input", "dinput8_load", FailKind::win32, static_cast<long>(GetLastError())); return false; }
+    const auto create = reinterpret_cast<InputCreateFn>(GetProcAddress(input_module, "DirectInput8Create"));
+    if (!create) { Fail("input", "DirectInput8Create_export", FailKind::win32, static_cast<long>(GetLastError())); return false; }
     IDirectInput8W* input = nullptr;
-    if (!create || FAILED(create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8W, reinterpret_cast<void**>(&input), nullptr))) return false;
+    const HRESULT made_input = create(GetModuleHandleW(nullptr), DIRECTINPUT_VERSION, IID_IDirectInput8W, reinterpret_cast<void**>(&input), nullptr);
+    if (FAILED(made_input) || !input) { Fail("input", "DirectInput8Create", FailKind::hr, made_input); return false; }
     const GUID* identifiers[] = {&GUID_SysKeyboard, &GUID_SysMouse};
+    const char* const device_names[] = {"CreateDevice_keyboard", "CreateDevice_mouse"};
+    const char* const state_names[] = {"keyboard_GetDeviceState", "mouse_GetDeviceState"};
+    const char* const data_names[] = {"keyboard_GetDeviceData", "mouse_GetDeviceData"};
+#if MGS_BACKGROUND_WORKER
+    const char* const format_names[] = {"keyboard_SetDataFormat", "mouse_SetDataFormat"};
+    const char* const coop_names[] = {"keyboard_SetCooperativeLevel", "mouse_SetCooperativeLevel"};
+#endif
     bool ok = true;
     for (unsigned i = 0; i < ARRAYSIZE(identifiers) && ok; ++i) {
         IDirectInputDevice8W* object = nullptr;
-        if (FAILED(input->CreateDevice(*identifiers[i], &object, nullptr))) { ok = false; break; }
+        const HRESULT made_device = input->CreateDevice(*identifiers[i], &object, nullptr);
+        if (FAILED(made_device) || !object) { Fail("input", device_names[i], FailKind::hr, made_device); ok = false; break; }
         void** methods = *reinterpret_cast<void***>(object);
         if (i == 0 || methods[9] != state_hooks[0].target)
-            ok = AddHook(state_hooks[i], methods[9], reinterpret_cast<void*>(&DeviceState));
+            ok = StepHook("input", state_names[i], state_hooks[i], methods[9], reinterpret_cast<void*>(&DeviceState));
         if (ok && (i == 0 || methods[10] != data_hooks[0].target))
-            ok = AddHook(data_hooks[i], methods[10], reinterpret_cast<void*>(&DeviceData));
+            ok = StepHook("input", data_names[i], data_hooks[i], methods[10], reinterpret_cast<void*>(&DeviceData));
 #if MGS_BACKGROUND_WORKER
         if (ok && worker_scenario::Requested() && (i == 0 || methods[11] != format_hooks[0].target))
-            ok = AddHook(format_hooks[i], methods[11], reinterpret_cast<void*>(&WorkerFormat));
+            ok = StepHook("input", format_names[i], format_hooks[i], methods[11], reinterpret_cast<void*>(&WorkerFormat));
         if (ok && worker_scenario::Requested() && (i == 0 || methods[13] != coop_hooks[0].target))
-            ok = AddHook(coop_hooks[i], methods[13], reinterpret_cast<void*>(&WorkerCoop));
+            ok = StepHook("input", coop_names[i], coop_hooks[i], methods[13], reinterpret_cast<void*>(&WorkerCoop));
 #endif
         object->Release();
     }
     input->Release();
     const HMODULE user = GetModuleHandleW(L"user32.dll");
-    if (ok) ok = AddHook(cursor_hook, reinterpret_cast<void*>(GetProcAddress(user, "SetCursorPos")), reinterpret_cast<void*>(&CursorPos));
-    if (ok) ok = AddHook(clip_hook, reinterpret_cast<void*>(GetProcAddress(user, "ClipCursor")), reinterpret_cast<void*>(&Clip));
-    if (ok) ok = AddHook(keyboard_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyboardState")), reinterpret_cast<void*>(&Keyboard));
+    if (ok) ok = StepHook("input", "SetCursorPos", cursor_hook, reinterpret_cast<void*>(GetProcAddress(user, "SetCursorPos")), reinterpret_cast<void*>(&CursorPos));
+    if (ok) ok = StepHook("input", "ClipCursor", clip_hook, reinterpret_cast<void*>(GetProcAddress(user, "ClipCursor")), reinterpret_cast<void*>(&Clip));
+    if (ok) ok = StepHook("input", "GetKeyboardState", keyboard_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyboardState")), reinterpret_cast<void*>(&Keyboard));
     const HMODULE xinput = GetModuleHandleW(L"XINPUT1_3.dll");
-    if (ok && xinput) ok = AddHook(pad_hook, reinterpret_cast<void*>(GetProcAddress(xinput, "XInputGetState")), reinterpret_cast<void*>(&Pad));
+    if (ok && xinput) ok = StepHook("input", "XInputGetState", pad_hook, reinterpret_cast<void*>(GetProcAddress(xinput, "XInputGetState")), reinterpret_cast<void*>(&Pad));
 #if MGS_BACKGROUND_WORKER
-    if (ok && worker_scenario::Requested()) ok = xinput && pad_hook.target &&
-        AddHook(async_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetAsyncKeyState")), reinterpret_cast<void*>(&WorkerAsync)) &&
-        AddHook(key_state_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyState")), reinterpret_cast<void*>(&WorkerKeyState)) &&
-        AddHook(raw_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputData")), reinterpret_cast<void*>(&WorkerRawInput)) &&
-        AddHook(raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer)) &&
-        AddHook(foreground_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetForegroundWindow")), reinterpret_cast<void*>(&WorkerForeground)) &&
-        AddHook(get_cursor_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetCursorPos")), reinterpret_cast<void*>(&WorkerGetCursorPos));
+    if (ok && worker_scenario::Requested()) {
+        if (!xinput || !pad_hook.target) { Fail("input", "xinput1_3_module", FailKind::null_address, 0); ok = false; }
+        else ok =
+            StepHook("input", "GetAsyncKeyState", async_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetAsyncKeyState")), reinterpret_cast<void*>(&WorkerAsync)) &&
+            StepHook("input", "GetKeyState", key_state_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyState")), reinterpret_cast<void*>(&WorkerKeyState)) &&
+            StepHook("input", "GetRawInputData", raw_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputData")), reinterpret_cast<void*>(&WorkerRawInput)) &&
+            StepHook("input", "GetRawInputBuffer", raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer)) &&
+            StepHook("input", "GetForegroundWindow", foreground_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetForegroundWindow")), reinterpret_cast<void*>(&WorkerForeground)) &&
+            StepHook("input", "GetCursorPos", get_cursor_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetCursorPos")), reinterpret_cast<void*>(&WorkerGetCursorPos));
+    }
 #endif
     return ok;
 }
@@ -1788,12 +1854,19 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
     if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
-    if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) { Log("overlay=refused; reason=minhook\r\n"); return TRUE; }
+    if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) {
+        StringCchPrintfA(install_line, ARRAYSIZE(install_line), "overlay=refused; reason=minhook; mh=%s(%d)\r\n", MH_StatusToString(status), static_cast<int>(status));
+        Log(install_line); return TRUE;
+    }
     WNDCLASSEXW cls{sizeof(cls)};
     cls.lpfnWndProc = DefWindowProcW; cls.hInstance = GetModuleHandleW(nullptr); cls.lpszClassName = L"MGSCoopDX11Probe";
     const ATOM atom = RegisterClassExW(&cls);
-    if (!atom) { Log("overlay=refused; reason=probe_class\r\n"); return TRUE; }
+    if (!atom) {
+        StringCchPrintfA(install_line, ARRAYSIZE(install_line), "overlay=refused; reason=probe_class; error=%lu\r\n", GetLastError());
+        Log(install_line); return TRUE;
+    }
     const HWND hidden = CreateWindowExW(0, cls.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 16, 16, nullptr, nullptr, cls.hInstance, nullptr);
+    if (!hidden) Fail("window", "CreateWindowExW", FailKind::win32, static_cast<long>(GetLastError()));
     DXGI_SWAP_CHAIN_DESC desc{};
     desc.BufferCount = 1; desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.OutputWindow = hidden;
@@ -1801,11 +1874,12 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
     IDXGISwapChain* dummy = nullptr; ID3D11Device* dummy_device = nullptr; ID3D11DeviceContext* dummy_context = nullptr;
     const HRESULT created = hidden ? D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
         nullptr, 0, D3D11_SDK_VERSION, &desc, &dummy, &dummy_device, nullptr, &dummy_context) : E_FAIL;
-    bool ok = SUCCEEDED(created);
+    bool ok = SUCCEEDED(created) && dummy;
+    if (hidden && !ok) Fail("device", "D3D11CreateDeviceAndSwapChain", FailKind::hr, created);
     if (ok) {
         void** methods = *reinterpret_cast<void***>(dummy);
-        ok = AddHook(present_hook, methods[8], reinterpret_cast<void*>(&Present)) &&
-             AddHook(resize_hook, methods[13], reinterpret_cast<void*>(&Resize));
+        ok = StepHook("present_hook", "IDXGISwapChain_Present", present_hook, methods[8], reinterpret_cast<void*>(&Present)) &&
+             StepHook("resize_hook", "IDXGISwapChain_ResizeBuffers", resize_hook, methods[13], reinterpret_cast<void*>(&Resize));
         original_present = reinterpret_cast<PresentFn>(present_hook.original);
         original_resize = reinterpret_cast<ResizeFn>(resize_hook.original);
         if (ok) ok = InputHooks() && EnableHooks();
@@ -1815,7 +1889,10 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
     Release(dummy_context); Release(dummy_device); Release(dummy);
     if (hidden) DestroyWindow(hidden);
     UnregisterClassW(cls.lpszClassName, cls.hInstance);
-    Log(ok ? "overlay=installed; api=dx11; toggle=F9; graphics=Present_ResizeBuffers\r\n" : "overlay=refused; reason=graphics_or_input_hook\r\n");
+    if (ok) StringCchCopyA(install_line, ARRAYSIZE(install_line), "overlay=installed; api=dx11; toggle=F9; graphics=Present_ResizeBuffers\r\n");
+    else if (!RefusalLine(install_failure, install_line, ARRAYSIZE(install_line)))
+        StringCchCopyA(install_line, ARRAYSIZE(install_line), "overlay=refused; reason=graphics_or_input_hook\r\n");
+    Log(install_line);
     return TRUE;
 }
 } // namespace
@@ -1895,6 +1972,12 @@ void Install() noexcept {
     SetLastError(error);
 }
 #ifdef MGS_DEBUG_OVERLAY_TESTING
+bool RefusalLineForTest(const char* step, const char* detail, unsigned kind, long code, char* out, std::size_t capacity) noexcept {
+    return RefusalLine(InstallFailure{step, detail, static_cast<FailKind>(kind), code}, out, capacity);
+}
+bool InstallLineForTest(char* out, std::size_t capacity) noexcept {
+    return install_line[0] && out && SUCCEEDED(StringCchCopyA(out, capacity, install_line));
+}
 void SetMouseHeldForTest(bool value) noexcept { test_mouse_held.store(value, std::memory_order_release); }
 void SetOpenForTest(bool value) noexcept { ChangeOpen(value); }
 void SetForegroundForTest(bool value) noexcept { test_foreground.store(value); }

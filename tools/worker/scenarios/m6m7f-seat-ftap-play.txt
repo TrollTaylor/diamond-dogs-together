@@ -84,6 +84,7 @@ wait 300
 guest capture s1-ftap-shot350
 wait 300
 guest capture s1-ftap-shot650
+host capture s1-ftap-shot-drv
 guest release
 wait 1500
 guest capture s1-ftap-after
@@ -166,6 +167,7 @@ wait 300
 host capture k2-ftap-shot350
 wait 300
 host capture k2-ftap-shot650
+guest capture k2-ftap-shot-drv
 host press f 150
 wait 700
 host capture k2-tap-back

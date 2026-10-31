@@ -80,5 +80,11 @@ TestStats StatsForTest() noexcept;
 void CaptureNextFrameForTest() noexcept;
 bool CapturedFrameForTest(const unsigned char*& rgba, unsigned& width, unsigned& height) noexcept;
 void ShutdownForTest() noexcept;
+// The install refusal line: the kept prefix 'overlay=refused; reason=graphics_or_input_hook' plus the
+// failing step, its sub-step and code (kind 0 none, 1 HRESULT, 2 MH_STATUS, 3 GetLastError, 4 null
+// address). False when it does not fit.
+bool RefusalLineForTest(const char* step, const char* detail, unsigned kind, long code, char* out, std::size_t capacity) noexcept;
+// The last install line this process logged (installed or refused); false before an install ran.
+bool InstallLineForTest(char* out, std::size_t capacity) noexcept;
 #endif
 }
