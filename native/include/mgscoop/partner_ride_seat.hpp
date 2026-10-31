@@ -30,7 +30,8 @@
 //
 // Arm only while no DM runs on either body, only in 30010/30020 and only for
 // the seat DM's lifetime; revert once DM End ran (body act != 0x8B), and at
-// mission end, stop and shutdown (the driver owns that policy).
+// mission end and stop (the driver owns that policy); the window's close is
+// Close (PartnerShutdown, any thread; design 8.53).
 #include <cstddef>
 #include <cstdint>
 

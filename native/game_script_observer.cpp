@@ -1553,6 +1553,10 @@ void PartnerShutdown() noexcept {
     // the owner context clears the guest beacon once and stops calling Steam.
     mgscoop::partner_net::Shutdown();
     mgscoop::steam_online::Shutdown();
+    // The seated rider's four code dwords (design 8.53): the window thread is not the mission thread, so the
+    // MissionEnd revert below never ran on the other_thread return (run 1d9fd748: no revert line). One locked
+    // compare-exchange per dword, re-verified like Arm; no Arm after this. Logs reverted; reason=shutdown when live.
+    if (game_base) mgscoop::partner_ride_seat::Close(game_base, game_span, Log);
     if (!partner_on || !partner_mission) return;
     // Thread-safe first: no deferral, no window, no mirror write from here on.
     mgscoop::partner_defer::Shutdown();
@@ -1561,6 +1565,8 @@ void PartnerShutdown() noexcept {
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
     // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
+    // The seat patch was closed above; the seat first-person bit (impl+0x60) is released only by the MissionEnd below,
+    // so on the other_thread return it stays set until the process ends (design 8.53).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     mgscoop::partner_ui_filter::Shutdown();  // G1: the hint-queue leaf hooks pass every request through
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
