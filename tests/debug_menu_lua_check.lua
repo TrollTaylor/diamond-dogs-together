@@ -910,10 +910,12 @@ w = f.calls[#f.calls][2]
 check(math.abs(w.pos[1] - 8.5) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
     'enemy goto lands 2.5 m from the soldier on the player side, facing him')
 -- mb-staff-sync: an optional distance (0.5-10 m): 5 m to frame a staff member, 1 m to Fulton one.
+f = fixture({host = false})
 check(f:send('enemy goto nearest 5')[3] == 'enemy_goto;ent=4294967295;submitted_warp', 'goto with a distance')
 w = f.calls[#f.calls][2]
 check(math.abs(w.pos[1] - 6) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
     'enemy goto nearest 5 lands 5 m from the soldier, facing him')
+f = fixture({host = false})
 check(f:send('enemy goto nearest 11')[3] == 'enemy_args' and f:send('enemy info nearest 5')[3] == 'enemy_args',
     'goto distance bounded; other ops take no distance')
 f = fixture(); f.env.e.MgsCoopWorld = {paired = true, w1 = true}
