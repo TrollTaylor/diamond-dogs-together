@@ -350,6 +350,9 @@ local function allocate(env, options)
     elseif env.continuing then
         continueFromCheckpoint(env, env.n, options.checkpoint)
     else
+        -- options.restore: TppVarInit.InitializeForNewMission's TppSave.VarRestoreOnMissionStart
+        -- reloads the mission-start slot after the chunk ran.
+        for key, value in pairs(options.restore or {}) do env.vars[key] = value end
         env.TppPlayer.MissionStartPlayerTypeSetting()
     end
     if options.endCall ~= false then env.TppPlayer.ForceChangePlayerFromOcelot() end
@@ -553,6 +556,23 @@ local function scenarios(real)
     status = allocate(env)
     check(status.reason == 'override_sortie_kept' and env.vars.playerType == PT.DD_FEMALE and env.vars.playerFaceId == 360,
         tag .. 'real type comes from the saved temporary state')
+    -- October 31 friend host (new sortie into 30050): the vars read before the restore said
+    -- Snake, the mission-start slot brought back an Ocelot from an earlier session, and the
+    -- vanilla revert then made the host the sortie DD soldier. Snake must win after the restore.
+    env = F({character = 'snake', mission = 30050, playerType = PT.SNAKE, sortieType = PT.DD_MALE, sortieFace = 192})
+    status = allocate(env, {restore = {playerType = PT.OCELOT, playerPartsType = PARTS.OCELOT, playerCamoType = CAMO.OCELOT}})
+    check(status.reason == 'override_sortie_kept' and env.vars.playerType == PT.SNAKE and
+        env.vars.playerPartsType == PARTS.SNEAKING_SUIT and env.vars.playerCamoType == CAMO.SPLITTER,
+        tag .. 'stale kept Snake: Snake after a restored Ocelot, never the sortie DD')
+    check(env.gvars.ply_isUsingTempPlayerType == true and env.gvars.ply_lastPlayerTypeUsingTemp == PT.OCELOT and
+        env.ocelotRevertCalls == 1 and env.Tpp.MgsCoop.characterStatus.expect == PT.SNAKE,
+        tag .. 'stale kept Snake: own type saved for the vanilla restore, readback expects Snake')
+    check(has(env.reports, 'allocated;mission=30050;vars=0;parts=2;camo=3;temp=1;start=new;late=1;before=5'),
+        tag .. 'stale kept Snake: late application reported')
+    -- The same for a kept DD: a restored Snake under a DD request becomes the sortie DD.
+    env = F({character = 'dd_female', mission = 30050, playerType = PT.DD_FEMALE, sortieType = PT.DD_FEMALE, sortieFace = 360})
+    allocate(env, {restore = {playerType = PT.SNAKE}})
+    check(env.vars.playerType == PT.DD_FEMALE and env.vars.playerFaceId == 360, tag .. 'stale kept DD: sortie DD after a restored Snake')
 
     -- Checkpoint continue (title Continue into 30050, the October 3 live run):
     -- InitializeForContinue reloads the checkpoint (Snake) and runs the type
