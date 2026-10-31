@@ -16,6 +16,9 @@ closes while the mission thread is in the middle of a seat write (design 8.54). 
   host's E was the c-far frame; relabelled.
 - **Part C scenario** (`6dc7d93`, not run): the guest leaves the jeep right after each boot, no `guest debug
   forward`, godmode again after the reload, and C3's guest goes to the door only after the host drives.
+- Full `tools/build.ps1` at `8dc956f`: CTest 336/336 (the first pass failed only `friend_package_tests_2`, its
+  relaunch timing assert at 7312 ms under load; it passed alone and in the second full pass); contract `--check`
+  836 / 213.
 - **Open:** the downed protection between a checkpoint reload and the pair re-forming (`d462df5d`); a front-seat
   first-person aim down at a guard about 11 m away left the rifle across the view and the gun did not fire (2 of 2
   lab runs): an A/B with `partner_seat_fpv=0` at the same aim decides whether first person is worse than the
