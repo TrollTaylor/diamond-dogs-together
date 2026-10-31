@@ -35,6 +35,28 @@ Branch `dev/oct7-continue`. Releases everything since 0.14.4 (`01fd055`), with `
 - **Version.** 0.14.5 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.5 and still 0.14.4; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.6", "0.14.5")`. The launcher's mock screenshot scenes keep their 0.14.4 strings, as the 0.14.4 bump left theirs.
 - **Checks at the bump commit `f8eba06`:** `pwsh -File tools/build.ps1 -Fast` 305/305; `pwsh -File tools/build.ps1` (Debug) 337/337; the Release receipt above (324 audited tests).
 
+## 2026-10-31: debug menu Travel and Bring partner here (branch `wp/debug-travel`, local only, NOT run-proven)
+
+**Players get (built, not yet seen in a game):** F9 > World > Travel: **Go to Afghanistan / Go to Africa / Go to Mother
+Base** take both players there with no helicopter ride, menus or loading-tips key, and **Bring partner here** (also on
+the Partner page) puts the partner 3 m in front of the caller, or makes the partner's copy travel to the caller's
+mission. Both players can use every button: a guest's Go to asks the host, who leads; world follow carries the guest,
+which lands 4 m in front of the host. Spots: Afghanistan `828.18 338.20 1630.51` yaw 95, Africa `-656.01 1.20 877.73`
+yaw 62, Mother Base `22.61 1.80 -15.55` (the afgh-ledge, africa-jeep and mb-ladder seeds). On by default (no key).
+- **How:** `lua/coop/world_goto.lua` "Travel" reuses the lab goto's and test boot's stock calls without their lab gates
+  (free roam helicopter clear or `f30050_sequence.ReserveMissionClear` -> the ACC's on-foot route-0 sortie once it is in
+  its main game -> `TppPlayer.SetInitialPosition` at the target's reserve, `waitOnLoadingTipsEnd=false`, the MB demo
+  cleared); refusals for story missions, the helicopter's prep, the iDroid, cutscenes, riding/carried, downed and a
+  running trip; 240 s cap. New wire op TRAVEL `0x3B` (control queue, both directions, works unpaired; protocol section
+  22) and world note 14. docs/debug-menu.md "Travel". Failing first `b55fbb7c` -> `8d484156`, `f8593349`; scenario
+  `travel-play.txt` (play defaults, mb-ladder seed: host Go to Africa, guest Go to Mother Base, Bring both ways).
+- **Proof: none in a game.** 13:05-13:26 the NVIDIA D3D11 device failed (`0x8007000E`) for 20 min (no run started);
+  13:34 the preflight's worker-policy-fixture timed out (120 s, 3.6 s by hand); the one retry (13:44,
+  `a5270761`) passed the preflight, the host was admitted, the guest copy's overlay device failed with `0x8007000E`
+  and the session ended before admission. Full CTest: green except `debug_overlay_tests` (the same DX11 device).
+  Unproven: everything player-visible, the MB -> ACC hop (the lab goto once met an "Overall Completion" screen there),
+  the cross-mission Bring.
+
 ## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
 
 **Players get:** a guest who presses E a moment after the host started getting into the jeep (the host's ride already
