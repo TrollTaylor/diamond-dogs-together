@@ -136,7 +136,7 @@ frames].
   (`859964ce`) and fired once (`1bd4419a`). The in-aim turn down after a set blocked first person 2 of 2.
 - **Part C** (`8567f888`, play): the driver's D-Dog boarded seat 1 with the driver even from 335 m away, so the guest
   got the back seat again; the dog arriving after the partner sits in seat 1 needs the partner to board first [U].
-- Runs `859964ce`, `1bd4419a`, `8567f888` (archive `C:/Users/taylo/mgs-coop-run-archive/m6m7i`); never-lines 0.
+- Runs `859964ce`, `1bd4419a`, `8567f888` (archive: the run archive's `m6m7i/`); never-lines 0.
 - First person looks ~3.5 deg lower than the shoulder aim, but at the same pre-raise turn its shots went ~8 deg lower
   (ground 2.6 / 3.6 m out against 9.5 m). A fall-back clear given up mid-aim is now cleared again at the aim end (review fix, unit tests).
 - Existing teardown AV at the close (`crash_probe=av; rva=0xbf421a` after `hooks_off`) in `8567f888` host and
