@@ -598,6 +598,14 @@ try {
             $file = Join-Path $fixture 'play-seat1-anchor-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_seat1_anchor=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_ride_seat1_anchor'])|$($m['partner_ride_seat1_anchor_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat-1 anchor 0 turns it off in play'
+            # Get-in camera cut (design 8.60): Play-Coop never names the key; play defaults it on with the gun profile; a named 0
+            # turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_ride_getin_cut') -and !$guestIni.Contains('partner_ride_getin_cut') -and
+                !$clipsIni.Contains('partner_ride_getin_cut')) 'Play-Coop lab.ini never names partner_ride_getin_cut'
+            Assert-Equal "$($n['partner_ride_getin_cut'])|$($n['partner_ride_getin_cut_given'])" '1|0' 'native: play defaults the get-in camera cut on'
+            $file = Join-Path $fixture 'play-getin-cut-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_getin_cut=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_getin_cut'])|$($m['partner_ride_getin_cut_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named get-in cut 0 turns it off in play'
             # Seat first person (design 8.46, 8.49): Play-Coop never names the key; play defaults it on with the gun profile;
             # a named 0 turns it off in play (no refusal bit).
             Assert-True (!$hostIni.Contains('partner_seat_fpv') -and !$guestIni.Contains('partner_seat_fpv') -and

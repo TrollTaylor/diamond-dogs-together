@@ -1006,6 +1006,23 @@ RIDE_FOLLOW_SITES = [
      'blend vt+0x18 step(dt): alpha +0x20 = curve 0x1112D60; done: +0x14 = 0'),
 ]
 SITES += RIDE_FOLLOW_SITES
+# fb1031 ride lag (design 8.60, partner_pass_camera get-in cut): camera module 0 (live vtable 0x23BE5E0), active for about
+# 3.5 s after a front-seat get-in and holding the camera where the get-in began. Its CanActivate (vt+0x18 0x1184D80)
+# returns flags +0x147C bit 5 and, while its request word +0xAE0 is 1, sets that bit again; its Deactivate (vt+0x08
+# 0x1182B40) clears the request (the qword at +0xADC) and the flags (bit 5 last). The cut clears bit 5 and a request word of
+# 1 so the stock selection deactivates module 0 (no code patched, no game function called).
+GETIN_CUT_SITES = [
+    (0x1184DB6, '83bbe00a00000175468b837c140000a8087430488d542430488d4be0e849e0ffff488b4424304885c075088983e00a0000eb1c',
+     'module 0 CanActivate 0x1184D80: while the request +0xAE0 == 1 (flags bit 3: the 0x1182E20 lookup) ...'),
+    (0x1184DE9, '838b7c1400002448898338060000eb0c83e0fb83c82089837c1400008b837c140000488b5c2438c1e80583e0014883c4205fc3',
+     'module 0 CanActivate: ... flags +0x147C |= 0x24, or flags = (flags & ~4) | 0x20; returns (flags >> 5) & 1'),
+    (0x1182B46, 'f6817c14000004488bd90f840201000083b9dc0a000001',
+     'module 0 Deactivate 0x1182B40: the hand-over path only with flags bit 2 and +0xADC == 1'),
+    (0x1182C58, '488b4b2883a37c140000fc33c0488983dc0a0000488b01ff502883a37c140000f3',
+     'module 0 Deactivate: flags &= ~3, the qword +0xADC (and the request word +0xAE0) = 0, flags &= ~0xC'),
+    (0x1182CEC, '83a37c140000df', 'module 0 Deactivate: flags &= ~0x20 (bit 5, the active bit CanActivate returns)'),
+]
+SITES += GETIN_CUT_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
 # vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
 # 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
@@ -3703,6 +3720,10 @@ w('// 0x23b7ec0): duration +0x18, elapsed +0x1c, alpha +0x20, start point S +0x3
 w('inline constexpr std::uintptr_t follow_module_vtable_rva=0x23b2ab0, follow_blend_vtable_rva=0x23b7ec0;')
 w('inline constexpr std::size_t follow_module_blend=0x30, follow_blend_dur=0x18, follow_blend_elapsed=0x1c, follow_blend_alpha=0x20, follow_blend_start=0x30;')
 w('inline constexpr std::uintptr_t ride_follow_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in RIDE_FOLLOW_SITES) + '};')
+w('// fb1031 ride lag (design 8.60): camera module 0 (vtable 0x23be5e0), its flags +0x147c (bit 5 active) and request +0xae0.')
+w('inline constexpr std::uintptr_t getin_module_vtable_rva=0x23be5e0;')
+w('inline constexpr std::size_t getin_flags=0x147c, getin_request=0xae0;')
+w('inline constexpr std::uintptr_t getin_cut_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in GETIN_CUT_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
 w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
 w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')

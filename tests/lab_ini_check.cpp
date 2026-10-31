@@ -213,6 +213,9 @@ int main(int argc, char** argv) {
         // Design 8.59: the follow carry (off unless named in lab and play) and whether it was named.
         std::printf("partner_ride_follow=%d\npartner_ride_follow_given=%d\n", c.partner_ride_follow ? 1 : 0,
                     c.partner_ride_follow_given ? 1 : 0);
+        // Design 8.60: the get-in camera cut and whether it was named.
+        std::printf("partner_ride_getin_cut=%d\npartner_ride_getin_cut_given=%d\n", c.partner_ride_getin_cut ? 1 : 0,
+                    c.partner_ride_getin_cut_given ? 1 : 0);
         // Design 8.27: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
         std::printf("partner_pass_camera=%s\npartner_pass_camera_given=%d\npartner_pass_camera_trace=%d\n",
                     mgscoop::PartnerPassCameraName(c.partner_pass_camera), c.partner_pass_camera_given ? 1 : 0,

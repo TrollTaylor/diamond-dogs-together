@@ -4121,6 +4121,52 @@ getting in and moving".
   guest never drove). **Decision:** the carry is not turned on (nothing to carry was seen); `partner_ride_follow` stays
   off unless named. Sheets `fb1031/frames/camera/best-sheet-703d886a.jpg`, `best-sheet-70eefcea.jpg`.
 
+### 8.60 Riding while the partner drives: the front-seat get-in camera stays behind (2026-10-31, branch `wp/ride-lag`, fb1031)
+
+The user's report "camera lags behind when getting in and moving", confirmed as riding while the friend (the host) drove,
+real Steam session (rtt 134-174 ms, avg 145; jitter avg 7, max 17 ms; loss 0; interp_ms 67).
+
+- **The user's log [O].** Four rides as passenger with the host driving vehicle 25603 at Mother Base: seat 3 for 0.3 s
+  (boarded while the jeep moved, got off at once), seat 3 for 11 s (about 6.5 s of it moving), seat 1 for 27 s and
+  seat 1 for 21 s, both seat-1 rides boarded while the jeep was moving. So 48 of the about 55 s it rode a moving jeep
+  were in the front seat. Every seat-1 board logged `pass_camera; state=connect; ...; mode=0; prev=5` (camera module 0
+  active right after the get-in); every seat-3 board `mode=5`. On the guest's copy RIDE_FAST placed the jeep once per frame
+  (+120 per 2 s, `state=interpolate`, never hold or stale while moving). The 0.14.5 log has no camera poses, and the
+  8.59 census runs covered seat 3 only (the africa-jeep D-Dog holds seat 1), so the seat-1 camera was unmeasured.
+- **Reproduced [O, run `c54aae04`, play, `-WanSim bad` (the preset closest to the user's rtt: 80 ms one-way + 25 ms
+  jitter, about 180 ms rtt in the overlay), gun research, host seed `afgh-quiet` / guest `afgh-horse` (no D-Dog, seat 1
+  free), Wakh Sind jeep 25608, scenario `fb1031-ride-lag-play.txt`].** The guest boards seat 1 and the host drives off
+  at once: the census (`veh_cm` / `eye_cm` added for this round) shows module 0 (`cmode=0`) for 2.77 s of the drive with
+  the eye fixed where the get-in began: `lag_cm` 6 -> 1699, eye to jeep 3.2 m -> 18.5 m at up to 8.7 m/s, then the
+  fallback (`cmode=5`) jumps to the jeep (8.9 m, then 6.2 m). Frames `guest-f-in-06` (+1.4 s) and `-f-in2-03` (+2.8 s)
+  show only the wall and the ground where the guest got in, `-f-in2-04` the fallback behind the seated rider. Module 0 is
+  the vtable the m6m7g trace saw for about 3.5 s after any seat-1 get-in (`2a394a64`, `mvt=0x23be5e0`), so in the
+  user's seat-1 boards of a moving jeep the view stayed at the boarding spot for about 3.5 s and then snapped: "lags
+  behind when getting in and moving" [I: their session logged the same `mode=0; prev=5`].
+- **Not the cause [O, same runs].** The rider copy's jeep against the driver's own (same machine clock): 133 cm apart at
+  the same instant at over 3 m/s, which a pure 200-210 ms delay explains to 1-3 cm (100 ms RIDE_FAST render delay plus
+  the simulated one-way latency); per-tick steps as even as the driver's own (speed cv 0.40-0.49 both copies, no zero
+  steps, no snaps). After module 0 the fallback held the body within 0-2 cm at up to 12 m/s (seat 1 and seat 2).
+- **Fix: the get-in camera cut** (`partner_ride_getin_cut`; native-puppet "Get-in camera cut"). While the local
+  passenger sits and module 0 is the active camera module, once the ridden vehicle moved 0.3 m since module 0 was first
+  seen, clear module 0's active bit (`+0x147C` bit 5) and its request word (`+0xAE0` = 1); the stock selection then
+  deactivates it and the fallback follows the seated body. A parked jeep keeps the stock get-in view. Five pinned
+  blocks; contract 855 code sites / 213 vtable slots. Failing first `18505451` -> `1ebdf964` (off unless named),
+  `4ee88c91` -> `9526d21c` (follows the gun profile in lab and play).
+- **Proven [O, run `f71126c0`, the same route with the key named, `fb1031-ride-lag-play-cut.txt`].** `partner_ride=
+  pass_camera; state=getin_cut; event=cut; vehicle=25608; seat=1; moved_cm=31; ms=783; result=ok; cuts=1` (one write);
+  module 0 lasted 121 ms of the drive (`lag_cm` at most 25), then the fallback eased out from the get-in framing (eye
+  3.2 m -> 5.25 m from the jeep in about 0.4 s) and held 5.2-5.3 m at up to 11.9 m/s. The second seat-1
+  episode (after the aim) read up to 63 cm, all of it the eye moving closer to the body along the view (a pull-in like
+  the 8.59 drive-off zoom, not a trail). Frames `guest-f-in-06` (+1.4 s,
+  7.9 m/s) and `-f-in2-03` (+2.8 s, 11.9 m/s): the jeep with both riders in view. The seat-1 scope aim afterwards
+  (`f-aim-02`, the jeep standing at a shed wall), its end (`f-aimend-03`) and the get-off and on-foot camera
+  (`f-exit-03`) as before; the back seat 2 (`connect ... mode=5; prev=3`, no module 0) logged no cut and kept the body
+  within 1-2 cm at up to 11.6 m/s (`r-in-05`); the host's driver camera trailed 0.5-1.2 m as stock in both runs. Sheets
+  `ride-lag/frames/sheet-c54aae04-before.jpg`, `sheet-f71126c0-after.jpg`.
+- **Not shown.** A board of a jeep that is already moving (the user's own seat-1 boards; the cut handles it the same way:
+  module 0 seen, 0.3 m, cut); a two-PC Steam session; the truck cab (module 0 not observed there); Mother Base's jeep.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
