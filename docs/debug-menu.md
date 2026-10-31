@@ -267,6 +267,35 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   carries the landing error and `ms=` (world clock from the press to control).
 - Wire: TRAVEL `0x3B` (docs/world-sync-protocol.md section 22).
 
+### Game rules (end of the World page; not run-proven yet)
+
+| Button | Command | Who | What the partner sees |
+|---|---|---|---|
+| Wormhole Fulton off | `wormhole 0` | either player, for themselves | nothing changes on their own Fulton |
+| Wormhole Fulton on | `wormhole 1` | either player, for themselves | nothing |
+| Weapons at Mother Base (H, S) | `mb_weapons 1` | host, for both | "Your partner allowed weapons at Mother Base." |
+| Stock Mother Base rules (H, S) | `mb_weapons 0` | host, for both | "Your partner turned weapons at Mother Base off." |
+
+- **Wormhole Fulton off**: your Fulton uses the balloon again instead of the instant
+  wormhole. The wormhole is the item level `EQP_IT_Fulton_WormHole` (the stock scripts read
+  `Player.GetItemLevel(...) >= 1`); while off it is set to 0 in gameplay, again after a
+  reload or a mission change. The development stays, and every save
+  (`TppSave.SaveVarsToSlot`) writes your real level (only once `vars.itemLevels` is seen to
+  follow the stock slot). **On** puts the level back. A save without the wormhole: both
+  buttons say so and change nothing. Until a game restart; off again after one.
+- **Weapons at Mother Base**: stock Mother Base forbids lethal weapons
+  (`f30050_sequence`: `vars.playerDisableActionFlag` = CQC_KNIFE_KILL + KILLING_WEAPON and
+  the HUD's `EquipHudAll` `ALL_KILL_NOUSE`). On, both copies lift exactly that flag and the
+  HUD mark (as f30050's own debug sequence does), again after a cutscene or the Paz room;
+  any other flag (Paz room, side ops) is left alone. Live, no reload. Saves write the stock
+  flag. **Killing a staff member still fails the mission** (stock f30050 game over on any
+  staff death). The host's choice reaches the guest (RULES `0x3E`, docs/world-sync-protocol.md
+  section 23) on each press and each new pairing; the guest keeps it through a mission load
+  and drops it after 60 s without the pairing. The guest's buttons are greyed (`host_only`).
+- `rules` reads the state: `rules;wormhole=on|off;level=N;seen=N;mb_weapons=0|1;from=self|host;applied=0|1`.
+- Logs: `world_lua=event=rules; step=worm_off|worm_on|worm_failed|mb_on|mb_off|rx|save|host_rule_dropped`.
+- Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet).
+
 ### Tools
 
 Session status (`status`), a console that sends any text command (Up/Down recalls the

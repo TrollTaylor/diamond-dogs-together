@@ -149,6 +149,8 @@ mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 mgs_add_lua_check(debug_character_lua_check "${_mgs_coop}/debug_character.lua" "${_mgs_coop}/character.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
 mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
+# Game rules (docs/debug-menu.md "Game rules"): Wormhole Fulton off/on and weapons at Mother Base.
+mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).

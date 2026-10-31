@@ -1,0 +1,144 @@
+# Game rules (docs/debug-menu.md "Game rules", lua/coop/debug_rules.lua) in mode=play at the shipped defaults: no
+# labsetting (the rows are always there; both rules start stock). One run: Afghanistan free roam, then Travel to Mother Base.
+#   (A) Wormhole Fulton on both screens. A1: both players turn the wormhole off (the result's seen=1 says the seed has it
+#       developed; seen=0 means this seed has no wormhole: pick or capture a late-game seed); the host brings the
+#       nearest soldier over ('enemy come nearest'), puts him to sleep and Fultons him for real (aim + hold E), then a
+#       force Fulton ('enemy fulton nearest') as the fallback stimulus; frames on both screens (the balloon on the
+#       host's; the guest's copy shows its own mirror, W1). A2: both turn it on again; the same on the next soldier
+#       (the wormhole). A3: off again before the Travel: the mission change saves, the save writes the real level
+#       (event=rules; step=save) and the level is forced to 0 again in Mother Base.
+#   (B) Weapons at Mother Base: frames of the stock HUD first (lethal weapons greyed), then the host's
+#       'mb_weapons 1' -> both copies log step=mb_on (the guest by=host, from RULES 0x3E); both look up into the sky,
+#       draw (hold RMB) and fire (LMB) their loadout gun, frames on both screens; then 'mb_weapons 0' -> step=mb_off
+#       on both. No staff member is aimed at (stock f30050 fails the mission on any staff death).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/rules-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+# NEVER: step=worm_failed, event=error, bad_op, wrong_dir, GameOver / reason=game_over.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+host run rules
+host expect ^rules;wormhole=on;level=\d+;seen=0;mb_weapons=0;from=self;applied=0$
+guest run rules
+guest expect ^rules;wormhole=on;level=\d+;seen=0;mb_weapons=0;from=host;applied=0$
+both capture a-start
+# --- A1: wormhole off on both copies, the host Fultons a soldier -----------------------------------------------------
+logmark both
+host run wormhole 0
+host expect ^wormhole=off;level=0;seen=1$
+guest run wormhole 0
+guest expect ^wormhole=off;level=0;seen=1$
+waitlog host 'world_lua=event=rules; step=worm_off; level=1' 10
+waitlog guest 'world_lua=event=rules; step=worm_off; level=1' 10
+host run enemy come nearest
+wait 20000
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+wait 2000
+placebehind guest host 4 3
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture a1-asleep
+host hold e 1500 nowait
+both burst a1-fulton 6 400
+wait 3000
+both capture a1-after
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+host run enemy fulton nearest
+both burst a1-force 6 400
+wait 3000
+# --- A2: wormhole on again on both copies, the same on the next soldier ---------------------------------------------
+logmark both
+host run wormhole 1
+host expect ^wormhole=on;level=1$
+guest run wormhole 1
+guest expect ^wormhole=on;level=1$
+host run enemy come nearest
+wait 20000
+host run enemy sleep nearest
+wait 2000
+placebehind guest host 4 3
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture a2-asleep
+host hold e 1500 nowait
+both burst a2-fulton 6 400
+wait 3000
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+host run enemy fulton nearest
+both burst a2-force 6 400
+wait 3000
+# --- A3: off again, then the Travel saves: the save writes the real level, Mother Base forces 0 again --------------
+host run wormhole 0
+host expect ^wormhole=off;level=0;seen=1$
+logmark both
+host run travel 30050
+host expect travel_started;target=30050;linked=1
+waitlog host 'event=travel; step=arrived; mission=30050' 240
+waitlog guest 'event=travel; step=arrived; mission=30050' 240
+waitlog host 'event=paired' 90
+waitlog guest 'event=paired' 90
+# The stock Mother Base cutscene (runs 409cb374, 1bc18e9c): wait it out.
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+host run rules
+host expect ^rules;wormhole=off;level=0;seen=1;mb_weapons=0;from=self;applied=0$
+both debug godmode 1
+both debug infinite_ammo 1
+# --- B: weapons at Mother Base -----------------------------------------------------------------------------------------
+stance host stand
+stance guest stand
+host mouse 0 -900
+guest mouse 0 -900
+heldcapture host host rmb b0-host-stock 2
+heldcapture guest guest rmb b0-guest-stock 2
+logmark both
+host run mb_weapons 1
+host expect ^mb_weapons=on;sent=1;applied=1;mission=30050$
+waitlog guest 'world_lua=event=rules; step=rx; seq=[0-9]+; mb_weapons=1' 15
+waitlog guest 'world_lua=event=rules; step=mb_on; flag=[0-9]+; by=host' 15
+guest run rules
+guest expect ^rules;wormhole=on;level=\d+;seen=\d+;mb_weapons=1;from=host;applied=1$
+guest run mb_weapons 0
+guest expect host_only
+wait 1500
+host mouse 0 -900
+guest mouse 0 -900
+heldcapture host host rmb b1-host-aim 2
+heldcapture guest guest rmb b1-guest-aim 2
+host hold rmb 1500 nowait
+host press lmb 120
+host press lmb 120
+both capture b1-host-fired
+guest hold rmb 1500 nowait
+guest press lmb 120
+guest press lmb 120
+both capture b1-guest-fired
+heldcapture host guest rmb b1-host-aim-guest-view 2
+heldcapture guest host rmb b1-guest-aim-host-view 2
+# --- B off: stock Mother Base rules on both copies ---------------------------------------------------------------------
+logmark both
+host run mb_weapons 0
+host expect ^mb_weapons=off;sent=1;applied=0;mission=30050$
+waitlog host 'world_lua=event=rules; step=mb_off' 15
+waitlog guest 'world_lua=event=rules; step=mb_off' 15
+heldcapture host host rmb b2-host-stock 2
+heldcapture guest guest rmb b2-guest-stock 2
+host run wormhole 1
+host expect ^wormhole=on;level=1$

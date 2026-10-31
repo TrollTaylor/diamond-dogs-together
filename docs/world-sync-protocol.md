@@ -1890,3 +1890,12 @@ of it, or travels to its mission; a receiver with its own Bring outstanding, unt
 if it is the host, while a guest yields to the host's); answer = the receiver's verdict (a refusal shows world note 14
 b=5). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World note 14
 TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped}.
+
+## 23. Game rules (debug menu; docs/debug-menu.md "Game rules")
+
+**RULES 0x3E** (62; host to guest, control queue, reliable, level 3, lab and play, never a request; 2 fields, 3 bytes):
+seq, Mother Base weapons (0 stock, 1 allowed). The host sends it on each press of Weapons at Mother Base / Stock Mother
+Base rules and again on each new pairing once it chose (`lua/coop/debug_rules.lua`); it needs the pairing (a refused
+send waits 2 s). The guest applies the host's value at 30050, keeps it through a mission load and drops it after 60 s
+without the pairing. A partner without the op skips it by its length (unknown_op). The wormhole toggle is each
+player's own and sends nothing.

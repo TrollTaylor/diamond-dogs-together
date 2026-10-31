@@ -931,6 +931,11 @@ void World(const Snapshot& s) noexcept {
         Row(id, s, {nullptr, 150.0f});
     }
     Wrapped("Time and weather follow to the guest at world level 3. Only the host can change them.");
+    Heading("Game rules");
+    Row("rules_wormhole_off", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("rules_wormhole_on", s, {nullptr, 190.0f});
+    Row("rules_mb_weapons_on", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("rules_mb_weapons_off", s, {nullptr, 190.0f});
+    Wrapped("Wormhole Fulton: only your own Fulton. Weapons at Mother Base: the host decides for both players; killing staff "
+        "still fails the mission. Nothing changes in your save.");
 }
 int ConsoleHistory(ImGuiInputTextCallbackData* data) noexcept {
     if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || !ui.history_count) return 0;

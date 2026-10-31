@@ -150,6 +150,17 @@ constexpr ActionDef kActions[] = {
     {"travel_mother_base", C::world, "Go to Mother Base", "travel 30050", "travel teleport location mother base mb both",
      "Takes both players to Mother Base (the command platform deck), no helicopter ride or menus. Refused in story missions, "
      "cutscenes, while riding, carried, downed or already travelling.", S},
+    // Game rules (docs/debug-menu.md "Game rules", lua/coop/debug_rules.lua): the wormhole is this player's own; the Mother
+    // Base weapons rule is the host's, for both copies (RULES 0x3E). Nothing changes in the save.
+    {"rules_wormhole_off", C::world, "Wormhole Fulton off", "wormhole 0", "rules fulton wormhole balloon instant extract",
+     "Your Fulton uses the balloon again instead of the instant wormhole. Only you; the development stays in your save.", 0},
+    {"rules_wormhole_on", C::world, "Wormhole Fulton on", "wormhole 1", "rules fulton wormhole instant extract",
+     "Turns your wormhole Fulton back on (when your save has it).", 0},
+    {"rules_mb_weapons_on", C::world, "Weapons at Mother Base", "mb_weapons 1", "rules mother base mb weapons lethal guns",
+     "Both players can use their loadout weapons at Mother Base (stock: no lethal weapons there). The host decides for both. "
+     "Killing staff still fails the mission.", H | S},
+    {"rules_mb_weapons_off", C::world, "Stock Mother Base rules", "mb_weapons 0", "rules mother base mb weapons stock",
+     "Mother Base back to stock for both players: no lethal weapons.", H | S},
     // Tools
     {"mission_status", C::tools, "Status", "status", "session guard readiness mission", "Reports mission, guard state and active toggles.", 0},
     {"tools_console", C::tools, "Send", "console text", "console command type", "Sends the console line as a text command.", P},

@@ -681,6 +681,22 @@ int main() {
     for (const char* id : {"travel_afghanistan", "travel_africa", "travel_mother_base", "partner_bring"})
         Check(act::FindAction(id) && !(act::FindAction(id)->flags & (act::kHostOnly | act::kNeedsPartner | act::kParam)),
               "Travel rows: guest too, no partner pose needed (the partner may be elsewhere), fixed text");
+    // Game rules (docs/debug-menu.md "Game rules"): the wormhole rows are this player's own (both players); the Mother Base
+    // weapons rows are the host's and reach the guest (RULES).
+    Check(act::FindAction("rules_wormhole_off") && !std::strcmp(act::FindAction("rules_wormhole_off")->command, "wormhole 0") &&
+              act::FindAction("rules_wormhole_on") && !std::strcmp(act::FindAction("rules_wormhole_on")->command, "wormhole 1") &&
+              act::FindAction("rules_mb_weapons_on") && !std::strcmp(act::FindAction("rules_mb_weapons_on")->command, "mb_weapons 1") &&
+              act::FindAction("rules_mb_weapons_off") && !std::strcmp(act::FindAction("rules_mb_weapons_off")->command, "mb_weapons 0"),
+          "Game rules commands");
+    for (const char* id : {"rules_wormhole_off", "rules_wormhole_on"})
+        Check(act::FindAction(id) && act::FindAction(id)->category == act::Category::world &&
+                  !(act::FindAction(id)->flags & (act::kHostOnly | act::kSyncs | act::kNeedsPartner | act::kParam)),
+              "Wormhole rows: either player, local, fixed text");
+    for (const char* id : {"rules_mb_weapons_on", "rules_mb_weapons_off"})
+        Check(act::FindAction(id) && act::FindAction(id)->category == act::Category::world &&
+                  (act::FindAction(id)->flags & act::kHostOnly) && (act::FindAction(id)->flags & act::kSyncs) &&
+                  !(act::FindAction(id)->flags & (act::kNeedsPartner | act::kParam)),
+              "Mother Base weapons rows: host only, syncs to the guest, no partner needed, fixed text");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
     // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,
