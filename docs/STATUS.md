@@ -1,3 +1,21 @@
+## 2026-10-31: debug-menu round integrated (`wp/integ-dbg1031`, local only) -- not run-proven yet
+
+**Players would get (once proven):** the four entries below together in one build: the host is Snake again and F9
+Character switch, Spawn enemy here in play, Game rules (Wormhole Fulton off/on, Weapons at Mother Base), Give weapon
+and Friendly fire. Each entry's scenario is still unrun.
+
+- **Merged** (`--no-ff`, on `dev/oct7-continue` `9eacd319`, which already holds `wp/integ-fb1031` and `wp/mb-arrival`):
+  `wp/char-switch` `7b561525`, `wp/enemy-spawn` `0b3d1239`, `wp/game-rules` `82b78ac2`, `wp/give-weapons` `9a3b4f72`.
+  Debug fragments spliced after `debug_boot.lua` in this order: `debug_character`, `debug_spawn_play`, `debug_rules`,
+  `debug_arms`. Wire ops: RULES `0x3E` (protocol section 23), ARMS `0x3F` (section 24); `0x3C`/`0x3D` stay unused
+  (the character and spawn tracks needed none). World note 18 is ARMS; 15..17 unused. Player page: the Character rows,
+  then Give weapon.
+- **Fallout** (`abf34792`): the wire table has 64 ops; the character rows follow the stock Player rows (Give weapon closes
+  the list).
+- **Checks:** `pwsh -File tools/build.ps1` 343/343 at `abf34792`; `tools/generate_partner_contract.py --check` and
+  `tools/generate_soldier_warp_contract.py --check` pass. Lua (LF bytes): `debug_arms` 10670, `debug_rules` 9649,
+  `debug_character` 5308, `debug_spawn_play` 2064 (limit 16000); `character` 15436, `world_friendly` 4035 (32000).
+
 ## 2026-10-31: debug menu Give weapon and Friendly fire (`wp/give-weapons`, local only) -- not run-proven yet
 
 **Players would get:** F9 > Player > **Give weapon**: a list of the guns the game loaded in the area (the soldiers',
