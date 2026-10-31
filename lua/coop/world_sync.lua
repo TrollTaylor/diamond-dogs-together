@@ -14,9 +14,8 @@ do
   W.MISSIONS = {[30010] = {enemies = true, clock = true, weather = "all", areaEnemy = "f30010_enemy"},
     [30020] = {enemies = true, clock = true, weather = "nofog", areaEnemy = "f30020_enemy"},
     -- Mother Base: staff outcomes too; no area trap there (allCp: every CP counts as loaded), no patrol corrections yet;
-    -- spareStaff: a partner's kill, dying or Fulton lands on this copy as a knockout (world_enemy E.applyOne).
-    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, patrol = false, spareStaff = true,
-      enemiesLab = true}}
+    -- spareStaff: a partner's kill or dying lands on this copy as a knockout, a Fulton as disabled (world_enemy).
+    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, patrol = false, spareStaff = true}}
   local fmt, floor, sub, gsub, concat = string.format, math.floor, string.sub, string.gsub, table.concat
   local PRE = "return 'MGS_COOP_WORLD_"
   local function index(t, k) return t[k] end
@@ -231,7 +230,7 @@ do
     W.companionOn = r[16] == 1
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
-    -- enemiesLab (30050): W1 runs in the lab only until a hidden run proves it in play (fb1031 mb).
+    -- enemiesLab: W1 in the lab only (no mission sets it since fb1031-on; 30050 runs in play too).
     if W.feature.enemiesLab and W.mode ~= 1 then
       local f = {}
       for k, v in pairs(W.feature) do f[k] = v end
