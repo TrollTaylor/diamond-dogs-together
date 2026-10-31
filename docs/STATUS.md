@@ -1,3 +1,30 @@
+## October 31, 2026: fb1031 launcher - co-op gets ready by itself once Steam is logged in or MGSV has closed; Play waits for Steam to let go of the last game (`wp/launcher-busy`; unit tests only, no hidden run)
+
+- **What players get:** opening Diamond Dogs Together before Steam has logged in (or while MGSV still runs from the
+  folder, or another window sets co-op up) no longer ends in "Co-op couldn't get ready" and Try again: Play shows
+  "Getting co-op ready..." with one sentence ("Start Steam and log in. Co-op gets ready by itself once you are logged
+  in." / "Close Metal Gear Solid V first. ...") and carries on by itself. The opening refusal of a running MGSV clears by
+  itself too. Play pressed right after quitting, while Steam still lists MGSV as running, waits for Steam (at most 30 s,
+  "Waiting for Steam to finish closing the last game...") instead of a request Steam ignores.
+- **The friend's launcher.log [O]:** first 0.14.5 start (after 0.13.6) at 17:09:07 `window=open; phase=needs_setup`,
+  then `setup=failed; step=0` at :07, :27, :28, :29 and `setup=done` at :54; the log named no reason. `phase=needs_setup`
+  means the opening check had passed the game path, the game files and "no MGSV running" moments before; of step 0 only
+  the Steam account (and a save-path length that cannot change) is not in that check. [I] Steam was not logged in yet
+  (ActiveUser 0, and the saves alone did not name one account); three Try again in 2 s fit a player waiting for Steam.
+  Not MGSV running (that shows phase=error and no setup at all). Also [O]: `game=exited` 17:16:32, Play at 17:16:34 with
+  `steam=running=1;running_app=287700`, no game for 32 s, `launch=cancelled`, Play at 17:17:07 (`running_app=0`), game
+  seen 2 s later: Steam ignored the start request while it still listed MGSV.
+- **Code:** `RunSetup` logs `setup=failed; step=0; reason=path|files|game_running|session_live|mod_link|steam_login|
+  steam_missing|save_path|stopped`. `SetupBusyReason` / `SetupBusyText` (core_install): other_setup, game_running,
+  session_live, steam_login. The model waits for them (`setup=waiting; reason=...`, at most one check a second; the
+  other setup's lock on every tick as before), starts by itself afterwards (`setup=auto; after=...`), turns a setup that
+  failed on one of them (Try again too early) back into waiting, and clears the opening refusal of a running game / live
+  session by itself (`recheck=auto; after=...`). The single-setup lock is unchanged. Play: `play=steam_wait` /
+  `play=steam_url; waited_ms=...`. Red `159868db` -> green `91f248b2`; red `fe927acf` -> green `b9c51d5b`
+  (ddt_core_tests `SetupBusy`, `LaunchSteamBusy`; launcher_ui_tests `PreparingNote`).
+- **Not shown:** a run on a PC with Steam logged out (fake registry only); which step-0 check fired on the friend's PC
+  stays [I] until a log with the new reasons comes back.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
