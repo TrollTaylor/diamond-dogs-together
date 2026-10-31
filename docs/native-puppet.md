@@ -1029,6 +1029,53 @@ owner only, never writes the caller's record, pellets, census, stale, miss, with
 `coop-vehicle-seat-shot-s1.txt`, `coop-vehicle-seat-shot-ab.txt`, `coop-vehicle-seat-shot-play.txt` (the play
 rehearsal at the shipped defaults, S1 off), `coop-vehicle-seat-shot-fix.txt` (8.31: seats 3 and 2 on the merged build).
 
+### Seat first person
+
+Design 8.46 (branch `wp/seat-fpv2`; **built, not proven in game; off**). From seats 1 and 2 the stock seated aim looks
+into the panel, the passenger's own leg or the roll bar; the stock F tap while aiming gives the game's first-person view
+(the subjective camera module, `CAM+0x340 = 1`), which is clear [O `9a0c1f27`: guest seat 1, host seat 2, Bambetov SV].
+The automatic first person sets the same state the tap sets, only while the local passenger aims from seat 1 or 2.
+
+How the tap works [S, mgsvtpp.exe 1.0.15.4; path.md / PLAN.md of the m6m7f static round]:
+- The subjective module (vtable `0x23D1F00`, `impl = module - 0x20`) is current while any of its ten pollers
+  (`impl+0x78`) answers (UpdateCameraMode `0x12A04C0` ORs them into `impl+0x48`; CanActivate `0x129EA00`). Each poller gets
+  `ctx = {impl+0x40, CAM}`.
+- The tap is answered by the gun plugin's PollingForSubjectiveCamera `0x1053E80` (poller vtable `0x23B3DA0` vt[0]). While
+  the gun hold gate is open (flag `0x19` or `rec+0x3C0` bit 14, and not the `0x1800` / `0x1C0` states) it maps the hand
+  slot `rec+0x3DA` through the table `0x1054030` (slot 0, 1, 2, 3, 5, 6 -> bit 0, 1, 2, 4, 3, 8), calls
+  ToggleAimFpvModeOnPad `0x12A0580` (pad button 10, F, flips that bit of `impl+0x60`) and answers the bit. The bit is
+  sticky per slot: the next aim with that slot starts in first person.
+- Flag `0x6E` forces the answer 1 (not used). SaveModes `0x129F450` copies `impl+0x60` to a global (`+0x680`) and may
+  clear it; who calls it and when is [U].
+
+What the mod does (`partner_pass_camera_policy` FpvStep, TickPassCamera): with the key on, the local passenger in seat 1
+or 2 and the gun ready (FpvReady: mode 7, 9 or 10; not during the raise, so the raise's muzzle probe sees the shoulder
+pose that first person then keeps), the hand slot's bit is set in `impl+0x60` (one interlocked compare-exchange under
+SEH; only bits in `0x11F`). The bits it set are cleared when the aim ends, at the get-off, a seat
+change, the key's end, and the mission end / stop (SeatFpvRelease). A bit seen set during an aim that goes clear while the
+aim goes on is the player's own F tap: nothing more is set for that boarding, and the player's own bits are never cleared.
+No code patch and no game call. The blocks (`seat_fpv_blocks`, 10) are checked once per process before the first read;
+the module is found by its vtable among the six.
+
+| Key / lever | Values | Default | What |
+|---|---|---|---|
+| `partner_seat_fpv` (lab.ini) | 0 / 1 | 0 (lab and play) | the automatic first person from seats 1 and 2 |
+| `passcam seatfpv` (lab debug lever) | `on` / `off` / `key` | `key` | this copy's override (lab only; play ignores it) |
+| `partner_pass_camera_trace` (lab.ini, lab) | 0 / 1 | 0 | adds `state=fpv_trace` (on a change or every second) and one `state=pollers` line |
+
+Lines: `partner_ride=pass_camera; state=seat_fpv; event=mode|arm|set|restore|opt_out|stop; vehicle; seat; reason;
+set; clear; ok; toggles; after; slot; gun; f3c0; cmode; sm; read; sets; restores; opt_outs` (cap 200 a mission);
+`state=fpv_trace; ... cmode; mvt; subj; sm; si; sf; tog; st; f19; w3; ours; opt` (cap 600).
+
+**Not proven.** The probe `caf8fbc7` (`m6m7f-seat-fpv-probe.txt`) never started (the worker refused admission). Open
+from the static study: the mod's shot guard is off in first person (GuardStep wants the aim module) and the source of
+the 8.27 pull is unknown, so a first-person shot may climb the view; whether the shoulder raise from seats 1 / 2 reaches
+mode 7 on every boarding (mode 15, the red no-fire icon, keeps the shoulder view: the bit is never set); a checkpoint
+during a seated aim may persist the bit (`+0x680`). A guard extension to the subjective module (references reset on a module change) is drafted, not landed.
+Tests: `partner_pass_camera_tests` (`TestFpvBitsAndContract`, `TestFpvStep`, `TestFpvReadWrite`,
+`TestFpvLeverAndVerify`), `partner_driver_tests` `TestSeatFpvDriver`, `lab_config_tests`; failing first `a3b8100` ->
+`8b33be4`, `9916c4a` -> `e508347` (the ready gate).
+
 ## Traversal icon
 
 F3 (0.13.5, `native/partner_icon.*`, `tests/partner_icon_tests.cpp`; research

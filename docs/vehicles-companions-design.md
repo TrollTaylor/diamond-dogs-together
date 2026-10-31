@@ -3455,6 +3455,30 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Open, unchanged:** the -b rehearsal (seat 3 / D-Dog, a guard hit by a seated shot, teardown and mission end while
   seated), the stock control above, a moving get-off camera; the turn could also drop on move input (follow-up).
 
+### 8.46 Seat first person (2026-10-30, branch `wp/seat-fpv2`; built, not proven: the worker refused the probe)
+
+- **Goal:** a passenger who aims from seat 1 or 2 gets the game's own first-person view without tapping F (the seated
+  shoulder view looks into the panel, the own leg or the roll bar; the stock tap gives a clear view [O `9a0c1f27`]).
+- **Mechanism** [S, read again with pefile/capstone this round]: the gun plugin's PollingForSubjectiveCamera `0x1053E80`
+  answers bit m of the subjective camera's `impl+0x60` while the gun hold gate is open (m from `rec+0x3DA` through the
+  table `0x1054030`); ToggleAimFpvModeOnPad `0x12A0580` flips it on F. `partner_seat_fpv` (off unless named, lab and play;
+  lab lever `passcam seatfpv on|off|key`) sets that bit once the seated gun is ready (mode 7 / 9 / 10) and clears the bits
+  it set at the aim end, the get-off, a seat change, the key's end and the mission end / stop; the player's own tap (a seen
+  bit going clear mid-aim) opts out for the boarding. Seat 3 and the driver: never. No patch, no call; 10 blocks and
+  4 slots pinned (contract 836 / 213). Lab trace: `state=fpv_trace`, `state=pollers`. Details: native-puppet.md
+  "Seat first person".
+- **Probe not run:** `caf8fbc7` (`m6m7f-seat-fpv-probe.txt`: the stock tap in guest s1 / s2 and host s1 / s2, shots in
+  first person with frames at +300 / +600 / +900 ms, a get-off in first person, the lever legs) ended `IsolationFailed`
+  (`child_exited_before_admission`; the guest's worker refused `required_hooks_or_private_desktop`, its overlay
+  `refused; reason=graphics_or_input_hook`); SnippingTool.exe was running in the console session. The other track's 19:45
+  run failed the same way. Afterwards the CTest `debug_overlay_tests` failed "hardware DX11 fixture creation" with 36 GB
+  commit free. No retry (blocker).
+- **Open** [U]: whether the 8.27 pull acts in first person (the shot guard is off there: GuardStep wants the aim module;
+  a guard extension to the subjective module with references reset on a module change is drafted, not landed); whether
+  a first-person shot from a seat lands (S1 moves the start along the line of sight [I]); who calls SaveModes `0x129F450`
+  (a checkpoint during a seated aim could persist the bit); the get-off look-at of Deactivate against the get-off turn.
+  The probe scenario is ready for the next round.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

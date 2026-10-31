@@ -122,6 +122,23 @@ and kept the life 2300 on both copies, but fired on no line shown to hit the jee
 run on this machine from 14:04 ended the same). **Next:** run it; flip S1 on in play if the life holds on both copies.
 **Not proven:** seat 1, truck cab, a moving jeep, launchers / thrown items, two PCs, a 0.14.4 partner.
 
+## 2026-10-30: seat first person built, not proven (branch `wp/seat-fpv2`; `partner_seat_fpv` off)
+
+**Players see no change.** What players can do today: tap F while aiming from the front seat or the left back seat; the
+game's own first-person view is clear from there [O `9a0c1f27`: guest seat 1, host seat 2, Bambetov SV]. Whether a shot
+fired in first person from a seat lands, and whether the view climbs after it (the mod's shot guard is off in first
+person), is [U]: no run has fired one.
+- Code (design 8.46, native-puppet "Seat first person"): key `partner_seat_fpv` (off unless named, lab and play), lab
+  lever `passcam seatfpv on|off|key`: the stock first-person toggle bit of the hand slot (subjective camera `impl+0x60`,
+  the gun poller `0x1053E80`) is set while the local passenger aims from seat 1 / 2 with the gun ready (mode 7 / 9 / 10);
+  the bits it set are cleared at the aim end, the get-off, a seat change, the key's end and the mission end / stop; the
+  player's own tap opts out for the boarding. Lab trace `state=fpv_trace` / `state=pollers`. Failing first `a3b8100` ->
+  `8b33be4`, `9916c4a` -> `e508347`; driver test `655084b`.
+- **Blocker:** the probe `caf8fbc7` ended `IsolationFailed` (`child_exited_before_admission`; guest overlay `refused;
+  reason=graphics_or_input_hook`); SnippingTool.exe (PID 124620) runs in the console session; the other track's run at
+  19:45 failed the same way; `debug_overlay_tests` then failed "hardware DX11 fixture creation" with 36 GB commit free.
+  No retry. Next: run `m6m7f-seat-fpv-probe.txt` once the worker admits again.
+
 ## 2026-10-30: the get-off camera turn ON for players (branch `wp/aim-view`; `partner_pass_camera=view` default)
 
 **Players now get** (lab and play, default `view`; design 8.42): after getting out of a jeep's front seat or left back
