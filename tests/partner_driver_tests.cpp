@@ -7386,6 +7386,57 @@ void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPa
     s.ride_suffix = " ride=0";
 }
 
+// Melee on the partner (partner_melee.hpp): the driver hands the local strike that reaches body 1 to the melee hook with
+// the player object P, once per strike edge, logs one line per strike, and queues nothing with the key off, without a
+// realized body 1 or with the partner out of reach.
+std::vector<std::uintptr_t> g_melee_hits;
+bool HookMeleeHit(void*, std::uintptr_t player) noexcept { g_melee_hits.push_back(player); return true; }
+void MeleeSetup(Session& s, bool key) {
+    g_melee_hits.clear();
+    s.hooks.melee_hit = HookMeleeHit;
+    s.driver.settings.melee = key;
+    s.fake.Realize(true);
+    s.fake.state.parts[1] = 3;
+    s.fake.anim_ok = true;
+    s.fake.anim.act[0] = 1;
+    s.fake.state.slot[0][0] = 10.f; s.fake.state.slot[0][1] = 2.f; s.fake.state.slot[0][2] = -5.f; s.fake.state.slot[0][3] = 0.f;
+    s.fake.state.slot[1][0] = 10.f; s.fake.state.slot[1][1] = 2.f; s.fake.state.slot[1][2] = -4.f; s.fake.state.slot[1][3] = 3.14f;
+}
+void TestMeleeDriver() {
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=") == 0, "melee driver: no strike, no line");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P, "melee driver: the strike edge hands P to the hook");
+        Check(s.fake.Containing("partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1") == 1,
+              "melee driver: the strike line");
+        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.size() == 1 && s.fake.Containing("partner_melee=") == 1, "melee driver: a held strike is one hit");
+        s.fake.anim.act[0] = 1;
+        Check(s.Tick(0, 2000), "melee driver: idle");
+        s.fake.state.slot[1][2] = -2.5f;
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.size() == 1 &&
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=range; queued=0; dist_cm=250;") == 1,
+              "melee driver: out of reach, no hit");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, false);
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=off; queued=0;") == 1,
+              "melee driver: the key off queues nothing");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.Realize(false);
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=no_body; queued=0;") == 1,
+              "melee driver: no realized body 1, no hit");
+    }
+}
+
 // M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's
 // RequestBullet hook (light vehicle or truck cab, the hook live), withdraws it after, never publishes in play with the
 // key off, ignores the lab lever in play, and logs one line per new plan of the hook.
@@ -10170,6 +10221,7 @@ int main() {
     TestSeatFpvFallbackDriver();
     TestSeatFpvRelease();
     TestSeatShotDriver();
+    TestMeleeDriver();
     TestBoardSeatGates();
     TestSeatDraw();
     TestHiddenLocalSender();
