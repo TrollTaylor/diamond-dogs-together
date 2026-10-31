@@ -8,9 +8,9 @@
 #      draws: the guest's local_passenger seat == the host's partner_ride_seat=confirmed seat, no seat_draw on the host.
 #      If the guest's press lands before the ride (a tie, c's path) or after flags=0x05 (d's path), the log says so.
 #   f) deny-first attempt: the guest presses E first ('hold e 150 nowait'), the host right after: the claim reaches the
-#      host while it boards (why=host_pressed). 8.58: a deny that reaches the held press before the host's ride keeps
-#      holding (kDenyRideMs 1 s after the press) and the ride's settle seats it: no a=6. At -WanSim bad the host's ride
-#      (one way ~75 ms) usually beats the claim round trip (~230 ms), so the order is read from the guest log.
+#      host while it boards (why=host_pressed). 8.58 review: the deny wait was reverted, so a deny that reaches the held
+#      press before the host's ride ends it at once as in 8.57 (a=6, press again); f only records the order. At -WanSim
+#      bad the host's ride (one way ~75 ms) usually beats the claim round trip (~230 ms), so the order is read from the log.
 #   c) both press E at once (the same-moment tie, 8.57 regression): one driver, the same seat on both copies, no toast.
 #   d) the host drives, the guest presses E at the driver's door: a passenger seat (unchanged).
 # Needs at head: partner_board=race; ...; d=0x1251366 on both copies and the host's READY.
