@@ -2,10 +2,11 @@
 # teardown while the partner is seated, at the africa jeep (30020, veh_lv_0000 = 25608; the driver's own D-Dog rides in
 # seat 1 on the driver's copy), SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both.
 #   C1. The host waits at a known ground spot 23 m from the jeep (-633.5 3.0 871.8) so its D-Dog leaves the jeep,
-#       the guest waits at the jeep's right door. The host teleports back to the seed spot beside the driver's door
+#       the guest waits 10 m back (a guest standing at an empty jeep claims its driver's seat every 1.2 s and the
+#       host's copy then denies its own E: d462df5d, world_ride_pose.lua grant+yield). The host teleports back to the seed spot beside the driver's door
 #       (the readback's error_m is the arrival check, by distance, not by a fixed delay) and presses E; its own ride
 #       line (ext_tx seat=0) and 'host require vehicle;id=25608' (a hard stop) must come before the guest's E; the
-#       guest must get seat 1 (a lost race fails the run, it never passes as seat 3). Then the dog's arrival is
+#       guest warps to the right door and presses E 1.2 s later; it must get seat 1 (a lost race fails the run, it never passes as seat 3). Then the dog's arrival is
 #       filmed on both copies (where it goes: seat 1 over the partner, another seat, or it stays out), with
 #       vehicle_seats / buddy_status on the host.
 #   C2. Teardown by a checkpoint reload while the guest still sits in seat 1 (play refuses worldtrigger, so the host's
@@ -51,9 +52,9 @@ host debug teleport -633.5 3.0 871.8 0
 wait 8000
 host run buddy_status
 host capture c-far
-guest debug goto_vehicle jeep right
+guest debug forward -10
 wait 2500
-guest capture c-guest-door
+guest capture c-guest-back
 logmark both
 host debug teleport -656.01 1.20 877.73 62
 host expect ^warp_position_readback;error_m=0\.0
@@ -62,6 +63,8 @@ host press e 150
 waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
 host run vehicle_seats
 host require vehicle;id=25608;
+guest debug goto_vehicle jeep right
+wait 1200
 guest press e 150
 guest burst c-geton 3 400
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 8
