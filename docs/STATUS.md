@@ -22,6 +22,7 @@ The README's seat-shot note says so.
     the jeep 2300 on both copies after every shot.
 - **Open:** a guard hit by a seated shot (this aim pointed at the grass); the D-Dog arriving after the partner and a
   teardown with a seated partner (part C; its warp now waits 4 s, `89b1dea`). Design 8.50.
+- Full `tools/build.ps1` at `722b002`: CTest 336/336; contract `--check` 836 / 213.
 
 ## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
 
