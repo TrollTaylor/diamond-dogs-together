@@ -1,3 +1,20 @@
+## 2026-10-30: the seat checks at the shipped defaults - blocked, no game ran (branch `wp/seat-checks`, local only)
+
+**Goal** (design 8.45): the -b rehearsal (seat 3 with S1, the driver's D-Dog in seat 1, a guard hit by a seated shot,
+teardown while seated) and the S1 stock control on the east jeep (`m6m7e-seat-shot-stock-play.txt` with and without
+`-LabSetting partner_seat_shot=0`). **Scenarios** (`323d0e8`): -b part C now stages the D-Dog after the partner (the
+driver steps 40 m away first, the partner boards at once, the dog's arrival is captured) and ends seated; the stock
+scenario adds seat-2 line C (rel -90, across the jeep to the right). Scenario lint passes.
+**No game reached gameplay; nothing new is proven or disproven.**
+- 19:33: the worker's audited CTest refused the run (`debug_overlay_tests` "hardware DX11 fixture creation"). A probe
+  (`D3D11CreateDevice`) gave `0x8007000E` on the NVIDIA adapter only (the integrated GPU and WARP created fine) while
+  system commit had 21-22 GB free; the GPU's dedicated memory was 13.9 of 16 GB in use. It created again at 19:43.
+- 19:45: the rerun (`784ea30ba3e04ec7ade024766066beaa`, in the m6m7f run archive) ended
+  `IsolationFailed=True`, `child_exited_before_admission` (supervisor error 1067); the guest's `debug-overlay.log` ends
+  `overlay=refused; reason=graphics_or_input_hook`, its worker log `refused; reason=required_hooks_or_private_desktop`.
+  `SnippingTool.exe` was running in the console session (since 18:03). Stopped there by rule; baseline restored, real
+  saves unchanged. Still open, as in the section below: everything in the goal.
+
 ## 2026-10-30: the seat fixes merged and ON for players (branch `wp/seat-fixes`, local only)
 
 **Merged** onto `dev/oct7-continue` `0c893e1`: `wp/seat1-draw` `83c68a9`, `wp/self-hit` `5466c17` (`a520315`),
