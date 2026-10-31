@@ -770,6 +770,81 @@ if arg[7] and arg[8] then
     mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
     mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
     check(#placeTx(mbp, 34) == 0, 'Mother Base: no patrol position corrections (feature patrol = false)')
+    -- Mother Base staff placement (feature staffPlace, mb-staff-sync): the host shares the standing position of the
+    -- staff near EITHER player (the partner body, TppPlayer2 index 1), never a combat flag (no SetDiscoveryPlayer on
+    -- staff, even in ALERT), at most 2 reads per tick.
+    local MB = {enemies = true, allCp = true, spareStaff = true, staffPlace = true}
+    local function staffFixture(host)
+        local c = placeFixture(host)
+        c.W.w1, c.W.feature, c.W.activeCp = true, MB, nil
+        c.env.vars.playerPosX, c.env.vars.playerPosZ = 0, 0
+        c.env.GameObject = {GetGameObjectIdByIndex = function(kind, index)
+            c.partnerLookups = (c.partnerLookups or 0) + 1
+            return kind == 'TppPlayer2' and index == 1 and 900 or nil
+        end}
+        return c
+    end
+    local function runE(c, frames)
+        for _ = 1, frames do c.now = c.now + 33; c.E.tick(c.now); c.P.tick(c.now) end
+    end
+    local sh, sg = staffFixture(true), staffFixture(false)
+    sh.positions[1] = {10.0, 1.8, 12.0}     -- near the host
+    sh.positions[2] = {100.0, 1.8, 100.0}   -- near the partner only
+    for i = 3, 5 do sh.positions[i] = {300.0, 0, 300.0} end
+    sh.positions[900] = {98.0, 1.8, 97.0}   -- the partner body on the host
+    sh.W.cp[100].localPhase = 3
+    sh.P.patrol.combat[ENT1] = sh.now
+    for _ = 1, 4 do sh.now = sh.now + 600; sh.P.tick(sh.now) end
+    local stx = placeTx(sh, 34)
+    check(#stx == 2 and stx[1].v[2] == ENT1 and stx[1].v[3] == 3 and stx[1].v[8] == 0 and stx[2].v[2] == 3000000002 and
+        stx[2].v[4] == 100000 and stx[2].v[8] == 0, 'Mother Base: staff near either player shared (kind 3), flags 0 in ALERT')
+    check(sh.partnerLookups ~= nil and sh.partnerLookups <= 4, 'partner position read at most once per tick')
+    -- Place first: the host's own knockout of a standing staff member announces where they are (kind 3) BEFORE the
+    -- OUTCOME, on the same reliable channel.
+    sh.tx = {}
+    sh.positions[1] = {10.6, 1.8, 12.0}
+    sh.life[1] = 3
+    sh.E.check(ENT1, 1)
+    check(#sh.tx == 2 and sh.tx[1].op == 34 and sh.tx[1].v[2] == ENT1 and sh.tx[1].v[3] == 3 and sh.tx[1].v[4] == 10600 and
+        sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
+        'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
+    -- Guest: 3 m off is below the continuous threshold, but the outcome waits until this copy stands there.
+    sg.positions[1] = {13.6, 1.8, 12.0}
+    sg.warp = {{r = 0, h = 1, leaf = 'pinned'}}
+    deliver(sh, sg, 34)
+    check(#sg.P.q == 0, 'a 3 m divergence alone queues no correction')
+    deliver(sh, sg, 16)
+    runE(sg, 1)
+    check(#sg.P.q + (sg.P.cur and 1 or 0) == 1 and sent(sg, 1, 'ChangeLifeState') == 0 and logged(sg, 'event=place_first;'),
+        'guest: the staff outcome is held while this copy is placed first')
+    sg.positions[1] = {10.6, 1.8, 12.0}
+    runE(sg, 6)
+    check(receiptCount(sg, 'WORLD_WARP_V1') >= 1 and sent(sg, 1, 'ChangeLifeState') == 1 and sg.P.cur == nil and
+        logged(sg, 'kind=correct;result=applied'), 'guest: placed where the host has them, then asleep')
+    check(#sg.setOut == 0, 'Mother Base corrections never pin SetOutOfArea')
+    -- A placement that never lands holds the outcome for at most 4 s.
+    local th, tg = staffFixture(true), staffFixture(false)
+    th.positions[2] = {5.0, 1.8, 5.0}
+    for _ = 1, 3 do th.now = th.now + 600; th.P.tick(th.now) end
+    th.tx = {}
+    th.life[2] = 3
+    th.E.check(3000000002, 1)
+    tg.positions[2] = {25.0, 1.8, 5.0}
+    tg.warp = {{r = -1, h = 0, leaf = 'pinned'}}
+    deliver(th, tg, 34); deliver(th, tg, 16)
+    runE(tg, 60)
+    check(sent(tg, 2, 'ChangeLifeState') == 0, 'still held at 2 s')
+    runE(tg, 70)
+    check(sent(tg, 2, 'ChangeLifeState') == 1, 'applied after the 4 s hold even when the placement never lands')
+    -- Without staffPlace (free roam), an outcome applies at once.
+    local fh, fg = placeFixture(true), placeFixture(false)
+    fg.W.w1 = true
+    fh.life[1] = 3
+    fh.E.check(ENT1, 1)
+    check(#placeTx(fh, 34) == 0, 'free roam: no place-first announcement')
+    deliver(fh, fg, 16)
+    fg.now = fg.now + 33; fg.E.tick(fg.now)
+    check(sent(fg, 1, 'ChangeLifeState') == 1, 'free roam: the outcome applies at once')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

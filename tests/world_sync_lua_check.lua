@@ -1244,8 +1244,8 @@ do
         '30050: actual host rain is sent once and in digests; enemy outcomes (W1) run at Mother Base too')
     -- Mother Base staff: every CP counts as loaded (no area trap there), no patrol corrections; a host knockout is
     -- sent and the guest copy of the staff member faints.
-    check(c3.W.feature.allCp == true and c3.W.feature.patrol == false and c3.W.activeCp == nil,
-        '30050: every CP loaded, patrol corrections off')
+    check(c3.W.feature.allCp == true and c3.W.feature.patrol == nil and c3.W.feature.staffPlace == true and c3.W.activeCp == nil,
+        '30050: every CP loaded, staff placement on (staffPlace: host-authoritative positions, mb-staff-sync)')
     local mbHenv, mbH = fixture({role = 1, mission = 30050})
     F.start(mbHenv, mbH)
     F.pair(mbHenv, mbH, 3)
@@ -1289,7 +1289,8 @@ do
     F.start(mbPlayEnv, mbPlay)
     F.pair(mbPlayEnv, mbPlay, 3)
     check(not mbPlay.W.w1 and mbPlay.W.feature.enemies == nil and mbPlay.W.feature.allCp == true
-        and mbPlay.W.feature.spareStaff == true, '30050 in play: W1 off until a run shows both screens (lab only)')
+        and mbPlay.W.feature.spareStaff == true and mbPlay.W.feature.staffPlace == nil,
+        '30050 in play: W1 and staff placement off until a run shows both screens (lab only)')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
