@@ -1293,6 +1293,29 @@ void TestFpvFallback() {
     pc::FpvStep(q, FAt(true, 0, 15, 5100));
     o = pc::FpvStep(q, FAt(true, 0, 15, 5100 + 5 * pc::kFpvBlockedMs));
     Check(o.event == pc::FpvEvent::none && o.clear == 0 && o.set == 0 && q.fallbacks == 0, "fallback: 15 with nothing set: nothing");
+    // Review (8.56): a fall-back clear given up mid-aim (the game's plain store kept the bit) is cleared again at the aim's
+    // end and at the stop (restore on every exit); a fallen bit read clear once is no longer ours.
+    for (const bool stop : {false, true}) {
+        pc::Fpv g{};
+        pc::FpvStep(g, FAt(false, 0, 0, 6000));
+        pc::FpvStep(g, FAt(true, 0, 7, 6100));
+        pc::FpvStep(g, FAt(true, 0x4, 15, 6117));
+        o = pc::FpvStep(g, FAt(true, 0x4, 15, 6117 + pc::kFpvBlockedMs));
+        Check(o.event == pc::FpvEvent::fallback && o.clear == 0x4, "give-up: the fall");
+        for (std::uint32_t i = 0; i <= pc::kFpvClearTries; ++i) o = pc::FpvStep(g, FAt(true, 0x4, 15, 6300 + i * 17));
+        Check(o.event == pc::FpvEvent::retry && Same(o.reason, "give_up") && g.pending == 0, "give-up: the clear given up mid-aim");
+        o = pc::FpvStep(g, stop ? FIn(true, 0x4, 1, 2, false) : FAt(false, 0x4, 0, 7000));
+        Check(o.event == (stop ? pc::FpvEvent::stop : pc::FpvEvent::restore) && o.clear == 0x4,
+              stop ? "give-up: the get-off clears the fallen bit again" : "give-up: the aim end clears the fallen bit again");
+    }
+    pc::Fpv h{};
+    pc::FpvStep(h, FAt(false, 0, 0, 8000));
+    pc::FpvStep(h, FAt(true, 0, 7, 8100));
+    pc::FpvStep(h, FAt(true, 0x4, 15, 8117));
+    pc::FpvStep(h, FAt(true, 0x4, 15, 8117 + pc::kFpvBlockedMs));
+    pc::FpvStep(h, FAt(true, 0, 15, 8250));
+    o = pc::FpvStep(h, FAt(false, 0x4, 0, 8400));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "give-up: a fallen bit read clear, then set by the player: never cleared");
 }
 
 void TestFpvPending() {
