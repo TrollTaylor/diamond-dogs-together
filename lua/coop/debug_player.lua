@@ -5,7 +5,7 @@ do
   local get, call, number, fmt, floor = A.get, A.call, A.number, string.format, math.floor
   local P = {handles = {heal = true, godmode = true, fulton_infinite = true, forward = true, goto_partner = true,
     goto_carry = true, goto_horse = true, goto_walker = true, goto_vehicle = true, slowmo = true, time_add = true,
-    overlay_state = true, overlay_stop = true}}
+    overlay_state = true, overlay_stop = true, travel = true, bring_partner = true}}
   D.player = P
   local function fill()
     local l, m = A.life()
@@ -267,6 +267,10 @@ do
     elseif cmd == "overlay_stop" and #a == 1 then
       local ok = A.receipt("return 'MGS_COOP_DEBUG_PARTNER_V1' -- " .. fmt("%.0f overlay=stop", id)) == true
       return ok, ok and "overlay_stop_queued" or "overlay_refused"
+    elseif cmd == "travel" or cmd == "bring_partner" then
+      local Tr = get(get(e, "MgsCoopWorld"), "travel")
+      if not Tr then return false, "travel_unavailable" end
+      return Tr.command(a)
     elseif cmd == "time_add" and #a == 2 then
       if not A.hostOnly() then return false, "host_only" end
       local s = number(a[2], -86400, 86400, true)

@@ -198,6 +198,12 @@ constexpr OpSpec kOps[] = {
     // 0x36 skips it by its length (unknown_op).
     {op::seat, "SEAT", 1, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 7,
      {U16(1), U16(25600, 26111), U8(0, 3), U8(1, 2), U8(1, 4)}},
+    // TRAVEL (debug menu Travel, world-sync-protocol.md section 22): seq, kind (1 ask, 2 go, 3 bring, 4 answer), the
+    // mission (target, caller's or answered), xyz mm and yaw mdeg (the spot or the caller), the answer's reason (0 accepted).
+    // Control queue, both directions, never a request; unpaired too (the partner may be in another mission). 24 bytes.
+    {op::travel, "TRAVEL", 0, Dir::both, Wire::reliable, 3, false, false, 8, 0, 0, 24,
+     {U16(1), U8(1, 4), Mission(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-360000, 360000), U8()}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},
@@ -646,6 +652,14 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         }
         if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
         return;
+    case op::travel:
+        // Debug menu Travel crosses missions: the link session's HELLO gates only (as the W3 control above).
+        if (!remote_hello_ || remote_saves_ != 1 || remote_level_ < 3 || remote_role_ == config_.role) {
+            ++stats_.purged;
+            return;
+        }
+        if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
+        return;
     case op::req_mission:
         if (!paired_ || op.epoch != epoch_) { AutoAnswer(op.code, op.v[0], 0, reject::not_paired); return; }
         if (ctrl_size_ >= kControlQueue) { AutoAnswer(op.code, op.v[0], 0, reject::busy); Overflow(kDropControl, now_ms); return; }
@@ -904,6 +918,7 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
         for (unsigned i = 0; i < ctrl_size_; ++i) {
             const Entry& item = ctrl_[(ctrl_head_ + i) % ctrl_capacity];
             if (level_ >= 3 && (item.op == op::transition || item.op == op::seed || item.op == op::seeds_end || item.op == op::follow_ack ||
+                               item.op == op::travel ||
                                (item.local && item.op == op::unpaired && item.v[0] == unpair::link_session)))
                 ctrl_[(ctrl_head_ + kept++) % ctrl_capacity] = item;
         }
@@ -988,7 +1003,9 @@ TxStatus Core::Tx(std::uint8_t code, const std::int64_t* values, unsigned count,
         GotoTx(values[0], values[1], now_ms);
         return TxStatus::ok;
     }
-    if (spec->queue == 1 || (spec->level >= 3 && code > op::follow_ack)) {
+    if (code == op::travel && (level_ < 3 || !remote_hello_ || remote_level_ < 3 || remote_saves_ != 1 || remote_role_ == config_.role))
+        return TxStatus::disabled;
+    if (spec->queue == 1 || (spec->level >= 3 && code > op::follow_ack && code != op::travel)) {
         if (!paired_) return TxStatus::not_paired;
         if (eff_ < spec->level) return TxStatus::disabled;
     }

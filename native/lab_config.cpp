@@ -341,6 +341,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.debug_vehicle_door);
         if (ok) result.debug_vehicle_door_given = true;
     }
+    else if (Equals(key, "debug_travel")) {
+        // Debug menu Travel (lab and play, default off until proven); a named value records _given.
+        ok = ParseBool(value, result.debug_travel);
+        if (ok) result.debug_travel_given = true;
+        else result.debug_travel = false;
+    }
     else if (Equals(key, "partner_seat_gun")) {
         // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_gun);

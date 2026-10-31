@@ -666,6 +666,11 @@ struct LabConfig {
     // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
     bool partner_seat_gun = false;
     bool partner_seat_gun_given = false;
+    // Debug menu Travel (docs/debug-menu.md "Travel"; lua/coop/world_goto.lua "Travel"): the F9 commands `travel
+    // <30010|30020|30050>` and `bring_partner`. Off unless named in lab and play until a hidden run on both copies
+    // proves it (a named 1 runs it in both); off, native refuses them before Lua (`travel=refused; reason=off`).
+    bool debug_travel = false;
+    bool debug_travel_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

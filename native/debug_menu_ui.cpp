@@ -810,6 +810,7 @@ void Partner(const Snapshot& s) noexcept {
     } else ImGui::TextColored(kGrey, "No partner pose received yet%s.", up ? "" : " (link down)");
     ImGui::Text("Act %u   gun %u   flags 0x%02x   mapped clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
     Row("partner_goto", s, {nullptr, 0, 0, true});
+    ImGui::SameLine(); Row("partner_bring", s);
     Heading("Wounded and sleeping teammates");
     Rows({"coop_downed_status", "coop_revive_status", "coop_downed_pad_status", "coop_sleep_info_status", "coop_sleep_graph_status", "coop_carry_status", "coop_carry_plugin_status", "coop_carry_policy_status", "coop_carry_recipient_status", "coop_carry_request_status", "coop_carry_model_status"}, s);
     Wrapped("Wounded players crawl slowly. Sleep darts immobilize without losing health; sleepers wake after 30 seconds of paired gameplay. Close F9 and hold ACTION (E by default) within 3 m for 3 seconds to revive or wake your teammate.");
@@ -899,6 +900,13 @@ void World(const Snapshot& s) noexcept {
         if (coop_text::FormatMission(s.world_partner_mission, partner_mission, sizeof(partner_mission)))
             ImGui::Text("Partner mission %u (%s)   partner world level %u", s.world_partner_mission, partner_mission, s.world_remote_level);
     }
+    Heading("Travel (both players)");
+    Row("travel_afghanistan", s, {nullptr, 190.0f}); ImGui::SameLine();
+    Row("travel_africa", s, {nullptr, 190.0f}); ImGui::SameLine();
+    Row("travel_mother_base", s, {nullptr, 190.0f});
+    Row("partner_bring", s, {nullptr, 190.0f});
+    Wrapped("Takes both players there at once: no helicopter ride, no menus. A guest's press asks the host, who leads; "
+        "Bring partner here fetches your partner even from another mission.");
     Heading("Time");
     const char* times[] = {"world_time_dawn", "world_time_noon", "world_time_dusk", "world_time_midnight", "world_time_add_1h"};
     for (int i = 0; i < 5; ++i) { if (i) ImGui::SameLine(); Row(times[i], s, {nullptr, 150.0f}); }

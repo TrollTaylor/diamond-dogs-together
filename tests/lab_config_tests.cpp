@@ -559,6 +559,29 @@ int main() {
                   "an invalid seat gun value refuses");
         }
     }
+    // Debug menu Travel (debug_travel, docs/debug-menu.md "Travel"): Go to Afghanistan / Africa / Mother Base and Bring
+    // partner here. Off unless named in lab AND play until a hidden run on both copies proves it (fb1031: every run was
+    // refused before admission); a named 1 runs it in both.
+    {
+        Check(!LabConfig{}.debug_travel && !LabConfig{}.debug_travel_given && !Lab("").debug_travel, "travel off by default");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.debug_travel && !profile.debug_travel_given && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "travel stays off with the gun profile until proven (not named)");
+            const auto named = Lab(gun + mode + "debug_travel=1\n");
+            Check(named.debug_travel && named.debug_travel_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named debug_travel 1 runs in lab and play");
+            const auto off = Lab(gun + mode + "debug_travel=0\n");
+            Check(!off.debug_travel && off.debug_travel_given && off.play_refused == 0, "a named debug_travel 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\ndebug_travel=") + value + "\n");
+            Check(!invalid.debug_travel && !invalid.debug_travel_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid debug_travel value refuses");
+        }
+    }
     // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
     // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
     // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs
