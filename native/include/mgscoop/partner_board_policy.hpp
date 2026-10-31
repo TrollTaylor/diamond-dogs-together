@@ -288,6 +288,8 @@ struct RaceIn {
     std::uint32_t grant_until = 0;
 };
 // A deny first; then a live hold unless this vehicle holds a live grant; else pass.
+inline constexpr std::uint64_t kDenyYield = 1ull << 16;
+inline bool RaceIconRefused(RaceVerdict v, bool) noexcept { return v == RaceVerdict::deny; }
 inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
     if (RaceDenied(in.deny_vehicle, in.deny_until, in.now_ms, in.vehicle)) return RaceVerdict::deny;
     const bool held = in.hold_on && static_cast<std::uint32_t>(in.hold_until - in.now_ms) <= kRaceDenyMaxMs;
@@ -306,7 +308,8 @@ inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
 inline constexpr std::uint32_t kPressWaitMs = 1000;
 inline constexpr std::uint32_t kPressGapMs = 250;     // a pending press unseen this long is over (the next one is new)
 inline constexpr std::uint32_t kHostCommitMs = 3000;  // the host's own press owns the vehicle this long
-enum class PressVerdict : std::uint8_t { stock, start, wait, go };
+inline constexpr std::uint32_t kSeatSettleMs = 700;
+enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer };
 struct PressIn {
     bool hold = false;       // the guest's hold lease is live
     bool local = false;      // the record is the local player's (P+0x218)
@@ -317,6 +320,9 @@ struct PressIn {
     std::uint16_t pend_vehicle = kVehicleUnknown;
     std::uint32_t pend_start = 0, pend_seen = 0, now_ms = 0;
     bool granted = false, denied = false;  // a live grant / deny for this vehicle
+    bool seat_one = false;
+    bool peer_seen = false;
+    std::uint32_t peer_since = 0;
 };
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
 // (a grant, a deny or the timeout ended the wait; site B decides).
