@@ -309,6 +309,59 @@ deploymentGuest.env.TppMain.ReservePlayerLoadingPosition(1, true)
 local stage = deploymentGuest.stages[#deploymentGuest.stages]
 check(deploymentHost.F.outgoing[2] == 6 and stage[3] == -123.125 and stage[4] == 456.875 and stage[5] == 34.625,
     'real source-helicopter deployment Reserve cannot stage stale guest landing-zone prep over host seed pose')
+-- fb1031 arrival against the exact bodies: the host's sortie into Mother Base rides its helicopter (real Reserve);
+-- the guest replays it and its seeds, and the exact vanilla ResetMBFreeStartPositionToCommand leaves it on foot at
+-- Command (route 0, ON_FOOT, initial position reset, cluster Command) with its queued MB demo cleared.
+do
+    local mbResetSource = slice(missionSource, 'function e.ResetMBFreeStartPositionToCommand(', 'function e.SetNextMissionStartHeliRoute(')
+    local function mbFoot(c)
+        local env = c.env
+        env.TppDefine.NO_HELICOPTER_MISSION_START_POSITION, env.TppDefine.CLUSTER_DEFINE = {}, {Command = 0}
+        env.TppHelicopter = {ResetMissionStartHelicopterRoute = function() env.gvars.heli_missionStartRoute = 0 end}
+        env.TppPlayer.SetStartStatus = function(s) env.gvars.ply_initialPlayerState = s end
+        env.TppPlayer.ResetInitialPosition = function() env.vars.initialPlayerFlag = 0 end
+        env.TppPlayer.ResetMissionStartPosition = function() env.gvars.ply_useMissionStartPos = false end
+        env.TppMission.ResetIsStartFromHelispace = function() env.gvars.mis_isStartFromHelispace = false end
+        env.TppDemo = {GetMBDemoName = function() return c.mbDemo end, SetNextMBDemo = function(n) c.mbDemo = n end}
+        local chunk = assert(loadstring('local e=TppMission\n' .. mbResetSource)); setfenv(chunk, env); chunk()
+        return c
+    end
+    local mh, mg = mbFoot(fixture(true, 30050)), mbFoot(fixture(false, 30050))
+    mh.env.vars.missionCode, mh.F.deploying = 30050, true
+    mh.env.mvars.mis_helicopterMissionStartPosition = {9, 0.8, -42}
+    mh.env.TppMain.ReservePlayerLoadingPosition(1, true)
+    check(mh.env.gvars.ply_initialPlayerState == 1 and mh.env.gvars.heli_missionStartRoute == 444,
+        'exact host Reserve: the Mother Base sortie rides the helicopter in')
+    mh.env.TppMission.Load(30050, 40050)
+    for _ = 1, 4 do mh.F.tick(mh.time) end
+    transfer(mh, mg)
+    -- Default (fb1031 review): the guest rides in with the host's route and cluster, as in 0.14.5.
+    local plain = mbFoot(fixture(false, 30050))
+    transfer(mh, plain)
+    plain.F.current = plain.F.queue[1]
+    plain.F.current.session = 55
+    plain.mbDemo = 'X'
+    plain.env.vars.missionCode = 30050
+    plain.env.TppMain.ReservePlayerLoadingPosition(1, true)
+    plain.env.TppMission.Load(30050, 40050)
+    check(plain.loaded and plain.loaded[1] == 30050 and plain.env.gvars.ply_initialPlayerState == 1 and
+        plain.env.gvars.heli_missionStartRoute == 444 and plain.env.vars.mbClusterId == mh.env.vars.mbClusterId and plain.mbDemo == 'X',
+        'default exact guest Reserve: rides in with the host route and cluster, its MB demo kept')
+    -- Switched on (F.arrival.auto, for a lab proof run): on foot at Command.
+    mg.F.arrival.auto = true
+    mg.F.current = mg.F.queue[1]
+    mg.F.current.session = 55
+    mg.mbDemo = 'LongTimeNoSee_DdogSuperHighLikability'
+    mg.env.vars.missionCode = 30050
+    mg.env.TppMain.ReservePlayerLoadingPosition(1, true)
+    check(mh.F.outgoing[2] == 6 and mg.env.gvars.ply_initialPlayerState == 0 and mg.env.gvars.heli_missionStartRoute == 0 and
+        mg.env.vars.initialPlayerFlag == 0 and mg.env.vars.mbClusterId == 0 and mg.mbDemo == nil,
+        'exact guest Reserve after the seeds: on foot at Command, no helicopter route, MB demo cleared')
+    mg.env.TppMission.Load(30050, 40050)
+    check(mg.loaded and mg.loaded[1] == 30050 and mg.env.gvars.ply_initialPlayerState == 0 and
+        mg.env.gvars.heli_missionStartRoute == 0 and not mg.failure,
+        'the host seeds at the guest Load never put it back in the helicopter')
+end
 local h, blocked = fixture(true, 30020), fixture(false, 30020)
 blocked.env.gvars.ini_isTitleMode, blocked.env.gvars.ini_isReturnToTitle = true, true
 hostContinue(h); transfer(h, blocked, true); blocked.F.tick(blocked.time)

@@ -375,10 +375,10 @@ foreach($line in $steps){
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
                 'worldtrigger'{$Mode -ceq 'lab' -and (
                     ($t[0] -cin 'host','guest' -and $t.Count -eq 3 -and $t[2] -ceq 'world=0') -or
-                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020)$' -and
+                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020|30050)$' -and
                         ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
                     ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-                        ($t[0] -ceq 'guest' -and $t[2] -ceq 'world_probe=shared_death'))))}
+                        ($t[0] -ceq 'guest' -and $t[2] -cmatch '^world_probe=(shared_death|guest_restart)$'))))}
                 'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
                 'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'require'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
@@ -420,9 +420,9 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     # Validate the live owned process/context lease and release virtual keys before transition.
     $null=Send-Step $Role @{Operation='release'}
     $canonical=ConvertTo-WorldTriggerText -Text $Text
-    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020)( goto_lz=[01])?$'
+    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020|30050)( goto_lz=[01])?$'
     $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-        ($Role -ceq 'guest' -and $canonical -ceq 'world_probe=shared_death')
+        ($Role -ceq 'guest' -and $canonical -cmatch '^world_probe=(shared_death|guest_restart)$')
     $disable=$Role -cin 'host','guest' -and $canonical -ceq 'world=0'
     if(!$travel -and !$recovery -and !$disable){throw 'Worker world travel accepts only free-roam destinations, role-bound recovery probes or exact world=0.'}
     $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
@@ -437,8 +437,11 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     if(Test-Path -LiteralPath $trigger){throw 'Another world trigger is pending.'}
     # Capture both current allocations before submission; game-over need not
     # report gameplay_ready. A later same-mission wait must observe a new one.
+    # guest_restart (fb1031 arrival): only the guest reloads its mission; its next waitmission needs a new allocation.
     $captured=if($Role -ceq 'host' -and $canonical -ceq 'world_probe=host_continue'){
         Read-ContinueGenerations
+    }elseif($Role -ceq 'guest' -and $canonical -ceq 'world_probe=guest_restart'){
+        Read-ContinueGenerations @('guest')
     }else{$null}
     Write-WorkerAtomicText $trigger $canonical
     $limit=[Environment]::TickCount64+15000
@@ -452,7 +455,7 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
         }finally{$stream.Dispose()}
         $result=Find-WorldTriggerResult -LogText $text -Canonical $canonical
         if($result.State -ceq 'applied'){
-            if($captured){foreach($r in 'host','guest'){$continueRequirements[$r]=$captured[$r]}}
+            if($captured){foreach($r in @($captured.Keys)){$continueRequirements[$r]=$captured[$r]}}
             Write-Host "  $Role world travel: $canonical applied";return
         }
         if($result.State -cin 'rejected','different'){throw "Worker world travel refused: $($result.Reason)"}
@@ -531,9 +534,9 @@ function Get-ScenarioWaitAction([string]$Role,[string]$Result,[Collections.IDict
        $tick -lt 0 -or $tick -gt $Now -or $Now-$tick -gt 1000){return 'skip'}
     return 'e'
 }
-function Read-ContinueGenerations {
+function Read-ContinueGenerations([string[]]$Roles=@('host','guest')) {
     $captured=@{}
-    foreach($r in 'host','guest'){
+    foreach($r in $Roles){
         $s=Read-RoleRaw $r;$now=Get-ScenarioTick
         $generation=[uint32]0;$tick=[int64]0
         if(!$s -or $s['run_id'] -cne $runId -or $s['role'] -cne $r -or $s['terminating'] -or

@@ -1009,6 +1009,24 @@ void Schedulers() {
     Tx(g_host, op::goto_ack, {2, 1}, 5000);
     g_host.Cfg(30010, true, 30010, 30000);
     Check(HasLine(Lines(g_host), "world_goto=arrived; mission=30010; ms=29000"), "arrived from the ACC");
+    // fb1031 arrival: Mother Base -> its ACC -> Mother Base (the guest replays the host's sortie into 30050).
+    Setup();
+    g_host.Cfg(30050, true, 30050, 1000);
+    Drain(g_host, 1, 1000);
+    Lines(g_host);
+    g_host.ApplyTrigger(trigger(30050), "goto=30050", 30050, false, 1000);
+    Check(HasLine(Lines(g_host), "world_goto=armed; target=30050; lz=0") && g_host.goto_state() == world::GotoState::step1,
+          "armed for Mother Base");
+    Tx(g_host, op::goto_ack, {1, 1}, 1500);
+    g_host.LocalMissionEnd(4000);
+    g_host.Cfg(40050, true, 40050, 9000);
+    rx = Drain(g_host, 1, 9000);
+    p = Find(rx, op::go_to);
+    Check(p && p->v[0] == 2 && p->v[1] == 30050, "GOTO{2, 30050} at the 40050 ACC");
+    Tx(g_host, op::goto_ack, {2, 1}, 15000);
+    g_host.LocalMissionEnd(16000);
+    g_host.Cfg(30050, true, 30050, 40000);
+    Check(HasLine(Lines(g_host), "world_goto=arrived; mission=30050; ms=39000"), "arrived back at Mother Base");
     // Timeouts and an unexpected mission.
     struct Case { std::uint64_t at; const char* reason; };
     Setup();

@@ -1245,7 +1245,7 @@ void Core::ApplyTrigger(const Trigger& trigger, const char* canonical, std::uint
         const bool from_acc = here && IsHeliSpace(read_mission);
         if (!level_) refusal = "level";
         else if (!mission_running_ || (!from_mb && !from_acc)) refusal = "mission";
-        else if (trigger.goto_target != 30010 && trigger.goto_target != 30020) refusal = "target";
+        else if (trigger.goto_target != 30010 && trigger.goto_target != 30020 && trigger.goto_target != 30050) refusal = "target";
         else if (goto_.state != GotoState::idle) refusal = "busy";
         else if (terminating) refusal = "terminating";
         if (refusal) {

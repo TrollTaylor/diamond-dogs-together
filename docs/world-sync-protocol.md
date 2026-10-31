@@ -115,7 +115,7 @@ Control (queue 0):
 | 0x05 | RESYNC | G->H | rid, what 1..7 (1 outcomes, 2 phases, 4 clock + weather) | - | 3 |
 | 0x06 | RESYNC_END | H->G | rid, what, count, outcomeSeq (queued as a world op, see below) | - | 7 |
 | 0x07 | MISSION_END | both | missionCode | epoch | 6 |
-| 0x08 | PROBE_SYNC | both (lab) | probeId 1..18, step 1..4, entHash, arg | atMs (step 1) | 14 |
+| 0x08 | PROBE_SYNC | both (lab) | probeId 1..19, step 1..4, entHash, arg | atMs (step 1) | 14 |
 
 REJECT reasons: 1 unknown_entity, 2 terminal, 3 not_forward, 5 epoch, 6
 not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive (4
@@ -252,8 +252,8 @@ refused receipt stays literal and Lua treats it as inactive or not sent.
 `lab.ini`: `world=0..3` (lab and play; other values count as invalid and keep
 the previous value) and `world_probe=none|p1|p3|p3b|p4|p12|p17|race_kill|
 remote_area_kill|kill_near|sleep_near|fulton_near|alert_near|weather_rain|
-clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint` (ids
-1..18 in this order after `none`; lab only: play forces none,
+clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint|guest_restart` (ids
+1..19 in this order after `none`; lab only: play forces none,
 sets `play_refused |= 0x8000` and counts one invalid value). `lab_ini_check
 lab` prints `world=` and `world_probe=` after `link_keys=1`.
 
@@ -568,8 +568,9 @@ refused|fail` (refusals: `reason=role|level|mission|paired|mode|busy`).
 | shared_death | either, supported W3/W4 scene at eff >= 3 | reserve PLAYER_DEAD shared game over through the wrapped `TppMission.ReserveGameOver` |
 | host_continue | host, shared game over at eff >= 3 | `TppMission.ContinueFromCheckPoint({isNoFade = true})`; guest follows and aligns in the new epoch |
 | shared_checkpoint | host, ready alignment at eff >= 3 | request a current-position checkpoint through `TppMission.UpdateCheckPoint`; require an accepted save/version change |
+| guest_restart | guest (fb1031 arrival, `lua/coop/world_follow.lua`) | the pause-menu Restart as the engine sends it: `TppMission.OnMessage(UI, PauseMenuRestart)`, so it passes the guest suppression; `result=ok` only when the Mother Base helicopter way out took it (`step=local_restart`) |
 
-Probe ids 1..18 are assigned; ids 16..18 exercise W4 recovery and are
+Probe ids 1..19 are assigned; ids 16..18 exercise W4 recovery and are
 single-call lab probes. A probe's `result=ok` is an API/receipt result, not
 proof that both games reached the expected state; record both readbacks.
 

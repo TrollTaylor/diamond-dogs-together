@@ -726,6 +726,43 @@ std::string LimitTextTail(const std::string& text, std::size_t max_chars) {
     return "[... " + std::to_string(start) + " earlier characters omitted ...]\n" + text.substr(start);
 }
 
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total) {
+    if (text.empty() || count < 1 || marker.empty()) return {};
+    // The line starts of the last `count` marker lines, newest first; the text before them is one more launch.
+    std::vector<std::size_t> starts;
+    std::size_t from = text.size();
+    while (from > 0 && static_cast<int>(starts.size()) < count) {
+        const std::size_t at = text.rfind(marker, from - 1);
+        if (at == std::string::npos) break;
+        const std::size_t nl = at == 0 ? std::string::npos : text.rfind('\n', at - 1);
+        const std::size_t line = nl == std::string::npos ? 0 : nl + 1;
+        starts.push_back(line);
+        if (line == 0) break;
+        from = line;
+    }
+    if (static_cast<int>(starts.size()) < count && (starts.empty() || starts.back() > 0)) starts.push_back(0);
+    std::vector<std::string> launches;
+    for (std::size_t i = starts.size(); i-- > 0;) {
+        const std::size_t end = i == 0 ? text.size() : starts[i - 1];
+        std::string launch = text.substr(starts[i], end - starts[i]);
+        if (launch.size() > per_launch && per_launch >= 1024) {
+            // Its first quarter (configuration, the first scenes) and its end (the scene it closed in).
+            std::size_t head = launch.rfind('\n', per_launch / 4);
+            head = head == std::string::npos ? per_launch / 4 : head + 1;
+            // The omission line (under 64 characters) counts inside the budget, so 8 cut launches fit 8 budgets.
+            launch = launch.substr(0, head) + LimitTextTail(launch.substr(head), per_launch - head - 64);
+        }
+        launches.push_back(std::move(launch));
+    }
+    std::size_t size = 0;
+    for (const std::string& l : launches) size += l.size();
+    std::size_t first = 0;
+    while (size > total && launches.size() - first > 1) size -= launches[first++].size();
+    std::string out;
+    for (std::size_t i = first; i < launches.size(); ++i) out += launches[i];
+    return out.size() > total ? LimitTextTail(out, total) : out;
+}
+
 bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_dir, std::wstring& zip_out, std::string& error) {
     zip_out.clear();
     if (!IsDir(paths.mod)) {
@@ -771,9 +808,10 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
         if (zip.AddFile(folder + "/" + name, clean.data(), clean.size(), add_error)) ++entries;
     };
     const std::uint64_t max_log = 1u << 20;
-    const std::string observer = ReadTail(JoinPath2(paths.mod, L"script-observer.log"), max_log * 8);
+    // fb1031: the last 8 game launches (a stuck guest relaunches; a report comes a session later), 2 MB each, 16 MB in all.
+    const std::string observer = ReadTail(JoinPath2(paths.mod, L"script-observer.log"), max_log * 24);
     if (!observer.empty()) {
-        save("script-observer.log", LimitTextTail(TextFromLastMarkers(observer, "MGS Co-op script adapter", 3), 3 * max_log));
+        save("script-observer.log", LastLaunches(observer, "MGS Co-op script adapter", 8, 2 * max_log, 16 * max_log));
         included.push_back("script-observer.log");
     } else {
         missing.push_back("script-observer.log");

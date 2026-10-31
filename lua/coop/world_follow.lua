@@ -35,6 +35,76 @@ if not r[1] then W.fail(r[2]); return false end
 return true, unpack(r, 2)
 end
 F.run = run
+-- fb1031 arrival (online 0.14.5: a guest that rode into Mother Base stayed in its helicopter, act 102, on every
+-- entry). A linked co-op guest riding a helicopter at 30050 restarts locally on Restart/Continue and then starts on
+-- foot at Command (vanilla ResetMBFreeStartPositionToCommand, as the vanilla MB restart) without its queued MB demo.
+-- A.auto (off: unproven in game, and it would move every working guest helicopter arrival to the Command cluster)
+-- gives every linked guest helicopter arrival at 30050 that start.
+local A = {auto = false}
+F.arrival = A
+function A.linked()
+if type(W.cfg) ~= "function" then return false end
+local ok, r = pcall(W.cfg, W.get(vars, "missionCode"), 0)
+return ok and type(r) == "table" and (r[1] or 0) >= 3 and r[2] == 2 and r[4] == 1 and type(r[8]) == "number" and r[8] > 0
+end
+function A.demo(at)
+local get, set = W.get(TppDemo, "GetMBDemoName"), W.get(TppDemo, "SetNextMBDemo")
+if type(get) ~= "function" or type(set) ~= "function" then return end
+local ok, name = pcall(get)
+if ok and name ~= nil and pcall(set) then log(fmt("step=mb_demo;at=%s;cleared=%s", at, string.sub(tostring(name), 1, 60))) end
+end
+-- continuing: a checkpoint Continue whose helicopter entry was used (vanilla VarSaveOnUpdateCheckPoint off the
+-- helicopter sets ply_isUsedPlayerInitialAction) keeps its spawn (the W4 shared Continue keeps the host's).
+function A.foot(at, continuing)
+if W.get(vars, "missionCode") ~= 30050 or not A.linked() then return end
+A.demo(at)
+local route, state = W.get(gvars, "heli_missionStartRoute") or 0, W.get(gvars, "ply_initialPlayerState")
+local heli = W.get(W.get(TppDefine, "INITIAL_PLAYER_STATE"), "RIDEON_HELICOPTER")
+local ride = (heli ~= nil and state == heli) or (heli == nil and route ~= 0)
+if continuing and W.get(svars, "ply_isUsedPlayerInitialAction") == true then ride = false end
+local reset = W.get(TppMission, "ResetMBFreeStartPositionToCommand")
+if not ride or type(reset) ~= "function" then return end
+reset()
+log(fmt("step=mb_foot;at=%s;route=%.0f;state=%s", at, route, tostring(state)))
+end
+function A.restarting()
+local p, now = A.pending, W.now()
+return p ~= nil and p.mission == 30050 and now - p.at >= 0 and now - p.at < 30000
+end
+function A.heli()
+local f, id = W.get(Tpp, "IsHelicopter"), W.get(vars, "playerVehicleGameObjectId")
+if type(f) == "function" and id ~= nil then
+    local ok, v = pcall(f, id)
+    if ok and v == true then return true end
+end
+local q, s = W.get(PlayerInfo, "OrCheckStatus"), W.get(PlayerStatus, "ON_HELICOPTER")
+if type(q) ~= "function" or s == nil then return false end
+local ok, v = pcall(q, {s})
+return ok and v == true
+end
+-- 1: run the original (a restart), 2: run TppMission.RestartMission instead (a Continue), nil: the host_only rule.
+local LOCAL = {RestartMission = 1, ExecuteRestartMission = 1, ContinueFromCheckPoint = 2, ExecuteContinueFromCheckPoint = 2}
+function A.unstick(name)
+local kind, now, p = LOCAL[name], W.now(), A.pending
+if not kind or W.mission ~= 30050 then return nil end
+if kind == 1 and p and p.mission == W.mission and now - p.at >= 0 and now - p.at < 30000 then return 1 end
+if W.get(svars, "mis_isDefiniteGameOver") == true or W.get(mvars, "mis_isReserveGameOver") == true or not A.heli() then return nil end
+A.pending = {mission = W.mission, at = now}
+log(fmt("step=local_restart;fn=%s;why=heli", name))
+return kind
+end
+-- Lab probe guest_restart (id 19, lab_config.hpp; lab mode only): the guest's pause-menu Restart as the engine sends
+-- it (UI PauseMenuRestart through TppMission.OnMessage), so it passes the suppression below and the way out.
+local P = W.probe
+if type(P) == "table" and type(P.handlers) == "table" and type(P.NAMES) == "table" then
+P.NAMES[19] = "guest_restart"
+P.handlers.guest_restart = function()
+    local on, s, before = W.get(TppMission, "OnMessage"), W.get(W.api, "str32"), A.pending
+    local ok = W.mode == 1 and not W.host and type(on) == "function" and type(s) == "function"
+    if ok then ok = pcall(on, s("UI"), s("PauseMenuRestart")) and A.pending ~= nil and A.pending ~= before end
+    W.log("event=probe;id=guest_restart;step=done;result=" .. (ok and "ok" or "refused"))
+end
+end
 function F.request(kind, arg)
 local now = W.now()
 if not F.reqAt or now - F.reqAt >= 2000 then
@@ -159,6 +229,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
+if t[4] == 30050 and A.auto then pcall(A.foot, "seeds", t[2] == 4) end
 if buddy then C.seeded(t[4], t[2]) end
 if relief then R.seeded(t[4], t[2]) end
 return true
@@ -341,7 +412,7 @@ end
 W.startHooks[#W.startHooks + 1] = function()
 F.enabled = W.level >= 3 and SUPPORTED[W.mission] ~= nil
 F.reqAt = nil
-F.hostDeploy, F.refused, F.disarmAt = nil, nil, nil
+F.hostDeploy, F.refused, F.disarmAt, A.pending = nil, nil, nil, nil
 if F.armed then F.unpairedAt = W.now() end
 F.title = nil
 -- D11 pre-pair gap (world_vehicle_rules.lua, world_relief_sync.lua, later chunks): this start replays the host's
@@ -394,7 +465,12 @@ for name, spec in pairs(suppressed) do
     local original = W.get(TppMission, name)
     if type(original) == "function" then
         TppMission[name] = function(...)
-            if guest() then F.request(spec[1]); if spec[2] then return false end; return end
+            if guest() then
+                local alt = A.unstick(name)
+                if alt == 1 then return original(...) end
+                if alt == 2 then return TppMission.RestartMission() end
+                F.request(spec[1]); if spec[2] then return false end; return
+            end
             if on() and W.host and (name == "Reload" or name == "ExecuteReload" or name == "ReturnToMission") then
                 log("step=refused;reason=unsupported_reload"); return
             end
@@ -470,7 +546,10 @@ if type(reserve) == "function" then
             kind == loads.MISSION_RESTART and 3 or kind == loads.CONTINUE_FROM_CHECK_POINT and 4 or 0
         if k > 0 and not F.prepare() then return end
         if k > 0 then local ok, err = pcall(F.publish, k); if not ok then W.fail(err) end end
-        return reserve(kind, ...)
+        local r = (function(...) return {n = select("#", ...), ...} end)(reserve(kind, ...))
+        if k > 0 and A.auto then pcall(A.foot, "reserve", k == 4)
+        elseif k == 3 and A.restarting() then pcall(A.foot, "restart", false) end
+        return unpack(r, 1, r.n)
     end
 end
 local function pack(...) return {n = select("#", ...), ...} end
@@ -548,6 +627,9 @@ if type(allocate) == "function" then
     e.OnAllocate = function(...)
         local t = W.host and F.outgoing or F.current
         if t and F.configured() and vars.missionCode == t[4] then math.randomseed((t[1] + t[6]) % 2147483647) end
+        if A.auto and W.get(vars, "missionCode") == 30050 and W.get(gvars, "f30050_missionPackIndex") == 0 and A.linked() then
+            pcall(A.demo, "allocate")
+        end
         return allocate(...)
     end
 end

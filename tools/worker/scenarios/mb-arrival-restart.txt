@@ -1,0 +1,57 @@
+# fb1031 arrival proof (docs/world-sync-design.md 9.2): the stuck guest's way out. The guest follows the host's ACC
+# sortie into Mother Base (world_follow kind 6, as mb-arrival-follow.txt) and, while its helicopter is still flying in
+# (act 102), presses the pause-menu Restart: the lab probe guest_restart sends the engine's own UI PauseMenuRestart
+# message through TppMission.OnMessage, so it passes world_follow's guest suppression and the way out (lab only).
+#   run-hidden.ps1 -Scenario tools/worker/scenarios/mb-arrival-restart.txt -ExtraJoined '-Mode lab -WanSim bad
+#       -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real -TimeoutSec 600'
+# Expected: guest `event=probe; id=guest_restart; step=done; result=ok`, `step=local_restart; fn=RestartMission;
+# why=heli`, `step=mb_foot; at=restart` (no `at=seeds`: the default arrival is 0.14.5); the guest reloads 30050 on foot
+# at Command and walks; host `partner_realized=1`; frames on both copies show the other player. Nothing goes to the
+# host (no `decision=host_only` on the host after the probe).
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+# A real-seed copy can play its queued Mother Base demo after the Continue: let it finish.
+wait 45000
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+host run godmode 1
+guest run godmode 1
+both capture mb-start
+logmark both
+host worldtrigger goto=30050
+waitmission host 40050 180
+waitmission guest 40050 180
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40050; next=30050; kind=6' 150
+waitmission host 30050 200
+waitmission guest 30050 200
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30050' 90
+wait 3000
+both capture heli-ride
+guest run position
+guest worldtrigger world_probe=guest_restart
+waitlog guest 'id=guest_restart; step=done; result=' 40
+waitlog guest 'step=local_restart; fn=RestartMission; why=heli' 5
+waitlog guest 'step=mb_foot; at=restart' 60
+both capture restarting
+waitmission guest 30050 200
+logmark both
+wait 8000
+both capture foot-1
+host run position
+guest run position
+waitlog host 'partner_realized=1' 60
+wait 3000
+both capture foot-2
+heldcapture guest host w guest-walk 3
+guest run position
+placebehind host guest 6
+wait 3000
+both capture host-sees-guest
+placebehind guest host 6
+wait 3000
+both capture guest-sees-host
+host run position
+guest run position
+state
