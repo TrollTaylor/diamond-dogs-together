@@ -164,10 +164,12 @@ do
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
             -- Mother Base (spareStaff): a partner never kills or removes a staff member in this copy's save (stock
-            -- f30050 reserves TARGET_DEAD on any staff Dead or Dying): dying, dead and fultoned land as a knockout.
+            -- f30050 reserves TARGET_DEAD on any staff Dead or Dying): dying and dead land as a knockout; a Fulton
+            -- disables the staff member for this mission load (TppEnemy.SetDisable: gone, no Fulton message).
             if W.feature and W.feature.spareStaff and (st == 4 or st == 5 or st == 6) and not TERMINAL[cur] then
-                L("event=spare;ent=%.0f;state=%d;as=3", h, st)
-                st = 3
+                local as = st == 6 and 7 or 3
+                L("event=spare;ent=%.0f;state=%d;as=%d", h, st, as)
+                st = as
             end
             local result = "noop"
             if TERMINAL[cur] then result = "terminal_local"

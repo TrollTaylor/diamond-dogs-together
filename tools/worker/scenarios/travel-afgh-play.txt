@@ -1,0 +1,64 @@
+# The debug menu Travel, the leftovers of run 5e166b4c (docs/debug-menu.md "Travel"), at the SHIPPED play defaults (no
+# labsetting line): -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder.
+# (a) the host presses Go to Afghanistan in Mother Base -> both land in 30010 (the rock shelf above the road), the camera
+#     behind each player. The moment the host has landed it presses Bring partner here while the guest may still be on its
+#     way (another area: refused with "Your partner is in another area: use Go to first.", or the partner answers
+#     'travelling'): nobody moves.
+# (b) in Afghanistan the guest stands 10 m behind the host; the host presses Bring partner here -> the guest lands 3 m in
+#     front of the host, facing it, its camera behind it.
+# (c) the guest presses Go to Mother Base -> the host leads, both land at the deck ladder.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+# The stock Mother Base cutscene after gameplay (run 409cb374): wait it out.
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+wait 4000
+both capture mb-start
+# (a) host: Go to Afghanistan
+logmark both
+host run travel 30010
+host expect travel_started;target=30010;linked=1
+waitlog guest 'event=travel; step=start; target=30010' 20
+waitlog host 'event=travel; step=hop1; from=30050; ok=1' 20
+wait 6000
+both capture a-leaving
+waitlog host 'event=travel; step=hop2; from=40050; target=30010; ok=1' 150
+waitlog host 'event=travel; step=arrived; mission=30010' 200
+host run bring_partner
+both capture a-host-landed
+waitlog guest 'event=travel; step=arrived; mission=30010' 200
+both capture a-arrived
+wait 2500
+both capture a-arrived-2
+waitlog host 'event=paired' 90
+waitlog guest 'event=paired' 90
+wait 3000
+both capture a-paired
+# (b) same mission: the guest 10 m behind the host, the host brings it
+placebehind guest host 10
+wait 3000
+both capture b-apart
+logmark both
+host run bring_partner
+host expect bring_sent;mission=30010
+waitlog guest 'event=travel; step=brought; mission=30010' 30
+wait 1500
+both capture b-brought
+wait 2500
+both capture b-brought-2
+# (c) guest: Go to Mother Base
+logmark both
+guest run travel 30050
+guest expect travel_asked;target=30050
+waitlog host 'event=travel; step=start; target=30050; from=30010; lead=1; by=partner' 20
+waitlog host 'event=travel; step=arrived; mission=30050' 240
+waitlog guest 'event=travel; step=arrived; mission=30050' 240
+both capture c-arrived
+wait 2500
+both capture c-arrived-2

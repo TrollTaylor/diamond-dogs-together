@@ -125,8 +125,8 @@ do
         -- Seed-proven outdoor spots (afgh-ledge, africa-jeep, mb-ladder): x y z yaw (degrees).
         local SPOT = {[30010] = {828.18, 338.20, 1630.51, 95}, [30020] = {-656.01, 1.20, 877.73, 62}, [30050] = {22.61, 1.80, -15.55, 0}}
         local ACC = {[40010] = true, [40020] = true, [40050] = true}
-        -- Answer reasons 1..6 (0 accepted).
-        local WHY = {"travelling", "gameplay", "on_foot", "downed", "demo", "mission", "off"}
+        -- Answer reasons 1..8 (0 accepted; 7 native's Travel-off answer).
+        local WHY = {"travelling", "gameplay", "on_foot", "downed", "demo", "mission", "off", "other_area"}
         local function log(s) W.log("event=travel;" .. s) end
         local function note(b, m) if type(W.note) == "function" then pcall(W.note, 14, m or 0, b) end end
         local function mission() return W.get(vars, "missionCode") or 0 end
@@ -227,6 +227,14 @@ do
                 if not linked() then return false, "partner_not_linked" end
                 local b = T.blocked()
                 if b then return false, "bring_refused;reason=" .. WHY[b] end
+                -- fb1031-on: never run across missions; the partner elsewhere is told to use Go to first.
+                local q = W.peer()
+                local pm = type(q) == "table" and q.mission
+                if type(pm) == "number" and pm ~= 0 and pm ~= mission() then
+                    note(7, mission())
+                    log(fmt("step=bring_other_area;mission=%d;partner=%d", mission(), pm))
+                    return false, "bring_refused;reason=other_area"
+                end
                 local p = pose()
                 if not p then return false, "position_unreadable" end
                 if not tx(3, mission(), p, 0) then return false, "bring_refused;reason=link" end
@@ -245,10 +253,16 @@ do
             T.start(target, landing(SPOT[target], true), true, by)
             tx(2, target, SPOT[target], 0)
         end
-        -- Brought by the partner: a warp beside it in this mission, else this copy travels there.
+        -- The stock camera behind the player's yaw (degrees, wrapped to -180..180).
+        local function behind(yaw)
+            if type(W.get(Player, "RequestToSetCameraRotation")) ~= "function" then return end
+            pcall(Player.RequestToSetCameraRotation, {rotX = 0, rotY = (yaw + 180) % 360 - 180, interpTime = 0.2})
+        end
+        -- Brought by the partner: a warp beside it in this mission. Another mission refuses (8): Go to first.
         local function brought(m, p)
             local b = T.blocked()
             if b then return b end
+            if m ~= mission() then return 8 end
             -- Crossing Brings (both pressed, or this copy's own still unanswered for 30 s): the host's wins.
             if T.bring and W.now() - T.bring < 30000 then
                 if W.host then return 1 end
@@ -256,14 +270,10 @@ do
             end
             T.bring = nil
             local spot = landing(p, false, 3)
-            if m == mission() then
-                if not pcall(TppPlayer.Warp, {pos = {spot[1], spot[2], spot[3]}, rotY = spot[4]}) then return 2 end
-                log(fmt("step=brought;mission=%d;x=%.2f;y=%.2f;z=%.2f", m, spot[1], spot[2], spot[3]))
-                note(3, m)
-                return
-            end
-            if not SPOT[m] then return 6 end
-            T.start(m, spot, true, "partner")
+            if not pcall(TppPlayer.Warp, {pos = {spot[1], spot[2], spot[3]}, rotY = spot[4]}) then return 2 end
+            behind(spot[4])
+            log(fmt("step=brought;mission=%d;x=%.2f;y=%.2f;z=%.2f", m, spot[1], spot[2], spot[3]))
+            note(3, m)
         end
         H[OP.TRAVEL] = function(v)
             local kind, m = v[2], v[3]
@@ -285,7 +295,7 @@ do
                 T.bring = nil
                 if v[8] ~= 0 then
                     log(fmt("step=refused_by_partner;mission=%d;reason=%s", m, WHY[v[8]] or tostring(v[8])))
-                    note(5, m)
+                    note(v[8] == 8 and 7 or 5, m)
                 end
             end
         end
@@ -304,6 +314,7 @@ do
                 return log(fmt("step=warp;err_m=%.1f;try=%d", err, j.warps))
             end
             T.job = nil
+            behind(p[4])
             log(fmt("step=arrived;mission=%d;err_m=%.2f;x=%.2f;y=%.2f;z=%.2f;ms=%.0f;lead=%d;by=%s", mission(), err, p[1], p[2], p[3],
                 now - j.at, j.lead and 1 or 0, j.by))
             if j.by == "partner" then note(2, mission()) end

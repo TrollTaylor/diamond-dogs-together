@@ -2971,8 +2971,20 @@ leak captures, loadout, census, noise record).
 
 Melee on the other player (`wp/melee`, fb1031). Key `partner_melee` (lab.ini; `native/partner_melee.cpp`, the driver's
 `TickMelee`), **off unless named** in lab and play (a named 1 runs it in both) until a hidden run on both copies shows
-it: both fb1031 runs (`52fdd178`, retry `79487b41`) were refused before admission (the guest's D3D11 device on the
-private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
+every case. Hidden play runs `9018ae47` and `1526e58a` (fb1031-on) showed the guest's strike on the host from about
+1 m: the host asleep on the host's own screen and the HOLD E WAKE UP prompt on the guest's; the host's strike on the
+guest, the single press after this round's fix and a combo from a true 3 m have not run yet.
+
+- **Placement drift, not a stale read (run `9018ae47`):** the scenario's `placebehind` teleports 3 m up and the drop
+  carries the placed player about 1.4 m forward. The guest placed 1.19 m behind the host landed 21 cm in front of it:
+  the host copy's `partner_body` of the guest (803426, 1637408) and the guest's own body 1 (803619, 1637279) agree with
+  the guest's `dist_cm=21; angle_deg=175`. The same drift explains `af0b88b6`'s 21 cm, so `read_local_body` was not
+  the fix there. The scenario now places at 2.5 m (about 1 m) and 4.5 m (about 3 m).
+- **One press is 113 then 114 (run `1526e58a`):** one 120 ms LMB press by the guest with the host 1.1 m in front gave
+  113 for 219 ms, then 114 for 549 ms (`verdict=jab; dist_cm=110; angle_deg=0`, then `verdict=land; dist_cm=88;
+  angle_deg=2`), and the host slept. So the 114 is the press's own strike, not a combo finisher. Since `9dd5dcaa` the
+  driver counts presses (one per 113 edge): the 113 and 114 of one press log `verdict=jab`, and the strike of the next
+  press in reach within 2 s lands.
 
 - **Why it did nothing (0.14.5 two-PC session, both copies):** guns are attacker-side: the shooter's real bullet hits
   body 1 on the shooter's copy (`downed_defense` / `downed_damage` samples `target=1; attacker=0`), FriendlyReplicaHit
@@ -2985,7 +2997,7 @@ private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
   takedown of a soldier: both of the host's `Neutralize; att=local` lines in that session line up with one.
 - **What it does (fb1031 review round, the vanilla CQC feel):** the attacker's copy judges its own strike. One jab (the
   local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. A second jab in reach within
-  2 s of the first, or the combo's finisher (an edge into 114 within 600 ms of a 113 tick), lands (hidden run
+  2 s of the first lands (`9dd5dcaa`: a 114 out of the same press's 113 never lands on its own; hidden run
   `af0b88b6`: four scripted presses gave two 113 edges 1.6 s apart and no 114 in one case, 113 then 114 in another, so
   the finisher alone is not reliable) when body 1 is realized, shown and on foot (not seated: seat phase,
   `ride_seated`, seated visibility; no vehicle job or attach; no live non-foot ride sample), within 1.6 m horizontally
@@ -3053,7 +3065,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_unrealize_all` | 0, 1 (G5: the other ride hides (the heli acts 97..108 or a heli ride, a vehicle drawn hidden by `partner_native_ride=hide` or a refused / unavailable seat, a horse rider by its ride kind 3 when `partner_native_mount` is off) unrealize body 1 through Lua's all-active mode like the mount hide, and the link-quality rebase after a ride logs `partner_ride=net_rebased` (the rebase itself is always on), see "Ride hides"; acts only where `partner_native_ride` hides; default 0 in lab and play until a hidden-worker FRAME proves it, a named 1 runs in lab only (play forces it off); a named value records `partner_native_unrealize_all_given`) |
 | `partner_seat_aim` | 0, 1 (the read-only back-seat aim census, see "Seat aim": the local player in a vehicle ride act and body 1 in the seat flow, `partner_seat_aim=sample\|end\|status` lines; lab only, default 0 with or without the gun profile, play forces it off; a named value records `partner_seat_aim_given`) |
 | `partner_seat_gun` | 0, 1 (M7, see "Seat gun": the remote back-seat passenger's raised gun on the seated body 1 through the gesture hook (GunHoldStart on graph 2, body 1's aim rates) and this copy's seated v6 direction; off unless named in lab and play, a named 1 runs in play too; the hold runs but draws no raised gun, runs 30a6a21a..d7cf5a4b; a named value records `partner_seat_gun_given`) |
-| `partner_melee` | 0, 1 (see "Melee": the local CQC strike that reaches body 1 knocks the other player down on their copy; off unless named in lab and play until a hidden run shows it, a named 1 runs it in both; a named value records `partner_melee_given`) |
+| `partner_melee` | 0, 1 (see "Melee": the local CQC strike of a second press within 2 s that reaches body 1 puts the other player to sleep on their copy; off unless named in lab and play until a hidden run shows every case, a named 1 runs it in both; a named value records `partner_melee_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
