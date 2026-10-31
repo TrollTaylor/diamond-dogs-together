@@ -1,4 +1,4 @@
-## October 31, 2026: fb1031 arrival - a joining guest starts Mother Base on foot (`wp/mb-arrival`; unit-tested, no hidden run reached the game)
+## October 31, 2026: fb1031 arrival - a guest stuck in the Mother Base helicopter can Restart out of it (`wp/mb-arrival`; unit-tested, no hidden run reached the game)
 
 Report (online 0.14.5 over Steam): the guest joined the host at Mother Base and was stuck "in a cutscene / the helicopter";
 the guest saw the host, the host never saw the guest. Host log only (the guest's Collect logs no longer held that launch).
@@ -11,28 +11,38 @@ the guest saw the host, the host never saw the guest. Host log only (the guest's
   queued Mother Base opening demo (f30050 `IsUseRoute()` is false then) while the guest rode the host's route. Why
   the guest's helicopter never landed is not visible without the guest's log [U]. The guest's pause-menu Restart
   (REQ kind 3) and Continue (kind 4) were refused `host_only`: no way out.
-- **Fix (default on, no key; `lua/coop/world_follow.lua` `F.arrival`, design 9.2):** a linked co-op guest entering
-  Mother Base with a helicopter start gets the vanilla `TppMission.ResetMBFreeStartPositionToCommand()` (the on-foot
-  Command start of the vanilla MB restart) after `ReservePlayerLoadingPosition` and after every seed apply, and its
-  queued MB demo is cleared. A guest riding a helicopter at Mother Base gets its pause-menu Restart locally (Continue
-  runs that restart) and lands on foot. The host, free roam and on-foot starts are unchanged.
-- **Collect logs:** `script-observer.log` keeps the last 8 game launches, 2 MB each (first quarter and end), 16 MB in
-  all (was the last 3 launches cut to a 3 MB tail; the guest's session spanned 3 launches and a later session followed).
+- **Way out (default on; `lua/coop/world_follow.lua` `F.arrival`, design 9.2):** a linked guest riding a helicopter
+  at Mother Base (not in a game over) gets its pause-menu Restart locally instead of the `host_only` refusal (Continue
+  runs that restart); that restart's `ReservePlayerLoadingPosition` (within 30 s) gets the vanilla
+  `TppMission.ResetMBFreeStartPositionToCommand()` (on foot at Command; the menu restart passes no return flag, so
+  vanilla does not) and the guest's queued MB demo is cleared before the pack list. Nothing is sent to the host.
+- **Review (14:40):** the first version reset EVERY linked guest helicopter arrival at 30050 to Command (also the
+  arrival that works, and it overwrote the host's seeded cluster) and cleared the guest demo at allocation, after the
+  vanilla pack list had already picked f30051/hangar packs for it. That broad rule is now off (`F.arrival.auto =
+  false`, kept for a lab proof run); switched on, the allocation clear skips `gvars.f30050_missionPackIndex ~= 0`.
+  Default arrival = 0.14.5 (the guest rides in with the host's route and cluster).
+- **Collect logs:** `script-observer.log` keeps up to the last 8 game launches, 2 MB each with the omission line
+  inside the budget (first quarter and end), 16 MB in all, from the log's last 24 MB (was the last 3 launches cut to
+  a 3 MB tail; the guest's session spanned 3 launches and a later session followed).
 - **Lab driver:** `world.trigger` `goto=30050` (Mother Base -> 40050 -> Mother Base on the Command platform 1 approach
   route) and scenario `tools/worker/scenarios/mb-arrival-follow.txt`.
-- **Checks:** world_follow_lua_check 194 (sortie replay with the host's helicopter seeds, restart/Continue of a
+- **Checks:** world_follow_lua_check 205 (the default arrival unchanged, the way out lands on foot within 30 s
+  and only on the restart Reserve, the guarded allocation clear; switched on: sortie replay with the host's helicopter seeds, restart/Continue of a
   helicopter save, the W4 shared Continue keeping the host spawn, host/free roam/on-foot/unlinked unchanged, the way
   out and its refusals, a throwing reset), ddt_core_tests CollectLogsLaunches, world_receipt/world_wire/world_goto,
   worker_session_tests; world_follow_game_lua_check (exact extracted TppMain Reserve and vanilla
-  ResetMBFreeStartPositionToCommand: the host rides in, the guest replay ends on foot at Command; fails on 0.14.5).
+  ResetMBFreeStartPositionToCommand: by default the guest rides in with the host's route and cluster; switched on,
+  it ends on foot at Command).
   Full tools/build.ps1 337/337; partner contract check matches.
 - **Hidden runs: none reached the game [U].** `mb-arrival-follow` (`-Mode lab -WanSim bad -PartnerProfile native
   -NativeStage gun -BuildProfile research -SaveSeed real`): 13:52 refused before admission (the guest game's overlay
   `D3D11CreateDeviceAndSwapChain` hr=0x8007000E, as the camera and melee tracks' runs today); its retry (14:00) and runs
   2 (14:06) and 3 (14:11) refused in the preflight: `Audited command timed out: worker-policy-fixture` with no output
   at all (the same tests/worker_checks_tests.ps1 passes in 4 s run directly; the fb1031-mb track's preflights hit the
-  same timeout). So the on-foot arrival, both copies seeing each other and the way out are **not shown in the game**;
-  the fix is on by default on unit-test evidence only. Slim receipts: run archive `fb1031/arrival/`.
+  same timeout). d3dprobe passed before each of the 4 attempts (wrapper logs); the task's rule of one retry was
+  exceeded. So the way out and both copies seeing each other are **not shown in the game**; it is on by default on
+  unit-test evidence only (it acts only for a guest already stuck, whose Restart/Continue 0.14.5 refused). Slim
+  receipts: run archive `fb1031/arrival/`.
 - **Preflight refusal found and fixed (`35c80183`):** an audited worker-check child inheriting an open stdin pipe
   hung before its first line (reproduced outside the lock: 150 s, no output; 2.5 s with the fix). `Invoke-WorkerCommand`
   now redirects and closes stdin (`tests/worker_checks_tests.ps1` 219). Next: one `mb-arrival-follow` run with it.
