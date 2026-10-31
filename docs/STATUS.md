@@ -33,6 +33,9 @@ the guest saw the host, the host never saw the guest. Host log only (the guest's
   at all (the same tests/worker_checks_tests.ps1 passes in 4 s run directly; the fb1031-mb track's preflights hit the
   same timeout). So the on-foot arrival, both copies seeing each other and the way out are **not shown in the game**;
   the fix is on by default on unit-test evidence only. Slim receipts: run archive `fb1031/arrival/`.
+- **Preflight refusal found and fixed (`35c80183`):** an audited worker-check child inheriting an open stdin pipe
+  hung before its first line (reproduced outside the lock: 150 s, no output; 2.5 s with the fix). `Invoke-WorkerCommand`
+  now redirects and closes stdin (`tests/worker_checks_tests.ps1` 219). Next: one `mb-arrival-follow` run with it.
 
 ## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
 
