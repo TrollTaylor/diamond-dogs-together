@@ -115,6 +115,8 @@ ignore / notice (H, S), disable / enable (H, S), mark / unmark (H, U), info.
 
 Nearest (within 150 m): `enemy kill nearest`, `enemy sleep nearest`,
 `enemy come nearest`, `enemy disable nearest` (H, S), `enemy mark nearest` (H).
+`enemy goto nearest|hash` (either player, typed): this copy's player warps 2.5 m from that soldier, on the player's
+side, facing him (each PC moves its own enemies, so each player reaches its own copy of him).
 
 Area: **Clear nearby** `clear_enemies r` (H, S, asks to confirm, 1..100 m, at most 16),
 **Unmark all** `enemy_unmark` (H), **Phase** `cp_phase nearest sneak|caution|alert`

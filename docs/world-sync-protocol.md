@@ -55,8 +55,9 @@ pushed in PAIRED, used for native TX gating and by Lua. A remote HELLO with
 
 Per mission (Lua `W.MISSIONS`): 30010 `{enemies, clock, weather=all,
 areaEnemy=f30010_enemy}`, 30020 `{enemies, clock, weather=nofog,
-areaEnemy=f30020_enemy}`, 30050 `{enemies, clock, weather=all, allCp, patrol=false}` (Mother Base
-staff, fb1031; design 7.7: no area trap there, so every CP counts as loaded for the W4 snapshot reads and the
+areaEnemy=f30020_enemy}`, 30050 `{enemies, clock, weather=all, allCp, patrol=false, spareStaff, enemiesLab}` (Mother Base
+staff, fb1031; W1 in the lab only, `enemiesLab`; spareStaff: a partner's DYING / DEAD applies as FAINT and a
+partner's FULTONED as VANISHED (`TppEnemy.SetDisable`, `event=spare; state=6; as=7`); design 7.7: no area trap there, so every CP counts as loaded for the W4 snapshot reads and the
 whole outcome ledger is re-checked every 10 s; no patrol position corrections); every other mission (the ACC 40050
 included) runs the level-1 plumbing only for enemy/environment sync. W3/W4
 travel and shared game over also support 40010/40020/40050.
