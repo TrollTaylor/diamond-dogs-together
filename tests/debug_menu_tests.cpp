@@ -572,6 +572,10 @@ int main() {
           flags.pending_frames == 34 && flags.god_mode && !flags.fulton_infinite && flags.slowmo_active && flags.game_clock_s == 43200 &&
           flags.player_life == 3000 && flags.player_life_max == 6000 && std::strcmp(flags.guard_reason, "ok") == 0, "twelve-field state parsed");
     Check(parse("0 0 0 none 0 0 0 0 0 -1 -1 on_foot") && flags.player_life == -1 && std::strcmp(flags.guard_reason, "on_foot") == 0, "unreadable life is -1");
+    // The F9 character switch and give weapon poll as pending "character" / "give" (debug_character.lua, debug_arms.lua).
+    Check(parse("0 0 9 character 31 0 0 0 0 -1 -1 ok") && std::strcmp(flags.pending_kind, "character") == 0 && flags.pending_id == 9,
+          "pending character switch state accepted");
+    Check(parse("0 0 4 give 2 0 0 0 0 -1 -1 ok") && std::strcmp(flags.pending_kind, "give") == 0, "pending give weapon state accepted");
     for (const auto* bad : {"1", "1 2 3", "0 0 0 none 0 0 0 0 0 -1 -1", "0 0 0 none 0 0 0 0 0 -1 -1 ok extra", "2 0", "1 256",
          "0 0 0 teleport 0 0 0 0 0 -1 -1 ok", "0 0 0 none 0 2 0 0 0 -1 -1 ok", "0 0 0 none 0 0 0 0 86400 -1 -1 ok",
          "0 0 0 none 0 0 0 0 0 -2 -1 ok", "0 0 0 none 0 0 0 0 0 -1 -1 OK", "0  0", " 0 0", "0 0 ", "0 0 0 none 0 0 0 0 0 -1 -1 ok;x",

@@ -148,6 +148,21 @@ check(ok and msg=="character_switched;own" and c.env.vars.playerType==PT.AVATAR 
 c=F({configured=""});ok,msg=c:run("default")
 check(ok and msg=="character_kept;own" and #c.calls==0,"own type already: kept")
 
+-- Quiet rules still win in place (low note char-1): Quiet as the buddy or a Quiet-conflict mission refuses, nothing stored.
+c=F({configured="quiet",bypass=true,playerType=PT.DD_MALE,parts=PARTS.NORMAL});c.env.vars.buddyType=3;ok,msg=c:run("quiet")
+check(not ok and msg=="character_quiet_unavailable;reason=buddy_quiet" and c.M.characterPick==nil and c.env.vars.playerType==PT.DD_MALE and
+ #c.calls==0,"Quiet refused while Quiet is the buddy")
+c=F({configured="quiet",bypass=true,playerType=PT.DD_MALE,parts=PARTS.NORMAL});c.env.vars.missionCode=10050;ok,msg=c:run("quiet")
+check(not ok and msg=="character_quiet_unavailable;reason=quiet_conflict" and c.M.characterPick==nil,"Quiet refused in a Quiet-conflict mission")
+-- Back to my default never restores a saved Ocelot/Quiet mid-mission while the bypass is off (low note char-3).
+c=F({configured="",playerType=PT.SNAKE,usingTemp=true,lastType=PT.OCELOT});c.M.characterPick="snake";ok,msg=c:run("default")
+check(ok and msg=="character_next_load;own" and #c.calls==0 and c.env.vars.playerType==PT.SNAKE and c.M.characterPick==nil and
+ c.env.gvars.ply_isUsingTempPlayerType==true,"saved Ocelot not restored with the bypass off: next load")
+c=F({configured="",bypass=true,playerType=PT.SNAKE,usingTemp=true,lastType=PT.OCELOT});ok,msg=c:run("default")
+check(ok and msg=="character_switched;own" and c.calls[1]=="restore","saved Ocelot restored while the bypass is on")
+-- A binding that throws leaves no pick behind (low note char-5).
+c=F({configured="snake"});c.env.TppPlayer.SaveCurrentPlayerType=nil
+ok=pcall(c.run,c,"dd_male");check(not ok and c.M.characterPick==nil,"a failed switch stores no pick")
 -- No planner yet (before the first mission load): refused.
 c=F();c.M.Character=nil;ok,msg=c:run("snake")
 check(not ok and msg=="character_unavailable","needs the character chunk")
