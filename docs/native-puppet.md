@@ -2945,21 +2945,30 @@ private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
   queues it, Lua sends FRIENDLY_HIT and the victim's copy applies it to its own player. The stock CQC strike never
   reaches that path: ~100 strikes at 0.3-1.8 m logged no defense or damage sample for body 1 (the sample budgets were
   not spent). The victim's copy never plays the strike either: the CQC bit 0x8000 is a world bit, never passed to body
-  1 (`partner_pad_dropped; cqc=N`). Those presses were census'd as the remote's act 113 (the strike, 0.2-1.1 s) then
-  114 (the combo's last strike, ~0.5 s); LMB without RMB is CQC (the same press also sets VEHICLE_FIRE and PLACE_MARKER).
-- **What it does:** the attacker's copy judges its own strike: the local act's edge into 113 or 114, body 1 realized and
-  shown, within 1.6 m horizontally and 1 m in height, inside 60 degrees of the local body facing, at most one hit per
-  1.5 s (a miss does not start that window). A landed strike is one friendly hit, cause sleep, into the queue the
-  damage hook uses (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it
-  wakes by itself after 30 s, or with a revive). No new wire op and no new read or patch site.
-- **Line:** `partner_melee=strike; act=113; verdict=land|range|height|angle|repeat|no_body|off; queued=0|1; dist_cm=..;
-  dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
+  1 (`partner_pad_dropped; cqc=N`). Those presses were census'd as the remote's act 113 (one jab, 0.2-1.1 s, each jab its
+  own edge) and the combo's finisher 114 straight out of a 113 (~0.5 s); LMB without RMB is CQC (the same press also
+  sets VEHICLE_FIRE and PLACE_MARKER). A 114 from another act (running 2 -> 114, held up to 3 s) was the start of a CQC
+  takedown of a soldier: both of the host's `Neutralize; att=local` lines in that session line up with one.
+- **What it does (fb1031 review round, the vanilla CQC feel):** the attacker's copy judges its own strike. One jab (the
+  local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. The combo's finisher (an edge
+  into 114 within 600 ms of a 113 tick) lands when body 1 is realized, shown and on foot (not seated: seat phase,
+  `ride_seated`, seated visibility; no vehicle job or attach; no live non-foot ride sample), within 1.6 m horizontally
+  and 1 m in height of body 1's drawn position (`read_body`, never the slot, which stays at the boarding spot while
+  seated), inside 60 degrees of the local body facing, and the other player is not in a CQC hold (91..96), a trash box
+  or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56) (`verdict=busy`) or prone (`verdict=prone`); at
+  most one hit per 1.5 s (a miss does not start that window). A 114 without a 113 before it is `verdict=takedown`. A
+  landed finisher is one friendly hit, cause sleep, into the queue the damage hook uses
+  (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it wakes by itself
+  after 30 s, or with a revive). No new wire op and no new read or patch site.
+- **Line:** `partner_melee=strike; act=113|114; verdict=land|jab|takedown|busy|prone|range|height|angle|repeat|no_body|off;
+  queued=0|1; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
 - **Not done:** the attacker's strike is not drawn on the victim's screen (the CQC bit on body 1 would act on the
   victim's world: it can grab or punch that copy's soldiers; a DM overlay entry needs the strike's state or clip name,
   not known); CQC grabs and throws of the other player; a soldier punched next to the other player is unchanged (the
-  strike is applied only on the attacker's copy, as before), but a strike aimed at a soldier with the other player
-  within reach in front also knocks the other player down.
-- Fixtures `partner_melee_tests`, `lab_config_tests`; scenario `melee-partner-play.txt`.
+  strike is applied only on the attacker's copy, as before), but a full combo aimed at a soldier with the other player
+  standing within reach in front also knocks the other player down (the target of the stock strike is not read).
+- Fixtures `partner_melee_tests`, `partner_driver_tests` (`TestMeleeDriver`), `lab_config_tests`; scenario
+  `melee-partner-play.txt`.
 
 ## Configuration
 
