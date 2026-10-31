@@ -2635,7 +2635,7 @@ void TestHud() {
         hud::PostWorldNote(3, 30020, 4, 30050, 40050);
         hud::PostWorldNote(3, 30020, 3, 40050, 40050);
         hud::PostWorldNote(1, 40010, 0, 0, 40010);
-        hud::PostWorldNote(14, 1, 1, 0, 0);  // reserved (7 since join-fix phase 2 and 13 since M1 have sentences)
+        hud::PostWorldNote(15, 1, 1, 0, 0);  // reserved (7 since join-fix phase 2, 13 since M1, 14 since Travel have sentences)
         hud::Event notes[8]{};
         const unsigned taken = hud::Take(notes, 8, model.cursor());
         Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&
@@ -3094,9 +3094,9 @@ void TestSaveHandoffHud() {
     Check(!text::FormatWorldNote(9, 101, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
               text::FormatWorldNote(9, 100, 0, 0, 0, sentence, sizeof(sentence)) && std::strstr(sentence, "(100%)"),
           "CONTINUE_DURING_HANDOFF needs a percent 0..100");
-    for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{14}, std::uint8_t{15}})
+    for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{15}})
         Check(!text::FormatWorldNote(code, 30010, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
-              "FormatWorldNote: code 13 (and the reserved 14, 15) returns false");
+              "FormatWorldNote: code 13 (and the reserved 15) returns false (14 is Travel since the debug menu Travel)");
     Check(text::FormatWorldNote(11, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(12, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(5, 4294967295u, 4294967295u, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars,
