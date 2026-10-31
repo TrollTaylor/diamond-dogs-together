@@ -1875,7 +1875,7 @@ stay reserved; 0x3B onward are free.
 Op `0x3B` TRAVEL (59), both directions, reliable, **control** queue, level 3, lab and play, never a request; 8 fields,
 24 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 go / 3 bring / 4 answer), `mission` (the target, the caller's mission
 or the answered one), `x`, `y`, `z` (i32 mm; the landing spot or the caller), `yaw` (i32 mdeg, |yaw| <= 360000),
-`reason` (u8; an answer's 0 accepted, 1 travelling, 2 gameplay, 3 on_foot, 4 downed, 5 demo, 6 mission, 7 off). Unlike every
+`reason` (u8; an answer's 0 accepted, 1 travelling, 2 gameplay, 3 on_foot, 4 downed, 5 demo, 6 mission, 7 off, 8 other_area). Unlike every
 other level-3 op after FOLLOW_ACK it does **not** need the pairing: the partner may be in another mission or the
 helicopter. TX and RX need only the link session's HELLO gates (both level 3, copied saves, roles differ), as
 MISSION_TRANSITION; a received TRAVEL survives a local mission start (kept in the control queue like W3 control). A
@@ -1886,7 +1886,10 @@ kind 4, the same `seq` and mission, reason 7 (off) without queueing it for Lua; 
 Lua (`lua/coop/world_goto.lua` "Travel", `W.travel`): ask = a linked guest's Go to (the host leads it and answers);
 go = the host's announced trip with its spot (a paired guest follows through world follow kind 1 and kind 6 and only
 does the landing; a guest elsewhere does its own two hops); bring = the caller's pose (the receiver warps 3 m in front
-of it, or travels to its mission; a receiver with its own Bring outstanding, until answered or 30 s, refuses it with 1
-if it is the host, while a guest yields to the host's); answer = the receiver's verdict (a refusal shows world note 14
-b=5). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World note 14
-TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped}.
+of it; fb1031-on: a caller whose partner reads another mission (CFG r[9], nonzero) does not send it and shows note 14
+b=7, a receiver in another mission answers 8 other_area; a receiver with its own Bring outstanding, until answered or
+30 s, refuses it with 1 if it is the host, while a guest yields to the host's); answer = the receiver's verdict (a
+refusal shows world note 14 b=5, reason 8 b=7). After a landing or a Bring warp the camera turns behind the player
+(`Player.RequestToSetCameraRotation`). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World
+note 14 TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped, 7 another
+area (Bring across missions refused)}.

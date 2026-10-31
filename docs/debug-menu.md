@@ -238,10 +238,13 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   copies cleanly): Afghanistan `828.18 338.20 1630.51` yaw 95 (the rock shelf above the
   road), Africa `-656.01 1.20 877.73` yaw 62 (Masa Village, beside the jeep), Mother Base
   `22.61 1.80 -15.55` yaw 0 (the command platform deck ladder).
-- **Bring partner here** puts the partner 3 m in front of you, facing you. When the
-  partner is in another mission (another free roam, Mother Base or the helicopter), the
-  partner's copy travels to your mission the same way and lands there. The caller must be
-  free to travel itself (`bring_refused;reason=travelling|on_foot|...`). When both players
+- **Bring partner here** puts the partner 3 m in front of you, facing you, its camera
+  behind it. When the partner is in another mission (another free roam, Mother Base or
+  the helicopter) it is refused with "Your partner is in another area: use Go to first."
+  (`bring_refused;reason=other_area`; a partner copy that sees the Bring from another
+  mission answers reason 8 `other_area`, same toast): that path was never run in a game,
+  so nobody is stranded. After every landing the camera turns behind the player
+  (`Player.RequestToSetCameraRotation`). The caller must be free to travel itself (`bring_refused;reason=travelling|on_foot|...`). When both players
   press it at once (or before the first one is answered, 30 s at most), the host's Bring
   wins: the host's copy refuses the guest's (answer 1) and the guest's copy goes to the host.
 - A copy whose own `lab.ini` has Travel off never sends TRAVEL and answers every partner
@@ -249,8 +252,9 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   nothing moves on it.
 - On screen: "Travelling to <place> with your partner." when a trip starts, "Your partner
   brought you to <place>." / "Your partner brought you here." for the moved player,
-  "Bringing your partner to you." for the caller, and "Your partner cannot travel right
-  now (...)" when the partner's copy refuses.
+  "Bringing your partner to you." for the caller, "Your partner cannot travel right
+  now (...)" when the partner's copy refuses and "Your partner is in another area: use
+  Go to first." for a Bring across missions.
 - Refusals (result text): `travel_refused;reason=mission|gameplay|demo|on_foot|downed|travelling`
   (story mission or helicopter, not in gameplay, a cutscene, riding a vehicle or horse or
   carried, downed, a trip already running), `partner_not_linked` (Bring without a partner
