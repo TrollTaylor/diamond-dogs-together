@@ -749,7 +749,8 @@ std::string LastLaunches(const std::string& text, const std::string& marker, int
             // Its first quarter (configuration, the first scenes) and its end (the scene it closed in).
             std::size_t head = launch.rfind('\n', per_launch / 4);
             head = head == std::string::npos ? per_launch / 4 : head + 1;
-            launch = launch.substr(0, head) + LimitTextTail(launch.substr(head), per_launch - head);
+            // The omission line (under 64 characters) counts inside the budget, so 8 cut launches fit 8 budgets.
+            launch = launch.substr(0, head) + LimitTextTail(launch.substr(head), per_launch - head - 64);
         }
         launches.push_back(std::move(launch));
     }

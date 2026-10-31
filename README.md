@@ -84,7 +84,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Won't connect:** both of you need the same version and Steam online, and the game must be started from the launcher. The launcher's **In game** page and the in-game **CO-OP** line say what is wrong.
 - **Different missions:** you only pair in the same Mother Base, free roam or helicopter. If one save always continues into a story mission, use **Tools → Share save** first.
 - **Red "Co-op did NOT start" banner:** you are playing normally on your real save. Quit and start the game from the launcher.
-- **Reporting a bug:** quit the game, use **Tools → Collect logs** on both PCs, and send the zips it puts on the Desktop. Codes and personal IDs are removed. The zip keeps your last 8 game starts, so a session in which you restarted the game is still in it.
+- **Reporting a bug:** quit the game, use **Tools → Collect logs** on both PCs, and send the zips it puts on the Desktop. Codes and personal IDs are removed. The zip keeps up to your last 8 game starts (very long ones are shortened, and short failed starts count too), so collect logs soon after the session.
 
 ## Uninstall
 
