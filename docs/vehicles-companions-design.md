@@ -3899,8 +3899,10 @@ working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a 
   only when the partner sits in seat 1 before the driver boards (8.25's DrawSeat); not run [U]. C2: the reload's stop
   reverted the patch (`reason=stop`) [O]; the 120 s `runtime_enter` waits failed although the host logged it later;
   C3 ended at the worker's session limit (`worker_timeout`, the second `host require` refused).
-- **Open:** a fall-back clear given up after `kFpvClearTries` mid-aim is not retried at the aim end (the bit stays on;
-  theoretical, the clear landed at once in `1bd4419a`); gun 15 for other reasons (reload, weapon switch) not checked.
+- **Review fix** (failing first, then the fix, after the merge): a fall-back clear given up after `kFpvClearTries`
+  mid-aim is cleared again at the aim end and the stop (`Fpv::fell`, dropped once a read shows the bit clear, so a
+  later F tap of the player's own is never cleared); unit tests only (in `1bd4419a` the clear landed at once).
+- **Open:** gun 15 for other reasons (reload, weapon switch, a moving jeep passing an obstacle) not checked.
   Existing, not from these branches: a teardown AV at the close (`crash_probe=av; rva=0xbf421a` after
   `partner_shutdown=hooks_off; teardown=other_thread`) in `8567f888`'s host and `e6ef6e4d`'s guest.
 

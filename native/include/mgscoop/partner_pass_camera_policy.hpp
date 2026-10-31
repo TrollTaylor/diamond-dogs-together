@@ -696,6 +696,7 @@ struct Fpv {
     std::uint8_t aim_falls = 0;    // falls this aim (kFpvFallbacksPerAim)
     std::uint64_t blocked_ms = 0;  // the first tick of the current run of 15 with our bit set (0: none)
     std::uint32_t fallbacks = 0;
+    std::uint32_t fell = 0;        // fall-back clears not yet read clear: cleared again at the aim end and the stop (review)
 };
 struct FpvIn {
     bool want = false;     // the key (or the lab lever) on, the hooks there, nothing latched
@@ -745,18 +746,20 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
     // A pending clear is confirmed by a read that shows the bit clear.
     if (s.pending && in.read_ok) s.pending &= in.toggles & kFpvSlotMask;
     if (!s.pending) s.pending_tries = 0;
+    if (s.fell && in.read_ok) s.fell &= in.toggles & kFpvSlotMask;
     const bool seat_ok = in.want && in.seated && FpvSeat(in.seat);
     if (s.active && (!seat_ok || in.vehicle != s.vehicle || in.seat != s.seat)) {
         // The boarding ends (the get-off, a seat change, the key off): the bits still ours are cleared (unread: all of them)
         // and stay pending until a read shows them clear.
         o.event = FpvEvent::stop;
         o.reason = !in.want ? "off" : !in.seated ? "get_off" : "seat";
-        const std::uint32_t still = (in.read_ok ? (s.ours & in.toggles) : s.ours) & kFpvSlotMask;
+        const std::uint32_t mine = s.ours | s.fell;
+        const std::uint32_t still = (in.read_ok ? (mine & in.toggles) : mine) & kFpvSlotMask;
         if (still) ++s.restores;
         s.pending |= still;
         o.clear = s.pending;
         s.active = s.opt_out = s.aim = false;
-        s.ours = s.seen = 0;
+        s.ours = s.seen = s.fell = 0;
         FpvFallReset(s);
         s.vehicle = kVehicleUnknown;
         s.seat = kSeatUnknown;
@@ -780,9 +783,9 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         s.aim = false;
         s.seen = 0;
         FpvFallReset(s);
-        if (s.ours) {
-            const std::uint32_t still = s.ours & toggles;
-            s.ours = 0;
+        if (s.ours | s.fell) {
+            const std::uint32_t still = (s.ours | s.fell) & toggles;
+            s.ours = s.fell = 0;
             if (still) {
                 s.pending |= still;
                 o.clear = s.pending;
@@ -821,6 +824,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
             s.ours &= ~held;
             s.seen &= ~held;
             s.pending |= held;
+            s.fell |= held;
             s.blocked_ms = 0;
             s.fallback = true;
             s.ref_ok = false;
@@ -860,6 +864,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         s.pending &= ~b;
         if (toggles & b) s.ours |= b;
     }
+    s.fell &= ~b;
     if (!(toggles & b)) {
         o.set = b;
         s.ours |= b;
