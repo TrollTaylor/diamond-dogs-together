@@ -11,6 +11,12 @@ waitgameplay host 120
 waitgameplay guest 120
 waitlog host 'event=paired' 120
 waitlog guest 'event=paired' 120
+# Run 409cb374: the stock Mother Base cutscene (D-Dog, a vehicle cab) plays on both copies right after gameplay and the
+# debug guard refuses every command ('gameplay'); wait it out (waitgameplay skips cutscenes), as mb-soldiers-play.
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
 both debug godmode 1
 wait 4000
 both capture mb-start
