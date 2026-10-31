@@ -1,6 +1,6 @@
-# m6m7g seat first person, lab (design 8.49): the automatic first person (the lab lever passcam seatfpv on, on both
-# copies from the start) in all four seat/role pairs, including the two where the stock F prompt was missing online
-# (host seat 1, guest seat 2: the gate flag f19 / f3c0 in state=fpv_trace); a first-person seat shot aimed at the body
+# m6m7g seat first person, lab (design 8.49): the automatic first person (partner_seat_fpv=1 named, both copies; run 1
+# 61384aab used the lab lever: mode 15 was never set) in all four seat/role pairs, including the two where the stock F
+# prompt was missing online (host seat 1, guest seat 2: the gate flag f19 / f3c0 in state=fpv_trace); a first-person seat shot aimed at the body
 # of a sleeping guard (0.25 m up: does it land? frames +50 / +350 / +650 ms: any pull?); the handgun in first person
 # from seat 1; the player's F tap (opt out); the aim end; get-offs while aiming in first person (the get-off turn, the
 # next aim on foot over the shoulder); seat 3 never set. Wakh Sind jeep 25608, host seed afgh-quiet, guest afgh-horse.
@@ -17,6 +17,7 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7g-seat-fpv-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
 labsetting partner_pass_camera_trace=1
+labsetting partner_seat_fpv=1
 boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
 both debug godmode 1
 both debug infinite_ammo 1
@@ -42,9 +43,6 @@ stance guest stand
 wait 2000
 both capture start
 logmark both
-both debug passcam seatfpv on
-waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=lever; hooks=1' 5
-waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=lever; hooks=1' 5
 # --- 1. The host drives; the guest in seat 1 -----------------------------------------------------------------------
 host debug teleport 577.20 320.2 1157.19 -84
 wait 2500

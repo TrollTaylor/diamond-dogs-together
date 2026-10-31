@@ -7730,6 +7730,27 @@ void FpvSetup(Session& s, bool key) {
 void TestSeatFpvDriver() {
     namespace pb = mgscoop::partner_board;
     {
+        // Design 8.49 [O lab run 61384aab]: from seat 2 the raise (6) goes to the blocked mode 15 and stays there; the bit is
+        // set at 15 (first person unblocks the aim) and cleared at the aim end.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv blocked: armed on the seat-2 boarding");
+        GuardGun(s, 6);
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv blocked: not during the raise");
+        GuardGun(s, 15);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready; set=0x4;") == 1,
+              "fpv blocked: the blocked aim (mode 15) sets the slot's bit");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0,
+              "fpv blocked: the aim end clears it");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0, 100) && g_fpv.toggles == 0, "fpv blocked: the get-off");
+    }
+    {
         // Seat 1, the key on: the slot's bit while aiming, cleared at the aim end; again at the next aim; the get-off
         // while aiming clears it.
         Session s(0);
