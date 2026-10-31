@@ -645,6 +645,9 @@ inline int FpvBit(std::uint8_t slot) noexcept {
 }
 // Seats 1 (front) and 2 (left back); seat 3 aims clear over the shoulder and the driver is stock.
 inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
+// The gun is ready (aimed 7, firing 9 / 10): the raise (6) is done, so its muzzle probe saw the shoulder pose, which first
+// person then keeps (shot.md: GunMuzzleProbeIssue 0x1062A30 skips the pose update with rec+0x3C0 bit 13).
+inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 7 || mode == 9 || mode == 10); }
 enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop };
 inline const char* FpvEventName(FpvEvent e) noexcept {
     switch (e) {
@@ -672,6 +675,7 @@ struct FpvIn {
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
     bool aiming = false;   // GunAims of the local gun
+    bool ready = false;    // the gun is ready (FpvReady: mode 7, 9, 10): the bit is set only then
     bool read_ok = false;  // the subjective module was found
     std::uint32_t toggles = 0;  // impl+0x60
     bool slot_ok = false;
@@ -742,6 +746,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         return o;
     }
     s.seen |= toggles;
+    if (!in.ready) return o;
     const int bit = in.slot_ok ? FpvBit(in.slot) : -1;
     if (bit < 0) return o;
     const std::uint32_t b = 1u << bit;
@@ -750,7 +755,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         s.ours |= b;
         ++s.sets;
         o.event = FpvEvent::set;
-        o.reason = "aim";
+        o.reason = "ready";
     }
     return o;
 }

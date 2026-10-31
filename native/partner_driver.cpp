@@ -3336,6 +3336,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         fi.vehicle = lp.vehicle;
         fi.seat = lp.seat;
         fi.aiming = aiming;
+        fi.ready = aim_ok && pc::FpvReady(aim_read.gun_ok[0], aim_read.gun_state[0]);
         fi.read_ok = fr_ok;
         fi.toggles = fr.subj.toggles;
         fi.slot_ok = fr.slot_ok;
