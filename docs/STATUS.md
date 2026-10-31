@@ -18,6 +18,7 @@ up, getting out in first person returns to the normal camera, and each new aim s
   view and the get-off turn checked `view=1`; every next aim (seat and foot) was over the shoulder; never-lines 0.
 - **Seen, cause [U]:** guards not on the scenario's sleep list (1194, 1195, 1296) started a fight in part 3; in part 4
   the jeep broke on the host (`VehicleBroken`, no seat shot in that part) and burned. Design 8.48.
+- Full `tools/build.ps1` at `3d57f4d`: CTest 336/336; contract `--check` 836 / 213.
 
 ## 2026-10-30: the seat branches integrated, review m6m7f closed (branch `wp/seat-fpv2` with `wp/seat-checks` merged, local only)
 
