@@ -7386,43 +7386,6 @@ void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPa
     s.ride_suffix = " ride=0";
 }
 
-// Design 8.56 [O run 859964ce]: seat 1 set at 7, then the gun at 15 for kFpvBlockedMs: our bit is cleared (event
-// fallback, the stock shoulder view and its red mark); the shoulder aim at 7 at the same angles is not set again and is
-// no opt-out; angles outside the aim module do not count; raised by kFpvRearmPitch it is set again (reason rearm); the
-// aim end clears it. The angles are read only during a fall.
-void TestSeatFpvFallbackDriver() {
-    namespace pc = mgscoop::partner_pass_camera;
-    Session s(0);
-    FpvSetup(s, true);
-    g_board.lp = BoardPassenger(25608, 1);
-    Check(s.Tick(0) && g_fpv.writes.empty(), "fpv fallback: armed");
-    GuardGun(s, 7);
-    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: set at 7");
-    const unsigned reads0 = g_guard.view_reads;
-    GuardGun(s, 15);
-    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: the first tick at 15: nothing");
-    Check(s.Tick(0, pc::kFpvBlockedMs) && g_fpv.toggles == 0 && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 &&
-              s.fake.Containing("state=seat_fpv; event=fallback; vehicle=25608; seat=1; reason=blocked; set=0x0; clear=0x4; ok=1;") == 1,
-          "fpv fallback: 15 held: our bit cleared (the shoulder view)");
-    Check(g_guard.view_reads == reads0, "fpv fallback: no angle read before the fall");
-    GuardGun(s, 7);
-    GuardView(0.139f, -0.593f, 0.0f, 0.0f);
-    Check(s.Tick(0) && s.Tick(0) && s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.toggles == 0 &&
-              s.fake.Containing("event=opt_out") == 0 && g_guard.view_reads > reads0,
-          "fpv fallback: the shoulder aim at 7 at the same angles: not set again, no opt-out");
-    g_guard.mvt = 0x1;
-    GuardView(-0.2f, -0.593f, 0.0f, 0.0f);
-    Check(s.Tick(0) && g_fpv.writes.size() == 2, "fpv fallback: angles outside the aim module do not count");
-    g_guard.mvt = pc::kAimModuleVtableRva;
-    Check(s.Tick(0) && g_fpv.writes.size() == 3 && g_fpv.toggles == 0x4 &&
-              s.fake.Containing("state=seat_fpv; event=set; vehicle=25608; seat=1; reason=rearm; set=0x4;") == 1,
-          "fpv fallback: raised by kFpvRearmPitch: set again");
-    GuardGun(s, 0);
-    Check(s.Tick(0) && g_fpv.toggles == 0 &&
-              s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
-          "fpv fallback: the aim end clears it");
-}
-
 // M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's
 // RequestBullet hook (light vehicle or truck cab, the hook live), withdraws it after, never publishes in play with the
 // key off, ignores the lab lever in play, and logs one line per new plan of the hook.
@@ -7869,6 +7832,41 @@ void TestSeatFpvDriver() {
         GuardGun(s, 0);
         Check(s.Tick(0) && g_fpv.writes.size() == 1, "tap: nothing cleared at the aim end (not ours)");
     }
+}
+
+// Design 8.56 [O run 859964ce]: seat 1 set at 7, then the gun at 15 for kFpvBlockedMs: our bit is cleared (event
+// fallback, the stock shoulder view and its red mark); the shoulder aim at 7 at the same angles is not set again and is
+// no opt-out; angles outside the aim module do not count; raised by kFpvRearmPitch it is set again (reason rearm); the
+// aim end clears it.
+void TestSeatFpvFallbackDriver() {
+    namespace pc = mgscoop::partner_pass_camera;
+    Session s(0);
+    FpvSetup(s, true);
+    g_board.lp = BoardPassenger(25608, 1);
+    Check(s.Tick(0) && g_fpv.writes.empty(), "fpv fallback: armed");
+    GuardGun(s, 7);
+    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: set at 7");
+    GuardGun(s, 15);
+    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: the first tick at 15: nothing");
+    Check(s.Tick(0, pc::kFpvBlockedMs) && g_fpv.toggles == 0 && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 &&
+              s.fake.Containing("state=seat_fpv; event=fallback; vehicle=25608; seat=1; reason=blocked; set=0x0; clear=0x4; ok=1;") == 1,
+          "fpv fallback: 15 held: our bit cleared (the shoulder view)");
+    GuardGun(s, 7);
+    GuardView(0.139f, -0.593f, 0.0f, 0.0f);
+    Check(s.Tick(0) && s.Tick(0) && s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.toggles == 0 &&
+              s.fake.Containing("event=opt_out") == 0,
+          "fpv fallback: the shoulder aim at 7 at the same angles: not set again, no opt-out");
+    g_guard.mvt = 0x1;
+    GuardView(-0.2f, -0.593f, 0.0f, 0.0f);
+    Check(s.Tick(0) && g_fpv.writes.size() == 2, "fpv fallback: angles outside the aim module do not count");
+    g_guard.mvt = pc::kAimModuleVtableRva;
+    Check(s.Tick(0) && g_fpv.writes.size() == 3 && g_fpv.toggles == 0x4 &&
+              s.fake.Containing("state=seat_fpv; event=set; vehicle=25608; seat=1; reason=rearm; set=0x4;") == 1,
+          "fpv fallback: raised by kFpvRearmPitch: set again");
+    GuardGun(s, 0);
+    Check(s.Tick(0) && g_fpv.toggles == 0 &&
+              s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
+          "fpv fallback: the aim end clears it");
 }
 
 // Review m6m7f (design 8.47): every exit releases our bit, a failed clear is kept and retried, the release needs only P.

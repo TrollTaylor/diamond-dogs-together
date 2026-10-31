@@ -3361,6 +3361,26 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         fi.toggles = fr.subj.toggles;
         fi.slot_ok = fr.slot_ok;
         fi.slot = fr.slot;
+        // Design 8.56: the blocked mode 15 (the fall back to the shoulder view) and, only during a fall, the aim camera
+        // module's look angles (the shoulder aim; pitch +0x270, yaw +0x274): the shot guard's read of this tick when it
+        // has one in the aim module, else one read here.
+        fi.blocked = aiming && aim_read.gun_ok[0] && aim_read.gun_state[0] == 15;
+        fi.now_ms = now;
+        if (c.fpv.fallback && aiming && fr_ok) {
+            pc::View fv{};
+            bool fv_ok = false;
+            if (gv_ok && guard_mvt == pc::kAimModuleVtableRva) {
+                fv = gv;
+                fv_ok = true;
+            } else if (h.pass_camera_view && h.pass_camera_mvt && h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva) {
+                fv_ok = h.pass_camera_view(h.context, st, fv) && fv.ok;
+            }
+            if (fv_ok) {
+                fi.ang_ok = true;
+                fi.pitch = fv.ang[2];
+                fi.yaw = fv.ang[3];
+            }
+        }
         const std::uint16_t fpv_vehicle = c.fpv.vehicle;
         const std::uint8_t fpv_seat_was = c.fpv.seat;
         const pc::FpvOut fo = pc::FpvStep(c.fpv, fi);
