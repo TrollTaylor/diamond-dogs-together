@@ -508,6 +508,15 @@ check(#gs.notes == 1 and #gs.deny == 2, 'the deny is refreshed; one toast per 3 
 gs.touts = 1
 gs.S.step(9500)
 check(gs.has('event=seat;action=timeout;vehicle=25608;timeouts=1'), 'a press the host never answered within 1 s is logged')
+-- Review (8.55): a host that went silent after its READY costs one held press, not READY_MS: stock until the next READY.
+check(gs.hold == 0 and gs.has('event=seat;state=stock'), 'a timeout: hold 0, stock until the next READY')
+gs.pseq, gs.press = 3, 25608
+gs.S.step(9700)
+check(#gs.tx == 2, 'stock after a timeout: the next press sends no claim')
+gs.now = 9800
+gs.ready()
+gs.S.step(9900)
+check(gs.hold == 2000, "the host's next READY holds again")
 for _, bad in ipairs({{9, 25608, 0, 2, 3}, {9, 25608, 1, 1, 3}, {9, 25599, 0, 1, 3}, {9, 25608, 0, 1}, {9, 25608, 0, 1, 1}}) do
     gs.W.handlers[54](bad)
 end
@@ -540,6 +549,16 @@ check(sl.hold == 0 and sl.has('event=seat;state=stock'), 'no READY for 12 s: hol
 sl.pseq, sl.press = 1, 25608
 sl.S.step(14000)
 check(#sl.tx == 0, 'stock: a press (none is counted natively without the hold) sends nothing')
+-- Review (8.55): a link dip on the guest only keeps the host's READY (cleared only when unpaired): held again at once.
+local dp = seatEnv(false)
+dp.ready()
+dp.S.step(1000)
+dp.W.eff = 2
+dp.W.tick()
+check(dp.hold == 0, 'a dip: hold 0 while the link is below level 3')
+dp.W.eff = 3
+dp.S.step(1300)
+check(dp.hold == 2000, 'the dip is over: held again without waiting for the next READY')
 -- The board answers off (key off on this copy, or not installed yet).
 local off = seatEnv(false)
 off.on, off.want, off.age = 0, 25608, 10

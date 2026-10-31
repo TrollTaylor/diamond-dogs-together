@@ -987,6 +987,8 @@ void TestPress() {
     Check(!rs.pend && rs.timeouts == 0, "no longer pending");
     g.driver_result = 0;
     Check(pb::detail::SiteBForTest(unit, pos) == 0, "granted: site B seats the driver");
+    pb::ReadRace(rs);
+    Check(rs.commits == 0 && rs.commit == pb::kVehicleUnknown, "a held guest's granted boarding is no commit (role=commit is the host's)");
     g.now = 1600;
     Check(D(0), "a later press: idle again");
     pb::ReadRace(rs);
@@ -1042,6 +1044,16 @@ void TestPress() {
     pb::ReadRace(rs);
     Check(rs.done_seq == 4, "one end per press");
     Policy(pb::Mode::off);
+    // Review (8.55): a held press whose phase 1 is aborted (reload, a hit, the vehicle gone) never reaches site D
+    // again; it is reported pending only while site D saw it within kPressGapMs.
+    g.now = 7000;
+    pb::RaceHold(2000);
+    Check(D(0), "a press: idle");
+    pb::ReadRace(rs);
+    Check(rs.pend, "pending");
+    g.now = 7000 + pb::kPressGapMs + 1;
+    pb::ReadRace(rs);
+    Check(!rs.pend, "phase 1 aborted (site D unseen for kPressGapMs): no longer pending");
     unsigned char empty[0x100]{};
     Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
     pb::RaceHold(0);
