@@ -93,6 +93,18 @@ A.pending = {mission = W.mission, at = now}
 log(fmt("step=local_restart;fn=%s;why=heli", name))
 return kind
 end
+-- Lab probe guest_restart (id 19, lab_config.hpp; lab mode only): the guest's pause-menu Restart as the engine sends
+-- it (UI PauseMenuRestart through TppMission.OnMessage), so it passes the suppression below and the way out.
+local P = W.probe
+if type(P) == "table" and type(P.handlers) == "table" and type(P.NAMES) == "table" then
+P.NAMES[19] = "guest_restart"
+P.handlers.guest_restart = function()
+    local on, s, before = W.get(TppMission, "OnMessage"), W.get(W.api, "str32"), A.pending
+    local ok = W.mode == 1 and not W.host and type(on) == "function" and type(s) == "function"
+    if ok then ok = pcall(on, s("UI"), s("PauseMenuRestart")) and A.pending ~= nil and A.pending ~= before end
+    W.log("event=probe;id=guest_restart;step=done;result=" .. (ok and "ok" or "refused"))
+end
+end
 function F.request(kind, arg)
 local now = W.now()
 if not F.reqAt or now - F.reqAt >= 2000 then
