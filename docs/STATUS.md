@@ -1,3 +1,46 @@
+## 2026-10-31: melee on the other player, run round (`wp/fb1031-on`, local only) -- `partner_melee` stays OFF unless named
+
+**Players get:** nothing new by default: melee on the other player stays off. Two hidden play runs showed the core of
+it working (a CQC strike from about 1 m puts the other player to sleep on their own screen, and the striker sees the
+wake-up prompt), but the host's strike on the guest, a single press after this round's fix, and a combo from a true
+3 m have not run yet. With `lab.ini` `partner_melee=1` on both PCs, one CQC press never puts the other player to
+sleep now; a second press in reach within 2 s does.
+
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, `melee-partner-play.txt` naming
+  `partner_melee=1`; both copies admitted, gameplay at 30010): `9018ae47` (16:57, before admission: C: 133.88 GB,
+  D: 27.88 GB, commit 17.04 GB; nvidia-smi 3708 MiB 9 %; d3dprobe HARDWARE hr=0) and `1526e58a` (17:09, nvidia-smi
+  3915 MiB 13 %, d3dprobe HARDWARE hr=0). Neither was refused.
+- [O] **The strike lands and the stock sleep follows on both copies.** `9018ae47` case c: the guest's 113
+  (`verdict=jab; dist_cm=142; angle_deg=0`), then 114 (`verdict=land; queued=1; dist_cm=84; angle_deg=4`); the host's
+  copy logged `friendly_hit=owner;seq=1;damage_milli=0;cause=2;applied=1;down=1`. Host frame: ASLEEP greyscale, "Your
+  teammate can wake you or carry you"; guest frame: HOLD E WAKE UP. A third strike on the sleeping host logged
+  `verdict=prone` (no second hit). `1526e58a` case j: the same at `dist_cm=110` / `88`, `angle_deg=0` / `2`, the same
+  two frames. Sheets `fb1031-on/frames/melee/best-sheet-9018ae47.jpg` and `best-sheet-1526e58a.jpg`.
+- [O] **The geometry is right; the scenario's placement was wrong.** `placebehind` teleports 3 m up, and the drop
+  carries the placed player about 1.4 m forward. In `9018ae47` the guest placed 1.19 m behind the host landed 21 cm in
+  front of it: the host copy's `partner_body` for the guest (803426, 1637408) and the guest copy's body 1 (803619,
+  1637279) agree with the guest's own `dist_cm=21; angle_deg=175`. So cases j, a and b never stood 1 m apart (the
+  host in b landed 40 cm past the guest), and no hit was right there. The same drift explains last round's `af0b88b6`
+  21 cm: it was not a stale slot. Scenario `01bbeadc` places at 2.5 m (about 1 m; `1526e58a` read 110 cm) and 4.5 m.
+- [O] **One press is 113 then 114.** In `1526e58a` one 120 ms LMB press by the guest, with the host 1.1 m in front,
+  gave 113 for 219 ms and then 114 for 549 ms (the host's `partner_act` census of the remote), and that 114 landed as
+  the "finisher": the host slept from a single press. The run then stopped at the next `stance host stand` (the
+  host was asleep).
+- **Fix (red `b0a4ee52`, green `9dd5dcaa`):** the driver counts presses (one per 113 edge). The 113 and the 114 of
+  one press log `verdict=jab`; the strike of the next press in reach within 2 s lands; strikes inside the 1.5 s
+  repeat window do not start a new pair. Not run in a game yet.
+- **Decision:** not every case is proven, so `partner_melee` stays off unless named in lab and play. There is no README
+  line.
+- **Open [U]:** the host's strike on the guest after a wake; the single press with `9dd5dcaa` (expected: two
+  `verdict=jab` lines and no hit); a combo from a true 3 m (the run-1 "3 m" case started about 1.5 m away after the
+  drop and landed at 84 cm after a jab's step); whether one connecting CQC press should rather knock the other player
+  down, as the stock CQC throw does to a soldier (the coordinator's vanilla-feel decision says no); the striker's
+  punch is still not drawn on the victim's screen.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `01bbeadc` (the scenario fix); at `2e81dc09` (the code head)
+  338/339: `partner_defer_tests` check 185 (a drain-window timing check, untouched here) failed under the parallel
+  load and passes alone; fast 307/307 and `partner_melee_tests` / `partner_driver_tests` / `lab_config_tests` pass at
+  `9dd5dcaa`. `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+
 ## 2026-10-31: rider camera proof round (`wp/integ-fb1031`, local only) -- `partner_ride_follow` stays OFF unless named
 
 **Players get:** nothing new: the rider's camera is as in 0.14.5. The runs found no trailing camera of the kind the
