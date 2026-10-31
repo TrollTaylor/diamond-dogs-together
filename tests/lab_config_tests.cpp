@@ -648,8 +648,8 @@ int main() {
             Check(!late.partner_seat_fpv && late.invalid_values == 1, "an invalid seat first person value after a valid 1 turns it off");
         }
     }
-    // Follow carry (partner_ride_follow, design 8.59): follows the gun profile in lab and play (off without a
-    // profile); a named 1 runs in lab and play; a named 0 opts out; an invalid value is named and off, also after a valid 1.
+    // Follow carry (partner_ride_follow, design 8.59): off unless named in lab and play until a hidden run
+    // proves it (the gun profile does not turn it on); a named 1 runs in lab and play; a named 0 stays off; an invalid value is named and off, also after a valid 1.
     {
         Check(!LabConfig{}.partner_ride_follow && !LabConfig{}.partner_ride_follow_given && !Lab("").partner_ride_follow, "follow carry defaults off");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
@@ -660,9 +660,9 @@ int main() {
             const auto bare = Lab(noprofile + mode);
             Check(!bare.partner_ride_follow && !bare.partner_ride_follow_given, "follow carry stays off without the gun profile");
             const auto profile = Lab(gun + mode);
-            Check(profile.partner_ride_follow && !profile.partner_ride_follow_given && profile.invalid_values == 0 &&
+            Check(!profile.partner_ride_follow && !profile.partner_ride_follow_given && profile.invalid_values == 0 &&
                       profile.play_refused == 0,
-                  "the gun profile turns follow carry on in lab and play (not named)");
+                  "the gun profile leaves the follow carry off in lab and play (not named; not run-proven)");
             const auto named = Lab(gun + mode + "partner_ride_follow=1\n");
             Check(named.partner_ride_follow && named.partner_ride_follow_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0,
