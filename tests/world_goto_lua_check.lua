@@ -60,4 +60,9 @@ c=setup();vars.missionCode=30050;c.arm(1,0);c.ready=true;c.tick(29999);check(c.c
 c.tick(30000);check(c.W.gt==nil and c.ack==0,"expired readback cannot ACK newer native request")
 c=setup();c.W.cfg=nil;c.arm(2,0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
 check(c.calls==2,"legacy metadata-less fixture behavior preserved before deadline")
+-- fb1031 arrival: step 2 into Mother Base selects the Command platform 1 approach route (f30050 DROP_ROUTE_USE_SORTIE_DEMO).
+c=setup();local routes={};c.W.api.str32=function(s)routes[#routes+1]=s;return 23 end
+TppMission.SelectNextMissionHeliStartRoute=function(m,r)c.calls=c.calls+1;c.next,c.route=m,r end
+c.W.handlers[1]({2,30050,0},0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
+check(c.next==30050 and c.route==23 and routes[1]=="ly003_cl00_30050_heli0000|cl00pl0_mb_fndt_plnt_heli_30050|rt_apr","MB step 2 route")
 print("world_goto_lua_check: "..count.." checks passed")

@@ -311,7 +311,9 @@ void Triggers() {
     Check(!Trigger("", t, canonical, reason) && reason == "empty", "empty");
     Check(!Trigger(" \r\n", t, canonical, reason) && reason == "empty", "blank");
     Check(!Trigger("world=4", t, canonical, reason) && reason == "token", "world 0..3");
-    Check(!Trigger("goto=30050", t, canonical, reason) && reason == "token", "goto targets");
+    // fb1031 arrival: Mother Base is a lab goto target (the guest follows the host's ACC sortie back in by helicopter).
+    Check(Trigger("goto=30050", t, canonical, reason) && t.goto_target == 30050 && canonical == "goto=30050", "goto 30050");
+    Check(!Trigger("goto=30030", t, canonical, reason) && reason == "token", "goto targets");
     Check(!Trigger("world_probe=none", t, canonical, reason) && reason == "token", "none is spelled off");
     Check(!Trigger("world_probe=p2", t, canonical, reason) && reason == "token", "unknown probe");
     Check(!Trigger("stage=3", t, canonical, reason) && reason == "token", "partner keys are not world keys");
