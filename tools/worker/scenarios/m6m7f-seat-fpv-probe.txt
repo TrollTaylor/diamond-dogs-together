@@ -140,7 +140,7 @@ guest hold rmb 1500 nowait
 wait 900
 guest capture a1-aim
 host capture a1-aim-drv
-waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=aim;' 3
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
 guest press lmb 120
 guest hold rmb 1500 nowait
 wait 50
@@ -272,7 +272,7 @@ host hold rmb 1500 nowait
 wait 900
 host capture b2-aim
 guest capture b2-aim-drv
-waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=aim;' 3
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready;' 3
 host press lmb 120
 host hold rmb 1500 nowait
 wait 50

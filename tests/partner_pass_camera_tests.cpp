@@ -1081,6 +1081,7 @@ pc::FpvIn FIn(bool aiming, std::uint32_t toggles, std::uint8_t seat = 1, std::ui
     in.vehicle = 25608;
     in.seat = seat;
     in.aiming = aiming;
+    in.ready = aiming;
     in.read_ok = true;
     in.toggles = toggles;
     in.slot_ok = true;
@@ -1117,10 +1118,15 @@ void TestFpvStep() {
           "seat 1 boarding: armed, nothing written outside an aim");
     o = pc::FpvStep(s, FIn(false, 0));
     Check(o.event == pc::FpvEvent::none && o.set == 0, "seated, not aiming: nothing");
-    // The aim: the slot's bit (slot 2 -> bit 2).
+    // The raise (gun mode 6): not yet; the muzzle probe takes the shoulder pose first (shot.md: frozen in first person).
+    pc::FpvIn raise = FIn(true, 0);
+    raise.ready = false;
+    o = pc::FpvStep(s, raise);
+    Check(o.event == pc::FpvEvent::none && o.set == 0 && s.ours == 0 && s.aims == 1, "the raise: nothing set yet");
+    // Ready (mode 7): the slot's bit (slot 2 -> bit 2).
     o = pc::FpvStep(s, FIn(true, 0));
-    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && o.clear == 0 && s.ours == 0x4 && s.sets == 1 && s.aims == 1 && Same(o.reason, "aim"),
-          "an aim from seat 1 sets the slot's toggle bit");
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && o.clear == 0 && s.ours == 0x4 && s.sets == 1 && s.aims == 1 && Same(o.reason, "ready"),
+          "an aim from seat 1 sets the slot's toggle bit once the gun is ready");
     o = pc::FpvStep(s, FIn(true, 0x4));
     Check(o.event == pc::FpvEvent::none && o.set == 0, "set and held: nothing more");
     // The aim ends: our bit cleared.

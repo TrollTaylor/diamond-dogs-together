@@ -7731,11 +7731,13 @@ void TestSeatFpvDriver() {
                   s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1; reason=seat;") == 1,
               "fpv: armed on the seat-1 boarding, nothing written");
         GuardGun(s, 6);
-        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
-                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=aim; set=0x4;") == 1,
-              "fpv: the aim sets the slot's bit");
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv: not during the raise (gun mode 6)");
         GuardGun(s, 7);
-        Check(s.Tick(0) && g_fpv.writes.size() == 1, "fpv: held");
+        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready; set=0x4;") == 1,
+              "fpv: the ready aim (mode 7) sets the slot's bit");
+        GuardGun(s, 9);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1, "fpv: held while firing");
         GuardGun(s, 0);
         Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0 &&
                   s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
