@@ -67,6 +67,7 @@ volatile LONG g_race_tried = 0;
 const char* g_race_refusal = nullptr;
 void* g_stub_c = nullptr;
 detail::PrequeryFn g_prequery = nullptr;
+detail::GateFn g_gate = nullptr;
 std::atomic<std::uint32_t> g_calls[2]{}, g_block[2]{}, g_steer[2]{}, g_faults{0};
 std::atomic<std::uint32_t> g_last_seat[2]{};
 std::atomic<std::uint32_t> g_last_vehicle{kVehicleUnknown}, g_last_type{0xFF}, g_last_count{0xFF};
@@ -421,6 +422,8 @@ void BindPrequeryForTest(PrequeryFn prequery) noexcept { g_prequery = prequery; 
 bool SiteCForTest(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept {
     return SiteC(action, body, unit, id, seat);
 }
+void BindGateForTest(GateFn gate) noexcept { g_gate = gate; }
+bool SiteDForTest(void* action, std::uint32_t index) noexcept { return g_gate ? g_gate(action, index) : false; }
 void ResetForTest() noexcept {
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
@@ -622,6 +625,7 @@ const char* InstallRace() noexcept {
     return nullptr;
 }
 void SetRace(bool on) noexcept { g_race.store(on, std::memory_order_release); }
+bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept { (void)vehicle; (void)ms; return false; }
 bool LiveRace() noexcept { return g_race.load(std::memory_order_acquire); }
 namespace {
 // One vehicle for ms (capped), or cleared (kVehicleUnknown) for a non-vehicle id or 0 ms.

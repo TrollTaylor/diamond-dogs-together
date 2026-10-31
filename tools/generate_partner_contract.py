@@ -876,6 +876,13 @@ BOARD_SITES = [
      'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
     (0x1245847, '4c8ba424400100004d8bf04c8be941c6042404',
      'the pre-query 0x1245820: r12 = its 5th argument (the seat pointer, [rsp+0x140]); *seat = 4 first (the refusal site C returns)'),
+    # E press only (design 8.55, partner_ride_race): site D, phase 1's per-frame update calls the remote gate 0x114DB20
+    # (action, index) at 0x1251366 before the record checks, site B and TryToRide; true returns (the stock idle).
+    (0x1251361, '8bd6488bcfe8b5c7efff84c00f85a6050000440fb78384000000bdffff000066443bc50f848f050000807b5a00',
+     'board site D: phase 1 event 0 calls the remote gate 0x114DB20(action, index) at 0x1251366; true -> 0x1251919 '
+     '(return); record +0x84 == 0xFFFF returns; +0x5a == 0 -> the seat search (site B)'),
+    (0x1251229, '488b4138488bf98bca2b4824488b47084d8bf1488d1cc9488b4878418be84c8ba13802000048c1e3068bf248035f78',
+     'phase 1: the record = *(action+0x78) + (index - *(*(action+0x38)+0x24)) * 0x240 (rbx)'),
 ]
 SITES += BOARD_SITES
 # --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
@@ -2585,6 +2592,9 @@ def board_assertions():
     need(a_refs == [0x12458AC, 0x124B39B], f'0x124B3A0 reached only from site A and the 0x124B360 tail jmp: {[hex(x) for x in a_refs]}')
     need(b_refs == [0x1251479], f'0x124B360 called only from site B: {[hex(x) for x in b_refs]}')
     need(q_refs == [0x1246A4F], f'the pre-query 0x1245820 called only by RideVehicle CanExec at 0x1246A4F: {[hex(x) for x in q_refs]}')
+    need(rd(0x1251366, 1) == b'\xe8' and call_target(0x1251366) == 0x114DB20 and
+         struct.unpack('<I', rd(0x1251367, 4))[0] == 0xFFEFC7B5, 'board site D: E8 rel32 0xFFEFC7B5 -> 0x114DB20')
+    need((0x1251367 & 63) + 4 <= 64, 'board site D patch dword inside one cache line')
     need(call_target(0x1245887) == 0xA27CC0 and call_target(0x124B370) == 0xA27CC0, 'both searches bound last with the seat count 0xA27CC0')
     need(call_target(0x125148D) == 0x55E7F0, 'phase 1 reads GetVehicleType 0x55E7F0 right after site B')
     need(call_target(0x1251851) == 0xCB9470, 'phase 1 registers the seat through TryToRide 0xCB9470')
@@ -2594,7 +2604,7 @@ def board_assertions():
     # Each site lies in one runtime function; no branch (rel32 anywhere, or rel8/rel32 inside that function's
     # linear sweep) lands inside a patched rel32 operand.
     funcs = runtime_functions()
-    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E)):
+    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E), (0x1251366, 0x1251367, 0x125136B)):
         owner = [f for f in funcs if f[0] <= site < f[1]]
         need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
         local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
@@ -3604,12 +3614,22 @@ w('// M6 review R1/R2 (seat races, partner_ride_race only): site C, RideVehicle 
 w('// 0x1245820(action, body, unit, id, char* seat) -> bool at 0x1246a4f; false: CanExec false (no ride icon).')
 w('inline constexpr std::uintptr_t board_c_site=0x1246a4f, board_c_next_ip=0x1246a54, board_c_block_rva=0x1246a3f, board_prequery_rva=0x1245820;')
 w('inline constexpr std::uint32_t board_c_rel32_orig=0xffffedcc;  // -> 0x1245820')
+w('// E press only (design 8.55): site D, phase 1 0x1251200 (event 0, the update after an E press started the ride')
+w('// action) calls the remote gate 0x114DB20(action, index) -> bool at 0x1251366; true: phase 1 returns this frame (the')
+w('// stock idle, before the record checks, site B and TryToRide). The wrapper reads the local index')
+w('// *(*(action+8)+0x138)+0x218 and the record *(action+0x78) + (index - *(*(action+0x38)+0x24)) * 0x240: u16 +0x84')
+w('// the vehicle (0xFFFF none), u8 +0x5a the seat searched.')
+w('inline constexpr std::uintptr_t board_d_site=0x1251366, board_d_next_ip=0x125136b, board_d_block_rva=0x1251361, board_gate_rva=0x114db20;')
+w('inline constexpr std::uint32_t board_d_rel32_orig=0xffefc7b5;  // -> 0x114db20')
+w('inline constexpr std::size_t board_act_owner=0x8, board_owner_player=0x138, board_player_index=0x218, board_act_table=0x38,')
+w('    board_table_first=0x24, board_act_records=0x78, board_record_size=0x240, board_rec_vehicle=0x84, board_rec_searched=0x5a;')
 w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
 w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
 w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')
 w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
 w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
-w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
+w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) +
+  ',0x114db20,0x114db6a};  // + the remote gate site D calls (pinned as EVADE\'s gate A)')
 w('// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the phase-1 dwords site B sets to `cmp al,1` for a steered')
 w('// seat 1 only (0x1251834: TryToRide gets seat 1; 0x1251894: the passenger phase 2), and the seat matrix 0xB799C0\'s')
 w('// seat-1 remap dword (0xB79A40: `cmp dil,1; jne` -> `jmp`, so a player in rider[1] is drawn at seat 1).')

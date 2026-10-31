@@ -68,6 +68,10 @@ bool LiveRace() noexcept;
 void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept;
 void RaceGrant(std::uint16_t vehicle, std::uint32_t ms) noexcept;
 void RaceHold(std::uint32_t ms) noexcept;
+// E press only (design 8.55; partner_board_policy.hpp PressDecide): the host's arbiter. Under the lock its site B
+// takes for its own press: false while the host's press owns the vehicle (kHostCommitMs); else the vehicle is yielded
+// (RaceDeny(vehicle, ms): the host's site B and site C refuse it) and true.
+bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept;
 struct RaceState {
     bool on;
     std::uint16_t want;           // the last vehicle the pre-query answered as the driver's (0xFFFF none)
@@ -86,6 +90,16 @@ struct RaceState {
     // prompt of the vehicle the partner sits in). While it is fresh Lua withholds the Fulton action (S.guard).
     std::uint16_t guard;
     std::uint32_t guard_age_ms;
+    // E press only: site D's last press (its vehicle, 0xFFFF none; how long ago it started), the press count (Lua
+    // claims each new one), whether it is still held, and the presses that ran out without an answer.
+    std::uint16_t press;
+    std::uint32_t press_age_ms;
+    std::uint32_t pseq;
+    bool pend;
+    std::uint32_t timeouts;
+    // The host's own press commit (site B) while live (0xFFFF none).
+    std::uint16_t commit;
+    std::uint32_t commit_left_ms;
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;
@@ -142,6 +156,10 @@ std::uint8_t SiteBForTest(void* unit, const float* pos) noexcept;
 using PrequeryFn = bool (*)(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat);
 void BindPrequeryForTest(PrequeryFn prequery) noexcept;
 bool SiteCForTest(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept;
+// E press only: the remote gate 0x114DB20(action, index) bound without an install; site D called directly.
+using GateFn = bool (*)(void* action, std::uint32_t index);
+void BindGateForTest(GateFn gate) noexcept;
+bool SiteDForTest(void* action, std::uint32_t index) noexcept;
 void ResetForTest() noexcept;
 } // namespace detail
 

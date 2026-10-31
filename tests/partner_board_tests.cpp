@@ -273,7 +273,7 @@ bool Logged(const char* part) {
 }
 
 void TestVerifyAndInstall() {
-    Check(sizeof(c::board_blocks) / sizeof(c::board_blocks[0]) == 20, "20 board blocks are pinned");
+    Check(sizeof(c::board_blocks) / sizeof(c::board_blocks[0]) == 24, "24 board blocks are pinned (8.55: site D, the record, the gate)");
     Check(c::board_a_site == 0x12458ac && c::board_a_next_ip == 0x12458b1 && c::board_a_rel32_orig == 0x00005aefu &&
               c::board_b_site == 0x1251479 && c::board_b_next_ip == 0x125147e && c::board_b_rel32_orig == 0xffff9ee2u,
           "the two sites and their original rel32");
@@ -802,15 +802,18 @@ void TestRace() {
     pb::ReadRace(rs);
     Check(rs.hits == 2, "site B's deny counted");
     Check(rs.guard == 25608, "a pass and site B's backstop leave the last site C refusal (the prompt is site C's)");
-    // The guest's hold (review R1): no driver's seat of an empty vehicle without the host's grant.
+    // The guest's hold (review R1), E press only (8.55): standing at the door never refuses the ride icon; site B
+    // still never seats the guest as the driver of the wanted vehicle without the host's grant (the backstop).
     pb::RaceDeny(pb::kVehicleUnknown, 0);
     pb::RaceHold(2000);
     pb::ReadRace(rs);
     Check(rs.hold && rs.hold_left_ms == 2000, "the hold lease");
-    Check(!C(unit), "held: no ride icon for an ungranted vehicle");
+    g.now = 1310;
+    Check(C(unit) && seat == 0, "E press only: held, the ride icon of an ungranted vehicle still shows (no claim without E)");
     pb::ReadRace(rs);
-    Check(rs.holds == 1 && rs.want == 25608 && rs.hits == 2, "a hold is counted apart from the deny; the want is recorded");
-    Check(rs.guard == 25608 && rs.guard_age_ms == 0, "a hold refusal is a refusal too (the guest's Fulton is withheld)");
+    Check(rs.holds == 0 && rs.want == 25608 && rs.hits == 2, "nothing refused or counted; the want is recorded");
+    Check(rs.guard == 25608 && rs.guard_age_ms == 10, "no new Fulton guard mark for a held icon (only a refusal marks it)");
+    g.now = 1300;
     g.driver_result = 0;
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "held: phase 1 never seats the guest as the driver of the wanted vehicle");
     Check(pb::detail::SiteBForTest(other, pos) == 0, "site B holds only the vehicle site C saw (no want for it: stock)");
@@ -823,7 +826,7 @@ void TestRace() {
     pb::ReadRace(rs);
     Check(rs.grant == pb::kVehicleUnknown && rs.deny == 25608, "a deny for the granted vehicle withdraws the grant");
     pb::RaceDeny(pb::kVehicleUnknown, 0);
-    Check(!C(unit), "held again");
+    Check(C(unit), "held again: the icon still shows");
     g.now = 3301;
     Check(C(unit), "the hold lease ran out: stock (a silent copy never holds the guest for good)");
     pb::RaceHold(2000);
@@ -870,6 +873,192 @@ void TestRace() {
     pb::RaceGrant(0x2003, 1000);
     pb::ReadRace(rs);
     Check(rs.deny == pb::kVehicleUnknown && rs.grant == pb::kVehicleUnknown, "a non-vehicle id is never denied or granted");
+    pb::detail::ResetForTest();
+}
+
+// E press only (design 8.55): site D keeps the guest's E press in phase 1 until the host answered (at most 1 s); the
+// host's own press commits at site B under the lock grant_if takes.
+struct FakeAction {
+    unsigned char action[0x100]{};
+    unsigned char owner[0x200]{};
+    unsigned char player[0x300]{};
+    unsigned char table[0x40]{};
+    unsigned char records[0x240 * 4]{};
+    std::int32_t first = 0;
+    FakeAction(std::uint32_t local, std::int32_t first_index) : first(first_index) {
+        void* p = owner;
+        std::memcpy(action + c::board_act_owner, &p, 8);
+        p = player;
+        std::memcpy(owner + c::board_owner_player, &p, 8);
+        std::memcpy(player + c::board_player_index, &local, 4);
+        p = table;
+        std::memcpy(action + c::board_act_table, &p, 8);
+        std::memcpy(table + c::board_table_first, &first, 4);
+        p = records;
+        std::memcpy(action + c::board_act_records, &p, 8);
+        for (std::uint32_t i = 0; i < 4; ++i) Set(first + i, 0xFFFF, 0);
+    }
+    void Set(std::uint32_t index, std::uint16_t vehicle, std::uint8_t searched) {
+        unsigned char* r = records + (index - first) * c::board_record_size;
+        std::memcpy(r + c::board_rec_vehicle, &vehicle, 2);
+        r[c::board_rec_searched] = searched;
+    }
+};
+struct GateFake {
+    unsigned calls = 0;
+    bool result = false;
+} gf;
+bool FakeGate(void*, std::uint32_t) { ++gf.calls; SetLastError(77); return gf.result; }
+void TestPress() {
+    Check(c::board_d_site == 0x1251366 && c::board_d_next_ip == 0x125136b && c::board_d_rel32_orig == 0xffefc7b5u &&
+              static_cast<std::uint32_t>(c::board_d_next_ip + c::board_d_rel32_orig) == c::board_gate_rva && c::board_d_block_rva == 0x1251361,
+          "site D: phase 1's call of the remote gate 0x114DB20");
+    Check(c::board_act_owner == 8 && c::board_owner_player == 0x138 && c::board_player_index == 0x218 && c::board_act_table == 0x38 &&
+              c::board_table_first == 0x24 && c::board_act_records == 0x78 && c::board_record_size == 0x240 && c::board_rec_vehicle == 0x84 &&
+              c::board_rec_searched == 0x5a, "the record offsets phase 1 uses");
+    // The pure verdict.
+    pb::PressIn in{};
+    in.hold = true; in.local = true; in.vehicle = 25608; in.now_ms = 1000;
+    Check(pb::PressDecide(in) == pb::PressVerdict::start, "a held guest's press on an empty vehicle: a new press (idle, claim it)");
+    pb::PressIn x = in; x.hold = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no hold (the host, no READY, 0.14.4, key off): stock");
+    x = in; x.local = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "another player's record: stock");
+    x = in; x.searched = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "a seat already searched: stock");
+    x = in; x.vehicle = pb::kVehicleUnknown;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no vehicle yet: stock");
+    x = in; x.vehicle = 0x2003;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "not a TppVehicle2 (a horse, a walker): stock");
+    x = in; x.peer_drives = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "the partner drives it: no wait (the passenger policy decides)");
+    x = in; x.denied = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::stock, "a live deny before the press: no claim (site B refuses a driver's seat)");
+    in.open = true; in.pend_vehicle = 25608; in.pend_start = 1000; in.pend_seen = 1000; in.now_ms = 1016;
+    Check(pb::PressDecide(in) == pb::PressVerdict::wait, "the next frame of that press: idle");
+    x = in; x.granted = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "a grant: go on");
+    x = in; x.denied = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "a deny: go on (site B's no-seat exit)");
+    x = in; x.now_ms = 1000 + pb::kPressWaitMs;
+    x.pend_seen = x.now_ms - 16;
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "no answer for 1 s: go on (site B's no-seat exit)");
+    x = in; x.now_ms = 1000 + pb::kPressGapMs + 1;
+    Check(pb::PressDecide(x) == pb::PressVerdict::start, "a press unseen for 250 ms ended (another action ended it): the next is new");
+    x = in; x.vehicle = 25609;
+    Check(pb::PressDecide(x) == pb::PressVerdict::start, "another vehicle: a new press");
+    // Site D with bound fakes.
+    unsigned char unit[0x80]{};
+    const std::uint16_t index8 = 8;  // 25608
+    std::memcpy(unit + pb::kUnitIndex, &index8, 2);
+    const float pos[4]{1, 2, 3, 0};
+    Bind();
+    gf = GateFake{};
+    pb::detail::BindGateForTest(&FakeGate);
+    FakeAction fa(0, 0);
+    fa.Set(0, 25608, 0);
+    fa.Set(1, 25608, 0);
+    const auto D = [&](std::uint32_t index) { return pb::detail::SiteDForTest(fa.action, index); };
+    pb::RaceState rs{};
+    g.now = 1000;
+    Check(!D(0) && gf.calls == 1, "race off: the stock gate");
+    pb::SetRace(true);
+    Check(!D(0) && gf.calls == 2, "race on, no hold (the host): the stock gate");
+    pb::ReadRace(rs);
+    Check(rs.pseq == 0 && rs.press == pb::kVehicleUnknown && !rs.pend, "no press recorded");
+    pb::RaceHold(2000);
+    SetLastError(0x3333);
+    Check(D(0) && gf.calls == 3, "a held guest's E press: phase 1 idles this frame");
+    Check(GetLastError() == 77, "the gate's own last error is kept");
+    pb::ReadRace(rs);
+    Check(rs.pseq == 1 && rs.press == 25608 && rs.pend && rs.press_age_ms == 0, "the press is counted (Lua claims it)");
+    g.now = 1016;
+    Check(D(0), "the next frame: still idle");
+    pb::ReadRace(rs);
+    Check(rs.pseq == 1 && rs.press_age_ms == 16, "one press, not one per frame");
+    Check(!D(1), "the partner's record (index 1): stock");
+    gf.result = true;
+    Check(D(0), "the stock gate's own true is kept");
+    gf.result = false;
+    pb::RaceGrant(25608, 3000);
+    g.now = 1200;
+    Check(!D(0), "the host's grant: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.timeouts == 0, "no longer pending");
+    g.driver_result = 0;
+    Check(pb::detail::SiteBForTest(unit, pos) == 0, "granted: site B seats the driver");
+    g.now = 1600;
+    Check(D(0), "a later press: idle again");
+    pb::ReadRace(rs);
+    Check(rs.pseq == 2 && rs.grant == pb::kVehicleUnknown, "counted; a grant from before the press is withdrawn (single use)");
+    pb::RaceDeny(25608, 3000);
+    g.now = 1700;
+    Check(!D(0), "the host's deny: phase 1 goes on");
+    const std::uint32_t hits = (pb::ReadRace(rs), rs.hits);
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: site B's no-seat exit (the guest stays on foot)");
+    pb::ReadRace(rs);
+    Check(rs.hits == hits + 1, "the deny refusal is counted");
+    pb::RaceDeny(pb::kVehicleUnknown, 0);
+    g.now = 2500;
+    Check(D(0), "another press");
+    for (std::uint32_t t = 2700; t < 3500; t += 200) {
+        g.now = t;
+        pb::RaceHold(2000);
+        Check(D(0), "no answer yet: idle");
+    }
+    g.now = 3500;
+    Check(!D(0), "no answer for 1 s: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(rs.pseq == 3 && rs.timeouts == 1 && !rs.pend, "the timeout is counted");
+    const std::uint32_t holds = rs.holds;
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "timed out: site B's no-seat exit (never stock: no two drivers)");
+    pb::ReadRace(rs);
+    Check(rs.holds == holds + 1, "counted as a hold refusal");
+    g.now = 5000;
+    pb::RaceHold(2000);
+    fa.Set(0, 25608, 1);
+    Check(!D(0), "a seat already searched: stock");
+    fa.Set(0, 0xFFFF, 0);
+    Check(!D(0), "no vehicle: stock");
+    fa.Set(0, 25608, 0);
+    Policy(pb::Mode::passenger, 25608, 0, 9000);
+    Check(!D(0), "the partner drives it: no wait");
+    Policy(pb::Mode::off);
+    pb::ReadRace(rs);
+    Check(rs.pseq == 3, "none of them is a press");
+    unsigned char empty[0x100]{};
+    Check(!pb::detail::SiteDForTest(empty, 0), "an unreadable action: stock");
+    pb::RaceHold(0);
+    Check(!D(0), "hold 0: stock");
+    pb::detail::ResetForTest();
+}
+// The host's arbiter: its own press (site B) and a guest claim (grant_if) under one lock; exactly one owns the vehicle.
+void TestArbiter() {
+    unsigned char unit[0x80]{};
+    const std::uint16_t index8 = 8;  // 25608
+    std::memcpy(unit + pb::kUnitIndex, &index8, 2);
+    const float pos[4]{1, 2, 3, 0};
+    Bind();
+    pb::SetRace(true);
+    pb::RaceState rs{};
+    g.now = 1000;
+    g.driver_result = 0;
+    Check(pb::detail::SiteBForTest(unit, pos) == 0, "the host's E press boards at once (never waits)");
+    pb::ReadRace(rs);
+    Check(rs.commit == 25608 && rs.commit_left_ms == pb::kHostCommitMs, "the host's press owns the vehicle for 3 s");
+    Check(!pb::RaceGrantIf(25608, 3000), "a guest claim after the host's press: refused (the host pressed first)");
+    pb::ReadRace(rs);
+    Check(rs.deny == pb::kVehicleUnknown, "refused: nothing yielded");
+    Check(pb::RaceGrantIf(25609, 3000), "another vehicle: granted");
+    pb::ReadRace(rs);
+    Check(rs.deny == 25609 && rs.deny_left_ms == 3000, "and yielded (the host's own deny)");
+    g.now = 1000 + pb::kHostCommitMs + 1;
+    Check(pb::RaceGrantIf(25608, 3000), "the host's press lapsed: granted");
+    pb::ReadRace(rs);
+    const std::uint32_t hits = rs.hits;
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "the host's press on a yielded vehicle: the no-seat exit");
+    pb::ReadRace(rs);
+    Check(rs.hits == hits + 1 && rs.commit == pb::kVehicleUnknown, "counted (the a=7 toast); no commit");
     pb::detail::ResetForTest();
 }
 
@@ -967,6 +1156,13 @@ void TestRaceInstall() {
         Check(pb::InstallRace() == nullptr && pb::LiveRace() && img.Rel(c::board_c_site) != c::board_c_rel32_orig &&
                   img.base[c::board_c_site] == 0xE8 && pb::PatchLive(img.base), "the race retargets site C, live");
         Check(Logged("partner_board=race; result=ok; c=0x1246a4f;"), "the race line");
+        Check(img.Rel(c::board_d_site) != c::board_d_rel32_orig && img.base[c::board_d_site] == 0xE8 &&
+                  Logged("; d=0x1251366;"), "E press only: the race retargets site D too");
+        const std::uint32_t saved_d = img.Rel(c::board_d_site);
+        img.base[c::board_d_site + 2] ^= 1;
+        Check(!pb::PatchLive(img.base), "a changed site D is not live");
+        std::memcpy(img.base + c::board_d_site + 1, &saved_d, 4);
+        Check(pb::PatchLive(img.base), "live again");
         Check(pb::InstallRace() == nullptr, "a second race install is a no-op");
         const std::uint32_t saved = img.Rel(c::board_c_site);
         img.base[c::board_c_site + 1] ^= 1;
@@ -983,6 +1179,22 @@ void TestRaceInstall() {
         std::memcpy(img.base + c::board_c_site + 1, &foreign, 4);
         Check(Same(pb::InstallRace(), "c_bytes") && !pb::LiveRace() && pb::PatchLive(img.base) &&
                   Logged("partner_board=race; result=refused; reason=c_bytes;"), "a foreign site C: no race, the board stays");
+        pb::detail::ResetForTest();
+    }
+    {
+        pb::detail::ResetForTest();
+        g_lines.clear();
+        Image img;
+        std::uintptr_t mismatch = 0;
+        img.base[c::board_d_site + 3] ^= 0x10;
+        Check(pb::detail::VerifyImage(img.base, img.span, mismatch) == nullptr, "the site D rel32 operand is masked");
+        img.base[c::board_d_site + 3] ^= 0x10;
+        const std::uint32_t foreign = c::board_d_rel32_orig + 0x10;
+        Check(pb::Install(img.base, img.span, &FakeNow, &Log) == nullptr, "installed");
+        std::memcpy(img.base + c::board_d_site + 1, &foreign, 4);
+        Check(Same(pb::InstallRace(), "d_bytes") && !pb::LiveRace() && img.Rel(c::board_c_site) == c::board_c_rel32_orig &&
+                  pb::PatchLive(img.base) && Logged("partner_board=race; result=refused; reason=d_bytes;"),
+              "a foreign site D: no race, site C back to the stock call, the board stays");
         pb::detail::ResetForTest();
     }
 }
@@ -1026,6 +1238,15 @@ void TestSeatRequest() {
     Check(r.cmd == pb::SeatCmd::hold && r.ms == 2000 && r.vehicle == pb::kVehicleUnknown, "hold <ms>");
     r = Req("hold 0");
     Check(r.cmd == pb::SeatCmd::hold && r.ms == 0, "hold 0 clears");
+    r = Req("grant_if 25608 3000");
+    Check(r.cmd == pb::SeatCmd::grant_if && r.vehicle == 25608 && r.ms == 3000, "grant_if <vehicle> <ms> (the host's arbiter)");
+    for (const char* b : {"grant_if", "grant_if 25608", "grant_if 25599 100", "grant_if 25608 0", "grant_if 25608 5001",
+                          "grant_if  25608 100", "grant_if 25608 100 ", "grant_ifx 25608 100"}) {
+        if (Req(b).cmd != pb::SeatCmd::bad) {
+            std::fprintf(stderr, "accepted: '%s'\n", b);
+            Check(false, "a malformed grant_if is refused");
+        }
+    }
     const char* bad[] = {"", "pol", "polls", "poll ", " poll", "clear 1", "deny", "deny 25608", "deny 25608 ", "deny 25608 3000 ",
                          "deny 25608 3000x", "deny 25608 3000 1", "deny  25608 3000", "deny 25608  3000", "deny 25599 3000",
                          "deny 26112 3000", "deny 25608 0", "deny 25608 5001", "deny -25608 3000", "deny +25608 3000",
@@ -1123,6 +1344,8 @@ int main() {
     TestSeatOneInstall();
     TestSeatOneLocalPassenger();
     TestRace();
+    TestPress();
+    TestArbiter();
     TestDrawSeat();
     TestRaceInstall();
     TestRemapWanted();
