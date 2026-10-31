@@ -350,7 +350,18 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 7: return Put(out, capacity, "Your partner is in another area: use Go to first.");
         default: return false;
         }
-    default:  // 15 reserved or unknown: no toast
+    case 15:  // MISSION_END (fb1031 mbgo){a=1 a debug kill of Mother Base staff refused | 2 the host's mission failed for a
+              // non-player reason (b=1 a staff member died at Mother Base, 0 another) | 3 the guest's Continue waits}
+        switch (a) {
+        case 1: return b == 0 && Put(out, capacity, "Killing staff at Mother Base fails the mission.");
+        case 2:
+            if (b > 1) return false;
+            return Put(out, capacity, b == 1 ? "Your partner's mission failed: a staff member died. Reloading."
+                                             : "Your partner's mission failed. Reloading.");
+        case 3: return b == 0 && Put(out, capacity, "Waiting for your partner to continue.");
+        default: return false;
+        }
+    default:  // unknown: no toast
         return false;
     }
 }
