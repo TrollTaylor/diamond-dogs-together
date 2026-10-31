@@ -471,6 +471,11 @@ struct Hooks {
                            std::uint32_t& after) noexcept = nullptr;
     bool (*seat_fpv_pollers)(void* context, const partner_player::State& state, std::uintptr_t (&rvas)[10]) noexcept = nullptr;
     int (*seat_fpv_override)(void* context) noexcept = nullptr;
+    // fb1031 (design 8.59): the follow carry's read of the active fallback module's blend (partner_pass_camera::ReadFollow
+    // after FollowInstall) and its start-point write (WriteFollowStart). Null: no carry, no census blend fields.
+    bool (*ride_follow_read)(void* context, const partner_player::State& state, partner_pass_camera::Follow& out) noexcept = nullptr;
+    bool (*ride_follow_write)(void* context, const partner_player::State& state, std::uintptr_t blend, const float (&expect)[3],
+                              const float (&start)[3]) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -522,7 +527,7 @@ inline constexpr unsigned kBoardLogCap = 200;
 // Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
 // fb1031: the ride camera census caps per mission (per-tick lines; 250 ms lines and episode summaries).
-inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400;
+inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400, kRideFollowCap = 200;
 // Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
 inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
@@ -630,6 +635,8 @@ struct Settings {
     // lab.ini partner_seat_fpv (design 8.46): the automatic first-person aim from seats 1 and 2 (the lab lever passcam
     // seatfpv overrides it on a lab copy).
     bool seat_fpv = false;
+    // lab.ini partner_ride_follow (design 8.59): the follow carry while the local passenger rides.
+    bool ride_follow = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -822,6 +829,9 @@ struct Mission {
         // (census_frame_cap), the 250 ms lines and the episode summaries (census_cap).
         partner_pass_camera::Census census;
         LogCap census_cap, census_frame_cap;
+        // fb1031 (design 8.59): the follow carry and its open / close lines.
+        partner_pass_camera::Carry carry;
+        LogCap carry_cap;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).

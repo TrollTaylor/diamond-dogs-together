@@ -993,6 +993,85 @@ inline const char* RequestGate(std::uint32_t d38, std::uint32_t f204) noexcept {
     return nullptr;
 }
 
+// --- fb1031: the follow carry (design 8.59; on with the passenger camera: every mode but off) --------------------------
+// [O static, the pinned ride_follow_blocks] The fallback camera module (live vtable 0x23B2AB0: the on-foot player and a
+// seated passenger) writes its follow point CAM+0x170 = S + alpha * (T - S) every update: T follows the body, S is the
+// start point of its timed blend (module+0x30 -> +0x30) and alpha (+0x20) climbs from 0 to 1 over the blend's duration
+// (+0x18; elapsed +0x1C) after each camera transition (getting in, an aim's end, a mode change), S being the camera's
+// point at that moment. S is a fixed world point: when the vehicle moves during a blend the camera stays behind by
+// (1 - alpha) * the distance driven and catches up as alpha reaches 1 (the reported "lags behind when getting in and
+// moving"). The carry moves S rigidly with the ridden vehicle (its position and yaw since the last tick) while a blend
+// runs, so the blend happens in the vehicle's frame. Never with alpha 1 (S unused), never across a vehicle warp.
+inline constexpr std::uintptr_t kFollowModuleVtableRva = 0x23B2AB0, kFollowBlendVtableRva = 0x23B7EC0;
+inline constexpr std::size_t kFollowModuleBlend = 0x30, kFollowDur = 0x18, kFollowElapsed = 0x1C, kFollowAlpha = 0x20, kFollowStart = 0x30;
+struct Follow {
+    bool ok = false;           // the active module is the fallback and its blend object carries the blend vtable
+    std::uintptr_t blend = 0;  // the blend object (the write checks it again)
+    float dur = 0.0f, elapsed = 0.0f, alpha = 0.0f;
+    float start[4]{};
+};
+inline bool FollowBlending(const Follow& f) noexcept {
+    return f.ok && std::isfinite(f.dur) && std::isfinite(f.elapsed) && std::isfinite(f.alpha) && f.dur > 0.0f && f.elapsed < f.dur &&
+           f.alpha < 1.0f && std::isfinite(f.start[0]) && std::isfinite(f.start[1]) && std::isfinite(f.start[2]);
+}
+inline constexpr std::uint64_t kCarryGapMs = 200;   // the last vehicle pose older than this: no carry this tick
+inline constexpr float kCarryMaxStep = 5.0f;        // a vehicle step longer than this (m per tick) is a warp: no carry
+inline constexpr float kCarryMinStep = 0.0005f;     // shorter: nothing to write
+struct CarryIn {
+    bool on = false;      // the passenger camera's mode is not off, installed, not uncertain
+    bool seated = false;  // the local passenger report (seats 1..3)
+    std::uint16_t vehicle = 0xFFFF;
+    bool veh_ok = false;
+    float veh[3]{}, yaw = 0.0f;
+    Follow follow;
+    std::uint64_t now_ms = 0;
+};
+struct Carry {
+    bool have = false;
+    std::uint16_t vehicle = 0xFFFF;
+    float veh[3]{}, yaw = 0.0f;
+    std::uint64_t ms = 0;
+    // The current blend episode (its writes and the largest carry) and the counters.
+    bool blending = false;
+    std::uintptr_t blend = 0;
+    std::uint64_t blend_ms = 0;
+    float blend_dur = 0.0f, carried = 0.0f, last_elapsed = 0.0f;
+    unsigned blend_writes = 0;
+    unsigned writes = 0, warps = 0, blends = 0;
+};
+enum class CarryEvent : std::uint8_t { none, open, close };
+struct CarryOut {
+    bool write = false;
+    float start[3]{};
+    float step = 0.0f;  // the carry of this tick (m)
+    CarryEvent event = CarryEvent::none;
+    // close: the episode that ended (its writes, its total carry and how long it ran)
+    unsigned writes = 0;
+    float carried = 0.0f, dur = 0.0f;
+    std::uint64_t ms = 0;
+};
+// S carried from the vehicle pose (pv, py) to (nv, ny): S' = nv + Ry(ny - py) (S - pv), the body yaw convention (forward
+// (sin, 0, cos)), so a point fixed in the vehicle stays fixed in it.
+inline void CarryPoint(const float* s, const float* pv, float py, const float* nv, float ny, float* out) noexcept {
+    const float d = ny - py, c = std::cos(d), sn = std::sin(d);
+    const float rx = s[0] - pv[0], ry = s[1] - pv[1], rz = s[2] - pv[2];
+    out[0] = nv[0] + rx * c + rz * sn;
+    out[1] = nv[1] + ry;
+    out[2] = nv[2] - rx * sn + rz * c;
+}
+inline CarryOut CarryStep(Carry& c, const CarryIn& in) noexcept {
+    CarryOut o{};  // red: not built yet
+    if (in.now_ms == 0xFFFFFFFFFFFFFFFFull) c.have = true;
+    return o;
+}
+// The driver reports a write it made (ok) so the episode counts only what reached the game.
+inline void CarryWritten(Carry& c, const CarryOut& o, bool ok) noexcept {
+    if (!o.write || !ok) return;
+    ++c.writes;
+    ++c.blend_writes;
+    c.carried += o.step;
+}
+
 // --- fb1031: the ride camera census (lab and play; design 8.59) ----------------------------------------------------
 // Per driver tick while the local player rides a vehicle (driver or passenger): the local body B (aim read body[0]), the
 // camera eye C and its rotation q (CAM+0xE0, CAM+0x90) and the vehicle V (unit pos, yaw). The body's camera-space
