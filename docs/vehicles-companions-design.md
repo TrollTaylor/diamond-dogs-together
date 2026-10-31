@@ -3675,6 +3675,35 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   while aiming in first person, and a checkpoint during it (impl+0x60 saved? [U]); x1 / d with first person on; a
   moving jeep; the Africa jeep's seats 1 / 2 in first person.
 
+### 8.52 Front-seat first-person shots online (2026-10-31, branch `wp/seat-proof3`, review m6m7h track shots)
+
+- **Method.** The Wakh Sind jeep 25608 faces +z (vstate yaw 107 mrad; the driver on +x, seat 1 on -x). Guard
+  1084844745 stood front-left of seat 1, across the driver (8.51). The soldier warp is play-refused
+  (`kPlayRefusedDebugSoldierWarp`), so the play scenario turns the jeep (w+a 2.5 s: heading 6 -> 67 deg) and keeps the
+  camp's guards ignoring the players (`enemy ignore`, synced). The awake guard did not stay: 39 -> 88 m, running after
+  the alert. In the lab the warp works, but the lab camp attacked both players from the boot even with `ignore`.
+- **Shown online** (`ecb5f08d`, play, `-WanSim bad`, shipped defaults) [O lines on both copies + frames]: seat-1
+  first-person shots fire in both roles (S1 `shift` each, magazine down), also during the turn (scope level at +50 /
+  +350 ms); a raise at rel +55 stays over the shoulder (red mark, no set) and a mouse turn right in the same aim gives
+  `set reason=ready gun=7` and first person, so 15 -> 7 does happen within one aim (8.51's [U]); a host get-off with the
+  bit set clears it (`clear=0x2 ok=1`), the get-off turn runs, the next on-foot aim is over the shoulder.
+- **Not shown:** a hit. The guest's two seat-1 shots hit a post 10.4 m out (dist_cm 1044 / 1119) in front of a moving
+  guard 30-44 m away; the host's went into a wall 15.9 m out (the re-aim chose a sleeping guard 45 m behind). Lab
+  `30007c04`: with the guard warped 12.5 m in front of seat 1, the aim set at 7, then after the in-aim re-aim 8.5 deg
+  down the rifle lay across the view and nothing fired, in the same second as an explosive that broke the jeep on the
+  guest's copy; whether straight ahead and down is a blocked direction is [U]. Lab `ffc0411d` (the camp asleep but the
+  target, warped 11.3 m front-right of seat 1): the aim set at 7 with the awake guard under the reticle [O frames];
+  the scripted in-aim re-aim (`enemy_aim_nearest 1.1`, RequestToSetCameraRotation, 8.3 deg down) moved the view off
+  him to the village and left the gun blocked (rifle across, red mark, two presses, no S1 line); the third press, at
+  16 m and 5.6 deg down, fired into the grass. Run 1's re-aim (1.5 deg, pitch up) did not block. So the next try
+  fires at the first set, without the lever re-aim; whether a player's own pitch-down blocks the same way is [U].
+- **Side findings** [O]: after the alert an enemy explosive broke the ridden jeep on the guest's copy in both runs, and
+  the host's copy removed it once the host got out (`vehicle_gone`): the README's wrecked-ridden-jeep rule, not seat
+  code [I]. The host's copy read the jeep at 2295 after the turn (the guest's 2300); cause [U].
+- **Next:** `m6m7h-seat-fpv-shots-lab.txt` part B with the shot at the first set (no re-aim); part A needs its own
+  warp spot (the second warp fell back to a route 60 m off); part C of `m6m7e-seat-fixes-play-b.txt`; a checkpoint
+  or death during a seated aim.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

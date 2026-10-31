@@ -1,3 +1,45 @@
+## 2026-10-31: front-seat first-person shots tested online (review m6m7h track shots, branch `wp/seat-proof3`, local only)
+
+**Players see no new behaviour** (no code or default changed). What is now shown online at the shipped defaults: from
+the jeep's front seat the automatic first person fires in both roles, also while the jeep turns, and the view stays on
+the aim; a raise the jeep blocks stays over the shoulder with the red mark, and turning to a clear direction in the same
+aim switches to first person; a host who gets out while aiming in first person gets the normal camera and aims over the
+shoulder on foot. In the lab the front-seat first person put an awake guard 11 m away under the reticle. Still not
+shown: a seated first-person shot hitting a guard (the test's own re-aim moved the view off him; see the lab runs).
+- **Play run** `ecb5f08d410743af88f7e64e46ce9670` (`m6m7h-seat-fpv-shots-play.txt`, `-Mode play -WanSim bad`, no
+  labsetting; both copies `seat_fpv on=1 source=key`, S1 `key=1 play=1`, pass_camera `mode=view`, anchor `on=1`;
+  never-lines 0 on both). In play the soldier warp is refused, so the driver turned the jeep instead (w+a 2.5 s).
+  - Blocked raise: the guest in seat 1 raised at rel +55 (across the windscreen frame and the driver): shoulder view
+    into the jeep's side, red mark, no set (frame +900 ms); a mouse turn right in the same aim: `set reason=ready
+    gun=7` and the scope [O].
+  - Moving: during the left turn the guest's seat-1 aim set at gun 7 and its shot fired (S1 `shift`, 24.4 m); the
+    scope stayed level at +50 / +350 ms [O]. The jeep: 2300 on the guest's copy, 2295 on the host's (cause [U]).
+  - Stopped: guest seat 1 (set at 7, two shots, S1 `shift`, magazine 7 -> 5) and host seat 1 (set at 7, two shots,
+    S1 `shift`) fired [O]; no hit: the guest's shots hit a wooden post 10.4 m out in front of the awake guard (30-44 m,
+    moving: the camp had gone to alert after the moving shot), the host's re-aim went to a sleeping guard 45 m behind.
+  - Host get-off while aiming in first person: `stop reason=get_off clear=0x2 ok=1`, the get-off turn `view=1
+    yaw_err_mrad=0`, the next aim on foot over the shoulder [O frames].
+  - After the alert an enemy explosive (2600 to the guest) broke the jeep on the guest's copy; the host's copy removed
+    it when the host got out (`vehicle_gone` applied), as the README says for a wrecked ridden jeep; not seat code [I].
+- **Lab run** `30007c04627743e9ba4c62371c1bfc49` (`m6m7h-seat-fpv-shots-lab.txt`, only `debug_soldier_warp=1`): the
+  warp put the awake guard 12.5 m in front of seat 1; the guest's aim set at gun 7, but after the in-aim re-aim at him
+  (8.5 deg down) the view showed the rifle across it and nothing fired (no S1 line, magazine 8). The lab camp attacked
+  both players from the boot and an explosive broke the jeep on the guest's copy in the same second, so whether that
+  direction blocks the gun is [U].
+- **Lab run** `ffc0411d1cff446ebcb87363b8ff01b6` (the same scenario with the camp asleep but the target; the first
+  try at 05:53 was refused before admission by the worker preflight, `Audited command timed out:
+  worker-policy-fixture`, with another program holding the GPU at 81-93 % and d3dprobe 0x8007000E; the one retry ran
+  at 05:59 with the GPU at 11 % and d3dprobe hr=0): the warp put the awake guard 11.3 m front-right of seat 1 (rel
+  -40); the guest's aim set at gun 7 with him under the reticle (frames `b-aim0`, `b-guard`) [O]. The scripted in-aim
+  re-aim at his torso (`enemy_aim_nearest 1.1`, 8.3 deg down) moved the view off him to the village and left the rifle
+  across the view with the red mark; two presses fired nothing (no S1 line, magazine 8); the third, after he had walked
+  to 16 m, fired (S1 `shift`, 24.9 m) into the grass [O]. No hit. Part A did not run (the host's second warp fell back
+  to a route 60 m off and the host did not board).
+- Contract `--check` 836 / 213; scenarios lint (worker_session 2/2). No code changed.
+- **Open:** a seated first-person shot hitting a guard: next time fire at the first set (no scripted re-aim), the
+  camp asleep but the warped guard (lab: the play warp is refused); why the scripted re-aim left the gun blocked [U];
+  part C of `m6m7e-seat-fixes-play-b.txt`; a checkpoint or death during a seated first-person aim [U].
+
 ## 2026-10-30: the seat branches integrated, review m6m7g closed (branch `wp/seat-proof` with `wp/seat-checks2` merged, local only)
 
 **Players get** the automatic first person from the jeep's front seat and left back seat (on since the fpv section
