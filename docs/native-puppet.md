@@ -1074,16 +1074,18 @@ set; clear; ok; toggles; after; slot; gun; f3c0; cmode; sm; read; sets; restores
 
 **Runs** (design 8.49): lab `61384aab` (the lever), `2a394a64` (the key named) and the play run `ff4134f4` at the
 shipped defaults (`-WanSim bad`, on=1 `source=key` on both copies): set in all four seat/role pairs
-(guest seat 1 at mode 15 after the fix), cleared at the aim end, stopped at the get-off (the get-off turn checked), the
+(at mode 7; guest seat 1 also at mode 15 before `2c43bf6`), cleared at the aim end, stopped at the get-off (the get-off
+turn checked; a get-off with the bit set only for the guest), the
 player's F tap opted out once and the next aim was over the shoulder, seat 3 never set, no climb after a first-person
 shot (+50 / +650 ms frames), the next aim on foot over the shoulder. Not shown: a first-person seat shot landing on a
 guard (no guard was under the crosshair; the landing run `4adc1005` never reached gameplay on the guest), the mission end / death / Fulton / a destroyed jeep while
-aiming in first person ([I] from the driver tests), a checkpoint during a seated aim (`+0x680`). Aimed into the jeep
-(the gun's blocked mode 15), first person shows the rifle body across the lower half of the view and the gun stays
-blocked (the bit is the one the stock F tap flips [I]). The shot guard is still off in first person (no pull seen there, so the drafted guard extension is not landed).
+aiming in first person ([I] from the driver tests), a checkpoint during a seated aim (`+0x680`). Blocked by the jeep
+(gun mode 15), first person showed the rifle body across the view and no shot left (5 of 5 sets at 15), so since
+`2c43bf6` (design 8.51) a blocked raise keeps the stock shoulder view; an aim set at 7 that is turned into the jeep in
+first person still blocks (rifle body, red mark, no shot; play `ff4134f4`). The bit is the one the stock F tap flips [I]. The shot guard is still off in first person (no pull seen there, so the drafted guard extension is not landed).
 Tests: `partner_pass_camera_tests` (`TestFpvBitsAndContract`, `TestFpvStep`, `TestFpvReadWrite`,
 `TestFpvLeverAndVerify`), `partner_driver_tests` `TestSeatFpvDriver`, `lab_config_tests`; failing first `a3b8100` ->
-`8b33be4`, `9916c4a` -> `e508347` (the ready gate), `a968074` -> `7226d5e` (mode 15), `a5e2fc3` -> `0ff748a` (the
+`8b33be4`, `9916c4a` -> `e508347` (the ready gate), `a968074` -> `7226d5e` (mode 15, reverted by `e827380` -> `2c43bf6`), `a5e2fc3` -> `0ff748a` (the
 default).
 
 ## Traversal icon

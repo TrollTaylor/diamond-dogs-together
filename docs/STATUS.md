@@ -1,28 +1,73 @@
+## 2026-10-30: the seat branches integrated, review m6m7g closed (branch `wp/seat-proof` with `wp/seat-checks2` merged, local only)
+
+**Players get** the automatic first person from the jeep's front seat and left back seat (on since the fpv section
+below) only when the gun can fire: an aim that the jeep blocks at the raise (the red no-fire mark) now keeps the stock
+over-the-shoulder view instead of a first-person view with the rifle body across it and no shot.
+- **Fix** (failing first `e827380` -> `2c43bf6`): FpvReady is 7 / 9 / 10 again (the mode-15 part of `7226d5e` reverted).
+  All 5 automatic sets at mode 15 (lab `2a394a64` guest seat 1 x3; play `ff4134f4` host and guest seat 1) kept the gun
+  at 15 for the whole aim and fired nothing; every first-person seat shot that fired was set at 7. Lab `61384aab` (the
+  same FpvReady) shows what a blocked raise now gives: the shoulder view filled by the jeep, the red no-fire mark.
+- **Merged** `wp/seat-checks2` (scenarios + docs only): README Seats keeps the automatic first person (F = opt-out for
+  the ride) and adds the measured S1 result (host as passenger, over the shoulder). Docs corrected per the reviews:
+  host seat 1's F-tap scope was not clear (spare wheel and box at 1.7 m, `cbfda7f1-host-h1-ftap`); the host's seat-2
+  first-person scope was about three quarters covered (`ff4134f4-host-k2-aim`); a get-off with our bit set was seen
+  only for the guest (seat 1, `clear=0x2`); S1's stock damage was on the passenger's (host's) copy only, the host-copy
+  authority is [I]. The m6m7f F-tap scenarios now name `partner_seat_fpv=0`. Design 8.51.
+- **Open:** a first-person seat shot hitting a guard; a host get-off while our bit is set; death / Fulton / mission
+  end / a checkpoint during a first-person seat aim (driver tests only); the S1 x1 / d lines with first person on;
+  a moving jeep; guest `4adc1005` stopping at `pair_wait; local_loading` [U].
+
 ## 2026-10-30: the automatic first person from seats 1 and 2 ON (review m6m7g track fpv, branch `wp/seat-proof`, local only)
 
 **Players now get** (play run, shipped defaults, both copies): aiming from the jeep's front seat or left back seat
 switches to the game's first-person view by itself, in both roles; stopping the aim or getting out (also while aiming)
 brings the normal camera back and the next aim on foot is over the shoulder; the right back seat is unchanged; the
 player's own F tap goes back to the shoulder for that ride. Still open: whether such a shot hits a guard [U].
-- **Fix** (failing first `a968074` -> `7226d5e`): the blocked seated aim (gun mode 15, the red no-fire icon) counts as
-  ready; lab `61384aab` showed a seat-1 aim staying in 15 for the whole aim, so the bit was never set there.
+- **Fix** (failing first `a968074` -> `7226d5e`, reverted in `2c43bf6`, see the section above): the blocked seated aim
+  (gun mode 15) counted as ready; no aim set at 15 ever fired.
 - **Default** (failing first `a5e2fc3` -> `0ff748a`): `partner_seat_fpv` follows the gun profile in lab and play, a
   named 0 opts out (`lab_ini_check` prints it; friend_package_tests: Play-Coop never names it, play defaults it on).
 - **Runs** (all admitted; d3dprobe hr=0, tasklist clean before each): lab `61384aabd1b84482965526e0e12db744` (the
   lever), lab `2a394a64d48a4072844f832959ea3f31` (the key named), play `ff4134f40c324a3880658d15eaf209e8`
   (`m6m7g-seat-fpv-play.txt`, `-WanSim bad`, no key named, no F pressed): `seat_fpv` on with `source=key` on both copies;
-  set in all four seat/role pairs (mode 7, or 15 in seat 1), cleared at the aim end, stopped at the get-off (get-off
-  turn checked); first-person shots (S1 `shift`) keep the scope on the aim at +350 / +650 ms; seat 3 never set;
+  set in all four seat/role pairs (mode 7; at 15 in seat 1 before `2c43bf6`), cleared at the aim end, stopped at the get-off (get-off
+  turn checked; a get-off with the bit set only for the guest); first-person shots (S1 `shift`) keep the scope on the aim at +350 / +650 ms; seat 3 never set;
   `opt_outs=0` without F, one opt-out for the lab F tap; never-lines 0. Aimed into the jeep (mode 15) the rifle covers
   the lower half of the first-person view and the gun stays blocked. Landing run `4adc100597f1422ea69296ac58a28a3d`
   (`m6m7g-seat-fpv-land.txt`): the guest's lab boot never reached gameplay (log stops at `pair_wait; local_loading`),
   cause [U]; the round's 4th run, no retry. Design 8.49; README Seats; native-puppet "Seat first person".
 - Full `tools/build.ps1` at `16f55a0`: CTest 336/336; contract `--check` 836 / 213.
 
+## 2026-10-30: the seat checks at the shipped defaults; S1 shown to stop real self-hits online (review m6m7g, branch `wp/seat-checks2`, local only)
+
+**Players see no new behaviour** (no default changed). What changed for them is known now: on the Afghanistan jeep two
+seated shot lines cost the jeep 702 of its 2300 life each without the seat-shot fix (S1) and nothing with it, online.
+The README's seat-shot note says so.
+- **Runs** (play, `-WanSim bad`, native gun, research; all three admitted; d3dprobe hr=0 on every adapter, no
+  snipping / screenclip / obs / gamebar process; [O] lines sliced from both copies, frames looked at):
+  - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults): the guest boarded back seat 3 beside the
+    host's D-Dog in seat 1 and the host's copy drew it there (`confirmed; seat=3`, anchor `configured; on=1`); the
+    seat-3 aim view was clear; five seated shots, S1 `result=shift` each (targets 8-18 m), the jeep 2300 on both copies.
+    No guard was hit: the reticle sat white on the grass by the sleeping guard 8.2 m out (no `req` / `commit`). Part B:
+    the host boarded the guest-driven jeep from the right into seat 3 (the guest's D-Dog in seat 1), drawn there on the
+    guest's copy, aim view clear. Part C did not run: the host's E 2.5 s after a 39 m warp did not board, the guest's E
+    then took the driver's seat, and the scenario's `require` stopped it; the worker closed with the guest driving
+    (`Forced`, baseline restored, real saves unchanged). Never-lines 0 on both.
+  - `663b270c2171429089a565b473fdb07e` (`m6m7e-seat-shot-stock-play.txt`, `-LabSetting partner_seat_shot=0`, afgh-quiet / afgh-horse; `key=0` on
+    both): the host rode, the guest drove the east jeep (`cat=2`). On the host's copy (the passenger's; that it is the
+    life that counts while ridden is [I]) seat-1 line x1 (back-left across the cabin) 2300 -> 1598 and seat-2 line d (back and down past the tail)
+    1598 -> 896; seat-2 lines a, b, c fired and cost nothing; x2 and x3 showed the red mark and did not fire. The
+    driver's copy stayed 2300 while ridden.
+  - `ce0233f4d044461f8af25db8dc8ffb02` (the same scenario at the shipped defaults, `key=1`): every fired line `result=shift` (x1 exit 1.37 m, d 0.26 m),
+    the jeep 2300 on both copies after every shot.
+- **Open:** a guard hit by a seated shot (this aim pointed at the grass); the D-Dog arriving after the partner and a
+  teardown with a seated partner (part C; its warp now waits 4 s, `89b1dea`). Design 8.50.
+- Full `tools/build.ps1` at `722b002`: CTest 336/336; contract `--check` 836 / 213.
+
 ## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
 
 **Players see no new behaviour** (no default changed); the README Seats tip now says what the online run showed: the F
-tap gives a clear first-person view from seat 1 and seat 2 in both roles, a shot fired that way does not pull the view
+tap gives a first-person view from seat 1 and seat 2 in both roles (clear for guest seat 1 / host seat 2), a shot fired that way does not pull the view
 up, getting out in first person returns to the normal camera, and each new aim starts over the shoulder again.
 - **Diagnostics** (failing first, `40076fd`): a refused overlay install keeps the prefix
   `overlay=refused; reason=graphics_or_input_hook` and appends `step=` (window, device, present_hook, resize_hook, input,
@@ -31,8 +76,8 @@ up, getting out in first person returns to the normal camera, and each new aim s
 - **Run** `cbfda7f1b3fb4a768ef3f41764af6f19` (`m6m7f-seat-ftap-play.txt`, play, `-WanSim bad`, native gun, shipped
   defaults; afgh-quiet / afgh-horse) was **admitted** on both copies (the Snipping Tool closed; d3dprobe hr=0 on every
   adapter). Configured on both: S1 on, seat-1 anchor on, pass camera `view`, seat first person off. [O] frames + logs:
-  the F tap gave a clear scoped first-person view in all four seat/role combos (the guest's seat-2 view partly covered
-  on the right); the switch prompt showed for guest seat 1 / host seat 2, not for host seat 1 / guest seat 2, and the tap
+  the F tap gave a scoped first-person view in all four seat/role combos, clear for guest seat 1 / host seat 2 (host
+  seat 1: a spare wheel and a box at 1.7 m; the guest's seat-2 view partly covered on the right); the switch prompt showed for guest seat 1 / host seat 2, not for host seat 1 / guest seat 2, and the tap
   worked anyway; first-person shots from guest seat 1 and host seat 2 kept the view on the aim at +50/+350/+650 ms,
   S1 `result=shift` (36 m, 22 m); no guard was hit (the scripted aim was 1.6 m above a lying guard), so landing is [U];
   the driver's frames show the partner seated, gun down; get-offs from first person went to the normal third-person
