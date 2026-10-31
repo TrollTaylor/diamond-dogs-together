@@ -7,7 +7,8 @@
 # Frames: every switch is captured on BOTH screens: the switching player's own camera and the partner looking at
 # them (placebehind). Proof per switch: the switcher's 'character=switch; ...; result=ready' and readback
 # 'character_readback=change; verdict=applied' (raw0 = the engine's own type), the partner's 'partner_look=apply;
-# ...; type=<n>' (avatar_as_snake=1 for an avatar, known limit), and the frames.
+# ...; type=<n>' (avatar_as_snake=1 for an avatar, known limit), and the frames. 'run' returns the FINAL result
+# (character_ready after PlayerStatus.PARTS_ACTIVE; the interim character_switched is not paired).
 title 200
 waitgameplay host 120
 waitgameplay guest 120
@@ -25,7 +26,7 @@ placebehind guest host 5
 wait 2000
 logmark both
 host run character dd_male
-host expect ^character_switched;dd_male$
+host expect ^character_ready;type=1;parts=
 waitlog host 'character=switch; mission=30050; .*pick=dd_male; result=ready; type=1' 40
 waitlog host 'character_readback=change; verdict=applied; expect=1' 40
 waitlog guest 'partner_look=apply; R=1; source=net; type=1' 40
@@ -33,7 +34,7 @@ wait 2000
 both capture a-host-ddmale
 logmark both
 host run character snake
-host expect ^character_switched;snake$
+host expect ^character_ready;type=0;parts=
 waitlog host 'character=switch; mission=30050; .*pick=snake; result=ready; type=0' 40
 waitlog host 'character_readback=change; verdict=applied; expect=0' 40
 waitlog guest 'partner_look=apply; R=1; source=net; type=0' 40
@@ -44,14 +45,14 @@ placebehind host guest 5
 wait 2000
 logmark both
 guest run character dd_female
-guest expect ^character_switched;dd_female$
+guest expect ^character_ready;type=2;parts=
 waitlog guest 'character=switch; mission=30050; .*pick=dd_female; result=ready; type=2' 40
 waitlog host 'partner_look=apply; R=1; source=net; type=2' 40
 wait 2000
 both capture b-guest-ddfemale
 logmark both
 guest run character quiet
-guest expect ^character_(switched|next_load);quiet$
+guest expect ^character_(ready;type=6;parts=|next_load;quiet$)
 waitlog guest 'character=switch; mission=30050; .*pick=quiet; result=(ready|next_load)' 40
 waitlog host 'partner_look=apply; R=1; source=net; type=6' 40
 wait 2000
@@ -86,7 +87,7 @@ both capture c-fresh-guest-quiet
 # (d) back to my default: the host's worker coop.ini is 'default', so its own save type comes back.
 logmark both
 host run character default
-host expect ^character_(switched|kept);own$
+host expect ^character_(ready;type=|kept;own$)
 wait 4000
 placebehind guest host 5
 wait 2000
