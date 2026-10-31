@@ -117,6 +117,7 @@
 #include "mgscoop/partner_upper_manual_idle.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include "mgscoop/debug_overlay.hpp"
+#include "mgscoop/window_close.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/save_handoff.hpp"
@@ -1538,7 +1539,11 @@ void PartnerMissionEnd() noexcept {
 // does, before the engine destroys the objects the deferred block-1 job, the
 // drain window and the rate/magazine mirrors name. Main (mission) thread only;
 // a run that intermittently crashed at close (guest, 0x21E72 write to 0x38)
-// had the native drive still armed.
+// had the native drive still armed. The WndProc runs on the window thread, not
+// the mission thread (208 of 208 archived closes), so the mission thread does the
+// teardown at its next partner tick (PartnerCloseTeardown) while the overlay holds
+// the WM_CLOSE (window_close.hpp: runs 8567f888 and e6ef6e4d faulted at 0xbf421a
+// after the close went on with the partner still realized).
 void PartnerShutdown() noexcept {
     InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
     mgscoop::carry_info::Shutdown();
@@ -1565,16 +1570,37 @@ void PartnerShutdown() noexcept {
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
     // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
-    // The seat patch was closed above; the seat first-person bit (impl+0x60) is released only by the MissionEnd below,
-    // so on the other_thread return it stays set until the process ends (design 8.53).
+    // The seat patch was closed above; the seat first-person bit (impl+0x60) is released by the mission thread's
+    // PartnerCloseTeardown (Stop) or the MissionEnd below; on an other_thread return it stays set (design 8.53).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     mgscoop::partner_ui_filter::Shutdown();  // G1: the hint-queue leaf hooks pass every request through
+    const bool running = mission_phase == MissionPhase::running && !termination_scope.Active() && !mission_terminating;
+    if (mgscoop::window_close::NeedsMissionThread(partner_on, partner_mission, running, mission_thread, GetCurrentThreadId())) {
+        mgscoop::window_close::Request();
+        LogFormat("partner_shutdown=hooks_off; teardown=mission_thread; thread=%lu; mission_thread=%lu; hold_ms=%llu\r\n",
+            GetCurrentThreadId(), mission_thread, static_cast<unsigned long long>(mgscoop::window_close::kHoldMs));
+        return;
+    }
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
     }
     Log("partner_shutdown=hooks_off; teardown=mission_end\r\n");
     PartnerMissionEnd();
+}
+
+// The window is closing and PartnerShutdown handed the teardown to this (mission) thread: at its first partner
+// tick, the stop of a natural MISSION_TERMINATING (input disarmed, DM and seat reverted, realize bits cleared,
+// policy restored; always clear, whatever partner_teardown says, so the engine tears a one-player mission down)
+// and the mission end, before the engine tears the mission down. Then the held WM_CLOSE goes on.
+void PartnerCloseTeardown() noexcept {
+    if (!mgscoop::window_close::Claim()) return;
+    pd::Stop(partner_driver, partner_hooks, mgscoop::PartnerTeardown::clear, true);
+    PartnerMissionEnd();
+    const bool released = mgscoop::window_close::Finish();
+    const bool posted = released && mgscoop::debug_overlay::PostHeldClose();
+    LogFormat("partner_shutdown=teardown; thread=%lu; close=%s\r\n", GetCurrentThreadId(),
+        posted ? "posted" : released ? "post_failed" : "not_held");
 }
 
 // World sync install (lab.ini world>=1; partner=1 and net=1 already hold).
@@ -1641,6 +1667,7 @@ const char* HandlePartnerCfg() noexcept {
     unsigned short mission = 0;
     const char* precheck = nullptr;
     if (!OnRuntimeThread() || mission_terminating) precheck = "not_runtime_thread";
+    else if (mgscoop::window_close::Quiet()) precheck = "window_closing";
     else if (!ReadMission(mission) || !mgscoop::SupportsPartnerBody(mission)) precheck = "mission";
     else if (!partner_gate_ok) precheck = "code_gate";
     if (!pd::Cfg(partner_driver, partner_hooks, precheck, mgscoop::partner_net::NowMs())) return no;
@@ -1750,6 +1777,8 @@ bool PhysicalTransformLine(char*,std::size_t) noexcept;
 
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
+    // The window is closing: tear down once (PartnerCloseTeardown), then no more partner ticks.
+    if (mgscoop::window_close::Quiet()) { PartnerCloseTeardown(); return nullptr; }
     const std::uint64_t started_us = QpcMicros();
     const auto upper_body_epoch = partner_driver.mission.body_epoch;
     partner::Reply reply{};

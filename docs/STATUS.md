@@ -1,3 +1,26 @@
+## 2026-10-31: Teardown AV at close (branch `wp/teardown-av`, local only)
+
+**Players get:** closing the game during a co-op mission (Alt+F4, the window's X, the worker's close) first tears the
+partner down on the mission thread, as a natural mission end does. It is meant to stop the crash that hit one copy in
+about one close in eight. The close waits for one partner tick, at most 1 s.
+- **Cause:** `crash_probe=av; rva=0xbf421a` (read 0, then `0x1be23eb`) in 7 archived runs (`8567f888` host, `e6ef6e4d`
+  guest, `30007c04` both, 3 in m6m7b, 1 in next2), all in 30010/30020 with `realized=1`. It is the game's own GameObject
+  SendCommand (`0xbf3a80` -> `0xbf4200` -> `0xbf9a10`) reading the registry `*(0x2c389a0)` after the GameObject module's
+  finalize (`0xbf36c0`, the only code that nulls it) had run. The call comes from a player-position resolver (`0xa11e30`,
+  type 0 goes through SendCommand; called only by `0xa12440`). The mod frames are incidental: `mod+0x13955f` is
+  `PoseCarryDispatch` calling that original through the passive native_pose_early hook. `mod+0xdba53` and `+0x1cb205`
+  are stale ReadProcessMemory census-reader frames. The mod's part: WM_CLOSE arrives on the window thread, so
+  PartnerShutdown always took `teardown=other_thread` (208 of 208 archived closes). The engine then tore the mission down
+  with the partner's realize bits still set and its drive armed, which a natural MISSION_TERMINATING stop clears first.
+- **Fix** (failing first `b43b4472`): `window_close` (`native/window_close.cpp`). PartnerShutdown hands the teardown to
+  the mission thread (`teardown=mission_thread`) and the overlay holds the WM_CLOSE (`overlay=close_held`). The next
+  partner tick runs the terminating stop (always `clear`) and the mission end, then posts the WM_CLOSE
+  (`partner_shutdown=teardown; close=posted`). With no tick, a 1 s timer posts it (`overlay=close_released; by=timeout`).
+  WM_DESTROY and WM_ENDSESSION never wait. CFG is refused while closing (`window_closing`).
+- `window_close_tests`; full CTest 337/337; contract `--check` 838 / 213. Scenario `teardown-av-close-seated-play.txt`.
+- **Open:** one clean run cannot prove a 1-in-8 crash gone [U]. Closes that bypass the overlay's WndProc (an overlay
+  refused at install, the game's own exit) are unchanged.
+
 ## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, `wp/seat-checks4` merged, local only, design 8.55)
 
 **Players get:** standing at an empty jeep's door no longer takes its driver's seat. Only an E press does, in both

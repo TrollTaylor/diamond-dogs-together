@@ -74,19 +74,29 @@ int main(){
  Check(!w::Finish(),"nothing held yet: nothing to post");
  Check(w::OnClose(t0)==w::Close::forward,"the WM_CLOSE goes on");
 
- // Races: the mission thread's Finish against the timer and against a late WM_CLOSE. One WM_CLOSE in every order.
+ // Races: the mission thread's Finish against the timer: exactly one of them ends the hold and posts.
  for(unsigned i=0;i<2000;++i){
   w::ResetForTest();
   w::Request();
   Check(w::OnClose(t0)==w::Close::hold,"race: held");
-  std::atomic<unsigned> released{0};
-  std::thread mission([&]{if(w::Claim()&&w::Finish())released.fetch_add(1);});
-  std::thread window([&]{
-   if(i&1){if(w::OnTimer(t0+w::kHoldMs)==w::Timer::release)released.fetch_add(1);}
-   else if(w::OnClose(t0+w::kHoldMs)==w::Close::forward)released.fetch_add(1);
-  });
+  std::atomic<unsigned> posted{0};
+  std::thread mission([&]{if(w::Claim()&&w::Finish())posted.fetch_add(1);});
+  std::thread window([&]{if(w::OnTimer(t0+w::kHoldMs)==w::Timer::release)posted.fetch_add(1);});
   mission.join();window.join();
-  if(released.load()!=1){std::fprintf(stderr,"race %u: %u releases\n",i,released.load());Check(false,"race: exactly one WM_CLOSE goes on");}
+  if(posted.load()!=1){std::fprintf(stderr,"timer race %u: %u posts\n",i,posted.load());Check(false,"timer race: exactly one WM_CLOSE is posted");}
+ }
+ // Against a duplicate WM_CLOSE at the deadline: the hold never stalls (the mission thread posted or the WM_CLOSE
+ // went on), and a WM_CLOSE the mission thread's post beat is a later close (the first one destroys the window).
+ for(unsigned i=0;i<2000;++i){
+  w::ResetForTest();
+  w::Request();
+  Check(w::OnClose(t0)==w::Close::hold,"race: held");
+  std::atomic<bool> posted{false},forwarded{false};
+  std::thread mission([&]{posted=w::Claim()&&w::Finish();});
+  std::thread window([&]{forwarded=w::OnClose(t0+w::kHoldMs)==w::Close::forward;});
+  mission.join();window.join();
+  if(!posted.load()&&!forwarded.load()){std::fprintf(stderr,"close race %u: stalled\n",i);Check(false,"close race: the hold never stalls");}
+  Check(w::OnTimer(t0+w::kHoldMs)==w::Timer::stop,"close race: the timer posts nothing more");
  }
  for(unsigned i=0;i<2000;++i){
   // The window thread looks at its first WM_CLOSE while the mission thread finishes.
