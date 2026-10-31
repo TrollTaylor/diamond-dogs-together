@@ -1,0 +1,114 @@
+# M7 seated shots, S1 A/B through the jeep (docs/native-puppet.md "Seat shot (S1)"; design 8.30): in run 0af9baa3
+# (coop-vehicle-seat-shot-s1.txt) the first S1-off seated shot killed a guard lying 8.6 m out across the jeep, so the
+# line from seat 3's muzzle (on the jeep's centre line, 1.37 m up) cleared the far side there. This run aims a line
+# that must cross the jeep's side: the guest in back seat 2 (left rear, facing right) shoots a guard lying 2.4 m out on
+# the jeep's RIGHT side (1.25 m beyond the side): from the muzzle the line drops ~0.5 m per metre and meets the right
+# side ~0.9 m above the ground. Two shots with S1 off (partner_seat_shot unnamed: the lab census plans and logs), the
+# jeep's life read before and after, then seatshot on and two shots (the moving shot is in the play rehearsal). africa-jeep (veh_lv_0000 = 25608), lab.
+# partner_ride_front=0 keeps the board on the back seats (seat 1's aim is a known defect, design 8.29).
+# Expected (lab): guest partner_seat_shot=published; ...; seat=2; ...; apply=0 then the census shots (result=census;
+# inside=1); then apply=1; source=lever and result=shift; the kill (guest world_lua=event=req; host commit actor=guest)
+# after the lever; the jeep's life lines (host vehicle_state_status 25608) before and after the S1-off shots.
+# Frames (look at them): g-guard (the guard beside the jeep), ab-aim, ab-off-1/2, ab-on-aim, ab-on-1/2, ab-after (the
+# guest), ab-drv-* (the host).
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-shot-ab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Run 3d452714 (v1) stopped before any shot: the seat race gave the empty jeep to the guest (see above).
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=0
+labsetting world_vehicle_state=1
+labsetting nametag=1
+labsetting debug_soldier_warp=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_seat_shot=configured; key=0; play=0' 30
+waitlog guest 'partner_seat_shot=configured; key=0; play=0' 30
+host debug clear_enemies 100
+wait 2000
+host debug clear_enemies 100
+# The guest steps 10 m back from the jeep (its boot spot faces the driver's door): with partner_ride_race on (the gun
+# profile since the seats-on merge) a guest at the driver's door claims the empty jeep and the host yields (run
+# 3d452714 stopped there: host vehicle_not_riding).
+guest debug forward -10
+wait 2500
+# --- The guard 2.4 m out on the jeep's right side, asleep ------------------------------------------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -5.5
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host capture g-guard
+# The host drives (stopped); the guest boards back seat 2 from the left side.
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=2; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=2;' 10
+waitlog guest 'partner_seat_shot=published; vehicle=256[0-9][0-9]; seat=2; class=light; cat=[12]; apply=0; source=key;' 5
+wait 1000
+both capture ab-seated
+host run vehicle_state_status 25608
+guest run enemy_aim_nearest 1.6
+guest expect ^aim_nearest;ent=\d+;
+wait 600
+logmark both
+# S1 off (the census): two single shots across the jeep.
+guest hold rmb 1500 nowait
+wait 700
+guest capture ab-aim
+host capture ab-drv-aim
+guest press lmb 120
+wait 300
+guest capture ab-off-1
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 300
+guest capture ab-off-2
+guest release
+waitlog guest 'partner_seat_shot=shot; result=census; vehicle=256[0-9][0-9]; seat=2; apply=0;' 5
+wait 2000
+host run vehicle_state_status 25608
+guest capture ab-off-after
+# S1 on (the lever): two single shots at the same guard.
+guest debug seatshot on
+waitlog guest 'partner_seat_shot=published; vehicle=256[0-9][0-9]; seat=2; class=light; cat=[12]; apply=1; source=lever;' 5
+guest hold rmb 1500 nowait
+wait 700
+guest capture ab-on-aim
+guest press lmb 120
+wait 300
+guest capture ab-on-1
+host capture ab-drv-on
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 300
+guest capture ab-on-2
+guest release
+waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=256[0-9][0-9]; seat=2; apply=1;' 5
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 8
+wait 1500
+both capture ab-after
+host run vehicle_state_status 25608
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+state

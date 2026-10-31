@@ -1,3 +1,1285 @@
+## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
+
+**Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `f8eba06` with Release receipt `20261031-160809-324523450267433b85ad21a2a5966831` (passed, 324 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.5+f8eba06` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.4.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.5.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,141,087 | `64437CDE63D17ED8C8A3BBCA1E6AA6F11FDEA7A019F9D8C77E61695594FFAB30` |
+| `DDT-source-0.14.5.zip` (1,498 source files plus `source-files.json`) | 8,908,393 | `D20C2E64AFE3E6A310977E5CBCB59C978AEBD150D82AA77BB7942578FE60839F` |
+| `DiamondDogsTogether.exe` | 2,370,048 | `6E5CE0F001C78742AB6DBEB546943664EF8C5C5B11C64DCA6E22E67A57DB964D` |
+| `dinput8.dll` | 7,193,600 | `CA638B48DCE9975907979FD8BB50B85C81DC35EEF2CC85E2B93E8CC696D0EC35` |
+
+- **Package audit:** 34/34 (both zips present; the player zip holds exactly its 9 files and no source or script; exe and dll are the receipt's; `package.json` version 0.14.5, `source_commit` `f8eba06`, `source_dirty` false, every `files[]` hash and `source_archive` match; every source file is in the source zip with its hash and matches the tree; `tools/check-release.ps1` accepts a simulated draft release carrying both zips). Against the git tree at `f8eba06`: no tracked file the package rules select is missing; beside the receipt's 18 MinHook files the zip adds MinHook's `AUTHORS.txt`, `README.md` and `build/MinGW/make.bat`. Build id strings `0.14.5+f8eba06` in both programs; no profile path, checkout path, e-mail or persona name in either zip.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.58.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** `git grep` at `296b72a6` for a Windows profile path (both slash styles) and the persona name: no hits (the four run-archive paths were reworded in `120c3c7c`). Older commits still hold that text in history; history was not rewritten.
+- **To release:** upload **both** zips to the GitHub release `v0.14.5`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.14.5 -PackageDir dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+Branch `dev/oct7-continue`. Releases everything since 0.14.4 (`01fd055`), with `wp/teardown-av` merged (`f1c52a34`); `wp/seat-fpv` (research) is not in it. None of it is two-PC tested yet; the proof runs (hidden worker, two copies on one PC, `-Mode play -WanSim bad` at the shipped defaults) are in the sections below.
+
+| What players get | Play default (gun profile, a named 0 opts out) | Section below |
+|---|---|---|
+| A jeep's front passenger seat (seat 1), drawn in the seat on both screens | **On** (`partner_ride_front`, `partner_ride_seat1_anchor`) | seats on in play; seat 1 drawn in the seat; the seat fixes merged |
+| Only an E press takes an empty jeep's driver's seat; a guest's press waits about one round trip; both at once: the host drives, the guest gets a back seat (with the host's D-Dog out), the same seat on both screens; a guest press just after the host starts getting in joins that tie | **On** (`partner_ride_race`, sites B, C, D) | 8.55, 8.57, 8.58 |
+| Shots from a seat start past the rider's own jeep (S1) | **On** (`partner_seat_shot`) | S1 shown to stop real self-hits online |
+| Automatic first person while aiming from the front seat and the left back seat; a blocked first person falls back over the shoulder | **On** (`partner_seat_fpv`) | the automatic first person ON; m6m7i seat checks |
+| The camera turns behind the player after a seat-1 / seat-2 get-off | **On** (`partner_pass_camera=view`) | the get-off camera turn ON |
+| D12 crew: a vehicle the guest destroys with only soldiers aboard is wrecked on the host's PC (held while a player is within the blast distance by type) | **On** (`world_vehicle_crew`, where `world_vehicle_break` runs: 30010, 30020) | fixes after 0.14.4 |
+| D11 before PAIRED: the guest's LOADOUT and VEHICLES drops refused from its arrival after a host-led follow | **On** (with `world_loadout_block`) | fixes after 0.14.4 |
+| The partner torn down on the mission thread before the game sees the window's close (the close crash) | **On** (no key) | Teardown AV at close |
+| Launcher: one setup at a time per game folder, a window closed during setup ends its setup | Always | the 0.14.4 review's launcher findings |
+| The guest's vehicle damage reported to the host (VEHICLE_DAMAGE `0x3A`) | **Off** (`world_vehicle_damage`, named in play to use it) | fixes after 0.14.4 |
+| The heroism and bond of a dog copy's death given back on the guest | **Off** (under `companion_host_owned`) | fixes after 0.14.4 |
+| Truck cab seat; the partner's raised gun on the seated body (M7 seat gun); M1/M2 companion; M3 sortie vehicle | Lab only / **Off** | as before |
+
+- **Not two-PC tested;** open seat items: the guest's own screen does not show the host's D-Dog in the front seat; a host deny that reaches the guest before the host's ride leaves the guest on foot (press E again; rare in testing); one clean close run cannot prove the 1-in-8 close crash gone.
+- **Version.** 0.14.5 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.5 and still 0.14.4; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.6", "0.14.5")`. The launcher's mock screenshot scenes keep their 0.14.4 strings, as the 0.14.4 bump left theirs.
+- **Checks at the bump commit `f8eba06`:** `pwsh -File tools/build.ps1 -Fast` 305/305; `pwsh -File tools/build.ps1` (Debug) 337/337; the Release receipt above (324 audited tests).
+
+## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
+
+**Players get:** a guest who presses E a moment after the host started getting into the jeep (the host's ride already
+reached the guest's game, the host's D-Dog not yet in) now waits at the door a moment (0.12-0.17 s in testing, at most
+0.7 s) and then gets into a back seat, the same seat on both screens. Before, that press took the front seat on the
+guest's screen while the host's screen showed the guest behind the dog. The guest's own screen still does not show the
+dog in the front seat. Nothing else changes for players: the deny-first change was reverted in review (below).
+- **How:** native only (site D). The published peer-driver policy is stamped when it first names the vehicle the
+  partner drives; a new guest press within `kSeatSettleMs` (700 ms) of that, while seat 1 is still offered, joins the
+  8.57 settle without a claim (`joins=` on the press line). If that ride drops before it settles, the press claims the
+  vehicle like any press (review), so it never ends as a silent timeout. Worst-case hold after one press stays 1.7 s.
+  The worker's `waitlog` polls every 50 ms. Failing first `bcd60d42` -> `a2b9f5ab`; review `a3f2fedc` -> `d15fb340`;
+  scenario `m6m7k-seat-near-play.txt`.
+- **Shown** (hidden worker, shipped play defaults, `-WanSim bad`, africa-jeep, both copies): `3ac51dfa` (at `a2b9f5ab`)
+  n1 and `ba2ab6c5` (at `d15fb340`, the review fixes) n1 and n2: the host's ride reached the guest's copy with seat 1
+  offered (`board_policy ... seat1=front`), the guest's E joined (`joins=1`, `joins=2`; `presses=0`: no claim, so the
+  review's claim path did not fire), the dog's `flags=0x05` came, the guest took seat 3 (`end=peer; wait_ms=122` /
+  `151` / `166`) and the host confirmed seat 3, no `seat_draw` [O logs]; frames show the guest in a back seat on both
+  screens and the dog in front on the host's [O]. c) the same-moment tie (seat 3 on both, `deny_end; seated=1`) and d)
+  boarding after the host drives (seat 2 on both): unchanged in both runs [O]. No `hud=toast`, NEVER lines 0 on both
+  copies in both runs. Sheets `best-sheet-3ac51dfa.jpg` (`frames/near`) and `best-sheet-ba2ab6c5.jpg`
+  (`frames/integrate`) under the run archive's `m6m7k/`.
+- **Review:** the deny wait (`a2b9f5ab`: a held press the host denied before its ride waited up to 1 s for that ride)
+  is reverted. A deny is not always followed by the host's ride (the host's 3 s commit outlives a failed boarding), so a
+  refused guest stood 1 s at the door before a=6, and the order it helps never occurred in a run. Deny-first stays open
+  as in 8.57 (a=6, press again). In both runs the guest-first attempt (f) got the host's ride before the deny
+  (`why=host_drives`) and took the tie's path: deny-first is rare at `-WanSim bad` [I, two attempts], not shown
+  impossible. The joined press whose ride drops (claim) and the no-dog near-tie are unit-tested only.
+- Full `tools/build.ps1` at `d15fb340`: CTest 336/336; contract `--check` 838 / 213. Both runs' shutdowns were forced
+  (`forced_job_termination`, as in 3 of 8 m6m7i runs; the close crash is `wp/teardown-av`'s) [I].
+
+## 2026-10-31: Teardown AV at close (branch `wp/teardown-av`, merged into `dev/oct7-continue`, local only)
+
+**Players get:** closing the game during a co-op mission (Alt+F4, the window's X, the worker's close) first tears the
+partner down on the mission thread, as a natural mission end does. It is meant to stop the crash that hit one copy in
+about one close in eight. The close waits for one partner tick, at most 1 s.
+- **Cause:** `crash_probe=av; rva=0xbf421a` (read 0, then `0x1be23eb`) in 7 archived runs (`8567f888` host, `e6ef6e4d`
+  guest, `30007c04` both, 3 in m6m7b, 1 in next2), all in 30010/30020 with `realized=1`. It is the game's own GameObject
+  SendCommand (`0xbf3a80` -> `0xbf4200` -> `0xbf9a10`) reading the registry `*(0x2c389a0)` after the GameObject module's
+  finalize (`0xbf36c0`, the only code that nulls it) had run. The call comes from a player-position resolver (`0xa11e30`,
+  type 0 goes through SendCommand; called only by `0xa12440`). The mod frames are incidental: `mod+0x13955f` is
+  `PoseCarryDispatch` calling that original through the passive native_pose_early hook. `mod+0xdba53` and `+0x1cb205`
+  are stale ReadProcessMemory census-reader frames. The mod's part: WM_CLOSE arrives on the window thread, so
+  PartnerShutdown always took `teardown=other_thread` (208 of 208 archived closes). The engine then tore the mission down
+  with the partner's realize bits still set and its drive armed, which a natural MISSION_TERMINATING stop clears first.
+- **Fix** (failing first `b43b4472`): `window_close` (`native/window_close.cpp`). PartnerShutdown hands the teardown to
+  the mission thread (`teardown=mission_thread`) and the overlay holds the WM_CLOSE (`overlay=close_held`). The next
+  partner tick runs the terminating stop (always `clear`) and the mission end, then posts the WM_CLOSE
+  (`partner_shutdown=teardown; close=posted`). With no tick, a 1 s timer posts it (`overlay=close_released; by=timeout`).
+  WM_DESTROY and WM_ENDSESSION never wait. CFG is refused while closing (`window_closing`).
+- `window_close_tests`; full CTest 337/337; contract `--check` 838 / 213. Scenario `teardown-av-close-seated-play.txt`.
+- **Shown** (hidden worker at `24120e20`, run `f32b567e`, play, `-WanSim bad`, seed africa-jeep; host driving the jeep,
+  guest in seat 2 at the close; archive `teardown-av/` in the run archive): on both copies
+  `teardown=mission_thread` -> `overlay=close_held` -> `partner_dm=reverted` -> `partner_bits=cleared` ->
+  `partner_stop; cleared=1` -> `partner_shutdown=teardown; close=posted`; no `crash_probe=av` on either copy. The guest
+  exited 0. The worker force-terminated the host after its 5 s wait (exit 1223), as in 13 of 23 m6m7g-i runs.
+  Expectations all met; real saves unchanged.
+- **Open:** one clean run cannot prove a 1-in-8 crash gone [U], and a host the worker terminates never reaches the
+  engine's teardown. Closes that bypass the overlay's WndProc (an overlay refused at install, the game's own exit) are
+  unchanged.
+- **Merged** into `dev/oct7-continue` after 8.57 / 8.58 (only this file conflicted): full `tools/build.ps1` CTest
+  337/337; `generate_partner_contract.py --check` 838 / 213, and every other `--check` generator passes (carry_info and
+  sleep_plugin with `--output native/<name>.hpp`, their default is `tools/`; vehicle_controller with `--executable`;
+  native_ui and teammate_targeting match their headers, their local `docs/evidence` reports are absent here).
+
+## 2026-10-31: the tie's seats and the door message (branch `wp/seat-tie`, local only, design 8.57)
+
+**Players get:** when both press E at an empty jeep at once and the host's D-Dog is out, the guest now sits in the same
+back seat on both screens (back right in testing), after waiting at the door about a third of a second while the dog
+takes the front seat. Before, the guest's own screen put it in the front seat while the host's showed it behind the
+dog. A host who only stands at the driver's door while the guest gets in no longer sees "Your partner reached the
+driver's seat first"; it comes only when the host presses E there while the guest is getting in.
+- **How:** site D keeps a held press the host's ride overtakes waiting while the host's copy still offers seat 1, at most
+  700 ms after the ride (`kSeatSettleMs`); the dog's OneTaken in the host's seat addendum ends it and the press takes a
+  back seat. The guest's deny toast waits for its seat (receipt `lpv`). The host's own yield no longer refuses its ride
+  icon, so a press there is refused at site B and only that shows a=7. Failing first `114bbb87` -> `76d7b3c7`;
+  `world_ride_pose.lua` trimmed first (`185ae270`); scenario `3f42bbcc`.
+- **Shown** (hidden worker `4a891af9`, shipped play defaults, `-WanSim bad`, both copies): c) one driver (the host); the
+  guest's log seat 3 = the host's confirmed seat 3; press to seated 367 ms; no toast on the guest [O logs, frames]. b)
+  the host stood at the door, the guest drove: no a=7 [O]. b2) the host pressed E inside the yield: a=7 once [O]. a)
+  and d) unchanged [O]. NEVER lines 0 on both copies. Sheet `m6m7j/frames/tie/best-sheet-4a891af9.jpg`.
+- **Not shown in a game:** the tie without a dog (seat 1 after 0.7 s; the guest then waits about 0.8-1.0 s at the door)
+  and the deny with every passenger seat full (unit tests only). The guest's screen does not show the host's dog in the
+  front seat (not new).
+- **Still open (8.57 residuals, code reading):** a guest press a moment after the host's ride reaches the guest, before
+  the dog's OneTaken (about 250-500 ms), still takes seat 1 and is drawn in seat 3 on the host's copy; a host deny that
+  reaches the guest before the host's ride leaves the guest on foot with a=6 (press again).
+- Full `tools/build.ps1` at `3f42bbcc`: CTest 336/336; contract `--check` 838 / 213.
+- **Review fixes** (`8a34103c` -> `21b0a888`, no change at the play defaults): the settle needs a seat-1 offer the
+  guest's own keys take; the host's yield deny is one store with its yield bit.
+
+## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, `wp/seat-checks4` merged, local only, design 8.55)
+
+**Players get:** standing at an empty jeep's door no longer takes its driver's seat. Only an E press does, in both
+roles, so a partner waiting at the door no longer locks the other out (m6m7h `23032c72`). A guest's E press at an
+empty jeep waits about one round trip (280 / 284 ms at `-WanSim bad`) at the door and then gets in with no second
+press. When both press at once the host drives and the guest gets a passenger seat: front on the guest's screen, back
+right behind the host's D-Dog on the host's screen (the screens disagree, 8.55 Open). A host standing at the door when the guest gets in sees "Your partner
+reached the driver's seat first".
+- **How:** new site D (`0x1251366`, RideVehicle phase 1's call of the remote gate `0x114DB20`) holds the guest's press
+  until the host answers (1 s cap); the host's own press commits at site B and its `grant_if` answer takes the same
+  lock; site C refuses only a live deny; READY (SEAT action 4) arms the guest, so 0.14.4 and key-off peers stay stock.
+  Failing first `db08fc0` -> `dc62f40`; the peer end `ef7c867` -> `b544c6d`; scenarios `cc185ce`, `73214a7`.
+- **Shown** (hidden worker, shipped play defaults, both copies): `23c7f305` a) the guest at the door without E, the
+  host's one E drives, no claim and no toast; d) the guest then boards back seat 2; b) the mirror, the guest drives
+  after `wait_ms=284`; c) both press: one driver (the host), the guest got seat 1 on its copy (seat 3 behind the dog on
+  the host's: `seat_draw reason=dog`, DrawSeat live once) and still saw the a=6 toast.
+  `1beffd8f`: a guest press at an empty jeep, `wait_ms=280`, drove. NEVER lines 0 in both.
+- **Merged head** run `caaf743f` (hidden worker at `c1c562d9`: the review fixes and the checks merge; play, `-WanSim bad`,
+  both copies; no expect failure, closed, baselines and real saves unchanged, not forced): a) b) c) d) again; b)
+  `wait_ms=268`; c) the press ended `end=peer` (`wait_ms=86`), the late deny logged `seated=1` and the guest saw no
+  toast (`b544c6d` shown) [O log, frames]; the host's screen again drew the guest in seat 3 behind its D-Dog [O frame];
+  `role=commit` only on the host. NEVER lines 0 on both. Sheet `frames/claim/best-sheet-caaf743f.jpg`.
+- **Review fixes** (`d758d50` -> `321d3d0`; the timeout and dip paths are unit-tested only): a press timeout makes the guest stock until the next READY
+  (a silent host cost up to 12 s of held presses; now one); a guest-only link dip keeps READY; a press whose phase 1
+  was aborted stops reading as pending after 250 ms; one-word press-done snapshot; `role=commit` is the host's.
+- **Open:** the tie's seat mismatch with a D-Dog; GRANT not matched to its claim (narrow); the a=7 message for a host
+  that only stood (user decision); no message on a timeout. `forced_job_termination=true` at a close is not new.
+- Full `tools/build.ps1` at `29d3c8f5` (both branches merged, the review fixes): CTest 336/336; contract `--check` 838 / 213.
+  Flaky: `debug_overlay_tests` ("raw no-legacy keyboard still supplies text to menu") failed once in a full CTest under load
+  and once in the worker's audited CTest (run 3b); it passes alone, 5 repeats and the next full run (336/336). Untouched here.
+
+## 2026-10-31: m6m7i seat checks - a first-person seat hit, the blocked first person falls back (branch `wp/seat-checks4`, local only)
+
+**Players get:** in first person from a jeep seat, when the jeep blocks the gun (the rifle lies across the view, for
+example after turning the aim down beside the front seat), the view now goes back over the shoulder about 0.1 s later
+and the gun fires from there (ready about 0.2 s after that); before, nothing fired for the rest of that aim. Shown in the lab (`1bd4419a`, design
+8.56) [O lines + frames on the guest copy; the host copy shows the guest seated]. Also shown in the lab: a
+first-person shot from the front seat hit a standing guard about 11 m away (`859964ce`) [O both copies' logs, guest
+frames].
+- **Fix** (failing first `fcfa971` -> `fccba00`): 100 ms at gun mode 15 with our bit set clears it (`seat_fpv;
+  event=fallback; reason=blocked`); in that aim first person comes back only after the shoulder aim turns up 0.07 rad
+  or sideways 0.175 rad (unit-tested, not seen in a game), at most 2 falls per aim; the next aim is as before.
+- **A/B** [O]: the stock shoulder view ignores an in-aim scripted turn, so it was compared with the turn made before
+  the raise. 8 deg down there, the shoulder view (looking at the jeep's seat back) fired; first person was blocked once
+  (`859964ce`) and fired once (`1bd4419a`). The in-aim turn down after a set blocked first person 2 of 2.
+- **Part C** (`8567f888`, play): the driver's D-Dog boarded seat 1 with the driver even from 335 m away, so the guest
+  got the back seat again; the dog arriving after the partner sits in seat 1 needs the partner to board first [U].
+- Runs `859964ce`, `1bd4419a`, `8567f888` (archive: the run archive's `m6m7i/`); never-lines 0.
+- First person looks ~3.5 deg lower than the shoulder aim, but at the same pre-raise turn its shots went ~8 deg lower
+  (ground 2.6 / 3.6 m out against 9.5 m). A fall-back clear given up mid-aim is now cleared again at the aim end (review fix, unit tests).
+- Existing teardown AV at the close (`crash_probe=av; rva=0xbf421a` after `hooks_off`) in `8567f888` host and
+  `e6ef6e4d` guest; not from these branches; to symbolize.
+- **Open:** the partner in seat 1 before the driver boards with its dog (DrawSeat itself was seen in `23c7f305` c); the in-aim rearm
+  of first person after a fall in a game; a checkpoint reload with a seated partner reaching play on both screens.
+
+## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
+
+**Players get** nothing new they can see: no default changed. The close fix (8.53) now also holds when the window
+closes while the mission thread is in the middle of a seat write (design 8.54). No hidden run this round.
+- **Seat lock** (failing first `c4327f1` -> `08a67c3`): Arm, Revert, the get-off rewrite and Close take one lock.
+  A get-off rewrite that passed its checks just before the close finished after Close's revert and left a seat
+  dword in the code with nothing armed; two reverts at once logged `partner_ride_seat_patch=refused` (a NEVER line);
+  the two threads' VirtualProtect pairs on the seat pages could interleave. A close with nothing of ours live is now
+  silent (no refusal line on a build whose bytes differ). `partner_ride_seat_tests` 110 checks.
+- **Review corrections** (no new run): `d462df5d`'s MISSION FAILED after the checkpoint reload was not the earlier
+  fall. The host came back at life 7800 but unpaired (`pair_wait; reason=remote_loading`, never `world=paired`)
+  while the guest sat at the load screen, and two guards shot it dead with no downed intercept [O host.log]. So a
+  reload with a seated partner reaching play again on both screens is [U]. In `d462df5d` the guest's spawn claim
+  had also locked the host out 10.7 s before the fall [O]. ecb5f08d's blocked raise: mode 15 is read from the red
+  mark (no `gun=15` line in any run) and one continuous aim is [I]. The `best-sheet-23032c72.jpg` panel after the
+  host's E was the c-far frame; relabelled.
+- **Part C scenario** (`6dc7d93`, not run): the guest leaves the jeep right after each boot, no `guest debug
+  forward`, godmode again after the reload, and C3's guest goes to the door only after the host drives.
+- Full `tools/build.ps1` at `8dc956f`: CTest 336/336 (the first pass failed only `friend_package_tests_2`, its
+  relaunch timing assert at 7312 ms under load; it passed alone and in the second full pass); contract `--check`
+  836 / 213.
+- **Open:** the downed protection between a checkpoint reload and the pair re-forming (`d462df5d`); a front-seat
+  first-person aim down at a guard about 11 m away left the rifle across the view and the gun did not fire (2 of 2
+  lab runs): an A/B with `partner_seat_fpv=0` at the same aim decides whether first person is worse than the
+  shoulder view there; a seated first-person shot hitting a guard; part C (a); a checkpoint or death during a seated
+  first-person aim.
+
+## 2026-10-31: front-seat first-person shots tested online (review m6m7h track shots, branch `wp/seat-proof3`, local only)
+
+**Players see no new behaviour** (no code or default changed). What is now shown online at the shipped defaults: from
+the jeep's front seat the automatic first person fires in both roles, also while the jeep turns, and the view stays on
+the aim; a raise the jeep blocks stays over the shoulder with the red mark, and turning to a clear direction in the same
+aim switches to first person; a host who gets out while aiming in first person gets the normal camera and aims over the
+shoulder on foot. In the lab the front-seat first person put an awake guard 11 m away under the reticle. Still not
+shown: a seated first-person shot hitting a guard (the test's own re-aim moved the view off him; see the lab runs).
+- **Play run** `ecb5f08d410743af88f7e64e46ce9670` (`m6m7h-seat-fpv-shots-play.txt`, `-Mode play -WanSim bad`, no
+  labsetting; both copies `seat_fpv on=1 source=key`, S1 `key=1 play=1`, pass_camera `mode=view`, anchor `on=1`;
+  never-lines 0 on both). In play the soldier warp is refused, so the driver turned the jeep instead (w+a 2.5 s).
+  - Blocked raise: the guest in seat 1 raised at rel +55 (across the windscreen frame and the driver): shoulder view
+    into the jeep's side, red mark, no set (frame +900 ms); a mouse turn right in the same aim: `set reason=ready
+    gun=7` and the scope [O]. Mode 15 is read from the red mark (no `gun=15` line) and one continuous aim is [I].
+  - Moving: during the left turn the guest's seat-1 aim set at gun 7 and its shot fired (S1 `shift`, 24.4 m); the
+    scope stayed level at +50 / +350 ms [O]. The jeep: 2300 on the guest's copy, 2295 on the host's (cause [U]).
+  - Stopped: guest seat 1 (set at 7, two shots, S1 `shift`, magazine 7 -> 5) and host seat 1 (set at 7, two shots,
+    S1 `shift`) fired [O]; no hit: the guest's shots hit a wooden post 10.4 m out in front of the awake guard (30-44 m,
+    moving: the camp had gone to alert after the moving shot), the host's re-aim went to a sleeping guard 45 m behind.
+  - Host get-off while aiming in first person: `stop reason=get_off clear=0x2 ok=1`, the get-off turn `view=1
+    yaw_err_mrad=0`, the next aim on foot over the shoulder [O frames].
+  - After the alert an enemy explosive (2600 to the guest) broke the jeep on the guest's copy; the host's copy removed
+    it when the host got out (`vehicle_gone` applied), as the README says for a wrecked ridden jeep; not seat code [I].
+- **Lab run** `30007c04627743e9ba4c62371c1bfc49` (`m6m7h-seat-fpv-shots-lab.txt`, only `debug_soldier_warp=1`): the
+  warp put the awake guard 12.5 m in front of seat 1; the guest's aim set at gun 7, but after the in-aim re-aim at him
+  (8.5 deg down) the view showed the rifle across it and nothing fired (no S1 line, magazine 8). The lab camp attacked
+  both players from the boot and an explosive broke the jeep on the guest's copy in the same second, so whether that
+  direction blocks the gun is [U].
+- **Lab run** `ffc0411d1cff446ebcb87363b8ff01b6` (the same scenario with the camp asleep but the target; the first
+  try at 05:53 was refused before admission by the worker preflight, `Audited command timed out:
+  worker-policy-fixture`, with another program holding the GPU at 81-93 % and d3dprobe 0x8007000E; the one retry ran
+  at 05:59 with the GPU at 11 % and d3dprobe hr=0): the warp put the awake guard 11.3 m front-right of seat 1 (rel
+  -40); the guest's aim set at gun 7 with him under the reticle (frames `b-aim0`, `b-guard`) [O]. The scripted in-aim
+  re-aim at his torso (`enemy_aim_nearest 1.1`, 8.3 deg down) moved the view off him to the village and left the rifle
+  across the view with the red mark; two presses fired nothing (no S1 line, magazine 8); the third, after he had walked
+  to 16 m, fired (S1 `shift`, 24.9 m) into the grass [O]. No hit. Part A did not run (the host's second warp fell back
+  to a route 60 m off and the host did not board).
+- Contract `--check` 836 / 213; scenarios lint (worker_session 2/2). No code changed.
+- **Open:** a seated first-person shot hitting a guard: next time fire at the first set (no scripted re-aim), the
+  camp asleep but the warped guard (lab: the play warp is refused); why the scripted re-aim left the gun blocked [U];
+  part C of `m6m7e-seat-fixes-play-b.txt`; a checkpoint or death during a seated first-person aim [U].
+
+## 2026-10-31: seat checks part C on its own (review m6m7h track partc, branch `wp/seat-checks3`, local only)
+
+**Players get** no visible change. The fix below only matters while a closing game process is still running.
+- **Close fix** (failing first `140abca` -> `ad609fe`): when the game window closes on a thread other than the
+  mission's (every shutdown line in these runs said `partner_shutdown=hooks_off; teardown=other_thread`), PartnerShutdown
+  returned before PartnerMissionEnd. So the seat patch revert never ran: it was missing, not only unlogged. The patch
+  covers the four seat dwords, the seat-1 anchor included. `partner_ride_seat::Close` now runs before the thread
+  split. It blocks every later Arm (`skipped; reason=closing`) and reverts at once (`reverted; reason=shutdown`).
+  Neither run closed with a live patch, so that line in a game is [U]. The process ends soon after the close (the
+  host copy logged a few more stats lines, then the worker's job termination), so the stale patch had no visible
+  effect [I].
+- **Why -b part C never ran** [O]: `debug forward -40` keeps the seed spot's height (0.75 m). 40 m back the ground is
+  higher, so the host landed under it, fell, and went down (WOUNDED). This happened in both `1d9fd748` and `d462df5d`
+  (frames `*-host-c-far`; `downed_damage=intercept;cause=lethal`). A downed host cannot board, so the guest took the
+  driver's seat. Not the 2.5 s wait. In `d462df5d` the guest's claim at spawn (t 341497253) had also locked the host
+  out 10.7 s before the fall; `1d9fd748` began with `deny; why=host_first`, so the fall alone stopped that one.
+- **The guest's claim** [O `23032c72`]: a guest standing at an empty jeep claims its driver's seat every ~1.2 s, without
+  pressing E. In that run the host's copy granted and yielded, and showed the host "Your partner reached the driver's
+  seat first: take another seat or wait." The host's E beside the driver's door then did not board.
+- **Checkpoint reload with a seated partner** [O `d462df5d`, guest driving, host copy drawing it in seat 0]: the host
+  chose Escape, CHECKPOINT, then 'a' + Enter (the confirm preselects NO). The host copy logged
+  `partner_ride_seat_patch=reverted; reason=stop` at MISSION_TERMINATING. Both copies reloaded 30020 (the guest by the
+  kind-4 follow). The guest copy then waited at "Space Resume Game" (no `runtime_enter`). The host copy came back at
+  life 7800 but unpaired (`pair_wait; reason=remote_loading`, never `world=paired`), and soldiers 1080 / 1210 shot it
+  dead with no downed intercept: MISSION FAILED (review m6m7h; not the earlier fall). A reload with a seated partner
+  reaching play on both screens is [U].
+- **Not shown:** where the D-Dog goes when it arrives after the partner sits in seat 1 [U]; neither run seated the
+  guest in seat 1. Scenario `m6m7h-seat-partc-play.txt` (`0eeda98`, then `6dc7d93`; not run) fixes the causes above.
+- Runs `d462df5d971e4ed19c3d2eb8cb997c30`, `23032c7227864813832e644dfba4cbd2`. NEVER lines are 0 on both copies.
+  Full `tools/build.ps1` at `c14a920` and again at `6f28764`: CTest 336/336; contract `--check` 836 / 213. Design 8.53.
+
+## 2026-10-30: the seat branches integrated, review m6m7g closed (branch `wp/seat-proof` with `wp/seat-checks2` merged, local only)
+
+**Players get** the automatic first person from the jeep's front seat and left back seat (on since the fpv section
+below) only when the gun can fire: an aim that the jeep blocks at the raise (the red no-fire mark) now keeps the stock
+over-the-shoulder view instead of a first-person view with the rifle body across it and no shot.
+- **Fix** (failing first `e827380` -> `2c43bf6`): FpvReady is 7 / 9 / 10 again (the mode-15 part of `7226d5e` reverted).
+  All 5 automatic sets at mode 15 (lab `2a394a64` guest seat 1 x3; play `ff4134f4` host and guest seat 1) kept the gun
+  at 15 for the whole aim and fired nothing; every first-person seat shot that fired was set at 7. Lab `61384aab` (the
+  same FpvReady) shows what a blocked raise now gives: the shoulder view filled by the jeep, the red no-fire mark.
+- **Merged** `wp/seat-checks2` (scenarios + docs only): README Seats keeps the automatic first person (F = opt-out for
+  the ride) and adds the measured S1 result (host as passenger, over the shoulder). Docs corrected per the reviews:
+  host seat 1's F-tap scope was not clear (spare wheel and box at 1.7 m, `cbfda7f1-host-h1-ftap`); the host's seat-2
+  first-person scope was about three quarters covered (`ff4134f4-host-k2-aim`); a get-off with our bit set was seen
+  only for the guest (seat 1, `clear=0x2`); S1's stock damage was on the passenger's (host's) copy only, the host-copy
+  authority is [I]. The m6m7f F-tap scenarios now name `partner_seat_fpv=0`. Design 8.51.
+- **Overlay** (failing first `5ccbcda` -> `b0e7fb1`): a create call that returns S_OK with no object now refuses with
+  `address=null` (was `hr=0x00000000`), and a failed path join in `system_directory` logs its HRESULT.
+- **Runs: none admitted.** Two tries of `m6m7g-seat-fpv-play.txt` (play, `-WanSim bad`, shipped defaults) at the merged
+  build were refused before admission; both times the host's overlay installed (`worker_render_ready`) and the guest's
+  logged `overlay=refused; reason=graphics_or_input_hook; step=device; detail=D3D11CreateDeviceAndSwapChain;
+  hr=0x8007000E` (E_OUTOFMEMORY, the new diagnostics' first real line). `4948b0528a85486f8586c6b5f7767058` (22:16,
+  supervisor `child_exited_before_admission` 1067): the probe at 22:14 had failed the same way on both NVIDIA adapters
+  with no lock held and no game up, then passed at 22:16; after the refusal it passed again, so the one retry ran.
+  `c9da986256c74f57bb61d40cbdebe02b` (22:18, supervisor `process_image_path` 5): the same guest refusal; probe hr=0
+  after it. tasklist found no snipping / screenclip / obs / gamebar process; commit free 30-33 GB; nvidia-smi 5.3-7.8
+  of 16 GB. Closed, baseline restored, real saves unchanged; overlay tails in `<archive>/<id>/refusal/`. So the
+  mode-15 revert is shown only by lab `61384aab` (the same FpvReady), not in play at this head.
+- Full `tools/build.ps1` at `b0e7fb1` plus these docs: CTest 336/336; contract `--check` 836 / 213.
+- **Open:** a first-person seat shot hitting a guard; a host get-off while our bit is set; death / Fulton / mission
+  end / a checkpoint during a first-person seat aim (driver tests only); the S1 x1 / d lines with first person on;
+  a moving jeep; guest `4adc1005` stopping at `pair_wait; local_loading` [U].
+
+## 2026-10-30: the automatic first person from seats 1 and 2 ON (review m6m7g track fpv, branch `wp/seat-proof`, local only)
+
+**Players now get** (play run, shipped defaults, both copies): aiming from the jeep's front seat or left back seat
+switches to the game's first-person view by itself, in both roles; stopping the aim or getting out (also while aiming)
+brings the normal camera back and the next aim on foot is over the shoulder; the right back seat is unchanged; the
+player's own F tap goes back to the shoulder for that ride. Still open: whether such a shot hits a guard [U].
+- **Fix** (failing first `a968074` -> `7226d5e`, reverted in `2c43bf6`, see the section above): the blocked seated aim
+  (gun mode 15) counted as ready; no aim set at 15 ever fired.
+- **Default** (failing first `a5e2fc3` -> `0ff748a`): `partner_seat_fpv` follows the gun profile in lab and play, a
+  named 0 opts out (`lab_ini_check` prints it; friend_package_tests: Play-Coop never names it, play defaults it on).
+- **Runs** (all admitted; d3dprobe hr=0, tasklist clean before each): lab `61384aabd1b84482965526e0e12db744` (the
+  lever), lab `2a394a64d48a4072844f832959ea3f31` (the key named), play `ff4134f40c324a3880658d15eaf209e8`
+  (`m6m7g-seat-fpv-play.txt`, `-WanSim bad`, no key named, no F pressed): `seat_fpv` on with `source=key` on both copies;
+  set in all four seat/role pairs (mode 7; at 15 in seat 1 before `2c43bf6`), cleared at the aim end, stopped at the
+  get-off (get-off turn checked; a get-off with the bit set only for the guest); first-person shots (S1 `shift`) keep
+  the scope on the aim at +350 / +650 ms; seat 3 never set;
+  `opt_outs=0` without F, one opt-out for the lab F tap; never-lines 0. Aimed into the jeep (mode 15) the rifle covers
+  the lower half of the first-person view and the gun stays blocked. Landing run `4adc100597f1422ea69296ac58a28a3d`
+  (`m6m7g-seat-fpv-land.txt`): the guest's lab boot never reached gameplay (log stops at `pair_wait; local_loading`),
+  cause [U]; the round's 4th run, no retry. Design 8.49; README Seats; native-puppet "Seat first person".
+- Full `tools/build.ps1` at `16f55a0`: CTest 336/336; contract `--check` 836 / 213.
+
+## 2026-10-30: the seat checks at the shipped defaults; S1 shown to stop real self-hits online (review m6m7g, branch `wp/seat-checks2`, local only)
+
+**Players see no new behaviour** (no default changed). What changed for them is known now: on the Afghanistan jeep two
+seated shot lines cost the jeep 702 of its 2300 life each without the seat-shot fix (S1) and nothing with it, online.
+The README's seat-shot note says so.
+- **Runs** (play, `-WanSim bad`, native gun, research; all three admitted; d3dprobe hr=0 on every adapter, no
+  snipping / screenclip / obs / gamebar process; [O] lines sliced from both copies, frames looked at):
+  - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults): the guest boarded back seat 3 beside the
+    host's D-Dog in seat 1 and the host's copy drew it there (`confirmed; seat=3`, anchor `configured; on=1`); the
+    seat-3 aim view was clear; five seated shots, S1 `result=shift` each (targets 8-18 m), the jeep 2300 on both copies.
+    No guard was hit: the reticle sat white on the grass by the sleeping guard 8.2 m out (no `req` / `commit`). Part B:
+    the host boarded the guest-driven jeep from the right into seat 3 (the guest's D-Dog in seat 1), drawn there on the
+    guest's copy, aim view clear. Part C did not run: the host's E 2.5 s after a 39 m warp did not board, the guest's E
+    then took the driver's seat, and the scenario's `require` stopped it; the worker closed with the guest driving
+    (`Forced`, baseline restored, real saves unchanged). Never-lines 0 on both.
+  - `663b270c2171429089a565b473fdb07e` (`m6m7e-seat-shot-stock-play.txt`, `-LabSetting partner_seat_shot=0`, afgh-quiet / afgh-horse; `key=0` on
+    both): the host rode, the guest drove the east jeep (`cat=2`). On the host's copy (the passenger's; that it is the
+    life that counts while ridden is [I]) seat-1 line x1 (back-left across the cabin) 2300 -> 1598 and seat-2 line d (back and down past the tail)
+    1598 -> 896; seat-2 lines a, b, c fired and cost nothing; x2 and x3 showed the red mark and did not fire. The
+    driver's copy stayed 2300 while ridden.
+  - `ce0233f4d044461f8af25db8dc8ffb02` (the same scenario at the shipped defaults, `key=1`): every fired line `result=shift` (x1 exit 1.37 m, d 0.26 m),
+    the jeep 2300 on both copies after every shot.
+- **Open:** a guard hit by a seated shot (this aim pointed at the grass); the D-Dog arriving after the partner and a
+  teardown with a seated partner (part C; its warp now waits 4 s, `89b1dea`). Design 8.50.
+- Full `tools/build.ps1` at `722b002`: CTest 336/336; contract `--check` 836 / 213.
+
+## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
+
+**Players see no new behaviour** (no default changed); the README Seats tip now says what the online run showed: the F
+tap gives a first-person view from seat 1 and seat 2 in both roles (clear for guest seat 1 / host seat 2), a shot fired that way does not pull the view
+up, getting out in first person returns to the normal camera, and each new aim starts over the shoulder again.
+- **Diagnostics** (failing first, `40076fd`): a refused overlay install keeps the prefix
+  `overlay=refused; reason=graphics_or_input_hook` and appends `step=` (window, device, present_hook, resize_hook, input,
+  enable_hooks), `detail=` (e.g. `dinput8_load`, `CreateDevice_mouse`, the hooked method or export, `apply_queued`) and
+  the code (`hr=0x...`, `mh=MH_STATUS(n)`, `error=`, `address=null`); the minhook / probe_class refusals carry theirs.
+- **Run** `cbfda7f1b3fb4a768ef3f41764af6f19` (`m6m7f-seat-ftap-play.txt`, play, `-WanSim bad`, native gun, shipped
+  defaults; afgh-quiet / afgh-horse) was **admitted** on both copies (the Snipping Tool closed; d3dprobe hr=0 on every
+  adapter). Configured on both: S1 on, seat-1 anchor on, pass camera `view`, seat first person off. [O] frames + logs:
+  the F tap gave a scoped first-person view in all four seat/role combos, clear for guest seat 1 / host seat 2 (host
+  seat 1: a spare wheel and a box at 1.7 m; the guest's seat-2 view partly covered on the right); the switch prompt showed for guest seat 1 / host seat 2, not for host seat 1 / guest seat 2, and the tap
+  worked anyway; first-person shots from guest seat 1 and host seat 2 kept the view on the aim at +50/+350/+650 ms,
+  S1 `result=shift` (36 m, 22 m); no guard was hit (the scripted aim was 1.6 m above a lying guard), so landing is [U];
+  the driver's frames show the partner seated, gun down; get-offs from first person went to the normal third-person
+  view and the get-off turn checked `view=1`; every next aim (seat and foot) was over the shoulder; never-lines 0.
+- **Seen, cause [U]:** guards not on the scenario's sleep list (1194, 1195, 1296) started a fight in part 3; in part 4
+  the jeep broke on the host (`VehicleBroken`, no seat shot in that part) and burned. Design 8.48.
+- Full `tools/build.ps1` at `3d57f4d`: CTest 336/336; contract `--check` 836 / 213.
+
+## 2026-10-30: the seat branches integrated, review m6m7f closed (branch `wp/seat-fpv2` with `wp/seat-checks` merged, local only)
+
+**Players see no new behaviour.** The README Seats tip about the F tap is narrowed to what was seen (a scoped rifle, the
+guest in the front seat and the host in the left back seat, lab `9a0c1f27`): some seated aims show no switch prompt, the
+game remembers first person for that weapon until F is tapped again, and firing or getting out in first person from a
+seat is not tested. `partner_seat_fpv` stays off (lab and play); no default changed.
+- **Fixes for a later flip of the key** (design 8.47; failing first `15d5ed2` -> `f5603bb`): a clear of our toggle bit
+  stays pending until a read shows it clear and is retried (on foot too, 30 tries at most); every exit releases (the
+  terminating stop, MissionStart, a refused or rejected tick, MissionEnd with only P); FpvInstall publishes after its
+  result; the trace drops an unpinned read. Driver tests cover each exit and the key off.
+- **Scenarios** (`fb02420`): new `m6m7f-seat-ftap-play.txt` (the stock F tap from seats 1 and 2 in both roles at the
+  shipped play defaults); -b part C requires seat 1; its seat-3 S1 wait accepts any result.
+- **Run** `5e5a2131d611489ba74f9c5e5589398a` (the F-tap scenario, play, `-WanSim bad`, shipped defaults) was refused
+  before admission (`IsolationFailed`, `child_exited_before_admission`): this time the host's worker refused
+  (`required_hooks_or_private_desktop`) and the host's overlay logged `refused; reason=graphics_or_input_hook`. The
+  hardware D3D11 device created on every adapter just before and after it (GPU 6.1 of 16.3 GB in use), so GPU memory does
+  not explain this refusal; the cause is [U] (`SnippingTool.exe` was still running). Stopped by rule; baseline restored,
+  real saves unchanged. **Blocker**: no hidden run of this round (m6m7f, four tries) was admitted.
+- Full `tools/build.ps1` at `fafdf11` (the merged head): CTest 336/336 (the DX11 fixture passes again); contract
+  `--check` 836 / 213; scenario lint passes.
+
+## 2026-10-30: seat first person built, not proven (branch `wp/seat-fpv2`; `partner_seat_fpv` off)
+
+**Players see no change.** What players can do today: tap F while aiming from the front seat or the left back seat; the
+game's own first-person view is clear from there [O `9a0c1f27`: guest seat 1, host seat 2, Bambetov SV]. Whether a shot
+fired in first person from a seat lands, and whether the view climbs after it (the mod's shot guard is off in first
+person), is [U]: no run has fired one.
+- Code (design 8.46, native-puppet "Seat first person"): key `partner_seat_fpv` (off unless named, lab and play), lab
+  lever `passcam seatfpv on|off|key`: the stock first-person toggle bit of the hand slot (subjective camera `impl+0x60`,
+  the gun poller `0x1053E80`) is set while the local passenger aims from seat 1 / 2 with the gun ready (mode 7 / 9 / 10);
+  the bits it set are cleared at the aim end, the get-off, a seat change, the key's end and the mission end / stop; the
+  player's own tap opts out for the boarding. Lab trace `state=fpv_trace` / `state=pollers`. Failing first `a3b8100` ->
+  `8b33be4`, `9916c4a` -> `e508347`; driver test `655084b`.
+- **Blocker (corrected in review m6m7f):** the probe `caf8fbc7` ended `IsolationFailed` (`child_exited_before_admission`;
+  guest overlay `refused; reason=graphics_or_input_hook`), like the other track's 19:45 run. The hardware D3D11 device
+  failed with `0x8007000E` 19:34-19:41 and in the DX11 CTest fixture 19:58-20:02, but the 20:31 refusal (section above)
+  came with the device creating fine, so the cause is [U] (the snipping tool ran through admitted runs since 18:04).
+- The full CTest at `9b3553a` was 335/336 only because of that fixture; the merged head's full CTest is in the section
+  above.
+
+## 2026-10-30: the seat checks at the shipped defaults - blocked, no game ran (branch `wp/seat-checks`, local only)
+
+**Goal** (design 8.45): the -b rehearsal (seat 3 with S1, the driver's D-Dog in seat 1, a guard hit by a seated shot,
+teardown while seated) and the S1 stock control on the east jeep (`m6m7e-seat-shot-stock-play.txt` with and without
+`-LabSetting partner_seat_shot=0`). **Scenarios** (`323d0e8`): -b part C now stages the D-Dog after the partner (the
+driver steps 40 m away first, the partner boards at once, the dog's arrival is captured) and ends seated; the stock
+scenario adds seat-2 line C (rel -90, across the jeep to the right). Scenario lint passes.
+**No game reached gameplay; nothing new is proven or disproven.**
+- 19:33: the worker's audited CTest refused the run (`debug_overlay_tests` "hardware DX11 fixture creation"). A probe
+  (`D3D11CreateDevice`) gave `0x8007000E` on the NVIDIA adapter only (the integrated GPU and WARP created fine) while
+  system commit had 21-22 GB free; the GPU's dedicated memory was 13.9 of 16 GB in use. It created again at 19:43.
+- 19:45: the rerun (`784ea30ba3e04ec7ade024766066beaa`, in the m6m7f run archive) ended
+  `IsolationFailed=True`, `child_exited_before_admission` (supervisor error 1067); the guest's `debug-overlay.log` ends
+  `overlay=refused; reason=graphics_or_input_hook`, its worker log `refused; reason=required_hooks_or_private_desktop`.
+  `SnippingTool.exe` was running (since 18:03; the cause is [U]: runs since 18:04 were admitted with it running, and the
+  20:31 refusal came with the D3D11 device creating fine). Stopped there by rule; baseline restored, real
+  saves unchanged. Still open, as in the section below: everything in the goal.
+
+## 2026-10-30: the seat fixes merged and ON for players (branch `wp/seat-fixes`, local only)
+
+**Merged** onto `dev/oct7-continue` `0c893e1`: `wp/seat1-draw` `83c68a9`, `wp/self-hit` `5466c17` (`a520315`),
+`wp/aim-view` `743d52b` (`776645f`). The docs renumber the design sections (self-hit 8.33 -> 8.37, aim-view 8.33-8.37 ->
+8.38-8.42); code comments follow the docs numbers since `95eed1c`, scenario headers keep the branch numbers. Contract
+826 code sites / 209 slots (`--check`).
+**Play defaults ON** (`5b4e464`, failing first `bc8484e`): `partner_ride_seat1_anchor` (the front-seat partner drawn in
+the seat, the clean get-off) and `partner_seat_shot` (S1) follow the gun profile in lab and play (a named 0 opts out);
+`partner_pass_camera=view` (the get-off turn) kept from the merge.
+**Play rehearsal** (`-Mode play -WanSim bad`, shipped defaults, no key named, Wakh Sind east jeep (`cat=2`), afgh-quiet /
+afgh-horse; design 8.43; [O] lines on both copies and frames looked at; frames `D:\mgs-coop-run-archive\m6m7e\frames\integrate`):
+- `c66eb55f32ee4d4ca5c95f41dfadf492` (`m6m7e-seat-fixes-play.txt`): `partner_seat_shot=configured; key=1; play=1` and `mode=view` on both copies
+  (the anchor's configured line comes at the first seat patch, not at load); D11 both refusals with their toasts; the race (host
+  first). Guest role: seat 1 drawn in the seat on the host's copy; S1 `shift` on a front-seat line and both seat-2 lines,
+  the guest's copy of the jeep 1382 before and after; RMB through the get-off (hold, then the request); end correction on
+  the host's copy 27 mm; seat-2 turn. Host seat 1: drawn in the seat on the guest's copy, its own view in the seat, S1
+  shift, host copy 1409 unchanged, end correction 20 mm. In both seat-1 windows the copy that did NOT shoot lost life:
+  the host's copy (the life of record) 2147 -> 1409 across the A1 drive and the guest's A2 shot, the guest's copy 1409 ->
+  1193 around the host's B1 shot; [I] enemy fire (guards 1194/1195 attacking, 11 guards conscious at part B, the puppet's
+  mag unchanged), confounded, not observed. The camp was in combat and the jeep broke on the guest's copy while the guest
+  drove (`VehicleBroken att=none`), removed on both: the host's seat-2 legs did not run. Two first E presses after
+  `goto_vehicle right` did not board.
+- `9b5df4b84152422aa405be37f6d937a7` (`m6m7e-seat-fixes-play2.txt`, `clear_enemies` and door teleports, but the buddy engaged and the camp went
+  to combat from part A: radio "under fire" / "All units" in the frames, `downed_damage` samples in part C): host seat 1
+  two S1 lines and seat 2 two lines, all `shift`, the jeep 2300 on both copies through part B; the host's hold and request
+  through an RMB get-off (`aimed=1`); turns at 1701 / 3093 / 3082 ms; the guest's copy draws the host in seat 1 parked and
+  while the guest drives, the host's copy draws the guest in seat 1 parked and while the host drives; end corrections 29 /
+  9 / 6 / 5 mm. Seat-1 and seat-2 aim views stay blocked (leg / panel; first-person track). The run ended `Forced=True`
+  (`forced_job_termination`, host exit 1223; also in four m6m7d runs, [I] pre-existing). Never-lines zero on both copies
+  in both runs.
+**What S1 shows in play: no harm, not yet a prevented self-hit.** The stock cost of 702 per shot (lab `8a920ec8` seat 3,
+`60faf9fc` seat 2) was on the Africa jeep (`cat=1`); the play seat-2 lines are other lines on another body (muzzle 30-45
+cm further back, chords 64-133 cm). The four front-seat shots left through the passenger's own right side (chords 17-32
+cm: `enemy_cam_turn` rel -148.1 / -55.2 points right from seat 1). Ready, not run: `m6m7e-seat-shot-stock-play.txt`
+(seat-1 lines across the cabin and the seat-2 lines; once with `-LabSetting partner_seat_shot=0`, once without).
+**Not proven** (run 3, `m6m7e-seat-fixes-play-b.txt`, was refused: D: had 2.08 GB free, under the 3 GB floor): seat 3
+and the D-Dog case at these defaults, a guard hit by a seated shot in play, a teardown while seated, a mission end while
+seated; the get-off turn while the player walks (only a look cancels it). Jeep damage while ridden counts on the host's
+copy only (pre-existing).
+**Review fixes** (`4df2464`, `95eed1c`, `bb6a01b`, design 8.44): worker admit cases for the anchor key (mutation-checked),
+stale default comments and the design numbers in code, the -b anchor waitlogs after the first seat patch, the README
+Seats claims (S1; a front-seat partner can also appear beside the seat while moving; walking does not stop the turn).
+**Blocked, no run:** D: had 2.0 GB at 18:51, then 72 GB at 19:11 (freed outside this work); the -b run (19:13) stopped in
+the worker's audited CTest before any game started: `debug_overlay_tests` fails "hardware DX11 fixture creation" on this
+PC since about 19:12, also with the older wp/self-hit and wp/aim-view test binaries (environment, not code). Full
+`tools/build.ps1` at the review-fix head: 334/336, the other failure `friend_package_tests_2` (a relaunch timing
+assert under load) passes alone. Nothing pushed.
+
+## 2026-10-30: seat 1 drawn in the seat, proven in play behind a lab key (branch `wp/seat1-draw`)
+
+**Fix** (design 8.33-8.35, lab key `partner_ride_seat1_anchor`, off unless named, lab and play): a copy drawing the
+peer in seat 1 of a light vehicle anchors it on the driver's seat matrix (the player's FrontRight clips are authored
+there [I]; the stock remap `0xB79A3F` hands a player in seat 1 seat 0's matrix [O]), and (new, `4f63a17` red ->
+`106d90e`) the passenger's own copy keeps that stock remap while it sits in seat 1 (`board_remap; state=stock;
+why=seated_own`); the truck cab keeps seat 1's matrix and the skip. **Proven** (`-Mode play -WanSim bad`, key named, [O]
+lines on both copies and frames looked at; design 8.35): `f58eebf7` the driver's copy draws the partner IN the front
+seat for both roles, parked, under W and stopped, back seat 2 unchanged, but the passenger's own copy still drew itself
+outside; `086d8043` with the own-view fix both copies draw the passenger in the seat, `err_mm` at rest 0-2 (was 855-932);
+`b4c10e6b` the driver's own D-Dog keeps seat 1 and the partner takes back seat 3, never drawn on the dog. Zero
+`step=error`, faults, `board_uncertain`, `two_drivers`, `seat_far`, `seat_patch=refused`.
+**Review fixes (design 8.36):** the driver's copy drew the partner's whole seat-1 get-off on the driver's seat matrix and
+corrected it by 0.87 m at the end (16-89 mm without the key; the 1.5-2.1 m host-driving numbers were mostly a vehicle
+split after the drive). `0248647` red -> `d2bc44f`: once the GetOff entry plays, the seat dword goes back to seat 1's own
+immediate (`partner_ride_seat_patch=getoff; seat=1; ...; anchor=1; was=0`). `54a885b2` [O logs]: that line on the
+driver's copy, end correction **29 mm**. `01174cfd` (host driving) [O logs and frames on the driver's copy during the GetOff]: the same line, 27 mm, and the
+partner climbs out over the right side and stands at the right front wheel, no snap.
+**Not ready to flip** [O frames `54a885b2` host `a-aim-right`, `01174cfd` guest `c-aim-right`]: with the key the passenger's own body sits in the seat,
+and aiming from seat 1 now shows the jeep's side panel filling the view (the own leg at the right, a red reticle). The
+flip waits for a seat-1 aim camera proven with this key on (camera track), plus seat-1 shots with it. **Play
+defaults:** unchanged (key off).
+
+## 2026-10-30: S1 against the self-hit, review round: proven in the lab for the seated host, not yet in play (branch `wp/self-hit`, local only)
+
+**Play defaults: unchanged** (S1 `partner_seat_shot` stays lab-only; nothing flipped). Hidden runs (archives
+`D:\mgs-coop-run-archive\m6m7d\<id>`, frames session scratch `complete/frames/m6m7d-hit/`, looked at; design 8.37). Only
+the host's copy can tell the arms apart for host-role shots: while the jeep is ridden the host copy sends no life
+(`vehicle_state; step=skip; reason=occupied|partner_ride`), so the guest copy reads the old life until the ride ends (a
+pre-existing sync gap, not S1: jeep damage on the host reaches the partner only after the ride; vehicles track).
+- `60faf9fc` lab (`m6m7d-self-hit-ab4.txt`, the review's fix): the host in back seat 2, ONE shot per boarding along two
+  fixed jeep-relative lines (lever `enemy_cam_turn` as each boarding's first aim), so S1 and stock fired on identical
+  lines (`d_milli` within 2 milli). Line A (826,-564,+11, beside `76bc4a1c`'s H2 stock hits): S1 2 shots 2300 -> 2300;
+  stock 2 shots 2300 -> 1598 -> 896. Line B (523,852,-23, the H1 line): S1 2 shots 896 -> 896; stock 2 shots 896 -> 194
+  -> 0. On foot the host saw the jeep intact after the S1 shots and a burning wreck after the 4th stock shot [O,
+  frames]. The guest's copy still showed an intact jeep at the end: nothing is sent while the jeep is ridden and no
+  destroyed state followed before the run ended (pre-existing sync gap, vehicles track); its own -718 / -247 came while
+  guards 1084 / 1072 fired on the riders [I].
+- `9ff5170f` lab (`m6m7d-self-hit-ab3.txt`, one shot per boarding): S1 from back seat 2 killed the 9.8 m front-left
+  guard (shot 1) and, on two identical level shots along a line that crosses 1.55 m of the jeep (`d_milli` 754,655,-50),
+  the 22 m front-right guard; the host's copy stayed 2300 [O]. Its stock arm had no target left (`no_readable_soldier`),
+  fired along the default view and cost nothing: not discriminating. Moving: 2 S1 shots while the guest drove (~56 m):
+  `result=shift`, `age_ms` 2-3 against `max_ms` 142 / 88 (the speed-scaled window, first time in game), life 2300 [O].
+- `76bc4a1c` lab A/B (`m6m7d-self-hit-ab2.txt`): the host in back seat 2, S1 6 shots cost nothing; stock 4 shots on
+  adjacent, HIGHER lines (the S1 arm fired first and recoil climbed 40-160 milli) cost the host's copy 702 three times.
+  The guest in back seat 3: ONE S1 shot on a line 1.8 deg from `8a920ec8`'s stock-hit line (702 there, cross-run) put
+  the guard to Dying with no life lost; 3 more S1 and 2 stock shots climbed onto lines not shown to hit. Cross-run [O]:
+  `8a920ec8`'s seat-2 S1 shot on the H1 stock-hit line (46 milli lower) downed a guard 21 m out, life 2247 -> 2247.
+- `d1e9e028` (lab) and `bd6b36c6` (play `-WanSim bad`: RTT 174-188 ms, loss 0-3.6 % host / 0-16.6 % guest; named key,
+  `key=1; play=1` on both): not discriminating. Seat 2 never fired, in the stock arm too (the lever aimed it at a guard
+  3.7 m away and the camera went into the wheel arch); seat 3 fired on a line not shown to hit. The non-702 drops came
+  while awake guards fired on the riders [I].
+- Never seen in any run: `step=error`, `viewer_changed`, faults, `board_uncertain`, `two_drivers`, `pass_camera
+  state=refused`, `result=stale`. No seated frame shows the outcome: the seat-2 aim view is the jeep's own panel in both
+  arms (problem 2, other track).
+**Merge note:** with the gun profile S1 is ON in lab (off in play): a lab scenario that needs stock seated shots names
+`partner_seat_shot=0`. **Still needed for the play flip:** a seat-1 (front seat, the play path) shot with S1; a play run
+on a stock-hit line; a mission end while seated; a point-blank target (near clamp, unit-only); two PCs; a 0.14.4
+partner.
+
+## 2026-10-30: a seated passenger's shots start past their own jeep, lab only (branch `wp/self-hit`, local only)
+
+**Play defaults: unchanged.** S1 (`partner_seat_shot`: a seated passenger's bullet starts where its line leaves the ridden
+jeep's box) follows the native gun profile **in lab**; play runs it only with a named 1 (`fbf6328`, failing first
+`e6d06b8`; it takes back the play half of `50e97a0`). No wire change, no new patch site (824 / 209).
+**Why [O]:** lab `8a920ec8`, back seat 3, one line (a guard 22 m front-right): one stock shot cost the shooter's copy of
+the jeep 702 life; two S1 shots on that line cost none (they did not hit the guard, already Dying). `66ad131f`'s 702 came
+from ONE of two stock shots (which one [U]); whether the lever's jeep-relative re-aim caused `299de3e1`'s damage is [U]
+(the front-right line itself costs 702 a hit). Play `41dcbf22` (shipped defaults then, `-WanSim bad`) shifted every shot
+and kept the life 2300 on both copies, but fired on no line shown to hit the jeep in stock (review): not a proof.
+**Review fix:** S1's freshness window follows the vehicle's speed (50-250 ms, QPC clock; `result=stale`, `age_ms` /
+`max_ms` on the shot line; `5e1873c`, failing first `4300b51`; unit-tested). **Blocked:** the discriminating play run
+`m6m7c-self-hit-play2.txt` failed twice before admission (IsolationFailed, `child_exited_before_admission`; every hidden
+run on this machine from 14:04 ended the same). **Next:** run it; flip S1 on in play if the life holds on both copies.
+**Not proven:** seat 1, truck cab, a moving jeep, launchers / thrown items, two PCs, a 0.14.4 partner.
+
+## 2026-10-30: the get-off camera turn ON for players (branch `wp/aim-view`; `partner_pass_camera=view` default)
+
+**Players now get** (lab and play, default `view`; design 8.42): after getting out of a jeep's front seat or left back
+seat the camera no longer stays on the driver up close: about 1.7 s (front) / 3.1 s (left back) after the get-off starts
+it turns to look along the jeep from behind the player. Holding RMB through the get-off keeps the turn waiting; it
+follows ~0.3 s after the aim ends (the stock camera shows the driver for about half a second before it). Turning the
+camera yourself (mouse or stick) during the get-off cancels the turn. The right back seat (seat 3) is unchanged.
+- Code: the inert seated raise removed (`2284282`: the aim-module entry write and its restore paths, `RaiseRevert`, the
+  hooks, three pins; 826 sites / 209 slots); the turn held through an on-foot aim (red `e4ec26d`, fix `a4db8b9`:
+  `state=turn; event=hold; reason=aiming`, the request line's `aimed=`); default `view` in lab and play, the play clamp
+  maps only `drop` to `aim`.
+- Play rehearsal `ae6283d3` (`m6m7e-getoff-camera-play.txt`, `-Mode play -WanSim bad`, shipped defaults, afgh-quiet /
+  afgh-horse, both copies admitted, closed, restored; `IsolationFailed False`) [O] in the slices and frames:
+  - guest seat 1, no input: `request ms=1693 aimed=0`, check `yaw_err_mrad=0 cam_body_cm=524`; `a-exit-02/04` the
+    driver up close, `a-exit-06..10` / `a-exited` along the jeep behind the player.
+  - guest seat 1, RMB held through the get-off: `hold ms=575`, the stock release at 1686 ms with no request, `request
+    ms=5436 aimed=1` after the release; `h-aim-*` the stock aim, `h-rel-03` (+0.7 s) the driver view, `h-rel-04` the
+    swing, `h-rel-05..10` / `h-after` along the jeep.
+  - guest seat 1, three mouse steps: `expire reason=look ms=841`, no request; `l-exited` keeps the turned-away view.
+  - host seat 2: `request ms=3086`, check 0 / 524; `k-exit-09..12` / `k-exited` along the jeep.
+  - host seat 1, RMB: the host's aim began only after the stock get-off ended (no hold line; `request ms=1685 aimed=0`,
+    the check at 1.59 m while aiming); the aim starts from the turned view and ends on it (`g-aim-02`, `g-after`).
+  - host seat 1 after the guest drove the jeep to another heading: `yaw_mrad=1462` (108 before, ~78 deg), check
+    `yaw_err_mrad=0`; `t-exited` along the jeep's new heading.
+  - No `step=error`, `viewer_changed`, faults, `board_uncertain`, `state=refused`, `state=view` on either copy.
+- Not done: an earlier request (the VehicleCamera never reads CAM+0xD38 [I, byte scan]; skipped); the aim views from
+  seats 1 and 2 (own leg / panel) are the first-person track's; problem (3) not this branch's.
+Frames `D:/mgs-coop-run-archive/m6m7e/frames/aim-finish/best-sheet-ae6283d3.jpg`, `ae6283d3-sheet-aim-through.jpg`.
+Full CTest 336/336; contract `--check` 826 / 209.
+
+## 2026-10-30: aim view review closed (branch `wp/aim-view`; the get-off turn yields to the player)
+
+**Fixed** (design 8.41; red `195ddf4`, fix `325391a`): a look (stick or mouse) or an on-foot aim while the get-off turn
+is pending drops it (`state=turn; event=expire; reason=look|aiming`), so the turn never pulls the camera off the
+player's own view. Hidden lab run `91618e86` (`m6m7d-aim-reprove.txt`, both copies admitted, closed and restored):
+- Seat-1 get-off in a dense burst [O]: the stock get-off view (driver up close) lasts until the request (`ms=1675`
+  after the report end); the next frame (`a-exit-06`, ~0.4 s later) already looks along the jeep with the player beside
+  it. The control with the lever at `aim`, same steps and delays (`c-exit-06..14`, `c-exited`): the camera stays on the
+  driver up close, as players see it today.
+- A mouse look during the get-off: `reason=look` at `ms=849`, no request; the camera stays where the player turned it.
+  RMB held: `reason=aiming` at `ms=585`; the aim view is stock, but after the release the stock camera goes back to the
+  driver-facing view (`h-after`): for a player who aims out of the jeep, problem (4) remains.
+- Seat 3 at this code [O]: no view or turn line; aim over the shoulder; the get-off camera stays behind the jeep,
+  facing the player. The raise's boarding-end restore ran on all three non-aiming seat-1 boardings (`event=restore;
+  reason=end; ok=1`). No faults on either copy.
+Frames `complete/frames/m6m7d-aim/best-sheet-91618e86.jpg`. Full CTest 336/336; contract `--check` 829 / 209. **Players see no change**
+(default `aim`; not flipped). Open: the turn after an on-foot aim ends, other jeep headings, problem (3), the raise.
+
+## 2026-10-30: aim view in game (branch `wp/aim-view`; the get-off camera proven, the seated raise does not work)
+
+Two hidden lab runs of `m6m7c-aim-view.txt` (`-PartnerProfile native -NativeStage gun -BuildProfile research`, host
+seed `afgh-quiet`, guest seed `afgh-horse`; both copies admitted, closed and restored):
+- **Problem (4) partly fixed in game** (corrected by the review): `89cfa402` and `5c8ce1ba`: after every get-off from
+  seat 1 (guest and host roles) and seat 2 (host) the turn request is made after the stock release (`yaw_err_mrad=0`,
+  the camera 5.24 m from the body); the settled frames show the camera along the jeep's heading with the player beside
+  the jeep (side-on or from the rear quarter; in `k2-exited` the jeep is on the player's right), not the driver up close.
+  Through the get-off itself the stock camera still shows the driver up close (the `exit-01..03` frames) until the
+  request, 1.7 s (seat 1) / 3.1 s (seat 2) after the report ends; the 0.4 s swing was not captured. Seat 3 gets no turn;
+  its stock camera stays behind the jeep, facing the player, the driver in view (`5c8ce1ba-guest-k3-exited`).
+- **Problem (2) not fixed:** the module entry is applied (variant 0 is listed) but the frames still show the leg (seat 1)
+  and the panel (seat 2): in the seated aim CAM+0x204 bit 2 stays clear (`f204=0x63110` on every aim tick), so the aim
+  module's update never calls FUN_1412BBFE0 and CAM+0x140 stays 0. A direct write of the target CAM+0x154 (`10aa42b`,
+  `99f41fe`, run `5c8ce1ba`) is written back to 0 between every two ticks (30 rewrites in ~0.4 s; [I] by the
+  parameter-record apply 0x111AAA0); reverted (`b890a69`, code back to `1715b82`). Seat 3's aim view is clear and unchanged.
+- Shots fire from seats 1-3 in mode view (magazine 8 -> 6, guard windows open and close); the jeep's life was not read
+  (`vehicle_state_status`: `life_refused; reason=off`; godmode on): problem (3) is [U] in these runs.
+- Scenario (`a9251e0`, `b890a69`): seat 1 in both roles, seat 2, seat 3 (a teleport to the right rear door).
+Full CTest 336/336; contract `--check` 829 / 209. **Players see no change** (default `aim`; not flipped this round).
+Design 8.40.
+
+## 2026-10-30: aim view review fixes (branch `wp/aim-view`; built, not proven)
+
+**Fixed** (design 8.39; red `f4f080e`, fix `c58b065`): the raise is written back by MissionEnd / Stop / MissionStart
+(8.38's "restored at terminate" was false: that branch never ran); a failed restore is retried and a restore writes only
+over our own entry; seats 1 and 2 only (seat 3 was clear); the get-off turn arms only on an observed get-off (act 0x70
+plus the stock clear; no time fallback; dropped when the mode leaves view); the request bit after its fields; a grow
+guard on CAM+0x150 [I]; `view` runs as `aim` in play (a lab key until proven). Scenarios wait for the view/turn lines.
+Full CTest 336/336; contract `--check` 829 / 209. **Not proven:** both hidden lab runs (`79aee3fc`, `6395316d`,
+`m6m7c-aim-view.txt`) ended `IsolationFailed` (`child_exited_before_admission`, then `process_image_path`; the guest
+worker refused `required_hooks_or_private_desktop`), as every hidden run on the machine since 13:51; saves and
+baselines restored. **Players see no change** (default `aim`).
+
+## 2026-10-30: the seated aim view and the camera after a get-off (branch `wp/aim-view`; built, not proven)
+
+**Built** (`bd6f0cf`, design 8.38): `partner_pass_camera=view` = aim + the seated aim camera raised 0.60 m over the
+shoulder from seats 1-3 (the stock aim module's own variant offset, obj+0x174 / +0x50, restored at the boarding end,
+a variant change and the latch; the terminate restore was dead code, fixed in 8.39) + one stock camera rotation request toward the jeep's forward after a
+get-off (seat 1's get-off camera ends on the driver's side looking across the jeep [O frames 37b94432]; the exit itself
+goes out of the right door). Five new pinned sites (contract 829 code sites / 209 slots), 310 unit checks, four mutants
+caught. **Not proven, default unchanged (`aim`):** the four hidden runs `1b597e17`, `62af662d`, `cf8111c4`, `f3fbeefd` ended
+`IsolationFailed` / `child_exited_before_admission` (guest `required_hooks_or_private_desktop`), as every hidden run on
+the machine from 13:51 to 14:16 [O supervisor.json]. Full CTest 335/336 (`lab_scripts_tests_1` failed once under
+load, passed alone; the plain lab suite 1692 checks pass). Players see no change. Next: `m6m7c-aim-view.txt` (lab), then flip the
+default and `m6m7c-aim-view-play.txt` (`-Mode play -WanSim bad`).
+
+## 2026-10-30: shooting from seats (`dev/oct7-continue`, local only)
+
+**Merged:** `e694c92` `wp/seat-shoot2` (`5029a26`; S1 `partner_seat_shot` built, off in lab and play). Contract 824 code
+sites / 209 slots (regenerated, no change); the five contract `--check` scripts pass; full CTest 336/336 (114 s wall,
+CTest 93.5 s). **Play defaults:** unchanged (front seat, race and `partner_pass_camera=aim` on; S1, seat gun off).
+**Smoke** (`-Mode play -WanSim bad`, shipped defaults, design 8.32; [O] lines on both copies, frames looked at):
+- `37b9443265084e42b756fbe889e5e9e8` (Wakh Sind, `m6m7b-shoot-smoke-play.txt`): D11 both refusals with toasts; the
+  race (`host_first`, guest on foot). **Seat 1 fires** across the jeep (magazine 8 -> 7 -> 6, guard windows `aim_end`)
+  and its second shot put a sleeping guard 22 m out to Dying (guest `req` state 4, host `commit actor=guest`), but the
+  aim view is the passenger's own leg. The guest then never boarded seat 3 (seat 1 free: a right-side boarding always
+  takes seat 1; scenario error) and finished the guard on foot (one Dead commit). Seat 2: three shots at guards 40-45 m
+  out hit the jeep's own panel (holes in frame), no kill; the camp went to alert; the jeep was destroyed on both copies
+  after that part (cause [U]: those shots and the alerted guards).
+- `299de3e1d147487b81ef7b1df79aa636` (africa jeep, `m6m7b-shoot-smoke-play-b.txt`; every expectation met): **a seated
+  kill in play**: back seat 3, the first shot killed a sleeping guard 8 m out (guest `obs Dead att=local`, `req` state
+  5; host one `commit state=5 actor=guest`). Seat 2 (guest driving): the first shot put a guard 21 m out to Dying
+  (`commit actor=host`; the guest's apply of state 4 fails, readback 2, as before). **Shots aimed toward the jeep's own
+  body hit the jeep:** the shooter's copy lost 2106 life (guest, 4 shots, seat 3) and 1404 (host, 4 shots, seat 2).
+Both runs Closed, BaselineRestored, RealSavesUnchanged, Forced=False; zero `step=error`, faults, `board_uncertain`,
+`two_drivers`, `pass_camera state=refused`; RTT 173-190 ms.
+**Not proven:** a moving jeep, two PCs, a 0.14.4 partner; the driver still sees no raised gun (design B not built).
+
+## 2026-10-30: the seated-shot review fixed; both back seats hit on the merged build (branch `wp/seat-shoot2`)
+
+**Built:** the review of 8.30 (design 8.31). S1 (`partner_seat_shot`, still off in lab and play) never moves a start
+outside the vehicle's box, its jeep box hugs the jeep (4.4 x 2.0 m) and a pose is fresh for 50 ms; only the two pins
+S1 relies on join the partner's code gate (the five static facts are generator checks, `SEAT_SHOT_FACTS`); the pellet
+assertion reads the executable. Contract 824 code sites / 209 slots. Failing first `19c55b5` -> `50389fb`. The 8.30 /
+README claims corrected (seat 3 only; frames on the shooter's copy; two commits per kill; the on-foot control Dying on
+the guest only).
+**Play default:** unchanged (no flip): seated firing with the aim camera was already on; S1 stays off.
+**Proof:** lab `881b37e6` (merged build, africa-jeep; every expectation met; Closed, BaselineRestored,
+RealSavesUnchanged, Forced=True): back seat 3 (the guest shooting, the host driving) killed a guard 8.5 m out at
+shot 2; back seat 2 (the host shooting through the known side-panel view, the reticle red) killed one 9.3 m out at
+shot 2, and the guest's driver view framed that kill; every held-aim shot fired (3/3, 2/2, 3/3); with the lever on
+the fixed box moved the start 1.02 m (`stale=0`). S1 off in both kills. README Seats line: either back seat hits.
+**Not proven:** a kill in play or from a moving jeep, longer range, two PCs; the driver's camera cannot be aimed by
+the scenario (part A's kill on the driver's copy by lines only); the partner's Dying state still fails to apply on
+the other copy (readback 2; Dead follows). Full CTest 336/336.
+
+## 2026-10-30: seated shots land; the bullet-start fix S1 built, kept off (branch `wp/seat-shoot2`)
+
+**Shooting from the right back seat hits [O, lab]** (design 8.30): lab `0af9baa3` (africa-jeep), back seat 3, a stopped
+jeep, the first shot killed a guard 8.5-9.4 m out across the jeep in both role orders (guest: `event=req` + host `commit
+actor=guest`; host: `commit` state 4 then state 5, one Dead commit per kill), frames on the shooter's copy (on the other
+copy the kill by its `commit` / `apply` lines); on-foot control in the same run (Dying on the guest's copy only: the
+host's apply failed, readback 2). One of those kills came with S1 off: the
+earlier misses (8.22) fit the camera's sky swing, fixed by `partner_pass_camera=aim` (on in play since 8.27) [I].
+Built: `partner_seat_shot` (S1: the RequestBullet hook moves a seated passenger's bullet start past the ridden
+vehicle's box; lab lever `seatshot`; contract `SEAT_SHOT_SITES`, 829 sites / 209 slots; failing first `bbe8160` ->
+`acfd916`; no new test executable). **Play default: S1 OFF** (lab and play): no effect seen (`a9d0af0f`: a steep line
+into the jeep from seat 2 never fires, with S1 off or on: the stock gun refuses it). Play rehearsal `381880b8`
+(`-WanSim bad`, shipped defaults): seat 3 fired in both role orders, no fault, jeep life unchanged; no target in range
+(play refuses the soldier warp), so no kill in play. `3d452714` stopped at the seat race (scenarios fixed). Merged
+`dev/oct7-continue` (`7a9a334`). All Closed, BaselineRestored, RealSavesUnchanged. Archives
+`%USERPROFILE%\mgs-coop-run-archive\m6m7b\<id>`.
+Not done / not proven: the driver seeing the partner raise the gun (design B; not attempted: even the stock passenger
+holds the rifle low; next B1p, posture 3 for the seated acts); `partner_seat_gun` / `partner_seat_aim` stay off; seat
+1 (gun does not fire) and the truck cab; a kill in play; two-PC. Full CTest 336/336 (`tools/build.ps1`, 116 s).
+
+## 2026-10-30: seats on, aim camera fixed, faster tests (`dev/oct7-continue`, local only)
+
+Merged (nothing pushed, tagged or released; not two-PC tested): `ff10600` `wp/test-speed` (`d620838`), `9c2b5a8`
+`wp/seats-on` (`71ee68c`), `cdefa1b` the aim camera fix of `wp/seat-shoot2` (`69db316`; its design sections are now
+8.27 / 8.28). Partner contract regenerated (822 code sites, 209 slots, no change); the five contract `--check` scripts
+pass. Full CTest 336/336 (`tools/build.ps1`): 123 s wall with the build, CTest 104.6 s (the quiet best on the branch
+was 51 s; why this run was slower is [U]). Marks: [O] observed, [I] inferred, [U] unknown.
+
+| What | Play default | Smoke (`-Mode play -WanSim bad`, shipped defaults, design 8.29) |
+|---|---|---|
+| Jeep front seat 1 (`partner_ride_front`) | **ON** | Boards and rides in both roles [O]; **but** the driver's screen draws the passenger pushed out past the jeep's right side, and from seat 1 the aim view shows the passenger's own leg and the gun does not fire [O] |
+| Driver's-seat race and the Fulton guard (`partner_ride_race`) | **ON** | [O] `host_first`, the host drove, the guest on foot |
+| Truck cab (`partner_ride_cab`) | lab only | not run (lab `0f145a4e` only) |
+| Back-seat aim camera (`partner_pass_camera=aim`) | **ON** | [O] seat 2: three shots each run, no sky swing, normal view after; the view still shows the wheel arch |
+| Tests: shards, preflight reuse | - | full CTest 111-115 s -> 51 s quiet; preflight 102 s -> 29 s, reused 1 s (run `83defaeb` started from a reused receipt) |
+
+Runs `1f81de654be042b498746135bb7747b2` (`m6m7b-smoke-play.txt`: D11 refusals with both toasts, the race, seat 1, seat
+2 with shots, both get-offs, the jeep parked at one pose on both copies; 2 expect misses: no seat-1 guard window, and
+the host's resend said `why=life` not `why=moved`) and `83defaeb24f44ddfa466594058ffe1c3` (`m6m7b-smoke-play-b.txt`,
+roles swapped; every expectation met). Both Closed, BaselineRestored, RealSavesUnchanged, Forced=True.
+Not fixed / not proven: the two seat-1 defects above; seat 2's aim view (the panel) and the 90 deg range; seated hits;
+the jeep lost 702 life in `1f81de65` while the host fired from seat 2 and the jeep was pushed against a building (three
+shots standing still in `83defaeb` cost none) [U]; the camera after a get-off faces the driver; the dog jumping in
+after the passenger; the truck cab in play; a 0.14.4 partner; two-PC.
+
+## 2026-10-30: developer test loop, faster (`wp/test-speed`; tests and tooling only, no product code changed)
+
+**Built [O]:** long fixtures run as parallel CTest shards (`cmake/test_shards.cmake`): `ddt_core_tests_1..5` (cases with
+costs, `tests/test_cases.hpp`), `link_udp_tests_1..2` (a port lock per case that also passes through the old whole-range
+lock, so a branch still on the old code is never overlapped), `worker_session_tests_1..2`, `local_coop_session_tests_1..2`,
+`lab_scripts_tests_1..7`, `friend_package_tests_1..2` (parts with costs, `tests/TestShards.psm1`; plain runs keep their
+counts). `tests/test_timer_resolution.hpp`: Windows 11 drops a windowless process's 1 ms timer after ~2.5 s (`Sleep(2)` =
+15.4 ms). The preflight's bootstrap only configures (`tools/build.ps1 -ConfigureOnly`). A hidden run's preflight reuses
+the profile's newest passed receipt when the source snapshot, the test inputs (`reuse_inputs`: every file under `cmake/`,
+`native/`, `lua/`, `tests/`, `tools/`, JSON fixtures and scenarios included), flags, cache options and built programs are
+unchanged (`-FreshChecks` opts out; never Release: the release gate always runs in full).
+**Measured [O]** (`-j 16`): full CTest 111-115 s -> 51 s (59-62 s while another checkout's suite runs); fast 12.4 s ->
+9.0 s; Research preflight 102 s -> 29 s fresh (38-57 s after a change), 1.0 s reused (receipt `20261030-153053`; an
+added `tests/fixtures` file refused live). Hidden run `13d9ff4d1af14149a3e3da2b1bc600ab` (`boot-30020.txt`) started from
+that reused receipt: both copies at gameplay in 30020, frames on both, saves and baseline restored.
+**Rules (AGENTS.md):** iterate with the affected tests (`ctest -R`, `--case`, `-Part`, `-Fast`), the full suite once
+before merging; a lab-script change also runs the plain `tests/lab_scripts_tests.ps1` once (only it chains the dry parts
+through a real Start/Stop; at the current costs install and e2e share shard 7). **Not reached:** the full suite under
+45 s: the lab and friend shards take 28 turns (~46 s) of the machine-wide test install mutex; lower needs a per-fixture
+installer mutex (`tools/package-install.ps1`, not changed). Merging the ~250 test executables was measured, not done.
+
+## 2026-10-30: seats on in play: the jeep front seat and the seat race (branch `wp/seats-on`, local, unreleased, not two-PC tested)
+
+The jeep's front seat and the driver's-seat race are **on in play** (`partner_ride_front`, `partner_ride_race` follow
+the native gun profile in lab and play; a named 0 is the off switch). The truck cab (`partner_ride_cab`) is **on in lab
+only** after the review: its play rehearsal named `world_relief=1` for the truck and the host-in-cab role ran only in
+the lab (a named 1 runs it in play). No Fulton while a race refuses the ride icon or at a vehicle the partner drives
+(since the review also where it offers no seat); the guard's bit is given back when the world stops. Details:
+`docs/vehicles-companions-design.md` 8.25 and the review fixes 8.26. [O] observed, [I] inferred.
+
+| Path | Proof (`-Mode play -WanSim bad`, shipped seat defaults, RTT 172-188 ms) |
+|---|---|
+| Fulton guard | [O] `92f2d2f9`, again `1be0769e` after the fixes: denied at the door, two 1500 ms E holds, no Fulton prompt, the jeep stays; at the partner's jeep only the ride icon. At the host-driven truck where the guest gets no seat (the cab off: `board_block`): `289615b8`, `on=1`, no ride icon and no Fulton prompt through two E holds, the truck still there (the pre-fix run `84e3db0e` showed the Fulton prompt there) |
+| Race inside one round trip | [O] `92f2d2f9`, `1be0769e`: the guest's hold refused its icon before any answer, the host drove, the guest stayed on foot |
+| Jeep seat 1, both roles | [O] guest `1be0769e` (the host drives forward: the guest's own view follows the moving jeep down the street, frames on both copies); host `d55e5159` |
+| D-Dog in seat 1 | [O] `8d61a33a`: the dog in front, the guest in the back right seat, moving |
+
+Camera defects seen, not fixed here (for the camera work): in seat 1 the guest's own camera ended inside a water tank
+while the host reversed onto it (`92f2d2f9`), and after each seat-1 get-off it faces the driver up close with the
+player out of view (`92f2d2f9`, `d55e5159`, `1be0769e`). Not proven: the dog jumping in after the passenger sat down,
+live (driver test only) [I]; two-PC. While moving, the driver's screen can draw the passenger up to 2.6 m beside its
+seat (`1be0769e`), back in the seat at rest, as before. Full CTest 321/321 (`tools/build.ps1`) at `43534d9` with these docs.
+## 2026-10-30: the aim camera's review fixes (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.28, `docs/native-puppet.md` "Passenger camera"): the shot guard of
+`partner_pass_camera=aim` now holds a seated shot's pull up and sideways only while the player gives no look input;
+the mouse / right stick moves its own axis freely inside a shot window; it writes only while aiming in the aim camera
+(an aim end closes the window without a write); each window settles a remaining climb (no climb from shot to shot);
+play runs a named `drop` as `aim`. **Play default: `aim` stays ON**, re-proven at the shipped code: play rehearsal
+`d946a420` (`-WanSim bad`, shipped defaults, every expectation met, Forced=False; host seat 2 and guest seat 3 as
+shooters, frames on both copies: mouse turns kept, no sky, no climb, the drivers' views unchanged).
+Fix runs (lab, both copies as shooters, every expectation met): `a64c40d4` (yaw free: a four-shot burst without input
+turned 0.93 rad sideways), `049aa5ed` (both axes followed 150 ms after a mouse turn: the pull lifted the view 20 deg),
+`d60dbb48` (per-axis input: every aim frame level on both copies, no climb, a no-input burst 26 mrad sideways, but a
+60 ms input latch let the pull take back each mouse step). Tests failing first (`10ed98a`, `31e5a8a`, `fdadbb7`,
+`fb662ad`), driver wiring tests each caught a mutation; contract 822 sites / 209 slots; full CTest 321/321.
+Corrections of 8.27: the view was held at pulls up to ~7 deg written back each tick, not "within ~3 deg"; seat 2's
+frames show only that the sky swing is gone (they look at the wheel arch); defect 1's cause is the seated aim
+camera's low pivot, our handle only picks which broken view.
+Not fixed / not proven: seat 2's view through the side panel; the 90 deg range; aiming down into the jeep's body
+stops the gun (gun mode 15, stock [I]); whether seated shots hit enemies; an explosion beside the jeep after seated
+shots (`a64c40d4`, `d60dbb48`, `d946a420`; source [U]); slow mouse tracking through a burst (tests only); a
+held-trigger automatic burst; seat 1; two-PC.
+
+## 2026-10-30: the passenger aim camera (branch `wp/seat-shoot2`)
+
+Built (`docs/vehicles-companions-design.md` 8.27, `docs/native-puppet.md` "Passenger camera"): `partner_pass_camera=
+off|connect|aim|drop` (lab and play) with a shot guard that writes the back-seat passenger's camera (look angles and
+rotation CAM+0x90) back toward the aim each tick through each shot (pulls up to ~7 deg; see the review fixes above); lab lever `passcam`, lab trace
+`partner_pass_camera_trace`, Lua lever `enemy_cam_turn`. **Play default: `aim` (ON)**: fixes the view swinging to
+the sky at each shot and the view stuck pitched up after the aim. Proof: lab `7e79996f` (africa-jeep; guest seats 3
+and 2, host seat 3; three shots each, every expectation met, frames on both copies), the A/B and trace runs
+`4f1a072f`, `17fce0b7`, `43e5b981` (afgh-ledge), play rehearsal `06aa3fc6` (`-Mode play -WanSim bad`, shipped
+defaults, RTT ~180 ms, loss up to 12.9 %: every expectation met, Forced=False; host seat 2 and guest seat 3 held the
+view through three shots and a shot while moving, normal after the release, the drivers' views unchanged).
+All Closed, BaselineRestored, RealSavesUnchanged (Forced=True in the lab runs). Archives `%USERPROFILE%\mgs-coop-run-
+archive\m6m7b\<id>` (`17fce0b7` under `D:\mgs-coop-run-archive\m6m7b`, C: was below 1 GB then).
+Not fixed / not proven: seat 2's aim camera still looks through the jeep's side panel (dropping our collision
+handle, mode `drop`, blocks seat 2's gun instead); the 90 deg aim range around the seated facing; whether a seated
+shot lands; seat 1 (not reached in `43e5b981`); two-PC. Contract 822 code sites / 207 slots; full CTest 321/321.
+
+## 2026-10-30: M6 seats and M7 passenger shooting
+
+Both tracks are merged into `dev/oct7-continue` (local only: nothing pushed, tagged or released; not two-PC tested):
+`c616d8b` merges `wp/seats` (`892620a`, review verdict `ship_behind_lab_key`, its fix round done) and `5a18d3b` merges
+`wp/seat-shoot` (`e558854`, verdict `fix_first`, its fix round done). **No play default flipped**: every new key is
+off in play, so a default session behaves as before for seats and shooting. Details:
+`docs/vehicles-companions-design.md` 8.20 / 8.21 (M6), 8.22 / 8.23 (M7, renumbered from 8.20 / 8.21 at the merge, its
+decision D16 now D18), 8.24 (the merge and the combined smoke), section 9 M6 / M7. Marks: [O] observed in a run or test
+named here, [I] inferred, [U] unproven.
+
+| Seat / behaviour | Built | Play default | Proven (runs) | Unproven |
+|---|---|---|---|---|
+| Jeep back seats (2, 3) as a passenger | (0.14.x, unchanged) | **On** | [O] combined smoke `a6830b7c` (play, `-WanSim bad`, shipped defaults): seat 2, frames on both copies while moving, the stock get-off and camera release | Two-PC |
+| Jeep front seat (1) | Lab key `partner_ride_front`; offered only when the driver's copy reports seat 1 free (v4 seat addendum); the seat-1 remap skipped only while seat 1 may be in use | **Off** (D16) | [O] lab `f49c167d`, `3c748d46` (both roles, frames on both copies while moving); the handshake with the driver's dog in seat 1: lab `43473119`, `f115a2b3`, play `56322b36` (passenger in the back seat, frames on both copies) | The seat-1 path itself in play with the fixed code; a dog that jumps in after the passenger sat down [I]; two-PC |
+| Truck cab (1) | Lab key `partner_ride_cab` (trucks: seat 1 only) | **Off** | [O] lab `0f145a4e` (both roles, moving frames on both copies, both stock get-offs); earlier `b66c7031`, `73af7206` | A play rehearsal (the test truck needs the lab-only sortie lever); two-PC |
+| Seat race (driver's seat of an empty vehicle) | Lab key `partner_ride_race`; world op SEAT `0x36` (54; a 0.14.4 partner skips it by length); the guest holds until the host's grant; site C (the pre-query's final answer) | **Off** (D17) | [O] lab `43473119`, `f115a2b3`, play `56322b36`: the race inside one round trip, the host drives, no `two_drivers`, frames on both copies | The 1.5 s silence fallback in a run (Lua test only); Fulton prompt during a hold [I]; two-PC |
+| Truck bed (E7), APC / tank crew | Not built (E7 static reads only) | - | - | Everything |
+| Passenger aim and fire (stock) | Nothing to patch; the aim self-check is skipped while riding | **On** (stock) | [O] M7 lab runs (8.22); combined smoke `a6830b7c` in play: `aim_dir=refused; reason=ride; checks=0`, magazine 8 -> 5, the camera inside the jeep's body and pitched up after the shots (frames `pass-aim-01`, `pass-fire-1/2`, `drv-stopped`) | Whether a seated shot lands: none landed in six lab runs (8.22) [O], cause [U]; the smoke aimed at no target |
+| Partner's raised gun on the driver's screen (design A) | Lab key `partner_seat_gun`: graph-2 GunHoldStart through the gesture hook, body 1's aim rates, the seated v6 direction (unchecked) | **Off** (D18) | [O] 30 holds ran on both copies (lab), but no frame shows a raised gun | The visible pose (design B, D18); the GunHold chain live; get-off during a hold; a mixed-build run [I] |
+| Back-seat aim census | Lab key `partner_seat_aim` (read-only) | Lab only (play forces it off) | [O] `6fc3098b` | - |
+
+**The merge:** conflicts in the two worker lab-key patterns (union), `lua/coop/debug_player.lua` `goto_vehicle` (both
+levers kept; the M7 lever test now expects `goto_vehicle_args` for `jeep left`) and the docs (both sides kept, M7
+renumbered). Op codes stay unique (SEAT `0x36` is the only new one); no CFG index added. The partner contract was
+regenerated once after both merges (819 code sites, 206 vtable slots) and `generate_partner_contract.py`,
+`generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`, `generate_nametag_contract.py` and
+`generate_downed_damage_contract.py --check` all pass. Fast CTest 304/304 at `5a18d3b`; full CTest 321/321
+(`tools/build.ps1`) at `5a18d3b` and again at the docs head `22bbec8`.
+
+**Combined hidden smoke** (one run, design 8.24): `a6830b7cd9714aecb4c8ecef7ba0df52` (probe `848b1b832b3f40f5844dcca1d01ee73c`),
+`tools/worker/scenarios/m6m7-smoke-play.txt` at `57d2cd7` (`wp/m6m7-smoke` in `D:/mgs-coop-wt/relief`, research build),
+`-Mode play -WanSim bad`, seed `africa-jeep`, shipped defaults. Every expectation met; Closed, BaselineRestored,
+RealSavesUnchanged, `Forced=False`; preflight receipt `20261030-120918-69670c53388b43c0b5e5bd9f964b4cf7` (313 tests
+passed). Covered: the guest's SUPPLY DROP refusal (LOADOUT and VEHICLES, toasts drawn), a jeep drive with the host in
+back seat 2 (`seat1=none`), the passenger aiming and firing while the jeep moved, both stock get-offs, and the jeep
+parked at the same spot on both copies (1 mm apart). No `step=error`, `viewer_changed`, `board_uncertain`, non-zero
+`faults=` or new-key line (`partner_board=race`, `board_remap`, `seat_ext_tx`, `partner_seat_gun`). Frames looked at on
+both copies (`complete/frames/m6m7-integrate/a6830b7c-*`); archived under `%USERPROFILE%\mgs-coop-run-archive\m6m7\`.
+
+**Docs:** README Known limits: the vehicle-shooting limit moved from Mounts to Seats and now says the camera can stay
+tilted up after aiming (seen in the smoke); the roadmap lines for M6 / M7 name the merges. CAMPAIGN-ROADMAP keeps M6 at
+[~] and M7 at [ ] (nothing new is on in play).
+
+**Waiting for the user:** D16 (the jeep front seat in play), D17 (the seat race in play), D18 (how to continue M7).
+
+## 2026-10-30: M6 seats, the review fixes (branch `wp/seats`, lab keys; merged in `c616d8b`, unreleased, not two-PC tested)
+
+An independent review of `wp/seats` (`e2a7451`) raised three major and five minor findings; all eight were real and
+are fixed or documented on `wp/seats` (local only: nothing pushed, tagged, merged or released). Results and evidence:
+`docs/vehicles-companions-design.md` 8.21 (and the corrections to 8.20's summaries); the SEAT rules:
+`docs/world-sync-protocol.md` section 21; the mechanism: `docs/native-puppet.md` "Seat 1 and seat races (M6)"; the v4
+seat addendum: `docs/vehicle-ws3.md`. Marks: [O] observed in a run or test named here, [I] inferred, [U] unproven.
+
+| Item | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| Seat race inside one round trip (R1) | The guest holds every empty vehicle's driver's seat until the host's SEAT grant (a 2 s native lease Lua refreshes; site C answers false, site B 4); a claim unanswered for 1.5 s drops the hold; the host yields at grant time and a live grant sticks | **Off** (`partner_ride_race`, D17) | [O] lab `43473119`, `f115a2b3`, play `56322b36` (`-WanSim bad`): the guest's icon refused before any answer (`action=hold; ...; deny=65535; grant=65535`), the host drives, the guest on foot, no `two_drivers`; frames on both copies | The silence fallback in a run (Lua test only); two-PC |
+| The want after the door check (R2) | Site C `0x1246A4F` (CanExec's call of the pre-query `0x1245820`, pinned, only with the race key): the want is the pre-query's final answer; site A no longer races | **Off** | [O] lab `f115a2b3`, play `56322b36`: a host at the jeep's rear (inside the old 4.5 m gate) has no want, the guest is granted and drives; frames on both copies | A CanExec check after the pre-query (a tilted vehicle) can refuse an icon whose want was recorded [I] |
+| Seat-1 handshake (R3, D16 (a)) | Ride addendum v4 from the driver's copy (Front / Cab accepted, `rider[1]` taken); the passenger's board offers seat 1 only with it | **Off** (`partner_ride_front`, `partner_ride_cab`) | [O] lab `43473119` (the host's dog jumped in: seat 1 withdrawn live), `f115a2b3` and play `56322b36` (the driver's dog in seat 1: the passenger in the back right seat, frames on both copies, the driver's own copy moving); truck cab `0f145a4e` (flags 0x03, seat 1 offered) | The seat-1 path itself in play with this code; a dog that jumps in after the passenger sat down [I]; two-PC |
+| Remap scope (R4) | The seat-1 remap `jmp` only while seat 1 may be in use (the driver tick, its only writer) | (with seat 1) | [O] `board_remap; state=skip; why=policy` / `state=stock; why=idle` in `43473119`, `0f145a4e`, `56322b36`; unit tests | The other callers of `0xB7AF90` while the skip is live [I] |
+| Phase-1 immediates / verify (R5), parser (R8) | Restored to 2 once site B is lost; `VerifyImage` strict; `ParseSeatRequest` tested; every rule run red first | - | [O] unit tests | Site B actually lost in a run (never happened) |
+| Truck cab, both roles | (unchanged) | **Off** | [O] lab `0f145a4e`: every expectation met, moving frames on both copies in both roles, both stock get-offs with the camera release (the step `73af7206` missed) | Play rehearsal (lab-only levers); two-PC |
+| Fulton prompt during a deny / hold (R6) | Documented (protocol 21, native-puppet, design 8.21) | - | - | Holding E there could Fulton the vehicle [I] |
+| Summaries (R7) | Corrected: 8.20's play and truck "moving on both copies" claims, the lab "race" of `b66c7031` | - | - | - |
+
+Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\`): `43473119725643e9855a31b08e1da97a`, `f115a2b3cf874d9eb4cdb7470e03d46b`,
+`0f145a4e19094fc4a0b0ecd2fcb0b755` (lab), `56322b362f96467194ad08b765e3dd9b` (`-Mode play -WanSim bad`). No play default
+flipped (D16, D17 wait for the user). Fast CTest after each change; the full CTest passed 318 of 318 with these docs (`tools/build.ps1`).
+
+## 2026-10-30: M6 more passenger seats (branch `wp/seats`, lab keys; merged in `c616d8b`, unreleased, not two-PC tested)
+
+Branch `wp/seats` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/vehicle-state`; local only (nothing pushed,
+tagged, merged or released). Results, the E6 / E7 static reads and the evidence: `docs/vehicles-companions-design.md`
+8.20; the SEAT op: `docs/world-sync-protocol.md` section 21; the mechanism: `docs/native-puppet.md` "Seat 1 and seat
+races (M6)". Marks: [O] observed in a run or test named here, [I] inferred, [U] unproven.
+
+| Item | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| Jeep front seat (1) | Lab key `partner_ride_front`: site B sets both phase-1 `cmp al,imm8` immediates (`0x1251834`, `0x1251894`) to 1 only for the call it steers to seat 1; the seat matrix's seat-1 remap (`0xB79A43`) is a `jmp` for the process (scoped to seat-1 use since the review fixes, above); contract pins; the passenger report, the receiver gate and the passenger camera take seat 1 | **Off** (D16) | [O] lab `f49c167d`, `3c748d46`: both roles, logs on both copies, FRAMES on both copies while moving, the stock GetOffFrontRight; play `65277fb8` (`-WanSim bad`, keys named): both roles passed the seat-1 lines, seated frames on both copies, but moving frames on the passenger's own copy only (the driver's copy burst was stationary; review R7) | The driver's own D-Dog rides in that seat on the driver's copy and the passenger is drawn over it (D16; fixed by the handshake above); two-PC |
+| Truck cab (1) | Lab key `partner_ride_cab`, the same mechanism for trucks (types 3 / 4: seat 1 only, never 2 / 3) | **Off** | [O] lab `b66c7031` (the guest as passenger), `73af7206` (both roles; moving frames on both copies for the guest-as-passenger role, on the host's own copy only for the host-as-passenger role; the guest's stock get-off) | The host's get-off from the cab (the worker lost its input desktop at that press, `73af7206`); a play rehearsal (the test truck needs the lab-only sortie lever); free roam's LRRP trucks carry soldiers; two-PC |
+| Seat race | Lab key `partner_ride_race`; world op SEAT `0x36` (54, both directions; a 0.14.4 partner skips it by its length); the board's pre-query want (within 4.5 m) and a native deny (`MGS_COOP_BOARD_SEAT_V1`); NOTE 13 a 6 / 7 | **Off** (D17) | [O] lab `b66c7031`: the guest denied at the truck's cab doors, the host driving, the guest on foot, FRAMES on both copies; incidental denies in `3c748d46`; play `65277fb8`: the deny and the toast drawn, but the host did not board (no ride icon at its spot) | The want is taken from the pre-query's nearest search before its door check, so a host that cannot use a door still wins a tie (`65277fb8`); presses within one round trip of the guest's icon; two-PC |
+| Truck bed (E7) | Not built (static reads only: the hide states live in the RideVehicle action; no bed anchor) | - | - | Everything |
+| APC / tank crew | Not built; census: the wheeled armoured vehicle has one seat | - | [O] census `b66c7031` | The tank's seat count; everything else |
+
+Hidden runs (research worker build, native gun stage, seed `afgh-ledge`; archived under
+`%USERPROFILE%\mgs-coop-run-archive\m6m7\`): `f49c167d318744178e60aac5efbe3d58`, `3c748d4691964b7b90d7d35811e40d0b`,
+`b66c703192e84214aa2d31f905489040`, `73af720692b5416a8cbbae651b4002f3` (lab), `65277fb83b1649ba85e9ef4c1e61f3de` (`-Mode play
+-WanSim bad`; its first form `11fe8abd92924c1da1a2904f0d68d41c` stopped at a harness check before the seats).
+An earlier start of the first run stopped inside the worker checks (the tree was edited while they ran; no game).
+Fast CTest after each change; the full CTest passed 318 of 318 at `c0387d6` with these docs (`tools/build.ps1`).
+
+## 2026-10-30: M7, shooting as a passenger (`wp/seat-shoot`; merged in `5a18d3b`, unreleased, not two-PC tested)
+
+Branch `wp/seat-shoot` from `dev/oct7-continue` `60e0d13` in `D:/mgs-coop-wt/companion-host`. The 0.13.5 seat-aim census
+(the uncommitted tree of `D:/mgs-coop-wt/seat-aim`) is committed on `wp/seat-aim` as `c87b270` and merged with a merge
+commit (`5e2ce28`); the partner contract was regenerated and re-pinned (816, then 818 code sites / 206 vtable slots).
+Details: docs/vehicles-companions-design.md 8.22, section 9 M7 and D18; docs/native-puppet.md "Seat gun". Marks: [O]
+observed in a run or test named here, [I] inferred, [U] unproven.
+
+**Verdict: M7 is not done.** Nothing flips: the new lab key `partner_seat_gun` stays off in lab and play.
+
+| Part | Built | Result |
+|---|---|---|
+| E8, the local passenger | Nothing to patch | [O] A stock back-seat passenger aims (upper act 2, modes 6/7; the reticle on its screen) and fires (upper 3, mode 9; the magazine goes down) its own gun; no frame shows the raised gun itself (its camera sits over or behind its head). The seated body faces into the jeep and the +-90 deg aim range is measured from it (seat 2 the right side, seat 3 the left); the aim swings to the top of its range at each shot. [O] **No seated shot landed** in the six runs that aimed at the guard, in both role orders (in `a3f7c4e1` the reticle was red on him before the shots), while the same lever-aimed method killed that guard on foot in `6e0edd8b` (the guest never boarded there). The on-foot control of `d7cf5a4b` was not a valid control: its reticle was on empty ground (frame `d-d1-pre`). Why seated shots miss is [U] |
+| The aim self-check | `partner_aim::GunDirSeated`; with the key on the passenger sends its seated v6 direction unchecked | [O] Not checked, so it cannot latch: `aim_dir=refused; reason=ride; checks=0` (key off), `aim_dir=valid; reason=seat; checks=0` (key on); no `reason=convention` in any run. The seated direction itself is not validated: roughly the lever's aim in `a3f7c4e1`, about 10 deg low in `d3409f57`, and it saturates near -75 deg at each shot |
+| E9, the partner's gun (design A) | `partner_seat_gun` (pure), two local kinds in the gesture hook (`gun_start` GunHoldStart, `gun_hold` GunHold; held while the driver names it, released with stateNull), body 1's aim rates written and restored, `TickSeatGun`; contract pins `SEAT_GUN_SITES` | [O] 30 holds: on both copies in `30a6a21a`, `03ceff68`, `d3409f57`, `a3f7c4e1` (3+2, 3+2, 3+2, 6+4) and on the host only in `d7cf5a4b` (5), each `hold` -> `submit; kind=gun_start` -> `applied; ok=1` -> `rates; ok=1` -> `release` -> `ended; cause=release; null=1`, no uncertain or fault. [O] **The frames show no raised gun** on the seated partner. The raise never reached its clip end, so GunHold was never requested; no hold ended by the gate (getting off), the lease or the epoch, and the rate restore was never logged [U] |
+| Test tooling | Debug commands `enemy_aim_nearest [height_m]` (the camera to the nearest living soldier) and `goto_vehicle jeep right` | [O] Both work (`a3f7c4e1`: the reticle red on a sleeping guard; `03ceff68`: seat 3 boarded from `goto_vehicle jeep right`) |
+
+**Hidden runs** (research build, native gun stage, seed `africa-jeep`, lab; all Closed, BaselineRestored,
+RealSavesUnchanged; `Forced=True` in `d40e4126`, `30a6a21a`, `6e0edd8b`, `03ceff68`, `a3f7c4e1`; CPU 5-30 % before each).
+The budget of eight is spent; no play rehearsal ran. A first attempt stopped in its worker checks (a source file added
+during the checks) and never launched the game.
+- `6fc3098b28344e27afe917f36a600a72` (`coop-vehicle-seat-aim.txt`, the census): E8 above; the passenger camera kept the
+  boarding direction and every shot missed the guard ahead; while firing, the view filled with a tan surface with a dark
+  edge, probably the jeep's bodywork, which the passenger camera leaves out of its collision query [I].
+- `d40e412636b04b58b5e4afeb40202dfa` (`coop-vehicle-seat-shoot.txt`): no hold started (the seat-owned branch of the driver
+  tick returned before `TickGesture`; fixed in `8c0d482`); from seat 2 aiming across, the camera looked through the
+  jeep's body.
+- `30a6a21a4c784049b79c259dd920977c`: the hold path on both copies; no visible change; seat 2's body faces right.
+- `6e0edd8b577f4df48f80b78cf3fd7541`: no boarding from the passenger side facing away (hence `goto_vehicle jeep right`;
+  that facing is the cause is [I], one run); the guest, still on foot, killed the sleeping guard with the same aim lever
+  (`enemy_aim_nearest 0.3`): `Dying`, `event=req; rid=3`, the host's `event=commit; ...; actor=guest; rid=3`.
+- `03ceff689ef24091a4194b0ab1a6fbe7`: seat 3's body faces left; aiming out of its own side clamps.
+- `d3409f579a724f5589113b0b69f1ce7f`: seat 3 across the jeep, the camera over the head; the lever's aim 7.5 deg low;
+  bursts climbed to the sky.
+- `a3f7c4e184d0490c833a4ee14a75beb1`: single shots with the reticle red on the sleeping guard; no hit recorded.
+- `d7cf5a4b4e3e4c6c82b136fdd088e4e2` (`coop-vehicle-seat-shoot-diag.txt`): driving, standing and first-person shots, then
+  an on-foot control; none hit, and the control's reticle was on empty ground (frame `d-d1-pre`), so it tested nothing.
+
+Slices in the session scratch `m6m7/shoot/slice-<run8>`, frames `complete/frames/shoot/<run8>-<role>-<label>.jpg`; run
+folders archived under `%USERPROFILE%\mgs-coop-run-archive\m6m7\<id>`.
+
+**Wire:** no new op or CFG index; with the key on the v6 input frame carries a seated direction, which a 0.14.4 receiver
+uses only in its native drive (disarmed while the sender rides) [I]. **Tests:** new `partner_seat_gun_tests`; additions
+to `partner_gesture_hook_tests`, `lab_config_tests`, `lab_ini_check`, `worker_session_tests`, `friend_package_tests`,
+`debug_menu_lua_check` (written with their code: that they failed first cannot be shown from the history). Fast CTest
+304/304; full CTest 320/320 (`tools/build.ps1`, after the docs). The review's fix round (below) adds driver-level
+tests shown failing against mutations.
+
+**Open (D18 in the design doc):** a static study of the gun plugin on a seated body and of the pitch jump at the shot,
+then design B with a new run budget; or park M7. The front seat and the truck bed depend on M6 (another track).
+
+**The review's fix round (verdict fix first; design doc 8.23 and section 11).** Every finding was checked first.
+- `fb71ab7`: `partner_seat_gun_tests` was in neither the Release receipt's audited list nor its excluded list, so
+  `tools/package.ps1 -Friend` would have thrown; it is audited now. New slow CTest `worker_coverage_tests` compares
+  every registered test (`ctest-test-names.txt`, written at configure) with the Release plan; it failed first naming
+  `partner_seat_gun_tests`. The research worker build's inventory (320 tests) is fully classified too, and the
+  hidden-run preflight passes with it: `Invoke-WorkerChecks -Profile Research` (no game, under the verify lock),
+  receipt `20261030-110552-f8f0879750314da0a876b8eacab98aad`, `passed`, 313 audited tests, 0 failures.
+- `e5c5739`: driver-level tests (`TestSeatGunDriver`, `TestSeatGunSender`): the seat-owned branch's gesture step and
+  hold (fails on the parent of `8c0d482`), the command and `hold_seq`, the hook's end and the retry, the unanswered
+  request, the aim's and the seat's release, the driver's seat refused, and the sender's seated direction only with
+  the key and a passenger report. Nine one-line mutations of the rules each fail them. `PassengerSeat` (seats 1..3;
+  0, 4, 255 refused) replaces the inline test, failing first.
+- Docs and README: the README no longer says a passenger can raise the gun; the hold counts (30, d7cf5a4b host-only),
+  the on-foot kill of `6e0edd8b` and the invalid control of `d7cf5a4b`, "not checked" for the seated direction, the
+  rate restore's exceptions (epoch, uncertain, fault), the camera attribution [I]/[U] and the boarding cause [I].
+- No runtime behaviour changed (the `PassengerSeat` refactor is the same test), so no hidden run was needed for it;
+  nothing flips. Fast CTest 304/304 after each step; full CTest 321/321 after the docs.
+
+## 2026-10-30: fixes after 0.14.4 (merged on `dev/oct7-continue`, unreleased, not two-PC tested)
+
+The three tracks that followed the 0.14.4 release are merged into `dev/oct7-continue` (from `01fd055`): `f1e80be`
+merges `wp/vehicle-fixes2` (`8e8e455`, review verdict `ship_behind_lab_key`, its fix round done), `101d925` merges
+`wp/dog-heroism` (`e67982a`, verdict `ship_behind_lab_key`, no fix round) and `416b2fa` merges `wp/launcher-fixes2`
+(`d76e7f6`, verdict `fix_first`, its fix round done); `8cb81f8` adds the combined smoke scenario. Local only: nothing
+pushed, tagged or released. The track sections below keep their own details. Marks: [O] observed in a run or test
+named here, [I] inferred, [U] unproven.
+
+**Merge notes.** Conflicts only in docs. `docs/STATUS.md`: every top section kept. `docs/vehicles-companions-design.md`:
+each track wrote a section 8.14; the vehicle fixes keep 8.14 / 8.15, the dog's section is now 8.16 and the launcher's
+are 8.17 / 8.18 (every reference the branches added renumbered with them); section 10's table takes the dog's D7 row and
+the vehicle fixes' D11 / D12 rows; section 11 keeps both review-log tables. Wire and configuration: the only new op is
+VEHICLE_DAMAGE `0x3A` and the only new CFG bits are `r[15]` bits 64 / 128 (`world_vehicle_crew`,
+`world_vehicle_damage`), both from the vehicle fixes; the dog and launcher tracks add no op, CFG index or lab key, so op
+codes and indices stay unique (`world_wire_tests`, `lab_config_tests`). A 0.14.4 partner skips `0x3A` by its length
+(`unknown_op`) and play pairing refuses mismatched builds anyway (protocol section 20); no mixed-build run [U].
+`Get-WorkerTests` carries both tracks' additions: the Release receipt list is now 312 tests (311 +
+`world_vehicle_damage_lua_check`), Normal and Research 310.
+
+| Fix | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| D12 crew: a vehicle the guest destroys with only soldiers aboard is wrecked on the host's copy at once | `world_vehicle_rules.lua`, key `world_vehicle_crew` (`r[15]` bit 64); held while a player stands within the blast distance by type (15 m light vehicles, 50 m every other or unknown type, also for `break_safe`; `blast_near` holds an unnamed copy instead of a Despawn) | **On** (off in the lab unless named) | [O] lab FRAME `ac0f7656`, `c0a385a5` (the hold at 33 m, the wreck once clear); play `-WanSim bad` `8995e351`, `c6db67b8`; at the shipped defaults `34d5744d`, `98d84a21` (frames on both copies) | [U] the armoured blast's damage at 25-50 m (godmode in every run); [fixture] `blast_near` and `crew_near` with the host's own player; [U] a Despawn under seated soldiers; an alerted enemy vehicle that drives off stays split (M8, `247a4eed`); two-PC |
+| The guest's vehicle damage short of destruction reported to the host | `world_vehicle_damage.lua`, op VEHICLE_DAMAGE `0x3A`, key `world_vehicle_damage` (bit 128); host bounds (half the copy's life per report, 3 per vehicle and 16 in all per second); D12's heavy rule counts own damage only | **Off** (lab key; named in play to use it) | [O] lab `ac0f7656`, the host bounds `c0a385a5`; with the key named in play `247a4eed`, `34d5744d` (before the review turned it off) | [U] live AI fire: each PC's guards hit the vehicle and their rounds add up (`846c1147`); no shot attribution; the frames cannot show a shared life at these values. So in a default session the guest's damage is still put back at the host's next state |
+| D11 before PAIRED: the guest's LOADOUT and VEHICLES items inactive from its arrival after a host-led follow | `world_vehicle_rules.lua`, `world_relief_sync.lua`; rides on `world_loadout_block`; the mark lapses 300 s after the arrival without PAIRED | **On** (with `world_loadout_block`) | [O] lab FRAME `251adcb6` (both refusals with their toasts before PAIRED); play `-WanSim bad` `c6db67b8` (LOADOUT), `98d84a21` (both items, frames on both copies, the host held on its tips screen); the paired refusal again in `32c3893a` (below) | [fixture] the 300 s lapse; two-PC |
+| The heroism and bond of a dog copy's death given back on the guest | `world_companion_guard.lua` (guest only); `world_sync.lua` hands on the attacker id; no key of its own | **Off** (under `companion_host_owned`, off in lab and play) | [O] lab `c7fdfdbf` (lab kill, mirrored down, guard fire: readbacks equal before and after, the stock notice on the guest's screen); control `2243bbc6`; a default play session logs no `dog_hero` line (`32c3893a`) | The first control `a7f00043` **failed** (the C4 missed the dog); no play rehearsal; the by-player branch (fixture only); persistence in the save [I]; the stock notice still shows. The review's four minor findings are open (no fix round ran): no lab key of its own, the scenario's expectations do not encode the give-back, the pre-death sample's age and the `unknown` attacker's caps, no co-op note after the give-back |
+| Launcher and package findings of the 0.14.4 review, rounds 1 and 2 | `native/launcher/**` (setup lock, close during setup, the closing-gap wait), `tools/package.ps1` (untracked files refused, fail-closed), `Invoke-WorkerChecks.ps1` (coverage, Release-only launcher checks), the tag, source zip and network wording | No game behaviour | [O] failing-first unit tests; hidden end-to-end `r4`, `r5` (outside `tools/worker`, recorded as a deviation); Release receipts `20261030-014929-6188027e...` and `20261030-031742-378e13be...` (311 tests); local packages audited 54/54 and 26/26 (not uploaded); a Research preflight with the new list, this smoke's `20261030-044444-8a250766d8ad4dcb83e01318f42dc345`: 310 tests passed with the background worker on | [U] a Normal-profile preflight; the closing-gap wait and an abandoned setup lock end to end with the real exe (unit tests only); two-PC |
+
+**Combined hidden test of the merged head** (`wp/next2-smoke` = `dev/oct7-continue` `8cb81f8`, built incrementally in
+`D:/mgs-coop-wt/relief`, research worker build, native gun stage; `tools/worker/scenarios/next2-smoke-play.txt`,
+`-Mode play -WanSim bad`, seed `africa-jeep`, **the shipped play defaults**: no labsetting line and no lab lever). Run
+`32c3893a301e4d579d76894397047bde`: **every expectation met** (ExpectFailures empty), Closed, BaselineRestored,
+RealSavesUnchanged, `Forced=False`; CPU 18 % before the run. Link RTT 174-189 ms, loss up to 13.3 %. No `step=error`,
+`event=error`, `viewer_changed`, non-zero `faults=`, `via=wreck`, `event=vehicle_damage` or `event=dog_hero` line on
+either copy. Slices `next2/integrate/slice-32c3893a` and frames `complete/frames/next2-integrate/32c3893a-*` in the
+session scratch, looked at for every line below; run and probe folders archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\` (`32c3893a...`, `df567698...`). One run of the two allowed.
+- [O] Both reached gameplay (host 53.0 s, guest 51.0 s after launch) and paired (`remote_build=0.14.4+8cb81f8` on
+  both; PAIRED epoch 3 in 30020 with 265 soldiers matched). `vehicle_rules; step=on; ...; break=1; credit=1;
+  loadout=1; gone=1; crew=1` on both copies, and no `vehicle_damage` on-line (off in play).
+  `dog_guard=off;reason=key_off;slots=0` and `dog_state ... installed=0` on both. Frame `smoke-start` on both screens:
+  the jeep with the partner beside it.
+- [O] D11: the guest's LOADOUT and VEHICLES items inactive and refused with both toasts (`step=refused` for
+  `idroid_drop_loadout` and `idroid_drop_vehicle`, NOTE 13 a 5 and a 4; frames `d11-guest-loadout-refused`,
+  `d11-guest-vehicles-refused`); the host's VEHICLES list opened (`d11-host-vehicles-open`).
+- [O] A drive with a passenger: the guest drove 25608 with the host in a back seat (`board_passenger ... seat=2` on the
+  host, `partner_ride_seat=confirmed ... seat=2` on the guest; frames `drv-seated` on both, `drv-pass-NN` from the
+  host's seat, `drv-driver-NN`) and stopped in the grass under a tree (`drv-stopped` on both). Parked: the host's
+  VEHICLE_STATE skipped 25608 while ridden, resumed (`was=partner_ride`) and sent it moved 23.7 m (`d_mm=23664`); the
+  guest's copy already stood there (`step=same; d_mm=1`; no guest `step=applied` in the whole run); `drv-parked-both`
+  shows the jeep under the same tree on both screens.
+- [O] D14: the host's hand Fulton of 25610: host `credit; via=own; res=14`, guest `credit_seize`, then `credit;
+  via=receiver; res=14` and `applied; via=seize; ok=1; ms=133`; one credit line per copy. Frames: the lift on the host's
+  screen (`fult-lift-03`); the jeep beside the partner on the guest's screen before (`fult-before`) and gone on both
+  after (`fult-after`).
+- Not in this smoke: a vehicle damaged by the guest staying damaged (the report is off in play, so it does not; not
+  tested), D12 (its rehearsals are in the table), the D11 window before PAIRED (here the guest paired 1.1 s after its
+  arrival), a dog death, the launcher.
+
+**Checks.** `pwsh -File tools/build.ps1 -Fast` 302/302 after each merge; full `pwsh -File tools/build.ps1` (Debug)
+318/318 at `416b2fa` and again at the docs commit `6ac6a86`; `worker_session_tests` with the new scenario; the five contract checks
+(`generate_partner_contract.py`, `generate_equip_writer_pins.py`, `generate_soldier_warp_contract.py`,
+`generate_nametag_contract.py`, `generate_downed_damage_contract.py`, each with `--check`) pass.
+
+**Open, for the user.** The dog track's two questions (should the guest share the stock penalty when the host's dog
+really fell; is the control with the key on the guest only acceptable as the key-off control) and the launcher track's
+one (may a launcher end-to-end use its own private-desktop harness outside `tools/worker`).
+
+## 2026-10-30: the review of the vehicle fixes (`wp/vehicle-fixes2`, unreleased, not two-PC tested)
+
+Branch `wp/vehicle-fixes2` in `D:/mgs-coop-wt/vehicle-state`, new commits after `116847e`; local, nothing merged,
+pushed, tagged or released. The independent review of the vehicle fixes (verdict `ship_behind_lab_key`: three major,
+four minor findings, four refuted claims) was checked finding by finding against the code, the slices and the frames.
+Details: `docs/vehicles-companions-design.md` 8.15 (results) and section 11 (the finding table),
+`docs/world-sync-protocol.md` section 20 (the review note; no wire change).
+
+| Finding | Outcome | Proof |
+|---|---|---|
+| Major: `world_vehicle_damage` on in play without its fire gate meeting live AI fire (the guards' rounds on the two copies add up) | **Off in play again** (`795bdfc`), lab key; host bounds per report (half the life) and per second (3 per vehicle, 16 in all), and D12's heavy rule ignores reported drops (`8f20483`) | The bound live in the lab `c0a385a5` (2260 -> lever 600 -> host 1130 `cap=1`; -> 300 -> 565; both copies 565 past the refresh) [O]; a live-guard rehearsal or shot attribution stays open [U] |
+| Major: the crew rule's 15 m (a jeep) vs. the armoured vehicle's blast that knocked the guest flat at 25 m | **Fixed** (`77be734`): 15 m for light vehicles, 50 m for every other type, an unknown type or a missing binding, for the hold and `break_safe`; an unnamed copy with a player inside it is held (`blast_near`) instead of a Despawn that cannot run | Lab FRAME `c0a385a5`: no knockdown at 33 m; the `crew_near` hold with the guest 33 m away (both screens), the wreck once it stood 63 m away, the host 60 m away on its feet; play `c6db67b8` and `98d84a21` (`-WanSim bad`, the guest's real C4 from 25 m: the same hold and release, frames on both copies) [O]. The blast's damage between 25 and 50 m is unmeasured [U]; `blast_near` live [fixture] |
+| Major: the D11 pre-PAIRED fix in play by default without a play rehearsal of that window | **Rehearsed in play** with the new worker step `titlecontinue` (`5293dc2`); the pre-pair mark now lapses 300 s after the arrival without PAIRED (`017e777`) | `98d84a21` (play, `-WanSim bad`, the shipped defaults): both items refused before PAIRED with both toasts drawn, the host on its tips screen (frames), PAIRED 45.2 s after the arrival; `c6db67b8`: LOADOUT the same, VEHICLES not reached (the alerted Masa guards closed the iDroid) [O]. The lapse [fixture] |
+| Minor: the host takes the guest's drop at face value; reported drops feed the heavy rule | **Fixed** (`8f20483`) | Fixtures (failing first); the bound live in `c0a385a5` |
+| Minor: protocol section 20 says the guards' fire counts once | **Fixed** (`3d2fc8b`) | Rewritten: counted once only when the host copy's own hit came first |
+| Minor: README states the crew hold as fact, the guest's gunfire as shared | **Fixed**: the hold is now proven live and the README names its distances; the damage report is off in play, so the README no longer claims it | `c0a385a5`, `c6db67b8`, `98d84a21` |
+| Minor: stale "off in play" comments; 8.14 `Forced=True` for every run | **Fixed** (`3929a6c`, `3d2fc8b`) | |
+| Refuted claims (D11 fix in play, "counts once", the damage FRAME, `Forced`) | **Corrected** in 8.14, section 20, this file (below) and the roadmap | |
+
+**Play defaults now.** `world_vehicle_crew` **on** in play unless named (`3929a6c`; lab FRAME `c0a385a5`, the play
+rehearsal `c6db67b8` with the key named, again at the shipped defaults `98d84a21`). `world_vehicle_damage` **off** in
+play unless named (`795bdfc`). The D11 fix rides on `world_loadout_block` (on; play rehearsals `c6db67b8`, `98d84a21`).
+In the lab both keys stay off unless named.
+
+**Hidden runs** (3 of 3 budgeted; research build, native gun stage, copied saves, `africa-jeep` seed; each Closed,
+BaselineRestored, RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\<id>`; slices `next2/vehicles/slice-<run8>` in the session scratch; frames
+`complete/frames/next2-vehicles/<run8>-<role>-<label>.jpg`):
+- `c0a385a55fd949a89f31505cb4ee19d5` (lab, `vehicle-review-lab.txt` at `2d47238`, every key named): **every expectation
+  met** (`Forced=True` at shutdown): the host's half bound twice; the crew hold at 33 m and the wreck once clear.
+- `c6db67b8999c4a79ab38ac6a57870fac` (play, `-WanSim bad`, `vehicle-review-play.txt` at `3d2fc8b`, crew named):
+  `Forced=False`, link 176-188 ms, loss up to 3.8 %; D11 before PAIRED: LOADOUT refused with its toast; VEHICLES not
+  reached (the alerted guards closed the iDroid; 2 expectations failed); the crew part met every expectation.
+- `98d84a219dd4494ebd6d5578614ad189` (play, `-WanSim bad`, the same scenario at `b4cd471`, **no vehicle key named**):
+  `Forced=False`, link 176-190 ms, loss up to 3.2 %; every behaviour met (D11 both items before PAIRED, the crew at its
+  default, no VEHICLE_DAMAGE line on either copy); one expectation failed by the scenario's own timing: the VEHICLES
+  toast is drawn in the frame, but its log line fell inside the HUD toast log's 10 s gap per note code (the scenario
+  waited 3.5 s; it now waits 10.5 s again).
+
+**Checks.** Tests first for every rule (logs `next2/vehicles/failfirst-*.log`: rules check 108, 63, 71; relief_sync 99;
+damage 47, 69; lab_config 1274, 1275; worker_loading). `pwsh -File tools/build.ps1 -Fast` 302/302 after each change;
+the full `pwsh -File tools/build.ps1` (Debug) 318/318 before the docs commit (code at `3929a6c`, scenario `b4cd471`).
+
+**Wire.** No change since 8.14: VEHICLE_DAMAGE 0x3A (a 0.14.4 partner skips it by its length; play pairing refuses
+mismatched builds anyway). The host bounds, the blast distances and the lapse are local behaviour.
+
+**Integration note.** `wp/launcher-fixes2` (`bc56c0d`): `Assert-WorkerCoverage` must admit
+`world_vehicle_damage_lua_check` (as before). The new worker step `titlecontinue` touches
+`tools/worker/Invoke-WorkerScenario.ps1` (help, validation, roles, dispatch) and `tests/worker_loading_tests.ps1`.
+
+## 2026-10-29: the vehicle fixes (D12 crew, the guest's vehicle damage report, D11 before PAIRED; `wp/vehicle-fixes2`, unreleased, not two-PC tested)
+
+**Superseded in part by the review above** (2026-10-30): the damage report is off in play again, the crew rule's
+blast distance depends on the vehicle type, and these refuted claims are corrected: the D11 fix was not exercised in
+`247a4eed` / `8995e351` / `34d5744d` (the guest's first guard line has the same millisecond as PAIRED: the old paired
+refusal); the damage FRAME shows the jeep, not the shared life; `Forced=False` held for four runs, not none.
+
+Branch `wp/vehicle-fixes2` in `D:/mgs-coop-wt/vehicle-state`, from `dev/oct7-continue` `01fd055` (0.14.4); local,
+nothing merged, pushed, tagged or released. The user approved the three fixes on 2026-10-29 after the 0.14.4 review
+(D12's open question; findings `game-d11-prepair-gap` and `game-vstate-heals-guest-damage`). Details:
+`docs/vehicles-companions-design.md` 8.14 (results), section 10 (D11, D12), `docs/world-sync-protocol.md` section 20
+(the op and the keys).
+
+| Fix | Built | Play default | Proven | Unproven |
+|---|---|---|---|---|
+| D12 crew: a soldier-crewed vehicle the guest destroys is wrecked on the host's PC at once | `world_vehicle_crew` (CFG `r[15]` bit 64, `world_vehicle_rules.lua`): a hold whose only reason is an NPC crew is judged at once and applied as the host's wreck (`break_crew`); held while a player is within 15 m of the host's copy; D-Dog, a buddy, the partner's ride and the host's own player keep the old hold or refusal | **On** where `world_vehicle_break` runs (30010, 30020) | FRAME lab `ac0f7656` (the guest's lever, the burning armoured vehicle on both screens), play `8995e351` (`-WanSim bad`, the guest's real C4, frames on both), again at the shipped defaults `34d5744d`; the crew's death counts once on each copy (one host commit, a `terminal_local` apply on the guest) [O] | An enemy vehicle that drives off in a fight moves separately on each PC (`247a4eed`: refused as far, the split stays; M8); `crew_near` and a Despawn under seated soldiers [U]; two-PC |
+| The guest's vehicle damage report | `world_vehicle_damage` (bit 128), new chunk `world_vehicle_damage.lua`, new op VEHICLE_DAMAGE 0x3A (guest to host, 26 bytes): drops of the guest's copy within 3 s of its own fire (GUN_FIRE) and 300 m are reported; the host applies the lower life (at most the guest's drop, never 0) and VEHICLE_STATE carries it back | **On** where VEHICLE_STATE runs (30010, 30020) | FRAME lab `ac0f7656` (the jeep on both screens at the shared life; the engine draws no damage at these lives), play `247a4eed` (the guest's real round 2020 -> 1990 on both copies past the refresh, applied 117 ms after the report), again at the shipped defaults `34d5744d` (the host's round synced and never reported back) | The guest's explosives short of a destruction, its collisions, a guard's round in the guest's 3 s window [I]; two-PC |
+| D11 before PAIRED | `world_follow.lua` records the follow arrival (`F.arrivedMission`); `world_vehicle_rules.lua` and `world_relief_sync.lua` mark that mission co-op at the guest's start, so LOADOUT and VEHICLES are inactive before PAIRED | (rides on `world_loadout_block`, **on**) | Lab `ac0f7656` (guard 29 s before PAIRED), `d3f5ca56` (104 s, on foot) with the host held on its tips screen (frames); FRAME `251adcb6` (both items refused with both toasts on the guest's screen before PAIRED, the host on its tips screen; the pair formed 96 s after the arrival); play `247a4eed`, `8995e351` (the fix in, refused with its toast; the play worker always pairs first) | The pre-pair window in play (the play worker always pairs first) [I]; two-PC |
+
+**Hidden runs** (research build, native gun stage, copied saves, `africa-jeep` seed; each Closed, BaselineRestored,
+RealSavesUnchanged, no `step=error`, `viewer_changed` or fault line; archived under
+`%USERPROFILE%\mgs-coop-run-archive\next2\<id>`; slices in the session scratch `next2/vehicles/slice-<run8>`; frames in
+`complete/frames/next2-vehicles/`):
+- `846c1147` (lab, `20a7120`): the report path worked (the guest's lever 2140 -> 1500 applied on the host 17 ms later),
+  but the guards' rounds on both copies were reported and added up until the host's jeep broke: the fire gate
+  (`d8497c5`). Stopped at A2 (`goto_vehicle` went to a jeep 600 m away).
+- `ac0f7656` (lab, `d8497c5`): the lab FRAME run (damage A/A2/A3, crew, D11's guard before PAIRED); the guest's iDroid
+  did not open while it rode the helicopter in.
+- `247a4eed` (play, `-WanSim bad`, `d8497c5`, the two keys named): D11 and the guest's damage passed; the host's rounds
+  missed; the crew part failed outside the rule (the alerted armoured vehicle drove apart, refused as far).
+- `d3f5ca56` (lab, `9538f86`): D11 on foot, the guard 104 s before PAIRED; the iDroid opened too late (arrival popups).
+- `8995e351` (play, `-WanSim bad`, `da2043d`, crew named, the damage report at its play default): D11 and the crew
+  passed; the Masa guards broke the jeep before the damage part. `Forced=False`.
+- (none): `vehicle-fixes2-d11.txt` at `f6823b9` never launched: the worker's audited CTest snapshot held a
+  failing-first test (`lab_config_tests` check 1275) written before its code.
+- `251adcb6` (lab, `f6823b9`): **the D11 FRAME before PAIRED, every expectation met**, `Forced=False`.
+- `34d5744d` (play, `-WanSim bad`, `f6823b9`, **no vehicle key named**: the shipped defaults): **every expectation
+  met**, `Forced=False`, link 175-186 ms, loss up to 13.3 %: D11, the guest's and the host's rounds, the crew.
+
+**Checks.** Tests first for every rule (logs `next2/vehicles/failfirst-*.log`). `pwsh -File tools/build.ps1 -Fast` 302/302 after each code change; the full `pwsh -File tools/build.ps1` (Debug) 318/318 (317 before plus `world_vehicle_damage_lua_check`) at the last code commit `f6823b9`. Hidden runs: 7 launched (`846c1147`, `ac0f7656`, `247a4eed`, `d3f5ca56`, `8995e351`, `251adcb6`, `34d5744d`) of the 8 budgeted; one more refused at its worker checks before launch.
+
+**Wire.** VEHICLE_DAMAGE 0x3A is new; a 0.14.4 partner skips it by its length (`unknown_op`) and play pairing refuses
+mismatched builds anyway. No other op or field changed. 0x35-0x37 stay reserved; 0x3B onward are free.
+
+**Integration note.** `wp/launcher-fixes2` (`bc56c0d`) adds `Assert-WorkerCoverage` / `Assert-WorkerInventory` to
+`tools/worker/Invoke-WorkerChecks.ps1`: the new `world_vehicle_damage_lua_check` (four Lua arguments) is in
+`Get-WorkerTests` here and must stay admitted there at the merge.
+
+## 2026-10-29: the heroism of a dog copy's death given back on the guest (`wp/dog-heroism`, lab only; merged on `dev/oct7-continue` 2026-10-30, see the top section)
+
+The user approved it on 2026-10-29: when the guest's copy of the host's D-Dog dies on the guest's PC, the stock game
+took 30 heroism and 2 bond points on the guest's PC ("D-Dog Near Death [Heroism -30]", run `9fa48400`) for
+a death that is not real. Branch `wp/dog-heroism` (from `dev/oct7-continue` `01fd055`, in the worktree
+`D:/mgs-coop-wt/companion-host`; commits `85ba7ec`, `159ae49`, `e905f99`, `2885155` and this one; nothing merged,
+pushed, tagged or released). Details: `docs/vehicles-companions-design.md` 8.16.
+
+- **Where the penalty is** [O, static, capstone]: native, not Lua. The dog's life update calls the buddy service's
+  dying handler (`BuddyServiceImpl` slot `0x258`, `0x140A4F440`) just before its `Dead` message: unless the DOG bit of
+  `deadBuddyType` is already set it takes 30 heroism and 20 raw bond (`vars.buddyFriendlyPoint`, 2 of
+  `GetFriendlyPoint`'s 100), or 60 heroism, 100 raw bond and +150 demon points when a player (id 0..511) made the kill,
+  then sets the bit. The notice comes from the same native code.
+- **Built:** `lua/coop/world_companion_guard.lua` (guest only, under `companion_host_owned`'s peer agreement): each copy
+  death gets back exactly what the stock penalty took, once, measured against the last 100 ms sample before it and
+  never more than the stock amount (`AddHeroicPoint`, the raw bond written back, `SubOgrePoint`; log `event=dog_hero`).
+  `world_sync.lua` hands the raw attacker id on. Lab levers `companion_lab hero` (both roles, play too: read only) and
+  `kill_own` (guest: the native kill on the guest's own dog when the session is not host-owned). No wire or receipt
+  change (protocol section 15). Fixture `world_companion_guard_lua_check` 115 -> 149 checks, red first.
+- **Proven in the lab** [O]: run `c7fdfdbfb73f41d8860cef055d88aaa7` (key on, `afgh-ledge` / `afgh-horse`, every
+  expectation met): the lab kill (`h=244995:244965:244995; b=1000:980:1000; give=30,20,0`), the host's dog down (the
+  host's own -30 / -20 raw kept on the host; the guest's mirrored copy given back) and a real death by guard fire
+  (`att=1206`, given back); the guest's readbacks equal before and after each death, the host's unchanged by the
+  guest's copy deaths, no `dog_hero` line on the host; FRAME: the stock notice "D-Dog Near Death [Heroism -30]" on the
+  guest's screen while the host's dog stands beside Snake on the host's (`c7fd-*-hr-dead-2`), and on both screens at the
+  mirrored down (`c7fd-*-hr-down`). Control run `2243bbc624ad4f0bb141837b40c40ed0` (the key on the guest only, so the
+  session is not host-owned and the guest's dog is its own; every expectation met): `kill_own` -> the guest lost 30
+  heroism and 20 raw bond and kept the loss (`applies=0`, no `dog_hero`), the host unchanged, the notice on the guest's
+  screen (`2243-guest-hc-dead-2`). A first control by the guest's own C4 with both keys off
+  (`a7f00043c6a64466915a6ee99342a73b`) **failed**: the blast missed the dog and downed the host through the friendly hit.
+  Runs archived under `%USERPROFILE%\mgs-coop-run-archive\next2\<run>` with their probe folders (`7a5e7417...`,
+  `4c3b3c64...`, `a2d998d8...`); frames in the session scratch `complete/frames/dog/`.
+- **Defaults: unchanged.** `companion_host_owned` stays **off in lab and play**, so nothing of this runs in a default
+  session. Unproven: a play rehearsal (play refuses the levers that kill the copy), the by-player branch in a run
+  (fixture only), the give-back reaching the guest's save at a checkpoint or mission end [I], both keys off with the
+  guest's dog dying (fixture and code only [I]), Mother Base, two-PC.
+- **Checks:** `pwsh -File tools/build.ps1 -Fast` 301/301 after each change; full `pwsh -File tools/build.ps1` (Debug)
+  317/317 before the last commit.
+
+## October 29, 2026: the review of those launcher and package fixes, round 2 (`wp/launcher-fixes2`, unreleased)
+
+Same branch and worktree as the section below; still not merged, pushed, tagged or released. An independent review of that section (verdict: fix first) found one major and seven minor issues. Each was checked against the code before it was changed, and all eight are handled here. None changes play, the wire, a CFG index or a lab key, and no play default changed. Marks: [O] observed in a run or test named here, [I] inferred from code, [U] not run.
+
+1. **The tag and source zip wording was still false** (major; `2dcd0e3`). At `c78ed3b` the tag held 16 tracked paths that the zip leaves out: `.gitignore`, `.gitmodules`, `AGENTS.md`, `Play-Offline-Coop.bat`, `native/launcher/assets/.gitattributes`, three files under `docs/evidence` and seven `docs/readme/*.jpg`. It also held MinHook only as a submodule link, while the zip carries its 21 files. A docs commit after packaging (`74291a3`) adds more differences [O: `git ls-tree -r c78ed3b` against the package's `source-files.json`].
+   - The player README, `THIRD_PARTY_NOTICES.md` and `README.md` now say: the zip is made from the commit `build.source_commit` names (`build.source_dirty` false: the files did not differ from it), with MinHook's source in place of its link and without the files the programs are not built from (the notices list them by name). The tag can sit on a later commit, so the zip is compared with `build.source_commit`, not with the tag.
+   - `friend_package_tests` checks that wording in the packaged README and notices, and that every tracked file the real tree's source zip leaves out is of a kind the notices name.
+   - Failing first [O]: with the old texts it stopped at "README.txt and the notices name source_commit as the zip's commit". Item 3 of the section below is corrected.
+2. **`friend_package_tests` depended on the developer's untracked files** (`f93dc74`). It packages the real tree, so since the untracked-file refusal any new, not yet committed file under a published folder (a scenario, a test) turned full CTest red. For that one run, the test now gives the child gits (`GIT_CONFIG_COUNT`, `core.excludesFile`) an excludes file that names exactly the tree's untracked files in the published folders. `tools/package.ps1` itself keeps no way around its refusal, which the git fixture still checks.
+   - Failing first [O]: with an untracked `tools/zz-r2-untracked-probe.txt` in the worktree the test failed ("Untracked file would be published in the source zip"). With the fix it passed (45 s) with that file present; the file was then removed. The side effect noted in item 5 of the section below is gone.
+3. **Every hidden run's preflight had gained the launcher's slow process test** (`8db0313`). `Get-WorkerTests` is the list of every profile, so the Normal and Research preflights of `Invoke-WorkerScenario` had gained `ddt_local_watch_process` (real helper processes, 8.5 s in the receipt, timing-sensitive) and `launcher_icon_tests`, though a hidden game run packages no launcher. Both moved to `Get-WorkerReleaseOnlyTests`, which only the Release plan adds.
+   - [O] `-PlanOnly`: Normal and Normal with the background worker plan 309 tests, Release 311 (the receipt list is unchanged). `tests/worker_checks_tests.ps1` 154 checks; failing first, it stopped at "a normal-worker-off preflight skips the launcher's helper-process and icon checks".
+   - [U] No Normal-profile worker check ran: its cache would be a new build folder on D: (`build/worker-checks/normal-worker-on-release`), which this round may not create. [I] The eleven fixtures that stay in every profile (0.02-0.16 s each in the Release receipt) are registered by CMake for every profile; the background-worker flag only adds two defines (`MGS_PLAY_REHEARSAL` to `mgs_coop_core`, `MGS_BACKGROUND_WORKER` to `mgs_coop_lab`). They were not run in that configuration.
+4. **No test covered an abandoned setup lock** (`9b20ce7`). Two new sub-tests of `TestSetupElsewhere`: `RunSetup` is the first to wait on a lock whose owner ended without releasing it, and runs; a window that waited (`setup=waiting`) sets up once the owner ends that way. Both pass [O]. With `WAIT_ABANDONED` dropped from `SetupLock::Lock` and `SetupRunningElsewhere` (a mutation check, reverted), 5 checks fail [O].
+   - In `r4` and `r5`, window C never tried a setup: the harness had given it a cache that forced `phase=error`. Its "never two setups" verdict was therefore trivially true. The runs show the folder-hold order (C opened after B's process ended), not a second setup that waited and then ran. That is now [O] by the unit tests only.
+5. **The setup lock wording overclaimed** (docs). Only `RunSetup` in builds from `8c7a0da` on takes the lock. A 0.14.4 or older exe, `tools/package-install.ps1` and the worker's drop-in installs do not. Two windows of one folder were already kept apart by the folder's single-instance mutex, so the lock matters for the developer `--write-session`. Item 1 of the section below now says "a setup run by Diamond Dogs Together from this version on".
+6. **A start during the closing gap exited without a window** (`bc9f305`). A window closed during setup is gone at once, but its process holds the folder for about 50 ms while it ends the setup. A start in that gap found the folder held and no window to bring forward, and exited (`r1`). The single-instance claim (now `ClaimFolderInstance` in `launcher_entry.cpp`, called by `ClaimSingleInstance`) waits up to 2 s for the folder when no window holds it, then looks for the window once more, since the next window may still be opening. An open window is still brought forward at once.
+   - Failing first [O]: `launcher_ui_tests`' real-mutex cases (folder released after 150 ms, abandoned after 150 ms, held with no window, window found on the second look) failed 5 checks with the old claim. Now 386 checks, 0 failures, in four runs.
+   - [U] Not run with the real exe end to end (see 8). [I] `ClaimSingleInstance` passes the old window search as the callback.
+7. **The untracked-file refusal failed open** (`6240a0a`). Any failure to run git (git missing from PATH, a broken git) counted as "not a git checkout", which skipped the refusal. With a `.git` entry at the root, `tools/package.ps1` now refuses to package and says why. An unpacked source zip (no `.git`) packages as before.
+   - Failing first [O]: `friend_package_tests`' git fixture, with git hidden from PATH and an untracked note, packaged it ("expected failure"). Now it is refused before anything is staged.
+8. **The launcher end-to-end ran outside `tools/worker` and without the verify lock** (process; recorded, not sanctioned). Runs `r1`-`r5` of the section below used a scratch harness (`E2eHost.cs`: CreateDesktop, SW_HIDE, a kill-on-close job) on a private desktop in a fake folder. They did not use `tools/worker` and did not take the verify lock. They touched no game copy, save or Steam data [I: afterwards the fake folder held only the planted files and the log, and the setup's game check fails before any Steam lookup]. Their safety rested on the harness's own ordering, not on the worker's receipt, lock and backup/restore. This round ran no such harness, so item 6 is proven by unit tests only. Whether launcher end-to-end runs may use such a harness, or must move under `tools/worker`, is for the user to decide.
+
+**Checks** [O]: `pwsh -File tools/build.ps1 -Fast` 301/301 at `8db0313`; full CTest (Debug) 317/317 at `8db0313`; `tests/worker_checks_tests.ps1` 154 checks; `friend_package_tests` passed with an untracked file in the tree.
+
+**Release checks and a new local package** [O] (a check of the tooling, built and audited only; nothing uploaded; it still says 0.14.4 and must not be released as such). Under the verify lock (D: had 5.9 GB free): receipt `20261030-031742-378e13becd5542889d9257d250299f32` passed with 311 audited tests; its run folder is archived under `%USERPROFILE%\mgs-coop-run-archive\next2\20261030-031742-378e13becd5542889d9257d250299f32`. `tools/package.ps1 -Friend -CheckReceipt` with that receipt, from the clean tree at `205b13c`, into the session scratch `next2/launcher/r2/dist/DiamondDogsTogether-0.14.4-20261030T032122Z-38459f1b`:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.4.zip` | 3,081,001 | `8C08872381AEB5753E8CB0DDAB63C06970974BD30E924A3B724E60C7676622DE` |
+| `DDT-source-0.14.4.zip` (1,410 source files plus `source-files.json`) | 8,344,719 | `ADB69998EFA2C0BF9D42CC5B1E97FB00840D7627D5A073B8134F1085746AC2A0` |
+| `DiamondDogsTogether.exe` | 2,370,048 | `604BFC6EF745D4C9BA1662A10304403D8218EF7CEDA4B51C63B473CCE34043E0` |
+| `dinput8.dll` | 7,060,992 | `51CBC61378F9872561BFB2BA32EDABC894A958F822B627D00EA3628E3C81A4EC` |
+
+- Audit 26/26 [O] (`next2/launcher/r2/audit-r2.py` in the session scratch): the new wording in the packaged README and notices, with each left-out kind named; `build.audited_tests` 311, including both launcher checks; `source_commit` `205b13c`, `source_dirty` false; the exe and dll are the receipt's, build id `0.14.4+205b13c` in both.
+- Against `205b13c` [O]: the 16 tracked files the zip leaves out are all of the kinds the notices name; the 21 zip files git does not track are MinHook's; the other 1,389 zip files equal their blobs at that commit (line endings aside: the checkout writes CRLF).
+- This STATUS record is written after the package, so it is one of the later commits the texts describe.
+
+## October 29, 2026: the 0.14.4 review's launcher and package findings fixed (`wp/launcher-fixes2`, unreleased)
+
+Branch `wp/launcher-fixes2` from `dev/oct7-continue` `01fd055`, in the worktree `D:/mgs-coop-wt/launcher-setup`; not merged, pushed, tagged or released. It fixes the five non-blocking launcher and package findings of the 0.14.4 pre-release review. None changes play, the wire or a lab key. Marks: [O] observed in a run or test named here, [I] inferred from code, [U] not run.
+
+1. **Two automatic setups could run at once after a window closed during setup** (`8c7a0da`). The closing window released the folder (its single-instance mutex) before its model was destroyed. The model then waited for a pending update check (WinHTTP waits up to about a minute on a stalled network) before it ended the setup, so a window opened again at once started a second automatic setup next to the first. Both ends are closed now:
+   - The closing end. `~RealModel` ends the setup first: the real window calls ExitProcess before any join, also for a setup that has just finished but was not yet picked up. `HoldFolderWhileClosing` holds the folder while the phase is `setting_up`, so the process ends while it still owns the mutex.
+   - The next window. `RunSetup` holds a per-folder setup lock (`Local\mgs-coop-setup-<16 hex>`, the play mutex's folder hash). A window whose automatic setup finds it taken waits (`setup=waiting; reason=other_setup`), then looks at the folder again, since the other setup may have finished it. A setup started anyway (Try again, `--write-session`) stops with a sentence (`setup=refused; reason=other_setup`) and changes nothing. This lock goes beyond the review's suggested fix: for a setup run by Diamond Dogs Together from this version on, the guarantee does not depend on timing. (Corrected in round 2, the section above: a 0.14.4 or older exe, `tools/package-install.ps1` and the worker's drop-in installs take no such lock, and two windows of one folder were already kept apart by its single-instance mutex.)
+   - Failing first [O]: `launcher_ui_tests` 1 failure ("co-op getting ready holds the folder until the setup has ended"), `ddt_core_tests` 12 failures (`TestCloseDuringSetup`: the closed model's setup ran on to `setup=done` and wrote `friend-install.json` while the model waited for a stalled update check; `TestSetupElsewhere`: a second setup started). After the fix: 377 checks / 0 and 1284 / 0.
+   - End to end [O], hidden: the Release receipt's own exe (`0.14.4+c78ed3b`) on a private, never-displayed desktop (CreateDesktop + `lpDesktop`, SW_HIDE, a kill-on-close job with UI limits; the input desktop stayed `Default`). It ran in a fake game folder in the session scratch: a 16 GiB sparse dummy `mgsvtpp.exe` (0 bytes allocated), a copy of `steam_api64.dll`, a dummy loader and `package.json`. The update feed was on 127.0.0.1 and accepted every connection without answering. The setup never passes its game check (the dummy is not the retail exe), so it never looks up Steam or reads a save; afterwards the folder held only those files and the log. Runs `r4` and `r5` (harness `next2/launcher/e2e/e2e-setup.ps1` in the session scratch; evidence `next2/launcher/e2e/runs/<run>`):
+     - While the harness held the folder's setup lock, the window waited 5 s and started no setup (`setup=waiting`). Once the lock was released, it logged `setup=auto` and `setup=start`.
+     - The window was closed 1.5 s into that setup, while it was still hashing and its update check still waited on the stalled feed. The window was gone after 5 ms and the process ended 52-54 ms after WM_CLOSE (`window=closed_during_setup`, no `update=check_failed`). When the window was gone, the process was still alive and still held the folder's single-instance mutex and its setup lock.
+     - A window started 12-13 ms after the close opened only after that end (its `window=open` follows `window=closed_during_setup`). In `r1`, such a window started while the old process was still ending found the folder held and exited without a window. (Round 2: that order was a race, not a guarantee; such a start now waits for the folder, `bc9f305`. Window C never tried a setup, since its cache forced `phase=error`, so these runs do not show a second setup waiting.)
+     - A window closed outside setup frees the folder at once (the mutex was gone 0.33 s after the close), while its process stays about 27 s until its update check times out (`update=check_failed ... 12002`), as before.
+   - [U] The 0.14.4 exe was not run through the same harness: making its setup run long enough would let it read the real Steam saves. The failing-first tests show the old behaviour. No visible-desktop or two-PC run.
+2. **The Release receipt left out shipped tests** (`bc56c0d`). `Get-WorkerTests` (the receipt's list) grows from 298 to 311 (round 2: the two launcher tests below now run only in the Release receipt, `Get-WorkerReleaseOnlyTests`; Normal and Research preflights run 309):
+   - New: `dog_guard_tests`; the outcome attribution, companion, buddy companion, dog guard, relief and relief sync Lua checks; `launcher_icon_tests`; `ddt_local_watch_process` (the exe's real `--local-watch` helper, hidden, on temp folders).
+   - Missing since 0.13.x / 0.14.3, not only since 0.14.4: `partner_act_log_tests`, `partner_ammo_leak_tests`, `partner_dm_overlay_tests`, `partner_ride_seat_tests`.
+   - `Assert-WorkerInventory` admits the exact arguments of the three that take any.
+   - The new `Assert-WorkerCoverage` refuses a Release inventory test that is neither audited nor excluded by name. The excluded list now also names `ddt_runtime_dat_integration` (reads the game folder), `ddt_launcher_screens` (mock pages in a DX11 window) and `launcher_assets_current` (Python asset check; `launcher_icon_tests` checks the icon the exe embeds).
+   - Failing first [O]: `tests/worker_checks_tests.ps1` stopped at the shipped-module check; it now passes 147 checks.
+   - Receipt `20261030-014929-6188027e7b644a37bf51164ae9fc7020` passed with 311 audited tests (`ctest-results.xml` 311 / 0 failures) [O]; its run folder (receipt, exe, dll, logs) is archived under `%USERPROFILE%\mgs-coop-run-archive\next2\20261030-014929-6188027e7b644a37bf51164ae9fc7020`.
+3. **"The tag holds the same source" was inexact** (`d6da17f`, corrected in round 2 by `2dcd0e3`). `tools/package-readme-player.txt`, `THIRD_PARTY_NOTICES.md` and `README.md` said:
+   - The source zip is the complete source of the two programs.
+   - ~~The tag `v<version>` holds the same code and differs only by the package's record in `docs/STATUS.md`, written after the build.~~ Refuted by the round-2 review: the tag also holds repository-only files the zip leaves out, holds MinHook only as a submodule link, and can sit on a later commit. The texts now compare the zip with `build.source_commit` and list what it leaves out (section above, item 1).
+   - `package.json` `build.source_commit` names the exact commit.
+   - README.md: the source zip exists from 0.14.4 on; older packages carry `mgs-coop/source.zip`.
+4. **The notices said the exe downloads nothing** (`d6da17f`). `THIRD_PARTY_NOTICES.md` now gives the exe's only network access: the update check against this repository's GitHub release feed and, on Update now, the download of that release's zip (WinHTTP). The setup downloads nothing. The player README has a short NETWORK section with the same facts, and README.md says the same [I: `core_update.cpp` is the only WinHTTP user; the local test's port probe only binds a local socket].
+5. **Untracked files could reach the public source zip** (`c78ed3b`). `tools/package.ps1` lists what git neither tracks nor ignores in the published folders (`git ls-files --others --exclude-standard`, read as UTF-8; the MinHook dependency is left to the receipt; nothing is listed outside a git checkout).
+   - It refuses such a file by name before it creates the dist folder: "Untracked file would be published in the source zip: ...".
+   - `build.source_dirty` counts those files too.
+   - Failing first [O]: `friend_package_tests` (a git fixture of its own) packaged an untracked `tools/notes.txt`. Now it is refused, and untracked code is refused even when the receipt hashed it. A clean tree, a tracked uncommitted file and an untracked `.log` record `source_dirty` false, true and true.
+   - Side effect: `friend_package_tests` (full CTest) now fails while the checkout has an untracked file with a published extension under `native`, `lua`, `tools`, `tests`, `third_party`, `cmake` or `docs`. `git add` it or move it out; the message names it. (Gone in round 2, `f93dc74`: the test's real-tree run no longer depends on untracked files; `tools/package.ps1` still refuses them, and now also refuses to package a git checkout whose git cannot be run, `6240a0a`.)
+
+**Local package** (a check of the tooling, built and audited only; nothing uploaded; it still says 0.14.4 and must not be released as such). `tools/package.ps1 -Friend -CheckReceipt` with the receipt above, from the clean tree at `c78ed3b`, into the session scratch `next2/launcher/dist/DiamondDogsTogether-0.14.4-20261030T015332Z-d51849d1`:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.4.zip` | 3,080,276 | `75068AEA56D47739D8ADC54604E803BBFFF9CF18A52A2816951EE62FC3EC6732` |
+| `DDT-source-0.14.4.zip` (1,410 source files plus `source-files.json`) | 8,329,914 | `8FB527E3787A7396E073D801C69187A22D28BD07DB869421D6E5917F93776194` |
+| `DiamondDogsTogether.exe` | 2,369,536 | `A0796E3ABE4FD34B10EEC730638D9883A3212B4A8F7F09B65101FCE8C07C9BE9` |
+| `dinput8.dll` | 7,060,992 | `6390E3F31122D5A643C540B45928066A368EC065EC023129EB125607D8CDF32F` |
+
+- **Package audit 54/54** [O]. It covers the 34 checks of the 0.14.4 audit plus:
+  - the corrected README and notice texts;
+  - `build.audited_tests` = 311, with each of the 13 added tests in the receipt;
+  - `source_commit` `c78ed3b`, `source_dirty` false;
+  - every source-zip file tracked by git or the MinHook submodule.
+- **Extras** [O]: build id `0.14.4+c78ed3b` in both programs, and no personal path or e-mail in either zip.
+
+**Checks** [O]: at `c78ed3b`, `pwsh -File tools/build.ps1` (Debug) 317/317, `tests/worker_checks_tests.ps1` 147 checks and `friend_package_tests` passed; `pwsh -File tools/build.ps1 -Fast` 301/301 after the launcher fix (`8c7a0da`).
+
 ## October 29, 2026: 0.14.4 (vehicles in Afghanistan and Africa, the vehicle decisions, launcher polish)
 
 **Package (2026-10-29):** `dist/DiamondDogsTogether-0.14.4-20261030T010348Z-6cc0fbb5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at `ecd3b60` (the binaries are from the version bump `89f8d93`; `ecd3b60` only rewords two design-doc lines so the source zip carries no persona name; the first package `20261030T004356Z-a5bd9d1b` is superseded) with Release receipt `20261030-003929-a54b029ae1e5453fb2853f94263a8b66` (passed, 298 audited tests). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.4+89f8d93` and are the receipt's own files.
@@ -1143,7 +2425,8 @@ Branch `wp/fast-tests` from `dev/oct7-continue` `ba7bb62`. Tests and tooling onl
   worktrees run at the same time. Hidden-worker runs, worker checks, packaging and installs keep taking the lock; after
   taking it, `Wait-CtestReaders` waits for suites that were already running (`tools/worker/README.md`).
   `tools/build.ps1 -NoWorkerWait` skips the wait (the `build_profile_tests` fixture). `Invoke-WorkerChecks.ps1` is
-  unchanged (`-j 1`).
+  unchanged (`-j 1`). (Superseded 2026-10-30: parallel preflight tests, sharded suites and preflight reuse; see the
+  top section "developer test loop, faster".)
 
 ## October 23, 2026: developer test boot (`lab_fast_boot`, `lab_boot`, save-seed library, low graphics preset)
 
@@ -1967,6 +3250,43 @@ end of this subsection (sea death proven both ways, put-down and seated aim pass
   is held runs the knock (frame `callmenu-select1`: the host's Snake knocks; a host `partner_gesture=local;
   kind=knock` without a lever line); E did nothing. **Default unchanged (0)** (a lab lever); the knock / sign kinds
   of `partner_native_gesture` stay unproven visually.
+
+## 2026-10-22: the back-seat aim census (`partner_seat_aim`; left uncommitted on `wp/seat-aim`, committed and merged on 2026-10-30)
+
+Written on 0.13.5 (`cc973a8`) in `D:/mgs-coop-wt/seat-aim` and left uncommitted; committed there as `wip(seat-aim)` and
+merged into `wp/seat-shoot` (M7) on 2026-10-30. The contract counts below are 0.13.5's; the merge regenerated the
+contract (816 code sites / 206 vtable slots).
+
+### partner_seat_aim
+
+- **G2: aiming and shooting from the back seat, research first** (`wp/seat-aim`; [native-puppet.md "Seat aim"](native-puppet.md);
+  research scratchpad `complete/re-seat-aim.md`). Verdict: **partial**.
+- **The local passenger:** stock already allows the weapon in a back seat (static reading, not yet run).
+  - The ride plugin's Exec stage 0 sets the "no weapon" flag 0xC3 every frame (`0x12473A2`).
+  - The passenger phase clears it once its seat loop runs (`0x1250FF8`; the only clear in the ride plugin; the
+    driver keeps it).
+  - The gun plugin's EnableCheck (`0x103E010`) refuses only on 0xC3 / 0xC2.
+  - Expect RMB / LMB to raise and fire the gun with the **standing** upper-body set (UpdateAttackType has no posture
+    for act 0x6E, unlike the heli door's act 99 / posture 5 and the horse's 0x79 / 3), the act staying 0x6E, and no
+    first person (the ride's PollingForSubjectiveCamera gives a passenger none).
+- **The partner shown as a passenger:** not built. The DM seat chain owns body 1, the native puppet leaves (`seat`),
+  and the aim mirror refuses ride. Three designs are in the note: (A) a graph-2 gun-hold pose on the seated body 1 in
+  the `partner_gesture` style, (B) upper-only native windows while seated, (C) body 1 as a stock passenger. Each waits
+  on run facts first.
+- **Built (lab only, read-only):** new key `partner_seat_aim=0|1` (`_given`; default 0 in lab and play, play forces it
+  off), the census `partner_seat_aim=on|sample|end|status|capped`.
+  - The local player in a vehicle ride act and body 1 in the seat flow.
+  - Fields: act, upper act, gun mode, posture, the weapon flags 0x18 / 0xC2 / 0xC3 / 0xCF / 0xD8, the local camera
+    mode and handle.
+  - Per watch: aims, fires, reloads and armed / aim time.
+  - No write, no game call.
+- **Contract** 759 code sites / 195 vtable slots (0.13.5: 743 / 193): `SEAT_AIM_SITES` (16 blocks), Exec at +0x80 of
+  both ride vtables, `seat_aim_assertions`.
+- **Tests:** new `partner_seat_aim_tests` (in `Get-WorkerTests`), plus `lab_config_tests`, `lab_ini_check`,
+  `worker_session_tests`, `friend_package_tests`, the three `-LabSetting` allow-lists and the help.
+- **Scenario** `coop-vehicle-seat-aim.txt` (written, not run): the first two halves of `coop-vehicle-passenger.txt`
+  with `labsetting partner_seat_aim=1`. The passenger holds RMB, then RMB+LMB, in the back seat, in both directions.
+- **No hidden run yet.** The checks are in native-puppet.md "Seat aim".
 
 ## October 22, 2026: 0.13.5 (back-seat passengers with their own camera, the partner's cardboard box, ladders and step-ons, the pickup gesture, hidden horse / D-Walker riders)
 

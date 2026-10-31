@@ -18,7 +18,12 @@
 // vt+0x228(cs, 1, 2) 0xAF1F70, sign/knock vt+0x2B8(cs, 1, 3) 0xAF2110 or the
 // remote's speed > 1, or the 2000 ms deadline; then, only while graph 2 still
 // shows our node, SetCurrentNode(cs, 1, 2, stateNull 0xC1A2050D3802, 0.0f, 0)
-// (the validated manual_idle return). Another owner of graph 2 ends the
+// (the validated manual_idle return).
+// M7 seat gun (partner_seat_gun.hpp): two local kinds for the DM-seated body 1 (act 0x8B): gun_start =
+// SetCurrentNode(cs, 1, 2, GunHoldStart, 0.0f, 0), chained at its motion end (vt+0x228) to GunHold; held with no
+// deadline while the driver's command names it (hold_seq), released with the stateNull return. While one runs the
+// hook also writes body 1's aim rates (+0x5C / +0x60 of its own rate record, *(PS1+0x260), vtables 0x23AD380 /
+// 0x23AD2B0) and puts the originals back when it ends. Another owner of graph 2 ends the
 // gesture without a write (via=override; cause=node). So does another owner's
 // graph-2 request still waiting in body 1's request buffer at the update's
 // entry (mask bit 2; stock plugin code submits outside the motion update and
@@ -80,6 +85,12 @@ struct Command {
     Request request;
     bool remote_known;
     std::uint8_t remote_speed;
+    // M7 seat gun (partner_seat_gun.hpp): the gun-kind request the driver still holds (0: release it), and body 1's
+    // aim rates (r5c, r60 in [0, 1]) to write into its rate record while a gun kind runs (rates_valid false: the
+    // last written pose stays).
+    std::uint32_t hold_seq;
+    bool rates_valid;
+    float r5c, r60;
 };
 enum class Stage : std::uint8_t { submit, refused, applied, ended, uncertain, fault };
 const char* StageName(Stage stage) noexcept;
@@ -110,6 +121,9 @@ struct Status {
     const char* resolve;
     std::uint32_t active_seq, epoch;
     std::uint32_t body_calls, submits, ends, refusals, dropped;
+    // M7 seat gun: body 1's aim-rate writes and restores (process totals) and the last refusal of the rate record.
+    std::uint32_t rate_writes, rate_restores;
+    const char* rate_refusal;
     unsigned count;
     Receipt receipts[kReceipts];
 };

@@ -113,8 +113,9 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 59, "59 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
-                       "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, and local ops)");
+    Check(count == 61, "61 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+                       "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
+                       "M6 seat, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -1877,6 +1878,91 @@ void VehicleState() {
     Check(Tx(g_host, op::vehicle_state, {1, 25608, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0}, 201) == world::TxStatus::disabled,
           "VEHICLE_STATE needs world level 3");
 }
+// The vehicle fixes of 2026-10-29 (docs/world-sync-protocol.md section 20): VEHICLE_DAMAGE 0x3A, the guest's report of a
+// body-life drop on its own copy of a vehicle. Guest to host, world queue, reliable, level 3, play too, never a request;
+// 10 fields, 26 bytes. A partner without the op (0.14.4 and older) skips it by its length (unknown_op, section 3).
+void VehicleDamageOp() {
+    const auto* dmg = world::FindOp(op::vehicle_damage);
+    Check(op::vehicle_damage == 0x3A && dmg && std::strcmp(dmg->name, "VEHICLE_DAMAGE") == 0, "VEHICLE_DAMAGE 0x3A exists");
+    Check(dmg->queue == 1 && dmg->wire == world::Wire::reliable && dmg->level == 3 && !dmg->lab_only && !dmg->request &&
+              dmg->dir == world::Dir::guest_to_host && dmg->lua == 10 && dmg->native == 0 && dmg->rx == 0 && dmg->body == 26,
+          "VEHICLE_DAMAGE: world queue, reliable, level 3, play too, guest to host, 10 fields, 26 bytes");
+    Check(!world::FindOp(0x35) && !world::FindOp(0x37), "0x35 and 0x37 stay reserved (0x36 is M6's SEAT)");
+    Setup(3, 3, true);
+    Pair(30020, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    // seq, id, locator hash, type, flags, life (after), drop, x, y, z
+    Check(Tx(g_guest, op::vehicle_damage, {1, 25608, 3523830114LL, 1, 0, 2170, 130, -653010, 1200, 877730}, 101) == world::TxStatus::ok,
+          "the guest reports a drop on its Masa Village jeep");
+    Check(Tx(g_host, op::vehicle_damage, {1, 25608, 0, 1, 0, 2170, 130, 0, 0, 0}, 101) == world::TxStatus::wrong_role,
+          "only the guest reports vehicle damage");
+    Check(Tx(g_guest, op::vehicle_damage, {2, 25599, 0, 1, 0, 2170, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 26112, 0, 1, 0, 2170, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {0, 25608, 0, 1, 0, 2170, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 25608, 0, 1, 8, 2170, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 25608, 0, 1, 0, 0, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 25608, 0, 1, 0, 65535, 130, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 25608, 0, 1, 0, 2170, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::vehicle_damage, {2, 25608, 0, 1, 0, 2170, 130, 1000000001, 0, 0}, 101) == world::TxStatus::bad_args,
+          "id class bounds, seq 1.., flags 0..7, life 1..65534 (never a destruction: that is D12's), drop 1.., position");
+    Check(Tx(g_guest, op::vehicle_damage, {2, 26111, 4294967295LL, 255, 7, 65534, 65535, 1000000000, -1000000000, 0}, 101) ==
+              world::TxStatus::ok,
+          "the field bounds encode");
+    Exchange(102);
+    Check(!Find(Drain(g_host, 1, 103), op::vehicle_damage), "VEHICLE_DAMAGE never rides the control queue");
+    auto rx = Drain(g_host, 3, 104);
+    Check(rx.size() == 2 && rx[0].op == op::vehicle_damage && rx[0].count == 10 && rx[0].v[0] == 1 && rx[0].v[1] == 25608 &&
+              rx[0].v[2] == 3523830114LL && rx[0].v[3] == 1 && rx[0].v[4] == 0 && rx[0].v[5] == 2170 && rx[0].v[6] == 130 &&
+              rx[0].v[7] == -653010 && rx[0].v[8] == 1200 && rx[0].v[9] == 877730 && rx[1].v[1] == 26111 && rx[1].v[5] == 65534 &&
+              rx[1].v[6] == 65535 && rx[1].v[8] == -1000000000,
+          "the host's world queue delivers each VEHICLE_DAMAGE in order with its exact fields");
+    g_guest.LocalMissionEnd(105);
+    Check(Tx(g_guest, op::vehicle_damage, {3, 25608, 0, 1, 0, 2170, 130, 0, 0, 0}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
+    Setup(2, 2, true);
+    Pair(30020, 200);
+    Check(Tx(g_guest, op::vehicle_damage, {1, 25608, 0, 1, 0, 2170, 130, 0, 0, 0}, 201) == world::TxStatus::disabled,
+          "VEHICLE_DAMAGE needs world level 3");
+}
+// M6 seat races (docs/world-sync-protocol.md section 21): SEAT 0x36, both directions, world queue, reliable, level 3,
+// play too, never a request; 5 fields, 7 bytes. A partner without the op (0.14.4 and older) skips it by its length.
+void SeatOp() {
+    const auto* s = world::FindOp(op::seat);
+    Check(op::seat == 0x36 && s && std::strcmp(s->name, "SEAT") == 0, "SEAT 0x36 exists (the design's reserved code 54)");
+    Check(s->queue == 1 && s->wire == world::Wire::reliable && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::both && s->lua == 5 && s->native == 0 && s->rx == 0 && s->body == 7,
+          "SEAT: world queue, reliable, level 3, play too, both directions, 5 fields, 7 bytes");
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    // seq, id, seat, role, action
+    Check(Tx(g_guest, op::seat, {1, 25608, 0, 2, 1}, 101) == world::TxStatus::ok, "the guest claims the jeep's driver seat");
+    Check(Tx(g_host, op::seat, {1, 25608, 0, 1, 3}, 101) == world::TxStatus::ok, "the host denies it");
+    Check(Tx(g_host, op::seat, {2, 25600, 0, 1, 4}, 101) == world::TxStatus::ok, "E press only (8.55): the host's READY (action 4)");
+    Check(Tx(g_guest, op::seat, {0, 25608, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25599, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 26112, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25608, 4, 2, 1}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25608, 0, 3, 1}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25608, 0, 2, 5}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25608, 0, 2, 0}, 101) == world::TxStatus::bad_args,
+          "seq 1.., the vehicle class, seat 0..3, role 1..2, action 1..4");
+    Exchange(102);
+    auto toHost = Drain(g_host, 3, 103);
+    auto toGuest = Drain(g_guest, 3, 103);
+    Check(toHost.size() == 1 && toHost[0].op == op::seat && toHost[0].count == 5 && toHost[0].v[0] == 1 && toHost[0].v[1] == 25608 &&
+              toHost[0].v[2] == 0 && toHost[0].v[3] == 2 && toHost[0].v[4] == 1,
+          "the host's world queue delivers the claim with its exact fields");
+    Check(toGuest.size() == 2 && toGuest[0].op == op::seat && toGuest[0].v[3] == 1 && toGuest[0].v[4] == 3 &&
+              toGuest[1].op == op::seat && toGuest[1].v[1] == 25600 && toGuest[1].v[4] == 4,
+          "the guest's world queue delivers the deny and the READY");
+    g_guest.LocalMissionEnd(105);
+    Check(Tx(g_guest, op::seat, {3, 25608, 0, 2, 1}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
+    Setup(2, 2, true);
+    Pair(30010, 200);
+    Check(Tx(g_guest, op::seat, {1, 25608, 0, 2, 1}, 201) == world::TxStatus::disabled, "SEAT needs world level 3");
+}
 } // namespace
 
 int main() {
@@ -1903,6 +1989,8 @@ int main() {
     CompanionM2Ops();
     VehicleState();
     VehicleSpawnOp();
+    VehicleDamageOp();
+    SeatOp();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

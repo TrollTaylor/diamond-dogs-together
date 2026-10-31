@@ -11,6 +11,9 @@ void Install() noexcept;
 // native hooks can disarm before the engine tears its objects down.
 using ShutdownFn = void (*)() noexcept;
 void SetShutdownHandler(ShutdownFn fn) noexcept;
+// A WM_CLOSE that window_close held for the partner's mission-thread teardown goes on: posts it to the window
+// it was held on. Any thread; false when nothing was held or the post failed (the window is already gone).
+bool PostHeldClose() noexcept;
 // Also available to game-owned input wrappers. False on normal launches.
 bool CapturingInput() noexcept;
 // Process-local virtual controller provider, shared by the early IAT wrapper
@@ -80,5 +83,14 @@ TestStats StatsForTest() noexcept;
 void CaptureNextFrameForTest() noexcept;
 bool CapturedFrameForTest(const unsigned char*& rgba, unsigned& width, unsigned& height) noexcept;
 void ShutdownForTest() noexcept;
+// The install refusal line: the kept prefix 'overlay=refused; reason=graphics_or_input_hook' plus the
+// failing step, its sub-step and code (kind 0 none, 1 HRESULT, 2 MH_STATUS, 3 GetLastError, 4 null
+// address). False when it does not fit.
+bool RefusalLineForTest(const char* step, const char* detail, unsigned kind, long code, char* out, std::size_t capacity) noexcept;
+// The last install line this process logged (installed or refused); false before an install ran.
+bool InstallLineForTest(char* out, std::size_t capacity) noexcept;
+// The kind a create call's refusal records (CreatedKind): 1 for a failed HRESULT, 4 for a success that handed back no
+// object, 0 for a success with it.
+unsigned CreatedFailKindForTest(long hr, bool got) noexcept;
 #endif
 }

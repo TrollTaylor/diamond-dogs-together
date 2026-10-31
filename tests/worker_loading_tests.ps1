@@ -47,6 +47,12 @@ Wait-ScenarioMission 'host' 30020 5
 Check ($c.commands.Count -eq 2) 'waitmission resumes both owned loading roles'
 Check ($c.commands[0].role -ceq 'host' -and $c.commands[1].role -ceq 'guest') 'each role dispatches explicitly'
 Check (@($c.commands|Where-Object{$_.operation -cne 'resume_loading' -or $_.args.ContainsKey('Keys')}).Count -eq 0) 'no generic Space press in waitmission'
+# waitmission <role> ... only (the D11 pre-pair proof): only that role's loading screen is resumed.
+$c.now=15000;$c.readyAt=15500;$c.commands.Clear();$loadingAttempts=@{};$c.loading=@{host=@{generation=7};guest=@{generation=8}}
+Wait-ScenarioMission 'guest' 30020 5 -Only
+Check ($c.commands.Count -eq 1 -and $c.commands[0].role -ceq 'guest' -and $c.commands[0].operation -ceq 'resume_loading') 'waitmission only resumes that role alone'
+$c.readyAt=900000;$c.commands.Clear();$loadingAttempts=@{};Resume-TripLoading 'host'
+Check ($c.commands.Count -eq 1 -and $c.commands[0].role -ceq 'host') 'Resume-TripLoading with a role resumes only it'
 $c.now=20000;$c.readyAt=20000;$c.commands.Clear();Wait-ScenarioMission 'guest' 30020 5
 Check ($c.commands.Count -eq 0) 'fresh arrived gameplay never requests resume'
 $c.now=30000;$c.readyAt=200000;$c.commands.Clear();$loadingAttempts=@{};$c.loading=@{host=@{generation=5};guest=@{generation=6}}
@@ -317,6 +323,31 @@ Check ((Get-ScenarioTitleMenuAction 'guest' $foreign $null) -ceq 'wait') 'a fore
 Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'host' 1) $null) -ceq 'wait') 'another role''s state.json never earns an Enter'
 $foreignLoading=New-TitleLoading 'guest' 40050 'running';$foreignLoading.run_id='f'*32
 Check ((Get-ScenarioTitleMenuAction 'guest' (New-TitleState 'guest' 1) $foreignLoading) -ceq 'press') 'a foreign loading.json cannot end titlemenu'
+# titlecontinue <role> (the vehicle review of 2026-10-29: D11 before PAIRED in -Mode play): Enter on one role's
+# running title only (its menu takes it as Continue), never while the title loads or ends, and done once its
+# loading.json names another mission, so its next loading screen is never pressed and 'waitmission <other> ... only'
+# brings the partner in first.
+foreach($name in 'Get-ScenarioTitleContinueAction','Invoke-ScenarioTitleContinue'){
+ $f=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true))
+ Check ($f.Count -eq 1) ('actual titlecontinue helper '+$name);. ([scriptblock]::Create($f[0].Extent.Text))
+}
+foreach($m in 40010,40020,40050){
+ Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' $m) (New-TitleLoading 'host' $m 'running')) -ceq 'press') ("a running title $m earns an Enter")
+ foreach($phase in 'unavailable','initialized','terminating'){
+  Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' $m) (New-TitleLoading 'host' $m $phase)) -ceq 'wait') ("a title $m ($phase) earns no Enter")
+ }
+}
+foreach($m in 30010,30020,30050){
+ foreach($phase in 'initialized','running'){
+  Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' 40020) (New-TitleLoading 'host' $m $phase)) -ceq 'done') ("the Continue's allocation $m ($phase) ends titlecontinue")
+ }
+ Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' $m) $null) -ceq 'done') ("state.json mission $m ends titlecontinue")
+}
+Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' 1) $null) -ceq 'wait') 'boot screens: no Enter (titlemenu first)'
+Check ((Get-ScenarioTitleContinueAction 'host' $null $null) -ceq 'wait') 'no state yet: no Enter'
+$foreignLoading=New-TitleLoading 'host' 30020 'initialized';$foreignLoading.run_id='f'*32
+Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'host' 40020) $foreignLoading) -ceq 'wait') 'a foreign loading.json neither ends titlecontinue nor earns an Enter'
+Check ((Get-ScenarioTitleContinueAction 'host' (New-TitleState 'guest' 40020) (New-TitleLoading 'guest' 40020 'running')) -ceq 'wait') 'another role''s files earn no Enter'
 # Timeline: the host already sits at its title; the guest is in mission 1 until its
 # 40050 allocation starts at +7 s and runs at +17 s.
 $readRoleBody=${function:Read-RoleRaw}

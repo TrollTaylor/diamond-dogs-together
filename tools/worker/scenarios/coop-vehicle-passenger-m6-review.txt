@@ -1,0 +1,216 @@
+# M6 review fixes (docs/vehicles-companions-design.md 8.21; review R1-R4), lab, Afghanistan (30010, afgh-ledge seed):
+#   A  the seat race inside one round trip: both players reach the empty Wakh Sind jeep (25608) at its two front doors
+#      and press E at once, before any SEAT answer exists. The guest's native hold refuses its ride icon while no deny
+#      or grant is live (guest world_lua=event=seat; action=hold; vehicle=25608; ...; deny=65535; grant=65535); the
+#      host drives; the guest is never a second driver (no board_uncertain two_drivers on either copy).
+#   B  the want after the door check: the host stands at the jeep's rear (3.1 m behind its origin at the spawn pose:
+#      within the old 4.5 m near gate, no front door; run 43473119 found that the 1.9 m spot of debug goto_vehicle jeep
+#      is the driver's door at this pose), the guest at the driver's door claims it: the host grants and yields
+#      (event=seat; action=grant / action=yield; role=host), the guest gets its grant (action=grant; ...; role=guest;
+#      set=1), boards and drives; the host's E there does nothing.
+#   C  the seat-1 handshake on the jeep: the guest drives; its copy sends the v4 seat addendum (partner_ride=seat_ext_tx;
+#      ...; vehicle=25608; flags=0x03 or 0x07 with rider1 = its D-Dog 9728); the host's policy offers seat 1 only when
+#      that seat is free on the guest's copy (board_policy ...; seat1=front,cab) and else the back seats (seat1=none);
+#      the host boards from the front right door; frames on both copies with the driver's own copy moving.
+#   D  the truck cab with the handshake (no dog rides in a truck: flags=0x03, seat1=front,cab), the seat-1 remap
+#      skipped by the tick only while seat 1 is in use (board_remap; state=skip; why=policy, then state=stock; why=idle),
+#      both roles, and the host's stock get-off from the cab (run 73af7206 lost its input desktop at that press).
+# Runs: 43473119 (A passed; B's host spot was the driver's door: fixed), f115a2b3 (A, B, C passed; C's forward drive
+# left the jeep on the truck spot and D stopped: both drives reverse now). D alone: coop-vehicle-passenger-m6-review-truck.txt.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-review.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=1
+labsetting partner_ride_cab=1
+labsetting partner_ride_race=1
+labsetting nametag=1
+labsetting debug_vehicle_door=1
+labsetting world_relief=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f;' 10
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f;' 10
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 4000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host run vehicle_census 8 1
+guest run vehicle_census 8 1
+# --- A: the race inside one round trip ------------------------------------------------------------------------------
+# Both step 15-20 m away first so no earlier want, deny or grant is live (each lasts at most 3 s), then the marks.
+host debug teleport 590.0 320.5 1157.5 -90
+guest debug teleport 594.0 320.5 1157.5 -90
+wait 4500
+logmark both
+host run goto_vehicle jeep driver 60
+host require warp_(position_readback|readback_timeout)
+guest run goto_vehicle jeep passenger 60
+guest require warp_(position_readback|readback_timeout)
+both press e 150
+wait 4000
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=deny' 5
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest;' 3
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(pressed|drives)' 5
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture m6r-race1
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- B: the host beside the jeep without a usable door: the guest's claim is granted --------------------------------
+guest debug teleport 594.0 320.5 1157.5 -90
+host debug teleport 576.10 320.2 1160.80 180
+wait 4500
+logmark both
+guest run goto_vehicle jeep driver 60
+guest require warp_(position_readback|readback_timeout)
+wait 2500
+both capture m6r-grant-before
+guest press e 150
+# 8.55: the claim, the host's grant and the guest's grant all follow the press (E press only).
+waitlog host 'world_lua=event=seat; action=grant; vehicle=25608; role=host' 5
+waitlog host 'world_lua=event=seat; action=yield; vehicle=25608; role=host' 5
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 5
+wait 3500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host press e 150
+wait 2500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture m6r-grant
+# --- C: the jeep seat-1 handshake (the guest drives; its D-Dog may hold seat 1 on its copy) -------------------------
+waitlog guest 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x0[37];' 10
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=' 10
+host run goto_partner_vehicle passenger 60
+host require warp_(position_readback|readback_timeout)
+wait 2500
+both capture m6r-jeep-beside
+host press e 150
+wait 3500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=[123]; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[123]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[123];' 10
+wait 1000
+both capture m6r-jeep-seated
+guest run vehicle_seats
+guest hold s 1500 nowait
+guest burst m6r-jeep-drive-g 6 150
+guest release
+guest hold s 1500 nowait
+host burst m6r-jeep-drive-h 6 150
+guest release
+wait 1500
+both capture m6r-jeep-stopped
+host press e 150
+host burst m6r-jeep-exit 6 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[123]; state=off' 5
+both capture m6r-jeep-exited
+guest press e 150
+wait 3000
+state
+# --- D: the truck cab with the handshake, both roles, the host's get-off ---------------------------------------------
+logmark both
+both debug heal
+guest debug goto_vehicle jeep
+wait 2000
+host debug clear_enemies 100
+host run relief_load 4 580.57 321.32 1177.24 1.309
+waitlog host 'event=relief; step=load; m=30010; write=1; call=1;' 10
+waitlog guest 'event=relief; role=guest; step=load; why=host_has; type=4;' 40
+wait 10000
+host run goto_vehicle sortie driver 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host debug clear_enemies 100
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25600
+host hold s 1500
+host release
+wait 2500
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25600; flags=0x03; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab; flags=0x03' 10
+waitlog guest 'partner_ride=board_remap; state=skip; why=policy; ok=1' 10
+guest run goto_partner_vehicle passenger 60
+guest require warp_(position_readback|readback_timeout)
+wait 3000
+guest press e 150
+wait 4000
+waitlog guest 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6r-truck-1-seated
+host hold s 1500 nowait
+host burst m6r-truck-1-drive-h 6 150
+host release
+host hold s+a 1500 nowait
+guest burst m6r-truck-1-drive-g 6 150
+host release
+wait 1500
+guest press e 150
+guest burst m6r-truck-1-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+host press e 150
+wait 3000
+waitlog guest 'partner_ride=board_remap; state=stock; why=idle; ok=1' 15
+state
+both debug heal
+guest run goto_vehicle sortie driver 60
+guest require warp_(position_readback|readback_timeout)
+wait 1500
+placebehind host guest 12 0
+wait 4000
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=25600
+guest hold s 1500
+guest release
+wait 2500
+waitlog host 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger; uncertain=none; seat1=front,cab;' 10
+host run goto_partner_vehicle passenger 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host press e 150
+wait 4000
+waitlog host 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6r-truck-1r-seated
+guest hold s 1500 nowait
+guest burst m6r-truck-1r-drive-g 6 150
+guest release
+guest hold s+d 1500 nowait
+host burst m6r-truck-1r-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst m6r-truck-1r-exit 6 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25600; seat=1; reason=stock; ok=1' 10
+both capture m6r-truck-1r-exited
+guest press e 150
+wait 3000
+state

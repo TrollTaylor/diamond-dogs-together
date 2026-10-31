@@ -23,12 +23,15 @@
 //
 // Seat 1 caveat (0xB79A3F..0xB79A57): 0xB799C0 maps seat 1 to seat 0 only when
 // rider[1] (word unit+0x32) holds a player id ((word & 0xFE00) == 0); on an
-// empty receiver copy (rider[1] == 0xFFFF) seat 1 is drawn front-right. Nothing
-// here writes rider[] (re-vehicle.md 3.4; the earlier wording had it inverted).
+// empty receiver copy (rider[1] == 0xFFFF) the anchor reads seat 1's own matrix,
+// where the player's FrontRight clips (authored on the driver's matrix) drew body 1
+// one seat further right, outside the jeep: Arm writes AnchorSeat(seat), 0 for seat
+// 1 (design 8.33). Nothing here writes rider[] (re-vehicle.md 3.4).
 //
 // Arm only while no DM runs on either body, only in 30010/30020 and only for
 // the seat DM's lifetime; revert once DM End ran (body act != 0x8B), and at
-// mission end, stop and shutdown (the driver owns that policy).
+// mission end and stop (the driver owns that policy); the window's close is
+// Close (PartnerShutdown, any thread; design 8.53).
 #include <cstddef>
 #include <cstdint>
 
@@ -47,6 +50,14 @@ struct Site {
 const Site& SiteFor(SiteId id) noexcept;
 // The seat dword for `seat` (0..3): 0x00B04130 | seat << 24.
 std::uint32_t SeatDword(std::uint8_t seat) noexcept;
+// The seat whose matrix the anchor reads for a seated `seat`: with `seat1_driver_matrix` (lab.ini
+// partner_ride_seat1_anchor) seat 1 of a light vehicle (`category` = unit+0x6C >> 4 of this copy's vehicle: 1, 2)
+// -> 0; the truck cab (3, 4), an unknown category (kCategoryUnknown) and the other seats unchanged.
+inline constexpr std::uint8_t kCategoryUnknown = 0xFF;
+std::uint8_t AnchorSeat(std::uint8_t seat, bool seat1_driver_matrix, std::uint8_t category) noexcept;
+// The process-wide choice Arm applies (the observer sets it from lab.ini; default off).
+void SetSeatOneAnchor(bool on) noexcept;
+bool SeatOneAnchor() noexcept;
 
 // Pure verification of an image (the running module or a fixture buffer of at
 // least `span` bytes): every pinned block of the contract that covers the four
@@ -66,10 +77,30 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept;
 // Re-arming an armed module with another seat rewrites only the seat dword.
 // Revert restores every site it finds patched (logs
 // partner_ride_seat=reverted; reason=..). Both are idempotent.
-bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
+bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t category = kCategoryUnknown) noexcept;
 void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcept;
+// The confirmed GetOff of an armed `seat` (review of design 8.35): the player's GetOff clips play on the seat's own
+// matrix (the passenger's own copy: rider[1] is cleared and its remap skip is back from act 112), so a seat-1 anchor
+// on seat 0 goes back to seat 1's own immediate; the driver's copy drew the get-off one seat to the left and corrected
+// 0.87 m at its end. Rewrites only the seat dword, logs partner_ride_seat_patch=getoff; seat=..; seat_dword=..;
+// anchor=..; was=.. when it wrote. False when `seat` is not the armed seat; true (nothing written) when it already
+// anchors on its own matrix. Revert restores it as any armed seat.
+bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
 bool Armed() noexcept;
 std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed
+// The game window is closing (PartnerShutdown, on whatever thread delivers WM_CLOSE / WM_DESTROY / WM_ENDSESSION;
+// design 8.53). One-way for the process: from here on Arm and ArmGetOff write nothing (Arm logs
+// partner_ride_seat_patch=skipped; reason=closing and returns false), then the live patch is reverted at once (logs
+// partner_ride_seat_patch=reverted; reason=shutdown when it wrote or was armed). The window thread is not the mission
+// thread, so the MissionEnd revert never ran there (run 1d9fd748: no revert line after partner_shutdown=hooks_off;
+// teardown=other_thread). Idempotent; a later Revert finds nothing.
+void Close(void* base, std::size_t span, LogFn log) noexcept;
+bool Closed() noexcept;
+// Tests only (design 8.54): a pause inside ArmGetOff after its checks (point 1) and inside Revert before its first
+// write (point 2), so a test can close from another thread at that moment; and a reset of the one-way close.
+using PauseFn = void (*)(int point);
+void SetPauseForTest(PauseFn fn) noexcept;
+void ResetForTest() noexcept;
 
 // --- The seated state table (StrCode64 of the MOG state names, verified
 // present in TppPlayer2_layers.mog; critic_work/mogcheck.py). class 0 = light

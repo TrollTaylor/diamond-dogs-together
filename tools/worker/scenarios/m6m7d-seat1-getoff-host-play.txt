@@ -1,0 +1,76 @@
+# Seat-1 get-off, the host-driving role only (review of design 8.35; the second role of m6m7d-seat1-getoff-play.txt,
+# whose part C did not board in run 54a885b2: the guest's first E at the right door logged board_passenger
+# site=prequery then world_lua seat action=fulton on=1/0, and the guest only boarded at the later E). This file is part
+# A of m6m7d-seat1-getoff-play.txt with the roles swapped: the host takes the driver's seat from its door, the guest
+# boards seat 1 from its door (574.36,1157.5 facing 96); both copies burst from the guest's E press at the get-off.
+# Run as m6m7d-seat1-getoff-play.txt (-Mode play -WanSim bad, afgh-quiet / afgh-horse, MGS_GAME_LUA_DIR unset).
+labsetting partner_ride_seat1_anchor=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+both capture start
+# --- C. The host drives, the guest in seat 1 (part A of m6m7d-seat1-getoff-play.txt, roles swapped) ----------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+host press e 150
+wait 4500
+host run vehicle_seats
+host expect vehicle;id=25608
+waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 10
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+guest press e 150
+guest burst c-geton 3 400
+wait 3300
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride=board_remap; state=stock; why=seated_own; ok=1' 10
+waitlog host 'partner_ride_seat1_anchor=configured; on=1' 10
+waitlog host 'partner_ride_seat_patch=applied; seat=1; sites=[^;]*; seat_dword=0x00b04130; anchor=0; cat=[12]' 10
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 2500
+both capture c-parked
+guest hold rmb 1500 nowait
+wait 800
+guest capture c-aim-right
+wait 900
+guest hold rmb 1500 nowait
+guest mouse -500 0
+wait 700
+guest capture c-aim-left
+wait 1500
+guest press e 150
+both burst c-getoff 8 200
+waitlog host 'partner_ride_seat_patch=getoff; seat=1; seat_dword=0x01b04130; anchor=1; was=0' 6
+wait 600
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog guest 'partner_ride=board_remap; state=skip; why=' 10
+waitlog host 'partner_ride_seat_patch=reverted;' 10
+both capture c-exited
+guest run vehicle_seats
+guest expect vehicle_not_riding
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture end

@@ -84,6 +84,10 @@ constexpr char world_vehicle_state_source[] = R"MGS_WORLD(
 constexpr char world_vehicle_rules_source[] = R"MGS_WORLD(
 @MGS_WORLD_VEHICLE_RULES_SOURCE@
 )MGS_WORLD";
+// The vehicle fixes of 2026-10-29: the guest's vehicle damage report (VEHICLE_DAMAGE op 58, CFG r[15] bit 128).
+constexpr char world_vehicle_damage_source[] = R"MGS_WORLD(
+@MGS_WORLD_VEHICLE_DAMAGE_SOURCE@
+)MGS_WORLD";
 // M1 host-owned companion (lab key companion_host_owned, CFG r[16]).
 constexpr char world_companion_source[] = R"MGS_WORLD(
 @MGS_WORLD_COMPANION_SOURCE@

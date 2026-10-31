@@ -515,6 +515,20 @@ pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin
         m.dir_riding);
     if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming) && riding) {
         why = pam::DirReason::ride;
+        // M7 seat gun: a back-seat passenger (the native passenger report) sends its seated aim direction, so the
+        // viewer can turn the partner's raised gun; unchecked (CheckStep never runs while riding: no latch).
+        if (d.settings.seat_gun && d.local_passenger.valid) {
+            pp::AimRead r{};
+            pam::GunDirIn gi{};
+            if (h.read_aim && h.read_aim(h.context, st, r)) gi = GunDirectionInput(r, 0);
+            const pam::GunDirOut dir = pam::GunDirSeated(gi);
+            if (dir.ok) {
+                why = pam::DirReason::seat;
+                v.aim_valid = true;
+                v.aim_pitch_cdeg = pam::PitchCdeg(dir.pitch);
+                v.aim_yaw_cdeg = pam::YawCdeg(dir.yaw);
+            }
+        }
     } else if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming)) {
         pp::AimRead r{};
         pam::GunDirIn gi{};
@@ -2585,6 +2599,18 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             }
             continue;
         }
+        // M6 review R3: the seat addendum (v4, 12 bytes) shares the ride magic (before IsRide, which takes any 0x52).
+        if (partner_ride_wire::IsSeatExt(message, size)) {
+            const bool had = d.ride_seat_ext.have && d.ride_seat_ext.epoch == epoch;
+            const partner_ride_wire::SeatExt before = d.ride_seat_ext.ext;
+            if (partner_ride_wire::AcceptSeatExt(d.ride_seat_ext, message, size, epoch, now)) {
+                const auto& e = d.ride_seat_ext.ext;
+                if (!had || !partner_ride_wire::SameSeatExt(before, e))
+                    EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=seat_ext_rx; rev=%u; vehicle=%u; flags=0x%02x; epoch=%u\r\n",
+                               unsigned(e.revision), unsigned(e.vehicle), unsigned(e.flags), epoch);
+            }
+            continue;
+        }
         if (partner_ride_wire::IsRide(message, size)) {
             if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
                 // Heartbeats repeat the revision: only a new state or revision is logged.
@@ -2780,6 +2806,117 @@ void SendRideExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     d.ride_ext_tx_ms = now;
 }
 
+// M6 review R3: the v4 seat addendum next to the v1/v2 packet while partner_ride_front or partner_ride_cab is
+// on in passenger mode: this copy draws a seat-1 passenger of those classes (the receiver gate) and, while
+// its player drives, whether rider[1] of its copy of that vehicle is taken (its D-Dog, a soldier; unread
+// counts as taken). The peer's board offers seat 1 only with it (partner_board_policy.hpp PolicyFor). On a
+// change at once (rider[1] read every kSeatRiderMs while driving), else a 2 s heartbeat.
+constexpr std::uint64_t kSeatRiderMs = 250;
+partner_board::Mode BoardMode(PartnerRideBoard value) noexcept;
+static_assert(partner_board::kSeatFlagFront == partner_ride_wire::SeatFlag::Front && partner_board::kSeatFlagCab == partner_ride_wire::SeatFlag::Cab &&
+                  partner_board::kSeatFlagOneTaken == partner_ride_wire::SeatFlag::OneTaken, "the seat addendum flags");
+void SendSeatExt(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    const Settings& set = d.settings;
+    if (BoardMode(set.ride_board) != partner_board::Mode::passenger || (!set.ride_front && !set.ride_cab) || !d.ride_tx_have ||
+        !h.send_reliable_append)
+        return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch || !(h.link_live && h.link_live(h.context))) return;
+    rw::SeatExt want{};
+    want.flags = static_cast<std::uint8_t>((set.ride_front ? rw::SeatFlag::Front : 0) | (set.ride_cab ? rw::SeatFlag::Cab : 0));
+    want.revision = d.ride_tx.revision;
+    const bool driving = d.ride_tx.kind == rw::Kind::vehicle && d.ride_tx.seat == 0 && d.ride_tx.vehicle != rw::kVehicleUnknown &&
+                         d.ride_tx.vehicle == d.local_vehicle;
+    want.vehicle = driving ? d.ride_tx.vehicle : rw::kVehicleUnknown;
+    if (driving) {
+        if (d.seat_rider_vehicle != want.vehicle || !d.seat_rider_ms || now < d.seat_rider_ms || now - d.seat_rider_ms >= kSeatRiderMs) {
+            std::uint16_t rider = 0xFFFF;
+            d.seat_rider_read = h.seat_rider && h.seat_rider(h.context, want.vehicle, 1, rider);
+            d.seat_rider_value = d.seat_rider_read ? rider : 0xFFFF;
+            d.seat_rider_vehicle = want.vehicle;
+            d.seat_rider_ms = now ? now : 1;
+        }
+        if (!d.seat_rider_read || d.seat_rider_value != 0xFFFF) want.flags = static_cast<std::uint8_t>(want.flags | rw::SeatFlag::OneTaken);
+    } else {
+        d.seat_rider_vehicle = rw::kVehicleUnknown;
+        d.seat_rider_ms = 0;
+    }
+    const bool same = d.ride_seat_ext_tx_have && rw::SameSeatExt(d.ride_seat_ext_tx, want);
+    if (same && d.ride_seat_ext_tx_epoch == epoch && now >= d.ride_seat_ext_tx_ms && now - d.ride_seat_ext_tx_ms < rw::kExtHeartbeatMs) return;
+    want.sender_ms = static_cast<std::uint32_t>(now);
+    std::uint8_t bytes[rw::kSeatExtSize]{};
+    if (!rw::EncodeSeatExt(want, bytes) || !h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) return;
+    if (!same)
+        EmitCapped(d.mission.ride_cap, h, "partner_ride",
+                   "partner_ride=seat_ext_tx; rev=%u; vehicle=%u; flags=0x%02x; rider1=%u; read=%u; epoch=%u\r\n", unsigned(want.revision),
+                   unsigned(want.vehicle), unsigned(want.flags), driving ? unsigned(d.seat_rider_value) : 0xFFFFu,
+                   driving && d.seat_rider_read ? 1u : 0u, epoch);
+    d.ride_seat_ext_tx = want;
+    d.ride_seat_ext_tx_have = true;
+    d.ride_seat_ext_tx_epoch = epoch;
+    d.ride_seat_ext_tx_ms = now;
+}
+
+// Seats on (docs/vehicles-companions-design.md 8.25, D16's residual): the D-Dog of this copy's player can jump into
+// seat 1 after the peer sat there (the v4 handshake said free when it boarded). The peer is drawn here by the DM seat
+// chain, never in rider[], so both bodies would be drawn in seat 1: while the peer's live ride is seat 1 of the vehicle
+// this copy's player drives and its rider[1] is the D-Dog, the peer is drawn in a free back seat (DrawSeat), latched
+// for that ride. rider[1..3] are read every kSeatRiderMs while that ride lasts; one line per latch and release.
+void UpdateSeatDraw(Driver& d, const Hooks& h, bool ride_live, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    namespace pb = partner_board;
+    auto& w = d.seat_draw;
+    const rw::Packet& p = d.ride_rx.packet;
+    pb::DrawSeatIn in{};
+    in.vehicle_ride = ride_live && p.kind == rw::Kind::vehicle;
+    in.vehicle = p.vehicle;
+    in.seat = p.seat;
+    in.local_drives = d.local_vehicle != rw::kVehicleUnknown && d.local_vehicle == p.vehicle;
+    const bool candidate = in.vehicle_ride && in.seat == pb::kFrontSeat && in.local_drives && h.seat_rider &&
+                           (d.settings.ride_front || d.settings.ride_cab);
+    if (candidate) {
+        if (w.read_vehicle != p.vehicle || !w.read_ms || now < w.read_ms || now - w.read_ms >= kSeatRiderMs) {
+            w.riders_ok = true;
+            for (std::uint8_t s = 1; s <= 3; ++s) {
+                std::uint16_t r = pb::kRiderEmpty;
+                if (!h.seat_rider(h.context, p.vehicle, s, r)) w.riders_ok = false;
+                w.rider[s] = r;
+            }
+            w.read_vehicle = p.vehicle;
+            w.read_ms = now ? now : 1;
+        }
+        in.riders_ok = w.riders_ok;
+        for (unsigned s = 0; s < 4; ++s) in.rider[s] = w.rider[s];
+        in.latched_vehicle = w.vehicle;
+        in.latched_seat = w.seat;
+    } else {
+        w.read_vehicle = rw::kVehicleUnknown;
+        w.read_ms = 0;
+    }
+    const pb::DrawSeatOut out = candidate ? pb::DrawSeat(in) : pb::DrawSeatOut{};
+    const std::uint16_t vehicle = out.moved ? p.vehicle : rw::kVehicleUnknown;
+    const std::uint8_t seat = out.moved ? out.seat : rw::kSeatUnknown;
+    if (vehicle == w.vehicle && seat == w.seat) return;
+    w.vehicle = vehicle;
+    w.seat = seat;
+    if (!out.moved && !w.logged) return;
+    w.logged = out.moved;
+    EmitCapped(d.mission.ride_cap, h, "partner_ride",
+               "partner_ride=seat_draw; vehicle=%u; from=%u; to=%u; reason=%s; rider1=%u; rider2=%u; rider3=%u\r\n", unsigned(vehicle),
+               out.moved ? 1u : unsigned(rw::kSeatUnknown), unsigned(seat), out.moved ? out.reason : "none", unsigned(w.rider[1]),
+               unsigned(w.rider[2]), unsigned(w.rider[3]));
+}
+// The peer's ride as this copy draws it: the seat-1 ride the D-Dog took moves to the latched back seat.
+partner_ride_wire::Packet DrawnRide(const Driver& d) noexcept {
+    partner_ride_wire::Packet p = d.ride_rx.packet;
+    const auto& w = d.seat_draw;
+    if (w.vehicle != partner_ride_wire::kVehicleUnknown && p.kind == partner_ride_wire::Kind::vehicle && p.vehicle == w.vehicle &&
+        p.seat == partner_board::kFrontSeat)
+        p.seat = w.seat;
+    return p;
+}
+
 // WS3 step 0 (partner_ride_census=1, lab only): one read-only census line per
 // ridden vehicle every kRideCensusMs: the local player's vehicle (who=local:
 // the driver's own record) and the remote's (who=remote: this copy of the
@@ -2848,6 +2985,11 @@ void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
     d.local_passenger = partner_board::LocalPassenger{};
     // The passenger camera connects only from a tick's own report (cleared just above), so
     // nothing of it outlives a mission boundary or a stop; the stock clears release the handle.
+    // M7 S1: the seated-shot publication ends with the report. This withdrawal owns the mission boundaries and the stop
+    // (Tick returns before TickSeatShot while terminating); the hook also ignores a publication older than
+    // partner_seat_shot::MaxAgeMs (50-250 ms by the vehicle's speed).
+    if (h.seat_shot_withdraw) h.seat_shot_withdraw(h.context);
+    d.mission.seat_shot.published = false;
 }
 const char* BoardSiteName(unsigned site) noexcept { return site ? "phase1" : "prequery"; }
 
@@ -2972,14 +3114,86 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     in.seat = d.ride_rx.packet.seat;
     in.vehicle = d.ride_rx.packet.vehicle;
     in.received_ms = d.ride_rx.received_ms;
-    const pb::Policy p = pb::PolicyFor(in);
+    // Review R3: the driver's seat-1 handshake for this exact ride (v4 seat addendum).
+    in.seat_flags = rw::SeatFlagsFor(d.ride_seat_ext, d.ride_rx.packet, epoch, now);
+    pb::Policy p = pb::PolicyFor(in);
+    // Review R4: the seat-1 remap is skipped only while seat 1 may be in use, and before a policy that
+    // offers seat 1 is published; a failed write never offers seat 1 again (process scoped).
+    if (stats.seat_one != d.board_seat_one_seen) {
+        d.board_seat_one_seen = stats.seat_one;
+        d.board_seat_one_ms = now ? now : 1;
+    }
+    pb::RemapIn ri{};
+    ri.armed = (d.settings.ride_front || d.settings.ride_cab) && mode == pb::Mode::passenger && h.board_remap && !d.board_remap_failed;
+    ri.policy_one = p.front_ok || p.cab_ok;
+    ri.local_seat_one = lp.valid && lp.seat == pb::kFrontSeat;
+    ri.steer_pending_one = b.steer_pending && b.steer_seat == pb::kFrontSeat;
+    ri.last_seat_one_ms = d.board_seat_one_ms;
+    ri.own_seat_one_stock = pb::OwnSeatOneStock(d.settings.ride_seat1_anchor, lp);
+    ri.now_ms = now;
+    const bool remap_want = pb::RemapWanted(ri);
+    if (remap_want != d.board_remap_skip && h.board_remap && (remap_want || !d.board_remap_failed || d.board_remap_skip)) {
+        const bool ok = h.board_remap(h.context, remap_want);
+        const char* why = !remap_want ? (ri.own_seat_one_stock ? "seated_own" : "idle") : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
+        EmitBoard(m, h, "partner_ride=board_remap; state=%s; why=%s; ok=%u; steers=%u\r\n", remap_want ? "skip" : "stock", why, ok ? 1u : 0u,
+                  stats.seat_one);
+        if (ok) d.board_remap_skip = remap_want;
+        else if (remap_want) d.board_remap_failed = true;
+    }
+    if (!d.board_remap_skip) p.front_ok = p.cab_ok = false;
     BoardPublish(d, h, p.mode == pb::Mode::off ? 0 : pb::Pack(p));
-    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat) {
+    if (!b.policy_logged || p.mode != b.logged.mode || p.vehicle != b.logged.vehicle || p.peer_seat != b.logged.peer_seat ||
+        p.front_ok != b.logged.front_ok || p.cab_ok != b.logged.cab_ok) {
         b.policy_logged = true;
         b.logged = p;
-        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s\r\n", unsigned(p.vehicle), unsigned(p.peer_seat),
-                  pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none");
+        EmitBoard(m, h, "partner_ride=board_policy; vehicle=%u; seat=%u; mode=%s; uncertain=%s; seat1=%s; flags=0x%02x\r\n", unsigned(p.vehicle),
+                  unsigned(p.peer_seat), pb::ModeName(p.mode), b.uncertain ? b.uncertain : "none",
+                  p.front_ok && p.cab_ok ? "front,cab" : p.front_ok ? "front" : p.cab_ok ? "cab" : "none", unsigned(in.seat_flags));
     }
+}
+
+// Design 8.46 / 8.47 (partner_seat_fpv): the mission ends, the partner stops or the tick is refused during a seated
+// first-person aim: the toggle bits still ours (and a clear still pending) are cleared. Only P is needed: a state read
+// refused during the unload still names the player; the write finds the camera module itself (SEH-guarded). A failed
+// write stays pending (the next tick, the next exit or the next mission's start tries again, kFpvClearTries at most).
+void SeatFpvRelease(Driver& d, const Hooks& h, const char* why) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& f = d.mission.pass_camera.fpv;
+    const std::uint32_t ours = f.ours & pc::kFpvSlotMask;
+    const std::uint32_t bits = (f.ours | f.pending) & pc::kFpvSlotMask;
+    const bool active = f.active;
+    const std::uint16_t vehicle = f.vehicle;
+    const std::uint8_t seat = f.seat;
+    f.active = f.opt_out = f.aim = false;
+    f.ours = f.seen = 0;
+    f.vehicle = pc::kVehicleUnknown;
+    f.seat = pc::kSeatUnknown;
+    if (!active && !bits) return;
+    bool ok = bits == 0;
+    std::uint32_t after = 0;
+    if (bits && h.seat_fpv_write && h.read_state) {
+        pp::State st{};
+        (void)h.read_state(h.context, st);
+        ok = st.P != 0 && h.seat_fpv_write(h.context, st, 0, bits, after);
+    }
+    bool gave_up = false;
+    if (ok) {
+        f.pending = 0;
+        f.pending_tries = 0;
+    } else {
+        f.pending = bits;
+        if (!active && !ours && ++f.pending_tries > pc::kFpvClearTries) {
+            f.pending = 0;
+            f.pending_tries = 0;
+            ++f.give_ups;
+            gave_up = true;
+        }
+    }
+    // Logged at the boarding's release, a landed retry and a give-up (a failing retry on every refused tick is not).
+    if (active || ours || ok || gave_up)
+        EmitFormat(h, "partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=%u; seat=%u; reason=%s; set=0x0; clear=0x%x; ok=%u; "
+                      "after=0x%x; pending=0x%x%s\r\n",
+                   unsigned(vehicle), unsigned(seat), why, bits, ok ? 1u : 0u, after, f.pending, gave_up ? "; give_up=1" : "");
 }
 
 // F1 passenger camera (docs/native-puppet.md "Passenger camera"; partner_pass_camera):
@@ -2996,6 +3210,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     Mission& m = d.mission;
     auto& c = m.pass_camera;
     if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    // A terminating mission writes nothing here (Tick returns before this call anyway).
     if (terminating) return;
     if (!d.pass_camera_install_tried) {
         d.pass_camera_install_tried = true;
@@ -3020,6 +3235,20 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         EmitBoard(m, h, "partner_ride=pass_camera; state=refused; vehicle=%u; seat=%u; reason=%s; latch=mission; faults=%u\r\n",
                   unsigned(lp.vehicle), unsigned(lp.seat), c.uncertain, stats.faults - c.seen.faults);
     }
+    // Design 8.27: the effective mode (the key; on a lab copy the passcam lever's override wins).
+    pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
+    bool lever = false;
+    const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::view)) {
+        mode = static_cast<pc::Mode>(override_mode);
+        lever = true;
+    }
+    const std::uint8_t mode_key = static_cast<std::uint8_t>((static_cast<unsigned>(mode) + 1u) | (lever ? 0x80u : 0u));
+    if (c.mode_logged != mode_key) {
+        c.mode_logged = mode_key;
+        EmitBoard(m, h, "partner_ride=pass_camera; state=mode; mode=%s; source=%s; trace=%u\r\n", pc::ModeName(mode), lever ? "lever" : "key",
+                  d.settings.pass_camera_trace ? 1u : 0u);
+    }
     pc::ArmIn ai{};
     ai.passenger_mode = true;
     ai.installed = d.pass_camera_installed;
@@ -3027,12 +3256,216 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     ai.passenger = lp.valid;
     ai.vehicle = lp.vehicle;
     ai.seat = lp.seat;
+    ai.seat_one = d.settings.ride_front || d.settings.ride_cab;
+    ai.off = mode == pc::Mode::off;
     const char* arm_reason = "none";
     const pc::Arm arm = pc::ArmFor(ai, arm_reason);
+    // The local gun (k = 0) while seated: the aim drop's and the shot guard's input, and the trace's.
+    const bool trace = d.settings.pass_camera_trace && !d.settings.play_mode && h.pass_camera_view != nullptr;
+    const bool armed = arm.armed && d.pass_camera_installed;
+    // Design 8.46: the seat first person's switch (the key; on a lab copy the passcam seatfpv lever wins).
+    const int fpv_lever = !d.settings.play_mode && h.seat_fpv_override ? h.seat_fpv_override(h.context) : pc::kFpvKey;
+    const bool fpv_on = fpv_lever == pc::kFpvKey ? d.settings.seat_fpv : fpv_lever == 1;
+    const bool fpv_hooks = h.seat_fpv_read != nullptr && h.seat_fpv_write != nullptr;
+    const bool fpv_seat = fpv_on && fpv_hooks && lp.valid && pc::FpvSeat(lp.seat);
+    pp::AimRead aim_read{};
+    const bool aim_ok = lp.valid && (arm.armed || trace || fpv_seat || c.fpv.active) && h.read_aim && h.read_aim(h.context, st, aim_read);
+    const bool aiming = aim_ok && pc::GunAims(aim_read.gun_ok[0], aim_read.gun_state[0], aim_read.gun_flags[0]);
+    const bool firing = aim_ok && pc::GunFires(aim_read.gun_ok[0], aim_read.gun_state[0]);
+    const pc::AimOut aim_out = pc::AimStep(c.aim, mode, armed, aiming, now);
     pc::Camera cam{};
     const char* plan = "none";
-    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, true, cam);
-    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, aim_out.want, cam);
+    else if (d.pass_camera_installed && ai.off && lp.valid && !ai.uncertain)
+        plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
+    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing || c.turn.pending))
+        h.pass_camera_read(h.context, st, cam);
+    // Design 8.38 / 8.42 (mode view): the get-off camera turn below.
+    const bool view = pc::Views(mode);
+    if (aim_out.event != pc::AimEvent::none)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=aim; event=%s; vehicle=%u; seat=%u; mode=%s; gun=%u; f3c0=0x%x; plan=%s; cam1f0=0x%llx; "
+                    "cam200=%u; cmode=%d; drops=%u; restores=%u\r\n",
+                    pc::AimEventName(aim_out.event), unsigned(arm.vehicle), unsigned(arm.seat), pc::ModeName(mode),
+                    unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), plan ? plan : "none",
+                    static_cast<unsigned long long>(cam.connect), cam.on, cam.mode, c.aim.drops, c.aim.restores);
+    // The shot guard (modes aim and drop; design 8.27, review fixes 8.28): the pull UP of a seated shot written back from
+    // the first firing tick until kGuardHoldMs after the last one; the yaw and the aim down pass; writes only while the
+    // local passenger aims in the aim camera module (partner_pass_camera_policy GuardStep).
+    const bool guard_on = armed && pc::Guards(mode) && h.pass_camera_view && h.pass_camera_pitch && h.pass_camera_mvt;
+    pc::View gv{};
+    const bool gv_need = guard_on && (aiming || firing || c.guard.active || c.guard.last_fire_ms != 0);
+    const bool gv_ok = gv_need && h.pass_camera_view(h.context, st, gv) && gv.ok;
+    const std::uintptr_t guard_mvt = gv_need ? h.pass_camera_mvt(h.context, st) : 0;
+    pc::GuardIn gi{};
+    gi.on = guard_on && (gv_ok || !gv_need);
+    gi.aiming = aiming;
+    gi.firing = firing;
+    gi.aim_module = guard_mvt == pc::kAimModuleVtableRva;
+    gi.ang_ok = gv_ok || !gv_need;
+    gi.pitch = gv_ok ? gv.ang[2] : 0.0f;
+    gi.yaw = gv_ok ? gv.ang[3] : 0.0f;
+    gi.rot = gv_ok ? gv.rot : nullptr;
+    gi.now_ms = now;
+    // The player's own look input: the effective right stick (the mouse comes as PP+0x474 / +0x47C with PP+0x488 bit 1).
+    partner_input::PadRaw look_raw{};
+    float look_x = 0.0f, look_y = 0.0f;
+    if (gv_need && h.read_pad && h.read_pad(h.context, st, look_raw)) {
+        const partner_input::PadSnapshot look_pad = partner_input::Effective(look_raw);
+        look_x = std::isfinite(look_pad.rx) ? look_pad.rx : 0.0f;
+        look_y = std::isfinite(look_pad.ry) ? look_pad.ry : 0.0f;
+    }
+    gi.look_x = std::fabs(look_x) > pc::kLookInput;
+    gi.look_y = std::fabs(look_y) > pc::kLookInput;
+    const pc::GuardOut go = pc::GuardStep(c.guard, gi);
+    bool guard_written = false;
+    if (go.write) guard_written = h.pass_camera_pitch(h.context, st, go.pitch);
+    if (go.write_rot && h.pass_camera_rotation) guard_written = h.pass_camera_rotation(h.context, st, go.rot) || guard_written;
+    const auto mrad = [](float a) noexcept {
+        return std::isfinite(a) && a > -2.0e6f && a < 2.0e6f ? static_cast<int>(std::lround(a * 1000.0f)) : INT32_MIN;
+    };
+    if (go.event == pc::GuardEvent::open)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=guard; event=open; vehicle=%u; seat=%u; gun=%u; ref_mrad=%d; up_mrad=%d; now_mrad=%d,%d; "
+                    "windows=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), unsigned(aim_read.gun_state[0]), mrad(c.guard.ref_pitch),
+                    c.guard.up_ok ? mrad(c.guard.ref_up) : INT32_MIN, gv_ok ? mrad(gv.ang[2]) : 0, gv_ok ? mrad(gv.ang[3]) : 0, c.guard.windows);
+    else if (go.event == pc::GuardEvent::close)
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=guard; event=close; vehicle=%u; seat=%u; end=%s; writes=%u; max_pull_mrad=%d; settle=%u; "
+                    "yaw_mrad=%d; look_ticks=%u; total_writes=%u; rot_writes=%u\r\n",
+                    unsigned(arm.vehicle), unsigned(arm.seat), pc::GuardEndName(go.end), c.guard.window_writes, mrad(c.guard.window_max),
+                    go.settle ? 1u : 0u, mrad(pc::WindowYaw(c.guard)), c.guard.look_ticks, c.guard.writes, c.guard.rot_writes);
+    // Design 8.46 (lab.ini partner_seat_fpv; the lab lever passcam seatfpv on|off|key): the automatic first-person aim from
+    // seats 1 and 2 (partner_pass_camera_policy FpvStep): the hand slot's stock toggle bit (the F tap's) is set while the
+    // local passenger aims there; the bits it set are cleared at the aim end, the get-off, a seat change and the key's end;
+    // the player's own tap opts out for the boarding.
+    const std::uint8_t fpv_mode_key = static_cast<std::uint8_t>((fpv_on ? 2u : 1u) | (fpv_lever != pc::kFpvKey ? 0x80u : 0u));
+    if (c.fpv_mode_logged != fpv_mode_key) {
+        c.fpv_mode_logged = fpv_mode_key;
+        EmitBoard(m, h, "partner_ride=pass_camera; state=seat_fpv; event=mode; on=%u; source=%s; hooks=%u\r\n", fpv_on ? 1u : 0u,
+                  fpv_lever != pc::kFpvKey ? "lever" : "key", fpv_hooks ? 1u : 0u);
+    }
+    pc::FpvRead fr{};
+    const bool fr_need = fpv_hooks && ((lp.valid && (fpv_seat || c.fpv.active || trace)) || c.fpv.pending != 0);
+    const bool fr_ok = fr_need && h.seat_fpv_read(h.context, st, fr) && fr.subj.ok;
+    {
+        pc::FpvIn fi{};
+        fi.want = fpv_on && fpv_hooks && d.pass_camera_installed && !c.uncertain && !ai.uncertain;
+        fi.seated = lp.valid;
+        fi.vehicle = lp.vehicle;
+        fi.seat = lp.seat;
+        fi.aiming = aiming;
+        fi.ready = aim_ok && pc::FpvReady(aim_read.gun_ok[0], aim_read.gun_state[0]);
+        fi.read_ok = fr_ok;
+        fi.toggles = fr.subj.toggles;
+        fi.slot_ok = fr.slot_ok;
+        fi.slot = fr.slot;
+        // Design 8.56: the blocked mode 15 (the fall back to the shoulder view) and, only during a fall, the aim camera
+        // module's look angles (the shoulder aim; pitch +0x270, yaw +0x274): the shot guard's read of this tick when it
+        // has one in the aim module, else one read here.
+        fi.blocked = aiming && aim_read.gun_ok[0] && aim_read.gun_state[0] == 15;
+        fi.now_ms = now;
+        if (c.fpv.fallback && aiming && fr_ok) {
+            pc::View fv{};
+            bool fv_ok = false;
+            if (gv_ok && guard_mvt == pc::kAimModuleVtableRva) {
+                fv = gv;
+                fv_ok = true;
+            } else if (h.pass_camera_view && h.pass_camera_mvt && h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva) {
+                fv_ok = h.pass_camera_view(h.context, st, fv) && fv.ok;
+            }
+            if (fv_ok) {
+                fi.ang_ok = true;
+                fi.pitch = fv.ang[2];
+                fi.yaw = fv.ang[3];
+            }
+        }
+        const std::uint16_t fpv_vehicle = c.fpv.vehicle;
+        const std::uint8_t fpv_seat_was = c.fpv.seat;
+        const pc::FpvOut fo = pc::FpvStep(c.fpv, fi);
+        if (fo.event != pc::FpvEvent::none) {
+            std::uint32_t after = fr.subj.toggles;
+            bool write_ok = true;
+            if (fo.set || fo.clear) {
+                write_ok = h.seat_fpv_write(h.context, st, fo.set, fo.clear, after);
+                if (!write_ok && fo.set) c.fpv.ours &= ~fo.set;  // not written: not ours
+                // A clear stays pending (FpvStep) until a read shows it: a failed one is retried on the next ticks.
+            }
+            const bool stop = fo.event == pc::FpvEvent::stop;
+            EmitNativeN(h, c.fpv_cap, kSeatFpvCap, "partner_seat_fpv",
+                        "partner_ride=pass_camera; state=seat_fpv; event=%s; vehicle=%u; seat=%u; reason=%s; set=0x%x; clear=0x%x; ok=%u; "
+                        "toggles=0x%x; after=0x%x; slot=%d; gun=%u; f3c0=0x%x; cmode=%d; sm=0x%x; read=%s; sets=%u; restores=%u; "
+                        "opt_outs=%u\r\n",
+                        pc::FpvEventName(fo.event), unsigned(stop ? fpv_vehicle : lp.vehicle), unsigned(stop ? fpv_seat_was : lp.seat),
+                        fo.reason, fo.set, fo.clear, write_ok ? 1u : 0u, fr.subj.toggles, after, fr.slot_ok ? int(fr.slot) : -1,
+                        unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), cam.mode, fr.subj.mask,
+                        fr_ok ? "ok" : fr.refusal ? fr.refusal : fr_need ? "module" : "skip", c.fpv.sets, c.fpv.restores, c.fpv.opt_outs);
+        }
+    }
+    if (aiming) c.trace_aim_ms = now ? now : 1;
+    if (trace && lp.valid && fpv_hooks && fr_ok) {
+        // The lab trace's seat first-person line: on a change of its key (the module's answer, the toggles, the gate) or
+        // every second; the once-per-mission pollers line.
+        const unsigned f19 = fr.flags_ok ? (fr.w0 >> 25) & 1u : 9u;
+        const unsigned w3 = fr.flags_ok ? (fr.w3 >> 12) & 0xFu : 0xFFu;  // bits 12..15: flags 0x6C, 0x6D, 0x6E, 0x6F
+        const std::uint32_t f3c0 = aim_read.gun_flags[0];
+        const std::uint64_t key = (static_cast<std::uint64_t>(fr.subj.mask & 0x3FF)) | (static_cast<std::uint64_t>(fr.subj.toggles & 0x1FF) << 10) |
+                                  (static_cast<std::uint64_t>((f3c0 >> 13) & 3u) << 19) | (static_cast<std::uint64_t>(f19 & 0xF) << 21) |
+                                  (static_cast<std::uint64_t>(w3 & 0xFF) << 25) | (static_cast<std::uint64_t>(cam.mode & 0xF) << 33) |
+                                  (static_cast<std::uint64_t>(aiming ? 1u : 0u) << 37) | (static_cast<std::uint64_t>(fr.slot & 0xF) << 38) |
+                                  (static_cast<std::uint64_t>(aim_read.gun_state[0] & 0x1F) << 42) | (static_cast<std::uint64_t>(lp.seat & 0xF) << 47);
+        if (key != c.fpv_trace_key || !c.fpv_trace_ms || now < c.fpv_trace_ms || now - c.fpv_trace_ms >= 1000) {
+            c.fpv_trace_key = key;
+            c.fpv_trace_ms = now ? now : 1;
+            const unsigned long long fmvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
+            EmitNativeN(h, c.fpv_trace_cap, kSeatFpvTraceCap, "partner_seat_fpv_trace",
+                        "partner_ride=pass_camera; state=fpv_trace; ms=%llu; seat=%u; aim=%u; gun=%u; f3c0=0x%x; b13=%u; b14=%u; slot=%d; "
+                        "cmode=%d; mvt=0x%llx; subj=%d; sm=0x%x; si=%d; sf=0x%llx; tog=0x%x; f19=%u; w3=0x%x; ours=0x%x; pend=0x%x; opt=%u\r\n",
+                        static_cast<unsigned long long>(now), unsigned(lp.seat), aiming ? 1u : 0u, unsigned(aim_read.gun_state[0]), f3c0,
+                        (f3c0 >> 13) & 1u, (f3c0 >> 14) & 1u, fr.slot_ok ? int(fr.slot) : -1, cam.mode, fmvt, fr.subj.index, fr.subj.mask,
+                        fr.subj.first, static_cast<unsigned long long>(fr.subj.first_fn), fr.subj.toggles, f19, w3,
+                        c.fpv.ours, c.fpv.pending, c.fpv.opt_out ? 1u : 0u);
+        }
+        std::uintptr_t polls[10]{};
+        if (!c.pollers_logged && h.seat_fpv_pollers && h.seat_fpv_pollers(h.context, st, polls)) {
+            c.pollers_logged = true;
+            EmitNativeN(h, c.fpv_trace_cap, kSeatFpvTraceCap, "partner_seat_fpv_trace",
+                        "partner_ride=pass_camera; state=pollers; p=0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx\r\n",
+                        static_cast<unsigned long long>(polls[0]), static_cast<unsigned long long>(polls[1]),
+                        static_cast<unsigned long long>(polls[2]), static_cast<unsigned long long>(polls[3]),
+                        static_cast<unsigned long long>(polls[4]), static_cast<unsigned long long>(polls[5]),
+                        static_cast<unsigned long long>(polls[6]), static_cast<unsigned long long>(polls[7]),
+                        static_cast<unsigned long long>(polls[8]), static_cast<unsigned long long>(polls[9]));
+        }
+    }
+    if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
+        c.trace_ms = now ? now : 1;
+        pc::View v{};
+        const bool view_ok = h.pass_camera_view(h.context, st, v) && v.ok;
+        const auto cm = [](float a) noexcept { return std::isfinite(a) && a > -2.0e7f && a < 2.0e7f ? static_cast<int>(a * 100.0f) : INT32_MIN; };
+        const auto milli = [](float a) noexcept { return std::isfinite(a) && a > -2.0e6f && a < 2.0e6f ? static_cast<int>(a * 1000.0f) : INT32_MIN; };
+        const float* body = aim_read.body[0];
+        const float* tgt = aim_read.q10[0];
+        const float* apt = aim_read.aimpt[0];
+        const unsigned long long mvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
+        EmitNativeN(h, c.trace_cap, pc::kTraceCap, "partner_pass_camera_trace",
+                    "partner_ride=pass_camera; state=trace; ms=%llu; seat=%u; mode=%s; aim=%u; gun=%u; f3c0=0x%x; h=%u; view=%u; cam_cm=%d,%d,%d; "
+                    "body_cm=%d,%d,%d; byaw_cdeg=%d; ang_mrad=%d,%d,%d,%d; rot_mrad=%d,%d; tgt_cm=%d,%d,%d; apt_cm=%d,%d,%d; r5c=%d; r60=%d; "
+                    "f204=0x%x; d38=0x%x; cmode=%d; mvt=0x%llx; gw=%u; look=%d,%d; off=%d,%d,%d,%d; piv=%d,%d,%d,%d; sc=%d,%d\r\n",
+                    static_cast<unsigned long long>(now), unsigned(lp.seat), pc::ModeName(mode), aiming ? 1u : 0u,
+                    unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]),
+                    cam.ok && cam.connect != 0 ? 1u : 0u, view_ok ? 1u : 0u, cm(v.pos[0] - body[0]), cm(v.pos[1] - body[1]),
+                    cm(v.pos[2] - body[2]), cm(body[0]), cm(body[1]), cm(body[2]),
+                    aim_read.body_ok[0] ? static_cast<int>(aim_read.body_yaw[0] * 5729.578f) : INT32_MIN, milli(v.ang[0]), milli(v.ang[1]),
+                    milli(v.ang[2]), milli(v.ang[3]), view_ok && pc::QuatOk(v.rot) ? milli(pc::UpPitch(v.rot)) : INT32_MIN,
+                    view_ok && pc::QuatOk(v.rot) ? milli(pc::WorldYaw(v.rot)) : INT32_MIN, cm(tgt[0] - v.pos[0]), cm(tgt[1] - v.pos[1]), cm(tgt[2] - v.pos[2]), cm(apt[0] - v.pos[0]), cm(apt[1] - v.pos[1]),
+                    cm(apt[2] - v.pos[2]), aim_read.rate_ok[0] ? milli(aim_read.r5c[0]) : INT32_MIN,
+                    aim_read.rate_ok[0] ? milli(aim_read.r60[0]) : INT32_MIN, v.flags, v.requests, cam.mode, mvt, guard_written ? 1u : 0u,
+                    milli(look_x), milli(look_y),
+                    milli(v.off[0]), milli(v.off[1]), milli(v.off[2]), milli(v.off[3]), milli(v.piv[0]), milli(v.piv[1]), milli(v.piv[2]),
+                    milli(v.piv[3]), milli(v.sc[0]), milli(v.sc[1]));
+    }
     pc::StepIn in{};
     in.passenger = lp.valid;
     in.vehicle = lp.vehicle;
@@ -3043,7 +3476,28 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     in.cam = cam;
     in.writes = stats.writes;
     in.now_ms = now;
+    const bool episode_was_active = c.episode.active;
+    const std::uint16_t episode_vehicle = c.episode.vehicle;
+    const std::uint8_t episode_seat = c.episode.seat;
     pc::StepOut out = pc::Step(c.episode, in);
+    // Design 8.38 / 8.39 (mode view): an observed get-off from seat 1 or 2 (the report ended on the get-off act 0x70; never
+    // a death, a lost report or a latch): the camera is turned behind the player once the stock get-off let go
+    // (partner_pass_camera_policy TurnStep). Another end of the boarding is logged and not armed.
+    if (episode_was_active && !c.episode.active && view && h.pass_camera_turn && d.pass_camera_installed && !c.uncertain &&
+        !ai.uncertain && pc::ViewSeat(episode_seat)) {
+        const bool get_off = !lp.valid && lp.reason && std::strcmp(lp.reason, "act") == 0 && lp.act == pc::kActGetOff;
+        if (get_off) pc::TurnArm(c.turn, episode_vehicle, episode_seat, now);
+        else
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=skip; vehicle=%u; seat=%u; reason=%s; act=0x%x\r\n",
+                        unsigned(episode_vehicle), unsigned(episode_seat), lp.valid ? "seated" : lp.reason ? lp.reason : "none",
+                        unsigned(lp.act));
+    }
+    // The mode left view (the lab lever) or the mission latched: a pending turn is dropped.
+    if ((!view || c.uncertain || ai.uncertain) && pc::TurnCancel(c.turn))
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=0; stock_seen=%u\r\n",
+                    unsigned(c.turn.vehicle), unsigned(c.turn.seat), !view ? "mode" : "uncertain", c.turn.seen_stock ? 1u : 0u);
     // The lines count this boarding's writes including this tick's (the counters read again).
     pc::Stats after = stats;
     if (d.pass_camera_installed) h.pass_camera_stats(h.context, after);
@@ -3064,6 +3518,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                   cam.vehicle_mode, writes);
         break;
     case pc::Event::release:
+        // The stock get-off cleared the handle: a pending get-off turn may follow (design 8.39).
+        if (out.reason && std::strcmp(out.reason, "stock") == 0) pc::TurnStockClear(c.turn);
         if (out.clear) {
             // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
             const char* why = h.pass_camera_connect(h.context, st, out.vehicle, false, cam);
@@ -3077,6 +3533,72 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     case pc::Event::none:
         break;
+    }
+    if (c.turn.pending || c.turn.check_ms) {
+        // Design 8.41 / 8.42: the player's own camera input while the turn is pending (on foot): the effective right stick
+        // or mouse above kLookInput (as the shot guard reads it) drops the turn; the local gun aiming holds it, and after
+        // the aim the request waits while the aim camera module is still the mode.
+        bool turn_look = false, turn_aim = false, turn_aim_cam = false;
+        unsigned turn_gun = 0;
+        if (c.turn.pending && !lp.valid) {
+            partner_input::PadRaw turn_raw{};
+            if (h.read_pad && h.read_pad(h.context, st, turn_raw)) {
+                const partner_input::PadSnapshot tp = partner_input::Effective(turn_raw);
+                turn_look = (std::isfinite(tp.rx) && std::fabs(tp.rx) > pc::kLookInput) || (std::isfinite(tp.ry) && std::fabs(tp.ry) > pc::kLookInput);
+            }
+            pp::AimRead turn_ar{};
+            if (h.read_aim && h.read_aim(h.context, st, turn_ar)) {
+                turn_aim = pc::GunAims(turn_ar.gun_ok[0], turn_ar.gun_state[0], turn_ar.gun_flags[0]);
+                turn_gun = turn_ar.gun_ok[0] ? turn_ar.gun_state[0] : 0xFFu;
+            }
+            if (c.turn.aimed && !turn_aim && h.pass_camera_mvt)
+                turn_aim_cam = h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva;
+        }
+        const char* why = "none";
+        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim, turn_aim_cam);
+        const unsigned age = static_cast<unsigned>(pc::ClampMs(now >= c.turn.since_ms ? now - c.turn.since_ms : 0));
+        if (ta == pc::TurnAct::request) {
+            partner_vehicle::Read vr{};
+            if (h.vehicle_read) h.vehicle_read(h.context, c.turn.vehicle, vr);
+            const bool vok = h.vehicle_read && !vr.refusal && vr.unit.id == c.turn.vehicle && std::isfinite(vr.unit.pos[3]);
+            const float yaw = vok ? pc::WrapPi(vr.unit.pos[3]) : 0.0f;
+            const char* refusal = !vok ? "vehicle" : h.pass_camera_turn(h.context, st, pc::kTurnPitch, yaw, pc::kTurnInterp);
+            pc::TurnDone(c.turn, refusal == nullptr, yaw, now);
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=%s; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; yaw_mrad=%d; "
+                        "pitch_mrad=%d; cmode=%d; requests=%u; aimed=%u\r\n",
+                        refusal ? "refused" : "request", unsigned(c.turn.vehicle), unsigned(c.turn.seat), refusal ? refusal : "made", age,
+                        c.turn.seen_stock ? 1u : 0u, static_cast<int>(std::lround(yaw * 1000.0f)),
+                        static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests, c.turn.aimed ? 1u : 0u);
+        } else if (ta == pc::TurnAct::hold) {
+            // Design 8.42: the player aims on foot: the turn waits for the aim's end (once per pending turn).
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=hold; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::expire) {
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::check) {
+            // About kTurnCheckMs after the request: the camera's world yaw against the one asked for, and its distance to
+            // the body (the frame shows the rest).
+            pc::View v{};
+            const bool vok = h.pass_camera_view && h.pass_camera_view(h.context, st, v) && v.ok && pc::QuatOk(v.rot);
+            pp::AimRead ar{};
+            const bool bok = h.read_aim && h.read_aim(h.context, st, ar) && ar.body_ok[0];
+            float dist = 0.0f;
+            if (vok && bok) {
+                const float dx = v.pos[0] - ar.body[0][0], dy = v.pos[1] - ar.body[0][1], dz = v.pos[2] - ar.body[0][2];
+                dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=check; vehicle=%u; seat=%u; view=%u; yaw_err_mrad=%d; up_mrad=%d; "
+                        "cam_body_cm=%d; cmode=%d\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), vok ? 1u : 0u,
+                        vok ? static_cast<int>(std::lround(pc::WrapPi(pc::WorldYaw(v.rot) - c.turn.yaw) * 1000.0f)) : INT32_MIN,
+                        vok ? static_cast<int>(std::lround(pc::UpPitch(v.rot) * 1000.0f)) : INT32_MIN,
+                        vok && bok ? static_cast<int>(std::lround(dist * 100.0f)) : INT32_MIN, cam.mode);
+        }
     }
 }
 
@@ -3207,6 +3729,152 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // mirror's gun record, the 1 Hz partner_fire line, the read-only census, the
 // loadout manifest this copy sends and the apply verdict of the received one.
 // `ready`: the lazy-install preconditions of the native drive hold.
+// --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)") -------------------------------
+// Every tick in passenger mode: while this copy's own player sits in a passenger seat (the local passenger report) of a
+// light vehicle or a truck cab and the fire filter's RequestBullet hook is live, publish the ridden vehicle's record
+// (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the
+// seatshot lever's override wins) decides apply: off on a lab copy still plans every seated shot (census lines, nothing
+// moved); off in play publishes nothing. One line per planned shot (the hook's last plan), capped per mission.
+void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
+    namespace pss = partner_seat_shot;
+    Mission& m = d.mission;
+    auto& s = m.seat_shot;
+    if (!h.seat_shot_publish || !h.seat_shot_withdraw || !h.seat_shot_stats) return;
+    bool apply = d.settings.seat_shot;
+    bool lever = false;
+    const int override_value = !d.settings.play_mode && h.seat_shot_override ? h.seat_shot_override(h.context) : -1;
+    if (override_value >= 0) {
+        apply = override_value != 0;
+        lever = true;
+    }
+    if (!s.configured_logged) {
+        s.configured_logged = true;
+        EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=configured; key=%u; play=%u\r\n",
+                    d.settings.seat_shot ? 1u : 0u, d.settings.play_mode ? 1u : 0u);
+    }
+    const auto cm = [](float v) noexcept {
+        return std::isfinite(v) && v > -2.0e7f && v < 2.0e7f ? static_cast<int>(std::lround(v * 100.0f)) : INT32_MIN;
+    };
+    const auto milli = [](float v) noexcept {
+        return std::isfinite(v) && v > -2.0e6f && v < 2.0e6f ? static_cast<int>(std::lround(v * 1000.0f)) : INT32_MIN;
+    };
+    partner_fire_filter::SeatShotStats ss{};
+    const bool last_ok = h.seat_shot_stats(h.context, ss);
+    if (!s.stats_have) {
+        s.stats_have = true;
+        s.seen = ss;
+        s.last_seq = ss.seq;
+    }
+    // The hook's last plan (one line per new plan; a plan written while the tick read is caught on the next tick).
+    if (last_ok && ss.seq && ss.seq != s.last_seq) {
+        s.last_seq = ss.seq;
+        EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot",
+                    "partner_seat_shot=shot; result=%s; vehicle=%u; seat=%u; apply=%u; t_cm=%d; exit_cm=%d; dist_cm=%d; inside=%u; "
+                    "o_cm=%d,%d,%d; d_milli=%d,%d,%d; shifted=%u; census=%u; refused=%u; stale=%u; age_ms=%u; max_ms=%u\r\n",
+                    ss.result ? ss.result : "-", unsigned(ss.vehicle), unsigned(ss.seat), ss.apply ? 1u : 0u, cm(ss.t), cm(ss.exit),
+                    ss.dist < 0.0f ? -1 : cm(ss.dist), ss.inside ? 1u : 0u, cm(ss.o_local[0]), cm(ss.o_local[1]), cm(ss.o_local[2]),
+                    milli(ss.d_local[0]), milli(ss.d_local[1]), milli(ss.d_local[2]), ss.shifted - s.seen.shifted,
+                    ss.census - s.seen.census, ss.refused - s.seen.refused, ss.stale - s.seen.stale, unsigned(ss.age_ms),
+                    unsigned(ss.max_ms));
+    }
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    // The refusal, in order (nullptr: publish).
+    const char* why = nullptr;
+    partner_vehicle::Read vr{};
+    pss::Class cls = pss::Class::none;
+    std::uint8_t category = 0xFF;
+    if (terminating) why = "terminating";  // defensive: Tick returns before this while terminating (BoardWithdraw owns it)
+    else if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) why = "board_mode";
+    else if (!apply && d.settings.play_mode) why = "key_off";
+    else if (!lp.valid) why = "not_seated";
+    else if (m.board.uncertain) why = "uncertain";
+    else if ((st.ids[0] & 0xFE00u) != 0) why = "owner";
+    else {
+        partner_fire_filter::Stats fs{};
+        if (h.fire_stats) h.fire_stats(h.context, fs);
+        if (!fs.installed || !fs.live) why = "fire_hook";
+        else if (!h.vehicle_read) why = "vehicle_read";
+        else {
+            h.vehicle_read(h.context, lp.vehicle, vr);
+            if (vr.refusal || vr.unit.id != lp.vehicle || !std::isfinite(vr.unit.pos[0]) || !std::isfinite(vr.unit.pos[1]) ||
+                !std::isfinite(vr.unit.pos[2]) || !std::isfinite(vr.unit.pos[3]))
+                why = "vehicle";
+            else {
+                category = static_cast<std::uint8_t>(vr.unit.type >> 4);
+                cls = pss::ClassFor(category, lp.seat);
+                if (cls == pss::Class::none) why = "class";
+            }
+        }
+    }
+    if (why) {
+        s.speed_have = false;
+        if (s.published) {
+            h.seat_shot_withdraw(h.context);
+            s.published = false;
+            EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=withdrawn; vehicle=%u; seat=%u; reason=%s\r\n",
+                        unsigned(s.vehicle), unsigned(s.seat), why);
+        }
+        // A refusal is logged once per change, only while seated (on foot is the normal case).
+        if (lp.valid && why != s.refusal_logged && std::strcmp(why, "terminating") != 0) {
+            s.refusal_logged = why;
+            EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot", "partner_seat_shot=refused; vehicle=%u; seat=%u; reason=%s; cat=%u\r\n",
+                        unsigned(lp.vehicle), unsigned(lp.seat), why, unsigned(category));
+        }
+        if (!lp.valid) s.refusal_logged = nullptr;
+        return;
+    }
+    s.refusal_logged = nullptr;
+    pss::Pub pub{};
+    pub.owner = static_cast<std::uint16_t>(st.ids[0] & 0x1FFu);
+    pub.vehicle = lp.vehicle;
+    pub.seat = lp.seat;
+    pub.cls = cls;
+    pub.apply = apply;
+    pub.pos[0] = vr.unit.pos[0];
+    pub.pos[1] = vr.unit.pos[1];
+    pub.pos[2] = vr.unit.pos[2];
+    pub.yaw = vr.unit.pos[3];
+    // The vehicle's speed from the last publication (the hook's freshness window, partner_seat_shot::MaxAgeMs).
+    if (s.speed_have && s.speed_vehicle == lp.vehicle && now > s.speed_ms && now - s.speed_ms <= 1000) {
+        const float dx = pub.pos[0] - s.speed_pos[0], dy = pub.pos[1] - s.speed_pos[1], dz = pub.pos[2] - s.speed_pos[2];
+        const float v = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0f / static_cast<float>(now - s.speed_ms);
+        if (std::isfinite(v)) pub.speed = v;
+    }
+    if (!s.speed_have || s.speed_vehicle != lp.vehicle || now != s.speed_ms) {
+        s.speed_have = true;
+        s.speed_vehicle = lp.vehicle;
+        s.speed_ms = now;
+        std::memcpy(s.speed_pos, pub.pos, sizeof(s.speed_pos));
+    }
+    pp::AimRead aim{};
+    const bool aim_ok = h.read_aim && h.read_aim(h.context, st, aim);
+    if (aim_ok && aim.q_ok && pss::Finite3(aim.q10[0])) {
+        pub.target_ok = true;
+        std::memcpy(pub.target, aim.q10[0], sizeof(pub.target));
+    }
+    h.seat_shot_publish(h.context, pub);
+    if (!s.published || s.vehicle != lp.vehicle || s.seat != lp.seat || s.apply != apply) {
+        // The local body root in the vehicle frame (the box check of the census).
+        float body[3]{};
+        const bool body_ok = aim_ok && aim.body_ok[0] && pss::Finite3(aim.body[0]);
+        if (body_ok) {
+            const float rel[3] = {aim.body[0][0] - pub.pos[0], aim.body[0][1] - pub.pos[1], aim.body[0][2] - pub.pos[2]};
+            pss::ToLocal(pub.yaw, rel, body);
+        }
+        EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot",
+                    "partner_seat_shot=published; vehicle=%u; seat=%u; class=%s; cat=%u; apply=%u; source=%s; veh_cm=%d,%d,%d; "
+                    "yaw_mrad=%d; body_cm=%d,%d,%d; target=%u\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), pss::ClassName(cls), unsigned(category), apply ? 1u : 0u,
+                    lever ? "lever" : "key", cm(pub.pos[0]), cm(pub.pos[1]), cm(pub.pos[2]), milli(pub.yaw),
+                    body_ok ? cm(body[0]) : INT32_MIN, body_ok ? cm(body[1]) : INT32_MIN, body_ok ? cm(body[2]) : INT32_MIN,
+                    pub.target_ok ? 1u : 0u);
+    }
+    s.published = true;
+    s.vehicle = lp.vehicle;
+    s.seat = lp.seat;
+    s.apply = apply;
+}
+
 void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, bool gun_ok, const pp::Gun1& gun,
                  const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
     Mission& m = d.mission;
@@ -5482,8 +6150,103 @@ void WithdrawGesture(Driver& d, const Hooks& h) noexcept {
     DrainGesture(d.mission, h, status);
 }
 
+// --- M7 seat gun (partner_seat_gun.hpp; docs/native-puppet.md "Seat gun") ------------------------------------------
+// While the seat flow holds body 1 seated and the remote rides a passenger seat and aims (its live pose flags or its
+// v5 input frame), the gesture hook holds body 1's graph 2 on GunHoldStart -> GunHold (hold_seq) and writes body 1's
+// aim rates from the remote's v6 direction against body 1's seated yaw. Lines (own cap): configured, hold, release,
+// refused (once per refusal change while the remote aims), hook_ended, rates (1 Hz while held).
+namespace psg = mgscoop::partner_seat_gun;
+constexpr unsigned kSeatGunLogCap = 200;
+void TickSeatGun(Driver& d, const Hooks& h, const Clock& clock, bool realized, bool parts_loaded, bool installed, const pp::State& st,
+                 std::uint32_t remote_flags, bool pose_live, psg::RatesOut& rates) noexcept {
+    Mission& m = d.mission;
+    rates = psg::RatesOut{};
+    if (!m.seat_gun_configured_logged) {
+        m.seat_gun_configured_logged = true;
+        EmitFormat(h, "partner_seat_gun=configured; key=1; gesture=%u; installed=%u\r\n", d.settings.ngesture ? 1u : 0u, installed ? 1u : 0u);
+    }
+    pin::Sample latest{};
+    const bool latest_ok = h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    psg::AimIn ai{};
+    ai.pose_live = pose_live;
+    ai.pose_aiming = (remote_flags & sync::ActionFlag::Aiming) != 0;
+    ai.input = latest_ok;
+    ai.input_age_ms = latest_ok ? latest.age_ms : 0;
+    ai.input_aiming = latest_ok && latest.packet.version >= 5 && (latest.packet.gun_flags & pin::GunFlag::Valid) &&
+                      (latest.packet.gun_flags & pin::GunFlag::Aiming);
+    const bool aiming = psg::RemoteAiming(ai);
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    const bool ride_live = partner_ride_wire::Live(d.ride_rx, epoch, clock.now_ms);
+    const partner_ride_wire::Packet& rp = d.ride_rx.packet;
+    psg::GateIn g{};
+    g.enabled = d.settings.ngesture;
+    g.installed = installed;
+    g.uncertain = m.gesture_uncertain;
+    g.seated = m.ride_seated && m.seat.phase == SeatPhase::seated;
+    g.passenger = psg::PassengerSeat(ride_live && rp.kind == partner_ride_wire::Kind::vehicle, rp.seat);
+    g.realized = realized && parts_loaded;
+    g.block = m.carry_hold                                     ? "carry"
+            : mgscoop::partner_dm_overlay::Active(m.overlay)  ? "overlay"
+            : RemoteDowned(clock.tick_ms)                      ? "downed"
+                                                               : nullptr;
+    g.other_gesture = (m.gesture_active && m.gesture_active_seq != m.seat_gun_seq) ||
+                      (m.gesture_request.seq && m.gesture_request.seq != m.seat_gun_seq);
+    const char* refusal = psg::Gate(g);
+    const psg::StepOut so = psg::Step(m.seat_gun, refusal, aiming, clock.tick_ms);
+    if (so.edge == psg::Edge::start) {
+        if (!++d.gesture_seq) d.gesture_seq = 1;
+        m.seat_gun_seq = d.gesture_seq;
+        m.seat_gun_since_ms = clock.tick_ms;
+        m.seat_gun_rates_ms = 0;
+        m.gesture_request = pges::Request{m.seat_gun_seq, gpol::Kind::gun_start, psg::kGunHoldStart, gpol::Method::set_current, psg::kStartBlend,
+                                          clock.tick_ms};
+        ++m.gesture_requests;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=hold; seq=%u; vehicle=%u; seat=%u; pose_aim=%u; input_aim=%u; flags=0x%x; starts=%u\r\n", m.seat_gun_seq,
+                    unsigned(rp.vehicle), unsigned(rp.seat), ai.pose_live && ai.pose_aiming ? 1u : 0u, ai.input_aiming ? 1u : 0u,
+                    unsigned(remote_flags), m.seat_gun.starts);
+    } else if (so.edge == psg::Edge::release) {
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=release; seq=%u; cause=%s; refusal=%s; ms=%llu; releases=%u\r\n", m.seat_gun_seq, so.cause,
+                    refusal ? refusal : "-",
+                    static_cast<unsigned long long>(clock.tick_ms >= m.seat_gun_since_ms ? clock.tick_ms - m.seat_gun_since_ms : 0),
+                    m.seat_gun.releases);
+    }
+    // A refusal while the remote aims: once per change.
+    if (aiming && refusal && refusal != m.seat_gun_refusal_logged) {
+        m.seat_gun_refusal_logged = refusal;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=refused; reason=%s; seat_phase=%s; ride_seated=%u; ride_live=%u; ride_kind=%u; ride_seat=%u\r\n", refusal,
+                    SeatPhaseName(m.seat.phase), m.ride_seated ? 1u : 0u, ride_live ? 1u : 0u, unsigned(rp.kind), unsigned(rp.seat));
+    } else if (!refusal) {
+        m.seat_gun_refusal_logged = nullptr;
+    }
+    if (!m.seat_gun.want) return;
+    // Body 1's aim pose: the remote's v6 direction against body 1's seated yaw.
+    pp::AimRead ar{};
+    const bool ar_ok = h.read_aim && h.read_aim(h.context, st, ar);
+    psg::RatesIn ri{};
+    ri.dir_ok = latest_ok && latest.age_ms <= psg::kDirStaleMs && latest.packet.version >= 6 && (latest.packet.gun_flags & pin::GunFlag::AimDir);
+    ri.pitch = latest.packet.aim_pitch_cdeg * pam::kCdegToRad;
+    ri.yaw = latest.packet.aim_yaw_cdeg * pam::kCdegToRad;
+    ri.body_ok = ar_ok && ar.body_ok[1];
+    ri.body_yaw = ar_ok ? ar.body_yaw[1] : 0.0f;
+    rates = psg::Rates(ri);
+    if (!m.seat_gun_rates_ms || clock.tick_ms < m.seat_gun_rates_ms || clock.tick_ms - m.seat_gun_rates_ms >= 1000) {
+        m.seat_gun_rates_ms = clock.tick_ms ? clock.tick_ms : 1;
+        EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                    "partner_seat_gun=rates; seq=%u; ok=%u; r5c=%.3f; r60=%.3f; clamped=%u; dir=%u; remote_pitch_cdeg=%d; remote_yaw_cdeg=%d; "
+                    "body_yaw_cdeg=%d; body_r5c=%.3f; body_r60=%.3f\r\n",
+                    m.seat_gun_seq, rates.ok ? 1u : 0u, rates.r5c, rates.r60, rates.clamped ? 1u : 0u, ri.dir_ok ? 1u : 0u,
+                    ri.dir_ok ? int(latest.packet.aim_pitch_cdeg) : 0, ri.dir_ok ? int(latest.packet.aim_yaw_cdeg) : 0,
+                    ri.body_ok ? int(pam::YawCdeg(ri.body_yaw)) : 0, ar_ok && ar.rate_ok[1] ? ar.r5c[1] : -1.0f,
+                    ar_ok && ar.rate_ok[1] ? ar.r60[1] : -1.0f);
+    }
+}
+
 void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool realized, bool parts_loaded, bool anim_ok,
-                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live) noexcept {
+                 const pp::Anim& anim, bool looks_ok, const pp::Looks& looks, const sync::AnimState& remote_anim, bool remote_live,
+                 const pp::State& st, std::uint32_t remote_flags) noexcept {
     Mission& m = d.mission;
     if (!set.ngesture) {
         m.gesture_pending = false;
@@ -5518,8 +6281,11 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
                     gpol::KindName(q.kind), q.seq, static_cast<unsigned long long>(q.node),
                     static_cast<unsigned long long>(clock.tick_ms >= q.issued_ms ? clock.tick_ms - q.issued_ms : 0), m.gesture_hook_body_calls,
                     m.gesture_hook_resolve ? m.gesture_hook_resolve : "ok");
+        if (q.seq == m.seat_gun_seq && m.seat_gun.want) psg::HookEnded(m.seat_gun, clock.tick_ms);
         m.gesture_request = pges::Request{};
     }
+    psg::RatesOut seat_rates{};
+    if (set.seat_gun) TickSeatGun(d, h, clock, realized, parts_loaded, installed, st, remote_flags, remote_live, seat_rates);
     if (m.gesture_pending) {
         m.gesture_pending = false;
         const gpol::Packet& p = m.gesture_rx_packet;
@@ -5561,15 +6327,41 @@ void TickGesture(Driver& d, const Hooks& h, const Settings& set, const Clock& cl
     }
     if (!installed) return;
     pges::Command command{};
-    command.enabled = set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain;
+    // M7: a held (or still running) seat gun keeps the command live while the seat owns body 1 (native drive blocked).
+    const bool seat_gun_live = set.seat_gun && m.seat_gun_seq &&
+                               (m.seat_gun.want || (m.gesture_active && m.gesture_active_seq == m.seat_gun_seq));
+    command.enabled = (set.native_active && realized && parts_loaded && !block && !m.gesture_uncertain) ||
+                      (seat_gun_live && realized && parts_loaded && !m.gesture_uncertain);
     command.epoch = d.gesture_epoch;
     command.now_ms = clock.tick_ms;
     command.request = m.gesture_request;
     command.remote_known = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     command.remote_speed = remote_anim.speed;
+    command.hold_seq = set.seat_gun && m.seat_gun.want ? m.seat_gun_seq : 0;
+    command.rates_valid = seat_rates.ok;
+    command.r5c = seat_rates.r5c;
+    command.r60 = seat_rates.r60;
     pges::Status status{};
     h.gesture_step(h.context, command, status);
     DrainGesture(m, h, status);
+    // M7: the hook ended or refused the hold while the driver still holds it (node override, a refusal): retry later.
+    if (set.seat_gun && m.seat_gun_seq && m.seat_gun.want) {
+        for (unsigned i = 0; i < status.count && i < pges::kReceipts; ++i) {
+            const pges::Receipt& r = status.receipts[i];
+            if (r.seq != m.seat_gun_seq || (r.stage != pges::Stage::ended && r.stage != pges::Stage::refused && r.stage != pges::Stage::uncertain &&
+                                            r.stage != pges::Stage::fault))
+                continue;
+            if (r.stage == pges::Stage::refused && r.kind == gpol::Kind::gun_hold) continue;  // the chain's refusal ends it next
+            psg::HookEnded(m.seat_gun, clock.tick_ms);
+            EmitNativeN(h, m.seat_gun_cap, kSeatGunLogCap, "partner_seat_gun",
+                        "partner_seat_gun=hook_ended; seq=%u; stage=%s; why=%s; retry_ms=%llu; rate_writes=%u; rate_restores=%u; rate_refusal=%s\r\n",
+                        r.seq, pges::StageName(r.stage), r.stage == pges::Stage::ended ? (r.cause ? r.cause : "-") : (r.reason ? r.reason : "-"),
+                        static_cast<unsigned long long>(psg::kRetryMs), status.rate_writes, status.rate_restores,
+                        status.rate_refusal ? status.rate_refusal : "-");
+            break;
+        }
+    }
+    m.gesture_active_seq = status.active ? status.active_seq : 0;
     m.gesture_active = status.active;
     m.gesture_hook_resolve = status.resolve;
     m.gesture_hook_body_calls = status.body_calls;
@@ -5633,7 +6425,7 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
         m.dm_patched = h.dm_patch(h.context, true, "seat");
         if (!m.dm_patched) { m.dm_patch_failed = true; return refuse("dm_patch"); }
     }
-    if (!h.ride_seat_arm(h.context, seat)) return refuse("seat_patch");
+    if (!h.ride_seat_arm(h.context, seat, vehicle)) return refuse("seat_patch");
     s.manual = true;
     s.armed = true;
     s.vehicle = vehicle;
@@ -5803,6 +6595,13 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // F1 vehicles: the board hook (ResolveWeaponDefaults: passenger with the gun profile, in
     // lab and play; with it the passenger camera).
     d.settings.ride_board = lab.partner_ride_board;
+    // Design 8.27: the passenger camera's mode (lab and play) and its trace (lab only).
+    d.settings.pass_camera = lab.partner_pass_camera;
+    d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
+    d.settings.seat_fpv = lab.partner_seat_fpv;
+    d.settings.ride_front = lab.partner_ride_front;
+    d.settings.ride_cab = lab.partner_ride_cab;
+    d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
     d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
@@ -5829,6 +6628,10 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.traverse = lab.partner_native_traverse;
     d.settings.cbox = lab.partner_native_cbox;
     d.settings.ngesture = lab.partner_native_gesture;
+    // M7 seat gun (lab and play, off unless named until its proof).
+    d.settings.seat_gun = lab.partner_seat_gun;
+    // M7 seated shots, S1 (partner_seat_shot; lab and play).
+    d.settings.seat_shot = lab.partner_seat_shot;
     // G1 partner HUD hints (lab only, default 0; play forces it off in the loader).
     d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
@@ -5871,6 +6674,11 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     // The seat dwords never outlive a mission (a missed MissionEnd included).
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
+    // Design 8.47: our seat first-person bit never outlives a mission either (a missed MissionEnd included); a clear that
+    // still fails stays pending into the new mission (retried there, kFpvClearTries at most).
+    SeatFpvRelease(d, h, "mission_start");
+    const std::uint32_t fpv_pending = d.mission.pass_camera.fpv.pending;
+    const std::uint32_t fpv_pending_tries = d.mission.pass_camera.fpv.pending_tries;
     // Gestures: a new hook epoch (a running gesture is dropped without a write).
     WithdrawGesture(d, h);
     PublishDisarmed(d, h);
@@ -5881,6 +6689,10 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
     BoardWithdraw(d, h);
     d.mission = Mission{};
+    d.mission.pass_camera.fpv.pending = fpv_pending;
+    d.mission.pass_camera.fpv.pending_tries = fpv_pending_tries;
+    // Seats on: a draw latch never outlives its mission.
+    d.seat_draw = Driver::SeatDraw{};
     // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
     d.mission.realize_gen = 1;
     d.mission.body_gun_mode = 0xFF;
@@ -5958,6 +6770,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    SeatFpvRelease(d, h, "mission_end");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     d.mission.seat.armed = false;
@@ -6023,6 +6836,8 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    // Design 8.47: the terminating stop too (MISSION_TERMINATING: the camera still alive; one SEH-guarded compare-exchange).
+    SeatFpvRelease(d, h, "stop");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     m.seat.armed = false;
@@ -6268,6 +7083,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // Without a tick nothing re-validates the window or the DM patch.
         DisarmInput(d, h, "tick_rejected");
         if (m.dm_patched) RevertDm(d, h, "tick_rejected");
+        SeatFpvRelease(d, h, "tick_rejected");  // design 8.47: no TickPassCamera on this tick
         return false;
     }
     ++m.ticks;
@@ -6300,6 +7116,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // window and no DM patch while they fail; both re-arm on their own.
         DisarmInput(d, h, "cfg_refused");
         if (m.dm_patched) RevertDm(d, h, "cfg_refused");
+        SeatFpvRelease(d, h, "cfg_refused");  // design 8.47: no TickPassCamera on this tick
         return false;
     }
     if (m.refusal) {
@@ -6353,8 +7170,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     partner::Tick ride_tick = tick;
     TickBoard(d, h, st, now, terminating, ride_tick);
     TickPassCamera(d, h, st, now, terminating);
+    TickSeatShot(d, h, st, now, terminating);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
+    SendSeatExt(d, h, now);
     TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};
@@ -6464,7 +7283,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                               SeatHooks(h) && !(h.native_pose_suppressed && h.native_pose_suppressed(h.context));
     const std::uint32_t ride_epoch = h.link_session ? h.link_session(h.context) : 0;
     const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == ride_epoch && partner_ride_wire::Live(d.ride_rx, ride_epoch, now);
-    SeatObserveRide(m.seat, ride_live, d.ride_rx.packet, now);
+    // Seats on: the seat this copy draws the peer's ride in (a seat-1 ride the D-Dog took moves to a back seat).
+    UpdateSeatDraw(d, h, ride_live, now);
+    const partner_ride_wire::Packet drawn_ride = DrawnRide(d);
+    SeatObserveRide(m.seat, ride_live, drawn_ride, now);
     if (ride_guard) {
         namespace rw = partner_ride_wire;
         if (m.recon_have_out && (m.recon_out.events & partner_recon::Event::placed_ok) &&
@@ -6486,10 +7308,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         vi.ride_have = d.ride_rx.have && d.ride_rx.epoch == epoch;
         vi.ride_live = rw::Live(d.ride_rx, epoch, now);
         vi.kind = d.ride_rx.packet.kind;
-        vi.seat_mode = seat_capable && !SeatBlocked(m.seat, d.ride_rx.packet);
+        vi.seat_mode = seat_capable && !SeatBlocked(m.seat, drawn_ride);
         const char* const seat_unavailable = SeatUnavailable(d, h, vi.ride_live);
         SeatLogUnavailable(d, h, seat_unavailable);
-        vi.seat = d.ride_rx.packet.seat;
+        vi.seat = drawn_ride.seat;
         vi.vehicle = d.ride_rx.packet.vehicle;
         vi.lease_live = epoch && h.link_live && h.link_live(h.context);
         vi.rearmed = m.bits_set;
@@ -6576,7 +7398,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             sin.seated = m.visibility.seated;
             sin.ride_live = ride_live;
             sin.kind = d.ride_rx.packet.kind;
-            sin.ride_seat = d.ride_rx.packet.seat;
+            sin.ride_seat = drawn_ride.seat;
             sin.ride_vehicle = d.ride_rx.packet.vehicle;
             sin.lease_live = ride_epoch && h.link_live && h.link_live(h.context);
             sin.remote_anim_valid = visibility_sample.valid && visibility_sample.anim_valid;
@@ -6603,6 +7425,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                     h.submit_look(h.context, looks.look[st.local]);
                 Probe(d, h, st, clock);
                 SeatReportRealized(m, h, realized_now, parts_now, now);
+                // M7 seat gun: the gesture step also runs while the seat owns body 1 (run d40e4126: this branch
+                // returned before TickGesture, so no hold ever started); ordinary gestures stay refused (block seat).
+                if (set.seat_gun)
+                    TickGesture(d, h, EffectiveSettings(d.settings, m.native_out.active), clock, realized_now, parts_now, anim_ok, anim, looks_ok,
+                                looks, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live, st, remote_flags);
                 m.body_ok = false;
                 reply = partner::Reply{seat_out.ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
                                        status, age_ms, partner::Look{}, 0};
@@ -7364,7 +8191,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
               extra_ops, itick);
     // Gestures: the received edge's gate, the request and the body-1 hook's receipts.
     TickGesture(d, h, set_levers, clock, realized, parts_loaded, anim_ok, anim, looks_ok, looks, remote_anim,
-                set.source == PartnerSource::net && sample_status == pose::Status::live);
+                set.source == PartnerSource::net && sample_status == pose::Status::live, st, remote_flags);
     // Round-1 actions: the DM overlay lever owns the DM while it runs; dm=map
     // stands down (TickDm with dm=off only to release a clip it still owns).
     // A seat episode blocks the overlay (OverlayBlocked: seat), so one already

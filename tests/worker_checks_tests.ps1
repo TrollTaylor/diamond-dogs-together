@@ -11,9 +11,10 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerShardedTests','Get-WorkerExcludedShardedTests','Get-WorkerShardNames','Get-WorkerShard','Get-WorkerReleaseOnlyTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
-    'Assert-WorkerInventory','Write-WorkerJson','New-WorkerCmakeOverride')
+    'Assert-WorkerInventory','Assert-WorkerCoverage','Write-WorkerJson','New-WorkerCmakeOverride',
+    'Get-WorkerBuildArtifacts','Get-WorkerReuseInputs','Get-WorkerReuseRefusal','Find-WorkerReusableReceipt','Get-WorkerReusableReceipt')
 foreach ($name in $pure) {
     $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
     if ($definitions.Count -ne 1) { throw "Missing or duplicate pure boundary: $name" }
@@ -77,11 +78,12 @@ try {
     $custom = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ('build\space ' + [char]0x96EA)
     Check ($custom.build_directory -ceq (Join-Path $fixture ('build\space ' + [char]0x96EA))) 'spaced/non-ASCII cache remains a literal checkout-relative path'
     Check (!$normal.retail_game_launch -and !$normal.system_input -and !$normal.installation) 'plan makes no runtime/installation claim'
-    foreach ($excluded in @('lab_scripts_tests','friend_package_tests','probe_install_recovery')) {
+    foreach ($excluded in @('lab_scripts_tests_1','lab_scripts_tests_7','friend_package_tests_1','friend_package_tests_2','probe_install_recovery')) {
         Check ($normal.tests -cnotcontains $excluded -and $normal.excluded -ccontains $excluded) "unsafe default flow excluded: $excluded"
     }
     Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
-    Check ($normal.tests -ccontains 'worker_session_tests') 'audited detached controller fixture is explicitly included'
+    Check ($normal.excluded -cnotcontains 'lab_scripts_tests' -and $normal.excluded -cnotcontains 'lab_scripts_tests_8' -and $normal.excluded -cnotcontains 'friend_package_tests_3') 'the excluded suites are named as exactly their CTest shards'
+    Check ($normal.tests -ccontains 'worker_session_tests_1' -and $normal.tests -ccontains 'worker_session_tests_2' -and $normal.tests -cnotcontains 'worker_session_tests') 'audited detached controller fixture is explicitly included (as its two CTest shards)'
     Check ($normal.tests -ccontains 'steam_transport_tests') 'the Steam online fixture (fake Steam interfaces, no Steam call) is audited'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
     Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @() $false '' } 'requires explicit'
@@ -168,7 +170,7 @@ try {
 
     # Detached controller fixtures share the exact six-argument PowerShell
     # contract. Names, script paths, interpreter flags and arity stay explicit.
-    $psNames=@('build_profile_tests','worker_session_tests','local_coop_windows_tests')
+    $psNames=@('build_profile_tests','worker_session_tests','local_coop_windows_tests','worker_coverage_tests')
     $psInventory=[pscustomobject]@{tests=@($psNames|ForEach-Object {
         [pscustomobject]@{name=$_;command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture ('tests\'+$_+'.ps1')));properties=@()}
     })}
@@ -185,6 +187,26 @@ try {
         $bad=Copy-PsInventory;$bad.tests[$index].command[1]='-NonInteractive'
         Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
     }
+    # PowerShell shards (cmake/test_shards.cmake): the base suite's audited command plus exactly -Shard K/N.
+    $shardNames=@('worker_session_tests_1','worker_session_tests_2','local_coop_session_tests_1','local_coop_session_tests_2')
+    $shardInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='worker_session_tests_1';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\worker_session_tests.ps1'),'-Shard','1/2');properties=@()},
+        [pscustomobject]@{name='worker_session_tests_2';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\worker_session_tests.ps1'),'-Shard','2/2');properties=@()},
+        [pscustomobject]@{name='local_coop_session_tests_1';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_session_tests.ps1'),'-IniCheck',(Join-Path $directory 'lab_ini_check.exe'),'-Shard','1/2');properties=@()},
+        [pscustomobject]@{name='local_coop_session_tests_2';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_session_tests.ps1'),'-IniCheck',(Join-Path $directory 'lab_ini_check.exe'),'-Shard','2/2');properties=@()}
+    )}
+    Assert-WorkerInventory $shardInventory $fixture $directory $shardNames
+    Check $true 'PowerShell suite shards are accepted with their base command and -Shard K/N'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[6]='--shard'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited shard arguments'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[7]='1/2'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited shard arguments'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[5]=Join-Path $fixture 'tests\local_coop_session_tests.ps1'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited PowerShell command'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[2].command=@($bad.tests[2].command[0..5])+@('-Shard','1/2')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited local-session fixture command'
+    $bad=$shardInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[3].command=@($bad.tests[3].command[0..5])+@('-Part','locks','-Shard','2/2')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shardNames} 'Unaudited local-session fixture command'
     $bad=Copy-PsInventory;$bad.tests[1].properties=@([pscustomobject]@{name='DEPENDS';value=@('build_profile_tests')})
     Assert-WorkerInventory $bad $fixture $directory $psNames
     Check $true 'controller fixture ordered dependencies remain audited'
@@ -193,26 +215,93 @@ try {
 
     # Diamond Dogs Together (the Release receipt hashes and keeps DiamondDogsTogether.exe):
     # the core and UI fixtures are plain executables; the exe itself runs only --selftest.
-    Check (@(@('ddt_archive_tests','ddt_core_tests','launcher_ui_tests','ddt_launcher_selftest') | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits the launcher fixtures and its --selftest'
+    Check (@(@('ddt_archive_tests','ddt_core_tests_1','ddt_core_tests_5','launcher_ui_tests','ddt_launcher_selftest') | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits the launcher fixtures and its --selftest'
+    Check ($release.tests -cnotcontains 'ddt_core_tests' -and $release.tests -cnotcontains 'ddt_core_tests_6') 'the core fixture is audited as its five CTest shards (cmake/test_shards.cmake), not as one entry'
     Check ($release.tests -cnotcontains 'ddt_runtime_dat_integration' -and $release.tests -cnotcontains 'ddt_launcher_screens') 'the game-folder .dat build and the window screenshots stay outside the audited set'
-    $ddtNames=@('ddt_core_tests','ddt_launcher_selftest')
+    $ddtNames=@('ddt_launcher_selftest') + @(1..5 | ForEach-Object { 'ddt_core_tests_' + $_ })
     $ddtInventory=[pscustomobject]@{tests=@(
-        [pscustomobject]@{name='ddt_core_tests';command=@((Join-Path $directory 'ddt_core_tests.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=300})},
         [pscustomobject]@{name='ddt_launcher_selftest';command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--selftest');properties=@()}
-    )}
+    ) + @(1..5 | ForEach-Object { [pscustomobject]@{name=('ddt_core_tests_' + $_);command=@((Join-Path $directory 'ddt_core_tests.exe'),'--shard',"$_/5");properties=@([pscustomobject]@{name='TIMEOUT';value=300})} })}
     Assert-WorkerInventory $ddtInventory $fixture $directory $ddtNames
-    Check $true 'the launcher --selftest and the core fixture are accepted'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[1]='--screenshot-all'
-    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--write-session','host')
-    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
-    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    Check $true 'the launcher --selftest and the five core fixture shards are accepted'
+    # Shards (cmake/test_shards.cmake): exactly the base fixture's command plus its own --shard K/N.
+    Check ($null -eq (Get-WorkerShard 'ddt_core_tests_6') -and $null -eq (Get-WorkerShard 'ddt_core_tests_0') -and $null -eq (Get-WorkerShard 'ddt_core_tests') -and
+        (Get-WorkerShard 'ddt_core_tests_3').base -ceq 'ddt_core_tests' -and (Get-WorkerShard 'ddt_core_tests_3').count -eq 5) 'shard names map to their base fixture and count'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[2]='2/5'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[2]='1/4'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'ddt_core_tests.exe'))
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited shard arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command=@((Join-Path $directory 'ddt_core_tests.exe'),'--local-watch-process','x','--shard','1/5')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unexpected fixture arguments'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[1].command[0]=Join-Path $directory 'ddt_launcher.exe'
     Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests=@($bad.tests|Select-Object -First 5)
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Required audited test is missing: ddt_core_tests_5'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[1]='--screenshot-all'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command=@((Join-Path $directory 'DiamondDogsTogether.exe'),'--write-session','host')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'only its --selftest'
+    $bad=$ddtInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json;$bad.tests[0].command[0]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $ddtNames} 'Unaudited fixture executable'
+
+    # 0.14.4 review (package-release-receipt-omits-new-shipped-tests): the Release receipt audits the fixture of every
+    # module that ships in dinput8.dll or DiamondDogsTogether.exe (and the Lua it carries), and refuses a registered
+    # test it neither runs nor excludes by name, so a new fixture is never silently left out of the receipt.
+    $shipped=@('dog_guard_tests','partner_act_log_tests','partner_ammo_leak_tests','partner_dm_overlay_tests','partner_ride_seat_tests',
+        'world_outcome_attclass_lua_check','world_companion_lua_check','world_buddy_companion_lua_check','world_companion_guard_lua_check',
+        'world_relief_lua_check','world_relief_sync_lua_check','launcher_icon_tests','ddt_local_watch_process')
+    Check (@($shipped | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits every shipped module''s fixture (dog guard, companion/relief/outcome Lua, act log, ammo leak, overlay, ride seat, launcher icon, local-watch helper)'
+    foreach ($left in @('ddt_runtime_dat_integration','ddt_launcher_screens','launcher_assets_current')) {
+        Check ($release.tests -cnotcontains $left -and $release.excluded -ccontains $left) "excluded by name: $left"
+    }
+    # Round 2: the preflight of every hidden game run (Normal/Research, Invoke-WorkerScenario) builds no launcher for a
+    # player, so it leaves out the launcher's real-process helper test (8-10 s, timing-sensitive) and its icon check;
+    # only the Release receipt (the packaged build) runs them. The sub-second loader and Lua fixtures run everywhere.
+    $launcherOnly=@('launcher_icon_tests','ddt_local_watch_process')
+    foreach ($plan in @($normal,$background,$research)) {
+        Check (@($launcherOnly | Where-Object { $plan.tests -ccontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight skips the launcher's helper-process and icon checks"
+        Check (@($shipped | Where-Object { $launcherOnly -cnotcontains $_ -and $plan.tests -cnotcontains $_ }).Count -eq 0) "a $($plan.profile_key) preflight runs the shipped loader and Lua fixtures"
+    }
+    Check ($release.tests.Count -eq $normal.tests.Count + $launcherOnly.Count -and @($normal.tests | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'the Release receipt runs the preflight list plus the two launcher checks'
+    $shipNames=@('ddt_local_watch_process','launcher_icon_tests','partner_dm_overlay_tests')
+    $shipInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='ddt_local_watch_process';command=@((Join-Path $directory 'ddt_core_tests.exe'),'--local-watch-process',(Join-Path $directory 'DiamondDogsTogether.exe'));properties=@([pscustomobject]@{name='TIMEOUT';value=180})},
+        [pscustomobject]@{name='launcher_icon_tests';command=@((Join-Path $directory 'launcher_icon_tests.exe'),(Join-Path $fixture 'native\launcher\resources\ddt_launcher.ico'),(Join-Path $fixture 'native\launcher\resources\ddt_logo.png'),(Join-Path $fixture 'docs\readme\logo.png'),(Join-Path $directory 'DiamondDogsTogether.exe'));properties=@()},
+        [pscustomobject]@{name='partner_dm_overlay_tests';command=@((Join-Path $directory 'partner_dm_overlay_tests.exe'),(Join-Path $fixture 'lua\coop\partner_sync.lua'));properties=@()}
+    )}
+    function Copy-ShipInventory { return ($shipInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json) }
+    Assert-WorkerInventory $shipInventory $fixture $directory $shipNames
+    Check $true 'the local-watch helper, icon and overlay fixtures are accepted with their exact arguments'
+    $bad=Copy-ShipInventory;$bad.tests[0].command[1]='--write-session'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[0].command[2]=Join-Path $fixture 'DiamondDogsTogether.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[0].command=@($bad.tests[0].command[0..1])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'local-watch helper fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command[4]=Join-Path $fixture 'other.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command[2]=Join-Path $fixture 'other.png'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[1].command+=@('--extra')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'icon fixture'
+    $bad=Copy-ShipInventory;$bad.tests[2].command[1]=Join-Path $fixture 'lua\coop\other.lua'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'overlay fixture'
+    $bad=Copy-ShipInventory;$bad.tests[2].command=@($bad.tests[2].command[0])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $shipNames} 'overlay fixture'
+    $coverage=[pscustomobject]@{tests=@(@($release.tests)+@($release.excluded) | ForEach-Object { [pscustomobject]@{name=$_;command=@('x.exe');properties=@()} })}
+    Assert-WorkerCoverage $coverage $release
+    Check $true 'a Release inventory of exactly the audited and the excluded tests is accepted'
+    $coverage.tests += [pscustomobject]@{name='new_module_tests';command=@('x.exe');properties=@()}
+    Refuses {Assert-WorkerCoverage $coverage $release} 'neither audits nor excludes: new_module_tests'
+    Assert-WorkerCoverage $coverage $normal
+    Check $true 'only the Release receipt (the packaged build) refuses an unclassified test'
 
     # Local session fixtures additionally require the one parser in this exact
     # owned build directory. No fixture can introduce runtime flags or a foreign tool.
     Check ($release.tests -ccontains 'local_coop_windows_tests') 'release inventory admits the inert window geometry fixture'
-    Check ($release.tests -ccontains 'local_coop_session_tests') 'release inventory admits the inert activation journal fixture'
+    Check ($release.tests -ccontains 'local_coop_session_tests_1' -and $release.tests -ccontains 'local_coop_session_tests_2') 'release inventory admits the inert activation journal fixture (as its two CTest shards)'
     $localNames=@('local_coop_windows_tests','local_coop_session_tests')
     $localInventory=[pscustomobject]@{tests=@(
         [pscustomobject]@{name='local_coop_windows_tests';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_windows_tests.ps1'));properties=@()},
@@ -369,12 +458,145 @@ if($LASTEXITCODE -ne 0) { throw 'nested native exit was not preserved' }
     Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $commandContext)
     & $child
     Check ($commandContext.receipt.commands.Count -eq 7 -and $commandContext.receipt.commands[-2].tag -ceq 'configure-bootstrap' -and $commandContext.receipt.commands[-1].tag -ceq 'build-loader-bootstrap') 'nested calls retain the owner receipt and both command identities'
+    # The bootstrap is a configure only (tools/build.ps1 -ConfigureOnly): a loader build there compiled every object twice
+    # per preflight (all OFF, then the profile's flags) although nothing had changed.
+    $bootstrap=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.CommandElements[0].Extent.Text -clike '*build.ps1*'},$true))
+    $bootstrapParameters=@($bootstrap|ForEach-Object{$_.CommandElements|Where-Object{$_ -is [Management.Automation.Language.CommandParameterAst]}|ForEach-Object{$_.ParameterName}})
+    Check ($bootstrap.Count -eq 1 -and $bootstrapParameters -ccontains 'ConfigureOnly' -and $bootstrapParameters -cnotcontains 'BuildOnly' -and $bootstrapParameters -ccontains 'DisableLocalExperiments') 'the worker checks bootstrap configures only (no OFF loader build before the profile build)'
     Check ([MgsCoopWorkerProcessFixture]::LastInfo.WorkingDirectory -ceq $fixture -and [MgsCoopWorkerProcessFixture]::LastInfo.FileName -ceq 'fixture-only.exe') 'nested lexical capture keeps owner executable and working directory'
     Check ([MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList.Count -eq 4 -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[1] -ceq 'literal cache space' -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[3] -ceq '3') 'nested build keeps literal paths and captured bounded jobs'
     Check (([IO.File]::ReadAllText($commandContext.receipt_path)|ConvertFrom-Json).commands.Count -eq 7 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 7) 'nested completion writes owner JSON and disposes both fake processes'
     [MgsCoopWorkerProcessFixture]::Mode='nonzero'
     Refuses { & $child } 'exit 17'
     Check ($commandContext.receipt.commands.Count -eq 8 -and $commandContext.receipt.commands[-1].exit_code -eq 17 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 8) 'nested failure retains native exit and stops before second command'
+    # Preflight reuse (Invoke-WorkerChecks -Reuse, which Invoke-WorkerScenario asks for): only the profile's newest receipt,
+    # only when it passed for the identical source snapshot, flags, tests and built programs; never a Release receipt.
+    $reuseRoot = Join-Path $fixture 'reuse'
+    $reuseSource = Join-Path $reuseRoot 'source'
+    $null = New-Item -ItemType Directory -Path (Join-Path $reuseSource 'native'), (Join-Path $reuseSource 'third_party\minhook') -Force
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'CMakeLists.txt'), '# inert reuse fixture')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'third_party\minhook\CMakeLists.txt'), '# inert dependency')
+    # What audited tests read beyond the compiled snapshot: a JSON fixture (steam_transport_tests' link-reasons.json) and a
+    # worker scenario (worker_session_tests pins each one).
+    $null = New-Item -ItemType Directory -Path (Join-Path $reuseSource 'tests\fixtures'), (Join-Path $reuseSource 'tools\worker\scenarios') -Force
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'tests\fixtures\link-reasons.json'), '{"reasons":[]}')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'tools\worker\scenarios\fixture.txt'), 'wait 1')
+    $reuseBuild = Join-Path $reuseRoot 'build'
+    $null = New-Item -ItemType Directory -Path $reuseBuild
+    Check ($null -eq (Get-WorkerBuildArtifacts $reuseBuild)) 'no loader and launcher: nothing to reuse'
+    foreach ($program in 'dinput8.dll', 'DiamondDogsTogether.exe', 'worker_supervisor.exe', 'worker_probe.exe') { [IO.File]::WriteAllText((Join-Path $reuseBuild $program), "inert $program") }
+    $reuseArtifacts = Get-WorkerBuildArtifacts $reuseBuild
+    Check ((@($reuseArtifacts.Keys) -join ',') -ceq 'loader_sha256,launcher_sha256,supervisor_sha256,probe_sha256') 'the loader, launcher and worker programs are vouched for'
+    $reusePlan = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST') $true ''
+    $reuseSnapshot = Get-WorkerSourceHashes $reuseSource
+    $reuseInputs = Get-WorkerReuseInputs $reuseSource
+    Check ($reuseInputs.files -eq 4 -and [string]$reuseInputs.sha256 -cmatch '^[0-9A-F]{64}$') 'the test inputs: every file under cmake, native, lua, tests and tools plus CMakeLists.txt (not third_party)'
+    function New-ReuseReceipt([string]$Status = 'passed', $Plan = $reusePlan, $Snapshot = $reuseSnapshot, $Artifacts = $reuseArtifacts, $Inputs = $reuseInputs) {
+        $receipt = [ordered]@{ schema = 1; run_id = 'fixture'; plan = $Plan; status = $Status; commands = @(); source_hashes = $Snapshot.hashes;
+            source_dependencies = $Snapshot.dependencies; reuse_inputs = $Inputs; artifacts = $Artifacts }
+        return ($receipt | ConvertTo-Json -Depth 16) | ConvertFrom-Json -AsHashtable
+    }
+    Check ($null -eq (Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs)) 'an unchanged passed Research receipt is reusable'
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'failed') $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'not_passed') 'a failed receipt is never reused'
+    $releasePlan = Get-WorkerPlan $fixture 'Release' 'Release' @() $false ''
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'passed' $releasePlan) $releasePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'release') 'a Release receipt is never reused'
+    $otherPlan = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $true ''
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'passed' $otherPlan) $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -clike 'plan_*') 'another experiment set is never reused'
+    $flagged = New-ReuseReceipt; $flagged.plan.flags['MGS_LOCAL_ACTION_EVENTS'] = 'ON'
+    Check ((Get-WorkerReuseRefusal $flagged $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'plan_flags') 'a changed flag is never reused'
+    $fewer = New-ReuseReceipt; $fewer.plan.tests = @($fewer.plan.tests | Select-Object -Skip 1)
+    Check ((Get-WorkerReuseRefusal $fewer $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'plan_tests') 'a changed audited test list is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// changed after the checks')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts $reuseInputs) -ceq 'source') 'a changed source file is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\b.hpp'), '// added after the checks')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts $reuseInputs) -ceq 'source') 'an added source file is never reused'
+    Remove-Item -LiteralPath (Join-Path $reuseSource 'native\b.hpp')
+    Remove-Item -LiteralPath (Join-Path $reuseSource 'native\a.cpp')
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts $reuseInputs) -ceq 'source') 'a removed source file is never reused'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'native\a.cpp'), '// checked')
+    Check ($null -eq (Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts $reuseInputs)) 'the same bytes again are reusable'
+    foreach ($program in @(@('dinput8.dll', 'loader_sha256'), @('DiamondDogsTogether.exe', 'launcher_sha256'), @('worker_supervisor.exe', 'supervisor_sha256'), @('worker_probe.exe', 'probe_sha256'))) {
+        [IO.File]::WriteAllText((Join-Path $reuseBuild $program[0]), 'rebuilt')
+        Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $reuseSnapshot (Get-WorkerBuildArtifacts $reuseBuild) $reuseInputs) -ceq ('artifact_' + $program[1])) "a rebuilt $($program[0]) is never reused"
+        [IO.File]::WriteAllText((Join-Path $reuseBuild $program[0]), "inert $($program[0])")
+    }
+    $older = New-ReuseReceipt; $older.artifacts.Remove('supervisor_sha256')
+    Check ((Get-WorkerReuseRefusal $older $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'artifact_supervisor_sha256') 'a receipt that never vouched for the worker programs is not reused'
+    # The rest of the plan (test-speed review): another excluded list, build directory or configuration is never reused.
+    $excludedOther = New-ReuseReceipt; $excludedOther.plan.excluded = @($excludedOther.plan.excluded | Select-Object -Skip 1)
+    Check ((Get-WorkerReuseRefusal $excludedOther $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'plan_excluded') 'a changed excluded test list is never reused'
+    $elsewhere = New-ReuseReceipt; $elsewhere.plan.build_directory = [string]$elsewhere.plan.build_directory + '-other'
+    Check ((Get-WorkerReuseRefusal $elsewhere $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'plan_directory') 'another build directory is never reused'
+    $debugPlan = Get-WorkerPlan $fixture 'Research' 'Debug' @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST') $true ''
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt 'passed' $debugPlan) $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'plan_configuration') 'another configuration is never reused'
+    # Test inputs outside the compiled snapshot (test-speed review): audited tests read tests/fixtures/*.json and the worker
+    # scenarios, which the snapshot (source extensions only) leaves out, so the receipt carries a digest of them all.
+    $noInputs = New-ReuseReceipt; $noInputs.Remove('reuse_inputs')
+    Check ((Get-WorkerReuseRefusal $noInputs $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq 'reuse_inputs') 'a receipt without the test-input digest (an older runner) is never reused'
+    Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $reuseSnapshot $reuseArtifacts $null) -ceq 'reuse_inputs') 'unreadable test inputs are never reused'
+    foreach ($input in @(@('tests\fixtures\link-reasons.json', '{"reasons":["added"]}', 'a changed JSON test fixture'),
+            @('tools\worker\scenarios\fixture.txt', 'wait 2', 'a changed worker scenario'),
+            @('tools\new_check.py', 'print(1)', 'an added generator script'))) {
+        $inputPath = Join-Path $reuseSource $input[0]
+        $saved = if (Test-Path -LiteralPath $inputPath) { [IO.File]::ReadAllText($inputPath) } else { $null }
+        [IO.File]::WriteAllText($inputPath, $input[1])
+        $sameSource = Get-WorkerSourceHashes $reuseSource
+        Check ($null -eq (& { try { Assert-WorkerSourceUnchanged $reuseSnapshot $sameSource } catch { 'changed' } })) "$($input[2]): the source snapshot alone does not see it"
+        Check ((Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan $sameSource $reuseArtifacts (Get-WorkerReuseInputs $reuseSource)) -ceq 'reuse_inputs') "$($input[2]) is never reused"
+        if ($null -eq $saved) { Remove-Item -LiteralPath $inputPath } else { [IO.File]::WriteAllText($inputPath, $saved) }
+    }
+    $null = New-Item -ItemType Directory -Path (Join-Path $reuseSource 'tools\__pycache__')
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'tools\__pycache__\gen.cpython-312.pyc'), 'cache')
+    Check ((Get-WorkerReuseInputs $reuseSource).sha256 -ceq $reuseInputs.sha256) 'a Python cache is not a test input'
+    Check ($null -eq (Get-WorkerReuseRefusal (New-ReuseReceipt) $reusePlan (Get-WorkerSourceHashes $reuseSource) $reuseArtifacts (Get-WorkerReuseInputs $reuseSource))) 'the same inputs again are reusable'
+    # Find: the newest receipt of the profile decides; other profiles' receipts are skipped.
+    $reuseRuns = Join-Path $reuseRoot 'worker-runs'
+    function Write-ReuseRun([string]$Name, $Receipt) {
+        $null = New-Item -ItemType Directory -Path (Join-Path $reuseRuns $Name) -Force
+        # A plain write (no temporary file moved over the target, which a scanner can briefly hold).
+        [IO.File]::WriteAllText((Join-Path $reuseRuns "$Name\receipt.json"), ($Receipt | ConvertTo-Json -Depth 16))
+        return (Join-Path $reuseRuns "$Name\receipt.json")
+    }
+    Check ($null -eq (Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs)) 'no run folder: no reuse'
+    $passedPath = Write-ReuseRun '20261030-100000-a' (New-ReuseReceipt)
+    $null = Write-ReuseRun '20261030-110000-b' (New-ReuseReceipt 'passed' $otherPlan)
+    Check ((Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs) -ceq $passedPath) 'the newest receipt of this profile is reused; another profile is skipped'
+    $null = Write-ReuseRun '20261030-120000-c' (New-ReuseReceipt 'failed')
+    Check ($null -eq (Find-WorkerReusableReceipt $reuseRuns $reusePlan $reuseSnapshot $reuseArtifacts $reuseInputs)) 'a newer failed run of the profile is never covered by an older pass'
+    # The -Reuse entry point (Get-WorkerReusableReceipt, under the coordinator lock): the cache must still carry the plan's
+    # options and belong to the profile (a reconfigure that was not rebuilt changes the next build), then the newest
+    # receipt decides.
+    $entryPlan = Get-WorkerPlan $reuseSource 'Research' 'Release' @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST') $true ''
+    $entryRuns = Join-Path $reuseSource 'build\worker-runs'
+    Check ($null -eq (Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns)) 'no cache: no reuse'
+    $null = New-Item -ItemType Directory -Path $entryPlan.build_directory -Force
+    foreach ($program in 'dinput8.dll', 'DiamondDogsTogether.exe', 'worker_supervisor.exe', 'worker_probe.exe') { [IO.File]::WriteAllText((Join-Path $entryPlan.build_directory $program), "inert $program") }
+    $entryCache = Join-Path $entryPlan.build_directory 'CMakeCache.txt'
+    $entryCacheText = (@($entryPlan.flags.Keys | ForEach-Object { $_ + ':BOOL=' + $entryPlan.flags[$_] }) -join "`r`n") + "`r`n"
+    [IO.File]::WriteAllText($entryCache, $entryCacheText)
+    $entryOwner = Join-Path $entryPlan.build_directory '.worker-check-profile.json'
+    $entryOwnerText = [ordered]@{ schema = 1; project = $entryPlan.project; profile_key = $entryPlan.profile_key; configuration = $entryPlan.configuration } | ConvertTo-Json
+    [IO.File]::WriteAllText($entryOwner, $entryOwnerText)
+    $null = New-Item -ItemType Directory -Path (Join-Path $entryRuns '20261030-130000-e') -Force
+    $entryPath = Join-Path $entryRuns '20261030-130000-e\receipt.json'
+    [IO.File]::WriteAllText($entryPath, ((New-ReuseReceipt 'passed' $entryPlan (Get-WorkerSourceHashes $reuseSource) (Get-WorkerBuildArtifacts $entryPlan.build_directory) (Get-WorkerReuseInputs $reuseSource)) | ConvertTo-Json -Depth 16))
+    Check ((Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns) -ceq $entryPath) 'an unchanged cache, owner, source, test inputs and programs reuse the receipt'
+    [IO.File]::WriteAllText($entryCache, $entryCacheText.Replace('MGS_LOCAL_ACTION_EVENTS:BOOL=OFF', 'MGS_LOCAL_ACTION_EVENTS:BOOL=ON'))
+    Check ($null -eq (Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns)) 'a cache reconfigured with another option is never reused'
+    [IO.File]::WriteAllText($entryCache, $entryCacheText)
+    [IO.File]::WriteAllText($entryOwner, $entryOwnerText.Replace($entryPlan.profile_key, 'normal-worker-on'))
+    Check ($null -eq (Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns)) 'a cache owned by another profile is never reused'
+    [IO.File]::WriteAllText($entryOwner, $entryOwnerText)
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'tests\fixtures\link-reasons.json'), '{"reasons":["late"]}')
+    Check ($null -eq (Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns)) 'the entry point sees a changed test fixture'
+    [IO.File]::WriteAllText((Join-Path $reuseSource 'tests\fixtures\link-reasons.json'), '{"reasons":[]}')
+    Check ((Get-WorkerReusableReceipt $entryPlan $reuseSource $entryRuns) -ceq $entryPath) 'restored: reusable again'
+    $entryRelease = Get-WorkerPlan $reuseSource 'Release' 'Release' @() $false ''
+    Check ($null -eq (Get-WorkerReusableReceipt $entryRelease $reuseSource $entryRuns)) 'the entry point never reuses for Release'
+    # The runner itself: -Reuse never applies to the Release profile (refused before anything is planned or built).
+    Refuses { & $scriptPath -Profile Release -Reuse -PlanOnly } 'never reused'
     Write-Output "Worker policy checks passed: $checks. No process launch, build, game, installation or system input ran."
 } finally {
     foreach($link in $ownedLinks) {

@@ -1,0 +1,172 @@
+# M7 seated shots, play rehearsal at the SHIPPED play defaults (docs/vehicles-companions-design.md 8.30): no labsetting
+# line. On as shipped: the back seats, partner_pass_camera=aim (the shot guard), partner_ride_front and _race;
+# partner_seat_shot stays off in play (S1 showed no effect in the lab runs 0af9baa3 / a9d0af0f), so the shooter's copy
+# logs partner_seat_shot=refused; reason=key_off once per boarding and moves nothing. africa-jeep (30020,
+# veh_lv_0000 = 25608). Play refuses the lab soldier warp: spawn_enemy here places the guard on the nearest route
+# (mode=route) and enemy sleep nearest keeps him; the shooter turns its camera to him once with enemy_aim_nearest 1.6
+# before its first aim. A kill needs the route spot inside the seat's aim range (the seated body faces across the jeep,
+# +-90 deg) and in the clear; the jeep's life is read before and after the shots.
+#   1. The host drives (stopped), the guest rides back seat 3: three single shots, then two while the host drives.
+#   2. The guest drives (after the host's grant), the host rides back seat 3: three single shots.
+# Expected (play, -WanSim bad): partner_seat_shot=configured; key=0; play=1 on both; the passenger's guard windows;
+#   a kill: the guest's world_lua=event=req and the host's commit actor=guest (part 1), the host's commit actor=host
+#   and the guest's apply (part 2), when the guard is in range; the stock get-offs.
+# NEVER (checked in the slices): step=error, viewer_changed, fault, board_uncertain, pass_camera; state=refused.
+# Frames (look at them): p-guard, p3-aim, p3-shot-N, p3-mv-N, p3-after (the guest), p3-drv-* (the host); h3-* the host as
+# the passenger, h3-drv-* the guest driving.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-shot-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'partner_seat_shot=configured; key=0; play=1' 30
+waitlog guest 'partner_seat_shot=configured; key=0; play=1' 30
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 2000
+host debug clear_enemies 100
+# The guest steps 10 m back from the jeep: with partner_ride_race on (shipped) a guest at the driver's door claims the
+# empty jeep and the host yields (lab run 3d452714).
+guest debug forward -10
+wait 2500
+# --- 1. The host drives, the guest rides seat 3 ------------------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+wait 3000
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+wait 2000
+host capture p-guard
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=
+host run vehicle_state_status 25608
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=3;' 10
+wait 1000
+both capture p3-seated
+guest run enemy_aim_nearest 1.6
+wait 600
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest capture p3-aim
+host capture p3-drv-aim
+guest press lmb 120
+wait 300
+guest capture p3-shot-1
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 300
+guest capture p3-shot-2
+host capture p3-drv-shot
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 300
+guest capture p3-shot-3
+guest release
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=256[0-9][0-9]; seat=3;' 5
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=guest;' 8
+wait 1500
+host hold w 1200 nowait
+guest hold rmb 1500 nowait
+wait 500
+guest press lmb 120
+guest capture p3-mv-1
+host capture p3-drv-mv
+wait 200
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 300
+guest capture p3-mv-2
+guest release
+host release
+wait 2000
+both capture p3-after
+host run vehicle_state_status 25608
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=off' 8
+host press e 150
+wait 3500
+# --- 2. The guest drives, the host rides seat 3 ------------------------------------------------------------------------
+# A fresh guard at the same spot (the host places it), then the host steps away; the guest claims the empty jeep and
+# waits for the host's grant (partner_ride_race).
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+wait 3000
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+wait 2000
+host capture h-guard
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -10
+wait 2500
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=256[0-9][0-9]; role=guest; set=1' 8
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=
+host debug goto_vehicle jeep right
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=256[0-9][0-9]; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=256[0-9][0-9]; seat=3; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=3;' 10
+wait 1000
+both capture h3-seated
+host run enemy_aim_nearest 1.6
+wait 600
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture h3-aim
+guest capture h3-drv-aim
+host press lmb 120
+wait 300
+host capture h3-shot-1
+host hold rmb 1500 nowait
+host press lmb 120
+wait 300
+host capture h3-shot-2
+guest capture h3-drv-shot
+host hold rmb 1500 nowait
+host press lmb 120
+wait 300
+host capture h3-shot-3
+host release
+waitlog host 'world_lua=event=commit; ent=[0-9]+; .*actor=host;' 8
+waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[45];' 8
+wait 1500
+both capture h3-after
+host press e 150
+wait 3500
+guest press e 150
+wait 3500
+both capture p-off
+state

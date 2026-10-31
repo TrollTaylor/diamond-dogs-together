@@ -1,0 +1,173 @@
+# The play rehearsal of the vehicle review fixes of 2026-10-29 (docs/vehicles-companions-design.md section 8.15) in
+# mode=play over -WanSim bad, Africa, africa-jeep seed, no lab lever (play refuses them), no vehicle key named: every
+# vehicle key at its play default (world_vehicle_crew on again since 3929a6c, world_vehicle_damage off).
+#   1. D11 before PAIRED in play: both reach their titles (40020, paired there); the host's title Continue
+#      (titlecontinue: Enter only while its title runs) is followed by the guest; only the guest's loading screen is
+#      resumed (waitmission guest ... only), so the guest is in game unpaired while the host waits on its tips screen.
+#      The arrival marks the mission co-op: guard lines for 30020 before PAIRED; the guest moves 70 m west of the
+#      armoured vehicle, away from the alerted Masa Village guards; its real iDroid path to LOADOUT and VEHICLES refused
+#      with both toasts (frames), the host's tips screen (frames); then the host's loading is resumed and the pair forms.
+#   2. D12 crew with the blast distance by type: the guest's real C4 on the soldier-crewed armoured vehicle 25623 from
+#      behind (the host's copy's driver set to ignore the players first), detonated from 26 m: the host holds the
+#      request (break_hold why=crew_near near=partner blast_mm=50000), the guest moves 70 m away, the host stands 60 m
+#      away: judged near, break_crew, the host's wreck, req_done; the explosion and the wreck on both screens.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/vehicle-review-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# History: c6db67b8 (build 3d2fc8b, world_vehicle_crew named): part 1 met every expectation up to LOADOUT (refused with
+#   its toast 25.5 s after the guest's arrival, PAIRED 54.9 s after it) but the VEHICLES refusal: the seed's Masa Village
+#   guards were in combat at the guest's arrival (night) and their hits closed its iDroid; part 2 met every expectation
+#   (the hold at 24.7 m, the wreck once the guest stood 70 m away, frames on both). Now no key is named, the guest moves
+#   away from Masa Village before its iDroid, and VEHICLES follows LOADOUT after 3.5 s (the toasts have separate limits).
+#   98d84a21 (build b4cd471, no key named): every behaviour met (both refusals before PAIRED, the crew at its default),
+#   but the VEHICLES toast, drawn in its frame, logged no line: the HUD's toast log writes one line per note code per
+#   10 s (coop_hud.hpp kToastLogGapMs) and both items use NOTE 13, so VEHICLES follows LOADOUT after 10.5 s again.
+# NEVER: step=error, viewer_changed, faults; an event=paired line for 30020 before the guest's refusals; break_safe or
+#        via=locator for 25623; a break_crew line before the guest's 70 m teleport; event=vehicle_damage step=on.
+labsetting partner_native_ride=seat
+labsetting nametag=1
+titlemenu both 240
+waitlog guest 'world=paired; epoch=[0-9]+; mission=40020' 120
+waitlog host 'world=paired; epoch=[0-9]+; mission=40020' 120
+wait 3000
+logmark both
+# 1. D11 before PAIRED.
+titlecontinue host 120
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40020; next=30020' 30
+waitmission guest 30020 300 only
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 30
+expectstate guest world_paired ^(False|false|0)$
+host capture d11p-host-waiting
+waitgameplay guest 150
+guest debug godmode 1
+expectstate guest world_paired ^(False|false|0)$
+guest run position
+guest capture d11p-guest-onfoot
+# Away from the alerted Masa Village guards (c6db67b8), 70 m west of the armoured vehicle (ground read in c0a385a5 and
+# c6db67b8); the arrival popups first (run d3f5ca56: a Tab during them opened the iDroid only after the last step).
+guest debug teleport -442.94 1.00 496.49 110
+wait 12000
+guest run position
+expectstate guest world_paired ^(False|false|0)$
+guest press tab
+wait 3000
+guest capture d11p-guest-idroid
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11p-guest-loadout
+guest press enter
+wait 500
+guest capture d11p-guest-loadout-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+wait 10500
+guest press s
+wait 800
+guest capture d11p-guest-vehicles
+guest press enter
+wait 500
+guest capture d11p-guest-vehicles-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=4;' 5
+expectstate guest world_paired ^(False|false|0)$
+host capture d11p-host-still-waiting
+wait 1500
+guest press tab
+wait 2500
+waitmission host 30020 300
+waitlog guest 'event=paired; epoch=[0-9]+; eff=3;' 60
+waitlog host 'event=paired; epoch=[0-9]+; eff=3;' 60
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitgameplay host 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+wait 3000
+both capture d11p-paired
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 60
+# 2. D12 crew: the guest's real C4 on the crewed armoured vehicle 25623 (-374.85, -2.76, 489.18).
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+host debug teleport -386.85 0.50 489.18 90
+wait 3000
+host run enemy info nearest
+host run enemy ignore nearest
+wait 1500
+host debug teleport -434.85 4.00 489.18 90
+guest debug teleport -379.85 0.50 489.18 90
+wait 3000
+guest run position
+guest run vehicle_state_status 25623
+guest debug slot support 2
+wait 2000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest hold rmb 1500 nowait
+wait 300
+guest hold lmb 300 nowait
+wait 1500
+guest release
+wait 1000
+guest debug teleport -399.85 0.50 497.18 110
+wait 3000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;.*busy=occupied
+guest run vehicle_state_status 25623
+both capture crew-placed
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest press e
+guest release
+both burst crew-blast 5 600
+waitlog guest 'event=vehicle_rules; step=break_seen; id=25623' 15
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=25623; cause=4; sent=1' 15
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=25623; cause=4' 15
+waitlog host 'event=vehicle_rules; step=break_hold; id=25623; rid=[0-9]+; why=crew_near; near=partner; d_mm=[0-9]+; crew=[1-4]; blast_mm=50000' 15
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=1;
+both capture crew-held
+wait 2000
+logmark both
+guest debug teleport -444.85 4.00 497.18 110
+both burst crew-wreck 6 500
+waitlog host 'event=vehicle_rules; step=break_judge; id=25623; rid=[0-9]+; ok=1; why=near;' 15
+waitlog host 'event=vehicle_rules; step=break_crew; id=25623; rid=[0-9]+; crew=[1-4]' 15
+waitlog host 'event=vehicle_gone; step=applied; id=25623; via=wreck; src=req; ok=1' 15
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=25623; result=gone' 15
+wait 4000
+both burst crew-after 4 1000
+host run position
+guest run position
+host run vehicle_state_status 25623
+host expect vstate;id=25623;alive=0;
+guest run vehicle_state_status 25623
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run enemy_list 60
+guest run enemy_list 60
+state

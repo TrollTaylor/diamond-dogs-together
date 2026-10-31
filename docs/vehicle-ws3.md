@@ -94,6 +94,13 @@ partner_ride_census; who=remote; id=25600; ref=ok; type=0x14; cat=1; var=4; real
   invalid ride packet (size/version) and keeps its stored v1/v2 state (it logs
   `partner_ride=refused; reason=packet_or_session` once). `RemoteCategory` returns a category only
   for a live addendum describing exactly the stored ride (revision, vehicle, seat).
+- **Ride wire v4 seat addendum** (M6 review R3, docs/vehicles-companions-design.md 8.21; 12 bytes, the
+  same magic, version 4): flags (bit 0 Front, bit 1 Cab: this copy draws that seat-1 passenger; bit 2
+  OneTaken: `rider[1]` of this copy's driven vehicle is not empty), the v1/v2 revision it describes,
+  the driven vehicle id, sender ms. Sent next to the v1/v2 packet only with `partner_ride_front` or
+  `partner_ride_cab` in passenger mode; the peer's board offers seat 1 only for a live v4 describing
+  that ride (`SeatFlagsFor`). The v3 decoder refuses unknown feature bits, so v4 is a separate packet:
+  0.14.4 and v3 builds drop it like any unknown ride version (the one refused line above).
 - **Offer** (`SeatByIdGate`, at the seat start and again at the write): both hooks, the ride still
   this (vehicle, seat), this copy has a vehicle with that id (`absent`: the read refused `live`, the
   index's pool bit clear, or `index`, past the pool; read first, so an absent id is `absent` with or

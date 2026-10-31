@@ -1,0 +1,170 @@
+# m6m7h / m6m7i: part C of m6m7e-seat-fixes-play-b.txt on its own (design 8.53), the D-Dog arriving after the partner and
+# teardown while the partner is seated, at the africa jeep (30020, veh_lv_0000 = 25608; the driver's own D-Dog rides in
+# seat 1 on the driver's copy), SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both.
+#   C1. The host waits at a known ground spot 23 m from the jeep (-633.5 3.0 871.8) so its D-Dog leaves the jeep,
+#       the guest waits 10 m back (before 8.55 a guest standing at an empty jeep claimed its driver's seat and the
+#       host's copy denied its own E, d462df5d; since 8.55 only an E press claims, the spot is kept for comparable runs). The host teleports back to the seed spot beside the driver's door
+#       (the readback's error_m is the arrival check, by distance, not by a fixed delay) and presses E; its own ride
+#       line (ext_tx seat=0) and 'host require vehicle;id=25608' (a hard stop) must come before the guest's E; the
+#       guest warps to the right door and presses E 1.2 s later; it must get seat 1 (a lost race fails the run, it never passes as seat 3). Then the dog's arrival is
+#       filmed on both copies (where it goes: seat 1 over the partner, another seat, or it stays out), with
+#       vehicle_seats / buddy_status on the host.
+#   C2. Teardown by a checkpoint reload while the guest still sits in seat 1 (play refuses worldtrigger, so the host's
+#       own pause menu: Escape, CHECKPOINT (the first item), the confirm "Restart from checkpoint?" with YES left and
+#       NO selected, so 'a' then Enter (frames d462df5d host-c2-dialog / -dialog-yes). Both copies reload 30020 (the
+#       guest by the kind-4 follow); the seat patch is reverted by the MISSION_TERMINATING stop (reason=stop: in
+#       d462df5d the mission_end revert found nothing left). After the load each copy waits at "Space Resume Game"
+#       (raw clock held), so both press Space. Frames after the reload on both copies (no stuck seat camera).
+#   C3. The guest boards again (any seat) and the run ends seated: the worker's close with a live seat patch
+#       (1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread; with ad609fe each copy
+#       that draws a seated partner logs partner_ride_seat_patch=reverted; reason=shutdown just before that line).
+# m6m7h run d462df5d (first version): 'debug forward -40' from the seed spot keeps the seed's height (0.75 m) and put
+#   the host under the ground 40 m back; it fell and went down (WOUNDED, frame host-c-far), so its E could not board
+#   and the guest's E took the driver's seat; 1d9fd748's part C most likely failed the same way. waitlog only warns.
+# Review m6m7h (integrate, not run): the guest leaves the jeep right after each boot (spawn claim race), no
+#   'guest debug forward' (it keeps the old height, as forward -40 did for the host), godmode again after the
+#   reload, and C3 sends the guest to the door only after the host drives.
+# NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
+#   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7h-seat-partc-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+# The guest leaves the jeep at once: both seeds start beside it, and before 8.55 (E press only) a guest at an empty jeep claimed its driver's
+# seat about every 1.2 s (d462df5d: claim at t 341497253, the host's copy granted and yielded 10.7 s before
+# the fall; 23032c72). A known ground spot (the host stood there in 23032c72), 4 m from the host's C1 spot.
+guest debug teleport -633.5 3.0 867.8 -117
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1;' 30
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1;' 30
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+host run vehicle_seats
+host run buddy_status
+both capture c-start
+# --- C1. The D-Dog after the partner ----------------------------------------------------------------------------------
+# m6m7i (design 8.56): in d7d50259 the dog followed the host to the spot 23 m away and boarded seat 1 together with the
+# host (riders=0,9728 at the first vehicle_seats after the host's E), so the guest got seat 3. The host now goes to the
+# 30020 fail-safe boot spot (docs/test-boot.md, ground known, ~335 m from the jeep) for 15 s so its dog runs off after
+# it, then warps back and drives at once; the guest boards right after; the dog arrives tens of seconds later.
+host debug teleport -510.73 5.09 1183.02 0
+wait 15000
+host run buddy_status
+host capture c-far
+guest capture c-guest-back
+logmark both
+host debug teleport -656.01 1.20 877.73 62
+host expect ^warp_position_readback;error_m=0\.0
+wait 1500
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host require vehicle;id=25608;
+guest debug goto_vehicle jeep right
+wait 1200
+guest press e 150
+guest burst c-geton 3 400
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 8
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog host 'partner_ride_seat_patch=applied; seat=1;' 5
+waitlog host 'partner_ride_seat1_anchor=configured; on=1' 5
+host run vehicle_seats
+host run buddy_status
+both capture c-seated
+wait 3000
+host run vehicle_seats
+both capture c-dog-1
+wait 3500
+host run vehicle_seats
+host run buddy_status
+both capture c-dog-2
+wait 4000
+host run vehicle_seats
+host run buddy_status
+guest run vehicle_seats
+both capture c-dog-3
+wait 8000
+host run vehicle_seats
+host run buddy_status
+both capture c-dog-4
+wait 10000
+host run vehicle_seats
+host run buddy_status
+guest run vehicle_seats
+both capture c-dog-5
+# --- C2. Checkpoint reload while the guest sits in seat 1 -------------------------------------------------------------
+logmark both
+host press escape
+wait 2500
+host capture c2-pause
+host press enter
+wait 1800
+both capture c2-dialog
+host press a
+wait 600
+host capture c2-dialog-yes
+host press enter
+waitlog host 'partner_ride_seat_patch=reverted; reason=stop' 20
+waitlog host 'mission_boundary=termination_returned; accepted=1' 30
+waitlog guest 'world_lua=event=follow; step=replay; id=[0-9]+; src=30020; next=30020; kind=4' 30
+both capture c2-loading
+waitlog host 'mission_boundary=runtime_enter; accepted=1' 120
+waitlog guest 'mission_boundary=runtime_enter; accepted=1' 120
+logmark both
+waitlog host 'event=raw_clock; step=held' 60
+waitlog guest 'event=raw_clock; step=held' 60
+wait 3000
+both capture c2-resume
+host press space
+guest press space
+waitlog host 'event=raw_clock; step=resumed' 30
+waitlog guest 'event=raw_clock; step=resumed' 30
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+# The guest leaves the jeep at once: both seeds start beside it, and before 8.55 (E press only) a guest at an empty jeep claimed its driver's
+# seat about every 1.2 s (d462df5d: claim at t 341497253, the host's copy granted and yielded 10.7 s before
+# the fall; 23032c72). A known ground spot (the host stood there in 23032c72), 4 m from the host's C1 spot.
+guest debug teleport -633.5 3.0 867.8 -117
+wait 8000
+host run vehicle_seats
+guest run vehicle_seats
+host run buddy_status
+both capture c2-reloaded
+host debug forward 2
+guest debug forward 2
+wait 2500
+both capture c2-reloaded-2
+# --- C3. Seated again, then the worker's close ------------------------------------------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+logmark both
+host debug goto_vehicle jeep
+wait 1500
+host debug goto_vehicle jeep
+waitlog host 'world_lua=goto_vehicle; name=veh_lv_0000; id=25608; dist=[0-3];' 5
+wait 2000
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host require vehicle;id=25608;
+guest debug goto_vehicle jeep right
+wait 1200
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 8
+waitlog host 'partner_ride_seat_patch=applied; seat=[13];' 10
+wait 2000
+host run vehicle_seats
+both capture c3-seated-end
+state

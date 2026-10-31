@@ -48,13 +48,76 @@ struct Stats {
     std::uint32_t writes;   // handle writes (set)
     std::uint32_t clears;   // our handle cleared
     std::uint32_t faults;   // SEH-caught writes
+    std::uint32_t angles;   // shot-guard angle writes (design 8.27)
+    std::uint32_t turns;    // get-off camera rotation requests made (design 8.38)
+    std::uint32_t fpv;      // seat first-person toggle writes (design 8.46)
 };
 void ReadStats(Stats& out) noexcept;
+
+// Design 8.27: the lab trace's read of the local camera (partner_pass_camera_policy View: CAM+0xE0, +0x90,
+// +0x268..0x274, +0x204, +0xD38). Reads only, under SEH; false when the camera is not the PlayerCamera.
+bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept;
+// The current mode's module vtable rva (CAM+0xBD0[CAM+0x340]; 0 when unread): the trace's mvt.
+std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
+
+// Design 8.27 / 8.28, the shot guard (modes aim and drop): writes the local camera's look pitch to CAM+0x270 and its
+// copy +0x268 (the stock look update's order; the yaw is never written). Only to the PlayerCamera (vtable checked), under
+// SEH; false on a fault (counted in Stats::faults: the driver latches the mission) or an unread camera. Counted in
+// Stats::angles.
+bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept;
+// The shot guard's rotation write: CAM+0x90..0x9C (x, y, z, w). Same checks and counters as WritePitch.
+bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept;
+
+// Design 8.38, the camera after a get-off: the stock rotation request of PlayerCamera vt+0xE0 0x111A920 (its fields and
+// gate; no game function is called): nullptr when made, else camera / busy / locked / fault. Counted in Stats::turns.
+const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept;
+
+// Design 8.46 (lab.ini partner_seat_fpv; docs/native-puppet.md "Seat first person"): the local camera's subjective module
+// (vtable 0x23D1F00 among the six; impl = module - 0x20). Reads only, under SEH; false when the camera is not the
+// PlayerCamera or no module has that vtable.
+struct Subj {
+    bool ok = false;
+    std::int32_t index = -1;      // among the six modules
+    std::uint32_t mask = 0;       // impl+0x48: the pollers answering this update
+    std::int32_t first = -1;      // impl+0x4C (10: none)
+    std::uintptr_t first_fn = 0;  // rva of that poller's vt[0] (0: none / unread)
+    std::uint32_t toggles = 0;    // impl+0x60: the per-slot first-person toggles (the F tap's)
+};
+bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept;
+// The driver's per-tick read (the observer fills it): the module, the local gun's hand slot rec+0x3DA (the poller's slot)
+// and the local flag record's words 0 (flag 0x19, the gun hold gate) and 3 (flags 0x6C first person on, 0x6E forced,
+// 0x6F the aim gate's twin; the trace). refusal: the blocks' install refusal (nothing read).
+struct FpvRead {
+    Subj subj;
+    bool slot_ok = false;
+    std::uint8_t slot = 0;
+    bool flags_ok = false;
+    std::uint32_t w0 = 0, w3 = 0;
+    const char* refusal = nullptr;
+};
+// The subjective module's ten pollers: each one's vt[0] rva (0: empty / unread). False when the module is not found.
+bool ReadSubjectivePollers(const void* base, std::uintptr_t P, std::uintptr_t (&rvas)[10]) noexcept;
+// Sets `set` and clears `clear` (both within kFpvSlotMask) in impl+0x60 with an interlocked compare-exchange (the game's
+// own toggle on another thread is never lost); `after` is the value left. False: no module, bits outside the mask, or a
+// fault (counted in Stats::faults). Counted in Stats::fpv.
+bool WriteFpvToggles(const void* base, std::uintptr_t P, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept;
+// The seat first-person blocks (contract seat_fpv_blocks), verified once per process: nullptr or VerifyImage's reasons.
+const char* FpvInstall(const void* base, std::size_t span) noexcept;
+// The lab lever "passcam seatfpv on|off|key": kFpvKey (-1, the key's choice), 0 off, 1 on.
+inline constexpr int kFpvKey = -1;
+int FpvOverride() noexcept;
+
+// The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
+// override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills
+// `result` and sets ok (false outside the lab or for bad arguments; nothing changes then).
+int Override() noexcept;
+bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept;
 
 namespace detail {
 // The pinned blocks against an image of at least `span` bytes: nullptr or
 // base / contract / span / read / bytes, with that block's rva in mismatch_rva.
 const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
+const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 void ResetForTest() noexcept;
 } // namespace detail
 

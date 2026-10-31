@@ -1,0 +1,66 @@
+# Control for the heroism give-back (docs/vehicles-companions-design.md 8.16): the session is NOT host-owned, so the
+# guest's D-Dog is the guest's own (world_companion_guard.lua's C.applies() false, as with the key off) and its death must
+# keep the stock penalty. The host runs without companion_host_owned (the shipped default); the guest names the key only
+# so its native guard is installed and the lab lever companion_lab kill_own reaches its own dog (the native kill flag
+# through a lab op with arm 0): without the host's key the peer agreement never forms, the guest keeps its own buddy
+# (no seeds), the legacy mirror holds it at the host dog's pose, and the give-back never runs. Seed africa-jeep (each
+# copy has its own D-Dog). The first version of this control (the guest's C4, run a7f00043, both keys off) never reached
+# the dog and downed the host through the friendly hit, so the kill is the lab lever's.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-heroism-off.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected: host dog_guard=off reason=key_off; guest dog_guard=installed; guest kill_own ready=true; guest obs Dead
+# id=9728; the guest's hero readback 30 lower (bond_raw 20 lower, dead_bit=1, applies=0, deaths=0), the host's
+# unchanged; "D-Dog Near Death [Heroism -30]" on the guest's screen. NEVER: event=dog_hero, event=dog_restore.
+labsetting guest companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+waitlog host 'dog_guard=off;reason=key_off;slots=0' 5
+waitlog guest 'dog_guard_code_gate=ok;scope=guest_mirror_dog_lease' 5
+host debug clear_enemies 100
+host run godmode 1
+guest run godmode 1
+host run teleport -661.66 1.20 874.97 262
+wait 3000
+placebehind guest host 6 -6
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+host run buddy_status
+host expect kdog
+guest run buddy_status
+guest expect kdog
+host run companion_lab call_here dog
+host expect ^call_here;kind=dog;
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 60
+wait 4000
+host run companion_status
+guest run companion_status
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=0;deaths=0$
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=0;deaths=0$
+both capture hc-before
+logmark both
+guest run companion_lab kill_own
+guest expect ^kill_own;ready=true;reason=ok;installed=1
+waitlog guest 'world_lua=event=obs; m=Dead; ent=0; id=9728;' 15
+wait 300
+both capture hc-dead
+wait 1200
+both capture hc-dead-2
+wait 1500
+guest capture hc-dead-3
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;.*;dead_bit=1;applies=0;deaths=0$
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;.*;dead_bit=0;applies=0;deaths=0$
+wait 5000
+guest run companion_lab hero
+host run companion_lab hero
+host run buddy_status
+guest run buddy_status
+host run companion_status
+guest run companion_status
+state

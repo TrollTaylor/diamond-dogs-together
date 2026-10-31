@@ -339,6 +339,16 @@ $script:LabPartnerKeys = @(
     # debug goto_vehicle truck / goto_partner_vehicle / vehicle_door (lab only: the loader defaults it off in lab and
     # forces it off in play; written only when set).
     @{ Key = 'debug_vehicle_door'; Json = 'debug_vehicle_door'; Kind = 'bool' },
+    # M6 seat 1 (docs/vehicles-companions-design.md 6.6): with the passenger board, the light vehicle's front seat and
+    # the truck cab seat (the loader defaults both off in lab and play; written only when set).
+    @{ Key = 'partner_ride_front'; Json = 'ride_front'; Kind = 'bool' },
+    @{ Key = 'partner_ride_cab'; Json = 'ride_cab'; Kind = 'bool' },
+    # M6 seat races (the SEAT op): the host decides an empty vehicle's driver seat (off in lab and play unless set).
+    @{ Key = 'partner_ride_race'; Json = 'ride_race'; Kind = 'bool' },
+    # Seat 1 on the driver's seat matrix (design 8.33): follows the gun profile in lab and play (8.43); written only when set.
+    @{ Key = 'partner_ride_seat1_anchor'; Json = 'ride_seat1_anchor'; Kind = 'bool' },
+    # Seat first person (design 8.46): the automatic first-person aim from seats 1 and 2 (off unless set; written only when set).
+    @{ Key = 'partner_seat_fpv'; Json = 'seat_fpv'; Kind = 'bool' },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
@@ -372,6 +382,17 @@ $script:LabPartnerKeys = @(
     # without the mount key) unrealize the partner body and the net-quality rebase after a ride is logged (lab only: the
     # loader defaults it off in lab and forces it off in play; written only when set).
     @{ Key = 'partner_native_unrealize_all'; Json = 'native_unrealize_all'; Kind = 'bool' },
+    # G2 back-seat aim (docs/native-puppet.md "Seat aim"): the read-only census of the local player in a vehicle ride act
+    # and of the partner body in the seat flow (lab only: off unless set, forced off in play; written only when set).
+    @{ Key = 'partner_seat_aim'; Json = 'seat_aim'; Kind = 'bool' },
+    # M7 seat gun (docs/native-puppet.md "Seat gun"): the partner's raised gun on the seated body and this copy's seated
+    # aim direction (lab and play: off unless set, a named 1 runs in play too; written only when set).
+    @{ Key = 'partner_seat_gun'; Json = 'seat_gun'; Kind = 'bool' },
+    @{ Key = 'partner_seat_shot'; Json = 'seat_shot'; Kind = 'bool' },
+    # The passenger camera (docs/native-puppet.md "Passenger camera", design 8.27): its mode off|connect|drop|aim|view (lab and
+    # play) and its read-only lab trace (lab only, forced off in play); written only when set.
+    @{ Key = 'partner_pass_camera'; Json = 'pass_camera'; Kind = 'enum'; Values = @('off', 'connect', 'drop', 'aim', 'view') },
+    @{ Key = 'partner_pass_camera_trace'; Json = 'pass_camera_trace'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
@@ -443,6 +464,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world_vehicle_break'; Json = 'world_vehicle_break'; Kind = 'bool' },
     @{ Key = 'world_vehicle_credit'; Json = 'world_vehicle_credit'; Kind = 'bool' },
     @{ Key = 'world_loadout_block'; Json = 'world_loadout_block'; Kind = 'bool' },
+    # The vehicle fixes of 2026-10-29 (lab and play; off in the lab unless named; in play the crew rule on and the damage
+    # report off unless named): D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
+    @{ Key = 'world_vehicle_crew'; Json = 'world_vehicle_crew'; Kind = 'bool' },
+    @{ Key = 'world_vehicle_damage'; Json = 'world_vehicle_damage'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

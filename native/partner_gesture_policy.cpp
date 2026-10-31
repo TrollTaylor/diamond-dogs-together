@@ -32,6 +32,8 @@ const char* KindName(Kind kind) noexcept {
     case Kind::sign_go: return "sign_go";
     case Kind::sign_stop: return "sign_stop";
     case Kind::knock: return "knock";
+    case Kind::gun_start: return "gun_start";
+    case Kind::gun_hold: return "gun_hold";
     default: return "none";
     }
 }
@@ -161,6 +163,10 @@ bool BodyReady(std::uint16_t act, std::uint8_t q28, std::uint8_t upper) noexcept
     return act >= 1 && act <= 6 && q28 == 0 && upper == 0;
 }
 
+bool SeatBodyReady(std::uint16_t act, std::uint8_t q28, std::uint8_t upper) noexcept {
+    return act == kSeatDmAct && q28 == 0 && (upper == 0 || upper == 2);
+}
+
 const char* Gate(const GateIn& in) noexcept {
     if (!in.enabled) return "key_off";
     if (in.uncertain) return "uncertain";
@@ -189,20 +195,25 @@ const char* ViaName(Via via) noexcept {
 
 EndOut End(const EndIn& in) noexcept {
     // Identity first: a different body or controller is never written.
-    if (!in.identity) return {Via::override_, "identity", false};
+    if (!in.identity) return {Via::override_, "identity", false, false};
     // Never written: the window is closing, or another owner's graph-2 request
     // is waiting for this update.
-    if (in.shutdown) return {Via::override_, "shutdown", false};
-    if (in.pending) return {Via::override_, "pending", false};
-    if (!in.lease) return {Via::override_, "lease", in.ours};
+    if (in.shutdown) return {Via::override_, "shutdown", false, false};
+    if (in.pending) return {Via::override_, "pending", false, false};
+    if (!in.lease) return {Via::override_, "lease", in.ours, false};
+    // The seated gun hold (M7): the driver's release ends it; no clip end or deadline does. The raise
+    // (gun_start) chains to the held loop once its clip ends.
+    if (GunKind(in.kind) && !in.held) return {Via::end, "release", in.ours, false};
     if (!in.ours) {
-        if (in.elapsed_ms < kNodeGraceMs) return {Via::none, nullptr, false};
-        return {Via::override_, "node", false};
+        if (in.elapsed_ms < kNodeGraceMs) return {Via::none, nullptr, false, false};
+        return {Via::override_, "node", false, false};
     }
-    if (in.clip_end && in.elapsed_ms >= kMinPlayMs) return {Via::end, "clip", true};
-    if (SignLike(in.kind) && in.remote_known && in.remote_speed > 1) return {Via::end, "speed", true};
-    if (in.elapsed_ms >= kEndDeadlineMs) return {Via::timeout, "deadline", true};
-    return {Via::none, nullptr, false};
+    if (in.kind == Kind::gun_start) return {Via::none, nullptr, false, in.clip_end && in.elapsed_ms >= kMinPlayMs};
+    if (in.kind == Kind::gun_hold) return {Via::none, nullptr, false, false};
+    if (in.clip_end && in.elapsed_ms >= kMinPlayMs) return {Via::end, "clip", true, false};
+    if (SignLike(in.kind) && in.remote_known && in.remote_speed > 1) return {Via::end, "speed", true, false};
+    if (in.elapsed_ms >= kEndDeadlineMs) return {Via::timeout, "deadline", true, false};
+    return {Via::none, nullptr, false, false};
 }
 
 } // namespace mgscoop::partner_gesture_policy

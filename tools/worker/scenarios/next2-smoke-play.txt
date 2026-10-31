@@ -1,0 +1,206 @@
+# Combined smoke of dev/oct7-continue after the fixes after 0.14.4 merged (2026-10-30: wp/vehicle-fixes2 for D12's crew
+# rule, the guest's vehicle damage report and D11 before PAIRED; wp/dog-heroism for the heroism of a dog copy's death;
+# wp/launcher-fixes2 for the launcher and package; docs/vehicles-companions-design.md 8.14-8.18) in mode=play over
+# -WanSim bad with the SHIPPED play defaults: no labsetting line and no lab lever. VEHICLE_GONE, VEHICLE_STATE,
+# world_vehicle_break, world_vehicle_credit, world_loadout_block and (since 3929a6c) world_vehicle_crew are on in 30020;
+# world_vehicle_damage is off in play (795bdfc), so the guest's damage short of destruction is not reported and this
+# smoke has no damage part (no event=vehicle_damage line may appear); companion_host_owned is off, so the D7 guard and
+# the heroism give-back stay out (dog_guard=off;reason=key_off; no event=dog_hero line) and each PC keeps its own buddy.
+# Africa, africa-jeep seed (Masa Village, veh_lv_0000 = 25608 beside the boot spots). The parts of integ-smoke-play.txt
+# (a1d7aaa1), with the rules' on line now carrying crew=1:
+#   0. Both reach gameplay and pair: the modules' step=on lines, the host's sweep, the guest's two iDroid guards, the
+#      guard's key_off line and dog_state installed=0 on both. Frame smoke-start (both players by the jeep).
+#   1. D11: the guest's real iDroid path (Tab, 3 MISSIONS, Enter SUPPLY DROP, S S LOADOUT, Enter; S VEHICLES, Enter):
+#      both items inactive, each refused with its toast (NOTE 13 a 5 and a 4; the HUD logs one toast line per note code
+#      per 10 s, so VEHICLES follows LOADOUT after 10.5 s); the host's VEHICLES list opens.
+#   2. A drive: the guest boards 25608 as driver, the host boards its back seat, the guest drives a few metres and
+#      stops, the host gets off, then the guest. VEHICLE_STATE skips 25608 while it is ridden, resumes after the get-off
+#      and keeps the pose the guest left on both copies. Frames drv-seated, drv-pass-NN, drv-driver-NN, drv-stopped,
+#      drv-parked, drv-parked-both.
+#   3. D14: the host Fultons veh_lv_0002 (25610) by hand from its goto_vehicle door spot in the swamp: the host's own
+#      credit (via=own), the guest's receiver Seize and credit (via=receiver). Census before and after.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, under the verify lock.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/next2-smoke-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+# NEVER: step=error, viewer_changed, faults; a second credit for one vehicle on one copy; via=wreck on the guest;
+#        dog_guard=installed on either copy; a guest vehicle_state step=applied while it rides 25608;
+#        event=vehicle_damage or event=dog_hero on either copy.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'dog_guard=off;reason=key_off;slots=0' 5
+waitlog guest 'dog_guard=off;reason=key_off;slots=0' 5
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=vehicle_gone; step=on; mission=30020; role=host; wreck=0' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30020; role=guest; wreck=0' 30
+waitlog host 'event=vehicle_rules; step=on; mission=30020; role=host; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=on; mission=30020; role=guest; break=1; credit=1; loadout=1; gone=1; crew=1' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 30
+waitlog host 'event=vehicle_state; step=sweep_done; sent=[0-9]+; pool=[0-9]+' 30
+host run companion_lab dog_state
+host expect ^dog_state;role=host;ready=false;reason=admission;.*;installed=0;
+guest run companion_lab dog_state
+guest expect ^dog_state;role=guest;ready=false;reason=admission;.*;installed=0;
+host run buddy_status
+guest run buddy_status
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+wait 1500
+both capture smoke-start
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;.*name=veh_lv_0000
+# 1. D11: the guest's LOADOUT and VEHICLES items, then the host's VEHICLES.
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11-guest-loadout
+guest press enter
+wait 500
+guest capture d11-guest-loadout-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+# The HUD logs one toast line per NOTE code per 10 s (coop_hud kToastLogGapMs; runs f729d7f4, 98d84a21): wait past the gap.
+wait 10500
+guest press s
+wait 800
+guest capture d11-guest-vehicles
+guest press enter
+wait 500
+guest capture d11-guest-vehicles-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_vehicle; via=menu_inactive; mission=30020' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=4;' 5
+wait 1500
+guest press tab
+wait 2500
+host press tab
+wait 2500
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press s
+wait 800
+host press s
+wait 800
+host press s
+wait 800
+host capture d11-host-vehicles
+host press enter
+wait 2500
+host capture d11-host-vehicles-open
+host press escape
+wait 1500
+host press tab
+wait 2500
+both capture d11-closed
+# 2. The drive: the guest drives 25608, the host rides in a back seat; then both get off and the jeep stays parked
+#    where the guest left it on both copies.
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 4000
+host debug clear_enemies 100
+wait 1500
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+logmark both
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+waitlog host 'event=vehicle_state; step=skip; reason=[a-z_]+; id=25608' 10
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=[23]; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 1000
+both capture drv-seated
+host run vehicle_seats
+guest run vehicle_seats
+guest hold w 1500 nowait
+host burst drv-pass 6 250
+guest release
+guest hold w+a 800 nowait
+guest burst drv-driver 4 200
+guest release
+guest hold s 500
+guest release
+wait 2000
+both capture drv-stopped
+host press e 150
+host burst drv-host-off 4 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=off' 10
+logmark both
+guest press e 150
+wait 3500
+waitlog host 'event=vehicle_state; step=resume; id=25608; was=[a-z_]+' 25
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=moved;' 10
+waitlog guest 'event=vehicle_state; step=(same|applied); id=25608; from=25608;' 15
+wait 1500
+both capture drv-parked
+placebehind host guest 7 -4
+wait 2500
+both capture drv-parked-both
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+# 3. D14: the host's own Fulton of 25610 from its goto_vehicle door spot in the swamp, the guest beside it.
+host debug teleport -98.408 -0.750 75.200 106
+guest debug teleport -98.408 -0.750 73.667 106
+wait 4000
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host run vehicle_state_status 25610
+host expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+guest run vehicle_state_status 25610
+guest expect vstate;id=25610;alive=1;.*name=veh_lv_0002
+host run relief_census smoke_a
+guest run relief_census smoke_a
+both capture fult-before
+logmark both
+host hold e 1500 nowait
+wait 700
+host capture fult-hold
+host hold e 1500
+host hold e 1500
+host release
+host burst fult-lift 6 500
+waitlog host 'event=vehicle_gone; step=watch; id=25610; m=(FultonInfo|Fulton); cause=1; att=' 15
+waitlog host 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=own; role=host; mission=30020' 20
+waitlog host 'event=vehicle_gone; step=tx; id=25610; cause=1; actor=0;' 40
+waitlog guest 'event=vehicle_rules; step=credit_seize; id=25610; role=guest; mission=30020' 15
+waitlog guest 'event=vehicle_gone; step=applied; id=25610; via=seize; src=rx; ok=1' 10
+waitlog guest 'event=vehicle_rules; step=credit; fn=OnFultonVehicle; id=25610; res=[0-9]+; via=receiver; role=guest; mission=30020' 10
+wait 1500
+both capture fult-after
+host run relief_census smoke_b
+guest run relief_census smoke_b
+host run vehicle_gone_status
+guest run vehicle_gone_status
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+state

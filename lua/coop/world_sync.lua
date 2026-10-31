@@ -199,7 +199,7 @@ do
     W.active, W.observing, W.isStarted, W.failed, W.paired, W.w1 = false, false, false, false, false, false
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
     W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = false, 0, 0, false, false, false
-    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn = false, false, false
+    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn, W.vehicleCrewOn, W.vehicleDamageOn = false, false, false, false, false
     W.companionOn = false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
@@ -218,9 +218,12 @@ do
     -- M4 review) VEHICLE_GONE's wreck parity for a destroyed vehicle; the user's decisions of 2026-10-29
     -- (world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16 D14 world_vehicle_credit, bit 32 D11
     -- world_loadout_block.
-    local vm = type(r[15]) == "number" and r[15] >= 0 and r[15] <= 63 and floor(r[15]) == r[15] and r[15] or 0
+    -- The vehicle fixes of 2026-10-29: bit 64 D12 world_vehicle_crew (world_vehicle_rules.lua), bit 128
+    -- world_vehicle_damage (world_vehicle_damage.lua).
+    local vm = type(r[15]) == "number" and r[15] >= 0 and r[15] <= 255 and floor(r[15]) == r[15] and r[15] or 0
     W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = vm % 2 == 1, vm % 4 >= 2, vm % 8 >= 4
-    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn = vm % 16 >= 8, vm % 32 >= 16, vm >= 32
+    W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn = vm % 16 >= 8, vm % 32 >= 16, vm % 64 >= 32
+    W.vehicleCrewOn, W.vehicleDamageOn = vm % 128 >= 64, vm >= 128
     -- M1 host-owned companion (lab key companion_host_owned): r[16] turns on world_companion.lua.
     W.companionOn = r[16] == 1
     W.host = W.role == 1
@@ -362,8 +365,9 @@ do
     if not h then
       -- 0.13.6: an unmapped id may be a vehicle (world_vehicle.lua; its own errors stay its own).
       if W.vehicleGone then pcall(W.vehicleGone.observe, kind, a0, class2, a1) end
-      -- M2 (E19): or this copy's dog (world_buddy.lua W.companionHurt; companion_host_owned only).
-      if W.companionHurt then pcall(W.companionHurt, kind, a0, class2) end
+      -- M2 (E19): or this copy's dog (world_buddy.lua W.companionHurt; companion_host_owned only). The raw attacker
+      -- id too: the stock dying penalty's player test (world_companion_guard.lua, the heroism given back).
+      if W.companionHurt then pcall(W.companionHurt, kind, a0, class2, att) end
       return
     end
     if kind == "ChangePhase" then

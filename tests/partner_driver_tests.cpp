@@ -2,6 +2,7 @@
 // deterministic timelines with fake effects. No game, no files, no network:
 // every read, guarded write, trigger, pose sample and log line goes through a
 // recording Hooks implementation (the observer wires the real ones).
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -185,9 +186,11 @@ struct Fake {
     bool peer_v6 = false;
     bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
-    unsigned seat_arms = 0, seat_reverts = 0;
+    unsigned seat_arms = 0, seat_reverts = 0, seat_getoffs = 0;
+    int seat_getoff_seat = -1;  // the seat the confirmed GetOff re-anchored (ride_seat_getoff)
     bool seat_arm_ok = true;
     int seat_armed = -1;
+    int seat_arm_vehicle = -1;  // the vehicle id the seat arm named (the light-vehicle check of the seat-1 anchor)
     std::string seat_revert_reason;
     // WS3 vehicles: the vehicle reads (id -> read; any other id refuses "live"),
     // the seat-by-id writes (requests, forced result, whether it wrote).
@@ -6062,11 +6065,12 @@ std::vector<std::uint8_t> ExtBytes(std::uint16_t revision, std::uint16_t vehicle
 }
 
 // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md).
-bool HookRideSeatArm(void* context, std::uint8_t seat) noexcept {
+bool HookRideSeatArm(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept {
     Fake& f = F(context);
     ++f.seat_arms;
     if (!f.seat_arm_ok) return false;
     f.seat_armed = seat;
+    f.seat_arm_vehicle = vehicle;
     f.native_order.push_back("seat_arm");
     return true;
 }
@@ -6075,6 +6079,11 @@ void HookRideSeatRevert(void* context, const char* reason) noexcept {
     ++f.seat_reverts;
     if (f.seat_armed >= 0) f.seat_revert_reason = reason ? reason : "";
     f.seat_armed = -1;
+}
+void HookRideSeatGetOff(void* context, std::uint8_t seat) noexcept {
+    Fake& f = F(context);
+    ++f.seat_getoffs;
+    f.seat_getoff_seat = seat;
 }
 struct SeatSession : Session {
     std::uint16_t ride_rev = 0;
@@ -6091,6 +6100,7 @@ struct SeatSession : Session {
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.ride_seat_getoff = HookRideSeatGetOff;
         hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
@@ -6385,7 +6395,8 @@ void TestRideSeatById() {
         Check(s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1") == 1 &&
                   s.fake.Containing("partner_ride=ext_rx; rev=1; vehicle=25600; seat=0; cat=1; type=0x10; features=0x03") == 1,
               "the offer and the received addendum are logged");
-        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0, "nothing targeted before the DM plays; the dwords armed first");
+        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25600,
+              "nothing targeted before the DM plays; the dwords armed first (naming the vehicle)");
         Check(s.Step() && s.fake.seat_targets.empty() && !s.driver.mission.seat.confirmed, "no DM yet: no write");
         s.Playing(kFrontLeftLoop);
         Check(s.Step() && s.fake.seat_targets.size() == 1 && s.fake.seat_targets[0].vehicle == 25600 && s.fake.seat_targets[0].seat == 0 &&
@@ -6745,6 +6756,154 @@ mgscoop::partner_ride_wire::Packet BoardSent(const Session& s) {
     return out;
 }
 
+// M6 review R3: the v4 seat addendum (the driver's copy draws a seat-1 passenger; its seat 1 is taken).
+struct SeatRiderFake {
+    unsigned reads = 0;
+    bool ok = true;
+    std::uint16_t vehicle = 25608, rider1 = 0xFFFF;
+} g_rider;
+bool HookSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    ++g_rider.reads;
+    out = 0xFFFF;
+    if (!g_rider.ok || seat != 1 || id != g_rider.vehicle) return false;
+    out = g_rider.rider1;
+    return true;
+}
+unsigned SeatExtCount(const Session& s, mgscoop::partner_ride_wire::SeatExt& last) {
+    namespace rw = mgscoop::partner_ride_wire;
+    unsigned n = 0;
+    for (const auto& item : s.fake.reliable_sent)
+        if (rw::IsSeatExt(item.data(), item.size()) && rw::DecodeSeatExt(item.data(), item.size(), last)) ++n;
+    return n;
+}
+void PushSeatExt(Session& s, std::uint8_t flags, std::uint16_t revision, std::uint16_t vehicle, std::uint32_t ms) {
+    namespace rw = mgscoop::partner_ride_wire;
+    rw::SeatExt e{};
+    e.flags = flags; e.revision = revision; e.vehicle = vehicle; e.sender_ms = ms;
+    std::uint8_t bytes[rw::kSeatExtSize]{};
+    Check(rw::EncodeSeatExt(e, bytes), "seat addendum encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+}
+// Review R4: the driver tick's remap (skip while seat 1 may be in use, before the policy offers it).
+std::vector<int> g_remap_calls;  // 1 skip, 0 stock, in order; -1 marks a publish
+bool g_remap_ok = true;
+bool HookBoardRemap(void*, bool skip) noexcept {
+    g_remap_calls.push_back(skip ? 1 : 0);
+    return g_remap_ok;
+}
+void HookBoardPublishMarked(void*, std::uint64_t word) noexcept {
+    g_board.published.push_back(word);
+    g_remap_calls.push_back(-1);
+}
+void TestBoardRemap() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    Session s(0);
+    BoardSetup(s, PartnerRideBoard::passenger);
+    s.hooks.board_remap = HookBoardRemap;
+    s.hooks.board_publish = HookBoardPublishMarked;
+    g_remap_calls.clear();
+    g_remap_ok = true;
+    s.driver.settings.ride_front = true;
+    s.ride_suffix = " ride=0";
+    Check(s.Tick(0) && g_remap_calls.empty(), "installed; nothing of seat 1 in use: no remap write");
+    std::uint16_t rev = 0;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 1) == g_remap_calls.end(),
+          "a peer driver without the handshake: still stock");
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 7000);
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.size() == 2 && g_remap_calls[0] == 1 && g_remap_calls[1] == -1 && pb::Unpack(BoardLast()).front_ok &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=1") == 1,
+          "the remap is skipped before the policy that offers seat 1 is published");
+    g_remap_calls.clear();
+    Check(s.Tick(0) && g_remap_calls.empty(), "no change: no write");
+    // A seat-1 steer happened (site B's counter), then the peer walks off: the policy goes, the remap stays
+    // skipped for the hold after that steer, then goes back to stock.
+    g_board.stats.seat_one = 1;
+    Check(s.Tick(0) && g_remap_calls.empty(), "a seat-1 steer: still skipped");
+    BoardRide(s, rev, rw::Kind::foot, 0xFF, 0xFFFF);
+    Check(s.Tick(0) && std::find(g_remap_calls.begin(), g_remap_calls.end(), 0) == g_remap_calls.end(), "inside the hold: still skipped");
+    Check(s.Tick(0, pb::kRemapHoldMs) && g_remap_calls.back() == 0 &&
+              s.fake.Containing("partner_ride=board_remap; state=stock; why=idle; ok=1") == 1,
+          "the hold ran out: the stock jne is back");
+    // A failed skip never publishes seat 1.
+    g_remap_ok = false;
+    BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+    PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 9000);
+    Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok && pb::Unpack(BoardLast()).mode == pb::Mode::passenger &&
+              s.fake.Containing("partner_ride=board_remap; state=skip; why=policy; ok=0") == 1,
+          "the skip failed: the policy offers the back seats only");
+}
+
+void TestBoardSeatExt() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerRideBoard;
+    {
+        // The passenger's copy: seat 1 only with the driver's live seat addendum for this exact ride.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.driver.settings.ride_front = s.driver.settings.ride_cab = true;
+        s.hooks.board_remap = HookBoardRemap;
+        g_remap_ok = true;
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "installed");
+        std::uint16_t rev = 0;
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).mode == pb::Mode::passenger && !pb::Unpack(BoardLast()).front_ok &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x00") == 1,
+              "a driver without the seat addendum (0.14.4, its key off): no seat 1");
+        PushSeatExt(s, rw::SeatFlag::Front, rev, 25608, 7000);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).front_ok && !pb::Unpack(BoardLast()).cab_ok &&
+                  s.fake.Containing("partner_ride=seat_ext_rx; rev=1; vehicle=25608; flags=0x01;") == 1 &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01") == 1,
+              "the driver draws a light vehicle's seat-1 passenger and its seat 1 is free: front_ok");
+        PushSeatExt(s, rw::SeatFlag::Front | rw::SeatFlag::OneTaken, rev, 25608, 7100);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok &&
+                  s.fake.Containing("partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x05") == 1,
+              "its D-Dog took seat 1 on the driver's copy: no seat 1 (the back seats stay)");
+        PushSeatExt(s, rw::SeatFlag::Front | rw::SeatFlag::Cab, rev, 25608, 7200);
+        Check(s.Tick(0) && pb::Unpack(BoardLast()).front_ok && pb::Unpack(BoardLast()).cab_ok, "both classes");
+        BoardRide(s, rev, rw::Kind::vehicle, 0, 25608);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok, "a newer ride revision the addendum does not describe: no seat 1");
+        PushSeatExt(s, rw::SeatFlag::Front, rev, 25609, 7300);
+        Check(s.Tick(0) && !pb::Unpack(BoardLast()).front_ok, "an addendum for another vehicle: no seat 1");
+    }
+    {
+        // The driver's copy: sent only with a seat-1 key in passenger mode; rider[1] read while it drives.
+        Session s(0);
+        BoardSetup(s, PartnerRideBoard::passenger);
+        s.hooks.seat_rider = HookSeatRider;
+        g_rider = SeatRiderFake{};
+        s.ride_suffix = " ride=2 veh=25608 seat=0";
+        rw::SeatExt last{};
+        Check(s.Tick(0) && s.Tick(0) && SeatExtCount(s, last) == 0 && g_rider.reads == 0, "no seat-1 key: no seat addendum, no read");
+        s.driver.settings.ride_front = true;
+        g_rider.rider1 = 9728;
+        Check(s.Tick(0) && SeatExtCount(s, last) == 1 && last.vehicle == 25608 && last.flags == (rw::SeatFlag::Front | rw::SeatFlag::OneTaken) &&
+                  last.revision == BoardSent(s).revision && g_rider.reads == 1,
+              "driving with its D-Dog in seat 1: Front | OneTaken for the ride it describes");
+        Check(s.fake.Containing("partner_ride=seat_ext_tx; rev=1; vehicle=25608; flags=0x05; rider1=9728; read=1;") == 1, "the tx line");
+        Check(s.Tick(0) && SeatExtCount(s, last) == 1 && g_rider.reads == 1, "unchanged and inside 250 ms: nothing sent, nothing read");
+        g_rider.rider1 = 0xFFFF;
+        Check(s.Tick(0, 300) && SeatExtCount(s, last) == 2 && last.flags == rw::SeatFlag::Front && g_rider.reads == 2,
+              "the dog left the seat: sent at once without OneTaken");
+        g_rider.ok = false;
+        Check(s.Tick(0, 300) && SeatExtCount(s, last) == 3 && last.flags == (rw::SeatFlag::Front | rw::SeatFlag::OneTaken),
+              "an unread rider[1] counts as taken");
+        g_rider.ok = true;
+        s.ride_suffix = " ride=0";
+        const unsigned reads = g_rider.reads;
+        Check(s.Tick(0) && SeatExtCount(s, last) == 4 && last.vehicle == rw::kVehicleUnknown && last.flags == rw::SeatFlag::Front &&
+                  g_rider.reads == reads, "on foot: the capability alone, no read");
+        s.driver.settings.ride_board = PartnerRideBoard::block;
+        const unsigned sent = SeatExtCount(s, last);
+        Check(s.Tick(0, 3000) && SeatExtCount(s, last) == sent, "block mode never draws a seat-1 passenger: no addendum");
+    }
+}
+
 void TestBoardDriver() {
     namespace rw = mgscoop::partner_ride_wire;
     namespace pb = mgscoop::partner_board;
@@ -7078,6 +7237,897 @@ void TestPassCameraDriver() {
     }
 }
 
+// Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the
+// handshake said free). The copy that drives the vehicle draws the peer's seat-1 ride in a free back seat (3, then
+// 2) while its rider[1] is its D-Dog, latched for that ride, so two bodies are never drawn in one seat.
+struct RidersFake {
+    bool ok = true;
+    std::uint16_t vehicle = 25603;
+    std::uint16_t rider[4]{0, 0xFFFF, 0xFFFF, 0xFFFF};
+    unsigned reads = 0;
+} g_riders;
+bool HookSeatRiders(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    ++g_riders.reads;
+    out = 0xFFFF;
+    if (!g_riders.ok || id != g_riders.vehicle || seat > 3) return false;
+    out = g_riders.rider[seat];
+    return true;
+}
+void TestSeatDraw() {
+    namespace rw = mgscoop::partner_ride_wire;
+    using mgscoop::PartnerRideBoard;
+    const auto mb = [](SeatSession& s, std::uint8_t seat) {
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        s.hooks.seat_rider = HookSeatRiders;
+        s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
+        AddBoardHooks(s.hooks);
+        s.driver.settings.ride_board = PartnerRideBoard::passenger;
+        s.driver.settings.ride_front = true;
+        s.Show();
+        s.ride_suffix = " ride=2 veh=25603 seat=0";  // the viewer drives the jeep
+        s.Ride(rw::Kind::vehicle, seat, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, seat, 1, 900));
+        s.fake.sample.act = 110;
+    };
+    {
+        // The dog sits in seat 1 of this copy: the peer's seat 1 is drawn in the back right seat.
+        g_riders = RidersFake{};
+        g_riders.rider[1] = 9728;
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 1);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 3 && s.reply.seat_vehicle == 25603 &&
+                  s.driver.mission.seat.seat == 3 &&
+                  s.fake.Containing("partner_ride=seat_draw; vehicle=25603; from=1; to=3; reason=dog; rider1=9728; rider2=65535; rider3=65535") == 1 &&
+                  s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=3; offer=1; reason=none;") == 1,
+              "the driver's dog in seat 1: the peer's seat 1 is drawn in seat 3 (offered by id, one draw line)");
+        g_riders.rider[1] = 0xFFFF;
+        for (unsigned i = 0; i < 20; ++i) Check(s.Step(100), "seated ticks");
+        Check(s.driver.mission.seat.seat == 3 && s.driver.mission.seat.phase != pd::SeatPhase::exit &&
+                  s.fake.Containing("partner_ride=seat_draw;") == 1 && s.fake.Containing("partner_ride_seat=exit") == 0,
+              "the dog left seat 1: latched for the ride (no hop back, no exit)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        for (unsigned i = 0; i < 10; ++i) s.Step(100);
+        Check(s.fake.Containing("partner_ride=seat_draw; vehicle=65535; from=255; to=255; reason=none;") == 1,
+              "the ride ended: the draw latch is released (logged)");
+    }
+    {
+        // Seat 1 free on this copy: drawn in seat 1.
+        g_riders = RidersFake{};
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 1);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 1 && s.fake.Containing("partner_ride=seat_draw;") == 0,
+              "seat 1 free: the peer's own seat, no draw line");
+        // The dog jumps in after the peer sat down: the seat-1 episode ends and the next one draws seat 3.
+        g_riders.rider[1] = 9728;
+        bool moved = false;
+        for (unsigned i = 0; i < 80 && !moved; ++i) {
+            s.Ended();
+            Check(s.Step(100), "ticks after the dog jumped in");
+            moved = (s.reply.op & op::ride_seat) && s.reply.seat == 3;
+        }
+        Check(moved && s.fake.Containing("partner_ride=seat_draw; vehicle=25603; from=1; to=3; reason=dog;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=1; reason=vehicle_change;") == 1,
+              "the dog jumped into seat 1: the seat-1 drawing ends (vehicle_change) and the peer is drawn in seat 3");
+    }
+    {
+        // Not the driver of that vehicle (another vehicle, or on foot): never moved.
+        g_riders = RidersFake{};
+        g_riders.rider[1] = 9728;
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        mb(s, 2);
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == 2 && s.fake.Containing("partner_ride=seat_draw;") == 0,
+              "a back seat is drawn where the peer sits");
+    }
+}
+
+// Design 8.27 / 8.28 (review fixes): the shot guard's driver wiring in TickPassCamera. The guard writes only for the
+// armed local back-seat passenger (never on foot, never seat 1 unless named, never in mode connect), only while the
+// aim camera module is active; in play the lab lever's override is ignored; mode off releases our handle only for a
+// seated passenger; a write fault latches the mission.
+struct PassGuardFake {
+    mgscoop::partner_pass_camera::View view{};
+    unsigned view_reads = 0;
+    std::vector<float> pitch_writes;
+    std::vector<std::array<float, 4>> rot_writes;
+    bool pitch_ok = true;
+    std::uintptr_t mvt = mgscoop::partner_pass_camera::kAimModuleVtableRva;
+    int override_mode = -1;
+};
+PassGuardFake g_guard;
+bool HookPassView(void*, const pp::State&, mgscoop::partner_pass_camera::View& out) noexcept {
+    ++g_guard.view_reads;
+    out = g_guard.view;
+    return out.ok;
+}
+bool HookPassPitch(void*, const pp::State&, float pitch) noexcept {
+    if (!g_guard.pitch_ok) {
+        ++g_pass.stats.faults;  // the real WritePitch counts its SEH fault
+        return false;
+    }
+    g_guard.pitch_writes.push_back(pitch);
+    return true;
+}
+bool HookPassRotation(void*, const pp::State&, const float (&rot)[4]) noexcept {
+    g_guard.rot_writes.push_back({rot[0], rot[1], rot[2], rot[3]});
+    return true;
+}
+std::uintptr_t HookPassMvt(void*, const pp::State&) noexcept { return g_guard.mvt; }
+int HookPassOverride(void*) noexcept { return g_guard.override_mode; }
+// The look angles (+0x270 pitch, +0x274 yaw) and the rotation CAM+0x90 for a world yaw / up-pitch (no roll).
+void GuardView(float pitch, float yaw, float world_yaw, float up) {
+    auto& v = g_guard.view;
+    v = mgscoop::partner_pass_camera::View{};
+    v.ok = true;
+    v.ang[0] = v.ang[2] = pitch;
+    v.ang[1] = v.ang[3] = yaw;
+    const float sy = std::sin(0.5f * world_yaw), cy = std::cos(0.5f * world_yaw), sx = std::sin(-0.5f * up), cx = std::cos(-0.5f * up);
+    v.rot[0] = cy * sx; v.rot[1] = sy * cx; v.rot[2] = -sy * sx; v.rot[3] = cy * cx;
+}
+void GuardGun(Session& s, std::uint8_t mode) {
+    s.fake.aim_read_ok = true;
+    s.fake.aim_read.gun_ok[0] = true;
+    s.fake.aim_read.gun_state[0] = mode;
+    s.fake.aim_read.gun_flags[0] = mode ? (1u << 18) : 0u;
+}
+void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPassCamera::aim) {
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    AddPassCameraHooks(s.hooks);
+    g_guard = PassGuardFake{};
+    s.hooks.read_aim = HookReadAim;
+    s.hooks.pass_camera_view = HookPassView;
+    s.hooks.pass_camera_pitch = HookPassPitch;
+    s.hooks.pass_camera_rotation = HookPassRotation;
+    s.hooks.pass_camera_mvt = HookPassMvt;
+    s.hooks.pass_camera_override = HookPassOverride;
+    s.driver.settings.pass_camera = mode;
+    s.ride_suffix = " ride=0";
+}
+
+// M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's
+// RequestBullet hook (light vehicle or truck cab, the hook live), withdraws it after, never publishes in play with the
+// key off, ignores the lab lever in play, and logs one line per new plan of the hook.
+struct SeatShotFake {
+    std::vector<mgscoop::partner_seat_shot::Pub> pubs;
+    unsigned withdraws = 0;
+    mgscoop::partner_fire_filter::SeatShotStats stats{};
+    int override_value = -1;
+} g_ss;
+void HookSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { g_ss.pubs.push_back(pub); }
+void HookSeatShotWithdraw(void*) noexcept { ++g_ss.withdraws; }
+bool HookSeatShotStats(void*, mgscoop::partner_fire_filter::SeatShotStats& out) noexcept { out = g_ss.stats; return true; }
+int HookSeatShotOverride(void*) noexcept { return g_ss.override_value; }
+void SeatShotSetup(Session& s, bool key) {
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    g_ss = SeatShotFake{};
+    s.hooks.seat_shot_publish = HookSeatShotPublish;
+    s.hooks.seat_shot_withdraw = HookSeatShotWithdraw;
+    s.hooks.seat_shot_stats = HookSeatShotStats;
+    s.hooks.seat_shot_override = HookSeatShotOverride;
+    s.hooks.vehicle_read = HookVehicleRead;
+    s.hooks.read_aim = HookReadAim;
+    s.hooks.fire_stats = HookFireStats;
+    s.driver.settings.seat_shot = key;
+    s.fake.fire.installed = s.fake.fire.live = true;
+    auto jeep = VehicleRead(25608, 0x20);
+    jeep.unit.pos[0] = 100.0f; jeep.unit.pos[1] = 10.0f; jeep.unit.pos[2] = 200.0f; jeep.unit.pos[3] = 0.5f;
+    s.fake.vehicles.push_back(jeep);
+    auto truck = VehicleRead(25602, 0x40);
+    truck.unit.pos[3] = 0.0f;
+    s.fake.vehicles.push_back(truck);
+    s.fake.aim_read = pp::AimRead{};
+    s.fake.aim_read.q_ok = true;
+    s.fake.aim_read.q10[0][0] = 115.0f; s.fake.aim_read.q10[0][1] = 10.2f; s.fake.aim_read.q10[0][2] = 199.0f;
+    s.fake.aim_read_ok = true;
+    s.ride_suffix = " ride=0";
+}
+
+void TestSeatShotDriver() {
+    namespace ss = mgscoop::partner_seat_shot;
+    {
+        // Lab, key on: the back-seat passenger of the jeep is published with the vehicle record, the class, the owner and
+        // the aim target; the published line once; the hook's new plan is logged; the get-off withdraws.
+        Session s(0);
+        SeatShotSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 3);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1, "S1 driver: published while seated");
+        const ss::Pub& p = g_ss.pubs.back();
+        Check(p.owner == 0 && p.vehicle == 25608 && p.seat == 3 && p.cls == ss::Class::light && p.apply && p.target_ok &&
+                  p.pos[0] == 100.0f && p.pos[2] == 200.0f && p.yaw == 0.5f && p.target[0] == 115.0f,
+              "S1 driver: the publication (owner 0, jeep, seat 3, light, apply, record, target)");
+        Check(s.fake.Containing("partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=2; apply=1; source=key;") == 1 &&
+                  s.fake.Containing("partner_seat_shot=configured; key=1; play=0") == 1,
+              "S1 driver: the configured and published lines");
+        Check(s.Tick(0) && g_ss.pubs.size() == 2 && s.fake.Containing("partner_seat_shot=published;") == 1, "S1 driver: every tick, one line");
+        g_ss.stats.seq = 1;
+        g_ss.stats.shifted = 1;
+        g_ss.stats.result = "shift";
+        g_ss.stats.apply = true;
+        g_ss.stats.inside = true;
+        g_ss.stats.vehicle = 25608;
+        g_ss.stats.seat = 3;
+        g_ss.stats.t = 1.5f;
+        g_ss.stats.exit = 1.45f;
+        g_ss.stats.dist = 15.3f;
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot; result=shift; vehicle=25608; seat=3; apply=1; t_cm=150; exit_cm=145; "
+                                              "dist_cm=1530; inside=1;") == 1,
+              "S1 driver: one line per new plan");
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot;") == 1, "S1 driver: the same plan is not logged again");
+        // The shot line carries the publication's age and window; the publication carries the vehicle's speed from the
+        // last two publications (review of 8.37): unknown on the first, then 0.33 m in 33 ms = 10 m/s.
+        g_ss.stats.seq = 2;
+        g_ss.stats.age_ms = 7;
+        g_ss.stats.max_ms = 100;
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot; result=shift;") == 2 && s.fake.Containing("; age_ms=7; max_ms=100") == 1,
+              "S1 driver: the shot line's age and window");
+        Check(g_ss.pubs.front().speed < 0.0f && std::fabs(g_ss.pubs.back().speed) < 0.01f, "S1 driver: speed unknown first, then parked 0");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] += 0.33f;
+        Check(s.Tick(0) && std::fabs(g_ss.pubs.back().speed - 10.0f) < 0.05f, "S1 driver: 0.33 m in 33 ms: 10 m/s");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] -= 0.33f;
+        g_board.lp = mgscoop::partner_board::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && g_ss.withdraws == 1 && s.fake.Containing("partner_seat_shot=withdrawn; vehicle=25608; seat=3; reason=not_seated") == 1,
+              "S1 driver: the get-off withdraws");
+        const std::size_t n = g_ss.pubs.size();
+        Check(s.Tick(0) && g_ss.pubs.size() == n && g_ss.withdraws == 1, "S1 driver: on foot nothing is published");
+    }
+    {
+        // Lab, key off: still published with apply off (the census); the lever on applies (lab only).
+        Session s(0);
+        SeatShotSetup(s, false);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && !g_ss.pubs.back().apply, "S1 driver: lab key off: the census publication");
+        g_ss.override_value = 1;
+        Check(s.Tick(0) && g_ss.pubs.back().apply &&
+                  s.fake.Containing("partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=2; apply=1; source=lever;") == 1,
+              "S1 driver: the lab lever turns it on");
+        g_ss.override_value = 0;
+        s.driver.settings.seat_shot = true;
+        Check(s.Tick(0) && !g_ss.pubs.back().apply, "S1 driver: the lab lever off wins over the key");
+    }
+    {
+        // Play: key off publishes nothing; key on publishes; the lever is ignored in play.
+        Session s(0);
+        SeatShotSetup(s, false);
+        s.driver.settings.play_mode = true;
+        g_board.lp = BoardPassenger(25608, 3);
+        g_ss.override_value = 1;
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25608; seat=3; reason=key_off") == 1,
+              "S1 driver: play, key off: nothing published, the lever ignored");
+        s.driver.settings.seat_shot = true;
+        g_ss.override_value = 0;
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && g_ss.pubs.back().apply, "S1 driver: play, key on: published (the lever ignored)");
+    }
+    {
+        // The refusals: the fire hook not live, an unreadable vehicle, a truck's back seat (no class), block mode, a
+        // terminating tick; the truck cab is a truck.
+        Session s(0);
+        SeatShotSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 3);
+        s.fake.fire.live = false;
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25608; seat=3; reason=fire_hook") == 1,
+              "S1 driver: the fire hook not live: refused");
+        s.fake.fire.live = true;
+        g_board.lp = BoardPassenger(25609, 3);
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("reason=vehicle;") == 1, "S1 driver: an unreadable vehicle: refused");
+        g_board.lp = BoardPassenger(25602, 2);
+        Check(s.Tick(0) && g_ss.pubs.empty() && s.fake.Containing("partner_seat_shot=refused; vehicle=25602; seat=2; reason=class; cat=4") == 1,
+              "S1 driver: a truck's seat 2: no class");
+        g_board.lp = BoardPassenger(25602, 1);
+        Check(s.Tick(0) && g_ss.pubs.size() == 1 && g_ss.pubs.back().cls == ss::Class::truck, "S1 driver: the truck cab: a truck");
+        // The mission end withdraws (BoardWithdraw; a terminating tick returns before the board, and the hook ignores a
+        // publication older than kFreshMs anyway).
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_ss.withdraws == 1 && !s.driver.mission.seat_shot.published, "S1 driver: the mission end withdraws");
+    }
+    {
+        Session s(0);
+        SeatShotSetup(s, true);
+        s.driver.settings.ride_board = mgscoop::PartnerRideBoard::block;
+        g_board.lp = BoardPassenger(25608, 3);
+        Check(s.Tick(0) && g_ss.pubs.empty(), "S1 driver: block mode: nothing");
+    }
+}
+
+// Design 8.38 / 8.42 (mode view): the get-off camera turn's driver wiring (the seated raise is gone, 8.42).
+struct PassViewFake {
+    std::vector<float> turns;
+} g_raise;
+const char* HookRaiseTurn(void*, const pp::State&, float, float yaw, float) noexcept {
+    g_raise.turns.push_back(yaw);
+    return nullptr;
+}
+void ViewSetup(Session& s) {
+    GuardSetup(s, mgscoop::PartnerPassCamera::view);
+    g_raise = PassViewFake{};
+    s.hooks.pass_camera_turn = HookRaiseTurn;
+    s.hooks.vehicle_read = HookVehicleRead;
+    auto jeep = VehicleRead(25608, 0x20);
+    jeep.unit.pos[3] = 0.5f;
+    s.fake.vehicles.push_back(jeep);
+    g_pass.cam = PassCam(0, 0);
+}
+std::uint64_t pc_handle(std::uint16_t vehicle) { return mgscoop::partner_pass_camera::ConnectHandle(vehicle); }
+
+void TestPassCameraViewDriver() {
+    namespace pb = mgscoop::partner_board;
+    {
+        // Design 8.42: no aim-module entry is written any more; MissionEnd / Stop / MissionStart log no view restore.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && s.Tick(0), "view: seated");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.Containing("state=view;") == 0, "view: no raise lines");
+    }
+    {
+        // Design 8.39: the get-off turn arms only on an observed get-off (act 0x70) from seat 1 or 2, waits for the stock
+        // clear of the handle (no time fallback), and is dropped when the mode leaves view.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0), "turn: seated");
+        g_pass.cam = PassCam(pc_handle(25608), 1, 3);  // the stock get-off: the VehicleCamera holds the handle
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending && g_raise.turns.empty(), "turn: armed on the get-off act");
+        for (int i = 0; i < 3; ++i) Check(s.Tick(0, 1000) && g_raise.turns.empty(), "turn: no time fallback while the stock holds");
+        g_pass.cam = PassCam(0, 0);  // the stock cleared the handle; the fallback module is active
+        Check(s.Tick(0) && g_raise.turns.size() == 1 && g_raise.turns[0] == 0.5f &&
+                  s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=2; reason=made;") == 1,
+              "turn: the request at the vehicle's yaw once the stock let go");
+    }
+    {
+        // A death (another act), a lost report, or seat 3: never armed; the skip line names why.
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            g_board.lp = BoardPassenger(25608, which == 2 ? 3 : 1);
+            s.driver.settings.ride_front = true;
+            Check(s.Tick(0), "skip: seated");
+            g_board.lp = pb::LocalPassenger{};
+            g_board.lp.reason = which == 1 ? "vehicle" : "act";
+            g_board.lp.act = which == 0 ? 0x2A : 0x70;
+            Check(s.Tick(0) && !s.driver.mission.pass_camera.turn.pending, "skip: not armed");
+            for (int i = 0; i < 4; ++i) Check(s.Tick(0, 1000), "skip: on foot");
+            Check(g_raise.turns.empty(), "skip: no request");
+            if (which == 0) Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=skip; vehicle=25608; seat=1; reason=act; act=0x2a") == 1,
+                                  "skip: the death act is named");
+            if (which == 1) Check(s.fake.Containing("state=turn; event=skip; vehicle=25608; seat=1; reason=vehicle;") == 1, "skip: a lost report");
+            if (which == 2) Check(s.fake.Containing("state=turn; event=skip") == 0, "skip: seat 3 is not a view seat (no line)");
+        }
+    }
+    {
+        // The lab lever leaves view while a turn is pending: dropped.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0), "cancel: seated");
+        g_pass.cam = PassCam(pc_handle(25608), 1, 3);
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending, "cancel: armed");
+        g_guard.override_mode = static_cast<int>(mgscoop::partner_pass_camera::Mode::aim);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && !s.driver.mission.pass_camera.turn.pending && g_raise.turns.empty() &&
+                  s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=2; reason=mode;") == 1,
+              "cancel: the mode left view, no request");
+    }
+    {
+        // Design 8.41: a look while the turn is pending drops it (no request). Design 8.42: an aim on foot holds it (one
+        // hold line); the request follows the aim's end once the aim camera module let go (kTurnSettleMs).
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            g_board.lp = BoardPassenger(25608, 1);
+            s.driver.settings.ride_front = true;
+            Check(s.Tick(0), "input: seated");
+            g_pass.cam = PassCam(pc_handle(25608), 1, 3);
+            g_board.lp = pb::LocalPassenger{};
+            g_board.lp.reason = "act";
+            g_board.lp.act = 0x70;
+            Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending, "input: armed");
+            if (which == 0) {
+                s.fake.pad.kb_flags = 2;
+                s.fake.pad.kb_f[1] = 0.6f;  // the mouse look (PP+0x474 with PP+0x488 bit 1)
+            } else if (which == 1) {
+                GuardGun(s, 6);  // the gun aims on foot
+            }
+            Check(s.Tick(0, 100), "input: the get-off tick");
+            s.fake.pad = mgscoop::partner_input::PadRaw{};
+            g_pass.cam = PassCam(0, 0);
+            if (which == 1) {
+                // Still aiming after the stock let go; then released while the aim camera module blends out.
+                for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty() && s.driver.mission.pass_camera.turn.pending,
+                                                  "aim: held while aiming");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=hold; vehicle=25608; seat=1; reason=aiming;") == 1,
+                      "aim: one hold line");
+                GuardGun(s, 0);
+                g_guard.mvt = mgscoop::partner_pass_camera::kAimModuleVtableRva;
+                for (int i = 0; i < 4; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty(), "aim: settling after the aim");
+                g_guard.mvt = 0x23B29E0;  // the fallback module
+                Check(s.Tick(0, 100) && g_raise.turns.size() == 1 && g_raise.turns[0] == 0.5f &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1 &&
+                          s.fake.Containing("aimed=1") == 1,
+                      "aim: the request after the aim");
+                continue;
+            }
+            GuardGun(s, 0);
+            for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100), "input: on foot");
+            if (which == 2) {
+                Check(g_raise.turns.size() == 1 &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1,
+                      "input: none, the request as before");
+            } else {
+                Check(g_raise.turns.empty() && !s.driver.mission.pass_camera.turn.pending, "input: no request");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;") == 1,
+                      "input: the expire line names the look");
+            }
+        }
+    }
+    {
+        // Mode aim: the turn hook is never called.
+        Session s(0);
+        ViewSetup(s);
+        s.driver.settings.pass_camera = mgscoop::PartnerPassCamera::aim;
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && s.Tick(0), "aim: ticks");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        for (int i = 0; i < 4; ++i) Check(s.Tick(0, 1000), "aim: on foot");
+        Check(g_raise.turns.empty(), "aim: no turn");
+    }
+}
+
+// Design 8.46 (partner_seat_fpv): the seat first person in TickPassCamera with fake read / write hooks.
+struct SeatFpvFake {
+    std::uint32_t toggles = 0;
+    std::uint8_t slot = 2;
+    bool module = true;
+    int lever = -1;
+    bool fail = false;      // the write fails (the module not found, a fault, the CAS tries spent)
+    unsigned failed = 0;    // failed write attempts
+    std::uintptr_t last_p = 0;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> writes;  // (set, clear)
+};
+SeatFpvFake g_fpv;
+bool HookFpvRead(void*, const mgscoop::partner_player::State&, mgscoop::partner_pass_camera::FpvRead& out) noexcept {
+    out = mgscoop::partner_pass_camera::FpvRead{};
+    out.subj.ok = g_fpv.module;
+    out.subj.toggles = g_fpv.toggles;
+    out.slot_ok = true;
+    out.slot = g_fpv.slot;
+    return g_fpv.module;
+}
+bool HookFpvWrite(void*, const mgscoop::partner_player::State& st, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    g_fpv.last_p = st.P;
+    if (g_fpv.fail || !st.P) {
+        ++g_fpv.failed;
+        after = 0;
+        return false;
+    }
+    g_fpv.writes.push_back({set, clear});
+    g_fpv.toggles = (g_fpv.toggles | set) & ~clear;
+    after = g_fpv.toggles;
+    return true;
+}
+int HookFpvLever(void*) noexcept { return g_fpv.lever; }
+void FpvSetup(Session& s, bool key) {
+    ViewSetup(s);
+    g_fpv = SeatFpvFake{};
+    s.hooks.seat_fpv_read = HookFpvRead;
+    s.hooks.seat_fpv_write = HookFpvWrite;
+    s.hooks.seat_fpv_override = HookFpvLever;
+    s.driver.settings.seat_fpv = key;
+    s.driver.settings.ride_front = true;
+}
+void TestSeatFpvDriver() {
+    namespace pb = mgscoop::partner_board;
+    {
+        // Design 8.51 [O runs 2a394a64 / ff4134f4]: a bit set at the blocked mode 15 never unblocked the aim (5 of 5 stayed
+        // at 15 and fired nothing), so the blocked aim keeps the stock shoulder view (the red no-fire icon) and nothing is
+        // written; once the shoulder aim is turned clear (15 -> 7) the bit is set, and the aim end clears it.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv blocked: armed on the seat-2 boarding");
+        GuardGun(s, 6);
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv blocked: not during the raise");
+        GuardGun(s, 15);
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.writes.empty() && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=set;") == 0,
+              "fpv blocked: the blocked aim (mode 15) keeps the shoulder view: nothing set");
+        GuardGun(s, 7);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready; set=0x4;") == 1,
+              "fpv blocked: turned clear (15 -> 7), the slot's bit is set");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0,
+              "fpv blocked: the aim end clears it");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0, 100) && g_fpv.toggles == 0, "fpv blocked: the get-off");
+    }
+    {
+        // Seat 1, the key on: the slot's bit while aiming, cleared at the aim end; again at the next aim; the get-off
+        // while aiming clears it.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        Check(s.Tick(0) && g_fpv.writes.empty() &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=key; hooks=1") == 1 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1; reason=seat;") == 1,
+              "fpv: armed on the seat-1 boarding, nothing written");
+        GuardGun(s, 6);
+        Check(s.Tick(0) && g_fpv.writes.empty(), "fpv: not during the raise (gun mode 6)");
+        GuardGun(s, 7);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready; set=0x4;") == 1,
+              "fpv: the ready aim (mode 7) sets the slot's bit");
+        GuardGun(s, 9);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1, "fpv: held while firing");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "fpv: the aim end clears it");
+        GuardGun(s, 7);
+        Check(s.Tick(0) && g_fpv.toggles == 0x4, "fpv: the next aim sets it again");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=get_off; set=0x0; clear=0x4; ok=1;") == 1,
+              "fpv: the get-off while aiming clears it");
+        Check(s.Tick(0, 100) && g_fpv.writes.size() == 4, "fpv: on foot, nothing more");
+    }
+    {
+        // Seat 3 and the key off: never written. Play: the lever is ignored.
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            FpvSetup(s, which != 1);
+            if (which == 2) {
+                s.driver.settings.play_mode = true;
+                s.driver.settings.seat_fpv = false;
+                g_fpv.lever = 1;
+            }
+            g_board.lp = BoardPassenger(25608, which == 0 ? 3 : 2);
+            Check(s.Tick(0), "fpv off: seated");
+            GuardGun(s, 7);
+            for (int i = 0; i < 3; ++i) Check(s.Tick(0), "fpv off: aiming");
+            Check(g_fpv.writes.empty() && s.fake.Containing("state=seat_fpv; event=set") == 0, "fpv off: never written");
+        }
+    }
+    {
+        // The lab lever turns it on over a key that is off; the mission end during a seated first-person aim clears it.
+        Session s(0);
+        FpvSetup(s, false);
+        g_fpv.lever = 1;
+        g_board.lp = BoardPassenger(25608, 2);
+        GuardGun(s, 7);
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.toggles == 0x4 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=mode; on=1; source=lever; hooks=1") == 1,
+              "lever: on, set while aiming from seat 2");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=2; reason=mission_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "lever: the mission end clears the bit");
+    }
+    {
+        // The player's own F tap (the bit cleared by the game mid-aim): opt out, nothing more this boarding.
+        Session s(0);
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        Check(s.Tick(0) && s.Tick(0) && s.Tick(0) && g_fpv.toggles == 0x4, "tap: set");
+        g_fpv.toggles = 0;  // the game's toggle on the F tap
+        Check(s.Tick(0) && s.fake.Containing("state=seat_fpv; event=opt_out; vehicle=25608; seat=1; reason=tap;") == 1, "tap: opt out");
+        for (int i = 0; i < 3; ++i) Check(s.Tick(0) && g_fpv.toggles == 0, "tap: not set again");
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_fpv.writes.size() == 1, "tap: nothing cleared at the aim end (not ours)");
+    }
+}
+
+// Design 8.56 [O run 859964ce]: seat 1 set at 7, then the gun at 15 for kFpvBlockedMs: our bit is cleared (event
+// fallback, the stock shoulder view and its red mark); the shoulder aim at 7 at the same angles is not set again and is
+// no opt-out; angles outside the aim module do not count; raised by kFpvRearmPitch it is set again (reason rearm); the
+// aim end clears it.
+void TestSeatFpvFallbackDriver() {
+    namespace pc = mgscoop::partner_pass_camera;
+    Session s(0);
+    FpvSetup(s, true);
+    g_board.lp = BoardPassenger(25608, 1);
+    Check(s.Tick(0) && g_fpv.writes.empty(), "fpv fallback: armed");
+    GuardGun(s, 7);
+    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: set at 7");
+    GuardGun(s, 15);
+    Check(s.Tick(0) && g_fpv.toggles == 0x4 && g_fpv.writes.size() == 1, "fpv fallback: the first tick at 15: nothing");
+    Check(s.Tick(0, pc::kFpvBlockedMs) && g_fpv.toggles == 0 && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 &&
+              s.fake.Containing("state=seat_fpv; event=fallback; vehicle=25608; seat=1; reason=blocked; set=0x0; clear=0x4; ok=1;") == 1,
+          "fpv fallback: 15 held: our bit cleared (the shoulder view)");
+    GuardGun(s, 7);
+    GuardView(0.139f, -0.593f, 0.0f, 0.0f);
+    Check(s.Tick(0) && s.Tick(0) && s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.toggles == 0 &&
+              s.fake.Containing("event=opt_out") == 0,
+          "fpv fallback: the shoulder aim at 7 at the same angles: not set again, no opt-out");
+    g_guard.mvt = 0x1;
+    GuardView(-0.2f, -0.593f, 0.0f, 0.0f);
+    Check(s.Tick(0) && g_fpv.writes.size() == 2, "fpv fallback: angles outside the aim module do not count");
+    g_guard.mvt = pc::kAimModuleVtableRva;
+    Check(s.Tick(0) && g_fpv.writes.size() == 3 && g_fpv.toggles == 0x4 &&
+              s.fake.Containing("state=seat_fpv; event=set; vehicle=25608; seat=1; reason=rearm; set=0x4;") == 1,
+          "fpv fallback: raised by kFpvRearmPitch: set again");
+    GuardGun(s, 0);
+    Check(s.Tick(0) && g_fpv.toggles == 0 &&
+              s.fake.Containing("state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end; set=0x0; clear=0x4; ok=1;") == 1,
+          "fpv fallback: the aim end clears it");
+}
+
+// Review m6m7f (design 8.47): every exit releases our bit, a failed clear is kept and retried, the release needs only P.
+void TestSeatFpvRelease() {
+    namespace pb = mgscoop::partner_board;
+    auto seated_set = [](Session& s) {
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        s.Tick(0);
+        s.Tick(0);
+        Check(g_fpv.toggles == 0x4, "release: set while aiming from seat 1");
+        s.fake.lines.clear();
+    };
+    {
+        // The get-off while the write fails: the stop line says ok=0; the clear is retried on foot until it lands.
+        Session s(0);
+        seated_set(s);
+        g_fpv.fail = true;
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && g_fpv.toggles == 0x4 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=get_off; set=0x0; clear=0x4; ok=0;") == 1,
+              "release: the failed clear at the get-off");
+        const unsigned failed = g_fpv.failed;
+        Check(s.Tick(0) && g_fpv.failed > failed && g_fpv.toggles == 0x4 && s.fake.Containing("state=seat_fpv; event=retry;") >= 1,
+              "release: retried on foot while it fails");
+        g_fpv.fail = false;
+        Check(s.Tick(0) && g_fpv.toggles == 0 && s.fake.Containing("event=retry; vehicle=") >= 1, "release: the retry lands");
+        const std::size_t writes = g_fpv.writes.size();
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.writes.size() == writes, "release: read clear, nothing more");
+    }
+    {
+        // A state refusal during a seated first-person aim (Tick returns before TickPassCamera): released at once.
+        Session s(0);
+        seated_set(s);
+        s.fake.refusal = pp::Refusal::online_bit;
+        s.Tick(0);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=cfg_refused; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the cfg refusal clears our bit");
+        s.Tick(0);
+        Check(s.fake.Containing("reason=cfg_refused; set=0x0") == 1, "release: once");
+        s.fake.refusal = pp::Refusal::none;
+        s.Tick(0);
+        s.Tick(0);
+        Check(g_fpv.toggles == 0x4, "release: the refusal over, the next ready aim sets it again");
+    }
+    {
+        // The terminating stop (MISSION_TERMINATING, the camera still alive) releases too.
+        Session s(0);
+        seated_set(s);
+        pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=stop; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the terminating stop clears our bit");
+    }
+    {
+        // A MissionStart without a MissionEnd releases before the mission state is reset.
+        Session s(0);
+        seated_set(s);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=mission_start; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: a missed MissionEnd is caught at MissionStart");
+    }
+    {
+        // The MissionEnd while the state read refuses (the unload): P alone is enough.
+        Session s(0);
+        seated_set(s);
+        s.fake.refusal = pp::Refusal::count;
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0 && g_fpv.last_p == 0x1000 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=mission_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the mission end writes with P although the state read refuses");
+    }
+    {
+        // The MissionEnd's write fails: still owned; the next MissionStart clears it.
+        Session s(0);
+        seated_set(s);
+        g_fpv.fail = true;
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0x4 && s.fake.Containing("reason=mission_end; set=0x0; clear=0x4; ok=0;") == 1, "release: the failed mission end");
+        g_fpv.fail = false;
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("reason=mission_start; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: kept and cleared at the next MissionStart");
+    }
+    {
+        // The key off: none of the exits writes anything.
+        Session s(0);
+        FpvSetup(s, false);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        s.Tick(0);
+        s.fake.refusal = pp::Refusal::online_bit;
+        s.Tick(0);
+        s.fake.refusal = pp::Refusal::none;
+        pd::MissionEnd(s.driver, s.hooks);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
+        Check(g_fpv.writes.empty() && g_fpv.failed == 0 && s.fake.Containing("state=seat_fpv; event=stop") == 0 &&
+                  s.fake.Containing("event=retry") == 0,
+              "release: key off, nothing written on any exit");
+    }
+}
+
+void TestPassCameraGuardDriver() {
+    namespace pc = mgscoop::partner_pass_camera;
+    namespace pb = mgscoop::partner_board;
+    using mgscoop::PartnerPassCamera;
+    {
+        // The armed back-seat passenger in the aim module: the pull up of a shot is written back (pitch and rotation),
+        // the yaw never; the open line names the references.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && g_guard.view_reads >= 1, "aimed: read, nothing written");
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.size() == 1 && g_guard.pitch_writes[0] == 0.10f && g_guard.rot_writes.size() == 1,
+              "the shot's pull up: the pitch and the rotation written back");
+        const auto& q = g_guard.rot_writes[0];
+        Check(std::fabs(pc::UpPitch(q.data()) + 0.10f) < 1e-3f && std::fabs(pc::WorldYaw(q.data()) + 1.97f) < 1e-3f,
+              "the rotation back at the aimed pitch with the current yaw");
+        Check(s.fake.Containing("partner_ride=pass_camera; state=guard; event=open; vehicle=25608; seat=3; gun=9; ref_mrad=100; up_mrad=-100;") == 1,
+              "the open line");
+        // The aim ends (RMB up, the gun out of the fire modes): closed at once, nothing written.
+        GuardGun(s, 0);
+        Check(s.Tick(0) && g_guard.pitch_writes.size() == 1 &&
+                  s.fake.Containing("partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=3; end=aim_end; writes=1;") == 1,
+              "the aim end closes the window (end=aim_end)");
+    }
+    {
+        // The player's own look input (the effective right stick, which carries the mouse: PP+0x474 with PP+0x488 bit 1)
+        // inside a window: the camera follows it, nothing is written; without it the sideways pull is held.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        s.fake.pad.kb_flags = 2;
+        s.fake.pad.kb_f[1] = 0.6f;
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "a mouse turn inside the window: not written");
+        GuardView(-0.30f, 1.17f, -2.4f, 0.30f);
+        Check(s.Tick(0, 20) && g_guard.pitch_writes.size() == 1 && g_guard.pitch_writes[0] == 0.10f && g_guard.rot_writes.size() == 1 &&
+                  std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f &&
+                  std::fabs(pc::UpPitch(g_guard.rot_writes[0].data()) + 0.10f) < 1e-3f,
+              "the mouse x input moves the yaw only: the pull up on the same ticks is written back");
+        g_guard.rot_writes.clear();
+        g_guard.pitch_writes.clear();
+        GuardView(0.10f, 1.17f, -2.4f, -0.10f);
+        s.fake.pad.kb_f[1] = 0.0f;
+        s.Tick(0, 200);
+        GuardView(0.10f, 1.13f, -2.44f, -0.10f);
+        Check(s.Tick(0) && g_guard.rot_writes.size() == 1 && std::fabs(pc::WorldYaw(g_guard.rot_writes[0].data()) + 2.4f) < 1e-3f,
+              "without input the sideways pull is held at the player's last aim");
+    }
+    {
+        // F3: firing while the active module is not the aim camera (the seated fallback): nothing written, no window.
+        Session s(0);
+        GuardSetup(s);
+        g_guard.mvt = 0x23B29E0;
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0, 5);
+        GuardGun(s, 7);
+        GuardView(0.10f, -1.57f, 1.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, -1.57f, 1.0f, 0.30f);
+        Check(s.Tick(0) && s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && s.fake.Containing("state=guard") == 0,
+              "outside the aim module: never written");
+    }
+    {
+        // On foot (no local passenger report; the driver's seat too): the camera is not even read for the guard.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        GuardGun(s, 9);
+        GuardView(-0.30f, 0.0f, 0.0f, 0.30f);
+        Check(s.Tick(0) && s.Tick(0) && g_guard.view_reads == 0 && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(),
+              "on foot / the driver: no guard");
+        // Seat 1 without partner_ride_front / _cab: not armed, no guard.
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        GuardView(0.10f, 0.0f, 0.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, 0.0f, 0.0f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty(), "seat 1 unnamed: no guard");
+    }
+    {
+        // Mode connect (0.14.4): the handle only, no guard.
+        Session s(0);
+        GuardSetup(s, PartnerPassCamera::connect);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        Check(s.Tick(0) && g_guard.pitch_writes.empty() && g_guard.rot_writes.empty() && PassConnects() >= 1, "connect: the handle, no guard");
+    }
+    {
+        // The lab lever's override: honoured in the lab, ignored in play.
+        Session lab(0);
+        GuardSetup(lab);
+        g_guard.override_mode = static_cast<int>(pc::Mode::off);
+        Check(lab.Tick(0) && lab.fake.Containing("partner_ride=pass_camera; state=mode; mode=off; source=lever;") == 1, "lab: the lever wins");
+        Session play(0);
+        GuardSetup(play);
+        play.driver.settings.play_mode = true;
+        g_guard.override_mode = static_cast<int>(pc::Mode::off);
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(0, 0);
+        Check(play.Tick(0) && play.fake.Containing("partner_ride=pass_camera; state=mode; mode=aim; source=key;") == 1 &&
+                  play.fake.Containing("source=lever") == 0 && PassConnects() == 1,
+              "play: the lever's override is ignored (the key's mode, connected)");
+    }
+    {
+        // Mode off: our handle released (ReleasePlan) only while a passenger is seated; nothing on foot.
+        Session s(0);
+        GuardSetup(s, PartnerPassCamera::off);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && g_pass.calls.empty(), "off, on foot: nothing");
+        g_board.lp = BoardPassenger(25608, 2);
+        g_pass.cam = PassCam(pc::ConnectHandle(25608), 1);
+        Check(s.Tick(0) && g_pass.calls.size() == 1 && !g_pass.calls[0].on && g_pass.cam.connect == 0, "off, seated: our handle released");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        Check(s.Tick(0) && g_pass.calls.size() == 1, "off, after the ride: nothing");
+    }
+    {
+        // A guard write fault latches the mission: nothing connected or written again.
+        Session s(0);
+        GuardSetup(s);
+        g_board.lp = BoardPassenger(25608, 3);
+        g_pass.cam = PassCam(0, 0, 2);
+        GuardGun(s, 7);
+        GuardView(0.10f, 1.57f, -2.0f, -0.10f);
+        s.Tick(0);
+        g_guard.pitch_ok = false;
+        GuardGun(s, 9);
+        GuardView(-0.30f, 1.60f, -1.97f, 0.30f);
+        s.Tick(0);
+        const std::size_t rot_before = g_guard.rot_writes.size();
+        const std::size_t calls_before = g_pass.calls.size();
+        Check(s.Tick(0) && s.fake.Containing("partner_ride=pass_camera; state=refused; vehicle=25608; seat=3; reason=fault; latch=mission; faults=1") == 1,
+              "the fault latches the mission");
+        GuardView(-0.40f, 1.60f, -1.97f, 0.40f);
+        Check(s.Tick(0) && g_guard.rot_writes.size() == rot_before && g_pass.calls.size() == calls_before && g_guard.pitch_writes.empty(),
+              "latched: no write, no connect");
+    }
+}
+
 void TestBoardSeatGates() {
     namespace rw = mgscoop::partner_ride_wire;
     using mgscoop::PartnerRideBoard;
@@ -7275,7 +8325,8 @@ void TestRideSeat() {
         Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25608 && s.reply.seat == 0 &&
                   s.reply.seat_action == partner::seat_action::play && s.reply.seat_entry == 0 && !(s.reply.op & ~op::ride_seat),
               "a vehicle ride in seat 0 plays the seat DM (RIDE_SEAT only)");
-        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.dm_patched && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25608 && s.fake.dm_patched &&
+              s.driver.mission.seat.phase == pd::SeatPhase::seated &&
                   s.fake.Containing("partner_ride_seat=armed; vehicle=25608; seat=0;") == 1 &&
                   s.fake.Containing("partner_ride_seat=play; vehicle=25608; seat=0;") == 1 && s.fake.Containing("partner_ride=seat_show") == 1,
               "comparator and seat dwords armed before the play");
@@ -7379,14 +8430,18 @@ void TestRideSeat() {
               "advancing to entry 1 (Loop) logs the loop probe once");
         s.fake.sample.act = 112;
         Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next &&
-                  !s.driver.mission.seat.getoff_confirmed,
-              "act 112 advances to GetOff");
+                  !s.driver.mission.seat.getoff_confirmed && s.fake.seat_getoffs == 0,
+              "act 112 advances to GetOff (the anchor stays until the GetOff plays)");
         s.fake.dm.rec18 = 0xe59bbf7182faull;  // stateVehicleGetOffFrontRight
         s.fake.dm.rec1a0 = 2;
         Check(s.Step() && s.driver.mission.seat.getoff_confirmed &&
                   s.fake.Containing("partner_ride_seat=dm; when=getoff;") == 1 &&
                   s.fake.Containing("rec18=0xe59bbf7182fa; rec1a0=2;") == 1,
               "advancing to entry 2 (GetOff) logs the getoff probe once");
+        // Review of design 8.35: the GetOff plays on the seat's own matrix on the passenger's own copy, so the confirmed
+        // GetOff hands the armed seat back to its own anchor (ride_seat_getoff), once.
+        Check(s.fake.seat_getoffs == 1 && s.fake.seat_getoff_seat == 1, "the confirmed seat-1 GetOff re-anchors once");
+        Check(s.Step() && s.fake.seat_getoffs == 1, "the next tick does not re-anchor again");
 
         // Delayed seat resolution (initial seat=255 while hiding/re-showing, then usable seat=0 after 1600 ms)
         // still prepends GetOn because SeatObserveRide refreshes vehicle_since_ms when a usable seat first arrives.
@@ -8847,6 +9902,213 @@ void TestGestures() {
     st.dropped = 0;
 }
 
+// M7 seat gun at the driver level (review of wp/seat-shoot; docs/native-puppet.md "Seat gun"). The seat-owned branch
+// of the tick runs the gesture step only with partner_seat_gun (run d40e4126: before 8c0d482 it returned before
+// TickGesture, so no hold ever started); the gate takes a passenger seat (1..3) only, never the driver's seat 0; the
+// command stays enabled while the hold or its still-running gesture lasts (the native drive is off while seated) and
+// names the gun_start request in hold_seq; the hook's own end (HookEnded) releases it and the next start waits
+// kRetryMs; the aim's end and the seat's end release it; an ordinary gesture stays refused while seated.
+void TestSeatGunDriver() {
+    namespace rw = mgscoop::partner_ride_wire;
+    namespace gp = mgscoop::partner_gesture_policy;
+    namespace pg = mgscoop::partner_gesture;
+    namespace psg = mgscoop::partner_seat_gun;
+    constexpr std::uint64_t kBackLeftLoop = 0xc40b38a1a985ull, kFrontLeftLoop = 0x489157d7d94full;
+    // The remote rides the given seat of jeep 25609 and the seat flow holds body 1 there; the gesture hook was
+    // installed on foot while the native drive ran (every live run).
+    const auto seated = [&](SeatSession& s, bool key, std::uint8_t seat) {
+        AddGestureHooks(s.hooks);
+        s.driver.settings.ngesture = true;
+        s.driver.settings.seat_gun = key;
+        s.driver.gesture_install_tried = true;
+        s.driver.gesture_install_refusal = nullptr;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, seat, 25609);
+        s.fake.sample.act = seat ? 110 : 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat == seat, "the seat plays");
+        s.Playing(seat ? kBackLeftLoop : kFrontLeftLoop);
+        Check(s.Step() && s.driver.mission.seat.confirmed && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+                  s.driver.mission.ride_seated,
+              "seated, confirmed");
+        s.fake.gesture_commands.clear();
+        s.fake.lines.clear();
+    };
+    const auto aim = [](SeatSession& s, bool on) { s.fake.sample.flags = on ? mgscoop::sync::ActionFlag::Aiming : 0u; };
+    const auto receipt = [](SeatSession& s, pg::Stage stage, std::uint32_t seq, gp::Kind kind) {
+        pg::Status& st = s.fake.gesture_status;
+        pg::Receipt& r = st.receipts[st.count++];
+        r = pg::Receipt{};
+        r.stage = stage;
+        r.seq = seq;
+        r.kind = kind;
+        r.node = kind == gp::Kind::gun_hold ? psg::kGunHold : psg::kGunHoldStart;
+        if (stage == pg::Stage::ended) { r.via = gp::Via::override_; r.cause = "node"; }
+        if (stage == pg::Stage::refused) r.reason = "no_node";
+    };
+    {
+        // Key off: the seat-owned branch stays as before (no gesture step, no seat-gun line) while the remote aims.
+        SeatSession s;
+        seated(s, false, 2);
+        aim(s, true);
+        for (unsigned i = 0; i < 5; ++i) Check(s.Step(), "seated ticks");
+        Check(s.fake.gesture_commands.empty() && s.fake.Containing("partner_seat_gun=") == 0 && !s.driver.mission.seat_gun.want,
+              "key off: no gesture step and no hold in the seat-owned branch");
+    }
+    {
+        // Key on, the remote in back seat 2: the hold starts from the seat-owned branch (fails before 8c0d482).
+        SeatSession s;
+        seated(s, true, 2);
+        Check(s.Step() && !s.fake.gesture_commands.empty() && !s.fake.gesture_commands.back().enabled &&
+                  !s.fake.gesture_commands.back().hold_seq && !s.fake.gesture_commands.back().request.seq &&
+                  !s.driver.mission.seat_gun.want && s.driver.mission.seat_gun_configured_logged,
+              "key on, not aiming: the step runs, disabled (the native drive is off while seated), nothing held");
+        aim(s, true);
+        Check(s.Step(), "aiming tick");
+        const pg::Command c = s.fake.gesture_commands.back();
+        Check(c.enabled && c.request.seq != 0 && c.request.kind == gp::Kind::gun_start && c.request.node == psg::kGunHoldStart &&
+                  c.request.method == gp::Method::set_current && c.hold_seq == c.request.seq && s.driver.mission.seat_gun.want &&
+                  s.driver.mission.seat_gun_seq == c.request.seq,
+              "the remote aims: an enabled command with the gun_start request, held by hold_seq");
+        const std::uint32_t seq = c.request.seq;
+        const std::string seqs = std::to_string(seq);
+        Check(s.fake.Containing(("partner_seat_gun=hold; seq=" + seqs + "; vehicle=25609; seat=2; pose_aim=1; input_aim=0; flags=0x1; starts=1").c_str()) == 1,
+              "one hold line");
+        // The hook takes it and runs it: the request is answered, the hold stays published.
+        receipt(s, pg::Stage::submit, seq, gp::Kind::gun_start);
+        s.fake.gesture_status.active = true;
+        s.fake.gesture_status.active_seq = seq;
+        Check(s.Step() && s.Step() && s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().request.seq &&
+                  s.fake.gesture_commands.back().hold_seq == seq && s.driver.mission.gesture_active_seq == seq,
+              "answered: no request, still held and enabled");
+        // An ordinary gesture from the remote stays refused while the seat owns body 1.
+        s.fake.channel2.push_back(GestureBytes(gp::Kind::pickup, 1, 1, 0));
+        Check(s.Step() && s.fake.Containing("partner_gesture=refused; reason=not_native; where=driver; kind=pickup;") == 1 &&
+                  !s.fake.gesture_commands.back().request.seq && s.fake.gesture_commands.back().hold_seq == seq,
+              "a pickup while seated is refused; the hold goes on");
+        // The chain's own refusal (GunHold refused) does not end the hold here: the hook ends it next.
+        receipt(s, pg::Stage::refused, seq, gp::Kind::gun_hold);
+        Check(s.Step() && s.driver.mission.seat_gun.want && s.fake.Containing("partner_seat_gun=hook_ended;") == 0,
+              "a refused gun_hold receipt is not the end");
+        // The hook ends it (a node override): released, and no new start before kRetryMs although the remote aims.
+        receipt(s, pg::Stage::ended, seq, gp::Kind::gun_start);
+        s.fake.gesture_status.active = false;
+        s.fake.gesture_status.active_seq = 0;
+        Check(s.Step() && !s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=hook_ended; seq=" + seqs + "; stage=ended; why=node; retry_ms=1000;").c_str()) == 1,
+              "the hook's end: released, one hook_ended line");
+        Check(s.Step() && !s.fake.gesture_commands.back().hold_seq && !s.fake.gesture_commands.back().enabled &&
+                  !s.fake.gesture_commands.back().request.seq,
+              "the next command holds nothing and is disabled");
+        for (unsigned i = 0; i < 20; ++i) Check(s.Step(), "within the retry wait");
+        Check(!s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 1, "no restart inside kRetryMs");
+        Check(s.Step(600) && s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 2 &&
+                  s.driver.mission.seat_gun_seq != seq && s.fake.gesture_commands.back().hold_seq == s.driver.mission.seat_gun_seq,
+              "after kRetryMs the still-aiming remote starts a new hold with a new seq");
+        const std::uint32_t seq2 = s.driver.mission.seat_gun_seq;
+        receipt(s, pg::Stage::submit, seq2, gp::Kind::gun_start);
+        s.fake.gesture_status.active = true;
+        s.fake.gesture_status.active_seq = seq2;
+        Check(s.Step(), "the second hold runs");
+        // The aim ends: released after kReleaseMs; the still-running gesture keeps the command enabled (the hook ends
+        // it under the lease with stateNull) until the hook reports it gone.
+        aim(s, false);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "inside the release debounce");
+        for (unsigned i = 0; i < 12; ++i) Check(s.Step(), "release ticks");
+        Check(!s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=release; seq=" + std::to_string(seq2) + "; cause=aim;").c_str()) == 1 &&
+                  s.fake.gesture_commands.back().enabled && !s.fake.gesture_commands.back().hold_seq,
+              "the aim ends: released (cause=aim); enabled while the hook still runs it, hold_seq 0");
+        s.fake.gesture_status.active = false;
+        s.fake.gesture_status.active_seq = 0;
+        Check(s.Step() && s.Step() && !s.fake.gesture_commands.back().enabled, "the hook's gesture gone: disabled again");
+    }
+    {
+        // The remote drives (seat 0, body 1 seated at the wheel): refused (driver), nothing requested.
+        SeatSession s;
+        seated(s, true, 0);
+        aim(s, true);
+        for (unsigned i = 0; i < 3; ++i) Check(s.Step(), "seated ticks");
+        Check(!s.driver.mission.seat_gun.want && s.driver.mission.seat_gun.starts == 0 && !s.fake.gesture_commands.back().hold_seq &&
+                  !s.fake.gesture_commands.back().request.seq &&
+                  s.fake.Containing("partner_seat_gun=refused; reason=driver; seat_phase=seated; ride_seated=1; ride_live=1; ride_kind=2; ride_seat=0") == 1,
+              "the driver's seat: refused once (driver)");
+    }
+    {
+        // A gun_start request no body-1 update answers within kRequestMs: the driver drops it and releases the hold.
+        SeatSession s;
+        seated(s, true, 2);
+        aim(s, true);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "holding");
+        Check(s.Step(600) && !s.driver.mission.seat_gun.want && !s.fake.gesture_commands.back().hold_seq &&
+                  s.fake.Containing("partner_gesture=refused; reason=unanswered; where=driver; kind=gun_start;") == 1,
+              "unanswered: dropped and released (the next start waits kRetryMs)");
+    }
+    {
+        // The seat ends while the hold runs: released by the gate.
+        SeatSession s(mgscoop::PartnerRideSeatExit::getoff);
+        seated(s, true, 2);
+        aim(s, true);
+        Check(s.Step() && s.driver.mission.seat_gun.want, "holding");
+        const std::uint32_t seq = s.driver.mission.seat_gun_seq;
+        s.fake.sample.act = 112;
+        for (unsigned i = 0; i < 3 && s.driver.mission.seat_gun.want; ++i) Check(s.Step(), "getting off");
+        Check(!s.driver.mission.seat_gun.want &&
+                  s.fake.Containing(("partner_seat_gun=release; seq=" + std::to_string(seq) + "; cause=gate; refusal=not_seated;").c_str()) == 1 &&
+                  !s.fake.gesture_commands.back().hold_seq,
+              "the seat's end releases the hold (cause=gate, not_seated)");
+    }
+}
+
+// M7 seat gun, the sender (SenderV6): with partner_seat_gun a back-seat passenger (the native passenger report) sends
+// its seated direction (GunDirSeated: the seated stance read as standing; reason seat) and runs no convention check;
+// without the key, or while it drives, it sends none (the 0.13.6 ride gate). Not a validated direction: the check is
+// skipped, not passed.
+void TestSeatGunSender() {
+    namespace pi = mgscoop::partner_input;
+    namespace pam = mgscoop::partner_aim;
+    NativeSession s;
+    s.hooks.peer_input_v6 = HookPeerInputV6;
+    AddWeaponHooks(s.hooks);
+    s.hooks.read_aim = HookReadAim;
+    s.driver.settings.ngun = true;
+    Check(s.Until(mgscoop::partner_native::Mode::active, 9000), "seat sender: native active");
+    BoardSetup(s, mgscoop::PartnerRideBoard::passenger);
+    s.fake.peer_v6 = true;
+    auto& r = s.fake.aim_read;
+    r.gun_ok[0] = r.rate_ok[0] = r.body_ok[0] = true; r.stance[0] = 2; r.gun_class[0] = 0;
+    r.r5c[0] = .625f; r.r60[0] = .517f; r.body_yaw[0] = static_cast<float>(4.8 * 3.14159265358979323846 / 180.0);
+    s.fake.aim_read_ok = true; s.fake.gun0_ok = true;
+    s.fake.gun0.fields_ok = true; s.fake.gun0.fields.flags27c = 1u << 6; s.fake.gun0.fields.equip = 46;
+    s.fake.gun0.gun3c0 = (1u << 18) | 4u; s.fake.gun0.mode_cur = 7;
+    s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 6 && (s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir),
+          "on foot: a v6 direction");
+    const auto checks0 = s.driver.mission.dir_check.checks;
+    // A back seat (seat 3 of jeep 25603), the seated stance unread as 0, key off: nothing (reason ride).
+    g_board.lp = BoardPassenger(25603, 3);
+    r.stance[0] = 0;
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    Check(s.driver.local_passenger.valid && !(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == pam::DirReason::ride && s.driver.mission.dir_check.checks == checks0,
+          "back seat, key off: no direction, no check");
+    // Key on: the seated direction, reason seat, unchecked (checks unchanged, never latched).
+    s.driver.settings.seat_gun = true;
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    const auto sent = s.fake.inputs.back();
+    Check((sent.gun_flags & pi::GunFlag::AimDir) && std::abs(sent.aim_pitch_cdeg - 1875) <= 1 && std::abs(sent.aim_yaw_cdeg - 174) <= 1 &&
+              s.driver.mission.dir_reason == pam::DirReason::seat && s.driver.mission.dir_check.checks == checks0 &&
+              !s.driver.mission.dir_check.latched && s.fake.Containing("aim_dir=valid; reason=seat; checks=") == 1,
+          "back seat, key on: the seated direction (the standing convention), not checked");
+    // Key on but driving (no passenger report; the tick's vehicle): nothing.
+    g_board.lp = mgscoop::partner_board::LocalPassenger{};
+    s.ride_suffix = " ride=2 veh=25603 seat=0";
+    for (unsigned n = 0; n < 5; ++n) s.N();
+    Check(!s.driver.local_passenger.valid && !(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == pam::DirReason::ride && s.driver.mission.dir_check.checks == checks0,
+          "driving, key on: no direction, no check");
+}
+
 // G4 truck test levers (vehicle_door; docs/native-puppet.md "Truck test levers"): the peer's live vehicle ride
 // (its link epoch, inside the lease) names the vehicle goto_partner_vehicle reads on this copy; nothing else does.
 void TestRidePeerVehicle() {
@@ -8898,9 +10160,18 @@ int main() {
     TestRideSeatAbsent();
     TestRideExtAndCensus();
     TestBoardDriver();
+    TestBoardSeatExt();
+    TestBoardRemap();
     TestRidePeerVehicle();
     TestPassCameraDriver();
+    TestPassCameraGuardDriver();
+    TestPassCameraViewDriver();
+    TestSeatFpvDriver();
+    TestSeatFpvFallbackDriver();
+    TestSeatFpvRelease();
+    TestSeatShotDriver();
     TestBoardSeatGates();
+    TestSeatDraw();
     TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();
@@ -8938,6 +10209,8 @@ int main() {
     TestBodySafetyNativeDrop();
     TestUiFilterLog();
     TestGestures();
+    TestSeatGunDriver();
+    TestSeatGunSender();
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();

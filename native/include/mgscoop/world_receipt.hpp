@@ -15,13 +15,14 @@
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
 //        phase 2 P2-1; r[14] the WS4 attacker census 0|1 (lab key
 //        partner_placed_census, lab only), also from HandleCfg; r[15] the
-//        vehicle modules bitmask 0..63 (lab and play), also from HandleCfg:
+//        vehicle modules bitmask 0..255 (lab and play), also from HandleCfg:
 //        bit 1 the 0.13.6 VEHICLE_GONE module (lab key world_vehicle_gone),
 //        bit 2 the M4 VEHICLE_STATE module (lab key world_vehicle_state),
 //        bit 4 VEHICLE_GONE's wreck parity (lab key world_vehicle_wreck, M4
 //        review), bits 8 / 16 / 32 the vehicle decisions of 2026-10-29 (lab keys
 //        world_vehicle_break D12, world_vehicle_credit D14, world_loadout_block
-//        D11); r[16] the M1 host-owned companion module 0|1 (lab key
+//        D11), bits 64 / 128 the vehicle fixes of 2026-10-29 (lab keys
+//        world_vehicle_crew, world_vehicle_damage); r[16] the M1 host-owned companion module 0|1 (lab key
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
 //        HandleCfg; Lua treats a missing or out-of-range value as 0)
@@ -90,11 +91,12 @@ bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint
 
 // r[15] (CfgReply::vehicle_gone): bit 1 VEHICLE_GONE, bit 2 VEHICLE_STATE, bit 4 the wreck parity; the
 // vehicle decisions of 2026-10-29 (lua/coop/world_vehicle_rules.lua): bit 8 D12 world_vehicle_break, bit 16
-// D14 world_vehicle_credit, bit 32 D11 world_loadout_block.
+// D14 world_vehicle_credit, bit 32 D11 world_loadout_block; the vehicle fixes of 2026-10-29: bit 64 D12
+// world_vehicle_crew (world_vehicle_rules.lua), bit 128 world_vehicle_damage (world_vehicle_damage.lua).
 constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool brk = false, bool credit = false,
-                                      bool loadout = false) noexcept {
+                                      bool loadout = false, bool crew = false, bool damage = false) noexcept {
     return static_cast<std::uint8_t>((gone ? 1 : 0) | (state ? 2 : 0) | (wreck ? 4 : 0) | (brk ? 8 : 0) | (credit ? 16 : 0) |
-                                     (loadout ? 32 : 0));
+                                     (loadout ? 32 : 0) | (crew ? 64 : 0) | (damage ? 128 : 0));
 }
 
 // NUL-terminated replies; 0 when they do not fit.

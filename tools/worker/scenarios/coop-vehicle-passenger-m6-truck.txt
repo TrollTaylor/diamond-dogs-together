@@ -1,0 +1,157 @@
+# M6 more passenger seats, the truck cab and the seat race (docs/vehicles-companions-design.md 6.6, 9 M6; the jeep's
+# front seat is coop-vehicle-passenger-m6.txt). Afghanistan (30010, afgh-ledge seed), lab. Free roam's LRRP trucks
+# carry two soldiers each and drive (run f49c167d), so the cab uses the sortie truck: the host's relief_load of type 4
+# (east truck, index 0 = 25600) at a fixed carry attitude 20 m from the Wakh Sind jeep, and the guest's copy loads the
+# same from the host's VEHICLE_SPAWN (labsetting world_relief=1; about 10 s later, run 3c748d46).
+#   host   goto_vehicle sortie driver 60 (the stock door spot by id, debug_vehicle_door=1), boards, drives a few metres;
+#   guest  goto_partner_vehicle passenger 60, E: partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1; ...;
+#          type=4; seats=2, local_passenger; seat=1; state=on; host partner_ride_seat=confirmed; vehicle=25600; seat=1.
+#   frames m6-truck-1-seated / m6-truck-1-drive-NN: the guest in the cab's right seat on both copies while it moves;
+#   the stock passenger phase plays stateTruckGetOnFrontRight and has no truck loop state (0x14124B2D0): the frames
+#   show what the graph does after the GetOn. Then the reverse (the guest drives, the host in the cab).
+# Seat race (SEAT op 54, partner_ride_race=1): both at the empty truck's two cab doors; the guest's claim meets the
+#   host's own want (ties go to the host): guest event=seat; action=deny; vehicle=25600; role=guest; set=1 and host
+#   event=seat; action=deny; ...; why=host_(pressed|drives); both press E: the host drives, the guest stays on foot (m6-race).
+# The sortie truck stands nose to a building at that attitude (run b66c7031: W pushed it into the wall and tilted it),
+#   so both drivers reverse (S) for the moving frames.
+# Census (E6; run b66c7031 refused relief_ridden 3 s after the host's get-off): relief_load of the tank (9) and the wheeled armoured vehicle (5) at the same spot, vehicle_census 0 1.
+# Run (lab):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-passenger-m6-truck.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+labsetting partner_native_ride=seat
+labsetting partner_ride_board=passenger
+labsetting partner_ride_front=1
+labsetting partner_ride_cab=1
+labsetting partner_ride_race=1
+labsetting nametag=1
+labsetting debug_vehicle_door=1
+labsetting world_relief=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=1;' 60
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+placebehind guest host 6 0
+wait 2000
+host debug clear_enemies 100
+wait 1500
+host run relief_load 4 580.57 321.32 1177.24 1.309
+waitlog host 'event=relief; step=load; m=30010; write=1; call=1;' 10
+waitlog guest 'event=relief; role=guest; step=load; why=host_has; type=4;' 40
+wait 10000
+host run vehicle_census 0 1
+host expect vehicle_census;first=0;n=1;found=1;25600:
+guest run vehicle_census 0 1
+guest expect vehicle_census;first=0;n=1;found=1;25600:
+host run goto_vehicle sortie driver 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host debug clear_enemies 100
+both capture m6-truck-host-door
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25600
+host hold s 1500
+host release
+wait 2500
+guest run goto_partner_vehicle passenger 60
+guest require warp_(position_readback|readback_timeout)
+waitlog guest 'partner_vehicle_door=answer; target=partner; id=25600; seat=1; out_cm=60; type=[34];' 5
+wait 3000
+both capture m6-truck-1-beside
+guest press e 150
+wait 4000
+waitlog guest 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6-truck-1-seated
+host hold s 1500 nowait
+both burst m6-truck-1-drive 6 150
+host release
+host hold s+a 1500 nowait
+guest burst m6-truck-1-drive-g 6 150
+host release
+wait 1500
+both capture m6-truck-1-stopped
+guest press e 150
+guest burst m6-truck-1-exit 6 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+both capture m6-truck-1-exited
+host press e 150
+wait 3000
+state
+both debug heal
+guest run goto_vehicle sortie driver 60
+guest require warp_(position_readback|readback_timeout)
+wait 1500
+placebehind host guest 12 0
+wait 4000
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest require vehicle;id=25600
+guest hold s 1500
+guest release
+wait 2500
+waitlog host 'partner_ride=board_policy; vehicle=25600; seat=0; mode=passenger' 10
+host run goto_partner_vehicle passenger 60
+host require warp_(position_readback|readback_timeout)
+wait 3000
+host press e 150
+wait 4000
+waitlog host 'partner_ride=board_passenger; vehicle=25600; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25600; seat=1;' 10
+wait 1000
+both capture m6-truck-1r-seated
+guest hold s 1500 nowait
+both burst m6-truck-1r-drive 6 150
+guest release
+guest hold s+d 1500 nowait
+host burst m6-truck-1r-drive-h 6 150
+guest release
+wait 1500
+host press e 150
+host burst m6-truck-1r-exit 6 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25600; seat=1; state=off' 5
+both capture m6-truck-1r-exited
+guest press e 150
+wait 3000
+state
+host run goto_vehicle sortie driver 60
+guest run goto_vehicle sortie passenger 60
+wait 3000
+# 8.55: no deny exists before a press (E press only); the race starts at the presses below.
+both capture m6-race-before
+both press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle;id=25600
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture m6-race
+wait 2000
+host press e 150
+wait 5000
+host run vehicle_seats
+placebehind host guest 15 0
+wait 3000
+host run relief_remove instant
+wait 3000
+host run relief_load 9 580.57 321.32 1177.24 1.309
+wait 10000
+host run vehicle_census 0 1
+both capture m6-census-tank
+host run relief_remove instant
+wait 3000
+host run relief_load 5 580.57 321.32 1177.24 1.309
+wait 10000
+host run vehicle_census 0 1
+both capture m6-census-wav
+state

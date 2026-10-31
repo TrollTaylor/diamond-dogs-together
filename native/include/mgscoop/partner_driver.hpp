@@ -67,6 +67,7 @@
 #include "mgscoop/partner_ui_filter.hpp"
 #include "mgscoop/partner_gesture.hpp"
 #include "mgscoop/partner_gesture_policy.hpp"
+#include "mgscoop/partner_seat_gun.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -364,7 +365,8 @@ struct Hooks {
     // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
     // any null: the seat refuses with reason=unavailable and the ride hides as before).
     // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
-    bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // `vehicle`: the seated vehicle's id (the seat-1 anchor reads this copy's category of it; design 8.34).
+    bool (*ride_seat_arm)(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept = nullptr;
     void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
     // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook
     // point of a camera-skip module (the DM entry/End camera-connect stores
@@ -429,7 +431,49 @@ struct Hooks {
     // == 1, Stop/GoNext only without the viewer's own DM); returns the bits
     // cleared. May be null (nothing is cleared).
     std::uint8_t (*dm_clear_stale)(void* context, std::uint8_t mask) noexcept = nullptr;
+    // M6 review R3 (partner_ride_front / partner_ride_cab): rider[seat] of this copy's vehicle `id` (u16;
+    // 0xFFFF empty), read only (partner_vehicle::ReadLive and the record's rider words). False: unread
+    // (the seat addendum then reports seat 1 taken). May be null.
+    bool (*seat_rider)(void* context, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept = nullptr;
+    // M6 review R4: the seat-1 remap skip (partner_board::SetRemapSkip), from this tick only. May be null
+    // (seat 1 is then never offered).
+    bool (*board_remap)(void* context, bool skip) noexcept = nullptr;
+    // Design 8.27: the passenger camera's lab trace (partner_pass_camera::ReadView; reads only) and the lab lever's
+    // mode override (partner_pass_camera::Override: -1 none). Either may be null (no trace; no override).
+    bool (*pass_camera_view)(void* context, const partner_player::State& state, partner_pass_camera::View& out) noexcept = nullptr;
+    int (*pass_camera_override)(void* context) noexcept = nullptr;
+    // The shot guard's write of the local camera's look pitch (partner_pass_camera::WritePitch; a fault counts in the
+    // stats and latches the mission) and the current module's vtable rva (ModeVtable: the guard writes only under the aim
+    // module, design 8.28; the trace's mvt). May be null (no guard; mvt=0).
+    bool (*pass_camera_pitch)(void* context, const partner_player::State& state, float pitch) noexcept = nullptr;
+    std::uintptr_t (*pass_camera_mvt)(void* context, const partner_player::State& state) noexcept = nullptr;
+    // The shot guard's rotation write (partner_pass_camera::WriteRotation). May be null (the pitch only).
+    bool (*pass_camera_rotation)(void* context, const partner_player::State& state, const float (&rot)[4]) noexcept = nullptr;
+    // M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)"): publish / withdraw the local
+    // seated passenger for the fire filter's RequestBullet hook (partner_fire_filter::PublishSeatShot / WithdrawSeatShot),
+    // its counters and last plan (ReadSeatShot), the lab lever's override (-1 none). Any null: nothing is published.
+    void (*seat_shot_publish)(void* context, const partner_seat_shot::Pub& pub) noexcept = nullptr;
+    void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
+    bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
+    int (*seat_shot_override)(void* context) noexcept = nullptr;
+    // The seated rider's confirmed GetOff (review of design 8.35; partner_ride_seat::ArmGetOff): the armed seat goes
+    // back to its own anchor, as the passenger's own copy plays it. May be null (the anchor stays until the revert).
+    void (*ride_seat_getoff)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // Design 8.38 / 8.42 (partner_pass_camera=view): the get-off camera request (partner_pass_camera::RequestTurn: nullptr
+    // when made, else its refusal). Null: mode view runs as aim (no turn).
+    const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
+    // Design 8.46 (lab.ini partner_seat_fpv; the lab lever passcam seatfpv): the local camera's subjective module with the
+    // local gun's hand slot and the flag words (partner_pass_camera::FpvRead), the toggle write
+    // (partner_pass_camera::WriteFpvToggles), the module's ten pollers (the lab trace's pollers line) and the lever
+    // (partner_pass_camera::FpvOverride). read or write null: no seat first person.
+    bool (*seat_fpv_read)(void* context, const partner_player::State& state, partner_pass_camera::FpvRead& out) noexcept = nullptr;
+    bool (*seat_fpv_write)(void* context, const partner_player::State& state, std::uint32_t set, std::uint32_t clear,
+                           std::uint32_t& after) noexcept = nullptr;
+    bool (*seat_fpv_pollers)(void* context, const partner_player::State& state, std::uintptr_t (&rvas)[10]) noexcept = nullptr;
+    int (*seat_fpv_override)(void* context) noexcept = nullptr;
 };
+// M7 seated shots: the per-mission cap of the partner_seat_shot lines.
+inline constexpr unsigned kSeatShotLogCap = 300;
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
 inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
@@ -475,6 +519,10 @@ inline constexpr unsigned kRideCensusCap = 400;
 // other board line (Board::cap), so the counters never crowd out a latch line.
 inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
+// Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
+inline constexpr unsigned kPassCameraAimCap = 120;
+// Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
+inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
 // unrealized here (Mother Base by id: absent, local_read, unrealized; free roam:
@@ -567,6 +615,19 @@ struct Settings {
     // F1 vehicles (lab.ini partner_ride_board; docs/native-puppet.md "Vehicle boarding"):
     // the board block / passenger hook and the local passenger report. Off by default; play forces off.
     PartnerRideBoard ride_board;
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
+    // with passenger, the light vehicle's front seat / the truck cab seat. The lab config follows the gun profile (design 8.25; the cab lab-only by default).
+    bool ride_front = false, ride_cab = false;
+    // lab.ini partner_ride_seat1_anchor (design 8.33-8.35): the local player in a light vehicle's seat 1 keeps the
+    // stock seat-1 remap while seated (partner_board::OwnSeatOneStock). Follows the gun profile, lab and play (8.43); a named 0 opts out.
+    bool ride_seat1_anchor = false;
+    // The passenger camera's mode (lab.ini partner_pass_camera, design 8.27; the lab lever passcam overrides it on a
+    // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
+    PartnerPassCamera pass_camera = PartnerPassCamera::aim;
+    bool pass_camera_trace = false;
+    // lab.ini partner_seat_fpv (design 8.46): the automatic first-person aim from seats 1 and 2 (the lab lever passcam
+    // seatfpv overrides it on a lab copy).
+    bool seat_fpv = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -606,6 +667,10 @@ struct Settings {
     bool traverse;     // traversal replay (partner_native_traverse)
     bool cbox;         // F2: the native cardboard box on body 1 (partner_native_cbox)
     bool ngesture;     // gestures on body 1 and their sender (partner_native_gesture)
+    bool seat_gun;     // M7: the remote passenger's raised gun on the seated body 1, this copy's seated v6 direction (partner_seat_gun)
+    // M7 seated shots, S1 (lab.ini partner_seat_shot; partner_seat_shot.hpp): the local seated passenger's bullets start
+    // past the ridden vehicle. Key off: the lab copy still plans (census lines, nothing moved); play publishes nothing.
+    bool seat_shot;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
@@ -736,7 +801,38 @@ struct Mission {
         bool seen_have;
         const char* uncertain;
         bool uncertain_logged;
+        // Design 8.27: the aim drop (mode aim), its lines (aim_cap) and the lab trace (trace_cap, its last line).
+        partner_pass_camera::AimDrop aim;
+        partner_pass_camera::Guard guard;
+        LogCap aim_cap, trace_cap;
+        std::uint64_t trace_ms, trace_aim_ms;
+        std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
+        // Design 8.38 / 8.42 (mode view): the get-off camera turn (lines under aim_cap).
+        partner_pass_camera::Turn turn;
+        // Design 8.46 (partner_seat_fpv): the seat first person, its lines, the last mode logged (+1; 0x80 lever), the
+        // lab trace's last fpv_trace key and the once-per-mission pollers line.
+        partner_pass_camera::Fpv fpv;
+        LogCap fpv_cap, fpv_trace_cap;
+        std::uint8_t fpv_mode_logged;
+        std::uint64_t fpv_trace_key, fpv_trace_ms;
+        bool pollers_logged;
     } pass_camera;
+    // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
+    // last plan seq logged and the hook's counters at this mission's start (lines under cap).
+    struct SeatShot {
+        bool configured_logged, published, apply, stats_have;
+        std::uint16_t vehicle;
+        std::uint8_t seat;
+        const char* refusal_logged;
+        std::uint32_t last_seq;
+        partner_fire_filter::SeatShotStats seen;
+        LogCap cap;
+        // The last publication's vehicle position and time (the speed the hook's freshness window follows).
+        bool speed_have;
+        std::uint16_t speed_vehicle;
+        std::uint64_t speed_ms;
+        float speed_pos[3];
+    } seat_shot;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
     const char* seat_unavailable;
@@ -1315,6 +1411,15 @@ struct Mission {
     const char* gesture_hook_resolve;
     std::uint32_t gesture_hook_body_calls;
     LogCap gesture_cap;
+    // --- M7 seat gun (partner_seat_gun.hpp, docs/native-puppet.md "Seat gun"): the hold decision, the seq of the
+    // hold's gun_start request (the hook's hold_seq), the seq the hook last reported active, the refusal last logged,
+    // the hold's start and the rates line clock, and the line family.
+    partner_seat_gun::State seat_gun;
+    std::uint32_t seat_gun_seq, gesture_active_seq;
+    const char* seat_gun_refusal_logged;
+    bool seat_gun_configured_logged;
+    std::uint64_t seat_gun_since_ms, seat_gun_rates_ms;
+    LogCap seat_gun_cap;
 };
 
 struct Driver {
@@ -1424,6 +1529,29 @@ struct Driver {
     std::uint32_t ride_ext_tx_epoch;
     std::uint64_t ride_ext_tx_ms;
     bool ride_ext_logged;
+    // M6 review R3: the v4 seat addendum (the peer draws a seat-1 passenger; the seat 1 of the vehicle it
+    // drives is taken on its copy), received and sent (link-session scoped), and this copy's rider[1] read
+    // of the vehicle its player drives (every kSeatRiderMs while it drives).
+    partner_ride_wire::SeatExtStore ride_seat_ext;
+    partner_ride_wire::SeatExt ride_seat_ext_tx;
+    bool ride_seat_ext_tx_have;
+    std::uint32_t ride_seat_ext_tx_epoch;
+    std::uint64_t ride_seat_ext_tx_ms;
+    std::uint16_t seat_rider_vehicle, seat_rider_value;
+    bool seat_rider_read;
+    std::uint64_t seat_rider_ms;
+    // Seats on (docs/vehicles-companions-design.md 8.25, D16's residual): the seat this copy draws the peer's seat-1
+    // ride in while its own D-Dog took seat 1 of the vehicle its player drives (partner_board::DrawSeat), latched per
+    // ride, and the rider[1..3] read behind it (every kSeatRiderMs while that ride lasts).
+    struct SeatDraw {
+        std::uint16_t vehicle = 0xFFFF;  // the latched ride's vehicle (0xFFFF: the peer's own seat is drawn)
+        std::uint8_t seat = 0xFF;        // the latched back seat
+        std::uint16_t read_vehicle = 0xFFFF;
+        std::uint64_t read_ms = 0;
+        bool riders_ok = false;
+        std::uint16_t rider[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        bool logged = false;             // a seat_draw line is out for the latch (one release line follows)
+    } seat_draw;
     std::uint16_t local_vehicle;
     // F1 vehicles: the local player as a stock back-seat passenger (the native
     // report; Lua says foot for act 0x6E), kept apart from local_vehicle (the
@@ -1432,6 +1560,11 @@ struct Driver {
     // The board hook's lazy install (once per process) and its result.
     bool board_install_tried, board_installed;
     const char* board_refusal;
+    // Review R4 (process scoped, like the remap dword): whether this tick has the seat-1 remap skipped,
+    // a failed remap write (seat 1 is then never offered again), the seat-1 steer count seen and its time.
+    bool board_remap_skip, board_remap_failed;
+    std::uint32_t board_seat_one_seen;
+    std::uint64_t board_seat_one_ms;
     // The passenger camera's lazy install (once per process, passenger mode) and its result.
     bool pass_camera_install_tried, pass_camera_installed;
     const char* pass_camera_refusal;

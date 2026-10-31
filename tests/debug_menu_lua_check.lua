@@ -279,6 +279,37 @@ check(c:send('enemy_nearest')[3]:find('nearest_ent=4294967295', 1, true), 'signe
 check(c:send('enemy_enable 4294967295')[2] == 1 and c:count('enable') == 1, 'u32 max authored hash accepted')
 check(c:send('enemy_disable 2147483648')[2] == 1 and c:count('disable') == 1, 'large unsigned authored hash')
 check(c:send('enemy_enable 123')[3] == 'enemy_not_authored', 'arbitrary actor refused')
+-- M7 test lever: turn this copy's camera to the nearest living soldier (sol_a 1 m east, same height: rotY 90, rotX
+-- atan(0.4) down from the 1.5 m eye to the 1.1 m chest) through the stock Player.RequestToSetCameraRotation only.
+c.env.Player.RequestToSetCameraRotation = function(a) c.calls[#c.calls + 1] = {'camrot', a} end
+do
+    local r = c:send('enemy_aim_nearest')
+    local cam = c.calls[#c.calls]
+    check(r[2] == 1 and r[3]:find('^aim_nearest;ent=%d+;d=1%.0;rotY=90%.0;rotX=21%.8;') and cam[1] == 'camrot' and
+        math.abs(cam[2].rotY - 90) < 1e-6 and math.abs(cam[2].rotX - math.deg(math.atan(0.4))) < 1e-6 and cam[2].interpTime == 0.2,
+        'aim nearest: the camera request toward the nearest living soldier')
+    check(c:send('enemy_aim_nearest 5')[3] == 'enemy_args' and c:send('enemy_aim_nearest x')[3] == 'enemy_args' and
+        c:send('enemy_aim_nearest 1 2')[3] == 'enemy_args', 'aim nearest: one height in metres, 0..2')
+    r = c:send('enemy_aim_nearest 0.3')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and math.abs(cam[2].rotX - math.deg(math.atan(1.2))) < 1e-6, 'aim nearest: a lying target 0.3 m up')
+    local saved = c.env.Player.RequestToSetCameraRotation
+    c.env.Player.RequestToSetCameraRotation = nil
+    check(c:send('enemy_aim_nearest')[3] == 'camera_unavailable', 'aim nearest: no camera API, no fake success')
+    -- Design 8.27 lever: the camera to the player's own facing (playerRotY -60) plus the degrees given, pitch 0 or given.
+    check(c:send('enemy_cam_turn 180')[3] == 'camera_unavailable', 'cam turn: no camera API, no fake success')
+    c.env.Player.RequestToSetCameraRotation = saved
+    r = c:send('enemy_cam_turn 180')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and r[3] == 'cam_turn;rotY=120.0;rotX=0.0;rel=180.0' and cam[1] == 'camrot' and math.abs(cam[2].rotY - 120) < 1e-6 and
+        cam[2].rotX == 0 and cam[2].interpTime == 0.2, 'cam turn: the facing plus 180 degrees, level')
+    r = c:send('enemy_cam_turn -150 -20')
+    cam = c.calls[#c.calls]
+    check(r[2] == 1 and math.abs(cam[2].rotY - 150) < 1e-6 and cam[2].rotX == -20, 'cam turn: wrapped to -180..180, a pitch given')
+    check(c:send('enemy_cam_turn')[3] == 'enemy_args' and c:send('enemy_cam_turn 181')[3] == 'enemy_args' and
+        c:send('enemy_cam_turn 0 61')[3] == 'enemy_args' and c:send('enemy_cam_turn x')[3] == 'enemy_args' and
+        c:send('enemy_cam_turn 0 0 0')[3] == 'enemy_args', 'cam turn: -180..180 and an optional pitch -60..60')
+end
 check(c:send('enemy_kill_nearest')[3]:find('dead_readback=1', 1, true) and c.life[5] == 3, 'nearest soldier exact dead enum/readback')
 check(c.life[7] == 255, 'unknown soldier not mutated')
 c.deferDead = true
@@ -976,8 +1007,14 @@ g.D.vehicle = {handles = {goto_partner_vehicle = true, vehicle_door = true}, run
 check(g:send('goto_vehicle truck passenger 30')[3] == 'door_stub' and g.truckArgs[1] == 'truck' and g.truckArgs[2] == 'passenger' and
     g.truckArgs[3] == '30' and g.truckArgs[4] == g.id - 1 and g:count('warp') == 0, 'goto_vehicle truck delegates to gotoTruck with its id')
 check(g:send('goto_vehicle truck')[3] == 'door_stub', 'a bare truck delegates too')
-check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep 60')[3] == 'command_args',
-    'only truck takes up to two door arguments')
+check(g:send('goto_vehicle truck a b c')[3] == 'command_args' and g:send('goto_vehicle jeep a b c')[3] == 'command_args',
+    'truck, sortie and jeep take at most two door arguments')
+-- M6 review runs: "jeep driver|passenger [cm]" (lab.ini debug_vehicle_door=1): the stock door spot of the nearest veh_lv_.
+check(g:send('goto_vehicle jeep 60')[3] == 'goto_vehicle_args' and g:send('goto_vehicle jeep driver 151')[3] == 'goto_vehicle_args' and
+    g:send('goto_vehicle jeep front')[3] == 'goto_vehicle_args' and g:count('warp') == 0, 'M6: jeep door arguments are strict (before any search)')
+check(tostring(g:send('goto_vehicle jeep passenger 40')[3]):find('^vehicle_none') ~= nil, 'M6: jeep door arguments pass the door guard (no jeep here)')
+check(g:send('goto_vehicle sortie a b c')[3] == 'command_args', 'M6: sortie takes at most two door arguments')
+check(tostring(g:send('goto_vehicle sortie driver')[3]):find('^vehicle_none') ~= nil, 'M6: sortie door arguments pass the door guard (no unnamed vehicle here)')
 g.D.vehicle.gotoTruck = function() return false, 'door_lab_only' end
 check(g:send('goto_vehicle truck')[3] == 'door_lab_only', 'a door refusal is the result')
 check(g:send('goto_partner_vehicle')[3] == 'goto_partner_vehicle_routed' and g:send('vehicle_door partner')[3] == 'vehicle_door_routed',
@@ -995,5 +1032,20 @@ local tr = g:send('goto_vehicle truck')
 local tw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
 check(tr[3]:find('vehicle=veh_trc_0001;id=25603', 1, true) and g:count('warp') == 1 and math.abs(tw.pos[1] - 41.9) < 1e-6 and
     tw.pos[3] == 50, 'a nil gotoTruck keeps the old 1.9 m truck spot ' .. tostring(tr[3]))
+-- M7: goto_vehicle jeep right, the 1.9 m spot on the jeep's passenger side (rotation 0: x - 1.9), facing the jeep.
+-- (A fresh fixture: the truck warp above is still waiting for its readback.)
+g = fixture(); g.vehicleIds = {veh_lv_0000 = 25608}; g.positions[25608] = {40, 2, 50}
+local jr = g:send('goto_vehicle jeep right')
+local jw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(jr[3]:find('vehicle=veh_lv_0000;id=25608', 1, true) and math.abs(jw.pos[1] - 38.1) < 1e-6 and math.abs(jw.pos[3] - 50) < 1e-6 and
+    math.abs(jw.rotY - 90) < 1e-6, 'goto_vehicle jeep right: the other side, facing the jeep ' .. tostring(jr[3]))
+g = fixture(); g.vehicleIds = {veh_lv_0000 = 25608}; g.positions[25608] = {40, 2, 50}
+local jl = g:send('goto_vehicle jeep')
+jw = g.calls[#g.calls][1] == 'warp' and g.calls[#g.calls][2] or {pos = {}}
+check(math.abs(jw.pos[1] - 41.9) < 1e-6 and math.abs(jw.rotY + 90) < 1e-6, 'goto_vehicle jeep keeps the driver side ' .. tostring(jl[3]))
+g = fixture()
+-- Merged with M6's door levers (jeep driver|passenger [cm]): any other jeep argument is refused at the door check.
+check(g:send('goto_vehicle jeep left')[3] == 'goto_vehicle_args' and g:send('goto_vehicle truck right')[3] == 'door_unavailable' and
+    g:send('goto_vehicle jeep right 60')[3] == 'goto_vehicle_args' and g:count('warp') == 0, 'only jeep right is new')
 
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

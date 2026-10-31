@@ -118,6 +118,14 @@ void Cfg() {
     r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true);
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0") == 0,
           "every vehicle key is r[15] = 63");
+    // The vehicle fixes of 2026-10-29: bit 64 D12 world_vehicle_crew, bit 128 world_vehicle_damage (lab and play).
+    Check(world::VehicleModules(false, false, false, false, false, false, true, false) == 64 &&
+              world::VehicleModules(false, false, false, false, false, false, false, true) == 128 &&
+              world::VehicleModules(true, true, false, true, false, false, true, true) == 203,
+          "r[15] bits: 64 the crewed vehicle wrecked at once, 128 the guest's vehicle damage report");
+    r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true, true, true);
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,255,0,0") == 0,
+          "every vehicle key, the fixes too, is r[15] = 255");
     r.vehicle_gone = world::VehicleModules(true, true, true);
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;

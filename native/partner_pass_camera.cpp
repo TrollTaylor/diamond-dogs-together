@@ -23,13 +23,27 @@ static_assert(c::p_local_id == kPLocalId && c::q_act == kQAct && c::board_p_unit
               "player offsets");
 static_assert(c::cam_connect == kCamConnect && c::cam_connect_on == kCamConnectOn && c::pass_cam_target == kCamTarget, "connect fields");
 static_assert(c::pass_cam_mode == kCamMode && c::pass_cam_prev_mode == kCamPrevMode && c::pass_cam_modules == kCamModules, "mode fields");
+static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c::pass_cam_pitch_prev == kCamPitchPrev &&
+                  c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev &&
+                  c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
+              "the look angles and the eye (design 8.27)");
+static_assert(c::pass_cam_aim_module_vtable_rva == kAimModuleVtableRva, "the aim camera module (design 8.28)");
+static_assert(c::pass_cam_request_flags == kCamRequestFlags && c::pass_cam_request == kCamRequest && c::pass_cam_lock_bit == kCamLockBit &&
+                  c::pass_cam_request_busy == kRequestBusy && c::pass_cam_request_flags_value == kTurnFlags,
+              "the get-off camera request (design 8.38)");
 
 // --- Process state (the DLL is pinned; nothing is torn down) ------------------
 volatile LONG g_install_tried = 0;
 volatile LONG g_installed = 0;
 const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
-std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0};
+std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0}, g_turns{0};
+volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
+// Design 8.46: the seat first-person toggle writes, the blocks' one-time check and the lab lever (kFpvKey, 0, 1).
+std::atomic<std::uint32_t> g_fpv{0};
+volatile LONG g_fpv_tried = 0;
+const char* g_fpv_refusal = nullptr;
+volatile LONG g_fpv_override = kFpvKey;
 
 void LogFormat(const char* format, ...) noexcept {
     if (!g_log) return;
@@ -101,6 +115,27 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
     return nullptr;
 }
 
+const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
+    mismatch_rva = 0;
+    const auto* image = static_cast<const unsigned char*>(base);
+    if (!image) return "base";
+    for (const std::uintptr_t rva : c::seat_fpv_blocks) {
+        mismatch_rva = rva;
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            same = std::memcmp(image + site->rva, site->bytes, site->size) == 0;
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    mismatch_rva = 0;
+    return nullptr;
+}
+
 void ResetForTest() noexcept {
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
@@ -108,6 +143,13 @@ void ResetForTest() noexcept {
     g_writes.store(0);
     g_clears.store(0);
     g_faults.store(0);
+    g_angles.store(0);
+    g_turns.store(0);
+    g_override = -1;
+    g_fpv.store(0);
+    g_fpv_tried = 0;
+    g_fpv_refusal = nullptr;
+    g_fpv_override = kFpvKey;
 }
 } // namespace detail
 
@@ -182,6 +224,236 @@ void ReadStats(Stats& out) noexcept {
     out.writes = g_writes.load(std::memory_order_relaxed);
     out.clears = g_clears.load(std::memory_order_relaxed);
     out.faults = g_faults.load(std::memory_order_relaxed);
+    out.angles = g_angles.load(std::memory_order_relaxed);
+    out.turns = g_turns.load(std::memory_order_relaxed);
+    out.fpv = g_fpv.load(std::memory_order_relaxed);
+}
+
+const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    std::uint32_t d38 = 0, f204 = 0;
+    if (!cam || !ReadValue(cam + kCamRequestFlags, d38) || !ReadValue(cam + kCamFlags, f204)) return "camera";
+    if (const char* why = RequestGate(d38, f204)) return why;
+    __try {
+        // The same fields as 0x111A920 (which writes the flag word first): here the six request fields first, then the
+        // request bit, so a camera update on another thread [U] never takes the bit with an older request's fields.
+        auto* r = reinterpret_cast<volatile float*>(cam + kCamRequest);
+        r[0] = interp;
+        r[1] = kTurnSpeed;
+        r[2] = kTurnBlend;
+        *reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequest + 0xC) = kTurnFlags;
+        r[4] = pitch;
+        r[5] = yaw;
+        auto* flags = reinterpret_cast<volatile std::uint32_t*>(cam + kCamRequestFlags);
+        *flags = *flags | kRequestBit;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return "fault";
+    }
+    g_turns.fetch_add(1, std::memory_order_relaxed);
+    return nullptr;
+}
+
+std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    std::int32_t mode = -1;
+    std::uintptr_t module = 0, vt = 0;
+    if (!cam || !ReadValue(cam + kCamMode, mode) || mode < 0 || mode >= static_cast<std::int32_t>(kModuleCount) ||
+        !ReadValue(cam + kCamModules + 8u * static_cast<unsigned>(mode), module) || !module || !ReadValue(module, vt) || vt < b)
+        return 0;
+    return vt - b;
+}
+
+bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    __try {
+        *reinterpret_cast<volatile float*>(cam + kCamPitch) = pitch;
+        *reinterpret_cast<volatile float*>(cam + kCamPitchPrev) = pitch;
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_angles.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept {
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    __try {
+        for (unsigned i = 0; i < 4; ++i) *reinterpret_cast<volatile float*>(cam + kCamRotation + 4u * i) = rot[i];
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_angles.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
+    out = View{};
+    const std::uintptr_t cam = LocalCamera(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!cam) return false;
+    View v{};
+    for (unsigned i = 0; i < 3; ++i)
+        if (!ReadValue(cam + kCamPos + 4u * i, v.pos[i])) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(cam + kCamRot + 4u * i, v.rot[i]) || !ReadValue(cam + kCamAngles + 4u * i, v.ang[i])) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(cam + kCamOffset + 4u * i, v.off[i]) || !ReadValue(cam + kCamPivot + 4u * i, v.piv[i])) return false;
+    if (!ReadValue(cam + kCamScale, v.sc[0]) || !ReadValue(cam + kCamScale + 4u, v.sc[1])) return false;
+    if (!ReadValue(cam + kCamFlags, v.flags) || !ReadValue(cam + kCamRequests, v.requests)) return false;
+    v.ok = true;
+    out = v;
+    return true;
+}
+
+int Override() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_override, 0, 0)); }
+
+// --- Design 8.46: seat first person ----------------------------------------------------------------------------------
+namespace {
+// The subjective module of the local camera: the module among the six whose vtable is 0x23D1F00 (0: none).
+std::uintptr_t SubjectiveModule(std::uintptr_t b, std::uintptr_t cam, std::int32_t& index) noexcept {
+    index = -1;
+    for (unsigned i = 0; i < kModuleCount; ++i) {
+        std::uintptr_t module = 0, vt = 0;
+        if (!ReadValue(cam + kCamModules + 8u * i, module) || !module || !ReadValue(module, vt)) continue;
+        if (vt == b + c::pass_subj_module_vtable_rva) {
+            index = static_cast<std::int32_t>(i);
+            return module;
+        }
+    }
+    return 0;
+}
+std::uintptr_t SubjectiveImpl(const void* base, std::uintptr_t P, std::int32_t& index) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    const std::uintptr_t module = cam ? SubjectiveModule(b, cam, index) : 0;
+    return module ? module - c::pass_subj_impl : 0;
+}
+} // namespace
+
+bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept {
+    out = Subj{};
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    Subj v{};
+    v.index = index;
+    if (!ReadValue(impl + c::pass_subj_toggles, v.toggles) || !ReadValue(impl + c::pass_subj_mask, v.mask) ||
+        !ReadValue(impl + c::pass_subj_first, v.first))
+        return false;
+    std::uintptr_t poller = 0, vt = 0, fn = 0;
+    if (ReadValue(impl + c::pass_subj_first_poller, poller) && poller && ReadValue(poller, vt) && vt && ReadValue(vt, fn) && fn >= b)
+        v.first_fn = fn - b;
+    v.ok = true;
+    out = v;
+    return true;
+}
+
+bool ReadSubjectivePollers(const void* base, std::uintptr_t P, std::uintptr_t (&rvas)[10]) noexcept {
+    for (auto& r : rvas) r = 0;
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    for (unsigned i = 0; i < c::pass_subj_count && i < 10; ++i) {
+        std::uintptr_t poller = 0, vt = 0, fn = 0;
+        if (ReadValue(impl + c::pass_subj_pollers + 8u * i, poller) && poller && ReadValue(poller, vt) && vt && ReadValue(vt, fn) && fn >= b)
+            rvas[i] = fn - b;
+    }
+    return true;
+}
+
+bool WriteFpvToggles(const void* base, std::uintptr_t P, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    after = 0;
+    if (((set | clear) & ~kFpvSlotMask) != 0 || (set & clear) != 0) return false;
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    auto* word = reinterpret_cast<volatile LONG*>(impl + c::pass_subj_toggles);
+    __try {
+        // The game's own toggle (the F tap, on the game thread) between the read and the write is never lost.
+        LONG seen = *word;
+        for (unsigned tries = 0; tries < 16; ++tries) {
+            const LONG next = static_cast<LONG>((static_cast<std::uint32_t>(seen) | set) & ~clear);
+            const LONG prior = InterlockedCompareExchange(word, next, seen);
+            if (prior == seen) {
+                after = static_cast<std::uint32_t>(next);
+                g_fpv.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+            seen = prior;
+        }
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+    }
+    return false;
+}
+
+const char* FpvInstall(const void* base, std::size_t span) noexcept {
+    // g_fpv_tried: 0 untried, 1 verifying (another caller: refused until done), 2 done (g_fpv_refusal stored before).
+    const LONG was = InterlockedCompareExchange(&g_fpv_tried, 1, 0);
+    if (was == 2) return g_fpv_refusal;
+    if (was == 1) return "verifying";
+    std::uintptr_t mismatch = 0;
+    g_fpv_refusal = detail::VerifyFpvImage(base, span, mismatch);
+    InterlockedExchange(&g_fpv_tried, 2);
+    if (g_fpv_refusal)
+        LogFormat("partner_pass_camera=seat_fpv; result=refused; reason=%s; rva=0x%llx\r\n", g_fpv_refusal,
+                  static_cast<unsigned long long>(mismatch));
+    else
+        LogFormat("partner_pass_camera=seat_fpv; result=installed; blocks=%u\r\n",
+                  static_cast<unsigned>(sizeof(c::seat_fpv_blocks) / sizeof(c::seat_fpv_blocks[0])));
+    return g_fpv_refusal;
+}
+int FpvOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_fpv_override, 0, 0)); }
+
+bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept {
+    ok = false;
+    if (!text || std::strncmp(text, "passcam", 7) != 0 || (text[7] != '\0' && text[7] != ' ')) return false;
+    const char* arg = text[7] ? text + 8 : "";
+    if (std::strncmp(arg, "seatfpv", 7) == 0 && (arg[7] == '\0' || arg[7] == ' ')) {
+        // Design 8.46: "passcam seatfpv on|off|key" (this copy's seat first person; key: lab.ini partner_seat_fpv).
+        const char* v = arg[7] ? arg + 8 : "";
+        const int next = std::strcmp(v, "on") == 0 ? 1 : std::strcmp(v, "off") == 0 ? 0 : std::strcmp(v, "key") == 0 ? kFpvKey : -2;
+        const char* refusal = !lab ? "lab_only" : next == -2 ? "args" : nullptr;
+        if (!refusal) InterlockedExchange(&g_fpv_override, next);
+        const int value = FpvOverride();
+        if (result && capacity) {
+            if (refusal)
+                StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=seatfpv on|off|key", refusal);
+            else
+                StringCchPrintfA(result, capacity, "passcam=seatfpv; seatfpv=%s; writes=%u; faults=%u",
+                                 value == 1 ? "on" : value == 0 ? "off" : "key", g_fpv.load(std::memory_order_relaxed),
+                                 g_faults.load(std::memory_order_relaxed));
+        }
+        ok = refusal == nullptr;
+        return true;
+    }
+    const std::size_t n = std::strlen(arg);
+    Mode mode{};
+    const bool status = n == 6 && std::memcmp(arg, "status", 6) == 0;
+    const bool clear = n == 3 && std::memcmp(arg, "lab", 3) == 0;
+    const bool set = ParseMode(arg, n, mode);
+    const char* refusal = !lab ? "lab_only" : !(status || clear || set) ? "args" : nullptr;
+    if (!refusal && clear) InterlockedExchange(&g_override, -1);
+    if (!refusal && set) InterlockedExchange(&g_override, static_cast<LONG>(mode));
+    const int value = Override();
+    if (result && capacity) {
+        if (refusal)
+            StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=off|connect|drop|aim|view|lab|status", refusal);
+        else
+            StringCchPrintfA(result, capacity, "passcam=%s; override=%s; writes=%u; clears=%u; faults=%u",
+                             value < 0 ? "lab" : ModeName(static_cast<Mode>(value)), value < 0 ? "none" : "set",
+                             g_writes.load(std::memory_order_relaxed), g_clears.load(std::memory_order_relaxed),
+                             g_faults.load(std::memory_order_relaxed));
+    }
+    ok = refusal == nullptr;
+    return true;
 }
 
 } // namespace mgscoop::partner_pass_camera

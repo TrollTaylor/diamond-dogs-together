@@ -97,6 +97,20 @@ void TestTable() {
           "the s10150 rear-seat state, zero and stateDirectPlay never confirm");
     Check(prs::SeatDword(0) == 0x00b04130u && prs::SeatDword(2) == c::ride_seat_old && prs::SeatDword(3) == 0x03b04130u,
           "seat dword: 30 41 b0 <seat>");
+    // Seat 1 anchors on the driver's seat matrix (the stock rule for a player in seat 1, 0xB79A3F: the player's
+    // FrontRight clips carry the driver-to-passenger offset; on the seat-1 matrix they drew one seat further right,
+    // outside the jeep, design 8.33).
+    // Review (8.34): a light vehicle only (category unit+0x6C >> 4: 1, 2); the truck cab (3, 4) plays the light
+    // FrontRight loop as a guess and has no frame proof, and an unknown category keeps seat 1's own matrix.
+    Check(prs::AnchorSeat(1, true, 1) == 0 && prs::AnchorSeat(1, true, 2) == 0,
+          "seat 1 of a light vehicle anchors on seat 0's matrix with partner_ride_seat1_anchor");
+    Check(prs::AnchorSeat(1, true, 3) == 1 && prs::AnchorSeat(1, true, 4) == 1, "the truck cab keeps seat 1's own matrix");
+    Check(prs::AnchorSeat(1, true, prs::kCategoryUnknown) == 1 && prs::AnchorSeat(1, true, 0) == 1 && prs::AnchorSeat(1, true, 5) == 1,
+          "an unknown or other category keeps seat 1's own matrix");
+    Check(prs::AnchorSeat(1, false, 1) == 1, "without the key seat 1 keeps its own matrix (0.14.4)");
+    for (const bool on : {false, true})
+        Check(prs::AnchorSeat(0, on, 1) == 0 && prs::AnchorSeat(2, on, 1) == 2 && prs::AnchorSeat(3, on, 1) == 3,
+              "the other seats anchor on their own matrix");
 }
 
 void TestFixture() {
@@ -114,7 +128,7 @@ void TestFixture() {
     Check(image[c::ride_cam_play_rva] == 0xEB && image[c::ride_cam_play_rva + 1] == 0x64 && image[c::ride_cam_plain_rva + 1] == 0x39 &&
               image[c::ride_cam_end_rva + 1] == 0x0C && image[c::ride_seat_rva + 3] == 0x00,
           "jmp rel8 64/39/0c and seat immediate 0");
-    Check(Logged("partner_ride_seat_patch=applied; seat=0;"), "applied line");
+    Check(Logged("partner_ride_seat_patch=applied; seat=0; sites=0x119883c,"), "applied line (the 0.14.4 prefix kept)");
     Check(prs::VerifyImage(image, kSpan) == nullptr, "an armed image re-validates (site dwords masked)");
     for (unsigned i = 0; i < prs::kSites; ++i)
         Check(prs::StateOf(image, static_cast<prs::SiteId>(i)) == prs::SiteState::patched, "every site reads patched");
@@ -134,6 +148,54 @@ void TestFixture() {
               Dword(image, c::ride_cam_play_rva) == c::ride_cam_play_new, "seat 2 keeps the retail immediate");
     prs::Revert(image, kSpan, Log, "seat2");
     Check(AllOriginal(image) && !prs::Armed(), "seat 2 reverted");
+    // Seat 1: off (the default) writes the immediate 1; with the key, 0 (the driver's seat matrix), still seat 1.
+    Check(!prs::SeatOneAnchor(), "the seat-1 anchor is off by default");
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log, 1) && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x01b04130u &&
+              Logged("partner_ride_seat_patch=applied; seat=1; sites=") && Logged("; anchor=1; cat=1\r\n"),
+          "seat 1 without the key arms the immediate 1");
+    prs::Revert(image, kSpan, Log, "seat1");
+    prs::SetSeatOneAnchor(true);
+    logged.clear();
+    Check(prs::SeatOneAnchor() && prs::Arm(image, kSpan, 1, Log, 1) && prs::ArmedSeat() == 1 &&
+              Dword(image, c::ride_seat_rva) == 0x00b04130u,
+          "seat 1 of a light vehicle with the key arms the anchor immediate 0");
+    Check(Logged("partner_ride_seat_patch=applied; seat=1; sites=") && Logged("; anchor=0; cat=1\r\n"),
+          "the applied line names the anchor and the category at its end");
+    // The get-off (review of design 8.35): the passenger's own copy plays its GetOff on seat 1's own matrix (rider[1]
+    // cleared, the remap skip back at act 112), so the confirmed GetOff moves this copy's anchor back to seat 1's own
+    // immediate; without it the driver's copy drew the get-off one seat to the left and corrected 0.87 m at its end.
+    logged.clear();
+    Check(prs::ArmGetOff(image, kSpan, 1, Log) && prs::Armed() && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x01b04130u &&
+              Logged("partner_ride_seat_patch=getoff; seat=1; seat_dword=0x01b04130; anchor=1; was=0\r\n"),
+          "the seat-1 get-off re-anchors on seat 1's own matrix");
+    logged.clear();
+    Check(prs::ArmGetOff(image, kSpan, 1, Log) && !Logged("getoff") && Dword(image, c::ride_seat_rva) == 0x01b04130u,
+          "a second get-off call writes and logs nothing");
+    Check(!prs::ArmGetOff(image, kSpan, 2, Log) && Dword(image, c::ride_seat_rva) == 0x01b04130u, "another seat than the armed one is refused");
+    prs::Revert(image, kSpan, Log, "seat1");
+    Check(AllOriginal(image) && !prs::Armed(), "seat 1 reverted");
+    logged.clear();
+    Check(!prs::ArmGetOff(image, kSpan, 1, Log) && AllOriginal(image) && !Logged("getoff"), "the get-off writes nothing when not armed");
+    Check(prs::Arm(image, kSpan, 2, Log) && prs::ArmGetOff(image, kSpan, 2, Log) && Dword(image, c::ride_seat_rva) == 0x02b04130u &&
+              !Logged("patch=getoff"),
+          "a back seat already anchors on its own matrix: the get-off writes nothing");
+    prs::Revert(image, kSpan, Log, "seat2");
+    Check(AllOriginal(image) && !prs::Armed(), "seat 2 reverted after the get-off call");
+    // The truck cab and an unknown category keep the immediate 1 with the key.
+    for (const std::uint8_t cat : {std::uint8_t(3), std::uint8_t(4), prs::kCategoryUnknown}) {
+        logged.clear();
+        Check(prs::Arm(image, kSpan, 1, Log, cat) && prs::ArmedSeat() == 1 && Dword(image, c::ride_seat_rva) == 0x01b04130u &&
+                  Logged("; anchor=1; cat="),
+              "the truck cab or an unknown category arms seat 1's own immediate with the key");
+        prs::Revert(image, kSpan, Log, "seat1");
+        Check(AllOriginal(image) && !prs::Armed(), "seat 1 reverted (truck/unknown)");
+    }
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log) && Dword(image, c::ride_seat_rva) == 0x01b04130u && Logged("; anchor=1; cat=255\r\n"),
+          "Arm without a category is unknown (seat 1's own matrix)");
+    prs::Revert(image, kSpan, Log, "seat1");
+    prs::SetSeatOneAnchor(false);
     // Refusals write nothing.
     logged.clear();
     Check(!prs::Arm(image, kSpan, 4, Log) && Logged("reason=args") && AllOriginal(image), "seat 4 refused");
@@ -176,7 +238,7 @@ void TestFixture() {
     // A page made read-only (code pages are execute-read) is still patched and its protection restored.
     DWORD old = 0;
     Check(VirtualProtect(image + 0x1198000, 0x2000, PAGE_READONLY, &old) != 0, "fixture protect");
-    Check(prs::Arm(image, kSpan, 1, Log) && Dword(image, c::ride_seat_rva) == 0x01b04130u, "arm on read-only pages");
+    Check(prs::Arm(image, kSpan, 3, Log) && Dword(image, c::ride_seat_rva) == 0x03b04130u, "arm on read-only pages");
     MEMORY_BASIC_INFORMATION info{};
     Check(VirtualQuery(image + 0x1198d56, &info, sizeof(info)) && info.Protect == PAGE_READONLY, "protection restored");
     prs::Revert(image, kSpan, Log, "readonly");
@@ -225,12 +287,96 @@ void TestRetailCopy() {
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("retail copy: verified\n");
 }
+// Design 8.53: the game window closes on another thread than the mission's (PartnerShutdown's other_thread path; run
+// 1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread). Close reverts the live patch at
+// once and logs it; every later Arm writes nothing, so the mission thread cannot put the patch back before the process
+// ends. One-way for the process: this test runs last.
+void TestClose() {
+    unsigned char* image = FixtureImage();
+    prs::SetSeatOneAnchor(true);
+    logged.clear();
+    Check(!prs::Closed() && prs::Arm(image, kSpan, 1, Log, 1) && prs::Armed() && Dword(image, c::ride_seat_rva) == 0x00b04130u,
+          "seat 1 armed on the driver's matrix before the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && prs::ArmedSeat() == 0xFF &&
+              Logged("partner_ride_seat_patch=reverted; reason=shutdown\r\n"),
+          "the close reverts the live seat-1 patch and logs it");
+    logged.clear();
+    Check(!prs::Arm(image, kSpan, 1, Log, 1) && AllOriginal(image) && !prs::Armed() &&
+              Logged("partner_ride_seat_patch=skipped; reason=closing\r\n") && !Logged("refused"),
+          "no arm after the close (not a refusal line)");
+    Check(!prs::ArmGetOff(image, kSpan, 1, Log) && AllOriginal(image), "no get-off rewrite after the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    prs::Revert(image, kSpan, Log, "mission_end");
+    Check(AllOriginal(image) && logged.empty(), "a second close and the later mission-end revert are silent");
+    prs::SetSeatOneAnchor(false);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
+
+// Design 8.54 (review of 8.53): Close runs on the window thread while the mission thread may be inside ArmGetOff or
+// Revert. The pause seam starts Close on another thread at the named point and gives it up to 200 ms; with the seat
+// lock that thread waits until the mission call returns, without it Close runs in the middle.
+unsigned char* g_race_image = nullptr;
+HANDLE g_closer = nullptr;
+int g_close_at = 0;
+DWORD WINAPI Closer(void*) { prs::Close(g_race_image, kSpan, Log); return 0; }
+void CloseAtPause(int point) {
+    if (point != g_close_at || g_closer) return;
+    g_closer = CreateThread(nullptr, 0, Closer, nullptr, 0, nullptr);
+    Check(g_closer != nullptr, "closer thread");
+    WaitForSingleObject(g_closer, 200);
+}
+void JoinCloser() {
+    if (g_closer) { WaitForSingleObject(g_closer, INFINITE); CloseHandle(g_closer); g_closer = nullptr; }
+}
+void TestCloseRaces() {
+    unsigned char* image = FixtureImage();
+    g_race_image = image;
+    prs::SetSeatOneAnchor(true);
+    // 1: a get-off rewrite that passed its checks just before the close must not leave a seat dword behind.
+    prs::ResetForTest();
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log, 1) && Dword(image, c::ride_seat_rva) == 0x00b04130u, "race 1: seat 1 armed on the driver's matrix");
+    g_close_at = 1;
+    prs::SetPauseForTest(CloseAtPause);
+    prs::ArmGetOff(image, kSpan, 1, Log);
+    prs::SetPauseForTest(nullptr);
+    JoinCloser();
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && !Logged("refused"),
+          "race 1: a get-off rewrite racing the close leaves every site original, no refusal line");
+    // 2: the mission thread's revert (foot / stop) racing the close: no refusal line (a NEVER line in the checks).
+    prs::ResetForTest();
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log, 1), "race 2: seat 1 armed");
+    g_close_at = 2;
+    prs::SetPauseForTest(CloseAtPause);
+    prs::Revert(image, kSpan, Log, "foot");
+    prs::SetPauseForTest(nullptr);
+    JoinCloser();
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && !Logged("refused") &&
+              Logged("partner_ride_seat_patch=reverted; reason="),
+          "race 2: a revert racing the close leaves every site original, no refusal line");
+    // 3: a close with nothing armed on an image whose seat site is not ours (another build) writes and logs nothing.
+    prs::ResetForTest();
+    logged.clear();
+    SetDword(image, c::ride_seat_rva, 0x90909090u);
+    prs::Close(image, kSpan, Log);
+    Check(prs::Closed() && Dword(image, c::ride_seat_rva) == 0x90909090u && logged.empty(),
+          "race 3: a close with nothing armed and a foreign seat dword is silent");
+    prs::ResetForTest();
+    prs::SetSeatOneAnchor(false);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
 } // namespace
 
 int main() {
     TestTable();
     TestFixture();
     TestRetailCopy();
+    TestClose();
+    TestCloseRaces();
     std::printf("partner_ride_seat_tests: %u checks passed\n", checks);
     return 0;
 }

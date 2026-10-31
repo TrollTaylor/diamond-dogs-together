@@ -1,0 +1,321 @@
+# m6m7d review re-prove (hit), run 2 of the round: the HOST in back seat 2, one shot per boarding on a FIXED jeep-relative
+# line (lever enemy_cam_turn as the boarding's first aim: playerRotY + rel, seated playerRotY = 62 here, 4f1a072f), so S1
+# and stock fire on identical lines with no target to lose (9ff5170f: S1 killed both aim_nearest guards, the stock arm
+# then had none). Lines are 76bc4a1c's observed stock-hit lines from seat 2:
+#   A rel 124.8 pitch -1 (H2: d_milli 821,-570,+24 cost 702),  B rel 31.9 pitch 0 (H1: d_milli 528,849,+3 cost 702).
+# A: S1 x2, frames on foot; stock x2, frames on foot. B (no life reset): S1 x2, frames; stock x1, frames; stock x1, frames
+# (2300 -> 1598 -> 896 -> 194 -> destroyed if every stock shot hits). The host's copy is the discriminating one.
+# Africa jeep (30020, veh_lv_0000 = 25608), the guest drives throughout.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7d-self-hit-ab4.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+labsetting partner_ride_front=0
+labsetting world_vehicle_state=1
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_seat_shot=configured; key=1; play=0' 30
+waitlog guest 'partner_seat_shot=configured; key=1; play=0' 30
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run enemy disable 1465137544
+host run cp_phase nearest sneak
+guest debug forward -10
+wait 2500
+both capture s-start
+host debug goto_vehicle jeep right
+wait 2000
+host debug forward -10
+wait 2500
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+guest press e 150
+# 8.55: the claim, the host's grant and the guest's grant all follow the press (E press only).
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+host run vehicle_life 25608 2300
+wait 1000
+# --- line a: rel 124.8 pitch -1 -------------------------------------------------------------
+host debug seatshot lab
+wait 500
+# line a on boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 800
+host run enemy_cam_turn 124.8 -1
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture a-on1-aim
+guest capture a-on1-drv
+host press lmb 120
+wait 300
+host capture a-on1-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# line a on boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 800
+host run enemy_cam_turn 124.8 -1
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture a-on2-aim
+host press lmb 120
+wait 300
+host capture a-on2-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host debug forward -6
+wait 2500
+both capture a-on-after-a
+wait 3000
+host capture a-on-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host debug seatshot off
+wait 500
+# line a off boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 800
+host run enemy_cam_turn 124.8 -1
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture a-off1-aim
+guest capture a-off1-drv
+host press lmb 120
+wait 300
+host capture a-off1-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# line a off boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 800
+host run enemy_cam_turn 124.8 -1
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture a-off2-aim
+host press lmb 120
+wait 300
+host capture a-off2-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host debug forward -6
+wait 2500
+both capture a-off-after-a
+wait 3000
+host capture a-off-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+# --- line b: rel 31.9 pitch 0 -------------------------------------------------------------
+host debug seatshot lab
+wait 500
+# line b on boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 800
+host run enemy_cam_turn 31.9 0
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-on1-aim
+guest capture b-on1-drv
+host press lmb 120
+wait 300
+host capture b-on1-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+# line b on boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=1; source=key;' 5
+wait 800
+host run enemy_cam_turn 31.9 0
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-on2-aim
+host press lmb 120
+wait 300
+host capture b-on2-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=25608; seat=2; apply=1;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host debug forward -6
+wait 2500
+both capture b-on-after-a
+wait 3000
+host capture b-on-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host debug seatshot off
+wait 500
+# line b off boarding 1
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 800
+host run enemy_cam_turn 31.9 0
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-off1-aim
+guest capture b-off1-drv
+host press lmb 120
+wait 300
+host capture b-off1-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host debug forward -6
+wait 2500
+both capture b-off1-after-a
+wait 3000
+host capture b-off1-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+# line b off boarding 2
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_seat_shot=published; vehicle=25608; seat=2; class=light; cat=[12]; apply=0; source=lever;' 5
+wait 800
+host run enemy_cam_turn 31.9 0
+host expect ^cam_turn;
+wait 900
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-off2-aim
+guest capture b-off2-drv
+host press lmb 120
+wait 300
+host capture b-off2-shot
+host release
+wait 1500
+waitlog host 'partner_seat_shot=shot; result=census; vehicle=25608; seat=2; apply=0;' 3
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+host debug forward -6
+wait 2500
+both capture b-off2-after-a
+wait 3000
+host capture b-off2-after-b
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+host debug seatshot lab
+guest press e 150
+wait 3500
+both capture end
+host run vehicle_state_status 25608
+host expect ^vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+state

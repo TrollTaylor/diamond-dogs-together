@@ -344,6 +344,9 @@ F.reqAt = nil
 F.hostDeploy, F.refused, F.disarmAt = nil, nil, nil
 if F.armed then F.unpairedAt = W.now() end
 F.title = nil
+-- D11 pre-pair gap (world_vehicle_rules.lua, world_relief_sync.lua, later chunks): this start replays the host's
+-- transition into W.mission (the guest can be in game before PAIRED); nil for any other start.
+F.arrivedMission = nil
 if floor(W.mission / 10000) == 4 and W.get(gvars, "ini_isTitleMode") == true then
     local s = storyStart()
     if s ~= nil then
@@ -358,6 +361,7 @@ if t and W.mission == t[4] then
     F.seeds[t[1]] = nil
     if F.queue[1] and F.queue[1][1] == t[1] then table.remove(F.queue, 1) end
     W.tx(OP.FOLLOW_ACK, t[1], W.mission, 2)
+    F.arrivedMission = W.mission
     log(fmt("step=arrived;id=%.0f;mission=%d;epoch=%d", t[1], W.mission, W.epoch))
 elseif t then
     F.current = nil; F.queue = {}; F.seeds = {}; F.armed = false

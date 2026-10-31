@@ -5,7 +5,7 @@ local function check(value, why)
     assert(value, checks .. ': ' .. why)
 end
 local env = setmetatable({e = {MgsCoopWorld = {
-    OP = {}, handlers = {}, paired = true, eff = 3, mission = 30050, epoch = 7,
+    OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, paired = true, eff = 3, mission = 30050, epoch = 7,
     now = function() return 1000 end,
     tx = function() return true end,
     tick = function() end
@@ -417,4 +417,359 @@ do
     check(#sends == 2 and sends[2].id == 4000 and sends[2].cmd == 'SetPosition', 'a vehicle RIDE_BODY pose still places the vehicle')
     W.api, W.log = api, nil
 end
+-- M6 seat races, E press only (docs/vehicles-companions-design.md 8.55, 5 SEAT op 54; protocol 21): standing at a door
+-- claims nothing. The host announces READY (action 4); a guest that heard it holds (the native hold lease), so native
+-- site D keeps its E press in phase 1 and counts it (pseq); the next tick claims that vehicle. The host grants unless
+-- its own press owns the vehicle (native grant_if) or it drives it; without READY (0.14.4, key off) the guest is stock.
+local function seatEnv(host)
+    local c = {tx = {}, notes = {}, logs = {}, cmds = {}, deny = {}, grant = {}, now = 1000, want = 65535, age = -1, on = 1, hits = 0,
+        pseq = 0, press = 65535, pend = 0, touts = 0}
+    local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, paired = true, eff = 3, mission = 30010, epoch = 7, host = host,
+        now = function() return c.now end,
+        tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return true end,
+        tick = function() if c.inner then c.inner() end end,
+        log = function(s) c.logs[#c.logs + 1] = s end,
+        note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end}
+    W.receipt = function(src)
+        local cmd = src:match("^return 'MGS_COOP_BOARD_SEAT_V1' %-%- (.+)$")
+        assert(cmd, 'the board seat receipt only: ' .. src)
+        c.cmds[#c.cmds + 1] = cmd
+        local v, ms = cmd:match('^deny (%d+) (%d+)$')
+        if v then c.deny[#c.deny + 1] = {tonumber(v), tonumber(ms)}; c.denied = tonumber(v); c.granted = nil end
+        local gv, gms = cmd:match('^grant (%d+) (%d+)$')
+        if gv then c.grant[#c.grant + 1] = {tonumber(gv), tonumber(gms)}; c.granted = tonumber(gv); if c.denied == c.granted then c.denied = nil end end
+        local h = cmd:match('^hold (%d+)$')
+        if h then c.hold = tonumber(h) end
+        local gi
+        local iv, ims = cmd:match('^grant_if (%d+) (%d+)$')
+        if iv then
+            gi = c.commit == tonumber(iv) and 0 or 1
+            if gi == 1 then c.deny[#c.deny + 1] = {tonumber(iv), tonumber(ims)}; c.denied = tonumber(iv) end
+        end
+        if c.on ~= 1 then return {ok = true, on = 0} end
+        return {ok = true, on = 1, want = c.want, age = c.age, deny = c.denied or 65535, left = 0, hits = c.hits,
+            hold = (c.hold or 0) > 0 and 1 or 0, grant = c.granted or 65535, holds = c.holds or 0, ref = c.ref or 65535, rage = c.rage or -1,
+            press = c.press, pseq = c.pseq, page = 0, pend = c.pend, touts = c.touts, gi = gi, commit = c.commit or 65535,
+            dend = c.dend or 0, dveh = c.dveh or 65535, lpv = c.lpv or 65535}
+    end
+    local env = setmetatable({e = {MgsCoopWorld = W}}, {__index = _G})
+    env.PlayerInfo = {OrCheckStatus = function() return c.driving ~= nil end}
+    env.PlayerStatus = {ON_VEHICLE = 4}
+    env.vars = {playerVehicleGameObjectId = 65535}
+    env.Tpp = {IsVehicle = function(id) return id >= 25600 and id <= 26111 end}
+    local f = assert(loadfile(arg[1]))
+    setfenv(f, env)
+    f()
+    c.W, c.R, c.S, c.env = W, W.ridePose, W.ridePose.seat, env
+    function c.drive(id) c.driving = id; env.vars.playerVehicleGameObjectId = id or 65535 end
+    function c.has(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
+    function c.count(p) local n = 0 for _, l in ipairs(c.cmds) do if l == p then n = n + 1 end end return n end
+    function c.ready(seq) c.W.handlers[54]({seq or 90, 25600, 0, 1, 4}) end
+    function c.claims() local n = 0 for _, t in ipairs(c.tx) do if t[6] == 1 then n = n + 1 end end return n end
+    return c
+end
+-- Guest.
+local gs = seatEnv(false)
+check(gs.W.OP.SEAT == 54 and type(gs.W.handlers[54]) == 'function' and type(gs.S) == 'table', 'SEAT is op 54 with a handler')
+gs.S.step(1000)
+check(gs.cmds[1] == 'poll' and gs.hold == nil and #gs.tx == 0, 'no READY from the host yet: the guest is stock (polled, never held)')
+gs.now = 1100
+gs.ready()
+check(gs.has('event=seat;state=ready'), "the host's READY")
+gs.S.step(1200)
+check(gs.cmds[#gs.cmds] == 'hold 2000' and gs.hold == 2000 and #gs.tx == 0, 'READY: the guest holds (a 2 s lease for native site D)')
+-- E press only (the user's rule): a guest standing at the driver's door with a fresh want never claims.
+gs.want, gs.age = 25608, 16
+for t = 1400, 6400, 200 do gs.S.step(t) end
+check(#gs.tx == 0 and not gs.has('action=claim'), 'standing at the door for 5 s without E: no claim')
+-- An E press (site D counted it): claimed on the next step.
+gs.pseq, gs.press, gs.pend = 1, 25608, 1
+gs.S.step(6416)
+check(#gs.tx == 1 and gs.tx[1][1] == 54 and gs.tx[1][3] == 25608 and gs.tx[1][4] == 0 and gs.tx[1][5] == 2 and gs.tx[1][6] == 1,
+    'the press is claimed: id, seat 0, role guest, claim')
+check(gs.has('event=seat;action=claim;vehicle=25608;role=guest;pseq=1'), 'the claim line names the press')
+gs.S.step(6432)
+gs.S.step(6448)
+check(#gs.tx == 1, 'one claim per press, while it is held (stepped every tick)')
+check(gs.count('hold 2000') >= 3, 'the hold lease is refreshed every step')
+gs.W.handlers[54]({5, 25608, 0, 1, 2})
+check(gs.grant[1] and gs.grant[1][1] == 25608 and gs.grant[1][2] == 3000 and gs.has('event=seat;action=grant;vehicle=25608;role=guest;set=1'),
+    "the host's grant: 3 s of native grant for that vehicle (site D lets the press board)")
+gs.pend = 0
+gs.pseq, gs.press = 2, 25608
+gs.S.step(9000)
+check(#gs.tx == 2 and gs.tx[2][6] == 1, 'the next press is claimed again')
+gs.W.handlers[54]({7, 25608, 0, 1, 3})
+check(gs.deny[1][1] == 25608 and gs.deny[1][2] == 3000 and gs.has('event=seat;action=deny;vehicle=25608;role=guest;set=1'),
+    "the host's deny: 3 s of native deny on the guest")
+check(#gs.notes == 1 and gs.notes[1][1] == 13 and gs.notes[1][2] == 6, 'the guest gets the seat-race toast (NOTE 13 a=6)')
+gs.W.handlers[54]({8, 25608, 0, 1, 3})
+check(#gs.notes == 1 and #gs.deny == 2, 'the deny is refreshed; one toast per 3 s')
+gs.touts = 1
+gs.S.step(9500)
+check(gs.has('event=seat;action=timeout;vehicle=25608;timeouts=1'), 'a press the host never answered within 1 s is logged')
+-- Review (8.55): a host that went silent after its READY costs one held press, not READY_MS: stock until the next READY.
+check(gs.hold == 0 and gs.has('event=seat;state=stock'), 'a timeout: hold 0, stock until the next READY')
+gs.pseq, gs.press = 3, 25608
+gs.S.step(9700)
+check(#gs.tx == 2, 'stock after a timeout: the next press sends no claim')
+gs.now = 9800
+gs.ready()
+gs.S.step(9900)
+check(gs.hold == 2000, "the host's next READY holds again")
+for _, bad in ipairs({{9, 25608, 0, 2, 3}, {9, 25608, 1, 1, 3}, {9, 25599, 0, 1, 3}, {9, 25608, 0, 1}, {9, 25608, 0, 1, 1}}) do
+    gs.W.handlers[54](bad)
+end
+check(#gs.deny == 2 and #gs.grant == 1, "the guest ignores a guest-role op, another seat, a non-vehicle id, a short op, a host claim")
+local gr = seatEnv(false)
+gr.ready()
+gr.drive(25609)
+gr.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gr.notes == 0 and gr.deny[1][1] == 25608, 'a deny while the guest already rides (another seat): no toast')
+-- Run 23c7f305 (both pressed): the host's ride reached the guest's copy during its held press, so the press took a
+-- passenger seat (native end 4, peer) before the deny came: no "getting into the driver's seat" toast for it.
+local gp = seatEnv(false)
+gp.ready()
+gp.pend, gp.dend, gp.dveh, gp.lpv = 0, 4, 25608, 25608
+gp.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gp.notes == 0 and gp.deny[1][1] == 25608 and gp.has('event=seat;action=deny;vehicle=25608;role=guest;set=1;seated=1'),
+    'a deny after the press already took a passenger seat (native lpv): no toast (logged seated=1)')
+-- 8.57: end 4 alone is no seat (every passenger seat full): the deny waits for a seat, then a=6.
+local gf = seatEnv(false)
+gf.ready()
+gf.pend, gf.dend, gf.dveh = 0, 4, 25608
+gf.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gf.notes == 0, 'a deny after a peer-ended press with no seat yet: no toast yet')
+gf.S.step(1600)
+check(#gf.notes == 0, 'still waiting for the seat')
+gf.S.step(2600)
+check(#gf.notes == 1 and gf.notes[1][2] == 6 and gf.has('event=seat;action=deny_end;vehicle=25608;seated=0'),
+    'no seat 1.5 s after the deny (every passenger seat full): the a=6 toast')
+-- The tie's press still held when the deny comes (8.57: it waits for the driver's seats): no toast once it sits.
+local gt = seatEnv(false)
+gt.ready()
+gt.pseq, gt.press, gt.pend = 1, 25608, 1
+gt.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gt.notes == 0, 'a deny while the press is still held: no toast yet')
+gt.pend, gt.dend, gt.dveh, gt.lpv = 0, 4, 25608, 25608
+gt.S.step(1300)
+check(#gt.notes == 0 and gt.has('event=seat;action=deny_end;vehicle=25608;seated=1'), 'the press took a passenger seat: no toast')
+local gq = seatEnv(false)
+gq.ready()
+gq.pend, gq.press, gq.dend, gq.dveh = 1, 25608, 4, 25608
+gq.W.handlers[54]({1, 25608, 0, 1, 3})
+check(#gq.notes == 0, 'a new press held when the deny comes: wait for its end')
+gq.pend, gq.dend = 0, 2
+gq.S.step(1200)
+check(#gq.notes == 1 and gq.notes[1][2] == 6, 'it ended on foot (the deny): the toast')
+-- READY lapses (the host stopped answering): the guest goes stock.
+local sl = seatEnv(false)
+sl.ready()
+sl.S.step(1000)
+check(sl.hold == 2000, 'held after READY')
+sl.S.step(1000 + sl.S.READY_MS + 1)
+check(sl.hold == 0 and sl.has('event=seat;state=stock'), 'no READY for 12 s: hold 0 (stock)')
+sl.pseq, sl.press = 1, 25608
+sl.S.step(14000)
+check(#sl.tx == 0, 'stock: a press (none is counted natively without the hold) sends nothing')
+-- Review (8.55): a link dip on the guest only keeps the host's READY (cleared only when unpaired): held again at once.
+local dp = seatEnv(false)
+dp.ready()
+dp.S.step(1000)
+dp.W.eff = 2
+dp.W.tick()
+check(dp.hold == 0, 'a dip: hold 0 while the link is below level 3')
+dp.W.eff = 3
+dp.S.step(1300)
+check(dp.hold == 2000, 'the dip is over: held again without waiting for the next READY')
+-- The board answers off (key off on this copy, or not installed yet).
+local off = seatEnv(false)
+off.on, off.want, off.age = 0, 25608, 10
+off.ready()
+off.S.step(1000)
+off.S.step(1400)
+check(#off.tx == 0 and off.has('event=seat;state=off'), 'key off on this copy: one state=off line, nothing sent')
+off.on = 1
+off.S.step(2000)
+check(#off.tx == 0 and not off.has('state=on'), 'off is read again only after 10 s')
+off.S.step(11100)
+check(off.has('event=seat;state=on') and off.hold == 2000, 'the board installed later: on, and held')
+-- Unpaired: the hold is dropped at once.
+off.W.paired = false
+off.W.tick()
+check(off.cmds[#off.cmds] == 'hold 0', 'unpaired: hold 0')
+off.W.paired = true
+off.S.step(30000)
+check(off.hold == 0, 'paired again: no hold until a new READY')
+-- Host.
+local hs = seatEnv(true)
+hs.S.step(1000)
+check(hs.cmds[1] == 'poll' and hs.hold == nil, 'the host never holds')
+check(#hs.tx == 1 and hs.tx[1][3] == 25600 and hs.tx[1][5] == 1 and hs.tx[1][6] == 4 and hs.has('event=seat;action=ready;role=host'),
+    'the host announces READY (action 4)')
+hs.S.step(1200)
+check(#hs.tx == 1, 'READY is not repeated every step')
+hs.S.step(1000 + hs.S.READY_TICK)
+check(#hs.tx == 2 and hs.tx[2][6] == 4, 'READY is repeated every 4 s')
+-- The host standing at the door (a fresh want) never denies: only its own E press does.
+hs.want, hs.age = 25608, 16
+hs.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hs.tx == 3 and hs.tx[3][3] == 25608 and hs.tx[3][5] == 1 and hs.tx[3][6] == 2 and hs.has('event=seat;action=grant;vehicle=25608;role=host') and
+    hs.cmds[#hs.cmds] == 'grant_if 25608 3000', 'a host at the door without E: the guest press is granted (grant_if)')
+check(hs.has('event=seat;action=yield;vehicle=25608;role=host') and hs.deny[1][1] == 25608, 'and yielded (the native deny)')
+local hp = seatEnv(true)
+hp.commit = 25608
+hp.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hp.tx == 1 and hp.tx[1][6] == 3 and hp.has('event=seat;action=deny;vehicle=25608;role=host;why=host_pressed') and #hp.deny == 0,
+    "the host's own press owns it (grant_if refused): deny, host_pressed")
+local hd = seatEnv(true)
+hd.drive(25608)
+hd.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hd.tx == 1 and hd.tx[1][6] == 3 and hd.has('why=host_drives'), 'the host drives it: deny')
+local hg = seatEnv(true)
+hg.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hg.tx == 1 and hg.tx[1][6] == 2 and hg.S.granted[25608] == 1000, 'granted')
+hg.hits = 3
+hg.S.step(1500)
+check(#hg.notes == 1 and hg.notes[1][1] == 13 and hg.notes[1][2] == 7, 'the host tried the yielded vehicle: the yield toast (NOTE 13 a=7)')
+hg.hits = 4
+hg.S.step(1800)
+check(#hg.notes == 1, 'one yield toast per 3 s')
+hg.S.step(4500)
+check(hg.S.granted[25608] == nil, 'a grant lapses after 3 s')
+local n = #hg.tx
+hg.W.handlers[54]({4, 25608, 0, 1, 1})
+hg.W.handlers[54]({5, 25608, 0, 2, 2})
+hg.W.handlers[54]({6, 25608, 0, 2, 4})
+check(#hg.tx == n, 'the host answers only guest claims')
+local hoff = seatEnv(true)
+hoff.on = 0
+hoff.S.step(1000)
+hoff.W.handlers[54]({1, 25608, 0, 2, 1})
+check(#hoff.tx == 0, 'a host with the key off never announces READY and never answers (the guest stays stock)')
+
+-- Seats on (design 8.21 R6): while the native board refused this copy's ride icon for an empty vehicle (a live deny,
+-- or the guest's hold before the host's grant) within GUARD_MS, only that vehicle's stock Fulton prompt is left on E and
+-- holding E would Fulton it: the Fulton action is withheld (PlayerDisableAction.FULTON), polled every tick. Only a bit
+-- this module added is removed again (world_revive_input.lua's rule), so a mission's own Fulton lock is kept.
+local fg = seatEnv(false)
+fg.env.vars.playerDisableActionFlag = 4
+fg.env.PlayerDisableAction = {FULTON = 8}
+fg.S.step(1000)
+fg.S.guard(1000)
+check(fg.env.vars.playerDisableActionFlag == 4 and not fg.has('action=fulton'), 'no refusal: the Fulton action stays available')
+fg.ref, fg.rage = 25608, 0
+fg.S.guard(1010)
+check(fg.env.vars.playerDisableActionFlag == 12 and fg.has('event=seat;action=fulton;on=1;vehicle=25608'),
+    'a refused ride icon withholds the Fulton action (other bits kept), logged')
+fg.S.guard(1020)
+local fultonLines = 0
+for _, l in ipairs(fg.logs) do if l:find('action=fulton', 1, true) then fultonLines = fultonLines + 1 end end
+check(fg.env.vars.playerDisableActionFlag == 12 and fultonLines == 1, 'withholding is idempotent and logged once')
+fg.rage = 350
+fg.S.guard(1360)
+check(fg.env.vars.playerDisableActionFlag == 12, 'inside 400 ms of the last refusal: still withheld')
+fg.rage = 450
+fg.S.guard(1460)
+check(fg.env.vars.playerDisableActionFlag == 4 and fg.has('event=seat;action=fulton;on=0;vehicle=25608'),
+    'no refusal for 400 ms (the grant came, or the player walked off): the Fulton action is back')
+fg.env.vars.playerDisableActionFlag = 8
+fg.rage = 0
+fg.S.guard(1600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is not doubled')
+fg.rage = 900
+fg.S.guard(2500)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission Fulton lock is never removed')
+fg.env.vars.playerDisableActionFlag = 0
+fg.rage = 0
+fg.S.guard(2600)
+check(fg.env.vars.playerDisableActionFlag == 8, 'refused again: withheld')
+fg.env.vars.playerDisableActionFlag = 0
+fg.S.guard(2610)
+check(fg.env.vars.playerDisableActionFlag == 8, 'a mission overwrite while refused is withheld again')
+local polls = fg.count('poll')
+local noop = function() end
+fg.R.refresh, fg.R.send, fg.R.fastSend, fg.R.fastApply = noop, noop, noop, noop
+fg.W.tick()
+check(fg.count('poll') > polls, 'withheld (hot): the world tick polls the guard every tick, not only at the 200 ms seat step')
+fg.W.paired = false
+fg.W.tick()
+check(fg.env.vars.playerDisableActionFlag == 0, 'unpaired: the withheld Fulton action comes back at once')
+local fo = seatEnv(false)
+fo.on = 0
+fo.env.vars.playerDisableActionFlag = 4
+fo.env.PlayerDisableAction = {FULTON = 8}
+fo.ref, fo.rage = 25608, 0
+fo.S.guard(1000)
+check(fo.env.vars.playerDisableActionFlag == 4, 'the board off (key off): never withheld')
+local fh = seatEnv(true)
+fh.env.vars.playerDisableActionFlag = 0
+fh.env.PlayerDisableAction = {FULTON = 8}
+fh.ref, fh.rage = 25608, 10
+fh.S.guard(1000)
+check(fh.env.vars.playerDisableActionFlag == 8, "the host's own refusal (a yielded vehicle) withholds it too")
+local fn = seatEnv(false)
+fn.env.vars.playerDisableActionFlag = 0
+fn.env.PlayerDisableAction = nil
+fn.ref, fn.rage = 25608, 0
+fn.S.guard(1000)
+check(fn.env.vars.playerDisableActionFlag == 0, 'no PlayerDisableAction table: nothing written')
+-- Review fixes (seats-on, 8.26): the guard polls every tick only while hot (withheld, or a mark under 1 s old); else
+-- the 200 ms seat step's own receipt feeds it, so it engages at most one seat step after the first mark.
+local cg = seatEnv(false)
+cg.env.vars.playerDisableActionFlag = 0
+cg.env.PlayerDisableAction = {FULTON = 8}
+cg.R.refresh, cg.R.send, cg.R.fastSend, cg.R.fastApply = noop, noop, noop, noop
+cg.W.tick()
+local n0 = #cg.cmds
+cg.now = 1050
+cg.W.tick()
+check(#cg.cmds == n0 and n0 >= 1, 'cold (no mark, nothing withheld): no receipt between the 200 ms seat steps')
+cg.ref, cg.rage = 25608, 0
+cg.now = 1200
+cg.W.tick()
+check(cg.env.vars.playerDisableActionFlag == 8 and #cg.cmds == n0 + 1, "the seat step's own receipt engages the guard (one receipt)")
+cg.now = 1250
+cg.W.tick()
+check(#cg.cmds == n0 + 2 and cg.cmds[#cg.cmds] == 'poll', 'hot: the guard polls every tick')
+cg.ref, cg.rage = 65535, -1
+cg.now = 1260
+cg.W.tick()
+check(cg.env.vars.playerDisableActionFlag == 0, 'the mark gone: given back on the next tick')
+cg.now = 1270
+local n1 = #cg.cmds
+cg.W.tick()
+check(#cg.cmds == n1, 'cold again: no receipt until the next seat step')
+-- Review fixes: the guard's bit never outlives the world tick. W.fail and a LEVEL 0 W.stop run the stop hooks and the
+-- ticks end; a LEVEL 0 inside the drain is followed by the rest of that tick, which must not withhold it again.
+local sh = seatEnv(false)
+sh.env.vars.playerDisableActionFlag = 4
+sh.env.PlayerDisableAction = {FULTON = 8}
+sh.R.refresh, sh.R.send, sh.R.fastSend, sh.R.fastApply = noop, noop, noop, noop
+sh.ref, sh.rage = 25608, 0
+sh.S.step(1000)
+sh.S.guard(1000)
+check(sh.env.vars.playerDisableActionFlag == 12 and #sh.W.stopHooks >= 1, 'withheld, with a stop hook registered')
+for _, f in ipairs(sh.W.stopHooks) do f(true) end
+check(sh.env.vars.playerDisableActionFlag == 4 and sh.has('action=fulton;on=0;vehicle=25608') and (sh.hold or 0) == 0,
+    'W.fail / W.stop: the stop hook gives the Fulton action back and ends the native hold')
+sh.S.guard(1010)
+check(sh.env.vars.playerDisableActionFlag == 12, 'withheld again')
+sh.W.active = true
+sh.inner = function() sh.W.active = false; for _, f in ipairs(sh.W.stopHooks) do f(true) end end
+sh.now = 1020
+sh.W.tick()
+check(sh.env.vars.playerDisableActionFlag == 4, 'a LEVEL 0 stop inside the drain: the rest of the tick does not withhold it again')
+-- Review fixes: claim and guard lines are capped per pairing (a new epoch starts again).
+local lc = seatEnv(false)
+local function claims() local n = 0 for _, l in ipairs(lc.logs) do if l:find('action=claim', 1, true) then n = n + 1 end end return n end
+local function press(i) lc.now = 1000 + i * 1000; lc.ready(); lc.pseq, lc.press = i, 25608; lc.S.step(lc.now) end
+for i = 0, 70 do press(i) end
+check(lc.claims() == 70 and claims() == 50, 'every press is claimed; at most 50 claim lines per pairing')
+for _, f in ipairs(lc.W.pairedHooks) do f(false) end
+press(80)
+check(claims() == 50, 'the same pairing again (no new epoch): still capped')
+for _, f in ipairs(lc.W.pairedHooks) do f(true) end
+press(81)
+check(claims() == 51, 'a new pairing logs again')
 print('world_ride_pose_lua_check: ' .. checks .. ' checks passed')

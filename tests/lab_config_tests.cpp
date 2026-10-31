@@ -20,6 +20,9 @@ mgscoop::CoopConfig Coop(const std::string& text) {
     Check(mgscoop::ParseCoopConfig(text.data(), text.size(), config), "coop parse usable");
     return config;
 }
+// Design 8.27 / 8.42: the shipped passenger camera mode (an unnamed partner_pass_camera, lab and play): view (the shot
+// guard plus the get-off turn).
+constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::view;
 } // namespace
 
 int main() {
@@ -214,6 +217,90 @@ int main() {
                       invalid.unknown_keys == 0,
                   "an invalid door value refuses");
         }
+    }
+    // M6 seat 1 (partner_ride_front / partner_ride_cab, docs/vehicles-companions-design.md 6.6) and the seat races:
+    // since the seats-on round (8.25) they follow the native gun profile (on, not named), off without it; the truck cab
+    // only in lab (8.26: no play rehearsal at the shipped defaults yet), a named 1 runs it in play. A named 0 is the off
+    // switch in either mode, a named 1 runs in either mode; an invalid value refuses and counts as named, off.
+    {
+        Check(!LabConfig{}.partner_ride_front && !LabConfig{}.partner_ride_front_given && !LabConfig{}.partner_ride_cab &&
+                  !LabConfig{}.partner_ride_cab_given && !Lab("").partner_ride_front && !Lab("").partner_ride_cab,
+              "the seat-1 keys default off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            const bool play = std::strcmp(mode, "mode=play\n") == 0;
+            Check(profile.partner_ride_front && profile.partner_ride_cab == !play && profile.partner_ride_race && !profile.partner_ride_front_given &&
+                      !profile.partner_ride_cab_given && !profile.partner_ride_race_given &&
+                      profile.partner_ride_board == PartnerRideBoard::passenger && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "seats on: the gun profile turns the front seat and the seat race on in lab and play, the truck cab in lab only");
+            const auto offAll = Lab(gun + mode + "partner_ride_front=0\npartner_ride_cab=0\npartner_ride_race=0\n");
+            Check(!offAll.partner_ride_front && !offAll.partner_ride_cab && !offAll.partner_ride_race && offAll.partner_ride_race_given,
+                  "each seat key stays an off switch under the gun profile");
+            const auto named = Lab(gun + mode + "partner_ride_front=1\npartner_ride_cab=1\n");
+            Check(named.partner_ride_front && named.partner_ride_cab && named.partner_ride_front_given && named.partner_ride_cab_given &&
+                      named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
+                  "named seat-1 keys run in lab and play");
+            const auto off = Lab(gun + mode + "partner_ride_front=0\npartner_ride_cab=0\n");
+            Check(!off.partner_ride_front && !off.partner_ride_cab && off.partner_ride_front_given && off.partner_ride_cab_given,
+                  "a named 0 stays off");
+        }
+        const auto later = Lab("enabled=1\nrole=host\npartner_ride_cab=1\npartner_ride_cab=0\n");
+        Check(!later.partner_ride_cab, "a later 0 turns the cab key off");
+        // The seat races key (SEAT op 54): the same rules.
+        Check(!LabConfig{}.partner_ride_race && !Lab("enabled=1\nrole=host\nmode=play\n").partner_ride_race &&
+                  Lab(gun + "mode=play\n").partner_ride_race && Lab(gun + "mode=lab\n").partner_ride_race,
+              "the race key: off without the gun profile, on with it in lab and play");
+        const auto race = Lab(gun + "mode=play\npartner_ride_race=1\n");
+        Check(race.partner_ride_race && race.partner_ride_race_given && race.invalid_values == 0 && race.play_refused == 0,
+              "a named race key runs in play");
+        const auto badRace = Lab("enabled=1\nrole=host\npartner_ride_race=maybe\n");
+        Check(!badRace.partner_ride_race && badRace.partner_ride_race_given && badRace.invalid_values == 1, "an invalid race value refuses");
+        for (const char* value : {"2", "-1", "", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_front=") + value + "\n");
+            Check(!invalid.partner_ride_front && invalid.partner_ride_front_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid front value refuses (named, off)");
+        }
+    }
+    // Design 8.27: the passenger camera's mode partner_pass_camera=off|connect|aim (lab and play; the default below) and
+    // its read-only lab trace partner_pass_camera_trace (lab only, default 0, play forces it off).
+    {
+        using mgscoop::PartnerPassCamera;
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        Check(!LabConfig{}.partner_pass_camera_given && !LabConfig{}.partner_pass_camera_trace, "the camera keys start unnamed, no trace");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_pass_camera == kPassCameraDefault && !profile.partner_pass_camera_given && !profile.partner_pass_camera_trace,
+                  "the shipped camera mode in lab and play, no trace");
+            for (const char* value : {"off", "connect", "drop", "aim", "view"}) {  // view: design 8.38
+                const auto named = Lab(gun + mode + "partner_pass_camera=" + value + "\npartner_pass_camera_trace=1\n");
+                // Design 8.28: drop is a lab option (it blocks the seat-2 gun: runs 17fce0b7, 43e5b981); play runs aim.
+                // Design 8.42: view runs in play (the default).
+                const char* want = !lab && std::strcmp(value, "drop") == 0 ? "aim" : value;
+                Check(std::strcmp(mgscoop::PartnerPassCameraName(named.partner_pass_camera), want) == 0 && named.partner_pass_camera_given &&
+                          named.partner_pass_camera_trace == lab && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                          named.play_refused == 0,
+                      "a named camera mode runs in lab and play (drop runs as aim in play); the trace in the lab only");
+            }
+        }
+        for (const char* value : {"", "on", "1", "Aim", "connected", "View", "views"}) {
+            const auto invalid = Lab(gun + "mode=play\npartner_pass_camera=" + value + "\n");
+            Check(invalid.partner_pass_camera == kPassCameraDefault && invalid.partner_pass_camera_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid camera mode refuses (named, the default kept)");
+        }
+        const auto later = Lab("enabled=1\nrole=host\npartner_pass_camera=off\npartner_pass_camera=aim\n");
+        Check(later.partner_pass_camera == PartnerPassCamera::aim, "a later camera mode wins");
+        const auto badTrace = Lab("enabled=1\nrole=host\npartner_pass_camera_trace=2\n");
+        Check(!badTrace.partner_pass_camera_trace && badTrace.invalid_values == 1, "an invalid trace value refuses");
+        PartnerPassCamera p{};
+        Check(mgscoop::ParsePartnerPassCamera("aim", 3, p) && p == PartnerPassCamera::aim && !mgscoop::ParsePartnerPassCamera("x", 1, p) &&
+                  std::strcmp(mgscoop::PartnerPassCameraName(PartnerPassCamera::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerPassCameraName(PartnerPassCamera::connect), "connect") == 0,
+              "camera mode parse and names");
     }
     // F2 cardboard box on body 1 (partner_native_cbox, docs/native-puppet.md "Cardboard box"): on with the native gun
     // profile in lab and play (hidden runs 05cffdd1 lab and the play rehearsal; the observer admits play only with link
@@ -412,6 +499,153 @@ int main() {
             Check(!invalid.partner_native_unrealize_all && !invalid.partner_native_unrealize_all_given && invalid.invalid_values == 1 &&
                       invalid.unknown_keys == 0,
                   "an invalid unrealize_all value refuses");
+        }
+    }
+    // G2 back-seat aim census (partner_seat_aim, docs/native-puppet.md "Seat aim"): read-only, lab only; off by default
+    // with or without the gun profile; a named 1 runs in lab, play forces it off (still recording _given, no refusal bit);
+    // independent of the board key.
+    {
+        Check(!LabConfig{}.partner_seat_aim && !LabConfig{}.partner_seat_aim_given && !Lab("").partner_seat_aim,
+              "seat aim census defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const bool lab = std::strcmp(mode, "mode=lab\n") == 0;
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_seat_aim && !profile.partner_seat_aim_given && profile.invalid_values == 0,
+                  "the gun profile leaves the seat aim census off in lab and play");
+            const auto named = Lab(gun + mode + "partner_seat_aim=1\n");
+            Check(named.partner_seat_aim == lab && named.partner_seat_aim_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0 && named.partner_ride_board == profile.partner_ride_board && !named.partner_ride_board_given,
+                  "a named seat aim census runs in lab only and leaves the board default");
+            const auto off = Lab(gun + mode + "partner_seat_aim=0\n");
+            Check(!off.partner_seat_aim && off.partner_seat_aim_given, "a named seat aim census 0 stays off");
+        }
+        const auto alone = Lab("enabled=1\nrole=host\npartner_seat_aim=1\n");
+        Check(alone.partner_seat_aim && alone.partner_seat_aim_given && alone.invalid_values == 0 && alone.unknown_keys == 0,
+              "partner_seat_aim=1 parses");
+        const auto later = Lab("enabled=1\nrole=host\npartner_seat_aim=1\npartner_seat_aim=0\n");
+        Check(!later.partner_seat_aim, "a later 0 turns the seat aim census off");
+        for (const char* value : {"2", "-1", "", "census", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_aim=") + value + "\n");
+            Check(!invalid.partner_seat_aim && !invalid.partner_seat_aim_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid seat aim value refuses");
+        }
+    }
+    // M7 seat gun (partner_seat_gun, docs/native-puppet.md "Seat gun"): off by default with or without the gun profile,
+    // in lab and play; a named 1 runs in lab AND play (no refusal bit); independent of the gesture and board keys.
+    {
+        Check(!LabConfig{}.partner_seat_gun && !LabConfig{}.partner_seat_gun_given && !Lab("").partner_seat_gun, "seat gun defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_seat_gun && !profile.partner_seat_gun_given && profile.invalid_values == 0,
+                  "the gun profile leaves the seat gun off in lab and play");
+            const auto named = Lab(gun + mode + "partner_seat_gun=1\n");
+            Check(named.partner_seat_gun && named.partner_seat_gun_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0 && named.partner_native_gesture == profile.partner_native_gesture &&
+                      named.partner_ride_board == profile.partner_ride_board,
+                  "a named seat gun runs in lab and play and leaves the gesture and board defaults");
+            const auto off = Lab(gun + mode + "partner_seat_gun=0\n");
+            Check(!off.partner_seat_gun && off.partner_seat_gun_given, "a named seat gun 0 stays off");
+        }
+        const auto later = Lab("enabled=1\nrole=host\npartner_seat_gun=1\npartner_seat_gun=0\n");
+        Check(!later.partner_seat_gun, "a later 0 turns the seat gun off");
+        for (const char* value : {"2", "-1", "", "hold", "maybe"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_gun=") + value + "\n");
+            Check(!invalid.partner_seat_gun && !invalid.partner_seat_gun_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid seat gun value refuses");
+        }
+    }
+    // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
+    // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
+    // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs
+    // in both (no refusal bit).
+    {
+        Check(!LabConfig{}.partner_seat_shot && !LabConfig{}.partner_seat_shot_given && !Lab("").partner_seat_shot,
+              "seat shot off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            // On with the gun profile in lab and play (not named).
+            Check(profile.partner_seat_shot && !profile.partner_seat_shot_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0,
+                  "the gun profile turns the seat shot on in lab and play (not named)");
+            const auto named = Lab(gun + mode + "partner_seat_shot=1\n");
+            Check(named.partner_seat_shot && named.partner_seat_shot_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0 && named.partner_ride_board == profile.partner_ride_board,
+                  "a named seat shot runs in lab and play and leaves the board default");
+            const auto off = Lab(gun + mode + "partner_seat_shot=0\n");
+            Check(!off.partner_seat_shot && off.partner_seat_shot_given, "a named seat shot 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_shot=") + value + "\n");
+            Check(!invalid.partner_seat_shot && !invalid.partner_seat_shot_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid seat shot value refuses");
+        }
+    }
+    // Seat 1 on the driver's seat matrix (partner_ride_seat1_anchor, design 8.33-8.36): follows the gun profile in lab AND
+    // play since the seat-fixes merge (as partner_ride_front; design 8.43), off without it; a named 0 is its off switch,
+    // a named 1 runs in lab and play (no refusal bit).
+    {
+        Check(!LabConfig{}.partner_ride_seat1_anchor && !LabConfig{}.partner_ride_seat1_anchor_given && !Lab("").partner_ride_seat1_anchor,
+              "seat-1 anchor defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_ride_seat1_anchor && !profile.partner_ride_seat1_anchor_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0 && profile.partner_ride_front,
+                  "the gun profile turns the seat-1 anchor on in lab and play (not named), with the front seat");
+            const auto named = Lab(gun + mode + "partner_ride_seat1_anchor=1\n");
+            Check(named.partner_ride_seat1_anchor && named.partner_ride_seat1_anchor_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0 && named.partner_ride_front == profile.partner_ride_front,
+                  "a named seat-1 anchor runs in lab and play and leaves the front seat default");
+            const auto off = Lab(gun + mode + "partner_ride_seat1_anchor=0\n");
+            Check(!off.partner_ride_seat1_anchor && off.partner_ride_seat1_anchor_given, "a named seat-1 anchor 0 stays off");
+        }
+        // Review (8.34): as partner_ride_front / _cab / _race, an invalid value is named and off, also after a valid 1.
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=") + value + "\n");
+            Check(!invalid.partner_ride_seat1_anchor && invalid.partner_ride_seat1_anchor_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid seat-1 anchor value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_seat1_anchor=1\npartner_ride_seat1_anchor=") + value + "\n");
+            Check(!late.partner_ride_seat1_anchor && late.partner_ride_seat1_anchor_given && late.invalid_values == 1,
+                  "an invalid seat-1 anchor value after a valid 1 turns it off");
+        }
+    }
+    // Seat first person (partner_seat_fpv, design 8.46, 8.49): follows the gun profile in lab and play (off without a
+    // profile); a named 1 runs in lab and play; a named 0 opts out; an invalid value is named and off, also after a valid 1.
+    {
+        Check(!LabConfig{}.partner_seat_fpv && !LabConfig{}.partner_seat_fpv_given && !Lab("").partner_seat_fpv, "seat first person defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string noprofile = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                      "partner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto bare = Lab(noprofile + mode);
+            Check(!bare.partner_seat_fpv && !bare.partner_seat_fpv_given, "seat first person stays off without the gun profile");
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_seat_fpv && !profile.partner_seat_fpv_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0,
+                  "the gun profile turns seat first person on in lab and play (not named)");
+            const auto named = Lab(gun + mode + "partner_seat_fpv=1\n");
+            Check(named.partner_seat_fpv && named.partner_seat_fpv_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
+                  "a named seat first person runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_seat_fpv=0\n");
+            Check(!off.partner_seat_fpv && off.partner_seat_fpv_given, "a named seat first person 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_fpv=") + value + "\n");
+            Check(!invalid.partner_seat_fpv && invalid.partner_seat_fpv_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid seat first person value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_seat_fpv=1\npartner_seat_fpv=") + value + "\n");
+            Check(!late.partner_seat_fpv && late.invalid_values == 1, "an invalid seat first person value after a valid 1 turns it off");
         }
     }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
@@ -1511,6 +1745,44 @@ int main() {
             Check(vehiclePlayDefault.world_loadout_block && vehiclePlayDefault.world_vehicle_break && vehiclePlayDefault.world_vehicle_credit &&
                       !vehiclePlayDefault.world_loadout_block_given && vehiclePlayDefault.play_refused == 0,
                   "D11 / D12 / D14 keys default on in play");
+        }
+        // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md 8.14): world_vehicle_crew (D12, a crewed
+        // vehicle wrecked at once, r[15] bit 64) and world_vehicle_damage (the guest's vehicle damage report, bit 128). Lab
+        // and play (no refusal bit), off in the lab unless named; in play see the defaults below.
+        {
+            struct Key { const char* name; bool mgscoop::LabConfig::*on; bool mgscoop::LabConfig::*given; };
+            const Key keys[] = {{"world_vehicle_crew", &mgscoop::LabConfig::world_vehicle_crew, &mgscoop::LabConfig::world_vehicle_crew_given},
+                                {"world_vehicle_damage", &mgscoop::LabConfig::world_vehicle_damage, &mgscoop::LabConfig::world_vehicle_damage_given}};
+            const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+            for (const auto& k : keys) {
+                const std::string n = k.name;
+                const auto vfOn = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=1\n");
+                const auto vfOff = Lab("enabled=1\nrole=guest\nworld=3\n" + n + "=0\n");
+                const auto vfBad = Lab("enabled=1\nrole=host\n" + n + "=2\n");
+                const auto playOn = Lab(play + n + "=1\n");
+                Check(!(def.*k.on) && !(def.*k.given) && !(vehicleGun.*k.on), (n + " defaults off in the lab (plain, gun profile)").c_str());
+                Check(vfOn.*k.on && vfOn.*k.given && vfOn.invalid_values == 0 && vfOn.unknown_keys == 0, (n + "=1 parses in the lab").c_str());
+                Check(!(vfOff.*k.on) && vfOff.*k.given && vfOff.invalid_values == 0, (n + "=0 is named and off").c_str());
+                Check(!(vfBad.*k.on) && vfBad.invalid_values == 1 && vfBad.unknown_keys == 0, ("an invalid " + n + " keeps it off").c_str());
+                Check(playOn.mode == mgscoop::LabMode::play && playOn.*k.on && playOn.play_refused == 0 && playOn.invalid_values == 0,
+                      (n + "=1 parses in play with no refusal bit").c_str());
+            }
+            // Play defaults (review of 2026-10-29). world_vehicle_damage off in play unless named: its fire gate was never
+            // run against live AI fire (every damage run after 846c1147 cleared the guards first), and each copy's guards
+            // hit vehicles on their own copy. world_vehicle_crew on in play unless named again, with the blast distance by
+            // type (50 m for every type but the light vehicles, after ac0f7656's 25 m knockdown): lab FRAME c0a385a5 (the
+            // crew_near hold and the wreck once clear, both screens) and the play rehearsal c6db67b8 (-WanSim bad, the
+            // guest's real C4, the hold, then the wreck, frames on both copies).
+            Check(!vehiclePlayDefault.world_vehicle_damage && !vehiclePlayDefault.world_vehicle_damage_given && vehiclePlayDefault.play_refused == 0,
+                  "world_vehicle_damage defaults off in play");
+            Check(vehiclePlayDefault.world_vehicle_crew && !vehiclePlayDefault.world_vehicle_crew_given, "world_vehicle_crew defaults on in play");
+            const auto crewOff = Lab(play + "world_vehicle_crew=0\n");
+            Check(crewOff.mode == mgscoop::LabMode::play && !crewOff.world_vehicle_crew && crewOff.world_vehicle_crew_given,
+                  "a named world_vehicle_crew=0 keeps it off in play");
+            const auto dmgOff = Lab(play + "world_vehicle_damage=0\n");
+            Check(dmgOff.mode == mgscoop::LabMode::play && !dmgOff.world_vehicle_damage && dmgOff.world_vehicle_damage_given,
+                  "a named world_vehicle_damage=0 keeps it off in play");
         }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.

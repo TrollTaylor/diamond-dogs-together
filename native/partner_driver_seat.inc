@@ -111,7 +111,7 @@ bool SeatBlocked(const Mission::Seat& s, const partner_ride_wire::Packet& ride) 
 const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noexcept {
     namespace rw = partner_ride_wire;
     const Mission& m = d.mission;
-    const rw::Packet& p = d.ride_rx.packet;
+    const rw::Packet p = DrawnRide(d);
     if (d.settings.nride != PartnerNativeRide::seat || !ride_live || p.kind != rw::Kind::vehicle) return nullptr;
     if (!rw::SeatUsable(p.seat, p.vehicle)) return "seat_unknown";
     if (!SeatCapableMission(m.mission_code, d.settings.seat_id)) return "mission";
@@ -125,7 +125,7 @@ const char* SeatUnavailable(const Driver& d, const Hooks& h, bool ride_live) noe
 // seat) while it holds (a latched refusal logged its episode's exit first).
 void SeatLogUnavailable(Driver& d, const Hooks& h, const char* why) noexcept {
     Mission& m = d.mission;
-    const partner_ride_wire::Packet& p = d.ride_rx.packet;
+    const partner_ride_wire::Packet p = DrawnRide(d);
     if (!why) {
         m.seat_unavailable = nullptr;
         return;
@@ -403,7 +403,7 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     s.remote_category = s.local_category = rw::kCategoryUnknown;
     if (!h.vehicle_read || !h.seat_target) return "unavailable";
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
-    if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || d.ride_rx.packet.seat != s.seat)
+    if (d.ride_rx.packet.kind != rw::Kind::vehicle || d.ride_rx.packet.vehicle != s.vehicle || DrawnRide(d).seat != s.seat)
         return "vehicle_change";
     partner_vehicle::Read r{};
     h.vehicle_read(h.context, s.vehicle, r);
@@ -414,7 +414,8 @@ const char* SeatByIdGate(Driver& d, const Hooks& h, std::uint64_t now) noexcept 
     if (s.remote_category == rw::kCategoryUnknown) return "remote_category";
     // F1 vehicles (partner_ride_board=passenger): the peer in a back seat of the vehicle the
     // viewer drives is seated there (never rider[]); any other seat of it stays refused.
-    if (s.vehicle == d.local_vehicle && !partner_board::LocalVehicleSeatAllowed(BoardMode(d.settings.ride_board), s.seat))
+    if (s.vehicle == d.local_vehicle &&
+        !partner_board::LocalVehicleSeatAllowed(BoardMode(d.settings.ride_board), s.seat, d.settings.ride_front || d.settings.ride_cab))
         return "local_vehicle";
     // The viewer's own back seat (Lua's shared_seat guard needs ON_VEHICLE and cannot see a passenger).
     if (partner_board::SharedWithLocal(d.local_passenger, s.vehicle, s.seat)) return "shared_seat";
@@ -670,7 +671,7 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
             }
         }
         if (!s.armed) {
-            if (!h.ride_seat_arm(h.context, s.seat)) {
+            if (!h.ride_seat_arm(h.context, s.seat, s.vehicle)) {
                 SeatRefuse(m, h, "seat_patch", now);
                 break;
             }
@@ -817,6 +818,9 @@ SeatTickOut TickSeat(Driver& d, const Hooks& h, const pp::State& st, const SeatT
         if (s.next_sent && !s.getoff_confirmed && body_dm && dm.rec_ok && dm.rec1a0 == s.loop_entry + 1) {
             s.getoff_confirmed = true;
             SeatDmProbe(m, h, dm_ok, dm, "getoff");
+            // The GetOff plays on the seat's own matrix on the passenger's own copy (review of design 8.35): a seat-1
+            // anchor on seat 0 goes back to seat 1's own immediate now, not at the revert after DM End.
+            if (s.armed && h.ride_seat_getoff) h.ride_seat_getoff(h.context, s.seat);
         }
         if (!body_dm) {
             // Nothing (more) plays on body 1: a request still pending is ours.

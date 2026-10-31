@@ -78,6 +78,27 @@ bool TakeOverAfterUpdate(std::uint32_t pid, const std::function<bool(int)>& clai
 
 bool OldLauncherFromRecentUpdate(const std::wstring& game_dir) { return core::OldExecutableFromRecentUpdate(game_dir); }
 
+void* ClaimFolderInstance(const std::wstring& name, int wait_ms, int no_window_wait_ms, const std::function<bool()>& bring_forward) {
+    HANDLE mutex = CreateMutexW(nullptr, TRUE, name.c_str());
+    if (!mutex || GetLastError() != ERROR_ALREADY_EXISTS) return mutex;
+    // Released, or abandoned by a process that ended: this window owns the folder now.
+    auto take = [mutex](int ms) {
+        if (ms <= 0) return false;
+        const DWORD r = WaitForSingleObject(mutex, static_cast<DWORD>(ms));
+        return r == WAIT_OBJECT_0 || r == WAIT_ABANDONED;
+    };
+    if (take(wait_ms)) return mutex;
+    const bool found = bring_forward && bring_forward();
+    if (!found) {
+        // No window holds the folder: its last window is closing (its process ends a setup first) or the next one is
+        // still opening. Wait a moment for the folder rather than exit without a window.
+        if (take(no_window_wait_ms)) return mutex;
+        if (bring_forward) bring_forward();
+    }
+    CloseHandle(mutex);
+    return nullptr;
+}
+
 int RunSelfTest(std::string& report) {
     int checks = 0, failures = 0;
     auto check = [&](bool ok, const char* what) {

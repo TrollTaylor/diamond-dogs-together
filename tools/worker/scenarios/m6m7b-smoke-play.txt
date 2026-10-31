@@ -1,0 +1,224 @@
+# Combined smoke of dev/oct7-continue after wp/test-speed, wp/seats-on and the aim camera fix of wp/seat-shoot2
+# (69db316) merged (2026-10-30; docs/vehicles-companions-design.md 8.25-8.28) in mode=play over -WanSim bad with the
+# SHIPPED play defaults: no labsetting line. On in play: partner_ride_front (the jeep's front seat 1), partner_ride_race
+# (the host decides an empty vehicle's driver seat), the Fulton guard, partner_pass_camera=aim (the shot guard). The
+# truck cab (partner_ride_cab) is lab-only in play, so no truck here. Host seed afgh-quiet (Quiet), guest seed
+# afgh-horse (D-Horse): seat 1 of the Wakh Sind jeep 25608 stays empty on each driver's copy (as 1be0769e). The jeep at
+# its spawn pose faces north; seat 1 door 574.36,1157.5 facing 96; seat 0 door 577.20,1157.19 facing -84.
+#   0. Both pair; the seat, race and camera defaults are logged on both copies (no key named).
+#   1. D11: the guest's real iDroid SUPPLY DROP: LOADOUT and VEHICLES inactive, each refused with its toast.
+#   2. The race: both press E at the empty jeep at once; the host drives, the guest is told to wait (on foot).
+#   3. The guest in seat 1 while the host drives forward; the guest aims and fires from seat 1 (the guard arms seat 1
+#      while partner_ride_front is on: never seen live before); the guest's stock get-off, then the host's.
+#   4. The guest drives (after the host's grant), the host rides a back seat (2 from the left side), aims, fires (a mouse
+#      turn inside a shot window), fires while the jeep moves, stops aiming; both stock get-offs; the jeep stays parked
+#      where the guest left it on both copies.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7b-smoke-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+# NEVER (checked in the slices): step=error, viewer_changed, faults; board_uncertain; two_drivers; event=vehicle_damage;
+#   partner_ride=pass_camera; state=refused.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f;' 60
+waitlog host 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=0' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=0' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 30
+waitlog guest 'event=vehicle_rules; step=guard; path=idroid_drop_vehicle; via=menu_inactive; mission=30010' 30
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+both capture smoke-start
+# --- 1. D11: the guest's LOADOUT and VEHICLES supply drop items -----------------------------------------------------
+logmark both
+guest press tab
+wait 2500
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press s
+wait 800
+guest press s
+wait 800
+guest capture d11-loadout
+guest press enter
+wait 500
+guest capture d11-loadout-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_loadout; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=5;' 5
+# The HUD logs one toast line per NOTE code per 10 s (coop_hud kToastLogGapMs): wait past the gap.
+wait 10500
+guest press s
+wait 800
+guest capture d11-vehicles
+guest press enter
+wait 500
+guest capture d11-vehicles-refused
+waitlog guest 'event=vehicle_rules; step=refused; path=idroid_drop_vehicle; via=menu_inactive; mission=30010' 5
+waitlog guest 'hud=toast; kind=world_note; code=13; a=4;' 5
+wait 1500
+guest press tab
+wait 2500
+both capture d11-closed
+# --- 2. The race for the empty jeep's driver seat --------------------------------------------------------------------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+guest debug teleport 574.36 320.2 1157.5 96
+wait 150
+both press e 150
+guest capture race-press
+wait 4500
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=deny' 5
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(pressed|drives)' 5
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+both capture race
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x01; rider1=65535; read=1;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+# --- 3. The guest in seat 1 while the host drives forward; the guest aims and fires from seat 1 ----------------------
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest capture s1-door
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1000
+both capture s1-seated
+host hold w 1500 nowait
+guest burst s1-drive-g 4 150
+host release
+host hold w 1500 nowait
+host burst s1-drive-h 4 150
+host release
+wait 2000
+both capture s1-stopped
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest capture s1-aim
+host capture s1-aim-drv
+guest press lmb 120
+wait 150
+guest capture s1-shot1
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 150
+guest capture s1-shot2
+host capture s1-shot2-drv
+guest release
+wait 1000
+guest capture s1-aim-end
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=1; end=' 3
+guest press e 150
+guest burst s1-exit 4 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25608; seat=1; reason=stock; ok=1' 10
+both capture s1-exited
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- 4. The guest drives, the host rides a back seat, aims and fires; both get off; the jeep stays parked ------------
+host debug teleport 597.0 320.5 1157.5 -90
+wait 2500
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+guest press e 150
+# 8.55: the claim, the host's grant and the guest's grant all follow the press (E press only).
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+wait 4500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=[23]; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog host 'partner_ride=pass_camera; state=connect; vehicle=25608; seat=[23];' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 1000
+both capture bk-seated
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture bk-aim
+guest capture bk-aim-drv
+host press lmb 120
+wait 80
+host mouse 300 0
+wait 250
+host capture bk-shot1-yaw
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 150
+host capture bk-shot2
+guest hold w 1500 nowait
+host hold rmb 1500 nowait
+wait 300
+host press lmb 120
+host burst bk-shot-move 3 200
+guest capture bk-shot-move-drv
+host release
+guest release
+wait 1000
+host capture bk-aim-end
+waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=[23]; end=' 3
+guest hold s 500
+guest release
+wait 2000
+both capture bk-stopped
+host press e 150
+host burst bk-host-off 4 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=off' 10
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25608; seat=[23]; reason=stock; ok=1' 10
+logmark both
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+waitlog host 'event=vehicle_state; step=resume; id=25608; was=[a-z_]+' 25
+waitlog host 'event=vehicle_state; step=tx; id=25608; why=moved;' 10
+waitlog guest 'event=vehicle_state; step=(same|applied); id=25608; from=25608;' 15
+wait 1500
+both capture parked
+placebehind host guest 7 -4
+wait 2500
+both capture parked-both
+host run vehicle_state_status 25608
+host expect vstate;id=25608;alive=1;
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;
+state

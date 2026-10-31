@@ -246,6 +246,29 @@ do
         return true, "submitted_local;ent=" .. fmt("%.0f", hash) .. ";" .. share(cmd == "enemy_enable" and 8 or 7, s)
       end end
       return false, "enemy_not_authored"
+    elseif cmd == "enemy_aim_nearest" then
+      -- M7 test lever (docs/native-puppet.md "Seat gun"): this copy's camera toward the nearest living soldier within
+      -- 60 m (1.1 m up, or the metres given: 0.3 for one lying asleep; from a 1.5 m eye) through the stock
+      -- Player.RequestToSetCameraRotation; nothing else.
+      local up = #a == 1 and 1.1 or #a == 2 and number(a[2], 0, 2)
+      if not up then return false, "enemy_args" end
+      if type(get(Player, "RequestToSetCameraRotation")) ~= "function" then return false, "camera_unavailable" end
+      local p, target = pose(), nil
+      for _, s in ipairs(nearby(60)) do if usable(s) then target = s; break end end
+      local v = target and position(target)
+      if not v then return false, "no_readable_soldier" end
+      local dx, dz, dy = v[1] - p[1], v[3] - p[3], (v[2] + up) - (p[2] + 1.5)
+      local yaw, pitch = math.deg(math.atan2(dx, dz)), math.deg(math.atan2(-dy, math.sqrt(dx * dx + dz * dz)))
+      call(Player, "RequestToSetCameraRotation", {rotX = pitch, rotY = yaw, interpTime = 0.2})
+      return true, fmt("aim_nearest;ent=%.0f;d=%.1f;rotY=%.1f;rotX=%.1f;%s", target.hash, math.sqrt(target.distance), yaw, pitch, A.sync("enemy"))
+    elseif cmd == "enemy_cam_turn" then
+      -- 8.27 lever: camera to playerRotY + a[2] deg, pitch a[3] (0) via RequestToSetCameraRotation
+      local r, p = number(a[2], -180, 180), #a == 3 and number(a[3], -60, 60) or #a == 2 and 0
+      if not r or not p then return false, "enemy_args" end
+      if type(get(Player, "RequestToSetCameraRotation")) ~= "function" then return false, "camera_unavailable" end
+      local y = (pose()[4] + r + 180) % 360 - 180
+      call(Player, "RequestToSetCameraRotation", {rotX = p, rotY = y, interpTime = 0.2})
+      return true, fmt("cam_turn;rotY=%.1f;rotX=%.1f;rel=%.1f", y, p, r)
     elseif cmd == "enemy_nearest" or cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" or cmd == "enemy_kill_nearest" or cmd == "clear_enemies" then
       if cmd == "clear_enemies" then
         if #a ~= 2 then return false, "radius_args" end

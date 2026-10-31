@@ -1,0 +1,138 @@
+# Second run of the m6m7b combined play smoke (after 1f81de65, m6m7b-smoke-play.txt): the failures it showed, with the
+# roles swapped, at the SHIPPED play defaults (no labsetting line), -Mode play -WanSim bad. Host seed afgh-quiet, guest
+# seed afgh-horse (no dog in seat 1), the Wakh Sind jeep 25608 at its spawn pose (faces north, the building ~18 m ahead;
+# seat 1 door 574.36,1157.5 facing 96; seat 0 door 577.20,1157.19 facing -84).
+#   A. The guest drives (after the host's grant), the host takes seat 1: how the guest's (driver's) copy draws the host
+#      in seat 1 before any drive, after a short drive in the open; the host aims and presses fire twice from seat 1
+#      (1f81de65: the guest's seat-1 view showed its own leg and the jeep's side, and no shot left the gun); the jeep's
+#      life before and after (vehicle_state_status on both copies).
+#   B. The host takes back seat 2 (left side) and fires three shots with the jeep standing still: the jeep's life before
+#      and after (1f81de65: life 2295 -> 1593 on the host's copy while the host fired from seat 2 and the guest pushed the
+#      jeep against a building).
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7b-smoke-play-b.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+# --- A. The guest drives, the host in seat 1 -----------------------------------------------------------------------
+logmark both
+guest debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+guest press e 150
+# 8.55: the claim, the host's grant and the guest's grant all follow the press (E press only).
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+wait 4500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host debug teleport 574.36 320.2 1157.5 96
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=front; flags=0x01' 10
+host press e 150
+wait 4500
+waitlog host 'partner_ride=board_passenger; vehicle=25608; seat=1; site=phase1' 5
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+wait 1500
+both capture a-seated
+wait 1500
+guest capture a-seated-2
+host hold rmb 1500 nowait
+wait 700
+host capture a-aim
+guest capture a-aim-drv
+host press lmb 120
+wait 150
+host capture a-shot1
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 150
+host capture a-shot2
+guest capture a-shot2-drv
+host release
+wait 1500
+host capture a-aim-end
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+guest hold w 1000
+guest release
+wait 2500
+both capture a-stopped
+wait 1500
+guest capture a-stopped-2
+host press e 150
+host burst a-exit 3 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- B. The host in back seat 2, three shots with the jeep standing still -----------------------------------------
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 1000
+both capture b-seated
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+logmark both
+host hold rmb 1500 nowait
+wait 700
+host capture b-aim
+host press lmb 120
+wait 150
+host capture b-shot1
+guest capture b-shot1-drv
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 150
+host capture b-shot2
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 150
+host capture b-shot3
+guest capture b-shot3-drv
+host release
+wait 2000
+both capture b-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=off' 10
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+wait 3000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture end
+state

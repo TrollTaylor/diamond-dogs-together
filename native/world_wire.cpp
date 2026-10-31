@@ -182,6 +182,22 @@ constexpr OpSpec kOps[] = {
     {op::vehicle_state, "VEHICLE_STATE", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 12, 0, 0, 32,
      {U16(1), U16(25600, 26111), U32(), U8(), U8(0, 7), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416), U16(), U16(0, 0x3FF), U16(0, 0xFFE)}},
+    // VEHICLE_DAMAGE (the vehicle fixes of 2026-10-29, world-sync-protocol.md section 20): seq, TppVehicle2 id (the
+    // guest's pool slot), locator hash (0 unnamed), vehicle type (255 unknown), flags (1 the guest rides it), the guest
+    // copy's body life after the drop (1..65534: never a destruction, that is D12's REQ_VEHICLE_GONE), the drop since
+    // the life this copy last agreed with (1..65535), xyz mm (the guest's copy). Guest to host, never a request (no
+    // RECEIVED / REJECT): the host's VEHICLE_STATE answers with the life it applied. 26 bytes. A partner that does not
+    // know 0x3A skips it by its length (unknown_op).
+    {op::vehicle_damage, "VEHICLE_DAMAGE", 1, Dir::guest_to_host, Wire::reliable, 3, false, false, 10, 0, 0, 26,
+     {U16(1), U16(25600, 26111), U32(), U8(), U8(0, 7), U16(1, 65534), U16(1, kU16), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-1000000000, 1000000000)}},
+    // SEAT (M6 seat races, world-sync-protocol.md section 21): seq, TppVehicle2 id, seat (0: the driver's; the
+    // only one raced today), role (1 host, 2 guest: the sender), action (1 claim, 2 grant, 3 deny, 4 ready: the host
+    // arbitrates E presses, design 8.55; its vehicle is 25600, unused). Both
+    // directions (the guest claims, the host answers), never a request. 7 bytes. A partner that does not know
+    // 0x36 skips it by its length (unknown_op).
+    {op::seat, "SEAT", 1, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 7,
+     {U16(1), U16(25600, 26111), U8(0, 3), U8(1, 2), U8(1, 4)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

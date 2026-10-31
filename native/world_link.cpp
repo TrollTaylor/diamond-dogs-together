@@ -33,6 +33,8 @@ bool g_vehicle_wreck = false;  // M4 review: CFG r[15] bit 4, VEHICLE_GONE's wre
 bool g_vehicle_break = false;  // D12: CFG r[15] bit 8 (lab key world_vehicle_break, lab and play)
 bool g_vehicle_credit = false; // D14: CFG r[15] bit 16 (lab key world_vehicle_credit, lab and play)
 bool g_loadout_block = false;  // D11: CFG r[15] bit 32 (lab key world_loadout_block, lab and play)
+bool g_vehicle_crew = false;   // D12 crew: CFG r[15] bit 64 (lab key world_vehicle_crew, lab and play)
+bool g_vehicle_damage = false; // VEHICLE_DAMAGE: CFG r[15] bit 128 (lab key world_vehicle_damage, lab and play)
 bool g_companion = false;      // M1 host-owned companion: CFG r[16] (lab key companion_host_owned, lab and play)
 bool g_relief = false;         // M3 sortie vehicle: CFG r[17] (lab key world_relief, lab and play)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
@@ -227,6 +229,8 @@ void Configure(const Config& config) noexcept {
     g_vehicle_break = config.vehicle_break;
     g_vehicle_credit = config.vehicle_credit;
     g_loadout_block = config.loadout_block;
+    g_vehicle_crew = config.vehicle_crew;
+    g_vehicle_damage = config.vehicle_damage;
     if (g_lab_triggers && config.directory &&
         FAILED(StringCchPrintfW(g_trigger_path, ARRAYSIZE(g_trigger_path) - 4, L"%s\\mgs-coop\\world.trigger", config.directory)))
         g_trigger_path[0] = 0;
@@ -292,9 +296,10 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.census = g_placed_census ? 1 : 0;
     // r[15] the vehicle modules (lab and play): bit 1 VEHICLE_GONE (0.13.6
     // online-vehicle-gone), bit 2 VEHICLE_STATE (M4), bit 4 the wreck parity (M4 review), bits 8 / 16 / 32
-    // the vehicle decisions of 2026-10-29 (D12 break, D14 credit, D11 loadout block).
+    // the vehicle decisions of 2026-10-29 (D12 break, D14 credit, D11 loadout block), bits 64 / 128 the
+    // vehicle fixes of 2026-10-29 (D12 crew, the guest's vehicle damage report).
     reply.vehicle_gone = world::VehicleModules(g_vehicle_gone, g_vehicle_state, g_vehicle_wreck, g_vehicle_break, g_vehicle_credit,
-                                               g_loadout_block);
+                                               g_loadout_block, g_vehicle_crew, g_vehicle_damage);
     // M1: r[16] the host-owned companion module (lab and play).
     reply.companion = g_companion ? 1 : 0;
     // M3: r[17] the sortie vehicle module (lab and play).

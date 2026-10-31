@@ -23,7 +23,8 @@
 --          SetPosition{position, rotY} when it is > 0.5 m / 5 deg off (read back: err_mm; a failed
 --          placement is refused place_failed), SetBodyLife{life} whenever this copy's body life differs
 --          (host-authoritative both ways, so guest-only hits never add up to a guest-only destruction;
---          a host life of 0 is written as 1: destruction is VEHICLE_GONE's).
+--          a host life of 0 is written as 1: destruction is VEHICLE_GONE's). With world_vehicle_damage the
+--          guest reports its own drops first (world_vehicle_damage.lua: S.lifeHook / S.lifeSeen below).
 -- Lab levers (lab mode only; native refuses them outside the one-PC lab): debug vehicle_push <id|nearest>
 -- <dx> <dz> (this copy's vehicle moved, a stand-in for a shove), debug vehicle_life <id|nearest> <life>
 -- (this copy's body life; 0 is the E5 wreck attempt); debug vehicle_state_status [id] is read-only.
@@ -288,11 +289,18 @@ function S.consider(q, t)
   local here = row(S.readLife(id, 1), id)
   local was, lifeSet = here and here[1] or UNKNOWN, false
   local life = q.life ~= UNKNOWN and math.max(q.life, 1) or nil
+  -- The guest's vehicle damage report (world_vehicle_damage.lua, key world_vehicle_damage): its unreported drop goes out
+  -- first, and this copy's lower life is kept while that report is in flight (an error there never stops this module).
+  if here and life and life ~= here[1] and type(S.lifeHook) == "function" then
+    local okH, keep = pcall(S.lifeHook, id, here[1], life, q, t)
+    if okH and keep == true then life = nil end
+  end
   if here and life and life ~= here[1] then
     send(id, {id = "SetBodyLife", life = life})
     local after = row(S.readLife(id, 1), id)
     lifeSet = after ~= nil and after[1] == life
   end
+  if here and life and type(S.lifeSeen) == "function" then pcall(S.lifeSeen, id, lifeSet and life or here[1]) end
   if lifeSet then S.stats.life = S.stats.life + 1 end
   if move and not moved then
     S.stats.refused = S.stats.refused + 1

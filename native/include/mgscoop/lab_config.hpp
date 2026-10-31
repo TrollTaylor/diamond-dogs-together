@@ -218,6 +218,14 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 // passenger with the native gun profile in lab and play (ResolveWeaponDefaults),
 // off without it.
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
+// The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.27 / 8.28), with
+// partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
+// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard),
+// drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
+// blocks the seat-2 gun; play runs it as aim). Values equal partner_pass_camera::Mode.
+// view (design 8.38 / 8.42; the default in lab and play): aim plus the camera turned behind the player after a seat-1 or
+// seat-2 get-off (held through an on-foot aim, dropped by a look).
+enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
 // foot), hide (the viewer also hides body 1 while the remote's act is a horse
@@ -602,12 +610,68 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
+    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (view unless
+    // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
+    // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.27) is lab only, default 0.
+    PartnerPassCamera partner_pass_camera = PartnerPassCamera::view;
+    bool partner_pass_camera_given = false;
+    bool partner_pass_camera_trace = false;
+    // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with
+    // partner_ride_board=passenger, partner_ride_front=1 also offers the light
+    // vehicle's front seat 1 and partner_ride_cab=1 the truck cab seat 1 of a vehicle
+    // the partner drives (the two phase-1 immediates per steered call, the seat-1
+    // remap skipped by the driver tick while seat 1 is in use), only where the driver's
+    // copy says that seat is free (the v4 seat addendum, design 8.21). Off unless named,
+    // in lab and play, until a FRAME proof on both copies and a play rehearsal; an
+    // invalid value refuses (named, off).
+    bool partner_ride_front = false;
+    bool partner_ride_front_given = false;
+    bool partner_ride_cab = false;
+    bool partner_ride_cab_given = false;
+    // Seat 1 on the driver's seat matrix (design 8.33, 8.34; partner_ride_seat::AnchorSeat): a copy that draws the peer
+    // in seat 1 of a light vehicle (the truck cab excluded) draws it in the seat instead of one seat further right,
+    // outside the jeep; the passenger's own copy keeps the stock seat-1 remap while it sits there (design 8.35,
+    // partner_board::OwnSeatOneStock). Frame-proven in play (8.35, 8.36); follows the gun profile in lab and play since the
+    // seat-fixes merge (8.43); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_seat1_anchor = false;
+    bool partner_ride_seat1_anchor_given = false;
+    // Seat first person (docs/native-puppet.md "Seat first person", design 8.46): the local passenger in seat 1 or 2 of a
+    // vehicle aims in the stock first-person view (the F tap's) without a tap; the aim end, the get-off and the mission
+    // end give the shoulder view back. Follows the gun profile in lab and play (design 8.49); a named 0 opts out; the lab
+    // lever passcam seatfpv overrides it.
+    bool partner_seat_fpv = false;
+    bool partner_seat_fpv_given = false;
+    // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
+    // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
+    // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
+    // and a toast. Off unless named, in lab and play.
+    bool partner_ride_race = false;
+    bool partner_ride_race_given = false;
     // G4 truck test levers (vehicle_door, docs/native-puppet.md "Truck test levers"): the native
     // door-spot receipt behind debug goto_vehicle truck / goto_partner_vehicle / vehicle_door
     // (three read-only game calls under SEH). Default 0 in lab and play with a _given flag; play
     // forces it off; the receipt also refuses outside mode=lab with offline and redirected saves.
     bool debug_vehicle_door = false;
     bool debug_vehicle_door_given = false;
+    // G2 back-seat aim (docs/native-puppet.md "Seat aim"): the read-only census
+    // (partner_seat_aim lines: the local player in a vehicle ride act and body 1
+    // in the seat flow: act, upper act, gun mode, posture, the weapon flags).
+    // Lab only (play forces it off), default off; a named value records _given.
+    bool partner_seat_aim = false;
+    bool partner_seat_aim_given = false;
+    // M7 seat gun (docs/native-puppet.md "Seat gun"; partner_seat_gun.hpp): the remote back-seat passenger's raised
+    // gun on the seated body 1 (graph-2 GunHoldStart / GunHold through the gesture hook, body 1's aim rates) and this
+    // copy's own seated aim direction on the v6 input frame (unchecked: the self-check never runs while riding). Off
+    // unless named, in lab and play (a named 1 runs in play too, no refusal bit), until a FRAME proof on both copies and
+    // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
+    bool partner_seat_gun = false;
+    bool partner_seat_gun_given = false;
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
+    // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
+    // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
+    // logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
+    bool partner_seat_shot = false;
+    bool partner_seat_shot_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;
@@ -742,6 +806,21 @@ struct LabConfig {
     // untouched.
     bool world_loadout_block = false;
     bool world_loadout_block_given = false;
+    // The vehicle fixes of 2026-10-29 (docs/vehicles-companions-design.md sections 8.14 and 8.15), lab and
+    // play (no refusal bit), off in the lab unless named; in play world_vehicle_crew is on unless named (lab
+    // FRAME c0a385a5, play rehearsal c6db67b8) and world_vehicle_damage off unless named (the review of
+    // 2026-10-29 turned it off again):
+    // world_vehicle_crew=0|1 (D12, bit 64; lua/coop/world_vehicle_rules.lua): a guest destruction the
+    // host judged plausible whose only hold is an NPC crew (soldiers, not a player, D-Dog or a buddy)
+    // is applied at once (the host's copy wrecked: the engine's blast decides the crew), held only
+    // while a player stands within the blast distance (15 m for a light vehicle, 50 m for any other type).
+    bool world_vehicle_crew = false;
+    bool world_vehicle_crew_given = false;
+    // world_vehicle_damage=0|1 (bit 128; lua/coop/world_vehicle_damage.lua): the guest reports the
+    // body-life drops of its own copy (VEHICLE_DAMAGE, op 0x3A) and the host applies them (the lower
+    // life, at most the guest's drop), so VEHICLE_STATE keeps the guest's damage on both copies.
+    bool world_vehicle_damage = false;
+    bool world_vehicle_damage_given = false;
     // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's
     // buddy is the session's one companion. The follow seeds carry the host's buddy vars
     // and the guest loads them (its own are kept for its saves); guest buddy calls, the
@@ -847,6 +926,7 @@ const char* PartnerNativeMountName(PartnerNativeMount value) noexcept;
 const char* PartnerRideSeatEnterName(PartnerRideSeatEnter value) noexcept;
 const char* PartnerRideSeatExitName(PartnerRideSeatExit value) noexcept;
 const char* PartnerRideBoardName(PartnerRideBoard value) noexcept;
+const char* PartnerPassCameraName(PartnerPassCamera value) noexcept;
 const char* PartnerNativeOverlayName(PartnerNativeOverlay value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
@@ -913,6 +993,7 @@ bool ParsePartnerNativeMount(const char* text, std::size_t size, PartnerNativeMo
 bool ParsePartnerRideSeatEnter(const char* text, std::size_t size, PartnerRideSeatEnter& out) noexcept;
 bool ParsePartnerRideSeatExit(const char* text, std::size_t size, PartnerRideSeatExit& out) noexcept;
 bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard& out) noexcept;
+bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept;
 bool ParsePartnerNativeOverlay(const char* text, std::size_t size, PartnerNativeOverlay& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.

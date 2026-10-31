@@ -997,10 +997,11 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F, 0x32, 0x35-0x37 and 0x3A onward are available (0x2A-0x2D are the
+World op codes 0x1D-0x1F, 0x32, 0x35-0x37 and 0x3B onward are available (0x2A-0x2D are the
 ride ops, 0x2E/0x2F VEHICLE_GONE, section 16; 0x30/0x31/0x38/0x39 the companion ops, section 15; 0x33
 VEHICLE_STATE, section 17; 0x34 VEHICLE_SPAWN, the M3 sortie vehicle, docs/vehicles-companions-design.md 6.3;
-0x32 and 0x35-0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
+0x3A VEHICLE_DAMAGE, the guest's vehicle damage report, section 20; 0x36 SEAT, the M6 seat races, section 21;
+0x32, 0x35 and 0x37 stay reserved for the companion / vehicle design, docs/vehicles-companions-design.md
 section 5); control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
@@ -1067,6 +1068,13 @@ and once the host's dog is down, the copy's own stock death. Review 2026-10-29 (
 `companion_host_owned`; the receipt's arm field takes 2 (a hold): through a link loss (UNPAIRED, link down, a lower
 level or another epoch) an armed lease is held drop-only, with no byte followed and no lab op, until the session or the
 mission ends, and a hold never starts the guard; the reply carries the record only when under a second old.
+
+**Heroism at a copy's death (2026-10-29, `docs/vehicles-companions-design.md` 8.16).** Under `companion_host_owned` the
+guest gives back the heroism, bond and demon points the stock dying penalty takes at each death of its copy of the
+host's dog (`world_companion_guard.lua`, log `event=dog_hero`, lever `companion_lab hero`). **No wire change and no
+receipt change:** it reads and writes only the guest's own vars and Mother Base points, so a 0.14.4 partner (host or
+guest) is unaffected and needs nothing; with a 0.14.4 host the give-back still runs on a new guest whenever the key's
+peer agreement holds (`C.applies`). The observer now hands the raw attacker id to `W.companionHurt` (local Lua only).
 
 | World op | Name | Direction | Fields | Queue | Body bytes |
 |---:|---|---|---|---|---:|
@@ -1681,3 +1689,180 @@ Tests: `world_vehicle_rules_lua_check` (in the worker gate), `world_vehicle_lua_
 `vehicle-decisions-refuse.txt`, `vehicle-decisions-review-lab.txt` and
 `vehicle-decisions-review-play.txt`. Hidden runs: docs/STATUS.md "D11, D12, D14" and
 "D11 / D12 review fixes".
+
+## 20. The vehicle fixes of 2026-10-29 (D12 crew, the guest's vehicle damage report, D11 before PAIRED; docs/vehicles-companions-design.md 8.14)
+
+The user approved three fixes on 2026-10-29 (the 0.14.4 review findings `game-d11-prepair-gap` and
+`game-vstate-heals-guest-damage`, and D12's open question). One new world op, two new keys, no changed field.
+
+**VEHICLE_DAMAGE, op 0x3A (58), guest to host.** World queue, reliable, level 3, lab and play, never a request (no
+RECEIVED or REJECT: the host's VEHICLE_STATE carries the life it applied). 10 Lua fields, 26 bytes:
+
+| Field | Type | Range | Meaning |
+|---|---|---|---|
+| seq | u16 | 1.. | the guest's report counter |
+| id | u16 | 25600..26111 | the guest's TppVehicle2 pool id |
+| hash | u32 | | StrCode32 of the locator (`veh_lv_/trc_/wav_NNNN`, Mother Base `veh_clNN_clNN_0000`), 0 unnamed |
+| vtype | u8 | | GetVehicleType, 255 unknown |
+| flags | u8 | 0..7 | 1 the guest rides it, 2 sent right before a VEHICLE_STATE write |
+| life | u16 | 1..65534 | the guest copy's body life after the drop (never 0: a destruction is D12's REQ_VEHICLE_GONE) |
+| drop | u16 | 1..65535 | the drop since the life the guest last agreed with |
+| x, y, z | i32 | +-1e9 | the guest copy's pose, mm |
+
+**Compatibility.** A partner whose op table lacks 0x3A (0.14.4 and older) skips it by its length (`unknown_op`,
+section 3) and changes nothing; play pairing refuses mismatched builds anyway (`build_mismatch`), so only a lab
+pair of two builds can meet it. A guest without `world_vehicle_damage` never sends; a host without it ignores the
+op (`event=vehicle_damage;step=ignored;reason=off` once). The guest keeps its lower life against the host's states
+for at most 3 s per report, so against a host that never applies it the 0.14.4 behaviour returns (the host's life
+wins at its next state). Codes 0x1D-0x1F, 0x32, 0x35-0x37 stay reserved (section 14); 0x3B onward are free.
+
+**Keys** (CFG r[15], now 0..255; `world::VehicleModules(..., crew, damage)`; lab and play, no refusal bit, a named
+invalid value counts as named and off):
+
+| Bit | Key | What | Needs |
+|---|---|---|---|
+| 64 | `world_vehicle_crew` | D12 crew: a crewed host copy wrecked at once | `world_vehicle_break` (and VEHICLE_GONE) on the host |
+| 128 | `world_vehicle_damage` | the guest's vehicle damage report | VEHICLE_STATE on both copies (30010 / 30020; Mother Base lab only) |
+
+Both keys are **off in lab and play unless named** (the review of 2026-10-29 turned off the play defaults of `9538f86`
+and `f6823b9`: the damage report's fire gate was never run against live AI fire, and the crew rule's blast distance
+by type changed the path its play rehearsals proved; the review subsection below and docs/STATUS.md). The keys are read per PC: a guest with `world_vehicle_damage` against a host without it sends
+reports the host ignores (logged once), so the 0.14.4 behaviour stays (the host's life wins at its next state); a guest
+without it never sends; a host without `world_vehicle_crew` holds a crewed vehicle as before (REJECT 9 after 120 s).
+
+- **The guest's vehicle damage report** (`lua/coop/world_vehicle_damage.lua`, spliced after `world_vehicle_rules.lua`).
+  Guest: every 250 ms it reads its copy's body life (VEHICLE_STATE's native read `MGS_COOP_VEHICLE_LIFE_V1`, 32 ids
+  per read) and keeps, per vehicle, the life it last agreed with (its first read, any raise, every life VEHICLE_STATE
+  wrote or found the same, each report). A drop below that is sent as VEHICLE_DAMAGE when the vehicle still lives,
+  is not index 0, an LRRP truck, one this copy lost or watches, or the partner's ride on this copy (the host drives
+  it), the guest's player stands within 300 m of it and **fired within 3 s** (`PlayerStatus.GUN_FIRE` or
+  `GUN_FIRE_SUPPRESSOR`, sampled every frame as `partner_actions.lua` does; in the lab the lever `vehicle_life` on the
+  guest stands in for a hit, `step=lever_hit`): each copy's own guards hit vehicles on that copy, so a drop without the
+  guest's fire is never sent (hidden run `846c1147`: the guards' rounds on both copies added up and broke the jeep);
+  at most one per vehicle per 500 ms (drops in between add up) and 8 per second. A drop that may not be reported is agreed (`step=skip;id=;reason=far|partner_ride|lrrp|
+  index0|no_fire|not_alive|...;life=;drop=`, once per vehicle and reason; a wreck's life word reads near 65535 and still falls, so only a live vehicle reports) and VEHICLE_STATE heals it as before. VEHICLE_STATE asks the
+  module before it writes a life on the guest (`S.lifeHook`): an unreported drop goes out first (flag 2), and a
+  raise is skipped while a report is in flight (3 s, until the host's state carries a life below the one before
+  the drop) or a drop waits for its gap (`step=keep;id=;here=;host=;f=`); afterwards `S.lifeSeen` records the life
+  the copy now has. Lines `step=tx;id=;life=;drop=;f=;seq=`. Host: it applies a report only while linked, to the
+  copy VEHICLE_STATE's match names (the locator hash within 40 m, or the same unnamed id that is the nearest of its
+  type; never index 0), never an LRRP truck, a vehicle it lost or watches, or the one its own player rides, and only
+  while the guest's DOWNED_STATUS position (at most 3 s old) lies within 300 m of its copy. The new life is
+  `max(life, here - drop, here - floor(here / 2), 1)` when that is below `here` (the half bound since the review):
+  it is never more than the guest's own drop (a guest copy that was lower before its hit does not drag the host's
+  down), at most half of the host copy's life per report, and never 0. The lower life wins only when the host copy's
+  own hit came before the report; the guards' fire on the two copies is separate rounds, so their hits add up
+  whenever the report comes first (hidden run `846c1147`), and a thrown grenade replayed on both copies counts once
+  or twice depending on which copy's hit is first. `SetBodyLife`, read back, and the id is
+  marked dirty so VEHICLE_STATE sends it at once (`why=life`). Lines `step=applied|same;id=<host id>;from=<guest
+  id>;life=;was=;drop=;d_mm=;f=` and `step=refused;id=;reason=unpaired|no_locator|absent|far|no_match|not_nearest|
+  index0|lrrp|gone_here|own_watch|local_rider|pose_unreadable|guest_unknown|guest_far|not_alive|send_error;d_mm=;
+  life=;drop=;f=` (once per vehicle and reason). A destruction still goes through D12 (the guest's break request).
+- **D12 crew** (`world_vehicle_rules.lua`). With `world_vehicle_break` and `world_vehicle_crew` on the host, a guest
+  destruction request (cause 2 or 4) that VEHICLE_GONE would hold as `occupied` is checked seat by seat
+  (`GetRiderId`): when every filled seat is an NPC soldier (world sync's roster `W.byId`, or
+  `GameObject.GetTypeIndex` = `TppGameObject.GAME_OBJECT_TYPE_SOLDIER2`) and the partner does not ride it, it goes to
+  the judge at once (`step=break_judge`, then `step=break_crew;id=;rid=;crew=<seats>`) and is applied through the
+  normal path: the host's wreck (`SetBodyLife 0`, `via=wreck`). The engine's blast decides the crew on the host's
+  copy; their deaths are host outcomes, sent by the existing enemy sync (on the guest's copy they already died
+  unattributed, so the host's outcome finds them dead there). While a player stands within the blast distance of the
+  host's copy (15 m for a light vehicle, 50 m for any other type since the review), or a position cannot be read, it
+  is held instead (`step=break_hold;why=crew_near;near=;d_mm=;crew=;blast_mm=`; a Despawn under seated soldiers is
+  untested), VEHICLE_GONE's 120 s cap still applies. D-Dog, a buddy, an
+  unknown rider, the partner's ride and the host's own player keep the old hold or refusal.
+- **D11 before PAIRED** (no key: part of `world_loadout_block`). `world_follow.lua` records the mission a start
+  replays the host's transition into (`F.arrivedMission`, at `step=arrived`; nil for every other start).
+  `world_vehicle_rules.lua` and `world_relief_sync.lua` then mark that mission co-op on the guest at its start
+  (`VR.coop` / `RS.coop` = mission, `stopped` = nil), so the guard greys the drop items as soon as the guest is in
+  game, before PAIRED; a solo load leaves them active. Since the review the mark lapses 300 s after the arrival
+  without PAIRED (`step=prepair_lapsed;mission=;ms=300000`, once; the host's game failed or quit while loading).
+
+Tests: `world_vehicle_damage_lua_check` (in the worker gate), `world_vehicle_rules_lua_check` (crew, D11 before
+PAIRED), `world_relief_sync_lua_check` and `world_follow_lua_check` (the arrival), `world_vehicle_lua_check` (r[15]
+0..255), `world_wire_tests` (VEHICLE_DAMAGE), `world_receipt_tests` (bits 64 / 128), `lab_config_tests`,
+`lab_ini_check`, `lab_scripts_tests`, `worker_session_tests`, `worker_loading_tests` (`waitmission ... only`).
+Scenarios `tools/worker/scenarios/vehicle-fixes2-lab.txt`, `vehicle-fixes2-d11.txt` and `vehicle-fixes2-play.txt`. Hidden runs: docs/STATUS.md
+"The vehicle fixes of 2026-10-29".
+
+**The review of 2026-10-29/30** (docs/vehicles-companions-design.md 8.15). No op, field or range changed: a 0.14.4
+partner and the builds before this review read the same bytes. Behaviour on the host only:
+- VEHICLE_DAMAGE: at most half of the host copy's life per report (`step=applied;...;f=;cap=1` when the bound cut it),
+  at most 3 reports per vehicle and 16 over all vehicles per second (`step=refused;reason=rate`), and the life the host
+  took is counted per vehicle; D12's heavy rule adds it back, so reported drops never make a far destruction request
+  plausible. The key is off in play unless named (above).
+- D12: the blast distance is 15 m for a light vehicle (`Vehicle.type` `EASTERN_` / `WESTERN_LIGHT_VEHICLE`) and 50 m for
+  every other type, an unknown type or a missing binding (`break_safe;...;blast_mm=`, `break_hold;why=crew_near;...;
+  blast_mm=`); an unnamed copy with a player inside its blast is held (`break_hold;why=blast_near;near=;d_mm=;
+  blast_mm=`, VEHICLE_GONE's hold, REJECT 9 after 120 s) instead of a Despawn VEHICLE_GONE cannot run there.
+- D11: the pre-pair mark lapses 300 s after the arrival without PAIRED (`event=vehicle_rules;step=prepair_lapsed`,
+  `event=relief;...;step=prepair_lapsed`).
+- Worker: `titlecontinue <role> <s>` (the host's title Continue without pressing its next loading screen) for the
+  pre-PAIRED window in `-Mode play`. Scenarios `vehicle-review-lab.txt`, `vehicle-review-play.txt`.
+
+## 21. Seat races (M6, docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 6.6)
+
+Op `0x36` SEAT (54, the code the design reserved for it), both directions, reliable, world queue, level 3, lab and
+play, never a request; 5 fields, 7 bytes: `seq` (u16 1..), `id` (u16 25600..26111, the sender's TppVehicle2 id),
+`seat` (u8 0..3; 0, the driver's, is the only one raced today), `role` (u8 1 host / 2 guest: the sender), `action`
+(u8 1 claim / 2 grant / 3 deny). Sent and applied by `lua/coop/world_ride_pose.lua` (`R.seat`) only while the
+native board answers `MGS_COOP_BOARD_SEAT_V1` with `on=1`, which needs `partner_ride_race` (on with the native gun
+profile in lab and play since the seats-on round, design 8.25; a named 0 turns it off), the board installed and its
+site C live (`partner_board=race; result=ok; c=0x1246a4f`).
+The wire format did not change in the review round of 2026-10-30 (design 8.21); the rules below did.
+
+**E press only (design 8.55, 2026-10-31).** `action` 4 READY (host to guest, `id` 25600) is new: the host sends it every
+4 s while its board is on; a guest that heard it within 12 s holds, and only then native site D (`0x1251366`) keeps
+the guest's E press on an empty vehicle for at most 1 s and the guest sends one `claim` per press (`pseq`). The host
+answers with native `grant_if` under the lock its own press commits in: `deny` with `why=host_pressed` (its press
+owns the vehicle for 3 s) or `why=host_drives`, else `grant` and its yield. The want-based claims, the hold that
+refused the ride icon and `why=host_first` below are gone: standing at a door claims and denies nothing. Without
+READY (0.14.4, the key off) the guest is stock.
+
+- **Want (review R2).** Site C, RideVehicle CanExec's call of the ride pre-query `0x1245820` at `0x1246A4F`
+  (`native/partner_board.cpp` `SiteC`, retargeted only with the key), records the vehicle whose driver's seat the
+  pre-query's **final** answer offers: true with seat 0 or 1 (stock phase 1 makes both the driver), after the
+  pre-query's door bits and its line check, for a vehicle without a peer-driver policy. A player beside a vehicle
+  without a usable door has no want (the earlier site-A want counted it within 4.5 m: run `65277fb8`).
+- **Hold (review R1).** The guest refreshes a 2 s native hold lease (`hold 2000`) every 200 ms while paired: site C
+  answers false for the driver's seat of any empty vehicle that holds no live grant (no ride icon), and site B (phase
+  1) answers 4 for the vehicle site C wants (the backstop). So the guest never drives an empty vehicle before the host
+  answered, however fast it presses (`event=seat; action=hold; vehicle=..; holds=..; deny=..; grant=..`, at most once
+  a second). Unpaired, the hold is dropped at once (`hold 0`).
+- **Guest.** Every 500 ms while its want is at most 600 ms old it sends `claim` for that vehicle (`event=seat;
+  action=claim; vehicle=..; role=guest; age=..`, the first 20 logged). A `grant` sets a 3 s native grant for that
+  vehicle (`action=grant; ...; role=guest; set=1`: its ride icon comes back); a `deny` a 3 s native deny (`action=deny;
+  ...; set=1`, NOTE 13 a=6, one toast per 3 s). A deny withdraws a grant of the same vehicle and the other way round.
+- **Host.** On a claim it sends `deny` when its own player drives that vehicle (`why=host_drives`) or, unless it
+  granted that vehicle within the last 3 s, wants it within the last 1000 ms (`why=host_first`: ties go to the host);
+  else `grant`, and it yields at once: its own 3 s native deny for that vehicle, refreshed by every claim
+  (`action=grant` and `action=yield` the first time). A live grant sticks while the guest keeps claiming, even when the
+  host then reaches a door. A host that tries a yielded vehicle gets NOTE 13 a=7.
+- **Silence.** A claim left unanswered for 1.5 s (a 0.14.4 host skips the op, or its key is off) drops the guest's
+  hold (`state=silent; vehicle=..`, `hold 0`: stock) until any answer comes (`state=answered`).
+- **Loser.** Once the winner drives, the peer-driver policy decides as before (passenger or block), so the loser can
+  still take a passenger seat.
+- **Fulton guard (seats on, design 8.25).** Site C marks the vehicle whose ride icon it refuses (a deny or a hold),
+  and a door of the vehicle the peer drives (its passenger icon shows there beside the stock Fulton prompt of the
+  vehicle the partner sits in; since 8.26 whatever the pre-query answered there, so a block vehicle, full back seats
+  or a taken cab are covered too). While a mark is under 400 ms old (`ref` / `rage` of the receipt: read at each 200 ms
+  seat step, and every tick while hot, i.e. withheld or a mark under 1 s old) `R.seat.guard` withholds the Fulton action
+  (`vars.playerDisableActionFlag` gains `PlayerDisableAction.FULTON`; only a bit it added is removed again, as
+  `world_revive_input.lua` does, so a mission lock set while it is withheld is removed with it [I]): `event=seat;
+  action=fulton; on=1|0; vehicle=..`. A stop hook gives the bit back when the world stops (`W.fail`, LEVEL 0, the end).
+  Claim, hold and guard lines: at most 50 per pairing, claim and hold lines at most one a second. Play `92f2d2f9`: no
+  Fulton prompt while denied (two 1500 ms E holds, the jeep still there) and none beside the ride icon at the
+  host-driven jeep.
+- **Not covered.** Passenger seats are not raced (the board never offers the peer's seat); a CanExec check after the
+  pre-query (a tilted vehicle's limits, the truck door distance) can still refuse an icon whose want was recorded
+  [I]: the other player is then denied (or the host yields) while that player stays there, at most about 1 s (the
+  host's want) or 3 s (a grant) after it leaves; the toast says to wait (design 8.25).
+
+`MGS_COOP_BOARD_SEAT_V1` (`native/game_script_observer.cpp`, parser `partner_board::ParseSeatRequest`, unit-tested):
+`poll | clear | deny <id> <ms> | grant <id> <ms> | hold <ms>` (id 25600..26111, deny / grant 1..5000 ms, hold
+0..5000 ms, single spaces, digits only); answer `{ok=true,on=1,want=,age=,deny=,left=,hits=,hold=,grant=,gleft=,
+holds=,ref=,rage=}` (`ref` / `rage`: the Fulton guard's vehicle and its age, -1 none) or `{ok=true,on=0}`.
+
+**Compatibility.** A partner whose op table lacks 0x36 (0.14.4 and older) skips it by its length (`unknown_op`,
+section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
+behaviour). Play pairing refuses mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37
+stay reserved; 0x3B onward are free.

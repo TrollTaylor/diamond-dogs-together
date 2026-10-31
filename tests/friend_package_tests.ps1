@@ -12,7 +12,7 @@
 # contacts the network. The developer scripts run as child processes under
 # Windows PowerShell 5.1 (what Play-Offline-Coop.bat starts).
 [CmdletBinding()]
-param([string]$IniCheck, [string]$FakeProcess)
+param([string]$IniCheck, [string]$FakeProcess, [string]$Shard = '', [string]$Part = '')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -189,7 +189,13 @@ $null = New-Item -ItemType Directory -Path $fixture
 $steamRunningFile = Join-Path $fixture 'steam-running.txt'
 [IO.File]::WriteAllText($steamRunningFile, "0`n")
 $env:MGS_COOP_TEST_STEAM_RUNNING_FILE = $steamRunningFile
+# CTest runs this suite as friend_package_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# parts dealt to it by their cost (ms, measured alone). The installed-game fixtures the later parts share stay outside
+# the parts; the local two-window test copies the package the package part builds, so both are one part. -Part pure.
+Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ pure = 4800; package = 30700; handoff = 12700 })
 try {
+    if (Test-TestPart 'pure') {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
     $steamKeys = $false
@@ -261,7 +267,9 @@ try {
         Assert-Equal "$($r.Status)|$($r.HostName)|$($r.Port)" "$($v[1])|$($v[2])|$($v[3])" "join code vector $($v[0])"
         if ($v[1] -eq 'ok') { Assert-Equal $r.Secret $(if ($v[0].Contains('C00PC')) { 'C00PC00PC00PC00PC00P' } else { '7K3QZ9M2XWD4HT8RVN6B' }) "secret of $($v[0])" }
     }
+    }
     $s7 = '7K3QZ9M2XWD4HT8RVN6B'
+    if (Test-TestPart 'pure') {
     Assert-Equal (Get-CoopCodeCheck -Secret '7K3QZ9M2XWD4HT8RVN6C' -HostName '203.0.113.7' -Port 47830) 'PY' 'check of the altered secret (PY)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '203.0.113.8' -Port 47830) '2Q' 'check of 203.0.113.8 (2Q)'
     Assert-Equal (Get-CoopCodeCheck -Secret $s7 -HostName '192.168.1.20' -Port 47831) 'BB' 'check of port 47831 (BB)'
@@ -548,7 +556,66 @@ try {
             $file = Join-Path $fixture 'play-boot-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "lab_fast_boot=1`nlab_boot=30020 time=12:00`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['lab_fast_boot'])|$($m['lab_boot_mission'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0x1000000|0/1' 'native: play forces the test boot off with its refusal bit'
+            # G2 back-seat aim census (docs/native-puppet.md "Seat aim"): read-only and lab only; Play-Coop never names the
+            # key, play defaults it off, and a named 1 is forced off in play (recorded as named, no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_seat_aim') -and !$guestIni.Contains('partner_seat_aim') -and
+                !$clipsIni.Contains('partner_seat_aim')) 'Play-Coop lab.ini never names partner_seat_aim'
+            Assert-Equal "$($n['partner_seat_aim'])|$($n['partner_seat_aim_given'])" '0|0' 'native: play leaves the seat aim census off'
+            $file = Join-Path $fixture 'play-seat-aim-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_aim=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_aim'])|$($m['partner_seat_aim_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat aim census is forced off in play'
+            # M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): Play-Coop never names the key and play defaults it
+            # on with the gun profile (seat-fixes merge, design 8.43); a named 0 opts out in play.
+            Assert-True (!$hostIni.Contains('partner_seat_shot') -and !$guestIni.Contains('partner_seat_shot') -and
+                !$clipsIni.Contains('partner_seat_shot')) 'Play-Coop lab.ini never names partner_seat_shot'
+            Assert-Equal "$($n['partner_seat_shot'])|$($n['partner_seat_shot_given'])" '1|0' 'native: play defaults the seat shot on'
+            $file = Join-Path $fixture 'play-seat-shot-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_shot=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_shot'])|$($m['partner_seat_shot_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat shot 0 opts out in play'
+            # M7 seat gun (docs/native-puppet.md "Seat gun"): Play-Coop never names the key and play defaults it off; a named
+            # 1 runs in play (recorded as named, no refusal bit) until the play default flips after its proof.
+            Assert-True (!$hostIni.Contains('partner_seat_gun') -and !$guestIni.Contains('partner_seat_gun') -and
+                !$clipsIni.Contains('partner_seat_gun')) 'Play-Coop lab.ini never names partner_seat_gun'
+            Assert-Equal "$($n['partner_seat_gun'])|$($n['partner_seat_gun_given'])" '0|0' 'native: play leaves the seat gun off'
+            $file = Join-Path $fixture 'play-seat-gun-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_gun=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_gun'])|$($m['partner_seat_gun_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1|1|0x0|0/0' 'native: a named seat gun runs in play'
+            # Seats on (docs/vehicles-companions-design.md 8.25, 8.26): Play-Coop never names the seat keys; play defaults the
+            # jeep's front seat and the seat race on with the gun profile, the truck cab off (lab only until its play
+            # rehearsal); a named 0 is each one's off switch.
+            Assert-True (!$hostIni.Contains('partner_ride_front') -and !$guestIni.Contains('partner_ride_cab') -and
+                !$clipsIni.Contains('partner_ride_race')) 'Play-Coop lab.ini never names the seat keys'
+            $n = Invoke-IniCheck lab (Join-Path $fixture 'play-host-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])|$($n['partner_ride_front_given'])|$($n['partner_ride_cab_given'])|$($n['partner_ride_race_given'])" '1|0|1|0|0|0' 'native: play defaults the front seat and the seat race on, the truck cab off'
+            $file = Join-Path $fixture 'play-seats-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_front=0`npartner_ride_cab=0`npartner_ride_race=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_front'])|$($m['partner_ride_cab'])|$($m['partner_ride_race'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0|0x0|0/0' 'native: each seat key named 0 turns it off in play'
+            # Seat 1 on the driver's seat matrix (design 8.33-8.36, 8.43): Play-Coop never names the key; play defaults it on
+            # with the gun profile (as the front seat); a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_ride_seat1_anchor') -and !$guestIni.Contains('partner_ride_seat1_anchor') -and
+                !$clipsIni.Contains('partner_ride_seat1_anchor')) 'Play-Coop lab.ini never names partner_ride_seat1_anchor'
+            Assert-Equal "$($n['partner_ride_seat1_anchor'])|$($n['partner_ride_seat1_anchor_given'])" '1|0' 'native: play defaults the seat-1 anchor on'
+            $file = Join-Path $fixture 'play-seat1-anchor-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_seat1_anchor=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_seat1_anchor'])|$($m['partner_ride_seat1_anchor_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat-1 anchor 0 turns it off in play'
+            # Seat first person (design 8.46, 8.49): Play-Coop never names the key; play defaults it on with the gun profile;
+            # a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_seat_fpv') -and !$guestIni.Contains('partner_seat_fpv') -and
+                !$clipsIni.Contains('partner_seat_fpv')) 'Play-Coop lab.ini never names partner_seat_fpv'
+            Assert-Equal "$($n['partner_seat_fpv'])|$($n['partner_seat_fpv_given'])" '1|0' 'native: play defaults the seat first person on'
+            $file = Join-Path $fixture 'play-seat-fpv-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_fpv=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_fpv'])|$($m['partner_seat_fpv_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat first person 0 turns it off in play'
+            # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
+            # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
+            Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
+                !$clipsIni.Contains('partner_pass_camera')) 'Play-Coop lab.ini never names partner_pass_camera'
+            Assert-Equal "$($n['partner_pass_camera'])|$($n['partner_pass_camera_given'])|$($n['partner_pass_camera_trace'])" 'view|0|0' 'native: play defaults the passenger camera to view'
+            $file = Join-Path $fixture 'play-pass-camera-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_pass_camera=connect`npartner_pass_camera_trace=1`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_pass_camera'])|$($m['partner_pass_camera_given'])|$($m['partner_pass_camera_trace'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'connect|1|0|0x0|0/0' 'native: a named connect runs in play, the trace is forced off'
             $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
+            Assert-Equal "$($n['partner_ride_front'])|$($n['partner_ride_cab'])|$($n['partner_ride_race'])" '1|0|1' 'native: play guest defaults the front seat and the race on, the cab off'
             Assert-Equal "$($n['partner_native_support'])|$($n['partner_native_support_given'])|$($n['play_refused'])" '1|0|0x0' 'native: play guest defaults native throws on (Stage B)'
             Assert-Equal "$($n['partner_native_placed'])|$($n['partner_native_arm'])|$($n['partner_native_placed_given'])|$($n['partner_native_arm_given'])" '1|1|0|0' 'native: play guest defaults C4 and arm holds on (WS4 v1)'
             Assert-Equal "$($n['partner_ride_census'])|$($n['partner_ride_seat_id'])|$($n['partner_ride_tilt'])" '0|1|1' 'native: play guest admits the seat by id and RIDE_TILT by default, no census'
@@ -1045,6 +1112,8 @@ try {
     Assert-True ($friendCommonText.Contains("'-EncodedCommand', (ConvertTo-CoopEncodedCommand -Script `$Script)") -and $friendCommonText.Contains('-Verb RunAs')) 'Invoke-CoopElevated uses RunAs with -EncodedCommand'
     Assert-True ($friendCommonText.Contains('Start-Job') -and $friendCommonText.Contains('Wait-Job -Job $job -Timeout $TimeoutSec') -and $friendCommonText.Contains("if (`$null -eq `$maps) { return 'unavailable|' }")) 'UPnP runs in a job with a timeout and handles a missing mapping collection'
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the Diamond Dogs Together package (tools/package.ps1 -Friend)
     # The drop-in zip: its root is what goes into the game folder. Inert loader and
     # launcher bytes with a synthetic passing Release receipt; nothing is built,
@@ -1150,7 +1219,28 @@ try {
     Assert-Throws { & $packageScript -Friend -CheckReceipt $stalePath -OutputRoot $distFx } 'Release source does not match check receipt' 'real package admission rejects stale source receipt'
     Assert-True (-not (Test-Path -LiteralPath $distFx)) 'every refusal comes before staging'
 
-    $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx
+    # The real tree's package must not depend on what the developer has left untracked (0.14.4 review, round 2: full
+    # CTest went red while a new scenario or test file was not yet committed). For this one run, the child gits (2.31+,
+    # GIT_CONFIG_COUNT/KEY/VALUE) take an excludes file of this fixture that names exactly the tree's untracked files in
+    # the published folders, so package.ps1 does not refuse them; tools/package.ps1 itself has no way around its
+    # refusal, which the git fixture below checks.
+    function Invoke-IgnoringTreeUntracked([scriptblock]$Body) {
+        $exclude = Join-Path $fixture 'real-tree-untracked.exclude'
+        [IO.File]::WriteAllText($exclude, '')
+        $saved = [ordered]@{}
+        foreach ($name in 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0') { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
+        try {
+            $env:GIT_CONFIG_COUNT = '1'; $env:GIT_CONFIG_KEY_0 = 'core.excludesFile'; $env:GIT_CONFIG_VALUE_0 = $exclude
+            $untracked = @(& git -C $projectRoot -c core.quotepath=off ls-files --others --exclude-standard -- native lua tools tests third_party cmake docs CMakeLists.txt README.md THIRD_PARTY_NOTICES.md 2>$null)
+            $patterns = @($untracked | Where-Object { $_ } | ForEach-Object { '/' + ($_ -replace '([\\*?\[\]!#])', '\$1') })
+            [IO.File]::WriteAllText($exclude, (($patterns -join "`n") + "`n"))
+            if ($patterns.Count) { Write-Host "friend_package_tests: the real tree's package run ignores $($patterns.Count) untracked file(s), e.g. $($untracked[0])" }
+            & $Body
+        } finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+    Invoke-IgnoringTreeUntracked { $null = & $packageScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptPath -OutputRoot $distFx }
     $runs = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $runs.Count 1 'one package run folder'
     Assert-True ($runs[0].Name -cmatch ('^DiamondDogsTogether-' + [regex]::Escape($packageVersion) + '-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$')) "package run folder name: $($runs[0].Name)"
@@ -1249,6 +1339,13 @@ try {
         Assert-True $readme.Contains($needle) "README.txt mentions $needle"
     }
     foreach ($needle in '.bat', 'Play-Coop', 'Install-Coop', 'Share-Save', 'LAN', 'VPN', 'UDP', '@VERSION@', 'SteamID64', 'mgs-coop\source.zip') { Assert-True (!$readme.Contains($needle)) "README.txt no longer mentions $needle" }
+    # 0.14.4 review, round 2: the source zip is compared with the commit package.json names, never with the tag (the
+    # tag can sit on a later commit, and the repository holds MinHook only as a link).
+    $notices = [IO.File]::ReadAllText((Join-Path $pkg 'mgs-coop/THIRD_PARTY_NOTICES.md'))
+    foreach ($text in @($readme, $notices)) {
+        Assert-True ($text.Contains('source_commit') -and $text.Contains('source_dirty') -and $text.Contains('later commit')) 'README.txt and the notices name source_commit as the zip''s commit; the tag can be later'
+        Assert-True (!$text.Contains('holds the same code') -and !$text.Contains('differs only') -and !$text.Contains('differs from the source zip only')) 'README.txt and the notices no longer say the tag equals the zip'
+    }
     # DDT-source-<version>.zip: the complete corresponding source (GPL), launcher and its embedded assets included.
     $sourceZip = [IO.Compression.ZipFile]::OpenRead($sourceZipPath)
     try {
@@ -1275,6 +1372,22 @@ try {
         Assert-Equal @($sourceNames | Where-Object { $_ -like 'tools/friend/*' -or $_ -like 'build/*' }).Count 0 'the source zip: no retired player scripts, no build output'
         Assert-Equal @($sourceNames | Where-Object { [IO.Path]::GetExtension($_) -in @('.log', '.go', '.mod', '.sum') -and
             $_ -cnotmatch '^(tests/fixtures/partner-lab/[^/]+\.log|tools/archive_probe/(main\.go|go\.mod|go\.sum))$' }).Count 0 'the source zip: logs and Go files only at their exact places'
+        # THIRD_PARTY_NOTICES.md names every kind of tracked file the zip leaves out (0.14.4 review, round 2: it had said
+        # the tag differs only by docs/STATUS.md). A tracked file of any other kind left out fails here, so that text
+        # stays exact. Files deleted in the working tree are not counted (that tree is dirty anyway).
+        $tracked = @(& git -C $projectRoot -c core.quotepath=off ls-files 2>$null)
+        $trackedOk = $LASTEXITCODE -eq 0
+        $deleted = @(& git -C $projectRoot -c core.quotepath=off ls-files --deleted 2>$null)
+        if ($trackedOk -and $LASTEXITCODE -eq 0 -and $tracked.Count) {
+            $inZip = [Collections.Generic.HashSet[string]]::new([string[]]$sourceNames, [StringComparer]::Ordinal)
+            $leftOut = @($tracked | Where-Object { !$inZip.Contains($_) -and $deleted -cnotcontains $_ })
+            $namedPattern = '^(\.gitignore|\.gitmodules|AGENTS\.md|Play-Offline-Coop\.bat|third_party/minhook|(.+/)?\.git(ignore|attributes)|docs/readme/[^/]+\.(jpg|png)|docs/evidence/[^/]+)$'
+            Assert-Equal (@($leftOut | Where-Object { $_ -cnotmatch $namedPattern }) -join ', ') '' 'the source zip leaves out only the kinds of tracked file THIRD_PARTY_NOTICES.md names'
+            Assert-True ($leftOut -ccontains 'third_party/minhook' -and $leftOut -ccontains 'AGENTS.md') 'the check sees the left-out files (the MinHook link, AGENTS.md)'
+            foreach ($named in '`.gitignore`', '`.gitmodules`', '`.gitattributes`', '`AGENTS.md`', '`Play-Offline-Coop.bat`', '`docs/evidence`', '`docs/readme`') {
+                Assert-True $notices.Contains($named) "THIRD_PARTY_NOTICES.md names $named among the files the zip leaves out"
+            }
+        }
     } finally { $sourceZip.Dispose() }
     # Regression: an owned, ordinary dependency lives outside the staged source
     # root, reached only by the exact supported third_party/minhook junction.
@@ -1353,6 +1466,91 @@ try {
         }
         Assert-True (Test-Path -LiteralPath (Join-Path $dependency 'src\hook.c') -PathType Leaf) 'junction removal preserves owned dependency files'
     }
+    # 0.14.4 review (package-untracked-files-published-in-source-zip): the public source zip never carries a file git
+    # neither tracks nor ignores (a scratch note, a run's JSON with a join code or a local path). package.ps1 refuses
+    # it by name before anything is written, and build.source_dirty counts untracked files too. A git checkout of its
+    # own (inside the ignored build folder); MinHook is untracked there, as the real submodule's files are to the
+    # repository, and stays in the zip (the Release receipt pins it).
+    & {
+        $gitRoot = Join-Path $fixture 'git-package-source'
+        Assert-InFixture $gitRoot
+        foreach ($dir in @('native','lua','tests','tools\worker','third_party\minhook\src','cmake','docs\readme')) {
+            $null = New-Item -ItemType Directory -Path (Join-Path $gitRoot $dir) -Force
+        }
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','docs\readme\logo.png','tools\package.ps1','tools\package-readme-player.txt','tools\worker\WorkerSource.psm1',
+                'third_party\dynamite\LICENSE','third_party\imgui\LICENSE.txt','third_party\tpp-mod\LICENSE')) {
+            $destination = Join-Path $gitRoot $file
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force
+            [IO.File]::Copy((Join-Path $projectRoot $file), $destination, $false)
+        }
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'native\fixture.cpp'), '// owned package-source fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'docs\fixture.md'), '# Owned git package-source fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\CMakeLists.txt'), '# Owned MinHook CMake fixture', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\src\hook.c'), '/* Owned MinHook C source fixture */', $utf8)
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'third_party\minhook\LICENSE.txt'), 'Owned fixture license', $utf8)
+        function Invoke-FixtureGit([string[]]$GitArgs) {
+            $out = @(& git -C $gitRoot -c user.name=fixture -c user.email=fixture@example.invalid @GitArgs 2>$null)
+            if ($LASTEXITCODE -ne 0) { throw "git $($GitArgs -join ' ') failed: $($out -join ' ')" }
+            return $out
+        }
+        $null = Invoke-FixtureGit @('init', '-q')
+        $null = Invoke-FixtureGit @('add', '--', 'CMakeLists.txt', 'README.md', 'THIRD_PARTY_NOTICES.md', 'docs', 'tools', 'native', 'third_party/dynamite', 'third_party/imgui', 'third_party/tpp-mod')
+        $null = Invoke-FixtureGit @('commit', '-q', '-m', 'fixture')
+        $gitScript = Join-Path $gitRoot 'tools\package.ps1'
+        function Get-FixtureRun([string]$Dist) {
+            $made = @(Get-ChildItem -LiteralPath $Dist -Directory)
+            Assert-Equal $made.Count 1 "one package run in $Dist"
+            $pkgJson = Get-Content -LiteralPath (Join-Path $made[0].FullName 'package\mgs-coop\package.json') -Raw | ConvertFrom-Json
+            $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $made[0].FullName "DDT-source-$packageVersion.zip"))
+            try { $names = @($zip.Entries | ForEach-Object { $_.FullName }) } finally { $zip.Dispose() }
+            return [pscustomobject]@{ package=$pkgJson; names=$names }
+        }
+        # Clean: packaged, not dirty; the untracked MinHook dependency files are still in the zip.
+        $receipt = New-FixtureReceipt $receiptFx 'git-clean.json' $bothArtifacts (Get-WorkerSourceHashes $gitRoot)
+        $dist = Join-Path $fixture 'git-package-dist-clean'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $clean = Get-FixtureRun $dist
+        Assert-True ($clean.package.build.source_commit -cmatch '^[0-9a-f]{40}$' -and $clean.package.build.source_dirty -eq $false) 'a clean git checkout packages with source_dirty false'
+        Assert-True ($clean.names -ccontains 'native/fixture.cpp' -and $clean.names -ccontains 'third_party/minhook/src/hook.c' -and $clean.names -ccontains 'third_party/minhook/LICENSE.txt') 'tracked source and the MinHook dependency are in the source zip'
+        # An untracked note: refused by name before anything is staged.
+        $note = Join-Path $gitRoot 'tools\notes.txt'
+        [IO.File]::WriteAllText($note, 'scratch: a join code and C:\Users\someone\path', $utf8)
+        $dist = Join-Path $fixture 'git-package-dist-untracked'
+        Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist } 'Untracked file would be published in the source zip: tools\notes.txt' 'an untracked file under a published folder is refused by name'
+        Assert-True (!(Test-Path -LiteralPath $dist) -or @(Get-ChildItem -LiteralPath $dist -Force).Count -eq 0) 'the refusal comes before anything is staged'
+        $code = Join-Path $gitRoot 'native\scratch_probe.cpp'
+        [IO.File]::WriteAllText($code, '// untracked experiment', $utf8)
+        $receiptCode = New-FixtureReceipt $receiptFx 'git-code.json' $bothArtifacts (Get-WorkerSourceHashes $gitRoot)
+        Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receiptCode -OutputRoot $dist } 'Untracked file would be published in the source zip: native\scratch_probe.cpp' 'untracked code is refused too, even when the receipt hashed it'
+        Remove-Item -LiteralPath $code
+        # Tracked (added, not committed): published, and the package says the tree differed from the commit.
+        $null = Invoke-FixtureGit @('add', '--', 'tools/notes.txt')
+        $dist = Join-Path $fixture 'git-package-dist-added'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $added = Get-FixtureRun $dist
+        Assert-True ($added.names -ccontains 'tools/notes.txt' -and $added.package.build.source_dirty -eq $true) 'a tracked, uncommitted file is published and marks source_dirty'
+        $null = Invoke-FixtureGit @('rm', '-q', '--cached', '--', 'tools/notes.txt')
+        Remove-Item -LiteralPath $note
+        # An untracked file that is never published (a log): not refused, not in the zip, but the tree is not clean.
+        [IO.File]::WriteAllText((Join-Path $gitRoot 'tools\run.log'), 'local log', $utf8)
+        $dist = Join-Path $fixture 'git-package-dist-log'
+        $null = & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist
+        $logged = Get-FixtureRun $dist
+        Assert-True ($logged.names -cnotcontains 'tools/run.log' -and $logged.package.build.source_dirty -eq $true) 'an untracked unpublished file is left out and counts as dirty'
+        # 0.14.4 review, round 2: the refusal fails closed. A git checkout (a .git entry at the root) whose git cannot be
+        # run (here: not on PATH) packages nothing, rather than publishing an untracked note without a word.
+        [IO.File]::WriteAllText($note, 'scratch: a join code and C:\Users\someone\path', $utf8)
+        $savedPath = $env:PATH
+        try {
+            $env:PATH = (@($savedPath.Split([IO.Path]::PathSeparator) | Where-Object { $_ -and !(Test-Path -LiteralPath (Join-Path $_ 'git.exe') -PathType Leaf) }) -join [IO.Path]::PathSeparator)
+            Assert-True ($null -eq (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) 'the fixture hides git'
+            $dist = Join-Path $fixture 'git-package-dist-no-git'
+            Assert-Throws { & $gitScript -Friend -LoaderPath $fakeLoader -LauncherPath $fakeLauncher -CheckReceipt $receipt -OutputRoot $dist } 'This is a git checkout, but git could not be run' 'a git checkout without a working git packages nothing (no silent untracked file)'
+            Assert-True (!(Test-Path -LiteralPath $dist) -or @(Get-ChildItem -LiteralPath $dist -Force).Count -eq 0) 'that refusal comes before anything is staged'
+        } finally { $env:PATH = $savedPath }
+        Remove-Item -LiteralPath $note
+    }
+
     # The repository keeps no player scripts: the PowerShell player tooling was
     # retired in 0.14.0 (DiamondDogsTogether.exe replaces it, tests/ddt_core_tests).
     foreach ($retired in @('tools/friend', 'Play-Coop.bat', 'Play-World-Coop.bat')) {
@@ -1362,6 +1560,7 @@ try {
     Assert-True ($offlineBatText.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\dev\Start-LocalCoop.ps1" %*') -and $offlineBatText.Contains('set "PSModulePath="') -and
         $offlineBatText.Contains("`r`n") -and $offlineBatText.Contains('pause')) 'Play-Offline-Coop.bat: the developer local test in tools\dev with Windows PowerShell and all arguments'
 
+    }
     # ------------------------------------------------------------ installed-game fixtures (in process)
     # Steam fixture: account 7 with saves (only ever compared, never written);
     # a lab-staged package with fixture hashes for the owned installer.
@@ -1406,6 +1605,7 @@ try {
         return $gp
     }
 
+    if (Test-TestPart 'handoff') {
     # ------------------------------------------------------------ the import core with a save handoff stage (Import-CoopProgressFiles, P2-18)
     $kp = New-InstalledGame 'handoff-core'
     $coreGame = $kp.Game
@@ -1781,6 +1981,8 @@ try {
         if ($sleeper -and !$sleeper.HasExited) { Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue }
     }
 
+    }
+    if (Test-TestPart 'package') {
     # ------------------------------------------------------------ the developer's local two-window test (tools/dev; never shipped)
     # A drop-in package as tools/package.ps1 -Friend stages it, with fixture game
     # hashes and a newer inert loader; dedicated inert copies; MGS_COOP_TEST_NO_LAUNCH
@@ -1930,7 +2132,9 @@ try {
         Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
         Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
     }
-    Write-Output "friend package tests passed: $script:checks checks (the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
+    }
+    Assert-TestPartsAsked
+    Write-Output "friend package tests passed: $script:checks checks (parts: $((Get-TestPartsSelected) -join ', '); the Diamond Dogs Together package, the developer tools in tools/dev and tools/CoopPlay.psm1; scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
 } finally {
     Start-Sleep -Milliseconds 300
     Remove-Item Env:MGS_COOP_TEST_STEAM_RUNNING_FILE -ErrorAction SilentlyContinue

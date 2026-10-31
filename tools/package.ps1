@@ -57,7 +57,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.14.4'
+$version='0.14.5'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $archiveBytes=16333824
 $executableSha256='085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45'
@@ -145,20 +145,60 @@ if($loaderSource -ceq 'release_receipt') {
 }
 $buildInfo.loader_sha256=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
 if($exe) { $buildInfo.launcher_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash }
-# Provenance: the source commit and whether the working tree differed from it.
+# The folders (and root files) the source zip is made from.
+$sourceScope=@('native','lua','tools','tests','third_party','cmake','docs','CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
+# Files git neither tracks nor ignores in those folders (0.14.4 review): a scratch file left in the checkout (notes, a
+# run's JSON with a join code or a local path) must never reach the public source zip. .git is $false when this is not
+# a git checkout (an unpacked source zip has no such notion; a checkout whose git cannot be run is refused, below);
+# .files are relative paths with backslashes. MinHook is a
+# submodule whose files the superproject never lists; a MinHook copied in as a plain folder is the dependency itself
+# (the Release receipt pins its files), so it is left to that check. git's output is read as UTF-8 (any file name).
+function Get-UntrackedSourceFiles {
+    $run={
+        param([string[]]$GitArgs)
+        $psi=[Diagnostics.ProcessStartInfo]::new('git')
+        foreach($a in @('-C',$projectRoot)+$GitArgs) { $psi.ArgumentList.Add($a) }
+        $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        $psi.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+        $p=[Diagnostics.Process]::Start($psi)
+        try {
+            $out=$p.StandardOutput.ReadToEndAsync();$null=$p.StandardError.ReadToEndAsync();$p.WaitForExit()
+            return [pscustomobject]@{exit=$p.ExitCode;out=$out.GetAwaiter().GetResult()}
+        } finally { $p.Dispose() }
+    }
+    $none=[pscustomobject]@{git=$false;files=[string[]]@()}
+    # Fails closed (0.14.4 review, round 2): with a .git entry at the root (a folder, or a worktree's file) this is a
+    # git checkout, and git must answer; git missing from PATH (or any other failure to run it) must never mean "nothing
+    # untracked". Without one (an unpacked source zip) there is nothing to ask.
+    $checkout=Test-Path -LiteralPath (Join-Path $projectRoot '.git')
+    $refuse={ param([string]$Why) throw "This is a git checkout, but $Why; the files git does not track cannot be listed, so nothing is packaged. Make git work here (put it on PATH), then package again." }
+    try { $inside=& $run @('rev-parse','--is-inside-work-tree') }
+    catch { if($checkout) { & $refuse "git could not be run ($($_.Exception.Message))" }; return $none }
+    if($inside.exit -ne 0 -or $inside.out.Trim() -cne 'true') {
+        if($checkout) { & $refuse "git does not see a work tree here (exit $($inside.exit))" }
+        return $none
+    }
+    $listed=& $run (@('-c','core.quotepath=off','ls-files','-z','--others','--exclude-standard','--')+$sourceScope)
+    if($listed.exit -ne 0) { throw 'git could not list the untracked files of the checkout.' }
+    $files=[string[]]@($listed.out.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries) |
+        Where-Object { !$_.StartsWith('third_party/minhook/',[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $_.Replace('/','\') })
+    return [pscustomobject]@{git=$true;files=$files}
+}
+# Provenance: the source commit and whether the working tree differed from it (tracked changes anywhere, or files git
+# does not track in the published folders).
 $buildInfo.source_commit=$null;$buildInfo.source_dirty=$null
 try {
     $commit=@(& git -C $projectRoot rev-parse HEAD 2>$null)
     if($LASTEXITCODE -eq 0 -and $commit.Count -eq 1 -and $commit[0] -match '^[0-9a-f]{40}$') {
         $buildInfo.source_commit=$commit[0]
-        $buildInfo.source_dirty=@(& git -C $projectRoot status --porcelain --untracked-files=no 2>$null).Count -gt 0
+        $changed=@(& git -C $projectRoot status --porcelain --untracked-files=no 2>$null).Count
+        $buildInfo.source_dirty=($changed + (Get-UntrackedSourceFiles).files.Count) -gt 0
     }
-} catch { $buildInfo.source_commit=$null }
+} catch { $buildInfo.source_commit=$null;$buildInfo.source_dirty=$null }
 
 $preparedUtc=[DateTime]::UtcNow
 $stamp=$preparedUtc.ToString('yyyyMMddTHHmmssZ')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
 $distRoot=if($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'dist' }
-if(!(Test-Path -LiteralPath $distRoot)) { $null=New-Item -ItemType Directory -Path $distRoot }
 $licenses=@(
     @{path=(Join-Path $projectRoot 'third_party/dynamite/LICENSE');name='DYNAMITE-LICENSE'},
     @{path=(Join-Path $projectRoot 'third_party/minhook/LICENSE.txt');name='MinHook-LICENSE.txt'},
@@ -209,6 +249,15 @@ function Get-PackageSourceFiles {
         if($leaf -like 'link-secret*' -or $leaf -like 'mgs-coop-player-runtime*') { continue }
         $rows+=@([pscustomobject]@{relative=$relative;path=$source})
     }
+    # Only what git tracks is published: an untracked file is refused by name (commit it, or move it out).
+    $untracked=(Get-UntrackedSourceFiles).files
+    if($untracked.Count) {
+        $set=[Collections.Generic.HashSet[string]]::new($untracked,[StringComparer]::OrdinalIgnoreCase)
+        $published=@($rows | Where-Object { $set.Contains($_.relative) })
+        if($published.Count) {
+            throw "Untracked file would be published in the source zip: $($published[0].relative) ($($published.Count) in all). Commit it, or move it out of the checkout, then package again."
+        }
+    }
     return $rows
 }
 function Write-PackageZip([string]$ZipPath,$Entries,[DateTime]$Time) {
@@ -245,6 +294,9 @@ function Assert-PackageZip([string]$ZipPath,$Entries) {
     } finally { $zip.Dispose() }
 }
 
+# The source files, listed (and an untracked one refused) before anything is written.
+$sourceRows=@(Get-PackageSourceFiles)
+if(!(Test-Path -LiteralPath $distRoot)) { $null=New-Item -ItemType Directory -Path $distRoot }
 if($Friend) {
     # ---------------------------------------------------------------- the drop-in player package
     $runRoot=Join-Path $distRoot "DiamondDogsTogether-$version-$stamp"
@@ -260,7 +312,6 @@ if($Friend) {
     Write-CrlfAscii (Join-Path $modDir 'README.txt') $readme
     # The GPL source: its own zip next to the player zip (a release asset of
     # its own), with its own hash list. Never inside the player zip.
-    $sourceRows=@(Get-PackageSourceFiles)
     $sourceEntries=@()
     $sourceHashes=@()
     foreach($row in $sourceRows) {
@@ -345,7 +396,7 @@ foreach($entry in @('install','configure-role')) {
 }
 $sourceRoot=Join-Path $packageRoot 'source'
 $sourceHashes=@()
-foreach($row in @(Get-PackageSourceFiles)) {
+foreach($row in $sourceRows) {
     $destination=Join-Path $sourceRoot $row.relative
     $parent=Split-Path -Parent $destination
     if(!(Test-Path -LiteralPath $parent)) { $null=New-Item -ItemType Directory -Path $parent -Force }

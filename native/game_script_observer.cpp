@@ -84,6 +84,7 @@
 #include "mgscoop/client_reset.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/partner_player.hpp"
+#include "partner_player_contract.hpp"
 #include "mgscoop/partner_missions.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_action_events.hpp"
@@ -103,6 +104,7 @@
 #include "mgscoop/partner_support_guard.hpp"
 #include "mgscoop/partner_support_policy.hpp"
 #include "mgscoop/partner_placed_census.hpp"
+#include "mgscoop/partner_seat_aim.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_ride_seat.hpp"
 #include "mgscoop/partner_vehicle.hpp"
@@ -115,6 +117,7 @@
 #include "mgscoop/partner_upper_manual_idle.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include "mgscoop/debug_overlay.hpp"
+#include "mgscoop/window_close.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/save_handoff.hpp"
@@ -919,11 +922,30 @@ bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
     return mgscoop::partner_dm_patch::Patched();
 }
 // The seated vehicle rider's four dwords (partner_ride_seat; docs/anim-round1-seat.md).
-bool PartnerRideSeatArm(void*, std::uint8_t seat) noexcept {
-    return game_base && mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log);
+// Seat 1 on the driver's seat matrix (lab.ini partner_ride_seat1_anchor; design 8.33, 8.34): set from the lab config
+// before every Arm (independent of the board install), logged once; a light vehicle only, so seat 1 reads this
+// copy's category of the vehicle (unknown without the code gate or a live read: seat 1's own matrix).
+volatile LONG partner_seat1_anchor_logged = 0;
+bool PartnerRideSeatArm(void*, std::uint8_t seat, std::uint16_t vehicle) noexcept {
+    if (!game_base) return false;
+    const bool anchor = mgscoop::GetLabConfig().partner_ride_seat1_anchor;
+    mgscoop::partner_ride_seat::SetSeatOneAnchor(anchor);
+    if (InterlockedCompareExchange(&partner_seat1_anchor_logged, 1, 0) == 0)
+        LogFormat("partner_ride_seat1_anchor=configured; on=%u\r\n", anchor ? 1u : 0u);
+    std::uint8_t category = mgscoop::partner_ride_seat::kCategoryUnknown;
+    if (anchor && seat == 1 && partner_gate_ok) {
+        mgscoop::partner_vehicle::Read r{};
+        mgscoop::partner_vehicle::ReadLive(game_base, vehicle, r);
+        if (!r.refusal && r.unit.id == vehicle) category = mgscoop::partner_vehicle::Category(r.unit.type);
+    }
+    return mgscoop::partner_ride_seat::Arm(game_base, game_span, seat, Log, category);
 }
 void PartnerRideSeatRevert(void*, const char* reason) noexcept {
     if (game_base) mgscoop::partner_ride_seat::Revert(game_base, game_span, Log, reason);
+}
+// The confirmed GetOff: the armed seat back on its own matrix (review of design 8.35).
+void PartnerRideSeatGetOff(void*, std::uint8_t seat) noexcept {
+    if (game_base) mgscoop::partner_ride_seat::ArmGetOff(game_base, game_span, seat, Log);
 }
 bool PartnerDmClearPending(void*) noexcept {
     bool cleared = false;
@@ -997,9 +1019,25 @@ const char* PartnerSeatTarget(void*, const pp::SeatTargetRequest& request, pp::S
 // only (ReadProcessMemory) and resolves the vehicle through partner_vehicle::ReadLive.
 const char* PartnerBoardInstall(void*) noexcept {
     if (!game_base || !partner_gate_ok) return "gate";
-    return mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log);
+    // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab, passenger mode only; off unless named).
+    const auto& config = mgscoop::GetLabConfig();
+    mgscoop::partner_board::SeatOpts opts{};
+    opts.front = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_front;
+    opts.cab = config.partner_ride_board == mgscoop::PartnerRideBoard::passenger && config.partner_ride_cab;
+    const char* why = mgscoop::partner_board::Install(game_base, game_span, &mgscoop::partner_net::NowMs, Log, opts);
+    // M6 seat races (lab.ini partner_ride_race, off unless named; review R1/R2): site C, the pre-query's final
+    // answer (the want), the guest's hold and the SEAT deny / grant. Logs partner_board=race once; a refusal
+    // leaves the race off and the board as it is.
+    if (!why && config.partner_ride_race) mgscoop::partner_board::InstallRace();
+    return why;
 }
-bool PartnerBoardLive(void*) noexcept { return game_base && mgscoop::partner_board::PatchLive(game_base); }
+bool PartnerBoardLive(void*) noexcept {
+    if (!game_base) return false;
+    const bool live = mgscoop::partner_board::PatchLive(game_base);
+    // Review R5: site B lost with a phase-1 immediate left at 1 (seat 1): back to the stock 2.
+    if (!live && mgscoop::partner_board::RestorePhaseOneIfBLost(game_base)) Log("partner_board=phase_one_restored; reason=site_b_lost\r\n");
+    return live;
+}
 void PartnerBoardPublish(void*, std::uint64_t policy) noexcept { mgscoop::partner_board::Publish(policy); }
 void PartnerBoardStats(void*, mgscoop::partner_board::Stats& out) noexcept { mgscoop::partner_board::ReadStats(out); }
 bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board::LocalPassenger& out) noexcept {
@@ -1014,7 +1052,25 @@ bool PartnerLocalPassenger(void*, const pp::State& state, mgscoop::partner_board
         mgscoop::partner_vehicle::ReadLive(game_base, id, r);
         return !r.refusal && r.unit.id == id ? r.unit.rec : 0;
     };
-    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local);
+    out = mgscoop::partner_board::ReadLocalPassenger(reader, lookup, state.P, state.Q, state.local,
+                                                     mgscoop::partner_board::SeatOne(mgscoop::partner_board::LiveSeatOpts()));
+    return true;
+}
+// M6 review R4: the seat-1 remap skip, from the driver tick only.
+bool PartnerBoardRemap(void*, bool skip) noexcept { return game_base && mgscoop::partner_board::SetRemapSkip(skip); }
+// M6 review R3: rider[seat] of this copy's vehicle `id` for the v4 seat addendum (ReadProcessMemory only).
+bool PartnerSeatRider(void*, std::uint16_t id, std::uint8_t seat, std::uint16_t& out) noexcept {
+    out = 0xFFFF;
+    if (!game_base || !partner_gate_ok || seat > 3) return false;
+    mgscoop::partner_vehicle::Read r{};
+    mgscoop::partner_vehicle::ReadLive(game_base, id, r);
+    if (r.refusal || r.unit.id != id || !r.unit.rec) return false;
+    std::uint16_t value = 0xFFFF;
+    SIZE_T read = 0;
+    const auto at = r.unit.rec + mgscoop::partner_board::kUnitRiders + 2u * seat;
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), &value, sizeof(value), &read) || read != sizeof(value))
+        return false;
+    out = value;
     return true;
 }
 // F1 passenger camera (docs/native-puppet.md "Passenger camera", partner_ride_board=passenger):
@@ -1037,6 +1093,83 @@ bool PartnerPassCameraRead(void*, const pp::State& state, mgscoop::partner_pass_
     if (!game_base || !partner_gate_ok) return false;
     return mgscoop::partner_pass_camera::ReadCamera(game_base, state.P, out);
 }
+// Design 8.27: the lab trace's camera read (reads only) and the passcam lever's override.
+bool PartnerPassCameraView(void*, const pp::State& state, mgscoop::partner_pass_camera::View& out) noexcept {
+    out = mgscoop::partner_pass_camera::View{};
+    if (!game_base || !partner_gate_ok) return false;
+    return mgscoop::partner_pass_camera::ReadView(game_base, state.P, out);
+}
+int PartnerPassCameraOverride(void*) noexcept { return mgscoop::partner_pass_camera::Override(); }
+bool PartnerPassCameraPitch(void*, const pp::State& state, float pitch) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::WritePitch(game_base, state.P, pitch);
+}
+bool PartnerPassCameraRotation(void*, const pp::State& state, const float (&rot)[4]) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return false;
+    return mgscoop::partner_pass_camera::WriteRotation(game_base, state.P, rot);
+}
+std::uintptr_t PartnerPassCameraMvt(void*, const pp::State& state) noexcept {
+    if (!game_base || !partner_gate_ok) return 0;
+    return mgscoop::partner_pass_camera::ModeVtable(game_base, state.P);
+}
+// Design 8.38 / 8.42 (partner_pass_camera=view): the get-off camera request.
+const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, float yaw, float interp) noexcept {
+    if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
+    return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);
+}
+// Design 8.46 (lab.ini partner_seat_fpv): the seat first person's read (the subjective module after its blocks' one-time
+// check, the local gun's hand slot rec+0x3DA, the local flag record's words 0 and 3), its toggle write, the pollers and
+// the passcam seatfpv lever.
+bool PartnerSeatFpvRead(void*, const pp::State& state, mgscoop::partner_pass_camera::FpvRead& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    out = pc::FpvRead{};
+    if (!game_base || !partner_gate_ok) return false;
+    if (const char* why = pc::FpvInstall(game_base, game_span)) {
+        out.refusal = why;
+        return false;
+    }
+    pc::ReadSubjective(game_base, state.P, out.subj);
+    pp::Gun1 gun{};
+    if (pp::ReadGun(partner_addresses, state, 0, gun) && gun.fields_ok) {
+        out.slot_ok = true;
+        out.slot = gun.slot;
+    }
+    pp::Block block{};
+    if (!pp::ResolveBlock(partner_addresses, state, 0, block) && block.ps) {
+        const auto read = [](std::uintptr_t at, void* to, std::size_t size) noexcept {
+            SIZE_T count = 0;
+            return at && size && at <= UINTPTR_MAX - size &&
+                   ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), to, size, &count) && count == size;
+        };
+        std::uintptr_t records = 0;
+        std::uint32_t base = 0;
+        namespace ppc = mgscoop::partner_player_contract;
+        if (read(block.ps + ppc::ps_rec280, &records, sizeof(records)) && records && read(block.ps + ppc::ps_base_id, &base, sizeof(base)) &&
+            block.id >= base && block.id - base < 64) {
+            const std::uintptr_t rec = records + static_cast<std::uintptr_t>(block.id - base) * ppc::ps_rec280_stride;
+            out.flags_ok = read(rec, &out.w0, sizeof(out.w0)) && read(rec + 3 * sizeof(std::uint32_t), &out.w3, sizeof(out.w3));  // word 3
+        }
+    }
+    return out.subj.ok;
+}
+bool PartnerSeatFpvWrite(void*, const pp::State& state, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    after = 0;
+    if (!game_base || !partner_gate_ok || mgscoop::partner_pass_camera::FpvInstall(game_base, game_span)) return false;
+    return mgscoop::partner_pass_camera::WriteFpvToggles(game_base, state.P, set, clear, after);
+}
+bool PartnerSeatFpvPollers(void*, const pp::State& state, std::uintptr_t (&rvas)[10]) noexcept {
+    for (auto& r : rvas) r = 0;
+    if (!game_base || !partner_gate_ok) return false;
+    return mgscoop::partner_pass_camera::ReadSubjectivePollers(game_base, state.P, rvas);
+}
+int PartnerSeatFpvOverride(void*) noexcept { return mgscoop::partner_pass_camera::FpvOverride(); }
+// M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
+void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
+void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
+bool PartnerSeatShotStats(void*, mgscoop::partner_fire_filter::SeatShotStats& out) noexcept {
+    return mgscoop::partner_fire_filter::ReadSeatShot(out);
+}
+int PartnerSeatShotOverride(void*) noexcept { return mgscoop::partner_fire_filter::SeatShotOverride(); }
 // WS2 Stage A (partner_support_policy::ModeRefusal, pattern EquipAdmissionReason):
 // native type-12 support runs in the one-PC lab, and in two-PC play only while
 // link v2 is connected. Both observer gates use it. After a link drop the guard
@@ -1132,7 +1265,11 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerVehicleRead,PartnerSeatTarget,PartnerPublishSupportIdentity,PartnerPeerInputV7,
     PartnerBoardInstall,PartnerBoardLive,PartnerBoardPublish,PartnerBoardStats,PartnerLocalPassenger,PartnerIconCensus,
     PartnerReadUpper, PartnerGestureInstall, PartnerGestureStep,
-    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale};
+    PartnerPassCameraInstall, PartnerPassCameraConnect, PartnerPassCameraStats, PartnerPassCameraRead, PartnerDmClearStale,
+    PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
+    PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
+    PartnerSeatShotOverride, PartnerRideSeatGetOff,
+    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1402,7 +1539,11 @@ void PartnerMissionEnd() noexcept {
 // does, before the engine destroys the objects the deferred block-1 job, the
 // drain window and the rate/magazine mirrors name. Main (mission) thread only;
 // a run that intermittently crashed at close (guest, 0x21E72 write to 0x38)
-// had the native drive still armed.
+// had the native drive still armed. The WndProc runs on the window thread, not
+// the mission thread (208 of 208 archived closes), so the mission thread does the
+// teardown at its next partner tick (PartnerCloseTeardown) while the overlay holds
+// the WM_CLOSE (window_close.hpp: runs 8567f888 and e6ef6e4d faulted at 0xbf421a
+// after the close went on with the partner still realized).
 void PartnerShutdown() noexcept {
     InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
     mgscoop::carry_info::Shutdown();
@@ -1417,6 +1558,10 @@ void PartnerShutdown() noexcept {
     // the owner context clears the guest beacon once and stops calling Steam.
     mgscoop::partner_net::Shutdown();
     mgscoop::steam_online::Shutdown();
+    // The seated rider's four code dwords (design 8.53): the window thread is not the mission thread, so the
+    // MissionEnd revert below never ran on the other_thread return (run 1d9fd748: no revert line). One locked
+    // compare-exchange per patched dword under the seat lock (design 8.54); no Arm after this. Logs reverted; reason=shutdown when live.
+    if (game_base) mgscoop::partner_ride_seat::Close(game_base, game_span, Log);
     if (!partner_on || !partner_mission) return;
     // Thread-safe first: no deferral, no window, no mirror write from here on.
     mgscoop::partner_defer::Shutdown();
@@ -1425,14 +1570,37 @@ void PartnerShutdown() noexcept {
     // F1 vehicles: the board wrappers fall back to the stock searches (an atomic store).
     mgscoop::partner_board::Publish(0);
     // F1 passenger camera: nothing to undo (no patch; the handle is cleared by the stock get-off / FinishState).
+    // The seat patch was closed above; the seat first-person bit (impl+0x60) is released by the mission thread's
+    // PartnerCloseTeardown (Stop) or the MissionEnd below; on an other_thread return it stays set (design 8.53).
     mgscoop::partner_gesture::Shutdown();  // the body-1 update hook passes through: no gesture write
     mgscoop::partner_ui_filter::Shutdown();  // G1: the hint-queue leaf hooks pass every request through
+    const bool running = mission_phase == MissionPhase::running && !termination_scope.Active() && !mission_terminating;
+    if (mgscoop::window_close::NeedsMissionThread(partner_on, partner_mission, running, mission_thread, GetCurrentThreadId())) {
+        mgscoop::window_close::Request();
+        LogFormat("partner_shutdown=hooks_off; teardown=mission_thread; thread=%lu; mission_thread=%lu; hold_ms=%llu\r\n",
+            GetCurrentThreadId(), mission_thread, static_cast<unsigned long long>(mgscoop::window_close::kHoldMs));
+        return;
+    }
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
     }
     Log("partner_shutdown=hooks_off; teardown=mission_end\r\n");
     PartnerMissionEnd();
+}
+
+// The window is closing and PartnerShutdown handed the teardown to this (mission) thread: at its first partner
+// tick, the stop of a natural MISSION_TERMINATING (input disarmed, DM and seat reverted, realize bits cleared,
+// policy restored; always clear, whatever partner_teardown says, so the engine tears a one-player mission down)
+// and the mission end, before the engine tears the mission down. Then the held WM_CLOSE goes on.
+void PartnerCloseTeardown() noexcept {
+    if (!mgscoop::window_close::Claim()) return;
+    pd::Stop(partner_driver, partner_hooks, mgscoop::PartnerTeardown::clear, true);
+    PartnerMissionEnd();
+    const bool released = mgscoop::window_close::Finish();
+    const bool posted = released && mgscoop::debug_overlay::PostHeldClose();
+    LogFormat("partner_shutdown=teardown; thread=%lu; close=%s\r\n", GetCurrentThreadId(),
+        posted ? "posted" : released ? "post_failed" : "not_held");
 }
 
 // World sync install (lab.ini world>=1; partner=1 and net=1 already hold).
@@ -1463,6 +1631,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.vehicle_break = labc.world_vehicle_break;
     world.vehicle_credit = labc.world_vehicle_credit;
     world.loadout_block = labc.world_loadout_block;
+    world.vehicle_crew = labc.world_vehicle_crew;
+    world.vehicle_damage = labc.world_vehicle_damage;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -1497,6 +1667,7 @@ const char* HandlePartnerCfg() noexcept {
     unsigned short mission = 0;
     const char* precheck = nullptr;
     if (!OnRuntimeThread() || mission_terminating) precheck = "not_runtime_thread";
+    else if (mgscoop::window_close::Quiet()) precheck = "window_closing";
     else if (!ReadMission(mission) || !mgscoop::SupportsPartnerBody(mission)) precheck = "mission";
     else if (!partner_gate_ok) precheck = "code_gate";
     if (!pd::Cfg(partner_driver, partner_hooks, precheck, mgscoop::partner_net::NowMs())) return no;
@@ -1606,6 +1777,8 @@ bool PhysicalTransformLine(char*,std::size_t) noexcept;
 
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
+    // The window is closing: tear down once (PartnerCloseTeardown), then no more partner ticks.
+    if (mgscoop::window_close::Quiet()) { PartnerCloseTeardown(); return nullptr; }
     const std::uint64_t started_us = QpcMicros();
     const auto upper_body_epoch = partner_driver.mission.body_epoch;
     partner::Reply reply{};
@@ -2230,6 +2403,98 @@ void ObservePlacedCensus() noexcept {
     }
 }
 
+// G2 (docs/native-puppet.md "Seat aim"; research complete/re-seat-aim.md): the
+// read-only back-seat aim census, lab key partner_seat_aim=1 in lab mode (play
+// forces the key off). Same natural owner and 10 Hz cadence as the equipment
+// observers. Reads only: Q's act / upper-act arrays, the qualified
+// partner_player::ReadGun (plus its rec+0x2C1 / +0x3D4), the per-id flag record
+// *(PS+0x280) of ResolveBlock's PS and, for the local player, the camera through
+// partner_pass_camera::ReadCamera. No write, no game call. Watched: the local
+// player (k = 0) while its act is a vehicle ride act or the native passenger
+// report holds a back seat, body 1 (k = 1) while the seat flow holds it.
+//   partner_seat_aim=on; ..        once per mission
+//   partner_seat_aim=sample; ..    on a change of a watched instance
+//   partner_seat_aim=end; ..       when a watch ends (aims, fires, reloads, armed / aim time)
+//   partner_seat_aim=status; ..    every 5 s while either instance is watched
+void ObserveSeatAimCensus() noexcept {
+    namespace sa=mgscoop::partner_seat_aim;
+    const auto& config=mgscoop::GetLabConfig();
+    const bool on=config.partner_seat_aim && config.mode==mgscoop::LabMode::lab && lab_active && partner_on && partner_gate_ok;
+    struct CensusState {
+        std::uint32_t mission=0xFFFFFFFFu,realize_gen=0xFFFFFFFFu;
+        bool announced=false;
+        sa::Track track[2]{};
+        sa::Budgets budgets{};
+        std::uint64_t status_ms=0;
+    };
+    static CensusState st;
+    const auto emit=[](const char* line) noexcept {Log(line);};
+    const std::uint64_t now=mgscoop::partner_net::NowMs();
+    if(!on || !game_base) {
+        // Turned off mid-mission (or the gate fell): close the open watches once.
+        for(std::uint32_t k=0;k<2;++k) sa::Finish(st.track[k],k,now,"off",st.budgets,emit);
+        return;
+    }
+    const auto& mission=partner_driver.mission;
+    if(st.mission!=partner_mission || st.realize_gen!=mission.realize_gen) {
+        for(std::uint32_t k=0;k<2;++k) sa::Finish(st.track[k],k,now,"mission",st.budgets,emit);
+        st=CensusState{};st.mission=partner_mission;st.realize_gen=mission.realize_gen;
+    }
+    char line[400]{};
+    if(!st.announced) {
+        st.announced=true;
+        if(sa::FormatOn(line,sizeof(line),partner_mission)) Log(line);
+    }
+    const auto read=[](std::uintptr_t at,void* out,std::size_t size) noexcept {
+        SIZE_T count=0;
+        return at && size && at<=UINTPTR_MAX-size &&
+            ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&count) && count==size;
+    };
+    pp::State state{};
+    const bool state_ok=mission.realized && pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.arrays_ok &&
+        state.count==2 && state.local==0 && state.ids[0]==0 && state.ids[1]==1;
+    const auto& seat=mission.seat;
+    const bool seat_flow=seat.phase==pd::SeatPhase::arm || seat.phase==pd::SeatPhase::play || seat.phase==pd::SeatPhase::seated ||
+        seat.phase==pd::SeatPhase::exit;
+    const auto& lp=partner_driver.local_passenger;
+    for(std::uint32_t k=0;k<2;++k) {
+        sa::Sample s{};
+        const bool realized=state_ok && pp::Realized(state,k);
+        if(realized) s.ok=sa::ReadActs(read,state.Q,state.ids[k],s.act,s.upper);
+        // Only a watched instance reads its gun record, flag record and camera.
+        const bool watch=k==0 ? sa::WatchLocal(s.ok,s.act,lp.valid) : sa::WatchBody1(mission.ride_seated,seat_flow);
+        if(realized && watch) {
+            pp::Gun1 gun{};
+            if(pp::ReadGun(partner_addresses,state,k,gun) && gun.fields_ok) {
+                s.gun_ok=true;
+                s.mode=gun.mode_cur;s.equip=static_cast<std::uint16_t>(gun.fields.equip);
+                s.cls=mgscoop::partner_placed_census::GunClass(gun.fields.flags27c);s.hand=gun.hand_slot;
+                sa::ReadGunExtra(read,gun.rec,s.next,s.posture);
+            }
+            pp::Block block{};
+            if(!pp::ResolveBlock(partner_addresses,state,k,block) && block.ps) {
+                const sa::Flags flags=sa::ReadFlags(read,block.ps,block.id);
+                s.flags_ok=flags.ok;s.w0=flags.w0;s.w6=flags.w6;
+            }
+            if(k==0) {
+                mgscoop::partner_pass_camera::Camera cam{};
+                if(mgscoop::partner_pass_camera::ReadCamera(game_base,state.P,cam) && cam.ok) {
+                    s.cam_ok=true;s.cam_mode=cam.mode;s.cam_handle=cam.connect;
+                }
+                if(lp.valid) {s.seat=lp.seat;s.vehicle=lp.vehicle;}
+            } else {
+                s.seat=seat.seat;s.vehicle=seat.vehicle;
+            }
+        }
+        sa::Tick(st.track[k],k,watch,s,now,st.budgets,emit);
+    }
+    if((st.track[0].episode.active || st.track[1].episode.active) && (now<st.status_ms || now-st.status_ms>=sa::k::kStatusMs) &&
+       mgscoop::partner_placed_census::Take(st.budgets.other,now,sa::k::kOtherPerSecond,sa::k::kOtherCap)) {
+        st.status_ms=now;
+        if(sa::FormatStatus(line,sizeof(line),st.track[0],st.track[1])) Log(line);
+    }
+}
+
 // The existing Lua OnUpdate polls in every mission, including title/ACC.
 // This path remains on the natural runtime owner under receipt_lock, independent
 // of the menu. Closing, termination and batch execution stop it before any reads.
@@ -2248,6 +2513,7 @@ void ObserveEquipmentTick() noexcept {
     ObserveNativeSupport();
     ObserveNativeCbox();
     ObservePlacedCensus();
+    ObserveSeatAimCensus();
 }
 
 void PublishDebugSnapshot() noexcept {
@@ -2570,6 +2836,30 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 replacement = {reply, std::strlen(reply)};
                 debug_quiet = true;
                 return true;
+            }
+            // "passcam off|connect|aim|lab|status" (the passenger camera's live A/B switch, lab only;
+            // docs/native-puppet.md "Passenger camera", design 8.27) is handled natively too.
+            if (mgscoop::partner_pass_camera::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,
+                                                            tag_result, sizeof(tag_result), tag_ok)) {
+                debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                LogFormat("debug_menu=passcam; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
+            // "seatshot on|off|lab|status" (M7 S1's live A/B switch, lab only; docs/native-puppet.md "Seat shot (S1)").
+            {
+                int next = -1;
+                if (mgscoop::partner_seat_shot::HandleCommand(pending.text, mgscoop::GetLabConfig().mode == mgscoop::LabMode::lab,
+                                                              mgscoop::partner_fire_filter::SeatShotOverride(), next, tag_result,
+                                                              sizeof(tag_result), tag_ok)) {
+                    if (tag_ok) mgscoop::partner_fire_filter::SetSeatShotOverride(next);
+                    debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                    LogFormat("debug_menu=seatshot; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                    replacement = {reply, std::strlen(reply)};
+                    debug_quiet = true;
+                    return true;
+                }
             }
             // "gesture_lever knock|sign_go|sign_stop" (docs/native-puppet.md "Gestures",
             // "Lab lever: knock and hand signs"): this copy's own knock / hand sign through
@@ -4384,6 +4674,65 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     if (!vd::FormatAnswer(answer, reply, sizeof(reply))) return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
+// M6 seat races (lua/coop/world_ride_pose.lua SEAT op 54; lab.ini partner_ride_race=1; partner_board "seat races"):
+//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms> | grant_if <vehicle> <ms>
+//     (8.55 E press only: press / page / pseq / pend / touts site D's last press, its age, the press count, held, the
+//      presses that got no answer; commit the host's own press; gi grant_if's answer 1 granted+yielded / 0 refused / -1)
+//     (partner_board::ParseSeatRequest: vehicle 25600..26111, deny / grant ms 1..5000, hold ms 0..5000; review R8)
+//   -> return {ok=true,on=0}                                   (the key off or site C not installed)
+//   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
+//              grant=<id|65535>,gleft=<ms>,holds=<n>,ref=<id|65535>,rage=<ms|-1>}
+//      (ref / rage: the Fulton guard's vehicle and its age: a refused ride icon or the peer's vehicle; seats on)
+//      (8.57: lpv the vehicle this player sits in as a passenger, 65535 none: Lua's deny toast waits for it)
+//   -> return {ok=false,reason='request'}
+// Atomics only: site C writes the want and reads the deny / grant / hold, site B reads them.
+bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static constexpr char kPrefix[] = "return 'MGS_COOP_BOARD_SEAT_V1' -- ";
+    constexpr std::size_t prefix = sizeof(kPrefix) - 1;
+    if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, kPrefix, prefix) != 0) return false;
+    world_quiet = true;
+    static char reply[384]{};
+    const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
+    namespace pb = mgscoop::partner_board;
+    const pb::SeatRequest request = pb::ParseSeatRequest(buffer + prefix, size - prefix);
+    int gi = -1;
+    if (!pb::LiveRace()) return finish("return {ok=true,on=0}");
+    switch (request.cmd) {
+    case pb::SeatCmd::poll: break;
+    case pb::SeatCmd::clear: pb::RaceDeny(pb::kVehicleUnknown, 0); pb::RaceGrant(pb::kVehicleUnknown, 0); pb::RaceHold(0); break;
+    case pb::SeatCmd::deny: pb::RaceDeny(request.vehicle, request.ms); break;
+    case pb::SeatCmd::grant: pb::RaceGrant(request.vehicle, request.ms); break;
+    case pb::SeatCmd::hold: pb::RaceHold(request.ms); break;
+    case pb::SeatCmd::grant_if: gi = pb::RaceGrantIf(request.vehicle, request.ms) ? 1 : 0; break;
+    default: return finish("return {ok=false,reason='request'}");
+    }
+    pb::RaceState rs{};
+    pb::ReadRace(rs);
+    const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
+    const long long rage = rs.guard == pb::kVehicleUnknown || rs.guard_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.guard_age_ms);
+    const long long page = rs.press == pb::kVehicleUnknown || rs.press_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.press_age_ms);
+    // 8.55: one line per ended press (the guest) and per host commit, written here on the Lua thread, never in the hook.
+    static std::uint32_t logged_done = 0, logged_commits = 0;
+    if (rs.done_seq != logged_done) {
+        logged_done = rs.done_seq;
+        LogFormat("partner_board=press; role=guest; vehicle=%u; end=%s; wait_ms=%u; presses=%u; timeouts=%u; joins=%u\r\n", unsigned(rs.done_vehicle),
+                  rs.done_end == 1 ? "grant" : rs.done_end == 2 ? "deny" : rs.done_end == 4 ? "peer" : "timeout", rs.done_wait_ms, rs.pseq,
+                  rs.timeouts, rs.joins);
+    }
+    if (rs.commits != logged_commits) {
+        logged_commits = rs.commits;
+        LogFormat("partner_board=press; role=commit; vehicle=%u; commits=%u\r\n", unsigned(rs.commit), rs.commits);
+    }
+    if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
+                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld,"
+                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d,dend=%u,dveh=%u,lpv=%u}",
+                                unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
+                                rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage, unsigned(rs.press), page, rs.pseq, rs.pend ? 1u : 0u,
+                                rs.timeouts, unsigned(rs.commit), gi, unsigned(rs.done_end), unsigned(rs.done_vehicle),
+                                partner_driver.local_passenger.valid ? unsigned(partner_driver.local_passenger.vehicle) : 0xFFFFu)))
+        return finish("return {ok=false,reason='format'}");
+    return finish(reply);
+}
 // M4 VEHICLE_STATE (lua/coop/world_vehicle_state.lua, docs/vehicles-companions-design.md 6.4; lab.ini
 // world_vehicle_state=1, lab and play): read-only body life and state words of this copy's TppVehicle2 pool.
 //   return 'MGS_COOP_VEHICLE_LIFE_V1' -- <first id 25600..26111> <n 1..32>
@@ -5129,6 +5478,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
+    if (SelectBoardSeatReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleLifeReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;

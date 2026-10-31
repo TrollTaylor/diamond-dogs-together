@@ -2,7 +2,7 @@
 # Detached pure protocol/policy/INI/AST fixtures. Never invokes a controller,
 # native worker, installer, process enumeration or window/input API.
 [CmdletBinding()]
-param([string]$SourceDirectory,[string]$RepoRoot)
+param([string]$SourceDirectory,[string]$RepoRoot,[string]$Shard='',[string]$Part='')
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 if(!$RepoRoot){$RepoRoot=if((Split-Path -Leaf $PSScriptRoot) -ceq 'tests'){Split-Path -Parent $PSScriptRoot}else{[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))}}
@@ -12,6 +12,10 @@ Import-Module (Join-Path $SourceDirectory 'WorkerSessionCommon.psm1') -Force -Di
 $script:checks=0
 function Assert-True([bool]$Value,[string]$Name){++$script:checks;if(!$Value){throw "Fixture failed: $Name"}}
 function Assert-Throws([scriptblock]$Action,[string]$Name){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Assert-True $threw $Name}
+# CTest runs this suite as worker_session_tests_1/_2 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs
+# the pure checks (about 3 s) and the parts dealt to it by their cost (ms, measured alone); -Part tail runs only that one.
+Import-Module (Join-Path $RepoRoot 'tests\TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{ fixtures = 10000; tail = 6000 })
 # Exact candidate policy is exercised separately from file rollback mocks.
 $pinned=Get-WorkerRuntimePins;$capacityPins=Get-WorkerBuddyCapacityPins
 Assert-True ($pinned.Archive -ceq '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') 'production runtime pin unchanged'
@@ -166,6 +170,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_ride_board=off','partner_ride_board=block','partner_ride_board=passenger','guest:partner_ride_board=passenger','host:partner_ride_board=block',
     # G4 truck test levers: the native door spot (lab only, default 0)
     'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
+    'partner_ride_front=1','partner_ride_front=0','guest:partner_ride_cab=1','host:partner_ride_cab=0','partner_ride_race=1',
+    'partner_ride_seat1_anchor=0','guest:partner_ride_seat1_anchor=1',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
@@ -178,6 +184,15 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_native_mount=hide','partner_native_mount=off','guest:partner_native_mount=hide','host:partner_native_mount=off',
     # G5: the other ride hides unrealize body 1 (lab only, default 0)
     'partner_native_unrealize_all=1','partner_native_unrealize_all=0','guest:partner_native_unrealize_all=1','host:partner_native_unrealize_all=0',
+    # G2: the read-only back-seat aim census (lab only, default 0)
+    'partner_seat_aim=1','partner_seat_aim=0','guest:partner_seat_aim=1','host:partner_seat_aim=0',
+    # M7: the seat gun (lab and play, default 0)
+    'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
+    # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
+    'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
+    # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
+    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','partner_pass_camera=view','guest:partner_pass_camera=aim',
+    'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
     # 0.13.6 online-net-epoch: the link-session counter skew (lab and the play rehearsal only)
@@ -196,12 +211,19 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_native_traverse=2','partner_native_traverse=','partner_native_traverse=on','both:partner_native_traverse=1','partner_native_traversal=1',
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
     'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
+    'partner_ride_front=2','partner_ride_front=on','partner_ride_cab=','both:partner_ride_cab=1','partner_ride_race=yes',
+    'partner_ride_seat1_anchor=2','partner_ride_seat1_anchor=on',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
     'partner_gesture_lever=2','partner_gesture_lever=','partner_gesture_lever=on','both:partner_gesture_lever=1','partner_gesture_levers=1','partner_native_gesture_lever=1',
     'partner_native_mount=1','partner_native_mount=','partner_native_mount=seat','both:partner_native_mount=hide','partner_native_mounts=hide',
     'partner_native_unrealize_all=2','partner_native_unrealize_all=','partner_native_unrealize_all=on','both:partner_native_unrealize_all=1','partner_native_unrealize=1',
+    'partner_seat_aim=2','partner_seat_aim=','partner_seat_aim=on','both:partner_seat_aim=1','partner_seat_aims=1',
+    'partner_seat_gun=2','partner_seat_gun=','partner_seat_gun=on','both:partner_seat_gun=1','partner_seat_guns=1',
+    'partner_seat_shot=2','partner_seat_shot=','partner_seat_shot=on','both:partner_seat_shot=1','partner_seat_shots=1',
+    'partner_pass_camera=on','partner_pass_camera=','partner_pass_camera=Aim','partner_pass_camera=1','partner_pass_camera_trace=2',
+    'both:partner_pass_camera=aim',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
     'link_session_skew=','link_session_skew=1000','link_session_skew=-1','link_session_skew=on','both:link_session_skew=2','link_session_skews=2')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
@@ -218,12 +240,18 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
         'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
+        'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1','labsetting partner_ride_race=1',
+        'labsetting partner_ride_seat1_anchor=0','labsetting guest partner_ride_seat1_anchor=1',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',
         'labsetting host partner_gesture_lever=1','labsetting partner_gesture_lever=0',
         'labsetting partner_native_mount=hide','labsetting guest partner_native_mount=hide','labsetting host partner_native_mount=off',
         'labsetting partner_native_unrealize_all=1','labsetting guest partner_native_unrealize_all=1','labsetting host partner_native_unrealize_all=0',
+        'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
+        'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
+        'labsetting partner_seat_shot=1','labsetting guest partner_seat_shot=0',
+        'labsetting partner_pass_camera=aim','labsetting partner_pass_camera=view','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
@@ -231,7 +259,10 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
 Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
 foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','labsetting both save_handoff=stage',
-        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1',
+        'labsetting partner_native_mount=seat','labsetting partner_native_mount=1','labsetting partner_seat_aim=on',
+        'labsetting both partner_seat_aim=1','labsetting partner_seat_gun=on','labsetting both partner_seat_gun=1',
+        'labsetting partner_seat_shot=on','labsetting both partner_seat_shot=1',
+        'labsetting partner_pass_camera=on','labsetting partner_pass_camera_trace=yes',
         'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
         'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
@@ -239,7 +270,8 @@ foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','lab
 Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses invalid native support bool'
 foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
         'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block',
-        'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1')){
+        'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1',
+        'labsetting partner_ride_cab=2','labsetting both partner_ride_front=1','labsetting partner_ride_seat1_anchor=2')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 # 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both
@@ -279,7 +311,7 @@ foreach($bad in @('world_vehicle_wreck=2','world_vehicle_wreck=','world_vehicle_
 Assert-True ('labsetting world_vehicle_wreck=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_wreck=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_wreck=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_wreck=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_wreck=0|1 only'
 # The vehicle decisions of 2026-10-29: world_loadout_block (D11), world_vehicle_break (D12), world_vehicle_credit (D14), each 0|1.
-foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit')){
+foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage')){
     foreach($ok in @("$vk=1","$vk=0","host:$vk=1","guest:$vk=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
     }
@@ -379,6 +411,10 @@ foreach($bad in @('partner_native_net=wan','partner_native_stall=keep','partner_
     Assert-True ($bad -cnotmatch $labSettingPatterns[0]) ('not allow-listed: '+$bad)
 }
 $scenarioSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+# Preflight reuse: both preflight calls ask Invoke-WorkerChecks to -Reuse an unchanged receipt unless -FreshChecks.
+$reuseCalls=[regex]::Matches($scenarioSource,[regex]::Escape("'Invoke-WorkerChecks.ps1')")+'[^\r\n]*-Reuse:\$reuse 2>&1').Count
+Assert-True ($scenarioSource.Contains('$reuse=!$FreshChecks') -and $reuseCalls -eq 2 -and
+    $scenarioSource -cmatch '(?m)^\s*\[switch\]\$FreshChecks,') 'the scenario preflight reuses an unchanged receipt unless -FreshChecks'
 $scenarioLine=[regex]::Match($scenarioSource,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)").Groups[1].Value
 Assert-True ([bool]$scenarioLine) 'the scenario labsetting line regex'
 foreach($ok in @('labsetting partner_native_net=online','labsetting host partner_native_stall=hold','labsetting guest partner_input_edge_repeats=5','labsetting partner_native_hold=net')){
@@ -844,14 +880,14 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ([regex]::IsMatch($cmakeText,'if\(MGS_BACKGROUND_WORKER\)\s+target_compile_definitions\(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1\)\s+endif\(\)')) 'only the worker build compiles the stall into partner_net'
         Assert-True ($cmakeText.Contains('option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)')) 'the background worker stays default OFF'
     }
-    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
+    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120','waitmission guest 30010 240 only',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
         'host worldtrigger world=0','guest worldtrigger world=0')){
         $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
     }
     foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','both worldtrigger world=0','host worldtrigger world=1','host worldtrigger world=0 extra',
         'host worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
-        'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401')){
+        'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401','waitmission guest 30010 240 alone','waitmission guest 30010 240 only x')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('hidden travel refuses '+$step)
     }
@@ -1264,6 +1300,7 @@ function New-WorkerCleanupFixture([string]$Name,[hashtable]$RecordState=@{}) {
     $session.baseline_sha256=$baselineHash;$session.candidate_sha256=$candidateHash
     return [pscustomobject]@{run=$run;session=$session;pins=$pins;report=[ordered]@{roles=[ordered]@{}}}
 }
+if (Test-TestPart 'fixtures') {
 try {
     $null=New-Item -ItemType Directory -Path $fixture
     [IO.File]::WriteAllText($marker,$nonce)
@@ -1908,6 +1945,8 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+}
+if (Test-TestPart 'tail') {
 # Worker-only graphics preset: pure retail text and recorded actual controller blocks.
 & {
  function Graphics-Tag([string]$text){
@@ -2132,4 +2171,6 @@ foreach($name in @('Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1')){
     }
 }
 
-Write-Output ("worker_session_tests: $script:checks detached checks passed; no worker/game/process/window operations")
+}
+Assert-TestPartsAsked
+Write-Output ("worker_session_tests: $script:checks detached checks passed (parts: $((Get-TestPartsSelected) -join ', ')); no worker/game/process/window operations")

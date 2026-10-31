@@ -88,6 +88,38 @@ std::uint8_t RemoteCategory(const ExtStore& s, const Packet& ride, std::uint32_t
     if(s.ext.revision!=ride.revision || s.ext.vehicle!=ride.vehicle || s.ext.seat!=ride.seat) return kCategoryUnknown;
     return s.ext.category;
 }
+bool EncodeSeatExt(const SeatExt& e, std::uint8_t (&b)[kSeatExtSize]) noexcept {
+    for(auto& x : b) x=0;
+    if(!e.revision || (e.flags & ~SeatFlag::Known)) return false;
+    if(e.vehicle!=kVehicleUnknown && (e.vehicle>>9)!=kVehicleType) return false;
+    if((e.flags & SeatFlag::OneTaken) && e.vehicle==kVehicleUnknown) return false;  // a taken seat 1 belongs to a vehicle
+    b[0]=kMagic; b[1]=kVersionSeat; b[2]=e.flags; b[3]=0;
+    b[4]=static_cast<std::uint8_t>(e.revision); b[5]=static_cast<std::uint8_t>(e.revision>>8);
+    b[6]=static_cast<std::uint8_t>(e.vehicle); b[7]=static_cast<std::uint8_t>(e.vehicle>>8);
+    for(unsigned i=0;i<4;++i) b[8+i]=static_cast<std::uint8_t>(e.sender_ms>>(i*8));
+    return true;
+}
+bool DecodeSeatExt(const std::uint8_t* b, std::size_t n, SeatExt& out) noexcept {
+    if(!IsSeatExt(b,n) || b[3]) return false;
+    SeatExt e{};
+    e.flags=b[2];
+    e.revision=static_cast<std::uint16_t>(b[4]|(b[5]<<8));
+    e.vehicle=static_cast<std::uint16_t>(b[6]|(b[7]<<8));
+    for(unsigned i=0;i<4;++i) e.sender_ms|=static_cast<std::uint32_t>(b[8+i])<<(i*8);
+    std::uint8_t check[kSeatExtSize]{};
+    if(!EncodeSeatExt(e,check)) return false;  // the same field rules both ways
+    out=e; return true;
+}
+bool AcceptSeatExt(SeatExtStore& s, const std::uint8_t* b, std::size_t n, std::uint32_t epoch, std::uint64_t now) noexcept {
+    SeatExt e{}; if(!epoch || !DecodeSeatExt(b,n,e)) { ++s.invalid; return false; }
+    if(s.have && s.epoch==epoch && static_cast<std::uint32_t>(e.sender_ms-s.ext.sender_ms)>=0x80000000u) { ++s.stale; return false; }
+    s.have=true; s.ext=e; s.epoch=epoch; s.received_ms=now; ++s.received; return true;
+}
+std::uint8_t SeatFlagsFor(const SeatExtStore& s, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept {
+    if(!s.have || !epoch || s.epoch!=epoch || now<s.received_ms || now-s.received_ms>kLeaseMs) return 0;
+    if(ride.kind!=Kind::vehicle || s.ext.revision!=ride.revision || s.ext.vehicle!=ride.vehicle) return 0;
+    return s.ext.flags;
+}
 void Observe(Visibility& s, const In& in) noexcept {
     // Ring identity is stronger evidence than clocks/positions: a real reset
     // may preserve both. Legacy/synthetic generation0 keeps prior behavior.

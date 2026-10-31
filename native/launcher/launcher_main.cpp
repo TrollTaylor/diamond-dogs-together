@@ -562,17 +562,15 @@ std::uint64_t FolderHash() {
 }
 
 // wait_ms > 0 (the restart after an update): wait that long for the window that
-// holds the folder to release it before bringing it to the front instead.
+// holds the folder to release it before bringing it to the front instead. When
+// no window holds it (the last one was closed during setup and its process is
+// still ending it, or the next one is still opening), wait a moment for the
+// folder instead of exiting without a window (launcher_entry.hpp
+// ClaimFolderInstance; 0.14.4 review, round 2).
 HANDLE ClaimSingleInstance(std::uint64_t hash, int wait_ms) {
     wchar_t name[96];
     swprintf_s(name, L"Local\\DiamondDogsTogether-ui-%016llx", static_cast<unsigned long long>(hash));
-    HANDLE mutex = CreateMutexW(nullptr, TRUE, name);
-    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (wait_ms > 0) {
-            // Released (or abandoned by a process that exited): this window owns the folder now.
-            const DWORD r = WaitForSingleObject(mutex, static_cast<DWORD>(wait_ms));
-            if (r == WAIT_OBJECT_0 || r == WAIT_ABANDONED) return mutex;
-        }
+    auto bring_forward = [hash]() {
         struct Find {
             std::uint64_t hash;
             HWND found;
@@ -590,14 +588,12 @@ HANDLE ClaimSingleInstance(std::uint64_t hash, int wait_ms) {
                 return TRUE;
             },
             reinterpret_cast<LPARAM>(&find));
-        if (find.found) {
-            if (IsIconic(find.found)) ShowWindow(find.found, SW_RESTORE);
-            SetForegroundWindow(find.found);
-        }
-        CloseHandle(mutex);
-        return nullptr;
-    }
-    return mutex;
+        if (!find.found) return false;
+        if (IsIconic(find.found)) ShowWindow(find.found, SW_RESTORE);
+        SetForegroundWindow(find.found);
+        return true;
+    };
+    return static_cast<HANDLE>(ddt::ClaimFolderInstance(name, wait_ms, ddt::kInstanceNoWindowWaitMs, bring_forward));
 }
 
 int RunWindow(const Options& o) {
@@ -686,11 +682,14 @@ int RunWindow(const Options& o) {
     }
     // While an update downloads, installs or hands over, or the local test is
     // still starting, that thread finishes before the folder is released (a new
-    // window must not tidy files it is replacing or switching over). Otherwise
-    // the folder is free as soon as the window is gone, and the model ends its
-    // threads afterwards: an update check that waits for the network must never
-    // make the next start close silently.
-    const bool hold = ddt::ui::HoldFolderWhileClosing(app.model->update_info(), app.model->local_test());
+    // window must not tidy files it is replacing or switching over). While co-op
+    // gets ready, the model ends the process with its setup right there, before
+    // it waits for anything else, so the folder is free only once that setup has
+    // stopped (0.14.4 review: a window opened again at once ran a second setup
+    // next to it). Otherwise the folder is free as soon as the window is gone,
+    // and the model ends its threads afterwards: an update check that waits for
+    // the network must never make the next start close silently.
+    const bool hold = ddt::ui::HoldFolderWhileClosing(app.model->update_info(), app.model->local_test(), app.model->phase());
     Shutdown(app);
     if (hold) app.model.reset();
     g_app = nullptr;

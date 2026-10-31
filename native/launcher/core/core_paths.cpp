@@ -96,6 +96,11 @@ std::wstring PlayMutexName(const std::wstring& game_root) {
     return L"Local\\mgs-coop-play-" + Wide(hash.substr(0, 16));
 }
 
+std::wstring SetupMutexName(const std::wstring& game_root) {
+    const std::wstring play = PlayMutexName(game_root);
+    return L"Local\\mgs-coop-setup-" + play.substr(play.size() - 16);
+}
+
 std::vector<std::wstring> SteamLibraryPathsFromVdf(const std::string& text) {
     std::vector<std::wstring> out;
     for (const std::string& raw : SplitLines(text)) {

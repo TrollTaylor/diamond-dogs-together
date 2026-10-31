@@ -874,6 +874,15 @@ BOARD_SITES = [
      '0x125AD00: (*(P+0x120))[body] = the ridden unit (the local passenger report)'),
     (0x12CF42F, '498b85e00000000fb70c706641898c2410010000',
      'UpdatePlayerInfo 0x12CE870: vars+0x110 (playerVehicleGameObjectId) = (*(Q+0xE0))[body]'),
+    (0x1245847, '4c8ba424400100004d8bf04c8be941c6042404',
+     'the pre-query 0x1245820: r12 = its 5th argument (the seat pointer, [rsp+0x140]); *seat = 4 first (the refusal site C returns)'),
+    # E press only (design 8.55, partner_ride_race): site D, phase 1's per-frame update calls the remote gate 0x114DB20
+    # (action, index) at 0x1251366 before the record checks, site B and TryToRide; true returns (the stock idle).
+    (0x1251361, '8bd6488bcfe8b5c7efff84c00f85a6050000440fb78384000000bdffff000066443bc50f848f050000807b5a00',
+     'board site D: phase 1 event 0 calls the remote gate 0x114DB20(action, index) at 0x1251366; true -> 0x1251919 '
+     '(return); record +0x84 == 0xFFFF returns; +0x5a == 0 -> the seat search (site B)'),
+    (0x1251229, '488b4138488bf98bca2b4824488b47084d8bf1488d1cc9488b4878418be84c8ba13802000048c1e3068bf248035f78',
+     'phase 1: the record = *(action+0x78) + (index - *(*(action+0x38)+0x24)) * 0x240 (rbx)'),
 ]
 SITES += BOARD_SITES
 # --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera", research complete/re-passcam):
@@ -915,8 +924,54 @@ PASS_CAMERA_SITES = [
     (0x1121D8F, '488b81f0010000488bf948b90000000000000080440f29bc24d0000000488bf241be000700004885c1740d488987200c000041be00078000',
      'PlayerCamera vt+0xA8 0x1121D30 (the position solve every module ends in): CAM+0x1F0 with bit 63 set is the ignored '
      'collision owner (copied to CAM+0xC20, query flags 0x700 | 0x800000)'),
+    # Design 8.27 (the aim camera): the look angles the shot guard writes back and the eye the lab trace reads.
+    (0x111FCB1, 'f30f1045c7f30f1075cff30f588374020000f30f58b370020000f30f11b370020000f30f118374020000e81097fbfef30f118374020000'
+     'f30f11b3680200008b837402000089836c020000',
+     'PlayerCamera vt+0xF0 0x111F830 (the look-at update): adds its deltas to CAM+0x270 (pitch) and CAM+0x274 (yaw, '
+     'wrapped by 0xD93F0), then copies them to CAM+0x268 / +0x26C (the shot guard writes the four the same way)'),
+    (0x109705C, '488b81b8000000440f2890e0000000',
+     'GunAimPointSolve 0x1096F90: the eye the gun aim point rec+0x150 is measured from is CAM+0xE0 (CAM = *(P+0xB8))'),
+    (0x112106E, 'f30f1187700200000f28c7e88c4f8e00410f28e8410f28c8410f28d9410fc6c8c9410fc6e8d2f30f118774020000440f298f90000000',
+     'PlayerCamera vt+0x88 0x1120B00: writes the look pitch CAM+0x270 and yaw +0x274 (atan2 of its direction) with the '
+     'rotation CAM+0x90 (the shot guard holds the rotation too)'),
+    # Design 8.38 / 8.42 (mode view): the stock rotation request (the camera after a get-off).
+    (0x111A920, '448b81380d000041f7c001100000754d8b8104020000c1e809a80175404183c802448981380d0000',
+     'PlayerCamera vt+0xE0 0x111A920 (RequestToSetCameraRotation): refused while CAM+0xD38 & 0x1001 or CAM+0x204 bit 9; '
+     'CAM+0xD38 |= 2'),
+    (0x111A948, '8b028981800d00008b42048981840d00008b42088981880d00008b420c89818c0d00008b42108981900d00008b42148981940d0000',
+     'PlayerCamera vt+0xE0: CAM+0xD80..0xD94 = the six request fields (interp, 0.4, 0.8, 0x400126, pitch, yaw)'),
 ]
 SITES += PASS_CAMERA_SITES
+# Design 8.46 (lab.ini partner_seat_fpv; docs/native-puppet.md "Seat first person"): the stock F tap of a seated aim is
+# answered by the gun plugin's PollingForSubjectiveCamera 0x1053E80 (its poller sub-object's vt[0], vtable 0x23B3DA0):
+# while the gun hold gate is open it returns bit m of the subjective camera impl+0x60 (m from the hand slot rec+0x3DA),
+# which ToggleAimFpvModeOnPad 0x12A0580 flips on pad button 10. partner_pass_camera sets that bit while the local passenger
+# aims from seat 1 or 2 and clears the bits it set afterwards; the seat trace reads the module's answer. No code patched.
+SEAT_FPV_SITES = [
+    (0x129EA00, '40534883ec20488b4108488bd94883c1e08b9084030000899100010000e89e1a0000',
+     'subjective camera module CanActivate 0x129EA00 (vt+0x18 of 0x23D1F00): impl = module - 0x20; calls UpdateCameraMode '
+     '0x12A04C0 and is true when impl+0x48 != 0'),
+    (0x12A04E1, '488d4140488bf94889442420488b4128',
+     'UpdateCameraMode 0x12A04C0: each poller gets ctx = {impl+0x40, CAM = impl+0x28}'),
+    (0x12A04F1, '44897948458d670a418bef418d5f0148894424284c8d7178',
+     'UpdateCameraMode: impl+0x48 = 0, first index 10 (none), the ten pollers at impl+0x78'),
+    (0x12A0530, 'ff1084c0740e095f48',
+     'UpdateCameraMode: poller vt+0 (PollingForSubjectiveCamera) true -> impl+0x48 |= its bit'),
+    (0x12A0560, '4489674c4c89bfc8000000',
+     'UpdateCameraMode: impl+0x4C = the first answering index, impl+0xC8 = that poller'),
+    (0x12A05AF, 'c1e80aa80174568b53208bcf41b801000000418bc0d3e08bca85d07421f7d023c8400fb6c63bca894b20410f45c0488b5c2430488b7424'
+     '384883c4205fc30bc8400fb6c63bca894b20410f45',
+     'ToggleAimFpvModeOnPad 0x12A0580 (impl+0x40 vt+0x60): pad button 10 (F) flips bit m of ctx+0x20 = impl+0x60'),
+    (0x1053F96, '410fb680da03000083f8067776488d1556c0fafe8b8c82304005014803caffe1',
+     'gun PollingForSubjectiveCamera 0x1053E80: the hand slot rec+0x3DA (0..6) through the table 0x1054030'),
+    (0x1053FB6, '33dbeb21bb01000000eb1abb02000000eb13bb08000000eb0cbb03000000eb05bb04000000',
+     'gun PollingForSubjectiveCamera: the table targets set bit m = 0, 1, 2, 8, 3, 4'),
+    (0x1053FDB, '498b068bd3498bceff5060418b4e200fa3d90f92c384c074',
+     'gun PollingForSubjectiveCamera: ToggleAimFpvModeOnPad(ctx, m) (impl+0x40 vt+0x60); answers bit m of ctx+0x20 = impl+0x60'),
+    (0x1054030, 'b63f0501ba3f0501c13f0501d63f050119400501cf3f0501c83f0501',
+     'its slot table: slot 0 -> bit 0, 1 -> 1, 2 -> 2, 3 -> 4, 4 none, 5 -> 3, 6 -> 8'),
+]
+SITES += SEAT_FPV_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
 # vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
 # 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
@@ -944,6 +999,89 @@ DOOR_DATA = [(0x21124C0, 0x3ECCCCCD), (0x21124C4, 0x3ECCCCCD), (0x21124C8, 0x3EC
 # The blocks vehicle_door re-checks before its first native call (DOOR_SITES plus the seat matrix, its seat-1 remap,
 # the record world matrix and the two getters it calls).
 DOOR_BLOCKS = [rva for rva, _, _ in DOOR_SITES] + [0xB7AF90, 0xB79A3F, 0x55DBC8, 0x55E7F0, 0xA27CC0, 0xA27D07]
+# --- G2 back-seat aim (partner_seat_aim, the read-only census; docs/native-puppet.md "Seat aim", research
+# complete/re-seat-aim.md): what the census's reading of a stock back-seat passenger's weapon rests on. The gun plugin
+# (AttackActionImpl::PollingImpl 0x1054210) runs UpdateAttackType, then EnableCheck, then PollingForLocal; EnableCheck
+# refuses the weapon while flag 0xC3 or 0xC2 of the per-id flag record rec = *(PS+0x280) + (id - *(PS+8))*0x20 is set
+# (flag n = word n >> 5, bit n & 31), else sets flag 0x18 (word 0 bit 24); a hold needs flag 0x18 and not flag 0xCF.
+# The ride plugin's Exec stage 0 (0x1247320) sets flag 0xC3 for an offline or local body and then runs the current ride
+# phase with event 1; the passenger phase 0x1250CF0's event 1 clears it once its seat loop runs (work+0x5C > 0): the
+# only clear of word 6 bit 3 in the ride plugin. UpdateAttackType has no posture for the passenger act 0x6E (heli
+# door 99 -> 5, horse 0x79 -> 3, 0x88 -> 6). Nothing here is patched or called.
+SEAT_AIM_SITES = [
+    (0x12475D0, '83fa06775e4c8d0d248adbfe8bc2418b9481387624014903d1ffe24883c1d0418bd0e929fdffff',
+     'RideVehicleActionImpl Exec 0x12475D0 (vt+0x80): stage <= 6 through the RVA table 0x1247638; stage 0 -> jmp 0x1247320'),
+    (0x1247638, 'eb75240133762401f7752401037624010f7624011b76240127762401',
+     'the ride Exec stage table: 0 -> 0x12475EB (0x1247320), 1 -> return, 2 -> 0x12475F7 (ExecPreMotionGraph 0x12471B0), ..'),
+    (0x124738E, '488b49788bd32b510848c1e20548039180020000834a1808',
+     'ride Exec stage 0 0x1247320 (offline, or the local body online): flag record word 6 |= 8 (flag 0xC3, no weapon)'),
+    (0x12473FE, '0f284e404533c98bd3660f6fc1458d4101660f73d808660f7ec04863c866480f7ec84803cfffd0',
+     'ride Exec stage 0: then the current phase function (work+0x40/+0x48) with event 1'),
+    (0x1250FC4, '8bd7488bcee852cbefff84c00f85d1010000837b5c000f8ec7010000488b4608488b48782b79088bc748c1e00548038180020000836018f7',
+     'passenger phase 0x1250CF0 event 1: not IsNeedToSync 0x114DB20 and work+0x5C > 0 (the seat loop runs): word 6 &= ~8 '
+     '(flag 0xC3 cleared: a back-seat passenger keeps its weapon)'),
+    (0x12510BD, 'f30f1042400f54056770e5000f2f0568bcec000f83d1000000498b40782b78088bcf48c1e1054803888002000081491800000001',
+     'passenger phase event 10: |unit+0x40| under the threshold: word 6 |= 0x1000000 (flag 0xD8)'),
+    (0x10542E6, 'e8453c04008bd7488bcee81b9dfeff8bd7488bce4584ff7507e82cf6ffffeb05e865f0ffff',
+     'gun plugin PollingImpl 0x1054210: EnableCheck 0x103E010, then PollingForLocal 0x1053930 (or PollingForGhost 0x1053370)'),
+    (0x103E192, 'bac30000004533c9498bce448d42ffe8ea5cfbff84c00f85e1000000',
+     'EnableCheck: OrCheck 0xFF3E90(flag record, 0xC3, 0xC2) true -> refuse (0x103E28F)'),
+    (0x103E26F, '488b4608488b48782b79088bc748c1e00548038180020000810800000001eb1e',
+     'EnableCheck admitted: flag record word 0 |= 0x1000000 (flag 0x18, the weapon usable)'),
+    (0x103E28F, '488b4608488b48782b79088bc748c1e005480381800200008120fffffffe',
+     'EnableCheck refused: flag record word 0 &= ~0x1000000 (flag 0x18 cleared)'),
+    (0x1053B70, '41f64603010f84e0020000418b4618c1e80fa8010f85d1020000',
+     'PollingForLocal 0x1053930: no hold unless flag 0x18 (word 0 byte 3 bit 0) is set and flag 0xCF (word 6 bit 15) clear'),
+    (0x10756B4, '488b4060458d4f7d458d4719488b40204c897c242041c6040602',
+     'StateGunHoldStart 0x1075620 enter: (*(Q+0x20))[id] = 2 (the census\'s aiming upper act; Set(0xC8, 0x19, 0x7D))'),
+    (0x1075A23, '49b984e5e20a1350000041b802000000488b8938020000418bd6488b01740ef30f11742420ff9090010000',
+     'StateGunHoldStart enter: graph 2 node 0x50130AE2E584 on the body\'s cs (vt+0x190, or vt+0x170 at 0x1075A50)'),
+    (0x108CD40, '80bad503000000458bc87408c682d403000007c34c8b5108498b8238010000488b4060488b4018460fb704484183e863746f4183e81674614183f8'
+     '0f7453498b4a78442b4908418bc148c1e005480381',
+     'UpdateAttackType 0x108CD40 (1/3): posture rec+0x3D4 = 7 with rec+0x3D5; act 99 -> 5, 0x79 -> 3, 0x88 -> 6 (no 0x6E)'),
+    (0x108CD90, '80020000f6400c017408c682d403000002c38b00c1e816a8017408c682d403000001c3488b81d802000041803c01417508c682d403000004c3'
+     'c682d403000000c3c682d403000006c3c682d403000003',
+     'UpdateAttackType (2/3): flag record word 3 bit 0 -> 2, word 0 bit 22 -> 1, PS byte 0x2D8 == 0x41 -> 4, else 0'),
+    (0x108CDE0, 'c3c682d403000005c3', 'UpdateAttackType (3/3): the act-99 (heli door) posture 5'),
+]
+SITES += SEAT_AIM_SITES
+# --- M7 seat gun (partner_seat_gun; docs/native-puppet.md "Seat gun"): the partner's raised gun on the DM-seated body 1.
+# The gesture hook puts body 1's graph 2 on GunHoldStart (the stock raise: SetCurrentNode(cs, id, 2, 0x50130AE2E584,
+# 0.0f, 0), SEAT_AIM_SITES 0x1075A23) and, at its motion end, on GunHold 0xAA0EA22A5E0E, the node the stock gun-hold
+# state enters (0x10721B3 through vt+0x190 with 8.0f, right after it stores the gun record's hold type +0x268 into
+# rate record +0x58), and writes body 1's aim rates +0x5C / +0x60 (the stores of 0x108E7D0, partner_aim_sites).
+SEAT_GUN_SITES = [
+    (0x10721A9, '488b8960020000488b01ff100fb68e68020000f30f100520890801894858498b450849b90e5e2aa20eaa0000f30f11442420488b4878'
+     '41b802000000418bd7488b8938020000488b01ff9090010000',
+     'the gun-hold enter: rate record = *(PS+0x260) vt+0 (id); +0x58 = gunRec+0x268; cs vt+0x190(id, 2, GunHold '
+     '0xAA0EA22A5E0E, 8.0f)'),
+    (0x1070B4A, '49b90e5e2aa20eaa00004c8bc6418bd4498bcdf30f117c2420e81893feff81a6c4030000ffffff7f',
+     'the other GunHold entry: 0x1059E80(.., GunHold 0xAA0EA22A5E0E, ..), then gunRec+0x3C4 &= 0x7FFFFFFF'),
+]
+SITES += SEAT_GUN_SITES
+# --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot (S1)"): the RequestBullet hook forwards a
+# copy of a seated passenger's record with its start moved past the ridden vehicle. SEAT_SHOT_SITES (in the partner's
+# code gate) are what the hook relies on: the record layout the copy reads and the pellet loop that re-uses the caller's
+# record. SEAT_SHOT_FACTS are the static study's reasons for S1 (m6m7b/shoot2: why the jeep is hit, where the shot's
+# target and origin come from): checked here against the executable, never in the gate, so a mismatch in them could
+# never switch the partner off (design 8.31).
+SEAT_SHOT_SITES = [
+    (0xD32690, '0f28024c8bc10f29010f284a100f2949108b42208941208b42248941240fb74228668941280fb7422a6689412a0fb7422c6689412c'
+     '0fb7422e6689412e0fb642308841300fb64231884131',
+     'the bullet slot copy: start +0x00 and direction +0x10 (movaps), then +0x20..+0x31 field by field (S1 copies 0x34)'),
+    (0x130342E, '0f294f10', 'the pellet loop: each pellet direction stored into the same record +0x10 before the slot call'),
+]
+SEAT_SHOT_FACTS = [
+    (0xD2DC60, '48c1e83b83e00f488945e883f80375648bc383e01f3c090f94c08844244484c07452e8c913edff488d542470448bc3488b8898000000'
+     '488b89e8010000488b01ff5018410fb747246639442470',
+     'the bullet hit loop: only the shooter\'s own character is skipped (type 3, sub 9, id == bullet+0x24); a vehicle hits'),
+    (0x108B0FC, '498b442410498bcf4803c90f2804c8410f298040010000', 'the shot target: gunRec+0x140 = Q+0x10[id]'),
+    (0x11192C5, '488b4110', 'the PlayerCamera update: rax = the Q+0x10 array (for the store at 0x111931C)'),
+    (0x1119314, 'f30f118e240300000f291cd0488b9ec0090000',
+     'the PlayerCamera update: Q+0x10[local] = the look ray hit CAM+0x9D0 (0x111931C; not in Q10_CENSUS\'s window)'),
+    (0x1041214, 'e8d73d0000', 'shoot: the bullet origin and direction from GunShotOriginDir 0x1044FF0 (the muzzle on the body)'),
+]
+SITES += SEAT_SHOT_SITES
 # --- Handle call hardening (WS1, docs/anim-round2-throws.md "Handle call resolved"): [prim+0x60] is the
 # process-wide equipment-handle manager X = [[gm]+0x98]+0x1E8; X vt+0x160 = 0xDC1740 (pin bit + model part),
 # vt+0x38 = 0xDC64E0 (model instance release), vt+0x40 = 0xDC0350 (has-model). rec+0x240 is the handle every
@@ -1562,6 +1700,15 @@ SLOTS += [
     (0x23D6720, 0x18, 0x12D0F60, 'VehicleCamera base vt+0x18 = CanActivate'),
     (0x23B8250, 0x50, 0x1111C50, 'PlayerCamera vt+0x50 = the module registration (CAM+0xBD0[index])'),
     (0x23B8250, 0xA8, 0x1121D30, 'PlayerCamera vt+0xA8 = the position solve (collision query ignores CAM+0x1F0)'),
+    (0x23B8250, 0xF0, 0x111F830, 'PlayerCamera vt+0xF0 = the look-at update (writes the look angles CAM+0x268..0x274)'),
+    # Design 8.28: the shot guard writes only while this module (the aim camera, CAM+0x340 index 2) is active.
+    (0x23D4D20, 0x18, 0x12BBAE0, 'aim camera module vt+0x18 = CanActivate (the gun record aim bit, the pad aim button)'),
+    (0x23D4D20, 0x20, 0x12BD4D0, 'aim camera module vt+0x20 = update'),
+    # Design 8.46: the subjective camera module (first person, CAM+0x340 index 1) and the gun plugin's poller.
+    (0x23D1F00, 0x00, 0x129E2A0, 'subjective camera module vt+0x00 = Activate (status bit 12: the gun record bit 13)'),
+    (0x23D1F00, 0x08, 0x129E690, 'subjective camera module vt+0x08 = Deactivate'),
+    (0x23D1F00, 0x18, 0x129EA00, 'subjective camera module vt+0x18 = CanActivate (any poller answers)'),
+    (0x23B3DA0, 0x00, 0x1053E80, 'gun plugin subjective poller vt[0] = PollingForSubjectiveCamera (the F tap toggle)'),
 ]
 # F3: the padop slots the vtable copy replaces (+0x28, +0x50) or relies on (+0x18 builder, +0x188 the ray with the
 # per-type cache the climb / pipe Exec use), and vt[0] / vt[1] of every traversal ActionPlugin vtable.
@@ -1585,6 +1732,9 @@ SLOTS += [
     (0x23C5A20, 0x38, 0x11E50B0, 'KnockActionPluginImpl vt+0x38 = RequestHandSignStop (the lever\'s sign_stop)'),
     (0x23C5A20, 0x58, 0x11E5160, 'KnockActionPluginImpl vt+0x58 = the polling that takes the request'),
 ]
+# G2 back-seat aim census: the ride plugin's Exec (stage 0 sets / the passenger phase clears flag 0xC3) in both
+# RideVehicleActionImpl vtables (CanExec 0x1246650 at +0x8 of each).
+SLOTS += [(vt, 0x80, 0x12475D0, f'RideVehicleActionImpl vtable {vt:#x} +0x80 = Exec(stage, body)') for vt in (0x23CBD88, 0x23CBEA8)]
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -2442,6 +2592,9 @@ def board_assertions():
     need(a_refs == [0x12458AC, 0x124B39B], f'0x124B3A0 reached only from site A and the 0x124B360 tail jmp: {[hex(x) for x in a_refs]}')
     need(b_refs == [0x1251479], f'0x124B360 called only from site B: {[hex(x) for x in b_refs]}')
     need(q_refs == [0x1246A4F], f'the pre-query 0x1245820 called only by RideVehicle CanExec at 0x1246A4F: {[hex(x) for x in q_refs]}')
+    need(rd(0x1251366, 1) == b'\xe8' and call_target(0x1251366) == 0x114DB20 and
+         struct.unpack('<I', rd(0x1251367, 4))[0] == 0xFFEFC7B5, 'board site D: E8 rel32 0xFFEFC7B5 -> 0x114DB20')
+    need((0x1251367 & 63) + 4 <= 64, 'board site D patch dword inside one cache line')
     need(call_target(0x1245887) == 0xA27CC0 and call_target(0x124B370) == 0xA27CC0, 'both searches bound last with the seat count 0xA27CC0')
     need(call_target(0x125148D) == 0x55E7F0, 'phase 1 reads GetVehicleType 0x55E7F0 right after site B')
     need(call_target(0x1251851) == 0xCB9470, 'phase 1 registers the seat through TryToRide 0xCB9470')
@@ -2451,13 +2604,52 @@ def board_assertions():
     # Each site lies in one runtime function; no branch (rel32 anywhere, or rel8/rel32 inside that function's
     # linear sweep) lands inside a patched rel32 operand.
     funcs = runtime_functions()
-    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E)):
+    for site, lo, hi in ((0x12458AC, 0x12458AD, 0x12458B1), (0x1251479, 0x125147A, 0x125147E), (0x1251366, 0x1251367, 0x125136B)):
         owner = [f for f in funcs if f[0] <= site < f[1]]
         need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
         local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
         inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
         need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
     need(any(f[0] == 0x1245820 and f[1] > 0x12458C2 for f in funcs), 'the pre-query 0x1245820 runs through site A')
+    # M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): site B sets the two phase-1 `cmp al,imm8` immediates to 1
+    # for a steered seat 1 (TryToRide gets seat 1, the next phase is 2, the passenger phase 0x1250CF0); the seat-1 remap
+    # of the seat matrix 0xB799C0 (seat 1 -> 0 while rider[1] is a player id) becomes a jmp.
+    need(rd(0x1251832, 14) == bytes.fromhex('240f3c0272080fb6c183e00feb03') and rd(0x1251840, 3) == bytes.fromhex('418bc7'),
+         'phase 1 seat pass: and al,0xf; cmp al,2 (0x1251834); jb 0x1251840 (mov eax,r15d = 0); else the seat')
+    need(call_target(0x1251851) == 0xCB9470 and rd(0x1251847, 3) == bytes.fromhex('0fb6d0'),
+         'phase 1 passes the chosen seat (dl = al) to TryToRide 0xCB9470')
+    need(rd(0x1251892, 12) == bytes.fromhex('240f3c020f92c00402884355'),
+         'phase 1 phase select: and al,0xf; cmp al,2 (0x1251894); setb al; add al,2; mov [rbx+0x55],al')
+    need(rd(0x1250E96, 32)[-8:] == bytes.fromhex('6e00000066890c78'), 'the passenger phase writes act 0x6E')
+    need(rd(0xB79A3F, 6) == bytes.fromhex('4080ff017515'), 'the seat matrix remap: cmp dil,1; jne 0xB79A5A (0xB79A43)')
+    need(0xB79A45 + 0x15 == 0xB79A5A and rd(0xB79A57, 3) == bytes.fromhex('0f44f9'),
+         'the remap jne skips exactly the cmove that maps seat 1 to 0')
+    for site in (0x1251834, 0x1251894, 0xB79A40):
+        need((site & 63) + 4 <= 64, f'seat-1 dword {site:#x} inside one cache line')
+    for site, lo, hi in ((0x1251834, 0x1251835, 0x1251836), (0x1251894, 0x1251895, 0x1251896), (0xB79A40, 0xB79A40, 0xB79A44)):
+        owner = [f for f in funcs if f[0] <= site < f[1]]
+        need(len(owner) == 1, f'one runtime function covers {site:#x}: {owner}')
+        local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+        inside = branch_refs(lo, hi) + [t for t in local if lo <= t < hi]
+        need(inside == [], f'no branch into {lo:#x}..{hi:#x}: {[hex(x) for x in inside]}')
+    # M6 review R1/R2 (seat races): site C 0x1246A4F, RideVehicle CanExec's call of the pre-query 0x1245820(action rcx,
+    # body edx, unit r8, id r9w, char* seat [rsp+0x20]) -> bool, retargeted only with partner_ride_race. Its final answer
+    # (true and *seat 0/1 after the door bits and the line check) is the race's want; a hold or deny returns false with
+    # *seat = 4 (the stock 'no seat' it starts from), so CanExec returns false (no ride icon) through 0x1246A56.
+    need(rd(0x1246A4F, 1) == b'\xe8' and call_target(0x1246A4F) == 0x1245820 and
+         struct.unpack('<I', rd(0x1246A50, 4))[0] == 0xFFFFEDCC, 'board site C: E8 rel32 0xFFFFEDCC -> 0x1245820')
+    need(rd(0x1246A3F, 16) == bytes.fromhex('488d442440418bd7488bce4889442420'),
+         'site C: lea rax,[rsp+0x40]; mov edx,r15d; mov rcx,rsi; mov [rsp+0x20],rax (the seat out pointer)')
+    need(rd(0x1246A54, 8) == bytes.fromhex('84c00f8417040000'), 'site C: test al,al; je 0x1246E73 (false: CanExec false)')
+    need(rd(0x1245820, 6) == bytes.fromhex('6644894c2420') and
+         rd(0x1245847, 19) == bytes.fromhex('4c8ba424400100004d8bf04c8be941c6042404'),
+         'the pre-query 0x1245820: the 5th argument (r12 = [rsp+0x140], the seat pointer) starts at 4 (0x1245855)')
+    need((0x1246A50 & 63) + 4 <= 64, 'board site C dword 0x1246a50 inside one cache line')
+    owner = [f for f in funcs if f[0] <= 0x1246A4F < f[1]]
+    need(len(owner) == 1, f'one runtime function covers 0x1246a4f: {owner}')
+    local = linear_branch_targets(owner[0][0], owner[0][1]) if len(owner) == 1 else []
+    inside = branch_refs(0x1246A50, 0x1246A54) + [t for t in local if 0x1246A50 <= t < 0x1246A54]
+    need(inside == [], f'no branch into 0x1246a50..0x1246a54: {[hex(x) for x in inside]}')
     return out
 
 
@@ -2487,6 +2679,63 @@ def pass_camera_assertions():
     return out
 
 
+def seat_aim_assertions():
+    """G2 back-seat aim census (partner_seat_aim): in the ride plugin (0x1244000..0x125D000) flag 0xC3 is set only by
+    the Exec stage 0 and cleared only by the passenger phase's event 1; the stage-0 function and the passenger phase
+    are reached only through the Exec table / the phase table; the gun plugin's posture and hold pollers have one
+    caller (its PollingImpl)."""
+    import re
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    lo, hi = 0x1244000, 0x125D000
+    code = rd(lo, hi - lo)
+    sets = [lo + m.start() for m in re.finditer(rb'\x83[\x48-\x4f]\x18\x08|\x83\x4c.\x18\x08|\x81[\x48-\x4f]\x18\x08\x00\x00\x00', code, re.S)]
+    clears = [lo + m.start() for m in re.finditer(rb'\x83[\x60-\x67]\x18\xf7|\x83\x64.\x18\xf7|\x81[\x60-\x67]\x18\xf7\xff\xff\xff', code, re.S)]
+    need(sets == [0x12473A2], f'ride plugin: word 6 |= 8 (flag 0xC3) only at 0x12473A2: {[hex(x) for x in sets]}')
+    need(clears == [0x1250FF8], f'ride plugin: word 6 &= ~8 only at 0x1250FF8 (the passenger phase): {[hex(x) for x in clears]}')
+    need(rel_refs(0x1247320) == [0x12475F2], 'the ride stage-0 function 0x1247320 only through the Exec table (jmp 0x12475F2)')
+    need(jump_table(0x1247638, 7)[0] == 0x12475EB, 'Exec stage 0 -> 0x12475EB')
+    need(qword_hits(0x12475D0) == [0x23CBE08, 0x23CBF28], f'Exec 0x12475D0 only at +0x80 of the two ride vtables: '
+         f'{[hex(x) for x in qword_hits(0x12475D0)]}')
+    need(lea_rip_refs(0x1250CF0) == [0x12481A6] and rel_refs(0x1250CF0) == [], 'the passenger phase only through the phase table')
+    need(rel_refs(0x108CD40) == [0x10541B9], 'UpdateAttackType 0x108CD40 only from PollingImpl')
+    need(rel_refs(0x1053930) == [0x10542FF], 'PollingForLocal 0x1053930 only from PollingImpl')
+    need(sorted(rel_refs(0x103E010)) == [0x1040330, 0x10542F0], 'EnableCheck 0x103E010 from PollingImpl and 0x1040330')
+    return out
+
+
+def seat_gun_assertions():
+    """M7 seat gun: the two graph-2 nodes the gesture hook requests are the stock gun-hold nodes, each imm64 found only at
+    its stock sites in the code sections (GunHoldStart once, in StateGunHoldStart; GunHold twice), and the hold's aim
+    rates are the fields 0x108E7D0 stores (+0x5C r5c, +0x60 r60) of the rate record the hook writes (vtables pinned)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+
+    def imm64_hits(value):
+        needle = struct.pack('<Q', value)
+        hits = []
+        for sec in pe.sections:
+            if sec.Name.rstrip(b'\0').decode() not in ('.text', '.xtext'):
+                continue
+            data = sec.get_data()
+            i = data.find(needle)
+            while i >= 0:
+                hits.append(sec.VirtualAddress + i)
+                i = data.find(needle, i + 1)
+        return sorted(hits)
+    need(imm64_hits(0x50130AE2E584) == [0x1075A25], f'GunHoldStart only in StateGunHoldStart: {[hex(x) for x in imm64_hits(0x50130AE2E584)]}')
+    need(imm64_hits(0xAA0EA22A5E0E) == [0x1070B4C, 0x10721CD], f'GunHold at its two stock sites: {[hex(x) for x in imm64_hits(0xAA0EA22A5E0E)]}')
+    need(rd(0x108EC17, 10).hex() == 'f30f117f60f30f11475c', '0x108E7D0 stores r60 (+0x60) and r5c (+0x5C)')
+    need(struct.unpack('<f', rd(0x20FAAE4, 4))[0] == 8.0, 'the stock GunHold blend 8.0f (0x20FAAE4)')
+    return out
+
+
 # (call site, X vtable offset) of every census-found X call taking rec+0x240 (docs/anim-round2-throws.md "Other X
 # calls"). Only the five vt+0x160 sites (and vt+0x38 before 0x1062696) are audited; the others are not.
 # REC240_X_CALLS_BY_HAND load rcx before the census window. REC240_X_METHODS: the method in both concrete X vtables.
@@ -2504,6 +2753,28 @@ REC240_X_CALLS = [
     (0x108B740, 0xE0), (0x108B775, 0xE8), (0x1098580, 0x58), (0x1098939, 0xA0), (0x1099BFC, 0x30),
     (0x1099E63, 0x128),
 ]
+
+
+def seat_shot_assertions():
+    """M7 S1: the static facts (SEAT_SHOT_FACTS, read from the executable, not gated), the shoot call reaches
+    GunShotOriginDir, the pellet store is followed directly by the slot call inside a loop that jumps back above the
+    store (every pellet re-uses the record), and RequestBullet hands the caller's record to the pinned copy."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for rva, expected, what in SEAT_SHOT_FACTS:
+        need(section_of(rva) == '.xtext' and rd(rva, len(expected) // 2).hex() == expected, f'{rva:#x} {what}')
+    need(0x1041219 + struct.unpack('<i', rd(0x1041215, 4))[0] == 0x1044FF0, 'shoot calls GunShotOriginDir 0x1044FF0 at 0x1041214')
+    # 0x130342E movaps [rdi+0x10],xmm1; 0x1303432 mov rcx,[rsi+0xa8]; mov rax,[rcx]; call [rax] (the slot, rdx = rdi);
+    # inc r13d; cmp r13d,6; jb back above the store.
+    need(rd(0x130342E, 0x19) == bytes.fromhex('0f294f10488b8ea8000000488b01ff1041ffc54183fd060f82'),
+         'the pellet store 0x130342E runs straight into the slot call 0x130343C and the loop bound (6)')
+    need(0x130344B + struct.unpack('<i', rd(0x1303447, 4))[0] < 0x130342E,
+         'the pellet loop 0x1303445 jumps back above the store: each pellet re-uses the same record')
+    need(0xD32CC1 + struct.unpack('<i', rd(0xD32CBD, 4))[0] == 0xD32690, 'RequestBullet copies the record with 0xD32690')
+    return out
 
 
 def handle_call_assertions():
@@ -2916,6 +3187,9 @@ def ui_filter_assertions():
 failures += ui_filter_assertions()
 failures += gesture_assertions()
 failures += gesture_lever_assertions()
+failures += seat_aim_assertions()
+failures += seat_gun_assertions()
+failures += seat_shot_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -3336,20 +3610,60 @@ w('inline constexpr std::uint32_t board_a_rel32_orig=0x00005aef;  // -> 0x124b3a
 w('inline constexpr std::uintptr_t board_b_site=0x1251479, board_b_next_ip=0x125147e, board_b_block_rva=0x125145c;')
 w('inline constexpr std::uint32_t board_b_rel32_orig=0xffff9ee2;  // -> 0x124b360')
 w('inline constexpr std::uintptr_t board_nearest_rva=0x124b3a0, board_driver_rva=0x124b360, board_type_rva=0x55e7f0, board_count_rva=0xa27cc0;')
+w('// M6 review R1/R2 (seat races, partner_ride_race only): site C, RideVehicle CanExec 0x1246650 calls the pre-query')
+w('// 0x1245820(action, body, unit, id, char* seat) -> bool at 0x1246a4f; false: CanExec false (no ride icon).')
+w('inline constexpr std::uintptr_t board_c_site=0x1246a4f, board_c_next_ip=0x1246a54, board_c_block_rva=0x1246a3f, board_prequery_rva=0x1245820;')
+w('inline constexpr std::uint32_t board_c_rel32_orig=0xffffedcc;  // -> 0x1245820')
+w('// E press only (design 8.55): site D, phase 1 0x1251200 (event 0, the update after an E press started the ride')
+w('// action) calls the remote gate 0x114DB20(action, index) -> bool at 0x1251366; true: phase 1 returns this frame (the')
+w('// stock idle, before the record checks, site B and TryToRide). The wrapper reads the local index')
+w('// *(*(action+8)+0x138)+0x218 and the record *(action+0x78) + (index - *(*(action+0x38)+0x24)) * 0x240: u16 +0x84')
+w('// the vehicle (0xFFFF none), u8 +0x5a the seat searched.')
+w('inline constexpr std::uintptr_t board_d_site=0x1251366, board_d_next_ip=0x125136b, board_d_block_rva=0x1251361, board_gate_rva=0x114db20;')
+w('inline constexpr std::uint32_t board_d_rel32_orig=0xffefc7b5;  // -> 0x114db20')
+w('inline constexpr std::size_t board_act_owner=0x8, board_owner_player=0x138, board_player_index=0x218, board_act_table=0x38,')
+w('    board_table_first=0x24, board_act_records=0x78, board_record_size=0x240, board_rec_vehicle=0x84, board_rec_searched=0x5a;')
 w('// Unit record: u16 rider[seat] at +0x30, u16 index at +0x78 (id = 0x6400 | index). Player: (*(P+0x120))[body] the')
 w('// ridden unit, (*(Q+0x18))[body] the act (0x6e: the passenger phase), (*(Q+0xe0))[body] the ridden vehicle id.')
 w('inline constexpr std::size_t board_unit_riders=0x30, board_unit_index=0x78, board_p_units=0x120, board_q_vehicle=0xe0;')
 w('inline constexpr std::uint16_t board_act_passenger=0x6e;')
 w('// The contract blocks partner_board re-checks before the patch (code_sites rvas; the two rel32 operands masked).')
-w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) + '};')
+w('inline constexpr std::uintptr_t board_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in BOARD_SITES) +
+  ',0x114db20,0x114db6a};  // + the remote gate site D calls (pinned as EVADE\'s gate A)')
+w('// M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6): the phase-1 dwords site B sets to `cmp al,1` for a steered')
+w('// seat 1 only (0x1251834: TryToRide gets seat 1; 0x1251894: the passenger phase 2), and the seat matrix 0xB799C0\'s')
+w('// seat-1 remap dword (0xB79A40: `cmp dil,1; jne` -> `jmp`, so a player in rider[1] is drawn at seat 1).')
+w(f'inline constexpr std::uintptr_t board_seat1_pass_rva=0x1251834, board_seat1_phase_rva=0x1251894, board_remap_rva=0xb79a40;')
+w(f'inline constexpr std::uint32_t board_seat1_pass_orig=0x{struct.unpack("<I", rd(0x1251834, 4))[0]:08x}, '
+  f'board_seat1_phase_orig=0x{struct.unpack("<I", rd(0x1251894, 4))[0]:08x}, '
+  f'board_remap_orig=0x{struct.unpack("<I", rd(0xB79A40, 4))[0]:08x}, '
+  f'board_remap_skip=0x{(struct.unpack("<I", rd(0xB79A40, 4))[0] & 0x00FFFFFF) | 0xEB000000:08x};')
+w('inline constexpr std::uintptr_t board_seat1_blocks[]={0x1251822,0x125188e,0xb79a3f};')
 w('// --- F1 passenger camera (partner_pass_camera; docs/native-puppet.md "Passenger camera") ------------------------')
 w('// The VehicleCamera module (live vtable 0x23d67f0, base 0x23d6720): CanActivate 0x12d0f60 at slot +0x18 of both, true')
 w('// only for act 0x6f / 0x70. The local camera CAM = *(P+0xb8) holds the six modules at CAM+0xbd0, the mode at +0x340')
 w('// (the previous one at +0x33c); the module + 8 is its CAM and CAM+0x348 is P (the act index is u32 P+0x218).')
 w('inline constexpr std::uintptr_t pass_cam_can_activate_rva=0x12d0f60, pass_cam_module_vtable_rva=0x23d67f0, pass_cam_module_base_vtable_rva=0x23d6720;')
 w('inline constexpr std::size_t pass_cam_slot=0x18, pass_cam_module_cam=0x8, pass_cam_cam_p=0x348, pass_cam_modules=0xbd0, pass_cam_mode=0x340, pass_cam_prev_mode=0x33c, pass_cam_target=0x1f8;')
+w('// Design 8.27: the look angles (pitch +0x270 / +0x268, yaw +0x274 / +0x26c: the look-at update 0x111fcb1) the shot')
+w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab trace reads.')
+w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
+w('// Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.')
+w('inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;')
+w('// Design 8.38 / 8.42 (mode view): the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94')
+w('// unless CAM+0xd38 & 0x1001 or')
+w('// CAM+0x204 bit 9; the Lua binding 0x9daf90 passes the flags 0x400126.')
+w('inline constexpr std::size_t pass_cam_request_flags=0xd38, pass_cam_request=0xd80;')
+w('inline constexpr std::uint32_t pass_cam_request_busy=0x1001, pass_cam_lock_bit=0x200, pass_cam_request_flags_value=0x400126;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
+w('// Design 8.46 (partner_seat_fpv): the subjective camera module (live vtable 0x23d1f00; impl = module - 0x20): the pollers answer')
+w('// mask impl+0x48, the first answering index impl+0x4c (10: none), that poller impl+0xc8, the ten pollers impl+0x78, the')
+w('// per-slot first-person toggles impl+0x60 (the F tap; slot -> bit mask 0x11f) and the started mask impl+0xe0 (trace).')
+w('inline constexpr std::uintptr_t pass_subj_module_vtable_rva=0x23d1f00, pass_subj_can_activate_rva=0x129ea00, pass_subj_gun_poller_rva=0x1053e80;')
+w('inline constexpr std::size_t pass_subj_impl=0x20, pass_subj_mask=0x48, pass_subj_first=0x4c, pass_subj_first_poller=0xc8, pass_subj_pollers=0x78, pass_subj_count=10, pass_subj_toggles=0x60, pass_subj_started=0xe0;')
+w('inline constexpr std::uint32_t pass_subj_toggle_mask=0x11f;')
+w('inline constexpr std::uintptr_t seat_fpv_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_FPV_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
 w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
 w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')
@@ -3359,6 +3673,28 @@ w('inline constexpr float door_offset_m=0.4f, door_radius_m=1.4f;')
 w('// The contract blocks vehicle_door re-checks before its first native call (code_sites rvas) and the two constants.')
 w('inline constexpr std::uintptr_t door_blocks[]={' + ','.join(f'0x{rva:x}' for rva in DOOR_BLOCKS) + '};')
 w('inline constexpr DataWord door_data[]={' + ','.join(f'{{0x{rva:x},0x{value:08x}}}' for rva, value in DOOR_DATA) + '};')
+w('// --- G2 back-seat aim census (partner_seat_aim, read-only; docs/native-puppet.md "Seat aim") ---------------------')
+w('// The per-id flag record *(PS+0x280) + (id - *(PS+8))*0x20 (ps_rec280, ps_rec280_stride): flag n = word n >> 5, bit')
+w('// n & 31. Word 0 bit 24 = flag 0x18 (EnableCheck: the weapon usable); word 6 (+0x18) bit 2 / 3 = flags 0xC2 / 0xC3')
+w('// (EnableCheck refuses; the ride\'s Exec stage 0 sets 0xC3, the passenger phase clears it), bit 15 = 0xCF (no hold),')
+w('// bit 24 = 0xD8 (the passenger phase on a slow vehicle). The gun record\'s requested next state u8 rec+0x2C1; its')
+w('// posture rec+0x3D4 (gun_class) comes from UpdateAttackType: act 99 (heli door) 5, 0x79 (horse) 3, 0x88 6, none for 0x6e.')
+w('inline constexpr std::size_t flag_word6=0x18, gun_next_state=0x2c1;')
+w('inline constexpr std::uint32_t flag_w0_armed=0x1000000, flag_w6_c2=0x4, flag_w6_c3=0x8, flag_w6_cf=0x8000, flag_w6_d8=0x1000000;')
+w('inline constexpr std::uint16_t act_ride_passenger=0x6e, act_ride_driver=0x6f, act_ride_getoff=0x70, act_heli_attack=0x63, act_horse_ride=0x79;')
+w('inline constexpr std::uint8_t upper_gun_hold=2, posture_heli=5, posture_horse=3;')
+w('inline constexpr std::uintptr_t seat_aim_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_AIM_SITES) + '};')
+w('// --- M7 seat gun (partner_seat_gun; docs/native-puppet.md "Seat gun") -----------------------------------------------')
+w('// The stock gun-hold nodes the gesture hook requests on the DM-seated body 1 (graph 2): GunHoldStart (StateGunHoldStart')
+w('// 0x1075A50, SetCurrentNode with 0.0f) and GunHold (the gun-hold enter 0x10721CB, 0x1070B4A); the hold writes body 1\'s')
+w('// aim rates rate_aim_pitch / rate_aim_yaw of its own rate record (stride rate_rec_stride, vtables rate_sp_vtable_rva /')
+w('// rate_rec_vtable_rva); the gun-hold enter stores the gun record\'s hold type +0x268 into rate record +0x58 first.')
+w('inline constexpr std::uint64_t seat_gun_node_start=0x50130ae2e584, seat_gun_node_hold=0xaa0ea22a5e0e;')
+w('inline constexpr std::size_t rate_hold_type=0x58, gun_hold_type=0x268;')
+w('inline constexpr std::uintptr_t seat_gun_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_GUN_SITES) + '};')
+w('// --- M7 seated shots, S1 (partner_seat_shot; docs/native-puppet.md "Seat shot (S1)"): the gated pins are the bullet')
+w('// record copy and the pellet loop; the static facts behind S1 are generator checks (SEAT_SHOT_FACTS), not gated.')
+w('inline constexpr std::uintptr_t seat_shot_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_SHOT_SITES) + '};')
 w('// --- F2: the cardboard box on body 1 (partner_cbox_equip; docs/native-puppet.md "Cardboard box") ----------------')
 w('// The equipment row of instance id (*(Q+0xC0) + id*0x3a): u16 items +0x1c + 2*sub (sub 0 is always 0, "no item"),')
 w('// u8 item bytes +0x2c + sub, the current item sub = row[+0x37] >> 4. The viewer\'s item stocks: u16 [*(Y+0x98) +')

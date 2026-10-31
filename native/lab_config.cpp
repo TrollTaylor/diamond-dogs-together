@@ -266,6 +266,19 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_loadout_block_given = true;
         if (!ok) result.world_loadout_block = false;
     }
+    // The vehicle fixes of 2026-10-29 (lab and play; off in the lab unless named; in play world_vehicle_crew on and
+    // world_vehicle_damage off unless named; see the defaults, step 8):
+    // D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
+    else if (Equals(key, "world_vehicle_crew")) {
+        ok = ParseBool(value, result.world_vehicle_crew);
+        result.world_vehicle_crew_given = true;
+        if (!ok) result.world_vehicle_crew = false;
+    }
+    else if (Equals(key, "world_vehicle_damage")) {
+        ok = ParseBool(value, result.world_vehicle_damage);
+        result.world_vehicle_damage_given = true;
+        if (!ok) result.world_vehicle_damage = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
@@ -285,10 +298,63 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
         if (ok) result.partner_ride_board_given = true;
     }
+    else if (Equals(key, "partner_pass_camera")) {
+        // The passenger camera's mode off|connect|drop|aim|view (lab and play; design 8.27, 8.38); an invalid value refuses (named,
+        // the default kept).
+        PartnerPassCamera mode{};
+        ok = ParsePartnerPassCamera(value.data, value.size, mode);
+        result.partner_pass_camera_given = true;
+        if (ok) result.partner_pass_camera = mode;
+    }
+    else if (Equals(key, "partner_pass_camera_trace")) ok = ParseBool(value, result.partner_pass_camera_trace);
+    // M6 seat 1 (lab and play; follows the gun profile unless named, see the defaults below).
+    else if (Equals(key, "partner_ride_front")) {
+        ok = ParseBool(value, result.partner_ride_front);
+        result.partner_ride_front_given = true;
+        if (!ok) result.partner_ride_front = false;
+    }
+    else if (Equals(key, "partner_ride_cab")) {
+        ok = ParseBool(value, result.partner_ride_cab);
+        result.partner_ride_cab_given = true;
+        if (!ok) result.partner_ride_cab = false;
+    }
+    else if (Equals(key, "partner_ride_seat1_anchor")) {
+        // Seat 1 on the driver's seat matrix (design 8.33; follows the gun profile in lab and play unless named); as
+        // partner_ride_front, an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_ride_seat1_anchor);
+        result.partner_ride_seat1_anchor_given = true;
+        if (!ok) result.partner_ride_seat1_anchor = false;
+    }
+    else if (Equals(key, "partner_seat_fpv")) {
+        // Seat first person (design 8.46): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_seat_fpv);
+        result.partner_seat_fpv_given = true;
+        if (!ok) result.partner_seat_fpv = false;
+    }
+    else if (Equals(key, "partner_ride_race")) {
+        ok = ParseBool(value, result.partner_ride_race);
+        result.partner_ride_race_given = true;
+        if (!ok) result.partner_ride_race = false;
+    }
     else if (Equals(key, "debug_vehicle_door")) {
         // G4 truck test levers (lab only, default 0); a named value records _given.
         ok = ParseBool(value, result.debug_vehicle_door);
         if (ok) result.debug_vehicle_door_given = true;
+    }
+    else if (Equals(key, "partner_seat_gun")) {
+        // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
+        ok = ParseBool(value, result.partner_seat_gun);
+        if (ok) result.partner_seat_gun_given = true;
+    }
+    else if (Equals(key, "partner_seat_shot")) {
+        // M7 S1: the seated passenger's bullets start past the ridden vehicle (lab and play); a named value records _given.
+        ok = ParseBool(value, result.partner_seat_shot);
+        if (ok) result.partner_seat_shot_given = true;
+    }
+    else if (Equals(key, "partner_seat_aim")) {
+        // G2: the read-only back-seat aim census (lab only, default off); a named value records _given.
+        ok = ParseBool(value, result.partner_seat_aim);
+        if (ok) result.partner_seat_aim_given = true;
     }
     else return false;
     return true;
@@ -951,6 +1017,13 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         if (!result.world_vehicle_break_given) result.world_vehicle_break = true;
         if (!result.world_vehicle_credit_given) result.world_vehicle_credit = true;
     }
+    // 8. The vehicle fixes of 2026-10-29. world_vehicle_damage stays off in lab and play unless named (the review of
+    // 2026-10-29 turned its play default off again: its fire gate was never run against live AI fire). world_vehicle_crew
+    // (D12, a soldier-crewed host copy wrecked at once; it acts only with world_vehicle_break, where VEHICLE_GONE runs) is
+    // on in play unless named, with the review's blast distance by type: lab FRAME c0a385a5 (the crew_near hold and the
+    // wreck once clear, on both screens) and the play rehearsal c6db67b8 with -WanSim bad (the guest's real C4, the hold,
+    // the wreck, frames on both copies).
+    if (result.mode == LabMode::play && !result.world_vehicle_crew_given) result.world_vehicle_crew = true;
     out = result;
     return true;
 }
@@ -1640,6 +1713,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // only the free back seats of a light vehicle; trucks and the rest block. A named
     // block or off still wins.
     if (!c.partner_ride_board_given) c.partner_ride_board = gun ? PartnerRideBoard::passenger : PartnerRideBoard::off;
+    // The passenger camera (design 8.27 / 8.28 / 8.42): view (the handle, the shot guard and the get-off turn) unless named,
+    // in lab and play: the view held through a seated shot (lab 7e79996f, play rehearsal 06aa3fc6) and the camera turned
+    // behind the player after a seat-1 / seat-2 get-off (design 8.42). A named aim drops the turn; connect is 0.14.4.
+    if (!c.partner_pass_camera_given) c.partner_pass_camera = PartnerPassCamera::view;
+    // M6 seat 1 (the light vehicle's front seat, the truck cab seat) and the seat races (SEAT op 54) follow the gun
+    // profile since the seats-on round (docs/vehicles-companions-design.md 8.25: the lab FRAME proofs of 8.20 / 8.21 and
+    // the play rehearsals of 8.25 / 8.26 at these defaults); the truck cab in lab only (play forces it off below unless
+    // named); each key named 0 stays an off switch.
+    if (!c.partner_ride_front_given) c.partner_ride_front = gun;
+    if (!c.partner_ride_cab_given) c.partner_ride_cab = gun;
+    if (!c.partner_ride_race_given) c.partner_ride_race = gun;
     // F2 cardboard box on body 1 follows the gun profile in lab and play (hidden
     // run 05cffdd1: the viewer saw the box model on the partner body, moving and
     // taken off, both directions, its own player never boxed); play admits it
@@ -1657,6 +1741,21 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
     // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
     if (!c.companion_host_owned_given) c.companion_host_owned = false;
+    // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
+    // on both copies and a play rehearsal pass; a named 1 runs in play too.
+    if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
+    // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab and play (design 8.37:
+    // the lab A/B 60faf9fc, seat 2 of the Africa jeep (cat=1), 702 life per stock shot and none with S1; turned on in play
+    // at the seat-fixes merge, 8.43: in play every seated shot shifted and the shooter's copy kept its life, but no play
+    // line was shown to damage the east jeep (cat=2) in stock, and seat 1 has no stock control anywhere (seat 3: lab
+    // 8a920ec8, Africa jeep, one line; 8.44)); a named 0 opts out.
+    if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
+    // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
+    // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
+    if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;
+    // Seat first person (design 8.46, 8.49): follows the gun profile in lab and play (the automatic first person from seats
+    // 1 and 2; lab runs 61384aab / m6m7g run 2, the play run of 8.49); a named 0 opts out.
+    if (!c.partner_seat_fpv_given) c.partner_seat_fpv = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
@@ -1696,6 +1795,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.partner_ride_census = false;
         // The WS4 placed / arm census is a lab measurement too (read-only).
         c.partner_placed_census = false;
+        // G2: the back-seat aim census is a lab measurement (read-only); a named value keeps _given.
+        c.partner_seat_aim = false;
         // WS4 v2: the place / detonate mirror stays lab-only (no play-mode C4 run yet).
         c.partner_native_place_mirror = false;
         // Traversal replay runs in play too (user decision 2026-10-22; the icon
@@ -1716,6 +1817,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
         c.debug_vehicle_door = false;
         // G5 stays lab-only (the unrealize of the other ride hides is unproven in a FRAME).
         c.partner_native_unrealize_all = false;
+        // M6 truck cab seat 1: lab-only by default (review of 8.25: its play rehearsal named world_relief=1 for the
+        // truck and the host-in-cab role ran only in the lab); a named 1 runs in play.
+        if (!c.partner_ride_cab_given) c.partner_ride_cab = false;
+        // The passenger camera's trace is a lab measurement (read-only); its mode runs in play, except drop (a lab option:
+        // it blocks the seat-2 gun, runs 17fce0b7 and 43e5b981), which runs as aim (design 8.28). View runs in play (8.42).
+        c.partner_pass_camera_trace = false;
+        if (c.partner_pass_camera == PartnerPassCamera::drop) c.partner_pass_camera = PartnerPassCamera::aim;
     }
 }
 
@@ -1826,6 +1934,22 @@ bool ParsePartnerRideBoard(const char* text, std::size_t size, PartnerRideBoard&
     if (Equals(s, "off")) out = PartnerRideBoard::off;
     else if (Equals(s, "block")) out = PartnerRideBoard::block;
     else if (Equals(s, "passenger")) out = PartnerRideBoard::passenger;
+    else return false;
+    return true;
+}
+
+const char* PartnerPassCameraName(PartnerPassCamera value) noexcept {
+    return value == PartnerPassCamera::off ? "off" : value == PartnerPassCamera::aim ? "aim" : value == PartnerPassCamera::drop ? "drop" : value == PartnerPassCamera::view ? "view" : "connect";
+}
+
+bool ParsePartnerPassCamera(const char* text, std::size_t size, PartnerPassCamera& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerPassCamera::off;
+    else if (Equals(s, "connect")) out = PartnerPassCamera::connect;
+    else if (Equals(s, "drop")) out = PartnerPassCamera::drop;
+    else if (Equals(s, "aim")) out = PartnerPassCamera::aim;
+    else if (Equals(s, "view")) out = PartnerPassCamera::view;
     else return false;
     return true;
 }

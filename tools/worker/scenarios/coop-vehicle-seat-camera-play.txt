@@ -1,0 +1,195 @@
+# Design 8.27 / 8.28 play rehearsal: the back-seat passenger's aim camera at the shipped defaults (partner_pass_camera
+# unnamed = aim: the jeep's ignore-collision handle kept for the whole ride, and the shot guard, which since 8.28 holds
+# only the pull up, writes only in the aim camera and settles each window). No labsetting line. africa-jeep (30020,
+# veh_lv_0000 = 25608). The guest drives; the host boards back seat 2 from the driver's side and aims across the jeep
+# the way a player does right after boarding: a shot with a mouse turn inside its window, a shot with the mouse down,
+# a four-shot burst with a turn, three spaced shots, then shots while the guest steers through a curve; the host gets
+# off. Then the roles reverse: the host drives, the guest boards back seat 3 from the right side and does the same.
+# v1 of this file ran as 06aa3fc6 (8.27: three shots per seat and a straight moving shot). The mouse pulls down stay
+# small: a pull of 250 aimed the gun into the jeep in lab a64c40d4 (gun mode 15, no shots for ~20 s).
+# This version ran as d946a420 at the shipped code (design 8.28): every expectation met.
+# Expected (play, -WanSim bad): the passenger's partner_ride=pass_camera; state=mode; mode=aim; source=key;
+#   state=guard; event=close; ...; end=..; ...; settle=..; yaw_mrad=..; the stock get-off releases the camera
+#   (state=release; reason=stock).
+# Frames (look at them): pass-aim, pass-yaw, pass-down, pass-burst-NN, pass-spaced, pass-turn-NN, pass-after (the
+# passenger), drv-* (the driver), the get-off; the same with rev- for the reverse.
+# Run (hidden worker, coordinator only, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-vehicle-seat-camera-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+waitlog host 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=0' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=aim; source=key; trace=0' 30
+# --- The guest drives; the host rides seat 2 ----------------------------------------------------------------------
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host debug goto_vehicle jeep
+wait 3000
+waitlog host 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger' 10
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog host 'partner_ride=pass_camera; state=connect; vehicle=25608; seat=2;' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+wait 1000
+both capture seated
+host hold rmb 1500 nowait
+wait 700
+host capture pass-aim
+guest capture drv-aim
+host press lmb 120
+wait 80
+host mouse 400 0
+wait 250
+host capture pass-yaw
+waitlog host 'partner_ride=pass_camera; state=guard; event=open; vehicle=25608; seat=2;' 3
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 80
+host mouse 0 60
+wait 250
+host capture pass-down
+host hold rmb 1500 nowait
+wait 150
+host press lmb 90
+wait 120
+host press lmb 90
+wait 120
+host mouse -400 0
+host press lmb 90
+wait 120
+host press lmb 90
+host burst pass-burst 3 150
+guest capture drv-burst
+host hold rmb 1500 nowait
+wait 200
+host press lmb 120
+wait 1100
+host hold rmb 1500 nowait
+host press lmb 120
+wait 1100
+host hold rmb 1500 nowait
+host press lmb 120
+wait 1100
+host capture pass-spaced
+host release
+wait 1000
+host capture pass-after
+waitlog host 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=2; end=' 3
+# Shots while the jeep moves through a curve.
+guest hold w+d 1500 nowait
+wait 400
+host hold rmb 1500 nowait
+wait 500
+host press lmb 120
+host burst pass-turn 3 200
+guest capture drv-turn
+guest hold w+d 1500 nowait
+host hold rmb 1500 nowait
+wait 300
+host press lmb 120
+wait 200
+host press lmb 120
+host burst pass-turn2 2 200
+host release
+guest release
+guest hold s 800
+guest release
+wait 2000
+host capture pass-stopped
+host press e 150
+host burst pass-off 3 400
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+waitlog host 'partner_ride=pass_camera; state=release; vehicle=25608; seat=2; reason=stock; ok=1' 10
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+# --- Reverse: the host drives; the guest rides seat 3 -------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle;id=25608
+guest debug goto_vehicle jeep right
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger' 10
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+wait 1000
+both capture rev-seated
+guest hold rmb 1500 nowait
+wait 700
+guest capture rev-pass-aim
+host capture rev-drv-aim
+guest press lmb 120
+wait 80
+guest mouse 400 0
+wait 250
+guest capture rev-pass-yaw
+guest hold rmb 1500 nowait
+wait 150
+guest press lmb 90
+wait 120
+guest press lmb 90
+wait 120
+guest mouse 0 60
+guest press lmb 90
+wait 120
+guest press lmb 90
+guest burst rev-pass-burst 3 150
+host capture rev-drv-burst
+guest hold rmb 1500 nowait
+wait 200
+guest press lmb 120
+wait 1100
+guest hold rmb 1500 nowait
+guest press lmb 120
+wait 1100
+guest capture rev-pass-spaced
+guest release
+wait 1000
+guest capture rev-pass-after
+waitlog guest 'partner_ride=pass_camera; state=guard; event=close; vehicle=25608; seat=3; end=' 3
+host hold w+a 1500 nowait
+wait 400
+guest hold rmb 1500 nowait
+wait 500
+guest press lmb 120
+guest burst rev-pass-turn 3 200
+host capture rev-drv-turn
+host release
+guest release
+host hold s 800
+host release
+wait 2000
+guest capture rev-pass-stopped
+guest press e 150
+guest burst rev-pass-off 3 400
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=off' 10
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25608; seat=3; reason=stock; ok=1' 10
+host press e 150
+wait 3000
+both capture end
+state

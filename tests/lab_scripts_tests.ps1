@@ -3,7 +3,7 @@
 # -PackageDirectory installer path. Everything runs inside an owned temporary
 # folder under build/; no real game folder, Steam folder or process is touched.
 [CmdletBinding()]
-param([string]$IniCheck, [string]$FakeProcess, [switch]$InputOnly)
+param([string]$IniCheck, [string]$FakeProcess, [switch]$InputOnly, [string]$Shard = '', [string]$Part = '')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -318,10 +318,22 @@ if ($InputOnly) {
 }
 
 if (!(Test-Path -LiteralPath $buildRoot)) { $null = New-Item -ItemType Directory -Path $buildRoot }
+# CTest runs this suite as lab_scripts_tests_1 .. _7 (cmake/test_shards.cmake, tests/TestShards.psm1): each shard runs the
+# parts dealt to it by their cost (ms, measured alone). The definitions the later parts read (fixture texts, the
+# partner fixture-run helpers, the dry run's folders) stay outside the parts and run in every shard; a dry part that
+# runs without the dry parts before it first replays their Prepare calls (Use-DryState). -Part core,logs runs only those.
+# Only the plain run (no -Shard / -Part) chains the dry parts through a real Start / Smoke / Stop; AGENTS.md asks for it
+# once before merging a change to the lab scripts' flows. At the current costs install and e2e share shard 7, so e2e's
+# own fixture replica (for an e2e run without install) runs only with -Part e2e.
+Import-Module (Join-Path $PSScriptRoot 'TestShards.psm1') -Force -DisableNameChecking
+Initialize-TestShard -Shard $Shard -Part $Part -Parts ([ordered]@{
+    core = 5400; logs = 4200; 'partner-a' = 21600; 'partner-b' = 16100; install = 11000; e2e = 10800
+    'dry-online' = 26600; 'dry-gate' = 14100; 'dry-offline' = 26800; 'dry-lan' = 31000 })
 $null = New-Item -ItemType Directory -Path $fixture
 [IO.File]::WriteAllText($ownerMarker, $nonce)
 
 try {
+    if (Test-TestPart 'core') {
     # ------------------------------------------------------------ identity
     Assert-Equal (ConvertTo-SteamId64 -AccountId 1) '76561197960265729' 'account 1'
     Assert-Equal (ConvertTo-SteamId64 -AccountId 4294967280) '76561202255233008' 'lab guest account 0xFFFFFFF0'
@@ -482,7 +494,9 @@ try {
     Assert-Equal "$($pj.partner)/$($pj.stage)/$($pj.source)/$($pj.apply)/$($pj.rate_hz)/$($pj.interp_ms)/$($pj.offset_cm)/$($pj.teardown)/$($pj.force_exists)/$($pj.policy_relax)/$($pj.anim_probe)/$($pj.crash_probe)/$($pj.net)" '1/0/fixed/warp/30/100/300/clear/0/0/0/1/1' 'lab.json partner defaults'
     Assert-Equal "$($pj.anim)/$($pj.aset)/$($pj.reset)/$($pj.look)" 'off/qs/n/copy' 'lab.json partner anim/look defaults keep the proven behaviour'
 
+    }
     $deadUrl = 'http://127.0.0.1:47899/tppstm/gate'
+    if (Test-TestPart 'core') {
     $hostOff = Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline
     $guestOff = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline
     Assert-Equal "$($hostOff.Marker)/$($guestOff.Marker)" 'offline-v1/offline-v1' 'offline marker on both roles'
@@ -575,7 +589,7 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
     # The vehicle decisions of 2026-10-29: D11 world_loadout_block, D12 world_vehicle_break, D14 world_vehicle_credit likewise.
-    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit')) {
+    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit', 'world_vehicle_crew', 'world_vehicle_damage')) {
         Assert-Equal "$(ConvertTo-LabPartnerValue -Key $vk -Value 1)/$(ConvertTo-LabPartnerValue -Key $vk -Value 0)" '1/0' "$vk values"
         Assert-Throws { ConvertTo-LabPartnerValue -Key $vk -Value 2 } '' "$vk=2 refused"
     }
@@ -1098,6 +1112,15 @@ try {
         $file = Join-Path $fixture 'vehicle-decisions-guest-lab.ini'; [IO.File]::WriteAllText($file, $vdIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_loadout_block'])$($n['world_vehicle_break'])$($n['world_vehicle_credit'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '111|lab|0x0|0/0' 'native: the D11 / D12 / D14 keys parse'
+        # The vehicle fixes of 2026-10-29 (world_vehicle_crew, world_vehicle_damage): off by default; LabCommon writes each; native parses it.
+        Assert-Equal "$($vdDefault['world_vehicle_crew'])$($vdDefault['world_vehicle_damage'])" '00' 'native: the crew / damage keys default off'
+        $vfOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_vehicle_crew=1', 'world_vehicle_damage=1') -Role guest
+        $vfIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $vfOverrides)
+        $vfText = ConvertFrom-IniText $vfIni
+        Assert-Equal "$($vfText['world_vehicle_crew'])$($vfText['world_vehicle_damage'])" '11' 'LabCommon writes the crew / damage keys'
+        $file = Join-Path $fixture 'vehicle-fixes-guest-lab.ini'; [IO.File]::WriteAllText($file, $vfIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_vehicle_crew'])$($n['world_vehicle_damage'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '11|lab|0x0|0/0' 'native: the crew / damage keys parse'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')
@@ -1132,6 +1155,7 @@ try {
         Assert-Equal (Invoke-IniCheck url $deadUrl)['url_status'] 'ok' 'native: the closed-port URL passes the redirect validator'
     }
 
+    }
     # ------------------------------------------------------------ TPP_GRAPHICS_CONFIG tag
     # A real (graphics settings only) config written by mgsvtpp 1.0.15.4 on this PC.
     $realConfig = @'
@@ -1164,6 +1188,7 @@ try {
    "project" : "tpp"
 }
 '@.Replace("`r`n", "`n")
+    if (Test-TestPart 'logs') {
     $info = Get-GraphicsConfigInfo -Text $realConfig
     Assert-True $info.Valid 'real config tag verifies (FastWriter + "-%x" length salt + MD5[0..8])'
     Assert-Equal $info.ComputedTag 'UzF+nvqVP+4=' 'computed tag'
@@ -1183,6 +1208,7 @@ try {
     Assert-Equal (Get-GraphicsConfigTag -Object $synthetic) 'vrSYXqLC+9k=' 'synthetic tag (independently computed with Python)'
     Assert-Throws { ConvertTo-JsonCppFastText -Value 1.5 } 'Floating-point' 'doubles refused'
 
+    }
     # ------------------------------------------------------------ log matching and verdicts
     $hostReady = "mode=host_v3; peer_acceptance=after_mission_start; max_players=2`r`n" +
         "install_result=0 installed=1 pid=4 thread=5 tick_ms=6 target_rva=0x1a178e0 lifetime=process`r`n" +
@@ -1200,6 +1226,7 @@ try {
     $hostEarly = "early=start; version=0.12.0; lab=1; role=host`r`nmutex=unchanged`r`nidentity=real`r`nsaves=redirected; dir=$hostSave`r`nxinput=none`r`n"
     $guestEarly = "early=start; version=0.12.0; lab=1; role=guest`r`nmutex=renamed; suffix=-guest`r`nidentity=fake; steamid=$labId`r`nsaves=redirected; dir=$guestSave`r`nxinput=pad 0`r`n"
     $steamOk = "`r`nMGS Co-op original Steam import observer 0.4.0; fingerprint=accepted`r`nmaster_server=redirected; method=in_place; url=$fuseUrl`r`n"
+    if (Test-TestPart 'logs') {
     function Get-HostSafetyFor([string]$Early = $hostEarly, [string]$Steam = $steamOk) {
         Get-LabSafetyVerdict -Role host -EarlyLog $Early -SteamLog $Steam -ExpectedSaveDir $hostSave -ExpectedUrl $fuseUrl
     }
@@ -1353,8 +1380,10 @@ try {
     $v = Get-V @{ HostOnly = $true; GuestSafety = $null; HostSafety = (Get-HostSafetyFor -Steam ''); ReadyElapsedSec = 900 }
     Assert-Equal "$($v.Verdict)/$($v.Reason)" 'fail/not_under_fuse' 'host-only without the master_server redirect reports not_under_fuse'
 
+    }
     # Host identity cross-check (host-steamid.txt vs client-host.txt / peer_steamid).
     $realHost = '76561197960265729'
+    if (Test-TestPart 'logs') {
     Assert-Equal (Get-HostIdCheck -HostIdText "$realHost`n" -ClientHostText "$realHost`n" -PeerSteamId $realHost) 'ok' 'host id ok'
     Assert-Equal (Get-HostIdCheck -HostIdText "$realHost`n" -ClientHostText "$realHost`n" -PeerSteamId 'learn') 'ok' 'peer learn ignored'
     Assert-Equal (Get-HostIdCheck -HostIdText '' -ClientHostText "$realHost`n" -PeerSteamId $realHost) 'not_written' 'host id not written yet'
@@ -1377,6 +1406,7 @@ try {
     Assert-True ($redacted.Contains('12345678901234567') -and $redacted.Contains('103582791429521408')) 'numbers that are not individual SteamIDs kept'
     Assert-True ((Hide-SteamIds -Text $sample).Contains('steamid=<steamid>')) 'without Keep the lab id is redacted too'
 
+    }
     # fuse console output and counts.
     $console = "time=1 level=INFO msg=`"client request handled`" type=CMD_GET_URLLIST ip=127.0.0.1:5000`n" +
         "time=2 level=INFO msg=CMD_AUTH_STEAMTICKET steamID=$realHost`n" +
@@ -1384,6 +1414,7 @@ try {
         "time=4 level=INFO msg=CMD_AUTH_STEAMTICKET steamID=$labId`n" +
         "time=5 level=INFO msg=`"client request handled`" type=CMD_AUTH_STEAMTICKET ip=127.0.0.1:5001`n" +
         "time=6 level=INFO msg=CMD_AUTH_STEAMTICKET steamID=$realHost`n"
+    if (Test-TestPart 'logs') {
     $fs = Get-FuseConsoleSummary -Text $console -LabSteamId $labId
     Assert-Equal "$($fs.Counts.CMD_GET_URLLIST)/$($fs.Counts.CMD_AUTH_STEAMTICKET)/$($fs.DistinctAuthIds)/$($fs.LabIdSeen)/$($fs.OtherAuthIds)" '1/2/2/True/1' 'fuse console summary'
     Assert-True (-not (Get-FuseConsoleSummary -Text $console.Replace($labId, $realHost) -LabSteamId $labId).LabIdSeen) 'lab id not seen when the guest presented the real id'
@@ -1483,6 +1514,7 @@ try {
     Assert-True ($null -eq (Get-PartnerDistance $sentinel (ConvertFrom-PartnerList '0,0,0' -Count 3))) 'no distance to an unavailable vector'
     Assert-Equal (Get-PartnerSpread -Vectors @((ConvertFrom-PartnerList '0,0,0' -Count 3), $sentinel, (ConvertFrom-PartnerList '300,0,400' -Count 3))) ([double]500) 'spread ignores unavailable vectors'
 
+    }
     # Fixture logs (tests/fixtures/partner-lab) written with the section 2.7 spellings.
     $partnerFixtures = Join-Path $PSScriptRoot 'fixtures/partner-lab'
     $fx = @{}
@@ -1507,6 +1539,7 @@ try {
         $lines -join "`n"
     }
 
+    if (Test-TestPart 'logs') {
     # E0: offline boot and baseline.
     $v = Get-PV E0 host $fx['e0-host']
     Assert-Verdict $v 'PASS' '' 'E0 host PASS fixture'
@@ -1828,6 +1861,7 @@ try {
     Assert-Verdict (Get-PV D4 host ($d4 + "`r`n" + $timeouts)) 'FAIL' 'stop_timeout x4' 'D4 repeated stop timeouts fail'
     Assert-Verdict (Get-PV D4 host (Remove-Lines $d4 'partner_dmmap=released')) 'INCOMPLETE' 'partner_dmmap=released' 'D4 waits for the release'
 
+    }
     # Scripts on a fixture run (no game): Test-PartnerSpike.ps1, Set-PartnerTrigger.ps1 and the smoke's offline refusal.
     $pwshExe = (Get-Process -Id $PID).Path
     $pr = Join-Path $fixture 'partner-run'
@@ -1872,6 +1906,7 @@ try {
         try { $json = (@($out | Where-Object { $_ -is [string] }) -join "`n") | ConvertFrom-Json } catch { $json = $null }
         [pscustomobject]@{ Code = $code; Text = ($out -join "`n"); Json = $json }
     }
+    if (Test-TestPart 'partner-a') {
     $runPass = New-PartnerFixtureRun 'e0-pass' @{ host = $fx['e0-host']; guest = $fx['e0-guest'] }
     $r = Invoke-TestSpike @('-Experiment', 'E0', '-RunDir', $runPass, '-NoProcessCheck', '-OutFile', (Join-Path $runPass 'e0.json'))
     Assert-Equal $r.Code 0 ('Test-PartnerSpike E0 PASS exit code: ' + $r.Text)
@@ -1915,11 +1950,13 @@ try {
     $passThru = & $testSpike -Experiment E6 -RunDir (New-PartnerFixtureRun 'e6' @{ host = $fx['e6-host']; guest = $fx['e6-guest'] }) -ConfigPath $prConfig -NoProcessCheck -PassThru
     Assert-Equal "$($passThru.verdict)/$($passThru.per_role.host.data.cross_check_mm)/$($passThru.per_role.guest.data.cross_check_mm)" 'PASS/20/10' 'E6 through the script: both logs, cross-check, -PassThru'
 
+    }
     $setTrigger = Join-Path $projectRoot 'tools/lab/Set-PartnerTrigger.ps1'
     function Invoke-SetTrigger([string[]]$Arguments) {
         $out = @(& $pwshExe -NoProfile -NonInteractive -File $setTrigger -ConfigPath $prConfig @Arguments 2>&1)
         [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join "`n") }
     }
+    if (Test-TestPart 'partner-a') {
     $r = Invoke-SetTrigger @('-RunDir', $runPass, '-Role', 'host', '-Text', ' apply=slot  stage=3 ')
     Assert-Equal $r.Code 0 ('Set-PartnerTrigger succeeds: ' + $r.Text)
     $bytes = [IO.File]::ReadAllBytes($prPaths.host.PartnerTrigger)
@@ -1936,6 +1973,8 @@ try {
     $r = Invoke-SetTrigger @('-Role', 'both', '-Text', 'stage=3 source=net')
     Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.PartnerTrigger) -eq "stage=3 source=net`n" -and [IO.File]::ReadAllText($prPaths.guest.PartnerTrigger) -eq "stage=3 source=net`n") '-Role both writes both instances'
     foreach ($p in $prPaths.Values) { Remove-Item -LiteralPath $p.PartnerTrigger }
+    }
+    if (Test-TestPart 'partner-b') {
     # -WaitSec: a stand-in for the native side consumes (deletes) the file and logs
     # its result to script-observer.log, as PollPartnerTrigger does.
     function Start-TriggerConsumer([string]$Role, [string]$Line) {
@@ -1962,8 +2001,10 @@ try {
     $r = Invoke-SetTrigger @('-Role', 'guest', '-Text', 'stage=1', '-WaitSec', '1')
     Assert-Equal $r.Code 2 '-WaitSec exit code 2 when nothing consumed the trigger'
     Remove-Item -LiteralPath $prPaths.guest.PartnerTrigger
+    }
     # The fixture runs share the game folders: each run below rewrites their logs.
     $experiment = Join-Path $projectRoot 'tools/lab/Invoke-PartnerExperiment.ps1'
+    if (Test-TestPart 'partner-b') {
     $runPass2 = New-PartnerFixtureRun 'e0-pass-2' @{ host = $fx['e0-host']; guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runPass2 -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 2>&1)
     Assert-True ($LASTEXITCODE -eq 0 -and ($out -join ' ').Contains('MANUAL: in the host window press w+a:6000') -and ($out -join ' ').Contains('MANUAL: in the guest window press w+a:6000') -and
@@ -1975,6 +2016,8 @@ try {
     Assert-True ($LASTEXITCODE -ne 0 -and ($out -join ' ').Contains('rejected') -and @(Get-ChildItem -LiteralPath $runReject -Filter 'partner-E1-*.json').Count -eq 0) ('Invoke-PartnerExperiment stops on a rejected trigger: ' + ($out -join ' | '))
     $null = $consumer.WaitForExit(10000)
     Assert-True (!(Test-Path -LiteralPath $prPaths.host.PartnerTrigger)) 'no trigger left behind after the rejection'
+    }
+    if (Test-TestPart 'partner-a') {
     # Set-WorldTrigger: canonical text, atomic write, both roles, -Force, refusal.
     $setWorld = Join-Path $projectRoot 'tools/lab/Set-WorldTrigger.ps1'
     function Invoke-SetWorld([string[]]$Arguments) {
@@ -1999,6 +2042,8 @@ try {
     $out = @(& $pwshExe -NoProfile -NonInteractive -File (Join-Path $projectRoot 'tools/lab/Invoke-LabSmoke.ps1') -ConfigPath $prConfig -RunDir $runPass -NoScreens 2>&1)
     Assert-True ($LASTEXITCODE -ne 0 -and ($out -join ' ').Contains('Test-PartnerSpike')) 'the session smoke refuses offline runs'
 
+    }
+    if (Test-TestPart 'install') {
     # ------------------------------------------------------------ manifests, backup and seeding
     # Windows PowerShell 5.1 (friend package) has no [IO.Path]::GetRelativePath.
     Assert-Equal (Get-RelativeChildPath -Root 'C:\a\b\' -Path 'C:\a\b\c\d.txt') 'c/d.txt' 'relative child path'
@@ -2269,6 +2314,7 @@ try {
     Assert-Throws { & $sessionMode -Role Join -HostSteamId '76561197960265729' -GameDirectory (Join-Path $fixture 'no-such-folder') } 'Cannot find path' 'set-session-mode: a valid id passes the identity check'
     Assert-Throws { & $sessionMode -Role Host -HostSteamId '76561197960265729' -GameDirectory $hostGame } 'only with -Role Join' 'set-session-mode: id only with Join'
 
+    }
     # ------------------------------------------------------------ end to end on a simulated run (no game)
     # Two idle pwsh processes stand in for the game instances; a small simulator
     # plays the native side (consumes join.trigger, appends the protocol lines).
@@ -2281,6 +2327,24 @@ try {
             } | ForEach-Object { $_.Name })
     }
     $pwshPath = (Get-Process -Id $PID).Path
+    if (Test-TestPart 'e2e') {
+    if (!(Test-Path -LiteralPath variable:userdata)) {
+        # The install part did not run in this shard: the Steam userdata fixture and its save backup as that part
+        # leaves them (the backup of the four fixture files, then TPP_GAME_DATA0 changed, 311340/remote/NEW added,
+        # TPP_GRAPHICS_CONFIG removed); this part's run.json names that backup and Stop-Lab compares against it.
+        $userdata = Join-Path $fixture 'steam/userdata/7'
+        foreach ($f in '287700/local/TPP_GAME_DATA0', '287700/local/TPP_GRAPHICS_CONFIG', '311340/remote/TPP_GAME_DATA', '287700/remotecache.vdf') {
+            $path = Join-Path $userdata $f
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+            [IO.File]::WriteAllText($path, "fixture $f")
+        }
+        $backup = Join-Path $fixture 'build/lab/save-backups/1'
+        $null = Backup-RealSaves -UserData $userdata -Destination $backup
+        [IO.File]::WriteAllText((Join-Path $userdata '287700/remotecache.vdf'), 'Steam rewrites this; not verified')
+        [IO.File]::WriteAllText((Join-Path $userdata '287700/local/TPP_GAME_DATA0'), 'changed')
+        [IO.File]::WriteAllText((Join-Path $userdata '311340/remote/NEW'), 'added')
+        Remove-Item -LiteralPath (Join-Path $userdata '287700/local/TPP_GRAPHICS_CONFIG')
+    }
     $e2e = Join-Path $fixture 'e2e'
     $e2eHost = Join-Path $e2e 'MGS_TPP'
     $e2eGuest = Join-Path $e2e 'MGS_TPP_guest'
@@ -2439,6 +2503,7 @@ Start-Sleep -Milliseconds 500
         foreach ($d in $dummies) { if (!$d.HasExited) { Stop-Process -Id $d.Id -Force -ErrorAction SilentlyContinue } }
     }
 
+    }
     # ------------------------------------------------------------ full harness dry run with stand-in processes
     # Prepare -> Start -> Smoke -> Screens -> Stop -> (unrecorded process left alone)
     # -> Start refusals at the safety gate -> Disable against fixture folders.
@@ -2511,9 +2576,30 @@ Start-Sleep -Milliseconds 500
         function Test-DryProcessesGone {
             @(Get-Process -Name mgsvtpp, fuse -ErrorAction SilentlyContinue | Where-Object { $p = Get-ProcessPathSafe $_; $p -and (Test-PathInside -Child $p -Parent $dry) }).Count -eq 0
         }
+        # The dry parts run in this order in one process (the plain run) or without the parts before them (a shard).
+        # A later part then first replays the Prepare calls those parts made, so it starts from the same folders:
+        # dry-online leaves them prepared (fuse mode), dry-offline leaves them prepared -Offline. Every replayed Prepare
+        # takes the machine-wide install turn, so the dry parts stay few (the turns are the suite's long pole).
+        $script:dryState = 'fresh'
+        function Use-DryState([ValidateSet('prepared', 'offline')][string]$State) {
+            if ($script:dryState -ceq 'fresh') {
+                $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1 }
+                Assert-Equal $LASTEXITCODE 0 ('replayed Prepare (dry-online): ' + ($out -join ' | '))
+                $script:dryState = 'prepared'
+            }
+            if ($State -ceq 'offline' -and $script:dryState -ceq 'prepared') {
+                $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -PartnerSetting 'guest:net_latency_ms=100' 2>&1 }
+                Assert-Equal $LASTEXITCODE 0 ('replayed Prepare -Offline (dry-offline): ' + ($out -join ' | '))
+                $script:dryState = 'offline'
+            }
+        }
         $env:MGS_COOP_FAKE_HOST_STEAMID = $dryHostId
         $env:MGS_COOP_FAKE_UNSAFE = ''
         try {
+            $hp = Get-InstancePaths -GameDirectory $dryHost
+            $gp = Get-InstancePaths -GameDirectory $dryGuest
+            if (Test-TestPart 'dry-online') {
+                $script:dryState = 'prepared'
             $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1 }
             Assert-Equal $LASTEXITCODE 0 ('Prepare succeeds: ' + ($out -join ' | '))
             $hp = Get-InstancePaths -GameDirectory $dryHost
@@ -2589,6 +2675,9 @@ Start-Sleep -Milliseconds 500
             Assert-True $later.WaitForExit(10000) '-IncludeUnrecordedProcesses closes it with WM_CLOSE'
             Assert-Equal (Get-Content -LiteralPath (Join-Path $dryRun 'stop.json') -Raw | ConvertFrom-Json).games."unrecorded-host-$($later.Id)".exit 'closed' 'closed, not terminated'
 
+            }
+            if (Test-TestPart 'dry-gate') {
+                Use-DryState 'prepared'
             # Safety gate refusals: Start-Lab stops what it started and never starts the guest early.
             $env:MGS_COOP_FAKE_UNSAFE = 'host:saves'
             $start = Invoke-DryStart
@@ -2614,6 +2703,10 @@ Start-Sleep -Milliseconds 500
             Assert-True (Test-DryProcessesGone) 'nothing left running after the id mismatch'
             $env:MGS_COOP_FAKE_HOST_STEAMID = $dryHostId
 
+            }
+            if (Test-TestPart 'dry-offline') {
+                Use-DryState 'prepared'
+                $script:dryState = 'offline'
             # Offline lab mode (docs/offline-partner-spike-plan.md 2.5, 4): no fuse, closed master port,
             # offline-v1 on both folders; the safety gate is unchanged.
             $dryDead = "http://127.0.0.1:$($base + 5)/tppstm/gate"
@@ -2661,6 +2754,9 @@ Start-Sleep -Milliseconds 500
                 $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline 2>&1 | Out-String)
                 Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains("TCP port $($base + 5)") -and (Test-DryProcessesGone)) 'Start-Lab -Offline refuses a listener on the master port; nothing started'
             } finally { $listener.Stop() }
+            }
+            if (Test-TestPart 'dry-lan') {
+                Use-DryState 'offline'
             # -Lan rehearsal (docs/two-pc-play.md): net_bind=any, the guest targets the LAN
             # address, both copies share a random link secret; Start-Lab needs -Lan for it.
             $out = Use-TestInstallTurn { & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 -WanSim good 2>&1 }
@@ -2713,6 +2809,7 @@ Start-Sleep -Milliseconds 500
                 @(Get-ChildItem -LiteralPath $gp.Mod -Filter 'lab.ini.disabled-*').Count -eq 2) 'Disable renames lab.ini and coop.ini (one renamed copy per -Disable: offline, then fuse mode)'
             Assert-Equal ([IO.File]::ReadAllText($hp.CoopIni)) $userCoop 'Disable restores the user coop.ini'
             Assert-Equal @(Get-ChildItem -LiteralPath $hp.Mod -File -Filter 'coop.ini.user-*').Count 0 'user backup moved back'
+            }
         } finally {
             Remove-Item Env:MGS_COOP_FAKE_HOST_STEAMID -ErrorAction SilentlyContinue
             Remove-Item Env:MGS_COOP_FAKE_UNSAFE -ErrorAction SilentlyContinue
@@ -2721,9 +2818,13 @@ Start-Sleep -Milliseconds 500
                 if ($path -and (Test-PathInside -Child $path -Parent $dry)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
             }
         }
-    } else { Write-Warning 'lab_fake_process not supplied; full harness dry run skipped.' }
+    } else {
+        Write-Warning 'lab_fake_process not supplied; full harness dry run skipped.'
+        foreach ($dryPart in 'dry-online', 'dry-gate', 'dry-offline', 'dry-lan') { $null = Test-TestPart $dryPart }
+    }
 
-    Write-Output "$script:checks lab script checks passed; temporary fixtures only, no game, Steam or fuse started"
+    Assert-TestPartsAsked
+    Write-Output "$script:checks lab script checks passed (parts: $((Get-TestPartsSelected) -join ', ')); temporary fixtures only, no game, Steam or fuse started"
 } finally {
     Remove-OwnedFixture
 }

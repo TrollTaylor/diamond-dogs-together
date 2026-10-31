@@ -42,6 +42,54 @@ detail::TypeFn g_type = nullptr;
 detail::CountFn g_count = nullptr;
 
 std::atomic<std::uint64_t> g_policy{0};
+// M6 seat 1: the live options (PackOpts; 0 until the remap skip is in) and the phase-1 writer.
+std::atomic<std::uint8_t> g_opts{0};
+detail::LimitFn g_limit = nullptr;
+std::atomic<std::uint32_t> g_seat_one{0};
+// Review R4: the remap reader (live: the image dword) and the seat-1 steers it refused.
+detail::RemapFn g_remap_read = nullptr;
+std::atomic<std::uint32_t> g_remap_refused{0};
+// M6 seat races: on, the want (vehicle | ms << 32), the deny and the grant (vehicle | until << 32), the
+// guest's hold lease (1 | until << 32; 0 off) and the refusal counts. Review R1/R2: site C.
+std::atomic<bool> g_race{false};
+std::atomic<std::uint64_t> g_want{kVehicleUnknown};
+std::atomic<std::uint64_t> g_deny{kVehicleUnknown};
+std::atomic<std::uint64_t> g_grant{kVehicleUnknown};
+std::atomic<std::uint64_t> g_hold{0};
+std::atomic<std::uint32_t> g_race_hits{0}, g_hold_hits{0};
+// Seats on (8.21 R6): the Fulton guard's last mark at site C (vehicle | ms << 32): a refused ride icon, or a door of
+// the vehicle the peer drives (ReadRace reports its age; Lua withholds the Fulton action while it is fresh).
+std::atomic<std::uint64_t> g_guard{kVehicleUnknown};
+void GuardMark(std::uint16_t vehicle, std::uint32_t now) noexcept {
+    g_guard.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+}
+// E press only (design 8.55): site D's press (vehicle | start << 32), when it was last seen, whether it is held, the
+// press count and the timeouts; the host's own press commit (vehicle | until << 32) and the lock it shares with
+// RaceGrantIf (linearizes the host's press against a guest claim whatever thread Lua runs on).
+std::atomic<std::uint64_t> g_press{kVehicleUnknown};
+std::atomic<std::uint32_t> g_press_seen{0}, g_pseq{0}, g_timeouts{0};
+std::atomic<bool> g_pend{false};
+// 8.57: when the held press first saw the partner drive its vehicle (kPeerSeen | low 32 ms; 0 not yet).
+inline constexpr std::uint64_t kPeerSeen = 1ull << 32;
+// 8.58 review: the press joined a ride's settle without a claim (PressDecide claim if that ride drops).
+inline constexpr std::uint64_t kJoined = 1ull << 33;
+std::atomic<std::uint64_t> g_press_peer{0};
+// 8.58: when the published policy first named the vehicle the partner drives (vehicle | ms << 32; Publish), and the
+// presses that joined that ride's settle (PressDecide join).
+std::atomic<std::uint64_t> g_policy_since{kVehicleUnknown};
+std::atomic<std::uint32_t> g_joins{0};
+std::atomic<std::uint64_t> g_commit{kVehicleUnknown};
+// The last press that ended (vehicle | end << 16 (1 grant, 2 deny, 3 timeout, 4 peer) | wait ms << 32), the ended count and
+// the host's commit count (game_script_observer logs 'partner_board=press' from the receipt, never from the hook).
+std::atomic<std::uint64_t> g_done{kVehicleUnknown};
+std::atomic<std::uint32_t> g_done_seq{0}, g_commits{0};
+SRWLOCK g_arb = SRWLOCK_INIT;
+volatile LONG g_race_tried = 0;
+const char* g_race_refusal = nullptr;
+void* g_stub_c = nullptr;
+void* g_stub_d = nullptr;
+detail::PrequeryFn g_prequery = nullptr;
+detail::GateFn g_gate = nullptr;
 std::atomic<std::uint32_t> g_calls[2]{}, g_block[2]{}, g_steer[2]{}, g_faults{0};
 std::atomic<std::uint32_t> g_last_seat[2]{};
 std::atomic<std::uint32_t> g_last_vehicle{kVehicleUnknown}, g_last_type{0xFF}, g_last_count{0xFF};
@@ -110,7 +158,7 @@ Pick Choose(void* unit) noexcept {
     if (!facts) g_faults.fetch_add(1, std::memory_order_relaxed);
     g_last_type.store(facts ? type : 0xFFu, std::memory_order_relaxed);
     g_last_count.store(facts && count >= 0 && count < 0xFF ? static_cast<std::uint32_t>(count) : 0xFFu, std::memory_order_relaxed);
-    const Range r = DecideSeats(p, facts, type, count);
+    const Range r = DecideSeats(p, facts, type, count, UnpackOpts(g_opts.load(std::memory_order_acquire)));
     k.reason = r.reason;
     if (!r.ok) {
         k.verdict = Verdict::block;
@@ -136,7 +184,269 @@ void Note(unsigned site, const Pick& k, std::uint8_t result) noexcept {
 
 // Site A 0x12458AC: the pre-query 0x1245820's nearest free seat (its own range).
 // The caller's last error is restored before the original runs (our reads and
-// getters never leak into it); Note only touches atomics.
+// getters never leak into it); Note only touches atomics. Site A takes no part in
+// the seat race (review R2: the want is site C's final answer, after the door bits).
+std::uint32_t NowLow() noexcept { return g_now ? static_cast<std::uint32_t>(g_now()) : 0u; }
+// The race's live state for one vehicle at `now`.
+RaceIn RaceFor(std::uint16_t vehicle, std::uint32_t now) noexcept {
+    RaceIn in{};
+    in.vehicle = vehicle;
+    in.now_ms = now;
+    const std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+    in.deny_vehicle = static_cast<std::uint16_t>(deny & 0xFFFFu);
+    in.deny_until = static_cast<std::uint32_t>(deny >> 32);
+    const std::uint64_t grant = g_grant.load(std::memory_order_acquire);
+    in.grant_vehicle = static_cast<std::uint16_t>(grant & 0xFFFFu);
+    in.grant_until = static_cast<std::uint32_t>(grant >> 32);
+    const std::uint64_t hold = g_hold.load(std::memory_order_acquire);
+    in.hold_on = (hold & 1u) != 0;
+    in.hold_until = static_cast<std::uint32_t>(hold >> 32);
+    return in;
+}
+// The vehicle of a record whose search the race may judge: the stock verdict (no peer-driver policy for
+// it; DecideVehicle reads the index only for a live peer driver) and a readable index. kVehicleUnknown else.
+std::uint16_t RaceVehicle(void* unit, std::uint32_t now) noexcept {
+    const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
+    std::uint16_t index = 0xFFFF;
+    bool index_ok = true;
+    if (p.mode != Mode::off && LeaseLive(p.until_ms, now) && p.peer_seat == 0) index_ok = ReadIndex(unit, index);
+    const char* reason = "off";
+    if (!index_ok || DecideVehicle(p, now, index_ok, index, reason) != Verdict::stock) return kVehicleUnknown;
+    if (!ReadIndex(unit, index) || index >= 0x200) return kVehicleUnknown;
+    return static_cast<std::uint16_t>(kVehicleBase | index);
+}
+// Seats on: the vehicle of a record the peer drives (a live peer-driver policy names it), kVehicleUnknown else.
+std::uint16_t PeerDriven(void* unit, std::uint32_t now) noexcept {
+    const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
+    if (p.mode == Mode::off || !LeaseLive(p.until_ms, now) || p.peer_seat != 0) return kVehicleUnknown;
+    std::uint16_t index = 0xFFFF;
+    const bool index_ok = ReadIndex(unit, index);
+    const char* reason = "off";
+    if (DecideVehicle(p, now, index_ok, index, reason) == Verdict::stock) return kVehicleUnknown;
+    return p.vehicle;
+}
+// A stamp within ms of now either way (another thread may stamp a few ms after this one read its clock).
+bool Near(std::uint32_t now, std::uint32_t at, std::uint32_t ms) noexcept { return now - at <= ms || at - now <= ms; }
+// A word's vehicle when it names `vehicle` and is live at now (RaceDenied's window).
+bool WordNames(std::uint64_t word, std::uint16_t vehicle, std::uint32_t now) noexcept {
+    return RaceDenied(static_cast<std::uint16_t>(word & 0xFFFFu), static_cast<std::uint32_t>(word >> 32), now, vehicle);
+}
+// Site B's backstop: a stock driver's seat (0, or 1 which stock phase 1 makes the driver) of a denied
+// vehicle (on the host: one it yielded), or of the vehicle site C wants or site D held a press for while the guest
+// holds it ungranted (8.55: a press the host denied or never answered), takes the no-seat exit. Anything else
+// boards: the host's own press then owns that vehicle for kHostCommitMs (one lock with RaceGrantIf).
+std::uint8_t RaceStepB(void* unit, Verdict verdict, std::uint8_t result) noexcept {
+    if (!g_race.load(std::memory_order_acquire) || verdict != Verdict::stock || result > kFrontSeat) return result;
+    std::uint16_t index = 0xFFFF;
+    if (!ReadIndex(unit, index) || index >= 0x200) return result;
+    const auto vehicle = static_cast<std::uint16_t>(kVehicleBase | index);
+    const std::uint32_t now = NowLow();
+    AcquireSRWLockExclusive(&g_arb);
+    const RaceVerdict v = RaceDecide(RaceFor(vehicle, now));
+    if (v == RaceVerdict::deny) {
+        ReleaseSRWLockExclusive(&g_arb);
+        g_race_hits.fetch_add(1, std::memory_order_relaxed);
+        return kNoSeat;
+    }
+    if (v == RaceVerdict::hold) {
+        ReleaseSRWLockExclusive(&g_arb);
+        const std::uint64_t want = g_want.load(std::memory_order_acquire);
+        const bool wanted = static_cast<std::uint16_t>(want & 0xFFFFu) == vehicle &&
+                            Near(now, static_cast<std::uint32_t>(want >> 32), kRaceWantFreshMs);
+        const std::uint64_t press = g_press.load(std::memory_order_acquire);
+        const bool pressed = static_cast<std::uint16_t>(press & 0xFFFFu) == vehicle &&
+                             Near(now, static_cast<std::uint32_t>(press >> 32), kPressWaitMs + kPressGapMs);
+        if (!wanted && !pressed) return result;
+        g_hold_hits.fetch_add(1, std::memory_order_relaxed);
+        return kNoSeat;
+    }
+    // A held (READY-armed) guest's granted boarding is no commit: only the host answers claims (role=commit, review).
+    const std::uint64_t hold = g_hold.load(std::memory_order_acquire);
+    if (!((hold & 1u) && static_cast<std::uint32_t>(static_cast<std::uint32_t>(hold >> 32) - now) <= kRaceDenyMaxMs)) {
+        g_commit.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now + kHostCommitMs) << 32, std::memory_order_release);
+        g_commits.fetch_add(1, std::memory_order_relaxed);
+    }
+    ReleaseSRWLockExclusive(&g_arb);
+    return result;
+}
+// Site D's record reads (design 8.55; contract board_act_* / board_rec_*), SEH: the local index, the record's vehicle
+// and whether its seat was searched. false: unreadable.
+bool ReadPress(void* action, std::uint32_t index, bool& local, std::uint16_t& vehicle, bool& searched) noexcept {
+    if (!action) return false;
+    __try {
+        const auto* a = static_cast<const unsigned char*>(action);
+        const auto* owner = *reinterpret_cast<const unsigned char* const volatile*>(a + c::board_act_owner);
+        const auto* player = *reinterpret_cast<const unsigned char* const volatile*>(owner + c::board_owner_player);
+        local = *reinterpret_cast<const volatile std::uint32_t*>(player + c::board_player_index) == index;
+        if (!local) return true;
+        const auto* table = *reinterpret_cast<const unsigned char* const volatile*>(a + c::board_act_table);
+        const auto first = *reinterpret_cast<const volatile std::uint32_t*>(table + c::board_table_first);
+        const auto* records = *reinterpret_cast<const unsigned char* const volatile*>(a + c::board_act_records);
+        const unsigned char* r = records + static_cast<std::uint64_t>(static_cast<std::uint32_t>(index - first)) * c::board_record_size;
+        vehicle = *reinterpret_cast<const volatile std::uint16_t*>(r + c::board_rec_vehicle);
+        searched = *reinterpret_cast<const volatile std::uint8_t*>(r + c::board_rec_searched) != 0;
+        return true;
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+// Site D 0x1251366 (partner_ride_race only): phase 1's per-frame call of the remote gate 0x114DB20(action, index).
+// The original runs first with the caller's arguments and last error; its true is kept. Else a held guest's E press
+// on an empty vehicle (PressDecide) answers true (phase 1 returns this frame: the stock idle before the record checks,
+// site B and TryToRide; nothing written) until the host's grant or deny for that vehicle, at most kPressWaitMs.
+// One word per ended press (vehicle, end, an 8-bit sequence, wait), so ReadRace reads one snapshot (review); one writer
+// (phase 1 runs on the game's update thread).
+void StoreDone(std::uint16_t vehicle, std::uint64_t end, std::uint32_t wait_ms) noexcept {
+    const std::uint64_t seq = (g_done_seq.fetch_add(1, std::memory_order_acq_rel) + 1u) & 0xFFu;
+    g_done.store(vehicle | end << 16 | seq << 24 | static_cast<std::uint64_t>(wait_ms) << 32, std::memory_order_release);
+}
+bool SiteD(void* action, std::uint32_t index) noexcept {
+    const bool ok = g_gate(action, index);
+    if (ok || !g_race.load(std::memory_order_acquire)) return ok;
+    const DWORD error = GetLastError();
+    const std::uint32_t now = NowLow();
+    PressIn in{};
+    in.now_ms = now;
+    const std::uint64_t hold = g_hold.load(std::memory_order_acquire);
+    in.hold = (hold & 1u) && static_cast<std::uint32_t>(static_cast<std::uint32_t>(hold >> 32) - now) <= kRaceDenyMaxMs;
+    if (!in.hold) {
+        SetLastError(error);
+        return ok;
+    }
+    if (!ReadPress(action, index, in.local, in.vehicle, in.searched)) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        SetLastError(error);
+        return ok;
+    }
+    const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
+    in.peer_drives = p.mode != Mode::off && LeaseLive(p.until_ms, now) && p.peer_seat == 0 && p.vehicle == in.vehicle;
+    in.seat_one = in.peer_drives && SettleSeatOne(p, UnpackOpts(g_opts.load(std::memory_order_acquire)));
+    const std::uint64_t peer = g_press_peer.load(std::memory_order_acquire);
+    in.peer_seen = (peer & kPeerSeen) != 0;
+    in.peer_since = static_cast<std::uint32_t>(peer);
+    in.joined = (peer & kJoined) != 0;
+    const std::uint64_t since = g_policy_since.load(std::memory_order_acquire);
+    in.ride_seen = in.peer_drives && static_cast<std::uint16_t>(since & 0xFFFFu) == in.vehicle;
+    in.ride_since = static_cast<std::uint32_t>(since >> 32);
+    const std::uint64_t press = g_press.load(std::memory_order_acquire);
+    in.open = g_pend.load(std::memory_order_acquire);
+    in.pend_vehicle = static_cast<std::uint16_t>(press & 0xFFFFu);
+    in.pend_start = static_cast<std::uint32_t>(press >> 32);
+    in.pend_seen = g_press_seen.load(std::memory_order_acquire);
+    in.granted = WordNames(g_grant.load(std::memory_order_acquire), in.vehicle, now);
+    in.denied = WordNames(g_deny.load(std::memory_order_acquire), in.vehicle, now);
+    bool result = ok;
+    const PressVerdict verdict = PressDecide(in);
+    switch (verdict) {
+    case PressVerdict::start: {
+        // A grant from before this press never lets it board (single use).
+        std::uint64_t grant = g_grant.load(std::memory_order_acquire);
+        if (static_cast<std::uint16_t>(grant & 0xFFFFu) == in.vehicle) g_grant.compare_exchange_strong(grant, kVehicleUnknown, std::memory_order_acq_rel);
+        g_press.store(static_cast<std::uint64_t>(in.vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+        g_press_seen.store(now, std::memory_order_release);
+        g_press_peer.store(0, std::memory_order_release);
+        g_pend.store(true, std::memory_order_release);
+        g_pseq.fetch_add(1, std::memory_order_acq_rel);
+        result = true;
+        break;
+    }
+    case PressVerdict::join:
+        // 8.58 near-tie: a new press just after the partner's ride appeared, seat 1 still offered: the same settle as a
+        // held press, timed from the ride's first appearance (a stamp past this frame's clock: now); no claim (no pseq:
+        // the partner already drives it).
+        g_press.store(static_cast<std::uint64_t>(in.vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+        g_press_seen.store(now, std::memory_order_release);
+        g_press_peer.store(kPeerSeen | kJoined | (static_cast<std::int32_t>(now - in.ride_since) < 0 ? now : in.ride_since),
+                           std::memory_order_release);
+        g_pend.store(true, std::memory_order_release);
+        g_joins.fetch_add(1, std::memory_order_relaxed);
+        result = true;
+        break;
+    case PressVerdict::claim: {
+        // 8.58 review: a joined press whose ride dropped before it settled claims the vehicle like any press (Lua claims
+        // the new pseq; the host's grant, deny or no answer ends it), so it never ends as a silent timeout. Answers from
+        // before the claim are withdrawn; the deadline stays kPressWaitMs after the press.
+        std::uint64_t grant = g_grant.load(std::memory_order_acquire);
+        if (static_cast<std::uint16_t>(grant & 0xFFFFu) == in.vehicle) g_grant.compare_exchange_strong(grant, kVehicleUnknown, std::memory_order_acq_rel);
+        std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+        if (static_cast<std::uint16_t>(deny & 0xFFFFu) == in.vehicle) g_deny.compare_exchange_strong(deny, kVehicleUnknown, std::memory_order_acq_rel);
+        g_press_seen.store(now, std::memory_order_release);
+        g_press_peer.store(0, std::memory_order_release);
+        g_pseq.fetch_add(1, std::memory_order_acq_rel);
+        result = true;
+        break;
+    }
+    case PressVerdict::wait:
+        g_press_seen.store(now, std::memory_order_release);
+        result = true;
+        break;
+    case PressVerdict::go: {
+        g_pend.store(false, std::memory_order_release);
+        if (!in.granted && !in.denied) g_timeouts.fetch_add(1, std::memory_order_relaxed);
+        const std::uint64_t end = in.granted ? 1u : in.denied ? 2u : 3u;
+        StoreDone(in.vehicle, end, now - in.pend_start);
+        break;
+    }
+    case PressVerdict::settle:
+        // 8.57: the partner drives it and still offers seat 1: idle until its seats settle (PressDecide).
+        if (!in.peer_seen) g_press_peer.store(kPeerSeen | now, std::memory_order_release);
+        g_press_seen.store(now, std::memory_order_release);
+        result = true;
+        break;
+    case PressVerdict::peer:
+        // The partner's ride arrived while this press was held (both pressed, run 23c7f305): the passenger policy seats
+        // it now, so it ends as 'peer' (end 4; Lua shows no deny toast once it sits).
+        g_pend.store(false, std::memory_order_release);
+        StoreDone(in.vehicle, 4u, now - in.pend_start);
+        break;
+    case PressVerdict::stock: break;
+    }
+    SetLastError(error);
+    return result;
+}
+// The seat the pre-query answered (the caller's stack byte), under SEH.
+bool ReadSeat(const char* seat, std::uint8_t& out) noexcept {
+    if (!seat) return false;
+    __try {
+        out = static_cast<std::uint8_t>(*reinterpret_cast<const volatile char*>(seat));
+        return true;
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+}
+// Site C 0x1246A4F (partner_ride_race only): RideVehicle CanExec's call of the pre-query. The original
+// runs first with the caller's arguments and last error; its final answer (true, seat 0/1) on a vehicle
+// without a peer-driver policy is the want; a live deny answers false (CanExec false: no ride icon; *seat
+// is left as the pre-query wrote it, CanExec reads it only after true; 8.55: a hold no longer does). The vehicle the
+// peer drives is marked for the Fulton guard whatever the pre-query answered (8.26: a block vehicle, full
+// back seats or a taken cab offer no seat, and its stock Fulton prompt would be left).
+bool SiteC(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept {
+    const bool ok = g_prequery(action, body, unit, id, seat);
+    if (!g_race.load(std::memory_order_acquire)) return ok;
+    const DWORD error = GetLastError();
+    std::uint8_t answer = kNoSeat;
+    const std::uint32_t now = NowLow();
+    const std::uint16_t vehicle = ok && ReadSeat(seat, answer) && answer <= kFrontSeat ? RaceVehicle(unit, now) : kVehicleUnknown;
+    bool result = ok;
+    if (vehicle != kVehicleUnknown) {
+        g_want.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now) << 32, std::memory_order_release);
+        // E press only (8.55): a hold never refuses the icon (standing at a door claims nothing); a deny does, except
+        // the host's own yield (8.57: its press is refused at site B, so a=7 answers a press, never standing there).
+        const RaceVerdict v = RaceDecide(RaceFor(vehicle, now));
+        const std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+        const bool refused = RaceIconRefused(v, (deny & kDenyYield) != 0 && WordNames(deny, vehicle, now));
+        if (refused) {
+            g_race_hits.fetch_add(1, std::memory_order_relaxed);
+            GuardMark(vehicle, now);
+        }
+        result = !refused;
+    } else if (const std::uint16_t peer = PeerDriven(unit, now); peer != kVehicleUnknown) {
+        // A door of the vehicle the peer drives: its passenger ride icon, and that vehicle's stock Fulton prompt.
+        GuardMark(peer, now);
+    }
+    SetLastError(error);
+    return result;
+}
 std::uint8_t SiteA(void* unit, const float* pos, std::uint8_t first, std::uint8_t last) noexcept {
     const DWORD error = GetLastError();
     const Pick k = Choose(unit);
@@ -147,7 +457,10 @@ std::uint8_t SiteA(void* unit, const float* pos, std::uint8_t first, std::uint8_
     Note(0, k, result);
     return result;
 }
-// Site B 0x1251479: phase 1 0x1251200's SearchNearestRideSeatForDriver.
+// Site B 0x1251479: phase 1 0x1251200's SearchNearestRideSeatForDriver. With seat 1
+// live (M6) every call also sets the two phase-1 immediates that run after it in the
+// same call: 1 for a steered seat 1, else stock 2. A failed write never seats the
+// viewer in seat 1 under the stock driver mapping: seat 1 then answers 4 (counted).
 std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     const DWORD error = GetLastError();
     const Pick k = Choose(unit);
@@ -155,8 +468,52 @@ std::uint8_t SiteB(void* unit, const float* pos) noexcept {
     std::uint8_t result = kNoSeat;
     if (k.verdict == Verdict::stock) result = g_driver(unit, pos);
     else if (k.verdict == Verdict::seats) result = g_nearest(unit, pos, k.first, k.last);
+    result = RaceStepB(unit, k.verdict, result);
+    if (g_opts.load(std::memory_order_acquire) && g_limit) {
+        std::uint8_t limit = PhaseOneLimit(k.verdict, result, true);
+        // Review R4: seat 1 only while the driver tick has the remap skipped (else the passenger would be
+        // placed at the driver's matrix): the no-seat exit, the immediates stay stock.
+        if (limit == kPhaseOneSeatOne && !(g_remap_read && g_remap_read())) {
+            g_remap_refused.fetch_add(1, std::memory_order_relaxed);
+            result = kNoSeat;
+            limit = kPhaseOneStock;
+        }
+        const DWORD before = GetLastError();
+        const bool written = g_limit(limit);
+        SetLastError(before);
+        if (!written) {
+            g_faults.fetch_add(1, std::memory_order_relaxed);
+            if (result == kFrontSeat) result = kNoSeat;
+        } else if (limit == kPhaseOneSeatOne) {
+            g_seat_one.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     Note(1, k, result);
     return result;
+}
+
+// The live writer: both phase-1 dwords (`3C imm8 ..`) with `limit`, only over bytes that are
+// the stock instruction with either immediate (anything else: false, nothing written).
+bool SetPhaseOneLimitLive(std::uint8_t limit) noexcept {
+    if (!g_base) return false;
+    const std::uintptr_t sites[2] = {c::board_seat1_pass_rva, c::board_seat1_phase_rva};
+    const std::uint32_t originals[2] = {c::board_seat1_pass_orig, c::board_seat1_phase_orig};
+    for (unsigned i = 0; i < 2; ++i) {
+        auto* at = reinterpret_cast<unsigned char*>(g_base + sites[i]);
+        std::uint32_t current = 0;
+        __try {
+            std::memcpy(&current, at, sizeof(current));
+        } __except (ReadFilter(GetExceptionCode())) {
+            return false;
+        }
+        const std::uint8_t imm = static_cast<std::uint8_t>(current >> 8);
+        if (PhaseOneDword(current, kPhaseOneStock) != originals[i] || (imm != kPhaseOneStock && imm != kPhaseOneSeatOne)) return false;
+        const std::uint32_t want = PhaseOneDword(originals[i], limit);
+        if (current == want) continue;
+        const char* why = near_code::PatchDword(at, current, want);
+        if (why && std::strcmp(why, "protect_restore") != 0) return false;
+    }
+    return true;
 }
 
 const c::Site* SiteAt(std::uintptr_t rva) noexcept {
@@ -169,7 +526,17 @@ const c::Site* SiteAt(std::uintptr_t rva) noexcept {
 std::size_t MaskedOperand(std::uintptr_t block) noexcept {
     if (block == c::board_a_block_rva) return c::board_a_site + 1 - c::board_a_block_rva;
     if (block == c::board_b_block_rva) return c::board_b_site + 1 - c::board_b_block_rva;
+    if (block == c::board_c_block_rva) return c::board_c_site + 1 - c::board_c_block_rva;
+    if (block == c::board_d_block_rva) return c::board_d_site + 1 - c::board_d_block_rva;
     return static_cast<std::size_t>(-1);
+}
+// M6: the bytes site B and the seat-one install own: the two phase-1 immediates (stock 2 or
+// our 1) and the remap's opcode (stock jne 0x75 or our jmp 0xEB). Review R5: only those two
+// values verify; anything else at an owned byte is a foreign change. -1: not an owned byte.
+int SeatOneByteOk(std::uintptr_t rva, unsigned char b) noexcept {
+    if (rva == c::board_seat1_pass_rva + 1 || rva == c::board_seat1_phase_rva + 1) return b == kPhaseOneStock || b == kPhaseOneSeatOne;
+    if (rva == c::board_remap_rva + 3) return b == 0x75 || b == 0xEB;
+    return -1;
 }
 
 bool SiteLive(std::uintptr_t base, std::uintptr_t site, std::uintptr_t next_ip, const void* stub) noexcept {
@@ -182,13 +549,17 @@ bool SiteLive(std::uintptr_t base, std::uintptr_t site, std::uintptr_t next_ip, 
     return code[0] == 0xE8 && live == rel;
 }
 
-// Puts site A's original rel32 back (B failed). nullptr on success.
-const char* RevertA(std::uintptr_t base, void* stub) noexcept {
+// Puts a retargeted site's original rel32 back. nullptr on success.
+const char* RevertSite(std::uintptr_t base, std::uintptr_t site, std::uintptr_t next_ip, std::uint32_t orig, void* stub) noexcept {
     std::int32_t rel = 0;
-    if (!near_code::Rel32(base + c::board_a_next_ip, reinterpret_cast<std::uintptr_t>(stub), rel)) return "range";
+    if (!near_code::Rel32(base + next_ip, reinterpret_cast<std::uintptr_t>(stub), rel)) return "range";
     std::uint32_t current = 0;
     std::memcpy(&current, &rel, 4);
-    return near_code::PatchDword(reinterpret_cast<void*>(base + c::board_a_site + 1), current, c::board_a_rel32_orig);
+    return near_code::PatchDword(reinterpret_cast<void*>(base + site + 1), current, orig);
+}
+// Puts site A's original rel32 back (B failed). nullptr on success.
+const char* RevertA(std::uintptr_t base, void* stub) noexcept {
+    return RevertSite(base, c::board_a_site, c::board_a_next_ip, c::board_a_rel32_orig, stub);
 }
 } // namespace
 
@@ -207,7 +578,8 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
         __try {
             for (std::size_t i = 0; i < site->size && same; ++i) {
                 if (i >= skip && i < skip + 4) continue;
-                same = image[site->rva + i] == site->bytes[i];
+                const int owned = SeatOneByteOk(site->rva + i, image[site->rva + i]);
+                same = owned >= 0 ? owned == 1 : image[site->rva + i] == site->bytes[i];
             }
         } __except (ReadFilter(GetExceptionCode())) {
             return "read";
@@ -218,6 +590,11 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
     return nullptr;
 }
 
+void BindSeatOneForTest(SeatOpts opts, LimitFn limit) noexcept {
+    g_opts.store(PackOpts(opts), std::memory_order_release);
+    g_limit = limit;
+}
+void BindRemapForTest(RemapFn remap) noexcept { g_remap_read = remap; }
 void BindForTest(NearestFn nearest, DriverFn driver, TypeFn type, CountFn count, NowFn now) noexcept {
     g_nearest = nearest;
     g_driver = driver;
@@ -229,6 +606,12 @@ std::uint8_t SiteAForTest(void* unit, const float* pos, std::uint8_t first, std:
     return SiteA(unit, pos, first, last);
 }
 std::uint8_t SiteBForTest(void* unit, const float* pos) noexcept { return SiteB(unit, pos); }
+void BindPrequeryForTest(PrequeryFn prequery) noexcept { g_prequery = prequery; }
+bool SiteCForTest(void* action, std::uint32_t body, void* unit, std::uint16_t id, char* seat) noexcept {
+    return SiteC(action, body, unit, id, seat);
+}
+void BindGateForTest(GateFn gate) noexcept { g_gate = gate; }
+bool SiteDForTest(void* action, std::uint32_t index) noexcept { return SiteD(action, index); }
 void ResetForTest() noexcept {
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
@@ -241,6 +624,37 @@ void ResetForTest() noexcept {
     g_type = nullptr;
     g_count = nullptr;
     g_policy.store(0);
+    g_opts.store(0);
+    g_limit = nullptr;
+    g_seat_one.store(0);
+    g_remap_read = nullptr;
+    g_remap_refused.store(0);
+    g_race.store(false);
+    g_want.store(kVehicleUnknown);
+    g_deny.store(kVehicleUnknown);
+    g_grant.store(kVehicleUnknown);
+    g_hold.store(0);
+    g_race_hits.store(0);
+    g_hold_hits.store(0);
+    g_guard.store(kVehicleUnknown);
+    g_race_tried = 0;
+    g_race_refusal = nullptr;
+    g_stub_c = nullptr;
+    g_stub_d = nullptr;
+    g_prequery = nullptr;
+    g_gate = nullptr;
+    g_press.store(kVehicleUnknown);
+    g_press_seen.store(0);
+    g_pseq.store(0);
+    g_timeouts.store(0);
+    g_pend.store(false);
+    g_press_peer.store(0);
+    g_policy_since.store(kVehicleUnknown);
+    g_joins.store(0);
+    g_commit.store(kVehicleUnknown);
+    g_done.store(kVehicleUnknown);
+    g_done_seq.store(0);
+    g_commits.store(0);
     for (unsigned i = 0; i < 2; ++i) {
         g_calls[i].store(0);
         g_block[i].store(0);
@@ -255,7 +669,47 @@ void ResetForTest() noexcept {
 }
 } // namespace detail
 
-const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) noexcept {
+namespace {
+// M6: the seat-1 blocks against the image (the owned bytes accepted in either state). nullptr when
+// seat 1 is live. Review R4: the remap is no longer skipped here (the driver tick's SetRemapSkip).
+const char* InstallSeatOne(std::size_t span) noexcept {
+    const auto* image = reinterpret_cast<const unsigned char*>(g_base);
+    for (const std::uintptr_t rva : c::board_seat1_blocks) {
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            for (std::size_t i = 0; i < site->size && same; ++i) {
+                const std::uintptr_t at = site->rva + i;
+                const unsigned char b = image[at];
+                const int owned = SeatOneByteOk(at, b);
+                same = owned >= 0 ? owned == 1 : b == site->bytes[i];
+            }
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    std::uint32_t current = 0;
+    std::memcpy(&current, reinterpret_cast<const void*>(g_base + c::board_remap_rva), sizeof(current));
+    if (current != c::board_remap_skip && current != c::board_remap_orig) return "remap";
+    return nullptr;
+}
+// The live remap state: the image dword is the skip (jmp).
+bool RemapSkippedLive() noexcept {
+    if (!g_base) return false;
+    std::uint32_t current = 0;
+    __try {
+        std::memcpy(&current, reinterpret_cast<const void*>(g_base + c::board_remap_rva), sizeof(current));
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+    return current == c::board_remap_skip;
+}
+} // namespace
+
+const char* Install(const void* base, std::size_t span, NowFn now, LogFn log, SeatOpts opts) noexcept {
     if (InterlockedCompareExchange(&g_install_tried, 1, 0) != 0) return g_installed ? nullptr : g_refusal;
     const DWORD error = GetLastError();
     g_base = reinterpret_cast<std::uintptr_t>(base);
@@ -310,8 +764,174 @@ const char* Install(const void* base, std::size_t span, NowFn now, LogFn log) no
               static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub_a)),
               static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub_b)),
               static_cast<unsigned>(sizeof(c::board_blocks) / sizeof(c::board_blocks[0])), warn ? "protect_restore" : "none");
+    if (SeatOne(opts)) {
+        // The phase-1 immediates start stock (2); site B owns them from here.
+        const char* why = InstallSeatOne(span);
+        if (!why) {
+            g_limit = &SetPhaseOneLimitLive;
+            g_remap_read = &RemapSkippedLive;
+            g_opts.store(PackOpts(opts), std::memory_order_release);
+        }
+        LogFormat("partner_board=seat_one; result=%s; reason=%s; front=%u; cab=%u; remap=0x%llx; sites=0x%llx,0x%llx\r\n",
+                  why ? "refused" : "ok", why ? why : "none", opts.front ? 1u : 0u, opts.cab ? 1u : 0u,
+                  static_cast<unsigned long long>(c::board_remap_rva), static_cast<unsigned long long>(c::board_seat1_pass_rva),
+                  static_cast<unsigned long long>(c::board_seat1_phase_rva));
+    }
     SetLastError(error);
     return nullptr;
+}
+
+SeatOpts LiveSeatOpts() noexcept { return UnpackOpts(g_opts.load(std::memory_order_acquire)); }
+
+bool SetRemapSkip(bool skip) noexcept {
+    if (!g_installed || !g_base || !g_opts.load(std::memory_order_acquire) || g_remap_read != &RemapSkippedLive) return false;
+    auto* remap = reinterpret_cast<unsigned char*>(g_base + c::board_remap_rva);
+    std::uint32_t current = 0;
+    __try {
+        std::memcpy(&current, remap, sizeof(current));
+    } __except (ReadFilter(GetExceptionCode())) {
+        return false;
+    }
+    const std::uint32_t want = skip ? c::board_remap_skip : c::board_remap_orig;
+    const std::uint32_t from = skip ? c::board_remap_orig : c::board_remap_skip;
+    if (current == want) return true;
+    if (current != from) return false;
+    const DWORD error = GetLastError();
+    const char* why = near_code::PatchDword(remap, from, want);
+    SetLastError(error);
+    return !why || std::strcmp(why, "protect_restore") == 0;
+}
+bool RemapSkipped() noexcept { return g_remap_read && g_remap_read(); }
+
+const char* InstallRace() noexcept {
+    if (!g_installed || !g_base) return "board";
+    if (InterlockedCompareExchange(&g_race_tried, 1, 0) != 0) return g_race_refusal;
+    const DWORD error = GetLastError();
+    g_prequery = reinterpret_cast<detail::PrequeryFn>(g_base + c::board_prequery_rva);
+    void* stub = nullptr;
+    const char* why = hk::detail::RetargetCall(g_base + c::board_c_site, g_base + c::board_c_next_ip, c::board_c_rel32_orig,
+                                               reinterpret_cast<const void*>(&SiteC), stub);
+    if (why && std::strcmp(why, "protect_restore") != 0) {
+        g_race_refusal = std::strcmp(why, "bytes") == 0 ? "c_bytes" : std::strcmp(why, "allocate_near") == 0 ? "c_allocate_near"
+                       : std::strcmp(why, "range") == 0 ? "c_range" : std::strcmp(why, "protect") == 0 ? "c_protect"
+                       : std::strcmp(why, "cache_line") == 0 ? "c_cache_line" : "c_exchange";
+        LogFormat("partner_board=race; result=refused; reason=%s; c=0x%llx\r\n", g_race_refusal, static_cast<unsigned long long>(c::board_c_site));
+        SetLastError(error);
+        return g_race_refusal;
+    }
+    // E press only (8.55): site D, the guest's press held in phase 1. Without it site C goes back (no race).
+    g_gate = reinterpret_cast<detail::GateFn>(g_base + c::board_gate_rva);
+    void* stub_d = nullptr;
+    const char* why_d = hk::detail::RetargetCall(g_base + c::board_d_site, g_base + c::board_d_next_ip, c::board_d_rel32_orig,
+                                                 reinterpret_cast<const void*>(&SiteD), stub_d);
+    if (why_d && std::strcmp(why_d, "protect_restore") != 0) {
+        const char* reverted = RevertSite(g_base, c::board_c_site, c::board_c_next_ip, c::board_c_rel32_orig, stub);
+        const bool c_back = !reverted || std::strcmp(reverted, "protect_restore") == 0;
+        // Site C left live passes through while the race is off.
+        if (!c_back) g_stub_c = stub;
+        g_race_refusal = std::strcmp(why_d, "bytes") == 0 ? "d_bytes" : std::strcmp(why_d, "allocate_near") == 0 ? "d_allocate_near"
+                       : std::strcmp(why_d, "range") == 0 ? "d_range" : std::strcmp(why_d, "protect") == 0 ? "d_protect"
+                       : std::strcmp(why_d, "cache_line") == 0 ? "d_cache_line" : "d_exchange";
+        LogFormat("partner_board=race; result=refused; reason=%s; d=0x%llx; c_reverted=%u\r\n", g_race_refusal,
+                  static_cast<unsigned long long>(c::board_d_site), c_back ? 1u : 0u);
+        SetLastError(error);
+        return g_race_refusal;
+    }
+    g_stub_c = stub;
+    g_stub_d = stub_d;
+    g_race.store(true, std::memory_order_release);
+    LogFormat("partner_board=race; result=ok; c=0x%llx; d=0x%llx; stub_c=0x%llx; stub_d=0x%llx; warn=%s\r\n",
+              static_cast<unsigned long long>(c::board_c_site), static_cast<unsigned long long>(c::board_d_site),
+              static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub)),
+              static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(stub_d)), why || why_d ? "protect_restore" : "none");
+    SetLastError(error);
+    return nullptr;
+}
+void SetRace(bool on) noexcept { g_race.store(on, std::memory_order_release); }
+bool LiveRace() noexcept { return g_race.load(std::memory_order_acquire); }
+namespace {
+// One vehicle for ms (capped), or cleared (kVehicleUnknown) for a non-vehicle id or 0 ms.
+std::uint64_t RaceWord(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+    if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) return kVehicleUnknown;
+    const std::uint32_t until = NowLow() + (ms < kRaceDenyMaxMs ? ms : kRaceDenyMaxMs);
+    return static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(until) << 32;
+}
+// A vehicle word's id while live at now (kVehicleUnknown else) and its time left.
+std::uint16_t LiveWord(std::uint64_t word, std::uint32_t now, std::uint32_t& left) noexcept {
+    const auto v = static_cast<std::uint16_t>(word & 0xFFFFu);
+    const auto until = static_cast<std::uint32_t>(word >> 32);
+    const bool live = v != kVehicleUnknown && static_cast<std::uint32_t>(until - now) <= kRaceDenyMaxMs;
+    left = live ? until - now : 0;
+    return live ? v : kVehicleUnknown;
+}
+// The deny word and its flags (kDenyYield) in one store: site C reads it without g_arb (8.57 review).
+void StoreDeny(std::uint16_t vehicle, std::uint32_t ms, std::uint64_t flags) noexcept {
+    const std::uint64_t word = RaceWord(vehicle, ms);
+    g_deny.store(word == kVehicleUnknown ? word : word | flags, std::memory_order_release);
+    // A deny withdraws a grant of the same vehicle.
+    std::uint64_t grant = g_grant.load(std::memory_order_acquire);
+    if (word != kVehicleUnknown && static_cast<std::uint16_t>(grant & 0xFFFFu) == vehicle)
+        g_grant.compare_exchange_strong(grant, kVehicleUnknown, std::memory_order_acq_rel);
+}
+} // namespace
+void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept { StoreDeny(vehicle, ms, 0); }
+bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+    if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) return false;
+    AcquireSRWLockExclusive(&g_arb);
+    const bool owned = WordNames(g_commit.load(std::memory_order_acquire), vehicle, NowLow());
+    if (!owned) StoreDeny(vehicle, ms, kDenyYield);  // the host's own yield (8.57: site C shows its icon)
+    ReleaseSRWLockExclusive(&g_arb);
+    return !owned;
+}
+void RaceGrant(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+    const std::uint64_t word = RaceWord(vehicle, ms);
+    g_grant.store(word, std::memory_order_release);
+    // A grant withdraws a deny of the same vehicle.
+    std::uint64_t deny = g_deny.load(std::memory_order_acquire);
+    if (word != kVehicleUnknown && static_cast<std::uint16_t>(deny & 0xFFFFu) == vehicle)
+        g_deny.compare_exchange_strong(deny, kVehicleUnknown, std::memory_order_acq_rel);
+}
+void RaceHold(std::uint32_t ms) noexcept {
+    if (!ms) {
+        g_hold.store(0, std::memory_order_release);
+        return;
+    }
+    const std::uint32_t until = NowLow() + (ms < kRaceDenyMaxMs ? ms : kRaceDenyMaxMs);
+    g_hold.store(1u | static_cast<std::uint64_t>(until) << 32, std::memory_order_release);
+}
+void ReadRace(RaceState& out) noexcept {
+    out = RaceState{};
+    out.on = g_race.load(std::memory_order_acquire);
+    const std::uint32_t now = NowLow();
+    const std::uint64_t want = g_want.load(std::memory_order_acquire);
+    out.want = static_cast<std::uint16_t>(want & 0xFFFFu);
+    out.want_age_ms = out.want == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(want >> 32);
+    out.deny = LiveWord(g_deny.load(std::memory_order_acquire), now, out.deny_left_ms);
+    out.grant = LiveWord(g_grant.load(std::memory_order_acquire), now, out.grant_left_ms);
+    const std::uint64_t hold = g_hold.load(std::memory_order_acquire);
+    const auto hold_until = static_cast<std::uint32_t>(hold >> 32);
+    out.hold = (hold & 1u) && static_cast<std::uint32_t>(hold_until - now) <= kRaceDenyMaxMs;
+    out.hold_left_ms = out.hold ? hold_until - now : 0;
+    out.hits = g_race_hits.load(std::memory_order_relaxed);
+    out.holds = g_hold_hits.load(std::memory_order_relaxed);
+    const std::uint64_t guard = g_guard.load(std::memory_order_acquire);
+    out.guard = static_cast<std::uint16_t>(guard & 0xFFFFu);
+    out.guard_age_ms = out.guard == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(guard >> 32);
+    const std::uint64_t press = g_press.load(std::memory_order_acquire);
+    out.press = static_cast<std::uint16_t>(press & 0xFFFFu);
+    out.press_age_ms = out.press == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(press >> 32);
+    out.pseq = g_pseq.load(std::memory_order_acquire);
+    // Pending only while site D saw it within kPressGapMs: an aborted phase 1 (reload, a hit) never calls it again.
+    out.pend = g_pend.load(std::memory_order_acquire) && Near(now, g_press_seen.load(std::memory_order_acquire), kPressGapMs);
+    out.timeouts = g_timeouts.load(std::memory_order_relaxed);
+    out.commit = LiveWord(g_commit.load(std::memory_order_acquire), now, out.commit_left_ms);
+    const std::uint64_t done = g_done.load(std::memory_order_acquire);
+    out.done_seq = static_cast<std::uint32_t>((done >> 24) & 0xFFu);
+    out.done_vehicle = static_cast<std::uint16_t>(done & 0xFFFFu);
+    out.done_end = static_cast<std::uint8_t>((done >> 16) & 0xFFu);
+    out.done_wait_ms = static_cast<std::uint32_t>(done >> 32);
+    out.commits = g_commits.load(std::memory_order_relaxed);
+    out.joins = g_joins.load(std::memory_order_relaxed);
 }
 
 bool Installed() noexcept { return g_installed != 0; }
@@ -320,10 +940,37 @@ const char* InstallRefusal() noexcept { return g_refusal; }
 bool PatchLive(const void* base) noexcept {
     const auto b = reinterpret_cast<std::uintptr_t>(base);
     if (!g_installed || !b) return false;
+    // Site C counts once the race installed it (review R1/R2); site D too (8.55).
+    if (g_stub_c && !SiteLive(b, c::board_c_site, c::board_c_next_ip, g_stub_c)) return false;
+    if (g_stub_d && !SiteLive(b, c::board_d_site, c::board_d_next_ip, g_stub_d)) return false;
     return SiteLive(b, c::board_a_site, c::board_a_next_ip, g_stub_a) && SiteLive(b, c::board_b_site, c::board_b_next_ip, g_stub_b);
 }
 
-void Publish(std::uint64_t policy) noexcept { g_policy.store(policy, std::memory_order_release); }
+// Review R5: without site B nothing resets the immediates a steered call left at 1, and a stock
+// right-door driver would then become a passenger of an empty vehicle. Called from the driver tick
+// only while site B is not live (no wrapper call can write them then): back to the stock 2.
+bool RestorePhaseOneIfBLost(const void* base) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    if (!g_installed || !b || b != g_base || !g_limit) return false;
+    if (SiteLive(b, c::board_b_site, c::board_b_next_ip, g_stub_b)) return false;
+    bool changed = false;
+    const std::uintptr_t sites[2] = {c::board_seat1_pass_rva, c::board_seat1_phase_rva};
+    for (const std::uintptr_t rva : sites) {
+        const unsigned char imm = reinterpret_cast<const volatile unsigned char*>(b + rva)[1];
+        if (imm == kPhaseOneSeatOne) changed = true;
+    }
+    if (!changed) return false;
+    return SetPhaseOneLimitLive(kPhaseOneStock);
+}
+
+void Publish(std::uint64_t policy) noexcept {
+    // 8.58: stamp the first publication naming a vehicle the partner drives before the policy itself (a reader that sees
+    // the new policy sees its stamp; the stamp carries the vehicle, so an older one never matches another ride).
+    const Policy after = Unpack(policy);
+    if (NewlyDriven(Unpack(g_policy.load(std::memory_order_acquire)), after))
+        g_policy_since.store(static_cast<std::uint64_t>(after.vehicle) | static_cast<std::uint64_t>(NowLow()) << 32, std::memory_order_release);
+    g_policy.store(policy, std::memory_order_release);
+}
 std::uint64_t Published() noexcept { return g_policy.load(std::memory_order_acquire); }
 
 void ReadStats(Stats& out) noexcept {
@@ -339,6 +986,8 @@ void ReadStats(Stats& out) noexcept {
     out.last_count = static_cast<std::uint8_t>(g_last_count.load(std::memory_order_relaxed));
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.last_reason = g_last_reason.load(std::memory_order_relaxed);
+    out.seat_one = g_seat_one.load(std::memory_order_relaxed);
+    out.remap_refused = g_remap_refused.load(std::memory_order_relaxed);
 }
 
 } // namespace mgscoop::partner_board

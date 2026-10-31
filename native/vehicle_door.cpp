@@ -233,7 +233,13 @@ const char* VerifyImage(const void* image, std::size_t span) noexcept {
         const c::Site* site = ContractSite(rva);
         if (!site) return "contract";
         if (site->rva > span || site->size > span - site->rva) return "span";
-        if (std::memcmp(base + site->rva, site->bytes, site->size) != 0) return "block";
+        // M6 seat 1 (partner_board): the seat matrix's seat-1 remap jne (0xB79A43) may be the board's jmp.
+        for (std::size_t i = 0; i < site->size; ++i) {
+            const std::uintptr_t at = site->rva + i;
+            const unsigned char b = base[at];
+            if (at == c::board_remap_rva + 3 && (b == 0x75 || b == 0xEB)) continue;
+            if (b != site->bytes[i]) return "block";
+        }
     }
     for (const auto& data : c::door_data) {
         if (data.rva > span || 4 > span - data.rva) return "span";

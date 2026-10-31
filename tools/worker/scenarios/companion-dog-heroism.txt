@@ -1,0 +1,156 @@
+# Heroism at a copy's death (user decision 2026-10-29; docs/vehicles-companions-design.md 8.16): when the guest's copy
+# of the host's D-Dog dies on the guest's PC the stock dying penalty (BuddyServiceImpl 0x140A4F440) takes 30 heroism and
+# 20 raw bond there (60, 100 and +150 demon points for a player's kill); under companion_host_owned the guest's
+# world_companion_guard.lua gives exactly that back, once per death (event=dog_hero step=given). Three copy deaths with
+# readbacks (companion_lab hero) on both copies before and after each: (1) the lab kill while the host's dog lives (the
+# restore), (2) the host's dog down (the host pays on its own PC; the guest's mirrored copy gets it back), (3) E19 with
+# the guard off: a real death by guard fire. The guest stands 6 m behind and 6 m left of the host, facing it, and the
+# host's dog is called 5 m in front of the host before parts 1 and 2.
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/companion-dog-heroism.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# Expected: (1) Dead -> step=dead host=alive -> step=given by=other give=30,20,0 (h=a:a-30:a) -> the guest's hero
+# readback equal before and after, the host's too; hr-dead-2 shows the stock "D-Dog Near Death [Heroism -30]" on the
+# guest's screen only; (2) the host's readback 30 lower (its own death), the guest's step=dead host=down -> step=given ->
+# equal; (3) obs Dead att=other -> step=given n=3. NEVER: event=dog_hero on the host; event=dog_hero step=error.
+labsetting companion_host_owned=1
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting debug_soldier_warp=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+waitlog host 'dog_guard_code_gate=ok;scope=guest_mirror_dog_lease' 5
+waitlog guest 'dog_guard_code_gate=ok;scope=guest_mirror_dog_lease' 5
+waitlog host 'world_lua=event=companion; role=host; step=seed; kind=dog;' 60
+waitlog guest 'world_lua=event=companion; role=guest; step=loaded; kind=dog; source=seed;' 90
+host run godmode 1
+guest run godmode 1
+host run teleport 796.0 341.5 1633.5 95
+wait 3000
+placebehind guest host 6 -6
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 75
+waitlog guest 'world_lua=event=dog_guard; role=guest; step=armed; reason=ok; byte=(129|1[3-5][0-9]);' 30
+# --- (1) the lab kill while the host's dog lives ----------------------------------------------------------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+host expect ^call_here;kind=dog;
+wait 5000
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=0;
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;ogre=-?[0-9]+;bond=[0-9]+;bond_raw=[0-9]+;dead_bit=0;applies=1;deaths=0$
+guest run companion_lab mark hero1
+both capture hr-before
+logmark both
+guest run companion_lab kill_mirror
+guest expect ^kill_mirror;queued=1
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=alive;' 20
+waitlog guest 'world_lua=event=dog_hero; role=guest; step=given; by=other; att=[0-9]+; h=[0-9]+:[0-9]+:[0-9]+; b=[0-9]+:[0-9]+:[0-9]+; o=-?[0-9]+:-?[0-9]+:-?[0-9]+; give=[0-9]+,[0-9]+,0; ms=[0-9]+; n=1;' 5
+wait 300
+both capture hr-dead
+wait 1200
+both capture hr-dead-2
+wait 1500
+guest capture hr-dead-3
+guest run companion_lab hero
+guest expect ^hero;role=guest;heroic=[0-9]+;.*;applies=1;deaths=1$
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=back; ms=[0-9]+;' 60
+wait 2500
+both capture hr-back
+guest run companion_lab hero
+host run companion_lab hero
+guest run buddy_status
+guest expect kdog
+# --- (2) the host's dog down: the host pays on its own PC, the guest's mirrored copy gets it back -----------------------
+resetpose host
+placebehind guest host 6 -6
+host run companion_lab call_here dog
+wait 5000
+host run companion_lab hero
+guest run companion_lab hero
+guest run companion_lab mark hero2
+logmark both
+host run companion_lab dog_life 0
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=dead; host=down;' 15
+waitlog guest 'world_lua=event=dog_hero; role=guest; step=given; by=[a-z]+; att=[0-9]+; .*; ms=[0-9]+; n=2;' 5
+wait 1500
+both capture hr-down
+wait 1500
+both capture hr-down-2
+host run companion_lab hero
+host expect ^hero;role=host;heroic=[0-9]+;.*;dead_bit=1;applies=0;
+guest run companion_lab hero
+guest expect ;applies=1;deaths=2$
+wait 20000
+logmark both
+host run companion_lab recall
+host expect ^recall;
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=recalled;' 60
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+wait 4000
+both capture hr-recall
+host run companion_lab hero
+guest run companion_lab hero
+# --- (3) E19 with the guard off: a real death by guard fire ------------------------------------------------------------
+host run teleport 796.0 341.5 1633.5 275
+wait 3000
+placebehind guest host 1 7
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+wait 2500
+both mouse 1500 0
+wait 400
+both mouse 1500 0
+waitlog guest 'world_lua=event=buddy; role=guest; result=target_submitted; error_cm=' 30
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 3000
+guest run spawn_sync
+guest run companion_lab near_guard on
+guest expect ^near_guard;on=1
+wait 10000
+host run cp_phase nearest alert
+host expect ^submitted_phase;
+wait 8000
+stance guest prone
+guest run companion_lab near_guard shield
+guest expect ^near_guard;on=shield
+host run companion_lab call_here dog
+wait 6000
+host run companion_lab hero
+guest run companion_lab hero
+both capture hr-shield
+guest run companion_lab mark hero3
+logmark both
+guest run companion_lab guard off
+guest expect ^guard;on=0
+waitlog guest 'world_lua=event=obs; m=Dead; ent=0; id=9728; att=other;' 150
+waitlog guest 'world_lua=event=dog_hero; role=guest; step=given; by=other; .*; n=3;' 5
+wait 1500
+both capture hr-fire-dead
+guest run companion_lab hero
+host run companion_lab hero
+guest run companion_lab near_guard off
+guest run companion_lab guard on
+guest expect ^guard;on=1
+host run cp_phase nearest sneak
+stance guest stand
+waitlog guest 'world_lua=event=dog_restore; role=guest; step=back; ms=[0-9]+;' 60
+wait 3000
+both capture hr-fire-back
+guest run companion_lab hero
+guest expect ;applies=1;deaths=3$
+host run companion_lab hero
+guest run companion_lab dog_state
+host run companion_status
+guest run companion_status
+state

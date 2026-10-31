@@ -269,6 +269,26 @@ public:
     }
 
     ~RealModel() override {
+        // The setup first (0.14.4 review): the window closed while co-op gets ready ends the process (and the setup with
+        // it) before it waits for anything else. It used to join a pending update check first (its WinHTTP waits last up
+        // to about a minute), so the setup ran on with the window gone, next to the setup of a window opened again
+        // meanwhile. The setup is resumable and starts over cleanly. Nothing else runs with a setup: an update download
+        // or install, a local test and a game session each need co-op ready, and the setup never starts during them. A
+        // setup that has just finished (not yet picked up by tick()) has written everything: the process ends as well,
+        // since launcher_main holds the folder until this destructor is done.
+        if (setup_thread_.joinable()) {
+            shared_->cancel = true;   // a setup that goes on stops at its next step (the tests' model never ends the process)
+            bool running = false;
+            {
+                std::lock_guard<std::mutex> lock(shared_->m);
+                running = shared_->setup_running;
+            }
+            if ((running || phase_ == Phase::setting_up) && exit_if_busy_) {
+                Log("window=closed_during_setup");
+                ExitProcess(0);
+            }
+            setup_thread_.join();
+        }
         // A local test still starting finishes its start first (it starts the helper that puts both folders back once
         // both games have exited); the folder check is short.
         if (local_start_thread_.joinable()) local_start_thread_.join();
@@ -286,20 +306,6 @@ public:
                     CleanupSession(*env_, paths_, false);
             }
             Log("window=closed; stage=" + StageName(stage_));
-        }
-        if (setup_thread_.joinable()) {
-            bool running = false;
-            {
-                std::lock_guard<std::mutex> lock(shared_->m);
-                running = shared_->setup_running;
-            }
-            if (running && exit_if_busy_) {
-                // Closing the window mid-setup ends the process (and the setup
-                // worker with it); the setup is resumable and starts over cleanly.
-                Log("window=closed_during_setup");
-                ExitProcess(0);
-            }
-            setup_thread_.join();
         }
     }
 
@@ -520,9 +526,23 @@ public:
         // After a failed attempt it waits for start_setup() ("Try again"); after an
         // Uninstall in this window for Check again; never while an update downloads
         // or installs (that replaces the files the setup reads).
+        // While another setup runs in this folder (a window that is closing ends its own first; the developer
+        // --write-session), this window waits for it instead of starting a second one next to it, then looks at the
+        // folder again: that setup may have made co-op ready already (0.14.4 review).
         if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce() && !UpdateBusy()) {
-            Log("setup=auto");
-            start_setup();
+            if (SetupRunningElsewhere(paths_.game)) {
+                if (!setup_waiting_) Log("setup=waiting; reason=other_setup");
+                setup_waiting_ = true;
+            } else {
+                if (setup_waiting_) {
+                    setup_waiting_ = false;
+                    Recheck();
+                }
+                if (phase_ == Phase::needs_setup) {
+                    Log("setup=auto");
+                    start_setup();
+                }
+            }
         }
         // Developer --update-now (with a loopback --update-feed): install as soon
         // as Update now may start (after the automatic setup, as a player would).
@@ -1669,6 +1689,7 @@ private:
     bool auto_setup_ = true;   // --write-session runs the setup itself (its setup=start line)
     // After an Uninstall in this window co-op is set up again only when the player asks (Check again, Try again).
     bool auto_paused_ = false;
+    bool setup_waiting_ = false;   // the automatic setup waits for another setup in this folder
     InstancePaths paths_;
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread setup_thread_;

@@ -128,6 +128,8 @@ int main(int argc, char** argv) {
         // The vehicle decisions of 2026-10-29 (D11, D12, D14), lab and play.
         std::printf("world_loadout_block=%d\nworld_vehicle_break=%d\nworld_vehicle_credit=%d\n", c.world_loadout_block ? 1 : 0,
                     c.world_vehicle_break ? 1 : 0, c.world_vehicle_credit ? 1 : 0);
+        // The vehicle fixes of 2026-10-29, lab and play.
+        std::printf("world_vehicle_crew=%d\nworld_vehicle_damage=%d\n", c.world_vehicle_crew ? 1 : 0, c.world_vehicle_damage ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
@@ -158,6 +160,10 @@ int main(int argc, char** argv) {
         // F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board key (passenger with the gun profile) and whether it was named.
         std::printf("partner_ride_board=%s\npartner_ride_board_given=%d\n", mgscoop::PartnerRideBoardName(c.partner_ride_board),
                     c.partner_ride_board_given ? 1 : 0);
+        std::printf("partner_ride_front=%d\npartner_ride_front_given=%d\npartner_ride_cab=%d\npartner_ride_cab_given=%d\n"
+                    "partner_ride_race=%d\npartner_ride_race_given=%d\n",
+                    c.partner_ride_front ? 1 : 0, c.partner_ride_front_given ? 1 : 0, c.partner_ride_cab ? 1 : 0,
+                    c.partner_ride_cab_given ? 1 : 0, c.partner_ride_race ? 1 : 0, c.partner_ride_race_given ? 1 : 0);
         // Native partner throws (docs/anim-round2-throws.md Stage B): the resolved key and whether it was named.
         std::printf("partner_native_support=%d\npartner_native_support_given=%d\n", c.partner_native_support ? 1 : 0,
                     c.partner_native_support_given ? 1 : 0);
@@ -195,6 +201,19 @@ int main(int argc, char** argv) {
         std::printf("lab_fast_boot=%d\nlab_boot_mission=%u\nlab_boot_pos=%d\nlab_boot_clock_s=%d\nlab_boot_weather=%s\n", c.lab_fast_boot ? 1 : 0,
                     static_cast<unsigned>(c.lab_boot.mission), c.lab_boot.has_pos ? 1 : 0, static_cast<int>(c.lab_boot.clock_s),
                     mgscoop::LabBootWeatherName(c.lab_boot.weather));
+        // G2: the back-seat aim census (lab only, default 0; play forces it off) and whether it was named.
+        std::printf("partner_seat_aim=%d\npartner_seat_aim_given=%d\n", c.partner_seat_aim ? 1 : 0, c.partner_seat_aim_given ? 1 : 0);
+        // M7: the seat gun (lab and play, default 0; a named 1 runs in play too) and whether it was named.
+        std::printf("partner_seat_gun=%d\npartner_seat_gun_given=%d\n", c.partner_seat_gun ? 1 : 0, c.partner_seat_gun_given ? 1 : 0);
+        std::printf("partner_seat_shot=%d\npartner_seat_shot_given=%d\n", c.partner_seat_shot ? 1 : 0, c.partner_seat_shot_given ? 1 : 0);
+        std::printf("partner_ride_seat1_anchor=%d\npartner_ride_seat1_anchor_given=%d\n", c.partner_ride_seat1_anchor ? 1 : 0,
+                    c.partner_ride_seat1_anchor_given ? 1 : 0);
+        // Design 8.49: the seat first person (follows the gun profile in lab and play) and whether it was named.
+        std::printf("partner_seat_fpv=%d\npartner_seat_fpv_given=%d\n", c.partner_seat_fpv ? 1 : 0, c.partner_seat_fpv_given ? 1 : 0);
+        // Design 8.27: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
+        std::printf("partner_pass_camera=%s\npartner_pass_camera_given=%d\npartner_pass_camera_trace=%d\n",
+                    mgscoop::PartnerPassCameraName(c.partner_pass_camera), c.partner_pass_camera_given ? 1 : 0,
+                    c.partner_pass_camera_trace ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {
