@@ -3,7 +3,7 @@
 # 300-900 ms after it: the 8.27 pull?), a get-off in first person, and the lab lever passcam seatfpv on (the automatic
 # first person: set at the aim, cleared at the aim end / get-off, the player's own F tap opts out) on the same boardings.
 # Wakh Sind jeep 25608, host seed afgh-quiet (the host drives first), guest seed afgh-horse; shipped lab defaults (seat-1
-# anchor, S1, pass camera view); the trace on; partner_seat_fpv NOT named (off): every automatic leg is the lab lever.
+# anchor, S1, pass camera view); the trace on; partner_seat_fpv=0 named (on by default since 0ff748a): every automatic leg is the lab lever.
 #   1. The host drives; the guest in seat 1, stock: aim, F tap (first person) + a shot, release, aim again (sticky?), F
 #      tap back; F tap + get-off while aiming; an aim on foot; F tap on foot (back to the shoulder).
 #   2. The guest in seat 1 with the lever on: aim (automatic first person) + a shot, release, aim again + F tap (opt out),
@@ -20,6 +20,7 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7f-seat-fpv-probe.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
 labsetting partner_pass_camera_trace=1
+labsetting partner_seat_fpv=0
 boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
 both debug godmode 1
 both debug infinite_ammo 1

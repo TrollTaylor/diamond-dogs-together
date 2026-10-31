@@ -1,5 +1,6 @@
-# m6m7f the stock F tap from seats 1 and 2 at the SHIPPED play defaults (design 8.47; README Seats tip): no labsetting
-# line, -Mode play -WanSim bad, the seat-1 anchor, S1 and partner_pass_camera=view on, partner_seat_fpv off. Wakh Sind
+# m6m7f the stock F tap from seats 1 and 2 at the play defaults (design 8.47; README Seats tip), except
+# labsetting partner_seat_fpv=0 (on by default since 0ff748a, design 8.51: with it on, each F tap here would be the
+# opt-out), -Mode play -WanSim bad, the seat-1 anchor, S1 and partner_pass_camera=view on. Wakh Sind
 # jeep 25608 (30010), host seed afgh-quiet, guest seed afgh-horse (both teleported to the jeep). Guards asleep by hash.
 #   1. The host drives; the guest in seat 1: aim (blocked?), F tap (first person?), a shot in first person (frames
 #      +50 / +350 / +650 ms: the 8.27 pull?), release, aim again (sticky?), F tap back; F tap + get-off while aiming in
@@ -14,6 +15,7 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7f-seat-ftap-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
 #        -Mode play -WanSim bad
+labsetting partner_seat_fpv=0
 title 200
 waitgameplay host 240
 waitgameplay guest 240
