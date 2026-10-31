@@ -1048,8 +1048,7 @@ private:
     // Update now may start: no setup running or about to start by itself, no game and no local test.
     bool UpdateAllowed() const {
         if (stage_ != Stage::none || phase_ == Phase::not_in_game_folder || phase_ == Phase::setting_up) return false;
-        // (While it waits for the player, fb1031, nothing is about to start: an update may.)
-        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce() && setup_busy_.empty()) return false;
+        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce()) return false;
         return true;
     }
 
