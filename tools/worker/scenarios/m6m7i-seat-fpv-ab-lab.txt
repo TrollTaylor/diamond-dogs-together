@@ -1,0 +1,230 @@
+# m6m7i (design 8.56): the front-seat downward-aim A/B, lab, one run. The setup is m6m7h-seat-fpv-shots-lab.txt part B
+# (the host drives, the guest boards seat 1, the host gets off, warps the one awake guard ~11 m front-right of seat 1
+# and steps back to the driver's door; the camp sleeps, 'enemy ignore' on all). Part A (roles swapped) is left out.
+# m6m7h ffc0411d: at the first set (cam_turn -40 2, 2 deg down) the guard stood under the reticle; the scripted in-aim
+# re-aim at his torso (enemy_aim_nearest 1.1, ~8 deg down) left the rifle across the first-person view with the red
+# mark and 2 presses fired nothing. Is that the automatic first person or the jeep itself? Legs, each on the guest:
+#   ON1 (partner_seat_fpv as shipped, the key): press 1 at the first set (does it fire, does it HIT him), then the
+#       re-aim and presses 2 and 3.
+#   OFF (lab lever 'passcam seatfpv off': the stock shoulder view): the same first direction, press 4, then the same
+#       re-aim, presses 5 and 6.
+#   ON2 (lever back to 'key'): the same raise and re-aim, press 7 (the A-B-A check: the guard may have moved).
+# The gun mode at each press: labsetting partner_pass_camera_trace=1 (lab-only logging, no behaviour change) logs the
+# local gun mode (gun=) every 100 ms while aiming and the seat first-person line on each change; 'guest debug passcam
+# status' right before each press is the press's marker in the guest's log (the trace lines after it carry its gun mode).
+# Read: guard_here; seat_fpv set / restore; partner_seat_shot lines (dist_cm against the guard's distance); the host's
+# world_lua obs (m=Dead / Unconscious / Neutralize) and damage lines; the frames on both copies.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7i-seat-fpv-ab-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+labsetting debug_soldier_warp=1
+labsetting partner_pass_camera_trace=1
+boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+host run enemy ignore 1084844745
+host run enemy ignore 1927090184
+host run enemy ignore 1791272719
+host run enemy ignore 2112392286
+host run enemy ignore 347113222
+host run enemy ignore 1113151945
+host run enemy ignore 1004648379
+host run enemy ignore 1856151639
+host run enemy ignore 2507222959
+host run enemy ignore 1626377522
+host run enemy ignore 2077341861
+host run enemy ignore 3439362210
+host run enemy ignore 2035351939
+host run enemy ignore 208831908
+host run enemy ignore 1445674198
+host run enemy ignore 3030732661
+host run enemy sleep 1927090184
+host run enemy sleep 1791272719
+host run enemy sleep 2112392286
+host run enemy sleep 347113222
+host run enemy sleep 1113151945
+host run enemy sleep 1004648379
+host run enemy sleep 1856151639
+host run enemy sleep 2507222959
+host run enemy sleep 1626377522
+host run enemy sleep 2077341861
+host run enemy sleep 3439362210
+host run enemy sleep 2035351939
+host run enemy sleep 208831908
+host run enemy sleep 1445674198
+host run enemy sleep 3030732661
+host run cp_phase nearest sneak
+stance host stand
+stance guest stand
+wait 1500
+both capture start
+# --- B. The host drives; the guest in seat 1 -----------------------------------------------------------------------
+host debug teleport 577.20 320.2 1157.19 -84
+wait 2500
+host press e 150
+wait 4500
+host run vehicle_seats
+host require vehicle;id=25608
+logmark both
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1;' 5
+both capture b-seated
+guest run vehicle_state_status 25608
+host run vehicle_state_status 25608
+host press e 150
+wait 3000
+host debug teleport 565.5 320.5 1171.7 146
+wait 2000
+logmark both
+host run spawn_enemy here
+host expect ^guard_here;
+wait 2500
+guest run spawn_sync
+host debug teleport 578.5 320.2 1155.5 -84
+# --- ON1: the shipped first person ---------------------------------------------------------------------------
+logmark both
+guest run enemy_cam_turn -40 2
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+wait 900
+guest capture on1-aim0
+host capture on1-guard
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p1-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p1-350
+guest hold rmb 1500 nowait
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.1
+guest expect ^aim_nearest;ent=\d+;
+guest hold rmb 1500 nowait
+wait 600
+guest capture on1-reaim
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p2-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p2-350
+guest hold rmb 1500 nowait
+wait 300
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture p3-050
+guest hold rmb 1500 nowait
+wait 300
+guest capture p3-350
+guest hold rmb 1500 nowait
+wait 300
+guest release
+wait 1500
+both capture on1-after
+host run vehicle_state_status 25608
+# --- OFF: the stock shoulder view (lab lever) ------------------------------------------------------------------
+guest debug passcam seatfpv off
+wait 500
+logmark both
+guest run enemy_cam_turn -40 2
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+wait 900
+guest capture off-aim0
+host capture off-guard
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p4-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p4-350
+guest hold rmb 1500 nowait
+wait 300
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.1
+guest expect ^aim_nearest;ent=\d+;
+guest hold rmb 1500 nowait
+wait 600
+guest capture off-reaim
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p5-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p5-350
+guest hold rmb 1500 nowait
+wait 300
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture p6-050
+guest hold rmb 1500 nowait
+wait 300
+guest capture p6-350
+guest hold rmb 1500 nowait
+wait 300
+guest release
+wait 1500
+both capture off-after
+# --- ON2: the lever back to the key (first person again) ------------------------------------------------------
+guest debug passcam seatfpv key
+wait 500
+logmark both
+guest run enemy_cam_turn -40 2
+guest expect ^cam_turn;
+wait 800
+guest hold rmb 1500 nowait
+wait 900
+guest capture on2-aim0
+host capture on2-guard
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.1
+guest expect ^aim_nearest;ent=\d+;
+guest hold rmb 1500 nowait
+wait 600
+guest capture on2-reaim
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+both capture p7-050
+guest hold rmb 1500 nowait
+wait 300
+both capture p7-350
+guest hold rmb 1500 nowait
+wait 300
+guest release
+wait 1500
+both capture on2-after
+guest run vehicle_state_status 25608
+host run vehicle_state_status 25608
+host run enemy_list
+state
