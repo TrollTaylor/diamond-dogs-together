@@ -1,9 +1,6 @@
 # fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the play defaults, -WanSim
 # bad, seed afgh-ledge for both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
-# Written for partner_melee on with the gun profile (f07b3c8c). Since f0b7e720 the key is off unless named (both fb1031
-# runs were refused before admission): to run this, either add partner_melee=[01] to the worker's labsetting allow-lists
-# (Invoke-WorkerScenario.ps1 -LabSetting and its scenario line check, Start-WorkerSession.ps1) and add
-# "labsetting partner_melee=1" below, or run it at a build whose default is on again (the default-on flip under test).
+# partner_melee is off unless named until a run shows it (f0b7e720), so this names it on both copies (labsetting).
 # Not run yet: 52fdd178 and its retry 79487b41 were refused (the guest's D3D11 device, E_OUTOFMEMORY).
 #   a) the guest stands 1 m behind the host, facing it, and presses LMB (no RMB: CQC). The guest's copy: local act 113
 #      (the strike) -> partner_melee=strike; ...; verdict=land; queued=1. The host's copy applies one friendly hit, cause
@@ -16,6 +13,7 @@
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-partner-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+labsetting partner_melee=1
 title 200
 waitgameplay host 120
 waitgameplay guest 120
