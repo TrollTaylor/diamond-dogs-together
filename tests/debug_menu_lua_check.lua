@@ -904,9 +904,11 @@ sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.loading = t
 check(sp.logs[#sp.logs][3] == 'action_context_changed' and forced(sp, false) == 0, 'mission not in gameplay: no guard command')
 sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.env.vars.missionCode = 30020; sp:tick()
 check(sp.D.pending == nil and forced(sp, false) == 0, 'mission change: no guard command to the old mission')
-sp = warpFixture({{r = 0, h = 1}}); for i = 1, 7 do sp.D.enemy.used['old_' .. i] = true end
+sp = fill8(warpFixture({{r = 0, h = 1}})); sp.D.enemy.used.old_8 = nil
 sp:send('spawn_enemy here'); sp:tick(); sp:tick()
-check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight per mission includes warped guards')
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight alive near you include warped guards')
+sp.life[5] = 3
+check(sp:send('spawn_enemy here')[3]:find('submitted_guard_here;ent=2147483648;', 1, true) == 1, 'the warped guard killed: the next press brings another')
 -- enemy_list and enemy <op>
 f = fixture(); f.life[6] = 1
 check(f:send('enemy_list 50')[3] == 'nearby=2;radius=50', 'nearby list result')

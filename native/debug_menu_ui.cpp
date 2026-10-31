@@ -43,7 +43,7 @@ struct State {
     float teleport[3]{}, yaw{}, step[3]{0, 0, 2};
     bool teleport_set{};
     int bookmark{}, payload{1};
-    bool spawn_come{};
+    bool spawn_come{true};  // "Spawn enemy here" brings a hostile soldier unless unchecked
     int nearby_radius{80}, clear_radius{25};
     std::uint32_t selected{};
     char camp[65]{};
@@ -266,13 +266,15 @@ void Chip(const ActionDef& a, const Snapshot& s) noexcept {
     const Ticket* ticket = nullptr;
     for (const auto& t : ui.tickets) if (t.action == &a) { ticket = &t; break; }
     if (!ticket || Now() - ticket->time > 20.0) return;
-    char text[64]{};
+    char text[96]{};
     ImVec4 color = kAmber;
     const char* full = "";
     if (!ticket->id) { std::snprintf(text, sizeof(text), "Refused by the queue"); color = kRed; }
     else if (const auto* r = FindReceipt(s, ticket->id)) {
         full = r->result;
-        std::snprintf(text, sizeof(text), "%s%.48s", r->status == 2 ? "... " : "", r->result);
+        // Plain words where the players need them (spawn results); the raw result stays in the tooltip.
+        if (const char* plain = act::ResultText(r->result)) std::snprintf(text, sizeof(text), "%s", plain);
+        else std::snprintf(text, sizeof(text), "%s%.48s", r->status == 2 ? "... " : "", r->result);
         color = r->status == 0 ? kGreen : r->status == 2 ? kAmber : kRed;
     } else std::snprintf(text, sizeof(text), "... queued");
     ImGui::SameLine();
@@ -579,11 +581,10 @@ void Enemies(const Snapshot& s) noexcept {
         Row("spawn_enemy_here", s, {"Spawn enemy here", 260.0f, ImGui::GetFrameHeight() * 1.8f, true});
         ImGui::SameLine();
         ImGui::Checkbox("He comes at me (hostile)", &ui.spawn_come);
-        Wrapped("Moves the nearest living guard 5 m in front of you, facing you (lab.ini debug_soldier_warp=1, engine "
-                "set-transform message). Unchecked he ignores you; checked he attacks. If the native placement is off or "
-                "refused he is snapped to the nearest patrol route instead (5-60 m). Host only; when the world link is paired "
-                "the guest's copy of him is moved the same way (spawn sync; the receipt log shows remote spawn_enemy). At most 8 "
-                "per mission. He is armed: enable Auto-heal or keep Kill/Sleep ready.");
+        Wrapped("Brings the nearest living guard (15-500 m) 5 m in front of you, facing you. Checked he attacks; unchecked "
+                "he ignores you. Afghanistan and Africa free roam only (no enemies at Mother Base). If the in-front placement "
+                "is refused he goes to the nearest patrol route instead. Host only; your partner sees the same soldier. At most "
+                "8 spawned soldiers alive near you: dead, asleep, Fultoned or far ones free their place. He is armed.");
         Rows({"spawn_enemy_closest", "enemy_goto_spawn"}, s);
         if (s.enemy_spawn_valid) ImGui::Text("Last guard %u at X %.1f Y %.1f Z %.1f m", s.enemy_spawn_hash,
             s.enemy_spawn_pos_mm[0] * 0.001, s.enemy_spawn_pos_mm[1] * 0.001, s.enemy_spawn_pos_mm[2] * 0.001);

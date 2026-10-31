@@ -2676,10 +2676,11 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!sw::ParseReceipt(text, size, id, request)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
+    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
-    if (labc.role == mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("host");
+    if (labc.role == mgscoop::LabRole::guest) return refuse("host");
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     if (!debug::DispatchedCommand(id, "spawn_enemy here")) return refuse("command");
@@ -2738,8 +2739,9 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (labc.role != mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("role");
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    if (labc.role != mgscoop::LabRole::guest) return refuse("role");
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
+    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
@@ -6139,13 +6141,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
-                    if (labc.debug_soldier_warp) {
+                    if (labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
-                        // or a guest spawn-sync grant (GuestWarpReceipt).
+                        // or a guest spawn-sync grant (GuestWarpReceipt). Lab: debug_soldier_warp; play: spawn_warp.
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
-                        if (soldier_warp_ready) Log("soldier_warp=ready; key=debug_soldier_warp; call=manager_vt38_send; hop=runtime_census\r\n");
+                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; call=manager_vt38_send; hop=runtime_census\r\n",
+                                                          labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

@@ -34,7 +34,7 @@ constexpr ActionDef kActions[] = {
     {"player_drop_secondary", C::player, "Drop secondary gun", "drop_item current_secondary n", "drop pickup weapon pistol", "Drops a pickup of the current secondary weapon.", P},
     // Enemies
     {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me warp",
-     "Moves the nearest living guard (15-500 m) 5 m in front of you, facing you, armed. Needs lab.ini debug_soldier_warp=1; otherwise or when refused he is snapped to the nearest patrol route (5-60 m). The guest's copy of him is moved the same way (spawn sync).", H | P | S},
+     "Brings the nearest living guard (15-500 m) 5 m in front of you, facing you, armed. Afghanistan and Africa free roam only. Play: lab.ini spawn_warp (on); lab: debug_soldier_warp=1. When refused he goes to the nearest patrol route. The guest's copy of him is moved the same way (spawn sync).", H | P | S},
     {"spawn_enemy_closest", C::enemies, "Spawn at closest camp", "spawn_enemy closest", "enemy soldier guard camp", "Moves a guard of the closest camp onto its patrol route.", H | S},
     {"spawn_enemy_route", C::enemies, "Spawn on selected route", "spawn_enemy camp route", "enemy soldier guard patrol", "Moves a guard onto the selected camp route (point 0).", H | P | kNeedsRoutes | S},
     {"enemy_goto_spawn", C::enemies, "Go to spawned guard", "goto_spawn", "teleport travel guard", "Teleports next to the last confirmed spawned guard.", kNeedsSpawn},
@@ -265,7 +265,20 @@ const char* LifeCodeName(std::uint32_t code) noexcept {
     }
 }
 const char* ResultText(const char* result) noexcept {
-    (void)result;
+    if (!result || !result[0]) return nullptr;
+    const auto starts = [result](const char* prefix) noexcept { return std::strncmp(result, prefix, std::strlen(prefix)) == 0; };
+    const auto has = [result](const char* part) noexcept { return std::strstr(result, part) != nullptr; };
+    if (starts("spawn_mother_base")) return "No enemies at Mother Base: spawn works in Afghanistan and Africa free roam.";
+    if (starts("spawn_pool_limit_8")) return "8 spawned soldiers are already near you. Deal with one first.";
+    if (starts("spawn_no_guard")) return "No soldier within 500 m to bring. Go nearer a base or outpost.";
+    if (starts("spawn_no_route") || starts("spawn_route_limit")) return "No patrol route near you to put a soldier on.";
+    if (starts("spawn_context")) return "Stopped: the mission or the menu command changed.";
+    if (starts("spawn_terminal_unknown")) return "The soldier died or was taken before he arrived.";
+    if (starts("spawn_position_timeout")) return "The soldier did not show up. Try again.";
+    if (starts("spawn_binding_error")) return "The game refused to move that soldier. Try again.";
+    if (starts("submitted_guard_here")) return "Bringing a soldier to you...";
+    if (starts("guard_here;") && has(";mode=warp;")) return "A soldier is in front of you.";
+    if (starts("guard_here;") && has(";mode=route;")) return "No in-front placement: a soldier went to the nearest patrol route.";
     return nullptr;
 }
 bool IsMenuText(const char* text) noexcept {
