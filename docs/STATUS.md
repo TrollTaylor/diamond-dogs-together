@@ -15,14 +15,17 @@ reached the driver's seat first".
   after `wait_ms=284`; c) both press: one driver (the host), the guest got seat 1 on its copy (seat 3 behind the dog on
   the host's: `seat_draw reason=dog`, DrawSeat live once) and still saw the a=6 toast.
   `1beffd8f`: a guest press at an empty jeep, `wait_ms=280`, drove. NEVER lines 0 in both.
-- **Not shown in a run:** `b544c6d` (no a=6 toast when the press already took another seat): run 3 was refused twice
-  before admission (a worker fixture timeout, then `debug_overlay_tests`' raw keyboard check in the worker's CTest).
-- **Review fixes** (`d758d50` -> `321d3d0`, unit tests): a press timeout makes the guest stock until the next READY
+- **Merged head** run `caaf743f` (hidden worker at `c1c562d9`: the review fixes and the checks merge; play, `-WanSim bad`,
+  both copies; no expect failure, closed, baselines and real saves unchanged, not forced): a) b) c) d) again; b)
+  `wait_ms=268`; c) the press ended `end=peer` (`wait_ms=86`), the late deny logged `seated=1` and the guest saw no
+  toast (`b544c6d` shown) [O log, frames]; the host's screen again drew the guest in seat 3 behind its D-Dog [O frame];
+  `role=commit` only on the host. NEVER lines 0 on both. Sheet `frames/claim/best-sheet-caaf743f.jpg`.
+- **Review fixes** (`d758d50` -> `321d3d0`; the timeout and dip paths are unit-tested only): a press timeout makes the guest stock until the next READY
   (a silent host cost up to 12 s of held presses; now one); a guest-only link dip keeps READY; a press whose phase 1
   was aborted stops reading as pending after 250 ms; one-word press-done snapshot; `role=commit` is the host's.
 - **Open:** the tie's seat mismatch with a D-Dog; GRANT not matched to its claim (narrow); the a=7 message for a host
   that only stood (user decision); no message on a timeout. `forced_job_termination=true` at a close is not new.
-- BUILDLINE
+- Full `tools/build.ps1` at `29d3c8f5` (both branches merged, the review fixes): CTest 336/336; contract `--check` 838 / 213.
 
 ## 2026-10-31: m6m7i seat checks - a first-person seat hit, the blocked first person falls back (branch `wp/seat-checks4`, local only)
 

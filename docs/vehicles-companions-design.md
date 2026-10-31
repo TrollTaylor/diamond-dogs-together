@@ -3847,18 +3847,27 @@ working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a 
 - **After 23c7f305** (`ef7c867` -> `b544c6d`, unit tests only, no admitted run): a held press the partner's ride
   overtakes ends as `end=peer` (4) and the late deny shows no toast (`seated=1` in the deny line). Run 3 was refused
   twice before admission (a worker-policy fixture timeout; then `debug_overlay_tests` "raw no-legacy keyboard" in the
-  worker's audited CTest, which passes alone), so this is [U] in a run.
+  worker's audited CTest, which passes alone); shown in `caaf743f` (below).
 - **Review fixes** (failing first `d758d50` -> `321d3d0`): a press timeout makes the guest stock until the next READY
   (`state=stock`; a silent host costs one held press, not READY_MS 12 s; dev fell back after 1.5 s); a guest-only link
   dip keeps READY (cleared only when unpaired); `pend` is reported only while site D saw the press within
   `kPressGapMs` (an aborted phase 1 no longer keeps the guest's seat step at every tick); the press-done word carries
   its own sequence (one snapshot); a held guest's granted boarding stores no commit, so `role=commit` is the host's
   (or a guest's without READY). `forced_job_termination=true` at a close is not new (`1bd4419a`, `d7d50259`).
+- **Run at the merged head** `caaf743f` (`c1c562d9`: the review fixes and `wp/seat-checks4`; v3 scenario, play,
+  `-WanSim bad`, both copies; no expect failure, closed, baselines and real saves unchanged, not forced). a) no claim,
+  grant, yield or toast while the guest stood at the driver's door; the host's one E drove (`commit`, host only) [O
+  logs, frames]. d) seat 2 [O logs]. b) `claim; pseq=1; page=19`, grant 247 ms later on the guest's clock,
+  `end=grant; wait_ms=268`, the guest drove; the host standing at the door again got a=7 [O]. c) the host drove
+  (`deny; why=host_drives`); the guest's held press ended `end=peer; wait_ms=86` in seat 1 on its copy, the late deny
+  logged `seated=1`, and no toast reached the guest (no `hud=toast` line; frames `caaf743f-guest-c-press-02`,
+  `-c-after`) [O]; the host's copy again drew the guest into seat 3 behind its D-Dog (`seat_draw; reason=dog`, frame
+  `caaf743f-host-c-after`) [O]. NEVER lines 0 on both copies. The timeout and dip paths did not occur [U in a run].
 - **Open:** in a tie the guest's copy seats it in seat 1 while the host's draws it behind the host's D-Dog (release a
   peer-ended press to a back seat, or hold it until the driver's seat addendum); a GRANT is not matched to the claim it
   answers (a GRANT delayed 2-3 s could let a later press board after the host's commit expired: echo the claim's pseq);
   the host's a=7 message fires for a host that only stood at the door (user decision); a timeout shows no message;
-  the host's press landing in a yield, the guest's timeout, and the c) toast change in a run.
+  the host's press landing in a yield and the guest's timeout in a run.
 
 ### 8.56 Seat checks m6m7i: a first-person seat hit, the blocked first person falls back (2026-10-31, branch `wp/seat-checks4`)
 
