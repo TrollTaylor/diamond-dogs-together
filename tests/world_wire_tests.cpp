@@ -114,9 +114,9 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 62, "62 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 63, "63 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
-                       "M6 seat, debug travel, and local ops)");
+                       "M6 seat, debug travel, game rules, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -2052,6 +2052,34 @@ void TravelOp() {
               back[1].v[0] == 10 && back[1].v[1] == 4 && back[1].v[2] == 30010 && back[1].v[7] == 7,
           "the guest hears answer 4 refused, reason 7 (off), for each");
 }
+// Debug menu Game rules (docs/world-sync-protocol.md section 23): RULES 0x3E, host to guest, control queue, reliable,
+// level 3, play too, never a request, paired only: seq, Mother Base weapons (0 stock, 1 allowed). 3 bytes.
+void RulesOp() {
+    const auto* s = world::FindOp(op::rules);
+    Check(op::rules == 0x3E && s && std::strcmp(s->name, "RULES") == 0, "RULES 0x3E exists (the rules track's code)");
+    if (!s) return;
+    Check(s->queue == 0 && s->wire == world::Wire::reliable && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::host_to_guest && s->lua == 2 && s->native == 0 && s->rx == 0 && s->body == 3,
+          "RULES: control queue, reliable, level 3, play too, host to guest, 2 fields, 3 bytes");
+    Setup(3, 3, true);
+    Pair(30050, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_host, op::rules, {1, 1}, 101) == world::TxStatus::ok && Tx(g_host, op::rules, {2, 0}, 101) == world::TxStatus::ok,
+          "the host sends weapons allowed, then stock");
+    Check(Tx(g_host, op::rules, {0, 1}, 101) == world::TxStatus::bad_args && Tx(g_host, op::rules, {3, 2}, 101) == world::TxStatus::bad_args,
+          "seq 1.., the rule 0..1");
+    Check(Tx(g_guest, op::rules, {1, 1}, 101) == world::TxStatus::wrong_role, "the guest never sends RULES (the host decides)");
+    Exchange(102);
+    auto g = Drain(g_guest, 1, 103);
+    Check(Count(g, op::rules) == 2 && g[0].op == op::rules && g[0].v[0] == 1 && g[0].v[1] == 1 && g[1].v[0] == 2 && g[1].v[1] == 0,
+          "the guest's control queue delivers both, in order");
+    g_host.LocalMissionEnd(105);
+    Check(Tx(g_host, op::rules, {3, 1}, 106) == world::TxStatus::not_paired, "unpaired: not sent (the host resends on the next pairing)");
+    Setup(2, 2, true);
+    Pair(30050, 200);
+    Check(Tx(g_host, op::rules, {1, 1}, 201) == world::TxStatus::disabled, "RULES needs world level 3");
+}
 int main() {
     Table();
     Codec();
@@ -2079,6 +2107,7 @@ int main() {
     VehicleDamageOp();
     SeatOp();
     TravelOp();
+    RulesOp();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }
