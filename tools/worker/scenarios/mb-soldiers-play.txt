@@ -2,10 +2,10 @@
 # -WanSim bad at the shipped defaults, mb-ladder seed on both copies (title Continue at the ladder spot). Stimuli are
 # the debug menu's host-only enemy commands (the same ChangeLifeState / RequestForceFulton calls; the game sends the
 # usual Unconscious / Fulton messages) and one real guest rifle shot:
-#   1. spawn_enemy here moves the nearest staff member 5 m in front of the host (world_place warp, also on the guest
-#      copy); the guest stands 4 m behind, 3 m right; host 'enemy sleep nearest': host commit state=2 -> guest apply.
+#   1. both cameras turn to the nearest staff member (enemy_aim_nearest; play refuses debug_soldier_warp, so no
+#      spawn_enemy here); the guest stands 4 m behind, 3 m right; host 'enemy sleep nearest': commit state=2 -> apply.
 #   2. host 'enemy fulton nearest' (the same, asleep): host commit state=6 -> guest RequestForceFulton, lifted.
-#   3. another staff member in front of the host; the guest aims (enemy_aim_nearest) and shoots him: guest req ->
+#   3. the guest aims at its nearest staff member (enemy_aim_nearest) and shoots him: guest req ->
 #      host commit actor=guest.
 #   4. host 'enemy kill nearest': host commit state=5 -> guest apply.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -14,7 +14,6 @@
 # Expected (world_lua lines): both event=started; mission=30050; ...; w1=0 then host event=align; step=ready; w1=1
 # and guest event=align; step=accepted; ...; w1=1; the commit/apply pairs above; frames of both copies per step.
 # NEVER: step=error, event=error, bad_op, roster_mismatch (rosters match), divergence growth, faults.
-labsetting debug_soldier_warp=1
 labsetting nametag=1
 title 200
 waitgameplay host 120
@@ -30,11 +29,13 @@ stance host stand
 stance guest stand
 both capture mb-start
 # --- 1. host puts a staff member to sleep -------------------------------------------------------------------------
-host run spawn_enemy here
-wait 3000
+host run enemy_aim_nearest 1.1
+wait 800
 placebehind guest host 4 3
 stance guest stand
 wait 2500
+guest run enemy_aim_nearest 1.1
+wait 800
 both capture s1-before
 logmark both
 host run enemy sleep nearest
@@ -42,6 +43,9 @@ host expect ^enemy_sleep;ent=\d+;
 waitlog host 'world_lua=event=commit; ent=[0-9]+; state=2; ver=[0-9]+; actor=host;' 10
 waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=2; ver=[0-9]+; src=outcome; result=ok' 10
 wait 1000
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 600
 both capture s1-asleep
 # --- 2. host Fultons the same staff member ------------------------------------------------------------------------
 logmark both
@@ -53,11 +57,9 @@ guest burst s2-guest 8 500
 waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=6; ver=[0-9]+; src=outcome; result=ok' 25
 both capture s2-after
 # --- 3. the guest shoots another staff member ---------------------------------------------------------------------
-host run spawn_enemy here
-wait 3000
-placebehind guest host 4 3
-stance guest stand
-wait 2500
+guest run enemy_aim_nearest 1.1
+host run enemy_aim_nearest 1.1
+wait 800
 both capture s3-before
 logmark both
 guest run enemy_aim_nearest 1.1
@@ -77,8 +79,13 @@ guest release
 waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=[0-9]+; state=[2345];' 8
 waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[2345]; ver=[0-9]+; actor=guest;' 10
 wait 1000
+host run enemy_aim_nearest 0.3
+wait 600
 both capture s3-after
 # --- 4. host kills the nearest staff member -----------------------------------------------------------------------
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
 logmark both
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;
