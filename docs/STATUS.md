@@ -53,16 +53,16 @@ has run it, because both hidden runs were refused before admission (below).
   after 30 s or with a revive). No new wire op, read or patch site; soldier outcomes unchanged. Line
   `partner_melee=strike; act=..; verdict=land|range|height|angle|repeat|no_body|off; queued=..; dist_cm=..`. Failing
   first `a294e346` -> `f07b3c8c` (default on), driver test `2bde887e`, default off `f0b7e720` -> `96e6d1e1`; scenario
-  `melee-partner-play.txt`.
+  `melee-partner-play.txt`, which names `partner_melee=1` (the worker's labsetting allow-lists admit it: failing first
+  `f9e532d3` -> `b2773e3f`).
 - **Runs refused:** `52fdd178` (13:41) and its one retry `79487b41` (13:47), play, `-WanSim bad`, afgh-ledge: preflight
   passed, the host was admitted, the guest `event=refused; reason=required_hooks_or_private_desktop`
   (`child_exited_before_admission`, supervisor code 2); the guest's own overlay log: `D3D11CreateDeviceAndSwapChain
   hr=0x8007000E`. The console probe passed before and after; the other fb1031 tracks hit the same refusal.
 - **Not done:** any game proof; the attacker's strike drawn on the victim's screen; CQC grabs and throws of the other
   player; a strike aimed at a soldier with the other player within reach in front also knocks the other player down.
-- Full `tools/build.ps1` at `96e6d1e1`: CTest 337/338, the one failure `debug_overlay_tests` ("hardware DX11 fixture
-  creation", the same machine-wide E_OUTOFMEMORY), which passed on its own rerun right after; contract `--check`
-  838 / 213.
+- Full `tools/build.ps1` at `b2773e3f`: CTest 338/338 (at `96e6d1e1` 337/338: `debug_overlay_tests` hit the same
+  machine-wide D3D11 E_OUTOFMEMORY and passed on its rerun); contract `--check` 838 / 213.
 
 ## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
 
