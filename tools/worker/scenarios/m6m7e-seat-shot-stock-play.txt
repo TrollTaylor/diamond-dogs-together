@@ -8,7 +8,9 @@
 #   Seat 1 (door teleport): X1 rel +148.1 pitch -1 (back-left across the rear deck) and X2 rel +55.2 pitch -1 (forward-left
 #   across the windscreen frame and the driver): enemy_cam_turn adds rel to the player's yaw, and for seat 1 a negative rel
 #   pointed right (c66eb55f / 9b5df4b8 L1 -148.1 / L2 -55.2 left the jeep through the passenger's own side).
-#   Seat 2: A rel 124.8 pitch -1 and B rel 31.9 pitch 0 (the run-2 seat-2 lines; chords 64 / 133 cm on this jeep).
+#   Seat 2: A rel 124.8 pitch -1 and B rel 31.9 pitch 0 (the run-2 seat-2 lines; chords 64 / 133 cm on this jeep);
+#   C rel -90 pitch -3 (m6m7f: straight across the jeep to the right from the left rear seat, the lab damage geometry of
+#   60faf9fc part B, guard beside the far side).
 # Read: vstate life on both copies after every shot. Stock arm: a line that costs life is a self-hit line on this jeep;
 # the S1 arm must then show result=shift and no life change on the same line. The jeep may break in the stock arm (it
 # has 2300 life; 60faf9fc's lab hits cost 702 each), so the seat-1 lines go first.
@@ -144,6 +146,24 @@ guest capture b-drv
 host press lmb 120
 wait 300
 host capture b-shot
+host release
+wait 2000
+waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=2;' 3
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+wait 500
+# c: seat 2, rel -90 pitch -3 (across the jeep to the right)
+logmark both
+host run enemy_cam_turn -90 -3
+host expect ^cam_turn;
+wait 900
+host hold rmb 1500 nowait
+wait 700
+host capture c-aim
+guest capture c-drv
+host press lmb 120
+wait 300
+host capture c-shot
 host release
 wait 2000
 waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=2;' 3

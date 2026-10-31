@@ -462,6 +462,15 @@ struct Hooks {
     // Design 8.38 / 8.42 (partner_pass_camera=view): the get-off camera request (partner_pass_camera::RequestTurn: nullptr
     // when made, else its refusal). Null: mode view runs as aim (no turn).
     const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
+    // Design 8.46 (lab.ini partner_seat_fpv; the lab lever passcam seatfpv): the local camera's subjective module with the
+    // local gun's hand slot and the flag words (partner_pass_camera::FpvRead), the toggle write
+    // (partner_pass_camera::WriteFpvToggles), the module's ten pollers (the lab trace's pollers line) and the lever
+    // (partner_pass_camera::FpvOverride). read or write null: no seat first person.
+    bool (*seat_fpv_read)(void* context, const partner_player::State& state, partner_pass_camera::FpvRead& out) noexcept = nullptr;
+    bool (*seat_fpv_write)(void* context, const partner_player::State& state, std::uint32_t set, std::uint32_t clear,
+                           std::uint32_t& after) noexcept = nullptr;
+    bool (*seat_fpv_pollers)(void* context, const partner_player::State& state, std::uintptr_t (&rvas)[10]) noexcept = nullptr;
+    int (*seat_fpv_override)(void* context) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -512,6 +521,8 @@ inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
+// Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
+inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
 // rides a seat this copy cannot play because the vehicle is missing or
 // unrealized here (Mother Base by id: absent, local_read, unrealized; free roam:
@@ -614,6 +625,9 @@ struct Settings {
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
     PartnerPassCamera pass_camera = PartnerPassCamera::aim;
     bool pass_camera_trace = false;
+    // lab.ini partner_seat_fpv (design 8.46): the automatic first-person aim from seats 1 and 2 (the lab lever passcam
+    // seatfpv overrides it on a lab copy).
+    bool seat_fpv = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -795,6 +809,13 @@ struct Mission {
         std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
         // Design 8.38 / 8.42 (mode view): the get-off camera turn (lines under aim_cap).
         partner_pass_camera::Turn turn;
+        // Design 8.46 (partner_seat_fpv): the seat first person, its lines, the last mode logged (+1; 0x80 lever), the
+        // lab trace's last fpv_trace key and the once-per-mission pollers line.
+        partner_pass_camera::Fpv fpv;
+        LogCap fpv_cap, fpv_trace_cap;
+        std::uint8_t fpv_mode_logged;
+        std::uint64_t fpv_trace_key, fpv_trace_ms;
+        bool pollers_logged;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).

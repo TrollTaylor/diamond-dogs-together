@@ -84,6 +84,7 @@
 #include "mgscoop/client_reset.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/partner_player.hpp"
+#include "partner_player_contract.hpp"
 #include "mgscoop/partner_missions.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_action_events.hpp"
@@ -1115,6 +1116,52 @@ const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, fl
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
     return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);
 }
+// Design 8.46 (lab.ini partner_seat_fpv): the seat first person's read (the subjective module after its blocks' one-time
+// check, the local gun's hand slot rec+0x3DA, the local flag record's words 0 and 3), its toggle write, the pollers and
+// the passcam seatfpv lever.
+bool PartnerSeatFpvRead(void*, const pp::State& state, mgscoop::partner_pass_camera::FpvRead& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    out = pc::FpvRead{};
+    if (!game_base || !partner_gate_ok) return false;
+    if (const char* why = pc::FpvInstall(game_base, game_span)) {
+        out.refusal = why;
+        return false;
+    }
+    pc::ReadSubjective(game_base, state.P, out.subj);
+    pp::Gun1 gun{};
+    if (pp::ReadGun(partner_addresses, state, 0, gun) && gun.fields_ok) {
+        out.slot_ok = true;
+        out.slot = gun.slot;
+    }
+    pp::Block block{};
+    if (!pp::ResolveBlock(partner_addresses, state, 0, block) && block.ps) {
+        const auto read = [](std::uintptr_t at, void* to, std::size_t size) noexcept {
+            SIZE_T count = 0;
+            return at && size && at <= UINTPTR_MAX - size &&
+                   ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(at), to, size, &count) && count == size;
+        };
+        std::uintptr_t records = 0;
+        std::uint32_t base = 0;
+        namespace ppc = mgscoop::partner_player_contract;
+        if (read(block.ps + ppc::ps_rec280, &records, sizeof(records)) && records && read(block.ps + ppc::ps_base_id, &base, sizeof(base)) &&
+            block.id >= base && block.id - base < 64) {
+            const std::uintptr_t rec = records + static_cast<std::uintptr_t>(block.id - base) * ppc::ps_rec280_stride;
+            out.flags_ok = read(rec, &out.w0, sizeof(out.w0)) && read(rec + 3 * sizeof(std::uint32_t), &out.w3, sizeof(out.w3));  // word 3
+        }
+    }
+    return out.subj.ok;
+}
+bool PartnerSeatFpvWrite(void*, const pp::State& state, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    after = 0;
+    if (!game_base || !partner_gate_ok || mgscoop::partner_pass_camera::FpvInstall(game_base, game_span)) return false;
+    return mgscoop::partner_pass_camera::WriteFpvToggles(game_base, state.P, set, clear, after);
+}
+bool PartnerSeatFpvPollers(void*, const pp::State& state, std::uintptr_t (&rvas)[10]) noexcept {
+    for (auto& r : rvas) r = 0;
+    if (!game_base || !partner_gate_ok) return false;
+    return mgscoop::partner_pass_camera::ReadSubjectivePollers(game_base, state.P, rvas);
+}
+int PartnerSeatFpvOverride(void*) noexcept { return mgscoop::partner_pass_camera::FpvOverride(); }
 // M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
 void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
 void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
@@ -1221,7 +1268,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
-    PartnerPassCameraTurn};
+    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

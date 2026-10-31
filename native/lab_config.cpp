@@ -325,6 +325,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_seat1_anchor_given = true;
         if (!ok) result.partner_ride_seat1_anchor = false;
     }
+    else if (Equals(key, "partner_seat_fpv")) {
+        // Seat first person (design 8.46): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_seat_fpv);
+        result.partner_seat_fpv_given = true;
+        if (!ok) result.partner_seat_fpv = false;
+    }
     else if (Equals(key, "partner_ride_race")) {
         ok = ParseBool(value, result.partner_ride_race);
         result.partner_ride_race_given = true;

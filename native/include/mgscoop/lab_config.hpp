@@ -635,6 +635,11 @@ struct LabConfig {
     // seat-fixes merge (8.43); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_seat1_anchor = false;
     bool partner_ride_seat1_anchor_given = false;
+    // Seat first person (docs/native-puppet.md "Seat first person", design 8.46): the local passenger in seat 1 or 2 of a
+    // vehicle aims in the stock first-person view (the F tap's) without a tap; the aim end, the get-off and the mission
+    // end give the shoulder view back. Off unless named, in lab and play; the lab lever passcam seatfpv overrides it.
+    bool partner_seat_fpv = false;
+    bool partner_seat_fpv_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon

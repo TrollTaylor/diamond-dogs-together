@@ -618,6 +618,183 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
 // seat) leaves the camera behind the player, looking forward (299de3e1).
 inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
 
+// --- Seat first person (lab.ini partner_seat_fpv; design 8.46) -------------------------------------------------------
+// [O] 9a0c1f27: from seats 1 and 2 the stock seated aim looks into the panel, the own leg or the roll bar; the stock F tap
+// gives the first-person view (the subjective camera module, CAM+0x340 = 1) with a clear view. [S] The tap is answered by
+// the gun plugin's PollingForSubjectiveCamera 0x1053E80: while the gun hold gate is open (flag 0x19 or rec+0x3C0 bit 14)
+// it returns bit m of the subjective camera impl+0x60 (m from the hand slot rec+0x3DA: FpvBit), which
+// ToggleAimFpvModeOnPad 0x12A0580 flips on pad button 10 (F); the bit is sticky per slot (the next aim with that slot
+// starts in first person). FpvStep sets the slot's bit while the local passenger aims from seat 1 or 2 and clears the
+// bits it set when the aim ends, at the get-off, a seat change and the key's end; a bit seen set during an aim that goes
+// clear while the aim goes on is the player's own F tap: no more bits are set for the rest of that boarding (the stock
+// toggle stays the player's).
+inline constexpr std::uint32_t kFpvSlotMask = 0x11F;
+inline constexpr std::size_t kSubjImpl = 0x20, kSubjToggles = 0x60;  // impl = module - 0x20; the toggles impl+0x60
+inline constexpr std::uintptr_t kSubjModuleVtableRva = 0x23D1F00;
+// The gun poller's slot map (table 0x1054030): slot rec+0x3DA -> toggle bit; -1: a slot the poller never answers.
+inline int FpvBit(std::uint8_t slot) noexcept {
+    switch (slot) {
+    case 0: return 0;
+    case 1: return 1;
+    case 2: return 2;
+    case 3: return 4;
+    case 5: return 3;
+    case 6: return 8;
+    default: return -1;
+    }
+}
+// Seats 1 (front) and 2 (left back); seat 3 aims clear over the shoulder and the driver is stock.
+inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
+// The gun is ready (aimed 7, firing 9 / 10): the raise (6) is done, so its muzzle probe saw the shoulder pose, which first
+// person then keeps (shot.md: GunMuzzleProbeIssue 0x1062A30 skips the pose update with rec+0x3C0 bit 13).
+inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 7 || mode == 9 || mode == 10); }
+enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop, retry };
+// A clear of ours stays pending until a read shows the bit clear (a failed write, the game's plain store over our
+// compare-exchange); it is retried on later ticks, at most kFpvClearTries times, then given up (design 8.47).
+inline constexpr std::uint32_t kFpvClearTries = 30;
+inline const char* FpvEventName(FpvEvent e) noexcept {
+    switch (e) {
+    case FpvEvent::arm: return "arm";
+    case FpvEvent::retry: return "retry";
+    case FpvEvent::set: return "set";
+    case FpvEvent::opt_out: return "opt_out";
+    case FpvEvent::restore: return "restore";
+    case FpvEvent::stop: return "stop";
+    default: return "none";
+    }
+}
+struct Fpv {
+    bool active = false;    // a seat 1 / 2 boarding with the switch on
+    bool opt_out = false;   // the player's own F tap this boarding: nothing more is set
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    std::uint32_t ours = 0;  // the toggle bits this switch set and has not cleared
+    std::uint32_t seen = 0;  // the bits seen set during this aim
+    bool aim = false;        // the last tick aimed
+    std::uint32_t pending = 0;        // ours, cleared but not yet read clear (kept over a boarding's end and a mission's)
+    std::uint32_t pending_tries = 0;  // retries of the pending clear
+    std::uint32_t sets = 0, restores = 0, aims = 0, opt_outs = 0, give_ups = 0;
+};
+struct FpvIn {
+    bool want = false;     // the key (or the lab lever) on, the hooks there, nothing latched
+    bool seated = false;   // the local passenger report
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    bool aiming = false;   // GunAims of the local gun
+    bool ready = false;    // the gun is ready (FpvReady: mode 7, 9, 10): the bit is set only then
+    bool read_ok = false;  // the subjective module was found
+    std::uint32_t toggles = 0;  // impl+0x60
+    bool slot_ok = false;
+    std::uint8_t slot = 0;      // rec+0x3DA
+};
+struct FpvOut {
+    FpvEvent event = FpvEvent::none;
+    std::uint32_t set = 0, clear = 0;  // the toggle bits to set / clear (never both)
+    const char* reason = "none";
+};
+// A tick with no other event retries the pending clear (unread too: the write finds the module itself); given up after
+// kFpvClearTries retries.
+inline FpvOut FpvRetry(Fpv& s, FpvOut o) noexcept {
+    if (!s.pending || o.event != FpvEvent::none) return o;
+    o.event = FpvEvent::retry;
+    if (++s.pending_tries > kFpvClearTries) {
+        o.reason = "give_up";
+        s.pending = 0;
+        s.pending_tries = 0;
+        ++s.give_ups;
+        return o;
+    }
+    o.reason = "pending";
+    o.clear = s.pending;
+    return o;
+}
+inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
+    FpvOut o{};
+    // A pending clear is confirmed by a read that shows the bit clear.
+    if (s.pending && in.read_ok) s.pending &= in.toggles & kFpvSlotMask;
+    if (!s.pending) s.pending_tries = 0;
+    const bool seat_ok = in.want && in.seated && FpvSeat(in.seat);
+    if (s.active && (!seat_ok || in.vehicle != s.vehicle || in.seat != s.seat)) {
+        // The boarding ends (the get-off, a seat change, the key off): the bits still ours are cleared (unread: all of them)
+        // and stay pending until a read shows them clear.
+        o.event = FpvEvent::stop;
+        o.reason = !in.want ? "off" : !in.seated ? "get_off" : "seat";
+        const std::uint32_t still = (in.read_ok ? (s.ours & in.toggles) : s.ours) & kFpvSlotMask;
+        if (still) ++s.restores;
+        s.pending |= still;
+        o.clear = s.pending;
+        s.active = s.opt_out = s.aim = false;
+        s.ours = s.seen = 0;
+        s.vehicle = kVehicleUnknown;
+        s.seat = kSeatUnknown;
+        return o;
+    }
+    if (!seat_ok) return FpvRetry(s, o);
+    if (!s.active) {
+        s.active = true;
+        s.opt_out = s.aim = false;
+        s.ours = s.seen = 0;
+        s.vehicle = in.vehicle;
+        s.seat = in.seat;
+        o.event = FpvEvent::arm;
+        o.reason = "seat";
+        return o;
+    }
+    if (!in.read_ok) return FpvRetry(s, o);
+    const std::uint32_t toggles = in.toggles & kFpvSlotMask;
+    if (!in.aiming) {
+        s.aim = false;
+        s.seen = 0;
+        if (s.ours) {
+            const std::uint32_t still = s.ours & toggles;
+            s.ours = 0;
+            if (still) {
+                s.pending |= still;
+                o.clear = s.pending;
+                o.event = FpvEvent::restore;
+                o.reason = "aim_end";
+                ++s.restores;
+            }
+        }
+        return FpvRetry(s, o);
+    }
+    if (!s.aim) {
+        s.aim = true;
+        s.seen = 0;
+        ++s.aims;
+    }
+    if (s.opt_out) return FpvRetry(s, o);
+    // The player's own F tap: a bit seen set during this aim is clear now (our own pending bits never count).
+    const std::uint32_t dropped = s.seen & ~toggles;
+    if (dropped) {
+        s.opt_out = true;
+        s.ours &= ~dropped;
+        s.seen = 0;
+        ++s.opt_outs;
+        o.event = FpvEvent::opt_out;
+        o.reason = "tap";
+        return o;
+    }
+    s.seen |= toggles & ~s.pending;
+    if (!in.ready) return FpvRetry(s, o);
+    const int bit = in.slot_ok ? FpvBit(in.slot) : -1;
+    if (bit < 0) return FpvRetry(s, o);
+    const std::uint32_t b = 1u << bit;
+    if (s.pending & b) {
+        // Our own clear not landed yet and this aim wants the bit again: ours again, no clear.
+        s.pending &= ~b;
+        if (toggles & b) s.ours |= b;
+    }
+    if (!(toggles & b)) {
+        o.set = b;
+        s.ours |= b;
+        ++s.sets;
+        o.event = FpvEvent::set;
+        o.reason = "ready";
+    }
+    return FpvRetry(s, o);
+}
+
 // --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------
 // [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
 // driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close

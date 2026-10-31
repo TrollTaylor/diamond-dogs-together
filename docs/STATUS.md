@@ -1,3 +1,61 @@
+## 2026-10-30: the seat branches integrated, review m6m7f closed (branch `wp/seat-fpv2` with `wp/seat-checks` merged, local only)
+
+**Players see no new behaviour.** The README Seats tip about the F tap is narrowed to what was seen (a scoped rifle, the
+guest in the front seat and the host in the left back seat, lab `9a0c1f27`): some seated aims show no switch prompt, the
+game remembers first person for that weapon until F is tapped again, and firing or getting out in first person from a
+seat is not tested. `partner_seat_fpv` stays off (lab and play); no default changed.
+- **Fixes for a later flip of the key** (design 8.47; failing first `15d5ed2` -> `f5603bb`): a clear of our toggle bit
+  stays pending until a read shows it clear and is retried (on foot too, 30 tries at most); every exit releases (the
+  terminating stop, MissionStart, a refused or rejected tick, MissionEnd with only P); FpvInstall publishes after its
+  result; the trace drops an unpinned read. Driver tests cover each exit and the key off.
+- **Scenarios** (`fb02420`): new `m6m7f-seat-ftap-play.txt` (the stock F tap from seats 1 and 2 in both roles at the
+  shipped play defaults); -b part C requires seat 1; its seat-3 S1 wait accepts any result.
+- **Run** `5e5a2131d611489ba74f9c5e5589398a` (the F-tap scenario, play, `-WanSim bad`, shipped defaults) was refused
+  before admission (`IsolationFailed`, `child_exited_before_admission`): this time the host's worker refused
+  (`required_hooks_or_private_desktop`) and the host's overlay logged `refused; reason=graphics_or_input_hook`. The
+  hardware D3D11 device created on every adapter just before and after it (GPU 6.1 of 16.3 GB in use), so GPU memory does
+  not explain this refusal; the cause is [U] (`SnippingTool.exe` was still running). Stopped by rule; baseline restored,
+  real saves unchanged. **Blocker**: no hidden run of this round (m6m7f, four tries) was admitted.
+- Full `tools/build.ps1` at `fafdf11` (the merged head): CTest 336/336 (the DX11 fixture passes again); contract
+  `--check` 836 / 213; scenario lint passes.
+
+## 2026-10-30: seat first person built, not proven (branch `wp/seat-fpv2`; `partner_seat_fpv` off)
+
+**Players see no change.** What players can do today: tap F while aiming from the front seat or the left back seat; the
+game's own first-person view is clear from there [O `9a0c1f27`: guest seat 1, host seat 2, Bambetov SV]. Whether a shot
+fired in first person from a seat lands, and whether the view climbs after it (the mod's shot guard is off in first
+person), is [U]: no run has fired one.
+- Code (design 8.46, native-puppet "Seat first person"): key `partner_seat_fpv` (off unless named, lab and play), lab
+  lever `passcam seatfpv on|off|key`: the stock first-person toggle bit of the hand slot (subjective camera `impl+0x60`,
+  the gun poller `0x1053E80`) is set while the local passenger aims from seat 1 / 2 with the gun ready (mode 7 / 9 / 10);
+  the bits it set are cleared at the aim end, the get-off, a seat change, the key's end and the mission end / stop; the
+  player's own tap opts out for the boarding. Lab trace `state=fpv_trace` / `state=pollers`. Failing first `a3b8100` ->
+  `8b33be4`, `9916c4a` -> `e508347`; driver test `655084b`.
+- **Blocker (corrected in review m6m7f):** the probe `caf8fbc7` ended `IsolationFailed` (`child_exited_before_admission`;
+  guest overlay `refused; reason=graphics_or_input_hook`), like the other track's 19:45 run. The hardware D3D11 device
+  failed with `0x8007000E` 19:34-19:41 and in the DX11 CTest fixture 19:58-20:02, but the 20:31 refusal (section above)
+  came with the device creating fine, so the cause is [U] (the snipping tool ran through admitted runs since 18:04).
+- The full CTest at `9b3553a` was 335/336 only because of that fixture; the merged head's full CTest is in the section
+  above.
+
+## 2026-10-30: the seat checks at the shipped defaults - blocked, no game ran (branch `wp/seat-checks`, local only)
+
+**Goal** (design 8.45): the -b rehearsal (seat 3 with S1, the driver's D-Dog in seat 1, a guard hit by a seated shot,
+teardown while seated) and the S1 stock control on the east jeep (`m6m7e-seat-shot-stock-play.txt` with and without
+`-LabSetting partner_seat_shot=0`). **Scenarios** (`323d0e8`): -b part C now stages the D-Dog after the partner (the
+driver steps 40 m away first, the partner boards at once, the dog's arrival is captured) and ends seated; the stock
+scenario adds seat-2 line C (rel -90, across the jeep to the right). Scenario lint passes.
+**No game reached gameplay; nothing new is proven or disproven.**
+- 19:33: the worker's audited CTest refused the run (`debug_overlay_tests` "hardware DX11 fixture creation"). A probe
+  (`D3D11CreateDevice`) gave `0x8007000E` on the NVIDIA adapter only (the integrated GPU and WARP created fine) while
+  system commit had 21-22 GB free; the GPU's dedicated memory was 13.9 of 16 GB in use. It created again at 19:43.
+- 19:45: the rerun (`784ea30ba3e04ec7ade024766066beaa`, in the m6m7f run archive) ended
+  `IsolationFailed=True`, `child_exited_before_admission` (supervisor error 1067); the guest's `debug-overlay.log` ends
+  `overlay=refused; reason=graphics_or_input_hook`, its worker log `refused; reason=required_hooks_or_private_desktop`.
+  `SnippingTool.exe` was running (since 18:03; the cause is [U]: runs since 18:04 were admitted with it running, and the
+  20:31 refusal came with the D3D11 device creating fine). Stopped there by rule; baseline restored, real
+  saves unchanged. Still open, as in the section below: everything in the goal.
+
 ## 2026-10-30: the seat fixes merged and ON for players (branch `wp/seat-fixes`, local only)
 
 **Merged** onto `dev/oct7-continue` `0c893e1`: `wp/seat1-draw` `83c68a9`, `wp/self-hit` `5466c17` (`a520315`),

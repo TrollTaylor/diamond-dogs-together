@@ -618,6 +618,31 @@ int main() {
                   "an invalid seat-1 anchor value after a valid 1 turns it off");
         }
     }
+    // Seat first person (partner_seat_fpv, design 8.46): off unless named, in lab and play (the gun profile does not turn it
+    // on yet); a named 1 runs in lab and play; an invalid value is named and off, also after a valid 1.
+    {
+        Check(!LabConfig{}.partner_seat_fpv && !LabConfig{}.partner_seat_fpv_given && !Lab("").partner_seat_fpv, "seat first person defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_seat_fpv && !profile.partner_seat_fpv_given && profile.invalid_values == 0,
+                  "the gun profile leaves seat first person off (not named)");
+            const auto named = Lab(gun + mode + "partner_seat_fpv=1\n");
+            Check(named.partner_seat_fpv && named.partner_seat_fpv_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
+                  "a named seat first person runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_seat_fpv=0\n");
+            Check(!off.partner_seat_fpv && off.partner_seat_fpv_given, "a named seat first person 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_seat_fpv=") + value + "\n");
+            Check(!invalid.partner_seat_fpv && invalid.partner_seat_fpv_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid seat first person value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_seat_fpv=1\npartner_seat_fpv=") + value + "\n");
+            Check(!late.partner_seat_fpv && late.invalid_values == 1, "an invalid seat first person value after a valid 1 turns it off");
+        }
+    }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
     // (after the lab hidden runs 7f8d643d / d05a1267), off without a profile and for off/loco; a named 0/1 always wins
     // in either key order; play keeps them (ModeRefusal gates them there, link v2 connected).
