@@ -18,8 +18,15 @@ about one close in eight. The close waits for one partner tick, at most 1 s.
   (`partner_shutdown=teardown; close=posted`). With no tick, a 1 s timer posts it (`overlay=close_released; by=timeout`).
   WM_DESTROY and WM_ENDSESSION never wait. CFG is refused while closing (`window_closing`).
 - `window_close_tests`; full CTest 337/337; contract `--check` 838 / 213. Scenario `teardown-av-close-seated-play.txt`.
-- **Open:** one clean run cannot prove a 1-in-8 crash gone [U]. Closes that bypass the overlay's WndProc (an overlay
-  refused at install, the game's own exit) are unchanged.
+- **Shown** (hidden worker at `24120e20`, run `f32b567e`, play, `-WanSim bad`, seed africa-jeep; host driving the jeep,
+  guest in seat 2 at the close; archive `C:/Users/taylo/mgs-coop-run-archive/teardown-av`): on both copies
+  `teardown=mission_thread` -> `overlay=close_held` -> `partner_dm=reverted` -> `partner_bits=cleared` ->
+  `partner_stop; cleared=1` -> `partner_shutdown=teardown; close=posted`; no `crash_probe=av` on either copy. The guest
+  exited 0. The worker force-terminated the host after its 5 s wait (exit 1223), as in 13 of 23 m6m7g-i runs.
+  Expectations all met; real saves unchanged.
+- **Open:** one clean run cannot prove a 1-in-8 crash gone [U], and a host the worker terminates never reaches the
+  engine's teardown. Closes that bypass the overlay's WndProc (an overlay refused at install, the game's own exit) are
+  unchanged.
 
 ## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, `wp/seat-checks4` merged, local only, design 8.55)
 
