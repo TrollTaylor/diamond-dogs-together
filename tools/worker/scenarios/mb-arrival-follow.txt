@@ -1,0 +1,46 @@
+# fb1031 arrival (docs/world-sync-design.md 9.2 "Guest arrival at Mother Base"): the guest follows the host's ACC
+# sortie into Mother Base (world_follow kind 6), the path of the online 0.14.5 report where the guest stayed in its
+# arrival helicopter (act 102) and the host never saw it. Lab mode only for the driver: the lab goto (goto=30050:
+# Mother Base -> 40050 -> Mother Base on the Command platform 1 approach route). No waitgameplay and no key press
+# on the guest after the sortie (waitgameplay presses E in a helicopter): the guest must get control on its own.
+#   run-hidden.ps1 -Scenario tools/worker/scenarios/mb-arrival-follow.txt -ExtraJoined '-Mode lab -WanSim bad
+#       -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real -TimeoutSec 600'
+# Expected (fixed build): guest `event=follow; step=mb_foot; at=seeds; route=<host route>` and
+# `step=arrived; ...; mission=30050`; host `partner_realized=1` and `partner_act` leaving 102(heli); frames on both
+# copies show the other player on the Command platform and the guest walking.
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+# A real-seed copy can play its queued Mother Base demo after the Continue: let it finish.
+wait 45000
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+host run godmode 1
+guest run godmode 1
+both capture mb-start
+logmark both
+host worldtrigger goto=30050
+waitmission host 40050 180
+waitmission guest 40050 180
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40050; next=30050; kind=6' 150
+waitmission host 30050 200
+waitmission guest 30050 200
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30050' 90
+wait 12000
+both capture arrive-1
+wait 8000
+both capture arrive-2
+host run position
+guest run position
+waitlog host 'partner_realized=1' 60
+placebehind host guest 6
+wait 3000
+both capture host-sees-guest
+heldcapture guest host w guest-walk 3
+placebehind guest host 6
+wait 3000
+both capture guest-sees-host
+host run position
+guest run position
+state
