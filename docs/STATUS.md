@@ -22,6 +22,8 @@ follow carry fixes, so the carry stays off.
   its own comment; `docs/native-puppet.md` names the live fallback vtable `0x23B2AB0` and lists the key and the
   census and carry lines. Notes cam-1 (vtable slots not pinned), cam-2 (no driver test of `TickFollowCarry`), cam-4
   (census episode lines share the 400 cap; the close line prints `vehicle=65535`) are open; cam-3 is history.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `bcd72d09` (and again at this entry's commit);
+  `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
 - **Open [U]:** whether a follow blend runs at a get-in when the jeep really leaves at once (the scenario's first drive
   input did nothing); what makes the guest's camera zoom in at the drive-off; the user's report may be the driver's
   stock chase camera (the user also drove in that session).
