@@ -4098,6 +4098,28 @@ getting in and moving".
   worker `refused; reason=required_hooks_or_private_desktop`); the machine's hardware D3D11 probe failed the same way
   from 13:00 to 13:33. Next: run the -off and on scenarios (before / after: `partner_ride_cam` lag and
   `state=follow` lines, frames `a-in-NN` on both copies), then turn the key on by default.
+- **Runs (fb1031 proof round, `wp/integ-fb1031` at `0d2eff33`, play, `-WanSim bad`, native gun research, africa-jeep;
+  both copies admitted and in gameplay at 30020):** `703d886a` (`-play-off.txt`, the carry off) and `70eefcea`
+  (`-play.txt`, `partner_ride_follow=1` in `session.json`). [O] **No trail of the kind the carry targets.** Every rider row
+  (fallback camera, `cmode=5`) on both copies in both runs read `blend=0,0,0` (no blend running: 222 guest rows each run,
+  111 host rows in `703d886a`); the aim rows read `cmode=2`, and after the aim's end the fallback came back with
+  `blend=0,0,0`. With the key on the carry never opened (no `state=follow` line, `carry=0` everywhere). Outside the
+  drive-off zoom below and the aim's return (54-61 cm on the first fallback row after the aim at 3-4 m/s, 4-6 cm 250 ms
+  later), the rider's camera kept the body within 1-2 cm of its rest place in the view at up to 11.5 m/s (`703d886a`)
+  and 14.9 m/s (`70eefcea`).
+  [O] **What the census did show instead, the same in both runs:** (1) right after the host drove off with the guest
+  in seat 3, the guest's camera moved about 1.5 m CLOSER to the rider along the view (`d_cm=0,0,-151` at 5.4 m/s, about
+  0.55 s, then back; `-152` in `70eefcea`); frames `guest-a-run-01` show the rider and driver much larger than at rest
+  and `a-run-02` back at the rest framing. That is a zoom-in, not a trail; its cause is [U] (camera collision near the
+  start spot or a stock pull-in, not told apart). (2) The driver's own VehicleCamera (`cmode=3`, stock) trails up to
+  0.7-0.9 m (`lag_ms` 62-108) on both copies, host and guest alike. (3) In `703d886a` leg C (the guest drove off while
+  the host was still getting in), the host's rider camera stayed rigid (`lag_cm` 0-1) while the host's body drifted up
+  to 1.46 m in the jeep (the get-in animation still playing; frames `host-c-in-04/05`).
+  [O] Scenario limits: the host's first `hold w` right after the seat report did not move the jeep (its census episode
+  started about 4.4 s later, at the second hold), and the `burst` captures run one role after the other, so the
+  `a-in` frames show the jeep at rest; leg B (left door) never boarded in either run; leg C failed in `70eefcea` (the
+  guest never drove). **Decision:** the carry is not turned on (nothing to carry was seen); `partner_ride_follow` stays
+  off unless named. Sheets `fb1031/frames/camera/best-sheet-703d886a.jpg`, `best-sheet-70eefcea.jpg`.
 
 ## 9. Milestones
 

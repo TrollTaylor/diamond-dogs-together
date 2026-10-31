@@ -1,3 +1,31 @@
+## 2026-10-31: rider camera proof round (`wp/integ-fb1031`, local only) -- `partner_ride_follow` stays OFF unless named
+
+**Players get:** nothing new: the rider's camera is as in 0.14.5. The runs found no trailing camera of the kind the
+follow carry fixes, so the carry stays off.
+
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, africa-jeep; both copies admitted, gameplay at
+  30020): `703d886a` (`fb1031-ride-camera-play-off.txt`, the 0.14.5 camera) and `70eefcea`
+  (`fb1031-ride-camera-play.txt`, `partner_ride_follow=1`). Pre-run d3dprobe HARDWARE hr=0 both times (nvidia-smi
+  3668 MiB 17 % / 3711 MiB 8 %).
+- [O] **No blend trail.** Every rider row of the census on both copies in both runs read `blend=0,0,0` (no follow
+  blend running), also after an aim's end while moving; with the key on, the carry wrote nothing (no `state=follow`
+  line, `carry=0`). Apart from the zoom below and the aim's return (under 250 ms), the rider's camera held the body
+  within 1-2 cm in the view at up to 11.5 / 14.9 m/s.
+- [O] **What the census showed instead (both runs alike):** right after the host drives off with the guest in seat 3,
+  the guest's camera zooms about 1.5 m closer for about half a second and returns (`d_cm=0,0,-151`; frames
+  `guest-a-run-01` vs `a-run-02`); the cause is [U]. The driver's stock VehicleCamera trails 0.7-0.9 m on both copies.
+  A host getting in while the guest drives off kept a rigid camera while the body drifted up to 1.46 m in the jeep.
+- [O] **Scenario limits:** the host's first drive input after the seat report did not move the jeep (it started about
+  4.4 s later), burst captures run one copy after the other, leg B (left door) never boarded, leg C failed in
+  `70eefcea`. Design 8.59 has the details.
+- **Code:** none changed in behaviour. Review note cam-5: `tests/lab_ini_check.cpp` prints `partner_ride_follow` under
+  its own comment; `docs/native-puppet.md` names the live fallback vtable `0x23B2AB0` and lists the key and the
+  census and carry lines. Notes cam-1 (vtable slots not pinned), cam-2 (no driver test of `TickFollowCarry`), cam-4
+  (census episode lines share the 400 cap; the close line prints `vehicle=65535`) are open; cam-3 is history.
+- **Open [U]:** whether a follow blend runs at a get-in when the jeep really leaves at once (the scenario's first drive
+  input did nothing); what makes the guest's camera zoom in at the drive-off; the user's report may be the driver's
+  stock chase camera (the user also drove in that session).
+
 ## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
 
 **Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
