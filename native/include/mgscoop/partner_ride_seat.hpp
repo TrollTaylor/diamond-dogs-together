@@ -30,7 +30,8 @@
 //
 // Arm only while no DM runs on either body, only in 30010/30020 and only for
 // the seat DM's lifetime; revert once DM End ran (body act != 0x8B), and at
-// mission end, stop and shutdown (the driver owns that policy).
+// mission end and stop (the driver owns that policy); the window's close is
+// Close (PartnerShutdown, any thread; design 8.53).
 #include <cstddef>
 #include <cstdint>
 
@@ -87,6 +88,19 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
 bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept;
 bool Armed() noexcept;
 std::uint8_t ArmedSeat() noexcept;  // 0xFF when not armed
+// The game window is closing (PartnerShutdown, on whatever thread delivers WM_CLOSE / WM_DESTROY / WM_ENDSESSION;
+// design 8.53). One-way for the process: from here on Arm and ArmGetOff write nothing (Arm logs
+// partner_ride_seat_patch=skipped; reason=closing and returns false), then the live patch is reverted at once (logs
+// partner_ride_seat_patch=reverted; reason=shutdown when it wrote or was armed). The window thread is not the mission
+// thread, so the MissionEnd revert never ran there (run 1d9fd748: no revert line after partner_shutdown=hooks_off;
+// teardown=other_thread). Idempotent; a later Revert finds nothing.
+void Close(void* base, std::size_t span, LogFn log) noexcept;
+bool Closed() noexcept;
+// Tests only (design 8.54): a pause inside ArmGetOff after its checks (point 1) and inside Revert before its first
+// write (point 2), so a test can close from another thread at that moment; and a reset of the one-way close.
+using PauseFn = void (*)(int point);
+void SetPauseForTest(PauseFn fn) noexcept;
+void ResetForTest() noexcept;
 
 // --- The seated state table (StrCode64 of the MOG state names, verified
 // present in TppPlayer2_layers.mog; critic_work/mogcheck.py). class 0 = light

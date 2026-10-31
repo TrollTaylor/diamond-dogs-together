@@ -66,6 +66,20 @@ bool Masked(std::uintptr_t at) noexcept {
 #ifdef _WIN32
 volatile LONG g_armed = 0;
 volatile LONG g_seat = 0xFF;
+volatile LONG g_closed = 0;  // Close: one-way for the process (design 8.53)
+PauseFn g_pause = nullptr;   // tests only (design 8.54)
+// Design 8.54: Close runs on the window thread, Arm / Revert / ArmGetOff on the mission thread. One lock makes each
+// call's checks and writes one step for the other thread (no write after the close's revert, no overlapping
+// compare-exchange, no overlapping VirtualProtect on the two code pages). Not recursive: the bodies below call the
+// unlocked RevertLocked only.
+SRWLOCK g_lock = SRWLOCK_INIT;
+struct Locked {
+    Locked() noexcept { AcquireSRWLockExclusive(&g_lock); }
+    ~Locked() { ReleaseSRWLockExclusive(&g_lock); }
+    Locked(const Locked&) = delete;
+    Locked& operator=(const Locked&) = delete;
+};
+void Pause(int point) noexcept { if (const PauseFn fn = g_pause) fn(point); }
 
 void Emit(LogFn log, const char* line) noexcept { if (log) log(line); }
 void EmitFormat(LogFn log, const char* format, const char* a, const char* b) noexcept {
@@ -139,8 +153,14 @@ SiteState StateOf(const unsigned char* base, SiteId id) noexcept {
 }
 
 #ifdef _WIN32
+namespace {
+void RevertLocked(void* base, LogFn log, const char* reason) noexcept;
+}
+
 bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_t category) noexcept {
     auto* image = static_cast<unsigned char*>(base);
+    Locked hold;
+    if (Closed()) { Emit(log, "partner_ride_seat_patch=skipped; reason=closing\r\n"); return false; }
     if (!image || seat > 3) { Emit(log, "partner_ride_seat_patch=refused; reason=args\r\n"); return false; }
     if (const char* why = VerifyImage(image, span)) {
         EmitFormat(log, "partner_ride_seat_patch=refused; reason=%s%s\r\n", why, "");
@@ -172,7 +192,7 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_
         written_from[i] = current;
     }
     InterlockedExchange(&g_seat, seat);
-    InterlockedExchange(&g_armed, 1);
+    InterlockedExchange(&g_armed, 1);  // under the lock: Close cannot set its flag between the check above and here
     char line[192]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
             "partner_ride_seat_patch=applied; seat=%u; sites=0x119883c,0x1198d56,0x1198d81,0x11992e9; seat_dword=0x%08x; anchor=%u; cat=%u\r\n",
@@ -181,8 +201,14 @@ bool Arm(void* base, std::size_t span, std::uint8_t seat, LogFn log, std::uint8_
 }
 
 void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcept {
-    auto* image = static_cast<unsigned char*>(base);
     (void)span;
+    Locked hold;
+    RevertLocked(base, log, reason);
+}
+
+namespace {
+void RevertLocked(void* base, LogFn log, const char* reason) noexcept {
+    auto* image = static_cast<unsigned char*>(base);
     if (!image) return;
     bool wrote = false;
     // The End skip first, the seat last (the reverse of Arm).
@@ -192,6 +218,7 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
         if (state != SiteState::patched) continue;
         const std::uint32_t current = ReadDword(image, s.rva);
         if (current == s.original) continue;
+        if (!wrote) Pause(2);
         if (const char* why = near_code::PatchDword(image + s.rva, current, s.original)) {
             EmitFormat(log, "partner_ride_seat_patch=refused; reason=revert_%s_%s\r\n", s.name, why);
             return;
@@ -208,11 +235,14 @@ void Revert(void* base, std::size_t span, LogFn log, const char* reason) noexcep
     InterlockedExchange(&g_seat, 0xFF);
     if (wrote || was) EmitFormat(log, "partner_ride_seat_patch=reverted; reason=%s%s\r\n", reason ? reason : "unknown", "");
 }
+} // namespace
 
 bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexcept {
     auto* image = static_cast<unsigned char*>(base);
     (void)span;
-    if (!image || seat > 3 || !Armed() || ArmedSeat() != seat) return false;
+    Locked hold;
+    if (!image || seat > 3 || Closed() || !Armed() || ArmedSeat() != seat) return false;
+    Pause(1);
     if (StateOf(image, SiteId::seat) == SiteState::other) return false;  // seat 2 armed is the retail dword itself
     const Site& s = kSiteTable[0];
     const std::uint32_t current = ReadDword(image, s.rva);
@@ -228,6 +258,24 @@ bool ArmGetOff(void* base, std::size_t span, std::uint8_t seat, LogFn log) noexc
     return true;
 }
 
+void Close(void* base, std::size_t span, LogFn log) noexcept {
+    (void)span;
+    Locked hold;  // waits for an Arm / Revert / get-off rewrite in progress on the mission thread
+    InterlockedExchange(&g_closed, 1);  // first: no Arm or get-off rewrite from here on
+    auto* image = static_cast<unsigned char*>(base);
+    bool ours = Armed();
+    for (unsigned i = 0; image && !ours && i < kSites; ++i)
+        ours = StateOf(image, static_cast<SiteId>(i)) == SiteState::patched;
+    if (!ours) return;  // nothing of ours is live: no write and no line (also on a build whose bytes differ)
+    RevertLocked(base, log, "shutdown");
+}
+bool Closed() noexcept { return g_closed != 0; }
+void SetPauseForTest(PauseFn fn) noexcept { g_pause = fn; }
+void ResetForTest() noexcept {
+    InterlockedExchange(&g_closed, 0);
+    InterlockedExchange(&g_armed, 0);
+    InterlockedExchange(&g_seat, 0xFF);
+}
 bool Armed() noexcept { return g_armed != 0; }
 std::uint8_t ArmedSeat() noexcept { return g_armed ? static_cast<std::uint8_t>(g_seat) : 0xFF; }
 #endif

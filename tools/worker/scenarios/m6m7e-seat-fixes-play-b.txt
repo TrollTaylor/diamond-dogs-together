@@ -13,6 +13,8 @@
 #      seated (the worker's close and restore while a seat patch is applied).
 # m6m7g (after 1d9fd748): B waits for its own seat patch (the anchor line is per copy, logged in A); C waits 4 s after
 #   the driver's 39 m goto_vehicle before E (2.5 s did not board, and the partner then took the driver's seat).
+# m6m7h: part C never ran because 'debug forward -40' put the host under the ground (it fell and went down; frame
+#   1d9fd748-host-c-far), not because of the wait. Use m6m7h-seat-partc-play.txt for part C (design 8.53).
 # m6m7g: part A adds shot 5 at 0.3 m (the height that killed a lying guard on foot in 6e0edd8b; 1.6 m went over a
 #   lying guard in cbfda7f1) with a capture on both copies.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;

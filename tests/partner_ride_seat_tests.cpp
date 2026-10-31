@@ -287,12 +287,96 @@ void TestRetailCopy() {
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("retail copy: verified\n");
 }
+// Design 8.53: the game window closes on another thread than the mission's (PartnerShutdown's other_thread path; run
+// 1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread). Close reverts the live patch at
+// once and logs it; every later Arm writes nothing, so the mission thread cannot put the patch back before the process
+// ends. One-way for the process: this test runs last.
+void TestClose() {
+    unsigned char* image = FixtureImage();
+    prs::SetSeatOneAnchor(true);
+    logged.clear();
+    Check(!prs::Closed() && prs::Arm(image, kSpan, 1, Log, 1) && prs::Armed() && Dword(image, c::ride_seat_rva) == 0x00b04130u,
+          "seat 1 armed on the driver's matrix before the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && prs::ArmedSeat() == 0xFF &&
+              Logged("partner_ride_seat_patch=reverted; reason=shutdown\r\n"),
+          "the close reverts the live seat-1 patch and logs it");
+    logged.clear();
+    Check(!prs::Arm(image, kSpan, 1, Log, 1) && AllOriginal(image) && !prs::Armed() &&
+              Logged("partner_ride_seat_patch=skipped; reason=closing\r\n") && !Logged("refused"),
+          "no arm after the close (not a refusal line)");
+    Check(!prs::ArmGetOff(image, kSpan, 1, Log) && AllOriginal(image), "no get-off rewrite after the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    prs::Revert(image, kSpan, Log, "mission_end");
+    Check(AllOriginal(image) && logged.empty(), "a second close and the later mission-end revert are silent");
+    prs::SetSeatOneAnchor(false);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
+
+// Design 8.54 (review of 8.53): Close runs on the window thread while the mission thread may be inside ArmGetOff or
+// Revert. The pause seam starts Close on another thread at the named point and gives it up to 200 ms; with the seat
+// lock that thread waits until the mission call returns, without it Close runs in the middle.
+unsigned char* g_race_image = nullptr;
+HANDLE g_closer = nullptr;
+int g_close_at = 0;
+DWORD WINAPI Closer(void*) { prs::Close(g_race_image, kSpan, Log); return 0; }
+void CloseAtPause(int point) {
+    if (point != g_close_at || g_closer) return;
+    g_closer = CreateThread(nullptr, 0, Closer, nullptr, 0, nullptr);
+    Check(g_closer != nullptr, "closer thread");
+    WaitForSingleObject(g_closer, 200);
+}
+void JoinCloser() {
+    if (g_closer) { WaitForSingleObject(g_closer, INFINITE); CloseHandle(g_closer); g_closer = nullptr; }
+}
+void TestCloseRaces() {
+    unsigned char* image = FixtureImage();
+    g_race_image = image;
+    prs::SetSeatOneAnchor(true);
+    // 1: a get-off rewrite that passed its checks just before the close must not leave a seat dword behind.
+    prs::ResetForTest();
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log, 1) && Dword(image, c::ride_seat_rva) == 0x00b04130u, "race 1: seat 1 armed on the driver's matrix");
+    g_close_at = 1;
+    prs::SetPauseForTest(CloseAtPause);
+    prs::ArmGetOff(image, kSpan, 1, Log);
+    prs::SetPauseForTest(nullptr);
+    JoinCloser();
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && !Logged("refused"),
+          "race 1: a get-off rewrite racing the close leaves every site original, no refusal line");
+    // 2: the mission thread's revert (foot / stop) racing the close: no refusal line (a NEVER line in the checks).
+    prs::ResetForTest();
+    logged.clear();
+    Check(prs::Arm(image, kSpan, 1, Log, 1), "race 2: seat 1 armed");
+    g_close_at = 2;
+    prs::SetPauseForTest(CloseAtPause);
+    prs::Revert(image, kSpan, Log, "foot");
+    prs::SetPauseForTest(nullptr);
+    JoinCloser();
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && !Logged("refused") &&
+              Logged("partner_ride_seat_patch=reverted; reason="),
+          "race 2: a revert racing the close leaves every site original, no refusal line");
+    // 3: a close with nothing armed on an image whose seat site is not ours (another build) writes and logs nothing.
+    prs::ResetForTest();
+    logged.clear();
+    SetDword(image, c::ride_seat_rva, 0x90909090u);
+    prs::Close(image, kSpan, Log);
+    Check(prs::Closed() && Dword(image, c::ride_seat_rva) == 0x90909090u && logged.empty(),
+          "race 3: a close with nothing armed and a foreign seat dword is silent");
+    prs::ResetForTest();
+    prs::SetSeatOneAnchor(false);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
 } // namespace
 
 int main() {
     TestTable();
     TestFixture();
     TestRetailCopy();
+    TestClose();
+    TestCloseRaces();
     std::printf("partner_ride_seat_tests: %u checks passed\n", checks);
     return 0;
 }
