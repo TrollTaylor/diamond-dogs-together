@@ -904,6 +904,11 @@ check(f:send('enemy kill 123')[3] == 'enemy_not_authored' and f:send('enemy jump
 f = fixture({host = false})
 check(f:send('enemy info nearest')[3] == 'enemy_info;ent=4294967295;name=sol_a;cp=cp_a;state=0;distance_m=1.0', 'guest info')
 check(f:send('enemy kill nearest')[3] == 'host_only' and f:count('ChangeLifeState') == 0, 'guest ops refused')
+-- enemy goto (either copy, this copy's player only): 2.5 m from the soldier on the player's side, facing him.
+check(f:send('enemy goto nearest')[3] == 'enemy_goto;ent=4294967295;submitted_warp', 'goto a soldier on either copy')
+w = f.calls[#f.calls][2]
+check(math.abs(w.pos[1] - 8.5) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
+    'enemy goto lands 2.5 m from the soldier on the player side, facing him')
 f = fixture(); f.env.e.MgsCoopWorld = {paired = true, w1 = true}
 check(f:send('enemy_kill_nearest')[3] == 'submitted=1;dead_readback=1;sync=world;max=16', 'kill alias keeps text with the sync tag')
 -- cp_phase

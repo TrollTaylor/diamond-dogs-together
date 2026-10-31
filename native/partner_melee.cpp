@@ -51,6 +51,7 @@ Out Step(State& s, const In& in) noexcept {
     s.last_act = in.act;
     if (in.act == kStrikeAct) { s.jab_seen = true; s.last_jab_ms = in.now_ms; }
     if (!edge) return o;
+    if (in.act == kStrikeAct) ++s.presses;  // each press starts with its own 113 edge
     if (!in.enabled) { o.verdict = Verdict::off; return o; }
     // The finisher is a 114 straight out of the combo's jabs; a 114 from any other act starts a soldier takedown.
     const bool finisher = in.act == kFinisherAct;
@@ -77,17 +78,21 @@ Out Step(State& s, const In& in) noexcept {
     if (dist > 1e-6 && cosine < kConeCos) { o.verdict = Verdict::angle; return o; }
     if (in.remote_valid && PartnerBusyAct(in.remote_act)) { o.verdict = Verdict::busy; return o; }
     if (in.remote_valid && in.remote_stance == 3) { o.verdict = Verdict::prone; return o; }
-    if (!finisher) {
-        // One jab never puts the partner to sleep; a second jab in reach within kPairMs does (run af0b88b6).
-        const bool pair = s.jab_reach && in.now_ms >= s.jab_reach_ms && in.now_ms - s.jab_reach_ms <= kPairMs;
-        if (!pair) {
+    if (s.landed && in.now_ms >= s.last_land_ms && in.now_ms - s.last_land_ms < kRepeatMs) { o.verdict = Verdict::repeat; return o; }
+    // One press never puts the partner to sleep: run 1526e58a gave 113 (219 ms) then 114 (549 ms) for ONE press with the
+    // partner 1.1 m in front, so the 114 is that press's own strike, not a combo finisher. The strike of the next press
+    // in reach within kPairMs of the first in-reach strike lands (run af0b88b6: two presses, two 113 edges).
+    const bool pair = s.jab_reach && s.jab_reach_press != s.presses && in.now_ms >= s.jab_reach_ms &&
+                      in.now_ms - s.jab_reach_ms <= kPairMs;
+    if (!pair) {
+        if (!s.jab_reach || s.jab_reach_press != s.presses) {
             s.jab_reach = true;
             s.jab_reach_ms = in.now_ms;
-            o.verdict = Verdict::jab;
-            return o;
+            s.jab_reach_press = s.presses;
         }
+        o.verdict = Verdict::jab;
+        return o;
     }
-    if (s.landed && in.now_ms >= s.last_land_ms && in.now_ms - s.last_land_ms < kRepeatMs) { o.verdict = Verdict::repeat; return o; }
     s.landed = true;
     s.last_land_ms = in.now_ms;
     s.jab_reach = false;

@@ -12,13 +12,15 @@
 
 namespace mgscoop::partner_melee {
 
-// The vanilla CQC feel (fb1031 review): one jab does not put the partner to sleep, the combo's finishing strike does.
+// The vanilla CQC feel (fb1031 review): one press does not put the partner to sleep, the next press within kPairMs does.
+// Hidden run 1526e58a: ONE press with the partner 1.1 m in front gave 113 (219 ms) then 114 (549 ms), so a 114 straight
+// out of a 113 is that press's own strike (counted by `presses`, one per 113 edge), never a lander on its own.
 // The 2026-10-31 census of the remote's presses: each jab is its own edge into 113 (held 0.2-1.1 s, back to stand
 // between jabs); the finisher is 114 straight out of 113 (same tick, held about 0.5 s). A 114 from any other act
 // (running 2 -> 114, held up to 3 s) was the start of a CQC takedown of a soldier (the host's Neutralize att=local
 // lined up with both), so it is not a strike on the partner.
 inline constexpr std::uint16_t kStrikeAct = 113;     // one CQC jab of the punch combo: logged, never queued
-inline constexpr std::uint16_t kFinisherAct = 114;   // the combo's finishing strike when a 113 was seen within kComboMs
+inline constexpr std::uint16_t kFinisherAct = 114;   // the press's strike out of its 113 (seen within kComboMs)
 inline constexpr std::uint32_t kComboMs = 600;       // the last 113 tick to the 114 edge
 // Run af0b88b6 (hidden, both copies): four scripted presses at ~350 ms gave two 113 edges 1.6 s apart and no 114, so the
 // finisher alone is not reliable: two jabs in reach within kPairMs land too (the coordinator's fallback).
@@ -56,8 +58,10 @@ struct State {
     bool landed = false;
     bool jab_seen = false;
     std::uint64_t last_jab_ms = 0;  // the last tick the local act was 113
-    bool jab_reach = false;         // a jab in reach that a second one within kPairMs completes
+    bool jab_reach = false;         // a press's strike in reach that the next press's strike within kPairMs completes
     std::uint64_t jab_reach_ms = 0;
+    std::uint32_t presses = 0;          // 113 edges (one per press; the 114 out of a 113 is the same press)
+    std::uint32_t jab_reach_press = 0;  // the press of jab_reach
     std::uint32_t strikes = 0, lands = 0;
 };
 struct Out {

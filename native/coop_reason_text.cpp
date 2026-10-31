@@ -332,7 +332,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 7: return Put(out, capacity, "Your partner reached the driver's seat first: take another seat or wait.");
         default: return false;
         }
-    case 14:  // TRAVEL{a=mission, b=1 travelling | 2 brought there | 3 brought here | 4 bringing | 5 refused | 6 stopped}
+    case 14:  // TRAVEL{a=mission, b=1 travelling | 2 brought there | 3 brought here | 4 bringing | 5 refused | 6 stopped
+              //        | 7 Bring refused: the partner is in another mission}
         switch (b) {
         case 1:
             if (!FormatMission(a, first, sizeof(first))) return false;
@@ -346,6 +347,7 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
             return Put(out, capacity,
                        "Your partner cannot travel right now (riding, carried, downed, in a cutscene or already travelling).");
         case 6: return Put(out, capacity, "Travel stopped: the trip did not finish in time. Use the helicopter instead.");
+        case 7: return Put(out, capacity, "Your partner is in another area: use Go to first.");
         default: return false;
         }
     default:  // 15 reserved or unknown: no toast
