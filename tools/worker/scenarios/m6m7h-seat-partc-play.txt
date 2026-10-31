@@ -21,6 +21,9 @@
 # m6m7h run d462df5d (first version): 'debug forward -40' from the seed spot keeps the seed's height (0.75 m) and put
 #   the host under the ground 40 m back; it fell and went down (WOUNDED, frame host-c-far), so its E could not board
 #   and the guest's E took the driver's seat; 1d9fd748's part C most likely failed the same way. waitlog only warns.
+# Review m6m7h (integrate, not run): the guest leaves the jeep right after each boot (spawn claim race), no
+#   'guest debug forward' (it keeps the old height, as forward -40 did for the host), godmode again after the
+#   reload, and C3 sends the guest to the door only after the host drives.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
 #   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -29,6 +32,10 @@
 title 200
 waitgameplay host 120
 waitgameplay guest 120
+# The guest leaves the jeep at once: both seeds start beside it, and a guest at an empty jeep claims its driver's
+# seat about every 1.2 s (d462df5d: claim at t 341497253, the host's copy granted and yielded 10.7 s before
+# the fall; 23032c72). A known ground spot (the host stood there in 23032c72), 4 m from the host's C1 spot.
+guest debug teleport -633.5 3.0 867.8 -117
 both debug godmode 1
 host run enemy sleep 4158955462
 host run enemy sleep 138337336
@@ -41,7 +48,6 @@ waitlog host 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace
 waitlog guest 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
 waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1;' 30
 waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=mode; on=1;' 30
-guest debug teleport -652.93 1.20 879.33 -117
 host debug teleport -656.01 1.20 877.73 62
 wait 3000
 host run vehicle_seats
@@ -52,8 +58,7 @@ host debug teleport -633.5 3.0 871.8 0
 wait 8000
 host run buddy_status
 host capture c-far
-guest debug forward -10
-wait 2500
+wait 3000
 guest capture c-guest-back
 logmark both
 host debug teleport -656.01 1.20 877.73 62
@@ -115,6 +120,11 @@ waitlog host 'event=raw_clock; step=resumed' 30
 waitlog guest 'event=raw_clock; step=resumed' 30
 waitgameplay host 120
 waitgameplay guest 120
+both debug godmode 1
+# The guest leaves the jeep at once: both seeds start beside it, and a guest at an empty jeep claims its driver's
+# seat about every 1.2 s (d462df5d: claim at t 341497253, the host's copy granted and yielded 10.7 s before
+# the fall; 23032c72). A known ground spot (the host stood there in 23032c72), 4 m from the host's C1 spot.
+guest debug teleport -633.5 3.0 867.8 -117
 wait 8000
 host run vehicle_seats
 guest run vehicle_seats
@@ -125,11 +135,8 @@ guest debug forward 2
 wait 2500
 both capture c2-reloaded-2
 # --- C3. Seated again, then the worker's close ------------------------------------------------------------------------
-guest debug teleport -652.93 1.20 879.33 -117
 host debug teleport -656.01 1.20 877.73 62
 wait 3000
-guest debug goto_vehicle jeep right
-wait 2500
 logmark both
 host debug goto_vehicle jeep
 wait 1500
@@ -138,6 +145,10 @@ waitlog host 'world_lua=goto_vehicle; name=veh_lv_0000; id=25608; dist=[0-3];' 5
 wait 2000
 host press e 150
 waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host require vehicle;id=25608;
+guest debug goto_vehicle jeep right
+wait 1200
 guest press e 150
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 8
 waitlog host 'partner_ride_seat_patch=applied; seat=[13];' 10
