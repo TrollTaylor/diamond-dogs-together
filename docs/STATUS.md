@@ -1,3 +1,28 @@
+## 2026-10-31: the rider's camera trailing a jeep that drives off (branch `wp/ride-camera`, local only, design 8.59)
+
+**Players get: nothing yet (built, unit-tested, NOT run-proven, off unless named).** Both hidden runs were refused
+before admission, so the fix stays behind `partner_ride_follow=1`.
+
+- **Report** (0.14.5, two PCs, Mother Base): "camera lags behind when getting in and moving" (the guest in a back seat
+  while the host drove).
+- **Cause** (design 8.59; static, pinned): a passenger's camera is the game's on-foot camera, whose follow point eases
+  from a fixed world point for a moment after each camera change (`CAM+0x170 = S + alpha (T - S)`, the fallback module's
+  timed blend); a jeep that drives off in that moment leaves the camera behind until alpha reaches 1. That a get-in and
+  an aim's end start such a blend is inferred (the log's `connect ... mode=5; prev=2` at the get-in), not run-observed.
+- **Built:** the ride camera census `partner_ride_cam=frame|line|episode` (`c93716c2`, lab and play, read only: the
+  body's shift in the camera's view while the vehicle leaves standstill, speed, drift, the blend's alpha / elapsed /
+  duration); the follow carry (`ca1c11b1` -> `fb298535`): while the local passenger rides and the blend runs, its start
+  point moves with the vehicle (12 pinned `ride_follow_blocks`; no code patched, no game function called); off unless
+  named (`599b14df` -> `f20616a0`). Scenarios `fb1031-ride-camera-play.txt` (key 1) and `-play-off.txt` (default).
+- **Runs (refused, both):** `d671ace6ddc743a592d897e1bc276f52` (census build) and `4232a7bd08124f3cb11f459b3e0162dc`
+  (the -off scenario, the one retry): "Worker supervisor exited before admission (code 2)", `child_exited_before_admission`,
+  error 1067; the host copy admitted, the guest copy's overlay `D3D11CreateDeviceAndSwapChain hr=0x8007000E`
+  (E_OUTOFMEMORY); the machine's hardware D3D11 probe failed the same way 13:00-13:33 (GPU 4.3-4.8 GB, 1-7 %). Closed,
+  baselines restored, real saves unchanged both times.
+- **Checks at `f20616a0`:** `tools/build.ps1` (Debug) 336/337, the one failure `debug_overlay_tests` (its hardware DX11 fixture, the GPU state above; it passed alone right after, and `-Fast` was 305/305 at 13:45); contract `--check` 850 code sites / 213 vtable slots.
+- **Next:** run the -off and the on scenario (before / after lag in metres and ms, frames `a-in-NN` on both copies), then
+  default the key on with the gun profile.
+
 ## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `f8eba06` with Release receipt `20261031-160809-324523450267433b85ad21a2a5966831` (passed, 324 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.5+f8eba06` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.4.
