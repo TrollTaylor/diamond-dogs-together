@@ -251,8 +251,12 @@ std::uint8_t RaceStepB(void* unit, Verdict verdict, std::uint8_t result) noexcep
         g_hold_hits.fetch_add(1, std::memory_order_relaxed);
         return kNoSeat;
     }
-    g_commit.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now + kHostCommitMs) << 32, std::memory_order_release);
-    g_commits.fetch_add(1, std::memory_order_relaxed);
+    // A held (READY-armed) guest's granted boarding is no commit: only the host answers claims (role=commit, review).
+    const std::uint64_t hold = g_hold.load(std::memory_order_acquire);
+    if (!((hold & 1u) && static_cast<std::uint32_t>(static_cast<std::uint32_t>(hold >> 32) - now) <= kRaceDenyMaxMs)) {
+        g_commit.store(static_cast<std::uint64_t>(vehicle) | static_cast<std::uint64_t>(now + kHostCommitMs) << 32, std::memory_order_release);
+        g_commits.fetch_add(1, std::memory_order_relaxed);
+    }
     ReleaseSRWLockExclusive(&g_arb);
     return result;
 }
@@ -281,6 +285,12 @@ bool ReadPress(void* action, std::uint32_t index, bool& local, std::uint16_t& ve
 // The original runs first with the caller's arguments and last error; its true is kept. Else a held guest's E press
 // on an empty vehicle (PressDecide) answers true (phase 1 returns this frame: the stock idle before the record checks,
 // site B and TryToRide; nothing written) until the host's grant or deny for that vehicle, at most kPressWaitMs.
+// One word per ended press (vehicle, end, an 8-bit sequence, wait), so ReadRace reads one snapshot (review); one writer
+// (phase 1 runs on the game's update thread).
+void StoreDone(std::uint16_t vehicle, std::uint64_t end, std::uint32_t wait_ms) noexcept {
+    const std::uint64_t seq = (g_done_seq.fetch_add(1, std::memory_order_acq_rel) + 1u) & 0xFFu;
+    g_done.store(vehicle | end << 16 | seq << 24 | static_cast<std::uint64_t>(wait_ms) << 32, std::memory_order_release);
+}
 bool SiteD(void* action, std::uint32_t index) noexcept {
     const bool ok = g_gate(action, index);
     if (ok || !g_race.load(std::memory_order_acquire)) return ok;
@@ -314,9 +324,7 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
         // The partner's ride arrived while this press was held (both pressed, run 23c7f305): the passenger policy seats
         // it now, so it ends as 'peer' (end 4; Lua shows no deny toast for it).
         g_pend.store(false, std::memory_order_release);
-        g_done.store(static_cast<std::uint64_t>(in.vehicle) | std::uint64_t{4} << 16 | static_cast<std::uint64_t>(now - in.pend_start) << 32,
-                     std::memory_order_release);
-        g_done_seq.fetch_add(1, std::memory_order_acq_rel);
+        StoreDone(in.vehicle, 4u, now - in.pend_start);
     }
     switch (verdict) {
     case PressVerdict::start: {
@@ -338,9 +346,7 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
         g_pend.store(false, std::memory_order_release);
         if (!in.granted && !in.denied) g_timeouts.fetch_add(1, std::memory_order_relaxed);
         const std::uint64_t end = in.granted ? 1u : in.denied ? 2u : 3u;
-        g_done.store(static_cast<std::uint64_t>(in.vehicle) | end << 16 | static_cast<std::uint64_t>(now - in.pend_start) << 32,
-                     std::memory_order_release);
-        g_done_seq.fetch_add(1, std::memory_order_acq_rel);
+        StoreDone(in.vehicle, end, now - in.pend_start);
         break;
     }
     case PressVerdict::stock: break;
@@ -857,11 +863,12 @@ void ReadRace(RaceState& out) noexcept {
     out.press = static_cast<std::uint16_t>(press & 0xFFFFu);
     out.press_age_ms = out.press == kVehicleUnknown ? 0xFFFFFFFFu : now - static_cast<std::uint32_t>(press >> 32);
     out.pseq = g_pseq.load(std::memory_order_acquire);
-    out.pend = g_pend.load(std::memory_order_acquire);
+    // Pending only while site D saw it within kPressGapMs: an aborted phase 1 (reload, a hit) never calls it again.
+    out.pend = g_pend.load(std::memory_order_acquire) && Near(now, g_press_seen.load(std::memory_order_acquire), kPressGapMs);
     out.timeouts = g_timeouts.load(std::memory_order_relaxed);
     out.commit = LiveWord(g_commit.load(std::memory_order_acquire), now, out.commit_left_ms);
-    out.done_seq = g_done_seq.load(std::memory_order_acquire);
     const std::uint64_t done = g_done.load(std::memory_order_acquire);
+    out.done_seq = static_cast<std::uint32_t>((done >> 24) & 0xFFu);
     out.done_vehicle = static_cast<std::uint16_t>(done & 0xFFFFu);
     out.done_end = static_cast<std::uint8_t>((done >> 16) & 0xFFu);
     out.done_wait_ms = static_cast<std::uint32_t>(done >> 32);

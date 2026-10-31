@@ -472,12 +472,12 @@ function S.guard(now, r)
     S.fulton = id
 end
 -- Unpaired, the link below level 3, or the world stopped (W.fail, LEVEL 0, the end): no hold (it would keep the guest
--- from any driver's seat), no guard, no READY heard.
-function S.reset()
+-- from any driver's seat), no guard; READY is kept while paired (a guest-only dip; a silent host ends it by a timeout).
+function S.reset(keep)
     if S.held then S.board("hold 0") end
     if S.fulton or S.fAdded then S.off = true; S.guard() end
     S.hot, S.off, S.granted, S.gotGrant, S.next, S.held, S.hitsSeen = nil, nil, {}, {}, 0, nil, nil
-    S.readyAt, S.readyNext, S.readySaid, S.pseqSeen, S.toutsSeen = nil, nil, nil, nil, nil
+    S.readyAt, S.readyNext, S.readySaid, S.pseqSeen, S.toutsSeen = keep and S.readyAt or nil, nil, nil, nil, nil
 end
 -- Off (the key, or the board not installed yet) is read again every OFF_MS; logged once per pairing.
 function S.step(now)
@@ -520,6 +520,10 @@ function S.step(now)
     local touts = tonumber(r.touts) or 0
     if S.toutsSeen and touts > S.toutsSeen then
         seatLog(string.format("action=timeout;vehicle=%d;timeouts=%d", tonumber(r.press) or 65535, touts), "t")
+        -- No answer in 1 s: stock until the next READY (an alive host sends one every 4 s), as dev's silent fallback.
+        S.readyAt, ready, S.held = nil, false, nil
+        S.board("hold 0")
+        seatLog("state=stock")
     end
     S.toutsSeen = touts
     -- Each new E press site D held (pseq) is claimed at once, only while held (READY heard).
@@ -601,7 +605,7 @@ function W.tick(...)
         local at = S.next
         S.step(now)
         if S.hot and S.next == at then S.guard(now) end
-    else S.reset() end
+    else S.reset(W.paired) end
     if W.paired and W.eff and W.eff >= 3 then
         R.fastSend(now)
         R.fastApply(now)
