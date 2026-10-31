@@ -40,7 +40,11 @@ copy only (pre-existing).
 **Review fixes** (`4df2464`, `95eed1c`, `bb6a01b`, design 8.44): worker admit cases for the anchor key (mutation-checked),
 stale default comments and the design numbers in code, the -b anchor waitlogs after the first seat patch, the README
 Seats claims (S1; a front-seat partner can also appear beside the seat while moving; walking does not stop the turn).
-No run: D: 2.0 GB free. Nothing pushed.
+**Blocked, no run:** D: had 2.0 GB at 18:51, then 72 GB at 19:11 (freed outside this work); the -b run (19:13) stopped in
+the worker's audited CTest before any game started: `debug_overlay_tests` fails "hardware DX11 fixture creation" on this
+PC since about 19:12, also with the older wp/self-hit and wp/aim-view test binaries (environment, not code). Full
+`tools/build.ps1` at the review-fix head: 334/336, the other failure `friend_package_tests_2` (a relaunch timing
+assert under load) passes alone. Nothing pushed.
 
 ## 2026-10-30: seat 1 drawn in the seat, proven in play behind a lab key (branch `wp/seat1-draw`)
 

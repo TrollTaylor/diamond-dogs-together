@@ -3435,7 +3435,7 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   3 GB); the first E after `goto_vehicle right` sometimes does not board (2 of 5); seat-1/2 aim views (first-person
   track); stock-hit status of the front-seat lines [U].
 
-### 8.44 The seat-fixes review closed (2026-10-30, branch `wp/seat-fixes`; no run, D: under 3 GB)
+### 8.44 The seat-fixes review closed (2026-10-30, branch `wp/seat-fixes`; no run: the worker refused, DX11 fixture)
 
 - **S1 in play is "no harm", not "prevents the self-hit"** [O slices]: the lab A/B stock costs (702 a shot, `8a920ec8`
   seat 3, `60faf9fc` seat 2) were on the Africa jeep (`published ... cat=1`); both play runs rode the east jeep (`cat=2`),
