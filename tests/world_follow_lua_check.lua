@@ -735,6 +735,11 @@ check(arrival.F.arrivedMission == nil and logged(arrival, 'step=refused;reason=w
 -- A linked co-op guest never starts Mother Base riding the helicopter (vanilla TppMission.ResetMBFreeStartPositionToCommand,
 -- the on-foot Command start of the vanilla MB restart), its queued MB demo is cleared, and a guest riding a helicopter at
 -- Mother Base restarts locally (then on foot) instead of the host_only refusal.
+local function count(c, text)
+    local n = 0
+    for _, s in ipairs(c.logs) do if s:find(text, 1, true) then n = n + 1 end end
+    return n
+end
 local function mbApis(c, demo)
     c.mbDemo = demo
     c.env.TppDefine.INITIAL_PLAYER_STATE = {ON_FOOT = 0, RIDEON_HELICOPTER = 1}
@@ -760,14 +765,14 @@ do
     mf.env.e.ReservePlayerLoadingPosition(1)
     check(called(mf, 'mb_foot') >= 1 and mf.env.gvars.heli_missionStartRoute == 0 and mf.env.gvars.ply_initialPlayerState == 0,
         'the guest arrival at Mother Base starts on foot (vanilla Command start)')
-    check(mf.mbDemo == nil and logged(mf, 'step=mb_demo;') == 1 and logged(mf, 'cleared=LongTimeNoSee_DdogSuperHighLikability') == 1,
+    check(mf.mbDemo == nil and count(mf, 'step=mb_demo;') == 1 and count(mf, 'cleared=LongTimeNoSee_DdogSuperHighLikability') == 1,
         'the guest queued MB demo is cleared once and logged')
     local before = called(mf, 'mb_foot')
     mf.env.TppMission.Load(30050)
     check(mf.loaded == 30050 and called(mf, 'mb_foot') == before + 1 and mf.env.gvars.heli_missionStartRoute == 0 and
         mf.env.gvars.ply_initialPlayerState == 0 and mf.env.vars.mbClusterId == 0,
         'the host seeds (its helicopter route) never put the guest back in the helicopter')
-    check(logged(mf, 'step=mb_foot;at=seeds;route=4294967295') >= 1, 'the on-foot start is logged with the replaced route')
+    check(count(mf, 'step=mb_foot;at=seeds;route=4294967295') >= 1, 'the on-foot start is logged with the replaced route')
     -- The host keeps its own arrival.
     local host = mbApis(fixture(1), 'QuietReturnToMB')
     host.env.gvars.ply_initialPlayerState = 1
@@ -778,7 +783,7 @@ do
     local boot = mbApis(fixture(2))
     boot.env.gvars.heli_missionStartRoute = 0
     boot.env.e.ReservePlayerLoadingPosition(1)
-    check(called(boot, 'mb_foot') == 0 and logged(boot, 'step=mb_foot') == 0, 'an on-foot start is left alone')
+    check(called(boot, 'mb_foot') == 0 and count(boot, 'step=mb_foot') == 0, 'an on-foot start is left alone')
     -- Elsewhere, unlinked or older games: unchanged.
     local field = mbApis(fixture(2), 'X')
     field.env.vars.missionCode, field.env.gvars.ply_initialPlayerState = 30010, 1
@@ -796,14 +801,14 @@ do
         local cont = mbApis(fixture(2), 'X')
         cont.env.gvars.ply_initialPlayerState = 1
         cont.env.e.ReservePlayerLoadingPosition(kind)
-        check(called(cont, 'mb_foot') == 1 and cont.mbDemo == nil and logged(cont, 'step=mb_foot;at=reserve') == 1,
+        check(called(cont, 'mb_foot') == 1 and cont.mbDemo == nil and count(cont, 'step=mb_foot;at=reserve') == 1,
             'kind ' .. kind .. ': a guest save that would ride in starts on foot')
     end
     -- The allocation (f30050 MissionPrepare reads the queued demo): cleared for a linked guest only.
     local alloc = mbApis(fixture(2), 'X')
     local co = coroutine.create(function() return alloc.env.e.OnAllocate(1) end)
     local ok, yielded = coroutine.resume(co)
-    check(ok and yielded == 'allocate' and alloc.mbDemo == nil and logged(alloc, 'step=mb_demo;at=allocate') == 1,
+    check(ok and yielded == 'allocate' and alloc.mbDemo == nil and count(alloc, 'step=mb_demo;at=allocate') == 1,
         'allocation clears the guest MB demo and still yields through')
     local hostAlloc = mbApis(fixture(1), 'X')
     coroutine.resume(coroutine.create(function() return hostAlloc.env.e.OnAllocate(1) end))
@@ -814,7 +819,7 @@ do
     local stuck = mbApis(fixture(2))
     stuck.env.vars.playerVehicleGameObjectId = 77
     stuck.env.TppMission.RestartMission()
-    check(called(stuck, 'restart_menu') == 1 and #stuck.tx == 0 and logged(stuck, 'step=local_restart;fn=RestartMission;why=heli') == 1,
+    check(called(stuck, 'restart_menu') == 1 and #stuck.tx == 0 and count(stuck, 'step=local_restart;fn=RestartMission;why=heli') == 1,
         'stuck guest: Restart runs locally, no host_only request')
     stuck.time = stuck.time + 1500
     stuck.env.TppMission.ExecuteRestartMission()
@@ -823,7 +828,7 @@ do
     cont.env.vars.playerVehicleGameObjectId = 77
     cont.env.TppMission.ContinueFromCheckPoint()
     check(called(cont, 'restart_menu') == 1 and called(cont, 'continue_menu') == 0 and #cont.tx == 0 and
-        logged(cont, 'step=local_restart;fn=ContinueFromCheckPoint;why=heli') == 1, 'stuck guest: Continue runs the local restart')
+        count(cont, 'step=local_restart;fn=ContinueFromCheckPoint;why=heli') == 1, 'stuck guest: Continue runs the local restart')
     local foot = mbApis(fixture(2))
     foot.env.TppMission.RestartMission()
     check(called(foot, 'restart_menu') == 0 and foot.tx[1].op == OP.REQ_MISSION, 'a guest on foot still asks the host')
