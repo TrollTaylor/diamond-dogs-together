@@ -1,8 +1,9 @@
 # Mother Base staff outcomes in play (W1 at 30050; docs/world-sync-protocol.md section 1 "Per mission"), fb1031-on:
 # both players a few metres from ONE staff member and facing them, mb-ladder seed on both copies, -WanSim bad.
-#   0. the host goes 2.5 m from the nearest staff member (enemy goto nearest, this round's debug lever) and puts them
-#      to sleep at once (staff walk their routes); the guest is placed 1.5 m behind / 2 m right of the host; both
-#      cameras turn to the sleeping staff member (enemy_aim_nearest 0.3).
+#   0. the host goes 2.5 m from staff member 1325835864 (the nearest one from the mb-ladder spot in runs 1d949f8c and
+#      3781890d; enemy goto <hash>, this round's debug lever) and puts them to sleep at once (staff walk their routes).
+#      Each PC moves its own staff (run 3781890d: the guest's copy of him was not near the host), so the guest then
+#      goes 2.5 m from ITS copy of the same staff member (asleep there by then); both cameras turn to him (0.3 m up).
 #   1. host 'enemy sleep nearest': host commit state=2 -> guest apply state=2: asleep on both screens.
 #   2. host 'enemy fulton nearest' (the same, asleep): the host's stock Fulton takes them away; host commit state=6
 #      -> the guest copy disables them (spareStaff: event=spare; state=6; as=7; TppEnemy.SetDisable), never
@@ -30,8 +31,8 @@ stance host stand
 stance guest stand
 both capture mb-start
 # --- 0. both next to ONE staff member ------------------------------------------------------------------------------
-host run enemy goto nearest
-host expect ^enemy_goto;ent=\d+;submitted_warp
+host run enemy goto 1325835864
+host expect ^(enemy_goto;ent=1325835864;submitted_warp|warp_position_readback)
 wait 2500
 host run enemy_aim_nearest 1.1
 wait 600
@@ -42,12 +43,13 @@ host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;
 waitlog host 'world_lua=event=commit; ent=[0-9]+; state=2; ver=[0-9]+; actor=host;' 10
 waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=2; ver=[0-9]+; src=outcome; result=ok' 10
-placebehind guest host 1.5 2
+guest run enemy goto 1325835864
+guest expect ^(enemy_goto;ent=1325835864;submitted_warp|warp_position_readback)
 stance guest stand
 wait 2500
 host run enemy_aim_nearest 0.3
 guest run enemy_aim_nearest 0.3
-guest expect ^aim_nearest;ent=\d+;
+guest expect ^aim_nearest;ent=1325835864;
 wait 800
 both capture s1-asleep
 host run enemy info nearest
