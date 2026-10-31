@@ -23,7 +23,9 @@ the guest saw the host, the host never saw the guest. Host log only (the guest's
 - **Checks:** world_follow_lua_check 194 (sortie replay with the host's helicopter seeds, restart/Continue of a
   helicopter save, the W4 shared Continue keeping the host spawn, host/free roam/on-foot/unlinked unchanged, the way
   out and its refusals, a throwing reset), ddt_core_tests CollectLogsLaunches, world_receipt/world_wire/world_goto,
-  worker_session_tests; the game-source checks (world_follow_game, world_sync_composed) pass unchanged.
+  worker_session_tests; world_follow_game_lua_check (exact extracted TppMain Reserve and vanilla
+  ResetMBFreeStartPositionToCommand: the host rides in, the guest replay ends on foot at Command; fails on 0.14.5).
+  Full tools/build.ps1 337/337; partner contract check matches.
 - **Hidden runs: none reached the game [U].** `mb-arrival-follow` (`-Mode lab -WanSim bad -PartnerProfile native
   -NativeStage gun -BuildProfile research -SaveSeed real`): 13:52 refused before admission (the guest game's overlay
   `D3D11CreateDeviceAndSwapChain` hr=0x8007000E, as the camera and melee tracks' runs today); its retry (14:00) and runs
