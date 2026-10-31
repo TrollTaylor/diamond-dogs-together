@@ -543,12 +543,14 @@ function Invoke-WorkerCommand {
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $Executable; $psi.WorkingDirectory = $Context.project_root
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    # fb1031: a closed stdin (an inherited open pipe hung the audited pwsh before its first line).
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
     foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
     $output = ''; $errorText = ''
     try {
         if (!$process.Start()) { throw "Cannot start audited command: $Tag" }
+        $process.StandardInput.Close()
         $row.pid = $process.Id
         $row.process_started_utc = $process.StartTime.ToUniversalTime().ToString('o')
         $outTask = $process.StandardOutput.ReadToEndAsync(); $errTask = $process.StandardError.ReadToEndAsync()
