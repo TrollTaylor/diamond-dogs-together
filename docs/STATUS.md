@@ -26,6 +26,8 @@ reached the driver's seat first".
 - **Open:** the tie's seat mismatch with a D-Dog; GRANT not matched to its claim (narrow); the a=7 message for a host
   that only stood (user decision); no message on a timeout. `forced_job_termination=true` at a close is not new.
 - Full `tools/build.ps1` at `29d3c8f5` (both branches merged, the review fixes): CTest 336/336; contract `--check` 838 / 213.
+  Flaky: `debug_overlay_tests` ("raw no-legacy keyboard still supplies text to menu") failed once in a full CTest under load
+  and once in the worker's audited CTest (run 3b); it passes alone, 5 repeats and the next full run (336/336). Untouched here.
 
 ## 2026-10-31: m6m7i seat checks - a first-person seat hit, the blocked first person falls back (branch `wp/seat-checks4`, local only)
 
