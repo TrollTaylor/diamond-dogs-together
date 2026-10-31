@@ -5,7 +5,8 @@
 
 namespace mgscoop::partner_melee {
 
-bool StrikeAct(std::uint16_t act) noexcept { return act == kStrikeAct || act == kStrikeEndAct; }
+bool StrikeAct(std::uint16_t act) noexcept { return act == kStrikeAct || act == kFinisherAct; }
+bool PartnerBusyAct(std::uint16_t) noexcept { return false; }
 
 const char* VerdictName(Verdict v) noexcept {
     switch (v) {

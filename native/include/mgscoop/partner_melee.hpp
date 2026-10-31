@@ -12,8 +12,14 @@
 
 namespace mgscoop::partner_melee {
 
-inline constexpr std::uint16_t kStrikeAct = 113;     // CQC strike (punch combo)
-inline constexpr std::uint16_t kStrikeEndAct = 114;  // the combo's last strike
+// The vanilla CQC feel (fb1031 review): one jab does not put the partner to sleep, the combo's finishing strike does.
+// The 2026-10-31 census of the remote's presses: each jab is its own edge into 113 (held 0.2-1.1 s, back to stand
+// between jabs); the finisher is 114 straight out of 113 (same tick, held about 0.5 s). A 114 from any other act
+// (running 2 -> 114, held up to 3 s) was the start of a CQC takedown of a soldier (the host's Neutralize att=local
+// lined up with both), so it is not a strike on the partner.
+inline constexpr std::uint16_t kStrikeAct = 113;     // one CQC jab of the punch combo: logged, never queued
+inline constexpr std::uint16_t kFinisherAct = 114;   // the combo's finishing strike when a 113 was seen within kComboMs
+inline constexpr std::uint32_t kComboMs = 600;       // the last 113 tick to the 114 edge
 inline constexpr float kReachM = 1.6f;               // horizontal, body origin to body origin
 inline constexpr float kHeightM = 1.0f;              // |y1 - y0|
 inline constexpr float kConeCos = 0.5f;              // +-60 degrees around the attacker's facing
@@ -22,7 +28,10 @@ inline constexpr unsigned kLineCap = 64;             // partner_melee lines per 
 
 bool StrikeAct(std::uint16_t act) noexcept;
 
-enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat };
+// jab: a 113 in reach (the finisher decides); takedown: a 114 without a 113 before it; busy: the partner is in a CQC
+// hold (91..96), a trash box or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56); prone: stance 3.
+enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat, jab, takedown, busy, prone };
+bool PartnerBusyAct(std::uint16_t act) noexcept;
 const char* VerdictName(Verdict v) noexcept;
 
 struct In {
@@ -31,14 +40,19 @@ struct In {
     std::uint16_t act = 0;        // the local player's act (Q+0x18[0])
     float pos0[3]{};              // local body origin (x, y, z), metres
     float yaw0 = 0;               // local body facing, radians: forward = (sin, cos) in (x, z)
-    bool body_valid = false;      // body 1 realized with a readable position
-    float pos1[3]{};
+    bool body_valid = false;      // body 1 realized, shown, on foot (not seated or riding), its position read back
+    float pos1[3]{};              // body 1's drawn position (the body readback, never the seat-stale slot)
+    bool remote_valid = false;    // the partner's act and stance from the anim wire this tick
+    std::uint16_t remote_act = 0;
+    std::uint8_t remote_stance = 0;  // 1 stand, 2 squat, 3 crawl
     std::uint64_t now_ms = 0;
 };
 struct State {
     std::uint16_t last_act = 0;
     std::uint64_t last_land_ms = 0;
     bool landed = false;
+    bool jab_seen = false;
+    std::uint64_t last_jab_ms = 0;  // the last tick the local act was 113
     std::uint32_t strikes = 0, lands = 0;
 };
 struct Out {
