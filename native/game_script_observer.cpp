@@ -124,6 +124,7 @@
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_arms.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -5322,6 +5323,38 @@ void CoopRescueTick() noexcept {
         if(now-logged>2000){logged=now;Log(state.peerWake?"coop_rescue=put_down; reason=teammate_wake_granted\r\n":"coop_rescue=put_down; reason=teammate_recovered\r\n");}
     }
 }
+// Debug menu arms (lua/coop/debug_arms.lua, docs/debug-menu.md "Give weapon"): MGS_COOP_ARMS_RESIDENT_V1 answers the
+// protected stock guns of the equip writer's last census of this mission (a copy of its status: no new game read,
+// no call); MGS_COOP_ARMS_STATE_V1 stores Lua's friendly fire switch and gun list for the menu. Both only while the
+// debug menu is enabled, on the runtime thread.
+bool SelectArmsReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_ARMS_RESIDENT_V1'";
+    constexpr char state[]="return 'MGS_COOP_ARMS_STATE_V1' -- ";
+    if(!buffer) return false;
+    const bool is_query=size==sizeof(query)-1 && std::memcmp(buffer,query,size)==0;
+    const bool is_state=size>sizeof(state)-1 && size<=768 && std::memcmp(buffer,state,sizeof(state)-1)==0;
+    if(!is_query && !is_state) return false;
+    static constexpr char none[]="return nil";
+    replacement={none,sizeof(none)-1};
+    if(!mgscoop::debug_menu::Enabled() || !OnRuntimeThread()) return true;
+    if(is_state) {
+        mgscoop::debug_arms::State s{};
+        if(mgscoop::debug_arms::ParseState(buffer+sizeof(state)-1,size-(sizeof(state)-1),s)) mgscoop::debug_arms::Store(s);
+        return true;
+    }
+    unsigned short mission=0;
+    mgscoop::equipment_stock_writer::Status status{};
+    mgscoop::equipment_stock_writer::ReadStatus(status);
+    mgscoop::debug_arms::Entry census[48]{};
+    const std::size_t count=status.resident_count<48 ? status.resident_count : 48;
+    for(std::size_t i=0;i<count;++i)
+        census[i]={status.resident[i].equip,status.resident[i].type,status.resident[i].flags};
+    const bool ok=status.census_ok && ReadMission(mission) && status.mission==mission;
+    static char reply[256]{};
+    const auto n=mgscoop::debug_arms::FormatResidentReply(ok,status.mission,census,count,reply,sizeof(reply));
+    if(n) replacement={reply,n};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5514,6 +5547,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectTeamReceipt(buffer, size, replacement)) return true;
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
+    if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);

@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_arms_source[] = R"MGS_ARMS(
+@MGS_DEBUG_ARMS_SOURCE@
+)MGS_ARMS";

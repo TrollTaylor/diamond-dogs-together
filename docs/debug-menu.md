@@ -97,6 +97,7 @@ is local to the PC that sends it.
 | Read inventory, Refill hip/back/secondary | `inventory`, `weapon hip current`, ... |
 | Drop hip/back/secondary gun | `drop_item current_hip n` (payload 1..10) |
 | **Character (you)** (U): Snake, DD soldier (male), DD soldier (female), My avatar, Ocelot, Quiet, Back to my default | `character snake\|dd_male\|dd_female\|avatar\|ocelot\|quiet\|default`. Host and guest, each for their own character: right away and at every later mission load of this game session. The partner sees the new look (an avatar as Snake). Ocelot/Quiet only with a launcher pick of Ocelot, Quiet or Story (else `character_needs_launcher_pick`); `character_next_load` when it can only apply at the next load. Default: your coop.ini character (the host: Snake), else your save's own. See [characters.md](characters.md#switch-in-game-f9). |
+| Give weapon (both) | `give_weapon <id>` / `give_weapon EQP_SWP_<item>` (the picker's choice; see **Give weapon**) |
 
 ### Enemies
 
@@ -154,6 +155,7 @@ is kept, but no partner body shows until you pair), otherwise `partner_applied`.
 | Play clip / Stop clip | `partner dm=on dmplay=n`, `partner dmstop=1` |
 | Slow motion (U) / off | `slowmo rate seconds` (0.05..1, 0.1..30 s), `slowmo off` |
 | Name tag on / off, Name tag status | `nametag on`, `nametag off`, `nametag status` |
+| Friendly fire (both; the host decides) | `friendly_fire 0` / `friendly_fire 1` (see **Friendly fire**) |
 
 **Shared save** (automatic save handoff, [save-handoff.md](save-handoff.md)): shown
 right after **Online** while save sharing is configured in this session (lab.ini
@@ -295,6 +297,37 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
 - `rules` reads the state: `rules;wormhole=on|off;level=N;seen=N;mb_weapons=0|1;from=self|host;applied=0|1`.
 - Logs: `world_lua=event=rules; step=worm_off|worm_on|worm_failed|mb_on|mb_off|rx|save|host_rule_dropped`.
 - Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet).
+
+### Give weapon (both players)
+
+At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on
+`wp/give-weapons`, **not run-proven yet**. On in lab and play, for the host and the guest, each for its own player only.
+
+- The list shows the guns the game has loaded in this area ("Assault rifle (East_ar_010)": the soldiers', yours and
+  your partner's; read from the equip writer's census, so it fills once the partner's body has loaded here), then the
+  stock support items (Grenade, Stun grenade, Smoke grenade, Sleeping gas grenade, Decoy, C4, Empty magazine).
+- A gun comes with a full magazine and full reserve, in hand at once (the stock `Player.ChangeEquip`); the gun it
+  replaces in that slot drops at your feet, as when you swap with a gun on the ground. A support item goes into a free
+  support slot (or refills the same item; a full list is refused). Development is not checked, like a gun taken from
+  a soldier. It stays in your loadout and is saved like any picked-up gun.
+- Your partner sees the gun of that slot their copy already carries for you (the same gun when it was loaded for
+  them, else the stand-in); the new gun shows on their screen from the next area load.
+- Results: `submitted_give;equip=..;kind=gun;type=..;slot=hip|back|secondary;name=..`, then `give_readback;equip=..;
+  slot=..`; refusals `give_refused;reason=not_loaded|no_census|metadata|support_full|item_unknown`. Log
+  `world_lua=event=arms; step=give; equip=..; slot=..; ok=1`. `give_list` lists the ids; `give_pick <n>` gives the
+  n-th entry (worker scenarios).
+
+### Friendly fire (both players; the host decides)
+
+At the end of the Partner page: **Friendly fire: ON / OFF** (`friendly_fire 0|1`). Default ON (as before).
+**Not run-proven yet.** The host's press sets it for both copies; a guest's press asks the host
+(`friendly_fire_asked;want=..`), and an unpaired guest is refused (`friendly_fire_refused;reason=not_paired`).
+
+- OFF: your partner's bullets, explosives and melee never hurt or down you, and no hit is sent between the copies.
+  Soldiers are not affected. It stays as set across Travel and mission changes for the session.
+- Both screens show "Friendly fire is OFF: you and your partner cannot hurt each other." or "... is ON ...".
+- Wire: ARMS `0x3F` (docs/world-sync-protocol.md section 24); world note 18. Logs: `world_lua=event=arms; step=ff;
+  on=0|1; by=self|partner|host` and `world_lua=event=friendly_fire;step=dropped;side=shooter|target;seq=..`.
 
 ### Tools
 

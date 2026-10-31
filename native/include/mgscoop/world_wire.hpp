@@ -102,6 +102,10 @@ inline constexpr std::uint8_t travel = 0x3B;
 // Debug menu Game rules (docs/world-sync-protocol.md section 23): RULES (62), host to guest, control queue, paired:
 // the host's Mother Base weapons choice for both copies. A partner without the op skips it by its length (unknown_op).
 inline constexpr std::uint8_t rules = 0x3E;
+// Debug menu arms (docs/world-sync-protocol.md section 24): ARMS (63), both directions, control queue, paired: the
+// guest's Friendly fire ask (kind 1) and the host's friendly fire state (kind 2). 0x3C..0x3E belong to the other
+// debug-menu tracks (character, spawn, rules).
+inline constexpr std::uint8_t arms = 0x3F;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;

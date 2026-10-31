@@ -1899,3 +1899,15 @@ Base rules and again on each new pairing once it chose (`lua/coop/debug_rules.lu
 send waits 2 s). The guest applies the host's value at 30050, keeps it through a mission load and drops it after 60 s
 without the pairing. A partner without the op skips it by its length (unknown_op). The wormhole toggle is each
 player's own and sends nothing.
+
+## 24. Arms (debug menu Friendly fire; docs/debug-menu.md "Friendly fire")
+
+Op `0x3F` ARMS (63), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
+3 fields, 4 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 state), `ff` (u8 0 off / 1 on). The host decides: a guest's
+press sends kind 1 (its wanted value), the host applies it and answers with kind 2; the host's own press sends kind 2;
+the host repeats kind 2 whenever a guest pairs. A guest never applies kind 1, the host never applies kind 2. Lua
+(`lua/coop/debug_arms.lua`) keeps the switch in `W.arms.ff` (default on, kept across missions); off,
+`world_friendly.lua` drops the partner's hits at both ends of FRIENDLY_HIT (the shooter consumes its queued hit
+without sending, the target never queues or applies one). World note 18 ARMS{a=1, b=0 off | 1 on} toasts the switch
+(the host's press and every change on the guest). 0x3C..0x3E and notes 15..17 are the other debug-menu tracks'.
+A partner without the op skips it by its length (unknown_op): its own switch stays on.
