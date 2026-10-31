@@ -654,6 +654,13 @@ struct LabConfig {
     // that too); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_getin_cut = false;
     bool partner_ride_getin_cut_given = false;
+    // fb1031 gear (equipment_stock_probe LateGear): a partner who pairs after this mission's allocation gets one
+    // mid-mission public TppEquip.RequestLoadToEquipMissionBlock of their stock bases (the allocation preload's
+    // read-only preflight; a mid-mission call is an unverified lifecycle). Off unless named, in lab and play, until
+    // a hidden run shows the partner's gun; without it the viewer is told once that the gun shows after the next
+    // load. An invalid value refuses (named, off), also after a valid 1.
+    bool partner_equip_midload = false;
+    bool partner_equip_midload_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon

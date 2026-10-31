@@ -114,6 +114,48 @@ constexpr PreloadSource ChoosePreloadSource(bool remote, bool peer_on_handed_sav
 constexpr const char* PreloadSourceName(PreloadSource s) noexcept {
     return s==PreloadSource::remote ? "remote" : s==PreloadSource::predicted ? "predicted" : "none";
 }
+// fb1031 gear (0.14.5 online, the friend's log): the host reloaded Mother Base
+// while the link was down (equip_preload=refused; admission=link_not_connected),
+// the partner paired 4 min later and for 216 s had no gun and no muzzle flash on
+// the host's screen (writer no_resident: their bases were never requested in
+// that mission) until a Game Over reload preloaded them. A partner who pairs
+// after this mission's allocation (a late join, a link that was down at the
+// load) gets, once per mission and link session: a mid-mission load of their
+// bases (lab.ini partner_equip_midload; the same read-only preflight as the
+// allocation's), else one note that their gun shows after the next load.
+struct LateGearInput {
+    bool admitted=false;   // EquipAdmissionReason: a connected link (play) or the one-PC lab
+    bool manifest=false;   // the peer's manifest of this link session
+    bool gameplay=false;   // the writer's gates (a partner-body mission's gameplay, not terminating)
+    bool covered=false;    // this allocation's verified preload covered every non-zero remote base
+    bool missing=false;    // a writer slot gave up for want of a resident entry (no_resident / no_cache_entry)
+    bool midload=false;    // lab.ini partner_equip_midload
+    bool attempted=false;  // the mid-mission load of this mission and link session was asked for
+    bool returned=false;   // ... and its one public call returned
+};
+enum class LateGear : unsigned char { none, request, loading, next_load };
+constexpr LateGear DecideLateGear(const LateGearInput&) noexcept { return LateGear::none; }
+constexpr const char* LateGearName(LateGear g) noexcept {
+    return g==LateGear::request ? "request" : g==LateGear::loading ? "loading" : g==LateGear::next_load ? "next_load" : "none";
+}
+// One mid-mission load per mission and link session (a new pair may ask once
+// more), on the runtime owner, only when DecideLateGear asks for it; the note
+// once per mission and link session.
+class MidLoadAuthorization {
+    std::uint32_t mission_=0, link_=0;
+    bool attempted_=false, permitted_=false, returned_=false, noted_=false;
+public:
+    void Track(std::uint32_t, std::uint32_t) noexcept {}
+    void End() noexcept { mission_=link_=0; attempted_=permitted_=returned_=noted_=false; }
+    bool Attempted() const noexcept { return attempted_; }
+    bool Returned() const noexcept { return returned_; }
+    const char* Try(bool, std::uint32_t, std::uint32_t, LateGear, bool) noexcept { return "not_needed"; }
+    bool Receipt(bool, std::uint32_t, bool) noexcept { return false; }
+    bool TakeNote(LateGear) noexcept { return false; }
+};
+// The writer re-plans its missing-cache slots once per returned mid-mission
+// load (the residency generation the observer bumps).
+inline bool ResidencyRenewal(std::uint32_t&, std::uint32_t) noexcept { return false; }
 // The late-manifest receipt: how many of the remote's non-zero base ids the
 // allocation's preload covered (`wanted` = the non-zero ones).
 inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16_t* ids, unsigned count, unsigned& wanted) noexcept {

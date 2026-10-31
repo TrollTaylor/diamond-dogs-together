@@ -92,5 +92,59 @@ int main() {
         const std::uint16_t none[3]={0,0,0};
         Check(PreloadCover(none,ids,2,wanted)==0 && wanted==0);
     }
+    {
+        // fb1031 gear: the partner paired after this mission's allocation
+        // (the friend's log: refused link_not_connected, then no_resident).
+        LateGearInput in{};
+        in.admitted=in.manifest=in.gameplay=in.missing=true;
+        Check(DecideLateGear(in)==LateGear::next_load);  // no mid-mission load: tell the viewer once
+        in.midload=true;
+        Check(DecideLateGear(in)==LateGear::request);
+        in.attempted=true;
+        Check(DecideLateGear(in)==LateGear::next_load);  // refused or failed: the next load
+        in.returned=true;
+        Check(DecideLateGear(in)==LateGear::loading);    // the writer re-plans
+        LateGearInput quiet=in; quiet.attempted=quiet.returned=false;
+        quiet.covered=true; Check(DecideLateGear(quiet)==LateGear::none);   // the allocation preloaded them
+        quiet.covered=false; quiet.missing=false; Check(DecideLateGear(quiet)==LateGear::none); // resident anyway
+        quiet.missing=true; quiet.admitted=false; Check(DecideLateGear(quiet)==LateGear::none);
+        quiet.admitted=true; quiet.manifest=false; Check(DecideLateGear(quiet)==LateGear::none);
+        quiet.manifest=true; quiet.gameplay=false; Check(DecideLateGear(quiet)==LateGear::none);
+        Check(std::strcmp(LateGearName(LateGear::request),"request")==0 && std::strcmp(LateGearName(LateGear::next_load),"next_load")==0 &&
+              std::strcmp(LateGearName(LateGear::loading),"loading")==0 && std::strcmp(LateGearName(LateGear::none),"none")==0);
+
+        MidLoadAuthorization m;
+        Check(std::strcmp(m.Try(true,30050,7,LateGear::request,true),"mission")==0 && !m.Attempted());
+        m.Track(30050,7);
+        Check(std::strcmp(m.Try(false,30050,7,LateGear::request,true),"not_runtime_owner")==0);
+        Check(std::strcmp(m.Try(true,30010,7,LateGear::request,true),"mission")==0);
+        Check(std::strcmp(m.Try(true,30050,8,LateGear::request,true),"mission")==0);
+        Check(std::strcmp(m.Try(true,30050,7,LateGear::next_load,true),"not_needed")==0 && !m.Attempted());
+        Check(!m.Receipt(true,30050,true));                       // nothing permitted yet
+        Check(m.Try(true,30050,7,LateGear::request,true)==nullptr && m.Attempted() && !m.Returned());
+        Check(std::strcmp(m.Try(true,30050,7,LateGear::request,true),"already_attempted")==0);
+        Check(!m.Receipt(false,30050,true) && !m.Receipt(true,30010,true));
+        Check(m.Receipt(true,30050,true) && m.Returned());
+        Check(!m.Receipt(true,30050,true));                       // one receipt per permit
+        m.Track(30050,7);                                         // the same pair: kept
+        Check(m.Attempted() && m.Returned());
+        m.Track(30050,8);                                         // a new pair asks once more
+        Check(!m.Attempted() && !m.Returned());
+        Check(std::strcmp(m.Try(true,30050,8,LateGear::request,false),"midload_preflight")==0 && m.Attempted() &&
+              !m.Receipt(true,30050,true) && !m.Returned());
+        // The note: once per mission and link session, only for next_load.
+        Check(!m.TakeNote(LateGear::loading) && !m.TakeNote(LateGear::request));
+        Check(m.TakeNote(LateGear::next_load) && !m.TakeNote(LateGear::next_load));
+        m.End(); Check(!m.Attempted());
+        m.Track(30050,8); Check(m.TakeNote(LateGear::next_load));
+        // A failed public call: returned stays false.
+        m.Track(30020,9);
+        Check(m.Try(true,30020,9,LateGear::request,true)==nullptr && !m.Receipt(true,30020,false) && !m.Returned());
+
+        std::uint32_t seen=0;
+        Check(!ResidencyRenewal(seen,0) && seen==0);
+        Check(ResidencyRenewal(seen,1) && seen==1 && !ResidencyRenewal(seen,1));
+        Check(ResidencyRenewal(seen,2) && seen==2);
+    }
     std::printf("equipment_stock_probe_tests: %u checks passed; native_calls=0\n",checks);
 }

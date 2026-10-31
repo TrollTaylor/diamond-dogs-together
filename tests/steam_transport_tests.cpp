@@ -2613,6 +2613,14 @@ void TestHud() {
         Check(!text::FormatWorldNote(13, 0, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0 &&
                   !text::FormatWorldNote(13, 8, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: an unknown companion reason has no toast");
+        // fb1031 gear: note 17 PARTNER_GEAR{a=1 next load}, posted locally once per mission and link session.
+        Check(text::FormatWorldNote(17, 1, 0, 0, 0, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner's gun will show after the next loading screen.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "FormatWorldNote: the partner gear note");
+        Check(!text::FormatWorldNote(17, 0, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
+                  !text::FormatWorldNote(17, 2, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: an unknown partner gear reason has no toast");
         Check(text::FormatWorldNote(16, 40010, 40050, 40050, 40010, sentence, sizeof(sentence)) &&
                   std::strcmp(sentence,
                               "Your partner is in the Mother Base helicopter; you are in the Afghanistan helicopter. Co-op only pairs when "
