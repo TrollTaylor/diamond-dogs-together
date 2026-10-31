@@ -718,7 +718,9 @@ int main() {
                       first < action_count && a == &actions[first + i],
                   "character rows: both players, local, fixed text, in order");
         }
-        Check(first + 6 == last_player, "character rows close the Player list");
+        // The other debug-menu tracks append their own Player rows after this block (Give weapon closes the list).
+        Check(first > 0 && first < action_count && !std::strcmp(actions[first - 1].id, "player_drop_secondary") && first + 6 <= last_player,
+              "character rows follow the stock Player rows");
         Check(act::SearchActions("character", found, 32) == 7, "search character lists the seven rows");
         debug::Snapshot guest{}; guest.enabled = guest.gameplay_ready = true; guest.host = false;
         Check(act::DisabledReason(*act::FindAction("character_dd_female"), guest, false) == nullptr, "a guest can press them");
