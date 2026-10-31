@@ -752,12 +752,29 @@ local function mbApis(c, demo)
     c.env.Tpp = {IsHelicopter = function(id) return id == 77 end}
     return c
 end
+-- The host's sortie seeds into 30050: its start status (1 rides the helicopter in) and initial-action flag.
+local function mbSeeds(g, id, state, used)
+    local h = fixture(1)
+    h.env.vars.missionCode, h.env.gvars.ply_initialPlayerState, h.env.svars.ply_isUsedPlayerInitialAction = 30050, state, used
+    h.env.e.ReservePlayerLoadingPosition(1)
+    h.env.TppMission.Load(30050)
+    for _ = 1, 4 do h.F.tick(h.time) end
+    local n, digest = 0, 0
+    for _, p in ipairs(h.tx) do
+        if p.op == OP.SEED then
+            local v = {id, 30050, p.v[3], p.v[4], p.v[5]}
+            send(g, OP.SEED, v)
+            n, digest = n + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+        end
+    end
+    send(g, OP.SEEDS_END, {id, 30050, n, digest})
+end
 do
     -- The kind-6 sortie replay into 30050 with the host's helicopter route (the online case).
     local mf = mbApis(fixture(2), 'LongTimeNoSee_DdogSuperHighLikability')
     mf.W.mission, mf.env.vars.missionCode = 40050, 40050
     send(mf, OP.TRANSITION, {1, 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
-    seedStream(mf, 30050, 1)
+    mbSeeds(mf, 1, 1, false)
     mf.F.tick(mf.time)
     check(mf.F.current and called(mf, 'route') == 1 and called(mf, 'deploy') == 1, 'kind 6 replays the host sortie')
     -- Vanilla ExecuteMissionFinalize: vars.missionCode is the destination, the start status the helicopter.
@@ -796,14 +813,29 @@ do
     local oldGame = fixture(2)
     oldGame.env.e.ReservePlayerLoadingPosition(3)
     check(called(oldGame, 'mb_foot') == 0 and oldGame.failure == nil, 'no vanilla reset function: nothing happens')
-    -- A title Continue / restart of a guest save bound to Mother Base in the helicopter (CONTINUE, RESTART).
+    -- A restart / Continue of a guest save bound to Mother Base in the helicopter (its checkpoint taken in the
+    -- helicopter: vanilla VarSaveOnUpdateCheckPoint leaves ply_isUsedPlayerInitialAction false).
     for _, kind in ipairs({3, 4}) do
         local cont = mbApis(fixture(2), 'X')
-        cont.env.gvars.ply_initialPlayerState = 1
+        cont.env.gvars.ply_initialPlayerState, cont.env.svars.ply_isUsedPlayerInitialAction = 1, false
         cont.env.e.ReservePlayerLoadingPosition(kind)
         check(called(cont, 'mb_foot') == 1 and cont.mbDemo == nil and count(cont, 'step=mb_foot;at=reserve') == 1,
             'kind ' .. kind .. ': a guest save that would ride in starts on foot')
     end
+    -- A Continue whose helicopter entry was used (a checkpoint on foot; the W4 shared Continue keeps the host spawn).
+    local used = mbApis(fixture(2), 'X')
+    used.env.gvars.ply_initialPlayerState, used.env.svars.ply_isUsedPlayerInitialAction = 1, true
+    used.env.e.ReservePlayerLoadingPosition(4)
+    check(called(used, 'mb_foot') == 0 and used.env.vars.initialPlayerPosX == -123.125 and used.mbDemo == nil,
+        'a checkpoint Continue on foot keeps its spawn (the demo is still cleared)')
+    local restart = mbApis(fixture(2), 'X')
+    restart.env.gvars.ply_initialPlayerState, restart.env.svars.ply_isUsedPlayerInitialAction = 1, true
+    restart.env.e.ReservePlayerLoadingPosition(3)
+    check(called(restart, 'mb_foot') == 1, 'a restart replays the helicopter entry: on foot whatever the flag')
+    local walked = mbApis(fixture(2), 'X')
+    walked.env.gvars.ply_initialPlayerState = 0
+    walked.env.e.ReservePlayerLoadingPosition(1)
+    check(called(walked, 'mb_foot') == 0, 'a start status on foot (route set) is left alone')
     -- The allocation (f30050 MissionPrepare reads the queued demo): cleared for a linked guest only.
     local alloc = mbApis(fixture(2), 'X')
     local co = coroutine.create(function() return alloc.env.e.OnAllocate(1) end)
