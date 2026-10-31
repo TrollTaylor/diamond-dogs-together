@@ -113,7 +113,7 @@ function D.reset()
   D.records,D.sequence,D.commitSequence,D.grantSerial,D.receivedGrant={},0,0,0,0
   D.remoteCommit,D.commitSeen,D.txAt,D.commitAt,D.remoteCommitAt,D.pendingGrant=nil,0,0,0,nil,nil
   D.active,D.failed,D.granted,D.lastNow,D.refusalAt=false,false,{},nil,nil
-  D.unlockGeneration,D.unlockAt,D.sleepTimers=nil,nil,{}
+  D.unlockGeneration,D.unlockAt,D.sleepTimers,D.put=nil,nil,{},nil
   if D.sleepClock then D.sleepClock.Reset() end
   if not D.nativePending then D.boundMission, D.boundEpoch = nil, nil end
   resetHold(); publishHud(); if D.hitReset then D.hitReset() end
@@ -213,6 +213,47 @@ H[OP.REVIVE_GRANT] = function(v)
   D.pendingGrant={role=v[1],generation=v[2],serial=v[3]}
   if reviveLocal(v[2]) then D.receivedGrant, D.pendingGrant = v[3], nil end
 end
+-- Put-down on the carried player's own copy (10-31 Steam session): the stock
+-- put-down released a player carried at a run and the body slid 4.7 m past the
+-- carrier off the Mother Base deck into the sea. While carried, keep the
+-- carrier's own reported spot; from the stock put-down (own act 44, at most
+-- PUT_MS) a body more than 2 m from it or 1 m below it is warped back to the
+-- carrier's feet, on the side the carrier came from. Never for cargo, never
+-- after the body has settled, never outside the window (a real fall stays lethal).
+local PUT_MS,PUT_XZ,PUT_DY,PUT_BACK,PUT_GAP,PUT_TRIES,PUT_AGE=3000,2000,1000,700,250,6,1000
+local function putDown(r,now)
+  local act,P=valid(r.act,0,65535) and r.act or 0,D.put
+  if r.carry == 3 or r.carry == 4 then D.put=nil; return end
+  if act ~= 44 and (r.carry == 2 or act == 42 or act == 43) then
+    local c=D.records[3 - W.role]
+    P=P and not P.start and P or {}
+    if fresh(c,now) then P.anchor,P.anchorAt={c.pos[1],c.pos[2],c.pos[3]},now end
+    P.carriedAt,D.put=now,P
+    return
+  end
+  if not P then return end
+  if not P.start then
+    if act ~= 44 or now - P.carriedAt > PUT_AGE or not P.anchor or now - P.anchorAt > PUT_AGE then D.put=nil; return end
+    P.start,P.tries,P.next=now,0,now
+  end
+  if now - P.start > PUT_MS then D.put=nil; return end
+  local a=P.anchor
+  local dx,dz,dy=r.pos[1] - a[1],r.pos[3] - a[3],a[2] - r.pos[2]
+  local d=math.sqrt(dx * dx + dz * dz)
+  if d <= PUT_XZ and dy <= PUT_DY then
+    if act ~= 44 then D.put=nil end
+    return
+  end
+  if P.tries >= PUT_TRIES or now < P.next then return end
+  local send=W.get(GameObject,"SendCommand")
+  if type(send) ~= "function" then D.put=nil; return end
+  local ux,uz=0,0
+  if d > 1 then ux,uz=dx / d,dz / d end
+  P.tries,P.next=P.tries + 1,now + PUT_GAP
+  local ok=pcall(send,{type="TppPlayer2",index=0},{id="Warp",
+    pos={(a[1] - ux * PUT_BACK) / 1000,(a[2] + 200) / 1000,(a[3] - uz * PUT_BACK) / 1000},rotY=math.atan2(ux,uz)})
+  log(fmt("step=putdown_place;try=%d;ok=%d;slide_mm=%.0f;drop_mm=%.0f;act=%d",P.tries,ok and 1 or 0,d,dy,act))
+end
 local function poll(now)
   local r=native(0,0)
   if not r then
@@ -258,6 +299,7 @@ local function poll(now)
   if r.down and not wasDown then
     log(fmt("step=entered;role=%d;generation=%.0f;cause=%d", W.role, r.generation, r.cause))
   end
+  putDown(r, now)
   if now >= D.txAt and W.tx(OP.DOWNED_STATUS, unpack(v)) then
     D.txAt=now + 100; if D.hitPublished then D.hitPublished(v,now) end
   end

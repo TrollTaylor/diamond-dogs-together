@@ -4959,14 +4959,18 @@ bool DownedAdmitted(std::uint32_t mission, std::uint16_t epoch) noexcept {
 }
 bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge::Replacement& replacement) noexcept {
     static char reply[512]{};
+    // act: the local body's current action (Q+0x18[0], coop_carry's existing read;
+    // 0 unread). world_downed.lua bounds the stock put-down (44) of a carried player.
+    const auto carry=mgscoop::coop_carry::GetStatus();
+    const unsigned act=carry.body[0].read?unsigned(carry.body[0].action):0u;
     if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s}",
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s,act=%u}",
         r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
         static_cast<unsigned long>(r.generation),unsigned(r.cause),
         static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
         static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
         r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false",
-        mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false"))) return false;
+        mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false",act))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
 // --- Teammate rescue state (docs/STATUS.md) -----------------------------
