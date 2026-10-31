@@ -790,6 +790,15 @@ do
         mf.env.gvars.ply_initialPlayerState == 0 and mf.env.vars.mbClusterId == 0,
         'the host seeds (its helicopter route) never put the guest back in the helicopter')
     check(count(mf, 'step=mb_foot;at=seeds;route=4294967295') >= 1, 'the on-foot start is logged with the replaced route')
+    -- A vanilla reset that throws never stops world sync (the seed apply runs inside the load wrappers' pcall).
+    local bad = mbApis(fixture(2))
+    bad.env.TppMission.ResetMBFreeStartPositionToCommand = function() error('reset_failed') end
+    bad.W.mission, bad.env.vars.missionCode = 40050, 40050
+    send(bad, OP.TRANSITION, {1, 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
+    mbSeeds(bad, 1, 1, false)
+    bad.F.tick(bad.time)
+    bad.env.TppMission.Load(30050)
+    check(bad.loaded == 30050 and bad.failure == nil and bad.W.active, 'a failing reset leaves the load and world sync running')
     -- The host keeps its own arrival.
     local host = mbApis(fixture(1), 'QuietReturnToMB')
     host.env.gvars.ply_initialPlayerState = 1
