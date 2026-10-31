@@ -3463,8 +3463,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("debug_menu=vehicle_lever; id=%u; ok=0; reason=lab_only\r\n", pending.id);
         } else if (pending.id && ((std::strncmp(pending.text, "travel", 6) == 0 && (pending.text[6] == 0 || pending.text[6] == ' ')) ||
                                   std::strcmp(pending.text, "bring_partner") == 0) && !mgscoop::GetLabConfig().debug_travel) {
-            // Debug menu Travel (docs/debug-menu.md "Travel"): off unless lab.ini names debug_travel=1 until a hidden
-            // run proves it; refused here before Lua, so nothing travels and no TRAVEL op is sent.
+            // Debug menu Travel (docs/debug-menu.md "Travel"): on unless lab.ini names debug_travel=0; off, refused
+            // here before Lua, so nothing travels and no TRAVEL op is sent.
             debug::Result(pending.id, 0, "travel=refused;reason=off");
             LogFormat("debug_menu=travel; id=%u; ok=0; reason=off\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {

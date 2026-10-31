@@ -673,9 +673,10 @@ struct LabConfig {
     bool partner_seat_gun = false;
     bool partner_seat_gun_given = false;
     // Debug menu Travel (docs/debug-menu.md "Travel"; lua/coop/world_goto.lua "Travel"): the F9 commands `travel
-    // <30010|30020|30050>` and `bring_partner`. Off unless named in lab and play until a hidden run on both copies
-    // proves it (a named 1 runs it in both); off, native refuses them before Lua (`travel=refused; reason=off`).
-    bool debug_travel = false;
+    // <30010|30020|30050>` and `bring_partner`. On in lab and play unless named 0 (hidden run 409cb374 showed Go to
+    // and Bring on both copies); off, native refuses them before Lua (`travel=refused; reason=off`) and answers a
+    // partner's TRAVEL refused (world::Config::travel).
+    bool debug_travel = true;
     bool debug_travel_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire

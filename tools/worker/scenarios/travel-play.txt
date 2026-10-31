@@ -3,9 +3,7 @@
 # (a) the host presses Go to Africa in Mother Base -> both land in 30020 (Masa Village jeep spot);
 # (b) the GUEST presses Go to Mother Base in Africa -> both land at the MB deck ladder;
 # (c) the guest stands ~29 m away on the MB deck; the host presses Bring partner here -> the guest warps beside it.
-# Travel is off unless named (debug_travel, until a run like this one proves it): both copies name it here. The
-# default-on flip is that run's result.
-labsetting debug_travel=1
+# Travel is on by default since run 409cb374 (debug_travel, lab and play): no labsetting line, the shipped defaults.
 title 200
 waitgameplay host 120
 waitgameplay guest 120
