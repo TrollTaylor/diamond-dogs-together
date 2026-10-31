@@ -1,0 +1,98 @@
+# fb1031 ride lag (design 8.60): the user's two-PC report "camera lags behind when getting in and moving", confirmed as
+# RIDING while the friend (the host) DROVE, Steam rtt 128-155 ms, jitter 5-17 ms. The user's log: 48 s of the 55 s it
+# rode a moving jeep were in the FRONT seat 1 (pass_camera connect mode=0; prev=5: camera module 0 right after a seat-1
+# get-in), the rest in seat 3. The fb1031 census runs (703d886a, 70eefcea) covered seat 3 only (the africa-jeep D-Dog
+# holds seat 1). This one: the shipped play defaults, -WanSim bad (80 ms one-way + 25 ms jitter each way: the preset
+# closest to the user's 145 ms rtt), neither driver has a D-Dog (host seed afgh-quiet: Quiet; guest seed afgh-horse:
+# D-Horse), so seat 1 of the Wakh Sind jeep (25608) is free. Door spots at its spawn pose: run 3c748d46 (seat 1 door
+# 574.36,1157.5 facing 96; seat 0 door 577.20,1157.19 facing -84).
+#   F) the host drives; the guest boards the FRONT seat 1; the host drives off as soon as the guest's copy reports the
+#      seat (the get-in camera still active), turns, stops; frames on the guest while it drives off and turns, then
+#      on the host;
+#   R) the guest gets off, boards the rear seat from the left door (seat 2), the host drives off at once; frames again.
+# Census rows partner_ride_cam=frame|line|episode on both copies (cmode, lag_cm, veh_cm and eye_cm: the vehicle and
+# the camera eye in world space, so the rider copy's jeep can be set against the driver's own on the same clock).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-ride-lag-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 577.20 320.2 1157.19 -84
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 3000
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger' 15
+wait 1500
+# --- F) the guest boards the front seat 1; the host drives off at once ---------------------------------------------
+guest debug teleport 574.36 320.2 1157.5 96
+wait 2500
+logmark both
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 10
+host hold w 1500 nowait
+guest burst f-in 7 200
+host hold w 1500 nowait
+guest burst f-in2 7 200
+host hold w 1500 nowait
+host burst f-in 5 250
+host hold w+d 1500 nowait
+guest burst f-turn 5 250
+host hold w+d 1500 nowait
+host burst f-turn 4 300
+host hold w 1500 nowait
+guest burst f-run 5 250
+host hold s 1500
+wait 2500
+both capture f-stop
+host run vehicle_seats
+guest run vehicle_seats
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=1;' 8
+# --- R) the guest gets off and boards the rear seat at the left door; the host drives off at once -------------------
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 8
+wait 2000
+guest debug goto_vehicle jeep left
+wait 3000
+logmark both
+guest press e 150
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 10
+host hold w 1500 nowait
+guest burst r-in 7 200
+host hold w 1500 nowait
+guest burst r-in2 7 200
+host hold w 1500 nowait
+host burst r-in 5 250
+host hold w+a 1500 nowait
+guest burst r-turn 5 250
+host hold w+a 1500 nowait
+host burst r-turn 4 300
+host hold s 1500
+wait 2500
+both capture r-stop
+host run vehicle_seats
+guest run vehicle_seats
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=[23];' 8
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+state

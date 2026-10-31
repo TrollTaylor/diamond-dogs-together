@@ -3842,11 +3842,12 @@ void TickRideCamCensus(Driver& d, const Hooks& h, const pp::State& st, std::uint
     EmitNativeN(h, o.event == pc::CensusEvent::frame ? c.census_frame_cap : c.census_cap,
                 o.event == pc::CensusEvent::frame ? kRideCamFrameCap : kRideCamCap, "partner_ride_cam",
                 "partner_ride_cam=%s; t=%llu; ep=%u; n=%u; vehicle=%u; seat=%u; spd_cms=%d; lag_cm=%d; d_cm=%d,%d,%d; drift_cm=%d; "
-                "cs_cm=%d,%d,%d; cmode=%d; blend=%d,%d,%d; carry=%u\r\n",
+                "cs_cm=%d,%d,%d; cmode=%d; blend=%d,%d,%d; carry=%u; veh_cm=%d,%d,%d; eye_cm=%d,%d,%d\r\n",
                 o.event == pc::CensusEvent::frame ? "frame" : "line", static_cast<unsigned long long>(now), o.episode, o.ticks,
                 unsigned(in.vehicle), unsigned(in.seat), cm(o.speed), cm(o.lag), cm(o.d[0]), cm(o.d[1]), cm(o.d[2]), cm(o.drift),
                 cm(o.cs[0]), cm(o.cs[1]), cm(o.cs[2]), cam.ok ? cam.mode : -1, fl_ok ? fms(fl.alpha) : -1, fl_ok ? fms(fl.elapsed) : -1,
-                fl_ok ? fms(fl.dur) : -1, c.carry.writes);
+                fl_ok ? fms(fl.dur) : -1, c.carry.writes, cm(in.veh[0]), cm(in.veh[1]), cm(in.veh[2]), cm(in.eye[0]), cm(in.eye[1]),
+                cm(in.eye[2]));
 }
 
 void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
