@@ -801,13 +801,20 @@ if arg[7] and arg[8] then
     check(sh.partnerLookups ~= nil and sh.partnerLookups <= 4, 'partner position read at most once per tick')
     -- Place first: the host's own knockout of a standing staff member announces where they are (kind 3) BEFORE the
     -- OUTCOME, on the same reliable channel.
-    sh.tx = {}
-    sh.positions[1] = {10.6, 1.8, 12.0}
+    -- The lying body reads lower (1.0 m) and the scanner may read it asleep first: the standing ground y is kept.
+    sh.positions[1] = {10.6, 1.0, 12.0}
     sh.life[1] = 3
+    for _ = 1, 3 do sh.now = sh.now + 600; sh.P.tick(sh.now) end
+    sh.tx = {}
     sh.E.check(ENT1, 1)
     check(#sh.tx == 2 and sh.tx[1].op == 34 and sh.tx[1].v[2] == ENT1 and sh.tx[1].v[3] == 3 and sh.tx[1].v[4] == 10600 and
         sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
         'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
+    -- A staff member never sampled standing (far from both players) gets no place-first; the OUTCOME still goes.
+    sh.tx = {}
+    sh.life[4] = 3
+    sh.E.check(3000000004, 1)
+    check(#sh.tx == 1 and sh.tx[1].op == 16, 'no standing sample: no place-first, the outcome is sent')
     -- Guest: 3 m off is below the continuous threshold, but the outcome waits until this copy stands there.
     sg.positions[1] = {13.6, 1.8, 12.0}
     sg.warp = {{r = 0, h = 1, leaf = 'pinned'}}
