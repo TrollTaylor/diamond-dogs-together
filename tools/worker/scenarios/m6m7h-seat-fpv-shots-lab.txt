@@ -8,8 +8,10 @@
 #   B. The host drives, the guest boards seat 1; the host gets off, stands 17 m out at rel -40 from seat 1 (front-right,
 #      the arc run ecb5f08d fired in) facing the jeep and warps the nearest awake guard 5 m in front of himself (~12 m
 #      from seat 1, standing), steps back to the driver's door; the guest aims front-right (cam_turn -40), waits for set
-#      reason=ready, re-aims at the guard's torso (enemy_aim_nearest 1.1) in first person and fires (frames on BOTH
-#      copies +50 / +350 / +650 ms), re-aims, fires twice more.
+#      reason=ready and fires at once (frames on BOTH copies +50 / +350 / +650 ms), then re-aims and fires twice more.
+#      m6m7h run ffc0411d: at the first set the guard stood under the reticle, but the scripted re-aim before the first
+#      shot (enemy_aim_nearest 1.1, 8.3 deg down) moved the view off him and left the gun blocked (rifle across, no shot),
+#      so the first shot now comes before any re-aim.
 #   A. Roles swap: the guest drives; the host warps a guard to the same spot on foot, boards seat 1, aims front-right,
 #      set, re-aims at the torso, two shots (frames on both copies).
 # The camp sleeps at the start except 1084844745 (run 30007c04: an awake lab camp attacked both players from the boot and
@@ -96,10 +98,7 @@ guest capture b-aim0
 both capture b-guard
 waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
 guest hold rmb 1500 nowait
-guest run enemy_aim_nearest 1.1
-guest expect ^aim_nearest;ent=\d+;
-guest hold rmb 1500 nowait
-wait 500
+wait 300
 guest capture b-aim
 guest hold rmb 1500 nowait
 guest press lmb 120
