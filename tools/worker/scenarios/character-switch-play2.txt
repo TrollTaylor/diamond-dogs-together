@@ -1,0 +1,69 @@
+# F9 character switch, round 2 (run 315fa18e already showed the host DD male -> Snake and the guest DD female on both
+# screens). Shipped play defaults (no labsetting line):
+#   -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder
+# The worker host's coop.ini is 'default' (no character chunk at the first load, so no host readback lines there): the
+# partner's copy is checked instead (the guest's readback raw1 = the engine's own type of the host's body there).
+# The guest's coop.ini is quiet, but this build's worker has no Ocelot/Quiet bypass (bypass_unavailable -> DD male).
+# Run 315fa18e lost the fresh-start frames: the host stood in Africa without auto-heal and a guard shot them (shared
+# game over); auto-heal is now switched on right after the arrival.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+# The stock Mother Base cutscene plays on both copies right after gameplay (travel-play run 409cb374).
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+both capture start
+# (a) the HOST switches: avatar, then DD soldier (female); the guest watches from 5 m behind.
+placebehind guest host 5
+wait 2000
+logmark both
+host run character avatar
+host expect ^character_ready;type=3;parts=
+waitlog host 'character=switch; mission=30050; .*pick=avatar; result=ready; type=3' 40
+waitlog guest 'partner_look=apply; R=1; source=net; .*avatar_as_snake=1' 40
+wait 2000
+both capture a-host-avatar
+logmark both
+host run character dd_female
+host expect ^character_ready;type=2;parts=
+waitlog host 'character=switch; mission=30050; .*pick=dd_female; result=ready; type=2' 40
+waitlog guest 'partner_look=apply; R=1; source=net; type=2' 40
+waitlog guest 'character_readback=change; verdict=applied; .*i1=2' 40
+wait 2000
+both capture a-host-ddfemale
+# (d) the host presses Back to my default: the worker coop.ini is 'default', so the save's own Snake comes back.
+logmark both
+host run character default
+host expect ^character_ready;type=0;parts=
+waitlog host 'character=switch; mission=30050; .*pick=default; result=ready; type=0' 40
+waitlog guest 'partner_look=apply; R=1; source=net; type=0' 40
+waitlog guest 'character_readback=change; verdict=applied; .*i1=0' 40
+wait 2000
+both capture d-host-default
+# (c) fresh sortie start (start=new, the friend-host path): the host's Snake pick stands in for the launcher's
+# coop.ini snake; the host leads Travel to Africa and must stay Snake on both screens.
+logmark both
+host run character snake
+host expect ^character_(kept;snake|ready;type=0;parts=)
+host run travel 30020
+host expect travel_started;target=30020;linked=1
+waitlog host 'character=apply; mission=30020; requested=snake; applied=snake; .*start=new' 200
+waitlog host 'character=allocated; mission=30020; vars=0; ' 200
+waitlog host 'event=travel; step=arrived; mission=30020' 200
+waitlog guest 'event=travel; step=arrived; mission=30020' 200
+both debug godmode 1
+waitlog host 'character_readback=start; verdict=applied; expect=0' 60
+waitlog guest 'partner_look=apply; R=1; source=net; type=0' 60
+waitgameplay host 120
+waitgameplay guest 120
+placebehind guest host 5
+wait 2000
+both capture c-fresh-host-snake
+placebehind host guest 5
+wait 2000
+both capture c-fresh-guest
