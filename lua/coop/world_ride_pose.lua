@@ -30,12 +30,8 @@ local function integer(n, lo, hi)
 end
 local function horse(id) return id == 6656 or id == 6657 end
 local function walker(id) return id == 22528 or id == 22529 end
--- RIDE_BODY never moves the viewer's own D-Horse / D-Walker (user decision 2026-10-22,
--- docs/mounts.md "RIDE_BODY and the viewer's own buddy"): a horse or walker pose applies
--- only to a dedicated mirror of the partner's mount, named in R.mirrors (id -> true).
--- Nothing registers one in 0.13.5: the shipped buddy archives realize one buddy per copy,
--- and that body is the viewer's own. Index 0 (6656 / 22528, the copy's declared buddy)
--- is never a mirror (docs/mounts.md section 7, step 0). Vehicles are unchanged.
+-- RIDE_BODY never moves the viewer's own D-Horse / D-Walker (docs/mounts.md): only a mirror named in
+-- R.mirrors (none registers one today); index 0 (6656 / 22528) is never a mirror.
 R.mirrors, R.refused = {}, {}
 function R.mirror(id, mirrors)
     return (id == 6657 or id == 22529) and type(mirrors) == "table" and mirrors[id] == true
@@ -298,9 +294,7 @@ function R.fastSend(now)
         if a and W.tx(TILT, W.tick32(now), id, a, b) then R.fast.tiltSent = (R.fast.tiltSent or 0) + 1 end
     end
 end
--- One line every 2 s while a track or a stream is live (rate evidence). applied counts SetPosition
--- calls that returned non-false (a call into an id with no instance also does); absent counts the
--- frames skipped because this copy has no live vehicle with that id (R.present).
+-- One line every 2 s while a track or a stream is live: applied SetPosition calls, absent frames (R.present).
 local function logFast(now)
     local f = R.fast
     if type(W.log) ~= "function" or now < (f.logAt or 0) then return end
@@ -312,16 +306,9 @@ local function logFast(now)
     W.log(string.format("event=ride_fast;tracks=%d;applied=%d;sent=%d;state=%s;samples=%d;tilt_sent=%d;tilt_written=%d;absent=%d", tracks,
         f.applied, f.sent or 0, state, samples, f.tiltSent or 0, f.tiltWritten or 0, f.absent or 0))
 end
--- Whether this copy has a vehicle with this id (the Africa fix, the two-PC test of 2026-10-23 bug 2: the
--- host's relief vehicle 25600 existed only on his copy, and every frame sent SetPosition and a refused
--- tilt write into nothing). IsAlive (StrCode32 0xED0E1BD6) goes to the TppVehicle2 class dispatcher
--- 0xB305B0, which answers false when the index's pool bit is clear and nothing past the pool
--- (world_vehicle.lua V.alive). A wreck also answers false but stays in the pool and still answers
--- GetPosition (world_vehicle.lua decideId): it is placed as before, like the native seat gate, whose
--- absent is the pool bit only (hidden run 7561ab63: the guest's copy of the jeep was wrecked in a crash
--- there only; skipping it left the seated driver behind, refused far, then hidden). Asked at most every
--- ALIVE_MS per track; only an answered IsAlive that is not true with no GetPosition answer marks it absent
--- (no binding or an error keeps placing it).
+-- Whether this copy has a vehicle with this id (the Africa fix, 2026-10-23 bug 2). IsAlive (0xED0E1BD6, pool bit;
+-- world_vehicle.lua V.alive) is false for a wreck too, which still answers GetPosition and is placed (run 7561ab63).
+-- Asked every ALIVE_MS per track; absent only for IsAlive not true and no GetPosition answer (an error keeps placing).
 function R.present(track, id, now)
     if track.aliveAt == nil or now - track.aliveAt >= ALIVE_MS or now < track.aliveAt then
         track.aliveAt = now
