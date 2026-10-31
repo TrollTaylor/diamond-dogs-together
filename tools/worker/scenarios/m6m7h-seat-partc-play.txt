@@ -1,18 +1,25 @@
 # m6m7h: part C of m6m7e-seat-fixes-play-b.txt on its own (design 8.53), the D-Dog arriving after the partner and
 # teardown while the partner is seated, at the africa jeep (30020, veh_lv_0000 = 25608; the driver's own D-Dog rides in
 # seat 1 on the driver's copy), SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both.
-#   C1. The host goes 40 m away from the jeep and sprints a few seconds further (its D-Dog follows on foot; s+shift runs away from the jeep), the guest
-#       waits at the jeep's right door. The host warps to the jeep; a second goto_vehicle must report dist 0..3 (the
-#       driver has arrived, by distance, not by a fixed delay) before its E; the host's own ride line (ext_tx seat=0)
-#       must come before the guest's E; the guest must get seat 1 (a lost race fails the run, it never passes as
-#       seat 3). Then the dog's arrival is filmed on both copies (where it goes: seat 1 over the partner, another seat,
-#       or it stays out), with vehicle_seats / buddy_status on the host.
+#   C1. The host waits at a known ground spot 23 m from the jeep (-633.5 3.0 871.8) so its D-Dog leaves the jeep,
+#       the guest waits at the jeep's right door. The host teleports back to the seed spot beside the driver's door
+#       (the readback's error_m is the arrival check, by distance, not by a fixed delay) and presses E; its own ride
+#       line (ext_tx seat=0) and 'host require vehicle;id=25608' (a hard stop) must come before the guest's E; the
+#       guest must get seat 1 (a lost race fails the run, it never passes as seat 3). Then the dog's arrival is
+#       filmed on both copies (where it goes: seat 1 over the partner, another seat, or it stays out), with
+#       vehicle_seats / buddy_status on the host.
 #   C2. Teardown by a checkpoint reload while the guest still sits in seat 1 (play refuses worldtrigger, so the host's
-#       own pause menu: Escape, CHECKPOINT, the confirm; first 'w' 'a' Enter (YES on top/left), then Enter Enter for a
-#       default-YES popup). Both copies must log the seat patch's mission_end revert and reach gameplay again; frames
-#       after the reload on both copies (no stuck seat camera).
+#       own pause menu: Escape, CHECKPOINT (the first item), the confirm "Restart from checkpoint?" with YES left and
+#       NO selected, so 'a' then Enter (frames d462df5d host-c2-dialog / -dialog-yes). Both copies reload 30020 (the
+#       guest by the kind-4 follow); the seat patch is reverted by the MISSION_TERMINATING stop (reason=stop: in
+#       d462df5d the mission_end revert found nothing left). After the load each copy waits at "Space Resume Game"
+#       (raw clock held), so both press Space. Frames after the reload on both copies (no stuck seat camera).
 #   C3. The guest boards again (any seat) and the run ends seated: the worker's close with a live seat patch
-#       (1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread).
+#       (1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread; with ad609fe each copy
+#       that draws a seated partner logs partner_ride_seat_patch=reverted; reason=shutdown just before that line).
+# m6m7h run d462df5d (first version): 'debug forward -40' from the seed spot keeps the seed's height (0.75 m) and put
+#   the host under the ground 40 m back; it fell and went down (WOUNDED, frame host-c-far), so its E could not board
+#   and the guest's E took the driver's seat; 1d9fd748's part C most likely failed the same way. waitlog only warns.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
 #   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -40,26 +47,21 @@ host run vehicle_seats
 host run buddy_status
 both capture c-start
 # --- C1. The D-Dog after the partner ----------------------------------------------------------------------------------
-host debug forward -40
-wait 1500
-host hold s+shift 1500
-host hold s+shift 1500
-host hold s+shift 1500
-host hold s+shift 1500
-wait 4000
+host debug teleport -633.5 3.0 871.8 0
+wait 8000
 host run buddy_status
 host capture c-far
 guest debug goto_vehicle jeep right
 wait 2500
 guest capture c-guest-door
 logmark both
-host debug goto_vehicle jeep
+host debug teleport -656.01 1.20 877.73 62
+host expect ^warp_position_readback;error_m=0\.0
 wait 1500
-host debug goto_vehicle jeep
-waitlog host 'world_lua=goto_vehicle; name=veh_lv_0000; id=25608; dist=[0-3];' 5
-wait 2000
 host press e 150
 waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host require vehicle;id=25608;
 guest press e 150
 guest burst c-geton 3 400
 waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 8
@@ -89,26 +91,28 @@ host capture c2-pause
 host press enter
 wait 1800
 both capture c2-dialog
-host press w
-wait 500
 host press a
-wait 500
+wait 600
 host capture c2-dialog-yes
 host press enter
-wait 3000
-both capture c2-after-1
-host press enter
-wait 1800
-host capture c2-dialog-2
-host press enter
-waitlog host 'partner_ride_seat_patch=reverted; reason=mission_end' 60
-waitlog guest 'partner_ride_seat_patch=reverted; reason=mission_end' 60
+waitlog host 'partner_ride_seat_patch=reverted; reason=stop' 20
+waitlog host 'mission_boundary=termination_returned; accepted=1' 30
+waitlog guest 'world_lua=event=follow; step=replay; id=[0-9]+; src=30020; next=30020; kind=4' 30
 both capture c2-loading
-waitlog host 'partner_ride=pass_camera; state=install; result=ok' 180
-waitlog guest 'partner_ride=pass_camera; state=install; result=ok' 180
+waitlog host 'mission_boundary=runtime_enter; accepted=1' 120
+waitlog guest 'mission_boundary=runtime_enter; accepted=1' 120
+logmark both
+waitlog host 'event=raw_clock; step=held' 60
+waitlog guest 'event=raw_clock; step=held' 60
+wait 3000
+both capture c2-resume
+host press space
+guest press space
+waitlog host 'event=raw_clock; step=resumed' 30
+waitlog guest 'event=raw_clock; step=resumed' 30
 waitgameplay host 120
 waitgameplay guest 120
-wait 12000
+wait 8000
 host run vehicle_seats
 guest run vehicle_seats
 host run buddy_status
