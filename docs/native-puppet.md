@@ -2964,9 +2964,9 @@ guest, the single press after this round's fix and a combo from a true 3 m have 
   the fix there. The scenario now places at 2.5 m (about 1 m) and 4.5 m (about 3 m).
 - **One press is 113 then 114 (run `1526e58a`):** one 120 ms LMB press by the guest with the host 1.1 m in front gave
   113 for 219 ms, then 114 for 549 ms (`verdict=jab; dist_cm=110; angle_deg=0`, then `verdict=land; dist_cm=88;
-  angle_deg=2`), and the host slept. So the 114 is the press's own strike, not a combo finisher. Since `9dd5dcaa` the
-  driver counts presses (one per 113 edge): the 113 and 114 of one press log `verdict=jab`, and the strike of the next
-  press in reach within 2 s lands.
+  angle_deg=2`), and the host slept. So the 114 is the press's own strike, not a combo finisher. The driver counts
+  presses (one per 113 edge); `9dd5dcaa` made one press never land (two presses needed), which melee-one reverts: one
+  press in reach is one hit.
 
 - **Why it did nothing (0.14.5 two-PC session, both copies):** guns are attacker-side: the shooter's real bullet hits
   body 1 on the shooter's copy (`downed_defense` / `downed_damage` samples `target=1; attacker=0`), FriendlyReplicaHit
@@ -2977,27 +2977,27 @@ guest, the single press after this round's fix and a combo from a true 3 m have 
   own edge) and the combo's finisher 114 straight out of a 113 (~0.5 s); LMB without RMB is CQC (the same press also
   sets VEHICLE_FIRE and PLACE_MARKER). A 114 from another act (running 2 -> 114, held up to 3 s) was the start of a CQC
   takedown of a soldier: both of the host's `Neutralize; att=local` lines in that session line up with one.
-- **What it does (fb1031 review round, the vanilla CQC feel):** the attacker's copy judges its own strike. One jab (the
-  local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. A second jab in reach within
-  2 s of the first lands (`9dd5dcaa`: a 114 out of the same press's 113 never lands on its own; hidden run
-  `af0b88b6`: four scripted presses gave two 113 edges 1.6 s apart and no 114 in one case, 113 then 114 in another, so
-  the finisher alone is not reliable) when body 1 is realized, shown and on foot (not seated: seat phase,
+- **What it does (melee-one, the user's decision: one connecting press knocks the other player down, as it does a
+  soldier):** the attacker's copy judges its own strike. A press is its 113 edge and the 114 straight out of it (run
+  `1526e58a`); the first of the two that reaches body 1 lands (run `9018ae47`: the 113 at 142 cm, its 114 at 84 cm), the
+  other logs `verdict=repeat` (`State::landed_press`, red `b3aa1644`, green `248b91da`; the two-press pair of
+  `9dd5dcaa` and `verdict=jab` are gone). A strike lands when body 1 is realized, shown and on foot (not seated: seat phase,
   `ride_seated`, seated visibility; no vehicle job or attach; no live non-foot ride sample), within 1.6 m horizontally
   and 1 m in height of body 1's drawn position (`read_body`, never the slot, which stays at the boarding spot while
   seated), inside 60 degrees of the local body facing (position and facing from the local body readback
   `read_local_body`, never the local slot S+0x20[0]: in `af0b88b6` that slot read 21 cm from body 1 with the players
   placed 1 m apart, and a strike from 3 m landed on it), and the other player is not in a CQC hold (91..96), a trash box
-  or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56) (`verdict=busy`) or prone (`verdict=prone`); at
-  most one hit per 1.5 s (a miss does not start that window). A 114 without a 113 before it is `verdict=takedown`. A
-  landed finisher is one friendly hit, cause sleep, into the queue the damage hook uses
+  or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56) (`verdict=busy`) or prone or asleep
+  (`verdict=prone`); one hit per press and at most one per 1.5 s (a miss does not start that window). A 114 without a
+  113 before it is `verdict=takedown`. A landed strike is one friendly hit, cause sleep, into the queue the damage hook uses
   (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it wakes by itself
   after 30 s, or with a revive). No new wire op and no new read or patch site.
-- **Line:** `partner_melee=strike; act=113|114; verdict=land|jab|takedown|busy|prone|range|height|angle|repeat|no_body|off;
+- **Line:** `partner_melee=strike; act=113|114; verdict=land|repeat|takedown|busy|prone|range|height|angle|no_body|no_local|off;
   queued=0|1; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
 - **Not done:** the attacker's strike is not drawn on the victim's screen (the CQC bit on body 1 would act on the
   victim's world: it can grab or punch that copy's soldiers; a DM overlay entry needs the strike's state or clip name,
   not known); CQC grabs and throws of the other player; a soldier punched next to the other player is unchanged (the
-  strike is applied only on the attacker's copy, as before), but a full combo aimed at a soldier with the other player
+  strike is applied only on the attacker's copy, as before), but a press aimed at a soldier with the other player
   standing within reach in front also knocks the other player down (the target of the stock strike is not read).
 - Fixtures `partner_melee_tests`, `partner_driver_tests` (`TestMeleeDriver`), `lab_config_tests`; scenario
   `melee-partner-play.txt`.
