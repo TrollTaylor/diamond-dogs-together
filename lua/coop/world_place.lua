@@ -162,6 +162,7 @@ do
                         reads = reads + 1
                         if P.state(en) == 0 then
                             local x, y, z = pos(en.id)
+                            if staff and x == 0 and z == 0 then x = nil end  -- no position: never shared
                             if x then
                                 local d2 = (x - hx) ^ 2 + (z - hz) ^ 2
                                 if qx and d2 > 3025000000 then d2 = (x - qx) ^ 2 + (z - qz) ^ 2 end

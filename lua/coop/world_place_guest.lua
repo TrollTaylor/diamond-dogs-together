@@ -172,6 +172,8 @@ do
                 return P.done(c, NATIVE[c.native] or "native_other")
             end
             if r.h == 1 then c.landed, c.leaf = c.frames, tostring(r.leaf)
+            -- Mother Base staff: never force-realize a staff member this copy has not loaded.
+            elseif r.r == -1 and c.kind == 3 and W.feature and W.feature.staffPlace then return P.done(c, "realize_timeout")
             elseif r.r == -1 and not c.forced then c.forced = true; pcall(send, id, {id = "SetForceRealize"}) end
             if not c.landed and (c.frames >= 150 or now - c.t0 > 10000) then return P.done(c, "realize_timeout") end
         end
