@@ -1132,7 +1132,7 @@ inline constexpr std::uintptr_t kGetInModuleVtableRva = 0x23BE5E0;
 inline constexpr std::size_t kGetInFlags = 0x147C, kGetInRequest = 0xAE0;
 inline constexpr std::uint32_t kGetInActiveBit = 0x20;
 inline constexpr float kGetInCutMove = 0.3f;        // the ridden vehicle moved this far (m) since module 0 was first seen
-inline constexpr unsigned kGetInCutMaxWrites = 8;   // writes per get-in; then gave_up (module 0 kept coming back)
+inline constexpr unsigned kGetInCutMaxWrites = 8;   // writes per seated ride; then gave_up (module 0 stayed active)
 struct GetInCutIn {
     bool on = false;      // the key, the passenger camera installed and not off, not uncertain
     bool seated = false;  // the local passenger report
@@ -1142,48 +1142,67 @@ struct GetInCutIn {
     float veh[3]{};
     std::uint64_t now_ms = 0;
 };
+// ride-cut-2: one episode per seated ride (the local passenger valid in one vehicle), not per module-0 activation. The
+// writes, the cut and the stand-down last until the passenger gets out or changes vehicle, so a module 0 that comes back
+// within the ride is never cut again (no flicker between module 0 and the fallback).
 struct GetInCut {
-    bool have = false;  // module 0 seen active while seated in this vehicle: anchor holds the vehicle there
+    bool have = false;    // a seated ride in `vehicle` is open
+    bool active = false;  // module 0 is active in this ride; anchor holds the vehicle where this activation was first seen
     std::uint16_t vehicle = 0xFFFF;
     float anchor[3]{};
     std::uint64_t since_ms = 0;
-    unsigned writes = 0;
-    bool done = false;  // gave up for this get-in
-    std::uint32_t cuts = 0, gave_up = 0;  // per mission
+    unsigned writes = 0;  // this ride
+    bool cut = false;     // this ride's cut was asked
+    bool done = false;    // stood down for this ride (gave up, or module 0 came back after the cut)
+    std::uint32_t cuts = 0, gave_up = 0, returned = 0;  // per mission
 };
-enum class GetInCutEvent : std::uint8_t { none, cut, gave_up };
+enum class GetInCutEvent : std::uint8_t { none, cut, gave_up, returned };
 struct GetInCutOut {
     GetInCutEvent event = GetInCutEvent::none;
     bool write = false;  // clear module 0's active bit and request word this tick
     float moved = 0.0f;  // m since the anchor
-    std::uint64_t ms = 0;  // since module 0 was first seen active
+    std::uint64_t ms = 0;  // since this activation of module 0 was first seen
 };
-// One driver tick. Module 0 not active, not seated or the key off: the get-in episode is over (the mission counts stay).
-// The first tick with module 0 active while seated anchors the vehicle's position; from then on a vehicle that moved
-// kGetInCutMove asks for the cut every tick module 0 is still active, at most kGetInCutMaxWrites times (then gave_up). An
-// unread vehicle keeps the episode as it is.
+// One driver tick. Not seated, or seated in another vehicle: the ride is over (the mission counts stay). The key off: the
+// ride is kept as it is and nothing is written. Within a seated ride: the first tick module 0 is active anchors the
+// vehicle's position; from then on a vehicle that moved kGetInCutMove asks for the cut every tick module 0 is still active,
+// at most kGetInCutMaxWrites times in the ride (then gave_up). Module 0 inactive ends the activation, not the ride: if it
+// comes back after the cut, the ride stands down with one returned event and the stock camera is left alone. Before any cut
+// a returning module 0 anchors anew. An unread vehicle keeps everything as it is.
 inline GetInCutOut GetInCutStep(GetInCut& c, const GetInCutIn& in) noexcept {
     GetInCutOut o{};
-    if (!in.on || !in.seated || !in.getin) {
-        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
+    if (!in.seated || (c.have && c.vehicle != in.vehicle)) {
+        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up, returned = c.returned;
         c = GetInCut{};
         c.cuts = cuts;
         c.gave_up = gave_up;
-        return o;
+        c.returned = returned;
+        if (!in.seated) return o;
     }
-    if (!in.veh_ok || !std::isfinite(in.veh[0]) || !std::isfinite(in.veh[1]) || !std::isfinite(in.veh[2])) return o;
-    if (!c.have || c.vehicle != in.vehicle) {
-        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
-        c = GetInCut{};
-        c.cuts = cuts;
-        c.gave_up = gave_up;
+    if (!in.on) return o;
+    if (!c.have) {
         c.have = true;
         c.vehicle = in.vehicle;
+    }
+    if (!in.getin) {
+        c.active = false;
+        return o;
+    }
+    if (c.done) return o;
+    if (!in.veh_ok || !std::isfinite(in.veh[0]) || !std::isfinite(in.veh[1]) || !std::isfinite(in.veh[2])) return o;
+    if (!c.active) {
+        if (c.cut) {
+            c.done = true;
+            ++c.returned;
+            o.event = GetInCutEvent::returned;
+            o.ms = in.now_ms >= c.since_ms ? in.now_ms - c.since_ms : 0;
+            return o;
+        }
+        c.active = true;
         for (unsigned i = 0; i < 3; ++i) c.anchor[i] = in.veh[i];
         c.since_ms = in.now_ms;
         return o;
     }
-    if (c.done) return o;
     const float dx = in.veh[0] - c.anchor[0], dy = in.veh[1] - c.anchor[1], dz = in.veh[2] - c.anchor[2];
     o.moved = std::sqrt(dx * dx + dy * dy + dz * dz);
     o.ms = in.now_ms >= c.since_ms ? in.now_ms - c.since_ms : 0;
@@ -1195,7 +1214,8 @@ inline GetInCutOut GetInCutStep(GetInCut& c, const GetInCutIn& in) noexcept {
         return o;
     }
     o.write = true;
-    if (c.writes == 0) {
+    if (!c.cut) {
+        c.cut = true;
         o.event = GetInCutEvent::cut;
         ++c.cuts;
     }

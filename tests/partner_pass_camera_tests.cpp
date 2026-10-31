@@ -870,17 +870,20 @@ void TestGetInCut() {
     // ride-cut-2 (the 8.60 skeptic): module 0 comes back within the same seated ride while the jeep keeps moving, again
     // and again. The episode is the seated ride, not one module-0 activation: never a second cut, never a write (no
     // flicker between module 0 and the fallback).
-    unsigned again = 0, again_writes = 0;
+    unsigned again = 0, again_writes = 0, returned_events = 0;
     for (unsigned k = 0; k < 6; ++k) {
         for (unsigned i = 0; i < 4; ++i) {
             const pc::GetInCutOut r =
                 pc::GetInCutStep(c, GetInIn(2000 + 400 * k + 16 * i, 1160.0f + 2.0f * static_cast<float>(k) + 0.5f * static_cast<float>(i)));
             if (r.event == pc::GetInCutEvent::cut) ++again;
+            if (r.event == pc::GetInCutEvent::returned) ++returned_events;
             if (r.write) ++again_writes;
         }
         pc::GetInCutStep(c, GetInIn(2000 + 400 * k + 100, 1161.0f + 2.0f * static_cast<float>(k), false));
     }
     Check(again == 0 && again_writes == 0 && c.cuts == 1, "module 0 back within the same ride: no second cut, no write");
+    Check(returned_events == 1 && c.returned == 1 && c.done && c.have && c.writes == 2,
+          "module 0 back: one returned event, the ride stands down (writes kept)");
     // The key or the camera off for a moment mid-ride (on=false) keeps the ride: still no second cut afterwards.
     pc::GetInCutIn blip = GetInIn(4500, 1180.0f);
     blip.on = false;
