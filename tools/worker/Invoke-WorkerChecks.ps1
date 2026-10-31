@@ -110,7 +110,9 @@ function Get-WorkerTests {
         # (DiamondDogsTogether.exe's two: Get-WorkerReleaseOnlyTests.)
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
-        'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check'
+        'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check',
+        # The window close held for the partner's mission-thread teardown (window_close.hpp).
+        'window_close_tests'
     ) + @(Get-WorkerShardNames)
 }
 # Fixtures CTest runs as parallel shards (cmake/test_shards.cmake): <name>_1 .. <name>_N, each the fixture's own command
