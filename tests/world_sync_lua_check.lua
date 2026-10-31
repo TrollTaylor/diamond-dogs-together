@@ -1246,11 +1246,14 @@ do
     -- sent and the guest copy of the staff member faints.
     check(c3.W.feature.allCp == true and c3.W.feature.patrol == false and c3.W.activeCp == nil,
         '30050: every CP loaded, patrol corrections off')
-    F.clear(c3)
-    c3.life[c3.ids.sol_b1] = LIFE.FAINT
-    F.msg(env3, 'GameObject', 'Unconscious', c3.ids.sol_b1)
-    F.tick(env3, c3, 1)
-    local mbOut = F.tx(c3, OP.OUTCOME)
+    local mbHenv, mbH = fixture({role = 1, mission = 30050})
+    F.start(mbHenv, mbH)
+    F.pair(mbHenv, mbH, 3)
+    F.clear(mbH)
+    mbH.life[mbH.ids.sol_b1] = LIFE.FAINT
+    F.msg(mbHenv, 'GameObject', 'Unconscious', mbH.ids.sol_b1)
+    F.tick(mbHenv, mbH, 1)
+    local mbOut = F.tx(mbH, OP.OUTCOME)
     check(#mbOut == 1 and mbOut[1].v[1] == u32('sol_b1') and mbOut[1].v[3] == 3, '30050: the host knockout of a staff member is sent')
     local mbGenv, mbG = fixture({role = 2, mission = 30050})
     F.start(mbGenv, mbG)
