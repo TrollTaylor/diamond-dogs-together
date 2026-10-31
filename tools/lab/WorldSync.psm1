@@ -16,7 +16,7 @@ $script:WorldProbeNames = @('p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 
     'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast', 'shared_death', 'host_continue', 'shared_checkpoint',
     'guest_restart')
 $script:WorldTriggerOrder = @('world', 'world_probe', 'goto', 'goto_lz')
-$script:WorldTriggerUsage = 'world=0..3 world_probe=<probe>|off goto=30010|30020 goto_lz=0|1 (goto_lz only with goto)'
+$script:WorldTriggerUsage = 'world=0..3 world_probe=<probe>|off goto=30010|30020|30050 goto_lz=0|1 (goto_lz only with goto)'
 
 function Get-WorldProbeNames { return $script:WorldProbeNames }
 
@@ -34,7 +34,7 @@ function ConvertTo-WorldTriggerText {
         $ok = switch ($key) {
             'world' { $value -cmatch '^[0-3]$' }
             'world_probe' { $value -ceq 'off' -or $value -cin $script:WorldProbeNames }
-            'goto' { $value -cin @('30010', '30020') }
+            'goto' { $value -cin @('30010', '30020', '30050') }
             'goto_lz' { $value -cin @('0', '1') }
         }
         if (!$ok) { throw "Invalid world trigger value '$token' ($script:WorldTriggerUsage)." }

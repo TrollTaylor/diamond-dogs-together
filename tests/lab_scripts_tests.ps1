@@ -2033,7 +2033,7 @@ try {
     $r = Invoke-SetWorld @('-Role', 'host', '-Text', 'world=0', '-Force')
     Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.WorldTrigger) -eq "world=0`n") '-Force replaces it'
     foreach ($p in $prPaths.Values) { Remove-Item -LiteralPath $p.WorldTrigger }
-    $r = Invoke-SetWorld @('-Role', 'guest', '-Text', 'goto=30050')
+    $r = Invoke-SetWorld @('-Role', 'guest', '-Text', 'goto=30030')
     Assert-True ($r.Code -ne 0 -and !(Test-Path -LiteralPath $prPaths.guest.WorldTrigger)) 'invalid world trigger: nothing written'
     $runShort = New-PartnerFixtureRun 'e0-short' @{ host = (Select-Lines $fx['e0-host'] 20); guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runShort -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 -PollSec 1 2>&1)
