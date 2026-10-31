@@ -161,6 +161,14 @@ const char* VerifyFollowImage(const void* base, std::size_t span, std::uintptr_t
     return nullptr;
 }
 
+// Red (failing first): the get-in camera cut's blocks are not verified yet.
+const char* VerifyGetInCutImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
+    (void)base;
+    (void)span;
+    mismatch_rva = 0;
+    return "todo";
+}
+
 void ResetForTest() noexcept {
     g_follow_tried = 0;
     g_follow_refusal = nullptr;
@@ -507,6 +515,10 @@ bool WriteFollowStart(const void* base, std::uintptr_t P, std::uintptr_t blend, 
     SetLastError(error);
     return ok;
 }
+// Red (failing first): the get-in camera cut is not implemented yet.
+const char* GetInCutInstall(const void*, std::size_t) noexcept { return "todo"; }
+bool GetInActive(const void*, std::uintptr_t) noexcept { return false; }
+const char* CutGetIn(const void*, std::uintptr_t) noexcept { return "todo"; }
 int FpvOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_fpv_override, 0, 0)); }
 
 bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept {
