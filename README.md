@@ -64,6 +64,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather.
 - **Shared progress:** the host's travel, checkpoints, and game over with continue for both players.
 - **Online play:** through Steam, with no port forwarding.
+- **Travel (F9 debug menu > World):** **Go to Africa** or **Go to Mother Base** takes both players there with no helicopter ride, in under half a minute; either player can press it. **Bring partner here** puts your partner right in front of you. A short message tells each player what happened.
 
 ## Known limits
 

@@ -1,3 +1,37 @@
+## 2026-10-31: debug menu Travel proof round (`wp/integ-fb1031`, local only) -- Travel ON by default in lab and play
+
+**Players get:** F9 > World > **Go to Africa** / **Go to Mother Base** takes both players there with no helicopter ride
+(press to control about 20-27 s wall clock), either player can press it (a guest's press asks the host, who leads), and
+**Bring partner here** puts the partner right in front of the caller at Mother Base, both ways. Each player sees a short
+message ("Your partner brought you to Africa free roam.", "Bringing your partner to you.", "Your partner brought you
+here."). On by default; `lab.ini` `debug_travel=0` turns it off.
+
+- **Review travel-1 (fixed):** `world_link::HandleNote` treated note 14 as unknown, so no Travel message reached the
+  screen. `world::NoteShown` covers 1..14 (red `c3ef8052`, green `9eb77cbd`); the runs log `hud=toast; kind=world_note;
+  code=14` on both copies and the frames show the sentences.
+- **Review travel-2 (fixed):** the receiving copy ignored its own `debug_travel`. `world::Config::travel`: off -> `Tx`
+  never sends TRAVEL and `OnOp` answers an ask, go or bring with kind 4 reason 7 (off) without queueing it for Lua.
+- **Review travel-4 (fixed):** Bring had no busy check and crossing Brings swapped missions. The caller now runs
+  `T.blocked()` (incl. a running trip); an outstanding Bring (until answered or 30 s) makes the host refuse a crossing
+  Bring (1) and the guest yield to the host's. Docs `25d6374b`.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder; both Closed, BaselineRestored,
+  RealSavesUnchanged):
+  - `409cb374` (named `debug_travel=1`): [O] the scenario's first host press was refused `gameplay`: the stock Mother
+    Base cutscene (vehicle cab, D-Dog) on both copies. Re-pressed through the worker's own debug channel, then:
+    (a) host Go to Africa, both land at Masa Village by the jeep (host err 0.00 m, `ms=13952`; guest one 4.0 m warp
+    fix, err 0.53 m); (b) guest Go to Mother Base, the host leads (`by=partner`), both on the 1st deck (host err 0.00,
+    guest 1.16 m); (c) Bring both ways on the deck. Frames `best-sheet-409cb374.jpg`. The scenario now waits out that
+    cutscene (`b02d3046`).
+  - `5e166b4c` (the shipped default, no labsetting, after the flip): [O] every expectation met, no failures; the same
+    (a), (b), (c) results and on-screen messages on both copies (`best-sheet-5e166b4c.jpg`).
+- **Decision:** proven on both copies, so `debug_travel` is on in lab and play (red `2e04a289`, green `90673739`);
+  `travel-play.txt` runs the defaults. README "What works" names Go to Africa / Mother Base and Bring.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** Go to Afghanistan and Bring across missions (partner in another free roam or the helicopter) were not
+  run; the low-severity review notes travel-6..11 (a received GO drops the guest's trip before its refusal, a paired
+  guest's refusal of GO has no effect, a job while world sync is inactive never times out, the leader's stop is not
+  sent, test gaps, no clearance check for the Bring spot) are not addressed.
+
 ## 2026-10-31: Mother Base staff outcomes, proof round (`wp/integ-fb1031`, local only, design 7.7) -- W1 at 30050 back to lab only in play
 
 **Players get:** at Mother Base in play, nothing changes from 0.14.5 (W1 off there). In the lab, W1 runs at 30050, and a partner's kill, dying or Fulton of a staff member lands on the other copy as a knockout, never a kill or a Fulton.
