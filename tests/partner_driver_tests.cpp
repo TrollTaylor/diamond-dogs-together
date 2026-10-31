@@ -6253,6 +6253,39 @@ void TestRideUnrealize() {
                   s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=112; kind=2; seat=blocked; vehicle=25609;") == 1,
               "the latched seat hides as blocked and is unrealized");
     }
+    for (const bool absent : {true, false}) {
+        // fb1031: the seat's absent latch (a vehicle this copy lacks: Fultoned here, the host's relief vehicle)
+        // unrealizes body 1 with the G5 key OFF (the play default): the bits-only hide leaves instance 1 standing at
+        // the get-on spot while Lua's all-active mode is on (0.13.5 horse / D-Walker). Any other latch keeps the
+        // key's rule (a category mismatch at Mother Base: bits only without the key, unchanged).
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        s.driver.settings.unrealize_all = false;
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        if (!absent) s.fake.vehicles.push_back(VehicleRead(25603, 0x20));
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+        s.fake.sample.act = 111;
+        bool cleared = false;
+        for (unsigned i = 0; i < 20; ++i)
+            if (s.Step(100) && (s.reply.op & op::clear_all_active)) cleared = true;
+        Check(s.driver.mission.seat.blocked && s.driver.mission.visibility.hidden, "latched and hidden");
+        if (!absent) {
+            Check(!cleared && s.fake.Containing("partner_ride=unrealize") == 0, "another latch, key off: bits only (unchanged)");
+            continue;
+        }
+        Check(cleared && s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=blocked; vehicle=25603;") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=1; op=clear_allactive") == 1,
+              "absent, key off: the hidden partner is unrealized (no body left standing at the get-on spot)");
+        Check(lua_unrealized(s), "absent: Lua reports all-active off (body 1 unrealized)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.ride_ep.active && !s.driver.mission.seat.blocked && !(s.reply.op & op::clear_all_active),
+              "absent: the get-off ends the episode and the latch");
+        Check(stable_show(s) && !s.driver.mission.visibility.hidden, "absent: on foot, shown again (SET_ALLACTIVE)");
+    }
     {
         // The heli acts (no ride packet: the legacy act rule).
         SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
