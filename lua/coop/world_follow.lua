@@ -36,9 +36,11 @@ return true, unpack(r, 2)
 end
 F.run = run
 -- fb1031 arrival (online 0.14.5: a guest that rode into Mother Base stayed in its helicopter, act 102, on every
--- entry). A linked co-op guest starts 30050 on foot at Command (vanilla ResetMBFreeStartPositionToCommand, as the
--- vanilla MB restart) without its queued MB demo; riding a helicopter there, its Restart/Continue restart locally.
-local A = {}
+-- entry). A linked co-op guest riding a helicopter at 30050 restarts locally on Restart/Continue and then starts on
+-- foot at Command (vanilla ResetMBFreeStartPositionToCommand, as the vanilla MB restart) without its queued MB demo.
+-- A.auto (off: unproven in game, and it would move every working guest helicopter arrival to the Command cluster)
+-- gives every linked guest helicopter arrival at 30050 that start.
+local A = {auto = false}
 F.arrival = A
 function A.linked()
 if type(W.cfg) ~= "function" then return false end
@@ -64,6 +66,10 @@ local reset = W.get(TppMission, "ResetMBFreeStartPositionToCommand")
 if not ride or type(reset) ~= "function" then return end
 reset()
 log(fmt("step=mb_foot;at=%s;route=%.0f;state=%s", at, route, tostring(state)))
+end
+function A.restarting()
+local p, now = A.pending, W.now()
+return p ~= nil and p.mission == 30050 and now - p.at >= 0 and now - p.at < 30000
 end
 function A.heli()
 local f, id = W.get(Tpp, "IsHelicopter"), W.get(vars, "playerVehicleGameObjectId")
@@ -211,7 +217,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
-if t[4] == 30050 then pcall(A.foot, "seeds", t[2] == 4) end
+if t[4] == 30050 and A.auto then pcall(A.foot, "seeds", t[2] == 4) end
 if buddy then C.seeded(t[4], t[2]) end
 if relief then R.seeded(t[4], t[2]) end
 return true
@@ -529,7 +535,8 @@ if type(reserve) == "function" then
         if k > 0 and not F.prepare() then return end
         if k > 0 then local ok, err = pcall(F.publish, k); if not ok then W.fail(err) end end
         local r = (function(...) return {n = select("#", ...), ...} end)(reserve(kind, ...))
-        if k > 0 then pcall(A.foot, "reserve", k == 4) end
+        if k > 0 and A.auto then pcall(A.foot, "reserve", k == 4)
+        elseif k == 3 and A.restarting() then pcall(A.foot, "restart", false) end
         return unpack(r, 1, r.n)
     end
 end
@@ -608,7 +615,9 @@ if type(allocate) == "function" then
     e.OnAllocate = function(...)
         local t = W.host and F.outgoing or F.current
         if t and F.configured() and vars.missionCode == t[4] then math.randomseed((t[1] + t[6]) % 2147483647) end
-        if W.get(vars, "missionCode") == 30050 and A.linked() then pcall(A.demo, "allocate") end
+        if A.auto and W.get(vars, "missionCode") == 30050 and W.get(gvars, "f30050_missionPackIndex") == 0 and A.linked() then
+            pcall(A.demo, "allocate")
+        end
         return allocate(...)
     end
 end
