@@ -1,5 +1,5 @@
 # fb1031 ride lag, the fix run (design 8.60): fb1031-ride-lag-play.txt (run c54aae04, the before) with the get-in camera
-# cut named (labsetting partner_ride_getin_cut=1; off unless named until this run proves it). Same seeds, -WanSim bad, the
+# cut named (labsetting partner_ride_getin_cut=1; the gun profile default since this run, f71126c0). Same seeds, -WanSim bad, the
 # shipped play defaults otherwise. Expected: leg F (front seat 1, the host drives off at once) logs
 # partner_ride=pass_camera; state=getin_cut; event=cut; vehicle=25608; seat=1; ... result=ok and the census shows cmode 5
 # from the cut on with lag_cm near 0 (the before: cmode 0 for 2.8 s, lag up to 17 m); the guest aims and lets go while

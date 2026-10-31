@@ -16,6 +16,9 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-ride-lag-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
 #        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+# Since the get-in camera cut follows the gun profile (design 8.60, after run f71126c0) this BEFORE scenario names it
+# off, so it keeps measuring the 0.14.5 camera (run c54aae04 ran before the key existed).
+labsetting partner_ride_getin_cut=0
 title 200
 waitgameplay host 120
 waitgameplay guest 120
