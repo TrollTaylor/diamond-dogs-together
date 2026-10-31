@@ -1,3 +1,22 @@
+## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, local only, design 8.55)
+
+**Players get:** standing at an empty jeep's door no longer takes its driver's seat. Only an E press does, in both
+roles, so a partner waiting at the door no longer locks the other out (m6m7h `23032c72`). A guest's E press at an
+empty jeep waits about one round trip (280 / 284 ms at `-WanSim bad`) at the door and then gets in with no second
+press. When both press at once the host drives. A host standing at the door when the guest gets in sees "Your partner
+reached the driver's seat first".
+- **How:** new site D (`0x1251366`, RideVehicle phase 1's call of the remote gate `0x114DB20`) holds the guest's press
+  until the host answers (1 s cap); the host's own press commits at site B and its `grant_if` answer takes the same
+  lock; site C refuses only a live deny; READY (SEAT action 4) arms the guest, so 0.14.4 and key-off peers stay stock.
+  Failing first `db08fc0` -> `dc62f40`; the peer end `ef7c867` -> `b544c6d`; scenarios `cc185ce`, `73214a7`.
+- **Shown** (hidden worker, shipped play defaults, both copies): `23c7f305` a) the guest at the door without E, the
+  host's one E drives, no claim and no toast; d) the guest then boards back seat 2; b) the mirror, the guest drives
+  after `wait_ms=284`; c) both press: one driver (the host), the guest got seat 1 and still saw the a=6 toast.
+  `1beffd8f`: a guest press at an empty jeep, `wait_ms=280`, drove. NEVER lines 0 in both.
+- **Not shown in a run:** `b544c6d` (no a=6 toast when the press already took another seat): run 3 was refused twice
+  before admission (a worker fixture timeout, then `debug_overlay_tests`' raw keyboard check in the worker's CTest).
+- Full `tools/build.ps1` at `b544c6d`: CTest 336/336; contract `--check` 838 / 213.
+
 ## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
 
 **Players get** nothing new they can see: no default changed. The close fix (8.53) now also holds when the window

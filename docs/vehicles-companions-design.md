@@ -3821,6 +3821,30 @@ working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a 
   lapse, host want never denies). Contract: site D, the record block and the gate blocks pinned (838 / 213).
   Scenarios (`cc185ce`): every wait for a proximity claim's answer now follows the press; A0 (a refusal without a
   press) removed; `m6m7i-seat-claim-play.txt`.
+- **Runs** (shipped play defaults, `-WanSim bad`, seed africa-jeep, both copies; site D and READY live on both:
+  `partner_board=race; result=ok; c=0x1246a4f; d=0x1251366`, `action=ready` / `state=ready`). `1beffd8f` (v1): the
+  second player stood 1 m behind / 1.2 m beside the door spot (placebehind) and had no ride icon there, so only one
+  press happened: the guest at the empty jeep's right door, `claim; pseq=1; page=15`, host grant + yield,
+  `partner_board=press; end=grant; wait_ms=280`, the guest drove with one press [O logs, frames]. `23c7f305` (v2):
+  a) the guest stood at the driver's door with its ride icon and never pressed; the host pressed once at the right
+  door and drove; no claim, grant, yield or toast on either copy [O logs, frames]. d) the guest then pressed at the
+  driver's door and boarded back seat 2 (`local_passenger; seat=2; state=on`, the host's `partner_ride_seat=confirmed;
+  seat=2`) [O logs]. b) the host stood at the driver's door; the guest pressed at the right door: claim 17 ms after
+  the press, grant 267 ms after the claim on the guest's clock, `wait_ms=284`, the guest drove; while held the guest
+  stood at the door with the prompt dimmed and was climbing in on the next burst frame (250 ms later) [O frames]; the
+  host got the a=7 toast "Your partner reached the driver's seat first" (its icon refused by the yield of a real
+  press) [O frame, log]. c) both pressed at once: the host drove (`commit`, then `deny; why=host_drives` for the
+  claim), the host's ride reached the guest's copy while its press was held, so the passenger policy put the guest in
+  seat 1, and the late deny still showed the a=6 toast [O frames, logs]. NEVER lines (two_drivers, board_uncertain,
+  seat_far, step=error, faults, refusals): 0 on both copies in both runs. The 8.20-8.26 races measured claim-to-answer
+  213-300 ms (median about 250, `56322b36`); the same round trip now sits between the press and getting in (280 /
+  284 ms) instead of between reaching the door and the ride icon. `vehicle_seats` reads a local passenger as
+  `vehicle_not_riding` (seat 1 and 2 here); the scenario checks passengers by `local_passenger` lines.
+- **After 23c7f305** (`ef7c867` -> `b544c6d`, unit tests only, no admitted run): a held press the partner's ride
+  overtakes ends as `end=peer` (4) and the late deny shows no toast (`seated=1` in the deny line). Run 3 was refused
+  twice before admission (a worker-policy fixture timeout; then `debug_overlay_tests` "raw no-legacy keyboard" in the
+  worker's audited CTest, which passes alone), so this is [U] in a run.
+- **Open:** the c) toast change in a run; the close forced the job termination in `23c7f305` (`forced_job_termination=true`, the guest seated at the end; baselines restored).
 
 ## 9. Milestones
 
