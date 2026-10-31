@@ -44,6 +44,7 @@ generated `lab.ini` is byte-for-byte what it was before.
 | `partner_anim_probe` | `0`/`1` (`0`) | |
 | `crash_probe` | `0`/`1` (`1`) | |
 | `debug_soldier_warp` | `0`/`1` (`0`; written only when set) | lab only: play forces it off (`play_refused` bit `0x10000`). F9 **Spawn enemy here** native placement ([debug-menu.md](debug-menu.md)) |
+| `spawn_warp` | `0`/`1` (`1`) | play: admits the F9 **Spawn enemy here** native placement (host and the guest copy), same contract and gates; lab uses `debug_soldier_warp` ([debug-menu.md](debug-menu.md)) |
 | `nametag`, `nametag_crosshair`, `nametag_name`, `nametag_max_m` | `0`/`1`, `aim`/`always`/`off`, 1..24 of `[A-Za-z0-9 _.-]`, `50`..`1000` (natively on, `aim`, the name sources, `300`; written only when set) | allowed in play. Partner name tag and friendly crosshair ([partner-nametag.md](partner-nametag.md)); `lab.ini` wins over `coop.ini` `nametag=`/`friendly_crosshair=` |
 | `net_latency_ms`, `net_loss_permille` | existing keys, written only when set (`-PartnerSetting guest:net_latency_ms=100`) | 0..2000, 0..1000 |
 
