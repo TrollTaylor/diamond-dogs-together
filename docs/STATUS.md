@@ -1,3 +1,29 @@
+## 2026-10-31: Game rules in the debug menu (`wp/game-rules`, local only) -- not run-proven yet
+
+**Players would get:** F9 > World > **Game rules**: **Wormhole Fulton off / on** (either player, for their own Fulton:
+off gives the balloon Fulton back; the development stays) and **Weapons at Mother Base / Stock Mother Base rules** (the
+host decides for both players; the partner gets a sentence). Both start stock. **No hidden run yet**, so this is
+unproven on screen.
+
+- **How (static, stock Lua) [O]:** the wormhole is the item level `EQP_IT_Fulton_WormHole` (stock TppMission reads
+  `Player.GetItemLevel(...) >= 1`; stock Lua writes levels with `Player.SetItemLevel` and `vars.itemLevels[equip -
+  EQP_IT_InstantStealth]`). Mother Base: `f30050_sequence` sets `vars.playerDisableActionFlag` = CQC_KNIFE_KILL +
+  KILLING_WEAPON and the HUD `EquipHudAll` `ALL_KILL_NOUSE`; its own `Seq_DEBUG_GimmickCheck` lifts both.
+- **Change:** new debug fragment `lua/coop/debug_rules.lua` (9.9 KB, after debug_boot). Off forces the wormhole level to
+  0 in gameplay (again after reloads); `TppSave.SaveVarsToSlot` writes the real level (and the stock MB flag), so the
+  save never changes [I: the D8 b save hook]. Mother Base: only the exact stock flag becomes NONE (Paz room and side-op
+  flags left alone), live, no reload. New wire op **RULES 0x3E** (host to guest, control queue, paired; sent on each
+  press and each new pairing). Messages through the stock announce log.
+- **Side effects:** killing a staff member still fails the mission (stock f30050 game over on any staff death; the
+  toast says so). In play W1 is off at 30050, so a partner's shot never reaches the other save; with W1 (lab) a
+  partner's kill lands as a knockout (spareStaff). Staff reactions, morale and alert with lethal weapons: [U].
+- **Checks:** red `dd19df1f` / green `c764c31d` (debug_rules_lua_check, world_wire_tests RulesOp, debug_menu_tests);
+  scenario red `1c13acbd` / green `630c4a0b` (worker_session_tests). Full CTest: see the next commit's message.
+- **Open [U]:** whether the wormhole level is the only switch (the Fulton draws the balloon); what the partner's copy
+  draws for a mirrored Fulton (its own level, RequestForceFulton); whether the lethal weapons and HUD come back live at
+  Mother Base; which seed has the wormhole developed (the scenario's `seen=1`). Run `tools/worker/scenarios/rules-play.txt`
+  (`-SaveSeed afgh-ledge -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research`).
+
 ## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
 
 **Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
