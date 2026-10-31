@@ -300,7 +300,10 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
     start = guest.find('const char* GuestWarpReceipt(')
     body = guest[start:guest.find('\n}\n', start)] if start >= 0 else ''
     for needle in ('world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', 'request.player[i] = snapshot.remote_pos[i]',
-                   'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial'):
+                   'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial',
+                   # Mother Base staff rule (docs/world-sync-design.md 7.7): play only through GuestAdmit
+                   # (mission 30050, corrections only), never the lab key alone.
+                   'sw::GuestAdmit(rule, staff)', 'grant.kind == mgscoop::world::place::correct'):
         if needle not in body.replace('\r\n', '\n'):
             failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
 
