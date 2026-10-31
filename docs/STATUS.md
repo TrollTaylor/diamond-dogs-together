@@ -16,6 +16,8 @@ seat is not tested. `partner_seat_fpv` stays off (lab and play); no default chan
   hardware D3D11 device created on every adapter just before and after it (GPU 6.1 of 16.3 GB in use), so GPU memory does
   not explain this refusal; the cause is [U] (`SnippingTool.exe` was still running). Stopped by rule; baseline restored,
   real saves unchanged. **Blocker**: no hidden run of this round (m6m7f, four tries) was admitted.
+- Full `tools/build.ps1` at `fafdf11` (the merged head): CTest 336/336 (the DX11 fixture passes again); contract
+  `--check` 836 / 213; scenario lint passes.
 
 ## 2026-10-30: seat first person built, not proven (branch `wp/seat-fpv2`; `partner_seat_fpv` off)
 
