@@ -5,7 +5,8 @@
 # fb1031 prove round (the vanilla CQC feel): one jab (local act 113) logs verdict=jab and queues nothing; the combo's
 # finisher (114 straight out of a 113) lands.
 #   j) the guest stands 1 m behind the host, facing it, and presses LMB once (no RMB: CQC): partner_melee=strike;
-#      act=113; verdict=jab; queued=0, no friendly_hit; the host still standing on both screens.
+#      act=113; verdict=jab; queued=0, no friendly_hit; the host still standing on both screens. Run 1526e58a: the one
+#      press gave 113 then 114 (219 + 549 ms) and the 114 landed; since 9dd5dcaa that 114 logs verdict=jab too.
 #   a) the guest presses LMB four times (the punch combo): its copy logs the jabs, then act=114 (the finisher) ->
 #      partner_melee=strike; act=114; verdict=land; queued=1. The host's copy applies one friendly hit, cause
 #      sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep on the
