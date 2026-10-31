@@ -830,12 +830,31 @@ if arg[7] and arg[8] then
     th.life[2] = 3
     th.E.check(3000000002, 1)
     tg.positions[2] = {25.0, 1.8, 5.0}
-    tg.warp = {{r = -1, h = 0, leaf = 'pinned'}}
+    tg.warp = {{r = 0, h = 0, leaf = 'pinned'}}
     deliver(th, tg, 34); deliver(th, tg, 16)
     runE(tg, 60)
     check(sent(tg, 2, 'ChangeLifeState') == 0, 'still held at 2 s')
     runE(tg, 70)
     check(sent(tg, 2, 'ChangeLifeState') == 1, 'applied after the 4 s hold even when the placement never lands')
+    -- A staff member not realized on this copy is never force-realized: the placement ends, the outcome applies.
+    local uh, ug = staffFixture(true), staffFixture(false)
+    uh.positions[3] = {6.0, 1.8, 6.0}
+    for _ = 1, 3 do uh.now = uh.now + 600; uh.P.tick(uh.now) end
+    uh.tx = {}
+    uh.life[3] = 3
+    uh.E.check(3000000003, 1)
+    ug.positions[3] = {26.0, 1.8, 6.0}
+    ug.warp = {{r = -1, h = 0, leaf = 'pinned'}}
+    deliver(uh, ug, 34); deliver(uh, ug, 16)
+    runE(ug, 6)
+    check(sent(ug, 3, 'SetForceRealize') == 0 and sent(ug, 3, 'ChangeLifeState') == 1 and logged(ug, 'why=realize_timeout'),
+        'Mother Base: an unrealized copy is never force-realized; the outcome applies')
+    -- A staff member read at exactly (0, 0, 0) (no position) is never shared.
+    local zh = staffFixture(true)
+    zh.positions[1] = {0, 0, 0}
+    for i = 2, 5 do zh.positions[i] = {300.0, 0, 300.0} end
+    for _ = 1, 4 do zh.now = zh.now + 600; zh.P.tick(zh.now) end
+    check(#placeTx(zh, 34) == 0, 'Mother Base: a staff member at the origin (no position) is not shared')
     -- Without staffPlace (free roam), an outcome applies at once.
     local fh, fg = placeFixture(true), placeFixture(false)
     fg.W.w1 = true
