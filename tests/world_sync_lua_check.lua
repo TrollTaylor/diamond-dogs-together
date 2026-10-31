@@ -1240,8 +1240,25 @@ do
     env3.vars.weather = 2
     F.tick(env3, c3, 40)
     local mbWeather = F.tx(c3, OP.WEATHER)
-    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and not c3.W.w1,
-        '30050: actual host rain is sent once and in digests; enemy authority stays off')
+    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and c3.W.w1,
+        '30050: actual host rain is sent once and in digests; enemy outcomes (W1) run at Mother Base too')
+    -- Mother Base staff: every CP counts as loaded (no area trap there), no patrol corrections; a host knockout is
+    -- sent and the guest copy of the staff member faints.
+    check(c3.W.feature.allCp == true and c3.W.feature.patrol == false and c3.W.activeCp == nil,
+        '30050: every CP loaded, patrol corrections off')
+    F.clear(c3)
+    c3.life[c3.ids.sol_b1] = LIFE.FAINT
+    F.msg(env3, 'GameObject', 'Unconscious', c3.ids.sol_b1)
+    F.tick(env3, c3, 1)
+    local mbOut = F.tx(c3, OP.OUTCOME)
+    check(#mbOut == 1 and mbOut[1].v[1] == u32('sol_b1') and mbOut[1].v[3] == 3, '30050: the host knockout of a staff member is sent')
+    local mbGenv, mbG = fixture({role = 2, mission = 30050})
+    F.start(mbGenv, mbG)
+    F.pair(mbGenv, mbG, 3)
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b1'), 1, 3, 1, 3, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    check(F.callCount(mbG, 'ChangeLifeState:sol_b1:' .. LIFE.FAINT) == 1, '30050: the guest copy of the staff member faints')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
