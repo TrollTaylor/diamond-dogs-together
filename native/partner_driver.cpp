@@ -3152,6 +3152,30 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     }
 }
 
+// Design 8.46 (partner_seat_fpv): the mission ends or the partner stops during a seated first-person aim: the toggle bits
+// still ours are cleared (best effort: the state read and the write are SEH-guarded; the line says whether it held).
+void SeatFpvRelease(Driver& d, const Hooks& h, const char* why) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& f = d.mission.pass_camera.fpv;
+    const std::uint32_t ours = f.ours & pc::kFpvSlotMask;
+    const bool active = f.active;
+    const std::uint16_t vehicle = f.vehicle;
+    const std::uint8_t seat = f.seat;
+    f.active = f.opt_out = f.aim = false;
+    f.ours = f.seen = 0;
+    f.vehicle = pc::kVehicleUnknown;
+    f.seat = pc::kSeatUnknown;
+    if (!active && !ours) return;
+    bool ok = ours == 0;
+    std::uint32_t after = 0;
+    if (ours && h.seat_fpv_write && h.read_state) {
+        pp::State st{};
+        ok = h.read_state(h.context, st) == pp::Refusal::none && h.seat_fpv_write(h.context, st, 0, ours, after);
+    }
+    EmitFormat(h, "partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=%u; seat=%u; reason=%s; set=0x0; clear=0x%x; ok=%u; after=0x%x\r\n",
+               unsigned(vehicle), unsigned(seat), why, ours, ok ? 1u : 0u, after);
+}
+
 // F1 passenger camera (docs/native-puppet.md "Passenger camera"; partner_pass_camera):
 // one step per tick right after TickBoard, passenger mode only. The lazy install (once
 // per process, after the code gate: the pinned blocks, no patch), the fault latch (mission
@@ -3219,8 +3243,13 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     // The local gun (k = 0) while seated: the aim drop's and the shot guard's input, and the trace's.
     const bool trace = d.settings.pass_camera_trace && !d.settings.play_mode && h.pass_camera_view != nullptr;
     const bool armed = arm.armed && d.pass_camera_installed;
+    // Design 8.46: the seat first person's switch (the key; on a lab copy the passcam seatfpv lever wins).
+    const int fpv_lever = !d.settings.play_mode && h.seat_fpv_override ? h.seat_fpv_override(h.context) : pc::kFpvKey;
+    const bool fpv_on = fpv_lever == pc::kFpvKey ? d.settings.seat_fpv : fpv_lever == 1;
+    const bool fpv_hooks = h.seat_fpv_read != nullptr && h.seat_fpv_write != nullptr;
+    const bool fpv_seat = fpv_on && fpv_hooks && lp.valid && pc::FpvSeat(lp.seat);
     pp::AimRead aim_read{};
-    const bool aim_ok = lp.valid && (arm.armed || trace) && h.read_aim && h.read_aim(h.context, st, aim_read);
+    const bool aim_ok = lp.valid && (arm.armed || trace || fpv_seat || c.fpv.active) && h.read_aim && h.read_aim(h.context, st, aim_read);
     const bool aiming = aim_ok && pc::GunAims(aim_read.gun_ok[0], aim_read.gun_state[0], aim_read.gun_flags[0]);
     const bool firing = aim_ok && pc::GunFires(aim_read.gun_ok[0], aim_read.gun_state[0]);
     const pc::AimOut aim_out = pc::AimStep(c.aim, mode, armed, aiming, now);
@@ -3287,7 +3316,87 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                     "yaw_mrad=%d; look_ticks=%u; total_writes=%u; rot_writes=%u\r\n",
                     unsigned(arm.vehicle), unsigned(arm.seat), pc::GuardEndName(go.end), c.guard.window_writes, mrad(c.guard.window_max),
                     go.settle ? 1u : 0u, mrad(pc::WindowYaw(c.guard)), c.guard.look_ticks, c.guard.writes, c.guard.rot_writes);
+    // Design 8.46 (lab.ini partner_seat_fpv; the lab lever passcam seatfpv on|off|key): the automatic first-person aim from
+    // seats 1 and 2 (partner_pass_camera_policy FpvStep): the hand slot's stock toggle bit (the F tap's) is set while the
+    // local passenger aims there; the bits it set are cleared at the aim end, the get-off, a seat change and the key's end;
+    // the player's own tap opts out for the boarding.
+    const std::uint8_t fpv_mode_key = static_cast<std::uint8_t>((fpv_on ? 2u : 1u) | (fpv_lever != pc::kFpvKey ? 0x80u : 0u));
+    if (c.fpv_mode_logged != fpv_mode_key) {
+        c.fpv_mode_logged = fpv_mode_key;
+        EmitBoard(m, h, "partner_ride=pass_camera; state=seat_fpv; event=mode; on=%u; source=%s; hooks=%u\r\n", fpv_on ? 1u : 0u,
+                  fpv_lever != pc::kFpvKey ? "lever" : "key", fpv_hooks ? 1u : 0u);
+    }
+    pc::FpvRead fr{};
+    const bool fr_need = fpv_hooks && lp.valid && (fpv_seat || c.fpv.active || trace);
+    const bool fr_ok = fr_need && h.seat_fpv_read(h.context, st, fr) && fr.subj.ok;
+    {
+        pc::FpvIn fi{};
+        fi.want = fpv_on && fpv_hooks && d.pass_camera_installed && !c.uncertain && !ai.uncertain;
+        fi.seated = lp.valid;
+        fi.vehicle = lp.vehicle;
+        fi.seat = lp.seat;
+        fi.aiming = aiming;
+        fi.read_ok = fr_ok;
+        fi.toggles = fr.subj.toggles;
+        fi.slot_ok = fr.slot_ok;
+        fi.slot = fr.slot;
+        const std::uint16_t fpv_vehicle = c.fpv.vehicle;
+        const std::uint8_t fpv_seat_was = c.fpv.seat;
+        const pc::FpvOut fo = pc::FpvStep(c.fpv, fi);
+        if (fo.event != pc::FpvEvent::none) {
+            std::uint32_t after = fr.subj.toggles;
+            bool write_ok = true;
+            if (fo.set || fo.clear) {
+                write_ok = h.seat_fpv_write(h.context, st, fo.set, fo.clear, after);
+                if (!write_ok && fo.set) c.fpv.ours &= ~fo.set;  // not written: not ours
+            }
+            const bool stop = fo.event == pc::FpvEvent::stop;
+            EmitNativeN(h, c.fpv_cap, kSeatFpvCap, "partner_seat_fpv",
+                        "partner_ride=pass_camera; state=seat_fpv; event=%s; vehicle=%u; seat=%u; reason=%s; set=0x%x; clear=0x%x; ok=%u; "
+                        "toggles=0x%x; after=0x%x; slot=%d; gun=%u; f3c0=0x%x; cmode=%d; sm=0x%x; read=%s; sets=%u; restores=%u; "
+                        "opt_outs=%u\r\n",
+                        pc::FpvEventName(fo.event), unsigned(stop ? fpv_vehicle : lp.vehicle), unsigned(stop ? fpv_seat_was : lp.seat),
+                        fo.reason, fo.set, fo.clear, write_ok ? 1u : 0u, fr.subj.toggles, after, fr.slot_ok ? int(fr.slot) : -1,
+                        unsigned(aim_read.gun_state[0]), unsigned(aim_read.gun_flags[0]), cam.mode, fr.subj.mask,
+                        fr_ok ? "ok" : fr.refusal ? fr.refusal : fr_need ? "module" : "skip", c.fpv.sets, c.fpv.restores, c.fpv.opt_outs);
+        }
+    }
     if (aiming) c.trace_aim_ms = now ? now : 1;
+    if (trace && lp.valid && fpv_hooks && fr_ok) {
+        // The lab trace's seat first-person line: on a change of its key (the module's answer, the toggles, the gate) or
+        // every second; the once-per-mission pollers line.
+        const unsigned f19 = fr.flags_ok ? (fr.w0 >> 25) & 1u : 9u;
+        const unsigned w3 = fr.flags_ok ? (fr.w3 >> 12) & 0xFu : 0xFFu;  // bits 12..15: flags 0x6C, 0x6D, 0x6E, 0x6F
+        const std::uint32_t f3c0 = aim_read.gun_flags[0];
+        const std::uint64_t key = (static_cast<std::uint64_t>(fr.subj.mask & 0x3FF)) | (static_cast<std::uint64_t>(fr.subj.toggles & 0x1FF) << 10) |
+                                  (static_cast<std::uint64_t>((f3c0 >> 13) & 3u) << 19) | (static_cast<std::uint64_t>(f19 & 0xF) << 21) |
+                                  (static_cast<std::uint64_t>(w3 & 0xFF) << 25) | (static_cast<std::uint64_t>(cam.mode & 0xF) << 33) |
+                                  (static_cast<std::uint64_t>(aiming ? 1u : 0u) << 37) | (static_cast<std::uint64_t>(fr.slot & 0xF) << 38) |
+                                  (static_cast<std::uint64_t>(aim_read.gun_state[0] & 0x1F) << 42) | (static_cast<std::uint64_t>(lp.seat & 0xF) << 47);
+        if (key != c.fpv_trace_key || !c.fpv_trace_ms || now < c.fpv_trace_ms || now - c.fpv_trace_ms >= 1000) {
+            c.fpv_trace_key = key;
+            c.fpv_trace_ms = now ? now : 1;
+            const unsigned long long fmvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
+            EmitNativeN(h, c.fpv_trace_cap, kSeatFpvTraceCap, "partner_seat_fpv_trace",
+                        "partner_ride=pass_camera; state=fpv_trace; ms=%llu; seat=%u; aim=%u; gun=%u; f3c0=0x%x; b13=%u; b14=%u; slot=%d; "
+                        "cmode=%d; mvt=0x%llx; subj=%d; sm=0x%x; si=%d; sf=0x%llx; tog=0x%x; st=0x%x; f19=%u; w3=0x%x; ours=0x%x; opt=%u\r\n",
+                        static_cast<unsigned long long>(now), unsigned(lp.seat), aiming ? 1u : 0u, unsigned(aim_read.gun_state[0]), f3c0,
+                        (f3c0 >> 13) & 1u, (f3c0 >> 14) & 1u, fr.slot_ok ? int(fr.slot) : -1, cam.mode, fmvt, fr.subj.index, fr.subj.mask,
+                        fr.subj.first, static_cast<unsigned long long>(fr.subj.first_fn), fr.subj.toggles, fr.subj.started, f19, w3,
+                        c.fpv.ours, c.fpv.opt_out ? 1u : 0u);
+        }
+        std::uintptr_t polls[10]{};
+        if (!c.pollers_logged && h.seat_fpv_pollers && h.seat_fpv_pollers(h.context, st, polls)) {
+            c.pollers_logged = true;
+            EmitNativeN(h, c.fpv_trace_cap, kSeatFpvTraceCap, "partner_seat_fpv_trace",
+                        "partner_ride=pass_camera; state=pollers; p=0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx\r\n",
+                        static_cast<unsigned long long>(polls[0]), static_cast<unsigned long long>(polls[1]),
+                        static_cast<unsigned long long>(polls[2]), static_cast<unsigned long long>(polls[3]),
+                        static_cast<unsigned long long>(polls[4]), static_cast<unsigned long long>(polls[5]),
+                        static_cast<unsigned long long>(polls[6]), static_cast<unsigned long long>(polls[7]),
+                        static_cast<unsigned long long>(polls[8]), static_cast<unsigned long long>(polls[9]));
+        }
+    }
     if (trace && lp.valid && pc::TraceDue(c.trace_ms, c.trace_aim_ms, aiming, now)) {
         c.trace_ms = now ? now : 1;
         pc::View v{};
@@ -6447,6 +6556,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     // Design 8.27: the passenger camera's mode (lab and play) and its trace (lab only).
     d.settings.pass_camera = lab.partner_pass_camera;
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
+    d.settings.seat_fpv = lab.partner_seat_fpv;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
     d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
@@ -6611,6 +6721,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_end");
+    SeatFpvRelease(d, h, "mission_end");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     d.mission.seat.armed = false;
@@ -6676,6 +6787,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
+    if (!terminating) SeatFpvRelease(d, h, "stop");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     m.seat.armed = false;

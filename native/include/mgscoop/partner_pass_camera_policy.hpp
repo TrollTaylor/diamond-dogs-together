@@ -683,9 +683,76 @@ struct FpvOut {
     const char* reason = "none";
 };
 inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
-    (void)s;
-    (void)in;
-    return FpvOut{};
+    FpvOut o{};
+    const bool seat_ok = in.want && in.seated && FpvSeat(in.seat);
+    if (s.active && (!seat_ok || in.vehicle != s.vehicle || in.seat != s.seat)) {
+        // The boarding ends (the get-off, a seat change, the key off): the bits still ours are cleared (unread: all of them).
+        o.event = FpvEvent::stop;
+        o.reason = !in.want ? "off" : !in.seated ? "get_off" : "seat";
+        o.clear = (in.read_ok ? (s.ours & in.toggles) : s.ours) & kFpvSlotMask;
+        if (o.clear) ++s.restores;
+        s.active = s.opt_out = s.aim = false;
+        s.ours = s.seen = 0;
+        s.vehicle = kVehicleUnknown;
+        s.seat = kSeatUnknown;
+        return o;
+    }
+    if (!seat_ok) return o;
+    if (!s.active) {
+        s.active = true;
+        s.opt_out = s.aim = false;
+        s.ours = s.seen = 0;
+        s.vehicle = in.vehicle;
+        s.seat = in.seat;
+        o.event = FpvEvent::arm;
+        o.reason = "seat";
+        return o;
+    }
+    if (!in.read_ok) return o;
+    const std::uint32_t toggles = in.toggles & kFpvSlotMask;
+    if (!in.aiming) {
+        s.aim = false;
+        s.seen = 0;
+        if (s.ours) {
+            o.clear = s.ours & toggles;
+            s.ours = 0;
+            if (o.clear) {
+                o.event = FpvEvent::restore;
+                o.reason = "aim_end";
+                ++s.restores;
+            }
+        }
+        return o;
+    }
+    if (!s.aim) {
+        s.aim = true;
+        s.seen = 0;
+        ++s.aims;
+    }
+    if (s.opt_out) return o;
+    // The player's own F tap: a bit seen set during this aim is clear now.
+    const std::uint32_t dropped = s.seen & ~toggles;
+    if (dropped) {
+        s.opt_out = true;
+        s.ours &= ~dropped;
+        s.seen = 0;
+        ++s.opt_outs;
+        o.event = FpvEvent::opt_out;
+        o.reason = "tap";
+        return o;
+    }
+    s.seen |= toggles;
+    const int bit = in.slot_ok ? FpvBit(in.slot) : -1;
+    if (bit < 0) return o;
+    const std::uint32_t b = 1u << bit;
+    if (!(toggles & b)) {
+        o.set = b;
+        s.ours |= b;
+        ++s.sets;
+        o.event = FpvEvent::set;
+        o.reason = "aim";
+    }
+    return o;
 }
 
 // --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------

@@ -39,6 +39,11 @@ const char* g_refusal = nullptr;
 LogFn g_log = nullptr;
 std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0}, g_turns{0};
 volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
+// Design 8.46: the seat first-person toggle writes, the blocks' one-time check and the lab lever (kFpvKey, 0, 1).
+std::atomic<std::uint32_t> g_fpv{0};
+volatile LONG g_fpv_tried = 0;
+const char* g_fpv_refusal = nullptr;
+volatile LONG g_fpv_override = kFpvKey;
 
 void LogFormat(const char* format, ...) noexcept {
     if (!g_log) return;
@@ -111,10 +116,24 @@ const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mism
 }
 
 const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
-    (void)base;
-    (void)span;
     mismatch_rva = 0;
-    return "stub";
+    const auto* image = static_cast<const unsigned char*>(base);
+    if (!image) return "base";
+    for (const std::uintptr_t rva : c::seat_fpv_blocks) {
+        mismatch_rva = rva;
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            same = std::memcmp(image + site->rva, site->bytes, site->size) == 0;
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    mismatch_rva = 0;
+    return nullptr;
 }
 
 void ResetForTest() noexcept {
@@ -127,6 +146,10 @@ void ResetForTest() noexcept {
     g_angles.store(0);
     g_turns.store(0);
     g_override = -1;
+    g_fpv.store(0);
+    g_fpv_tried = 0;
+    g_fpv_refusal = nullptr;
+    g_fpv_override = kFpvKey;
 }
 } // namespace detail
 
@@ -203,6 +226,7 @@ void ReadStats(Stats& out) noexcept {
     out.faults = g_faults.load(std::memory_order_relaxed);
     out.angles = g_angles.load(std::memory_order_relaxed);
     out.turns = g_turns.load(std::memory_order_relaxed);
+    out.fpv = g_fpv.load(std::memory_order_relaxed);
 }
 
 const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
@@ -289,37 +313,123 @@ bool ReadView(const void* base, std::uintptr_t P, View& out) noexcept {
 int Override() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_override, 0, 0)); }
 
 // --- Design 8.46: seat first person ----------------------------------------------------------------------------------
+namespace {
+// The subjective module of the local camera: the module among the six whose vtable is 0x23D1F00 (0: none).
+std::uintptr_t SubjectiveModule(std::uintptr_t b, std::uintptr_t cam, std::int32_t& index) noexcept {
+    index = -1;
+    for (unsigned i = 0; i < kModuleCount; ++i) {
+        std::uintptr_t module = 0, vt = 0;
+        if (!ReadValue(cam + kCamModules + 8u * i, module) || !module || !ReadValue(module, vt)) continue;
+        if (vt == b + c::pass_subj_module_vtable_rva) {
+            index = static_cast<std::int32_t>(i);
+            return module;
+        }
+    }
+    return 0;
+}
+std::uintptr_t SubjectiveImpl(const void* base, std::uintptr_t P, std::int32_t& index) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    const std::uintptr_t cam = LocalCamera(b, P);
+    const std::uintptr_t module = cam ? SubjectiveModule(b, cam, index) : 0;
+    return module ? module - c::pass_subj_impl : 0;
+}
+} // namespace
+
 bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept {
-    (void)base;
-    (void)P;
     out = Subj{};
-    return false;
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    Subj v{};
+    v.index = index;
+    if (!ReadValue(impl + c::pass_subj_toggles, v.toggles) || !ReadValue(impl + c::pass_subj_mask, v.mask) ||
+        !ReadValue(impl + c::pass_subj_first, v.first) || !ReadValue(impl + c::pass_subj_started, v.started))
+        return false;
+    std::uintptr_t poller = 0, vt = 0, fn = 0;
+    if (ReadValue(impl + c::pass_subj_first_poller, poller) && poller && ReadValue(poller, vt) && vt && ReadValue(vt, fn) && fn >= b)
+        v.first_fn = fn - b;
+    v.ok = true;
+    out = v;
+    return true;
 }
+
 bool ReadSubjectivePollers(const void* base, std::uintptr_t P, std::uintptr_t (&rvas)[10]) noexcept {
-    (void)base;
-    (void)P;
     for (auto& r : rvas) r = 0;
-    return false;
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    for (unsigned i = 0; i < c::pass_subj_count && i < 10; ++i) {
+        std::uintptr_t poller = 0, vt = 0, fn = 0;
+        if (ReadValue(impl + c::pass_subj_pollers + 8u * i, poller) && poller && ReadValue(poller, vt) && vt && ReadValue(vt, fn) && fn >= b)
+            rvas[i] = fn - b;
+    }
+    return true;
 }
+
 bool WriteFpvToggles(const void* base, std::uintptr_t P, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
-    (void)base;
-    (void)P;
-    (void)set;
-    (void)clear;
     after = 0;
+    if (((set | clear) & ~kFpvSlotMask) != 0 || (set & clear) != 0) return false;
+    std::int32_t index = -1;
+    const std::uintptr_t impl = SubjectiveImpl(base, P, index);
+    if (!impl) return false;
+    auto* word = reinterpret_cast<volatile LONG*>(impl + c::pass_subj_toggles);
+    __try {
+        // The game's own toggle (the F tap, on the game thread) between the read and the write is never lost.
+        LONG seen = *word;
+        for (unsigned tries = 0; tries < 16; ++tries) {
+            const LONG next = static_cast<LONG>((static_cast<std::uint32_t>(seen) | set) & ~clear);
+            const LONG prior = InterlockedCompareExchange(word, next, seen);
+            if (prior == seen) {
+                after = static_cast<std::uint32_t>(next);
+                g_fpv.fetch_add(1, std::memory_order_relaxed);
+                return true;
+            }
+            seen = prior;
+        }
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+    }
     return false;
 }
+
 const char* FpvInstall(const void* base, std::size_t span) noexcept {
-    (void)base;
-    (void)span;
-    return "stub";
+    if (InterlockedCompareExchange(&g_fpv_tried, 1, 0) != 0) return g_fpv_refusal;
+    std::uintptr_t mismatch = 0;
+    g_fpv_refusal = detail::VerifyFpvImage(base, span, mismatch);
+    if (g_fpv_refusal)
+        LogFormat("partner_pass_camera=seat_fpv; result=refused; reason=%s; rva=0x%llx\r\n", g_fpv_refusal,
+                  static_cast<unsigned long long>(mismatch));
+    else
+        LogFormat("partner_pass_camera=seat_fpv; result=installed; blocks=%u\r\n",
+                  static_cast<unsigned>(sizeof(c::seat_fpv_blocks) / sizeof(c::seat_fpv_blocks[0])));
+    return g_fpv_refusal;
 }
-int FpvOverride() noexcept { return kFpvKey; }
+int FpvOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_fpv_override, 0, 0)); }
 
 bool HandleCommand(const char* text, bool lab, char* result, std::size_t capacity, bool& ok) noexcept {
     ok = false;
     if (!text || std::strncmp(text, "passcam", 7) != 0 || (text[7] != '\0' && text[7] != ' ')) return false;
     const char* arg = text[7] ? text + 8 : "";
+    if (std::strncmp(arg, "seatfpv", 7) == 0 && (arg[7] == '\0' || arg[7] == ' ')) {
+        // Design 8.46: "passcam seatfpv on|off|key" (this copy's seat first person; key: lab.ini partner_seat_fpv).
+        const char* v = arg[7] ? arg + 8 : "";
+        const int next = std::strcmp(v, "on") == 0 ? 1 : std::strcmp(v, "off") == 0 ? 0 : std::strcmp(v, "key") == 0 ? kFpvKey : -2;
+        const char* refusal = !lab ? "lab_only" : next == -2 ? "args" : nullptr;
+        if (!refusal) InterlockedExchange(&g_fpv_override, next);
+        const int value = FpvOverride();
+        if (result && capacity) {
+            if (refusal)
+                StringCchPrintfA(result, capacity, "passcam=refused; reason=%s; use=seatfpv on|off|key", refusal);
+            else
+                StringCchPrintfA(result, capacity, "passcam=seatfpv; seatfpv=%s; writes=%u; faults=%u",
+                                 value == 1 ? "on" : value == 0 ? "off" : "key", g_fpv.load(std::memory_order_relaxed),
+                                 g_faults.load(std::memory_order_relaxed));
+        }
+        ok = refusal == nullptr;
+        return true;
+    }
     const std::size_t n = std::strlen(arg);
     Mode mode{};
     const bool status = n == 6 && std::memcmp(arg, "status", 6) == 0;

@@ -85,6 +85,17 @@ struct Subj {
     std::uint32_t started = 0;    // impl+0xE0: the pollers started
 };
 bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept;
+// The driver's per-tick read (the observer fills it): the module, the local gun's hand slot rec+0x3DA (the poller's slot)
+// and the local flag record's words 0 (flag 0x19, the gun hold gate) and 3 (flags 0x6C first person on, 0x6E forced,
+// 0x6F the aim gate's twin; the trace). refusal: the blocks' install refusal (nothing read).
+struct FpvRead {
+    Subj subj;
+    bool slot_ok = false;
+    std::uint8_t slot = 0;
+    bool flags_ok = false;
+    std::uint32_t w0 = 0, w3 = 0;
+    const char* refusal = nullptr;
+};
 // The subjective module's ten pollers: each one's vt[0] rva (0: empty / unread). False when the module is not found.
 bool ReadSubjectivePollers(const void* base, std::uintptr_t P, std::uintptr_t (&rvas)[10]) noexcept;
 // Sets `set` and clears `clear` (both within kFpvSlotMask) in impl+0x60 with an interlocked compare-exchange (the game's
