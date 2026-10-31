@@ -658,6 +658,23 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
             ++stats_.purged;
             return;
         }
+        if (!config_.travel) {
+            // This copy's own lab.ini debug_travel is off: nothing moves here. An ask, go or bring is answered
+            // 4 refused, reason 7 (off), so the partner's player hears it; an answer is dropped.
+            ++stats_.purged;
+            if (op.v[1] != 4) {
+                Op out{};
+                out.code = op::travel;
+                out.epoch = TxEpoch();
+                out.count = 8;
+                out.v[0] = op.v[0];
+                out.v[1] = 4;
+                out.v[2] = op.v[2];
+                out.v[7] = 7;
+                if (!QueueOut(out)) Dropped(kDropOut, 0, false);
+            }
+            return;
+        }
         if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
         return;
     case op::req_mission:
@@ -1003,7 +1020,8 @@ TxStatus Core::Tx(std::uint8_t code, const std::int64_t* values, unsigned count,
         GotoTx(values[0], values[1], now_ms);
         return TxStatus::ok;
     }
-    if (code == op::travel && (level_ < 3 || !remote_hello_ || remote_level_ < 3 || remote_saves_ != 1 || remote_role_ == config_.role))
+    if (code == op::travel &&
+        (!config_.travel || level_ < 3 || !remote_hello_ || remote_level_ < 3 || remote_saves_ != 1 || remote_role_ == config_.role))
         return TxStatus::disabled;
     if (spec->queue == 1 || (spec->level >= 3 && code > op::follow_ack && code != op::travel)) {
         if (!paired_) return TxStatus::not_paired;

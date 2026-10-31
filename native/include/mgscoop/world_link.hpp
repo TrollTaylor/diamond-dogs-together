@@ -57,6 +57,9 @@ struct Config {
     // wrecked at once), bit 128 world_vehicle_damage (the guest's vehicle damage report).
     bool vehicle_crew = false;
     bool vehicle_damage = false;
+    // lab.ini debug_travel (debug menu Travel): off -> this copy never sends TRAVEL and answers a
+    // partner's ask/go/bring refused (world::Config::travel).
+    bool travel = false;
 };
 
 // "0.12.0" -> 1200 (major*10000 + minor*100 + patch); 0 when malformed.

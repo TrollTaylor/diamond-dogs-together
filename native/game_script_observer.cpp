@@ -1649,6 +1649,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.loadout_block = labc.world_loadout_block;
     world.vehicle_crew = labc.world_vehicle_crew;
     world.vehicle_damage = labc.world_vehicle_damage;
+    world.travel = labc.debug_travel;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;

@@ -241,6 +241,7 @@ void Configure(const Config& config) noexcept {
     core.lab_triggers = g_lab_triggers;
     core.saves = config.saves;
     core.build = config.build;
+    core.travel = config.travel;
     core.probe = config.play ? WorldProbe::none : config.probe;
     const std::uint64_t now = partner_net::NowMs();
     {
@@ -377,7 +378,8 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     // (P2-3): 5 TRAVEL_LOCKED, 6 HOST_PARTNER_CANNOT_JOIN, 7 TITLE_CONTINUE_LOCKED,
     // 8 TRAVEL_ALONE, 9 CONTINUE_DURING_HANDOFF, 10 HANDOFF_KEPT_OWN,
     // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; M1: 13 COMPANION (a = 1 orders, 2 call
-    // refused, 3 Quiet locked; M3: 4 vehicle drop, 5 loadout drop refused); 14..15 have no meaning yet.
+    // refused, 3 Quiet locked; M3: 4 vehicle drop, 5 loadout drop refused); 14 TRAVEL (debug menu
+    // Travel, b = the sentence); 15 has no meaning yet (world::NoteShown).
     const bool known = world::NoteShown(code);
     const std::uint64_t now = partner_net::NowMs();
     std::uint32_t partner = 0, local = 0;

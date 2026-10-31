@@ -124,7 +124,7 @@ do
         local SPOT = {[30010] = {828.18, 338.20, 1630.51, 95}, [30020] = {-656.01, 1.20, 877.73, 62}, [30050] = {22.61, 1.80, -15.55, 0}}
         local ACC = {[40010] = true, [40020] = true, [40050] = true}
         -- Answer reasons 1..6 (0 accepted).
-        local WHY = {"travelling", "gameplay", "on_foot", "downed", "demo", "mission"}
+        local WHY = {"travelling", "gameplay", "on_foot", "downed", "demo", "mission", "off"}
         local function log(s) W.log("event=travel;" .. s) end
         local function note(b, m) if type(W.note) == "function" then pcall(W.note, 14, m or 0, b) end end
         local function mission() return W.get(vars, "missionCode") or 0 end
@@ -223,9 +223,12 @@ do
                 return true, fmt("travel_started;target=%d;linked=%d", target, live and 1 or 0)
             elseif a[1] == "bring_partner" and #a == 1 then
                 if not linked() then return false, "partner_not_linked" end
+                local b = T.blocked()
+                if b then return false, "bring_refused;reason=" .. WHY[b] end
                 local p = pose()
                 if not p then return false, "position_unreadable" end
                 if not tx(3, mission(), p, 0) then return false, "bring_refused;reason=link" end
+                T.bring = W.now()
                 note(4, mission())
                 log(fmt("step=bring;mission=%d;x=%.2f;y=%.2f;z=%.2f", mission(), p[1], p[2], p[3]))
                 return true, fmt("bring_sent;mission=%d", mission())
@@ -244,6 +247,12 @@ do
         local function brought(m, p)
             local b = T.blocked()
             if b then return b end
+            -- Crossing Brings (both pressed, or this copy's own still unanswered for 30 s): the host's wins.
+            if T.bring and W.now() - T.bring < 30000 then
+                if W.host then return 1 end
+                log("step=bring_yields")
+            end
+            T.bring = nil
             local spot = landing(p, false, 3)
             if m == mission() then
                 if not pcall(TppPlayer.Warp, {pos = {spot[1], spot[2], spot[3]}, rotY = spot[4]}) then return 2 end
@@ -270,9 +279,12 @@ do
                 T.asked = nil
             elseif kind == 3 then
                 tx(4, m, nil, brought(m, p) or 0)
-            elseif kind == 4 and v[8] ~= 0 then
-                log(fmt("step=refused_by_partner;mission=%d;reason=%s", m, WHY[v[8]] or tostring(v[8])))
-                note(5, m)
+            elseif kind == 4 then
+                T.bring = nil
+                if v[8] ~= 0 then
+                    log(fmt("step=refused_by_partner;mission=%d;reason=%s", m, WHY[v[8]] or tostring(v[8])))
+                    note(5, m)
+                end
             end
         end
         -- On foot in the target: within 3 m of the spot (else a warp, at most 3), then done.
