@@ -17,6 +17,7 @@ player's own F tap goes back to the shoulder for that ride. Still open: whether 
   the lower half of the first-person view and the gun stays blocked. Landing run `4adc100597f1422ea69296ac58a28a3d`
   (`m6m7g-seat-fpv-land.txt`): the guest's lab boot never reached gameplay (log stops at `pair_wait; local_loading`),
   cause [U]; the round's 4th run, no retry. Design 8.49; README Seats; native-puppet "Seat first person".
+- Full `tools/build.ps1` at `16f55a0`: CTest 336/336; contract `--check` 836 / 213.
 
 ## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
 
