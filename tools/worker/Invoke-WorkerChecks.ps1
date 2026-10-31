@@ -91,7 +91,7 @@ function Get-WorkerTests {
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
         'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check', 'debug_buddy_lua_check', 'debug_vehicle_lua_check', 'debug_boot_lua_check',
-        'world_sync_lua_check', 'world_downed_lua_check', 'world_revive_input_lua_check', 'world_buddy_lua_check', 'world_ride_pose_lua_check', 'world_horse_cargo_lua_check', 'world_buddy_ride_lua_check', 'world_vehicle_lua_check', 'world_vehicle_state_lua_check', 'world_vehicle_rules_lua_check', 'world_vehicle_damage_lua_check', 'world_follow_lua_check', 'world_handoff_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
+        'world_sync_lua_check', 'world_downed_lua_check', 'world_revive_input_lua_check', 'world_buddy_lua_check', 'world_ride_pose_lua_check', 'world_horse_cargo_lua_check', 'world_buddy_ride_lua_check', 'world_vehicle_lua_check', 'world_vehicle_state_lua_check', 'world_vehicle_rules_lua_check', 'world_vehicle_damage_lua_check', 'world_follow_lua_check', 'world_handoff_lua_check', 'world_goto_lua_check', 'world_travel_lua_check', 'world_align_lua_check',
         'world_follow_game_lua_check', 'world_env_game_lua_check', 'debug_menu_game_lua_check',
         'bootstrap_patch_check', 'bootstrap_lua_check', 'host_trial_patch_check', 'host_trial_lua_check',
         'partner_sync_composed_lua_check', 'world_sync_composed_lua_check',
@@ -109,6 +109,8 @@ function Get-WorkerTests {
         # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks.
         # (DiamondDogsTogether.exe's two: Get-WorkerReleaseOnlyTests.)
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
+        # Melee on the partner (partner_melee.hpp): the attacker-side reach test of a local CQC strike.
+        'partner_melee_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
         'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check',
         # The window close held for the partner's mission-thread teardown (window_close.hpp).
@@ -543,12 +545,14 @@ function Invoke-WorkerCommand {
     $psi = [Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = $Executable; $psi.WorkingDirectory = $Context.project_root
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
-    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    # fb1031: a closed stdin (an inherited open pipe hung the audited pwsh before its first line).
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
     foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
     $output = ''; $errorText = ''
     try {
         if (!$process.Start()) { throw "Cannot start audited command: $Tag" }
+        $process.StandardInput.Close()
         $row.pid = $process.Id
         $row.process_started_utc = $process.StartTime.ToUniversalTime().ToString('o')
         $outTask = $process.StandardOutput.ReadToEndAsync(); $errTask = $process.StandardError.ReadToEndAsync()

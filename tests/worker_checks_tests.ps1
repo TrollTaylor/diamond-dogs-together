@@ -386,8 +386,13 @@ public sealed class MgsCoopWorkerStreamFixture {
     public MgsCoopWorkerStreamFixture(string value) { text=value; }
     public Task<string> ReadToEndAsync() { return Task.FromResult(text); }
 }
+public sealed class MgsCoopWorkerInputFixture {
+    public void Close() { ++MgsCoopWorkerProcessFixture.InputCloses; }
+}
 public sealed class MgsCoopWorkerProcessFixture : IDisposable {
     public static string Mode="success";
+    public static int InputCloses;
+    public MgsCoopWorkerInputFixture StandardInput { get { return new MgsCoopWorkerInputFixture(); } }
     public static ProcessStartInfo LastInfo;
     public static int KillCalls, DisposeCalls;
     public static bool EntireTree;
@@ -424,6 +429,9 @@ public sealed class MgsCoopWorkerProcessFixture : IDisposable {
     $result=Invoke-WorkerCommand $commandContext 'fixture-only.exe' $arguments 'success' 2
     $info=[MgsCoopWorkerProcessFixture]::LastInfo
     Check (!$info.UseShellExecute -and $info.CreateNoWindow -and $info.RedirectStandardOutput -and $info.RedirectStandardError) 'real start-info requires hidden shell-free redirected execution'
+    # fb1031: an audited pwsh child that inherited an open stdin pipe never printed its first line (worker-policy-fixture
+    # timed out at 120 s with no output; 2.4 s with stdin closed). Every audited command gets a closed stdin.
+    Check ($info.RedirectStandardInput -and [MgsCoopWorkerProcessFixture]::InputCloses -eq 1) 'audited command stdin is redirected and closed at start'
     Check ($info.ArgumentList.Count -eq 3 -and $info.ArgumentList[0] -ceq $arguments[0] -and $info.ArgumentList[1] -ceq $arguments[1] -and $info.ArgumentList[2] -ceq $arguments[2]) 'literal spaces/newlines/command-substitution characters remain typed arguments'
     Check ($result.Output -ceq "stdout`nline2`n" -and $result.Error -ceq "stderr`n" -and $result.ExitCode -eq 0) 'wrapper returns exactly the original stdout/stderr/exit without progress contamination'
     $last=$script:receipt.commands[-1]

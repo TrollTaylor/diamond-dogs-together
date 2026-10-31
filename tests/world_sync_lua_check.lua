@@ -1240,8 +1240,52 @@ do
     env3.vars.weather = 2
     F.tick(env3, c3, 40)
     local mbWeather = F.tx(c3, OP.WEATHER)
-    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and not c3.W.w1,
-        '30050: actual host rain is sent once and in digests; enemy authority stays off')
+    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and c3.W.w1,
+        '30050: actual host rain is sent once and in digests; enemy outcomes (W1) run at Mother Base too')
+    -- Mother Base staff: every CP counts as loaded (no area trap there), no patrol corrections; a host knockout is
+    -- sent and the guest copy of the staff member faints.
+    check(c3.W.feature.allCp == true and c3.W.feature.patrol == false and c3.W.activeCp == nil,
+        '30050: every CP loaded, patrol corrections off')
+    local mbHenv, mbH = fixture({role = 1, mission = 30050})
+    F.start(mbHenv, mbH)
+    F.pair(mbHenv, mbH, 3)
+    F.clear(mbH)
+    mbH.life[mbH.ids.sol_b1] = LIFE.FAINT
+    F.msg(mbHenv, 'GameObject', 'Unconscious', mbH.ids.sol_b1)
+    F.tick(mbHenv, mbH, 1)
+    local mbOut = F.tx(mbH, OP.OUTCOME)
+    check(#mbOut == 1 and mbOut[1].v[1] == u32('sol_b1') and mbOut[1].v[3] == 3, '30050: the host knockout of a staff member is sent')
+    local mbGenv, mbG = fixture({role = 2, mission = 30050})
+    F.start(mbGenv, mbG)
+    F.pair(mbGenv, mbG, 3)
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b1'), 1, 3, 1, 3, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    check(F.callCount(mbG, 'ChangeLifeState:sol_b1:' .. LIFE.FAINT) == 1, '30050: the guest copy of the staff member faints')
+    -- A partner never kills or removes a staff member in this copy's save (stock f30050 reserves TARGET_DEAD on any
+    -- staff Dead or Dying): a partner's kill, dying or Fulton is applied here as a knockout (FAINT).
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b2'), 1, 5, 2, 1, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b3'), 1, 6, 3, 5, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_a1'), 1, 4, 4, 4, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    local lethal = 0
+    for _, v in ipairs(mbG.calls) do
+        if v:find('^RequestForceFulton:') or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DEAD .. '$')
+            or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DYING .. '$') then lethal = lethal + 1 end
+    end
+    check(lethal == 0 and F.callCount(mbG, 'ChangeLifeState:sol_b2:' .. LIFE.FAINT) == 1
+        and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 1
+        and F.callCount(mbG, 'ChangeLifeState:sol_a1:' .. LIFE.FAINT) == 1
+        and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';state=5;as=3'),
+        '30050: a partner kill, dying or Fulton knocks the staff member out on this copy, never kills or fultons them')
+    -- Play at Mother Base: W1 stays off (lab only) until a hidden run shows staff outcomes on both copies; the
+    -- allCp / spareStaff code stays dormant there.
+    local mbPlayEnv, mbPlay = fixture({role = 1, mission = 30050, mode = 2})
+    F.start(mbPlayEnv, mbPlay)
+    F.pair(mbPlayEnv, mbPlay, 3)
+    check(not mbPlay.W.w1 and mbPlay.W.feature.enemies == nil and mbPlay.W.feature.allCp == true,
+        '30050 in play: W1 off until a run proves it (lab only)')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)

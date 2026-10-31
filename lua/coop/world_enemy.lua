@@ -163,6 +163,12 @@ do
             if not E.active(e.cp, h) then return E.hold(h, st, ver, src, "out_of_area") end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
+            -- Mother Base (spareStaff): a partner never kills or removes a staff member in this copy's save (stock
+            -- f30050 reserves TARGET_DEAD on any staff Dead or Dying): dying, dead and fultoned land as a knockout.
+            if W.feature and W.feature.spareStaff and (st == 4 or st == 5 or st == 6) and not TERMINAL[cur] then
+                L("event=spare;ent=%.0f;state=%d;as=3", h, st)
+                st = 3
+            end
             local result = "noop"
             if TERMINAL[cur] then result = "terminal_local"
             elseif st == 0 then
@@ -338,7 +344,11 @@ do
                 end
                 if s.qHead > #q then s.queue, s.qHead = later, 1
                 else for _, a in ipairs(later) do q[#q + 1] = a end end
-                E.recheck(now, false)
+                -- Mother Base (allCp): no area change re-checks the ledger, so every 10 s all of it
+                -- (an apply that failed while the staff member's platform was not loaded here).
+                local all = W.feature and W.feature.allCp and now >= (s.allAt or 0)
+                if all then s.allAt = now + 10000 end
+                E.recheck(now, all)
             end
         end
 

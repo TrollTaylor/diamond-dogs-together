@@ -672,6 +672,15 @@ int main() {
           std::strcmp(act::FindAction("enemy_unmark_all")->command, "enemy_unmark") == 0 &&
           std::strcmp(act::FindAction("mission_status")->command, "status") == 0 &&
           std::strcmp(act::FindAction("world_time_noon")->command, "time 43200") == 0, "registry command texts");
+    // Debug menu Travel (docs/debug-menu.md "Travel"): both players can use every button (a guest asks the host).
+    Check(act::FindAction("travel_afghanistan") && !std::strcmp(act::FindAction("travel_afghanistan")->command, "travel 30010") &&
+              act::FindAction("travel_africa") && !std::strcmp(act::FindAction("travel_africa")->command, "travel 30020") &&
+              act::FindAction("travel_mother_base") && !std::strcmp(act::FindAction("travel_mother_base")->command, "travel 30050") &&
+              act::FindAction("partner_bring") && !std::strcmp(act::FindAction("partner_bring")->command, "bring_partner"),
+          "Travel and Bring partner here commands");
+    for (const char* id : {"travel_afghanistan", "travel_africa", "travel_mother_base", "partner_bring"})
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & (act::kHostOnly | act::kNeedsPartner | act::kParam)),
+              "Travel rows: guest too, no partner pose needed (the partner may be elsewhere), fixed text");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
     Check(std::strcmp(act::FindAction("buddy_horse_spawn")->command, "horse_spawn") == 0 &&

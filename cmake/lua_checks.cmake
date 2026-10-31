@@ -153,6 +153,8 @@ mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
 mgs_add_lua_check(world_handoff_lua_check "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 mgs_add_lua_check(world_goto_lua_check "${_mgs_coop}/world_goto.lua")
+# Debug menu Travel and Bring partner here (docs/debug-menu.md "Travel"): the travel section of world_goto.lua.
+mgs_add_lua_check(world_travel_lua_check "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"
   "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua"
   ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua")

@@ -55,7 +55,9 @@ pushed in PAIRED, used for native TX gating and by Lua. A remote HELLO with
 
 Per mission (Lua `W.MISSIONS`): 30010 `{enemies, clock, weather=all,
 areaEnemy=f30010_enemy}`, 30020 `{enemies, clock, weather=nofog,
-areaEnemy=f30020_enemy}`, 30050 `{clock, weather=all}`; every other mission (the ACC 40050
+areaEnemy=f30020_enemy}`, 30050 `{enemies, clock, weather=all, allCp, patrol=false}` (Mother Base
+staff, fb1031; design 7.7: no area trap there, so every CP counts as loaded for the W4 snapshot reads and the
+whole outcome ledger is re-checked every 10 s; no patrol position corrections); every other mission (the ACC 40050
 included) runs the level-1 plumbing only for enemy/environment sync. W3/W4
 travel and shared game over also support 40010/40020/40050.
 
@@ -1866,3 +1868,24 @@ holds=,ref=,rage=}` (`ref` / `rage`: the Fulton guard's vehicle and its age, -1 
 section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
 behaviour). Play pairing refuses mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37
 stay reserved; 0x3B onward are free.
+
+## 22. Travel (debug menu Travel and Bring partner here; docs/debug-menu.md "Travel")
+
+Op `0x3B` TRAVEL (59), both directions, reliable, **control** queue, level 3, lab and play, never a request; 8 fields,
+24 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 go / 3 bring / 4 answer), `mission` (the target, the caller's mission
+or the answered one), `x`, `y`, `z` (i32 mm; the landing spot or the caller), `yaw` (i32 mdeg, |yaw| <= 360000),
+`reason` (u8; an answer's 0 accepted, 1 travelling, 2 gameplay, 3 on_foot, 4 downed, 5 demo, 6 mission, 7 off). Unlike every
+other level-3 op after FOLLOW_ACK it does **not** need the pairing: the partner may be in another mission or the
+helicopter. TX and RX need only the link session's HELLO gates (both level 3, copied saves, roles differ), as
+MISSION_TRANSITION; a received TRAVEL survives a local mission start (kept in the control queue like W3 control). A
+partner without the op (0.14.5 and older) skips it by its length (unknown_op). A copy whose own `lab.ini` debug_travel is
+off (`world::Config::travel`) never sends TRAVEL (`disabled`) and native answers a received ask, go or bring with
+kind 4, the same `seq` and mission, reason 7 (off) without queueing it for Lua; a received answer is dropped.
+
+Lua (`lua/coop/world_goto.lua` "Travel", `W.travel`): ask = a linked guest's Go to (the host leads it and answers);
+go = the host's announced trip with its spot (a paired guest follows through world follow kind 1 and kind 6 and only
+does the landing; a guest elsewhere does its own two hops); bring = the caller's pose (the receiver warps 3 m in front
+of it, or travels to its mission; a receiver with its own Bring outstanding, until answered or 30 s, refuses it with 1
+if it is the host, while a guest yields to the host's); answer = the receiver's verdict (a refusal shows world note 14
+b=5). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World note 14
+TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped}.

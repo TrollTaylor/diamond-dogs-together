@@ -419,9 +419,11 @@ Ghidra, raw dumps in the scratchpad `complete/re-passcam/`):
   the old mode and the new module's `vt+0x00` runs. The modules come from data
   (`CAM vt+0x50 0x1111C50`); the classes found are the cut-in camera, a camera
   for act 0x68, the subjective camera, one keyed to player status bits, the
-  VehicleCamera (index 3 in the lab) and an always-true fallback (`0x23B29E0`,
-  CanActivate `0x84B020 mov al,1`; index 5), which the on-foot player and a
-  seated passenger use.
+  VehicleCamera (index 3 in the lab) and an always-true fallback (CanActivate
+  `0x84B020 mov al,1`; index 5), which the on-foot player and a seated passenger
+  use. Its live vtable is `0x23B2AB0` (design 8.59, the follow carry's pinned
+  blocks and the archived traces); `0x23B29E0`, written here before and still
+  used by the test fixtures' module chain, is not the live one.
 - **The VehicleCamera** (`tpp::gm::player::(anon)::VehicleCamera`, factory
   `0x12D0E20`, module vtable `0x23D67F0`, base `0x23D6720`). CanActivate
   `0x12D0F60` is `act = (*(Q+0x18))[P+0x218]; return act - 0x6F <= 1`, so it
@@ -1090,6 +1092,20 @@ Tests: `partner_pass_camera_tests` (`TestFpvBitsAndContract`, `TestFpvStep`, `Te
 `TestFpvLeverAndVerify`), `partner_driver_tests` `TestSeatFpvDriver`, `lab_config_tests`; failing first `a3b8100` ->
 `8b33be4`, `9916c4a` -> `e508347` (the ready gate), `a968074` -> `7226d5e` (mode 15, reverted by `e827380` -> `2c43bf6`), `a5e2fc3` -> `0ff748a` (the
 default).
+
+### Follow carry and the ride camera census (design 8.59)
+
+| Key | Values | Default | What |
+|---|---|---|---|
+| `partner_ride_follow` (lab.ini) | 0 / 1 | 0 (off unless named, lab and play) | moves the fallback camera's blend start point with the ridden vehicle while that blend runs |
+
+The census has no key (lab and play, read only). Lines: `partner_pass_camera=follow; result=installed; blocks=12` (once);
+`partner_ride=pass_camera; state=follow; event=open|close; vehicle; seat; dur_ms; elapsed_ms; alpha_milli` / `ms; writes;
+carried_cm; warps; total_writes` (cap 200); `partner_ride_cam=frame|line; t; ep; n; vehicle; seat; spd_cms; lag_cm; d_cm;
+drift_cm; cs_cm; cmode; blend=alpha,elapsed,dur (milli); carry` and `partner_ride_cam=episode; ep; vehicle; seat; ticks;
+ms; max_spd_cms; max_lag_cm; lag_ms; max_drift_cm; cmode` (frame lines cap 400; line and episode lines share another 400).
+Runs `703d886a` (off) and `70eefcea` (named 1), play, africa-jeep: every rider row read `blend=0,0,0` (no blend
+running), the carry wrote nothing, so the key stays off. See design 8.59.
 
 ## Traversal icon
 
@@ -2933,6 +2949,47 @@ leak captures, loadout, census, noise record).
   `switch3` -> `remote_slot` 1, no write (`same`), `weapon.gate=match`, and
   `switch-back-fire` shows suppressed shots.
 
+## Melee
+
+Melee on the other player (`wp/melee`, fb1031). Key `partner_melee` (lab.ini; `native/partner_melee.cpp`, the driver's
+`TickMelee`), **off unless named** in lab and play (a named 1 runs it in both) until a hidden run on both copies shows
+it: both fb1031 runs (`52fdd178`, retry `79487b41`) were refused before admission (the guest's D3D11 device on the
+private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
+
+- **Why it did nothing (0.14.5 two-PC session, both copies):** guns are attacker-side: the shooter's real bullet hits
+  body 1 on the shooter's copy (`downed_defense` / `downed_damage` samples `target=1; attacker=0`), FriendlyReplicaHit
+  queues it, Lua sends FRIENDLY_HIT and the victim's copy applies it to its own player. The stock CQC strike never
+  reaches that path: ~100 strikes at 0.3-1.8 m logged no defense or damage sample for body 1 (the sample budgets were
+  not spent). The victim's copy never plays the strike either: the CQC bit 0x8000 is a world bit, never passed to body
+  1 (`partner_pad_dropped; cqc=N`). Those presses were census'd as the remote's act 113 (one jab, 0.2-1.1 s, each jab its
+  own edge) and the combo's finisher 114 straight out of a 113 (~0.5 s); LMB without RMB is CQC (the same press also
+  sets VEHICLE_FIRE and PLACE_MARKER). A 114 from another act (running 2 -> 114, held up to 3 s) was the start of a CQC
+  takedown of a soldier: both of the host's `Neutralize; att=local` lines in that session line up with one.
+- **What it does (fb1031 review round, the vanilla CQC feel):** the attacker's copy judges its own strike. One jab (the
+  local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. A second jab in reach within
+  2 s of the first, or the combo's finisher (an edge into 114 within 600 ms of a 113 tick), lands (hidden run
+  `af0b88b6`: four scripted presses gave two 113 edges 1.6 s apart and no 114 in one case, 113 then 114 in another, so
+  the finisher alone is not reliable) when body 1 is realized, shown and on foot (not seated: seat phase,
+  `ride_seated`, seated visibility; no vehicle job or attach; no live non-foot ride sample), within 1.6 m horizontally
+  and 1 m in height of body 1's drawn position (`read_body`, never the slot, which stays at the boarding spot while
+  seated), inside 60 degrees of the local body facing (position and facing from the local body readback
+  `read_local_body`, never the local slot S+0x20[0]: in `af0b88b6` that slot read 21 cm from body 1 with the players
+  placed 1 m apart, and a strike from 3 m landed on it), and the other player is not in a CQC hold (91..96), a trash box
+  or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56) (`verdict=busy`) or prone (`verdict=prone`); at
+  most one hit per 1.5 s (a miss does not start that window). A 114 without a 113 before it is `verdict=takedown`. A
+  landed finisher is one friendly hit, cause sleep, into the queue the damage hook uses
+  (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it wakes by itself
+  after 30 s, or with a revive). No new wire op and no new read or patch site.
+- **Line:** `partner_melee=strike; act=113|114; verdict=land|jab|takedown|busy|prone|range|height|angle|repeat|no_body|off;
+  queued=0|1; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
+- **Not done:** the attacker's strike is not drawn on the victim's screen (the CQC bit on body 1 would act on the
+  victim's world: it can grab or punch that copy's soldiers; a DM overlay entry needs the strike's state or clip name,
+  not known); CQC grabs and throws of the other player; a soldier punched next to the other player is unchanged (the
+  strike is applied only on the attacker's copy, as before), but a full combo aimed at a soldier with the other player
+  standing within reach in front also knocks the other player down (the target of the stock strike is not read).
+- Fixtures `partner_melee_tests`, `partner_driver_tests` (`TestMeleeDriver`), `lab_config_tests`; scenario
+  `melee-partner-play.txt`.
+
 ## Configuration
 
 lab.ini (`native/lab_config.cpp`, LabCommon key table):
@@ -2978,6 +3035,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_unrealize_all` | 0, 1 (G5: the other ride hides (the heli acts 97..108 or a heli ride, a vehicle drawn hidden by `partner_native_ride=hide` or a refused / unavailable seat, a horse rider by its ride kind 3 when `partner_native_mount` is off) unrealize body 1 through Lua's all-active mode like the mount hide, and the link-quality rebase after a ride logs `partner_ride=net_rebased` (the rebase itself is always on), see "Ride hides"; acts only where `partner_native_ride` hides; default 0 in lab and play until a hidden-worker FRAME proves it, a named 1 runs in lab only (play forces it off); a named value records `partner_native_unrealize_all_given`) |
 | `partner_seat_aim` | 0, 1 (the read-only back-seat aim census, see "Seat aim": the local player in a vehicle ride act and body 1 in the seat flow, `partner_seat_aim=sample\|end\|status` lines; lab only, default 0 with or without the gun profile, play forces it off; a named value records `partner_seat_aim_given`) |
 | `partner_seat_gun` | 0, 1 (M7, see "Seat gun": the remote back-seat passenger's raised gun on the seated body 1 through the gesture hook (GunHoldStart on graph 2, body 1's aim rates) and this copy's seated v6 direction; off unless named in lab and play, a named 1 runs in play too; the hold runs but draws no raised gun, runs 30a6a21a..d7cf5a4b; a named value records `partner_seat_gun_given`) |
+| `partner_melee` | 0, 1 (see "Melee": the local CQC strike that reaches body 1 knocks the other player down on their copy; off unless named in lab and play until a hidden run shows it, a named 1 runs it in both; a named value records `partner_melee_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

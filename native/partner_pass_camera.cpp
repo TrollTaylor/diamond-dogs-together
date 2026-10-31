@@ -41,9 +41,13 @@ std::atomic<std::uint32_t> g_writes{0}, g_clears{0}, g_faults{0}, g_angles{0}, g
 volatile LONG g_override = -1;  // the lab lever's Mode, -1 none
 // Design 8.46: the seat first-person toggle writes, the blocks' one-time check and the lab lever (kFpvKey, 0, 1).
 std::atomic<std::uint32_t> g_fpv{0};
+std::atomic<std::uint32_t> g_follow{0};  // fb1031: follow carry writes
 volatile LONG g_fpv_tried = 0;
 const char* g_fpv_refusal = nullptr;
 volatile LONG g_fpv_override = kFpvKey;
+// fb1031 (design 8.59): the follow carry blocks' one-time check (0 untried, 1 verifying, 2 done).
+volatile LONG g_follow_tried = 0;
+const char* g_follow_refusal = nullptr;
 
 void LogFormat(const char* format, ...) noexcept {
     if (!g_log) return;
@@ -136,7 +140,30 @@ const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& m
     return nullptr;
 }
 
+const char* VerifyFollowImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
+    mismatch_rva = 0;
+    const auto* image = static_cast<const unsigned char*>(base);
+    if (!image) return "base";
+    for (const std::uintptr_t rva : c::ride_follow_blocks) {
+        mismatch_rva = rva;
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            same = std::memcmp(image + site->rva, site->bytes, site->size) == 0;
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    mismatch_rva = 0;
+    return nullptr;
+}
+
 void ResetForTest() noexcept {
+    g_follow_tried = 0;
+    g_follow_refusal = nullptr;
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
     g_log = nullptr;
@@ -147,6 +174,7 @@ void ResetForTest() noexcept {
     g_turns.store(0);
     g_override = -1;
     g_fpv.store(0);
+    g_follow.store(0);
     g_fpv_tried = 0;
     g_fpv_refusal = nullptr;
     g_fpv_override = kFpvKey;
@@ -227,6 +255,7 @@ void ReadStats(Stats& out) noexcept {
     out.angles = g_angles.load(std::memory_order_relaxed);
     out.turns = g_turns.load(std::memory_order_relaxed);
     out.fpv = g_fpv.load(std::memory_order_relaxed);
+    out.follow = g_follow.load(std::memory_order_relaxed);
 }
 
 const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept {
@@ -409,6 +438,74 @@ const char* FpvInstall(const void* base, std::size_t span) noexcept {
         LogFormat("partner_pass_camera=seat_fpv; result=installed; blocks=%u\r\n",
                   static_cast<unsigned>(sizeof(c::seat_fpv_blocks) / sizeof(c::seat_fpv_blocks[0])));
     return g_fpv_refusal;
+}
+// --- fb1031 (design 8.59): the follow carry ---------------------------------------------------------------------------
+static_assert(c::follow_module_vtable_rva == kFollowModuleVtableRva && c::follow_blend_vtable_rva == kFollowBlendVtableRva &&
+                  c::follow_module_blend == kFollowModuleBlend && c::follow_blend_dur == kFollowDur &&
+                  c::follow_blend_elapsed == kFollowElapsed && c::follow_blend_alpha == kFollowAlpha && c::follow_blend_start == kFollowStart,
+              "the follow blend (design 8.59)");
+const char* FollowInstall(const void* base, std::size_t span) noexcept {
+    const LONG was = InterlockedCompareExchange(&g_follow_tried, 1, 0);
+    if (was == 2) return g_follow_refusal;
+    if (was == 1) return "verifying";
+    std::uintptr_t mismatch = 0;
+    g_follow_refusal = detail::VerifyFollowImage(base, span, mismatch);
+    InterlockedExchange(&g_follow_tried, 2);
+    if (g_follow_refusal)
+        LogFormat("partner_pass_camera=follow; result=refused; reason=%s; rva=0x%llx\r\n", g_follow_refusal,
+                  static_cast<unsigned long long>(mismatch));
+    else
+        LogFormat("partner_pass_camera=follow; result=installed; blocks=%u\r\n",
+                  static_cast<unsigned>(sizeof(c::ride_follow_blocks) / sizeof(c::ride_follow_blocks[0])));
+    return g_follow_refusal;
+}
+namespace {
+// The blend object of the active module when that module is the fallback one (0: not).
+std::uintptr_t FollowBlend(std::uintptr_t b, std::uintptr_t P) noexcept {
+    const std::uintptr_t cam = LocalCamera(b, P);
+    std::int32_t mode = -1;
+    std::uintptr_t module = 0, vt = 0, blend = 0, bvt = 0;
+    if (!cam || !ReadValue(cam + kCamMode, mode) || mode < 0 || mode >= static_cast<std::int32_t>(kModuleCount) ||
+        !ReadValue(cam + kCamModules + 8u * static_cast<unsigned>(mode), module) || !module || !ReadValue(module, vt) ||
+        vt != b + kFollowModuleVtableRva || !ReadValue(module + kFollowModuleBlend, blend) || !blend || !ReadValue(blend, bvt) ||
+        bvt != b + kFollowBlendVtableRva)
+        return 0;
+    return blend;
+}
+} // namespace
+bool ReadFollow(const void* base, std::uintptr_t P, Follow& out) noexcept {
+    out = Follow{};
+    const std::uintptr_t blend = FollowBlend(reinterpret_cast<std::uintptr_t>(base), P);
+    if (!blend) return false;
+    Follow f{};
+    f.blend = blend;
+    if (!ReadValue(blend + kFollowDur, f.dur) || !ReadValue(blend + kFollowElapsed, f.elapsed) || !ReadValue(blend + kFollowAlpha, f.alpha))
+        return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(blend + kFollowStart + 4u * i, f.start[i])) return false;
+    f.ok = true;
+    out = f;
+    return true;
+}
+bool WriteFollowStart(const void* base, std::uintptr_t P, std::uintptr_t blend, const float (&expect)[3], const float (&start)[3]) noexcept {
+    const DWORD error = GetLastError();
+    bool ok = false;
+    if (blend && FollowBlend(reinterpret_cast<std::uintptr_t>(base), P) == blend) {
+        __try {
+            auto* s = reinterpret_cast<volatile float*>(blend + kFollowStart);
+            if (s[0] == expect[0] && s[1] == expect[1] && s[2] == expect[2]) {
+                s[0] = start[0];
+                s[1] = start[1];
+                s[2] = start[2];
+                ok = true;
+            }
+        } __except (ReadFilter(GetExceptionCode())) {
+            g_faults.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    if (ok) g_follow.fetch_add(1, std::memory_order_relaxed);
+    SetLastError(error);
+    return ok;
 }
 int FpvOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_fpv_override, 0, 0)); }
 

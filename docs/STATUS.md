@@ -1,3 +1,147 @@
+## 2026-10-31: rider camera proof round (`wp/integ-fb1031`, local only) -- `partner_ride_follow` stays OFF unless named
+
+**Players get:** nothing new: the rider's camera is as in 0.14.5. The runs found no trailing camera of the kind the
+follow carry fixes, so the carry stays off.
+
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, africa-jeep; both copies admitted, gameplay at
+  30020): `703d886a` (`fb1031-ride-camera-play-off.txt`, the 0.14.5 camera) and `70eefcea`
+  (`fb1031-ride-camera-play.txt`, `partner_ride_follow=1`). Pre-run d3dprobe HARDWARE hr=0 both times (nvidia-smi
+  3668 MiB 17 % / 3711 MiB 8 %).
+- [O] **No blend trail.** Every rider row of the census on both copies in both runs read `blend=0,0,0` (no follow
+  blend running), also after an aim's end while moving; with the key on, the carry wrote nothing (no `state=follow`
+  line, `carry=0`). Apart from the zoom below and the aim's return (under 250 ms), the rider's camera held the body
+  within 1-2 cm in the view at up to 11.5 / 14.9 m/s.
+- [O] **What the census showed instead (both runs alike):** right after the host drives off with the guest in seat 3,
+  the guest's camera zooms about 1.5 m closer for about half a second and returns (`d_cm=0,0,-151`; frames
+  `guest-a-run-01` vs `a-run-02`); the cause is [U]. The driver's stock VehicleCamera trails 0.7-0.9 m on both copies.
+  A host getting in while the guest drives off kept a rigid camera while the body drifted up to 1.46 m in the jeep.
+- [O] **Scenario limits:** the host's first drive input after the seat report did not move the jeep (it started about
+  4.4 s later), burst captures run one copy after the other, leg B (left door) never boarded, leg C failed in
+  `70eefcea`. Design 8.59 has the details.
+- **Code:** none changed in behaviour. Review note cam-5: `tests/lab_ini_check.cpp` prints `partner_ride_follow` under
+  its own comment; `docs/native-puppet.md` names the live fallback vtable `0x23B2AB0` and lists the key and the
+  census and carry lines. Notes cam-1 (vtable slots not pinned), cam-2 (no driver test of `TickFollowCarry`), cam-4
+  (census episode lines share the 400 cap; the close line prints `vehicle=65535`) are open; cam-3 is history.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `bcd72d09` (and again at this entry's commit);
+  `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+- **Open [U]:** whether a follow blend runs at a get-in when the jeep really leaves at once (the scenario's first drive
+  input did nothing); what makes the guest's camera zoom in at the drive-off; the user's report may be the driver's
+  stock chase camera (the user also drove in that session).
+
+## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
+
+**Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
+`partner_melee=1` on both PCs: one CQC jab never puts the other player to sleep; a second jab in reach within 2 s, or the
+combo's finisher, does (the stock sleep on the other player's own copy, 30 s auto wake or a revive).
+
+- **Review fixes (red `0273a47d`, green `1da831bf`):** melee-seated-stale-slot (the reach test reads body 1's drawn
+  position, `read_body`, and a seated or riding partner is `verdict=no_body`); melee-114-is-soldier-takedown (a 114
+  without a 113 within 600 ms is `verdict=takedown`); melee-soldier-adjacent-false-positive (a partner in a CQC hold,
+  box/toilet, ladder/pipe or ledge act is `verdict=busy`, prone is `verdict=prone`). Driver tests now cover the seat
+  phase, `ride_seated`, the body readback and the facing cone.
+- **Coordinator decision (vanilla CQC feel):** one jab logs `verdict=jab` and never queues. The 0.14.5 census showed the
+  finisher as 113 -> 114 on one tick, but hidden run `af0b88b6` gave two 113 edges 1.6 s apart and no 114 for four
+  scripted presses (case a), so two jabs in reach within 2 s land too (red `6270e419`, green `b872e35b`).
+- **Run `af0b88b6`** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, named `partner_melee=1`; both
+  copies admitted and in gameplay at 30010): [O] every strike edge was logged on the striker's own copy, but the
+  geometry was wrong. Players placed 1 m apart read 21 cm, and with the partner visibly ahead in the frames the cone read
+  175-180 degrees, so no hit landed in a or b. In case c (placed 3 m apart) the guest's 113 -> 114 logged
+  `verdict=land; dist_cm=83`, and the host's copy applied the stock sleep (`friendly_hit=owner;...;cause=2;applied=1;
+  down=1`; host frame ASLEEP "Teammate 3 m"). So the chain from a landed strike to the stock sleep works [O], but that
+  land was false: the attacker's position came from the local slot S+0x20[0], stale after the worker's teleports [I].
+  The +pi facing of `b872e35b` was a wrong reading of the same data. Red `ed13d848`, green `5266fddc`: the attacker's
+  position and facing come from `read_local_body`, and the +pi is gone. Sheet
+  `fb1031/frames/melee/best-sheet-af0b88b6.jpg`.
+- **Run 2:** not started. C: had 5.60 GB free (16:27, 16:29, 16:31), under the 6 GB floor, until the time box ended (nothing
+  was deleted); the waiting helper held no lock and was stopped.
+- **Decision:** not proven at head, so `partner_melee` stays off unless named in lab and play. There is no README line.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `5266fddc`; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** whether the local body readback gives the right distance and cone in a game; whether the finisher (114)
+  or the jab pair is what players will trigger; the striker's animation on the victim's screen (still not drawn); the
+  low-severity note that the range-hide and terminating gates have no driver test.
+
+## 2026-10-31: debug menu Travel proof round (`wp/integ-fb1031`, local only) -- Travel ON by default in lab and play
+
+**Players get:** F9 > World > **Go to Africa** / **Go to Mother Base** takes both players there with no helicopter ride
+(press to control about 20-27 s wall clock), either player can press it (a guest's press asks the host, who leads), and
+**Bring partner here** puts the partner right in front of the caller at Mother Base, both ways. Each player sees a short
+message ("Your partner brought you to Africa free roam.", "Bringing your partner to you.", "Your partner brought you
+here."). On by default; `lab.ini` `debug_travel=0` turns it off.
+
+- **Review travel-1 (fixed):** `world_link::HandleNote` treated note 14 as unknown, so no Travel message reached the
+  screen. `world::NoteShown` covers 1..14 (red `c3ef8052`, green `9eb77cbd`); the runs log `hud=toast; kind=world_note;
+  code=14` on both copies and the frames show the sentences.
+- **Review travel-2 (fixed):** the receiving copy ignored its own `debug_travel`. `world::Config::travel`: off -> `Tx`
+  never sends TRAVEL and `OnOp` answers an ask, go or bring with kind 4 reason 7 (off) without queueing it for Lua.
+- **Review travel-4 (fixed):** Bring had no busy check and crossing Brings swapped missions. The caller now runs
+  `T.blocked()` (incl. a running trip); an outstanding Bring (until answered or 30 s) makes the host refuse a crossing
+  Bring (1) and the guest yield to the host's. Docs `25d6374b`.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder; both Closed, BaselineRestored,
+  RealSavesUnchanged):
+  - `409cb374` (named `debug_travel=1`): [O] the scenario's first host press was refused `gameplay`: the stock Mother
+    Base cutscene (vehicle cab, D-Dog) on both copies. Re-pressed through the worker's own debug channel, then:
+    (a) host Go to Africa, both land at Masa Village by the jeep (host err 0.00 m, `ms=13952`; guest one 4.0 m warp
+    fix, err 0.53 m); (b) guest Go to Mother Base, the host leads (`by=partner`), both on the 1st deck (host err 0.00,
+    guest 1.16 m); (c) Bring both ways on the deck. Frames `best-sheet-409cb374.jpg`. The scenario now waits out that
+    cutscene (`b02d3046`).
+  - `5e166b4c` (the shipped default, no labsetting, after the flip): [O] every expectation met, no failures; the same
+    (a), (b), (c) results and on-screen messages on both copies (`best-sheet-5e166b4c.jpg`).
+- **Decision:** proven on both copies, so `debug_travel` is on in lab and play (red `2e04a289`, green `90673739`);
+  `travel-play.txt` runs the defaults. README "What works" names Go to Africa / Mother Base and Bring.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** Go to Afghanistan and Bring across missions (partner in another free roam or the helicopter) were not
+  run; the low-severity review notes travel-6..11 (a received GO drops the guest's trip before its refusal, a paired
+  guest's refusal of GO has no effect, a job while world sync is inactive never times out, the leader's stop is not
+  sent, test gaps, no clearance check for the Bring spot) are not addressed.
+
+## 2026-10-31: Mother Base staff outcomes, proof round (`wp/integ-fb1031`, local only, design 7.7) -- W1 at 30050 back to lab only in play
+
+**Players get:** at Mother Base in play, nothing changes from 0.14.5 (W1 off there). In the lab, W1 runs at 30050, and a partner's kill, dying or Fulton of a staff member lands on the other copy as a knockout, never a kill or a Fulton.
+
+- **Review mb-1 (fixed):** stock `f30050_sequence.lua` reserves `TARGET_DEAD` / `PLAYER_KILL_DD` on any non-player Dead or Dying, so a guest's staff kill mirrored as ChangeLifeState DEAD/DYING failed the host's mission. `W.MISSIONS[30050].spareStaff`: `E.applyOne` applies a partner's state 4, 5 or 6 as FAINT (`event=spare; state=N; as=3`). Red `e7908f12`, green `842aa344`. What the stock own-staff Fulton does to the roster is [U] (`TppTerminal.lua` is not in the extracted sources), so a mirrored Fulton is a knockout too.
+- **Review mb-2 (fixed):** `mb-soldiers-play.txt` has no host kill step (stock rule: the acting copy's own mission fails) and expects the spare knockout for the mirrored Fulton (`65bc581a`); `b627c437` waits out a stock Mother Base cutscene. **mb-3:** design 7.7 corrected (the guest may keep its own save; the slots match, the staff may not). mb-4 and mb-5 not changed.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder; both Closed, BaselineRestored, RealSavesUnchanged):
+  - `1bc18e9c`: [O] W1 came on at 30050 (host `align; step=ready; w1=1`; guest `step=accepted; soldiers=126; cps=7; unknown=0; divergence=0; w1=1`). Then a stock cutscene (Ocelot, D-Dog) on both copies (frames `best-sheet-1bc18e9c.jpg`); every debug command was refused `gameplay` and the scenario stopped at `placebehind`.
+  - `1d949f8c`: [O] the logs on both copies. Host `enemy_sleep` -> `commit; state=2; actor=host` -> guest `apply; state=2; src=outcome; result=ok; readback=2`. Host `enemy_fulton` -> `commit; state=6; actor=host` -> guest `spare; state=6; as=3` and `apply; state=3; result=noop; readback=2` (still asleep, no RequestForceFulton). No game over, error or bad_op line. [O] **No frame shows the staff member** on either copy (`best-sheet-1d949f8c.jpg`): `enemy_aim_nearest` did not bring them into view. [O] The guest's two rifle shots made no request (step 3 failed).
+- **Decision:** the outcome is not shown on screen, so W1 at 30050 is lab only in play (`W.MISSIONS[30050].enemiesLab`, red `c59a18aa`, green `c4fdb3bf`). The allCp and spareStaff code stays.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339; `tools/generate_partner_contract.py --check` passes.
+- **Open:** a run whose frames show the staff member asleep / knocked out on both copies (aim the cameras by position, or place the players next to a staff member); the guest's real shot at a staff member.
+
+## 2026-10-31: Mother Base staff outcomes (branch `wp/mb-soldiers`, local only, design 7.7) -- not run-proven yet
+
+**Players would get:** at Mother Base, a staff member knocked out, put to sleep, killed or Fultoned by either player shows the same on the partner's screen (W1, the outcome sync free roam already has). **No hidden run reached gameplay**, so this is unproven and must not land before a run on both copies.
+
+- **Cause** (the 0.14.5 online session, both copies at 30050): `W.MISSIONS[30050]` had no `enemies` since WP5, so `event=started; ...; mission=30050; soldiers=126; cps=7; ...; w1=0` on both copies, stats `commits=0 reqs=0 applies=0`, debug enemy commands `sync=none`; the host's knockouts and Fultons of mapped staff never left the host's PC.
+- **Change:** 30050 `{enemies, clock, weather=all, allCp, patrol=false}`. Mother Base has no area trap, so the W4 snapshot now reads every CP's staff (before, every staff member read as unknown and the guest refused the snapshot: W1 would never have come on), and the whole ledger is re-checked every 10 s (an apply that failed on a platform not loaded on that copy). Patrol position corrections and Mother Base vehicles stay off. The roster digest covers the slot layout, not staff ids (same layout with other staff is not detected).
+- **Checks:** red `b7586511`, green `b98c7c06` (`world_align_lua_check`, `world_sync_lua_check`); `pwsh -File tools/build.ps1` 337/337; `tools/generate_partner_contract.py --check` passes.
+- **Runs (scenario `tools/worker/scenarios/mb-soldiers-play.txt`, play at the shipped defaults, mb-ladder):** hardware D3D11 failed (`hr=0x8007000E`) 13:00-13:33, so the first attempt waited; then 13:41 refused before admission `play_rehearsal_lab_configuration` (the scenario's `labsetting debug_soldier_warp=1`, which play refuses; removed in `6b3e595b`); 13:55 and 14:06 the preflight failed `Audited command timed out: worker-policy-fixture` (CPU 100% at the first; the same test passes alone in 3 s). No game started.
+- **Open:** the proof run; Mother Base staff positions (patrol corrections); Mother Base vehicles in play (needs a live cluster jeep on both copies).
+
+## 2026-10-31: the rider's camera trailing a jeep that drives off (branch `wp/ride-camera`, local only, design 8.59)
+
+**Players get: nothing yet (built, unit-tested, NOT run-proven, off unless named).** Both hidden runs were refused
+before admission, so the fix stays behind `partner_ride_follow=1`.
+
+- **Report** (0.14.5, two PCs, Mother Base): "camera lags behind when getting in and moving" (the guest in a back seat
+  while the host drove).
+- **Cause** (design 8.59; static, pinned): a passenger's camera is the game's on-foot camera, whose follow point eases
+  from a fixed world point for a moment after each camera change (`CAM+0x170 = S + alpha (T - S)`, the fallback module's
+  timed blend); a jeep that drives off in that moment leaves the camera behind until alpha reaches 1. That a get-in and
+  an aim's end start such a blend is inferred (the log's `connect ... mode=5; prev=2` at the get-in), not run-observed.
+- **Built:** the ride camera census `partner_ride_cam=frame|line|episode` (`c93716c2`, lab and play, read only: the
+  body's shift in the camera's view while the vehicle leaves standstill, speed, drift, the blend's alpha / elapsed /
+  duration); the follow carry (`ca1c11b1` -> `fb298535`): while the local passenger rides and the blend runs, its start
+  point moves with the vehicle (12 pinned `ride_follow_blocks`; no code patched, no game function called); off unless
+  named (`599b14df` -> `f20616a0`). Scenarios `fb1031-ride-camera-play.txt` (key 1) and `-play-off.txt` (default).
+- **Runs (refused, both):** `d671ace6ddc743a592d897e1bc276f52` (census build) and `4232a7bd08124f3cb11f459b3e0162dc`
+  (the -off scenario, the one retry): "Worker supervisor exited before admission (code 2)", `child_exited_before_admission`,
+  error 1067; the host copy admitted, the guest copy's overlay `D3D11CreateDeviceAndSwapChain hr=0x8007000E`
+  (E_OUTOFMEMORY); the machine's hardware D3D11 probe failed the same way 13:00-13:33 (GPU 4.3-4.8 GB, 1-7 %). Closed,
+  baselines restored, real saves unchanged both times.
+- **Checks at `f20616a0`:** `tools/build.ps1` (Debug) 336/337, the one failure `debug_overlay_tests` (its hardware DX11 fixture, the GPU state above; it passed alone right after, and `-Fast` was 305/305 at 13:45); contract `--check` 850 code sites / 213 vtable slots.
+- **Next:** run the -off and the on scenario (before / after lag in metres and ms, frames `a-in-NN` on both copies), then
+  default the key on with the gun profile.
+
 ## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `f8eba06` with Release receipt `20261031-160809-324523450267433b85ad21a2a5966831` (passed, 324 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.5+f8eba06` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.4.
@@ -34,6 +178,58 @@ Branch `dev/oct7-continue`. Releases everything since 0.14.4 (`01fd055`), with `
 - **Not two-PC tested;** open seat items: the guest's own screen does not show the host's D-Dog in the front seat; a host deny that reaches the guest before the host's ride leaves the guest on foot (press E again; rare in testing); one clean close run cannot prove the 1-in-8 close crash gone.
 - **Version.** 0.14.5 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.5 and still 0.14.4; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.6", "0.14.5")`. The launcher's mock screenshot scenes keep their 0.14.4 strings, as the 0.14.4 bump left theirs.
 - **Checks at the bump commit `f8eba06`:** `pwsh -File tools/build.ps1 -Fast` 305/305; `pwsh -File tools/build.ps1` (Debug) 337/337; the Release receipt above (324 audited tests).
+
+## 2026-10-31: debug menu Travel and Bring partner here (branch `wp/debug-travel`, local only, NOT run-proven)
+
+**Players get (built, not yet seen in a game):** F9 > World > Travel: **Go to Afghanistan / Go to Africa / Go to Mother
+Base** take both players there with no helicopter ride, menus or loading-tips key, and **Bring partner here** (also on
+the Partner page) puts the partner 3 m in front of the caller, or makes the partner's copy travel to the caller's
+mission. Both players can use every button: a guest's Go to asks the host, who leads; world follow carries the guest,
+which lands 4 m in front of the host. Spots: Afghanistan `828.18 338.20 1630.51` yaw 95, Africa `-656.01 1.20 877.73`
+yaw 62, Mother Base `22.61 1.80 -15.55` (the afgh-ledge, africa-jeep and mb-ladder seeds). **Off unless `lab.ini` names
+`debug_travel=1`** (lab and play, `dd0331c3`) until a hidden run proves it; `travel-play.txt` names it on both copies.
+- **How:** `lua/coop/world_goto.lua` "Travel" reuses the lab goto's and test boot's stock calls without their lab gates
+  (free roam helicopter clear or `f30050_sequence.ReserveMissionClear` -> the ACC's on-foot route-0 sortie once it is in
+  its main game -> `TppPlayer.SetInitialPosition` at the target's reserve, `waitOnLoadingTipsEnd=false`, the MB demo
+  cleared); refusals for story missions, the helicopter's prep, the iDroid, cutscenes, riding/carried, downed and a
+  running trip; 240 s cap. New wire op TRAVEL `0x3B` (control queue, both directions, works unpaired; protocol section
+  22) and world note 14. docs/debug-menu.md "Travel". Failing first `b55fbb7c` -> `8d484156`, `f8593349`; scenario
+  `travel-play.txt` (play defaults, mb-ladder seed: host Go to Africa, guest Go to Mother Base, Bring both ways).
+- **Proof: none in a game.** 13:05-13:26 the NVIDIA D3D11 device failed (`0x8007000E`) for 20 min (no run started);
+  13:34 the preflight's worker-policy-fixture timed out (120 s, 3.6 s by hand); the one retry (13:44,
+  `a5270761`) passed the preflight, the host was admitted, the guest copy's overlay device failed with `0x8007000E`
+  and the session ended before admission. Full CTest: green except `debug_overlay_tests` (the same DX11 device).
+  Unproven: everything player-visible, the MB -> ACC hop (the lab goto once met an "Overall Completion" screen there),
+  the cross-mission Bring.
+
+## 2026-10-31: melee on the other player (branch `wp/melee`, local only; fb1031 two-PC feedback)
+
+**Players get:** nothing yet. The strike is built and unit-tested but **off unless named** (`partner_melee=1`): no game
+has run it, because both hidden runs were refused before admission (below).
+- **Why melee did nothing in 0.14.5** (the 2026-10-31 two-PC session at Mother Base, both copies' logs): gun friendly
+  fire is attacker-side (the shooter's bullet hits body 1 on the shooter's copy: `downed_defense` / `downed_damage`
+  samples `target=1; attacker=0`, `friendly_hit=queued`; the victim's copy applies it, `friendly_hit=owner; ...;
+  cause=2; applied=1; down=1`). The stock CQC strike never reaches that path: ~100 strikes at 0.3-1.8 m logged no
+  defense or damage sample for body 1 while the sample budgets were unspent [I, strong]. And the victim's copy never
+  plays the strike: CQC 0x8000 is a world bit, never passed to body 1 (`partner_pad_dropped; cqc=N`). The census shows
+  those presses as the remote's act 113 (0.2-1.1 s) then 114 (~0.5 s), `match_ms=miss`; LMB without RMB is CQC.
+- **What is built** (`partner_melee`, the driver's `TickMelee`; docs/native-puppet.md "Melee"): the attacker's copy
+  judges its own strike (the local act's edge into 113 / 114; body 1 realized and shown; 1.6 m, 1 m height, 60 degrees
+  of the body facing; one hit per 1.5 s) and queues one friendly hit, cause sleep (`downed_player::QueueFriendlyHit(P,
+  0, 2)`, the damage hook's queue); Lua sends FRIENDLY_HIT and the victim's copy applies the stock player sleep (wakes
+  after 30 s or with a revive). No new wire op, read or patch site; soldier outcomes unchanged. Line
+  `partner_melee=strike; act=..; verdict=land|range|height|angle|repeat|no_body|off; queued=..; dist_cm=..`. Failing
+  first `a294e346` -> `f07b3c8c` (default on), driver test `2bde887e`, default off `f0b7e720` -> `96e6d1e1`; scenario
+  `melee-partner-play.txt`, which names `partner_melee=1` (the worker's labsetting allow-lists admit it: failing first
+  `f9e532d3` -> `b2773e3f`).
+- **Runs refused:** `52fdd178` (13:41) and its one retry `79487b41` (13:47), play, `-WanSim bad`, afgh-ledge: preflight
+  passed, the host was admitted, the guest `event=refused; reason=required_hooks_or_private_desktop`
+  (`child_exited_before_admission`, supervisor code 2); the guest's own overlay log: `D3D11CreateDeviceAndSwapChain
+  hr=0x8007000E`. The console probe passed before and after; the other fb1031 tracks hit the same refusal.
+- **Not done:** any game proof; the attacker's strike drawn on the victim's screen; CQC grabs and throws of the other
+  player; a strike aimed at a soldier with the other player within reach in front also knocks the other player down.
+- Full `tools/build.ps1` at `b2773e3f`: CTest 338/338 (at `96e6d1e1` 337/338: `debug_overlay_tests` hit the same
+  machine-wide D3D11 E_OUTOFMEMORY and passed on its rerun); contract `--check` 838 / 213.
 
 ## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
 

@@ -641,6 +641,12 @@ struct LabConfig {
     // lever passcam seatfpv overrides it.
     bool partner_seat_fpv = false;
     bool partner_seat_fpv_given = false;
+    // fb1031 follow carry (docs/vehicles-companions-design.md 8.59): while the local passenger rides, the fallback camera's
+    // follow blend leaves from a point carried with the vehicle (no trailing after getting in or an aim's end). Off
+    // unless named, in lab and play, until a hidden run proves it (it rides on the passenger camera, so it needs
+    // that too); a named 1 turns it on; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_follow = false;
+    bool partner_ride_follow_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
@@ -666,12 +672,23 @@ struct LabConfig {
     // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
     bool partner_seat_gun = false;
     bool partner_seat_gun_given = false;
+    // Debug menu Travel (docs/debug-menu.md "Travel"; lua/coop/world_goto.lua "Travel"): the F9 commands `travel
+    // <30010|30020|30050>` and `bring_partner`. On in lab and play unless named 0 (hidden run 409cb374 showed Go to
+    // and Bring on both copies); off, native refuses them before Lua (`travel=refused; reason=off`) and answers a
+    // partner's TRAVEL refused (world::Config::travel).
+    bool debug_travel = true;
+    bool debug_travel_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
     // logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
+    // Melee on the partner (docs/native-puppet.md "Melee"; partner_melee.hpp): the local CQC strike (act 113 / 114) that
+    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Off unless
+    // named, in lab and play, until a hidden run on both copies shows it; a named 1 runs it in both (no refusal bit).
+    bool partner_melee = false;
+    bool partner_melee_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

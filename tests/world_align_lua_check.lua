@@ -7,7 +7,7 @@ local OP = {RESYNC = 5, RESYNC_END = 6, OUTCOME = 16, REQ_OUTCOME = 17, PHASE = 
     AREA = 20, PVEC = 23, ALIGN_BEGIN = 14, ALIGN_END = 15, ALIGN_RECORD = 24, ALIGN_ACK = 25, REJECT = 4, RECEIVED = 3,
     GAME_OVER = 26, REQ_GAME_OVER = 27, CHECKPOINT = 28, PROBE = 116, PROBE_FIRE = 117, PROBE_SYNC = 8,
     PAIRED = 113, UNPAIRED = 114}
-local function fixture(host, level)
+local function fixture(host, level, mb)
     local c = {now = 1000, tx = {}, logs = {}, commands = {}, life = {}, action = {}, phase = {cp_a = 10, cp_b = 10},
         positions = {}, receipts = {}, warp = {}, enemyCalls = {}, setOut = {}}
     local env = setmetatable({e = {}, vars = {playerPosX = 12.25, playerPosY = 30.1, playerPosZ = -8.5, playerRotY = -45.125},
@@ -15,8 +15,10 @@ local function fixture(host, level)
         TppDefine = {GAME_OVER_TYPE = {PLAYER_DEAD = 1, PLAYER_FALL_DEAD = 2}, GAME_OVER_RADIO = {PLAYER_DEAD = 1}},
         TppMission = {}, TppCheckPoint = {}, TppPlayer = {}}, {__index = _G})
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {}, bindHooks = {},
-        active = true, level = level or 3, host = host, role = host and 1 or 2, feature = {enemies = true}, epoch = 7,
-        paired = true, eff = level or 3, mode = 1, mission = 30010, roster = 4000000000, rosterOk = true, w1ok = true, w1 = true,
+        active = true, level = level or 3, host = host, role = host and 1 or 2, epoch = 7,
+        feature = mb and {enemies = true, allCp = true, patrol = false, spareStaff = true} or {enemies = true},
+        paired = true, eff = level or 3, mode = 1, mission = mb and 30050 or 30010, roster = 4000000000, rosterOk = true,
+        w1ok = true, w1 = true,
         ent = {}, entOrder = {}, cp = {}, cpOrder = {100, 200}, activeCp = {[100] = true, [200] = not host},
         areaState = {}, attribOverride = {}, observers = {}, flags = 0, isStarted = true, t0 = 0,
         lifeWire = {[1] = 5, [2] = 4, [3] = 2, [4] = 3}, lifeConst = {[5] = 1, [4] = 2, [2] = 3, [3] = 4},
@@ -43,7 +45,7 @@ local function fixture(host, level)
             end
             if command.id == 'GetStatus' and c.status then return c.status[id] end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
-            if command.id == 'ChangeLifeState' then c.life[id] = command.state
+            if command.id == 'ChangeLifeState' then if not c.inert then c.life[id] = command.state end
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
             elseif command.id == 'SetPhase' then c.phase[id == 11 and 'cp_a' or 'cp_b'] = command.phase end
         end}
@@ -118,7 +120,8 @@ local function fixture(host, level)
     W.align.install({level or 3})
     if W.recovery then W.recovery.install({level or 3}) end
     for _, f in ipairs(W.startHooks) do f() end
-    W.activeCp = {[100] = true, [200] = not host}
+    -- Mother Base has no free-roam area trap: W.activeCp stays nil there.
+    if not mb then W.activeCp = {[100] = true, [200] = not host} end
     for _, f in ipairs(W.pairedHooks) do f(false) end
     c.W, c.A, c.R, c.env = W, W.align, W.recovery, env
     return c
@@ -759,5 +762,66 @@ if arg[7] and arg[8] then
     run(pg, 4)
     check(pg.P.cur == nil and sent(pg, 1, 'SetDiscoveryPlayer') == 2,
         'completed combat correction re-asserts SetDiscoveryPlayer after warp')
+    -- Mother Base (feature patrol = false): no patrol position corrections until a run shows them working there.
+    local mbp = placeFixture(true)
+    mbp.W.w1, mbp.W.feature, mbp.W.activeCp = true, {enemies = true, allCp = true, patrol = false}, nil
+    mbp.env.vars.playerPosX, mbp.env.vars.playerPosZ = 0, 0
+    mbp.positions[1] = {10.0, 1.8, 12.0}
+    mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
+    mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
+    check(#placeTx(mbp, 34) == 0, 'Mother Base: no patrol position corrections (feature patrol = false)')
+end
+-- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
+-- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest
+-- accepts and applies it, and a failed apply (a staff member on a platform this copy has not loaded) is retried
+-- every 10 s, since no area change ever re-checks the ledger there.
+do
+    local mh, mg = fixture(true, 3, true), fixture(false, 3, true)
+    check(mh.W.activeCp == nil and mh.W.inferredCp ~= nil and mh.W.inferredCp[100] and mh.W.inferredCp[200],
+        'Mother Base: every CP counts as loaded for the snapshot reads')
+    mh.life[2] = 3
+    capture(mh)
+    transfer(mh, mg)
+    check(mg.W.w1 and logged(mg, 'step=accepted') and logged(mg, 'unknown=0'),
+        'Mother Base: the guest accepts a fully readable snapshot (W1 on)')
+    mg.W.enemy.tick(mg.now)
+    mg.now = mg.now + 300; mg.W.enemy.tick(mg.now)
+    check(mg.life[2] == 3, 'Mother Base: the snapshot puts the asleep staff member to sleep on the guest copy')
+    mg.A.tick(mg.now)
+    transfer(mg, mh, function(p) return p.op == OP.ALIGN_ACK end)
+    check(mh.W.w1, 'Mother Base: the host resumes W1 after the ACK')
+    mg.inert = true
+    mg.W.enemy.apply(3000000004, 2, 5, 'outcome')
+    for _ = 1, 80 do mg.now = mg.now + 33; mg.W.enemy.tick(mg.now) end
+    local held = mg.W.enemy.s.ledger[3000000004]
+    check(mg.life[4] == 0 and held ~= nil and held.reason == 'apply_failed', 'Mother Base: an apply that never lands is held')
+    mg.inert = false
+    for _ = 1, 400 do mg.now = mg.now + 33; mg.W.enemy.tick(mg.now) end
+    check(mg.life[4] == 3 and mg.W.enemy.s.ledger[3000000004] == nil,
+        'Mother Base: the held apply is retried within 10 s and lands once the platform is loaded')
+end
+-- Mother Base (feature spareStaff): stock f30050_sequence.lua reserves TARGET_DEAD (Mission Failed, PLAYER_KILL_DD)
+-- on any non-player Dead or Dying. A guest's kill or fatal hit on a staff member is committed on the host but applied
+-- to the host's staff member as a knockout: the host's own mission never fails for the guest's act.
+do
+    local sh, sg = fixture(true, 3, true), fixture(false, 3, true)
+    capture(sh)
+    transfer(sh, sg)
+    sg.A.tick(sg.now)
+    transfer(sg, sh, function(p) return p.op == OP.ALIGN_ACK end)
+    check(sh.W.w1 and sg.W.w1, 'Mother Base: W1 on at both copies before the guest kill')
+    local reserved, send = 0, sh.W.api.send
+    sh.W.api.send = function(id, command)
+        -- stub of f30050's GameObject Dead / Dying handler (DEAD = 1, DYING = 2 in this fixture)
+        if command.id == 'ChangeLifeState' and (command.state == 1 or command.state == 2) then reserved = reserved + 1 end
+        return send(id, command)
+    end
+    sh.W.handlers[OP.REQ_OUTCOME]({41, 3000000001, 1, 5, 0, 1, 0, 0, 0, 0, 0}, sh.now)
+    sh.W.handlers[OP.REQ_OUTCOME]({42, 3000000002, 1, 4, 0, 4, 0, 0, 0, 0, 0}, sh.now)
+    for _ = 1, 40 do sh.now = sh.now + 33; sh.W.enemy.tick(sh.now) end
+    check(logged(sh, 'ent=3000000001;state=5;ver=2;actor=guest') and logged(sh, 'ent=3000000002;state=4;ver=2;actor=guest'),
+        'Mother Base: the guest kill and dying requests are committed on the host')
+    check(reserved == 0 and sh.life[1] == 4 and sh.life[2] == 4 and logged(sh, 'event=spare;ent=3000000001;state=5;as=3'),
+        'Mother Base: the host copy knocks the staff member out and never reserves its own TARGET_DEAD game over')
 end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

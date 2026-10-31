@@ -95,6 +95,10 @@ inline constexpr std::uint8_t vehicle_damage = 0x3A;
 // partner_ride_race=1 (the native board's MGS_COOP_BOARD_SEAT_V1 answers on=1). A partner without the op (0.14.4
 // and older) skips it by its length (unknown_op). 0x35 and 0x37 stay reserved (design 5).
 inline constexpr std::uint8_t seat = 0x36;
+// Debug menu Travel (docs/world-sync-protocol.md section 22): TRAVEL (59), both directions, control queue: a guest's
+// Go to (ask), the host's announced travel (go), Bring partner here (bring) and their answers. It crosses missions:
+// only the link session's HELLO gates apply (as MISSION_TRANSITION), never the pairing.
+inline constexpr std::uint8_t travel = 0x3B;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -220,6 +224,7 @@ struct Config {
     bool play = false;               // mode=play: no probes, no PROBE_SYNC, no goto
     bool lab_triggers = false;       // world.trigger honoured
     std::uint8_t saves = 1;          // the local save gate (always 1 when configured)
+    bool travel = false;             // lab.ini debug_travel: off -> TRAVEL never sent; an ask/go/bring is answered refused (7 off)
     std::uint32_t build = 0;         // major*10000 + minor*100 + patch
     WorldProbe probe = WorldProbe::none;  // lab.ini world_probe (consumed by the first CFG start)
 };
