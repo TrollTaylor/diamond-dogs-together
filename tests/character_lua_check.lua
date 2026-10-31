@@ -569,6 +569,16 @@ local function scenarios(real)
         tag .. 'stale kept Snake: own type saved for the vanilla restore, readback expects Snake')
     check(has(env.reports, 'allocated;mission=30050;vars=0;parts=2;camo=3;temp=1;start=new;late=1;before=5'),
         tag .. 'stale kept Snake: late application reported')
+    -- F9 character switch (debug_character.lua): the session pick wins over coop.ini at every
+    -- later load and goes through the same decision (story gates, Quiet rules, bypass).
+    env = F({character = 'snake', mission = 30050})
+    env.Tpp.MgsCoop.characterPick = 'dd_female'
+    status = allocate(env)
+    check(status.requested == 'dd_female' and status.applied == 'dd_female' and env.vars.playerType == PT.DD_FEMALE,
+        tag .. 'session pick replaces coop.ini at the next load')
+    env = F({character = 'snake', mission = 10030})
+    env.Tpp.MgsCoop.characterPick = 'dd_female'
+    check(allocate(env).reason == 'story_temp_snake', tag .. 'session pick still yields to a story-forced mission')
     -- The same for a kept DD: a restored Snake under a DD request becomes the sortie DD.
     env = F({character = 'dd_female', mission = 30050, playerType = PT.DD_FEMALE, sortieType = PT.DD_FEMALE, sortieFace = 360})
     allocate(env, {restore = {playerType = PT.SNAKE}})
