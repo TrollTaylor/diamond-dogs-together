@@ -44,8 +44,7 @@ do
             return "quiet", "on_team"
         end
 
-        -- Pure decision. x = {character, fallback, mission, titleMode, storySnake,
-        -- existingTemp, subsistence, buddyQuiet, quiet}. result: skip | keep | apply.
+        -- Pure decision (x from C.Gather). result: skip | keep | apply.
         function C.Decide(x)
             local name = x.character
             if name == nil or name == "" or name == "default" then return {result = "skip", reason = "default"} end
@@ -108,8 +107,7 @@ do
             x.subsistence = read(function() return TppMission.IsSubsistenceMission() end) == true
             x.buddyQuiet = read(function()
                 return type(BuddyType.QUIET) == "number" and vars.buddyType == BuddyType.QUIET end) == true
-            -- story only: CanArrivalQuietInMB's parts; sortie also counts the
-            -- mtbs_q99011 unlock TppMission.SetSortieBuddy applies later in OnAllocate.
+            -- story only; sortie also counts the mtbs_q99011 unlock (SetSortieBuddy runs later).
             x.quiet = character == "story" and read(function()
                 local S, Q, L = TppBuddyService, BuddyType.QUIET, BuddyCommonFlag.BUDDY_QUIET_LOST
                 if Q == nil or L == nil then return nil end
@@ -133,8 +131,7 @@ do
             return x
         end
 
-        -- The continue flag is set only where the mission does not set it itself
-        -- and is put back (normally by C.Post, else by the next allocation).
+        -- The continue flag: set only where the mission does not set it; put back by C.Post or the next allocation.
         function C.SetAlways(sequence)
             if type(sequence) ~= "table" or sequence[C.ALWAYS] == true then return false end
             coop.characterAlways = {sequence = sequence, previous = sequence[C.ALWAYS]}
@@ -241,8 +238,7 @@ do
                 else
                     d.reason, d.expect = d.reason .. "_sortie_kept", x.realType
                     post.kept, post.sortie, post.status = d.applied, x.sortie, d
-                    -- A checkpoint saved under an earlier override: a continue
-                    -- then runs the vanilla restore as well.
+                    -- A checkpoint saved under an earlier override: the continue restores too.
                     if x.usingTemp then d.always = C.SetAlways(sequence) end
                 end
                 -- Armed for every apply; a kept sortie never bypasses (vanilla revert).
