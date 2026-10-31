@@ -896,9 +896,10 @@ try {
     $worldCases = @(
         @('goto=30010', 'goto=30010'), @('goto_lz=1 goto=30020', 'goto=30020 goto_lz=1'), @('world=0', 'world=0'),
         @('  world_probe=race_kill   world=3 ', 'world=3 world_probe=race_kill'), @('world_probe=off', 'world_probe=off'),
-        @('goto=30010 world=2 world_probe=p3b goto_lz=0', 'world=2 world_probe=p3b goto=30010 goto_lz=0'))
+        @('goto=30010 world=2 world_probe=p3b goto_lz=0', 'world=2 world_probe=p3b goto=30010 goto_lz=0'),
+        @('goto=30050', 'goto=30050'), @('world_probe=guest_restart', 'world_probe=guest_restart'))
     foreach ($case in $worldCases) { Assert-Equal (ConvertTo-WorldTriggerText -Text $case[0]) $case[1] "world trigger '$($case[0])'" }
-    foreach ($bad in @('', ' ', 'world=4', 'world=1 world=2', 'goto_lz=1', 'goto=30050', 'world_probe=none', 'world_probe=p2', 'stage=3', 'world', 'goto=30010 goto_lz=2')) {
+    foreach ($bad in @('', ' ', 'world=4', 'world=1 world=2', 'goto_lz=1', 'goto=30030', 'world_probe=none', 'world_probe=p2', 'stage=3', 'world', 'goto=30010 goto_lz=2')) {
         Assert-Throws { ConvertTo-WorldTriggerText -Text $bad } '' "world trigger refuses '$bad'"
         Assert-True (-not (Test-WorldTriggerText $bad)) "Test-WorldTriggerText is false for '$bad'"
     }
