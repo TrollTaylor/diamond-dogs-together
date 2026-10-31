@@ -7730,8 +7730,9 @@ void FpvSetup(Session& s, bool key) {
 void TestSeatFpvDriver() {
     namespace pb = mgscoop::partner_board;
     {
-        // Design 8.49 [O lab run 61384aab]: from seat 2 the raise (6) goes to the blocked mode 15 and stays there; the bit is
-        // set at 15 (first person unblocks the aim) and cleared at the aim end.
+        // Design 8.51 [O runs 2a394a64 / ff4134f4]: a bit set at the blocked mode 15 never unblocked the aim (5 of 5 stayed
+        // at 15 and fired nothing), so the blocked aim keeps the stock shoulder view (the red no-fire icon) and nothing is
+        // written; once the shoulder aim is turned clear (15 -> 7) the bit is set, and the aim end clears it.
         Session s(0);
         FpvSetup(s, true);
         g_board.lp = BoardPassenger(25608, 2);
@@ -7739,9 +7740,13 @@ void TestSeatFpvDriver() {
         GuardGun(s, 6);
         Check(s.Tick(0) && g_fpv.writes.empty(), "fpv blocked: not during the raise");
         GuardGun(s, 15);
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.writes.empty() && g_fpv.toggles == 0 &&
+                  s.fake.Containing("state=seat_fpv; event=set;") == 0,
+              "fpv blocked: the blocked aim (mode 15) keeps the shoulder view: nothing set");
+        GuardGun(s, 7);
         Check(s.Tick(0) && g_fpv.writes.size() == 1 && g_fpv.writes[0].first == 0x4 && g_fpv.toggles == 0x4 &&
                   s.fake.Containing("partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready; set=0x4;") == 1,
-              "fpv blocked: the blocked aim (mode 15) sets the slot's bit");
+              "fpv blocked: turned clear (15 -> 7), the slot's bit is set");
         GuardGun(s, 0);
         Check(s.Tick(0) && g_fpv.writes.size() == 2 && g_fpv.writes[1].second == 0x4 && g_fpv.toggles == 0,
               "fpv blocked: the aim end clears it");

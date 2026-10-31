@@ -1118,13 +1118,15 @@ void TestFpvStep() {
           "seat 1 boarding: armed, nothing written outside an aim");
     o = pc::FpvStep(s, FIn(false, 0));
     Check(o.event == pc::FpvEvent::none && o.set == 0, "seated, not aiming: nothing");
-    // Design 8.49 [O lab run 61384aab]: from seats 1 / 2 the shoulder raise (6) ends in mode 15 (the gun blocked by the
-    // jeep: the red no-fire icon) and stays there for the whole aim; first person is what unblocks it, so 15 is ready too.
-    // Not the raise (6), the lowering (8), idle (0) or an unread gun.
-    Check(pc::FpvReady(true, 7) && pc::FpvReady(true, 9) && pc::FpvReady(true, 10) && pc::FpvReady(true, 15) &&
+    // Design 8.51 [O runs 2a394a64 / ff4134f4]: a bit set at the blocked mode 15 (the red no-fire icon) did not unblock the
+    // aim: 5 of 5 such aims stayed at 15, with the rifle body across the first-person view, and fired nothing (shot.md: in
+    // first person the muzzle probe keeps the blocked shoulder pose). So 15 is not ready: the shoulder aim, which follows
+    // the view, goes 15 -> 7 when turned clear and only then switches. Nor the raise (6), the lowering (8), idle (0) or an
+    // unread gun.
+    Check(pc::FpvReady(true, 7) && pc::FpvReady(true, 9) && pc::FpvReady(true, 10) && !pc::FpvReady(true, 15) &&
               !pc::FpvReady(true, 6) && !pc::FpvReady(true, 8) && !pc::FpvReady(true, 0) && !pc::FpvReady(false, 15) &&
               !pc::FpvReady(false, 7),
-          "ready: aimed 7, firing 9 / 10, blocked 15; not the raise, the lowering, idle or an unread gun");
+          "ready: aimed 7, firing 9 / 10; not blocked 15, the raise, the lowering, idle or an unread gun");
     // The raise (gun mode 6): not yet; the muzzle probe takes the shoulder pose first (shot.md: frozen in first person).
     pc::FpvIn raise = FIn(true, 0);
     raise.ready = false;
