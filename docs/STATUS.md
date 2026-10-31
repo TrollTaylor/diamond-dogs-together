@@ -1,3 +1,21 @@
+## 2026-10-31: m6m7i seat checks - a first-person seat hit, the blocked first person falls back (branch `wp/seat-checks4`, local only)
+
+**Players get:** in first person from a jeep seat, when the jeep blocks the gun (the rifle lies across the view, for
+example after turning the aim down beside the front seat), the view now goes back over the shoulder about 0.1 s later
+and the gun fires from there (ready about 0.2 s after that); before, nothing fired for the rest of that aim. Shown in the lab (`1bd4419a`, design
+8.56) [O lines + frames on the guest copy; the host copy shows the guest seated]. Also shown in the lab: a
+first-person shot from the front seat hit a standing guard about 11 m away (`859964ce`) [O both copies' logs, guest
+frames].
+- **Fix** (failing first `fcfa971` -> `fccba00`): 100 ms at gun mode 15 with our bit set clears it (`seat_fpv;
+  event=fallback; reason=blocked`); in that aim first person comes back only after the shoulder aim turns up 0.07 rad
+  or sideways 0.175 rad (unit-tested, not seen in a game), at most 2 falls per aim; the next aim is as before.
+- **A/B** [O]: the stock shoulder view ignores an in-aim scripted turn, so it was compared with the turn made before
+  the raise. 8 deg down there, the shoulder view (looking at the jeep's seat back) fired; first person was blocked once
+  (`859964ce`) and fired once (`1bd4419a`). The in-aim turn down after a set blocked first person 2 of 2.
+- **Part C** (`8567f888`, play): the driver's D-Dog boarded seat 1 with the driver even from 335 m away, so the guest
+  got the back seat again; the dog arriving after the partner sits in seat 1 needs the partner to board first [U].
+- Runs `859964ce`, `1bd4419a`, `8567f888` (archive `C:/Users/taylo/mgs-coop-run-archive/m6m7i`); never-lines 0.
+
 ## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
 
 **Players get** nothing new they can see: no default changed. The close fix (8.53) now also holds when the window
