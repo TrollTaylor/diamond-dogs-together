@@ -3786,6 +3786,42 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   `ffc0411d` and `30007c04`) against the shoulder view at the same aim (`partner_seat_fpv=0`); a first-person seat hit;
   part C (a); a close or checkpoint during a seated first-person aim (impl+0x60 still released only by MissionEnd).
 
+### 8.55 E press only: the driver's seat is claimed by a press (2026-10-31, branch `wp/seat-claim`, review m6m7i)
+
+The user's rule: only an actual E press may claim a vehicle's driver seat, in both roles. Until now a guest standing at
+an empty vehicle's door claimed it every 500 ms from site C's want, and its proximity hold kept the host's E from
+working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a host whose partner never pressed E).
+
+- **Design chosen: the 'commit' design** (two read-only designs agreed; Ghidra closed this round, its static claims
+  were re-checked against the pinned bytes). Site D retargets the rel32 call at `0x1251366` in RideVehicle phase 1
+  (`0x1251200`, event 0), the call of the stock remote gate `0x114DB20(action, index)`; a true answer makes phase 1
+  return for that frame (`JNZ 0x1251919`) before the record checks, site B and TryToRide, which is a stock wait
+  (phase 1 already idles while record `+0x84 == 0xFFFF`). Phase 1 runs only after an E press (8.20 `b66c7031`:
+  hundreds of `site=prequery` and no `site=phase1` until a press). The wrapper calls the original first, then reads
+  the local index `[[[action+8]+0x138]+0x218]` (the field the gate itself compares, pinned block `0x114DB6A`) and the
+  record `[action+0x78] + (index - [[action+0x38]+0x24]) * 0x240` (`+0x84` vehicle, `+0x5a` searched; pinned block
+  `0x1251229`). Why this design: it holds the press before anything is written, so the guest's copy can only seat
+  what the host granted, and the host decides under one lock without a clock sync. The 'arbiter' design's extra
+  PROBE/RELEASE actions were left out (READY alone arms; a late grant ends with GRANT_MS).
+- **Guest.** The host sends READY (SEAT action 4, id 25600) every 4 s while its board is on. A guest that heard READY
+  within 12 s refreshes the hold lease; only then site D keeps its E press on an empty vehicle (`PressDecide`: the
+  local record, not yet searched, a TppVehicle2 id, no peer-driver policy, no live deny) for at most 1000 ms, counts
+  it (`pseq`), and Lua claims it on the next tick (`event=seat; action=claim; ...; pseq=..; page=..`; the receipt is
+  polled every tick near a driver's door or while a press is held). A grant lets phase 1 go on (no second press); a
+  deny or no answer ends it on foot through site B's no-seat exit. `partner_board=press; role=guest; vehicle=..;
+  end=grant|deny|timeout; wait_ms=..` is the press-to-answer time (logged from the receipt on the Lua thread, never
+  in the hook). Without READY (0.14.4, the key off, an older dev host) the guest is stock: no hold, no claim.
+- **Host.** Its own press never waits: site B (`RaceStepB`) commits the vehicle for 3 s under the lock
+  (`partner_board=press; role=commit`). A guest claim runs `grant_if` under the same lock: refused while the host's
+  commit is live (`why=host_pressed`), else granted and yielded (the host's own 3 s deny, as before). `host_drives`
+  is unchanged; `host_first` (the host's want) is gone, so a host standing at a door never denies either.
+- **Site C** refuses the ride icon only for a live deny (the host won, or on the host a vehicle it yielded to a real
+  guest press); every refusal still marks the Fulton guard.
+- Tests (failing first `db08fc0` -> `dc62f40`): `partner_board_tests` (TestPress, TestArbiter, site D install and its tamper check), `world_wire_tests` (action 4), `world_ride_pose_lua_check` (no claim without a press, READY arming and
+  lapse, host want never denies). Contract: site D, the record block and the gate blocks pinned (838 / 213).
+  Scenarios (`cc185ce`): every wait for a proximity claim's answer now follows the press; A0 (a refusal without a
+  press) removed; `m6m7i-seat-claim-play.txt`.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

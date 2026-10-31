@@ -1810,6 +1810,14 @@ profile in lab and play since the seats-on round, design 8.25; a named 0 turns i
 site C live (`partner_board=race; result=ok; c=0x1246a4f`).
 The wire format did not change in the review round of 2026-10-30 (design 8.21); the rules below did.
 
+**E press only (design 8.55, 2026-10-31).** `action` 4 READY (host to guest, `id` 25600) is new: the host sends it every
+4 s while its board is on; a guest that heard it within 12 s holds, and only then native site D (`0x1251366`) keeps
+the guest's E press on an empty vehicle for at most 1 s and the guest sends one `claim` per press (`pseq`). The host
+answers with native `grant_if` under the lock its own press commits in: `deny` with `why=host_pressed` (its press
+owns the vehicle for 3 s) or `why=host_drives`, else `grant` and its yield. The want-based claims, the hold that
+refused the ride icon and `why=host_first` below are gone: standing at a door claims and denies nothing. Without
+READY (0.14.4, the key off) the guest is stock.
+
 - **Want (review R2).** Site C, RideVehicle CanExec's call of the ride pre-query `0x1245820` at `0x1246A4F`
   (`native/partner_board.cpp` `SiteC`, retargeted only with the key), records the vehicle whose driver's seat the
   pre-query's **final** answer offers: true with seat 0 or 1 (stock phase 1 makes both the driver), after the
