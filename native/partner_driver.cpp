@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cmath>
+#include <limits>
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
@@ -5056,7 +5057,7 @@ void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clo
 // (FRIENDLY_HIT, the stock player sleep). One line per strike edge (a jab logs verdict=jab and queues nothing).
 // fb1031 review: body 1's position is its drawn body (read_body): the slot stays at the boarding spot while seated.
 void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool anim_ok, const pp::Anim& anim,
-               const sync::AnimState& remote_anim, bool local_body, float local_body_yaw) noexcept {
+               const sync::AnimState& remote_anim) noexcept {
     Mission& m = d.mission;
     namespace pm = partner_melee;
     namespace rw = partner_ride_wire;
@@ -5065,12 +5066,16 @@ void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& cloc
     in.local_valid = anim_ok && st.slots_ok && st.local == 0;
     in.act = anim_ok ? anim.act[0] : 0;
     in.now_ms = clock.now_ms;
-    if (st.slots_ok) {
-        for (unsigned i = 0; i < 3; ++i) in.pos0[i] = st.slot[0][i];
-        // The game's yaw (body quaternion or vars) points the model's back: hidden run af0b88b6 logged angle_deg 175-180
-        // for every strike with the partner visibly in front on both copies. The cone wants the facing.
-        const float yaw = local_body ? local_body_yaw : st.slot[0][3];
-        in.yaw0 = yaw + 3.14159265f;
+    // The attacker's position and facing come from the local body readback (read_local_body, the facing sender's
+    // source), never the local slot S+0x20[0]: run af0b88b6 read it 21 cm from body 1 four seconds after a teleport with
+    // the players 1 m apart. No readback on a strike tick: no_local (NaN position).
+    in.pos0[0] = in.pos0[1] = in.pos0[2] = std::numeric_limits<float>::quiet_NaN();
+    if (in.local_valid && pm::StrikeAct(in.act) && h.read_local_body) {
+        float lpos[4]{}, lquat[4]{};
+        if (h.read_local_body(h.context, st, lpos, lquat)) {
+            for (unsigned i = 0; i < 3; ++i) in.pos0[i] = lpos[i];
+            in.yaw0 = partner::QuatToYaw(lquat);
+        }
     }
     in.remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     in.remote_act = remote_anim.act;
@@ -7428,7 +7433,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickActLog(d, h, st, clock, anim_ok, anim, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live,
                set.input_mask);
     // Melee on the partner: the local strike that reaches body 1 (one friendly hit for the partner's copy).
-    TickMelee(d, h, st, clock, terminating, anim_ok, anim, remote_anim, local_body, local_body_yaw);
+    TickMelee(d, h, st, clock, terminating, anim_ok, anim, remote_anim);
     const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
     const bool vehicle_attached=VehicleAttached(h,st);
     if(m.vehicle_job&&!vehicle_job){
