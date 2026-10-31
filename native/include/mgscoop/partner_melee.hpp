@@ -20,6 +20,9 @@ namespace mgscoop::partner_melee {
 inline constexpr std::uint16_t kStrikeAct = 113;     // one CQC jab of the punch combo: logged, never queued
 inline constexpr std::uint16_t kFinisherAct = 114;   // the combo's finishing strike when a 113 was seen within kComboMs
 inline constexpr std::uint32_t kComboMs = 600;       // the last 113 tick to the 114 edge
+// Run af0b88b6 (hidden, both copies): four scripted presses at ~350 ms gave two 113 edges 1.6 s apart and no 114, so the
+// finisher alone is not reliable: two jabs in reach within kPairMs land too (the coordinator's fallback).
+inline constexpr std::uint32_t kPairMs = 2000;
 inline constexpr float kReachM = 1.6f;               // horizontal, body origin to body origin
 inline constexpr float kHeightM = 1.0f;              // |y1 - y0|
 inline constexpr float kConeCos = 0.5f;              // +-60 degrees around the attacker's facing
@@ -53,6 +56,8 @@ struct State {
     bool landed = false;
     bool jab_seen = false;
     std::uint64_t last_jab_ms = 0;  // the last tick the local act was 113
+    bool jab_reach = false;         // a jab in reach that a second one within kPairMs completes
+    std::uint64_t jab_reach_ms = 0;
     std::uint32_t strikes = 0, lands = 0;
 };
 struct Out {

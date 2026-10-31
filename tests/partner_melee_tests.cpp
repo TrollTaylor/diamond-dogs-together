@@ -68,15 +68,45 @@ void TestJabAndFinisher() {
     Check(jab.dist_cm == 100 && jab.dy_cm == 0 && jab.angle_deg == 0, "the jab's distance, height and angle");
     for (int i = 0; i < 30; ++i) Check(f.Step(113).verdict == pm::Verdict::none, "a held jab is one edge");
     Check(f.Step(1).verdict == pm::Verdict::none, "back to stand between jabs");
+    // Run af0b88b6: four scripted presses gave two 113 edges 1.6 s apart and no 114 on either copy, so two jabs in reach
+    // within kPairMs land too (the coordinator's fallback); one jab alone never does.
     const auto jab2 = f.Step(113, 300);
-    Check(jab2.verdict == pm::Verdict::jab && !jab2.queue, "a second jab still does not queue");
+    Check(jab2.verdict == pm::Verdict::land && jab2.queue && jab2.dist_cm == 100, "a second jab in reach within 2 s lands");
     const auto fin = f.Step(114, 200);
-    Check(fin.verdict == pm::Verdict::land && fin.queue && fin.dist_cm == 100, "the finisher straight out of a jab lands");
-    Check(f.s.strikes == 3 && f.s.lands == 1, "counters: two jabs and one land");
-    Check(f.Combo().verdict == pm::Verdict::repeat, "another combo inside 1.5 s does not queue again");
+    Check(fin.verdict == pm::Verdict::repeat && !fin.queue, "the finisher inside 1.5 s of that land does not queue again");
+    Check(f.s.strikes == 3 && f.s.lands == 1, "counters: two jabs, a finisher and one land");
     f.Step(1, pm::kRepeatMs);
     const auto later = f.Combo();
-    Check(later.verdict == pm::Verdict::land && later.queue, "a combo after the repeat window lands again");
+    Check(later.verdict == pm::Verdict::land && later.queue, "a jab then the finisher after the repeat window lands again");
+    f.Step(1, pm::kRepeatMs);
+    Check(f.Step(113).verdict == pm::Verdict::jab, "after a land the pair starts over: one jab");
+    f.Step(1, pm::kPairMs + 100);
+    Check(f.Step(113).verdict == pm::Verdict::jab, "a second jab more than 2 s later is one jab again");
+}
+
+void TestJabPair() {
+    {
+        Fixture f; f.Partner(0.f, 0.f, 2.f);
+        Check(f.Step(113).verdict == pm::Verdict::range, "a jab out of reach");
+        f.Step(1, 300);
+        f.Partner(0.f, 0.f, 1.f);
+        Check(f.Step(113, 300).verdict == pm::Verdict::jab, "a jab out of reach does not count toward the pair");
+    }
+    {
+        Fixture f; f.in.remote_valid = true; f.in.remote_act = 93;
+        Check(f.Step(113).verdict == pm::Verdict::busy, "a jab at a busy partner");
+        f.Step(1, 300);
+        f.in.remote_act = 1;
+        Check(f.Step(113, 300).verdict == pm::Verdict::jab, "a jab at a busy partner does not count toward the pair");
+    }
+    {
+        Fixture f;
+        Check(f.Step(113).verdict == pm::Verdict::jab, "a jab");
+        f.in.local_valid = false;
+        f.Step(1, 300);
+        f.in.local_valid = true;
+        Check(f.Step(113, 300).verdict == pm::Verdict::land, "a missed local read between two jabs keeps the pair");
+    }
 }
 
 void TestTakedown() {
@@ -218,6 +248,7 @@ void TestFormat() {
 int main() {
     TestActs();
     TestJabAndFinisher();
+    TestJabPair();
     TestTakedown();
     TestPartnerState();
     TestMisses();
