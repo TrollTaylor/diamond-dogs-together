@@ -168,6 +168,33 @@ e.ReservePlayerLoadingPosition(1)
 i = c.find("initial")
 check(i and math.abs(i[2][3] - (-15.55 + 3)) < 1e-6, "lands 3 m in front of the caller")
 
+-- fb1031 travel-4: a travelling caller cannot bring; crossing brings: the host keeps its own, the guest yields.
+c = setup(true)
+c.T.command({"travel", "30020"})
+ok, msg = c.T.command({"bring_partner"})
+check(not ok and msg == "bring_refused;reason=travelling", "a travelling caller cannot bring")
+c = setup(true); c.W.paired = false
+ok = c.T.command({"bring_partner"})
+c.rx(12, 3, 30020, -656010, 1200, 877730, 62000, 0)
+check(ok and not c.T.job and c.lasttx()[3] == 4 and c.lasttx()[9] == 1, "crossing brings: the host keeps its own and refuses (1)")
+c = setup(false); vars.missionCode = 30020; c.W.paired = false
+ok = c.T.command({"bring_partner"})
+c.rx(13, 3, 30050, 22610, 1800, -15550, 0, 0)
+check(ok and c.T.job and c.T.job.target == 30050 and c.lasttx()[9] == 0, "crossing brings: the guest yields to the host's bring")
+c = setup(true); c.W.paired = false
+c.T.command({"bring_partner"})
+c.rx(14, 4, 30050, 0, 0, 0, 0, 0)
+c.rx(15, 3, 30020, -656010, 1200, 877730, 62000, 0)
+check(c.T.job and c.T.job.target == 30020, "after the partner answered, a later bring is accepted")
+c = setup(true); c.W.paired = false
+c.T.command({"bring_partner"})
+c.tick(30001)
+c.rx(16, 3, 30020, -656010, 1200, 877730, 62000, 0)
+check(c.T.job and c.T.job.target == 30020, "an unanswered bring stops counting after 30 s")
+c = setup(true)
+c.rx(17, 4, 30020, 0, 0, 0, 0, 7)
+check(c.notes[#c.notes][3] == 5 and c.logs[#c.logs]:find("reason=off", 1, true), "answer reason 7: the partner has Travel off")
+
 -- Refusals at the menu.
 c = setup(true); vars.missionCode = 10020
 ok, msg = c.T.command({"travel", "30010"})

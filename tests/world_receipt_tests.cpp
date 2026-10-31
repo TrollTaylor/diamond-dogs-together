@@ -167,6 +167,9 @@ void Note() {
               !parse("1 1 1 1") && !parse("+1 1 1") && !parse("1 1.0 1") && !parse(" 1 1 1") && !parse(""),
           "strict NOTE grammar");
     Check(code == 9 && a == 9 && b == 9, "outputs untouched on failure");
+    // fb1031 travel-1: note 14 (TRAVEL) is shown and logged with its values like 1..13; 15 stays unknown.
+    Check(world::NoteShown(1) && world::NoteShown(13) && world::NoteShown(14) && !world::NoteShown(0) && !world::NoteShown(15),
+          "HandleNote shows notes 1..14 (14 TRAVEL), never 0 or 15");
     const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
     Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
 }

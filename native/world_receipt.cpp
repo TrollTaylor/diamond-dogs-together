@@ -150,6 +150,8 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
     return true;
 }
 
+bool NoteShown(std::uint8_t code) noexcept { return code >= 1 && code <= 13; }
+
 bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
                std::uint32_t& d, std::uint32_t& e) noexcept {
     if (!source || !Prefixed(source, size, save_prefix) || size > max_receipt) return false;

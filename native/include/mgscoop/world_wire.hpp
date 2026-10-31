@@ -224,6 +224,7 @@ struct Config {
     bool play = false;               // mode=play: no probes, no PROBE_SYNC, no goto
     bool lab_triggers = false;       // world.trigger honoured
     std::uint8_t saves = 1;          // the local save gate (always 1 when configured)
+    bool travel = false;             // lab.ini debug_travel: off -> TRAVEL never sent; an ask/go/bring is answered refused (7 off)
     std::uint32_t build = 0;         // major*10000 + minor*100 + patch
     WorldProbe probe = WorldProbe::none;  // lab.ini world_probe (consumed by the first CFG start)
 };

@@ -89,6 +89,7 @@ void Setup(std::uint8_t host_level = 3, std::uint8_t guest_level = 3, bool play 
     h.play = play;
     h.lab_triggers = !play;
     h.build = 1100;
+    h.travel = true;
     world::Config g = h;
     g.level = guest_level;
     g.role = world::kRoleGuest;
@@ -2020,6 +2021,36 @@ void TravelOp() {
     Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 202) == world::TxStatus::disabled, "TRAVEL needs a level-3 peer");
     Setup(3, 3, true);
     Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 300) == world::TxStatus::disabled, "no HELLO yet: not sent");
+    // fb1031 travel-2: a copy whose own debug_travel is off never acts on a partner's TRAVEL. Its control queue never
+    // sees an ask, go or bring; the partner gets answer 4 refused, reason 7 (off). It never sends TRAVEL itself.
+    {
+        world::Config hc{};
+        hc.level = 3;
+        hc.role = world::kRoleHost;
+        hc.play = true;
+        hc.build = 1100;
+        hc.travel = false;
+        world::Config gc = hc;
+        gc.role = world::kRoleGuest;
+        gc.travel = true;
+        g_host.Configure(hc, 0);
+        g_guest.Configure(gc, 0);
+        Lines(g_host);
+        Lines(g_guest);
+    }
+    link(30050, 30020, 400);
+    Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 402) == world::TxStatus::disabled, "travel off: this copy never sends TRAVEL");
+    Check(Tx(g_guest, op::travel, {9, 3, 30020, -656010, 1200, 877730, 62000, 0}, 402) == world::TxStatus::ok &&
+              Tx(g_guest, op::travel, {10, 1, 30010, 0, 0, 0, 0, 0}, 402) == world::TxStatus::ok,
+          "the guest (travel on) brings and asks");
+    Exchange(403);
+    auto off = Drain(g_host, 1, 404);
+    Check(Count(off, op::travel) == 0, "travel off: the host's Lua never sees the guest's bring or ask");
+    Exchange(405);
+    auto back = Drain(g_guest, 1, 406);
+    Check(Count(back, op::travel) == 2 && back[0].v[0] == 9 && back[0].v[1] == 4 && back[0].v[2] == 30020 && back[0].v[7] == 7 &&
+              back[1].v[0] == 10 && back[1].v[1] == 4 && back[1].v[2] == 30010 && back[1].v[7] == 7,
+          "the guest hears answer 4 refused, reason 7 (off), for each");
 }
 int main() {
     Table();
