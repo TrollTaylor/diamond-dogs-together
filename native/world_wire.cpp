@@ -204,6 +204,10 @@ constexpr OpSpec kOps[] = {
     {op::travel, "TRAVEL", 0, Dir::both, Wire::reliable, 3, false, false, 8, 0, 0, 24,
      {U16(1), U8(1, 4), Mission(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-360000, 360000), U8()}},
+    // RULES (debug menu Game rules, world-sync-protocol.md section 23): seq, Mother Base weapons (0 stock, 1 allowed). The
+    // host's choice for both copies, on each press and each new pairing. Control queue, host to guest, paired, never a
+    // request. 3 bytes. A partner that does not know 0x3E skips it by its length (unknown_op).
+    {op::rules, "RULES", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 2, 0, 0, 3, {U16(1), U8(0, 1)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},
