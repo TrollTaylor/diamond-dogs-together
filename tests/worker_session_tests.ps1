@@ -1440,6 +1440,21 @@ try {
     $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
     Assert-True ([IO.File]::ReadAllText(($guest.LabIni+'.user-20260101-000000')) -ceq "historical unrelated user INI`n") 'historical user backup is untouched and never selected'
 
+    # fb1031 run 09668f9e: Start failed (out of disk space) after the package install and before the role marker.
+    # The installer's own first-install marker where none was belongs to this run: Stop removes it and restores.
+    $case=New-WorkerCleanupFixture 'install-marker'
+    $script:fixtureSession=$case.session;$script:packageCalls=0;$script:processCalls=0
+    $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    [IO.File]::WriteAllText($guest.Marker,"client-check-v1`n")
+    Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report
+    Assert-True (!(Test-Path -LiteralPath $guest.Marker) -and $case.report.roles.guest.configuration_restored) 'the installer first-install marker on an absent baseline is removed with the restore'
+    $case=New-WorkerCleanupFixture 'other-marker'
+    $script:fixtureSession=$case.session;$script:packageCalls=0
+    $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    [IO.File]::WriteAllText($guest.Marker,"online-v1`n")
+    Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'any other new marker still refuses'
+    Assert-True ($script:packageCalls -eq 0 -and [IO.File]::ReadAllText($guest.Marker) -ceq "online-v1`n") 'an unknown marker survives untouched'
+
     # A changed config in the SECOND role must stop the whole restoration before
     # the FIRST role installer/config mutations. Unknown secret bytes survive.
     $case=New-WorkerCleanupFixture 'changed-secret'
