@@ -419,9 +419,11 @@ Ghidra, raw dumps in the scratchpad `complete/re-passcam/`):
   the old mode and the new module's `vt+0x00` runs. The modules come from data
   (`CAM vt+0x50 0x1111C50`); the classes found are the cut-in camera, a camera
   for act 0x68, the subjective camera, one keyed to player status bits, the
-  VehicleCamera (index 3 in the lab) and an always-true fallback (`0x23B29E0`,
-  CanActivate `0x84B020 mov al,1`; index 5), which the on-foot player and a
-  seated passenger use.
+  VehicleCamera (index 3 in the lab) and an always-true fallback (CanActivate
+  `0x84B020 mov al,1`; index 5), which the on-foot player and a seated passenger
+  use. Its live vtable is `0x23B2AB0` (design 8.59, the follow carry's pinned
+  blocks and the archived traces); `0x23B29E0`, written here before and still
+  used by the test fixtures' module chain, is not the live one.
 - **The VehicleCamera** (`tpp::gm::player::(anon)::VehicleCamera`, factory
   `0x12D0E20`, module vtable `0x23D67F0`, base `0x23D6720`). CanActivate
   `0x12D0F60` is `act = (*(Q+0x18))[P+0x218]; return act - 0x6F <= 1`, so it
@@ -1090,6 +1092,20 @@ Tests: `partner_pass_camera_tests` (`TestFpvBitsAndContract`, `TestFpvStep`, `Te
 `TestFpvLeverAndVerify`), `partner_driver_tests` `TestSeatFpvDriver`, `lab_config_tests`; failing first `a3b8100` ->
 `8b33be4`, `9916c4a` -> `e508347` (the ready gate), `a968074` -> `7226d5e` (mode 15, reverted by `e827380` -> `2c43bf6`), `a5e2fc3` -> `0ff748a` (the
 default).
+
+### Follow carry and the ride camera census (design 8.59)
+
+| Key | Values | Default | What |
+|---|---|---|---|
+| `partner_ride_follow` (lab.ini) | 0 / 1 | 0 (off unless named, lab and play) | moves the fallback camera's blend start point with the ridden vehicle while that blend runs |
+
+The census has no key (lab and play, read only). Lines: `partner_pass_camera=follow; result=installed; blocks=12` (once);
+`partner_ride=pass_camera; state=follow; event=open|close; vehicle; seat; dur_ms; elapsed_ms; alpha_milli` / `ms; writes;
+carried_cm; warps; total_writes` (cap 200); `partner_ride_cam=frame|line; t; ep; n; vehicle; seat; spd_cms; lag_cm; d_cm;
+drift_cm; cs_cm; cmode; blend=alpha,elapsed,dur (milli); carry` and `partner_ride_cam=episode; ep; vehicle; seat; ticks;
+ms; max_spd_cms; max_lag_cm; lag_ms; max_drift_cm; cmode` (frame lines cap 400; line and episode lines share another 400).
+Runs `703d886a` (off) and `70eefcea` (named 1), play, africa-jeep: every rider row read `blend=0,0,0` (no blend
+running), the carry wrote nothing, so the key stays off. See design 8.59.
 
 ## Traversal icon
 
