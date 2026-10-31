@@ -1102,10 +1102,28 @@ default).
 The census has no key (lab and play, read only). Lines: `partner_pass_camera=follow; result=installed; blocks=12` (once);
 `partner_ride=pass_camera; state=follow; event=open|close; vehicle; seat; dur_ms; elapsed_ms; alpha_milli` / `ms; writes;
 carried_cm; warps; total_writes` (cap 200); `partner_ride_cam=frame|line; t; ep; n; vehicle; seat; spd_cms; lag_cm; d_cm;
-drift_cm; cs_cm; cmode; blend=alpha,elapsed,dur (milli); carry` and `partner_ride_cam=episode; ep; vehicle; seat; ticks;
+drift_cm; cs_cm; cmode; blend=alpha,elapsed,dur (milli); carry; veh_cm; eye_cm` (veh_cm / eye_cm: the vehicle and the
+camera eye in world space, cm, on the driver tick clock, which both hidden-worker copies share) and
+`partner_ride_cam=episode; ep; vehicle; seat; ticks;
 ms; max_spd_cms; max_lag_cm; lag_ms; max_drift_cm; cmode` (frame lines cap 400; line and episode lines share another 400).
 Runs `703d886a` (off) and `70eefcea` (named 1), play, africa-jeep: every rider row read `blend=0,0,0` (no blend
 running), the carry wrote nothing, so the key stays off. See design 8.59.
+
+### Get-in camera cut (design 8.60)
+
+| Key | Values | Default | What |
+|---|---|---|---|
+| `partner_ride_getin_cut` (lab.ini) | 0 / 1 | follows the gun profile (lab and play); a named 0 opts out | ends camera module 0 (the front-seat get-in camera) once the ridden vehicle moved 0.3 m |
+
+After a front-seat (seat 1) get-in the local camera runs module 0 (live vtable `0x23BE5E0`) for about 3.5 s; it keeps the
+view where the get-in began, so a jeep the partner drives off leaves the rider's camera behind. While the local passenger
+sits (passenger camera installed, not off, no latch) and module 0 is the active module, `TickGetInCut` anchors the
+vehicle's position; once it moved 0.3 m (`kGetInCutMove`) `CutGetIn` clears module 0's flags `+0x147C` bit 5 (the bit its
+CanActivate `0x1184D80` returns) and its request word `+0xAE0` when it is 1 (which would set the bit again); the stock
+selection then runs module 0's own Deactivate (`0x1182B40`) and the fallback takes over. At most 8 writes a get-in.
+Five pinned blocks (`getin_cut_blocks`), verified once per process. Lines: `partner_pass_camera=getin_cut;
+result=installed; blocks=5` (once); `partner_ride=pass_camera; state=getin_cut; event=cut; vehicle; seat; moved_cm; ms;
+result; cuts` or `event=gave_up; ...; writes` (cap 100 a mission). Runs `c54aae04` (before) and `f71126c0` (named 1).
 
 ## Traversal icon
 
