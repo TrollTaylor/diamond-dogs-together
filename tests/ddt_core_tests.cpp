@@ -1428,6 +1428,14 @@ void TestCollectLogsLaunches() {
     for (int i = 1; i <= 5; ++i) five += launch(i, 1u << 20);
     const std::string capped = LastLaunches(five, marker, 8, 2u << 20, 3u << 20);
     CHECK(!Has(capped, "tail-2\n") && Has(capped, "tail-3\n") && Has(capped, "tail-5\n") && capped.size() <= (3u << 20));
+    // fb1031 review: eight launches that are all cut still fit the total (the omission line is inside each budget),
+    // so none of the 8 is dropped.
+    std::string eightBig;
+    for (int i = 1; i <= 8; ++i) eightBig += launch(i, 100000);
+    const std::string all8 = LastLaunches(eightBig, marker, 8, 64u << 10, 8u * (64u << 10));
+    bool every = all8.size() <= 8u * (64u << 10);
+    for (int i = 1; i <= 8; ++i) every = every && Has(all8, "head-" + std::to_string(i) + "\n") && Has(all8, "tail-" + std::to_string(i) + "\n");
+    CHECK(every);
     // Collect logs: a stuck launch four launches back (5 launches of 1.4 MB) is in the zip.
     Fixture f(L"collect_launches");
     CreateDirectories(f.paths.mod);
