@@ -335,6 +335,20 @@ do
     mh.env.TppMission.Load(30050, 40050)
     for _ = 1, 4 do mh.F.tick(mh.time) end
     transfer(mh, mg)
+    -- Default (fb1031 review): the guest rides in with the host's route and cluster, as in 0.14.5.
+    local plain = mbFoot(fixture(false, 30050))
+    transfer(mh, plain)
+    plain.F.current = plain.F.queue[1]
+    plain.F.current.session = 55
+    plain.mbDemo = 'X'
+    plain.env.vars.missionCode = 30050
+    plain.env.TppMain.ReservePlayerLoadingPosition(1, true)
+    plain.env.TppMission.Load(30050, 40050)
+    check(plain.loaded and plain.loaded[1] == 30050 and plain.env.gvars.ply_initialPlayerState == 1 and
+        plain.env.gvars.heli_missionStartRoute == 444 and plain.env.vars.mbClusterId == mh.env.vars.mbClusterId and plain.mbDemo == 'X',
+        'default exact guest Reserve: rides in with the host route and cluster, its MB demo kept')
+    -- Switched on (F.arrival.auto, for a lab proof run): on foot at Command.
+    mg.F.arrival.auto = true
     mg.F.current = mg.F.queue[1]
     mg.F.current.session = 55
     mg.mbDemo = 'LongTimeNoSee_DdogSuperHighLikability'

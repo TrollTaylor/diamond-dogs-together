@@ -769,9 +769,12 @@ local function mbSeeds(g, id, state, used)
     end
     send(g, OP.SEEDS_END, {id, 30050, n, digest})
 end
+-- fb1031 review: the broad arrival rule (every linked guest helicopter arrival at 30050 reset to Command, the guest MB
+-- demo cleared at seeds and allocation) is off by default (F.arrival.auto); these checks run it switched on.
+local function mbAuto(c, demo) mbApis(c, demo); c.F.arrival.auto = true; return c end
 do
     -- The kind-6 sortie replay into 30050 with the host's helicopter route (the online case).
-    local mf = mbApis(fixture(2), 'LongTimeNoSee_DdogSuperHighLikability')
+    local mf = mbAuto(fixture(2), 'LongTimeNoSee_DdogSuperHighLikability')
     mf.W.mission, mf.env.vars.missionCode = 40050, 40050
     send(mf, OP.TRANSITION, {1, 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
     mbSeeds(mf, 1, 1, false)
@@ -791,7 +794,7 @@ do
         'the host seeds (its helicopter route) never put the guest back in the helicopter')
     check(count(mf, 'step=mb_foot;at=seeds;route=4294967295') >= 1, 'the on-foot start is logged with the replaced route')
     -- A vanilla reset that throws never stops world sync (the seed apply runs inside the load wrappers' pcall).
-    local bad = mbApis(fixture(2))
+    local bad = mbAuto(fixture(2))
     bad.env.TppMission.ResetMBFreeStartPositionToCommand = function() error('reset_failed') end
     bad.W.mission, bad.env.vars.missionCode = 40050, 40050
     send(bad, OP.TRANSITION, {1, 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
@@ -800,22 +803,22 @@ do
     bad.env.TppMission.Load(30050)
     check(bad.loaded == 30050 and bad.failure == nil and bad.W.active, 'a failing reset leaves the load and world sync running')
     -- The host keeps its own arrival.
-    local host = mbApis(fixture(1), 'QuietReturnToMB')
+    local host = mbAuto(fixture(1), 'QuietReturnToMB')
     host.env.gvars.ply_initialPlayerState = 1
     host.env.e.ReservePlayerLoadingPosition(1)
     check(called(host, 'mb_foot') == 0 and host.mbDemo == 'QuietReturnToMB' and host.env.gvars.heli_missionStartRoute == 4294967295,
         'the host arrival and demo are untouched')
     -- Route 0 and on foot (the lab boot, a travel landing): nothing to change.
-    local boot = mbApis(fixture(2))
+    local boot = mbAuto(fixture(2))
     boot.env.gvars.heli_missionStartRoute = 0
     boot.env.e.ReservePlayerLoadingPosition(1)
     check(called(boot, 'mb_foot') == 0 and count(boot, 'step=mb_foot') == 0, 'an on-foot start is left alone')
     -- Elsewhere, unlinked or older games: unchanged.
-    local field = mbApis(fixture(2), 'X')
+    local field = mbAuto(fixture(2), 'X')
     field.env.vars.missionCode, field.env.gvars.ply_initialPlayerState = 30010, 1
     field.env.e.ReservePlayerLoadingPosition(1)
     check(called(field, 'mb_foot') == 0 and field.mbDemo == 'X', 'free roam keeps its helicopter arrival')
-    local alone = mbApis(fixture(2), 'X')
+    local alone = mbAuto(fixture(2), 'X')
     alone.link = 0
     alone.env.e.ReservePlayerLoadingPosition(4)
     check(called(alone, 'mb_foot') == 0 and alone.mbDemo == 'X', 'no link: a solo guest copy keeps vanilla')
@@ -825,33 +828,34 @@ do
     -- A restart / Continue of a guest save bound to Mother Base in the helicopter (its checkpoint taken in the
     -- helicopter: vanilla VarSaveOnUpdateCheckPoint leaves ply_isUsedPlayerInitialAction false).
     for _, kind in ipairs({3, 4}) do
-        local cont = mbApis(fixture(2), 'X')
+        local cont = mbAuto(fixture(2), 'X')
         cont.env.gvars.ply_initialPlayerState, cont.env.svars.ply_isUsedPlayerInitialAction = 1, false
         cont.env.e.ReservePlayerLoadingPosition(kind)
         check(called(cont, 'mb_foot') == 1 and cont.mbDemo == nil and count(cont, 'step=mb_foot;at=reserve') == 1,
             'kind ' .. kind .. ': a guest save that would ride in starts on foot')
     end
     -- A Continue whose helicopter entry was used (a checkpoint on foot; the W4 shared Continue keeps the host spawn).
-    local used = mbApis(fixture(2), 'X')
+    local used = mbAuto(fixture(2), 'X')
     used.env.gvars.ply_initialPlayerState, used.env.svars.ply_isUsedPlayerInitialAction = 1, true
     used.env.e.ReservePlayerLoadingPosition(4)
     check(called(used, 'mb_foot') == 0 and used.env.vars.initialPlayerPosX == -123.125 and used.mbDemo == nil,
         'a checkpoint Continue on foot keeps its spawn (the demo is still cleared)')
-    local restart = mbApis(fixture(2), 'X')
+    local restart = mbAuto(fixture(2), 'X')
     restart.env.gvars.ply_initialPlayerState, restart.env.svars.ply_isUsedPlayerInitialAction = 1, true
     restart.env.e.ReservePlayerLoadingPosition(3)
     check(called(restart, 'mb_foot') == 1, 'a restart replays the helicopter entry: on foot whatever the flag')
-    local walked = mbApis(fixture(2), 'X')
+    local walked = mbAuto(fixture(2), 'X')
     walked.env.gvars.ply_initialPlayerState = 0
     walked.env.e.ReservePlayerLoadingPosition(1)
     check(called(walked, 'mb_foot') == 0, 'a start status on foot (route set) is left alone')
     -- The allocation (f30050 MissionPrepare reads the queued demo): cleared for a linked guest only.
-    local alloc = mbApis(fixture(2), 'X')
+    local alloc = mbAuto(fixture(2), 'X')
+    alloc.env.gvars.f30050_missionPackIndex = 0
     local co = coroutine.create(function() return alloc.env.e.OnAllocate(1) end)
     local ok, yielded = coroutine.resume(co)
     check(ok and yielded == 'allocate' and alloc.mbDemo == nil and count(alloc, 'step=mb_demo;at=allocate') == 1,
         'allocation clears the guest MB demo and still yields through')
-    local hostAlloc = mbApis(fixture(1), 'X')
+    local hostAlloc = mbAuto(fixture(1), 'X')
     coroutine.resume(coroutine.create(function() return hostAlloc.env.e.OnAllocate(1) end))
     check(hostAlloc.mbDemo == 'X', 'the host demo stays queued')
 end
@@ -885,5 +889,61 @@ do
     over.env.svars.mis_isDefiniteGameOver = true
     over.env.TppMission.RestartMission()
     check(called(over, 'restart_menu') == 0 and over.tx[1].op == OP.REQ_MISSION, 'a game over keeps the host_only rule')
+end
+do
+    -- fb1031 review (default): a linked guest's helicopter arrival at Mother Base stays vanilla (the 0.14.5 arrival
+    -- that works: riding in with the host's route and cluster); its queued MB demo stays queued.
+    local mf = mbApis(fixture(2), 'X')
+    mf.W.mission, mf.env.vars.missionCode = 40050, 40050
+    send(mf, OP.TRANSITION, {1, 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
+    mbSeeds(mf, 1, 1, false)
+    mf.F.tick(mf.time)
+    mf.env.vars.missionCode, mf.env.gvars.ply_initialPlayerState = 30050, 1
+    mf.env.e.ReservePlayerLoadingPosition(1)
+    mf.env.TppMission.Load(30050)
+    check(mf.F.arrival.auto ~= true and mf.loaded == 30050 and called(mf, 'mb_foot') == 0 and count(mf, 'step=mb_foot') == 0 and
+        mf.env.gvars.ply_initialPlayerState == 1 and mf.env.gvars.heli_missionStartRoute == 4294967295 and mf.mbDemo == 'X',
+        'default: the guest rides in with the host route, no Command reset, its MB demo kept')
+    for _, kind in ipairs({1, 3, 4}) do
+        local r = mbApis(fixture(2), 'X')
+        r.env.gvars.ply_initialPlayerState, r.env.svars.ply_isUsedPlayerInitialAction = 1, false
+        r.env.e.ReservePlayerLoadingPosition(kind)
+        check(called(r, 'mb_foot') == 0 and r.mbDemo == 'X', 'default: kind ' .. kind .. ' Reserve without a stuck-guest restart is vanilla')
+    end
+    local alloc = mbApis(fixture(2), 'X')
+    alloc.env.gvars.f30050_missionPackIndex = 0
+    coroutine.resume(coroutine.create(function() return alloc.env.e.OnAllocate(1) end))
+    check(alloc.mbDemo == 'X' and count(alloc, 'step=mb_demo') == 0, 'default: allocation leaves the guest MB demo queued')
+    -- The way out lands on foot: the stuck guest's local restart Reserve resets to Command (the menu restart passes no
+    -- return-to-mission flag, so vanilla ExecuteRestartMission does not), and clears its queued demo before the pack list.
+    for _, menu in ipairs({'RestartMission', 'ContinueFromCheckPoint'}) do
+        local out = mbApis(fixture(2), 'X')
+        out.env.vars.playerVehicleGameObjectId, out.env.gvars.ply_initialPlayerState = 77, 1
+        out.env.TppMission[menu]()
+        out.time = out.time + 1500
+        out.env.TppMission.ExecuteRestartMission()
+        out.env.e.ReservePlayerLoadingPosition(3)
+        check(called(out, 'mb_foot') == 1 and out.env.gvars.ply_initialPlayerState == 0 and out.env.gvars.heli_missionStartRoute == 0 and
+            out.mbDemo == nil and count(out, 'step=mb_foot;at=restart') == 1, 'way out (' .. menu .. '): the local restart starts on foot at Command')
+    end
+    local stale = mbApis(fixture(2), 'X')
+    stale.env.vars.playerVehicleGameObjectId, stale.env.gvars.ply_initialPlayerState = 77, 1
+    stale.env.TppMission.RestartMission()
+    stale.time = stale.time + 31000
+    stale.env.e.ReservePlayerLoadingPosition(3)
+    check(called(stale, 'mb_foot') == 0 and stale.mbDemo == 'X', 'a restart Reserve 31 s after the way out is vanilla')
+    local away = mbApis(fixture(2), 'X')
+    away.env.vars.playerVehicleGameObjectId, away.env.gvars.ply_initialPlayerState = 77, 1
+    away.env.TppMission.RestartMission()
+    away.env.e.ReservePlayerLoadingPosition(1)
+    check(called(away, 'mb_foot') == 0, 'only the restart Reserve takes the way-out reset')
+    -- Switched on, allocation never clears a demo whose packs the vanilla 30050 pack list already chose
+    -- (f30051 demo stage = 1, battle hangar = 2): the packs and the demo state must agree.
+    for _, index in ipairs({1, 2}) do
+        local stage = mbAuto(fixture(2), 'X')
+        stage.env.gvars.f30050_missionPackIndex = index
+        coroutine.resume(coroutine.create(function() return stage.env.e.OnAllocate(1) end))
+        check(stage.mbDemo == 'X' and count(stage, 'step=mb_demo') == 0, 'auto: pack index ' .. index .. ' keeps its demo at allocation')
+    end
 end
 print('world_follow_lua_check: ' .. checks .. ' checks passed')
