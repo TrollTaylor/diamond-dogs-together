@@ -618,16 +618,21 @@ int main() {
                   "an invalid seat-1 anchor value after a valid 1 turns it off");
         }
     }
-    // Seat first person (partner_seat_fpv, design 8.46): off unless named, in lab and play (the gun profile does not turn it
-    // on yet); a named 1 runs in lab and play; an invalid value is named and off, also after a valid 1.
+    // Seat first person (partner_seat_fpv, design 8.46, 8.49): follows the gun profile in lab and play (off without a
+    // profile); a named 1 runs in lab and play; a named 0 opts out; an invalid value is named and off, also after a valid 1.
     {
         Check(!LabConfig{}.partner_seat_fpv && !LabConfig{}.partner_seat_fpv_given && !Lab("").partner_seat_fpv, "seat first person defaults off");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string noprofile = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                      "partner_apply=xform\npartner_anim=off\npartner_dm=map\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto bare = Lab(noprofile + mode);
+            Check(!bare.partner_seat_fpv && !bare.partner_seat_fpv_given, "seat first person stays off without the gun profile");
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_seat_fpv && !profile.partner_seat_fpv_given && profile.invalid_values == 0,
-                  "the gun profile leaves seat first person off (not named)");
+            Check(profile.partner_seat_fpv && !profile.partner_seat_fpv_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0,
+                  "the gun profile turns seat first person on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_seat_fpv=1\n");
             Check(named.partner_seat_fpv && named.partner_seat_fpv_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0,
