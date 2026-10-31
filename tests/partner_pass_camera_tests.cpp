@@ -1201,6 +1201,69 @@ void TestFpvStep() {
     o = pc::FpvStep(s, FIn(false, 0x5, 1, 0));
     Check(o.clear == 0x5 && s.ours == 0, "both cleared at the aim end");
 }
+// Review m6m7f (design 8.47): a clear of ours stays pending until a read shows the bit clear; retried, bounded.
+void TestFpvPending() {
+    pc::Fpv s{};
+    pc::FpvStep(s, FIn(false, 0));
+    pc::FpvStep(s, FIn(true, 0));
+    Check(s.ours == 0x4, "pending: set");
+    pc::FpvIn un = FIn(false, 0x4, 1, 2, false);
+    un.read_ok = false;
+    pc::FpvOut o = pc::FpvStep(s, un);
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x4 && s.ours == 0 && s.pending == 0x4, "the unread get-off: the clear stays pending");
+    o = pc::FpvStep(s, FIn(false, 0x4, 1, 2, false));
+    Check(o.event == pc::FpvEvent::retry && o.clear == 0x4 && Same(o.reason, "pending") && s.pending == 0x4,
+          "on foot the bit still reads set (the clear failed): retried");
+    o = pc::FpvStep(s, FIn(false, 0, 1, 2, false));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && s.pending == 0 && s.pending_tries == 0, "a read showing the bit clear confirms it");
+    o = pc::FpvStep(s, FIn(false, 0, 1, 2, false));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "confirmed: nothing more");
+    // The aim end's clear, overwritten by the game's plain store (the bit reads set again): cleared again.
+    pc::FpvStep(s, FIn(false, 0));
+    pc::FpvStep(s, FIn(true, 0));
+    o = pc::FpvStep(s, FIn(false, 0x4));
+    Check(o.event == pc::FpvEvent::restore && o.clear == 0x4 && s.pending == 0x4, "the aim end's clear is pending until read clear");
+    o = pc::FpvStep(s, FIn(false, 0x4));
+    Check(o.event == pc::FpvEvent::retry && o.clear == 0x4, "the bit back after our clear: cleared again");
+    o = pc::FpvStep(s, FIn(false, 0));
+    Check(o.event == pc::FpvEvent::none && s.pending == 0, "then read clear: confirmed");
+    // A new aim while our bit is still pending (the clear not landed): taken back as ours, never read as the player's tap.
+    pc::FpvStep(s, FIn(true, 0));
+    pc::FpvStep(s, FIn(false, 0x4));
+    Check(s.pending == 0x4, "pending again");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    Check(o.event == pc::FpvEvent::none && s.ours == 0x4 && s.pending == 0 && !s.opt_out, "the next aim takes the pending bit back as ours");
+    o = pc::FpvStep(s, FIn(true, 0x4));
+    Check(!s.opt_out && o.event == pc::FpvEvent::none, "no opt out from our own pending bit");
+    // A bit that never reads clear is given up after kFpvClearTries retries.
+    pc::FpvStep(s, FIn(false, 0x4));
+    unsigned retries = 0;
+    bool gave_up = false;
+    for (unsigned i = 0; i < pc::kFpvClearTries + 3 && !gave_up; ++i) {
+        o = pc::FpvStep(s, FIn(false, 0x4));
+        if (o.event == pc::FpvEvent::retry && Same(o.reason, "pending")) ++retries;
+        if (o.event == pc::FpvEvent::retry && Same(o.reason, "give_up")) gave_up = true;
+    }
+    Check(gave_up && retries == pc::kFpvClearTries && s.pending == 0 && o.clear == 0 && s.give_ups == 1, "bounded: given up");
+    o = pc::FpvStep(s, FIn(false, 0x4));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "given up: the bit is left alone");
+    // A pending bit of another slot never blocks the set of this aim's slot; the set of a pending bit ends its pending.
+    pc::Fpv t{};
+    pc::FpvStep(t, FIn(false, 0));
+    t.pending = 0x1;
+    o = pc::FpvStep(t, FIn(true, 0x1));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && t.pending == 0x1, "another slot's pending bit: this slot still set");
+    o = pc::FpvStep(t, FIn(true, 0x5));
+    Check(o.event == pc::FpvEvent::retry && o.clear == 0x1 && !t.opt_out, "the other slot's pending clear retried while aiming");
+    o = pc::FpvStep(t, FIn(true, 0x4));
+    Check(o.event == pc::FpvEvent::none && t.pending == 0 && !t.opt_out, "its clear landed: no opt out");
+    // The key off with nothing ours: never anything.
+    pc::Fpv k{};
+    for (int i = 0; i < 3; ++i) {
+        o = pc::FpvStep(k, FIn(true, 0x4, 1, 2, true, false));
+        Check(o.event == pc::FpvEvent::none && o.set == 0 && o.clear == 0, "key off: nothing");
+    }
+}
 void TestFpvReadWrite() {
     pc::detail::ResetForTest();
     Chain k;
@@ -1297,6 +1360,7 @@ int main() {
     TestVerifyAndInstall();
     TestFpvBitsAndContract();
     TestFpvStep();
+    TestFpvPending();
     TestFpvReadWrite();
     TestFpvLeverAndVerify();
     std::printf("partner_pass_camera_tests: %u checks passed\n", checks);

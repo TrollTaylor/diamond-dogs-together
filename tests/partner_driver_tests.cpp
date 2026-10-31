@@ -7691,6 +7691,9 @@ struct SeatFpvFake {
     std::uint8_t slot = 2;
     bool module = true;
     int lever = -1;
+    bool fail = false;      // the write fails (the module not found, a fault, the CAS tries spent)
+    unsigned failed = 0;    // failed write attempts
+    std::uintptr_t last_p = 0;
     std::vector<std::pair<std::uint32_t, std::uint32_t>> writes;  // (set, clear)
 };
 SeatFpvFake g_fpv;
@@ -7702,7 +7705,13 @@ bool HookFpvRead(void*, const mgscoop::partner_player::State&, mgscoop::partner_
     out.slot = g_fpv.slot;
     return g_fpv.module;
 }
-bool HookFpvWrite(void*, const mgscoop::partner_player::State&, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+bool HookFpvWrite(void*, const mgscoop::partner_player::State& st, std::uint32_t set, std::uint32_t clear, std::uint32_t& after) noexcept {
+    g_fpv.last_p = st.P;
+    if (g_fpv.fail || !st.P) {
+        ++g_fpv.failed;
+        after = 0;
+        return false;
+    }
     g_fpv.writes.push_back({set, clear});
     g_fpv.toggles = (g_fpv.toggles | set) & ~clear;
     after = g_fpv.toggles;
@@ -7796,6 +7805,108 @@ void TestSeatFpvDriver() {
         for (int i = 0; i < 3; ++i) Check(s.Tick(0) && g_fpv.toggles == 0, "tap: not set again");
         GuardGun(s, 0);
         Check(s.Tick(0) && g_fpv.writes.size() == 1, "tap: nothing cleared at the aim end (not ours)");
+    }
+}
+
+// Review m6m7f (design 8.47): every exit releases our bit, a failed clear is kept and retried, the release needs only P.
+void TestSeatFpvRelease() {
+    namespace pb = mgscoop::partner_board;
+    auto seated_set = [](Session& s) {
+        FpvSetup(s, true);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        s.Tick(0);
+        s.Tick(0);
+        Check(g_fpv.toggles == 0x4, "release: set while aiming from seat 1");
+        s.fake.lines.clear();
+    };
+    {
+        // The get-off while the write fails: the stop line says ok=0; the clear is retried on foot until it lands.
+        Session s(0);
+        seated_set(s);
+        g_fpv.fail = true;
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && g_fpv.toggles == 0x4 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=get_off; set=0x0; clear=0x4; ok=0;") == 1,
+              "release: the failed clear at the get-off");
+        const unsigned failed = g_fpv.failed;
+        Check(s.Tick(0) && g_fpv.failed > failed && g_fpv.toggles == 0x4 && s.fake.Containing("state=seat_fpv; event=retry;") >= 1,
+              "release: retried on foot while it fails");
+        g_fpv.fail = false;
+        Check(s.Tick(0) && g_fpv.toggles == 0 && s.fake.Containing("event=retry; vehicle=") >= 1, "release: the retry lands");
+        const std::size_t writes = g_fpv.writes.size();
+        Check(s.Tick(0) && s.Tick(0) && g_fpv.writes.size() == writes, "release: read clear, nothing more");
+    }
+    {
+        // A state refusal during a seated first-person aim (Tick returns before TickPassCamera): released at once.
+        Session s(0);
+        seated_set(s);
+        s.fake.refusal = pp::Refusal::online_bit;
+        s.Tick(0);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=cfg_refused; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the cfg refusal clears our bit");
+        s.Tick(0);
+        Check(s.fake.Containing("reason=cfg_refused; set=0x0") == 1, "release: once");
+        s.fake.refusal = pp::Refusal::none;
+        s.Tick(0);
+        s.Tick(0);
+        Check(g_fpv.toggles == 0x4, "release: the refusal over, the next ready aim sets it again");
+    }
+    {
+        // The terminating stop (MISSION_TERMINATING, the camera still alive) releases too.
+        Session s(0);
+        seated_set(s);
+        pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=stop; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the terminating stop clears our bit");
+    }
+    {
+        // A MissionStart without a MissionEnd releases before the mission state is reset.
+        Session s(0);
+        seated_set(s);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=mission_start; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: a missed MissionEnd is caught at MissionStart");
+    }
+    {
+        // The MissionEnd while the state read refuses (the unload): P alone is enough.
+        Session s(0);
+        seated_set(s);
+        s.fake.refusal = pp::Refusal::count;
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0 && g_fpv.last_p == 0x1000 &&
+                  s.fake.Containing("state=seat_fpv; event=stop; vehicle=25608; seat=1; reason=mission_end; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: the mission end writes with P although the state read refuses");
+    }
+    {
+        // The MissionEnd's write fails: still owned; the next MissionStart clears it.
+        Session s(0);
+        seated_set(s);
+        g_fpv.fail = true;
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(g_fpv.toggles == 0x4 && s.fake.Containing("reason=mission_end; set=0x0; clear=0x4; ok=0;") == 1, "release: the failed mission end");
+        g_fpv.fail = false;
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(g_fpv.toggles == 0 && s.fake.Containing("reason=mission_start; set=0x0; clear=0x4; ok=1;") == 1,
+              "release: kept and cleared at the next MissionStart");
+    }
+    {
+        // The key off: none of the exits writes anything.
+        Session s(0);
+        FpvSetup(s, false);
+        g_board.lp = BoardPassenger(25608, 1);
+        GuardGun(s, 7);
+        s.Tick(0);
+        s.fake.refusal = pp::Refusal::online_bit;
+        s.Tick(0);
+        s.fake.refusal = pp::Refusal::none;
+        pd::MissionEnd(s.driver, s.hooks);
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        pd::Stop(s.driver, s.hooks, mgscoop::PartnerTeardown::keep, true);
+        Check(g_fpv.writes.empty() && g_fpv.failed == 0 && s.fake.Containing("state=seat_fpv; event=stop") == 0 &&
+                  s.fake.Containing("event=retry") == 0,
+              "release: key off, nothing written on any exit");
     }
 }
 
@@ -9995,6 +10106,7 @@ int main() {
     TestPassCameraGuardDriver();
     TestPassCameraViewDriver();
     TestSeatFpvDriver();
+    TestSeatFpvRelease();
     TestSeatShotDriver();
     TestBoardSeatGates();
     TestSeatDraw();

@@ -648,10 +648,14 @@ inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2;
 // The gun is ready (aimed 7, firing 9 / 10): the raise (6) is done, so its muzzle probe saw the shoulder pose, which first
 // person then keeps (shot.md: GunMuzzleProbeIssue 0x1062A30 skips the pose update with rec+0x3C0 bit 13).
 inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 7 || mode == 9 || mode == 10); }
-enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop };
+enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop, retry };
+// A clear of ours stays pending until a read shows the bit clear (a failed write, the game's plain store over our
+// compare-exchange); it is retried on later ticks, at most kFpvClearTries times, then given up (design 8.47).
+inline constexpr std::uint32_t kFpvClearTries = 30;
 inline const char* FpvEventName(FpvEvent e) noexcept {
     switch (e) {
     case FpvEvent::arm: return "arm";
+    case FpvEvent::retry: return "retry";
     case FpvEvent::set: return "set";
     case FpvEvent::opt_out: return "opt_out";
     case FpvEvent::restore: return "restore";
@@ -667,7 +671,9 @@ struct Fpv {
     std::uint32_t ours = 0;  // the toggle bits this switch set and has not cleared
     std::uint32_t seen = 0;  // the bits seen set during this aim
     bool aim = false;        // the last tick aimed
-    std::uint32_t sets = 0, restores = 0, aims = 0, opt_outs = 0;
+    std::uint32_t pending = 0;        // ours, cleared but not yet read clear (kept over a boarding's end and a mission's)
+    std::uint32_t pending_tries = 0;  // retries of the pending clear
+    std::uint32_t sets = 0, restores = 0, aims = 0, opt_outs = 0, give_ups = 0;
 };
 struct FpvIn {
     bool want = false;     // the key (or the lab lever) on, the hooks there, nothing latched
