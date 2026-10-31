@@ -109,6 +109,8 @@ function Get-WorkerTests {
         # module; the Lua it carries: the outcome attribution, companion, buddy companion, dog guard and relief chunks.
         # (DiamondDogsTogether.exe's two: Get-WorkerReleaseOnlyTests.)
         'dog_guard_tests', 'partner_act_log_tests', 'partner_ammo_leak_tests', 'partner_dm_overlay_tests', 'partner_ride_seat_tests',
+        # Melee on the partner (partner_melee.hpp): the attacker-side reach test of a local CQC strike.
+        'partner_melee_tests',
         'world_outcome_attclass_lua_check', 'world_companion_lua_check', 'world_buddy_companion_lua_check',
         'world_companion_guard_lua_check', 'world_relief_lua_check', 'world_relief_sync_lua_check',
         # The window close held for the partner's mission-thread teardown (window_close.hpp).
