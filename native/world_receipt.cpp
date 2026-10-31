@@ -290,6 +290,7 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out, char* canoni
             if (result.has_goto) { reason = "repeat"; return false; }
             if (SameText(value, vlen, "30010")) result.goto_target = 30010;
             else if (SameText(value, vlen, "30020")) result.goto_target = 30020;
+            else if (SameText(value, vlen, "30050")) result.goto_target = 30050;
             else return false;
             result.has_goto = true;
         } else if (SameText(key, eq, "goto_lz")) {
