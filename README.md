@@ -64,6 +64,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather.
 - **Shared progress:** the host's travel, checkpoints, and game over with continue for both players.
 - **Online play:** through Steam, with no port forwarding.
+- **Character (F9 debug menu > Player > Character (you)):** either player switches to Snake, a Diamond Dogs soldier (male or female), their custom character, or back to their default, right away and for the rest of the session; the partner sees the new look (a custom character as Snake). After a fresh start in Africa the host stayed Snake on both screens. Ocelot and Quiet: pick them in the launcher.
 - **Travel (F9 debug menu > World):** **Go to Africa** or **Go to Mother Base** takes both players there with no helicopter ride, in under half a minute; either player can press it. **Bring partner here** puts your partner right in front of you. A short message tells each player what happened.
 
 ## Known limits

@@ -66,14 +66,17 @@ character_fallback=dd_male
 
 ## Switch in game (F9)
 
-F9 > Player > **Character (you)** (`lua/coop/debug_character.lua`, not run-proven yet): either player switches
+F9 > Player > **Character (you)** (`lua/coop/debug_character.lua`; Snake, DD male/female, avatar and Back to my default
+run-proven in hidden runs 315fa18e and 308c7879 on both screens; Ocelot/Quiet are off the page): either player switches
 their own character while playing. The switch keeps your own character in the save the game's way
 (`TppPlayer.SaveCurrentPlayerType`), writes the type vars and waits for `PlayerStatus.PARTS_ACTIVE`; the world is not
 reloaded, so the partner stays where they are and sees the new look through the look frames. The choice
 (`Tpp.MgsCoop.characterPick`) replaces `character=` at every later load of this game session; **Back to my default**
 returns to `character=` (a launcher host: Snake), else to your save's own character. Ocelot and Quiet need the bypass,
 so only a player whose `character=` is `ocelot`, `quiet` or `story` gets them (at once while the bypass is on this
-mission, else at the next load). Log: `character=switch; mission=..; id=..; pick=..; result=switched|ready|kept|next_load|timeout|reverted; type=..`.
+mission, else at the next load). Quiet in place also refuses as the buddy or in a Quiet-conflict mission
+(`character_quiet_unavailable;reason=buddy_quiet|quiet_conflict`), and Back to my default leaves a saved Ocelot/Quiet for
+the next load while the bypass is off. Log: `character=switch; mission=..; id=..; pick=..; result=switched|ready|kept|next_load|timeout|reverted; type=..`.
 
 **A kept choice is checked after the restore (10-31).** `requested=snake` with `reason=override_sortie_kept` was decided
 on the vars from before `TppVarInit.InitializeForNewMission` restored the mission-start slot; a friend host's slot held an

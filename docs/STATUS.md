@@ -1,3 +1,22 @@
+## 2026-10-31: F9 Character switch run-proven and on; host Snake after a fresh start (`wp/integ-dbg1031`, local only)
+
+**Players get:** F9 > Player > Character (you): Snake, DD soldier (male/female), My avatar and Back to my default switch
+your own character in place (no reload; the partner stays put) and the partner sees the new look. After a fresh start
+(Travel to Africa) the host stayed Snake on both screens. Ocelot/Quiet rows are off the page ("Not available yet").
+
+- **Runs** (hidden worker, play, WanSim bad, native gun, research, mb-ladder; both screens, frames looked at, sheets
+  `best-sheet-315fa18e.jpg`, `best-sheet-308c7879.jpg`): host DD male (face 192) -> Snake, guest DD female (face 350),
+  host avatar (guest: `avatar_as_snake=1`), host DD female -> Back to my default (save's Snake). Each: `character_ready;
+  type=N;parts=active`, the partner's `partner_look=apply; ... type=N` and its readback `raw1=N`. Host Ocelot ->
+  `character_needs_launcher_pick`. Fresh start 30020: host `requested=snake; applied=snake; ... start=new`,
+  `allocated; vars=0`, readback `applied; expect=0`, guest `partner_look type=0`.
+- **Not proven:** Ocelot/Quiet in place or at the next load (the worker guest's Quiet fell back to DD male,
+  `bypass_unavailable`; the Quiet press gave `character_next_load;quiet`); the 10-31 stale-Ocelot slot (`C.Post` late
+  re-plan) live: fixture only. Run 315fa18e: a guard shot the idle host in Africa without auto-heal (scenario issue).
+- **Low review notes fixed** (red/green): Quiet in place obeys the buddy/conflict rule; Back to my default keeps a saved
+  Ocelot/Quiet for the next load while the bypass is off; the pick is stored only after a successful switch; STATE_V1
+  accepts the pending kinds `character` and `give` (the F9 state stayed frozen while a switch or give polled).
+
 ## 2026-10-31: debug-menu round integrated (`wp/integ-dbg1031`, local only) -- not run-proven yet
 
 **Players would get (once proven):** the four entries below together in one build: the host is Snake again and F9
