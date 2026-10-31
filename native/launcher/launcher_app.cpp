@@ -370,9 +370,16 @@ void LauncherUi::SetupStatus() {
         Spinner(ImVec2(p.x + Px(9.0f), p.y + Px(11.0f)), 6.5f, col::kAccent, time_);
         ImGui::SetCursorScreenPos(ImVec2(p.x + Px(26.0f), p.y));
         Text("Getting co-op ready...", col::kText, kBody, GetFonts().semibold, -1.0f);
-        ImGui::SameLine(0.0f, Px(10.0f));
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
-        Text(ui::PreparingNote(setup_uinfo).c_str(), col::kTextFaint, kSmall, nullptr, -1.0f);
+        // Waiting for the player (MGSV still running, Steam not logged in; fb1031): what to do, on its own line.
+        const std::string wait = model_.setup_wait_text();
+        const std::string note = ui::PreparingNote(setup_uinfo, wait);
+        if (!wait.empty() && note == wait) {
+            Text(note.c_str(), col::kText, kSmall, nullptr, 0.0f);
+        } else {
+            ImGui::SameLine(0.0f, Px(10.0f));
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + Px(2.0f));
+            Text(note.c_str(), col::kTextFaint, kSmall, nullptr, -1.0f);
+        }
         Gap(4.0f);
         return;
     }

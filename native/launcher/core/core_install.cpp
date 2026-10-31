@@ -468,10 +468,11 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
     auto step = [&](int index, StepState state, const std::string& detail, float progress) {
         if (report) report(StepReport{index, state, detail, progress});
     };
-    auto fail = [&](int index, const std::string& message) {
+    // `reason` (step 0, fb1031): which check stopped it, in launcher.log.
+    auto fail = [&](int index, const std::string& message, const char* reason = nullptr) {
         error = message;
         step(index, StepState::failed, message, 0.0f);
-        LauncherLog(env, paths, "setup=failed; step=" + std::to_string(index));
+        LauncherLog(env, paths, "setup=failed; step=" + std::to_string(index) + (reason ? std::string("; reason=") + reason : std::string()));
         return false;
     };
     auto cancelled = [&]() { return cancel && cancel->load(); };
@@ -480,30 +481,32 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
     // ---- 0: the game ----
     step(0, StepState::running, "Checking the game files (a few seconds)...", 0.1f);
     std::string problem = GamePathProblem(paths.game);
-    if (!problem.empty()) return fail(0, problem);
+    if (!problem.empty()) return fail(0, problem, "path");
     Settings settings;
     LoadSettings(paths, settings);
     const PackageInfo package = ReadPackage(paths);
     problem = GameFileProblem(paths, settings, package);
-    if (!problem.empty()) return fail(0, problem);
-    if (AnyGameRunningIn(env, paths.game)) return fail(0, "MGSV is running from this folder. Quit it normally, then try again.");
+    if (!problem.empty()) return fail(0, problem, "files");
+    if (AnyGameRunningIn(env, paths.game))
+        return fail(0, "Metal Gear Solid V is still running. Close it first, then press Try again.", "game_running");
     if (PlaySessionLive(env, paths))
         return fail(0, "Co-op is still on for a game started from this folder. Quit MGSV (or close the other Diamond Dogs Together "
-                       "window), then try again.");
-    if (IsDir(paths.mod) && HasReparsePoint(paths.mod, paths.game)) return fail(0, "The mgs-coop folder is a link; that is not supported.");
+                       "window), then try again.", "session_live");
+    if (IsDir(paths.mod) && HasReparsePoint(paths.mod, paths.game))
+        return fail(0, "The mgs-coop folder is a link; that is not supported.", "mod_link");
     if (IsDir(paths.mod)) {
         CleanupSession(env, paths, false);
         RemoveStaleHandoff(env, paths);
     }
     step(0, StepState::running, "Finding your Steam account...", 0.6f);
     const SteamAccount account = ResolveSteamAccount(env);
-    if (!account.ok) return fail(0, account.problem);
+    if (!account.ok) return fail(0, account.problem, account.steam_root.empty() ? "steam_missing" : "steam_login");
     std::vector<std::string> save_files;
     for (const wchar_t* app : {L"287700", L"311340"})
         for (const ManifestRow& r : HashManifest(account.userdata, {app})) save_files.push_back(r.path);
     problem = GamePathProblem(paths.game, save_files);
-    if (!problem.empty()) return fail(0, problem);
-    if (cancelled()) return fail(0, "Setup was stopped.");
+    if (!problem.empty()) return fail(0, problem, "save_path");
+    if (cancelled()) return fail(0, "Setup was stopped.", "stopped");
     step(0, StepState::done, "Game version OK (Steam 1.0.15.4, original files).", 1.0f);
 
     // ---- 1: real-save backup ----
@@ -609,9 +612,27 @@ bool SetupRunningElsewhere(const std::wstring& game_root) {
     return !taken;
 }
 
-std::string SetupBusyReason(Env& /*env*/, const InstancePaths& /*paths*/) { return {}; }
+std::string SetupBusyReason(Env& env, const InstancePaths& paths) {
+    if (SetupRunningElsewhere(paths.game)) return "other_setup";
+    if (AnyGameRunningIn(env, paths.game)) return "game_running";
+    if (PlaySessionLive(env, paths)) return "session_live";
+    // Steam is installed for this Windows user but nobody is logged in, and the saves alone do not name the account.
+    const SteamAccount account = ResolveSteamAccount(env);
+    if (!account.ok && !account.steam_root.empty()) return "steam_login";
+    return {};
+}
 
-std::string SetupBusyText(const std::string& /*reason*/) { return {}; }
+std::string SetupBusyText(const std::string& reason) {
+    if (reason == "game_running") return "Close Metal Gear Solid V first. Co-op gets ready by itself once the game has closed.";
+    if (reason == "steam_login") return "Start Steam and log in. Co-op gets ready by itself once you are logged in.";
+    if (reason == "session_live")
+        return "Quit MGSV (or close the other Diamond Dogs Together window): co-op is still on for a game started from this folder. "
+               "This window carries on by itself afterwards.";
+    if (reason == "other_setup")
+        return "Co-op is being set up by another Diamond Dogs Together window for this game folder. This window carries on by itself "
+               "once it has finished.";
+    return {};
+}
 
 // ---- Uninstall --------------------------------------------------------------------------
 bool Uninstall(Env& env, const InstancePaths& paths, std::string& report, std::string& error) {
