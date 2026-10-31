@@ -142,7 +142,7 @@ c.rx(5, 3, 30050, 10000, 800, -40000, 90000, 0)
 w = c.find("warp")
 check(w and math.abs(w[2].pos[1] - 13) < 1e-6 and math.abs(w[2].pos[3] + 40) < 1e-6 and w[2].rotY == 270, "receiver warps beside the caller")
 check(c.lasttx()[3] == 4 and c.lasttx()[9] == 0 and c.notes[#c.notes][3] == 3, "answer accepted, note: brought you here")
-check(c.find("camera") and c.find("camera")[2].rotY == 270, "the brought player's camera turns behind it (facing the caller)")
+check(c.find("camera") and c.find("camera")[2].rotY == -90, "the brought player's camera turns behind it (facing the caller; 270 wrapped)")
 -- Refusals: riding, cutscene, downed.
 c = setup(false); c.foot = false
 c.rx(6, 3, 30050, 0, 0, 0, 0, 0)

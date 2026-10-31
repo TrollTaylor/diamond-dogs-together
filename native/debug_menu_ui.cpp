@@ -906,7 +906,7 @@ void World(const Snapshot& s) noexcept {
     Row("travel_mother_base", s, {nullptr, 190.0f});
     Row("partner_bring", s, {nullptr, 190.0f});
     Wrapped("Takes both players there at once: no helicopter ride, no menus. A guest's press asks the host, who leads; "
-        "Bring partner here fetches your partner even from another mission.");
+        "Bring partner here fetches your partner in your area (in another area, use Go to first).");
     Heading("Time");
     const char* times[] = {"world_time_dawn", "world_time_noon", "world_time_dusk", "world_time_midnight", "world_time_add_1h"};
     for (int i = 0; i < 5; ++i) { if (i) ImGui::SameLine(); Row(times[i], s, {nullptr, 150.0f}); }
