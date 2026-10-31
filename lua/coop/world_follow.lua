@@ -211,7 +211,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
-if t[4] == 30050 then A.foot("seeds", t[2] == 4) end
+if t[4] == 30050 then pcall(A.foot, "seeds", t[2] == 4) end
 if buddy then C.seeded(t[4], t[2]) end
 if relief then R.seeded(t[4], t[2]) end
 return true
