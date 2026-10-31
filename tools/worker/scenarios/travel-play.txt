@@ -1,0 +1,66 @@
+# The debug menu Travel (docs/debug-menu.md "Travel"): the debug menu Travel + Bring partner here at the SHIPPED play defaults (no labsetting
+# line), -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder.
+# (a) the host presses Go to Africa in Mother Base -> both land in 30020 (Masa Village jeep spot);
+# (b) the GUEST presses Go to Mother Base in Africa -> both land at the MB deck ladder;
+# (c) the guest stands ~29 m away on the MB deck; the host presses Bring partner here -> the guest warps beside it.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+both debug godmode 1
+wait 4000
+both capture mb-start
+# (a) host: Go to Africa
+logmark both
+host run travel 30020
+host expect travel_started;target=30020;linked=1
+waitlog guest 'event=travel; step=start; target=30020' 20
+waitlog host 'event=travel; step=hop1; from=30050; ok=1' 20
+wait 6000
+both capture a-leaving
+waitlog host 'event=travel; step=hop2; from=40050; target=30020; ok=1' 150
+waitlog host 'event=travel; step=arrived; mission=30020' 200
+waitlog guest 'event=travel; step=arrived; mission=30020' 200
+both capture a-arrived
+wait 2500
+both capture a-arrived-2
+waitlog host 'event=paired' 90
+waitlog guest 'event=paired' 90
+wait 3000
+both capture a-paired
+# (b) guest: Go to Mother Base
+logmark both
+guest run travel 30050
+guest expect travel_asked;target=30050
+waitlog host 'event=travel; step=start; target=30050; from=30020; lead=1; by=partner' 20
+waitlog guest 'event=travel; step=start; target=30050' 20
+waitlog host 'event=travel; step=arrived; mission=30050' 240
+waitlog guest 'event=travel; step=arrived; mission=30050' 240
+both capture b-arrived
+wait 2500
+both capture b-arrived-2
+waitlog host 'event=paired' 90
+waitlog guest 'event=paired' 90
+wait 3000
+# (c) same mission: the guest goes ~29 m away, the host brings it
+guest debug teleport 9.0 0.8 -41.1 0
+wait 3000
+both capture c-apart
+logmark both
+host run bring_partner
+host expect bring_sent;mission=30050
+waitlog guest 'event=travel; step=brought; mission=30050' 30
+wait 1500
+both capture c-brought
+wait 2500
+both capture c-brought-2
+# (c2) the guest brings the host back (both directions)
+host debug teleport 9.0 0.8 -41.1 180
+wait 3000
+logmark both
+guest run bring_partner
+guest expect bring_sent;mission=30050
+waitlog host 'event=travel; step=brought; mission=30050' 30
+wait 1500
+both capture c2-brought
