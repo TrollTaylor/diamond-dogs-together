@@ -1060,8 +1060,55 @@ inline void CarryPoint(const float* s, const float* pv, float py, const float* n
     out[2] = nv[2] - rx * sn + rz * c;
 }
 inline CarryOut CarryStep(Carry& c, const CarryIn& in) noexcept {
-    CarryOut o{};  // red: not built yet
-    if (in.now_ms == 0xFFFFFFFFFFFFFFFFull) c.have = true;
+    CarryOut o{};
+    const bool riding = in.on && in.seated && in.veh_ok && std::isfinite(in.veh[0] + in.veh[1] + in.veh[2] + in.yaw);
+    const bool blending = riding && FollowBlending(in.follow);
+    // An episode ends when the blend completes, the ride ends, the blend object changes or it restarts (elapsed went back).
+    if (c.blending && (!blending || in.follow.blend != c.blend || in.follow.elapsed + 0.0001f < c.last_elapsed)) {
+        o.event = CarryEvent::close;
+        o.writes = c.blend_writes;
+        o.carried = c.carried;
+        o.dur = c.blend_dur;
+        o.ms = in.now_ms >= c.blend_ms ? in.now_ms - c.blend_ms : 0;
+        c.blending = false;
+    }
+    if (!riding) {
+        c.have = false;
+        return o;
+    }
+    const bool fresh = c.have && c.vehicle == in.vehicle && in.now_ms > c.ms && in.now_ms - c.ms <= kCarryGapMs;
+    if (blending && !c.blending && o.event == CarryEvent::none) {
+        c.blending = true;
+        c.blend = in.follow.blend;
+        c.blend_ms = in.now_ms;
+        c.blend_dur = in.follow.dur;
+        c.carried = 0.0f;
+        c.blend_writes = 0;
+        c.last_elapsed = in.follow.elapsed;
+        ++c.blends;
+        o.event = CarryEvent::open;
+    }
+    if (c.blending) c.last_elapsed = in.follow.elapsed;
+    if (blending && fresh) {
+        float s[3]{};
+        CarryPoint(in.follow.start, c.veh, c.yaw, in.veh, in.yaw, s);
+        const float dx = s[0] - in.follow.start[0], dy = s[1] - in.follow.start[1], dz = s[2] - in.follow.start[2];
+        const float step = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float vx = in.veh[0] - c.veh[0], vy = in.veh[1] - c.veh[1], vz = in.veh[2] - c.veh[2];
+        const float vstep = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (!std::isfinite(step) || vstep > kCarryMaxStep || step > kCarryMaxStep * 2.0f) {
+            ++c.warps;
+        } else if (step >= kCarryMinStep) {
+            o.write = true;
+            o.step = step;
+            for (unsigned i = 0; i < 3; ++i) o.start[i] = s[i];
+        }
+    }
+    c.have = true;
+    c.vehicle = in.vehicle;
+    for (unsigned i = 0; i < 3; ++i) c.veh[i] = in.veh[i];
+    c.yaw = in.yaw;
+    c.ms = in.now_ms;
     return o;
 }
 // The driver reports a write it made (ok) so the episode counts only what reached the game.
@@ -1080,7 +1127,7 @@ inline void CarryWritten(Carry& c, const CarryOut& o, bool ok) noexcept {
 // is kept; once the vehicle moves (>= kCensusMoveSpeed) an episode measures lag = |cs - cs0| (m), lag / speed (ms) and
 // the body's drift in the vehicle frame (B - V turned by -yaw, against its rest value). Read only.
 inline constexpr float kCensusRestSpeed = 0.3f, kCensusMoveSpeed = 1.0f, kCensusMsSpeed = 3.0f;
-inline constexpr std::uint64_t kCensusRestMs = 300, kCensusEndMs = 600, kCensusLineMs = 250, kCensusGapMs = 500;
+inline constexpr std::uint64_t kCensusRestMs = 150, kCensusEndMs = 600, kCensusLineMs = 250, kCensusGapMs = 500;
 inline constexpr unsigned kCensusFrameTicks = 90, kCensusFrameEpisodes = 4;
 struct CensusIn {
     bool ok = false;  // every read below succeeded this tick
