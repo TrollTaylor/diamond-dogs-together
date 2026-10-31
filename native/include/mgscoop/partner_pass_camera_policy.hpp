@@ -651,7 +651,18 @@ inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2;
 // gun at 15 with the rifle body across the first-person view and no shot. A blocked aim keeps the stock shoulder view and
 // switches only if it turns clear (15 -> 7; [I] the shoulder pose follows the view, no run has shown it).
 inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 7 || mode == 9 || mode == 10); }
-enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop, retry };
+enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop, retry, fallback };
+// Design 8.56 [O run 859964ce]: a set at 7 does not keep the aim clear. From seat 1 looking 8 deg down the shoulder raise
+// reached 7, the set took the gun to 15 within 17 ms and it stayed 15 (rifle across, nothing fired), while the first
+// person looked about 3.5 deg lower than the shoulder aim at the same turn. Our bit read set while the gun stays at 15 for
+// kFpvBlockedMs is cleared (fallback): the stock shoulder view and its red mark come back. In that aim it is set again only
+// once the shoulder aim (the aim camera module's look angles) has turned up by kFpvRearmPitch or sideways by kFpvRearmYaw
+// from where it came back, and at most kFpvFallbacksPerAim falls per aim, so the view cannot flicker; the next aim sets at
+// 7 / 9 / 10 as before.
+inline constexpr std::uint64_t kFpvBlockedMs = 100;
+inline constexpr float kFpvRearmPitch = 0.07f;  // rad up (the look pitch is positive down), more than the 3.5 deg offset
+inline constexpr float kFpvRearmYaw = 0.175f;   // rad (10 deg) either way
+inline constexpr std::uint8_t kFpvFallbacksPerAim = 2;
 // A clear of ours stays pending until a read shows the bit clear (a failed write, the game's plain store over our
 // compare-exchange); it is retried on later ticks, at most kFpvClearTries times, then given up (design 8.47).
 inline constexpr std::uint32_t kFpvClearTries = 30;
@@ -663,6 +674,7 @@ inline const char* FpvEventName(FpvEvent e) noexcept {
     case FpvEvent::opt_out: return "opt_out";
     case FpvEvent::restore: return "restore";
     case FpvEvent::stop: return "stop";
+    case FpvEvent::fallback: return "fallback";
     default: return "none";
     }
 }
@@ -677,6 +689,13 @@ struct Fpv {
     std::uint32_t pending = 0;        // ours, cleared but not yet read clear (kept over a boarding's end and a mission's)
     std::uint32_t pending_tries = 0;  // retries of the pending clear
     std::uint32_t sets = 0, restores = 0, aims = 0, opt_outs = 0, give_ups = 0;
+    // Design 8.56: the blocked first person's fall back to the shoulder view (FpvStep).
+    bool fallback = false;         // this aim fell back: no set until the shoulder aim turns (kFpvRearm*)
+    bool ref_ok = false;           // the shoulder aim's look angles where it came back
+    float ref_pitch = 0.0f, ref_yaw = 0.0f;
+    std::uint8_t aim_falls = 0;    // falls this aim (kFpvFallbacksPerAim)
+    std::uint64_t blocked_ms = 0;  // the first tick of the current run of 15 with our bit set (0: none)
+    std::uint32_t fallbacks = 0;
 };
 struct FpvIn {
     bool want = false;     // the key (or the lab lever) on, the hooks there, nothing latched
@@ -689,6 +708,10 @@ struct FpvIn {
     std::uint32_t toggles = 0;  // impl+0x60
     bool slot_ok = false;
     std::uint8_t slot = 0;      // rec+0x3DA
+    bool blocked = false;       // aiming with the gun at the blocked mode 15 (design 8.56)
+    std::uint64_t now_ms = 0;
+    bool ang_ok = false;        // the aim camera module's look angles (read only during a fall)
+    float pitch = 0.0f, yaw = 0.0f;
 };
 struct FpvOut {
     FpvEvent event = FpvEvent::none;
@@ -711,6 +734,12 @@ inline FpvOut FpvRetry(Fpv& s, FpvOut o) noexcept {
     o.clear = s.pending;
     return o;
 }
+inline void FpvFallReset(Fpv& s) noexcept {
+    s.fallback = s.ref_ok = false;
+    s.ref_pitch = s.ref_yaw = 0.0f;
+    s.aim_falls = 0;
+    s.blocked_ms = 0;
+}
 inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
     FpvOut o{};
     // A pending clear is confirmed by a read that shows the bit clear.
@@ -728,6 +757,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         o.clear = s.pending;
         s.active = s.opt_out = s.aim = false;
         s.ours = s.seen = 0;
+        FpvFallReset(s);
         s.vehicle = kVehicleUnknown;
         s.seat = kSeatUnknown;
         return o;
@@ -737,6 +767,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         s.active = true;
         s.opt_out = s.aim = false;
         s.ours = s.seen = 0;
+        FpvFallReset(s);
         s.vehicle = in.vehicle;
         s.seat = in.seat;
         o.event = FpvEvent::arm;
@@ -748,6 +779,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
     if (!in.aiming) {
         s.aim = false;
         s.seen = 0;
+        FpvFallReset(s);
         if (s.ours) {
             const std::uint32_t still = s.ours & toggles;
             s.ours = 0;
@@ -764,6 +796,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
     if (!s.aim) {
         s.aim = true;
         s.seen = 0;
+        FpvFallReset(s);
         ++s.aims;
     }
     if (s.opt_out) return FpvRetry(s, o);
@@ -779,10 +812,49 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         return o;
     }
     s.seen |= toggles & ~s.pending;
+    // Design 8.56: our bit read set and the gun held at 15 for kFpvBlockedMs: clear it (the shoulder view back). Our own
+    // clear leaves `seen`, so it is no opt-out; it stays pending until a read shows it clear.
+    const std::uint32_t held = s.ours & toggles;
+    if (in.blocked && held) {
+        if (!s.blocked_ms) s.blocked_ms = in.now_ms ? in.now_ms : 1;
+        if (in.now_ms >= s.blocked_ms && in.now_ms - s.blocked_ms >= kFpvBlockedMs) {
+            s.ours &= ~held;
+            s.seen &= ~held;
+            s.pending |= held;
+            s.blocked_ms = 0;
+            s.fallback = true;
+            s.ref_ok = false;
+            if (s.aim_falls < 0xFF) ++s.aim_falls;
+            ++s.fallbacks;
+            o.event = FpvEvent::fallback;
+            o.reason = "blocked";
+            o.clear = s.pending;
+            return o;
+        }
+    } else {
+        s.blocked_ms = 0;
+    }
     if (!in.ready) return FpvRetry(s, o);
     const int bit = in.slot_ok ? FpvBit(in.slot) : -1;
     if (bit < 0) return FpvRetry(s, o);
     const std::uint32_t b = 1u << bit;
+    const char* set_reason = "ready";
+    if (s.fallback) {
+        // The shoulder view after a fall: the first look angles read with the bit clear are the reference; set again only
+        // once the aim has turned up or sideways from it, and not after kFpvFallbacksPerAim falls.
+        if ((s.pending & b) || (toggles & b) || !in.ang_ok || !std::isfinite(in.pitch) || !std::isfinite(in.yaw))
+            return FpvRetry(s, o);
+        if (!s.ref_ok) {
+            s.ref_ok = true;
+            s.ref_pitch = in.pitch;
+            s.ref_yaw = in.yaw;
+            return FpvRetry(s, o);
+        }
+        const bool turned = s.ref_pitch - in.pitch >= kFpvRearmPitch || std::fabs(WrapPi(in.yaw - s.ref_yaw)) >= kFpvRearmYaw;
+        if (!turned || s.aim_falls >= kFpvFallbacksPerAim) return FpvRetry(s, o);
+        s.fallback = s.ref_ok = false;
+        set_reason = "rearm";
+    }
     if (s.pending & b) {
         // Our own clear not landed yet and this aim wants the bit again: ours again, no clear.
         s.pending &= ~b;
@@ -793,7 +865,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         s.ours |= b;
         ++s.sets;
         o.event = FpvEvent::set;
-        o.reason = "ready";
+        o.reason = set_reason;
     }
     return FpvRetry(s, o);
 }
