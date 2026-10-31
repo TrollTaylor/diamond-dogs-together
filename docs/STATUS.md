@@ -1,3 +1,37 @@
+## October 31, 2026: fb1031 arrival - a joining guest starts Mother Base on foot (`wp/mb-arrival`; unit-tested, no hidden run reached the game)
+
+Report (online 0.14.5 over Steam): the guest joined the host at Mother Base and was stuck "in a cutscene / the helicopter";
+the guest saw the host, the host never saw the guest. Host log only (the guest's Collect logs no longer held that launch).
+
+- **Diagnosis [O host log]:** on every guest entry into 30050 (the host's ACC sortie replayed as follow kind 6, then two
+  title Continues after relaunching) the guest's remote action stayed `102(heli)` and the host hid it the whole time
+  (`partner_ride=hide; reason=ride`; never realizing it is a consequence, not a second bug). The guest played its own
+  co-op save (save handoff STATE need=0 every time; no offer), saved at Mother Base still in the helicopter, so its
+  Continues came back into it. The host itself started on foot at f30050's default spot (9, 0.8, -42): [I] it had a
+  queued Mother Base opening demo (f30050 `IsUseRoute()` is false then) while the guest rode the host's route. Why
+  the guest's helicopter never landed is not visible without the guest's log [U]. The guest's pause-menu Restart
+  (REQ kind 3) and Continue (kind 4) were refused `host_only`: no way out.
+- **Fix (default on, no key; `lua/coop/world_follow.lua` `F.arrival`, design 9.2):** a linked co-op guest entering
+  Mother Base with a helicopter start gets the vanilla `TppMission.ResetMBFreeStartPositionToCommand()` (the on-foot
+  Command start of the vanilla MB restart) after `ReservePlayerLoadingPosition` and after every seed apply, and its
+  queued MB demo is cleared. A guest riding a helicopter at Mother Base gets its pause-menu Restart locally (Continue
+  runs that restart) and lands on foot. The host, free roam and on-foot starts are unchanged.
+- **Collect logs:** `script-observer.log` keeps the last 8 game launches, 2 MB each (first quarter and end), 16 MB in
+  all (was the last 3 launches cut to a 3 MB tail; the guest's session spanned 3 launches and a later session followed).
+- **Lab driver:** `world.trigger` `goto=30050` (Mother Base -> 40050 -> Mother Base on the Command platform 1 approach
+  route) and scenario `tools/worker/scenarios/mb-arrival-follow.txt`.
+- **Checks:** world_follow_lua_check 194 (sortie replay with the host's helicopter seeds, restart/Continue of a
+  helicopter save, the W4 shared Continue keeping the host spawn, host/free roam/on-foot/unlinked unchanged, the way
+  out and its refusals, a throwing reset), ddt_core_tests CollectLogsLaunches, world_receipt/world_wire/world_goto,
+  worker_session_tests; the game-source checks (world_follow_game, world_sync_composed) pass unchanged.
+- **Hidden runs: none reached the game [U].** `mb-arrival-follow` (`-Mode lab -WanSim bad -PartnerProfile native
+  -NativeStage gun -BuildProfile research -SaveSeed real`): 13:52 refused before admission (the guest game's overlay
+  `D3D11CreateDeviceAndSwapChain` hr=0x8007000E, as the camera and melee tracks' runs today); its retry (14:00) and runs
+  2 (14:06) and 3 (14:11) refused in the preflight: `Audited command timed out: worker-policy-fixture` with no output
+  at all (the same tests/worker_checks_tests.ps1 passes in 4 s run directly; the fb1031-mb track's preflights hit the
+  same timeout). So the on-foot arrival, both copies seeing each other and the way out are **not shown in the game**;
+  the fix is on by default on unit-test evidence only. Slim receipts: run archive `fb1031/arrival/`.
+
 ## October 31, 2026: 0.14.5 (seats in play, E press only for the driver's seat, shooting from seats, the vehicle fixes, the close crash)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.5-20261031T160939Z-b16981a1/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `f8eba06` with Release receipt `20261031-160809-324523450267433b85ad21a2a5966831` (passed, 324 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.5+f8eba06` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.4.
