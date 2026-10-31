@@ -1,19 +1,22 @@
-# m6m7i (design 8.56): the front-seat downward-aim A/B, lab, one run. The setup is m6m7h-seat-fpv-shots-lab.txt part B
-# (the host drives, the guest boards seat 1, the host gets off, warps the one awake guard ~11 m front-right of seat 1
-# and steps back to the driver's door; the camp sleeps, 'enemy ignore' on all). Part A (roles swapped) is left out.
-# m6m7h ffc0411d: at the first set (cam_turn -40 2, 2 deg down) the guard stood under the reticle; the scripted in-aim
-# re-aim at his torso (enemy_aim_nearest 1.1, ~8 deg down) left the rifle across the first-person view with the red
-# mark and 2 presses fired nothing. Is that the automatic first person or the jeep itself? Legs, each on the guest:
-#   ON1 (partner_seat_fpv as shipped, the key): press 1 at the first set (does it fire, does it HIT him), then the
-#       re-aim and presses 2 and 3.
-#   OFF (lab lever 'passcam seatfpv off': the stock shoulder view): the same first direction, press 4, then the same
-#       re-aim, presses 5 and 6.
-#   ON2 (lever back to 'key'): the same raise and re-aim, press 7 (the A-B-A check: the guard may have moved).
+# m6m7i (design 8.56): the front-seat downward-aim A/B, lab. The setup is m6m7h-seat-fpv-shots-lab.txt part B (the
+# host drives, the guest boards seat 1, the host gets off, warps the one awake guard ~11 m front-right of seat 1 and
+# steps back to the driver's door; the camp sleeps, 'enemy ignore' on all). Part A (roles swapped) is left out.
+# Run e6ef6e4d (first version): at the first set (cam_turn -40 2) press 1 fired at gun 7 (the guard had crouched by
+# then; the shot went past him to 18 m); the in-aim enemy_aim_nearest 1.1 (8.3 deg down) took the first-person gun
+# to 15 (rifle across, red mark) and presses 2-3 fired nothing [O gun=15 trace]; with the lever off the shoulder view
+# at the first direction looked into the jeep's seat but fired at gun 7; the OFF re-aim picked another guard 26 m
+# behind (the first had walked off) and did not move the shoulder aim, so the downward A/B was not done. Now a FIXED
+# downward re-aim, the same in every leg: the in-aim 'enemy_cam_turn -40 8' (8 deg down at the same yaw).
+#   ON  (partner_seat_fpv as shipped): raise at -40 2, the set, press 1 at once and press 2 300 ms later (the hit
+#       try: the guard stood under the reticle at the set in ffc0411d and e6ef6e4d), then the in-aim re-aim to 8 deg
+#       down, presses 3 and 4.
+#   OFF (lab lever 'passcam seatfpv off', the stock shoulder view): raise at -40 2, the same in-aim re-aim, presses 5
+#       and 6.
+#   PRE (lever back to the key): cam_turn -40 8 BEFORE the raise (a player already looking down): press 7 (a blocked
+#       raise keeps the shoulder view by design 8.51).
 # The gun mode at each press: labsetting partner_pass_camera_trace=1 (lab-only logging, no behaviour change) logs the
-# local gun mode (gun=) every 100 ms while aiming and the seat first-person line on each change; 'guest debug passcam
-# status' right before each press is the press's marker in the guest's log (the trace lines after it carry its gun mode).
-# Read: guard_here; seat_fpv set / restore; partner_seat_shot lines (dist_cm against the guard's distance); the host's
-# world_lua obs (m=Dead / Unconscious / Neutralize) and damage lines; the frames on both copies.
+# local gun mode (gun=) every 100 ms while aiming; 'guest debug passcam status' right before each press is the
+# press's marker in the guest's log.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7i-seat-fpv-ab-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
@@ -86,35 +89,21 @@ host expect ^guard_here;
 wait 2500
 guest run spawn_sync
 host debug teleport 578.5 320.2 1155.5 -84
-# --- ON1: the shipped first person ---------------------------------------------------------------------------
+# --- ON: the shipped first person; the hit try, then the fixed downward re-aim -----------------------------------
 logmark both
 guest run enemy_cam_turn -40 2
 guest expect ^cam_turn;
 wait 800
 guest hold rmb 1500 nowait
-wait 900
-guest capture on1-aim0
-host capture on1-guard
-waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
-guest hold rmb 1500 nowait
-guest debug passcam status
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 4
 guest press lmb 120
 guest hold rmb 1500 nowait
 wait 50
 both capture p1-050
 guest hold rmb 1500 nowait
-wait 300
-both capture p1-350
+wait 250
+both capture p1-300
 guest hold rmb 1500 nowait
-wait 300
-guest hold rmb 1500 nowait
-guest run enemy_aim_nearest 1.1
-guest expect ^aim_nearest;ent=\d+;
-guest hold rmb 1500 nowait
-wait 600
-guest capture on1-reaim
-guest hold rmb 1500 nowait
-guest debug passcam status
 guest press lmb 120
 guest hold rmb 1500 nowait
 wait 50
@@ -123,23 +112,38 @@ guest hold rmb 1500 nowait
 wait 300
 both capture p2-350
 guest hold rmb 1500 nowait
-wait 300
+guest run enemy_cam_turn -40 8
+guest expect ^cam_turn;
+guest hold rmb 1500 nowait
+wait 700
+guest capture on-down
+guest hold rmb 1500 nowait
 guest hold rmb 1500 nowait
 guest debug passcam status
 guest press lmb 120
 guest hold rmb 1500 nowait
 wait 50
-guest capture p3-050
+both capture p3-050
 guest hold rmb 1500 nowait
 wait 300
-guest capture p3-350
+both capture p3-350
+guest hold rmb 1500 nowait
+guest hold rmb 1500 nowait
+guest debug passcam status
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture p4-050
 guest hold rmb 1500 nowait
 wait 300
+guest capture p4-350
+guest hold rmb 1500 nowait
 guest release
 wait 1500
-both capture on1-after
+both capture on-after
 host run vehicle_state_status 25608
-# --- OFF: the stock shoulder view (lab lever) ------------------------------------------------------------------
+guest run vehicle_state_status 25608
+# --- OFF: the stock shoulder view (lab lever), the same fixed re-aim ---------------------------------------------
 guest debug passcam seatfpv off
 wait 500
 logmark both
@@ -149,24 +153,14 @@ wait 800
 guest hold rmb 1500 nowait
 wait 900
 guest capture off-aim0
-host capture off-guard
 guest hold rmb 1500 nowait
-guest debug passcam status
-guest press lmb 120
 guest hold rmb 1500 nowait
-wait 50
-both capture p4-050
+guest run enemy_cam_turn -40 8
+guest expect ^cam_turn;
 guest hold rmb 1500 nowait
-wait 300
-both capture p4-350
+wait 700
+guest capture off-down
 guest hold rmb 1500 nowait
-wait 300
-guest hold rmb 1500 nowait
-guest run enemy_aim_nearest 1.1
-guest expect ^aim_nearest;ent=\d+;
-guest hold rmb 1500 nowait
-wait 600
-guest capture off-reaim
 guest hold rmb 1500 nowait
 guest debug passcam status
 guest press lmb 120
@@ -177,7 +171,6 @@ guest hold rmb 1500 nowait
 wait 300
 both capture p5-350
 guest hold rmb 1500 nowait
-wait 300
 guest hold rmb 1500 nowait
 guest debug passcam status
 guest press lmb 120
@@ -188,28 +181,20 @@ guest hold rmb 1500 nowait
 wait 300
 guest capture p6-350
 guest hold rmb 1500 nowait
-wait 300
 guest release
 wait 1500
 both capture off-after
-# --- ON2: the lever back to the key (first person again) ------------------------------------------------------
+# --- PRE: the key again; looking 8 deg down before the raise ---------------------------------------------------
 guest debug passcam seatfpv key
 wait 500
 logmark both
-guest run enemy_cam_turn -40 2
+guest run enemy_cam_turn -40 8
 guest expect ^cam_turn;
 wait 800
 guest hold rmb 1500 nowait
 wait 900
-guest capture on2-aim0
-host capture on2-guard
-waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+guest capture pre-aim0
 guest hold rmb 1500 nowait
-guest run enemy_aim_nearest 1.1
-guest expect ^aim_nearest;ent=\d+;
-guest hold rmb 1500 nowait
-wait 600
-guest capture on2-reaim
 guest hold rmb 1500 nowait
 guest debug passcam status
 guest press lmb 120
@@ -220,10 +205,9 @@ guest hold rmb 1500 nowait
 wait 300
 both capture p7-350
 guest hold rmb 1500 nowait
-wait 300
 guest release
 wait 1500
-both capture on2-after
+both capture pre-after
 guest run vehicle_state_status 25608
 host run vehicle_state_status 25608
 host run enemy_list
