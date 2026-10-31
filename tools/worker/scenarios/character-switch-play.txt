@@ -1,0 +1,93 @@
+# F9 character switch (docs/debug-menu.md "Character", docs/characters.md "Switch in game") and the host's
+# Snake after a fresh sortie start (the 10-31 friend-host DD-soldier bug). Shipped play defaults (no labsetting line):
+#   -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder
+# Characters: the worker writes lab.json's coop.ini characters (host default, guest quiet), so the guest's Quiet
+# bypass is on at the start. The launcher writes the host's coop.ini as snake; here the host's own "Snake" press
+# stores the same session pick, which the chunk uses like coop.ini at the fresh start of part (c).
+# Frames: every switch is captured on BOTH screens: the switching player's own camera and the partner looking at
+# them (placebehind). Proof per switch: the switcher's 'character=switch; ...; result=ready' and readback
+# 'character_readback=change; verdict=applied' (raw0 = the engine's own type), the partner's 'partner_look=apply;
+# ...; type=<n>' (avatar_as_snake=1 for an avatar, known limit), and the frames.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+# The stock Mother Base cutscene plays on both copies right after gameplay (travel-play run 409cb374).
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+both capture start
+# (a) the HOST switches: DD soldier (male), then Snake. The guest watches from 5 m behind.
+placebehind guest host 5
+wait 2000
+logmark both
+host run character dd_male
+host expect ^character_switched;dd_male$
+waitlog host 'character=switch; mission=30050; .*pick=dd_male; result=ready; type=1' 40
+waitlog host 'character_readback=change; verdict=applied; expect=1' 40
+waitlog guest 'partner_look=apply; R=1; source=net; type=1' 40
+wait 2000
+both capture a-host-ddmale
+logmark both
+host run character snake
+host expect ^character_switched;snake$
+waitlog host 'character=switch; mission=30050; .*pick=snake; result=ready; type=0' 40
+waitlog host 'character_readback=change; verdict=applied; expect=0' 40
+waitlog guest 'partner_look=apply; R=1; source=net; type=0' 40
+wait 2000
+both capture a-host-snake
+# (b) the GUEST switches: DD soldier (female), then back to Quiet (its bypass is still on this mission).
+placebehind host guest 5
+wait 2000
+logmark both
+guest run character dd_female
+guest expect ^character_switched;dd_female$
+waitlog guest 'character=switch; mission=30050; .*pick=dd_female; result=ready; type=2' 40
+waitlog host 'partner_look=apply; R=1; source=net; type=2' 40
+wait 2000
+both capture b-guest-ddfemale
+logmark both
+guest run character quiet
+guest expect ^character_(switched|next_load);quiet$
+waitlog guest 'character=switch; mission=30050; .*pick=quiet; result=(ready|next_load)' 40
+waitlog host 'partner_look=apply; R=1; source=net; type=6' 40
+wait 2000
+both capture b-guest-quiet
+# A refusal the host sees as a toast: no Ocelot for a host without an Ocelot/Quiet/Story launcher pick.
+host run character ocelot
+host expect ^character_needs_launcher_pick$
+# (c) fresh sortie start (start=new, the friend-host path): the host leads Travel to Africa; the host stays Snake
+# on both screens and the guest's pick (Quiet) holds across the load.
+logmark both
+host run travel 30020
+host expect travel_started;target=30020;linked=1
+waitlog host 'character=apply; mission=30020; requested=snake; applied=snake; .*start=new' 200
+waitlog host 'character=allocated; mission=30020; vars=0; ' 200
+waitlog guest 'character=apply; mission=30020; requested=quiet; applied=quiet' 200
+waitlog host 'event=travel; step=arrived; mission=30020' 200
+waitlog guest 'event=travel; step=arrived; mission=30020' 200
+waitlog host 'character_readback=start; verdict=applied; expect=0' 60
+waitlog host 'event=paired' 90
+waitlog guest 'event=paired' 90
+waitlog guest 'partner_look=apply; R=1; source=net; type=0' 60
+waitlog host 'partner_look=apply; R=1; source=net; type=6' 60
+wait 3000
+waitgameplay host 120
+waitgameplay guest 120
+placebehind guest host 5
+wait 2000
+both capture c-fresh-host-snake
+placebehind host guest 5
+wait 2000
+both capture c-fresh-guest-quiet
+# (d) back to my default: the host's worker coop.ini is 'default', so its own save type comes back.
+logmark both
+host run character default
+host expect ^character_(switched|kept);own$
+wait 4000
+placebehind guest host 5
+wait 2000
+both capture d-host-default
