@@ -413,15 +413,10 @@ W.handlers[FAST] = function(v)
     end
     R.trackPush(track, now, v[1], v[4], v[5], v[6], v[7])
 end
--- M6 seat races, E press only (design 4 rule 3, 8.55; 5 SEAT; protocol 21; partner_ride_race, on with the gun
--- profile): SEAT (op 54: seq, TppVehicle2 id, seat 0, role 1 host / 2 guest, action 1 claim / 2 grant / 3 deny /
--- 4 ready) keeps two players from both driving one empty vehicle. Standing at a door claims nothing (the user's rule:
--- only an actual E press). The host announces READY every READY_TICK; a guest that heard one within READY_MS holds
--- (the HOLD_MS native lease), so native site D keeps its E press in phase 1 (at most 1 s) and counts it (pseq); the
--- next tick claims that vehicle. The host grants and yields it (native grant_if, one lock with its own press) unless
--- its own press owns it (host_pressed) or it drives it (host_drives). NOTE 13 a=6: the denied guest; a=7: the host
--- tried a yielded one. Without READY (0.14.4, key off, an older host) the guest is stock. Once the winner drives, the
--- peer-driver policy decides.
+-- M6 seat races, E press only (design 8.55; protocol 21): SEAT op 54 (seq, id, seat 0, role 1 host / 2 guest, action
+-- 1 claim / 2 grant / 3 deny / 4 ready). A door claims nothing. A guest that heard READY holds; native site D keeps its
+-- E press (pseq), claimed at once; the host grants (grant_if) unless its press owns it or it drives it. Toast a=6 the
+-- denied guest, a=7 the host refused by a yield. No READY: stock.
 local SEAT = 54
 W.OP.SEAT = SEAT
 local S = {seq = 0, next = 0, granted = {}, gotGrant = {}, toastAt = 0, off = nil, n = {}, at = {}}
@@ -579,8 +574,10 @@ W.handlers[SEAT] = function(v)
     if action == DENY then
         local r = S.board(string.format("deny %d %d", id, DENY_MS))
         S.gotGrant[id] = nil
-        seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d", id, r and r.deny == id and 1 or 0))
-        if not R.localVehicle() then toast(6, now) end
+        -- The press took another seat (native end 4: the host's ride came first): no toast.
+        local seated = r and tonumber(r.pend) == 0 and r.dveh == id and r.dend == 4
+        seatLog(string.format("action=deny;vehicle=%d;role=guest;set=%d%s", id, r and r.deny == id and 1 or 0, seated and ";seated=1" or ""))
+        if not R.localVehicle() and not seated then toast(6, now) end
     elseif action == GRANT then
         local r = S.board(string.format("grant %d %d", id, GRANT_MS))
         if not S.gotGrant[id] or now - S.gotGrant[id] > GRANT_MS then

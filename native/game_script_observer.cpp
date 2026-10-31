@@ -4686,7 +4686,8 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     if (rs.done_seq != logged_done) {
         logged_done = rs.done_seq;
         LogFormat("partner_board=press; role=guest; vehicle=%u; end=%s; wait_ms=%u; presses=%u; timeouts=%u\r\n", unsigned(rs.done_vehicle),
-                  rs.done_end == 1 ? "grant" : rs.done_end == 2 ? "deny" : "timeout", rs.done_wait_ms, rs.pseq, rs.timeouts);
+                  rs.done_end == 1 ? "grant" : rs.done_end == 2 ? "deny" : rs.done_end == 4 ? "peer" : "timeout", rs.done_wait_ms, rs.pseq,
+                  rs.timeouts);
     }
     if (rs.commits != logged_commits) {
         logged_commits = rs.commits;
@@ -4694,10 +4695,10 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     }
     if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
                                 "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld,"
-                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d}",
+                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d,dend=%u,dveh=%u}",
                                 unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
                                 rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage, unsigned(rs.press), page, rs.pseq, rs.pend ? 1u : 0u,
-                                rs.timeouts, unsigned(rs.commit), gi)))
+                                rs.timeouts, unsigned(rs.commit), gi, unsigned(rs.done_end), unsigned(rs.done_vehicle))))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }

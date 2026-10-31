@@ -100,7 +100,8 @@ struct RaceState {
     // The host's own press commit (site B) while live (0xFFFF none).
     std::uint16_t commit;
     std::uint32_t commit_left_ms;
-    // The last press that ended at site D: its count, vehicle, how (1 grant, 2 deny, 3 timeout) and the press-to-answer
+    // The last press that ended at site D: its count, vehicle, how (1 grant, 2 deny, 3 timeout, 4 peer: the partner's ride
+    // came first and the passenger policy seated it) and the press-to-answer
     // ms; the host's press commits (site B) so far.
     std::uint32_t done_seq;
     std::uint16_t done_vehicle;

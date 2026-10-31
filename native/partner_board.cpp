@@ -70,7 +70,7 @@ std::atomic<std::uint64_t> g_press{kVehicleUnknown};
 std::atomic<std::uint32_t> g_press_seen{0}, g_pseq{0}, g_timeouts{0};
 std::atomic<bool> g_pend{false};
 std::atomic<std::uint64_t> g_commit{kVehicleUnknown};
-// The last press that ended (vehicle | end << 16 (1 grant, 2 deny, 3 timeout) | wait ms << 32), the ended count and
+// The last press that ended (vehicle | end << 16 (1 grant, 2 deny, 3 timeout, 4 peer) | wait ms << 32), the ended count and
 // the host's commit count (game_script_observer logs 'partner_board=press' from the receipt, never from the hook).
 std::atomic<std::uint64_t> g_done{kVehicleUnknown};
 std::atomic<std::uint32_t> g_done_seq{0}, g_commits{0};
@@ -309,7 +309,16 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
     in.granted = WordNames(g_grant.load(std::memory_order_acquire), in.vehicle, now);
     in.denied = WordNames(g_deny.load(std::memory_order_acquire), in.vehicle, now);
     bool result = ok;
-    switch (PressDecide(in)) {
+    const PressVerdict verdict = PressDecide(in);
+    if (verdict == PressVerdict::stock && in.open && in.peer_drives && in.pend_vehicle == in.vehicle) {
+        // The partner's ride arrived while this press was held (both pressed, run 23c7f305): the passenger policy seats
+        // it now, so it ends as 'peer' (end 4; Lua shows no deny toast for it).
+        g_pend.store(false, std::memory_order_release);
+        g_done.store(static_cast<std::uint64_t>(in.vehicle) | std::uint64_t{4} << 16 | static_cast<std::uint64_t>(now - in.pend_start) << 32,
+                     std::memory_order_release);
+        g_done_seq.fetch_add(1, std::memory_order_acq_rel);
+    }
+    switch (verdict) {
     case PressVerdict::start: {
         // A grant from before this press never lets it board (single use).
         std::uint64_t grant = g_grant.load(std::memory_order_acquire);
