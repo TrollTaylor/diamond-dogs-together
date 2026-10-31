@@ -1,3 +1,23 @@
+## 2026-10-31: the tie's seats and the door message (branch `wp/seat-tie`, local only, design 8.57)
+
+**Players get:** when both press E at an empty jeep at once and the host's D-Dog is out, the guest now sits in the same
+back seat on both screens (back right in testing), after waiting at the door about a third of a second while the dog
+takes the front seat. Before, the guest's own screen put it in the front seat while the host's showed it behind the
+dog. A host who only stands at the driver's door while the guest gets in no longer sees "Your partner reached the
+driver's seat first"; it comes only when the host presses E there while the guest is getting in.
+- **How:** site D keeps a held press the host's ride overtakes waiting while the host's copy still offers seat 1, at most
+  700 ms after the ride (`kSeatSettleMs`); the dog's OneTaken in the host's seat addendum ends it and the press takes a
+  back seat. The guest's deny toast waits for its seat (receipt `lpv`). The host's own yield no longer refuses its ride
+  icon, so a press there is refused at site B and only that shows a=7. Failing first `114bbb87` -> `76d7b3c7`;
+  `world_ride_pose.lua` trimmed first (`185ae270`); scenario `3f42bbcc`.
+- **Shown** (hidden worker `4a891af9`, shipped play defaults, `-WanSim bad`, both copies): c) one driver (the host); the
+  guest's log seat 3 = the host's confirmed seat 3; press to seated 367 ms; no toast on the guest [O logs, frames]. b)
+  the host stood at the door, the guest drove: no a=7 [O]. b2) the host pressed E inside the yield: a=7 once [O]. a)
+  and d) unchanged [O]. NEVER lines 0 on both copies. Sheet `m6m7j/frames/tie/best-sheet-4a891af9.jpg`.
+- **Not shown in a game:** the tie without a dog (seat 1 after 0.7 s) and the deny with every passenger seat full (unit
+  tests only). The guest's screen does not show the host's dog in the front seat (not new).
+- Full `tools/build.ps1` at `3f42bbcc`: CTest 336/336; contract `--check` 838 / 213.
+
 ## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, `wp/seat-checks4` merged, local only, design 8.55)
 
 **Players get:** standing at an empty jeep's door no longer takes its driver's seat. Only an E press does, in both
