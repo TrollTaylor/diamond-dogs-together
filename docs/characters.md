@@ -64,6 +64,22 @@ character_fallback=dd_male
   the default characters, prepare with `Prepare-LabInstance.ps1 -Offline
   -Character default`.
 
+## Switch in game (F9)
+
+F9 > Player > **Character (you)** (`lua/coop/debug_character.lua`, not run-proven yet): either player switches
+their own character while playing. The switch keeps your own character in the save the game's way
+(`TppPlayer.SaveCurrentPlayerType`), writes the type vars and waits for `PlayerStatus.PARTS_ACTIVE`; the world is not
+reloaded, so the partner stays where they are and sees the new look through the look frames. The choice
+(`Tpp.MgsCoop.characterPick`) replaces `character=` at every later load of this game session; **Back to my default**
+returns to `character=` (a launcher host: Snake), else to your save's own character. Ocelot and Quiet need the bypass,
+so only a player whose `character=` is `ocelot`, `quiet` or `story` gets them (at once while the bypass is on this
+mission, else at the next load). Log: `character=switch; mission=..; id=..; pick=..; result=switched|ready|kept|next_load|timeout|reverted; type=..`.
+
+**A kept choice is checked after the restore (10-31).** `requested=snake` with `reason=override_sortie_kept` was decided
+on the vars from before `TppVarInit.InitializeForNewMission` restored the mission-start slot; a friend host's slot held an
+old Ocelot, and the vanilla revert made them the sortie DD soldier. `C.Post` now plans again on what the restore left
+(`character=allocated; ...; late=1; before=5`).
+
 ## Where the choice applies
 
 | Situation | What happens |

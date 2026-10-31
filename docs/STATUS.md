@@ -1,3 +1,31 @@
+## 2026-10-31: the host shows as Snake again; F9 Character switch (`wp/char-switch`, local only) -- not run-proven yet
+
+**Players get (once proven):** the host is Snake on both screens after a new sortie as well (the 10-31 friend host
+became a Diamond Dogs soldier). F9 > Player > **Character (you)**: Snake, DD soldier (male), DD soldier (female), My
+avatar, Ocelot, Quiet, Back to my default; either player switches their own character in place, the partner sees the
+new look, and the choice holds for later missions of that game session.
+
+- **Bug [O], friend-host log 10-31:** `character=apply; mission=30050; requested=snake; type=nil;
+  reason=override_sortie_kept; real=0; start=new`, then `character=allocated; vars=5; parts=26; camo=115` (an Ocelot)
+  and `character_readback=start; verdict=not_applied; vars=1`; the guest got `partner_look ... type=1 face=192`. The
+  chunk read Snake before `TppVarInit.InitializeForNewMission` restored the mission-start slot, which held an Ocelot
+  from an earlier session in which this friend joined as Ocelot [I]; nothing was registered, and the vanilla
+  `ForceChangePlayerFromOcelot` turned the Ocelot into the sortie DD soldier. `friend_install_role=Join;
+  character=ocelot` is the friend's launcher pick for joining; a host session always writes `character=snake`
+  (`core_model.cpp` `StartSession`). Fix (red `b3c08e4e`, green `27fc0427`): `C.Post` plans a kept choice again on
+  what the restore left and applies it the vanilla way (`late=1; before=5`).
+- **F9 Character** (red `cea5efd0`/`56e86820`/`98c2b8b3`, green `1f59e735`/`3d8af39f`/`b6af3527`): new fragment
+  `lua/coop/debug_character.lua` (`character <name>`), spliced after `debug_boot`; dispatch rides on `D.player`, so
+  `debug_menu.lua` is unchanged. In place: the game's `SaveCurrentPlayerType`, then the type vars (as Infinite Heaven
+  and s10151 do), then a wait for `PlayerStatus.PARTS_ACTIVE`. `Tpp.MgsCoop.characterPick` replaces coop.ini at every
+  later load (story-forced missions and the Quiet rules still win). Ocelot/Quiet only where the existing bypass allows
+  (launcher pick Ocelot, Quiet or Story); otherwise refused, or `character_next_load` while the bypass is off. No wire
+  op, no lab key, no new patch or read site: the look frames already resend on change.
+- **Scenario (not run):** `tools/worker/scenarios/character-switch-play.txt`.
+- **Open [U]:** that writing the type vars mid-mission reloads the parts with the partner body present; that the
+  partner's copy draws each look (DD faces, Quiet); that a switch saved at a checkpoint restores the own character at
+  the next mission without an override.
+
 ## 2026-10-31: melee on the other player, proof round (`wp/integ-fb1031`, local only) -- `partner_melee` stays OFF unless named
 
 **Players get:** nothing new by default: melee on the other player stays off (not proven at this head). With `lab.ini`
