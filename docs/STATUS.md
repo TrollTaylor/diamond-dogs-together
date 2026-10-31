@@ -15,6 +15,12 @@
   host frame after the guest's restart is that cutscene: the guest's body **on the host's screen** is [U] (log only),
   and the scenario stopped at its second `placebehind` (the host's position read `gameplay` during the demo).
   Contact sheet `fb1031/frames/arrival/best-sheet-0ca61fa1.jpg` (nametag masked).
+- **Default arrival unchanged (hidden run `25226a97`, same route, no Restart):** the guest rode in (`position ->
+  helicopter` at +6, +31, +61 and +91 s), its helicopter landed on the Command platform (host log remote `102` ->
+  `103` -> `99`; frames: staff saluting, the vanilla [E] get-off prompt) and it waited there for E, which the scenario
+  never sends; no `mb_foot`, `mb_demo`, `local_restart` or `host_only` on either copy [O]. The host stood on foot at
+  Command and hid the riding guest (`partner_ride=hide; reason=ride`) [O]. So the lab arrival lands as vanilla; the
+  report's helicopter that never left act 102 is still not reproduced [U]. Sheet `best-sheet-25226a97.jpg`.
 - **Before that (this round):** run `89c796f9` reached Mother Base and stopped at `host worldtrigger goto=30050`:
   `tools/lab/WorldSync.psm1` still refused `goto=30050` (fixed `5fb0aac0`/`c4a45e3e`). Run `09668f9e` was refused
   in Start ("There is not enough space on the disk" after both package installs; C: 5.7 GB) and its cleanup refused
