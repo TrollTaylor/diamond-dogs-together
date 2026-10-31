@@ -1,3 +1,38 @@
+## 2026-10-31: Mother Base staff outcomes, run round (`wp/fb1031-on`, local only, design 7.7) -- W1 at 30050 stays lab only in play
+
+**Players get:** nothing new in play: at Mother Base each player's staff knockouts and Fultons stay on their own screen,
+as in 0.14.5. Two hidden play runs showed the host's side working on screen and both copies agreeing in the logs, but
+no frame from the guest's screen showed the staff member, so the feature stays off in play.
+
+- **Decision applied (coordinator):** a partner's Fulton of a staff member now makes them disappear on the other copy
+  for this mission load instead of fainting: `E.applyOne` maps a partner's FULTONED to VANISHED (`event=spare;
+  state=6; as=7`, the existing `TppEnemy.SetDisable` apply); a partner's kill or dying stays a knockout. Why it is safe
+  for the other player's save [I, stock Lua read-only]: `TppEnemy.SetDisable` is only `SendCommand{id="SetEnabled",
+  enabled=false}`; f30050's `TARGET_DEAD` comes only from its `Dead` / `Dying` handlers; no extracted Lua reacts to a
+  disabled staff member; the roster is native `TppMotherBaseManagement` data; the soldier state sits in mission svars
+  (`svars.solState`) that `TppEnemy.RestoreOnMissionStart2` zeroes at every Mother Base load. Red `be5f624d`, green
+  `c0dd77e2` (with the new debug lever `enemy goto nearest|hash`: this copy's player 2.5 m from that soldier, facing
+  him). It runs wherever W1 runs at 30050, which is the lab only.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder, `mb-staff-gone-play.txt`, both admitted,
+  neither refused; W1 at 30050 on in that build): `3781890d` (17:37; C: 133.65 GB, D: 23.68 GB, commit 19.39 GB;
+  nvidia-smi 3730 MiB 8 %; d3dprobe HARDWARE hr=0) and `8ce9d986` (17:43; nvidia-smi 3731 MiB 9 %, d3dprobe hr=0).
+  Closed / BaselineRestored / RealSavesUnchanged True both times.
+- [O] **Logs, both copies, both runs:** host `align step=ready w1=1`, guest `step=accepted soldiers=126 cps=7 unknown=0
+  divergence=0 w1=1`; host commit state=2 for staff member 1325835864 -> guest apply state=2 `result=ok; readback=2`;
+  host commit state=6 (cause 5) -> guest `event=spare; state=6; as=7` and apply state=7 `result=ok; readback=7`. No
+  `RequestForceFulton`, game over or error line on either copy.
+- [O] **Host's screen, both runs:** the staff member saluting 2.5 m ahead, then lying asleep with the Fulton prompt, then
+  lifted by the balloon, then gone. Sheets `fb1031-on/frames/mb/best-sheet-3781890d.jpg` and `best-sheet-8ce9d986.jpg`.
+- [O] **Guest's screen: not shown.** Each PC moves its own staff. In `3781890d` the guest stood next to the host, but its
+  copy of the staff member was elsewhere (its nearest soldier was another one, 9.2 m off). In `8ce9d986` the guest went
+  to its own copy of him (`enemy goto 1325835864`; logged 3.3 m away, asleep), yet no guest frame shows him before or
+  after the Fulton: the camera stayed level behind the guest's own body.
+- **Decision:** W1 at 30050 stays lab only in play (red `5532ffa5`, green `1ce60874`: `enemiesLab` back). No README line.
+- **Missing for the flip:** one guest frame of the staff member asleep and then gone (stand the guest about 5 m off and
+  level, or crouched, so the body on the deck is in view). The user's "soldiers in Mother Base don't seem synced" is
+  partly this: staff positions are never shared, only what happens to them (README Known limits, Enemies).
+- **Checks:** `pwsh -File tools/build.ps1 -Fast` 307/307 at `c0dd77e2` and `1ce60874`; full `tools/build.ps1` 339/339 at `c0dd77e2` and at `1ce60874` (the code head); `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+
 ## 2026-10-31: melee on the other player, run round (`wp/fb1031-on`, local only) -- `partner_melee` stays OFF unless named
 
 **Players get:** nothing new by default: melee on the other player stays off. Two hidden play runs showed the core of
