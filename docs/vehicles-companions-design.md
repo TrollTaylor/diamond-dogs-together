@@ -3455,6 +3455,25 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Open, unchanged:** the -b rehearsal (seat 3 / D-Dog, a guard hit by a seated shot, teardown and mission end while
   seated), the stock control above, a moving get-off camera; the turn could also drop on move input (follow-up).
 
+### 8.45 The seat checks at the shipped defaults (2026-10-30, branch `wp/seat-checks`; blocked, no game ran)
+
+- **Planned** (three hidden runs, play, `-WanSim bad`, shipped defaults): `m6m7e-seat-fixes-play-b.txt` (seat 3 boarding
+  and drawing, its aim view, an S1 seat-3 `shift`, a guard hit by a seated shot, the driver's D-Dog with the partner in
+  seat 3, teardown while seated) and `m6m7e-seat-shot-stock-play.txt` once with `-LabSetting partner_seat_shot=0` and
+  once without (seat 1 across the cabin, seat 2 A / B / C; the jeep's life on both copies after each shot).
+- **Scenario changes** (`323d0e8`, no behaviour change): -b part C stages the D-Dog after the partner: the driver first
+  teleports to the seed spot and steps 40 m back so the dog is away, then is warped to the jeep and drives, the partner
+  boards from the right at once (seat 1 or 3 recorded), `vehicle_seats` / `buddy_status` and captures 9 s later; the run
+  ends with the partner seated. A waitlog for the seat-3 `result=shift` after the first shot. The stock scenario adds
+  seat-2 line C (rel -90 pitch -3: across the jeep to the right, the lab damage geometry of `60faf9fc` part B).
+- **Blocked** [O]: 19:33 the worker's audited CTest failed `debug_overlay_tests` (hardware DX11 fixture); a ctypes probe
+  of `D3D11CreateDevice` returned `0x8007000E` on the NVIDIA adapter only, with 21-22 GB system commit free (so not the
+  commit floor) and 13.9 / 16 GB GPU dedicated memory in use; it created again at 19:43. 19:45 the rerun
+  (`784ea30ba3e04ec7ade024766066beaa`) ended `IsolationFailed=True` / `child_exited_before_admission`; the guest's overlay
+  refused (`graphics_or_input_hook`) with `SnippingTool.exe` running in the console session; stopped by rule. [U] whether
+  the snipping tool causes the refusal (earlier runs since 18:04 passed with it running).
+- **Open, unchanged from 8.44:** everything planned above; S1's play benefit stays [U].
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
