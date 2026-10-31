@@ -1,4 +1,4 @@
-# m6m7h: part C of m6m7e-seat-fixes-play-b.txt on its own (design 8.53), the D-Dog arriving after the partner and
+# m6m7h / m6m7i: part C of m6m7e-seat-fixes-play-b.txt on its own (design 8.53), the D-Dog arriving after the partner and
 # teardown while the partner is seated, at the africa jeep (30020, veh_lv_0000 = 25608; the driver's own D-Dog rides in
 # seat 1 on the driver's copy), SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both.
 #   C1. The host waits at a known ground spot 23 m from the jeep (-633.5 3.0 871.8) so its D-Dog leaves the jeep,
@@ -54,11 +54,14 @@ host run vehicle_seats
 host run buddy_status
 both capture c-start
 # --- C1. The D-Dog after the partner ----------------------------------------------------------------------------------
-host debug teleport -633.5 3.0 871.8 0
-wait 8000
+# m6m7i (design 8.56): in d7d50259 the dog followed the host to the spot 23 m away and boarded seat 1 together with the
+# host (riders=0,9728 at the first vehicle_seats after the host's E), so the guest got seat 3. The host now goes to the
+# 30020 fail-safe boot spot (docs/test-boot.md, ground known, ~335 m from the jeep) for 15 s so its dog runs off after
+# it, then warps back and drives at once; the guest boards right after; the dog arrives tens of seconds later.
+host debug teleport -510.73 5.09 1183.02 0
+wait 15000
 host run buddy_status
 host capture c-far
-wait 3000
 guest capture c-guest-back
 logmark both
 host debug teleport -656.01 1.20 877.73 62
@@ -91,6 +94,15 @@ host run vehicle_seats
 host run buddy_status
 guest run vehicle_seats
 both capture c-dog-3
+wait 8000
+host run vehicle_seats
+host run buddy_status
+both capture c-dog-4
+wait 10000
+host run vehicle_seats
+host run buddy_status
+guest run vehicle_seats
+both capture c-dog-5
 # --- C2. Checkpoint reload while the guest sits in seat 1 -------------------------------------------------------------
 logmark both
 host press escape
