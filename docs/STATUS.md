@@ -24,7 +24,7 @@
 - **Not shown:** where the D-Dog goes when it arrives after the partner sits in seat 1 [U]; neither run seated the
   guest in seat 1. Scenario `m6m7h-seat-partc-play.txt` (`0eeda98`, not run) fixes the three causes above.
 - Runs `d462df5d971e4ed19c3d2eb8cb997c30`, `23032c7227864813832e644dfba4cbd2`. NEVER lines are 0 on both copies.
-  Full `tools/build.ps1` at `c14a920`: CTest 336/336; contract `--check` 836 / 213. Design 8.53.
+  Full `tools/build.ps1` at `c14a920` and again at `6f28764`: CTest 336/336; contract `--check` 836 / 213. Design 8.53.
 
 ## 2026-10-30: the seat branches integrated, review m6m7g closed (branch `wp/seat-proof` with `wp/seat-checks2` merged, local only)
 
