@@ -22,6 +22,11 @@ title 200
 waitgameplay host 120
 waitgameplay guest 120
 wait 15000
+# Run 1bc18e9c: a stock Mother Base cutscene (Ocelot, D-Dog) starts on both copies within 15 s of gameplay and the
+# debug guard refuses every command ('gameplay'); wait it out again (waitgameplay skips cutscenes).
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
 both debug godmode 1
 both debug infinite_ammo 1
 host debug time 43200
