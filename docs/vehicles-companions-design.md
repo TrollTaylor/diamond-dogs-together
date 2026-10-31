@@ -3704,6 +3704,54 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   warp spot (the second warp fell back to a route 60 m off); part C of `m6m7e-seat-fixes-play-b.txt`; a checkpoint
   or death during a seated aim.
 
+### 8.53 Seat checks part C on its own; the close revert (2026-10-31, branch `wp/seat-checks3`, review m6m7h)
+
+- **Part C's real blocker** [O]: `debug forward -40` keeps the seed spot's height (0.75 m). The host landed under the
+  higher ground 40 m back, fell, and went down (WOUNDED). This happened in `1d9fd748` (frame `1d9fd748-host-c-far`;
+  host.log `downed_damage=intercept;cause=lethal`, `event=downed; step=entered`) and again in `d462df5d`
+  (`d462df5d-host-c-far`). A downed host cannot board, so the guest's E took the driver's seat (guest copy
+  `riders=0,9728`: the guest with its own D-Dog). 89b1dea's longer wait did not touch the cause. The scenario now uses
+  a ground spot 23 m away (-633.5 3.0 871.8). In `23032c72` the host stood there on its feet, and its D-Dog followed it
+  within 8 s (`23032c72-host-c-far`; buddy at -633.53, 0.70, 871.77) [O]. `waitlog` only warns; `require` stops.
+- **A guest standing at an empty jeep keeps its driver's seat** [O `23032c72`]: the guest never pressed E. Standing
+  3 m from the jeep and then at its right door, it claimed the driver's seat 28 times (`action=claim; role=guest`,
+  every ~1.2 s). The host copy granted and yielded once and showed the host "Your partner reached the driver's seat
+  first: take another seat or wait." (`23032c72-host-c-start`). 20 s later the host's E beside the driver's door did
+  not board (`vehicle_not_riding`), and `host require` stopped the run. world_ride_pose.lua grants an unwanted
+  vehicle's claim and refreshes the grant with every claim (GRANT_MS 3000); host_first applies only without a live
+  grant [I source]. `0eeda98` keeps the guest 10 m back until the host drives (not run).
+- **Checkpoint reload with a seated partner** [O `d462df5d`]: the guest drove, and the host copy drew it in seat 0
+  (`partner_ride_seat_patch=applied; seat=0`). In the host's pause menu CHECKPOINT is the first item. Its confirm,
+  "Restart from checkpoint?", has YES on the left and NO preselected, so the run pressed 'a' and then Enter
+  (`d462df5d-host-c2-dialog`, `-dialog-yes`). The host copy then logged `partner_ride_seat_patch=reverted;
+  reason=stop`, `partner_stop; cleared=1`, MISSION_TERMINATING and `termination_returned`, and reloaded 30020. The
+  guest followed (`follow; step=replay; src=30020; next=30020; kind=4`) and reloaded. The patch was reverted by the
+  terminating stop, so the MissionEnd revert found nothing and logged no `reason=mission_end` line. After the load the
+  guest copy waited at "Space Resume Game" with the raw clock held (`d462df5d-guest-c2-loading`). The host copy showed
+  MISSION FAILED (`d462df5d-host-c2-loading` and its last frame): that host had been down since the fall, and its
+  downed controls timed out under the pause menu (`event=downed; step=refused; reason=controls_timeout`). Whether a
+  host who is not down reaches gameplay after this reload, and the frames after Space, are [U]. The run hit the
+  worker's session limit (`worker_timeout`, about 10 min after admission) while waiting there.
+- **The close** [O source and unit test]: PartnerShutdown runs on the thread that delivers WM_CLOSE. Every shutdown
+  line here (`d462df5d` host, `23032c72` both; `d462df5d`'s guest logged none) and in 1d9fd748 said
+  `teardown=other_thread`. On that path it returned before PartnerMissionEnd, so the driver's
+  `ride_seat_revert` never ran, and the four seat dwords (the seat-1 anchor included) stayed patched: the revert was
+  missing, not only unlogged. The stale patch matters only while the process lives on. After the close the process
+  ends soon (`d462df5d` host: a few `world=stats` / `link=stats` lines after the shutdown line, then
+  `forced_job_termination`), and no seat is drawn after `partner_window_closing`, so players saw nothing [I]. **Fix** (failing first `140abca` -> `ad609fe`):
+  `partner_ride_seat::Close` runs in PartnerShutdown before the thread split. It sets a one-way flag, so later Arms
+  log `partner_ride_seat_patch=skipped; reason=closing`, the get-off rewrite writes nothing, and an Arm that raced
+  the close takes its own write back. It then reverts with `reverted; reason=shutdown` (one locked compare-exchange
+  per dword, re-verified like Arm). `partner_ride_seat_tests` TestClose covers it. Neither run closed with a live
+  patch (`d462df5d`: reverted at the reload's stop; `23032c72`: nobody seated), so that line in a game is [U].
+- The seat first-person bit (impl+0x60) is still released only by MissionEnd, so a close during a seated first-person
+  aim leaves it set until the process ends. Whether the game saves it then is [U].
+- **Not shown** [U]: where the driver's D-Dog goes when it arrives after the partner already sits in seat 1, and the
+  close with a live seat patch in a game. NEVER lines were 0 on both copies in both runs.
+- Runs: `d462df5d971e4ed19c3d2eb8cb997c30` (`e4a0d53`), `23032c7227864813832e644dfba4cbd2` (`c14a920`; it read the
+  scenario before `0eeda98`). Sheets `best-sheet-d462df5d.jpg`, `best-sheet-23032c72.jpg` under
+  `C:/Users/taylo/mgs-coop-run-archive/m6m7h/frames/partc/`.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

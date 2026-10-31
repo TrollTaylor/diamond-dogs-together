@@ -287,12 +287,40 @@ void TestRetailCopy() {
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("retail copy: verified\n");
 }
+// Design 8.53: the game window closes on another thread than the mission's (PartnerShutdown's other_thread path; run
+// 1d9fd748 logged no revert after partner_shutdown=hooks_off; teardown=other_thread). Close reverts the live patch at
+// once and logs it; every later Arm writes nothing, so the mission thread cannot put the patch back before the process
+// ends. One-way for the process: this test runs last.
+void TestClose() {
+    unsigned char* image = FixtureImage();
+    prs::SetSeatOneAnchor(true);
+    logged.clear();
+    Check(!prs::Closed() && prs::Arm(image, kSpan, 1, Log, 1) && prs::Armed() && Dword(image, c::ride_seat_rva) == 0x00b04130u,
+          "seat 1 armed on the driver's matrix before the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    Check(prs::Closed() && AllOriginal(image) && !prs::Armed() && prs::ArmedSeat() == 0xFF &&
+              Logged("partner_ride_seat_patch=reverted; reason=shutdown\r\n"),
+          "the close reverts the live seat-1 patch and logs it");
+    logged.clear();
+    Check(!prs::Arm(image, kSpan, 1, Log, 1) && AllOriginal(image) && !prs::Armed() &&
+              Logged("partner_ride_seat_patch=skipped; reason=closing\r\n") && !Logged("refused"),
+          "no arm after the close (not a refusal line)");
+    Check(!prs::ArmGetOff(image, kSpan, 1, Log) && AllOriginal(image), "no get-off rewrite after the close");
+    logged.clear();
+    prs::Close(image, kSpan, Log);
+    prs::Revert(image, kSpan, Log, "mission_end");
+    Check(AllOriginal(image) && logged.empty(), "a second close and the later mission-end revert are silent");
+    prs::SetSeatOneAnchor(false);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
 } // namespace
 
 int main() {
     TestTable();
     TestFixture();
     TestRetailCopy();
+    TestClose();
     std::printf("partner_ride_seat_tests: %u checks passed\n", checks);
     return 0;
 }
