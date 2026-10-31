@@ -240,6 +240,14 @@ These wrappers are active only for the guest in follow mode. A module token is s
 
 Inventory, ammo, health, suit, buddy, supply drops, support fire, decoys, interrogation, non-mission collectibles, plants, markers (until a later phase), free-roam quests (host only, guest quest blocks not reconciled), and results screens (each save keeps its own).
 
+#### 7.7 Mother Base staff (W1 at 30050, fb1031)
+
+- **Why it was off:** `W.MISSIONS[30050]` had no `enemies` since WP5, so W1 never ran at Mother Base (the 0.14.5 online session: staff knockouts and Fultons on the host, `commits=0` on both copies, debug enemy commands `sync=none`). Turning `enemies` on alone is not enough: Mother Base has no free-roam area trap, so `W.activeCp` stays nil and the W4 snapshot read every soldier as unknown; the guest refused it (`no_readable_state`) and W1 never came on.
+- **Now (`allCp`):** the snapshot counts every CP as loaded (`W.inferredCp` = all CPs, `world_align.lua`); the apply rule already treats every CP as active when `W.activeCp` is nil. No area change ever re-checks the ledger there, so with `allCp` the whole ledger (an apply that failed while the staff member's platform was not loaded on that copy included) is re-checked every 10 s (`world_enemy.lua`).
+- **Identity:** the roster digest hashes the Mother Base soldier slot names (the platform layout), not staff ids. A different layout keeps W1 off (PAIRED `match=0`) as before; the same layout with different staff is not detected (no staff-id read is known), so a knockout acts on the same slot on both copies. The save handoff normally gives the guest the host's save, so the staff match.
+- **Kept off:** patrol position corrections (`feature.patrol = false`, `world_place.lua`) until a run shows them working at Mother Base; Mother Base vehicles (VEHICLE_GONE / VEHICLE_STATE) stay lab-only.
+- **Local by design:** morale and training effects of a hit count only on the copy whose player hit the staff member (the other copy gets ChangeLifeState / RequestForceFulton).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
