@@ -1137,7 +1137,8 @@ function Wait-ScenarioLog([string]$Role,[string]$Pattern,[int]$TimeoutSec){
     while($true){
         foreach($line in @(Read-ScenarioLogLines $cursor)){if($line -cmatch $Pattern){return $line}}
         if((Get-ScenarioTick) -ge $limit){return $null}
-        Start-Sleep -Milliseconds 500
+        # 50 ms: a step after waitlog may need to land inside a few hundred ms of that line (m6m7k near-tie).
+        Start-Sleep -Milliseconds 50
     }
 }
 # expectstate: the role's own fresh state.json field (booleans as true/false).

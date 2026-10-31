@@ -318,7 +318,7 @@ inline constexpr std::uint32_t kHostCommitMs = 3000;  // the host's own press ow
 // the passenger policy picks: the back seats once OneTaken arrived, seat 1 when it stayed free. Without an offer
 // (a 0.14.4 driver, no addendum, the seat-1 keys off, OneTaken already) it ends at once as before.
 inline constexpr std::uint32_t kSeatSettleMs = 700;
-enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer };
+enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer, join, claim };
 struct PressIn {
     bool hold = false;       // the guest's hold lease is live
     bool local = false;      // the record is the local player's (P+0x218)
@@ -332,21 +332,40 @@ struct PressIn {
     bool seat_one = false;         // 8.57: the live peer-driver policy for it offers seat 1 (front_ok / cab_ok)
     bool peer_seen = false;        // this press already saw the partner drive it, at peer_since
     std::uint32_t peer_since = 0;
+    bool ride_seen = false;        // 8.58: the published peer-driver policy first named this vehicle at ride_since
+    std::uint32_t ride_since = 0;
+    bool joined = false;           // 8.58 review: this press joined a ride's settle and has not claimed yet
 };
+// 8.58: the policy newly names a vehicle the partner drives (another vehicle or none before; a republished lease or
+// changed seat flags of the same ride are not new). Publish stamps when (g_policy_since).
+inline bool PartnerDrives(const Policy& p) noexcept { return p.mode != Mode::off && p.peer_seat == 0 && p.vehicle != kVehicleUnknown; }
+inline bool NewlyDriven(const Policy& before, const Policy& after) noexcept {
+    return PartnerDrives(after) && !(PartnerDrives(before) && before.vehicle == after.vehicle);
+}
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
 // (a grant, a deny or the timeout ended the wait; site B decides). The partner drives the held press's vehicle:
 // settle: idle while its seats settle (8.57); peer: the gate's own answer, the press ends as 'peer' (end 4; the
-// passenger policy seats it). A new press at a vehicle the partner drives is stock (the passenger policy decides).
+// passenger policy seats it). A new press at a vehicle the partner drives is stock (the passenger policy decides),
+// except 8.58's near-tie: join (record it without a claim and settle) while seat 1 is still offered and the policy
+// first named that vehicle under kSeatSettleMs ago (a stamp just past this frame's clock is age 0). claim (8.58
+// review): a joined press whose ride dropped before it settled claims the vehicle like any press; its deadline stays
+// kPressWaitMs after the press. A deny ends a held press at once (8.57; the deny wait was reverted in review).
+// Worst case after one press: kPressWaitMs then kSeatSettleMs after the ride = 1.7 s; a join that keeps its ride < 0.7 s.
 inline PressVerdict PressDecide(const PressIn& in) noexcept {
     if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType)
         return PressVerdict::stock;
     const bool same = in.open && in.pend_vehicle == in.vehicle && in.now_ms - in.pend_seen <= kPressGapMs;
     if (in.peer_drives) {
-        if (!same) return PressVerdict::stock;
+        if (!same) {
+            const std::uint32_t age = in.now_ms - in.ride_since;
+            const bool fresh = age < kSeatSettleMs || 0u - age < kSeatSettleMs;
+            return in.seat_one && in.ride_seen && fresh ? PressVerdict::join : PressVerdict::stock;
+        }
         const bool settling = in.seat_one && (!in.peer_seen || in.now_ms - in.peer_since < kSeatSettleMs);
         return settling ? PressVerdict::settle : PressVerdict::peer;
     }
     if (!same) return in.denied ? PressVerdict::stock : PressVerdict::start;
+    if (in.joined) return PressVerdict::claim;
     if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
     return PressVerdict::wait;
 }
