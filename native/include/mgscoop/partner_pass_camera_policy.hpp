@@ -993,4 +993,294 @@ inline const char* RequestGate(std::uint32_t d38, std::uint32_t f204) noexcept {
     return nullptr;
 }
 
+// --- fb1031: the follow carry (design 8.59; on with the passenger camera: every mode but off) --------------------------
+// [O static, the pinned ride_follow_blocks] The fallback camera module (live vtable 0x23B2AB0: the on-foot player and a
+// seated passenger) writes its follow point CAM+0x170 = S + alpha * (T - S) every update: T follows the body, S is the
+// start point of its timed blend (module+0x30 -> +0x30) and alpha (+0x20) climbs from 0 to 1 over the blend's duration
+// (+0x18; elapsed +0x1C) after each camera transition (getting in, an aim's end, a mode change), S being the camera's
+// point at that moment. S is a fixed world point: when the vehicle moves during a blend the camera stays behind by
+// (1 - alpha) * the distance driven and catches up as alpha reaches 1 (the reported "lags behind when getting in and
+// moving"). The carry moves S rigidly with the ridden vehicle (its position and yaw since the last tick) while a blend
+// runs, so the blend happens in the vehicle's frame. Never with alpha 1 (S unused), never across a vehicle warp.
+inline constexpr std::uintptr_t kFollowModuleVtableRva = 0x23B2AB0, kFollowBlendVtableRva = 0x23B7EC0;
+inline constexpr std::size_t kFollowModuleBlend = 0x30, kFollowDur = 0x18, kFollowElapsed = 0x1C, kFollowAlpha = 0x20, kFollowStart = 0x30;
+struct Follow {
+    bool ok = false;           // the active module is the fallback and its blend object carries the blend vtable
+    std::uintptr_t blend = 0;  // the blend object (the write checks it again)
+    float dur = 0.0f, elapsed = 0.0f, alpha = 0.0f;
+    float start[4]{};
+};
+inline bool FollowBlending(const Follow& f) noexcept {
+    return f.ok && std::isfinite(f.dur) && std::isfinite(f.elapsed) && std::isfinite(f.alpha) && f.dur > 0.0f && f.elapsed < f.dur &&
+           f.alpha < 1.0f && std::isfinite(f.start[0]) && std::isfinite(f.start[1]) && std::isfinite(f.start[2]);
+}
+inline constexpr std::uint64_t kCarryGapMs = 200;   // the last vehicle pose older than this: no carry this tick
+inline constexpr float kCarryMaxStep = 5.0f;        // a vehicle step longer than this (m per tick) is a warp: no carry
+inline constexpr float kCarryMinStep = 0.0005f;     // shorter: nothing to write
+struct CarryIn {
+    bool on = false;      // the passenger camera's mode is not off, installed, not uncertain
+    bool seated = false;  // the local passenger report (seats 1..3)
+    std::uint16_t vehicle = 0xFFFF;
+    bool veh_ok = false;
+    float veh[3]{}, yaw = 0.0f;
+    Follow follow;
+    std::uint64_t now_ms = 0;
+};
+struct Carry {
+    bool have = false;
+    std::uint16_t vehicle = 0xFFFF;
+    float veh[3]{}, yaw = 0.0f;
+    std::uint64_t ms = 0;
+    // The current blend episode (its writes and the largest carry) and the counters.
+    bool blending = false;
+    std::uintptr_t blend = 0;
+    std::uint64_t blend_ms = 0;
+    float blend_dur = 0.0f, carried = 0.0f, last_elapsed = 0.0f;
+    unsigned blend_writes = 0;
+    unsigned writes = 0, warps = 0, blends = 0;
+};
+enum class CarryEvent : std::uint8_t { none, open, close };
+struct CarryOut {
+    bool write = false;
+    float start[3]{};
+    float step = 0.0f;  // the carry of this tick (m)
+    CarryEvent event = CarryEvent::none;
+    // close: the episode that ended (its writes, its total carry and how long it ran)
+    unsigned writes = 0;
+    float carried = 0.0f, dur = 0.0f;
+    std::uint64_t ms = 0;
+};
+// S carried from the vehicle pose (pv, py) to (nv, ny): S' = nv + Ry(ny - py) (S - pv), the body yaw convention (forward
+// (sin, 0, cos)), so a point fixed in the vehicle stays fixed in it.
+inline void CarryPoint(const float* s, const float* pv, float py, const float* nv, float ny, float* out) noexcept {
+    const float d = ny - py, c = std::cos(d), sn = std::sin(d);
+    const float rx = s[0] - pv[0], ry = s[1] - pv[1], rz = s[2] - pv[2];
+    out[0] = nv[0] + rx * c + rz * sn;
+    out[1] = nv[1] + ry;
+    out[2] = nv[2] - rx * sn + rz * c;
+}
+inline CarryOut CarryStep(Carry& c, const CarryIn& in) noexcept {
+    CarryOut o{};
+    const bool riding = in.on && in.seated && in.veh_ok && std::isfinite(in.veh[0] + in.veh[1] + in.veh[2] + in.yaw);
+    const bool blending = riding && FollowBlending(in.follow);
+    // An episode ends when the blend completes, the ride ends, the blend object changes or it restarts (elapsed went back).
+    if (c.blending && (!blending || in.follow.blend != c.blend || in.follow.elapsed + 0.0001f < c.last_elapsed)) {
+        o.event = CarryEvent::close;
+        o.writes = c.blend_writes;
+        o.carried = c.carried;
+        o.dur = c.blend_dur;
+        o.ms = in.now_ms >= c.blend_ms ? in.now_ms - c.blend_ms : 0;
+        c.blending = false;
+    }
+    if (!riding) {
+        c.have = false;
+        return o;
+    }
+    const bool fresh = c.have && c.vehicle == in.vehicle && in.now_ms > c.ms && in.now_ms - c.ms <= kCarryGapMs;
+    if (blending && !c.blending && o.event == CarryEvent::none) {
+        c.blending = true;
+        c.blend = in.follow.blend;
+        c.blend_ms = in.now_ms;
+        c.blend_dur = in.follow.dur;
+        c.carried = 0.0f;
+        c.blend_writes = 0;
+        c.last_elapsed = in.follow.elapsed;
+        ++c.blends;
+        o.event = CarryEvent::open;
+    }
+    if (c.blending) c.last_elapsed = in.follow.elapsed;
+    if (blending && fresh) {
+        float s[3]{};
+        CarryPoint(in.follow.start, c.veh, c.yaw, in.veh, in.yaw, s);
+        const float dx = s[0] - in.follow.start[0], dy = s[1] - in.follow.start[1], dz = s[2] - in.follow.start[2];
+        const float step = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const float vx = in.veh[0] - c.veh[0], vy = in.veh[1] - c.veh[1], vz = in.veh[2] - c.veh[2];
+        const float vstep = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (!std::isfinite(step) || vstep > kCarryMaxStep || step > kCarryMaxStep * 2.0f) {
+            ++c.warps;
+        } else if (step >= kCarryMinStep) {
+            o.write = true;
+            o.step = step;
+            for (unsigned i = 0; i < 3; ++i) o.start[i] = s[i];
+        }
+    }
+    c.have = true;
+    c.vehicle = in.vehicle;
+    for (unsigned i = 0; i < 3; ++i) c.veh[i] = in.veh[i];
+    c.yaw = in.yaw;
+    c.ms = in.now_ms;
+    return o;
+}
+// The driver reports a write it made (ok) so the episode counts only what reached the game.
+inline void CarryWritten(Carry& c, const CarryOut& o, bool ok) noexcept {
+    if (!o.write || !ok) return;
+    ++c.writes;
+    ++c.blend_writes;
+    c.carried += o.step;
+}
+
+// --- fb1031: the ride camera census (lab and play; design 8.59) ----------------------------------------------------
+// Per driver tick while the local player rides a vehicle (driver or passenger): the local body B (aim read body[0]), the
+// camera eye C and its rotation q (CAM+0xE0, CAM+0x90) and the vehicle V (unit pos, yaw). The body's camera-space
+// position cs = (r.(B-C), u.(B-C), f.(B-C)) stays put while the camera orbits the body rigidly (a look turn included)
+// and moves when the camera's follow point trails the body: at rest (speed < kCensusRestSpeed for kCensusRestMs) cs0
+// is kept; once the vehicle moves (>= kCensusMoveSpeed) an episode measures lag = |cs - cs0| (m), lag / speed (ms) and
+// the body's drift in the vehicle frame (B - V turned by -yaw, against its rest value). Read only.
+inline constexpr float kCensusRestSpeed = 0.3f, kCensusMoveSpeed = 1.0f, kCensusMsSpeed = 3.0f;
+inline constexpr std::uint64_t kCensusRestMs = 150, kCensusEndMs = 600, kCensusLineMs = 250, kCensusGapMs = 500;
+inline constexpr unsigned kCensusFrameTicks = 90, kCensusFrameEpisodes = 4;
+struct CensusIn {
+    bool ok = false;  // every read below succeeded this tick
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+    float veh[3]{}, yaw = 0.0f, body[3]{}, eye[3]{}, rot[4]{};
+    std::uint64_t now_ms = 0;
+};
+struct Census {
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+    bool have = false;
+    float last_veh[3]{};
+    std::uint64_t last_ms = 0;
+    bool rest_have = false;
+    std::uint64_t rest_since = 0;
+    float cs0[3]{}, local0[3]{};
+    bool moving = false;
+    std::uint64_t start_ms = 0, still_since = 0, line_ms = 0;
+    unsigned ticks = 0, episodes = 0;
+    float max_lag = 0.0f, max_speed = 0.0f, max_drift = 0.0f, ms_sum = 0.0f;
+    unsigned ms_n = 0;
+};
+enum class CensusEvent : std::uint8_t { none, frame, line, end };
+struct CensusOut {
+    CensusEvent event = CensusEvent::none;
+    float cs[3]{}, d[3]{};
+    float lag = 0.0f, drift = 0.0f, speed = 0.0f;
+    // end: the episode's summary (the state is reset after it).
+    unsigned episode = 0, ticks = 0;
+    std::uint64_t dur_ms = 0;
+    float max_lag = 0.0f, max_speed = 0.0f, max_drift = 0.0f, lag_ms = -1.0f;
+    std::uint16_t vehicle = 0xFFFF;
+    std::uint8_t seat = 0xFF;
+};
+// v in the camera frame of q (Hamilton x, y, z, w): right q(1,0,0)q*, up q(0,1,0)q*, forward q(0,0,1)q*.
+inline void CameraSpace(const float* q, const float* v, float* out) noexcept {
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float r[3] = {1.0f - 2.0f * (y * y + z * z), 2.0f * (x * y + w * z), 2.0f * (x * z - w * y)};
+    const float u[3] = {2.0f * (x * y - w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z + w * x)};
+    const float f[3] = {2.0f * (x * z + w * y), 2.0f * (y * z - w * x), 1.0f - 2.0f * (x * x + y * y)};
+    out[0] = r[0] * v[0] + r[1] * v[1] + r[2] * v[2];
+    out[1] = u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    out[2] = f[0] * v[0] + f[1] * v[1] + f[2] * v[2];
+}
+// v in the vehicle frame of yaw (the body yaw convention: forward (sin, 0, cos), right (cos, 0, -sin)).
+inline void YawSpace(float yaw, const float* v, float* out) noexcept {
+    const float s = std::sin(yaw), c = std::cos(yaw);
+    out[0] = c * v[0] - s * v[2];
+    out[1] = v[1];
+    out[2] = s * v[0] + c * v[2];
+}
+inline float Norm3(const float* v) noexcept { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); }
+inline CensusOut CensusEnd(Census& c) noexcept {
+    CensusOut o{};
+    o.event = CensusEvent::end;
+    o.episode = c.episodes;
+    o.ticks = c.ticks;
+    o.dur_ms = c.last_ms >= c.start_ms ? c.last_ms - c.start_ms : 0;
+    o.max_lag = c.max_lag;
+    o.max_speed = c.max_speed;
+    o.max_drift = c.max_drift;
+    o.lag_ms = c.ms_n ? c.ms_sum / static_cast<float>(c.ms_n) : -1.0f;
+    o.vehicle = c.vehicle;
+    o.seat = c.seat;
+    c.moving = false;
+    c.rest_have = false;
+    c.rest_since = 0;
+    return o;
+}
+inline CensusOut CensusStep(Census& c, const CensusIn& in) noexcept {
+    const bool same = in.ok && c.have && in.vehicle == c.vehicle && in.seat == c.seat && in.now_ms > c.last_ms &&
+                      in.now_ms - c.last_ms <= kCensusGapMs;
+    if (!same) {
+        // A new ride, a seat change, a read gap or the ride's end: an open episode ends with what it measured.
+        CensusOut o{};
+        if (c.moving) o = CensusEnd(c);
+        const unsigned episodes = c.episodes;
+        c = Census{};
+        c.episodes = episodes;
+        if (in.ok) {
+            c.have = true;
+            c.vehicle = in.vehicle;
+            c.seat = in.seat;
+            for (unsigned i = 0; i < 3; ++i) c.last_veh[i] = in.veh[i];
+            c.last_ms = in.now_ms;
+        }
+        return o;
+    }
+    CensusOut o{};
+    const float dv[3] = {in.veh[0] - c.last_veh[0], in.veh[1] - c.last_veh[1], in.veh[2] - c.last_veh[2]};
+    const float speed = Norm3(dv) * 1000.0f / static_cast<float>(in.now_ms - c.last_ms);
+    for (unsigned i = 0; i < 3; ++i) c.last_veh[i] = in.veh[i];
+    c.last_ms = in.now_ms;
+    const float rel[3] = {in.body[0] - in.eye[0], in.body[1] - in.eye[1], in.body[2] - in.eye[2]};
+    const float bv[3] = {in.body[0] - in.veh[0], in.body[1] - in.veh[1], in.body[2] - in.veh[2]};
+    float cs[3]{}, local[3]{};
+    CameraSpace(in.rot, rel, cs);
+    YawSpace(in.yaw, bv, local);
+    if (!std::isfinite(speed) || !std::isfinite(cs[0] + cs[1] + cs[2]) || !std::isfinite(local[0] + local[1] + local[2])) return o;
+    o.speed = speed;
+    for (unsigned i = 0; i < 3; ++i) o.cs[i] = cs[i];
+    if (speed < kCensusRestSpeed) {
+        if (!c.rest_since) c.rest_since = in.now_ms;
+        if (c.moving) {
+            if (!c.still_since) c.still_since = in.now_ms;
+            if (in.now_ms - c.still_since >= kCensusEndMs) return CensusEnd(c);
+        } else if (in.now_ms - c.rest_since >= kCensusRestMs) {
+            c.rest_have = true;
+            for (unsigned i = 0; i < 3; ++i) {
+                c.cs0[i] = cs[i];
+                c.local0[i] = local[i];
+            }
+        }
+    } else {
+        c.rest_since = 0;
+        c.still_since = 0;
+    }
+    if (!c.moving && c.rest_have && speed >= kCensusMoveSpeed) {
+        c.moving = true;
+        c.start_ms = in.now_ms;
+        c.line_ms = 0;
+        c.ticks = 0;
+        ++c.episodes;
+        c.max_lag = c.max_speed = c.max_drift = c.ms_sum = 0.0f;
+        c.ms_n = 0;
+    }
+    if (!c.moving) return o;
+    float dl[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        o.d[i] = cs[i] - c.cs0[i];
+        dl[i] = local[i] - c.local0[i];
+    }
+    o.lag = Norm3(o.d);
+    o.drift = Norm3(dl);
+    ++c.ticks;
+    if (o.lag > c.max_lag) c.max_lag = o.lag;
+    if (speed > c.max_speed) c.max_speed = speed;
+    if (o.drift > c.max_drift) c.max_drift = o.drift;
+    if (speed >= kCensusMsSpeed) {
+        c.ms_sum += o.lag * 1000.0f / speed;
+        ++c.ms_n;
+    }
+    o.episode = c.episodes;
+    o.ticks = c.ticks;
+    o.dur_ms = in.now_ms - c.start_ms;
+    if (c.ticks <= kCensusFrameTicks && c.episodes <= kCensusFrameEpisodes) {
+        o.event = CensusEvent::frame;
+    } else if (!c.line_ms || in.now_ms - c.line_ms >= kCensusLineMs) {
+        c.line_ms = in.now_ms;
+        o.event = CensusEvent::line;
+    }
+    return o;
+}
+
 } // namespace mgscoop::partner_pass_camera

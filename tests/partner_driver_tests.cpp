@@ -7386,6 +7386,152 @@ void GuardSetup(Session& s, mgscoop::PartnerPassCamera mode = mgscoop::PartnerPa
     s.ride_suffix = " ride=0";
 }
 
+// Melee on the partner (partner_melee.hpp): the driver hands the local strike that reaches body 1 to the melee hook with
+// the player object P, once per strike edge, logs one line per strike, and queues nothing with the key off, without a
+// realized body 1 or with the partner out of reach.
+std::vector<std::uintptr_t> g_melee_hits;
+bool HookMeleeHit(void*, std::uintptr_t player) noexcept { g_melee_hits.push_back(player); return true; }
+void MeleeSetup(Session& s, bool key) {
+    g_melee_hits.clear();
+    s.hooks.melee_hit = HookMeleeHit;
+    s.driver.settings.melee = key;
+    s.fake.Realize(true);
+    s.fake.state.parts[1] = 3;
+    s.fake.anim_ok = true;
+    s.fake.anim.act[0] = 1;
+    s.fake.state.slot[0][0] = 10.f; s.fake.state.slot[0][1] = 2.f; s.fake.state.slot[0][2] = -5.f; s.fake.state.slot[0][3] = 0.f;
+    s.fake.state.slot[1][0] = 10.f; s.fake.state.slot[1][1] = 2.f; s.fake.state.slot[1][2] = -4.f; s.fake.state.slot[1][3] = 3.14f;
+    // Body 1's drawn position (read_body): the reach test reads it, never the slot (stale while seated, fb1031 review).
+    s.fake.body_ok = true;
+    s.fake.body_pos[0] = 10.f; s.fake.body_pos[1] = 2.f; s.fake.body_pos[2] = -4.f; s.fake.body_pos[3] = 1.f;
+    // The local body readback (read_local_body): position and facing (identity quat: yaw 0, forward +z). Run af0b88b6:
+    // right after a teleport the local slot S+0x20[0] read 21 cm from body 1 with the players 1 m apart, so the slot is
+    // never used: it is set to a stale spot here.
+    s.hooks.read_local_body = HookReadLocalBody;
+    s.fake.local_body_ok = true;
+    s.fake.local_body_pos[0] = 10.f; s.fake.local_body_pos[1] = 2.f; s.fake.local_body_pos[2] = -5.f; s.fake.local_body_pos[3] = 1.f;
+    s.fake.local_body_quat[0] = 0.f; s.fake.local_body_quat[1] = 0.f; s.fake.local_body_quat[2] = 0.f; s.fake.local_body_quat[3] = 1.f;
+    s.fake.state.slot[0][0] = 30.f; s.fake.state.slot[0][2] = 30.f; s.fake.state.slot[0][3] = 2.f;
+}
+void TestMeleeDriver() {
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=") == 0, "melee driver: no strike, no line");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() &&
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=jab; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=0") == 1,
+              "melee driver: one jab logs and hands nothing to the hook (vanilla CQC feel)");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P, "melee driver: the finisher hands P to the hook");
+        Check(s.fake.Containing("partner_melee=strike; act=114; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=1") == 1,
+              "melee driver: the finisher line");
+        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.size() == 1 && s.fake.Containing("partner_melee=") == 2, "melee driver: a held finisher is one hit");
+        s.fake.anim.act[0] = 1;
+        Check(s.Tick(0, 2000), "melee driver: idle");
+        s.fake.state.slot[1][2] = -2.5f;
+        s.fake.body_pos[2] = -2.5f;
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0), "melee driver: a jab out of reach");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.size() == 1 &&
+                  s.fake.Containing("partner_melee=strike; act=114; verdict=range; queued=0; dist_cm=250;") == 1,
+              "melee driver: out of reach, no hit");
+    }
+    {
+        // fb1031 review (melee-seated-stale-slot): the slot stays at the boarding spot beside the attacker while the drawn
+        // body is 20 m away; the reach test reads the body.
+        Session s(0);
+        MeleeSetup(s, true);
+        Check(s.Tick(0), "melee driver: idle before the body test");
+        s.fake.body_pos[2] = 15.f;
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0), "melee driver: a jab at the stale slot");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=range; queued=0; dist_cm=2000;") == 1,
+              "melee driver: a stale slot beside the attacker with the drawn body 20 m away is out of reach");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.body_ok = false;
+        Check(s.Tick(0), "melee driver: idle without a body readback");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0), "melee driver: a jab without a body readback");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=no_body; queued=0;") == 1,
+              "melee driver: no body readback, no hit");
+    }
+    {
+        // fb1031 review (melee-seated-stale-slot): a seated partner (the seat flow owns body 1) is never struck, even with
+        // the slot and the body both beside the attacker (a strike at the jeep they sit in).
+        Session s(0);
+        MeleeSetup(s, true);
+        Check(s.Tick(0), "melee driver: idle before the seat test");
+        s.driver.mission.seat.phase = pd::SeatPhase::seated;
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0), "melee driver: a jab at a seated partner");
+        s.driver.mission.seat.phase = pd::SeatPhase::seated;
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=no_body; queued=0;") == 1,
+              "melee driver: a seated partner is not strikeable");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        Check(s.Tick(0), "melee driver: idle before the ride-seated test");
+        s.driver.mission.ride_seated = true;
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0), "melee driver: a jab at a ride-seated partner");
+        s.driver.mission.ride_seated = true;
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=no_body; queued=0;") == 1,
+              "melee driver: ride_seated is not strikeable");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, false);
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=off; queued=0;") == 1,
+              "melee driver: the key off queues nothing");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=off; queued=0;") == 1,
+              "melee driver: the key off queues no finisher");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.Realize(false);
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=no_body; queued=0;") == 1,
+              "melee driver: no realized body 1, no hit");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=114; verdict=no_body; queued=0;") == 1,
+              "melee driver: no realized body 1, no finisher hit");
+    }
+    {
+        // The partner behind the attacker's back (z - 1 at yaw 0) is outside the cone.
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.state.slot[1][2] = -6.f;
+        s.fake.body_pos[2] = -6.f;
+        Check(s.Tick(0), "melee driver: idle before the facing test");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() &&
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=angle; queued=0; dist_cm=100; dy_cm=0; angle_deg=180;") == 1,
+              "melee driver: the partner at the attacker's back is outside the cone");
+    }
+    {
+        Session s(0);
+        MeleeSetup(s, true);
+        s.fake.local_body_ok = false;
+        Check(s.Tick(0), "melee driver: idle without a local body readback");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=no_local; queued=0;") == 1,
+              "melee driver: no local body readback, no strike judged");
+    }
+}
+
 // M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's
 // RequestBullet hook (light vehicle or truck cab, the hook live), withdraws it after, never publishes in play with the
 // key off, ignores the lab lever in play, and logs one line per new plan of the hook.
@@ -10170,6 +10316,7 @@ int main() {
     TestSeatFpvFallbackDriver();
     TestSeatFpvRelease();
     TestSeatShotDriver();
+    TestMeleeDriver();
     TestBoardSeatGates();
     TestSeatDraw();
     TestHiddenLocalSender();

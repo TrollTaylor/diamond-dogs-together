@@ -143,7 +143,8 @@ do
                     end
                 end
             end
-            if W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and P.patrol then
+            if W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and P.patrol and
+                not (W.feature and W.feature.patrol == false) then
                 local list = W.entOrder
                 local n = type(list) == "table" and #list or 0
                 local hx, hz = (W.get(vars, "playerPosX") or 0) * 1000, (W.get(vars, "playerPosZ") or 0) * 1000

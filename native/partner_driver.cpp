@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cmath>
+#include <limits>
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
@@ -3735,6 +3736,119 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the
 // seatshot lever's override wins) decides apply: off on a lab copy still plans every seated shot (census lines, nothing
 // moved); off in play publishes nothing. One line per planned shot (the hook's last plan), capped per mission.
+// fb1031 (design 8.59, lab.ini partner_ride_follow): the follow carry (partner_pass_camera::CarryStep). While the local
+// passenger rides with the passenger camera on (any mode but off; installed; no latch) and the fallback camera's follow
+// blend runs, the blend's start point moves rigidly with the vehicle, so the camera does not trail the vehicle after getting
+// in or after an aim; one line when a blend opens and one when it closes (its writes and the distance carried).
+void TickFollowCarry(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& c = d.mission.pass_camera;
+    if (terminating || BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
+    const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::view)) mode = static_cast<pc::Mode>(override_mode);
+    pc::CarryIn in{};
+    in.now_ms = now;
+    in.on = d.settings.ride_follow && d.pass_camera_installed && mode != pc::Mode::off && !c.uncertain && !d.mission.board.uncertain &&
+            h.ride_follow_read && h.ride_follow_write && h.vehicle_read;
+    in.seated = lp.valid;
+    in.vehicle = lp.vehicle;
+    if (in.on && in.seated) {
+        partner_vehicle::Read vr{};
+        h.vehicle_read(h.context, lp.vehicle, vr);
+        in.veh_ok = !vr.refusal && vr.unit.id == lp.vehicle;
+        for (unsigned i = 0; i < 3; ++i) in.veh[i] = vr.unit.pos[i];
+        in.yaw = vr.unit.pos[3];
+        h.ride_follow_read(h.context, st, in.follow);
+    }
+    if (!(in.on && in.seated) && !c.carry.have && !c.carry.blending) return;
+    const pc::CarryOut o = pc::CarryStep(c.carry, in);
+    bool ok = false;
+    if (o.write) {
+        const float expect[3] = {in.follow.start[0], in.follow.start[1], in.follow.start[2]};
+        const float start[3] = {o.start[0], o.start[1], o.start[2]};
+        ok = h.ride_follow_write(h.context, st, in.follow.blend, expect, start);
+    }
+    pc::CarryWritten(c.carry, o, ok);
+    const auto ms = [](float s) noexcept { return std::isfinite(s) && s > -2.0e6f && s < 2.0e6f ? static_cast<int>(std::lround(s * 1000.0f)) : -1; };
+    if (o.event == pc::CarryEvent::open)
+        EmitNativeN(h, c.carry_cap, kRideFollowCap, "partner_ride_follow",
+                    "partner_ride=pass_camera; state=follow; event=open; vehicle=%u; seat=%u; dur_ms=%d; elapsed_ms=%d; alpha_milli=%d\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), ms(in.follow.dur), ms(in.follow.elapsed), ms(in.follow.alpha));
+    else if (o.event == pc::CarryEvent::close)
+        EmitNativeN(h, c.carry_cap, kRideFollowCap, "partner_ride_follow",
+                    "partner_ride=pass_camera; state=follow; event=close; vehicle=%u; seat=%u; ms=%llu; dur_ms=%d; writes=%u; carried_cm=%d; "
+                    "warps=%u; total_writes=%u\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), static_cast<unsigned long long>(o.ms), ms(o.dur), o.writes,
+                    static_cast<int>(std::lround(o.carried * 100.0f)), c.carry.warps, c.carry.writes);
+}
+
+// fb1031 (design 8.59): the ride camera census, lab and play, read only. While the local player rides a vehicle (the
+// local passenger report, else the vehicle it drives), the body's camera-space position against
+// its rest value (partner_pass_camera::CensusStep): per-tick lines for the first ticks of an episode (accelerating
+// from standstill), then one line every 250 ms, and a summary when the vehicle stops or the ride ends.
+void TickRideCamCensus(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
+    namespace pc = partner_pass_camera;
+    auto& c = d.mission.pass_camera;
+    const partner_board::LocalPassenger& lp = d.local_passenger;
+    pc::CensusIn in{};
+    in.now_ms = now;
+    if (lp.valid) {
+        in.vehicle = lp.vehicle;
+        in.seat = lp.seat;
+    } else if (d.local_vehicle != partner_ride_wire::kVehicleUnknown) {
+        in.vehicle = d.local_vehicle;  // the vehicle this copy's player drives (Lua's ON_VEHICLE)
+        in.seat = 0;
+    }
+    pc::View v{};
+    pp::AimRead ar{};
+    partner_vehicle::Read vr{};
+    if (in.vehicle != partner_ride_wire::kVehicleUnknown && h.vehicle_read && h.read_aim && h.pass_camera_view) {
+        h.vehicle_read(h.context, in.vehicle, vr);
+        const bool veh_ok = !vr.refusal && vr.unit.id == in.vehicle && std::isfinite(vr.unit.pos[0]) && std::isfinite(vr.unit.pos[1]) &&
+                            std::isfinite(vr.unit.pos[2]) && std::isfinite(vr.unit.pos[3]);
+        const bool body_ok = veh_ok && h.read_aim(h.context, st, ar) && ar.body_ok[0] && std::isfinite(ar.body[0][0]) &&
+                             std::isfinite(ar.body[0][1]) && std::isfinite(ar.body[0][2]);
+        const bool view_ok = body_ok && h.pass_camera_view(h.context, st, v) && v.ok && pc::QuatOk(v.rot);
+        if (view_ok) {
+            in.ok = true;
+            for (unsigned i = 0; i < 3; ++i) {
+                in.veh[i] = vr.unit.pos[i];
+                in.body[i] = ar.body[0][i];
+                in.eye[i] = v.pos[i];
+            }
+            in.yaw = vr.unit.pos[3];
+            for (unsigned i = 0; i < 4; ++i) in.rot[i] = v.rot[i];
+        }
+    }
+    if (!in.ok && !c.census.have) return;
+    const pc::CensusOut o = pc::CensusStep(c.census, in);
+    if (o.event == pc::CensusEvent::none) return;
+    const auto cm = [](float a) noexcept { return std::isfinite(a) && a > -2.0e7f && a < 2.0e7f ? static_cast<int>(std::lround(a * 100.0f)) : INT32_MIN; };
+    pc::Camera cam{};
+    if (h.pass_camera_read) h.pass_camera_read(h.context, st, cam);
+    pc::Follow fl{};
+    const bool fl_ok = h.ride_follow_read && h.ride_follow_read(h.context, st, fl) && fl.ok;
+    const auto fms = [](float s) noexcept { return std::isfinite(s) && s > -2.0e6f && s < 2.0e6f ? static_cast<int>(std::lround(s * 1000.0f)) : -1; };
+    if (o.event == pc::CensusEvent::end) {
+        EmitNativeN(h, c.census_cap, kRideCamCap, "partner_ride_cam",
+                    "partner_ride_cam=episode; ep=%u; vehicle=%u; seat=%u; ticks=%u; ms=%llu; max_spd_cms=%d; max_lag_cm=%d; lag_ms=%d; "
+                    "max_drift_cm=%d; cmode=%d\r\n",
+                    o.episode, unsigned(o.vehicle), unsigned(o.seat), o.ticks, static_cast<unsigned long long>(o.dur_ms), cm(o.max_speed),
+                    cm(o.max_lag), o.lag_ms < 0.0f ? -1 : static_cast<int>(std::lround(o.lag_ms)), cm(o.max_drift), cam.ok ? cam.mode : -1);
+        return;
+    }
+    EmitNativeN(h, o.event == pc::CensusEvent::frame ? c.census_frame_cap : c.census_cap,
+                o.event == pc::CensusEvent::frame ? kRideCamFrameCap : kRideCamCap, "partner_ride_cam",
+                "partner_ride_cam=%s; t=%llu; ep=%u; n=%u; vehicle=%u; seat=%u; spd_cms=%d; lag_cm=%d; d_cm=%d,%d,%d; drift_cm=%d; "
+                "cs_cm=%d,%d,%d; cmode=%d; blend=%d,%d,%d; carry=%u\r\n",
+                o.event == pc::CensusEvent::frame ? "frame" : "line", static_cast<unsigned long long>(now), o.episode, o.ticks,
+                unsigned(in.vehicle), unsigned(in.seat), cm(o.speed), cm(o.lag), cm(o.d[0]), cm(o.d[1]), cm(o.d[2]), cm(o.drift),
+                cm(o.cs[0]), cm(o.cs[1]), cm(o.cs[2]), cam.ok ? cam.mode : -1, fl_ok ? fms(fl.alpha) : -1, fl_ok ? fms(fl.elapsed) : -1,
+                fl_ok ? fms(fl.dur) : -1, c.carry.writes);
+}
+
 void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
@@ -4935,6 +5049,54 @@ void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clo
     const pal::PadOut po = pal::PadStep(m.pad_census, pi);
     if (po.line && pal::FormatPad(po, line, sizeof(line))) Emit(h, line);
     if (po.capped_now) EmitFormat(h, "partner_pad_dropped=capped; limit=%u\r\n", pal::kPadLineCap);
+}
+
+// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): the local player's CQC combo finisher (act 114
+// straight out of a 113 jab) that reaches body 1 (shown on this copy, on foot: not range- or ride-hidden, not seated or
+// riding) hands one friendly hit, cause sleep, to the downed owner's queue; the partner's own copy applies it
+// (FRIENDLY_HIT, the stock player sleep). One line per strike edge (a jab logs verdict=jab and queues nothing).
+// fb1031 review: body 1's position is its drawn body (read_body): the slot stays at the boarding spot while seated.
+void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool anim_ok, const pp::Anim& anim,
+               const sync::AnimState& remote_anim) noexcept {
+    Mission& m = d.mission;
+    namespace pm = partner_melee;
+    namespace rw = partner_ride_wire;
+    pm::In in{};
+    in.enabled = d.settings.melee && !terminating;
+    in.local_valid = anim_ok && st.slots_ok && st.local == 0;
+    in.act = anim_ok ? anim.act[0] : 0;
+    in.now_ms = clock.now_ms;
+    // The attacker's position and facing come from the local body readback (read_local_body, the facing sender's
+    // source), never the local slot S+0x20[0]: run af0b88b6 read it 21 cm from body 1 four seconds after a teleport with
+    // the players 1 m apart. No readback on a strike tick: no_local (NaN position).
+    in.pos0[0] = in.pos0[1] = in.pos0[2] = std::numeric_limits<float>::quiet_NaN();
+    if (in.local_valid && pm::StrikeAct(in.act) && h.read_local_body) {
+        float lpos[4]{}, lquat[4]{};
+        if (h.read_local_body(h.context, st, lpos, lquat)) {
+            for (unsigned i = 0; i < 3; ++i) in.pos0[i] = lpos[i];
+            in.yaw0 = partner::QuatToYaw(lquat);
+        }
+    }
+    in.remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    in.remote_act = remote_anim.act;
+    in.remote_stance = remote_anim.stance;
+    // The body readback and the ride checks run only while the local act is a strike act (an edge may be pending).
+    if (in.local_valid && pm::StrikeAct(in.act) && st.slots_ok && pp::Realized(st, partner::partner_index) && !m.range_hidden &&
+        !m.visibility.hidden && !m.visibility.seated && !m.ride_seated && m.seat.phase == SeatPhase::idle && !m.vehicle_job) {
+        const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+        const bool ride_live = d.ride_rx.have && d.ride_rx.epoch == epoch && rw::Live(d.ride_rx, epoch, clock.now_ms);
+        const bool riding = (ride_live && d.ride_rx.packet.kind != rw::Kind::foot) || VehicleAttached(h, st);
+        float body_pos[4]{}, body_quat[4]{};
+        if (!riding && h.read_body && h.read_body(h.context, st, body_pos, body_quat)) {
+            in.body_valid = true;
+            for (unsigned i = 0; i < 3; ++i) in.pos1[i] = body_pos[i];
+        }
+    }
+    const pm::Out o = pm::Step(m.melee, in);
+    if (o.verdict == pm::Verdict::none) return;
+    const bool queued = o.queue && h.melee_hit && h.melee_hit(h.context, st.P);
+    char line[256]{};
+    if (pm::FormatStrike(m.melee, in.act, o, queued, line, sizeof(line))) EmitNativeN(h, m.melee_cap, pm::kLineCap, "partner_melee", "%s", line);
 }
 
 // The DM overlay's eligibility (a static reason, or nullptr): body 1 loaded and
@@ -6599,6 +6761,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.pass_camera = lab.partner_pass_camera;
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.seat_fpv = lab.partner_seat_fpv;
+    d.settings.ride_follow = lab.partner_ride_follow;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
     d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
@@ -6632,6 +6795,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_gun = lab.partner_seat_gun;
     // M7 seated shots, S1 (partner_seat_shot; lab and play).
     d.settings.seat_shot = lab.partner_seat_shot;
+    // Melee on the partner (partner_melee; lab and play, with the gun profile).
+    d.settings.melee = lab.partner_melee;
     // G1 partner HUD hints (lab only, default 0; play forces it off in the loader).
     d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
@@ -7171,6 +7336,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     TickBoard(d, h, st, now, terminating, ride_tick);
     TickPassCamera(d, h, st, now, terminating);
     TickSeatShot(d, h, st, now, terminating);
+    TickFollowCarry(d, h, st, now, terminating);
+    if (!terminating) TickRideCamCensus(d, h, st, now);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     SendSeatExt(d, h, now);
@@ -7265,6 +7432,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // Round-1 actions: the act census (log only), before the ride/range guards.
     TickActLog(d, h, st, clock, anim_ok, anim, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live,
                set.input_mask);
+    // Melee on the partner: the local strike that reaches body 1 (one friendly hit for the partner's copy).
+    TickMelee(d, h, st, clock, terminating, anim_ok, anim, remote_anim);
     const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
     const bool vehicle_attached=VehicleAttached(h,st);
     if(m.vehicle_job&&!vehicle_job){

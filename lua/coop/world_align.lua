@@ -79,6 +79,12 @@ do
     function A.reset()
         A.tx, A.rx, A.ack, A.unknown, A.discovery, A.pairEpoch = nil, nil, nil, {}, 0, nil
         W.inferredCp, W.inferredArea = nil, nil
+        -- Mother Base (allCp): no area trap, so the snapshot reads every CP's staff.
+        if W.feature and W.feature.allCp then
+            local all = {}
+            for _, h in ipairs(W.cpOrder or {}) do all[h] = true end
+            W.inferredCp = all
+        end
         A.dead = false
         A.baseW1 = W.w1 and W.api.isStart and W.api.isStart() == true
         if A.enabled and W.active and W.level >= 3 and W.feature and W.feature.enemies then

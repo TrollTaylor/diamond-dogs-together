@@ -9,6 +9,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -664,6 +665,220 @@ void TestTraceDue() {
     Check(pc::TraceDue(5000, 4900, false, 5100) && !pc::TraceDue(5000, 4900 - pc::kTraceAfterMs, false, 5100),
           "fast for kTraceAfterMs after the aim");
     Check(pc::TraceDue(9000, 0, false, 5000), "a clock that went back: due");
+}
+
+// fb1031 (design 8.59): the ride camera census. A camera 5 m behind the body that follows it rigidly measures no lag; one
+// whose eye trails the vehicle by 100 ms measures speed * 0.1 m along the forward axis and ~100 ms.
+void TestRideCamCensus() {
+    const float q_id[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float cs[3]{};
+    const float fwd[3] = {0.0f, 0.0f, 5.0f};
+    pc::CameraSpace(q_id, fwd, cs);
+    Check(cs[0] == 0.0f && cs[1] == 0.0f && cs[2] == 5.0f, "identity: camera space is world space");
+    const float half = 0.70710678f;
+    const float q_yaw[4] = {0.0f, half, 0.0f, half};  // 90 deg about up: forward = +x
+    const float px[3] = {5.0f, 0.0f, 0.0f};
+    pc::CameraSpace(q_yaw, px, cs);
+    Check(std::fabs(cs[2] - 5.0f) < 1e-4f && std::fabs(cs[0]) < 1e-4f, "yawed camera: +x is forward");
+    float local[3]{};
+    pc::YawSpace(1.5707963f, px, local);
+    Check(std::fabs(local[2] - 5.0f) < 1e-4f && std::fabs(local[0]) < 1e-4f, "vehicle yaw 90 deg: +x is the vehicle's forward");
+    for (int trail = 0; trail < 2; ++trail) {
+        pc::Census c{};
+        pc::CensusOut last{}, end{};
+        unsigned frames = 0, lines = 0;
+        const float speed_max = 15.0f;
+        float z = 0.0f, v = 0.0f;
+        std::uint64_t t = 100000;
+        for (int i = 0; i < 600; ++i, t += 16) {
+            // 1 s at rest, 4 s accelerating to 15 m/s along +z, then a stop.
+            if (i >= 60 && i < 300) v = std::fmin(speed_max, v + 0.07f);
+            else if (i >= 300) v = 0.0f;
+            z += v * 0.016f;
+            pc::CensusIn in{};
+            in.ok = true;
+            in.vehicle = 25608;
+            in.seat = 3;
+            in.veh[2] = z;
+            in.body[0] = -1.0f;
+            in.body[1] = 1.2f;
+            in.body[2] = z - 1.0f;
+            for (unsigned k = 0; k < 4; ++k) in.rot[k] = q_id[k];
+            in.eye[0] = -1.5f;
+            in.eye[1] = 2.5f;
+            in.eye[2] = z - 6.0f - (trail ? v * 0.1f : 0.0f);
+            in.now_ms = t;
+            const pc::CensusOut o = pc::CensusStep(c, in);
+            if (o.event == pc::CensusEvent::frame) ++frames;
+            if (o.event == pc::CensusEvent::line) ++lines;
+            if (o.event == pc::CensusEvent::end) end = o;
+            if ((o.event == pc::CensusEvent::frame || o.event == pc::CensusEvent::line) && o.d[2] > last.d[2]) last = o;
+        }
+        Check(frames == pc::kCensusFrameTicks && lines > 0, "per-tick lines at the episode's start, then 250 ms lines");
+        Check(end.event == pc::CensusEvent::end && end.episode == 1 && end.vehicle == 25608 && end.seat == 3, "the stop ends episode 1");
+        Check(end.max_speed > 14.0f && end.max_speed < 16.0f, "the vehicle's speed from its positions");
+        Check(end.max_drift < 0.01f, "a body fixed in the vehicle: no drift");
+        if (!trail) {
+            Check(end.max_lag < 0.01f && end.lag_ms >= 0.0f && end.lag_ms < 1.0f, "a rigid camera: no lag");
+        } else {
+            Check(std::fabs(end.max_lag - 1.5f) < 0.05f, "a 100 ms trail at 15 m/s: 1.5 m");
+            Check(end.lag_ms > 95.0f && end.lag_ms < 105.0f, "a 100 ms trail: ~100 ms");
+            Check(last.d[2] > 0.0f, "the body runs ahead of a trailing camera (camera-space forward, at its most)");
+        }
+    }
+    // A seat change or a read gap ends an open episode; a gap with no episode open says nothing.
+    pc::Census c{};
+    pc::CensusIn in{};
+    in.ok = true;
+    in.vehicle = 25608;
+    in.seat = 3;
+    in.rot[3] = 1.0f;
+    in.eye[2] = -5.0f;
+    std::uint64_t t = 1000;
+    for (int i = 0; i < 30; ++i, t += 16) { in.now_ms = t; pc::CensusStep(c, in); }
+    for (int i = 0; i < 10; ++i, t += 16) { in.veh[2] += 0.1f; in.body[2] += 0.1f; in.eye[2] += 0.1f; in.now_ms = t; pc::CensusStep(c, in); }
+    Check(c.moving, "moving at ~6 m/s");
+    in.seat = 1;
+    in.now_ms = t;
+    Check(pc::CensusStep(c, in).event == pc::CensusEvent::end && !c.moving && c.have && c.seat == 1, "a seat change ends the episode");
+    pc::CensusIn none{};
+    none.now_ms = t + 16;
+    Check(pc::CensusStep(c, none).event == pc::CensusEvent::none && !c.have, "the ride's end with no episode: nothing");
+}
+
+// fb1031 (design 8.59): the follow carry. A blend running while the vehicle moves gets its start point moved with the
+// vehicle (translation and yaw); nothing without a blend, at alpha 1, across a warp, off the seat or with the key off.
+pc::CarryIn RideIn(std::uint64_t t, float z, float yaw, float start_z, float elapsed, float alpha) {
+    pc::CarryIn in{};
+    in.on = true;
+    in.seated = true;
+    in.vehicle = 25608;
+    in.veh_ok = true;
+    in.veh[0] = 10.0f;
+    in.veh[1] = 1.0f;
+    in.veh[2] = z;
+    in.yaw = yaw;
+    in.follow.ok = true;
+    in.follow.blend = 0x1000;
+    in.follow.dur = 1.0f;
+    in.follow.elapsed = elapsed;
+    in.follow.alpha = alpha;
+    in.follow.start[0] = 8.0f;
+    in.follow.start[1] = 2.5f;
+    in.follow.start[2] = start_z;
+    in.follow.start[3] = 1.0f;
+    in.now_ms = t;
+    return in;
+}
+void TestFollowCarry() {
+    float out[3]{};
+    const float s[3] = {8.0f, 2.5f, -4.0f}, pv[3] = {10.0f, 1.0f, 0.0f}, nv[3] = {10.0f, 1.0f, 0.5f};
+    pc::CarryPoint(s, pv, 0.0f, nv, 0.0f, out);
+    Check(out[0] == 8.0f && out[1] == 2.5f && std::fabs(out[2] + 3.5f) < 1e-5f, "a straight move carries S by the vehicle's step");
+    pc::CarryPoint(s, pv, 0.0f, pv, 1.5707963f, out);
+    // S 4 m behind and 2 m left of the vehicle (forward +z); a quarter turn (forward +x): 4 m behind is -x, 2 m left is +z.
+    Check(std::fabs(out[0] - 6.0f) < 1e-4f && std::fabs(out[2] - 2.0f) < 1e-4f, "a quarter turn turns S about the vehicle");
+    pc::Carry c{};
+    // First tick of a ride: no previous pose, the blend opens, nothing written.
+    pc::CarryOut o = pc::CarryStep(c, RideIn(1000, 0.0f, 0.0f, -4.0f, 0.1f, 0.2f));
+    Check(!o.write && o.event == pc::CarryEvent::open && c.blending && c.blends == 1, "a blend seen: open, no write without a last pose");
+    // The vehicle moves 0.25 m: S moves 0.25 m with it.
+    o = pc::CarryStep(c, RideIn(1016, 0.25f, 0.0f, -4.0f, 0.116f, 0.25f));
+    Check(o.write && std::fabs(o.start[2] + 3.75f) < 1e-5f && o.start[0] == 8.0f && std::fabs(o.step - 0.25f) < 1e-5f,
+          "moving during the blend: S carried 0.25 m");
+    pc::CarryWritten(c, o, true);
+    Check(c.writes == 1 && c.blend_writes == 1 && std::fabs(c.carried - 0.25f) < 1e-5f, "the write counted");
+    // Not moving: nothing to write.
+    o = pc::CarryStep(c, RideIn(1032, 0.25f, 0.0f, -3.75f, 0.13f, 0.3f));
+    Check(!o.write && o.event == pc::CarryEvent::none, "standing still: no write");
+    // A warp (6 m in one tick): no carry, counted.
+    o = pc::CarryStep(c, RideIn(1048, 6.25f, 0.0f, -3.75f, 0.15f, 0.35f));
+    Check(!o.write && c.warps == 1, "a warp is not carried");
+    // A gap longer than kCarryGapMs: the pose is stale, no write; the next tick carries again.
+    o = pc::CarryStep(c, RideIn(1048 + pc::kCarryGapMs + 1, 7.0f, 0.0f, -3.75f, 0.3f, 0.5f));
+    Check(!o.write, "a stale last pose: no write");
+    o = pc::CarryStep(c, RideIn(1048 + pc::kCarryGapMs + 17, 7.5f, 0.0f, -3.75f, 0.32f, 0.52f));
+    Check(o.write && std::fabs(o.start[2] + 3.25f) < 1e-5f, "carried again after the gap");
+    pc::CarryWritten(c, o, false);
+    Check(c.writes == 1, "a failed write is not counted");
+    // The blend completes (alpha 1, elapsed = dur): close with the episode's numbers, no write.
+    o = pc::CarryStep(c, RideIn(1300, 8.0f, 0.0f, -3.25f, 1.0f, 1.0f));
+    Check(!o.write && o.event == pc::CarryEvent::close && o.writes == 1 && std::fabs(o.carried - 0.25f) < 1e-5f && !c.blending,
+          "the blend's end closes the episode");
+    // A new blend (a transition) opens again; a restart (elapsed back) closes it.
+    o = pc::CarryStep(c, RideIn(1316, 8.2f, 0.0f, -3.0f, 0.0f, 0.0f));
+    Check(o.event == pc::CarryEvent::open && o.write && c.blends == 2, "a new transition: open, carried at once");
+    o = pc::CarryStep(c, RideIn(1332, 8.4f, 0.0f, -3.0f, 0.5f, 0.6f));
+    o = pc::CarryStep(c, RideIn(1348, 8.6f, 0.0f, -3.0f, 0.01f, 0.01f));
+    Check(o.event == pc::CarryEvent::close, "a restarted blend closes the episode");
+    // Off the seat: close (if open) and forget the pose; the key off: nothing.
+    pc::Carry c2{};
+    pc::CarryStep(c2, RideIn(2000, 0.0f, 0.0f, -4.0f, 0.1f, 0.2f));
+    pc::CarryIn off = RideIn(2016, 0.5f, 0.0f, -4.0f, 0.12f, 0.25f);
+    off.seated = false;
+    o = pc::CarryStep(c2, off);
+    Check(!o.write && o.event == pc::CarryEvent::close && !c2.have, "the get-off closes the episode");
+    pc::Carry c3{};
+    pc::CarryIn k0 = RideIn(3000, 0.0f, 0.0f, -4.0f, 0.1f, 0.2f);
+    k0.on = false;
+    pc::CarryStep(c3, k0);
+    k0.now_ms = 3016;
+    k0.veh[2] = 0.5f;
+    Check(!pc::CarryStep(c3, k0).write && !c3.have && c3.blends == 0, "the key off: nothing");
+    // No blend (alpha 1 from the start, or the active module not the fallback one): never written.
+    pc::Carry c4{};
+    pc::CarryStep(c4, RideIn(4000, 0.0f, 0.0f, -4.0f, 1.0f, 1.0f));
+    o = pc::CarryStep(c4, RideIn(4016, 0.5f, 0.0f, -4.0f, 1.0f, 1.0f));
+    Check(!o.write && c4.blends == 0, "alpha 1: S is unused, never written");
+    pc::CarryIn nf = RideIn(4032, 1.0f, 0.0f, -4.0f, 0.1f, 0.2f);
+    nf.follow.ok = false;
+    Check(!pc::CarryStep(c4, nf).write, "another module active: no write");
+}
+
+void TestFollowReadWrite() {
+    pc::detail::ResetForTest();
+    Chain k;
+    unsigned char module[0x40]{};
+    unsigned char blend[0x40]{};
+    Chain::Put<std::uintptr_t>(module, 0, Chain::kBase + c::follow_module_vtable_rva);
+    Chain::Put<std::uintptr_t>(module, c::follow_module_blend, Chain::A(blend));
+    Chain::Put<std::uintptr_t>(blend, 0, Chain::kBase + c::follow_blend_vtable_rva);
+    Chain::Put<float>(blend, c::follow_blend_dur, 1.5f);
+    Chain::Put<float>(blend, c::follow_blend_elapsed, 0.25f);
+    Chain::Put<float>(blend, c::follow_blend_alpha, 0.3f);
+    const float s[4] = {1.0f, 2.0f, 3.0f, 1.0f};
+    std::memcpy(blend + c::follow_blend_start, s, sizeof(s));
+    Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 40, Chain::A(module));
+    k.Mode(5);
+    pc::Follow f{};
+    Check(pc::ReadFollow(k.Base(), k.P(), f) && f.ok && f.blend == Chain::A(blend) && f.dur == 1.5f && f.elapsed == 0.25f &&
+              f.alpha == 0.3f && f.start[0] == 1.0f && f.start[2] == 3.0f,
+          "the active fallback module's blend read");
+    k.Mode(3);
+    Check(!pc::ReadFollow(k.Base(), k.P(), f) && !f.ok, "another module active (the VehicleCamera): no read");
+    k.Mode(5);
+    const float expect[3] = {1.0f, 2.0f, 3.0f}, wrong[3] = {1.0f, 2.0f, 3.5f}, next[3] = {1.0f, 2.0f, 3.25f};
+    SetLastError(4321);
+    Check(!pc::WriteFollowStart(k.Base(), k.P(), Chain::A(blend), wrong, next) && GetLastError() == 4321,
+          "S changed since the read (a stock reset): not written, last error kept");
+    Check(!pc::WriteFollowStart(k.Base(), k.P(), Chain::A(blend) + 0x40, expect, next), "another blend object: not written");
+    pc::Stats st{};
+    pc::ReadStats(st);
+    const std::uint32_t before = st.follow;
+    Check(pc::WriteFollowStart(k.Base(), k.P(), Chain::A(blend), expect, next), "the same blend and S: written");
+    float now[4]{};
+    std::memcpy(now, blend + c::follow_blend_start, sizeof(now));
+    Check(now[0] == 1.0f && now[1] == 2.0f && now[2] == 3.25f && now[3] == 1.0f, "S's xyz written, w kept");
+    pc::ReadStats(st);
+    Check(st.follow == before + 1, "the write counted");
+    Chain::Put<std::uintptr_t>(blend, 0, Chain::kBase + 0x23B7EC8);
+    Check(!pc::ReadFollow(k.Base(), k.P(), f), "a blend object without the blend vtable: no read");
+    // The pinned blocks: refused on a blank image, the contract has them.
+    std::vector<unsigned char> image(0x2000000, 0);
+    std::uintptr_t rva = 0;
+    Check(Same(pc::detail::VerifyFollowImage(image.data(), image.size(), rva), "bytes") && rva == c::ride_follow_blocks[0],
+          "a blank image fails the first follow block");
+    Check(sizeof(c::ride_follow_blocks) / sizeof(c::ride_follow_blocks[0]) == 12, "twelve follow blocks pinned");
 }
 
 void TestReadViewAndLever() {
@@ -1465,6 +1680,9 @@ int main() {
     TestGuardAimGate();
     TestGuardEdges();
     TestTraceDue();
+    TestRideCamCensus();
+    TestFollowCarry();
+    TestFollowReadWrite();
     TestReadViewAndLever();
     TestWritePitchAndModeVtable();
     TestViewMode();

@@ -89,6 +89,7 @@ void Setup(std::uint8_t host_level = 3, std::uint8_t guest_level = 3, bool play 
     h.play = play;
     h.lab_triggers = !play;
     h.build = 1100;
+    h.travel = true;
     world::Config g = h;
     g.level = guest_level;
     g.role = world::kRoleGuest;
@@ -113,9 +114,9 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 61, "61 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 62, "62 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
-                       "M6 seat, and local ops)");
+                       "M6 seat, debug travel, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -1983,6 +1984,92 @@ void SeatOp() {
 }
 } // namespace
 
+// Debug menu Travel (docs/world-sync-protocol.md section 22): TRAVEL 0x3B, both directions, control queue, reliable,
+// level 3, play too, never a request. It works unpaired (the partner may be in another mission or the helicopter),
+// behind the link session's HELLO gates only (as MISSION_TRANSITION). 8 fields, 24 bytes.
+void TravelOp() {
+    const auto* t = world::FindOp(op::travel);
+    Check(op::travel == 0x3B && t && std::strcmp(t->name, "TRAVEL") == 0, "TRAVEL 0x3B exists");
+    Check(t && t->queue == 0 && t->wire == world::Wire::reliable && t->level == 3 && !t->lab_only && !t->request &&
+              t->dir == world::Dir::both && t->lua == 8 && t->native == 0 && t->rx == 0 && t->body == 24,
+          "TRAVEL: control queue, reliable, level 3, play too, both directions, 8 fields, 24 bytes");
+    if (!t) return;
+    auto link = [](std::uint32_t host_mission, std::uint32_t guest_mission, std::uint64_t now) {
+        g_host.OnLinkState(true, 1, now);
+        g_guest.OnLinkState(true, 1, now);
+        g_host.Cfg(host_mission, true, host_mission, now);
+        g_guest.Cfg(guest_mission, true, guest_mission, now);
+        Check(Tx(g_host, op::hello, {host_mission, 1, 77, 10, 3}, now) == world::TxStatus::ok &&
+                  Tx(g_guest, op::hello, {guest_mission, 1, 77, 10, 3}, now) == world::TxStatus::ok,
+              "HELLOs");
+        Exchange(now + 1);
+        Drain(g_host, 3, now + 1);
+        Drain(g_guest, 3, now + 1);
+    };
+    Setup(3, 3, true);
+    link(30050, 30020, 100);
+    Check(!g_host.paired() && !g_guest.paired(), "Mother Base and Africa: never paired");
+    // seq, kind (1 ask, 2 go, 3 bring, 4 answer), mission, x, y, z mm, yaw mdeg, reason
+    Check(Tx(g_guest, op::travel, {1, 3, 30020, -656010, 1200, 877730, 62000, 0}, 102) == world::TxStatus::ok,
+          "the guest in Africa brings the host in Mother Base (unpaired)");
+    Check(Tx(g_host, op::travel, {1, 4, 30020, 0, 0, 0, 0, 0}, 102) == world::TxStatus::ok,
+          "the host answers while unpaired");
+    Check(Tx(g_host, op::travel, {0, 2, 30020, 0, 0, 0, 0, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 0, 30020, 0, 0, 0, 0, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 5, 30020, 0, 0, 0, 0, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 2, 100000, 0, 0, 0, 0, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 2, 30020, 1000000001, 0, 0, 0, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 2, 30020, 0, 0, 0, 360001, 0}, 102) == world::TxStatus::bad_args &&
+              Tx(g_host, op::travel, {2, 2, 30020, 0, 0, 0, 0, 256}, 102) == world::TxStatus::bad_args,
+          "seq 1.., kind 1..4, mission, position and yaw bounds, reason one byte");
+    Check(Tx(g_host, op::travel, {65535, 2, 30010, 828180, 338200, 1630510, -360000, 255}, 102) == world::TxStatus::ok,
+          "the field bounds encode");
+    Exchange(103);
+    auto h = Drain(g_host, 1, 104);
+    const auto* hr = Find(h, op::travel);
+    Check(hr && hr->count == 8 && hr->v[0] == 1 && hr->v[1] == 3 && hr->v[2] == 30020 && hr->v[3] == -656010 &&
+              hr->v[4] == 1200 && hr->v[5] == 877730 && hr->v[6] == 62000 && hr->v[7] == 0,
+          "the host's control queue delivers the guest's TRAVEL with its exact fields");
+    auto g = Drain(g_guest, 1, 104);
+    Check(Count(g, op::travel) == 2 && g[0].op == op::travel && g[0].v[1] == 4 && g[1].v[0] == 65535 && g[1].v[3] == 828180 &&
+              g[1].v[6] == -360000 && g[1].v[7] == 255,
+          "the guest's control queue delivers both host TRAVELs in order");
+    Setup(3, 2, true);
+    link(30050, 30050, 200);
+    Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 202) == world::TxStatus::disabled, "TRAVEL needs a level-3 peer");
+    Setup(3, 3, true);
+    Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 300) == world::TxStatus::disabled, "no HELLO yet: not sent");
+    // fb1031 travel-2: a copy whose own debug_travel is off never acts on a partner's TRAVEL. Its control queue never
+    // sees an ask, go or bring; the partner gets answer 4 refused, reason 7 (off). It never sends TRAVEL itself.
+    {
+        world::Config hc{};
+        hc.level = 3;
+        hc.role = world::kRoleHost;
+        hc.play = true;
+        hc.build = 1100;
+        hc.travel = false;
+        world::Config gc = hc;
+        gc.role = world::kRoleGuest;
+        gc.travel = true;
+        g_host.Configure(hc, 0);
+        g_guest.Configure(gc, 0);
+        Lines(g_host);
+        Lines(g_guest);
+    }
+    link(30050, 30020, 400);
+    Check(Tx(g_host, op::travel, {1, 2, 30020, 0, 0, 0, 0, 0}, 402) == world::TxStatus::disabled, "travel off: this copy never sends TRAVEL");
+    Check(Tx(g_guest, op::travel, {9, 3, 30020, -656010, 1200, 877730, 62000, 0}, 402) == world::TxStatus::ok &&
+              Tx(g_guest, op::travel, {10, 1, 30010, 0, 0, 0, 0, 0}, 402) == world::TxStatus::ok,
+          "the guest (travel on) brings and asks");
+    Exchange(403);
+    auto off = Drain(g_host, 1, 404);
+    Check(Count(off, op::travel) == 0, "travel off: the host's Lua never sees the guest's bring or ask");
+    Exchange(405);
+    auto back = Drain(g_guest, 1, 406);
+    Check(Count(back, op::travel) == 2 && back[0].v[0] == 9 && back[0].v[1] == 4 && back[0].v[2] == 30020 && back[0].v[7] == 7 &&
+              back[1].v[0] == 10 && back[1].v[1] == 4 && back[1].v[2] == 30010 && back[1].v[7] == 7,
+          "the guest hears answer 4 refused, reason 7 (off), for each");
+}
 int main() {
     Table();
     Codec();
@@ -2009,6 +2096,7 @@ int main() {
     VehicleSpawnOp();
     VehicleDamageOp();
     SeatOp();
+    TravelOp();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

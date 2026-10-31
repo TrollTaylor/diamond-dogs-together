@@ -190,6 +190,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
     # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
     'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
+    # Melee on the other player (lab and play; off unless named until a hidden run shows it)
+    'partner_melee=1','partner_melee=0','guest:partner_melee=1','host:partner_melee=0',
     # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
     'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','partner_pass_camera=view','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
@@ -222,6 +224,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_seat_aim=2','partner_seat_aim=','partner_seat_aim=on','both:partner_seat_aim=1','partner_seat_aims=1',
     'partner_seat_gun=2','partner_seat_gun=','partner_seat_gun=on','both:partner_seat_gun=1','partner_seat_guns=1',
     'partner_seat_shot=2','partner_seat_shot=','partner_seat_shot=on','both:partner_seat_shot=1','partner_seat_shots=1',
+    'partner_melee=2','partner_melee=','partner_melee=on','both:partner_melee=1','partner_melees=1',
     'partner_pass_camera=on','partner_pass_camera=','partner_pass_camera=Aim','partner_pass_camera=1','partner_pass_camera_trace=2',
     'both:partner_pass_camera=aim',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
@@ -251,6 +254,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
         'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
         'labsetting partner_seat_shot=1','labsetting guest partner_seat_shot=0',
+        'labsetting partner_melee=1','labsetting host partner_melee=0',
         'labsetting partner_pass_camera=aim','labsetting partner_pass_camera=view','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
@@ -262,6 +266,7 @@ foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','lab
         'labsetting partner_native_mount=seat','labsetting partner_native_mount=1','labsetting partner_seat_aim=on',
         'labsetting both partner_seat_aim=1','labsetting partner_seat_gun=on','labsetting both partner_seat_gun=1',
         'labsetting partner_seat_shot=on','labsetting both partner_seat_shot=1',
+        'labsetting partner_melee=on','labsetting both partner_melee=1',
         'labsetting partner_pass_camera=on','labsetting partner_pass_camera_trace=yes',
         'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
         'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
