@@ -2210,6 +2210,64 @@ void TestSetupBusy() {
     CHECK(SetupBusyText("").empty() && SetupBusyText("files").empty());
 }
 
+// fb1031: the friend pressed Play 2 s after the game had exited, while Steam still listed MGSV as running
+// (`play=launch; ...; steam=running=1;running_app=287700`): Steam ignored the start request, nothing happened for 32 s
+// and the player cancelled; Play again a second later started the game in 2 s. The window now asks Steam once Steam has
+// let go of the last game (at most 30 s later, as before when it never does).
+void TestLaunchSteamBusy() {
+    Fixture f(L"launch-steam-busy");
+    const wchar_t* app_key = L"Software\\Valve\\Steam\\Apps\\287700";
+    auto steam_lists_mgsv = [&](bool on) {
+        f.env->SetDword(app_key, L"Running", on ? 1 : 0);
+        f.env->SetDword(L"Software\\Valve\\Steam", L"RunningAppID", on ? 287700 : 0);
+    };
+    auto m = MakeRealModelWithEnv(f.game, f.env);
+    m->tick();
+    CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+    steam_lists_mgsv(true);
+    std::string error;
+    CHECK(m->join("", error) && m->phase() == Phase::launching);
+    CHECK(f.env->UrlCount() == 0 && Has(ReadText(f.paths.launcher_log), "play=steam_wait; running=1;running_app=287700"));
+    CHECK(Has(m->link().detail, "Waiting for Steam"));
+    for (int i = 0; i < 8; ++i) {
+        f.env->Advance(500);
+        m->tick();
+    }
+    CHECK(f.env->UrlCount() == 0 && m->phase() == Phase::launching);
+    steam_lists_mgsv(false);   // Steam has let go of the last game
+    f.env->Advance(500);
+    m->tick();
+    CHECK(f.env->UrlCount() == 1 && f.env->urls[0] == L"steam://rungameid/287700" && m->phase() == Phase::launching);
+    CHECK(Has(ReadText(f.paths.launcher_log), "play=steam_url; waited_ms=4500"));
+    CHECK(!Has(m->link().detail, "Waiting for Steam"));
+    CHECK(m->cancel_launch(error) && m->phase() == Phase::ready);
+    // Steam never lets go: it is asked anyway 30 s later.
+    steam_lists_mgsv(true);
+    CHECK(m->join("", error) && f.env->UrlCount() == 1);
+    for (int i = 0; i < 59; ++i) {
+        f.env->Advance(500);
+        m->tick();
+    }
+    CHECK(f.env->UrlCount() == 1);
+    f.env->Advance(1000);
+    m->tick();
+    CHECK(f.env->UrlCount() == 2 && Has(ReadText(f.paths.launcher_log), "play=steam_url; waited_ms=30500"));
+    // Cancel while waiting for Steam: nothing is asked afterwards.
+    CHECK(m->cancel_launch(error) && m->phase() == Phase::ready);
+    CHECK(m->join("", error) && f.env->UrlCount() == 2);
+    CHECK(m->cancel_launch(error) && m->phase() == Phase::ready);
+    steam_lists_mgsv(false);
+    for (int i = 0; i < 4; ++i) {
+        f.env->Advance(500);
+        m->tick();
+    }
+    CHECK(f.env->UrlCount() == 2);
+    // Steam does not list MGSV: asked at once, as before.
+    CHECK(m->join("", error) && f.env->UrlCount() == 3);
+    CHECK(m->cancel_launch(error) && m->phase() == Phase::ready);
+    CHECK(f.RealSavesUntouched());
+}
+
 void StageForModel(Fixture& f, const std::string& xfer, std::uint32_t pid) {
     std::string set;
     WriteStage(f, xfer, {{L"287700\\local\\TPP_GAME_DATA0", "host-save"}}, set);
@@ -4765,6 +4823,7 @@ int main(int argc, char** argv) {
         {"CloseDuringSetup", TestCloseDuringSetup, 190},
         {"SetupElsewhere", TestSetupElsewhere, 3800},
         {"SetupBusy", TestSetupBusy, 600},
+        {"LaunchSteamBusy", TestLaunchSteamBusy, 300},
         {"LocalText", TestLocalText, 10},
         {"GraphicsConfig", TestGraphicsConfig, 10},
         {"LocalLayout", TestLocalLayout, 10},
