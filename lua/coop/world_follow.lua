@@ -51,13 +51,17 @@ if type(get) ~= "function" or type(set) ~= "function" then return end
 local ok, name = pcall(get)
 if ok and name ~= nil and pcall(set) then log(fmt("step=mb_demo;at=%s;cleared=%s", at, string.sub(tostring(name), 1, 60))) end
 end
-function A.foot(at)
+-- continuing: a checkpoint Continue whose helicopter entry was used (vanilla VarSaveOnUpdateCheckPoint off the
+-- helicopter sets ply_isUsedPlayerInitialAction) keeps its spawn (the W4 shared Continue keeps the host's).
+function A.foot(at, continuing)
 if W.get(vars, "missionCode") ~= 30050 or not A.linked() then return end
 A.demo(at)
 local route, state = W.get(gvars, "heli_missionStartRoute") or 0, W.get(gvars, "ply_initialPlayerState")
 local heli = W.get(W.get(TppDefine, "INITIAL_PLAYER_STATE"), "RIDEON_HELICOPTER")
+local ride = (heli ~= nil and state == heli) or (heli == nil and route ~= 0)
+if continuing and W.get(svars, "ply_isUsedPlayerInitialAction") == true then ride = false end
 local reset = W.get(TppMission, "ResetMBFreeStartPositionToCommand")
-if (route == 0 and (heli == nil or state ~= heli)) or type(reset) ~= "function" then return end
+if not ride or type(reset) ~= "function" then return end
 reset()
 log(fmt("step=mb_foot;at=%s;route=%.0f;state=%s", at, route, tostring(state)))
 end
@@ -207,7 +211,7 @@ end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
-if t[4] == 30050 then A.foot("seeds") end
+if t[4] == 30050 then A.foot("seeds", t[2] == 4) end
 if buddy then C.seeded(t[4], t[2]) end
 if relief then R.seeded(t[4], t[2]) end
 return true
@@ -525,7 +529,7 @@ if type(reserve) == "function" then
         if k > 0 and not F.prepare() then return end
         if k > 0 then local ok, err = pcall(F.publish, k); if not ok then W.fail(err) end end
         local r = (function(...) return {n = select("#", ...), ...} end)(reserve(kind, ...))
-        if k > 0 then pcall(A.foot, "reserve") end
+        if k > 0 then pcall(A.foot, "reserve", k == 4) end
         return unpack(r, 1, r.n)
     end
 end
