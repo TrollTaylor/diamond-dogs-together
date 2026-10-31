@@ -1762,8 +1762,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Seat first person (design 8.46, 8.49): follows the gun profile in lab and play (the automatic first person from seats
     // 1 and 2; lab runs 61384aab / m6m7g run 2, the play run of 8.49); a named 0 opts out.
     if (!c.partner_seat_fpv_given) c.partner_seat_fpv = gun;
-    // The follow carry (design 8.59): follows the gun profile in lab and play; a named 0 opts out.
-    if (!c.partner_ride_follow_given) c.partner_ride_follow = gun;
+    // The follow carry (design 8.59): off unless named, in lab and play, until a hidden run proves it (fb1031: both runs
+    // were refused before admission); a named 1 turns it on.
+    if (!c.partner_ride_follow_given) c.partner_ride_follow = false;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
