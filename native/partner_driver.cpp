@@ -3152,12 +3152,15 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     }
 }
 
-// Design 8.46 (partner_seat_fpv): the mission ends or the partner stops during a seated first-person aim: the toggle bits
-// still ours are cleared (best effort: the state read and the write are SEH-guarded; the line says whether it held).
+// Design 8.46 / 8.47 (partner_seat_fpv): the mission ends, the partner stops or the tick is refused during a seated
+// first-person aim: the toggle bits still ours (and a clear still pending) are cleared. Only P is needed: a state read
+// refused during the unload still names the player; the write finds the camera module itself (SEH-guarded). A failed
+// write stays pending (the next tick, the next exit or the next mission's start tries again, kFpvClearTries at most).
 void SeatFpvRelease(Driver& d, const Hooks& h, const char* why) noexcept {
     namespace pc = partner_pass_camera;
     auto& f = d.mission.pass_camera.fpv;
     const std::uint32_t ours = f.ours & pc::kFpvSlotMask;
+    const std::uint32_t bits = (f.ours | f.pending) & pc::kFpvSlotMask;
     const bool active = f.active;
     const std::uint16_t vehicle = f.vehicle;
     const std::uint8_t seat = f.seat;
@@ -3165,15 +3168,32 @@ void SeatFpvRelease(Driver& d, const Hooks& h, const char* why) noexcept {
     f.ours = f.seen = 0;
     f.vehicle = pc::kVehicleUnknown;
     f.seat = pc::kSeatUnknown;
-    if (!active && !ours) return;
-    bool ok = ours == 0;
+    if (!active && !bits) return;
+    bool ok = bits == 0;
     std::uint32_t after = 0;
-    if (ours && h.seat_fpv_write && h.read_state) {
+    if (bits && h.seat_fpv_write && h.read_state) {
         pp::State st{};
-        ok = h.read_state(h.context, st) == pp::Refusal::none && h.seat_fpv_write(h.context, st, 0, ours, after);
+        (void)h.read_state(h.context, st);
+        ok = st.P != 0 && h.seat_fpv_write(h.context, st, 0, bits, after);
     }
-    EmitFormat(h, "partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=%u; seat=%u; reason=%s; set=0x0; clear=0x%x; ok=%u; after=0x%x\r\n",
-               unsigned(vehicle), unsigned(seat), why, ours, ok ? 1u : 0u, after);
+    bool gave_up = false;
+    if (ok) {
+        f.pending = 0;
+        f.pending_tries = 0;
+    } else {
+        f.pending = bits;
+        if (!active && !ours && ++f.pending_tries > pc::kFpvClearTries) {
+            f.pending = 0;
+            f.pending_tries = 0;
+            ++f.give_ups;
+            gave_up = true;
+        }
+    }
+    // Logged at the boarding's release, a landed retry and a give-up (a failing retry on every refused tick is not).
+    if (active || ours || ok || gave_up)
+        EmitFormat(h, "partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=%u; seat=%u; reason=%s; set=0x0; clear=0x%x; ok=%u; "
+                      "after=0x%x; pending=0x%x%s\r\n",
+                   unsigned(vehicle), unsigned(seat), why, bits, ok ? 1u : 0u, after, f.pending, gave_up ? "; give_up=1" : "");
 }
 
 // F1 passenger camera (docs/native-puppet.md "Passenger camera"; partner_pass_camera):
@@ -3327,7 +3347,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                   fpv_lever != pc::kFpvKey ? "lever" : "key", fpv_hooks ? 1u : 0u);
     }
     pc::FpvRead fr{};
-    const bool fr_need = fpv_hooks && lp.valid && (fpv_seat || c.fpv.active || trace);
+    const bool fr_need = fpv_hooks && ((lp.valid && (fpv_seat || c.fpv.active || trace)) || c.fpv.pending != 0);
     const bool fr_ok = fr_need && h.seat_fpv_read(h.context, st, fr) && fr.subj.ok;
     {
         pc::FpvIn fi{};
@@ -3350,6 +3370,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
             if (fo.set || fo.clear) {
                 write_ok = h.seat_fpv_write(h.context, st, fo.set, fo.clear, after);
                 if (!write_ok && fo.set) c.fpv.ours &= ~fo.set;  // not written: not ours
+                // A clear stays pending (FpvStep) until a read shows it: a failed one is retried on the next ticks.
             }
             const bool stop = fo.event == pc::FpvEvent::stop;
             EmitNativeN(h, c.fpv_cap, kSeatFpvCap, "partner_seat_fpv",
@@ -3380,11 +3401,11 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
             const unsigned long long fmvt = h.pass_camera_mvt ? static_cast<unsigned long long>(h.pass_camera_mvt(h.context, st)) : 0ull;
             EmitNativeN(h, c.fpv_trace_cap, kSeatFpvTraceCap, "partner_seat_fpv_trace",
                         "partner_ride=pass_camera; state=fpv_trace; ms=%llu; seat=%u; aim=%u; gun=%u; f3c0=0x%x; b13=%u; b14=%u; slot=%d; "
-                        "cmode=%d; mvt=0x%llx; subj=%d; sm=0x%x; si=%d; sf=0x%llx; tog=0x%x; st=0x%x; f19=%u; w3=0x%x; ours=0x%x; opt=%u\r\n",
+                        "cmode=%d; mvt=0x%llx; subj=%d; sm=0x%x; si=%d; sf=0x%llx; tog=0x%x; f19=%u; w3=0x%x; ours=0x%x; pend=0x%x; opt=%u\r\n",
                         static_cast<unsigned long long>(now), unsigned(lp.seat), aiming ? 1u : 0u, unsigned(aim_read.gun_state[0]), f3c0,
                         (f3c0 >> 13) & 1u, (f3c0 >> 14) & 1u, fr.slot_ok ? int(fr.slot) : -1, cam.mode, fmvt, fr.subj.index, fr.subj.mask,
-                        fr.subj.first, static_cast<unsigned long long>(fr.subj.first_fn), fr.subj.toggles, fr.subj.started, f19, w3,
-                        c.fpv.ours, c.fpv.opt_out ? 1u : 0u);
+                        fr.subj.first, static_cast<unsigned long long>(fr.subj.first_fn), fr.subj.toggles, f19, w3,
+                        c.fpv.ours, c.fpv.pending, c.fpv.opt_out ? 1u : 0u);
         }
         std::uintptr_t polls[10]{};
         if (!c.pollers_logged && h.seat_fpv_pollers && h.seat_fpv_pollers(h.context, st, polls)) {
@@ -6633,6 +6654,11 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     // The seat dwords never outlive a mission (a missed MissionEnd included).
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "mission_start");
+    // Design 8.47: our seat first-person bit never outlives a mission either (a missed MissionEnd included); a clear that
+    // still fails stays pending into the new mission (retried there, kFpvClearTries at most).
+    SeatFpvRelease(d, h, "mission_start");
+    const std::uint32_t fpv_pending = d.mission.pass_camera.fpv.pending;
+    const std::uint32_t fpv_pending_tries = d.mission.pass_camera.fpv.pending_tries;
     // Gestures: a new hook epoch (a running gesture is dropped without a write).
     WithdrawGesture(d, h);
     PublishDisarmed(d, h);
@@ -6643,6 +6669,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // F1 vehicles: no board policy outlives a mission (the lease would end it anyway).
     BoardWithdraw(d, h);
     d.mission = Mission{};
+    d.mission.pass_camera.fpv.pending = fpv_pending;
+    d.mission.pass_camera.fpv.pending_tries = fpv_pending_tries;
     // Seats on: a draw latch never outlives its mission.
     d.seat_draw = Driver::SeatDraw{};
     // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
@@ -6788,7 +6816,8 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     DisarmInput(d, h, "stop");
     if (m.dm_patched) RevertDm(d, h, "stop");
     if (h.ride_seat_revert) h.ride_seat_revert(h.context, "stop");
-    if (!terminating) SeatFpvRelease(d, h, "stop");
+    // Design 8.47: the terminating stop too (MISSION_TERMINATING: the camera still alive; one SEH-guarded compare-exchange).
+    SeatFpvRelease(d, h, "stop");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
     m.seat.armed = false;
@@ -7034,6 +7063,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // Without a tick nothing re-validates the window or the DM patch.
         DisarmInput(d, h, "tick_rejected");
         if (m.dm_patched) RevertDm(d, h, "tick_rejected");
+        SeatFpvRelease(d, h, "tick_rejected");  // design 8.47: no TickPassCamera on this tick
         return false;
     }
     ++m.ticks;
@@ -7066,6 +7096,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // window and no DM patch while they fail; both re-arm on their own.
         DisarmInput(d, h, "cfg_refused");
         if (m.dm_patched) RevertDm(d, h, "cfg_refused");
+        SeatFpvRelease(d, h, "cfg_refused");  // design 8.47: no TickPassCamera on this tick
         return false;
     }
     if (m.refusal) {

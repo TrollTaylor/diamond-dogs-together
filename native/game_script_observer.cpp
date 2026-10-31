@@ -84,6 +84,7 @@
 #include "mgscoop/client_reset.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/partner_player.hpp"
+#include "partner_player_contract.hpp"
 #include "mgscoop/partner_missions.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_action_events.hpp"
@@ -1141,10 +1142,11 @@ bool PartnerSeatFpvRead(void*, const pp::State& state, mgscoop::partner_pass_cam
         };
         std::uintptr_t records = 0;
         std::uint32_t base = 0;
-        if (read(block.ps + 0x280, &records, sizeof(records)) && records && read(block.ps + 0x8, &base, sizeof(base)) && block.id >= base &&
-            block.id - base < 64) {
-            const std::uintptr_t rec = records + static_cast<std::uintptr_t>(block.id - base) * 0x20;
-            out.flags_ok = read(rec, &out.w0, sizeof(out.w0)) && read(rec + 0xC, &out.w3, sizeof(out.w3));
+        namespace ppc = mgscoop::partner_player_contract;
+        if (read(block.ps + ppc::ps_rec280, &records, sizeof(records)) && records && read(block.ps + ppc::ps_base_id, &base, sizeof(base)) &&
+            block.id >= base && block.id - base < 64) {
+            const std::uintptr_t rec = records + static_cast<std::uintptr_t>(block.id - base) * ppc::ps_rec280_stride;
+            out.flags_ok = read(rec, &out.w0, sizeof(out.w0)) && read(rec + 3 * sizeof(std::uint32_t), &out.w3, sizeof(out.w3));  // word 3
         }
     }
     return out.subj.ok;

@@ -344,7 +344,7 @@ bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept {
     Subj v{};
     v.index = index;
     if (!ReadValue(impl + c::pass_subj_toggles, v.toggles) || !ReadValue(impl + c::pass_subj_mask, v.mask) ||
-        !ReadValue(impl + c::pass_subj_first, v.first) || !ReadValue(impl + c::pass_subj_started, v.started))
+        !ReadValue(impl + c::pass_subj_first, v.first))
         return false;
     std::uintptr_t poller = 0, vt = 0, fn = 0;
     if (ReadValue(impl + c::pass_subj_first_poller, poller) && poller && ReadValue(poller, vt) && vt && ReadValue(vt, fn) && fn >= b)
@@ -395,9 +395,13 @@ bool WriteFpvToggles(const void* base, std::uintptr_t P, std::uint32_t set, std:
 }
 
 const char* FpvInstall(const void* base, std::size_t span) noexcept {
-    if (InterlockedCompareExchange(&g_fpv_tried, 1, 0) != 0) return g_fpv_refusal;
+    // g_fpv_tried: 0 untried, 1 verifying (another caller: refused until done), 2 done (g_fpv_refusal stored before).
+    const LONG was = InterlockedCompareExchange(&g_fpv_tried, 1, 0);
+    if (was == 2) return g_fpv_refusal;
+    if (was == 1) return "verifying";
     std::uintptr_t mismatch = 0;
     g_fpv_refusal = detail::VerifyFpvImage(base, span, mismatch);
+    InterlockedExchange(&g_fpv_tried, 2);
     if (g_fpv_refusal)
         LogFormat("partner_pass_camera=seat_fpv; result=refused; reason=%s; rva=0x%llx\r\n", g_fpv_refusal,
                   static_cast<unsigned long long>(mismatch));

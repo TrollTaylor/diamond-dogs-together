@@ -82,7 +82,6 @@ struct Subj {
     std::int32_t first = -1;      // impl+0x4C (10: none)
     std::uintptr_t first_fn = 0;  // rva of that poller's vt[0] (0: none / unread)
     std::uint32_t toggles = 0;    // impl+0x60: the per-slot first-person toggles (the F tap's)
-    std::uint32_t started = 0;    // impl+0xE0: the pollers started
 };
 bool ReadSubjective(const void* base, std::uintptr_t P, Subj& out) noexcept;
 // The driver's per-tick read (the observer fills it): the module, the local gun's hand slot rec+0x3DA (the poller's slot)

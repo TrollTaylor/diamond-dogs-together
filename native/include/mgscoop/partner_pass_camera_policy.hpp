@@ -692,22 +692,44 @@ struct FpvOut {
     std::uint32_t set = 0, clear = 0;  // the toggle bits to set / clear (never both)
     const char* reason = "none";
 };
+// A tick with no other event retries the pending clear (unread too: the write finds the module itself); given up after
+// kFpvClearTries retries.
+inline FpvOut FpvRetry(Fpv& s, FpvOut o) noexcept {
+    if (!s.pending || o.event != FpvEvent::none) return o;
+    o.event = FpvEvent::retry;
+    if (++s.pending_tries > kFpvClearTries) {
+        o.reason = "give_up";
+        s.pending = 0;
+        s.pending_tries = 0;
+        ++s.give_ups;
+        return o;
+    }
+    o.reason = "pending";
+    o.clear = s.pending;
+    return o;
+}
 inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
     FpvOut o{};
+    // A pending clear is confirmed by a read that shows the bit clear.
+    if (s.pending && in.read_ok) s.pending &= in.toggles & kFpvSlotMask;
+    if (!s.pending) s.pending_tries = 0;
     const bool seat_ok = in.want && in.seated && FpvSeat(in.seat);
     if (s.active && (!seat_ok || in.vehicle != s.vehicle || in.seat != s.seat)) {
-        // The boarding ends (the get-off, a seat change, the key off): the bits still ours are cleared (unread: all of them).
+        // The boarding ends (the get-off, a seat change, the key off): the bits still ours are cleared (unread: all of them)
+        // and stay pending until a read shows them clear.
         o.event = FpvEvent::stop;
         o.reason = !in.want ? "off" : !in.seated ? "get_off" : "seat";
-        o.clear = (in.read_ok ? (s.ours & in.toggles) : s.ours) & kFpvSlotMask;
-        if (o.clear) ++s.restores;
+        const std::uint32_t still = (in.read_ok ? (s.ours & in.toggles) : s.ours) & kFpvSlotMask;
+        if (still) ++s.restores;
+        s.pending |= still;
+        o.clear = s.pending;
         s.active = s.opt_out = s.aim = false;
         s.ours = s.seen = 0;
         s.vehicle = kVehicleUnknown;
         s.seat = kSeatUnknown;
         return o;
     }
-    if (!seat_ok) return o;
+    if (!seat_ok) return FpvRetry(s, o);
     if (!s.active) {
         s.active = true;
         s.opt_out = s.aim = false;
@@ -718,29 +740,31 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         o.reason = "seat";
         return o;
     }
-    if (!in.read_ok) return o;
+    if (!in.read_ok) return FpvRetry(s, o);
     const std::uint32_t toggles = in.toggles & kFpvSlotMask;
     if (!in.aiming) {
         s.aim = false;
         s.seen = 0;
         if (s.ours) {
-            o.clear = s.ours & toggles;
+            const std::uint32_t still = s.ours & toggles;
             s.ours = 0;
-            if (o.clear) {
+            if (still) {
+                s.pending |= still;
+                o.clear = s.pending;
                 o.event = FpvEvent::restore;
                 o.reason = "aim_end";
                 ++s.restores;
             }
         }
-        return o;
+        return FpvRetry(s, o);
     }
     if (!s.aim) {
         s.aim = true;
         s.seen = 0;
         ++s.aims;
     }
-    if (s.opt_out) return o;
-    // The player's own F tap: a bit seen set during this aim is clear now.
+    if (s.opt_out) return FpvRetry(s, o);
+    // The player's own F tap: a bit seen set during this aim is clear now (our own pending bits never count).
     const std::uint32_t dropped = s.seen & ~toggles;
     if (dropped) {
         s.opt_out = true;
@@ -751,11 +775,16 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         o.reason = "tap";
         return o;
     }
-    s.seen |= toggles;
-    if (!in.ready) return o;
+    s.seen |= toggles & ~s.pending;
+    if (!in.ready) return FpvRetry(s, o);
     const int bit = in.slot_ok ? FpvBit(in.slot) : -1;
-    if (bit < 0) return o;
+    if (bit < 0) return FpvRetry(s, o);
     const std::uint32_t b = 1u << bit;
+    if (s.pending & b) {
+        // Our own clear not landed yet and this aim wants the bit again: ours again, no clear.
+        s.pending &= ~b;
+        if (toggles & b) s.ours |= b;
+    }
     if (!(toggles & b)) {
         o.set = b;
         s.ours |= b;
@@ -763,7 +792,7 @@ inline FpvOut FpvStep(Fpv& s, const FpvIn& in) noexcept {
         o.event = FpvEvent::set;
         o.reason = "ready";
     }
-    return o;
+    return FpvRetry(s, o);
 }
 
 // --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------

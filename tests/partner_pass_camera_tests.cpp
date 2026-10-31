@@ -1281,11 +1281,10 @@ void TestFpvReadWrite() {
     Chain::Put<std::uintptr_t>(subj, c::pass_subj_first_poller, Chain::A(poller));
     Chain::Put<std::uintptr_t>(subj, c::pass_subj_pollers + 8 * 3, Chain::A(poller));
     Chain::Put<std::uint32_t>(subj, c::pass_subj_toggles, 0x1);
-    Chain::Put<std::uint32_t>(subj, c::pass_subj_started, 0x8);
     pc::Subj sj{};
     Check(pc::ReadSubjective(k.Base(), k.P(), sj) && sj.ok && sj.index == 1 && sj.mask == 0x8 && sj.first == 3 &&
-              sj.first_fn == c::pass_subj_gun_poller_rva && sj.toggles == 0x1 && sj.started == 0x8,
-          "the subjective module read: index, answer mask, first poller, toggles, started");
+              sj.first_fn == c::pass_subj_gun_poller_rva && sj.toggles == 0x1,
+          "the subjective module read: index, answer mask, first poller, toggles");
     std::uintptr_t rvas[10]{};
     Check(pc::ReadSubjectivePollers(k.Base(), k.P(), rvas) && rvas[3] == c::pass_subj_gun_poller_rva && rvas[0] == 0 && rvas[9] == 0,
           "the pollers line: slot 3 is the gun poller");
