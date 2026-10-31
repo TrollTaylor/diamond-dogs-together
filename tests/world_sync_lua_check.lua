@@ -1279,6 +1279,13 @@ do
         and F.callCount(mbG, 'ChangeLifeState:sol_a1:' .. LIFE.FAINT) == 1
         and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';state=5;as=3'),
         '30050: a partner kill, dying or Fulton knocks the staff member out on this copy, never kills or fultons them')
+    -- Play at Mother Base: W1 stays off (lab only) until a hidden run shows staff outcomes on both copies; the
+    -- allCp / spareStaff code stays dormant there.
+    local mbPlayEnv, mbPlay = fixture({role = 1, mission = 30050, mode = 2})
+    F.start(mbPlayEnv, mbPlay)
+    F.pair(mbPlayEnv, mbPlay, 3)
+    check(not mbPlay.W.w1 and mbPlay.W.feature.enemies == nil and mbPlay.W.feature.allCp == true,
+        '30050 in play: W1 off until a run proves it (lab only)')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
