@@ -171,6 +171,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # G4 truck test levers: the native door spot (lab only, default 0)
     'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
     'partner_ride_front=1','partner_ride_front=0','guest:partner_ride_cab=1','host:partner_ride_cab=0','partner_ride_race=1',
+    'partner_ride_seat1_anchor=0','guest:partner_ride_seat1_anchor=1',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
     # Gestures (on with the gun profile, lab and play)
@@ -190,7 +191,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
     'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
     # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
-    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','guest:partner_pass_camera=aim',
+    'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','partner_pass_camera=view','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
     # join-fix phase 2 (P2-19): the save handoff and the travel lock
     'save_handoff=off','save_handoff=stage','host:save_handoff=stage','guest:save_handoff=scene','save_handoff=always','travel_lock=0','travel_lock=1','guest:travel_lock=1',
@@ -211,6 +212,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
     'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
     'partner_ride_front=2','partner_ride_front=on','partner_ride_cab=','both:partner_ride_cab=1','partner_ride_race=yes',
+    'partner_ride_seat1_anchor=2','partner_ride_seat1_anchor=on',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
     'partner_native_ui_filter=2','partner_native_ui_filter=','partner_native_ui_filter=on','both:partner_native_ui_filter=1','partner_native_ui_filters=1',
@@ -239,6 +241,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
         'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
         'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1','labsetting partner_ride_race=1',
+        'labsetting partner_ride_seat1_anchor=0','labsetting guest partner_ride_seat1_anchor=1',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
         'labsetting partner_native_ui_filter=1','labsetting host partner_native_ui_filter=0',
@@ -248,7 +251,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
         'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
         'labsetting partner_seat_shot=1','labsetting guest partner_seat_shot=0',
-        'labsetting partner_pass_camera=aim','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
+        'labsetting partner_pass_camera=aim','labsetting partner_pass_camera=view','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
@@ -268,7 +271,7 @@ Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[
 foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
         'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block',
         'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1',
-        'labsetting partner_ride_cab=2','labsetting both partner_ride_front=1')){
+        'labsetting partner_ride_cab=2','labsetting both partner_ride_front=1','labsetting partner_ride_seat1_anchor=2')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 # 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both

@@ -345,6 +345,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_ride_cab'; Json = 'ride_cab'; Kind = 'bool' },
     # M6 seat races (the SEAT op): the host decides an empty vehicle's driver seat (off in lab and play unless set).
     @{ Key = 'partner_ride_race'; Json = 'ride_race'; Kind = 'bool' },
+    # Seat 1 on the driver's seat matrix (design 8.33): follows the gun profile in lab and play (8.43); written only when set.
+    @{ Key = 'partner_ride_seat1_anchor'; Json = 'ride_seat1_anchor'; Kind = 'bool' },
     # WS4 step 0: the read-only C4 / bionic-arm census (lab only, default 0, written only when set).
     @{ Key = 'partner_placed_census'; Json = 'placed_census'; Kind = 'bool' },
     # WS4 v1: native placed C4 and arm holds for the partner body (the loader defaults both on with the gun profile;
@@ -385,9 +387,9 @@ $script:LabPartnerKeys = @(
     # aim direction (lab and play: off unless set, a named 1 runs in play too; written only when set).
     @{ Key = 'partner_seat_gun'; Json = 'seat_gun'; Kind = 'bool' },
     @{ Key = 'partner_seat_shot'; Json = 'seat_shot'; Kind = 'bool' },
-    # The passenger camera (docs/native-puppet.md "Passenger camera", design 8.27): its mode off|connect|drop|aim (lab and
+    # The passenger camera (docs/native-puppet.md "Passenger camera", design 8.27): its mode off|connect|drop|aim|view (lab and
     # play) and its read-only lab trace (lab only, forced off in play); written only when set.
-    @{ Key = 'partner_pass_camera'; Json = 'pass_camera'; Kind = 'enum'; Values = @('off', 'connect', 'drop', 'aim') },
+    @{ Key = 'partner_pass_camera'; Json = 'pass_camera'; Kind = 'enum'; Values = @('off', 'connect', 'drop', 'aim', 'view') },
     @{ Key = 'partner_pass_camera_trace'; Json = 'pass_camera_trace'; Kind = 'bool' },
     # Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever
     # (off natively) and the act census lines (on natively); written only when set.

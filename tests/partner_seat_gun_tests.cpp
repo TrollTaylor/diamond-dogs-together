@@ -285,6 +285,15 @@ int main() {
         // older than that is metres off on a moving jeep.
         Check(ss::kLightBox.half_side == 1.0f && ss::kLightBox.half_fwd == 2.2f && ss::kFreshMs <= 50,
               "S1 box: the light box hugs the jeep (4.4 x 2.0 m); fresh for 50 ms");
+        // The freshness window follows the vehicle's speed (review of 8.37): a parked jeep's pose stays good for 250 ms, so a
+        // 25-30 fps copy (33-40 ms ticks on a 15.6 ms clock) never judges a parked shot stale; at 20 m/s and over it is
+        // 50 ms (1 m of drift); unknown speed is 50 ms.
+        Check(ss::MaxAgeMs(-1.0f) == 50 && ss::MaxAgeMs(std::numeric_limits<float>::quiet_NaN()) == 50 && ss::MaxAgeMs(0.0f) == 250 &&
+                  ss::MaxAgeMs(2.0f) == 250 && ss::MaxAgeMs(10.0f) == 100 && ss::MaxAgeMs(20.0f) == 50 && ss::MaxAgeMs(40.0f) == 50,
+              "S1 fresh: the window by speed (unknown 50, parked 250, 10 m/s 100, 20+ m/s 50 ms)");
+        Check(ss::Fresh(1120, 1000, 0.0f) && !ss::Fresh(1060, 1000, 20.0f) && ss::Fresh(1050, 1000, -1.0f) && !ss::Fresh(1251, 1000, 0.0f) &&
+                  !ss::Fresh(999, 1000, 0.0f),
+              "S1 fresh: parked 120 ms fresh; 20 m/s 60 ms stale; 251 ms stale; a future stamp stale");
         // A seated shot across a jeep at yaw 0: the start 0.3 m right of the centre line and 1.1 m up (in the box), aiming
         // left and slightly down at a guard 15 m out: the start moves to the box's left side (-1.0 m) + 5 cm.
         ss::Pub p{};

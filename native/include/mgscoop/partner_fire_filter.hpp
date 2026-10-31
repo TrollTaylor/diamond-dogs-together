@@ -167,7 +167,7 @@ void ReadCensusTotals(CensusTotals& out) noexcept;  // the slot check uses the b
 // --- M7 seated shots, S1 (partner_seat_shot.hpp; docs/native-puppet.md "Seat shot (S1)") ---
 // The driver publishes the local seated passenger every tick (a seqlock; PublishSeatShot stamps pub.ms with the
 // hook's clock) and withdraws it when the report ends. Hook, for a request whose owner is the published owner (type
-// bits 0, never the armed instance) and a publication at most kFreshMs old: copies the record's first kRecordBytes,
+// bits 0, never the armed instance) and a publication at most MaxAgeMs(pub.speed) old: copies the record's first kRecordBytes,
 // plans (partner_seat_shot::PlanShot) and, with pub.apply and a move, forwards the copy with its start moved; the
 // caller's record is never written. Counters and the last plan for the driver's lines.
 void PublishSeatShot(const partner_seat_shot::Pub& pub) noexcept;
@@ -178,7 +178,7 @@ struct SeatShotStats {
     std::uint32_t shifted;   // forwarded as a moved copy
     std::uint32_t census;    // planned a move with apply off (forwarded unchanged)
     std::uint32_t refused;   // planned no move (class, miss, clear, near, target, ...; forwarded unchanged)
-    std::uint32_t stale;     // the publication was older than kFreshMs (forwarded unchanged)
+    std::uint32_t stale;     // the publication was older than MaxAgeMs(its speed) (forwarded unchanged)
     std::uint32_t unread;    // the record was not readable (forwarded unchanged)
     std::uint32_t busy;      // the publication was being written (forwarded unchanged)
     std::uint32_t seq;       // the last plan's number (0: none yet)
@@ -188,6 +188,7 @@ struct SeatShotStats {
     std::uint8_t seat;
     std::uint16_t vehicle;
     float t, exit, dist, o_local[3], d_local[3];
+    std::uint32_t age_ms, max_ms;  // the publication's age at the shot and its freshness window (MaxAgeMs)
 };
 // False while a hook is writing the last plan (the counters are still read).
 bool ReadSeatShot(SeatShotStats& out) noexcept;
@@ -196,7 +197,7 @@ int SeatShotOverride() noexcept;
 void SetSeatShotOverride(int value) noexcept;
 
 namespace detail {
-// Test only: the clock PublishSeatShot stamps and Hook compares (nullptr: GetTickCount64).
+// Test only: the clock PublishSeatShot stamps and Hook compares (nullptr: QueryPerformanceCounter in ms).
 void SetSeatShotClockForTest(std::uint64_t (*clock)() noexcept) noexcept;
 // The hook entry (vtable ABI: rcx = iface, rdx = record; returns rax).
 using RequestFn = void* (*)(void* iface, const void* record) noexcept;

@@ -251,9 +251,12 @@ inline StepOut Step(Episode& e, const StepIn& in) noexcept {
 // stays clear, but in seat 2 the collision pulls the camera into the passenger (cam at the pivot, the aim target
 // 0-1 m away) and the gun refuses to fire (gun mode 15; runs 17fce0b7, 43e5b981), so drop is not the default. The lab
 // lever "passcam off|connect|aim|drop|lab|status" overrides the key on this copy (lab only).
-enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
+// view (design 8.38 / 8.42) is aim plus the camera turned behind the player after a get-off from seat 1 or 2 (the end of
+// this file). The seated aim raise of 8.38 was inert in game (8.40: the aim module's parameter record rewrites
+// CAM+0x150..0x15C every tick) and is gone (8.42).
+enum class Mode : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 inline const char* ModeName(Mode m) noexcept {
-    return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : "aim";
+    return m == Mode::off ? "off" : m == Mode::connect ? "connect" : m == Mode::drop ? "drop" : m == Mode::view ? "view" : "aim";
 }
 inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (!text) return false;
@@ -261,10 +264,12 @@ inline bool ParseMode(const char* text, std::size_t n, Mode& out) noexcept {
     if (n == 7 && std::memcmp(text, "connect", 7) == 0) { out = Mode::connect; return true; }
     if (n == 4 && std::memcmp(text, "drop", 4) == 0) { out = Mode::drop; return true; }
     if (n == 3 && std::memcmp(text, "aim", 3) == 0) { out = Mode::aim; return true; }
+    if (n == 4 && std::memcmp(text, "view", 4) == 0) { out = Mode::view; return true; }
     return false;
 }
 inline bool DropsWhileAiming(Mode m) noexcept { return m == Mode::drop; }
-inline bool Guards(Mode m) noexcept { return m == Mode::aim || m == Mode::drop; }
+inline bool Guards(Mode m) noexcept { return m == Mode::aim || m == Mode::drop || m == Mode::view; }
+inline bool Views(Mode m) noexcept { return m == Mode::view; }
 // The local gun aims: the qualified gun record's aim flag (rec+0x3C0 bit 18, partner_input GunFlag::Aiming) or its
 // current mode in the aim / fire / reload family (partner_seat_aim census, run 6fc3098b: RMB 6 / 7, RMB+LMB 9 / 10,
 // an empty magazine 11 / 12).
@@ -607,6 +612,128 @@ inline bool TraceDue(std::uint64_t last_ms, std::uint64_t last_aim_ms, bool aimi
     const bool fast = aiming || (last_aim_ms && now_ms >= last_aim_ms && now_ms - last_aim_ms < kTraceAfterMs);
     const std::uint64_t every = fast ? kTraceAimMs : kTraceIdleMs;
     return !last_ms || now_ms < last_ms || now_ms - last_ms >= every;
+}
+
+// The seats whose get-off turns the camera (mode view): seat 1 (front) and seat 2 (left back). Seat 3 (the right back
+// seat) leaves the camera behind the player, looking forward (299de3e1).
+inline bool ViewSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
+
+// --- The camera after a get-off (mode view; design 8.38) ------------------------------------------------------------
+// [O] runs 37b94432 / 1f81de65 / 83defaeb: after the stock get-off from seat 1 (and seat 2) the camera is left on the
+// driver's side looking across the jeep, and its collision (the handle cleared by the stock get-off) pulls it in close
+// to the driver with the player out of view; after seat 3 (299de3e1) it stays behind, looking forward. Mode view arms
+// only on an observed get-off from seat 1 or 2 (the body's act kActGetOff 0x70 when the report ends: never on a death,
+// a lost report or a latch) and asks once, after the stock get-off let go (the stock clear of the handle, or the
+// VehicleCamera seen active and gone; no time fallback) and before kTurnMs, for the stock camera
+// rotation of RequestToSetCameraRotation (PlayerCamera vt+0xE0 0x111A920, pinned: unless CAM+0xD38 & 0x1001 or CAM+0x204
+// bit 9, CAM+0xD38 |= 2 and CAM+0xD80..0xD94 = {interp, 0.4, 0.8, 0x400126, pitch, yaw}) toward the vehicle's forward
+// (the vehicle record's yaw: forward = (sin, 0, cos), the camera's world yaw atan2(fx, fz)), kTurnPitch down (positive
+// looks down, like the Lua rotX): the camera swings behind the player along the jeep's side, as after seat 3.
+inline constexpr float kTurnPitch = 0.12f, kTurnInterp = 0.4f;
+inline constexpr float kTurnSpeed = 0.4f, kTurnBlend = 0.8f;  // the Lua binding's two constants (0x2104860, 0x20C5CB0)
+inline constexpr std::uint32_t kTurnFlags = 0x400126;
+inline constexpr std::uint64_t kTurnMs = 6000, kTurnCheckMs = 900;
+// Design 8.42: an on-foot aim while the turn is pending holds it; after the aim the request waits kTurnSettleMs (and while
+// the aim camera module is still the mode), within kTurnAfterAimMs of the aim's end (past kTurnMs if need be); an aim
+// still held kTurnAimMaxMs after the get-off drops it.
+inline constexpr std::uint64_t kTurnSettleMs = 300, kTurnAfterAimMs = 3000, kTurnAimMaxMs = 20000;
+inline constexpr std::size_t kCamRequestFlags = 0xD38, kCamRequest = 0xD80;
+inline constexpr std::uint32_t kRequestBusy = 0x1001, kRequestBit = 2, kCamLockBit = 1u << 9;
+enum class TurnAct : std::uint8_t { none, request, expire, check, hold };
+struct Turn {
+    bool pending = false;
+    bool seen_stock = false;     // the VehicleCamera was the active module since the boarding ended
+    bool stock_clear = false;    // the stock get-off cleared the handle (the release line's reason=stock)
+    std::uint16_t vehicle = kVehicleUnknown;
+    std::uint8_t seat = kSeatUnknown;
+    std::uint64_t since_ms = 0;
+    std::uint64_t check_ms = 0;  // a request was made: its check line is due then (0: none)
+    float yaw = 0.0f;            // the requested world yaw
+    bool aimed = false;          // the player aimed on foot while the turn was pending (design 8.42)
+    std::uint64_t aim_end_ms = 0;  // the first tick after that aim (0: aiming, or no aim)
+    std::uint32_t requests = 0, expired = 0;
+};
+// The boarding ended (a get-off, a seat change, a lost report): arm the turn for that vehicle and seat.
+inline void TurnArm(Turn& t, std::uint16_t vehicle, std::uint8_t seat, std::uint64_t now_ms) noexcept {
+    t.pending = true;
+    t.seen_stock = false;
+    t.stock_clear = false;
+    t.vehicle = vehicle;
+    t.seat = seat;
+    t.since_ms = now_ms ? now_ms : 1;
+    t.aimed = false;
+    t.aim_end_ms = 0;
+}
+// The stock get-off cleared the handle: the get-off ran (the request follows once no VehicleCamera is active).
+inline void TurnStockClear(Turn& t) noexcept {
+    if (t.pending) t.stock_clear = true;
+}
+// The mode left view (the lab lever) or the mission latched: a pending turn is dropped. True when one was.
+inline bool TurnCancel(Turn& t) noexcept {
+    const bool was = t.pending;
+    t.pending = false;
+    t.check_ms = 0;
+    if (was) ++t.expired;
+    return was;
+}
+// One tick. Reasons (static): check, seated, timeout, look, aiming, settle, wait, stock, request. look: the player's own
+// camera input this tick (the effective right stick or mouse above kLookInput); aiming: the local gun aiming on foot;
+// aim_cam: the aim camera module is the camera's mode (read while settling after an aim). Design 8.41: a look while the
+// turn is pending (under the stock get-off or after it, aiming or not) gives the player the camera: the turn is dropped.
+// Design 8.42: an aim holds it (hold on the first aiming tick, never a request while aiming); after the aim, the request
+// follows kTurnSettleMs later once the aim module let go, with the stock get-off's own conditions, within kTurnAfterAimMs
+// of the aim's end. A re-boarding drops it first.
+inline TurnAct TurnStep(Turn& t, bool seated, const Camera& cam, std::uint64_t now_ms, const char*& reason, bool look = false,
+                        bool aiming = false, bool aim_cam = false) noexcept {
+    reason = "none";
+    if (t.check_ms && now_ms >= t.check_ms) {
+        t.check_ms = 0;
+        reason = "check";
+        return TurnAct::check;
+    }
+    if (!t.pending) return TurnAct::none;
+    const std::uint64_t age = now_ms >= t.since_ms ? now_ms - t.since_ms : 0;
+    if (seated) { t.pending = false; ++t.expired; reason = "seated"; return TurnAct::expire; }
+    if (look) { t.pending = false; ++t.expired; reason = "look"; return TurnAct::expire; }
+    if (aiming) {
+        if (age >= kTurnAimMaxMs) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
+        if (cam.ok && StockModule(cam)) t.seen_stock = true;
+        const bool first = !t.aimed;
+        t.aimed = true;
+        t.aim_end_ms = 0;
+        reason = "aiming";
+        return first ? TurnAct::hold : TurnAct::none;
+    }
+    if (t.aimed && !t.aim_end_ms) t.aim_end_ms = now_ms ? now_ms : 1;
+    const bool after_aim = t.aimed && now_ms >= t.aim_end_ms && now_ms - t.aim_end_ms < kTurnAfterAimMs;
+    if (age >= kTurnMs && !after_aim) { t.pending = false; ++t.expired; reason = "timeout"; return TurnAct::expire; }
+    if (t.aimed && (now_ms < t.aim_end_ms || now_ms - t.aim_end_ms < kTurnSettleMs || aim_cam)) {
+        if (cam.ok && StockModule(cam)) t.seen_stock = true;
+        reason = "settle";
+        return TurnAct::none;
+    }
+    if (!cam.ok) { reason = "wait"; return TurnAct::none; }
+    if (StockModule(cam)) { t.seen_stock = true; reason = "stock"; return TurnAct::none; }
+    if (!t.seen_stock && !t.stock_clear) { reason = "wait"; return TurnAct::none; }
+    reason = "request";
+    return TurnAct::request;
+}
+// The request was made (ok) or refused (its own gate, the vehicle unread): either way the turn is spent.
+inline void TurnDone(Turn& t, bool ok, float yaw, std::uint64_t now_ms) noexcept {
+    t.pending = false;
+    if (ok) {
+        ++t.requests;
+        t.yaw = yaw;
+        t.check_ms = (now_ms ? now_ms : 1) + kTurnCheckMs;
+    } else {
+        ++t.expired;
+    }
+}
+// The request's own gate (0x111A920): busy while CAM+0xD38 & 0x1001, locked while CAM+0x204 bit 9.
+inline const char* RequestGate(std::uint32_t d38, std::uint32_t f204) noexcept {
+    if (d38 & kRequestBusy) return "busy";
+    if (f204 & kCamLockBit) return "locked";
+    return nullptr;
 }
 
 } // namespace mgscoop::partner_pass_camera

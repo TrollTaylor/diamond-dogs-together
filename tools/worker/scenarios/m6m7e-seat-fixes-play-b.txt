@@ -1,0 +1,163 @@
+# m6m7e combined play rehearsal of the seat fixes, part b (design 8.43): seat 3 and the D-Dog case at the africa jeep
+# (30020, veh_lv_0000 = 25608; the driver's own D-Dog rides in seat 1, so the right side gives back seat 3), SHIPPED
+# play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both. Guards asleep by name hash as targets.
+#   A. The host drives (stopped), the guest boards from the right: back seat 3 (the D-Dog keeps seat 1 on the driver's
+#      copy); the driver's copy draws the guest in seat 3; the guest's seat-3 aim view (must stay clear); shots at the
+#      nearest guard (S1 published for seat 3; the hit); the stock get-off (seat 3 never arms the turn).
+#   B. The guest drives (after the host's grant), the host boards from the right: the seat it gets is recorded; the
+#      host's aim view from that seat; the get-off.
+#   C. Teardown while seated: the guest boards seat 3 again and the run ends with the guest seated (the worker's
+#      close and restore while a seat patch is applied).
+# NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
+#   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7e-seat-fixes-play-b.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_seat_shot=configured; key=1; play=1' 30
+waitlog guest 'partner_seat_shot=configured; key=1; play=1' 30
+waitlog host 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
+waitlog guest 'partner_ride=pass_camera; state=mode; mode=view; source=key; trace=0' 30
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest debug forward -10
+wait 2500
+both capture b-start
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25608
+host run vehicle_state_status 25608
+# --- A. The host drives, the guest in back seat 3 -------------------------------------------------------------------
+logmark both
+guest debug goto_vehicle jeep right
+wait 3000
+guest press e 150
+guest burst a-geton 3 400
+wait 2300
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+waitlog guest 'partner_seat_shot=published; vehicle=25608; seat=3; class=light; cat=[12]; apply=1;' 5
+# The anchor's configured line is logged once, at this copy's first seat patch (PartnerRideSeatArm), not at load.
+waitlog host 'partner_ride_seat1_anchor=configured; on=1' 5
+wait 1000
+both capture a-seated
+guest hold rmb 1500 nowait
+wait 800
+guest capture a-aim-view
+wait 900
+host run enemy sleep nearest
+guest run enemy_aim_nearest 1.6
+guest expect ^aim_nearest;ent=\d+;
+wait 600
+logmark both
+guest hold rmb 1500 nowait
+wait 700
+guest capture a-aim
+host capture a-drv-aim
+guest press lmb 120
+wait 300
+guest capture a-shot-1
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-shot-2
+guest run enemy_aim_nearest 1.1
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest run enemy_aim_nearest 0.5
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-shot-4
+guest release
+wait 1500
+waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=[0-9]+; state=[45];' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=guest;' 8
+both capture a-after
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+guest expect vstate;id=25608;alive=1;
+logmark both
+guest press e 150
+guest burst a-exit 8 300
+wait 1500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=off' 5
+waitlog guest 'partner_ride=pass_camera; state=release; vehicle=25608; seat=3; reason=stock; ok=1' 10
+both capture a-exited
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+host debug goto_vehicle jeep right
+wait 2000
+host debug forward -10
+wait 2500
+# --- B. The guest drives, the host boards from the right ------------------------------------------------------------
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+host debug goto_vehicle jeep right
+wait 3000
+host press e 150
+wait 4500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[13];' 10
+waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 5
+wait 1000
+both capture b-seated
+host hold rmb 1500 nowait
+wait 800
+host capture b-aim-view
+guest capture b-aim-drv
+wait 900
+host press e 150
+host burst b-exit 8 300
+wait 2000
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=off' 5
+both capture b-exited
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+# --- C. Teardown while seated ---------------------------------------------------------------------------------------
+logmark both
+host debug goto_vehicle jeep
+wait 2500
+host press e 150
+wait 3500
+host run vehicle_seats
+host require vehicle;id=25608
+guest debug goto_vehicle jeep right
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=3;' 10
+wait 1000
+both capture c-seated-end
+state

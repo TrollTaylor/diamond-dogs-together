@@ -220,10 +220,12 @@ enum class PartnerRideSeatExit : std::uint8_t { stop, getoff };
 enum class PartnerRideBoard : std::uint8_t { off, block, passenger };
 // The passenger camera (partner_pass_camera, docs/native-puppet.md "Passenger camera", design 8.27 / 8.28), with
 // partner_ride_board=passenger: off (never connected: the stock collision for the whole ride), connect (the
-// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard; the default),
+// vehicle's ignore-collision handle for the whole ride, 0.14.4), aim (connect plus the shot guard),
 // drop (the shot guard, and the handle dropped while the local passenger aims and briefly after: a lab option, it
 // blocks the seat-2 gun; play runs it as aim). Values equal partner_pass_camera::Mode.
-enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3 };
+// view (design 8.38 / 8.42; the default in lab and play): aim plus the camera turned behind the player after a seat-1 or
+// seat-2 get-off (held through an on-foot aim, dropped by a look).
+enum class PartnerPassCamera : std::uint8_t { off = 0, connect = 1, aim = 2, drop = 3, view = 4 };
 // D-Horse and D-Walker riders (docs/mounts.md, partner_mount_policy): off (the
 // ride wire alone decides: a horse rider hides, a D-Walker rider is reported on
 // foot), hide (the viewer also hides body 1 while the remote's act is a horse
@@ -608,10 +610,10 @@ struct LabConfig {
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;
     bool partner_ride_board_given = false;
-    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (aim unless
+    // The passenger camera's mode (PartnerPassCamera; lab and play): resolved in ResolveWeaponDefaults (view unless
     // named); a named value records _given; an invalid value refuses (named, the default kept). The lab trace
     // (partner_pass_camera_trace=1: the local camera, gun and body while seated, design 8.27) is lab only, default 0.
-    PartnerPassCamera partner_pass_camera = PartnerPassCamera::aim;
+    PartnerPassCamera partner_pass_camera = PartnerPassCamera::view;
     bool partner_pass_camera_given = false;
     bool partner_pass_camera_trace = false;
     // M6 seat 1 (docs/vehicles-companions-design.md 6.6, E6; partner_board): with
@@ -626,6 +628,13 @@ struct LabConfig {
     bool partner_ride_front_given = false;
     bool partner_ride_cab = false;
     bool partner_ride_cab_given = false;
+    // Seat 1 on the driver's seat matrix (design 8.33, 8.34; partner_ride_seat::AnchorSeat): a copy that draws the peer
+    // in seat 1 of a light vehicle (the truck cab excluded) draws it in the seat instead of one seat further right,
+    // outside the jeep; the passenger's own copy keeps the stock seat-1 remap while it sits there (design 8.35,
+    // partner_board::OwnSeatOneStock). Frame-proven in play (8.35, 8.36); follows the gun profile in lab and play since the
+    // seat-fixes merge (8.43); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_seat1_anchor = false;
+    bool partner_ride_seat1_anchor_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
@@ -653,8 +662,8 @@ struct LabConfig {
     bool partner_seat_gun_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
-    // change). Off unless named, in lab and play, until a FRAME proof on both copies and a play rehearsal; a lab copy
-    // with it off still logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
+    // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
+    // logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census

@@ -186,9 +186,11 @@ struct Fake {
     bool peer_v6 = false;
     bool peer_v7 = false;
     // The seated vehicle rider's dwords (partner_ride_seat).
-    unsigned seat_arms = 0, seat_reverts = 0;
+    unsigned seat_arms = 0, seat_reverts = 0, seat_getoffs = 0;
+    int seat_getoff_seat = -1;  // the seat the confirmed GetOff re-anchored (ride_seat_getoff)
     bool seat_arm_ok = true;
     int seat_armed = -1;
+    int seat_arm_vehicle = -1;  // the vehicle id the seat arm named (the light-vehicle check of the seat-1 anchor)
     std::string seat_revert_reason;
     // WS3 vehicles: the vehicle reads (id -> read; any other id refuses "live"),
     // the seat-by-id writes (requests, forced result, whether it wrote).
@@ -6063,11 +6065,12 @@ std::vector<std::uint8_t> ExtBytes(std::uint16_t revision, std::uint16_t vehicle
 }
 
 // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md).
-bool HookRideSeatArm(void* context, std::uint8_t seat) noexcept {
+bool HookRideSeatArm(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept {
     Fake& f = F(context);
     ++f.seat_arms;
     if (!f.seat_arm_ok) return false;
     f.seat_armed = seat;
+    f.seat_arm_vehicle = vehicle;
     f.native_order.push_back("seat_arm");
     return true;
 }
@@ -6076,6 +6079,11 @@ void HookRideSeatRevert(void* context, const char* reason) noexcept {
     ++f.seat_reverts;
     if (f.seat_armed >= 0) f.seat_revert_reason = reason ? reason : "";
     f.seat_armed = -1;
+}
+void HookRideSeatGetOff(void* context, std::uint8_t seat) noexcept {
+    Fake& f = F(context);
+    ++f.seat_getoffs;
+    f.seat_getoff_seat = seat;
 }
 struct SeatSession : Session {
     std::uint16_t ride_rev = 0;
@@ -6092,6 +6100,7 @@ struct SeatSession : Session {
         hooks.send_reliable_append = HookSendReliable;
         hooks.ride_seat_arm = HookRideSeatArm;
         hooks.ride_seat_revert = HookRideSeatRevert;
+        hooks.ride_seat_getoff = HookRideSeatGetOff;
         hooks.dm_clear_stale = HookDmClearStale;
         lab.partner_native_ride = ride;
         driver.settings.nride = ride;
@@ -6386,7 +6395,8 @@ void TestRideSeatById() {
         Check(s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=1; reason=none; remote_cat=1; local_cat=1") == 1 &&
                   s.fake.Containing("partner_ride=ext_rx; rev=1; vehicle=25600; seat=0; cat=1; type=0x10; features=0x03") == 1,
               "the offer and the received addendum are logged");
-        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0, "nothing targeted before the DM plays; the dwords armed first");
+        Check(s.fake.seat_targets.empty() && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25600,
+              "nothing targeted before the DM plays; the dwords armed first (naming the vehicle)");
         Check(s.Step() && s.fake.seat_targets.empty() && !s.driver.mission.seat.confirmed, "no DM yet: no write");
         s.Playing(kFrontLeftLoop);
         Check(s.Step() && s.fake.seat_targets.size() == 1 && s.fake.seat_targets[0].vehicle == 25600 && s.fake.seat_targets[0].seat == 0 &&
@@ -7445,6 +7455,19 @@ void TestSeatShotDriver() {
                                               "dist_cm=1530; inside=1;") == 1,
               "S1 driver: one line per new plan");
         Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot;") == 1, "S1 driver: the same plan is not logged again");
+        // The shot line carries the publication's age and window; the publication carries the vehicle's speed from the
+        // last two publications (review of 8.37): unknown on the first, then 0.33 m in 33 ms = 10 m/s.
+        g_ss.stats.seq = 2;
+        g_ss.stats.age_ms = 7;
+        g_ss.stats.max_ms = 100;
+        Check(s.Tick(0) && s.fake.Containing("partner_seat_shot=shot; result=shift;") == 2 && s.fake.Containing("; age_ms=7; max_ms=100") == 1,
+              "S1 driver: the shot line's age and window");
+        Check(g_ss.pubs.front().speed < 0.0f && std::fabs(g_ss.pubs.back().speed) < 0.01f, "S1 driver: speed unknown first, then parked 0");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] += 0.33f;
+        Check(s.Tick(0) && std::fabs(g_ss.pubs.back().speed - 10.0f) < 0.05f, "S1 driver: 0.33 m in 33 ms: 10 m/s");
+        for (auto& v : s.fake.vehicles)
+            if (v.unit.id == 25608) v.unit.pos[0] -= 0.33f;
         g_board.lp = mgscoop::partner_board::LocalPassenger{};
         g_board.lp.reason = "act";
         Check(s.Tick(0) && g_ss.withdraws == 1 && s.fake.Containing("partner_seat_shot=withdrawn; vehicle=25608; seat=3; reason=not_seated") == 1,
@@ -7507,6 +7530,158 @@ void TestSeatShotDriver() {
         s.driver.settings.ride_board = mgscoop::PartnerRideBoard::block;
         g_board.lp = BoardPassenger(25608, 3);
         Check(s.Tick(0) && g_ss.pubs.empty(), "S1 driver: block mode: nothing");
+    }
+}
+
+// Design 8.38 / 8.42 (mode view): the get-off camera turn's driver wiring (the seated raise is gone, 8.42).
+struct PassViewFake {
+    std::vector<float> turns;
+} g_raise;
+const char* HookRaiseTurn(void*, const pp::State&, float, float yaw, float) noexcept {
+    g_raise.turns.push_back(yaw);
+    return nullptr;
+}
+void ViewSetup(Session& s) {
+    GuardSetup(s, mgscoop::PartnerPassCamera::view);
+    g_raise = PassViewFake{};
+    s.hooks.pass_camera_turn = HookRaiseTurn;
+    s.hooks.vehicle_read = HookVehicleRead;
+    auto jeep = VehicleRead(25608, 0x20);
+    jeep.unit.pos[3] = 0.5f;
+    s.fake.vehicles.push_back(jeep);
+    g_pass.cam = PassCam(0, 0);
+}
+std::uint64_t pc_handle(std::uint16_t vehicle) { return mgscoop::partner_pass_camera::ConnectHandle(vehicle); }
+
+void TestPassCameraViewDriver() {
+    namespace pb = mgscoop::partner_board;
+    {
+        // Design 8.42: no aim-module entry is written any more; MissionEnd / Stop / MissionStart log no view restore.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && s.Tick(0), "view: seated");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.Containing("state=view;") == 0, "view: no raise lines");
+    }
+    {
+        // Design 8.39: the get-off turn arms only on an observed get-off (act 0x70) from seat 1 or 2, waits for the stock
+        // clear of the handle (no time fallback), and is dropped when the mode leaves view.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0), "turn: seated");
+        g_pass.cam = PassCam(pc_handle(25608), 1, 3);  // the stock get-off: the VehicleCamera holds the handle
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending && g_raise.turns.empty(), "turn: armed on the get-off act");
+        for (int i = 0; i < 3; ++i) Check(s.Tick(0, 1000) && g_raise.turns.empty(), "turn: no time fallback while the stock holds");
+        g_pass.cam = PassCam(0, 0);  // the stock cleared the handle; the fallback module is active
+        Check(s.Tick(0) && g_raise.turns.size() == 1 && g_raise.turns[0] == 0.5f &&
+                  s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=2; reason=made;") == 1,
+              "turn: the request at the vehicle's yaw once the stock let go");
+    }
+    {
+        // A death (another act), a lost report, or seat 3: never armed; the skip line names why.
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            g_board.lp = BoardPassenger(25608, which == 2 ? 3 : 1);
+            s.driver.settings.ride_front = true;
+            Check(s.Tick(0), "skip: seated");
+            g_board.lp = pb::LocalPassenger{};
+            g_board.lp.reason = which == 1 ? "vehicle" : "act";
+            g_board.lp.act = which == 0 ? 0x2A : 0x70;
+            Check(s.Tick(0) && !s.driver.mission.pass_camera.turn.pending, "skip: not armed");
+            for (int i = 0; i < 4; ++i) Check(s.Tick(0, 1000), "skip: on foot");
+            Check(g_raise.turns.empty(), "skip: no request");
+            if (which == 0) Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=skip; vehicle=25608; seat=1; reason=act; act=0x2a") == 1,
+                                  "skip: the death act is named");
+            if (which == 1) Check(s.fake.Containing("state=turn; event=skip; vehicle=25608; seat=1; reason=vehicle;") == 1, "skip: a lost report");
+            if (which == 2) Check(s.fake.Containing("state=turn; event=skip") == 0, "skip: seat 3 is not a view seat (no line)");
+        }
+    }
+    {
+        // The lab lever leaves view while a turn is pending: dropped.
+        Session s(0);
+        ViewSetup(s);
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0), "cancel: seated");
+        g_pass.cam = PassCam(pc_handle(25608), 1, 3);
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        g_board.lp.act = 0x70;
+        Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending, "cancel: armed");
+        g_guard.override_mode = static_cast<int>(mgscoop::partner_pass_camera::Mode::aim);
+        g_pass.cam = PassCam(0, 0);
+        Check(s.Tick(0) && !s.driver.mission.pass_camera.turn.pending && g_raise.turns.empty() &&
+                  s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=2; reason=mode;") == 1,
+              "cancel: the mode left view, no request");
+    }
+    {
+        // Design 8.41: a look while the turn is pending drops it (no request). Design 8.42: an aim on foot holds it (one
+        // hold line); the request follows the aim's end once the aim camera module let go (kTurnSettleMs).
+        for (int which = 0; which < 3; ++which) {
+            Session s(0);
+            ViewSetup(s);
+            g_board.lp = BoardPassenger(25608, 1);
+            s.driver.settings.ride_front = true;
+            Check(s.Tick(0), "input: seated");
+            g_pass.cam = PassCam(pc_handle(25608), 1, 3);
+            g_board.lp = pb::LocalPassenger{};
+            g_board.lp.reason = "act";
+            g_board.lp.act = 0x70;
+            Check(s.Tick(0) && s.driver.mission.pass_camera.turn.pending, "input: armed");
+            if (which == 0) {
+                s.fake.pad.kb_flags = 2;
+                s.fake.pad.kb_f[1] = 0.6f;  // the mouse look (PP+0x474 with PP+0x488 bit 1)
+            } else if (which == 1) {
+                GuardGun(s, 6);  // the gun aims on foot
+            }
+            Check(s.Tick(0, 100), "input: the get-off tick");
+            s.fake.pad = mgscoop::partner_input::PadRaw{};
+            g_pass.cam = PassCam(0, 0);
+            if (which == 1) {
+                // Still aiming after the stock let go; then released while the aim camera module blends out.
+                for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty() && s.driver.mission.pass_camera.turn.pending,
+                                                  "aim: held while aiming");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=hold; vehicle=25608; seat=1; reason=aiming;") == 1,
+                      "aim: one hold line");
+                GuardGun(s, 0);
+                g_guard.mvt = mgscoop::partner_pass_camera::kAimModuleVtableRva;
+                for (int i = 0; i < 4; ++i) Check(s.Tick(0, 100) && g_raise.turns.empty(), "aim: settling after the aim");
+                g_guard.mvt = 0x23B29E0;  // the fallback module
+                Check(s.Tick(0, 100) && g_raise.turns.size() == 1 && g_raise.turns[0] == 0.5f &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1 &&
+                          s.fake.Containing("aimed=1") == 1,
+                      "aim: the request after the aim");
+                continue;
+            }
+            GuardGun(s, 0);
+            for (int i = 0; i < 3; ++i) Check(s.Tick(0, 100), "input: on foot");
+            if (which == 2) {
+                Check(g_raise.turns.size() == 1 &&
+                          s.fake.Containing("partner_ride=pass_camera; state=turn; event=request; vehicle=25608; seat=1; reason=made;") == 1,
+                      "input: none, the request as before");
+            } else {
+                Check(g_raise.turns.empty() && !s.driver.mission.pass_camera.turn.pending, "input: no request");
+                Check(s.fake.Containing("partner_ride=pass_camera; state=turn; event=expire; vehicle=25608; seat=1; reason=look;") == 1,
+                      "input: the expire line names the look");
+            }
+        }
+    }
+    {
+        // Mode aim: the turn hook is never called.
+        Session s(0);
+        ViewSetup(s);
+        s.driver.settings.pass_camera = mgscoop::PartnerPassCamera::aim;
+        g_board.lp = BoardPassenger(25608, 2);
+        Check(s.Tick(0) && s.Tick(0), "aim: ticks");
+        g_board.lp = pb::LocalPassenger{};
+        g_board.lp.reason = "act";
+        for (int i = 0; i < 4; ++i) Check(s.Tick(0, 1000), "aim: on foot");
+        Check(g_raise.turns.empty(), "aim: no turn");
     }
 }
 
@@ -7864,7 +8039,8 @@ void TestRideSeat() {
         Check(s.Step() && (s.reply.op & op::ride_seat) && s.reply.seat_vehicle == 25608 && s.reply.seat == 0 &&
                   s.reply.seat_action == partner::seat_action::play && s.reply.seat_entry == 0 && !(s.reply.op & ~op::ride_seat),
               "a vehicle ride in seat 0 plays the seat DM (RIDE_SEAT only)");
-        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.dm_patched && s.driver.mission.seat.phase == pd::SeatPhase::seated &&
+        Check(s.fake.seat_arms == 1 && s.fake.seat_armed == 0 && s.fake.seat_arm_vehicle == 25608 && s.fake.dm_patched &&
+              s.driver.mission.seat.phase == pd::SeatPhase::seated &&
                   s.fake.Containing("partner_ride_seat=armed; vehicle=25608; seat=0;") == 1 &&
                   s.fake.Containing("partner_ride_seat=play; vehicle=25608; seat=0;") == 1 && s.fake.Containing("partner_ride=seat_show") == 1,
               "comparator and seat dwords armed before the play");
@@ -7968,14 +8144,18 @@ void TestRideSeat() {
               "advancing to entry 1 (Loop) logs the loop probe once");
         s.fake.sample.act = 112;
         Check(s.Step() && s.reply.op == op::ride_seat && s.reply.seat_action == partner::seat_action::next &&
-                  !s.driver.mission.seat.getoff_confirmed,
-              "act 112 advances to GetOff");
+                  !s.driver.mission.seat.getoff_confirmed && s.fake.seat_getoffs == 0,
+              "act 112 advances to GetOff (the anchor stays until the GetOff plays)");
         s.fake.dm.rec18 = 0xe59bbf7182faull;  // stateVehicleGetOffFrontRight
         s.fake.dm.rec1a0 = 2;
         Check(s.Step() && s.driver.mission.seat.getoff_confirmed &&
                   s.fake.Containing("partner_ride_seat=dm; when=getoff;") == 1 &&
                   s.fake.Containing("rec18=0xe59bbf7182fa; rec1a0=2;") == 1,
               "advancing to entry 2 (GetOff) logs the getoff probe once");
+        // Review of design 8.35: the GetOff plays on the seat's own matrix on the passenger's own copy, so the confirmed
+        // GetOff hands the armed seat back to its own anchor (ride_seat_getoff), once.
+        Check(s.fake.seat_getoffs == 1 && s.fake.seat_getoff_seat == 1, "the confirmed seat-1 GetOff re-anchors once");
+        Check(s.Step() && s.fake.seat_getoffs == 1, "the next tick does not re-anchor again");
 
         // Delayed seat resolution (initial seat=255 while hiding/re-showing, then usable seat=0 after 1600 ms)
         // still prepends GetOn because SeatObserveRide refreshes vehicle_since_ms when a usable seat first arrives.
@@ -9699,6 +9879,7 @@ int main() {
     TestRidePeerVehicle();
     TestPassCameraDriver();
     TestPassCameraGuardDriver();
+    TestPassCameraViewDriver();
     TestSeatShotDriver();
     TestBoardSeatGates();
     TestSeatDraw();

@@ -517,8 +517,8 @@ too), a passenger in a truck (trucks block), and the attach jitter against the
 20 Hz RIDE_FAST placement. The guest's head showed the blood decal after the
 ride in both lab runs (also in `59cfc415`, godmode on, source not found).
 
-**The aim camera (design 8.27, review fixes 8.28).** Key `partner_pass_camera=off|connect|aim|drop`
-(lab and play; **default aim**): connect is the behaviour above (0.14.4); aim
+**The aim camera (design 8.27, review fixes 8.28).** Key `partner_pass_camera=off|connect|aim|drop|view`
+(lab and play; **default view** since design 8.42, aim before): connect is the behaviour above (0.14.4); aim
 keeps it and adds the shot guard; drop adds the guard but drops the handle
 while aiming (+600 ms; a lab option, it blocks the seat-2 gun: play runs it as
 aim); off never connects. Lab lever `debug passcam
@@ -556,6 +556,29 @@ Aiming down into the jeep's body also refuses the gun (gun mode 15, stock).
 Pins: the look-at update's angle writes 0x111FCB1, vt+0x88's angle and
 rotation writes 0x112106E, the aim-point solve's eye 0x109705C, slot vt+0xF0,
 the aim module's slots +0x18 / +0x20 (13 pass camera blocks).
+
+**The camera after a get-off (design 8.38 / 8.41 / 8.42; default view in lab
+and play).** Mode `partner_pass_camera=view` (lever `debug passcam view`) is
+aim plus one stock rotation request after an observed get-off (act 0x70) from
+seat 1 or 2 (seat 3 leaves the camera behind the player): once the stock
+get-off let go (the stock clear of the handle, or the VehicleCamera seen and
+gone; no time fallback), `RequestTurn` writes the fields and gate of
+PlayerCamera vt+0xE0 0x111A920 (RequestToSetCameraRotation) toward the
+vehicle's forward yaw, 0.12 rad down, fields before the bit (`state=turn;
+event=request|refused|expire|check|skip|hold`, the request line names
+`aimed=`). A look (stick or mouse above kLookInput) while it is pending drops
+it (`reason=look`); an on-foot aim holds it (`event=hold; reason=aiming`) and
+the request follows 300 ms after the aim ends, once the aim camera module let
+go, within 3 s of the aim's end (an aim past 20 s after the get-off drops it);
+a re-boarding drops it (play rehearsal `ae6283d3`, design 8.42). No game function is called. Pins: 0x111A920,
+0x111A948 (15 pass camera blocks). The camera update FUN_14111CBA0 latches
+the request (CAM+0xD38 bit 2 -> 0x2000) every update; the VehicleCamera never
+reads CAM+0xD38 [I, byte scan], so the request waits for the stock release
+(1.7 s after a seat-1 get-off, 3.1 s seat 2). The seated aim raise of 8.38 (the
+aim module's variant entry, three pins) did nothing in game (8.40: CAM+0x204
+bit 2 stays clear in the seated aim; CAM+0x150..0x15C is rewritten every tick)
+and was removed in 8.42: from seat 1 the aim view still shows the own leg,
+from seat 2 the jeep's panel.
 
 ### Truck test levers
 
@@ -660,7 +683,17 @@ the cab in lab only (8.26; a named 1 runs it in play), and a named 0 turns one o
   checks the blocks (`partner_board=seat_one; result=ok; front=..; cab=..; remap=0xb79a40`); `VerifyImage` accepts
   only 1 / 2 at the immediates. The local passenger report, the receiver's `local_vehicle` gate and the passenger
   camera take seat 1 with either key. Pins: `board_seat1_*`, `board_remap_*`, `board_seat1_blocks`; `vehicle_door`
-  accepts the remap's `jmp`.
+  accepts the remap's `jmp`. With `partner_ride_seat1_anchor=1` (8.33-8.36; on with the gun profile in lab and play since 8.43, a named 0 opts out;
+  frame-proven in play: `f58eebf7`, `086d8043`, `b4c10e6b`) any copy that draws the peer in seat 1 of a light vehicle (category 1/2; not the truck cab, design
+  8.34) anchors body 1's seat-1 DM on seat 0's matrix (`partner_ride_seat::AnchorSeat`, the anchor immediate 0; the
+  applied line ends `anchor=0; cat=1`): the
+  player's FrontRight clips carry the driver-to-passenger offset (the stock remap hands a player in seat 1 the driver's
+  matrix), so seat 1's own matrix drew the body one seat further right, outside the jeep. With the same key the passenger's own copy keeps
+  the stock remap while it sits in a light vehicle's seat 1 (`partner_board::OwnSeatOneStock`; `board_remap;
+  state=stock; why=seated_own`), so it draws itself in the seat too (design 8.35). The GetOff plays on seat 1's own
+  matrix on the passenger's own copy (its skip is back from act 112), so once body 1's GetOff entry plays the driver's
+  copy hands the seat dword back to seat 1's own immediate (`partner_ride_seat::ArmGetOff`; `partner_ride_seat_patch=getoff;
+  seat=1; seat_dword=0x01b04130; anchor=1; was=0`; design 8.36).
 - `partner_ride_race=1`: `InstallRace` retargets site C `0x1246A4F` (RideVehicle CanExec's call of the pre-query
   `0x1245820(action, body, unit, id, char* seat)`; pinned: `board_c_*`, the pre-query's `*seat = 4` start
   `0x1245847`), logged `partner_board=race; result=ok; c=0x1246a4f`. Site C records the want from the pre-query's
@@ -933,15 +966,20 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 
 ### Seat shot (S1)
 
-M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31). Key `partner_seat_shot=0|1` (`_given`):
-**off unless named, in lab and play** (built and tested; it showed no effect in the runs, so nothing flips). Lab
-lever `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
+M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31, on since 8.37). Key
+`partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab and play** (lab since `wp/self-hit`, 8.37:
+a stock seated shot from back seat 3 (`8a920ec8`) or 2 (`60faf9fc`) of the Africa jeep cost the shooter's copy 702 life,
+S1 shots on the same line none; play since the seat-fixes merge, 8.43, with no harm seen but no play line shown to
+damage the east jeep in stock, and seat 1 without a stock control anywhere, 8.44); a named 0 opts out. Lab lever
+`seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
 **What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a
 light vehicle, seat 1 of a truck) and the fire filter's RequestBullet hook is live, the driver tick publishes the ridden
 vehicle's record (position, yaw; the class from its category `+0x6C >> 4`), the seat, the owner and this copy's aim
 target `Q+0x10[local]` through a seqlock (`partner_fire_filter::PublishSeatShot`). The hook (`Hook`, slot 0 of
-`0x2337DE8` / `0x2337D18`), for a request of that owner and a publication at most 50 ms old, forwards a COPY of the
+`0x2337DE8` / `0x2337D18`), for a request of that owner and a fresh publication (`MaxAgeMs`: 1 m of drift at the
+vehicle's speed from the last two publications, 50 ms at 20 m/s and over or speed unknown, up to 250 ms parked, on a
+QueryPerformanceCounter clock; a stale shot is the stock one, logged `result=stale`), forwards a COPY of the
 record (0x34 bytes, what RequestBullet's slot copy `0xD32690` reads) whose start (`+0x00`) moves along its own direction
 (`+0x10`) to where the line leaves the vehicle's box, +5 cm, never closer than 0.3 m to the target; a start outside
 the box is never moved (`result=outside`: the seated muzzle is always inside, so the pose is stale or wrong). The caller's record
@@ -963,8 +1001,8 @@ runs straight into the slot call `0x130343C` and the loop jumps back above it.
 
 **Lines.** `partner_seat_shot=configured; key=..; play=..` once; `published; vehicle=..; seat=..; class=light|truck;
 cat=..; apply=0|1; source=key|lever; veh_cm=..; yaw_mrad=..; body_cm=..; target=..` on each change; one `shot;
-result=shift|census|outside|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
-o_cm=..; d_milli=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
+result=shift|census|stale|outside|near|miss|target|class|far|dir|nonfinite; ...; t_cm=..; exit_cm=..; dist_cm=..; inside=..;
+o_cm=..; d_milli=..; ...; age_ms=..; max_ms=..` per planned shot (the start and direction in the vehicle frame); `refused; reason=..` (seated
 only) and `withdrawn; reason=..`. Off on a lab copy still plans every seated shot (`result=census`, nothing moved); off
 in play publishes nothing.
 

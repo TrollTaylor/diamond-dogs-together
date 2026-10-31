@@ -49,6 +49,7 @@ struct Stats {
     std::uint32_t clears;   // our handle cleared
     std::uint32_t faults;   // SEH-caught writes
     std::uint32_t angles;   // shot-guard angle writes (design 8.27)
+    std::uint32_t turns;    // get-off camera rotation requests made (design 8.38)
 };
 void ReadStats(Stats& out) noexcept;
 
@@ -65,6 +66,10 @@ std::uintptr_t ModeVtable(const void* base, std::uintptr_t P) noexcept;
 bool WritePitch(const void* base, std::uintptr_t P, float pitch) noexcept;
 // The shot guard's rotation write: CAM+0x90..0x9C (x, y, z, w). Same checks and counters as WritePitch.
 bool WriteRotation(const void* base, std::uintptr_t P, const float (&rot)[4]) noexcept;
+
+// Design 8.38, the camera after a get-off: the stock rotation request of PlayerCamera vt+0xE0 0x111A920 (its fields and
+// gate; no game function is called): nullptr when made, else camera / busy / locked / fault. Counted in Stats::turns.
+const char* RequestTurn(const void* base, std::uintptr_t P, float pitch, float yaw, float interp) noexcept;
 
 // The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
 // override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills

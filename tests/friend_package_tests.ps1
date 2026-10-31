@@ -564,6 +564,14 @@ try {
             $file = Join-Path $fixture 'play-seat-aim-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_aim=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_aim'])|$($m['partner_seat_aim_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat aim census is forced off in play'
+            # M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): Play-Coop never names the key and play defaults it
+            # on with the gun profile (seat-fixes merge, design 8.43); a named 0 opts out in play.
+            Assert-True (!$hostIni.Contains('partner_seat_shot') -and !$guestIni.Contains('partner_seat_shot') -and
+                !$clipsIni.Contains('partner_seat_shot')) 'Play-Coop lab.ini never names partner_seat_shot'
+            Assert-Equal "$($n['partner_seat_shot'])|$($n['partner_seat_shot_given'])" '1|0' 'native: play defaults the seat shot on'
+            $file = Join-Path $fixture 'play-seat-shot-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_shot=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_seat_shot'])|$($m['partner_seat_shot_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat shot 0 opts out in play'
             # M7 seat gun (docs/native-puppet.md "Seat gun"): Play-Coop never names the key and play defaults it off; a named
             # 1 runs in play (recorded as named, no refusal bit) until the play default flips after its proof.
             Assert-True (!$hostIni.Contains('partner_seat_gun') -and !$guestIni.Contains('partner_seat_gun') -and
@@ -582,11 +590,19 @@ try {
             $file = Join-Path $fixture 'play-seats-off-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_front=0`npartner_ride_cab=0`npartner_ride_race=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_ride_front'])|$($m['partner_ride_cab'])|$($m['partner_ride_race'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0|0|0x0|0/0' 'native: each seat key named 0 turns it off in play'
-            # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to aim (the handle and the
+            # Seat 1 on the driver's seat matrix (design 8.33-8.36, 8.43): Play-Coop never names the key; play defaults it on
+            # with the gun profile (as the front seat); a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('partner_ride_seat1_anchor') -and !$guestIni.Contains('partner_ride_seat1_anchor') -and
+                !$clipsIni.Contains('partner_ride_seat1_anchor')) 'Play-Coop lab.ini never names partner_ride_seat1_anchor'
+            Assert-Equal "$($n['partner_ride_seat1_anchor'])|$($n['partner_ride_seat1_anchor_given'])" '1|0' 'native: play defaults the seat-1 anchor on'
+            $file = Join-Path $fixture 'play-seat1-anchor-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_seat1_anchor=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_seat1_anchor'])|$($m['partner_ride_seat1_anchor_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat-1 anchor 0 turns it off in play'
+            # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
                 !$clipsIni.Contains('partner_pass_camera')) 'Play-Coop lab.ini never names partner_pass_camera'
-            Assert-Equal "$($n['partner_pass_camera'])|$($n['partner_pass_camera_given'])|$($n['partner_pass_camera_trace'])" 'aim|0|0' 'native: play defaults the passenger camera to aim'
+            Assert-Equal "$($n['partner_pass_camera'])|$($n['partner_pass_camera_given'])|$($n['partner_pass_camera_trace'])" 'view|0|0' 'native: play defaults the passenger camera to view'
             $file = Join-Path $fixture 'play-pass-camera-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_pass_camera=connect`npartner_pass_camera_trace=1`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_pass_camera'])|$($m['partner_pass_camera_given'])|$($m['partner_pass_camera_trace'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" 'connect|1|0|0x0|0/0' 'native: a named connect runs in play, the trace is forced off'

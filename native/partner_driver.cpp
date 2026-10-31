@@ -2985,7 +2985,9 @@ void BoardWithdraw(Driver& d, const Hooks& h) noexcept {
     d.local_passenger = partner_board::LocalPassenger{};
     // The passenger camera connects only from a tick's own report (cleared just above), so
     // nothing of it outlives a mission boundary or a stop; the stock clears release the handle.
-    // M7 S1: the seated-shot publication ends with the report (a stale one is ignored by the hook after 500 ms anyway).
+    // M7 S1: the seated-shot publication ends with the report. This withdrawal owns the mission boundaries and the stop
+    // (Tick returns before TickSeatShot while terminating); the hook also ignores a publication older than
+    // partner_seat_shot::MaxAgeMs (50-250 ms by the vehicle's speed).
     if (h.seat_shot_withdraw) h.seat_shot_withdraw(h.context);
     d.mission.seat_shot.published = false;
 }
@@ -3127,11 +3129,12 @@ void TickBoard(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now
     ri.local_seat_one = lp.valid && lp.seat == pb::kFrontSeat;
     ri.steer_pending_one = b.steer_pending && b.steer_seat == pb::kFrontSeat;
     ri.last_seat_one_ms = d.board_seat_one_ms;
+    ri.own_seat_one_stock = pb::OwnSeatOneStock(d.settings.ride_seat1_anchor, lp);
     ri.now_ms = now;
     const bool remap_want = pb::RemapWanted(ri);
     if (remap_want != d.board_remap_skip && h.board_remap && (remap_want || !d.board_remap_failed || d.board_remap_skip)) {
         const bool ok = h.board_remap(h.context, remap_want);
-        const char* why = !remap_want ? "idle" : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
+        const char* why = !remap_want ? (ri.own_seat_one_stock ? "seated_own" : "idle") : ri.policy_one ? "policy" : ri.local_seat_one ? "seated" : ri.steer_pending_one ? "steer" : "hold";
         EmitBoard(m, h, "partner_ride=board_remap; state=%s; why=%s; ok=%u; steers=%u\r\n", remap_want ? "skip" : "stock", why, ok ? 1u : 0u,
                   stats.seat_one);
         if (ok) d.board_remap_skip = remap_want;
@@ -3163,6 +3166,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     Mission& m = d.mission;
     auto& c = m.pass_camera;
     if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) return;
+    // A terminating mission writes nothing here (Tick returns before this call anyway).
     if (terminating) return;
     if (!d.pass_camera_install_tried) {
         d.pass_camera_install_tried = true;
@@ -3191,7 +3195,7 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     pc::Mode mode = static_cast<pc::Mode>(d.settings.pass_camera);
     bool lever = false;
     const int override_mode = !d.settings.play_mode && h.pass_camera_override ? h.pass_camera_override(h.context) : -1;
-    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::drop)) {
+    if (override_mode >= 0 && override_mode <= static_cast<int>(pc::Mode::view)) {
         mode = static_cast<pc::Mode>(override_mode);
         lever = true;
     }
@@ -3225,7 +3229,10 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     if (d.pass_camera_installed && arm.armed) plan = h.pass_camera_connect(h.context, st, arm.vehicle, aim_out.want, cam);
     else if (d.pass_camera_installed && ai.off && lp.valid && !ai.uncertain)
         plan = h.pass_camera_connect(h.context, st, lp.vehicle, false, cam);  // off: our own handle cleared (ReleasePlan)
-    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing)) h.pass_camera_read(h.context, st, cam);
+    else if (d.pass_camera_installed && (lp.valid || c.episode.active || c.episode.releasing || c.turn.pending))
+        h.pass_camera_read(h.context, st, cam);
+    // Design 8.38 / 8.42 (mode view): the get-off camera turn below.
+    const bool view = pc::Views(mode);
     if (aim_out.event != pc::AimEvent::none)
         EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
                     "partner_ride=pass_camera; state=aim; event=%s; vehicle=%u; seat=%u; mode=%s; gun=%u; f3c0=0x%x; plan=%s; cam1f0=0x%llx; "
@@ -3318,7 +3325,28 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
     in.cam = cam;
     in.writes = stats.writes;
     in.now_ms = now;
+    const bool episode_was_active = c.episode.active;
+    const std::uint16_t episode_vehicle = c.episode.vehicle;
+    const std::uint8_t episode_seat = c.episode.seat;
     pc::StepOut out = pc::Step(c.episode, in);
+    // Design 8.38 / 8.39 (mode view): an observed get-off from seat 1 or 2 (the report ended on the get-off act 0x70; never
+    // a death, a lost report or a latch): the camera is turned behind the player once the stock get-off let go
+    // (partner_pass_camera_policy TurnStep). Another end of the boarding is logged and not armed.
+    if (episode_was_active && !c.episode.active && view && h.pass_camera_turn && d.pass_camera_installed && !c.uncertain &&
+        !ai.uncertain && pc::ViewSeat(episode_seat)) {
+        const bool get_off = !lp.valid && lp.reason && std::strcmp(lp.reason, "act") == 0 && lp.act == pc::kActGetOff;
+        if (get_off) pc::TurnArm(c.turn, episode_vehicle, episode_seat, now);
+        else
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=skip; vehicle=%u; seat=%u; reason=%s; act=0x%x\r\n",
+                        unsigned(episode_vehicle), unsigned(episode_seat), lp.valid ? "seated" : lp.reason ? lp.reason : "none",
+                        unsigned(lp.act));
+    }
+    // The mode left view (the lab lever) or the mission latched: a pending turn is dropped.
+    if ((!view || c.uncertain || ai.uncertain) && pc::TurnCancel(c.turn))
+        EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                    "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=0; stock_seen=%u\r\n",
+                    unsigned(c.turn.vehicle), unsigned(c.turn.seat), !view ? "mode" : "uncertain", c.turn.seen_stock ? 1u : 0u);
     // The lines count this boarding's writes including this tick's (the counters read again).
     pc::Stats after = stats;
     if (d.pass_camera_installed) h.pass_camera_stats(h.context, after);
@@ -3339,6 +3367,8 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
                   cam.vehicle_mode, writes);
         break;
     case pc::Event::release:
+        // The stock get-off cleared the handle: a pending get-off turn may follow (design 8.39).
+        if (out.reason && std::strcmp(out.reason, "stock") == 0) pc::TurnStockClear(c.turn);
         if (out.clear) {
             // Our handle outlived the ride (no stock clear within kReleaseMs): clear it.
             const char* why = h.pass_camera_connect(h.context, st, out.vehicle, false, cam);
@@ -3352,6 +3382,72 @@ void TickPassCamera(Driver& d, const Hooks& h, const pp::State& st, std::uint64_
         break;
     case pc::Event::none:
         break;
+    }
+    if (c.turn.pending || c.turn.check_ms) {
+        // Design 8.41 / 8.42: the player's own camera input while the turn is pending (on foot): the effective right stick
+        // or mouse above kLookInput (as the shot guard reads it) drops the turn; the local gun aiming holds it, and after
+        // the aim the request waits while the aim camera module is still the mode.
+        bool turn_look = false, turn_aim = false, turn_aim_cam = false;
+        unsigned turn_gun = 0;
+        if (c.turn.pending && !lp.valid) {
+            partner_input::PadRaw turn_raw{};
+            if (h.read_pad && h.read_pad(h.context, st, turn_raw)) {
+                const partner_input::PadSnapshot tp = partner_input::Effective(turn_raw);
+                turn_look = (std::isfinite(tp.rx) && std::fabs(tp.rx) > pc::kLookInput) || (std::isfinite(tp.ry) && std::fabs(tp.ry) > pc::kLookInput);
+            }
+            pp::AimRead turn_ar{};
+            if (h.read_aim && h.read_aim(h.context, st, turn_ar)) {
+                turn_aim = pc::GunAims(turn_ar.gun_ok[0], turn_ar.gun_state[0], turn_ar.gun_flags[0]);
+                turn_gun = turn_ar.gun_ok[0] ? turn_ar.gun_state[0] : 0xFFu;
+            }
+            if (c.turn.aimed && !turn_aim && h.pass_camera_mvt)
+                turn_aim_cam = h.pass_camera_mvt(h.context, st) == pc::kAimModuleVtableRva;
+        }
+        const char* why = "none";
+        const pc::TurnAct ta = pc::TurnStep(c.turn, lp.valid, cam, now, why, turn_look, turn_aim, turn_aim_cam);
+        const unsigned age = static_cast<unsigned>(pc::ClampMs(now >= c.turn.since_ms ? now - c.turn.since_ms : 0));
+        if (ta == pc::TurnAct::request) {
+            partner_vehicle::Read vr{};
+            if (h.vehicle_read) h.vehicle_read(h.context, c.turn.vehicle, vr);
+            const bool vok = h.vehicle_read && !vr.refusal && vr.unit.id == c.turn.vehicle && std::isfinite(vr.unit.pos[3]);
+            const float yaw = vok ? pc::WrapPi(vr.unit.pos[3]) : 0.0f;
+            const char* refusal = !vok ? "vehicle" : h.pass_camera_turn(h.context, st, pc::kTurnPitch, yaw, pc::kTurnInterp);
+            pc::TurnDone(c.turn, refusal == nullptr, yaw, now);
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=%s; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; yaw_mrad=%d; "
+                        "pitch_mrad=%d; cmode=%d; requests=%u; aimed=%u\r\n",
+                        refusal ? "refused" : "request", unsigned(c.turn.vehicle), unsigned(c.turn.seat), refusal ? refusal : "made", age,
+                        c.turn.seen_stock ? 1u : 0u, static_cast<int>(std::lround(yaw * 1000.0f)),
+                        static_cast<int>(std::lround(pc::kTurnPitch * 1000.0f)), cam.mode, c.turn.requests, c.turn.aimed ? 1u : 0u);
+        } else if (ta == pc::TurnAct::hold) {
+            // Design 8.42: the player aims on foot: the turn waits for the aim's end (once per pending turn).
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=hold; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::expire) {
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=expire; vehicle=%u; seat=%u; reason=%s; ms=%u; stock_seen=%u; gun=%u\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), why, age, c.turn.seen_stock ? 1u : 0u, turn_gun);
+        } else if (ta == pc::TurnAct::check) {
+            // About kTurnCheckMs after the request: the camera's world yaw against the one asked for, and its distance to
+            // the body (the frame shows the rest).
+            pc::View v{};
+            const bool vok = h.pass_camera_view && h.pass_camera_view(h.context, st, v) && v.ok && pc::QuatOk(v.rot);
+            pp::AimRead ar{};
+            const bool bok = h.read_aim && h.read_aim(h.context, st, ar) && ar.body_ok[0];
+            float dist = 0.0f;
+            if (vok && bok) {
+                const float dx = v.pos[0] - ar.body[0][0], dy = v.pos[1] - ar.body[0][1], dz = v.pos[2] - ar.body[0][2];
+                dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            EmitNativeN(h, c.aim_cap, kPassCameraAimCap, "partner_pass_camera_aim",
+                        "partner_ride=pass_camera; state=turn; event=check; vehicle=%u; seat=%u; view=%u; yaw_err_mrad=%d; up_mrad=%d; "
+                        "cam_body_cm=%d; cmode=%d\r\n",
+                        unsigned(c.turn.vehicle), unsigned(c.turn.seat), vok ? 1u : 0u,
+                        vok ? static_cast<int>(std::lround(pc::WrapPi(pc::WorldYaw(v.rot) - c.turn.yaw) * 1000.0f)) : INT32_MIN,
+                        vok ? static_cast<int>(std::lround(pc::UpPitch(v.rot) * 1000.0f)) : INT32_MIN,
+                        vok && bok ? static_cast<int>(std::lround(dist * 100.0f)) : INT32_MIN, cam.mode);
+        }
     }
 }
 
@@ -3488,7 +3584,7 @@ std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
 // (position, yaw), the seat and this copy's aim target Q+0x10[local] for the hook; withdraw otherwise. The key (lab: the
 // seatshot lever's override wins) decides apply: off on a lab copy still plans every seated shot (census lines, nothing
 // moved); off in play publishes nothing. One line per planned shot (the hook's last plan), capped per mission.
-void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminating) noexcept {
+void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pss = partner_seat_shot;
     Mission& m = d.mission;
     auto& s = m.seat_shot;
@@ -3523,11 +3619,12 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
         s.last_seq = ss.seq;
         EmitNativeN(h, s.cap, kSeatShotLogCap, "partner_seat_shot",
                     "partner_seat_shot=shot; result=%s; vehicle=%u; seat=%u; apply=%u; t_cm=%d; exit_cm=%d; dist_cm=%d; inside=%u; "
-                    "o_cm=%d,%d,%d; d_milli=%d,%d,%d; shifted=%u; census=%u; refused=%u; stale=%u\r\n",
+                    "o_cm=%d,%d,%d; d_milli=%d,%d,%d; shifted=%u; census=%u; refused=%u; stale=%u; age_ms=%u; max_ms=%u\r\n",
                     ss.result ? ss.result : "-", unsigned(ss.vehicle), unsigned(ss.seat), ss.apply ? 1u : 0u, cm(ss.t), cm(ss.exit),
                     ss.dist < 0.0f ? -1 : cm(ss.dist), ss.inside ? 1u : 0u, cm(ss.o_local[0]), cm(ss.o_local[1]), cm(ss.o_local[2]),
                     milli(ss.d_local[0]), milli(ss.d_local[1]), milli(ss.d_local[2]), ss.shifted - s.seen.shifted,
-                    ss.census - s.seen.census, ss.refused - s.seen.refused, ss.stale - s.seen.stale);
+                    ss.census - s.seen.census, ss.refused - s.seen.refused, ss.stale - s.seen.stale, unsigned(ss.age_ms),
+                    unsigned(ss.max_ms));
     }
     const partner_board::LocalPassenger& lp = d.local_passenger;
     // The refusal, in order (nullptr: publish).
@@ -3535,7 +3632,7 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
     partner_vehicle::Read vr{};
     pss::Class cls = pss::Class::none;
     std::uint8_t category = 0xFF;
-    if (terminating) why = "terminating";
+    if (terminating) why = "terminating";  // defensive: Tick returns before this while terminating (BoardWithdraw owns it)
     else if (BoardMode(d.settings.ride_board) != partner_board::Mode::passenger) why = "board_mode";
     else if (!apply && d.settings.play_mode) why = "key_off";
     else if (!lp.valid) why = "not_seated";
@@ -3559,6 +3656,7 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
         }
     }
     if (why) {
+        s.speed_have = false;
         if (s.published) {
             h.seat_shot_withdraw(h.context);
             s.published = false;
@@ -3585,6 +3683,18 @@ void TickSeatShot(Driver& d, const Hooks& h, const pp::State& st, bool terminati
     pub.pos[1] = vr.unit.pos[1];
     pub.pos[2] = vr.unit.pos[2];
     pub.yaw = vr.unit.pos[3];
+    // The vehicle's speed from the last publication (the hook's freshness window, partner_seat_shot::MaxAgeMs).
+    if (s.speed_have && s.speed_vehicle == lp.vehicle && now > s.speed_ms && now - s.speed_ms <= 1000) {
+        const float dx = pub.pos[0] - s.speed_pos[0], dy = pub.pos[1] - s.speed_pos[1], dz = pub.pos[2] - s.speed_pos[2];
+        const float v = std::sqrt(dx * dx + dy * dy + dz * dz) * 1000.0f / static_cast<float>(now - s.speed_ms);
+        if (std::isfinite(v)) pub.speed = v;
+    }
+    if (!s.speed_have || s.speed_vehicle != lp.vehicle || now != s.speed_ms) {
+        s.speed_have = true;
+        s.speed_vehicle = lp.vehicle;
+        s.speed_ms = now;
+        std::memcpy(s.speed_pos, pub.pos, sizeof(s.speed_pos));
+    }
     pp::AimRead aim{};
     const bool aim_ok = h.read_aim && h.read_aim(h.context, st, aim);
     if (aim_ok && aim.q_ok && pss::Finite3(aim.q10[0])) {
@@ -6164,7 +6274,7 @@ bool SeatManual(Driver& d, const Hooks& h, bool arm, std::uint8_t seat, std::uin
         m.dm_patched = h.dm_patch(h.context, true, "seat");
         if (!m.dm_patched) { m.dm_patch_failed = true; return refuse("dm_patch"); }
     }
-    if (!h.ride_seat_arm(h.context, seat)) return refuse("seat_patch");
+    if (!h.ride_seat_arm(h.context, seat, vehicle)) return refuse("seat_patch");
     s.manual = true;
     s.armed = true;
     s.vehicle = vehicle;
@@ -6339,6 +6449,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.pass_camera_trace = lab.partner_pass_camera_trace && lab.mode == LabMode::lab;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
+    d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
     d.local_passenger = partner_board::LocalPassenger{};
     d.settings.nstandin = lab.partner_native_standin;
     d.settings.nsupport = lab.partner_native_support;
@@ -6895,7 +7006,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     partner::Tick ride_tick = tick;
     TickBoard(d, h, st, now, terminating, ride_tick);
     TickPassCamera(d, h, st, now, terminating);
-    TickSeatShot(d, h, st, terminating);
+    TickSeatShot(d, h, st, now, terminating);
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     SendSeatExt(d, h, now);

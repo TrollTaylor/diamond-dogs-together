@@ -927,6 +927,12 @@ PASS_CAMERA_SITES = [
     (0x112106E, 'f30f1187700200000f28c7e88c4f8e00410f28e8410f28c8410f28d9410fc6c8c9410fc6e8d2f30f118774020000440f298f90000000',
      'PlayerCamera vt+0x88 0x1120B00: writes the look pitch CAM+0x270 and yaw +0x274 (atan2 of its direction) with the '
      'rotation CAM+0x90 (the shot guard holds the rotation too)'),
+    # Design 8.38 / 8.42 (mode view): the stock rotation request (the camera after a get-off).
+    (0x111A920, '448b81380d000041f7c001100000754d8b8104020000c1e809a80175404183c802448981380d0000',
+     'PlayerCamera vt+0xE0 0x111A920 (RequestToSetCameraRotation): refused while CAM+0xD38 & 0x1001 or CAM+0x204 bit 9; '
+     'CAM+0xD38 |= 2'),
+    (0x111A948, '8b028981800d00008b42048981840d00008b42088981880d00008b420c89818c0d00008b42108981900d00008b42148981940d0000',
+     'PlayerCamera vt+0xE0: CAM+0xD80..0xD94 = the six request fields (interp, 0.4, 0.8, 0x400126, pitch, yaw)'),
 ]
 SITES += PASS_CAMERA_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
@@ -3589,6 +3595,11 @@ w('// guard writes, and the eye +0xe0 (the aim-point solve 0x109705c) the lab tr
 w('inline constexpr std::size_t pass_cam_pitch=0x270, pass_cam_yaw=0x274, pass_cam_pitch_prev=0x268, pass_cam_yaw_prev=0x26c, pass_cam_eye=0xe0, pass_cam_rotation=0x90;')
 w('// Design 8.28: the aim camera module (live vtable 0x23d4d20, CAM+0x340 index 2): the shot guard writes only under it.')
 w('inline constexpr std::uintptr_t pass_cam_aim_module_vtable_rva=0x23d4d20;')
+w('// Design 8.38 / 8.42 (mode view): the stock rotation request (0x111a920 / 0x111a948): CAM+0xd38 |= 2 and CAM+0xd80..0xd94')
+w('// unless CAM+0xd38 & 0x1001 or')
+w('// CAM+0x204 bit 9; the Lua binding 0x9daf90 passes the flags 0x400126.')
+w('inline constexpr std::size_t pass_cam_request_flags=0xd38, pass_cam_request=0xd80;')
+w('inline constexpr std::uint32_t pass_cam_request_busy=0x1001, pass_cam_lock_bit=0x200, pass_cam_request_flags_value=0x400126;')
 w('// The contract blocks partner_pass_camera re-checks before it connects (code_sites rvas).')
 w('inline constexpr std::uintptr_t pass_camera_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in PASS_CAMERA_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')

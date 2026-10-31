@@ -404,7 +404,7 @@ void TestLocalPassenger() {
         Lookup l;
         l.recs[25603] = kUnit;
         const pb::LocalPassenger lp = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
-        Check(lp.valid && lp.vehicle == 25603 && lp.seat == 2 && lp.via == 1 && Same(lp.reason, "ok"),
+        Check(lp.valid && lp.vehicle == 25603 && lp.seat == 2 && lp.via == 1 && Same(lp.reason, "ok") && lp.act == pb::kActPassenger,
               "act 0x6E, P+0x120 -> 0x6400|3, rider[2] == 0: passenger in seat 2");
         Riders(m, kUnit, 0xFFFF, 0xFFFF, 0xFFFF, 0);
         const pb::LocalPassenger r = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
@@ -423,7 +423,7 @@ void TestLocalPassenger() {
         l.recs[25603] = kUnit;
         m.Put<std::uint16_t>(kActs, 0x6F);
         const pb::LocalPassenger lp = pb::ReadLocalPassenger(m, l, kP, kQ, 0);
-        Check(!lp.valid && Same(lp.reason, "act") && l.calls == 0, "act 0x6F (the driver): no report, no lookup");
+        Check(!lp.valid && Same(lp.reason, "act") && lp.act == 0x6F && l.calls == 0, "act 0x6F (the driver): no report, no lookup (the act kept)");
         m.Put<std::uint16_t>(kActs, 1);
         Check(!pb::ReadLocalPassenger(m, l, kP, kQ, 0).valid, "on foot: no report");
     }
@@ -1004,6 +1004,12 @@ void TestRemapWanted() {
     Check(!pb::RemapWanted(x), "the hold ran out");
     x = in; x.policy_one = true; x.armed = false;
     Check(!pb::RemapWanted(x), "seat 1 not armed: never");
+    // Design 8.35: the local player seated in seat 1 of a light vehicle with the anchor key: the stock remap, over the
+    // policy, the seated report and the hold.
+    x = in; x.policy_one = true; x.local_seat_one = true; x.last_seat_one_ms = 10000; x.own_seat_one_stock = true;
+    Check(!pb::RemapWanted(x), "own seat 1 on the driver's matrix: the stock remap while seated");
+    x.own_seat_one_stock = false;
+    Check(pb::RemapWanted(x), "without it: skipped while seated (unchanged)");
 }
 
 // Review R8: the MGS_COOP_BOARD_SEAT_V1 request parser (game_script_observer.cpp SelectBoardSeatReceipt).
@@ -1049,6 +1055,36 @@ void TestSeatOneLocalPassenger() {
     Check(pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).seat == 2, "seat 1 on: the back seats still read");
     Riders(m, kUnit, 0, 0xFFFF, 0xFFFF, 0xFFFF);
     Check(!pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).valid, "seat 1 on: the driver's seat is still no passenger");
+    // Design 8.35: the report names this copy's category of the seated vehicle (unit+0x6C >> 4).
+    Riders(m, kUnit, 0xFFFF, 0, 0xFFFF, 0xFFFF);
+    Check(pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).category == pb::kCategoryUnread, "no category byte: unread");
+    m.Put<std::uint8_t>(kUnit + pb::kUnitCategory, 0x23);
+    const pb::LocalPassenger cat = pb::ReadLocalPassenger(m, l, kP, kQ, 0, true);
+    Check(cat.valid && cat.seat == 1 && cat.category == 2, "unit+0x6C 0x23: category 2 (a light vehicle), attachment 3");
+    m.Put<std::uint8_t>(kUnit + pb::kUnitCategory, 0x40);
+    Check(pb::ReadLocalPassenger(m, l, kP, kQ, 0, true).category == 4, "unit+0x6C 0x40: category 4 (a truck)");
+}
+
+// Design 8.35: with partner_ride_seat1_anchor the local player seated in seat 1 of a light vehicle keeps the stock
+// seat-1 remap (the player's FrontRight clips are authored on the driver's seat matrix), so its own copy draws it in
+// the seat, as the driver's copy does with the anchor.
+void TestOwnSeatOneStock() {
+    pb::LocalPassenger lp{};
+    lp.valid = true; lp.vehicle = 25608; lp.seat = 1; lp.category = 2;
+    Check(pb::OwnSeatOneStock(true, lp), "key on, seat 1 of a category-2 vehicle: the stock remap");
+    lp.category = 1;
+    Check(pb::OwnSeatOneStock(true, lp), "category 1 (a light vehicle) too");
+    Check(!pb::OwnSeatOneStock(false, lp), "key off: unchanged (the skip while seated)");
+    lp.category = 3;
+    Check(!pb::OwnSeatOneStock(true, lp), "the truck cab (3) keeps the skip");
+    lp.category = 4;
+    Check(!pb::OwnSeatOneStock(true, lp), "the truck cab (4) keeps the skip");
+    lp.category = pb::kCategoryUnread;
+    Check(!pb::OwnSeatOneStock(true, lp), "an unread category keeps the skip");
+    lp.category = 2; lp.seat = 2;
+    Check(!pb::OwnSeatOneStock(true, lp), "a back seat: no remap question");
+    lp.seat = 1; lp.valid = false;
+    Check(!pb::OwnSeatOneStock(true, lp), "no live report: unchanged");
 }
 
 void TestSurprise() {
@@ -1090,6 +1126,7 @@ int main() {
     TestDrawSeat();
     TestRaceInstall();
     TestRemapWanted();
+    TestOwnSeatOneStock();
     TestSeatRequest();
     TestSurprise();
     std::printf("partner_board_tests: %u checks passed\n", checks);

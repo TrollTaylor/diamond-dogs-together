@@ -1,0 +1,78 @@
+# The seat-1 anchor with the driver's own D-Dog (docs/vehicles-companions-design.md 8.34, 8.35; branch wp/seat1-draw):
+# -Mode play -WanSim bad, the play defaults plus the lab key partner_ride_seat1_anchor=1. Host seed afgh-ledge (the lab
+# save's D-Dog), guest seed afgh-horse; the Wakh Sind jeep 25608 at its spawn pose (door spots of run 3c748d46).
+#   E. The host drives; its D-Dog takes seat 1 on the host's copy (seat_ext_tx flags=0x05; rider1=9728) BEFORE the
+#      guest walks to the right door: no seat 1 is offered, the guest gets a back seat and the host's copy draws it
+#      there with that seat's own anchor (never anchor=0 over the dog); frames parked, while the host holds W, stopped,
+#      on both copies; the guest's and the host's get-offs.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7d-seat1-dog-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-ledge -GuestSaveSeed afgh-horse
+# NEVER (sliced from both logs after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers;
+# seat_far; partner_ride_seat_patch=refused; on the host `seat_patch=applied; seat=1` while rider1=9728.
+labsetting partner_ride_seat1_anchor=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1; cab=0;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 597.0 320.5 1157.5 -90
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 4500
+both capture start
+# --- E. The host drives with its D-Dog in seat 1; the guest takes a free seat --------------------------------------
+logmark both
+host debug teleport 577.20 320.2 1157.19 -84
+wait 3000
+host press e 150
+wait 4500
+host run vehicle_seats
+host expect vehicle;id=25608
+waitlog host 'partner_ride=seat_ext_tx; rev=[0-9]+; vehicle=25608; flags=0x05; rider1=9728; read=1;' 25
+host run vehicle_seats
+host capture e-dog
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger; uncertain=none; seat1=none; flags=0x05' 10
+guest press e 150
+guest burst e-geton 3 400
+wait 3300
+waitlog guest 'partner_ride=board_passenger; vehicle=25608; seat=[23]; site=phase1' 5
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=on' 5
+waitlog host 'partner_ride_seat1_anchor=configured; on=1' 10
+waitlog host 'partner_ride_seat_patch=applied; seat=([23]); sites=[^;]*; seat_dword=0x0[23]b04130; anchor=[23];' 10
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=[23];' 10
+wait 2000
+both capture e-parked
+host hold w 1500 nowait
+wait 300
+host burst e-drive 3 250
+guest capture e-drive-p
+host release
+wait 2500
+both capture e-stopped
+guest press e 150
+guest burst e-getoff 3 300
+wait 2600
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[23]; state=off' 5
+waitlog host 'partner_ride_seat_patch=reverted;' 10
+both capture e-exited
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+both capture end

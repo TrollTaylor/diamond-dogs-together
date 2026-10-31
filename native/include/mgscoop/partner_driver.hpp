@@ -365,7 +365,8 @@ struct Hooks {
     // --- The seated vehicle rider (partner_native_ride=seat, docs/anim-round1-seat.md;
     // any null: the seat refuses with reason=unavailable and the ride hides as before).
     // Arms the four partner_ride_seat dwords for `seat` (true: armed) / reverts them.
-    bool (*ride_seat_arm)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // `vehicle`: the seated vehicle's id (the seat-1 anchor reads this copy's category of it; design 8.34).
+    bool (*ride_seat_arm)(void* context, std::uint8_t seat, std::uint16_t vehicle) noexcept = nullptr;
     void (*ride_seat_revert)(void* context, const char* reason) noexcept = nullptr;
     // Round-1 actions (docs/anim-round1-actions.md "DM overlay"): the hook
     // point of a camera-skip module (the DM entry/End camera-connect stores
@@ -455,6 +456,12 @@ struct Hooks {
     void (*seat_shot_withdraw)(void* context) noexcept = nullptr;
     bool (*seat_shot_stats)(void* context, partner_fire_filter::SeatShotStats& out) noexcept = nullptr;
     int (*seat_shot_override)(void* context) noexcept = nullptr;
+    // The seated rider's confirmed GetOff (review of design 8.35; partner_ride_seat::ArmGetOff): the armed seat goes
+    // back to its own anchor, as the passenger's own copy plays it. May be null (the anchor stays until the revert).
+    void (*ride_seat_getoff)(void* context, std::uint8_t seat) noexcept = nullptr;
+    // Design 8.38 / 8.42 (partner_pass_camera=view): the get-off camera request (partner_pass_camera::RequestTurn: nullptr
+    // when made, else its refusal). Null: mode view runs as aim (no turn).
+    const char* (*pass_camera_turn)(void* context, const partner_player::State& state, float pitch, float yaw, float interp) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -598,8 +605,11 @@ struct Settings {
     // the board block / passenger hook and the local passenger report. Off by default; play forces off.
     PartnerRideBoard ride_board;
     // M6 seat 1 (lab.ini partner_ride_front / partner_ride_cab; docs/vehicles-companions-design.md 6.6):
-    // with passenger, the light vehicle's front seat / the truck cab seat. Off unless named, lab and play.
+    // with passenger, the light vehicle's front seat / the truck cab seat. The lab config follows the gun profile (design 8.25; the cab lab-only by default).
     bool ride_front = false, ride_cab = false;
+    // lab.ini partner_ride_seat1_anchor (design 8.33-8.35): the local player in a light vehicle's seat 1 keeps the
+    // stock seat-1 remap while seated (partner_board::OwnSeatOneStock). Follows the gun profile, lab and play (8.43); a named 0 opts out.
+    bool ride_seat1_anchor = false;
     // The passenger camera's mode (lab.ini partner_pass_camera, design 8.27; the lab lever passcam overrides it on a
     // lab copy) and the lab trace (partner_pass_camera_trace, lab only).
     PartnerPassCamera pass_camera = PartnerPassCamera::aim;
@@ -783,6 +793,8 @@ struct Mission {
         LogCap aim_cap, trace_cap;
         std::uint64_t trace_ms, trace_aim_ms;
         std::uint8_t mode_logged;  // the last effective mode logged + 1 (0: none yet)
+        // Design 8.38 / 8.42 (mode view): the get-off camera turn (lines under aim_cap).
+        partner_pass_camera::Turn turn;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).
@@ -794,6 +806,11 @@ struct Mission {
         std::uint32_t last_seq;
         partner_fire_filter::SeatShotStats seen;
         LogCap cap;
+        // The last publication's vehicle position and time (the speed the hook's freshness window follows).
+        bool speed_have;
+        std::uint16_t speed_vehicle;
+        std::uint64_t speed_ms;
+        float speed_pos[3];
     } seat_shot;
     // The last partner_ride_seat=unavailable reason and its (vehicle, seat):
     // why seat mode hides a live vehicle ride (mission, hooks, blocked, ...).
