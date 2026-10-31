@@ -14,6 +14,13 @@
 # Read: vstate life on both copies after every shot. Stock arm: a line that costs life is a self-hit line on this jeep;
 # the S1 arm must then show result=shift and no life change on the same line. The jeep may break in the stock arm (it
 # has 2300 life; 60faf9fc's lab hits cost 702 each), so the seat-1 lines go first.
+# m6m7g: x3 (seat 1, rel 40 pitch 18) and d (seat 2, rel -90 pitch 22) aim at the ground just beyond the body, so the
+#   camera line clears the jeep and the lower muzzle line crosses it (the self-hit S1 is for). Positive pitch is down
+#   (enemy_aim_nearest's sign). In the stock arm (key 0 in play) no shot line is logged, so those waitlogs only warn.
+# Measured (m6m7g, 663b270c stock / ce0233f4 S1; S1 d_milli fwd,right,up): x1 back-left level (-0.86,-0.52,0): stock
+#   -702; x2 and x3 never fire (red mark); a forward-left, b forward-right, c back (-0.99,0.13,0.08): no stock damage;
+#   d back and 33 deg down past the tail (-0.82,0.21,-0.54): stock -702. So from seat 2 rel -90 points BACKWARD, not across
+#   the jeep (the C and d notes below are the intent, not the result). S1: every fired line shift, life unchanged.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, D: at least 3 GB free):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7e-seat-shot-stock-play.txt
@@ -103,6 +110,24 @@ waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=1;' 3
 host run vehicle_state_status 25608
 guest run vehicle_state_status 25608
 wait 500
+# x3 (m6m7g): seat 1, rel 40 pitch 18 (forward-left and down: the ground beyond the bonnet; the muzzle line crosses it)
+logmark both
+host run enemy_cam_turn 40 18
+host expect ^cam_turn;
+wait 900
+host hold rmb 1500 nowait
+wait 700
+host capture x3-aim
+guest capture x3-drv
+host press lmb 120
+wait 300
+host capture x3-shot
+host release
+wait 2000
+waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=1;' 3
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+wait 500
 host press e 150
 wait 4000
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 5
@@ -164,6 +189,24 @@ guest capture c-drv
 host press lmb 120
 wait 300
 host capture c-shot
+host release
+wait 2000
+waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=2;' 3
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+wait 500
+# d (m6m7g): seat 2, rel -90 pitch 22 (across the jeep to the right and down: the ground ~5 m beyond the right side)
+logmark both
+host run enemy_cam_turn -90 22
+host expect ^cam_turn;
+wait 900
+host hold rmb 1500 nowait
+wait 700
+host capture d-aim
+guest capture d-drv
+host press lmb 120
+wait 300
+host capture d-shot
 host release
 wait 2000
 waitlog host 'partner_seat_shot=shot; result=[a-z]+; vehicle=25608; seat=2;' 3

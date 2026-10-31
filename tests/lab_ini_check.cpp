@@ -208,6 +208,8 @@ int main(int argc, char** argv) {
         std::printf("partner_seat_shot=%d\npartner_seat_shot_given=%d\n", c.partner_seat_shot ? 1 : 0, c.partner_seat_shot_given ? 1 : 0);
         std::printf("partner_ride_seat1_anchor=%d\npartner_ride_seat1_anchor_given=%d\n", c.partner_ride_seat1_anchor ? 1 : 0,
                     c.partner_ride_seat1_anchor_given ? 1 : 0);
+        // Design 8.49: the seat first person (follows the gun profile in lab and play) and whether it was named.
+        std::printf("partner_seat_fpv=%d\npartner_seat_fpv_given=%d\n", c.partner_seat_fpv ? 1 : 0, c.partner_seat_fpv_given ? 1 : 0);
         // Design 8.27: the passenger camera's mode (lab and play) and whether it was named, and its lab trace.
         std::printf("partner_pass_camera=%s\npartner_pass_camera_given=%d\npartner_pass_camera_trace=%d\n",
                     mgscoop::PartnerPassCameraName(c.partner_pass_camera), c.partner_pass_camera_given ? 1 : 0,

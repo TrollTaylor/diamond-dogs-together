@@ -637,7 +637,8 @@ struct LabConfig {
     bool partner_ride_seat1_anchor_given = false;
     // Seat first person (docs/native-puppet.md "Seat first person", design 8.46): the local passenger in seat 1 or 2 of a
     // vehicle aims in the stock first-person view (the F tap's) without a tap; the aim end, the get-off and the mission
-    // end give the shoulder view back. Off unless named, in lab and play; the lab lever passcam seatfpv overrides it.
+    // end give the shoulder view back. Follows the gun profile in lab and play (design 8.49); a named 0 opts out; the lab
+    // lever passcam seatfpv overrides it.
     bool partner_seat_fpv = false;
     bool partner_seat_fpv_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",

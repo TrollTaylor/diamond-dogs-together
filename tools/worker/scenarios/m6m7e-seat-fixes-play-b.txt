@@ -11,6 +11,10 @@
 #      host's E, so it sits in seat 1 before the dog arrives (the waits require seat=1: a lost race fails, it never
 #      passes as seat 3); the dog's arrival is waited for and captured on both copies; the run ends with the guest
 #      seated (the worker's close and restore while a seat patch is applied).
+# m6m7g (after 1d9fd748): B waits for its own seat patch (the anchor line is per copy, logged in A); C waits 4 s after
+#   the driver's 39 m goto_vehicle before E (2.5 s did not board, and the partner then took the driver's seat).
+# m6m7g: part A adds shot 5 at 0.3 m (the height that killed a lying guard on foot in 6e0edd8b; 1.6 m went over a
+#   lying guard in cbfda7f1) with a capture on both copies.
 # NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
 #   partner_ride_seat_patch=refused; pass_camera state=refused; turn event=refused; partner_seat_shot result=stale.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -91,6 +95,13 @@ wait 700
 guest press lmb 120
 wait 300
 guest capture a-shot-4
+guest run enemy_aim_nearest 0.3
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest capture a-shot-5
+both capture a-shot-5b
 guest release
 wait 1500
 waitlog guest 'world_lua=event=req; rid=[0-9]+; ent=[0-9]+; state=[45];' 6
@@ -129,7 +140,7 @@ host press e 150
 wait 4500
 waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=[13]; state=on' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=[13];' 10
-waitlog guest 'partner_ride_seat1_anchor=configured; on=1' 5
+waitlog guest 'partner_ride_seat_patch=applied; seat=[13];' 5
 wait 1000
 both capture b-seated
 host hold rmb 1500 nowait
@@ -157,7 +168,7 @@ wait 9000
 host run buddy_status
 host capture c-far
 host debug goto_vehicle jeep
-wait 2500
+wait 4000
 host press e 150
 wait 1500
 guest debug goto_vehicle jeep right

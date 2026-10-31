@@ -1,0 +1,343 @@
+# m6m7g seat first person, lab (design 8.49): the automatic first person (partner_seat_fpv=1 named, both copies; run 1
+# 61384aab used the lab lever: mode 15 was never set) in all four seat/role pairs, including the two where the stock F
+# prompt was missing online (host seat 1, guest seat 2: the gate flag f19 / f3c0 in state=fpv_trace); a first-person seat shot aimed at the body
+# of a sleeping guard (0.25 m up: does it land? frames +50 / +350 / +650 ms: any pull?); the handgun in first person
+# from seat 1; the player's F tap (opt out); the aim end; get-offs while aiming in first person (the get-off turn, the
+# next aim on foot over the shoulder); seat 3 never set. Wakh Sind jeep 25608, host seed afgh-quiet, guest afgh-horse.
+#   1. The host drives; the guest in seat 1: aim (automatic) + a shot; the handgun aim + a shot; the rifle aim + F tap
+#      (opt out); aim (shoulder); get-off; an aim on foot.
+#   2. The guest in seat 3: aim (never set) + a shot; get-off.
+#   3. The guest drives; the host in seat 2: aim (automatic) + a shot; get-off while aiming; an aim on foot.
+#   4. The guest still drives; the host in seat 1 (no stock prompt online): aim + a shot, release (aim end), get-off.
+#   5. The host drives; the guest in seat 2 (no stock prompt online): aim + a shot; get-off while aiming; aim on foot.
+# Read: state=seat_fpv (arm / set / restore / opt_out / stop; opt_outs=0 until part 1's F), state=fpv_trace (f19,
+# f3c0, tog, ours), partner_seat_shot lines, world_lua obs m=Dead / event=req after each shot, the turn lines, frames.
+# NEVER: step=error; faults; pass_camera state=refused; turn event=refused; seat_fpv result=refused.
+# Targets (run 2): before each seat-1 / seat-2 boarding the host warps a guard ~6 m out on that seat's side of the jeep
+# (goto_vehicle jeep [right], forward -11, spawn_enemy here: lab key debug_soldier_warp) and puts it to sleep; the
+# guest's copy follows (spawn_sync). Run 1's guard 1084844745 lay ~22 m out behind rock from the seats.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7g-seat-fpv-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+labsetting partner_pass_camera_trace=1
+labsetting partner_seat_fpv=1
+labsetting debug_soldier_warp=1
+boot 30010 597.0 320.5 1157.5 -90 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+host run enemy sleep 1084844745
+host run enemy sleep 1927090184
+host run enemy sleep 1791272719
+host run enemy sleep 2112392286
+host run enemy sleep 347113222
+host run enemy sleep 1113151945
+host run enemy sleep 1004648379
+host run enemy sleep 1856151639
+host run enemy sleep 2507222959
+host run enemy sleep 1626377522
+host run enemy sleep 2077341861
+host run enemy sleep 3439362210
+host run enemy sleep 2035351939
+host run enemy sleep 208831908
+host run enemy sleep 1445674198
+host run enemy sleep 3030732661
+host run cp_phase nearest sneak
+stance host stand
+stance guest stand
+wait 2000
+both capture start
+logmark both
+# --- 1. The host drives; the guest in seat 1 -----------------------------------------------------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w1-guard
+host debug teleport 577.20 320.2 1157.19 -84
+wait 2500
+host press e 150
+wait 4500
+host run vehicle_seats
+host require vehicle;id=25608
+guest debug teleport 574.36 320.2 1157.5 96
+wait 3000
+guest press e 150
+wait 4500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog host 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1;' 5
+wait 1000
+both capture s1-seated
+host run enemy sleep nearest
+guest run enemy_aim_nearest 0.3
+guest expect ^aim_nearest;ent=\d+;
+wait 600
+guest hold rmb 1500 nowait
+wait 900
+guest capture a1-aim
+host capture a1-aim-drv
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture a1-shot50
+wait 300
+guest capture a1-shot350
+wait 300
+guest capture a1-shot650
+host capture a1-shot-drv
+guest release
+wait 1500
+guest capture a1-end
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end;' 3
+waitlog host 'world_lua=event=obs; m=Dead;' 3
+# the handgun (unscoped) in first person from seat 1: eye level against the panel, a shot
+guest debug slot secondary 0
+wait 1500
+host run enemy sleep nearest
+guest run enemy_aim_nearest 0.3
+wait 600
+guest hold rmb 1500 nowait
+wait 900
+guest capture a1-hg-aim
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 350
+guest capture a1-hg-shot350
+guest release
+wait 1200
+guest capture a1-hg-end
+guest debug slot back 0
+wait 1500
+# the player's own F tap during the automatic first person: back to the shoulder, opted out for the boarding
+guest hold rmb 1500 nowait
+wait 900
+guest capture a1-aim2
+guest press f 150
+wait 700
+guest capture a1-optout
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=opt_out; vehicle=25608; seat=1; reason=tap;' 3
+guest release
+wait 1200
+guest hold rmb 1500 nowait
+wait 900
+guest capture a1-aim3
+guest release
+wait 1200
+guest press e 150
+guest burst a1-exit 3 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 8
+wait 1200
+guest hold rmb 1500 nowait
+wait 900
+guest capture a1-foot-aim
+guest release
+wait 1000
+# --- 2. The guest in seat 3: never set -----------------------------------------------------------------------------
+logmark both
+guest debug teleport 574.25 320.2 1156.51 96
+wait 3000
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=on' 5
+wait 1000
+host run enemy sleep nearest
+guest run enemy_aim_nearest 0.3
+wait 600
+guest hold rmb 1500 nowait
+wait 900
+guest capture k3-aim
+guest press lmb 120
+wait 400
+guest capture k3-shot
+guest release
+wait 1200
+guest press e 150
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=3; state=off' 5
+wait 1000
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- 3. The guest drives; the host in seat 2 -----------------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w3-guard
+host debug teleport 597.0 320.5 1157.5 -90
+wait 2500
+logmark both
+guest debug goto_vehicle jeep
+wait 3000
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
+guest press e 150
+wait 4500
+guest run vehicle_seats
+guest require vehicle;id=25608
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 3500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=2;' 10
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=2;' 5
+wait 1000
+both capture k2-seated
+host run enemy sleep nearest
+host run enemy_aim_nearest 0.3
+host expect ^aim_nearest;ent=\d+;
+wait 600
+host hold rmb 1500 nowait
+wait 900
+host capture b2-aim
+guest capture b2-aim-drv
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready;' 3
+host press lmb 120
+host hold rmb 1500 nowait
+wait 50
+host capture b2-shot50
+wait 300
+host capture b2-shot350
+wait 300
+host capture b2-shot650
+guest capture b2-shot-drv
+waitlog host 'world_lua=event=obs; m=Dead;' 2
+wait 300
+host press e 150
+host burst b2-exit 4 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=25608; seat=2; reason=get_off;' 3
+host release
+wait 1500
+both capture b2-exited
+host hold rmb 1500 nowait
+wait 900
+host capture b2-foot-aim
+host release
+wait 1000
+# --- 4. The guest still drives; the host in seat 1 ------------------------------------------------------------------
+host debug goto_vehicle jeep right
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w4-guard
+logmark both
+host debug teleport 574.36 320.2 1157.5 96
+wait 3000
+host press e 150
+wait 4500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
+waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=1;' 5
+wait 1000
+both capture b1-seated
+host run enemy sleep nearest
+host run enemy_aim_nearest 0.3
+wait 600
+host hold rmb 1500 nowait
+wait 900
+host capture b1-aim
+guest capture b1-aim-drv
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=1; reason=ready;' 3
+host press lmb 120
+host hold rmb 1500 nowait
+wait 50
+host capture b1-shot50
+wait 300
+host capture b1-shot350
+wait 300
+host capture b1-shot650
+host release
+wait 1500
+host capture b1-end
+waitlog host 'partner_ride=pass_camera; state=seat_fpv; event=restore; vehicle=25608; seat=1; reason=aim_end;' 3
+host press e 150
+host burst b1-exit 3 300
+wait 2500
+waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 10
+wait 1200
+both capture b1-exited
+host hold rmb 1500 nowait
+wait 900
+host capture b1-foot-aim
+host release
+wait 1000
+guest press e 150
+wait 3500
+# --- 5. The host drives again; the guest in seat 2 -----------------------------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -11
+wait 3000
+host run spawn_enemy here
+wait 2500
+host run enemy sleep nearest
+guest run spawn_sync
+wait 2000
+host capture w5-guard
+logmark both
+host debug goto_vehicle jeep
+wait 3000
+host press e 150
+wait 4500
+host run vehicle_seats
+host require vehicle;id=25608
+guest debug goto_vehicle jeep
+wait 3000
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=2; state=on' 5
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=arm; vehicle=25608; seat=2;' 5
+wait 1000
+host run enemy sleep nearest
+guest run enemy_aim_nearest 0.3
+wait 600
+guest hold rmb 1500 nowait
+wait 900
+guest capture g2-aim
+host capture g2-aim-drv
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=set; vehicle=25608; seat=2; reason=ready;' 3
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 50
+guest capture g2-shot50
+wait 300
+guest capture g2-shot350
+wait 300
+guest capture g2-shot650
+waitlog host 'world_lua=event=obs; m=Dead;' 2
+wait 300
+guest press e 150
+guest burst g2-exit 4 300
+wait 2500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=2; state=off' 10
+waitlog guest 'partner_ride=pass_camera; state=seat_fpv; event=stop; vehicle=25608; seat=2; reason=get_off;' 3
+guest release
+wait 1500
+both capture g2-exited
+guest hold rmb 1500 nowait
+wait 900
+guest capture g2-foot-aim
+guest release
+wait 1000
+state

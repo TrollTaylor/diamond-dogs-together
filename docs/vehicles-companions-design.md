@@ -3520,6 +3520,161 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   a first-person shot, a get-off in first person), the -b rehearsal, the S1 stock control, the automatic first person;
   who calls SaveAimFpvModes `0x129F450`; whether the toggle write and the camera poller share a thread.
 
+### 8.48 Diagnosable overlay refusals; the stock F tap from a seat online (2026-10-30, branch `wp/seat-proof`)
+
+- **Refusal line** (`native/debug_overlay.cpp`, failing first `40076fd`): InstallOnce records the first failing step
+  (`window` CreateWindowExW, `device` D3D11CreateDeviceAndSwapChain, `present_hook`, `resize_hook`, `input`: system
+  directory, `dinput8_load`, `DirectInput8Create` export / HRESULT, `CreateDevice_keyboard|mouse`, each method / user32 /
+  xinput hook, `enable_hooks`: each queued hook, `apply_queued`) and logs it after the kept prefix with its HRESULT,
+  MH_STATUS name and number, Win32 error or `address=null`. debug_overlay_tests: the formatter for each kind and the
+  installed line. No tool or test matched the old line (grep); docs quote only the prefix.
+- **Run** `cbfda7f1b3fb4a768ef3f41764af6f19` (`m6m7f-seat-ftap-play.txt` plus a driver capture after each
+  first-person shot; play, `-WanSim bad`, native gun, research, shipped defaults) admitted, all four parts ran:
+  - F tap [O]: a scoped first-person view (Bambetov SV) in all four: clear for guest seat 1 and host seat 2; host seat 1
+    showed a spare wheel and a box at 1.7 m (8.51); the guest's seat-2 view had a dark shape over its right part. The shoulder aims before were blocked (panel, rear box).
+  - Prompt [O]: shown for guest seat 1 and host seat 2; absent for host seat 1 (the alert message stood there) and guest
+    seat 2; the tap worked in all four.
+  - Shot in first person [O]: guest seat 1 and host seat 2, frames at +50/+350/+650 ms keep the scope on the aim (no
+    8.27 climb), magazine -1, S1 `shot; result=shift` (`dist_cm` 3605 / 2159, `inside=1`). Landing [U]: the scripted aim
+    was 1.6 m above a lying, sleeping guard and no damage or death line followed. The other copy [O]: the driver's frame
+    right after shows the partner seated with the gun down; its puppet's magazine dropped only after the get-off [I: the
+    seated shot is not replayed there; README already says the partner does not see you aim].
+  - Get-off while aiming in first person [O]: the camera went to the normal third-person get-off view in both roles;
+    the get-off turn requested and checked (`view=1`, `yaw_err_mrad=0`) for guest seat 1, host seat 2, host seat 1.
+  - Toggle [O]: not sticky in this run; every new aim (seat and foot) started over the shoulder, unlike lab `9a0c1f27`
+    (why it differs is [U]).
+  - Never-lines 0 on both copies (`step=error`, faults, pass camera `state=refused`, turn `event=refused`,
+    `seat_fpv; event=set`).
+  - Seen, cause [U]: guards 1194 / 1195 / 1296 (not on the sleep list) fought from part 3; in part 4 the jeep broke on
+    the host (`VehicleBroken`, cause=2; no seat shot in part 4; the host's buddy killed two guards just before) and burned.
+- **Open:** a first-person seat shot aimed at a standing or body-height target (does it land, does the other copy see
+  the hit); the scenario's sleep list (add 1194 / 1195 / 1296); why the toggle stuck in the lab and not here.
+
+### 8.49 The automatic seat first person (2026-10-30, branch `wp/seat-proof`, review m6m7g track fpv)
+
+- **Lab probe** `61384aabd1b84482965526e0e12db744` (`m6m7g-seat-fpv-lab.txt` first version, the lab lever on both
+  copies, trace on; admitted): host seat 2, host seat 1 and guest seat 2 set the hand slot's bit at gun mode 7, cleared
+  it at the aim end (`restore; reason=aim_end`) and stopped at the get-off; `f19=1` (the stock gate open) during every
+  seated aim, in all four seat/role pairs. **Guest seat 1 never set it** [O trace]: the raise (6) went to mode 15 (the
+  red no-fire icon, the shoulder view filled by the jeep's side) and stayed there for the whole aim, and FpvReady took
+  only 7 / 9 / 10.
+- **Fix** (failing first `a968074` -> `7226d5e`; **reverted in 8.51**, no aim set at 15 ever fired): FpvReady also
+  took 15; the raise (6) is still excluded. **Flip** (failing first `a5e2fc3` -> `0ff748a`): `partner_seat_fpv` follows the
+  gun profile in lab and play, a named 0 opts out; `lab_ini_check` prints the key; friend_package_tests: Play-Coop never
+  names it, play defaults it on.
+- **Lab proof** `2a394a64d48a4072844f832959ea3f31` (`partner_seat_fpv=1` named, `source=key` on both copies; admitted)
+  [O lines + frames]: guest seat 1 set at mode 15 for the rifle (bit 0x2) and the handgun (0x4); the F tap during the
+  automatic first person logged `opt_out; reason=tap` (`opt_outs=1`, the only one in both runs) and the next aim was the
+  shoulder view again; host seat 2, host seat 1, guest seat 2 set at 7. Frames: the scoped first-person view with no jeep
+  part in it (host seats 1 and 2, guest seat 2); each shot (S1 `shift`, magazine -1) jumps the scope at +50 ms and it is
+  back on the same spot at +650 ms (no 8.27 climb); the aim end gives the normal seated camera; get-offs (also while
+  aiming) the normal third-person view with the get-off turn (`check; view=1; yaw_err_mrad=0`); the next aim on foot is
+  over the shoulder. Seat 3: no `seat_fpv` line at all, the shoulder view as before. Guest seat 1 in first person at
+  mode 15: the scripted aim pointed into the cabin, the rifle's scope body covered most of the view and the gun stayed
+  blocked (no shot left); the handgun's first-person eye line is above the dashboard. Never-lines 0 on both copies.
+- **Landing [U]:** no seated shot had a guard under the crosshair. The scripted aim (`enemy_aim_nearest`, issued before
+  the seated aim) turned the view onto rock near the jeep (S1 `dist_cm` 969-1392); S1's direction in the jeep's frame was
+  115-124 deg for requested world angles of 31.9-40.6 deg [I: in a seat the request is not applied in the world frame,
+  as `enemy_cam_turn` in 8.27]; the lab soldier warp
+  fell back to the route (`guard_here; mode=route; why=anomaly|latched`), so no guard was placed beside the jeep.
+- **Play run at the shipped defaults** `ff4134f40c324a3880658d15eaf209e8` (`m6m7g-seat-fpv-play.txt`, `-Mode play
+  -WanSim bad`, no key named, no F pressed; afgh-quiet / afgh-horse; admitted, exit 0) [O lines on both copies + frames]:
+  `seat_fpv; event=mode; on=1; source=key` on both copies. Guest seat 1: set at 7 (a clear scoped view), restore at the
+  aim end; its next aim set at 15 and the get-off while aiming stopped it (`stop; reason=get_off; clear=0x2; ok=1`), the
+  get-off turn held while aiming, then `check; view=1`. Host seat 2 and guest seat 2: set at 7, one shot each (S1
+  `shift`, magazine -1), the scope back on the aim at +350 / +650 ms, restore, stop, `check; view=1`. Host seat 1: set
+  at 15, the rifle body across the lower half of the view with the camp visible above, no shot left (blocked), restore,
+  stop, check. Guest seat 3: no `seat_fpv` line, the shoulder view. Get-offs while aiming: the normal third-person view;
+  every next aim on foot over the shoulder. `opt_outs=0` everywhere; never-lines 0 on both copies. The driver's frames
+  show the partner seated with the rifle upright (the aim is not mirrored, as before). The host's first seat-2 aim had a
+  dark jeep part over about three quarters of the scope (8.51). No guard was hit: the sleeping guard lay
+  behind a rock lip from the seats (S1 `dist_cm` 1196 / 1667 against the guard at 19-22 m); a re-aim issued while in
+  first person did turn the view.
+- **Landing run** `4adc100597f1422ea69296ac58a28a3d` (`m6m7g-seat-fpv-land.txt`: two awake guards warped onto the
+  right side before the camp sleeps; admitted on both copies, d3dprobe hr=0, tasklist clean): the host reached gameplay,
+  the guest's log stopped at `world=pair_wait; reason=local_loading` about 5 s after admission and its lab boot did not
+  reach gameplay in 300 s (the process was gone at the end); closed cleanly, real saves unchanged; cause [U]. It was the
+  round's fourth run: no retry. **Whether a first-person seat shot lands on a guard stays [U].**
+- **Decision:** on in lab and play (the play run shows it on both copies, both roles, seats 1 and 2, with the releases;
+  set at 7 only since 8.51); it does the same as the player's own F tap [I: the same toggle bit], so where the round goes is the stock first-person shot's (S1 still moves
+  its start out of the jeep). The drafted shot-guard extension is not landed (no climb seen in first person).
+
+### 8.50 The seat checks at the shipped defaults; S1's play benefit (2026-10-30, branch `wp/seat-checks2`)
+
+- **Runs** (play, `-WanSim bad`, native gun, research, all admitted; d3dprobe hr=0, no snipping / screenclip / obs /
+  gamebar; slices and frames in `C:/Users/taylo/mgs-coop-run-archive/m6m7g/<id>`):
+  - `1d9fd748033e4f0fbeb3f54f989d964e` (`m6m7e-seat-fixes-play-b.txt`, africa-jeep, shipped defaults; configured S1 `key=1`, `mode=view` on both).
+    A [O]: guest in back seat 3 (`local_passenger; seat=3`), host's copy `partner_ride_seat=confirmed; seat=3`,
+    `seat_patch=applied; seat=3; anchor=3`, the host's D-Dog in seat 1 (frame `host-a-seated`); seat-3 aim view clear;
+    S1 published `seat=3; cat=1` and five `shot; result=shift` (`t_cm` 108-110, `dist_cm` 820 / 998 / 1249 / 1430 /
+    1834, magazine 8 -> 3); `vstate` 2300 on both copies after. No hit on the sleeping guard (`aim_nearest` 1.6 / 1.1 /
+    0.5 / 0.3 m, 8.2 m out): the reticle stayed white on the grass, no `req` / `commit`; the shot targets moved from
+    8 to 18 m out while each new aim was commanded lower [U why]. Get-off: `release; reason=stock; ok=1`, seat patch reverted
+    `foot`. B [O]: guest drives, host boards right -> seat 3 on both copies (the guest's D-Dog in seat 1), host's aim
+    view clear, get-off normal. C [O]: the host's E 2.5 s after `goto_vehicle` from 39 m did not board; the guest's
+    claim was granted the driver's seat (host `grant` + `yield`); `host require` stopped the run, so the D-Dog after
+    the partner and a teardown with a seated partner were not tested. The worker closed (forced) with the guest driving
+    and the host's seat-0 patch live: `partner_shutdown=hooks_off; teardown=other_thread`, no revert line, baseline
+    restored, real saves unchanged. Never-lines 0 (`step=error`, faults, `board_uncertain`, `two_drivers`, `seat_far`,
+    `seat_patch=refused`, `pass_camera state=refused`, turn `refused`, `result=stale`, `seat_fpv event=set`).
+  - `663b270c2171429089a565b473fdb07e` (`m6m7e-seat-shot-stock-play.txt`, `-LabSetting partner_seat_shot=0`; `configured; key=0; play=1` on both)
+    and `ce0233f4d044461f8af25db8dc8ffb02` (the same at the shipped defaults, `key=1`): the guest drives the east jeep (`cat=2`), the host rides and
+    shoots; `vstate` life after every shot [O]:
+
+    | line (seat, `enemy_cam_turn`) | direction (S1 `d_milli`, fwd/right/up) | stock (host copy) | S1 |
+    |---|---|---|---|
+    | x1 (1, 148.1 / -1) | back-left, level (-0.86, -0.52, 0.00) | 2300 -> 1598 | `shift` exit 1.37 m, 2300 |
+    | x2 (1, 55.2 / -1), x3 (1, 40 / 18) | - | red mark, did not fire | did not fire |
+    | a (2, 124.8 / -1) | forward-left (0.81, -0.59, 0.01) | fired, 1598 | `shift`, 2300 |
+    | b (2, 31.9 / 0) | forward-right (0.63, 0.78, 0.02) | fired, 1598 | `shift`, 2300 |
+    | c (2, -90 / -3) | back (-0.99, 0.13, 0.08) | fired, 1598 | `shift` exit 0.21 m, 2300 |
+    | d (2, -90 / 22) | back, 33 deg down (-0.82, 0.21, -0.54) | 1598 -> 896 | `shift` exit 0.26 m (target 2.0 m), 2300 |
+
+    The driver's copy read 2300 throughout in both arms ([I] the host's copy counts while ridden; a guest passenger is
+    untested). Both arms ran with `seat_fpv on=0`: these are shoulder aims. Frames: the x1 and d aim
+    views look into the jeep's own panel and seat in both arms; stock `d-shot` shows a spark next to the camera [I: on the jeep]. The pass
+    camera guard opened and closed `aim_end` on each line in both arms (`max_pull_mrad` 95-101); the get-off turns
+    checked `view=1`. The S1 `x1-shot` frame shows the normal ride camera, not the aim: [I] the 1.5 s hold had ended
+    (19 guard writes there against 26 in the stock arm). Never-lines 0 in both.
+- **Verdict:** S1 prevents real self-hits in play on the east jeep [O, two lines, 702 each in stock, none with S1],
+  correcting 8.44's "no harm, benefit [U]". The `rel -90` seat-2 lines point backward, not across the jeep: the
+  scenario's notes now carry the measured directions.
+- **Scenario fixes** (no behaviour change): -b shot 5 at 0.3 m (`0881098`); B waits for its own seat patch (the anchor's
+  configured line is per copy and came in A); C waits 4 s after the driver's warp before E (`89b1dea`). Stock scenario:
+  x3 and d added, measured directions noted.
+- **Open:** a seated shot that hits a guard (aim at a standing or body-height target); C (the D-Dog after the partner,
+  teardown with a seated partner, whether the seat patch is reverted at a forced close); why the seat-3 shot targets
+  drifted up with each aim.
+
+### 8.51 Review m6m7g closed: mode 15 out of FpvReady, the seat branches merged (2026-10-30, branch `wp/seat-proof`)
+
+- **Mode 15** (three reviews): all 5 bits set at gun mode 15 left the gun at 15 for the whole aim, with the rifle body
+  across the first-person view and no shot (lab `2a394a64` guest seat 1: rifle, handgun, rifle; play `ff4134f4` host
+  seat 1 and the guest's second seat-1 aim) [O lines]; every first-person seat shot that fired was set at 7 (play host
+  seat 2, guest seat 2; lab host seats 1 / 2, guest seat 2). shot.md: in first person the muzzle probe keeps the blocked
+  shoulder pose. **Fix** (failing first `e827380` -> `2c43bf6`): FpvReady 7 / 9 / 10; partner_driver_tests: seat 2 at
+  15 writes nothing, 15 -> 7 sets the bit. A blocked raise keeps the stock shoulder view (lab `61384aab`, the same
+  FpvReady: the jeep's panel fills it, the red no-fire mark) [O frame]. Whether a blocked shoulder aim turns clear
+  (15 -> 7) within one aim is [U]. A bit set at 7 does not stay unblocked: the guest's play aim set at 7 (clear scope)
+  went to the rifle body and the red mark after a re-aim toward the driver, and its shot did not fire
+  (`ff4134f4-guest-s1-aim-t`) [O]; this refutes shot.md's [I] that it stays unblocked.
+- **Corrections** to 8.48 / 8.49 [O frames]: host seat 1's stock F-tap scope showed a spare wheel and a box at 1.7 m
+  (`cbfda7f1-host-h1-ftap`), not a clear view; the host's first seat-2 first-person scope was about three quarters
+  covered (`ff4134f4-host-k2-aim`), not half. A get-off with our bit set was seen once, the guest at seat 1
+  (`clear=0x2`); every host get-off came after `aim_end` (`clear=0x0`). 8.50's stock damage was on the host's copy, the
+  passenger's; that the host copy decides the jeep's life is [I], and a guest passenger's stock damage is untested.
+  8.50 ran with `seat_fpv on=0`, so it measures the shoulder aim.
+- **Overlay** (`5ccbcda` -> `b0e7fb1`): S_OK with no object -> `address=null`; the path join's HRESULT.
+- **Runs** (two tries, none admitted): `4948b052` and `c9da9862` at the merged build; the guest's overlay both times
+  `step=device; detail=D3D11CreateDeviceAndSwapChain; hr=0x8007000E` while the host's installed; d3dprobe hr=0 right
+  before each and after each (it had failed with 0x8007000E on both NVIDIA adapters at 22:14 with nothing of ours up).
+  The cause of the guest's E_OUTOFMEMORY is [U]; the mode-15 revert is not shown in play at this head.
+- **Scenarios:** `m6m7f-seat-ftap-play.txt` and `m6m7f-seat-fpv-probe.txt` measure the stock F tap, so they now name
+  `partner_seat_fpv=0` (at the new default an F tap there is the opt-out).
+- **Open:** a first-person seat shot on a standing guard; a host get-off with the bit set; death / Fulton / mission end
+  while aiming in first person, and a checkpoint during it (impl+0x60 saved? [U]); x1 / d with first person on; a
+  moving jeep; the Africa jeep's seats 1 / 2 in first person.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

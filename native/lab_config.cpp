@@ -1753,6 +1753,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
     // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
     if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;
+    // Seat first person (design 8.46, 8.49): follows the gun profile in lab and play (the automatic first person from seats
+    // 1 and 2; lab runs 61384aab / m6m7g run 2, the play run of 8.49); a named 0 opts out.
+    if (!c.partner_seat_fpv_given) c.partner_seat_fpv = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was
