@@ -34,6 +34,8 @@ const char* CategoryLabel(Category value) noexcept;
 bool ParseCategory(const char* text, Category& out) noexcept;
 const char* MissionName(std::uint32_t mission) noexcept;
 const char* LifeCodeName(std::uint32_t code) noexcept;
+// Plain words for a command result the players read on the row's chip (spawn results), else nullptr.
+const char* ResultText(const char* result) noexcept;
 
 enum class OverlayOp : std::uint8_t { none, open, close, toggle, category, search, press, confirm, cancel, footer, select };
 struct OverlayRequest { std::uint32_t serial{}; OverlayOp op{}; char arg[97]{}; };

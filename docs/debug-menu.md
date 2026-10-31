@@ -104,9 +104,16 @@ is local to the PC that sends it.
 
 | Button | Command |
 |---|---|
-| **Spawn enemy here** (H, S) | `spawn_enemy here` (`spawn_enemy here come` with "He comes at me") |
+| **Spawn enemy here** (H, S) | `spawn_enemy here come` ("He comes at me", checked by default), `spawn_enemy here` unchecked |
 | Spawn at closest camp (H, S) | `spawn_enemy closest` |
 | Go to spawned guard | `goto_spawn` |
+
+Who presses what (play and lab): **Spawn enemy here**, Spawn at closest camp and Spawn on
+selected route are host only (the guest's row reads "Host only: use the host's menu").
+In Afghanistan and Africa free roam the host gets a soldier 5 m in front, facing them, and
+the guest sees the same soldier there (spawn sync). At Mother Base every spawn row refuses:
+"No enemies at Mother Base: spawn works in Afghanistan and Africa free roam." The row's
+chip reads the result in plain words; the raw result is in its tooltip.
 
 Nearby table: radius 10..300 m, **List nearby** = `enemy_list r`. Click a row to
 select a soldier (Name, distance, state, flags M marked / I ignoring / P placed). The
@@ -278,8 +285,8 @@ existing one:
 2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
    you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
    landed (he attacks).
-3. **Native placement** (lab.ini `debug_soldier_warp=1`, lab only; play forces it
-   off): the menu sends the engine's own set-transform message `0x287158b07327` to
+3. **Native placement** (play: lab.ini `spawn_warp`, on unless named 0; lab:
+   `debug_soldier_warp=1`, which play still refuses): the menu sends the engine's own set-transform message `0x287158b07327` to
    his GameObjectId through the GameObject manager's SendCommand, the same call the
    player carry code makes. The target is 5 m along your heading at your height, and
    he faces you. A guard that is not realized yet answers `r=-1`: he is
@@ -315,9 +322,13 @@ Results:
 (see **Spawn sync**) or `sync=none;why=<reason>` (`not_paired`, `roster`,
 `world_off` without a world link, `tx_<n>` a refused send).
 
-At most 8 guards per mission (native and route together). The guard is armed: turn
-on Auto-heal or keep Kill / Sleep ready. His patrol AI may walk him back to his route
-afterwards.
+At most 8 placed guards alive near you at once (native and route together):
+before each host spawn (`lua/coop/debug_spawn_play.lua`) a placed guard who is dead,
+asleep, fainted, Fultoned, disabled, gone or more than 150 m away frees his place, and
+an awake one may be placed again. Eight alive within 150 m refuse with
+`spawn_pool_limit_8` ("8 spawned soldiers are already near you"). Mother Base refuses
+every spawn row with `spawn_mother_base`. The guard is armed: turn on Auto-heal or keep
+Kill / Sleep ready. His patrol AI may walk him back to his route afterwards.
 
 ### Native placement: what is verified
 
@@ -390,8 +401,8 @@ local.
 every update until the guard lands (force-realize once on `r=-1`, at most 150 updates
 or 10 s, force-realize always released). The native handler
 (`game_script_observer.cpp` `GuestWarpReceipt`) uses the already verified `Warp()` and
-adds no game address. It refuses unless all of these hold: guest role in lab mode,
-lab.ini `debug_soldier_warp=1`, `soldier_warp=ready` at startup, the mission gates,
+adds no game address. It refuses unless all of these hold: guest role (lab or play),
+lab.ini `debug_soldier_warp=1` (play: `spawn_warp`), `soldier_warp=ready` at startup, the mission gates,
 the grant `world::Core` recorded when the guest's Lua popped that `ENEMY_DEBUG`
 (kind warp or correct, same epoch, at most 15 s old, 16 slots; cleared at unpair, link
 session, host epoch and local mission changes), and a live remote pose of the host at
@@ -401,8 +412,9 @@ grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
 `anomaly` latch of the host path. The per-grant gate id is the grant's process-unique
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
-asserts that `Warp()` has exactly these two callers and their gates. Play mode
-forces the key off, so there only route placements (kind 2) move the guest's copy.
+asserts that `Warp()` has exactly these two callers and their gates. In play mode
+`spawn_warp` (on unless named 0) admits both callers; with it named 0 only route
+placements (kind 2) move the guest's copy.
 
 **Settle window.** For 60 s after a native landing the host samples its guard once a
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The

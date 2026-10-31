@@ -678,6 +678,11 @@ struct LabConfig {
     // partner's TRAVEL refused (world::Config::travel).
     bool debug_travel = true;
     bool debug_travel_given = false;
+    // Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here"): in play mode the engine set-transform
+    // placement of debug_soldier_warp (lab only) is admitted by this key, host warp and the guest copy's warp alike,
+    // with the same pinned contract, gates and latch. Lab keeps debug_soldier_warp.
+    bool spawn_warp = true;
+    bool spawn_warp_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

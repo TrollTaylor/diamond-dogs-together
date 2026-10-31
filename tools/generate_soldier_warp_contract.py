@@ -279,7 +279,7 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
 # and the guest spawn-sync grant receipt (WORLD_WARP_V1, target from the
 # world::Core grant, never from Lua).
 EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt')}
-CALLER_GATES = ('debug_soldier_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+CALLER_GATES = ('debug_soldier_warp', 'spawn_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
 callers = []
 for path in sorted((ROOT / 'native').glob('*.cpp')):
     if path.name == 'soldier_warp.cpp':

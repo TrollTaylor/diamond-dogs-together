@@ -1,3 +1,29 @@
+## 2026-10-31: Spawn enemy here for players (`wp/enemy-spawn`, local only) -- not run-proven yet
+
+**Players get (once proven):** in Afghanistan and Africa free roam the host's **Spawn enemy here** brings a hostile
+soldier 5 m in front of them (He comes at me is now checked by default), and the guest sees the same soldier there. It
+keeps working after many presses. At Mother Base the row says why in plain words. Guest presses still say "Host only".
+
+- **Why it was broken [O]** (the game-folder log, split per process; every spawn press was in a `lab=active` process,
+  the `worker=1` ones are hidden workers): in play every press was a route snap 120-450 m away
+  (`guard_here;...;d=119.7..454.6;far=1;mode=route;why=disabled`), because play forced `debug_soldier_warp` off
+  (bit `0x10000`). The chip said OK, but nobody appeared. After eight placements in a mission, every press said
+  `spawn_pool_limit_8` (five presses in a row in one session), even when those eight were dead or gone. Mother Base
+  and no guard within 500 m gave code words (`spawn_no_guard`; an older build gave `spawn_no_loaded_living_guard`).
+  With the lab key, the native placement worked many times (`mode=warp;d=5.0;leaf=engine`; the guest copy
+  `kind=warp;result=applied;err_m=0.01`).
+- **Changes (red `c2a39ec9`, green `1b5f428d`):** lab.ini `spawn_warp` (on unless named 0) admits the native
+  placement in play for the host and the guest copy, with the same pinned contract, gates and latch
+  (`generate_soldier_warp_contract.py` pins the gate). Lab keeps `debug_soldier_warp`. The new
+  `lua/coop/debug_spawn_play.lua` recycles the pool: a placed guard who is dead, asleep, fainted, Fultoned, disabled,
+  gone or more than 150 m away frees his place, so the cap counts only eight alive near you. It also refuses every spawn
+  row at Mother Base (`spawn_mother_base`). The row's chip shows plain words (`debug_actions::ResultText`).
+- **Scenario (not run):** `tools/worker/scenarios/spawn-enemy-play.txt` (`-Mode play`, afgh-ledge, no labsetting) runs
+  10 host presses with frames on both screens, three guest presses and the Mother Base refusal.
+- **Not done:** guest presses. They need a SPAWN ask (op 0x3D) and a native admission for a placement aimed at the
+  guest (the host and guest-copy range checks use the host's pose today). New soldiers (unused slots, IH-style packs)
+  were not attempted: they need new packs and the same soldier identity on both copies.
+
 ## 2026-10-31: the host shows as Snake again; F9 Character switch (`wp/char-switch`, local only) -- not run-proven yet
 
 **Players get (once proven):** the host is Snake on both screens after a new sortie as well (the 10-31 friend host

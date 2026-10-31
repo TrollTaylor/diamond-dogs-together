@@ -108,7 +108,7 @@ mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua"
 mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
 mgs_add_lua_check(partner_actions_lua_check "${_mgs_coop}/partner_actions.lua")
 mgs_add_lua_check(debug_menu_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua" "${_mgs_coop}/debug_enemy.lua"
-  "${_mgs_coop}/debug_player.lua" "${_mgs_coop}/debug_spawn.lua")
+  "${_mgs_coop}/debug_player.lua" "${_mgs_coop}/debug_spawn.lua" "${_mgs_coop}/debug_spawn_play.lua")
 # World sync W0-W2 (docs/world-sync-protocol.md): the seven chunks, in splice order.
 set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
