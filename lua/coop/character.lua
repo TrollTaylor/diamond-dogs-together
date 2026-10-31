@@ -214,6 +214,8 @@ do
             local poll = {frames = 0, reports = 0, enabled = false, started = false}
             coop.characterPoll = poll
             local character, fallback, readback = receipt("return 'MGS_COOP_CHARACTER_V1'")
+            -- The F9 switch's session pick (debug_character.lua) replaces coop.ini.
+            if type(coop.characterPick) == "string" and character ~= "MGS_COOP_CHARACTER_V1" then character = coop.characterPick end
             local x = C.Gather(character, fallback)
             local d = C.Decide(x)
             coop.characterStatus = d
