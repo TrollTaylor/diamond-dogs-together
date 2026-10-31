@@ -939,16 +939,12 @@ void TestPress() {
     x = in; x.granted = true;
     Check(pb::PressDecide(x) == pb::PressVerdict::go, "a grant: go on");
     x = in; x.denied = true;
-    Check(pb::PressDecide(x) == pb::PressVerdict::wait, "8.58 deny-first: a deny before the partner's ride: keep holding for the ride");
-    x.now_ms = 1000 + pb::kDenyRideMs - 1; x.pend_seen = x.now_ms - 16;
-    Check(pb::PressDecide(x) == pb::PressVerdict::wait, "deny-first: still holding just under kDenyRideMs after the press");
-    x.now_ms = 1000 + pb::kDenyRideMs;
-    Check(pb::PressDecide(x) == pb::PressVerdict::go, "deny-first, no ride within kDenyRideMs (the host's press failed): go on (site B's no-seat exit, a=6)");
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "a deny: go on (site B's no-seat exit; 8.58 review: no wait for a ride that may never come)");
     x = in; x.denied = true; x.peer_drives = true; x.seat_one = true;
-    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "deny-first, the host's ride arrived with seat 1 offered: settle (the tie's path)");
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "a deny and the host's ride with seat 1 offered: settle (the tie's path)");
     x.seat_one = false;
-    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "deny-first, the host's ride arrived, its dog in seat 1: end as peer (a back seat)");
-    Check(pb::kDenyRideMs <= pb::kPressWaitMs && pb::kDenyRideMs + pb::kSeatSettleMs <= 1700, "the worst-case hold after one press stays 1.7 s");
+    Check(pb::PressDecide(x) == pb::PressVerdict::peer, "a deny and the host's ride, its dog in seat 1: end as peer (a back seat)");
+    Check(pb::kPressWaitMs + pb::kSeatSettleMs <= 1700, "the worst-case hold after one press stays 1.7 s");
     x = in; x.now_ms = 1000 + pb::kPressWaitMs;
     x.pend_seen = x.now_ms - 16;
     Check(pb::PressDecide(x) == pb::PressVerdict::go, "no answer for 1 s: go on (site B's no-seat exit)");
@@ -986,6 +982,22 @@ void TestPress() {
     Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no hold (the host, no READY, key off): stock");
     x.hold = true; x.ride_seen = false;
     Check(pb::PressDecide(x) == pb::PressVerdict::stock, "no first-seen stamp for it: stock");
+    x.ride_seen = true; x.ride_since = x.now_ms + 5;
+    Check(pb::PressDecide(x) == pb::PressVerdict::join, "8.58 review: a stamp a few ms past this frame's clock (published meanwhile): age 0, join");
+    // 8.58 review: a joined press (no claim) whose ride dropped before it settled claims like any press: no silent
+    // timeout and no stock fallback; the host's answer ends it.
+    x = in; x.joined = true; x.peer_seen = true; x.peer_since = x.now_ms - 100;
+    Check(pb::PressDecide(x) == pb::PressVerdict::claim, "a joined press, the partner's ride gone: claim it now");
+    x.granted = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::claim, "a grant from before the claim does not end it");
+    x.granted = false; x.denied = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::claim, "a deny from before the claim does not end it");
+    x.denied = false; x.peer_drives = true; x.seat_one = true;
+    Check(pb::PressDecide(x) == pb::PressVerdict::settle, "a joined press while the ride is there: settle as before");
+    x.peer_drives = false; x.seat_one = false; x.joined = false; x.peer_seen = false;
+    Check(pb::PressDecide(x) == pb::PressVerdict::wait, "after its claim: wait for the host's answer");
+    x.now_ms = 1000 + pb::kPressWaitMs; x.pend_seen = x.now_ms - 16;
+    Check(pb::PressDecide(x) == pb::PressVerdict::go, "after its claim: no answer kPressWaitMs after the press: go on (the bound stays)");
     {
         pb::Policy before{}, after{};
         after.vehicle = 25608; after.peer_seat = 0; after.mode = pb::Mode::passenger; after.front_ok = true;
@@ -1062,28 +1074,20 @@ void TestPress() {
     Check(rs.pseq == 2 && rs.grant == pb::kVehicleUnknown, "counted; a grant from before the press is withdrawn (single use)");
     pb::RaceDeny(25608, 3000);
     g.now = 1700;
-    // 8.58: a deny before the host's ride keeps the press (its ride is due) until kDenyRideMs after the press.
-    for (std::uint32_t t = 1700; t < 1600 + pb::kDenyRideMs; t += 200) {
-        g.now = t;
-        pb::RaceHold(2000);
-        Check(D(0), "the host's deny, no ride yet: still idle");
-    }
-    g.now = 1600 + pb::kDenyRideMs;
-    Check(!D(0), "the host's deny and no ride within kDenyRideMs: phase 1 goes on");
+    Check(!D(0), "the host's deny: phase 1 goes on");
     const std::uint32_t hits = (pb::ReadRace(rs), rs.hits);
     Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "denied: site B's no-seat exit (the guest stays on foot)");
     pb::ReadRace(rs);
     Check(rs.hits == hits + 1, "the deny refusal is counted");
     pb::RaceDeny(pb::kVehicleUnknown, 0);
-    g.now = 3000;
-    pb::RaceHold(2000);
+    g.now = 2500;
     Check(D(0), "another press");
-    for (std::uint32_t t = 3200; t < 4000; t += 200) {
+    for (std::uint32_t t = 2700; t < 3500; t += 200) {
         g.now = t;
         pb::RaceHold(2000);
         Check(D(0), "no answer yet: idle");
     }
-    g.now = 4000;
+    g.now = 3500;
     Check(!D(0), "no answer for 1 s: phase 1 goes on");
     pb::ReadRace(rs);
     Check(rs.pseq == 3 && rs.timeouts == 1 && !rs.pend, "the timeout is counted");
@@ -1266,48 +1270,66 @@ void TestPress() {
     pb::ReadRace(rs);
     Check(!rs.pend && rs.pseq == pseq0, "no press recorded");
     pb::RaceDeny(25608, 0);
-    // 8.58 deny-first: the host's deny (why=host_pressed) reaches the held press before the host's ride: the press keeps
-    // holding; the ride arrives (seat 1 offered, then the dog): it ends as peer and the passenger policy seats it.
+    // 8.58 review (the deny wait reverted, 8.57 as before): the host's deny before its ride ends the held press at the
+    // deny (end 2; site B's no-seat exit; Lua shows a=6), with no wait for a ride that may never come.
     g.now = 13000;
     Policy(pb::Mode::off);
     pb::RaceHold(2000);
-    Check(D(0), "deny-first: a press, idle (claimed)");
-    pb::ReadRace(rs);
-    const std::uint32_t seq2 = rs.done_seq;
+    Check(D(0), "deny before the ride: a press, idle (claimed)");
     g.now = 13230;
     pb::RaceDeny(25608, 3000);
-    Check(D(0), "deny-first: the deny came before the host's ride: still idle");
+    Check(!D(0), "deny before the ride: phase 1 goes on at the deny");
     pb::ReadRace(rs);
-    Check(rs.pend && rs.done_seq == seq2, "deny-first: pending, not ended");
-    g.now = 13300;
-    Policy(pb::Mode::passenger, 25608, 0, 17000, true);
-    Check(D(0), "deny-first: the host's ride arrived with seat 1 offered: settle");
-    g.now = 13500;
-    Policy(pb::Mode::passenger, 25608, 0, 17000, false);
-    Check(!D(0), "deny-first: the dog took seat 1: phase 1 goes on");
-    pb::ReadRace(rs);
-    Check(!rs.pend && rs.done_end == 4 && rs.done_wait_ms == 500 && rs.done_seq == seq2 + 1, "deny-first: ended as peer (seated), not as deny");
-    g.nearest_result = 3;
-    Check(pb::detail::SiteBForTest(unit, pos) == 3, "deny-first: site B seats it in a back seat (the deny's backstop is skipped)");
-    // Deny-first with no ride (the host's own press failed): the press ends as deny kDenyRideMs after it; no seat (a=6).
+    Check(!rs.pend && rs.done_end == 2 && rs.done_wait_ms == 230, "deny before the ride: ended as deny, 230 ms after the press");
+    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "deny before the ride: site B's no-seat exit (Lua shows a=6)");
     pb::RaceDeny(25608, 0);
-    g.now = 14000;
+    // 8.58 review: a joined press whose ride drops before it settles (the host's boarding cancelled, a lapsed lease)
+    // claims the vehicle at once (one pseq); the host's answer ends it, with no silent timeout.
+    g.now = 15000;
     Policy(pb::Mode::off);
     pb::RaceHold(2000);
-    Check(D(0), "no ride: a press, idle");
-    g.now = 14230;
-    pb::RaceDeny(25608, 3000);
-    for (std::uint32_t t = 14230; t < 14000 + pb::kDenyRideMs; t += 100) {
-        g.now = t;
-        pb::RaceHold(2000);
-        Check(D(0), "no ride: holding for the host's ride");
-    }
-    g.now = 14000 + pb::kDenyRideMs;
-    Check(!D(0), "no ride within kDenyRideMs: phase 1 goes on");
+    Policy(pb::Mode::passenger, 25608, 0, 19000, true);
+    g.now = 15150;
+    Check(D(0), "join then drop: a new press 150 ms after the ride appeared joins the settle");
     pb::ReadRace(rs);
-    Check(!rs.pend && rs.done_end == 2 && rs.done_wait_ms == pb::kDenyRideMs, "no ride: ended as deny");
-    Check(pb::detail::SiteBForTest(unit, pos) == pb::kNoSeat, "no ride: site B's no-seat exit (Lua shows a=6)");
-    pb::RaceDeny(25608, 0);
+    const std::uint32_t pseq3 = rs.pseq, touts3 = rs.timeouts, seq3 = rs.done_seq;
+    g.now = 15300;
+    Policy(pb::Mode::off);
+    Check(D(0), "join then drop: the ride is gone before it settled: still idle, claimed now");
+    pb::ReadRace(rs);
+    Check(rs.pend && rs.pseq == pseq3 + 1 && rs.done_seq == seq3, "join then drop: one claim (pseq), still pending");
+    g.now = 15316;
+    Check(D(0), "join then drop: waiting for the host's answer");
+    pb::ReadRace(rs);
+    Check(rs.pseq == pseq3 + 1, "join then drop: one claim, not one per frame");
+    pb::RaceGrant(25608, 3000);
+    g.now = 15500;
+    Check(!D(0), "join then drop: the host's grant: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 1 && rs.done_wait_ms == 350 && rs.timeouts == touts3, "join then drop: ended as grant, no timeout");
+    pb::RaceGrant(25608, 0);
+    // The same with a deny from an earlier press still live: the claim withdraws it and waits for a new answer; with
+    // none it ends at the press's own deadline (kPressWaitMs after the press, not after the claim: the bound stays).
+    g.now = 16000;
+    Policy(pb::Mode::off);
+    pb::RaceHold(2000);
+    pb::RaceDeny(25608, 3000);
+    Policy(pb::Mode::passenger, 25608, 0, 20000, true);
+    g.now = 16100;
+    Check(D(0), "join then drop, an earlier deny live: joins the settle");
+    g.now = 16200;
+    Policy(pb::Mode::off);
+    Check(D(0), "join then drop, an earlier deny live: the ride dropped: claimed, still idle");
+    pb::ReadRace(rs);
+    Check(rs.deny == pb::kVehicleUnknown && rs.pend, "join then drop: the earlier deny is withdrawn (the claim waits for a new answer)");
+    for (std::uint32_t t = 16300; t < 16100 + pb::kPressWaitMs; t += 200) {
+        g.now = t;
+        Check(D(0), "join then drop: no answer yet: idle");
+    }
+    g.now = 16100 + pb::kPressWaitMs;
+    Check(!D(0), "join then drop: no answer kPressWaitMs after the press: phase 1 goes on");
+    pb::ReadRace(rs);
+    Check(!rs.pend && rs.done_end == 3 && rs.done_wait_ms == pb::kPressWaitMs, "join then drop: a timeout at the press's own deadline");
     pb::RaceHold(0);
     Check(!D(0), "hold 0: stock");
     pb::detail::ResetForTest();

@@ -321,7 +321,7 @@ inline constexpr std::uint32_t kSeatSettleMs = 700;
 // 8.58 deny-first: a held press the host denied before its ride reached this copy waits for that ride this long after
 // the press (a deny for a held press means the host pressed or drives it); then site B decides as before.
 inline constexpr std::uint32_t kDenyRideMs = 1000;
-enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer, join };
+enum class PressVerdict : std::uint8_t { stock, start, wait, go, settle, peer, join, claim };
 struct PressIn {
     bool hold = false;       // the guest's hold lease is live
     bool local = false;      // the record is the local player's (P+0x218)
@@ -337,6 +337,7 @@ struct PressIn {
     std::uint32_t peer_since = 0;
     bool ride_seen = false;        // 8.58: the published peer-driver policy first named this vehicle at ride_since
     std::uint32_t ride_since = 0;
+    bool joined = false;           // 8.58 review: this press joined a ride's settle and has not claimed yet
 };
 // 8.58: the policy newly names a vehicle the partner drives (another vehicle or none before; a republished lease or
 // changed seat flags of the same ride are not new). Publish stamps when (g_policy_since).
