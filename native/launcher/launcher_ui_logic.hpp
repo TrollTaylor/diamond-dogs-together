@@ -234,6 +234,9 @@ std::string UpdatedNote(const UpdateInfo& info);
 // The small line next to Play's "Getting co-op ready...": the first start, right
 // after a self-update, or waiting for an update in progress.
 std::string PreparingNote(const UpdateInfo& info);
+// The same line while the setup waits for the player (LauncherModel::setup_wait_text, fb1031): that sentence, unless
+// an update is in progress (the setup waits for the update first).
+std::string PreparingNote(const UpdateInfo& info, const std::string& wait_text);
 
 // The GitHub release page of a version ("0.14.4" or "0.14.4+abc1234"): the
 // player zip and its source zip (DDT-source-<version>.zip) are both there.

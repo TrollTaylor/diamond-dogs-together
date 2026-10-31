@@ -609,6 +609,10 @@ bool SetupRunningElsewhere(const std::wstring& game_root) {
     return !taken;
 }
 
+std::string SetupBusyReason(Env& /*env*/, const InstancePaths& /*paths*/) { return {}; }
+
+std::string SetupBusyText(const std::string& /*reason*/) { return {}; }
+
 // ---- Uninstall --------------------------------------------------------------------------
 bool Uninstall(Env& env, const InstancePaths& paths, std::string& report, std::string& error) {
     report.clear();

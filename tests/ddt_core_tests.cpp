@@ -2076,6 +2076,140 @@ void TestSetupElsewhere() {
     CHECK(SetupMutexName(L"C:\\Games\\MGS_TPP") != PlayMutexName(L"C:\\Games\\MGS_TPP"));
 }
 
+// fb1031: on a friend's PC the first setup after an update failed at step 0 four times in 22 s (launcher.log
+// `setup=failed; step=0`, no reason), then went through: the window had opened with phase=needs_setup, so the game and
+// its files had passed and the step-0 check left was the Steam account (Steam not logged in yet). The window now waits
+// with one plain sentence for what the player closes or starts (Steam's login, MGSV, another window's setup or
+// session) and sets co-op up by itself afterwards; every step-0 failure names its reason in launcher.log.
+void TestSetupBusy() {
+    const std::wstring other_account = L"\\userdata\\67890\\287700\\local\\TPP_GAME_DATA0";
+    {
+        // The friend's case: Steam is not logged in and two accounts on this PC have MGSV saves.
+        Fixture f(L"setup-busy-steam");
+        WriteText(f.steam + other_account, "someone-else");
+        f.env->dwords.erase(FakeEnv::Key(false, L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser"));
+        CHECK(SetupBusyReason(*f.env, f.paths) == "steam_login");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::needs_setup);
+        for (int i = 0; i < 5; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        std::string log = ReadText(f.paths.launcher_log);
+        CHECK(m->phase() == Phase::needs_setup && !Has(log, "setup=start") && CountOf(log, "setup=waiting; reason=steam_login") == 1);
+        CHECK(Has(m->setup_wait_text(), "Start Steam and log in") && Has(m->setup_wait_text(), "by itself"));
+        for (const SetupStep& s : m->setup_steps()) CHECK(s.state == SetupStep::State::pending);
+        f.env->dwords[FakeEnv::Key(false, L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser")] = 12345;   // Steam logged in
+        CHECK(SetupBusyReason(*f.env, f.paths).empty());
+        f.env->Advance(1000);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up && m->setup_wait_text().empty());
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        log = ReadText(f.paths.launcher_log);
+        CHECK(Has(log, "setup=auto; after=steam_login") && CountOf(log, "setup=start") == 1 && !Has(log, "setup=failed"));
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // Try again pressed while Steam still logs in (the friend pressed it three times in 2 s): the failure names its
+        // reason, and the window goes back to waiting (no red banner) and sets up by itself once Steam is logged in.
+        Fixture f(L"setup-busy-try-again");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        WriteText(f.steam + other_account, "someone-else");
+        f.env->dwords.erase(FakeEnv::Key(false, L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser"));
+        m->start_setup();   // Try again: no check before it
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        std::string log = ReadText(f.paths.launcher_log);
+        CHECK(m->phase() == Phase::needs_setup && Has(log, "setup=failed; step=0; reason=steam_login"));
+        CHECK(Has(log, "setup=waiting; reason=steam_login") && Has(m->setup_wait_text(), "Start Steam and log in"));
+        for (const SetupStep& s : m->setup_steps()) CHECK(s.state != SetupStep::State::failed);
+        for (int i = 0; i < 5; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::needs_setup && CountOf(ReadText(f.paths.launcher_log), "setup=start") == 1);
+        f.env->dwords[FakeEnv::Key(false, L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser")] = 12345;
+        f.env->Advance(1000);
+        m->tick();
+        CHECK(m->phase() == Phase::setting_up);
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }) && m->phase() == Phase::ready);
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=auto; after=steam_login"));
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // MGSV still runs from the folder when the window opens: a plain sentence, and once the game has closed the
+        // window carries on by itself (no Check again needed), here into the setup.
+        Fixture f(L"setup-busy-game");
+        f.env->AddGame(9100, f.GameExe(), f.env->NowMs());
+        CHECK(SetupBusyReason(*f.env, f.paths) == "game_running");
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        CHECK(m->phase() == Phase::error && Has(m->last_error(), "Close it first") && Has(m->last_error(), "by itself"));
+        for (int i = 0; i < 3; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        CHECK(m->phase() == Phase::error && !Has(ReadText(f.paths.launcher_log), "setup=start"));
+        f.env->Kill(9100);
+        CHECK(SetupBusyReason(*f.env, f.paths).empty());
+        f.env->Advance(1000);
+        m->tick();
+        CHECK(Has(ReadText(f.paths.launcher_log), "recheck=auto; after=game_running"));
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() == Phase::ready; }) && m->phase() == Phase::ready);
+        CHECK(CountOf(ReadText(f.paths.launcher_log), "setup=start") == 1);
+        CHECK(f.RealSavesUntouched());
+    }
+    {
+        // A failure that does not go away by itself (here the runtime build) keeps its banner and waits for Try again.
+        Fixture f(L"setup-busy-not");
+        const InstallHooks saved = Hooks();
+        Hooks().build_runtime = [](const std::wstring&, const std::wstring&, const std::function<void(float, const std::string&)>&,
+                                   std::string& error) {
+            error = "The game's archives could not be read.";
+            return false;
+        };
+        auto m = MakeRealModelWithEnv(f.game, f.env);
+        m->tick();
+        CHECK(PumpUntil(*m, *f.env, [&]() { return m->phase() != Phase::setting_up; }));
+        for (int i = 0; i < 5; ++i) {
+            f.env->Advance(1000);
+            m->tick();
+        }
+        const std::string log = ReadText(f.paths.launcher_log);
+        CHECK(m->phase() == Phase::needs_setup && CountOf(log, "setup=start") == 1 && !Has(log, "setup=waiting"));
+        CHECK(m->setup_wait_text().empty() && Has(m->last_error(), "archives"));
+        Hooks() = saved;
+    }
+    {
+        // RunSetup itself: plain sentences, and the reason of every step-0 failure in launcher.log.
+        Fixture f(L"setup-busy-direct");
+        std::string error;
+        f.env->AddGame(9300, f.GameExe(), f.env->NowMs());
+        CHECK(!RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error));
+        CHECK(Has(error, "Metal Gear Solid V is still running") && Has(error, "Try again"));
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=failed; step=0; reason=game_running"));
+        f.env->Kill(9300);
+        WriteText(f.paths.exe, "OTHER-EXE");
+        CHECK(!RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error) && Has(error, "mgsvtpp.exe"));
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=failed; step=0; reason=files"));
+        WriteText(f.paths.exe, "FAKE-EXE");
+        WriteText(f.steam + other_account, "someone-else");
+        f.env->dwords.erase(FakeEnv::Key(false, L"Software\\Valve\\Steam\\ActiveProcess", L"ActiveUser"));
+        CHECK(!RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error) && Has(error, "Start Steam"));
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=failed; step=0; reason=steam_login"));
+        f.env->strings.clear();   // Steam is not installed for this Windows user: nothing to wait for
+        CHECK(SetupBusyReason(*f.env, f.paths).empty());
+        CHECK(!RunSetup(*f.env, f.paths, "dd_male", "compact", nullptr, nullptr, error) && Has(error, "Steam was not found"));
+        CHECK(Has(ReadText(f.paths.launcher_log), "setup=failed; step=0; reason=steam_missing"));
+        CHECK(!PathExists(f.paths.friend_install) && f.RealSavesUntouched());
+    }
+    // The sentences: short and plain, one per token.
+    CHECK(Has(SetupBusyText("game_running"), "Close Metal Gear Solid V first"));
+    CHECK(Has(SetupBusyText("steam_login"), "Start Steam and log in"));
+    CHECK(Has(SetupBusyText("session_live"), "Quit") && Has(SetupBusyText("other_setup"), "another Diamond Dogs Together window"));
+    for (const char* token : {"game_running", "steam_login", "session_live", "other_setup"}) CHECK(Has(SetupBusyText(token), "by itself"));
+    CHECK(SetupBusyText("").empty() && SetupBusyText("files").empty());
+}
+
 void StageForModel(Fixture& f, const std::string& xfer, std::uint32_t pid) {
     std::string set;
     WriteStage(f, xfer, {{L"287700\\local\\TPP_GAME_DATA0", "host-save"}}, set);
@@ -4630,6 +4764,7 @@ int main(int argc, char** argv) {
         {"UpdateDuringSetup", TestUpdateDuringSetup, 270},
         {"CloseDuringSetup", TestCloseDuringSetup, 190},
         {"SetupElsewhere", TestSetupElsewhere, 3800},
+        {"SetupBusy", TestSetupBusy, 600},
         {"LocalText", TestLocalText, 10},
         {"GraphicsConfig", TestGraphicsConfig, 10},
         {"LocalLayout", TestLocalLayout, 10},

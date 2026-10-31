@@ -502,6 +502,8 @@ std::string PreparingNote(const UpdateInfo& info) {
     return "This takes about a minute the first time.";
 }
 
+std::string PreparingNote(const UpdateInfo& info, const std::string& /*wait_text*/) { return PreparingNote(info); }
+
 std::string ReleasePageUrl(const std::string& version) {
     const std::string releases = "https://github.com/TrollTaylor/diamond-dogs-together/releases";
     const std::string plain = version.substr(0, version.find('+'));
