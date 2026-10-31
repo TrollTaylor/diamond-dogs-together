@@ -560,16 +560,15 @@ int main() {
         }
     }
     // Debug menu Travel (debug_travel, docs/debug-menu.md "Travel"): Go to Afghanistan / Africa / Mother Base and Bring
-    // partner here. Off unless named in lab AND play until a hidden run on both copies proves it (fb1031: every run was
-    // refused before admission); a named 1 runs it in both.
+    // partner here. ON in lab AND play unless named 0, since hidden run 409cb374 showed it on both copies.
     {
-        Check(!LabConfig{}.debug_travel && !LabConfig{}.debug_travel_given && !Lab("").debug_travel, "travel off by default");
+        Check(LabConfig{}.debug_travel && !LabConfig{}.debug_travel_given, "travel on by default");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(!profile.debug_travel && !profile.debug_travel_given && profile.invalid_values == 0 && profile.play_refused == 0,
-                  "travel stays off with the gun profile until proven (not named)");
+            Check(profile.debug_travel && !profile.debug_travel_given && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "travel is on with the gun profile when not named (lab and play)");
             const auto named = Lab(gun + mode + "debug_travel=1\n");
             Check(named.debug_travel && named.debug_travel_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0, "a named debug_travel 1 runs in lab and play");
