@@ -350,6 +350,9 @@ inline PressVerdict PressDecide(const PressIn& in) noexcept {
     if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
     return PressVerdict::wait;
 }
+// PressIn::seat_one: the driver's offer is one this copy's own seat-1 keys can take (8.57 review: waiting for an
+// offer DecideSeats never gives only delays the press).
+inline bool SettleSeatOne(const Policy& p, const SeatOpts& o) noexcept { return (p.front_ok && o.front) || (p.cab_ok && o.cab); }
 
 // Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the v4
 // handshake said free when the peer boarded). The peer is drawn on this copy by the DM seat chain, never in rider[],

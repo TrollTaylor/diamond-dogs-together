@@ -966,6 +966,18 @@ void TestPress() {
     x = in; x.open = false; x.peer_drives = true; x.seat_one = true;
     Check(pb::PressDecide(x) == pb::PressVerdict::stock, "a new press at a vehicle the partner already drives: stock (boarding after it drives)");
     Check(pb::kSeatSettleMs >= 500 && pb::kSeatSettleMs <= 1000, "the settle covers the driver's 250 ms rider read, the dog's jump and one way");
+    {
+        pb::Policy sp{};
+        sp.front_ok = true;
+        pb::SeatOpts so{};
+        so.front = true;
+        Check(pb::SettleSeatOne(sp, so), "a front offer the front key takes: settle");
+        so.front = false; so.cab = true;
+        Check(!pb::SettleSeatOne(sp, so), "a front offer, only the cab key on: no settle (DecideSeats never gives it)");
+        sp.cab_ok = true;
+        Check(pb::SettleSeatOne(sp, so), "a cab offer the cab key takes: settle");
+        Check(!pb::SettleSeatOne(sp, pb::SeatOpts{}), "both keys off or the remap skip not in (opts 0): no settle");
+    }
     // Site D with bound fakes.
     unsigned char unit[0x80]{};
     const std::uint16_t index8 = 8;  // 25608

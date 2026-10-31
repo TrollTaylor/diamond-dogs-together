@@ -314,7 +314,7 @@ bool SiteD(void* action, std::uint32_t index) noexcept {
     }
     const Policy p = Unpack(g_policy.load(std::memory_order_acquire));
     in.peer_drives = p.mode != Mode::off && LeaseLive(p.until_ms, now) && p.peer_seat == 0 && p.vehicle == in.vehicle;
-    in.seat_one = in.peer_drives && (p.front_ok || p.cab_ok);
+    in.seat_one = in.peer_drives && SettleSeatOne(p, UnpackOpts(g_opts.load(std::memory_order_acquire)));
     const std::uint64_t peer = g_press_peer.load(std::memory_order_acquire);
     in.peer_seen = (peer & kPeerSeen) != 0;
     in.peer_since = static_cast<std::uint32_t>(peer);
@@ -810,17 +810,6 @@ const char* InstallRace() noexcept {
     return nullptr;
 }
 void SetRace(bool on) noexcept { g_race.store(on, std::memory_order_release); }
-bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept {
-    if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) return false;
-    AcquireSRWLockExclusive(&g_arb);
-    const bool owned = WordNames(g_commit.load(std::memory_order_acquire), vehicle, NowLow());
-    if (!owned) {
-        RaceDeny(vehicle, ms);
-        g_deny.fetch_or(kDenyYield, std::memory_order_acq_rel);  // the host's own yield (8.57: site C shows its icon)
-    }
-    ReleaseSRWLockExclusive(&g_arb);
-    return !owned;
-}
 bool LiveRace() noexcept { return g_race.load(std::memory_order_acquire); }
 namespace {
 // One vehicle for ms (capped), or cleared (kVehicleUnknown) for a non-vehicle id or 0 ms.
@@ -837,14 +826,24 @@ std::uint16_t LiveWord(std::uint64_t word, std::uint32_t now, std::uint32_t& lef
     left = live ? until - now : 0;
     return live ? v : kVehicleUnknown;
 }
-} // namespace
-void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+// The deny word and its flags (kDenyYield) in one store: site C reads it without g_arb (8.57 review).
+void StoreDeny(std::uint16_t vehicle, std::uint32_t ms, std::uint64_t flags) noexcept {
     const std::uint64_t word = RaceWord(vehicle, ms);
-    g_deny.store(word, std::memory_order_release);
+    g_deny.store(word == kVehicleUnknown ? word : word | flags, std::memory_order_release);
     // A deny withdraws a grant of the same vehicle.
     std::uint64_t grant = g_grant.load(std::memory_order_acquire);
     if (word != kVehicleUnknown && static_cast<std::uint16_t>(grant & 0xFFFFu) == vehicle)
         g_grant.compare_exchange_strong(grant, kVehicleUnknown, std::memory_order_acq_rel);
+}
+} // namespace
+void RaceDeny(std::uint16_t vehicle, std::uint32_t ms) noexcept { StoreDeny(vehicle, ms, 0); }
+bool RaceGrantIf(std::uint16_t vehicle, std::uint32_t ms) noexcept {
+    if (vehicle == kVehicleUnknown || !ms || (vehicle >> 9) != kVehicleType) return false;
+    AcquireSRWLockExclusive(&g_arb);
+    const bool owned = WordNames(g_commit.load(std::memory_order_acquire), vehicle, NowLow());
+    if (!owned) StoreDeny(vehicle, ms, kDenyYield);  // the host's own yield (8.57: site C shows its icon)
+    ReleaseSRWLockExclusive(&g_arb);
+    return !owned;
 }
 void RaceGrant(std::uint16_t vehicle, std::uint32_t ms) noexcept {
     const std::uint64_t word = RaceWord(vehicle, ms);
