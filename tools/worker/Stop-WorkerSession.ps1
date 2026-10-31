@@ -34,6 +34,10 @@ function Assert-WorkerConfigSnapshotPreflight($Snapshot,[string]$Game,[string]$R
     if(!$present){return}
     $current=Get-WorkerHash $path
     if($Snapshot.present -and $current -ieq $Snapshot.sha256){return}
+    # A Start that failed after the package install and before the role marker (fb1031 run 09668f9e: out of disk
+    # space) leaves the installer's own first-install marker (tools/package-install.ps1 initial mode) where none was.
+    if(!$Snapshot.present -and !$Snapshot.worker_sha256 -and [IO.Path]::GetFileName($path) -ceq 'script-observe.enabled' -and
+       (Get-Item -LiteralPath $path).Length -eq 16 -and [IO.File]::ReadAllText($path) -ceq "client-check-v1`n"){$Snapshot.worker_sha256=$current;return}
     if(!$Snapshot.worker_sha256 -or $current -ine $Snapshot.worker_sha256){throw "Worker refuses to overwrite a changed configuration: $path"}
 }
 function Invoke-WorkerPackageRestore([string]$Repo,[string]$Game,[string]$Package,[string]$Role) {
