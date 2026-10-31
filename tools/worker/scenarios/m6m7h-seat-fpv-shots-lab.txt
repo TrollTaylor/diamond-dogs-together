@@ -5,12 +5,15 @@
 # fire online but hit a wooden post 10 m out (the guard was 30-44 m away and running: the camp had gone to alert).
 # Wakh Sind jeep 25608 faces +z (seat 1 on -x, the driver on +x). The camp stays awake but ignores the players (enemy
 # ignore, synced), so the warp (which refuses sleeping guards) has a guard to move, and nothing alerts before the shots.
-#   B. The host drives, the guest boards seat 1; the host gets off, stands 17 m in front of the jeep facing it and
-#      warps the nearest awake guard 5 m in front of himself (~12 m straight ahead of seat 1, standing), steps back to
-#      the driver's door; the guest aims straight ahead, waits for set reason=ready, re-aims at the guard's torso
-#      (enemy_aim_nearest 1.1) in first person and fires (frames on BOTH copies +50 / +350 / +650 ms), re-aims, fires.
-#   A. Roles swap: the guest drives, the host boards seat 1 and, from the seat, warps the nearest awake guard 5 m in
-#      front of seat 1; the host aims, set, re-aims at the torso, two shots (frames on both copies).
+#   B. The host drives, the guest boards seat 1; the host gets off, stands 17 m out at rel -40 from seat 1 (front-right,
+#      the arc run ecb5f08d fired in) facing the jeep and warps the nearest awake guard 5 m in front of himself (~12 m
+#      from seat 1, standing), steps back to the driver's door; the guest aims front-right (cam_turn -40), waits for set
+#      reason=ready, re-aims at the guard's torso (enemy_aim_nearest 1.1) in first person and fires (frames on BOTH
+#      copies +50 / +350 / +650 ms), re-aims, fires twice more.
+#   A. Roles swap: the guest drives; the host warps a guard to the same spot on foot, boards seat 1, aims front-right,
+#      set, re-aims at the torso, two shots (frames on both copies).
+# The camp sleeps at the start except 1084844745 (run 30007c04: an awake lab camp attacked both players from the boot and
+# a grenade broke the jeep on the guest's copy); the warp from that spot picks him (the nearest awake guard).
 # Read: guard_here mode=warp; state=seat_fpv set / restore; partner_seat_shot lines (dist_cm against the guard's
 # distance); world_lua obs m=Dead / event=req / commit on the host; vstate life; the frames.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -36,6 +39,21 @@ host run enemy ignore 2035351939
 host run enemy ignore 208831908
 host run enemy ignore 1445674198
 host run enemy ignore 3030732661
+host run enemy sleep 1927090184
+host run enemy sleep 1791272719
+host run enemy sleep 2112392286
+host run enemy sleep 347113222
+host run enemy sleep 1113151945
+host run enemy sleep 1004648379
+host run enemy sleep 1856151639
+host run enemy sleep 2507222959
+host run enemy sleep 1626377522
+host run enemy sleep 2077341861
+host run enemy sleep 3439362210
+host run enemy sleep 2035351939
+host run enemy sleep 208831908
+host run enemy sleep 1445674198
+host run enemy sleep 3030732661
 host run cp_phase nearest sneak
 stance host stand
 stance guest stand
@@ -61,15 +79,15 @@ guest run vehicle_state_status 25608
 host run vehicle_state_status 25608
 host press e 150
 wait 3000
-host debug teleport 575.5 320.5 1175.0 180
+host debug teleport 565.5 320.5 1171.7 146
 wait 2000
 logmark both
 host run spawn_enemy here
-host expect ^submitted_guard_here;
+host expect ^guard_here;
 wait 2500
 guest run spawn_sync
 host debug teleport 578.5 320.2 1155.5 -84
-guest run enemy_cam_turn 0 2
+guest run enemy_cam_turn -40 2
 guest expect ^cam_turn;
 wait 800
 guest hold rmb 1500 nowait
@@ -100,6 +118,14 @@ guest press lmb 120
 guest hold rmb 1500 nowait
 wait 350
 both capture b-shot2-350
+guest hold rmb 1500 nowait
+guest run enemy_aim_nearest 1.1
+guest hold rmb 1500 nowait
+wait 400
+guest press lmb 120
+guest hold rmb 1500 nowait
+wait 350
+both capture b-shot3-350
 guest release
 waitlog host 'world_lua=event=obs; m=Dead;' 4
 wait 1000
@@ -116,6 +142,12 @@ guest press e 150
 wait 4500
 guest run vehicle_seats
 guest require vehicle;id=25608
+host debug teleport 565.5 320.5 1171.7 146
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;
+wait 2500
+guest run spawn_sync
 host debug goto_vehicle jeep right
 wait 3000
 host press e 150
@@ -124,11 +156,7 @@ waitlog host 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 5
 waitlog guest 'partner_ride_seat=confirmed; vehicle=25608; seat=1;' 10
 both capture a-seated
 logmark both
-host run spawn_enemy here
-host expect ^submitted_guard_here;
-wait 2500
-guest run spawn_sync
-host run enemy_cam_turn 0 4
+host run enemy_cam_turn -40 2
 host expect ^cam_turn;
 wait 800
 host hold rmb 1500 nowait
