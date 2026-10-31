@@ -97,6 +97,13 @@ int main() {
             "unrecorded refusal keeps the prefix");
         char tiny[16]{};
         Check(!ui::RefusalLineForTest("device", "x", 1, 0, tiny, sizeof(tiny)), "refusal line that does not fit is refused");
+        // Review m6m7g (integrate): a create call that succeeds but hands back no object is a null address, not hr=0; a
+        // failed one keeps its HRESULT; a success with the object records nothing.
+        Check(ui::CreatedFailKindForTest(static_cast<long>(0x8007000Eu), false) == 1 &&
+                  ui::CreatedFailKindForTest(static_cast<long>(0x8007000Eu), true) == 1 &&
+                  ui::CreatedFailKindForTest(0, false) == 4 && ui::CreatedFailKindForTest(1, false) == 4 &&
+                  ui::CreatedFailKindForTest(0, true) == 0,
+              "created object: failed HRESULT -> hr, success without the object -> address=null, success -> none");
     }
 
     std::array<void*, 16> methods{};

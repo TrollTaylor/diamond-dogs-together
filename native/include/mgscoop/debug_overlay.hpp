@@ -86,5 +86,8 @@ void ShutdownForTest() noexcept;
 bool RefusalLineForTest(const char* step, const char* detail, unsigned kind, long code, char* out, std::size_t capacity) noexcept;
 // The last install line this process logged (installed or refused); false before an install ran.
 bool InstallLineForTest(char* out, std::size_t capacity) noexcept;
+// The kind a create call's refusal records (CreatedKind): 1 for a failed HRESULT, 4 for a success that handed back no
+// object, 0 for a success with it.
+unsigned CreatedFailKindForTest(long hr, bool got) noexcept;
 #endif
 }
