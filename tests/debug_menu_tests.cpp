@@ -728,6 +728,13 @@ int main() {
         Check(act::SearchActions("character", found, 32) == 7, "search character lists the seven rows");
         debug::Snapshot guest{}; guest.enabled = guest.gameplay_ready = true; guest.host = false;
         Check(act::DisabledReason(*act::FindAction("character_dd_female"), guest, false) == nullptr, "a guest can press them");
+        // Hidden-worker runs 315fa18e and 308c7879 (both screens): Snake, DD male/female, avatar and Back to my default are
+        // proven; Ocelot/Quiet in place are not (the worker had no bypass), so they stay unverified and off the page.
+        for (const char* id : {"character_snake", "character_dd_male", "character_dd_female", "character_avatar", "character_default"})
+            Check(!(act::FindAction(id)->flags & act::kUnverified), "run-proven character rows are verified");
+        for (const char* id : {"character_ocelot", "character_quiet"})
+            Check((act::FindAction(id)->flags & act::kUnverified) && std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+                  "Ocelot/Quiet rows: unverified, not available yet");
     }
     Check(std::strcmp(act::FindAction("buddy_horse_spawn")->command, "horse_spawn") == 0 &&
           std::strcmp(act::FindAction("buddy_horse_status")->command, "horse_status") == 0, "normal-release horse commands in F9 registry");
