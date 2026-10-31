@@ -2950,11 +2950,15 @@ private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
   sets VEHICLE_FIRE and PLACE_MARKER). A 114 from another act (running 2 -> 114, held up to 3 s) was the start of a CQC
   takedown of a soldier: both of the host's `Neutralize; att=local` lines in that session line up with one.
 - **What it does (fb1031 review round, the vanilla CQC feel):** the attacker's copy judges its own strike. One jab (the
-  local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. The combo's finisher (an edge
-  into 114 within 600 ms of a 113 tick) lands when body 1 is realized, shown and on foot (not seated: seat phase,
+  local act's edge into 113) never puts the other player to sleep: it logs `verdict=jab`. A second jab in reach within
+  2 s of the first, or the combo's finisher (an edge into 114 within 600 ms of a 113 tick), lands (hidden run
+  `af0b88b6`: four scripted presses gave two 113 edges 1.6 s apart and no 114 in one case, 113 then 114 in another, so
+  the finisher alone is not reliable) when body 1 is realized, shown and on foot (not seated: seat phase,
   `ride_seated`, seated visibility; no vehicle job or attach; no live non-foot ride sample), within 1.6 m horizontally
   and 1 m in height of body 1's drawn position (`read_body`, never the slot, which stays at the boarding spot while
-  seated), inside 60 degrees of the local body facing, and the other player is not in a CQC hold (91..96), a trash box
+  seated), inside 60 degrees of the local body facing (position and facing from the local body readback
+  `read_local_body`, never the local slot S+0x20[0]: in `af0b88b6` that slot read 21 cm from body 1 with the players
+  placed 1 m apart, and a strike from 3 m landed on it), and the other player is not in a CQC hold (91..96), a trash box
   or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56) (`verdict=busy`) or prone (`verdict=prone`); at
   most one hit per 1.5 s (a miss does not start that window). A 114 without a 113 before it is `verdict=takedown`. A
   landed finisher is one friendly hit, cause sleep, into the queue the damage hook uses
