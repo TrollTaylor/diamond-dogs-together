@@ -374,7 +374,7 @@ foreach($line in $steps){
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
                 'worldtrigger'{$Mode -ceq 'lab' -and (
                     ($t[0] -cin 'host','guest' -and $t.Count -eq 3 -and $t[2] -ceq 'world=0') -or
-                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020)$' -and
+                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020|30050)$' -and
                         ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
                     ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
                         ($t[0] -ceq 'guest' -and $t[2] -ceq 'world_probe=shared_death'))))}
@@ -419,7 +419,7 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     # Validate the live owned process/context lease and release virtual keys before transition.
     $null=Send-Step $Role @{Operation='release'}
     $canonical=ConvertTo-WorldTriggerText -Text $Text
-    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020)( goto_lz=[01])?$'
+    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020|30050)( goto_lz=[01])?$'
     $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
         ($Role -ceq 'guest' -and $canonical -ceq 'world_probe=shared_death')
     $disable=$Role -cin 'host','guest' -and $canonical -ceq 'world=0'
