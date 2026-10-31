@@ -127,6 +127,16 @@ void Note() {
     Check(text::FormatWorldNote(18, 1, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "Friendly fire is ON"), "note 18 on sentence");
     Check(!text::FormatWorldNote(18, 1, 2, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(18, 2, 0, 0, 0, s, sizeof(s)),
           "note 18 other values: no toast");
+    // Lua's W.note(18, 1, b) reaches world_link::HandleNote only through the NOTE_V1 grammar.
+    std::uint8_t code = 0;
+    std::uint32_t a = 0, b = 9;
+    const auto parse = [&](const char* tail) {
+        char receipt[96]{};
+        std::snprintf(receipt, sizeof(receipt), "%s%s", mgscoop::world::note_prefix, tail);
+        return mgscoop::world::ParseNote(receipt, std::strlen(receipt), code, a, b);
+    };
+    Check(parse("18 1 0") && code == 18 && a == 1 && b == 0, "the NOTE_V1 receipt admits note 18");
+    Check(!parse("16 1 0") && !parse("17 1 0") && !parse("19 1 0"), "16, 17 and 19 stay refused");
 }
 } // namespace
 
