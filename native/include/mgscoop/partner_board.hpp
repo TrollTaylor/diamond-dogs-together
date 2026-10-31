@@ -100,6 +100,13 @@ struct RaceState {
     // The host's own press commit (site B) while live (0xFFFF none).
     std::uint16_t commit;
     std::uint32_t commit_left_ms;
+    // The last press that ended at site D: its count, vehicle, how (1 grant, 2 deny, 3 timeout) and the press-to-answer
+    // ms; the host's press commits (site B) so far.
+    std::uint32_t done_seq;
+    std::uint16_t done_vehicle;
+    std::uint8_t done_end;
+    std::uint32_t done_wait_ms;
+    std::uint32_t commits;
 };
 void ReadRace(RaceState& out) noexcept;
 bool Installed() noexcept;

@@ -321,8 +321,12 @@ struct PressIn {
 // stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
 // (a grant, a deny or the timeout ended the wait; site B decides).
 inline PressVerdict PressDecide(const PressIn& in) noexcept {
-    (void)in;
-    return PressVerdict::stock;
+    if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType || in.peer_drives)
+        return PressVerdict::stock;
+    const bool same = in.open && in.pend_vehicle == in.vehicle && in.now_ms - in.pend_seen <= kPressGapMs;
+    if (!same) return in.denied ? PressVerdict::stock : PressVerdict::start;
+    if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
+    return PressVerdict::wait;
 }
 
 // Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the v4
@@ -374,7 +378,8 @@ inline DrawSeatOut DrawSeat(const DrawSeatIn& in) noexcept {
 }
 
 // The MGS_COOP_BOARD_SEAT_V1 request (game_script_observer.cpp SelectBoardSeatReceipt; review R8: a pure,
-// tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>,
+// tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms> |
+// grant_if <vehicle> <ms> (8.55: the host's arbiter),
 // single spaces, decimal digits only, nothing after the last number. vehicle 25600..26111 (a TppVehicle2
 // id); deny / grant ms 1..kRaceDenyMaxMs; hold ms 0..kRaceDenyMaxMs (0 clears the hold).
 enum class SeatCmd : std::uint8_t { bad, poll, clear, deny, grant, hold, grant_if };
@@ -417,6 +422,7 @@ inline SeatRequest ParseSeatRequest(const char* text, std::size_t n) noexcept {
     else if (detail::SeatWord(p, end, "deny ")) cmd = SeatCmd::deny;
     else if (detail::SeatWord(p, end, "grant ")) cmd = SeatCmd::grant;
     else if (detail::SeatWord(p, end, "hold ")) cmd = SeatCmd::hold;
+    else if (detail::SeatWord(p, end, "grant_if ")) cmd = SeatCmd::grant_if;
     else return r;
     if (cmd == SeatCmd::poll || cmd == SeatCmd::clear) {
         if (p != end) return r;

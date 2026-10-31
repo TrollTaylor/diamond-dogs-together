@@ -4646,7 +4646,9 @@ bool SelectVehicleDoorReceipt(const char* buffer, std::size_t size, mgscoop::scr
     return finish(reply);
 }
 // M6 seat races (lua/coop/world_ride_pose.lua SEAT op 54; lab.ini partner_ride_race=1; partner_board "seat races"):
-//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>
+//   return 'MGS_COOP_BOARD_SEAT_V1' -- poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms> | grant_if <vehicle> <ms>
+//     (8.55 E press only: press / page / pseq / pend / touts site D's last press, its age, the press count, held, the
+//      presses that got no answer; commit the host's own press; gi grant_if's answer 1 granted+yielded / 0 refused / -1)
 //     (partner_board::ParseSeatRequest: vehicle 25600..26111, deny / grant ms 1..5000, hold ms 0..5000; review R8)
 //   -> return {ok=true,on=0}                                   (the key off or site C not installed)
 //   -> return {ok=true,on=1,want=<id|65535>,age=<ms|-1>,deny=<id|65535>,left=<ms>,hits=<n>,hold=<0|1>,
@@ -4659,10 +4661,11 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     constexpr std::size_t prefix = sizeof(kPrefix) - 1;
     if (!buffer || size <= prefix || size > 96 || std::memcmp(buffer, kPrefix, prefix) != 0) return false;
     world_quiet = true;
-    static char reply[200]{};
+    static char reply[384]{};
     const auto finish = [&](const char* text) noexcept { replacement = {text, std::strlen(text)}; return true; };
     namespace pb = mgscoop::partner_board;
     const pb::SeatRequest request = pb::ParseSeatRequest(buffer + prefix, size - prefix);
+    int gi = -1;
     if (!pb::LiveRace()) return finish("return {ok=true,on=0}");
     switch (request.cmd) {
     case pb::SeatCmd::poll: break;
@@ -4670,16 +4673,31 @@ bool SelectBoardSeatReceipt(const char* buffer, std::size_t size, mgscoop::scrip
     case pb::SeatCmd::deny: pb::RaceDeny(request.vehicle, request.ms); break;
     case pb::SeatCmd::grant: pb::RaceGrant(request.vehicle, request.ms); break;
     case pb::SeatCmd::hold: pb::RaceHold(request.ms); break;
+    case pb::SeatCmd::grant_if: gi = pb::RaceGrantIf(request.vehicle, request.ms) ? 1 : 0; break;
     default: return finish("return {ok=false,reason='request'}");
     }
     pb::RaceState rs{};
     pb::ReadRace(rs);
     const long long age = rs.want == pb::kVehicleUnknown || rs.want_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.want_age_ms);
     const long long rage = rs.guard == pb::kVehicleUnknown || rs.guard_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.guard_age_ms);
+    const long long page = rs.press == pb::kVehicleUnknown || rs.press_age_ms > 0x7FFFFFFFu ? -1LL : static_cast<long long>(rs.press_age_ms);
+    // 8.55: one line per ended press (the guest) and per host commit, written here on the Lua thread, never in the hook.
+    static std::uint32_t logged_done = 0, logged_commits = 0;
+    if (rs.done_seq != logged_done) {
+        logged_done = rs.done_seq;
+        LogFormat("partner_board=press; role=guest; vehicle=%u; end=%s; wait_ms=%u; presses=%u; timeouts=%u\r\n", unsigned(rs.done_vehicle),
+                  rs.done_end == 1 ? "grant" : rs.done_end == 2 ? "deny" : "timeout", rs.done_wait_ms, rs.pseq, rs.timeouts);
+    }
+    if (rs.commits != logged_commits) {
+        logged_commits = rs.commits;
+        LogFormat("partner_board=press; role=commit; vehicle=%u; commits=%u\r\n", unsigned(rs.commit), rs.commits);
+    }
     if (FAILED(StringCchPrintfA(reply, ARRAYSIZE(reply),
-                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld}",
+                                "return {ok=true,on=1,want=%u,age=%lld,deny=%u,left=%u,hits=%u,hold=%u,grant=%u,gleft=%u,holds=%u,ref=%u,rage=%lld,"
+                                "press=%u,page=%lld,pseq=%u,pend=%u,touts=%u,commit=%u,gi=%d}",
                                 unsigned(rs.want), age, unsigned(rs.deny), rs.deny_left_ms, rs.hits, rs.hold ? 1u : 0u, unsigned(rs.grant),
-                                rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage)))
+                                rs.grant_left_ms, rs.holds, unsigned(rs.guard), rage, unsigned(rs.press), page, rs.pseq, rs.pend ? 1u : 0u,
+                                rs.timeouts, unsigned(rs.commit), gi)))
         return finish("return {ok=false,reason='format'}");
     return finish(reply);
 }
