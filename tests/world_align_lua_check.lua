@@ -16,7 +16,7 @@ local function fixture(host, level, mb)
         TppMission = {}, TppCheckPoint = {}, TppPlayer = {}}, {__index = _G})
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {}, bindHooks = {},
         active = true, level = level or 3, host = host, role = host and 1 or 2, epoch = 7,
-        feature = mb and {enemies = true, allCp = true, patrol = false} or {enemies = true},
+        feature = mb and {enemies = true, allCp = true, patrol = false, spareStaff = true} or {enemies = true},
         paired = true, eff = level or 3, mode = 1, mission = mb and 30050 or 30010, roster = 4000000000, rosterOk = true,
         w1ok = true, w1 = true,
         ent = {}, entOrder = {}, cp = {}, cpOrder = {100, 200}, activeCp = {[100] = true, [200] = not host},
@@ -799,5 +799,29 @@ do
     for _ = 1, 400 do mg.now = mg.now + 33; mg.W.enemy.tick(mg.now) end
     check(mg.life[4] == 3 and mg.W.enemy.s.ledger[3000000004] == nil,
         'Mother Base: the held apply is retried within 10 s and lands once the platform is loaded')
+end
+-- Mother Base (feature spareStaff): stock f30050_sequence.lua reserves TARGET_DEAD (Mission Failed, PLAYER_KILL_DD)
+-- on any non-player Dead or Dying. A guest's kill or fatal hit on a staff member is committed on the host but applied
+-- to the host's staff member as a knockout: the host's own mission never fails for the guest's act.
+do
+    local sh, sg = fixture(true, 3, true), fixture(false, 3, true)
+    capture(sh)
+    transfer(sh, sg)
+    sg.A.tick(sg.now)
+    transfer(sg, sh, function(p) return p.op == OP.ALIGN_ACK end)
+    check(sh.W.w1 and sg.W.w1, 'Mother Base: W1 on at both copies before the guest kill')
+    local reserved, send = 0, sh.W.api.send
+    sh.W.api.send = function(id, command)
+        -- stub of f30050's GameObject Dead / Dying handler (DEAD = 1, DYING = 2 in this fixture)
+        if command.id == 'ChangeLifeState' and (command.state == 1 or command.state == 2) then reserved = reserved + 1 end
+        return send(id, command)
+    end
+    sh.W.handlers[OP.REQ_OUTCOME]({41, 3000000001, 1, 5, 0, 1, 0, 0, 0, 0, 0}, sh.now)
+    sh.W.handlers[OP.REQ_OUTCOME]({42, 3000000002, 1, 4, 0, 4, 0, 0, 0, 0, 0}, sh.now)
+    for _ = 1, 40 do sh.now = sh.now + 33; sh.W.enemy.tick(sh.now) end
+    check(logged(sh, 'ent=3000000001;state=5;ver=2;actor=guest') and logged(sh, 'ent=3000000002;state=4;ver=2;actor=guest'),
+        'Mother Base: the guest kill and dying requests are committed on the host')
+    check(reserved == 0 and sh.life[1] == 4 and sh.life[2] == 4 and logged(sh, 'event=spare;ent=3000000001;state=5;as=3'),
+        'Mother Base: the host copy knocks the staff member out and never reserves its own TARGET_DEAD game over')
 end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

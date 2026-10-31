@@ -1262,6 +1262,23 @@ do
     F.push(mbG, 1, OP.OUTCOME, u32('sol_b1'), 1, 3, 1, 3, 0, 0, 0, 0, 0, 0)
     F.tick(mbGenv, mbG, 15)
     check(F.callCount(mbG, 'ChangeLifeState:sol_b1:' .. LIFE.FAINT) == 1, '30050: the guest copy of the staff member faints')
+    -- A partner never kills or removes a staff member in this copy's save (stock f30050 reserves TARGET_DEAD on any
+    -- staff Dead or Dying): a partner's kill, dying or Fulton is applied here as a knockout (FAINT).
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b2'), 1, 5, 2, 1, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b3'), 1, 6, 3, 5, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_a1'), 1, 4, 4, 4, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    local lethal = 0
+    for _, v in ipairs(mbG.calls) do
+        if v:find('^RequestForceFulton:') or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DEAD .. '$')
+            or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DYING .. '$') then lethal = lethal + 1 end
+    end
+    check(lethal == 0 and F.callCount(mbG, 'ChangeLifeState:sol_b2:' .. LIFE.FAINT) == 1
+        and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 1
+        and F.callCount(mbG, 'ChangeLifeState:sol_a1:' .. LIFE.FAINT) == 1
+        and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';state=5;as=3'),
+        '30050: a partner kill, dying or Fulton knocks the staff member out on this copy, never kills or fultons them')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
