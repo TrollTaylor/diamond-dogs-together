@@ -645,13 +645,12 @@ inline int FpvBit(std::uint8_t slot) noexcept {
 }
 // Seats 1 (front) and 2 (left back); seat 3 aims clear over the shoulder and the driver is stock.
 inline bool FpvSeat(std::uint8_t seat) noexcept { return seat == 1 || seat == 2; }
-// The gun is ready (aimed 7, firing 9 / 10) or blocked (15): the raise (6) is done, so its muzzle probe saw the shoulder
+// The gun is ready (aimed 7, firing 9 / 10): the raise (6) is done and clear, so its muzzle probe saw a clear shoulder
 // pose, which first person then keeps (shot.md: GunMuzzleProbeIssue 0x1062A30 skips the pose update with rec+0x3C0 bit 13).
-// Design 8.49 [O lab 61384aab]: a seat-1 aim across the bonnet went 6 -> 15 (the red no-fire icon) and stayed there, so
-// the blocked aim, the one first person is for, counts too.
-inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept {
-    return gun_ok && (mode == 7 || mode == 9 || mode == 10 || mode == 15);
-}
+// Not the blocked mode 15 (the red no-fire icon): design 8.51 [O runs 2a394a64 / ff4134f4], 5 of 5 bits set at 15 left the
+// gun at 15 with the rifle body across the first-person view and no shot. A blocked aim keeps the stock shoulder view and
+// switches only if it turns clear (15 -> 7; [I] the shoulder pose follows the view, no run has shown it).
+inline bool FpvReady(bool gun_ok, std::uint8_t mode) noexcept { return gun_ok && (mode == 7 || mode == 9 || mode == 10); }
 enum class FpvEvent : std::uint8_t { none, arm, set, opt_out, restore, stop, retry };
 // A clear of ours stays pending until a read shows the bit clear (a failed write, the game's plain store over our
 // compare-exchange); it is retried on later ticks, at most kFpvClearTries times, then given up (design 8.47).
@@ -685,7 +684,7 @@ struct FpvIn {
     std::uint16_t vehicle = kVehicleUnknown;
     std::uint8_t seat = kSeatUnknown;
     bool aiming = false;   // GunAims of the local gun
-    bool ready = false;    // the gun is ready (FpvReady: mode 7, 9, 10, 15): the bit is set only then
+    bool ready = false;    // the gun is ready (FpvReady: mode 7, 9, 10; not the blocked 15): the bit is set only then
     bool read_ok = false;  // the subjective module was found
     std::uint32_t toggles = 0;  // impl+0x60
     bool slot_ok = false;

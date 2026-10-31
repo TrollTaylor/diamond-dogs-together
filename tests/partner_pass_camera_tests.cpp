@@ -1120,8 +1120,8 @@ void TestFpvStep() {
     Check(o.event == pc::FpvEvent::none && o.set == 0, "seated, not aiming: nothing");
     // Design 8.51 [O runs 2a394a64 / ff4134f4]: a bit set at the blocked mode 15 (the red no-fire icon) did not unblock the
     // aim: 5 of 5 such aims stayed at 15, with the rifle body across the first-person view, and fired nothing (shot.md: in
-    // first person the muzzle probe keeps the blocked shoulder pose). So 15 is not ready: the shoulder aim, which follows
-    // the view, goes 15 -> 7 when turned clear and only then switches. Nor the raise (6), the lowering (8), idle (0) or an
+    // first person the muzzle probe keeps the blocked shoulder pose). So 15 is not ready: a blocked aim keeps the stock
+    // shoulder view and switches only if it turns clear (15 -> 7, [I]). Nor the raise (6), the lowering (8), idle (0) or an
     // unread gun.
     Check(pc::FpvReady(true, 7) && pc::FpvReady(true, 9) && pc::FpvReady(true, 10) && !pc::FpvReady(true, 15) &&
               !pc::FpvReady(true, 6) && !pc::FpvReady(true, 8) && !pc::FpvReady(true, 0) && !pc::FpvReady(false, 15) &&
