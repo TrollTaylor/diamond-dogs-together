@@ -1,0 +1,123 @@
+# m6m7i: E press only (design 8.55; the user's rule: only an actual E press may claim a vehicle's driver seat, in both
+# roles) at the SHIPPED play defaults (no labsetting line), -WanSim bad, seed africa-jeep for both (30020, the jeep
+# veh_lv_0000 = 25608; the driver's door spot -656.01 1.20 877.73 facing 62, used in m6m7h part C).
+#   a) The guest stands at the empty jeep's driver's door and never presses E (m6m7h 23032c72: it held the driver's
+#      seat and the host's E did nothing, "Your partner reached the driver's seat first"). The host comes beside it
+#      and presses E: the host drives; no claim, no grant, no yield, no toast.
+#   d) After a): the guest boards as a passenger at the right door as before (any passenger seat).
+#   b) The mirror: the host stands at the door without E, the guest presses E: site D holds the guest's press until
+#      the host's grant (partner_board=press; end=grant; wait_ms= the press-to-answer time), then the guest drives.
+#   c) Both press E at the same door at once: the host's press commits natively first, the guest's claim is denied
+#      (host_pressed or host_drives), its press ends on foot with the toast (a=6) and no Fulton prompt; one driver.
+# Needs at head: partner_board=race; ...; d=0x1251366 on both copies and the host's READY (world_lua=event=seat;
+#   action=ready; role=host / the guest's state=ready).
+# NEVER (sliced after the run): step=error, viewer_changed, faults; board_uncertain; two_drivers; seat_far;
+#   partner_ride_seat_patch=refused; pass_camera state=refused; partner_board=race; result=refused;
+#   in a): any guest action=claim, host action=grant / action=yield.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/m6m7i-seat-claim-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep -Mode play -WanSim bad
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+guest debug teleport -633.5 3.0 867.8 -117
+both debug godmode 1
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 2552560298
+host run enemy sleep 1480013509
+host run cp_phase nearest sneak
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog guest 'partner_board=race; result=ok; c=0x1246a4f; d=0x1251366;' 60
+waitlog host 'world_lua=event=seat; action=ready; role=host' 30
+waitlog guest 'world_lua=event=seat; state=ready' 30
+host debug teleport -633.5 3.0 871.8 0
+wait 8000
+host run vehicle_seats
+both capture start
+# --- a) The guest at the driver's door without E; the host presses E -----------------------------------------------
+logmark both
+guest debug teleport -656.01 1.20 877.73 62
+wait 4500
+both capture a-guest-at-door
+placebehind host guest 1 1.2
+wait 1500
+both capture a-host-beside
+host press e 150
+host burst a-host-press 4 300
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+wait 1500
+both capture a-host-drives
+# --- d) The guest boards as a passenger ---------------------------------------------------------------------------
+logmark both
+guest debug goto_vehicle jeep right
+wait 1500
+guest press e 150
+guest burst d-geton 3 400
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=[0-9]; state=on' 8
+wait 2000
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host run vehicle_seats
+both capture d-seated
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect vehicle_not_riding
+# --- b) The host at the door without E; the guest presses E -----------------------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+placebehind guest host 1 1.2
+wait 3000
+both capture b-host-at-door
+logmark both
+guest press e 150
+guest burst b-guest-press 4 250
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest; pseq=' 3
+waitlog host 'world_lua=event=seat; action=grant; vehicle=25608; role=host' 5
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 5
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=grant; wait_ms=' 5
+waitlog guest 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+guest run vehicle_seats
+guest expect vehicle;id=25608
+host run vehicle_seats
+host expect vehicle_not_riding
+wait 1500
+both capture b-guest-drives
+guest press e 150
+wait 3500
+guest run vehicle_seats
+guest expect vehicle_not_riding
+# --- c) Both press E at the same door at once ---------------------------------------------------------------------
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+placebehind guest host 1 1.2
+wait 4000
+both capture c-before
+logmark both
+both press e 150
+both burst c-press 4 250
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest; pseq=' 3
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(pressed|drives)' 5
+waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=deny' 5
+host run vehicle_seats
+host expect vehicle;id=25608
+guest run vehicle_seats
+guest expect vehicle_not_riding
+wait 800
+both capture c-after
+wait 2000
+both capture c-after-2
+state

@@ -98,8 +98,9 @@ wait 2500
 logmark both
 guest debug goto_vehicle jeep
 wait 3000
-waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
 guest press e 150
+# 8.55: the claim, the host's grant and the guest's grant all follow the press (E press only).
+waitlog guest 'world_lua=event=seat; action=grant; vehicle=25608; role=guest; set=1' 8
 wait 4500
 guest run vehicle_seats
 guest require vehicle;id=25608

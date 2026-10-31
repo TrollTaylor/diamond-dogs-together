@@ -31,7 +31,6 @@ both capture start
 logmark both
 host debug teleport 577.20 320.2 1157.19 -84
 wait 3000
-waitlog host 'world_lua=event=seat; action=grant; vehicle=25608; role=host; set=1' 8
 host press e 150
 wait 4500
 host run vehicle_seats

@@ -96,8 +96,7 @@ host debug goto_vehicle jeep
 wait 1500
 placebehind guest host 1 1.2
 wait 3500
-waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 10
-waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_first' 5
+# 8.55: no deny exists before a press (E press only); the race starts at the presses below.
 both capture m6p-race-before
 both press e 150
 wait 4000
