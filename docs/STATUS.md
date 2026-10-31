@@ -2,29 +2,45 @@
 
 **Merged** onto `dev/oct7-continue` `0c893e1`: `wp/seat1-draw` `83c68a9`, `wp/self-hit` `5466c17` (`a520315`),
 `wp/aim-view` `743d52b` (`776645f`). The docs renumber the design sections (self-hit 8.33 -> 8.37, aim-view 8.33-8.37 ->
-8.38-8.42; code comments and scenario headers keep the branch numbers). Contract 826 code sites / 209 slots (`--check`).
+8.38-8.42); code comments follow the docs numbers since `95eed1c`, scenario headers keep the branch numbers. Contract
+826 code sites / 209 slots (`--check`).
 **Play defaults ON** (`5b4e464`, failing first `bc8484e`): `partner_ride_seat1_anchor` (the front-seat partner drawn in
 the seat, the clean get-off) and `partner_seat_shot` (S1) follow the gun profile in lab and play (a named 0 opts out);
-`partner_pass_camera=view` (the get-off turn) kept from the merge. Full CTest 336/336.
-**Play rehearsal** (`-Mode play -WanSim bad`, shipped defaults, no key named, Wakh Sind jeep, afgh-quiet / afgh-horse;
-design 8.43; [O] lines on both copies and frames looked at; frames `D:\mgs-coop-run-archive\m6m7e\frames\integrate`):
+`partner_pass_camera=view` (the get-off turn) kept from the merge.
+**Play rehearsal** (`-Mode play -WanSim bad`, shipped defaults, no key named, Wakh Sind east jeep (`cat=2`), afgh-quiet /
+afgh-horse; design 8.43; [O] lines on both copies and frames looked at; frames `D:\mgs-coop-run-archive\m6m7e\frames\integrate`):
 - `c66eb55f32ee4d4ca5c95f41dfadf492` (`m6m7e-seat-fixes-play.txt`): `partner_seat_shot=configured; key=1; play=1` and `mode=view` on both copies
   (the anchor's configured line comes at the first seat patch, not at load); D11 both refusals with their toasts; the race (host
-  first). Guest role: seat 1 drawn in the seat on the host's copy; S1 on a front-seat line and both 60faf9fc seat-2 lines
-  (`result=shift`), the guest's copy of the jeep 1382 before and after; RMB through the get-off (hold, then the request);
-  end correction on the host's copy 27 mm; seat-2 turn. Host seat 1: drawn in the seat on the guest's copy, its own view
-  in the seat, S1 shift, host copy 1409 unchanged, end correction 20 mm. Then the camp was in combat (guards firing on
-  both players since part A) and the jeep broke on the guest's copy while the guest drove (`VehicleBroken att=none`),
-  removed on both: the host's seat-2 legs did not run. Two first E presses after `goto_vehicle right` did not board.
-- `9b5df4b84152422aa405be37f6d937a7` (`m6m7e-seat-fixes-play2.txt`, guards cleared, door teleports): host seat 1 two S1 lines and seat 2 both 60faf9fc
-  lines, all `shift`, the jeep 2300 on both copies; the host's hold and request through an RMB get-off (`aimed=1`); turns
-  at 1701 / 3093 / 3082 ms; the guest's copy draws the host in seat 1 parked and while the guest drives, the host's copy
-  draws the guest in seat 1 parked and while the host drives; end corrections 29 / 9 / 6 / 5 mm. Seat-1 and seat-2 aim
-  views stay blocked (leg / panel; first-person track). Never-lines zero on both copies in both runs.
+  first). Guest role: seat 1 drawn in the seat on the host's copy; S1 `shift` on a front-seat line and both seat-2 lines,
+  the guest's copy of the jeep 1382 before and after; RMB through the get-off (hold, then the request); end correction on
+  the host's copy 27 mm; seat-2 turn. Host seat 1: drawn in the seat on the guest's copy, its own view in the seat, S1
+  shift, host copy 1409 unchanged, end correction 20 mm. In both seat-1 windows the copy that did NOT shoot lost life:
+  the host's copy (the life of record) 2147 -> 1409 across the A1 drive and the guest's A2 shot, the guest's copy 1409 ->
+  1193 around the host's B1 shot; [I] enemy fire (guards 1194/1195 attacking, 11 guards conscious at part B, the puppet's
+  mag unchanged), confounded, not observed. The camp was in combat and the jeep broke on the guest's copy while the guest
+  drove (`VehicleBroken att=none`), removed on both: the host's seat-2 legs did not run. Two first E presses after
+  `goto_vehicle right` did not board.
+- `9b5df4b84152422aa405be37f6d937a7` (`m6m7e-seat-fixes-play2.txt`, `clear_enemies` and door teleports, but the buddy engaged and the camp went
+  to combat from part A: radio "under fire" / "All units" in the frames, `downed_damage` samples in part C): host seat 1
+  two S1 lines and seat 2 two lines, all `shift`, the jeep 2300 on both copies through part B; the host's hold and request
+  through an RMB get-off (`aimed=1`); turns at 1701 / 3093 / 3082 ms; the guest's copy draws the host in seat 1 parked and
+  while the guest drives, the host's copy draws the guest in seat 1 parked and while the host drives; end corrections 29 /
+  9 / 6 / 5 mm. Seat-1 and seat-2 aim views stay blocked (leg / panel; first-person track). The run ended `Forced=True`
+  (`forced_job_termination`, host exit 1223; also in four m6m7d runs, [I] pre-existing). Never-lines zero on both copies
+  in both runs.
+**What S1 shows in play: no harm, not yet a prevented self-hit.** The stock cost of 702 per shot (lab `8a920ec8` seat 3,
+`60faf9fc` seat 2) was on the Africa jeep (`cat=1`); the play seat-2 lines are other lines on another body (muzzle 30-45
+cm further back, chords 64-133 cm). The four front-seat shots left through the passenger's own right side (chords 17-32
+cm: `enemy_cam_turn` rel -148.1 / -55.2 points right from seat 1). Ready, not run: `m6m7e-seat-shot-stock-play.txt`
+(seat-1 lines across the cabin and the seat-2 lines; once with `-LabSetting partner_seat_shot=0`, once without).
 **Not proven** (run 3, `m6m7e-seat-fixes-play-b.txt`, was refused: D: had 2.08 GB free, under the 3 GB floor): seat 3
-and the D-Dog case at these defaults, a guard hit by a seated shot, a teardown while seated, a mission end while seated.
-Stock-hit status of the two front-seat lines [U] (no stock control in play). Jeep damage while ridden counts on the host's
-copy only (pre-existing). Nothing pushed.
+and the D-Dog case at these defaults, a guard hit by a seated shot in play, a teardown while seated, a mission end while
+seated; the get-off turn while the player walks (only a look cancels it). Jeep damage while ridden counts on the host's
+copy only (pre-existing).
+**Review fixes** (`4df2464`, `95eed1c`, `bb6a01b`, design 8.44): worker admit cases for the anchor key (mutation-checked),
+stale default comments and the design numbers in code, the -b anchor waitlogs after the first seat patch, the README
+Seats claims (S1; a front-seat partner can also appear beside the seat while moving; walking does not stop the turn).
+No run: D: 2.0 GB free. Nothing pushed.
 
 ## 2026-10-30: seat 1 drawn in the seat, proven in play behind a lab key (branch `wp/seat1-draw`)
 

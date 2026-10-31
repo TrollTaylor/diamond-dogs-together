@@ -1739,7 +1739,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"): follows the gun profile in lab and play (design 8.37:
-    // the lab A/B 60faf9fc on identical lines; the seat-fixes merge turned it on in play, design 8.43); a named 0 opts out.
+    // the lab A/B 60faf9fc, seat 2 of the Africa jeep (cat=1), 702 life per stock shot and none with S1; turned on in play
+    // at the seat-fixes merge, 8.43: in play every seated shot shifted and the shooter's copy kept its life, but no play
+    // line was shown to damage the east jeep (cat=2) in stock, and seat 1 has no stock control anywhere (seat 3: lab
+    // 8a920ec8, Africa jeep, one line; 8.44)); a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
     // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
     // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.

@@ -968,8 +968,9 @@ lease, another owner, a foreign record vtable), `lab_config_tests`,
 
 M7 seated shots (`wp/seat-shoot2`; docs/vehicles-companions-design.md 8.30, review fixes 8.31, on since 8.37). Key
 `partner_seat_shot=0|1` (`_given`): **on with the native gun profile in lab and play** (lab since `wp/self-hit`, 8.37:
-a stock seated shot cost the shooter's copy of the jeep 702 life, S1 shots on the same line none; play since the
-seat-fixes merge, 8.43); a named 0 opts out. Lab lever
+a stock seated shot from back seat 3 (`8a920ec8`) or 2 (`60faf9fc`) of the Africa jeep cost the shooter's copy 702 life,
+S1 shots on the same line none; play since the seat-fixes merge, 8.43, with no harm seen but no play line shown to
+damage the east jeep in stock, and seat 1 without a stock control anywhere, 8.44); a named 0 opts out. Lab lever
 `seatshot on|off|lab|status` (native, lab only) overrides the key on that copy.
 
 **What it does.** While this copy's own player sits in a passenger seat (the local passenger report: seats 1..3 of a

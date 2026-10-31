@@ -3416,7 +3416,7 @@ descriptions were wrong, seat 3 was not seen at the final code, the raise's writ
 ### 8.43 The seat fixes merged and on in play (2026-10-30, branch `wp/seat-fixes`)
 
 Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38-8.42 were 8.33-8.37 on `wp/aim-view`
-(renumbered in the docs at the merge; code comments and scenario headers keep the branch numbers).
+(renumbered in the docs at the merge; code comments follow since `95eed1c`, scenario headers keep the branch numbers).
 - **Merge** (`a520315`, `776645f`): the partner_driver Api keeps `ride_seat_getoff` then `pass_camera_turn`; lab_config
   keeps every key; contract 826 / 209.
 - **Flips** (`5b4e464`, failing first `bc8484e`): `partner_ride_seat1_anchor` and `partner_seat_shot` follow the gun
@@ -3424,14 +3424,36 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Rehearsal** (play, `-WanSim bad`, shipped defaults; [O] both copies' lines and frames): `c66eb55f32ee4d4ca5c95f41dfadf492` and `9b5df4b84152422aa405be37f6d937a7` (STATUS has the
   numbers). Both roles: the front-seat partner in the seat parked and while driving on the driver's copy, the own view in
   the seat, the get-off line on the driver's copy with end corrections 5-29 mm, S1 `shift` on two front-seat lines and
-  on both 60faf9fc seat-2 lines with the shooter's copy of the jeep unchanged, the get-off turn from seats 1 and 2 and
+  two seat-2 lines with the shooter's copy of the jeep unchanged (no stock control: 8.44), the get-off turn from seats 1 and 2 and
   through an RMB get-off (now also the host's hold). D11 and the race as before. Never-lines zero.
 - **Seen, not caused by the flips** [I]: guards alerted in both runs fired on the jeep (red hit arcs, `downed_damage`
-  samples); in `c66eb55f32ee4d4ca5c95f41dfadf492` the jeep broke on the guest's copy while ridden and was removed on both. In `9b5df4b84152422aa405be37f6d937a7` the driver's copy
-  stayed at 2300 through the host's four seated S1 shots [O].
+  samples; in `9b5df4b84152422aa405be37f6d937a7` too, after `clear_enemies`); in `c66eb55f32ee4d4ca5c95f41dfadf492` the copy that did not shoot lost life in both seat-1 windows
+  (host's copy 2147 -> 1409, guest's 1409 -> 1193; confounded with that fire) and the jeep broke on the guest's copy while
+  ridden and was removed on both. In `9b5df4b84152422aa405be37f6d937a7` both copies stayed at 2300 through the host's four seated S1 shots [O]; that run
+  ended `Forced=True` (host exit 1223, as four m6m7d runs).
 - **Open:** seat 3 / D-Dog, a guard hit by a seated shot, teardown and mission end while seated (run 3 refused: D: under
   3 GB); the first E after `goto_vehicle right` sometimes does not board (2 of 5); seat-1/2 aim views (first-person
   track); stock-hit status of the front-seat lines [U].
+
+### 8.44 The seat-fixes review closed (2026-10-30, branch `wp/seat-fixes`; no run, D: under 3 GB)
+
+- **S1 in play is "no harm", not "prevents the self-hit"** [O slices]: the lab A/B stock costs (702 a shot, `8a920ec8`
+  seat 3, `60faf9fc` seat 2) were on the Africa jeep (`published ... cat=1`); both play runs rode the east jeep (`cat=2`),
+  whose seat-2 lines start 30-45 cm further back with chords of 64-133 cm. The front-seat lines left through the
+  passenger's own right side (`d_milli` lateral +0.50..+0.82, exits 17-32 cm): `enemy_cam_turn` adds rel to the player's
+  yaw and a negative rel points right from seat 1. [I] `37b94432` (8.32) saw stock seat-2 shots hole the east jeep's
+  panel. Ready: `m6m7e-seat-shot-stock-play.txt` (seat 1 at rel +148.1 / +55.2 across the cabin, seat 2 A / B; the
+  life on both copies after each shot), once with `-LabSetting partner_seat_shot=0` and once without. README, STATUS
+  and the `ResolveWeaponDefaults` comment say so.
+- **README:** a front-seat partner can also appear beside the seat for a moment while the jeep moves (8.35's moving
+  err_mm 0.2-2.8 m; the drive frames are stills); the get-off turn is cancelled by a look, not by walking.
+- **Code and tests** (`4df2464`, `95eed1c`, `bb6a01b`): worker admit and refuse cases for `partner_ride_seat1_anchor`
+  (failing with the regex alternative removed); the stale "off unless named" comments; 44 comment lines from
+  `wp/aim-view` / `wp/self-hit` moved to the docs numbers by `git blame`; the -b anchor waitlogs follow each copy's first
+  seat patch (`PartnerRideSeatArm` logs the configured line there, not at load).
+- **Refuted in review** [O]: "S1 from seat 3 never fired": lab `8a920ec8` fired S1 from seat 3 (`result=shift`, `cat=1`).
+- **Open, unchanged:** the -b rehearsal (seat 3 / D-Dog, a guard hit by a seated shot, teardown and mission end while
+  seated), the stock control above, a moving get-off camera; the turn could also drop on move input (follow-up).
 
 ## 9. Milestones
 
