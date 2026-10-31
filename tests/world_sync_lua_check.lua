@@ -1275,17 +1275,20 @@ do
             or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DYING .. '$') then lethal = lethal + 1 end
     end
     check(lethal == 0 and F.callCount(mbG, 'ChangeLifeState:sol_b2:' .. LIFE.FAINT) == 1
-        and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 1
         and F.callCount(mbG, 'ChangeLifeState:sol_a1:' .. LIFE.FAINT) == 1
         and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';state=5;as=3'),
-        '30050: a partner kill, dying or Fulton knocks the staff member out on this copy, never kills or fultons them')
-    -- Play at Mother Base: W1 stays off (lab only) until a hidden run shows staff outcomes on both copies; the
-    -- allCp / spareStaff code stays dormant there.
+        '30050: a partner kill or dying knocks the staff member out on this copy, never kills them')
+    -- fb1031-on: a partner's Fulton makes the staff member disappear on this copy for this mission load
+    -- (TppEnemy.SetDisable, the debug menu's disable: no Fulton message, no roster change), never RequestForceFulton.
+    check(F.callCount(mbG, 'SetEnabled:sol_b3:') == 1 and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 0
+        and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b3')) .. ';state=6;as=7'),
+        '30050: a partner Fulton disables the staff member on this copy (gone), never a knockout or a Fulton')
+    -- Play at Mother Base: W1 on, as in the lab (fb1031-on mb run).
     local mbPlayEnv, mbPlay = fixture({role = 1, mission = 30050, mode = 2})
     F.start(mbPlayEnv, mbPlay)
     F.pair(mbPlayEnv, mbPlay, 3)
-    check(not mbPlay.W.w1 and mbPlay.W.feature.enemies == nil and mbPlay.W.feature.allCp == true,
-        '30050 in play: W1 off until a run proves it (lab only)')
+    check(mbPlay.W.w1 and mbPlay.W.feature.enemies == true and mbPlay.W.feature.allCp == true
+        and mbPlay.W.feature.spareStaff == true, '30050 in play: W1 on with the staff rules (allCp, spareStaff)')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
