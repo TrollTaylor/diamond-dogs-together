@@ -68,10 +68,11 @@ host run enemy sleep nearest
 guest run enemy_aim_nearest 0.25
 guest expect ^aim_nearest;ent=\d+;
 wait 600
-guest hold rmb 3000 nowait
+guest hold rmb 1500 nowait
 wait 900
 guest capture s1-aim
 guest run enemy_aim_nearest 0.3
+guest hold rmb 1500 nowait
 wait 700
 guest capture s1-aim-t
 host capture s1-aim-drv
@@ -157,10 +158,11 @@ host run enemy sleep nearest
 host run enemy_aim_nearest 0.25
 host expect ^aim_nearest;ent=\d+;
 wait 600
-host hold rmb 3000 nowait
+host hold rmb 1500 nowait
 wait 900
 host capture k2-aim
 host run enemy_aim_nearest 0.3
+host hold rmb 1500 nowait
 wait 700
 host capture k2-aim-t
 guest capture k2-aim-drv
@@ -203,10 +205,11 @@ both capture h1-seated
 host run enemy sleep nearest
 host run enemy_aim_nearest 0.25
 wait 600
-host hold rmb 3000 nowait
+host hold rmb 1500 nowait
 wait 900
 host capture h1-aim
 host run enemy_aim_nearest 0.3
+host hold rmb 1500 nowait
 wait 700
 host capture h1-aim-t
 guest capture h1-aim-drv
@@ -253,10 +256,11 @@ wait 1000
 host run enemy sleep nearest
 guest run enemy_aim_nearest 0.25
 wait 600
-guest hold rmb 3000 nowait
+guest hold rmb 1500 nowait
 wait 900
 guest capture g2-aim
 guest run enemy_aim_nearest 0.3
+guest hold rmb 1500 nowait
 wait 700
 guest capture g2-aim-t
 host capture g2-aim-drv
