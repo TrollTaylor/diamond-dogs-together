@@ -155,12 +155,21 @@ do
             if F then F.token = token end
             return ok, err
         end
+        -- The ACC's main game (no sortie prep or other menu sequence); true when unreadable.
+        local function mainGame()
+            local f = W.get(TppSequence, "GetCurrentSequenceName")
+            if type(f) ~= "function" then return true end
+            local ok, s = pcall(f)
+            return not ok or s == "Seq_Game_MainGame"
+        end
         -- Why this copy cannot travel or be brought now (nil: it can).
         function T.blocked()
             if T.job then return 1 end
             local m = mission()
             if not SPOT[m] and not ACC[m] then return 6 end
-            if not yes(TppMission, "CheckMissionState") then return 2 end
+            if not yes(TppMission, "CheckMissionState") or (ACC[m] and not mainGame()) or yes(TppUiCommand, "IsMbDvcTerminalOpened") then
+                return 2
+            end
             if yes(DemoDaemon, "IsDemoPlaying") then return 5 end
             if SPOT[m] then
                 local D = W.downed
@@ -313,6 +322,7 @@ do
                 log(fmt("step=hop1;from=%d;ok=%d", m, ok and 1 or 0) .. (ok and "" or ";err=" .. tostring(err):sub(1, 60)))
                 if not ok then T.stop("hop1_error") end
             elseif ACC[m] and not j.hop2 then
+                if not mainGame() then j.settle = nil; return end
                 j.settle = j.settle or now
                 if now - j.settle < 2000 then return end
                 if W.get(gvars, "mis_nextMissionCodeForEmergency") ~= 0 then return T.stop("emergency") end
