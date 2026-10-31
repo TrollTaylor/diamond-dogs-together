@@ -1,0 +1,92 @@
+# ride-cut-2 (design 8.60, the skeptic's open case): the get-in camera cut at the SHIPPED default (partner_ride_getin_cut is
+# not named: on with the gun profile in play), the guest boarding the front seat 1 of a jeep the host is ALREADY driving,
+# twice in one session (get out, board again). Same seeds and spot as fb1031-ride-lag-play-cut.txt (run f71126c0).
+#   A) the host starts to drive off, the guest presses E at the front passenger door about 0.45 s later (the jeep has
+#      been rolling on the guest's copy for about 0.2 s at -WanSim bad), and the host keeps driving;
+#   B) wherever A left the jeep: the guest is placed beside the seated driver on the passenger side, presses E, and the
+#      host drives off at once (within about 0.2 s of the press).
+# Expected (guest script-observer.log), per board: partner_ride=local_passenger; vehicle=25608; seat=1; state=on, then
+# partner_ride=pass_camera; state=getin_cut; event=cut; vehicle=25608; seat=1; ... result=ok (one per ride, the second
+# ride cut again: cuts=2), no event=returned and no event=gave_up; the census shows cmode 5 from the cut on with the eye
+# holding the jeep (no return to cmode 0 in the ride). Frames a-in*/b-in* show the jeep and both riders.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-ride-cut-moving.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad
+#        -HostSaveSeed afgh-quiet -GuestSaveSeed afgh-horse
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'partner_board=seat_one; result=ok; reason=none; front=1;' 60
+waitlog guest 'partner_board=seat_one; result=ok; reason=none; front=1;' 60
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+host debug goto_vehicle jeep
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+host debug teleport 577.20 320.2 1157.19 -84
+guest debug teleport 600.0 320.5 1157.5 -90
+wait 3000
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=25608; seat=0;' 8
+waitlog guest 'partner_ride=board_policy; vehicle=25608; seat=0; mode=passenger' 15
+wait 1500
+# --- A) board 1: the host is already driving off when the guest presses E at the front passenger door ---------------
+guest debug teleport 574.36 320.2 1157.5 96
+wait 2500
+logmark both
+guest capture a-pre
+host hold w 600 nowait
+wait 450
+guest press e 150
+host hold w 1500 nowait
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 10
+guest burst a-in 7 200
+host hold w 1500 nowait
+guest burst a-in2 7 200
+host hold w 1500 nowait
+host burst a-in 4 250
+host hold w+d 1500 nowait
+guest burst a-turn 5 250
+host hold s 1500
+wait 2500
+both capture a-stop
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=1;' 8
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=off' 8
+guest capture a-exit
+wait 1000
+# --- B) board 2, same session and jeep: the guest boards beside the seated driver, the host drives off at once -------
+placebehind guest host 0 -1.75
+wait 2000
+logmark both
+guest capture b-pre
+guest press e 150
+host hold w 1500 nowait
+waitlog guest 'partner_ride=local_passenger; vehicle=25608; seat=1; state=on' 10
+guest burst b-in 7 200
+host hold w 1500 nowait
+guest burst b-in2 7 200
+host hold w 1500 nowait
+host burst b-in 4 250
+host hold w+a 1500 nowait
+guest burst b-turn 5 250
+host hold s 1500
+wait 2500
+both capture b-stop
+host run vehicle_seats
+guest run vehicle_seats
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=25608; seat=1;' 8
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+state
