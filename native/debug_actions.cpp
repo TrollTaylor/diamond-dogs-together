@@ -32,6 +32,10 @@ constexpr ActionDef kActions[] = {
     {"player_drop_hip", C::player, "Drop hip gun", "drop_item current_hip n", "drop pickup weapon", "Drops a pickup of the current hip weapon.", P},
     {"player_drop_back", C::player, "Drop back gun", "drop_item current_back n", "drop pickup weapon", "Drops a pickup of the current back weapon.", P},
     {"player_drop_secondary", C::player, "Drop secondary gun", "drop_item current_secondary n", "drop pickup weapon pistol", "Drops a pickup of the current secondary weapon.", P},
+    // Arms (docs/debug-menu.md "Give weapon"): both players, play and lab; this PC's own player only.
+    {"arms_give", C::player, "Give weapon", "give_weapon equip", "weapon spawn give gun rifle pistol grenade ammo item pick",
+     "Gives you the weapon or item chosen in the list, with full ammo. Guns: only the ones the game loaded in this area "
+     "(the soldiers', yours and your partner's). Your old gun in that slot drops at your feet.", P},
     // Enemies
     {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me warp",
      "Moves the nearest living guard (15-500 m) 5 m in front of you, facing you, armed. Needs lab.ini debug_soldier_warp=1; otherwise or when refused he is snapped to the nearest patrol route (5-60 m). The guest's copy of him is moved the same way (spawn sync).", H | P | S},
@@ -113,6 +117,10 @@ constexpr ActionDef kActions[] = {
      "Reads the current vehicle native seats and your actual seat. Shared riding is still unverified.", 0},
     {"buddy_follow_status", C::partner, "D-Dog follow status", "buddy_status", "dog buddy follow sync companion",
      "Reads the host dog follow state and guest position error.", 0},
+    // Arms (docs/debug-menu.md "Friendly fire"): the host decides for both copies; a guest's press asks the host.
+    {"arms_friendly_fire", C::partner, "Friendly fire", "friendly_fire 0", "friendly fire team damage partner hurt shoot off on",
+     "Turns friendly fire on or off for both players (the host decides; a guest's press asks the host). Off: your partner's "
+     "bullets, explosives and melee never hurt you. Soldiers are not affected.", P | T | S},
     // World
     {"world_time_dawn", C::world, "Dawn 06:00", "time 21600", "clock morning", "Sets the clock to 06:00.", H | S},
     {"world_time_noon", C::world, "Noon 12:00", "time 43200", "clock day midday", "Sets the clock to 12:00.", H | S},

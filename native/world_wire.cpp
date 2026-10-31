@@ -204,6 +204,10 @@ constexpr OpSpec kOps[] = {
     {op::travel, "TRAVEL", 0, Dir::both, Wire::reliable, 3, false, false, 8, 0, 0, 24,
      {U16(1), U8(1, 4), Mission(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-360000, 360000), U8()}},
+    // ARMS (debug menu Friendly fire, world-sync-protocol.md section 23): seq, kind (1 a guest's ask, 2 the host's
+    // state), friendly fire (0 off, 1 on). Control queue, both directions, paired, never a request. 4 bytes. A partner
+    // without the op skips it by its length (unknown_op): its friendly fire stays on.
+    {op::arms, "ARMS", 0, Dir::both, Wire::reliable, 3, false, false, 3, 0, 0, 4, {U16(1), U8(1, 2), U8(0, 1)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

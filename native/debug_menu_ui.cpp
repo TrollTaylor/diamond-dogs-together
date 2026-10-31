@@ -17,6 +17,7 @@
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/debug_arms.hpp"
 #include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/save_handoff_wire.hpp"
@@ -120,6 +121,19 @@ template<std::size_t N> void Copy(char (&dst)[N], const char* src) noexcept {
     std::snprintf(dst, N, "%s", src ? src : "");
 }
 bool Is(const ActionDef& a, const char* id) noexcept { return std::strcmp(a.id, id) == 0; }
+// Arms (docs/debug-menu.md "Give weapon"): the picker's choice, 0.. the listed guns of this mission, then the
+// support items; and the command for it (empty list or a stale state: nothing to send).
+int arms_pick = 0;
+bool ArmsGive(const Snapshot& s, char* out, std::size_t cap) noexcept {
+    const auto st = mgscoop::debug_arms::Get();
+    const std::uint32_t guns = st.known && st.mission == s.mission ? st.count : 0;
+    std::size_t support = 0;
+    const auto* items = mgscoop::debug_arms::SupportItems(support);
+    if (arms_pick < 0) return false;
+    const auto pick = static_cast<std::size_t>(arms_pick);
+    if (pick < guns) return mgscoop::debug_arms::FormatGiveGun(out, cap, st.guns[pick].equip);
+    return pick - guns < support && mgscoop::debug_arms::FormatGiveSupport(out, cap, items[pick - guns].token);
+}
 const ActionDef& Def(const char* id) noexcept {
     static const ActionDef missing{"missing", Category::tools, "Missing", nullptr, "", "", 0};
     const auto* a = act::FindAction(id);
@@ -164,6 +178,8 @@ bool Build(const ActionDef& a, const Snapshot& s, char* out, std::size_t cap) no
     if (Is(a, "partner_slowmo")) return act::FormatSlowmo(out, cap, ui.slow_rate, ui.slow_seconds);
     if (Is(a, "world_time_set")) return act::FormatTimeSet(out, cap, ui.hour, ui.minute);
     if (Is(a, "tools_console")) return debug_menu::ValidText(ui.console) && print(std::snprintf(out, cap, "%s", ui.console));
+    if (Is(a, "arms_give")) return ArmsGive(s, out, cap);
+    if (Is(a, "arms_friendly_fire")) return mgscoop::debug_arms::FormatFriendlyFire(out, cap, !mgscoop::debug_arms::Get().friendly_fire);
     return false;
 }
 // nullptr when available, else a short reason code.
@@ -512,6 +528,35 @@ void Player(const Snapshot& s) noexcept {
     ImGui::SetNextItemWidth(220); ImGui::SliderInt("Drop payload", &ui.payload, 1, 10);
     Rows({"player_drop_hip", "player_drop_back", "player_drop_secondary"}, s);
     Wrapped("Refill and drop use the gun already equipped in that slot. Payload changes the dropped item's contents; it does not create more pickups.");
+    // Arms (docs/debug-menu.md "Give weapon"): the guns the game loaded in this mission, then the support items.
+    Heading("Give weapon");
+    const auto arms = mgscoop::debug_arms::Get();
+    const std::uint32_t guns = arms.known && arms.mission == s.mission ? arms.count : 0;
+    std::size_t support = 0;
+    const auto* items = mgscoop::debug_arms::SupportItems(support);
+    const int total = static_cast<int>(guns + support);
+    if (arms_pick >= total) arms_pick = 0;
+    char preview[64]{};
+    const auto label = [&](int i, char* out, std::size_t cap) noexcept {
+        if (i < static_cast<int>(guns)) mgscoop::debug_arms::FormatGunLabel(arms.guns[i], out, cap);
+        else std::snprintf(out, cap, "%s", items[i - static_cast<int>(guns)].label);
+    };
+    label(arms_pick, preview, sizeof(preview));
+    ImGui::SetNextItemWidth(330);
+    if (ImGui::BeginCombo("Weapon or item", preview)) {
+        for (int i = 0; i < total; ++i) {
+            if (i == static_cast<int>(guns)) ImGui::SeparatorText("Support items");
+            char text[64]{};
+            label(i, text, sizeof(text));
+            ImGui::PushID(i);
+            if (ImGui::Selectable(text, arms_pick == i)) arms_pick = i;
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    Row("arms_give", s);
+    if (!guns) ImGui::TextColored(kGrey, "No guns listed yet: they appear once your partner's body has loaded in this area.");
+    Wrapped("Full ammo. Guns: only the ones the game loaded here (the soldiers', yours, your partner's). Your old gun in that slot drops at your feet. Your partner may see another gun of yours in your hands until the next area.");
 }
 const char* StateName(std::uint32_t code) noexcept { return act::LifeCodeName(code); }
 void NearbyTable(const Snapshot& s) noexcept {
@@ -885,6 +930,11 @@ void Partner(const Snapshot& s) noexcept {
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+    // Arms (docs/debug-menu.md "Friendly fire"): the host's switch for both players.
+    Heading("Friendly fire");
+    const bool ff = mgscoop::debug_arms::Get().friendly_fire;
+    Row("arms_friendly_fire", s, {ff ? "Friendly fire: ON (click to turn off)" : "Friendly fire: OFF (click to turn on)"});
+    Wrapped(s.host ? "You are the host: this sets it for both of you." : "The host decides: your click asks the host.");
 }
 void World(const Snapshot& s) noexcept {
     char clock[16]{};

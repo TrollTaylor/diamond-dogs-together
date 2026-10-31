@@ -10,7 +10,7 @@ local SLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2}
 local CENSUS = {30010, 39, 1, 24, 5, 52, 8, 6, 2, 51, 6, 16, 3}
 local function F(host, opts)
   opts = opts or {}
-  local c = {equips = {}, tx = {}, notes = {}, logs = {}, states = {}, results = {}, census = opts.census or CENSUS, paired = opts.paired ~= false}
+  local c = {equips = {}, tx = {}, notes = {}, logs = {}, states = {}, results = {}, census = opts.census == nil and CENSUS or opts.census, paired = opts.paired ~= false}
   local env = setmetatable({}, {__index = _G}); env._G = env
   env.vars = {missionCode = 30010, weapons = {[0] = 871, [1] = 873, [2] = 875, [3] = 0}, supportWeapons = {[0] = 300, 0, 0, 0, 0, 0, 0, 0}}
   env.TppDefine = {WEAPONSLOT = SLOT}
@@ -37,6 +37,9 @@ local function F(host, opts)
     return true
   end}
   local D = {mission = 30010, host = host}
+  -- The player module the arms commands ride on (debug_menu.lua routes to D.player first).
+  D.player = {handles = {heal = true}, run = function(a) c.playerRuns = (c.playerRuns or 0) + 1; return true, "player_" .. a[1] end,
+    stop = function() c.playerStops = (c.playerStops or 0) + 1 end}
   D.api = {
     get = function(t, k) if t == nil then return nil end; return t[k] end,
     call = function(t, k, ...) local fn = t and t[k]; if type(fn) ~= "function" then error("missing_" .. k, 0) end; return fn(...) end,
@@ -81,6 +84,15 @@ check(c.R and c.R.handles.give_weapon and c.R.handles.give_pick and c.R.handles.
 check(c.R.ff == true and c.W.arms == c.R and c.W.OP.ARMS == 63 and type(c.W.handlers[63]) == "function",
   "friendly fire ON by default, W.arms is the module, ARMS is op 63 (0x3F)")
 
+-- Routed through D.player: the menu's module list is unchanged; other commands still reach the player module.
+check(c.D.player.handles.give_weapon and c.D.player.handles.friendly_fire and c.D.player.handles.heal, "arms commands ride on D.player's handles")
+local okp, msgp = c.D.player.run({"give_list"}, 3)
+check(okp and msgp:find("give_list;", 1, true) and not c.playerRuns, "an arms command reaches the arms module")
+okp, msgp = c.D.player.run({"heal"}, 4)
+check(okp and msgp == "player_heal" and c.playerRuns == 1, "a player command still reaches the player module")
+c.R.list = {{id = 1, type = 1, code = "x"}}; c.D.player.stop()
+check(c.playerStops == 1 and #c.R.list == 0, "the player module's stop also stops arms")
+c = F(true)
 -- The loaded-gun list: the native census, named from TppEquip, published to the menu.
 c:tick()
 check(c.queries == 1 and #c.R.list == 6 and c.R.list[1].id == 39 and c.R.list[1].type == 1 and c.R.list[1].code == "East_ar_010",

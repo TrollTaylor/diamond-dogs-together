@@ -348,7 +348,12 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 6: return Put(out, capacity, "Travel stopped: the trip did not finish in time. Use the helicopter instead.");
         default: return false;
         }
-    default:  // 15 reserved or unknown: no toast
+    case 18:  // ARMS{a=1 friendly fire, b=0 off | 1 on} (debug menu Friendly fire, the host's switch, both screens)
+        if (a != 1) return false;
+        if (b == 0) return Put(out, capacity, "Friendly fire is OFF: you and your partner cannot hurt each other.");
+        if (b == 1) return Put(out, capacity, "Friendly fire is ON: you and your partner can hurt each other.");
+        return false;
+    default:  // 15..17 reserved or unknown: no toast
         return false;
     }
 }
