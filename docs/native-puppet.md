@@ -1031,7 +1031,7 @@ rehearsal at the shipped defaults, S1 off), `coop-vehicle-seat-shot-fix.txt` (8.
 
 ### Seat first person
 
-Design 8.46 (branch `wp/seat-fpv2`; **built, not proven in game; off**). From seats 1 and 2 the stock seated aim looks
+Design 8.46, 8.49 (branch `wp/seat-proof`; **follows the gun profile in lab and play**, a named 0 opts out). From seats 1 and 2 the stock seated aim looks
 into the panel, the passenger's own leg or the roll bar; the stock F tap while aiming gives the game's first-person view
 (the subjective camera module, `CAM+0x340 = 1`), which is clear [O `9a0c1f27`: guest seat 1, host seat 2, Bambetov SV].
 The automatic first person sets the same state the tap sets, only while the local passenger aims from seat 1 or 2.
@@ -1049,8 +1049,9 @@ How the tap works [S, mgsvtpp.exe 1.0.15.4; path.md / PLAN.md of the m6m7f stati
   clear it; who calls it and when is [U].
 
 What the mod does (`partner_pass_camera_policy` FpvStep, TickPassCamera): with the key on, the local passenger in seat 1
-or 2 and the gun ready (FpvReady: mode 7, 9 or 10; not during the raise, so the raise's muzzle probe sees the shoulder
-pose that first person then keeps), the hand slot's bit is set in `impl+0x60` (one interlocked compare-exchange under
+or 2 and the gun ready or blocked (FpvReady: mode 7, 9, 10 or 15 (design 8.49: a seat-1 aim can stay in the blocked
+mode 15 for the whole aim); not during the raise, so the raise's muzzle probe sees the shoulder pose that first person
+then keeps), the hand slot's bit is set in `impl+0x60` (one interlocked compare-exchange under
 SEH; only bits in `0x11F`). The bits it set are cleared when the aim ends, at the get-off, a seat
 change, the key's end, and (SeatFpvRelease, design 8.47) the mission end, the stop (also while terminating), the next
 MissionStart and a refused or rejected tick. A clear stays pending until a read shows the bit clear (a failed write, or
@@ -1063,7 +1064,7 @@ the module is found by its vtable among the six.
 
 | Key / lever | Values | Default | What |
 |---|---|---|---|
-| `partner_seat_fpv` (lab.ini) | 0 / 1 | 0 (lab and play) | the automatic first person from seats 1 and 2 |
+| `partner_seat_fpv` (lab.ini) | 0 / 1 | on with the gun profile (lab and play) | the automatic first person from seats 1 and 2 |
 | `passcam seatfpv` (lab debug lever) | `on` / `off` / `key` | `key` | this copy's override (lab only; play ignores it) |
 | `partner_pass_camera_trace` (lab.ini, lab) | 0 / 1 | 0 | adds `state=fpv_trace` (on a change or every second) and one `state=pollers` line |
 
@@ -1071,14 +1072,19 @@ Lines: `partner_ride=pass_camera; state=seat_fpv; event=mode|arm|set|restore|opt
 set; clear; ok; toggles; after; slot; gun; f3c0; cmode; sm; read; sets; restores; opt_outs` (cap 200 a mission);
 `state=fpv_trace; ... cmode; mvt; subj; sm; si; sf; tog; st; f19; w3; ours; opt` (cap 600).
 
-**Not proven.** The probe `caf8fbc7` (`m6m7f-seat-fpv-probe.txt`) never started (the worker refused admission). Open
-from the static study: the mod's shot guard is off in first person (GuardStep wants the aim module) and the source of
-the 8.27 pull is unknown, so a first-person shot may climb the view; whether the shoulder raise from seats 1 / 2 reaches
-mode 7 on every boarding (mode 15, the red no-fire icon, keeps the shoulder view: the bit is never set); a checkpoint
-during a seated aim may persist the bit (`+0x680`). A guard extension to the subjective module (references reset on a module change) is drafted, not landed.
+**Runs** (design 8.49): lab `61384aab` (the lever), `2a394a64` (the key named) and the play run `ff4134f4` at the
+shipped defaults (`-WanSim bad`, on=1 `source=key` on both copies): set in all four seat/role pairs
+(guest seat 1 at mode 15 after the fix), cleared at the aim end, stopped at the get-off (the get-off turn checked), the
+player's F tap opted out once and the next aim was over the shoulder, seat 3 never set, no climb after a first-person
+shot (+50 / +650 ms frames), the next aim on foot over the shoulder. Not shown: a first-person seat shot landing on a
+guard (no guard was under the crosshair; the landing run `4adc1005` never reached gameplay on the guest), the mission end / death / Fulton / a destroyed jeep while
+aiming in first person ([I] from the driver tests), a checkpoint during a seated aim (`+0x680`). Aimed into the jeep
+(the gun's blocked mode 15), first person shows the rifle body across the lower half of the view and the gun stays
+blocked (the bit is the one the stock F tap flips [I]). The shot guard is still off in first person (no pull seen there, so the drafted guard extension is not landed).
 Tests: `partner_pass_camera_tests` (`TestFpvBitsAndContract`, `TestFpvStep`, `TestFpvReadWrite`,
 `TestFpvLeverAndVerify`), `partner_driver_tests` `TestSeatFpvDriver`, `lab_config_tests`; failing first `a3b8100` ->
-`8b33be4`, `9916c4a` -> `e508347` (the ready gate).
+`8b33be4`, `9916c4a` -> `e508347` (the ready gate), `a968074` -> `7226d5e` (mode 15), `a5e2fc3` -> `0ff748a` (the
+default).
 
 ## Traversal icon
 

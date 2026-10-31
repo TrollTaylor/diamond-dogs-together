@@ -1,3 +1,23 @@
+## 2026-10-30: the automatic first person from seats 1 and 2 ON (review m6m7g track fpv, branch `wp/seat-proof`, local only)
+
+**Players now get** (play run, shipped defaults, both copies): aiming from the jeep's front seat or left back seat
+switches to the game's first-person view by itself, in both roles; stopping the aim or getting out (also while aiming)
+brings the normal camera back and the next aim on foot is over the shoulder; the right back seat is unchanged; the
+player's own F tap goes back to the shoulder for that ride. Still open: whether such a shot hits a guard [U].
+- **Fix** (failing first `a968074` -> `7226d5e`): the blocked seated aim (gun mode 15, the red no-fire icon) counts as
+  ready; lab `61384aab` showed a seat-1 aim staying in 15 for the whole aim, so the bit was never set there.
+- **Default** (failing first `a5e2fc3` -> `0ff748a`): `partner_seat_fpv` follows the gun profile in lab and play, a
+  named 0 opts out (`lab_ini_check` prints it; friend_package_tests: Play-Coop never names it, play defaults it on).
+- **Runs** (all admitted; d3dprobe hr=0, tasklist clean before each): lab `61384aabd1b84482965526e0e12db744` (the
+  lever), lab `2a394a64d48a4072844f832959ea3f31` (the key named), play `ff4134f40c324a3880658d15eaf209e8`
+  (`m6m7g-seat-fpv-play.txt`, `-WanSim bad`, no key named, no F pressed): `seat_fpv` on with `source=key` on both copies;
+  set in all four seat/role pairs (mode 7, or 15 in seat 1), cleared at the aim end, stopped at the get-off (get-off
+  turn checked); first-person shots (S1 `shift`) keep the scope on the aim at +350 / +650 ms; seat 3 never set;
+  `opt_outs=0` without F, one opt-out for the lab F tap; never-lines 0. Aimed into the jeep (mode 15) the rifle covers
+  the lower half of the first-person view and the gun stays blocked. Landing run `4adc100597f1422ea69296ac58a28a3d`
+  (`m6m7g-seat-fpv-land.txt`): the guest's lab boot never reached gameplay (log stops at `pair_wait; local_loading`),
+  cause [U]; the round's 4th run, no retry. Design 8.49; README Seats; native-puppet "Seat first person".
+
 ## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
 
 **Players see no new behaviour** (no default changed); the README Seats tip now says what the online run showed: the F

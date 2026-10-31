@@ -3550,6 +3550,55 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
 - **Open:** a first-person seat shot aimed at a standing or body-height target (does it land, does the other copy see
   the hit); the scenario's sleep list (add 1194 / 1195 / 1296); why the toggle stuck in the lab and not here.
 
+### 8.49 The automatic seat first person (2026-10-30, branch `wp/seat-proof`, review m6m7g track fpv)
+
+- **Lab probe** `61384aabd1b84482965526e0e12db744` (`m6m7g-seat-fpv-lab.txt` first version, the lab lever on both
+  copies, trace on; admitted): host seat 2, host seat 1 and guest seat 2 set the hand slot's bit at gun mode 7, cleared
+  it at the aim end (`restore; reason=aim_end`) and stopped at the get-off; `f19=1` (the stock gate open) during every
+  seated aim, in all four seat/role pairs. **Guest seat 1 never set it** [O trace]: the raise (6) went to mode 15 (the
+  red no-fire icon, the shoulder view filled by the jeep's side) and stayed there for the whole aim, and FpvReady took
+  only 7 / 9 / 10.
+- **Fix** (failing first `a968074` -> `7226d5e`): FpvReady also takes 15 (the blocked aim is the one first person is
+  for); the raise (6) is still excluded. **Flip** (failing first `a5e2fc3` -> `0ff748a`): `partner_seat_fpv` follows the
+  gun profile in lab and play, a named 0 opts out; `lab_ini_check` prints the key; friend_package_tests: Play-Coop never
+  names it, play defaults it on.
+- **Lab proof** `2a394a64d48a4072844f832959ea3f31` (`partner_seat_fpv=1` named, `source=key` on both copies; admitted)
+  [O lines + frames]: guest seat 1 set at mode 15 for the rifle (bit 0x2) and the handgun (0x4); the F tap during the
+  automatic first person logged `opt_out; reason=tap` (`opt_outs=1`, the only one in both runs) and the next aim was the
+  shoulder view again; host seat 2, host seat 1, guest seat 2 set at 7. Frames: the scoped first-person view with no jeep
+  part in it (host seats 1 and 2, guest seat 2); each shot (S1 `shift`, magazine -1) jumps the scope at +50 ms and it is
+  back on the same spot at +650 ms (no 8.27 climb); the aim end gives the normal seated camera; get-offs (also while
+  aiming) the normal third-person view with the get-off turn (`check; view=1; yaw_err_mrad=0`); the next aim on foot is
+  over the shoulder. Seat 3: no `seat_fpv` line at all, the shoulder view as before. Guest seat 1 in first person at
+  mode 15: the scripted aim pointed into the cabin, the rifle's scope body covered most of the view and the gun stayed
+  blocked (no shot left); the handgun's first-person eye line is above the dashboard. Never-lines 0 on both copies.
+- **Landing [U]:** no seated shot had a guard under the crosshair. The scripted aim (`enemy_aim_nearest`, issued before
+  the seated aim) turned the view onto rock near the jeep (S1 `dist_cm` 969-1392); S1's direction in the jeep's frame was
+  115-124 deg for requested world angles of 31.9-40.6 deg [I: in a seat the request is not applied in the world frame,
+  as `enemy_cam_turn` in 8.27]; the lab soldier warp
+  fell back to the route (`guard_here; mode=route; why=anomaly|latched`), so no guard was placed beside the jeep.
+- **Play run at the shipped defaults** `ff4134f40c324a3880658d15eaf209e8` (`m6m7g-seat-fpv-play.txt`, `-Mode play
+  -WanSim bad`, no key named, no F pressed; afgh-quiet / afgh-horse; admitted, exit 0) [O lines on both copies + frames]:
+  `seat_fpv; event=mode; on=1; source=key` on both copies. Guest seat 1: set at 7 (a clear scoped view), restore at the
+  aim end; its next aim set at 15 and the get-off while aiming stopped it (`stop; reason=get_off; clear=0x2; ok=1`), the
+  get-off turn held while aiming, then `check; view=1`. Host seat 2 and guest seat 2: set at 7, one shot each (S1
+  `shift`, magazine -1), the scope back on the aim at +350 / +650 ms, restore, stop, `check; view=1`. Host seat 1: set
+  at 15, the rifle body across the lower half of the view with the camp visible above, no shot left (blocked), restore,
+  stop, check. Guest seat 3: no `seat_fpv` line, the shoulder view. Get-offs while aiming: the normal third-person view;
+  every next aim on foot over the shoulder. `opt_outs=0` everywhere; never-lines 0 on both copies. The driver's frames
+  show the partner seated with the rifle upright (the aim is not mirrored, as before). The host's first seat-2 aim had a
+  dark jeep part over the left half of the scope (as the guest's in 8.48). No guard was hit: the sleeping guard lay
+  behind a rock lip from the seats (S1 `dist_cm` 1196 / 1667 against the guard at 19-22 m); a re-aim issued while in
+  first person did turn the view.
+- **Landing run** `4adc100597f1422ea69296ac58a28a3d` (`m6m7g-seat-fpv-land.txt`: two awake guards warped onto the
+  right side before the camp sleeps; admitted on both copies, d3dprobe hr=0, tasklist clean): the host reached gameplay,
+  the guest's log stopped at `world=pair_wait; reason=local_loading` about 5 s after admission and its lab boot did not
+  reach gameplay in 300 s (the process was gone at the end); closed cleanly, real saves unchanged; cause [U]. It was the
+  round's fourth run: no retry. **Whether a first-person seat shot lands on a guard stays [U].**
+- **Decision:** on in lab and play (the play run shows it on both copies, both roles, seats 1 and 2, with the releases);
+  it does the same as the player's own F tap, so where the round goes is the stock first-person shot's (S1 still moves
+  its start out of the jeep). The drafted shot-guard extension is not landed (no climb seen in first person).
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker
