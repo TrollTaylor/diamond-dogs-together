@@ -1,3 +1,58 @@
+## 2026-10-31: E press only for the driver's seat (branch `wp/seat-claim`, `wp/seat-checks4` merged, local only, design 8.55)
+
+**Players get:** standing at an empty jeep's door no longer takes its driver's seat. Only an E press does, in both
+roles, so a partner waiting at the door no longer locks the other out (m6m7h `23032c72`). A guest's E press at an
+empty jeep waits about one round trip (280 / 284 ms at `-WanSim bad`) at the door and then gets in with no second
+press. When both press at once the host drives and the guest gets a passenger seat: front on the guest's screen, back
+right behind the host's D-Dog on the host's screen (the screens disagree, 8.55 Open). A host standing at the door when the guest gets in sees "Your partner
+reached the driver's seat first".
+- **How:** new site D (`0x1251366`, RideVehicle phase 1's call of the remote gate `0x114DB20`) holds the guest's press
+  until the host answers (1 s cap); the host's own press commits at site B and its `grant_if` answer takes the same
+  lock; site C refuses only a live deny; READY (SEAT action 4) arms the guest, so 0.14.4 and key-off peers stay stock.
+  Failing first `db08fc0` -> `dc62f40`; the peer end `ef7c867` -> `b544c6d`; scenarios `cc185ce`, `73214a7`.
+- **Shown** (hidden worker, shipped play defaults, both copies): `23c7f305` a) the guest at the door without E, the
+  host's one E drives, no claim and no toast; d) the guest then boards back seat 2; b) the mirror, the guest drives
+  after `wait_ms=284`; c) both press: one driver (the host), the guest got seat 1 on its copy (seat 3 behind the dog on
+  the host's: `seat_draw reason=dog`, DrawSeat live once) and still saw the a=6 toast.
+  `1beffd8f`: a guest press at an empty jeep, `wait_ms=280`, drove. NEVER lines 0 in both.
+- **Merged head** run `caaf743f` (hidden worker at `c1c562d9`: the review fixes and the checks merge; play, `-WanSim bad`,
+  both copies; no expect failure, closed, baselines and real saves unchanged, not forced): a) b) c) d) again; b)
+  `wait_ms=268`; c) the press ended `end=peer` (`wait_ms=86`), the late deny logged `seated=1` and the guest saw no
+  toast (`b544c6d` shown) [O log, frames]; the host's screen again drew the guest in seat 3 behind its D-Dog [O frame];
+  `role=commit` only on the host. NEVER lines 0 on both. Sheet `frames/claim/best-sheet-caaf743f.jpg`.
+- **Review fixes** (`d758d50` -> `321d3d0`; the timeout and dip paths are unit-tested only): a press timeout makes the guest stock until the next READY
+  (a silent host cost up to 12 s of held presses; now one); a guest-only link dip keeps READY; a press whose phase 1
+  was aborted stops reading as pending after 250 ms; one-word press-done snapshot; `role=commit` is the host's.
+- **Open:** the tie's seat mismatch with a D-Dog; GRANT not matched to its claim (narrow); the a=7 message for a host
+  that only stood (user decision); no message on a timeout. `forced_job_termination=true` at a close is not new.
+- Full `tools/build.ps1` at `29d3c8f5` (both branches merged, the review fixes): CTest 336/336; contract `--check` 838 / 213.
+  Flaky: `debug_overlay_tests` ("raw no-legacy keyboard still supplies text to menu") failed once in a full CTest under load
+  and once in the worker's audited CTest (run 3b); it passes alone, 5 repeats and the next full run (336/336). Untouched here.
+
+## 2026-10-31: m6m7i seat checks - a first-person seat hit, the blocked first person falls back (branch `wp/seat-checks4`, local only)
+
+**Players get:** in first person from a jeep seat, when the jeep blocks the gun (the rifle lies across the view, for
+example after turning the aim down beside the front seat), the view now goes back over the shoulder about 0.1 s later
+and the gun fires from there (ready about 0.2 s after that); before, nothing fired for the rest of that aim. Shown in the lab (`1bd4419a`, design
+8.56) [O lines + frames on the guest copy; the host copy shows the guest seated]. Also shown in the lab: a
+first-person shot from the front seat hit a standing guard about 11 m away (`859964ce`) [O both copies' logs, guest
+frames].
+- **Fix** (failing first `fcfa971` -> `fccba00`): 100 ms at gun mode 15 with our bit set clears it (`seat_fpv;
+  event=fallback; reason=blocked`); in that aim first person comes back only after the shoulder aim turns up 0.07 rad
+  or sideways 0.175 rad (unit-tested, not seen in a game), at most 2 falls per aim; the next aim is as before.
+- **A/B** [O]: the stock shoulder view ignores an in-aim scripted turn, so it was compared with the turn made before
+  the raise. 8 deg down there, the shoulder view (looking at the jeep's seat back) fired; first person was blocked once
+  (`859964ce`) and fired once (`1bd4419a`). The in-aim turn down after a set blocked first person 2 of 2.
+- **Part C** (`8567f888`, play): the driver's D-Dog boarded seat 1 with the driver even from 335 m away, so the guest
+  got the back seat again; the dog arriving after the partner sits in seat 1 needs the partner to board first [U].
+- Runs `859964ce`, `1bd4419a`, `8567f888` (archive `C:/Users/taylo/mgs-coop-run-archive/m6m7i`); never-lines 0.
+- First person looks ~3.5 deg lower than the shoulder aim, but at the same pre-raise turn its shots went ~8 deg lower
+  (ground 2.6 / 3.6 m out against 9.5 m). A fall-back clear given up mid-aim is now cleared again at the aim end (review fix, unit tests).
+- Existing teardown AV at the close (`crash_probe=av; rva=0xbf421a` after `hooks_off`) in `8567f888` host and
+  `e6ef6e4d` guest; not from these branches; to symbolize.
+- **Open:** the partner in seat 1 before the driver boards with its dog (DrawSeat itself was seen in `23c7f305` c); the in-aim rearm
+  of first person after a fall in a game; a checkpoint reload with a seated partner reaching play on both screens.
+
 ## 2026-10-31: m6m7h integrated, review closed (branch `wp/seat-proof3` with `wp/seat-checks3` merged, local only)
 
 **Players get** nothing new they can see: no default changed. The close fix (8.53) now also holds when the window

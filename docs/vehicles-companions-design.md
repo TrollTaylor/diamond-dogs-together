@@ -3786,6 +3786,135 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   `ffc0411d` and `30007c04`) against the shoulder view at the same aim (`partner_seat_fpv=0`); a first-person seat hit;
   part C (a); a close or checkpoint during a seated first-person aim (impl+0x60 still released only by MissionEnd).
 
+### 8.55 E press only: the driver's seat is claimed by a press (2026-10-31, branch `wp/seat-claim`, review m6m7i)
+
+The user's rule: only an actual E press may claim a vehicle's driver seat, in both roles. Until now a guest standing at
+an empty vehicle's door claimed it every 500 ms from site C's want, and its proximity hold kept the host's E from
+working (m6m7h `23032c72`: "Your partner reached the driver's seat first" for a host whose partner never pressed E).
+
+- **Design chosen: the 'commit' design** (two read-only designs agreed; Ghidra closed this round, its static claims
+  were re-checked against the pinned bytes). Site D retargets the rel32 call at `0x1251366` in RideVehicle phase 1
+  (`0x1251200`, event 0), the call of the stock remote gate `0x114DB20(action, index)`; a true answer makes phase 1
+  return for that frame (`JNZ 0x1251919`) before the record checks, site B and TryToRide, which is a stock wait
+  (phase 1 already idles while record `+0x84 == 0xFFFF`). Phase 1 runs only after an E press (8.20 `b66c7031`:
+  hundreds of `site=prequery` and no `site=phase1` until a press). The wrapper calls the original first, then reads
+  the local index `[[[action+8]+0x138]+0x218]` (the field the gate itself compares, pinned block `0x114DB6A`) and the
+  record `[action+0x78] + (index - [[action+0x38]+0x24]) * 0x240` (`+0x84` vehicle, `+0x5a` searched; pinned block
+  `0x1251229`). Why this design: it holds the press before anything is written, so the guest's copy can only seat
+  what the host granted, and the host decides under one lock without a clock sync. The 'arbiter' design's extra
+  PROBE/RELEASE actions were left out (READY alone arms; a late grant ends with GRANT_MS).
+- **Guest.** The host sends READY (SEAT action 4, id 25600) every 4 s while its board is on. A guest that heard READY
+  within 12 s refreshes the hold lease; only then site D keeps its E press on an empty vehicle (`PressDecide`: the
+  local record, not yet searched, a TppVehicle2 id, no peer-driver policy, no live deny) for at most 1000 ms, counts
+  it (`pseq`), and Lua claims it on the next tick (`event=seat; action=claim; ...; pseq=..; page=..`; the receipt is
+  polled every tick near a driver's door or while a press is held). A grant lets phase 1 go on (no second press); a
+  deny or no answer ends it on foot through site B's no-seat exit. `partner_board=press; role=guest; vehicle=..;
+  end=grant|deny|timeout; wait_ms=..` is the press-to-answer time (logged from the receipt on the Lua thread, never
+  in the hook). Without READY (0.14.4, the key off, an older dev host) the guest is stock: no hold, no claim.
+- **Host.** Its own press never waits: site B (`RaceStepB`) commits the vehicle for 3 s under the lock
+  (`partner_board=press; role=commit`). A guest claim runs `grant_if` under the same lock: refused while the host's
+  commit is live (`why=host_pressed`), else granted and yielded (the host's own 3 s deny, as before). `host_drives`
+  is unchanged; `host_first` (the host's want) is gone, so a host standing at a door never denies either.
+- **Site C** refuses the ride icon only for a live deny (the host won, or on the host a vehicle it yielded to a real
+  guest press); every refusal still marks the Fulton guard.
+- Tests (failing first `db08fc0` -> `dc62f40`): `partner_board_tests` (TestPress, TestArbiter, site D install and its tamper check), `world_wire_tests` (action 4), `world_ride_pose_lua_check` (no claim without a press, READY arming and
+  lapse, host want never denies). Contract: site D, the record block and the gate blocks pinned (838 / 213).
+  Scenarios (`cc185ce`): every wait for a proximity claim's answer now follows the press; A0 (a refusal without a
+  press) removed; `m6m7i-seat-claim-play.txt`.
+- **Runs** (shipped play defaults, `-WanSim bad`, seed africa-jeep, both copies; site D and READY live on both:
+  `partner_board=race; result=ok; c=0x1246a4f; d=0x1251366`, `action=ready` / `state=ready`). `1beffd8f` (v1): the
+  second player stood 1 m behind / 1.2 m beside the door spot (placebehind) and had no ride icon there, so only one
+  press happened: the guest at the empty jeep's right door, `claim; pseq=1; page=15`, host grant + yield,
+  `partner_board=press; end=grant; wait_ms=280`, the guest drove with one press [O logs, frames]. `23c7f305` (v2):
+  a) the guest stood at the driver's door with its ride icon and never pressed; the host pressed once at the right
+  door and drove; no claim, grant, yield or toast on either copy [O logs, frames]. d) the guest then pressed at the
+  driver's door and boarded back seat 2 (`local_passenger; seat=2; state=on`, the host's `partner_ride_seat=confirmed;
+  seat=2`) [O logs]. b) the host stood at the driver's door; the guest pressed at the right door: claim 17 ms after
+  the press, grant 267 ms after the claim on the guest's clock, `wait_ms=284`, the guest drove; while held the guest
+  stood at the door with the prompt dimmed and was climbing in on the next burst frame (250 ms later) [O frames]; the
+  host got the a=7 toast "Your partner reached the driver's seat first" (its icon refused by the yield of a real
+  press) [O frame, log]. c) both pressed at once: the host drove (`commit`, then `deny; why=host_drives` for the
+  claim), the host's ride reached the guest's copy while its press was held, so the passenger policy put the guest in
+  seat 1 on its own copy, and the late deny still showed the a=6 toast [O frames, logs]. The host's copy drew the guest
+  in back seat 3 behind its D-Dog (`partner_ride=seat_draw; from=1; to=3; reason=dog; rider1=9728`, confirmed seat 3;
+  frame `23c7f305-host-c-after`: the dog in front, the guest back right): 8.25's DrawSeat seen live once, and the two
+  screens disagree (the dog's seat addendum reached the guest after its board). The b) host-copy frame hides the
+  driver's seat behind the host, so the guest at the wheel there is [O log] only. NEVER lines (two_drivers, board_uncertain,
+  seat_far, step=error, faults, refusals): 0 on both copies in both runs. The 8.20-8.26 races measured claim-to-answer
+  213-300 ms (median about 250, `56322b36`); the same round trip now sits between the press and getting in (280 /
+  284 ms) instead of between reaching the door and the ride icon. `vehicle_seats` reads a local passenger as
+  `vehicle_not_riding` (seat 1 and 2 here); the scenario checks passengers by `local_passenger` lines.
+- **After 23c7f305** (`ef7c867` -> `b544c6d`, unit tests only, no admitted run): a held press the partner's ride
+  overtakes ends as `end=peer` (4) and the late deny shows no toast (`seated=1` in the deny line). Run 3 was refused
+  twice before admission (a worker-policy fixture timeout; then `debug_overlay_tests` "raw no-legacy keyboard" in the
+  worker's audited CTest, which passes alone); shown in `caaf743f` (below).
+- **Review fixes** (failing first `d758d50` -> `321d3d0`): a press timeout makes the guest stock until the next READY
+  (`state=stock`; a silent host costs one held press, not READY_MS 12 s; dev fell back after 1.5 s); a guest-only link
+  dip keeps READY (cleared only when unpaired); `pend` is reported only while site D saw the press within
+  `kPressGapMs` (an aborted phase 1 no longer keeps the guest's seat step at every tick); the press-done word carries
+  its own sequence (one snapshot); a held guest's granted boarding stores no commit, so `role=commit` is the host's
+  (or a guest's without READY). `forced_job_termination=true` at a close is not new (`1bd4419a`, `d7d50259`).
+- **Run at the merged head** `caaf743f` (`c1c562d9`: the review fixes and `wp/seat-checks4`; v3 scenario, play,
+  `-WanSim bad`, both copies; no expect failure, closed, baselines and real saves unchanged, not forced). a) no claim,
+  grant, yield or toast while the guest stood at the driver's door; the host's one E drove (`commit`, host only) [O
+  logs, frames]. d) seat 2 [O logs]. b) `claim; pseq=1; page=19`, grant 247 ms later on the guest's clock,
+  `end=grant; wait_ms=268`, the guest drove; the host standing at the door again got a=7 [O]. c) the host drove
+  (`deny; why=host_drives`); the guest's held press ended `end=peer; wait_ms=86` in seat 1 on its copy, the late deny
+  logged `seated=1`, and no toast reached the guest (no `hud=toast` line; frames `caaf743f-guest-c-press-02`,
+  `-c-after`) [O]; the host's copy again drew the guest into seat 3 behind its D-Dog (`seat_draw; reason=dog`, frame
+  `caaf743f-host-c-after`) [O]. NEVER lines 0 on both copies. The timeout and dip paths did not occur [U in a run].
+- **Open:** in a tie the guest's copy seats it in seat 1 while the host's draws it behind the host's D-Dog (release a
+  peer-ended press to a back seat, or hold it until the driver's seat addendum); a GRANT is not matched to the claim it
+  answers (a GRANT delayed 2-3 s could let a later press board after the host's commit expired: echo the claim's pseq);
+  the host's a=7 message fires for a host that only stood at the door (user decision); a timeout shows no message;
+  the host's press landing in a yield and the guest's timeout in a run.
+
+### 8.56 Seat checks m6m7i: a first-person seat hit, the blocked first person falls back (2026-10-31, branch `wp/seat-checks4`)
+
+- **A first-person seat shot hits a guard** [O `859964ce`, lab, guest seat 1, both copies]: at the set (gun 7, rel -40 /
+  2 deg down) the first press fired (S1 `shift`, `dist_cm` 1092) into the standing guard 1084844745 warped ~11 m out.
+  Guest copy `Neutralize att=local` and `req state=4`, host copy `commit state=4 actor=guest`, `Dying` on both
+  (frames `859964ce-guest-p1-050`: the guard recoiling in the scope; `-p1-300`: down below the reticle). The host's
+  frames show the jeep's side only (the guard out of view).
+- **The A/B** [O traces + frames]. An in-aim `enemy_cam_turn` does not move the stock shoulder aim (`859964ce` OFF: look
+  angles 34,-593 mrad before and after, the same frames, S1 `d_milli` equal to `e6ef6e4d`'s at 2 deg). So the shoulder
+  arm turns before the raise. Pre-raise -40 / 8 deg down: the shoulder view looks at the jeep's seat back and fires
+  (`1bd4419a` OFF, two shots, S1 9.5 m, ~10 deg down). First person there was blocked once (`859964ce` PRE: the shoulder
+  raise reached 7, the set took it to 15 within 17 ms, 15 for 2.3 s, no shot) and fired once (`1bd4419a` FALL: the raise
+  drifted to 216 / -710 mrad, first person 20 deg down, two shots into the ground 2.6 / 3.6 m out). The in-aim turn from
+  2 to 8 deg down after a set blocked first person both times (`859964ce` ON, `1bd4419a` MID; gun 15 within 100 ms, the
+  rifle across). The look angles in first person read ~3.5 deg lower than the shoulder aim at the same turn (58 -> 114, 139 -> 201 mrad),
+  but at the same pre-raise turn the shots went ~8 deg lower: S1 `d_milli` z -311 (first person, ground 2.6 / 3.6 m out)
+  against -179 (shoulder, 9.5 m).
+- **Fix** (failing first `fcfa971` -> `fccba00`): FpvStep clears our bit once it reads set with the gun at 15 for
+  `kFpvBlockedMs` 100 ms (`event=fallback; reason=blocked`); our clear leaves `seen`, so it is no opt-out. In that aim it
+  is set again (`reason=rearm`) only once the shoulder aim (the aim module's look angles, read only during a fall) has
+  turned up 0.07 rad or sideways 0.175 rad from where it came back, at most 2 falls per aim (bounded, not zero: first person, shoulder, first person, shoulder); the next aim sets at 7 as
+  before; every release path is unchanged. Shown [O `1bd4419a` MID]: 15 -> fallback ~110 ms later -> shoulder (cmode 2),
+  15 for 200 ms then 7; no set after it; press 5 fired (gun 9, S1 14.4 m; magazine 4 -> 3; frames `-mid-aim`,
+  `-p5-050`: the shoulder view at the seat back). The rearm is unit-tested only [U in a game].
+- Never-lines 0 on both copies in both runs, `opt_outs=0`. Side finding `1bd4419a`: guard 715983031 shot the host
+  (godmode) and the host's buddy killed it (`att=buddy`).
+- Runs: `859964ce2b3242058b22bd700b616012` (`m6m7i-seat-fpv-ab-lab.txt` v2, `36eb7da`),
+  `1bd4419ad5be4ee4bf83fb938f6ef527` (`m6m7i-seat-fpv-fall-lab.txt`, `81eead9`). Sheets `best-sheet-859964ce.jpg`,
+  `best-sheet-1bd4419a.jpg` under `C:/Users/taylo/mgs-coop-run-archive/m6m7i/frames/checks/`.
+- **Part C, the D-Dog after the partner** (`8567f888`, play, `-WanSim bad`, africa-jeep for both, shipped defaults;
+  scenario `626993e`): the host waited 15 s at the 30020 fail-safe spot (~335 m off) and its dog followed it there
+  (`buddy` at -511.80, 3.92, 1181.40) [O]. The host warped back and pressed E: the first `vehicle_seats` after it read
+  `riders=0,9728`, the dog in seat 1 at once, and the dog then read at the jeep (-654.04, 1.22, 878.92) [O]. So the
+  stock boards the driver's dog with the driver even from 335 m (how [I]), as in `d7d50259` from 23 m. The guest got
+  seat 3 (host copy `seat_patch=applied; seat=3`, confirmed); frames over ~30 s on both copies show the guest in the
+  back right seat and the host driving, unchanged (`best-sheet-8567f888.jpg`). The dog-after-partner case is reached
+  only when the partner sits in seat 1 before the driver boards (8.25's DrawSeat); not run [U]. C2: the reload's stop
+  reverted the patch (`reason=stop`) [O]; the 120 s `runtime_enter` waits failed although the host logged it later;
+  C3 ended at the worker's session limit (`worker_timeout`, the second `host require` refused).
+- **Review fix** (failing first, then the fix, after the merge): a fall-back clear given up after `kFpvClearTries`
+  mid-aim is cleared again at the aim end and the stop (`Fpv::fell`, dropped once a read shows the bit clear, so a
+  later F tap of the player's own is never cleared); unit tests only (in `1bd4419a` the clear landed at once).
+- **Open:** gun 15 for other reasons (reload, weapon switch, a moving jeep passing an obstacle) not checked.
+  Existing, not from these branches: a teardown AV at the close (`crash_probe=av; rva=0xbf421a` after
+  `partner_shutdown=hooks_off; teardown=other_thread`) in `8567f888`'s host and `e6ef6e4d`'s guest.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

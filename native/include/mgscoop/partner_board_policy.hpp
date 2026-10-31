@@ -294,6 +294,40 @@ inline RaceVerdict RaceDecide(const RaceIn& in) noexcept {
     if (held && !RaceDenied(in.grant_vehicle, in.grant_until, in.now_ms, in.vehicle)) return RaceVerdict::hold;
     return RaceVerdict::pass;
 }
+// E press only (design 8.55; the user's rule: only an actual E press may claim a vehicle's driver seat). Standing at a
+// door claims nothing: site C no longer refuses the ride icon for a hold (only for a live deny: the host's press won, or
+// on the host a vehicle it yielded). Site D (0x1251366, phase 1's per-frame call of the remote gate 0x114DB20, which
+// runs only after an E press started the ride action, before the record checks, site B and TryToRide) keeps the
+// guest's press in phase 1 (the gate's stock "true": return this frame; nothing written) while the hold lease is live
+// (Lua refreshes it only after the host's READY), at most kPressWaitMs, until the host's grant or deny for that
+// vehicle arrived. Lua claims each new press (pseq) at once. A grant: phase 1 goes on and site B seats the driver; a
+// deny or no answer: site B's no-seat exit (the press ends on foot). The host never waits: its site B owns a driver's
+// seat it boards for kHostCommitMs (one lock with grant_if), and refuses one it yielded to a guest press.
+inline constexpr std::uint32_t kPressWaitMs = 1000;
+inline constexpr std::uint32_t kPressGapMs = 250;     // a pending press unseen this long is over (the next one is new)
+inline constexpr std::uint32_t kHostCommitMs = 3000;  // the host's own press owns the vehicle this long
+enum class PressVerdict : std::uint8_t { stock, start, wait, go };
+struct PressIn {
+    bool hold = false;       // the guest's hold lease is live
+    bool local = false;      // the record is the local player's (P+0x218)
+    bool searched = false;   // record +0x5a != 0 (phase 1 already chose a seat)
+    std::uint16_t vehicle = kVehicleUnknown;  // record +0x84
+    bool peer_drives = false;  // a live peer-driver policy names this vehicle (the passenger policy decides)
+    bool open = false;         // a press is pending
+    std::uint16_t pend_vehicle = kVehicleUnknown;
+    std::uint32_t pend_start = 0, pend_seen = 0, now_ms = 0;
+    bool granted = false, denied = false;  // a live grant / deny for this vehicle
+};
+// stock: the gate's own answer; start: a new press (record it, count it, idle); wait: idle; go: the gate's own answer
+// (a grant, a deny or the timeout ended the wait; site B decides).
+inline PressVerdict PressDecide(const PressIn& in) noexcept {
+    if (!in.hold || !in.local || in.searched || in.vehicle == kVehicleUnknown || (in.vehicle >> 9) != kVehicleType || in.peer_drives)
+        return PressVerdict::stock;
+    const bool same = in.open && in.pend_vehicle == in.vehicle && in.now_ms - in.pend_seen <= kPressGapMs;
+    if (!same) return in.denied ? PressVerdict::stock : PressVerdict::start;
+    if (in.granted || in.denied || in.now_ms - in.pend_start >= kPressWaitMs) return PressVerdict::go;
+    return PressVerdict::wait;
+}
 
 // Seats on (design 8.21, D16's residual): the driver's D-Dog jumps into seat 1 after the peer sat there (the v4
 // handshake said free when the peer boarded). The peer is drawn on this copy by the DM seat chain, never in rider[],
@@ -344,10 +378,11 @@ inline DrawSeatOut DrawSeat(const DrawSeatIn& in) noexcept {
 }
 
 // The MGS_COOP_BOARD_SEAT_V1 request (game_script_observer.cpp SelectBoardSeatReceipt; review R8: a pure,
-// tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms>,
+// tested parser). Exactly one of: poll | clear | deny <vehicle> <ms> | grant <vehicle> <ms> | hold <ms> |
+// grant_if <vehicle> <ms> (8.55: the host's arbiter),
 // single spaces, decimal digits only, nothing after the last number. vehicle 25600..26111 (a TppVehicle2
 // id); deny / grant ms 1..kRaceDenyMaxMs; hold ms 0..kRaceDenyMaxMs (0 clears the hold).
-enum class SeatCmd : std::uint8_t { bad, poll, clear, deny, grant, hold };
+enum class SeatCmd : std::uint8_t { bad, poll, clear, deny, grant, hold, grant_if };
 struct SeatRequest {
     SeatCmd cmd = SeatCmd::bad;
     std::uint16_t vehicle = kVehicleUnknown;
@@ -387,6 +422,7 @@ inline SeatRequest ParseSeatRequest(const char* text, std::size_t n) noexcept {
     else if (detail::SeatWord(p, end, "deny ")) cmd = SeatCmd::deny;
     else if (detail::SeatWord(p, end, "grant ")) cmd = SeatCmd::grant;
     else if (detail::SeatWord(p, end, "hold ")) cmd = SeatCmd::hold;
+    else if (detail::SeatWord(p, end, "grant_if ")) cmd = SeatCmd::grant_if;
     else return r;
     if (cmd == SeatCmd::poll || cmd == SeatCmd::clear) {
         if (p != end) return r;

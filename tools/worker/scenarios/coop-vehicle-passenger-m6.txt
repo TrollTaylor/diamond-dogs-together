@@ -29,14 +29,14 @@
 # Seat race (SEAT op 54, labsetting partner_ride_race=1; here incidental: the guest beside the jeep the host takes): both copies at the empty sortie truck's two cab doors; the guest's
 #   pre-query wants its driver's seat and claims it, the host wants it too (ties go to the host) and denies:
 #   guest  world_lua=event=seat; action=claim; vehicle=25600; role=guest; ... then event=seat; action=deny; vehicle=25600;
-#          role=guest; set=1 (a 3 s native deny: no ride icon, the toast); host event=seat; action=deny; ...; why=host_first.
+#          role=guest; set=1 (a 3 s native deny: no ride icon, the toast); host event=seat; action=deny; ...; why=host_(pressed|drives).
 #   Both press E: the host drives (vehicle_seats vehicle;id=25600), the guest stays on foot (vehicle_not_riding), m6-race.
 # The truck halves use the sortie truck (relief type 4, east truck, index 0 = 25600, labsetting world_relief=1: the guest's
 #   copy loads it from the host's VEHICLE_SPAWN): free roam's LRRP trucks carry two soldiers each (vehicle_census
 #   riders=1194,1195 ...), and run f49c167d's truck coasted 23 m after clear_enemies took its driver (gate=far).
 # Run 3c748d46 (wp/seats 387c6b0): both jeep halves passed again, with the jeep moving in both (frames on both
 #   copies), and the guest beside the jeep the host took was denied by SEAT (event=seat; action=deny; ...;
-#   why=host_first, then host_drives) before it boarded seat 1 under the passenger policy. Its truck part stopped at
+#   why=host_(pressed|drives), then host_drives) before it boarded seat 1 under the passenger policy. Its truck part stopped at
 #   goto_vehicle sortie (door_unavailable: fixed) after the guest's copy loaded the sortie truck 10 s after the census.
 # Run f49c167d (wp/seats 0c9f93f): both jeep halves passed (seat 1 boarded, confirmed, camera connect/release, the stock
 #   GetOffFrontRight); the first half's jeep did not move under the host's W (its drive frames are stationary); the

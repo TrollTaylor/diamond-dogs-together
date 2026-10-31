@@ -1211,6 +1211,113 @@ void TestFpvStep() {
     Check(o.clear == 0x5 && s.ours == 0, "both cleared at the aim end");
 }
 // Review m6m7f (design 8.47): a clear of ours stays pending until a read shows the bit clear; retried, bounded.
+// Design 8.56 [O run 859964ce]: from seat 1 looking 8 deg down the shoulder raise reached 7, the set took the gun to 15
+// in 17 ms and it stayed there (rifle across, nothing fired). Our bit read set while the gun stays at 15 for
+// kFpvBlockedMs is cleared (fallback): the stock shoulder view and its red mark come back. In that aim the bit is set
+// again only once the shoulder aim has turned up by kFpvRearmPitch or sideways by kFpvRearmYaw from where it came back,
+// and only kFpvFallbacksPerAim falls per aim; the next aim sets at 7 as before.
+pc::FpvIn FAt(bool aiming, std::uint32_t toggles, std::uint8_t gun, std::uint64_t now, bool ang_ok = false, float pitch = 0.0f,
+              float yaw = 0.0f) {
+    pc::FpvIn in = FIn(aiming, toggles);
+    in.ready = aiming && pc::FpvReady(true, gun);
+    in.blocked = aiming && gun == 15;
+    in.now_ms = now;
+    in.ang_ok = ang_ok;
+    in.pitch = pitch;
+    in.yaw = yaw;
+    return in;
+}
+void TestFpvFallback() {
+    pc::Fpv s{};
+    pc::FpvStep(s, FAt(false, 0, 0, 1000));
+    pc::FpvOut o = pc::FpvStep(s, FAt(true, 0, 7, 1100));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && s.ours == 0x4, "fallback: set at 7");
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 1117));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && s.ours == 0x4, "fallback: the first tick at 15: nothing yet");
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 1117 + pc::kFpvBlockedMs - 1));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && s.ours == 0x4, "fallback: not before kFpvBlockedMs");
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 1117 + pc::kFpvBlockedMs));
+    Check(o.event == pc::FpvEvent::fallback && o.clear == 0x4 && o.set == 0 && s.ours == 0 && s.fallback && s.fallbacks == 1 &&
+              Same(o.reason, "blocked") && Same(pc::FpvEventName(o.event), "fallback"),
+          "fallback: 15 held kFpvBlockedMs with our bit set: cleared (the shoulder view)");
+    o = pc::FpvStep(s, FAt(true, 0x4, 7, 1250));
+    Check(o.event == pc::FpvEvent::retry && o.clear == 0x4 && o.set == 0 && !s.opt_out && s.ours == 0,
+          "fallback: the clear not read yet: retried, not owned again");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 1283, true, 0.139f, -0.593f));
+    Check(o.event == pc::FpvEvent::none && o.set == 0 && !s.opt_out && s.opt_outs == 0 && s.ref_ok,
+          "fallback: the shoulder view at 7: no opt-out, no set; its angles are the reference");
+    o = pc::FpvStep(s, FAt(true, 0, 9, 1400, true, 0.139f - pc::kFpvRearmPitch + 0.01f, -0.593f));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "fallback: firing, raised less than kFpvRearmPitch: nothing");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 1500, true, 0.30f, -0.593f));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "fallback: aimed lower: nothing");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 1600));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "fallback: no angle read: nothing");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 1700, true, 0.139f - pc::kFpvRearmPitch - 0.001f, -0.593f));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && s.ours == 0x4 && !s.fallback && Same(o.reason, "rearm"),
+          "fallback: raised by kFpvRearmPitch: set again");
+    pc::FpvStep(s, FAt(true, 0x4, 15, 1800));
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 1800 + pc::kFpvBlockedMs));
+    Check(o.event == pc::FpvEvent::fallback && o.clear == 0x4 && s.fallbacks == 2, "fallback: the second fall in the aim");
+    pc::FpvStep(s, FAt(true, 0, 7, 2000, true, 0.10f, -0.593f));
+    o = pc::FpvStep(s, FAt(true, 0, 7, 2100, true, -0.40f, 1.0f));
+    Check(pc::kFpvFallbacksPerAim == 2 && o.event == pc::FpvEvent::none && o.set == 0 && s.ours == 0,
+          "fallback: kFpvFallbacksPerAim falls: the shoulder view to the aim end");
+    o = pc::FpvStep(s, FAt(false, 0, 0, 2200));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && !s.fallback, "fallback: the aim end: nothing of ours to clear");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 2300));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && Same(o.reason, "ready"), "fallback: the next aim sets at 7 as before");
+    pc::FpvStep(s, FAt(true, 0x4, 15, 2400));
+    o = pc::FpvStep(s, FAt(true, 0x4, 7, 2450));
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 2460 + pc::kFpvBlockedMs - 1));
+    Check(o.event == pc::FpvEvent::none && s.ours == 0x4, "fallback: a 7 between restarts the hold");
+    o = pc::FpvStep(s, FAt(true, 0x4, 15, 2460 + 2 * pc::kFpvBlockedMs));
+    Check(o.event == pc::FpvEvent::fallback && s.fallbacks == 3, "fallback: 15 held again: the fall");
+    pc::FpvStep(s, FAt(true, 0, 7, 2700, true, 0.139f, 3.10f));
+    o = pc::FpvStep(s, FAt(true, 0, 7, 2750, true, 0.139f, -3.10f));
+    Check(o.event == pc::FpvEvent::none && o.set == 0, "fallback: a small turn across +-pi: nothing");
+    o = pc::FpvStep(s, FAt(true, 0, 7, 2800, true, 0.139f, 3.10f - pc::kFpvRearmYaw - 0.001f));
+    Check(o.event == pc::FpvEvent::set && o.set == 0x4 && Same(o.reason, "rearm"), "fallback: turned sideways: set again");
+    pc::FpvStep(s, FAt(true, 0x4, 15, 2900));
+    pc::FpvStep(s, FAt(true, 0x4, 15, 2900 + pc::kFpvBlockedMs));
+    o = pc::FpvStep(s, FIn(true, 0x4, 1, 2, false));
+    Check(o.event == pc::FpvEvent::stop && o.clear == 0x4 && !s.fallback && !s.ref_ok && s.aim_falls == 0,
+          "fallback: the get-off during a fall: the pending clear, the fall state reset");
+    // Never a bit that is not ours: the player's own F tap at 15, or 15 with nothing set.
+    pc::Fpv p{};
+    pc::FpvStep(p, FAt(false, 0, 0, 5000));
+    pc::FpvStep(p, FAt(true, 0x4, 15, 5100));
+    o = pc::FpvStep(p, FAt(true, 0x4, 15, 5100 + 5 * pc::kFpvBlockedMs));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && p.fallbacks == 0, "fallback: the player's own bit at 15: never cleared");
+    pc::Fpv q{};
+    pc::FpvStep(q, FAt(false, 0, 0, 5000));
+    pc::FpvStep(q, FAt(true, 0, 15, 5100));
+    o = pc::FpvStep(q, FAt(true, 0, 15, 5100 + 5 * pc::kFpvBlockedMs));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0 && o.set == 0 && q.fallbacks == 0, "fallback: 15 with nothing set: nothing");
+    // Review (8.56): a fall-back clear given up mid-aim (the game's plain store kept the bit) is cleared again at the aim's
+    // end and at the stop (restore on every exit); a fallen bit read clear once is no longer ours.
+    for (const bool stop : {false, true}) {
+        pc::Fpv g{};
+        pc::FpvStep(g, FAt(false, 0, 0, 6000));
+        pc::FpvStep(g, FAt(true, 0, 7, 6100));
+        pc::FpvStep(g, FAt(true, 0x4, 15, 6117));
+        o = pc::FpvStep(g, FAt(true, 0x4, 15, 6117 + pc::kFpvBlockedMs));
+        Check(o.event == pc::FpvEvent::fallback && o.clear == 0x4, "give-up: the fall");
+        for (std::uint32_t i = 0; i <= pc::kFpvClearTries; ++i) o = pc::FpvStep(g, FAt(true, 0x4, 15, 6300 + i * 17));
+        Check(o.event == pc::FpvEvent::retry && Same(o.reason, "give_up") && g.pending == 0, "give-up: the clear given up mid-aim");
+        o = pc::FpvStep(g, stop ? FIn(true, 0x4, 1, 2, false) : FAt(false, 0x4, 0, 7000));
+        Check(o.event == (stop ? pc::FpvEvent::stop : pc::FpvEvent::restore) && o.clear == 0x4,
+              stop ? "give-up: the get-off clears the fallen bit again" : "give-up: the aim end clears the fallen bit again");
+    }
+    pc::Fpv h{};
+    pc::FpvStep(h, FAt(false, 0, 0, 8000));
+    pc::FpvStep(h, FAt(true, 0, 7, 8100));
+    pc::FpvStep(h, FAt(true, 0x4, 15, 8117));
+    pc::FpvStep(h, FAt(true, 0x4, 15, 8117 + pc::kFpvBlockedMs));
+    pc::FpvStep(h, FAt(true, 0, 15, 8250));
+    o = pc::FpvStep(h, FAt(false, 0x4, 0, 8400));
+    Check(o.event == pc::FpvEvent::none && o.clear == 0, "give-up: a fallen bit read clear, then set by the player: never cleared");
+}
+
 void TestFpvPending() {
     pc::Fpv s{};
     pc::FpvStep(s, FIn(false, 0));
@@ -1368,6 +1475,7 @@ int main() {
     TestVerifyAndInstall();
     TestFpvBitsAndContract();
     TestFpvStep();
+    TestFpvFallback();
     TestFpvPending();
     TestFpvReadWrite();
     TestFpvLeverAndVerify();

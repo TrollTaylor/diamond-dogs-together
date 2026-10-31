@@ -192,11 +192,12 @@ constexpr OpSpec kOps[] = {
      {U16(1), U16(25600, 26111), U32(), U8(), U8(0, 7), U16(1, 65534), U16(1, kU16), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-1000000000, 1000000000)}},
     // SEAT (M6 seat races, world-sync-protocol.md section 21): seq, TppVehicle2 id, seat (0: the driver's; the
-    // only one raced today), role (1 host, 2 guest: the sender), action (1 claim, 2 grant, 3 deny). Both
+    // only one raced today), role (1 host, 2 guest: the sender), action (1 claim, 2 grant, 3 deny, 4 ready: the host
+    // arbitrates E presses, design 8.55; its vehicle is 25600, unused). Both
     // directions (the guest claims, the host answers), never a request. 7 bytes. A partner that does not know
     // 0x36 skips it by its length (unknown_op).
     {op::seat, "SEAT", 1, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 7,
-     {U16(1), U16(25600, 26111), U8(0, 3), U8(1, 2), U8(1, 3)}},
+     {U16(1), U16(25600, 26111), U8(0, 3), U8(1, 2), U8(1, 4)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

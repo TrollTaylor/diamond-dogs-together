@@ -11,7 +11,7 @@
 #   show what the graph does after the GetOn. Then the reverse (the guest drives, the host in the cab).
 # Seat race (SEAT op 54, partner_ride_race=1): both at the empty truck's two cab doors; the guest's claim meets the
 #   host's own want (ties go to the host): guest event=seat; action=deny; vehicle=25600; role=guest; set=1 and host
-#   event=seat; action=deny; ...; why=host_first; both press E: the host drives, the guest stays on foot (m6-race).
+#   event=seat; action=deny; ...; why=host_(pressed|drives); both press E: the host drives, the guest stays on foot (m6-race).
 # The sortie truck stands nose to a building at that attitude (run b66c7031: W pushed it into the wall and tilted it),
 #   so both drivers reverse (S) for the moving frames.
 # Census (E6; run b66c7031 refused relief_ridden 3 s after the host's get-off): relief_load of the tank (9) and the wheeled armoured vehicle (5) at the same spot, vehicle_census 0 1.
@@ -127,8 +127,7 @@ state
 host run goto_vehicle sortie driver 60
 guest run goto_vehicle sortie passenger 60
 wait 3000
-waitlog guest 'world_lua=event=seat; action=deny; vehicle=25600; role=guest; set=1' 10
-waitlog host 'world_lua=event=seat; action=deny; vehicle=25600; role=host; why=host_first' 5
+# 8.55: no deny exists before a press (E press only); the race starts at the presses below.
 both capture m6-race-before
 both press e 150
 wait 3500

@@ -1939,22 +1939,24 @@ void SeatOp() {
     // seq, id, seat, role, action
     Check(Tx(g_guest, op::seat, {1, 25608, 0, 2, 1}, 101) == world::TxStatus::ok, "the guest claims the jeep's driver seat");
     Check(Tx(g_host, op::seat, {1, 25608, 0, 1, 3}, 101) == world::TxStatus::ok, "the host denies it");
+    Check(Tx(g_host, op::seat, {2, 25600, 0, 1, 4}, 101) == world::TxStatus::ok, "E press only (8.55): the host's READY (action 4)");
     Check(Tx(g_guest, op::seat, {0, 25608, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
               Tx(g_guest, op::seat, {2, 25599, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
               Tx(g_guest, op::seat, {2, 26112, 0, 2, 1}, 101) == world::TxStatus::bad_args &&
               Tx(g_guest, op::seat, {2, 25608, 4, 2, 1}, 101) == world::TxStatus::bad_args &&
               Tx(g_guest, op::seat, {2, 25608, 0, 3, 1}, 101) == world::TxStatus::bad_args &&
-              Tx(g_guest, op::seat, {2, 25608, 0, 2, 4}, 101) == world::TxStatus::bad_args &&
+              Tx(g_guest, op::seat, {2, 25608, 0, 2, 5}, 101) == world::TxStatus::bad_args &&
               Tx(g_guest, op::seat, {2, 25608, 0, 2, 0}, 101) == world::TxStatus::bad_args,
-          "seq 1.., the vehicle class, seat 0..3, role 1..2, action 1..3");
+          "seq 1.., the vehicle class, seat 0..3, role 1..2, action 1..4");
     Exchange(102);
     auto toHost = Drain(g_host, 3, 103);
     auto toGuest = Drain(g_guest, 3, 103);
     Check(toHost.size() == 1 && toHost[0].op == op::seat && toHost[0].count == 5 && toHost[0].v[0] == 1 && toHost[0].v[1] == 25608 &&
               toHost[0].v[2] == 0 && toHost[0].v[3] == 2 && toHost[0].v[4] == 1,
           "the host's world queue delivers the claim with its exact fields");
-    Check(toGuest.size() == 1 && toGuest[0].op == op::seat && toGuest[0].v[3] == 1 && toGuest[0].v[4] == 3,
-          "the guest's world queue delivers the deny");
+    Check(toGuest.size() == 2 && toGuest[0].op == op::seat && toGuest[0].v[3] == 1 && toGuest[0].v[4] == 3 &&
+              toGuest[1].op == op::seat && toGuest[1].v[1] == 25600 && toGuest[1].v[4] == 4,
+          "the guest's world queue delivers the deny and the READY");
     g_guest.LocalMissionEnd(105);
     Check(Tx(g_guest, op::seat, {3, 25608, 0, 2, 1}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
     Setup(2, 2, true);

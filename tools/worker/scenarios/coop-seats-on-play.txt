@@ -37,27 +37,8 @@ host debug clear_enemies 100
 host debug teleport 597.0 320.5 1157.5 -90
 guest debug teleport 600.0 320.5 1157.5 -90
 wait 4500
-# --- A0: the Fulton guard while denied ------------------------------------------------------------------------------
-logmark both
-host debug teleport 577.20 320.2 1157.19 -84
-wait 1500
-guest debug teleport 574.36 320.2 1157.5 96
-wait 3000
-waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
-waitlog guest 'world_lua=event=seat; action=fulton; on=1; vehicle=25608' 5
-guest capture s1-guard-denied
-heldcapture guest guest e s1-guard-hold 2
-wait 1500
-guest run vehicle_census 8 1
-guest expect vehicle_census;first=8;n=1;found=1;25608:2:4
-guest run vehicle_seats
-guest expect vehicle_not_riding
-host run vehicle_seats
-host expect vehicle_not_riding
-host debug teleport 597.0 320.5 1157.5 -90
-guest debug teleport 600.0 320.5 1157.5 -90
-wait 5000
-waitlog guest 'world_lua=event=seat; action=fulton; on=0; vehicle=25608' 5
+# --- A0 removed (design 8.55, E press only: a player standing at a door is never refused, so the
+# guest is no longer denied before any press; the Fulton guard at the partner-driven vehicle is part B).
 # --- A: the race inside one round trip ------------------------------------------------------------------------------
 logmark both
 host debug teleport 577.20 320.2 1157.19 -84
@@ -66,9 +47,9 @@ wait 150
 both press e 150
 guest capture s1-race-press
 wait 4500
-waitlog guest 'world_lua=event=seat; action=hold; vehicle=25608; holds=[0-9]+; deny=65535; grant=65535' 3
+waitlog guest 'partner_board=press; role=guest; vehicle=25608; end=deny' 5
 waitlog guest 'world_lua=event=seat; action=claim; vehicle=25608; role=guest;' 3
-waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(first|drives)' 5
+waitlog host 'world_lua=event=seat; action=deny; vehicle=25608; role=host; why=host_(pressed|drives)' 5
 waitlog guest 'world_lua=event=seat; action=deny; vehicle=25608; role=guest; set=1' 5
 host run vehicle_seats
 host expect vehicle;id=25608
