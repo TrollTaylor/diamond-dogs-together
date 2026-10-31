@@ -726,6 +726,11 @@ std::string LimitTextTail(const std::string& text, std::size_t max_chars) {
     return "[... " + std::to_string(start) + " earlier characters omitted ...]\n" + text.substr(start);
 }
 
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total) {
+    (void)count, (void)per_launch, (void)total;
+    return LimitTextTail(TextFromLastMarkers(text, marker, 3), 3u << 20);
+}
+
 bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_dir, std::wstring& zip_out, std::string& error) {
     zip_out.clear();
     if (!IsDir(paths.mod)) {

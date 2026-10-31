@@ -1401,6 +1401,56 @@ void TestSetup() {
     }
 }
 
+// fb1031 arrival: a guest's stuck launch was not in its Collect logs zip (script-observer.log kept only the last 3
+// game launches, cut to a 3 MB tail; that session had 3 launches and a later session followed). The zip now keeps
+// the last 8 launches, each cut to 2 MB (its first quarter and its end), at most 16 MB in all.
+void TestCollectLogsLaunches() {
+    const std::string marker = "MGS Co-op script adapter";
+    auto launch = [&](int i, std::size_t size) {
+        std::string s = marker + " launch " + std::to_string(i) + "\nhead-" + std::to_string(i) + "\n";
+        const std::string fill = "entry_count=1 thread=2 tick_ms=3 size=38 name_prefix=return\n";
+        while (s.size() + fill.size() < size) s += fill;
+        return s + "tail-" + std::to_string(i) + "\n";
+    };
+    std::string ten;
+    for (int i = 1; i <= 10; ++i) ten += launch(i, 200);
+    const std::string last8 = LastLaunches(ten, marker, 8, 2u << 20, 16u << 20);
+    CHECK(StartsWith(last8, marker + " launch 3\n") && Has(last8, "tail-10\n") && !Has(last8, "launch 2\n"));
+    CHECK(LastLaunches("old line\n" + launch(1, 100), marker, 8, 2u << 20, 16u << 20) == "old line\n" + launch(1, 100));
+    CHECK(LastLaunches("", marker, 8, 2u << 20, 16u << 20).empty());
+    // One long launch keeps its start (configuration) and its end (the latest scene), with the cut marked.
+    const std::string big = launch(1, 3u << 20);
+    const std::string cut = LastLaunches(big + launch(2, 100), marker, 8, 1u << 20, 16u << 20);
+    CHECK(StartsWith(cut, marker + " launch 1\nhead-1\n") && Has(cut, "tail-1\n") && Has(cut, "earlier characters omitted") &&
+          Has(cut, marker + " launch 2\n") && cut.size() < (1u << 20) + 4096 + 200);
+    // Over the total: the oldest launches go first, the newest always stays.
+    std::string five;
+    for (int i = 1; i <= 5; ++i) five += launch(i, 1u << 20);
+    const std::string capped = LastLaunches(five, marker, 8, 2u << 20, 3u << 20);
+    CHECK(!Has(capped, "tail-2\n") && Has(capped, "tail-3\n") && Has(capped, "tail-5\n") && capped.size() <= (3u << 20));
+    // Collect logs: a stuck launch four launches back (5 launches of 1.4 MB) is in the zip.
+    Fixture f(L"collect_launches");
+    CreateDirectories(f.paths.mod);
+    std::string observer;
+    for (int i = 1; i <= 5; ++i) observer += launch(i, 1400000);
+    WriteText(f.paths.mod + L"\\script-observer.log", observer);
+    std::wstring zip;
+    std::string error;
+    CHECK(CollectLogs(*f.env, f.paths, f.desktop, zip, error));
+    ZipReader reader;
+    ZipLimits limits;
+    CHECK(reader.OpenFile(zip, limits, error));
+    bool found = false;
+    for (const ZipEntry& e : reader.entries()) {
+        if (!EndsWith(e.name, "/script-observer.log")) continue;
+        Bytes data;
+        CHECK(reader.Extract(e, data, error));
+        const std::string text(data.begin(), data.end());
+        found = Has(text, "head-1\n") && Has(text, "tail-1\n") && Has(text, "tail-5\n");
+    }
+    CHECK(found);
+}
+
 void TestUninstallAndLogs() {
     Fixture f(L"uninstall");
     bool ok = false;
@@ -4565,6 +4615,7 @@ int main(int argc, char** argv) {
         {"ShareSave", TestShareSave, 480},
         {"Setup", TestSetup, 970},
         {"UninstallAndLogs", TestUninstallAndLogs, 380},
+        {"CollectLogsLaunches", TestCollectLogsLaunches, 400},
         {"Watchdog", TestWatchdog, 340},
         {"Model", TestModel, 1110},
         {"AutoSetup", TestAutoSetup, 1330},
