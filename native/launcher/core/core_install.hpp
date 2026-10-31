@@ -124,5 +124,9 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
 // Collect-logs text helpers (ports of Get-TextFromLastMarkers / Limit-TextTail).
 std::string TextFromLastMarkers(const std::string& text, const std::string& marker, int count);
 std::string LimitTextTail(const std::string& text, std::size_t max_chars);
+// The last `count` game launches of a log whose launches start at a line holding `marker` (text before the first
+// marker counts as one more). A launch over `per_launch` keeps its first quarter and its end around an omission
+// line; the oldest launches are dropped until the whole is at most `total` (the newest always stays, cut).
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total);
 
 }  // namespace ddt::core

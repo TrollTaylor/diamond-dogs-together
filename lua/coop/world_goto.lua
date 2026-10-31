@@ -18,7 +18,9 @@ do
         local fmt = string.format
         -- Landing zones as "lz|rt" (route hash = Fox.StrCode32 of the whole string).
         local LZ = {[30010] = {"lz_drp_field_N0000|rt_drp_field_N_0000", "lz_drp_enemyBase_S0000|rt_drp_enemyBase_S_0000"},
-            [30020] = {"lz_drp_savannahEast_N0000|rt_drp_savannahEast_N_0000", "lz_drp_pfCampNorth_S0000|rt_drp_pfCampNorth_S_0000"}}
+            [30020] = {"lz_drp_savannahEast_N0000|rt_drp_savannahEast_N_0000", "lz_drp_pfCampNorth_S0000|rt_drp_pfCampNorth_S_0000"},
+            -- fb1031 arrival: the Command platform 1 approach route (f30050 DROP_ROUTE_USE_SORTIE_DEMO), both lz values.
+            [30050] = {"ly003_cl00_30050_heli0000|cl00pl0_mb_fndt_plnt_heli_30050|rt_apr", "ly003_cl00_30050_heli0000|cl00pl0_mb_fndt_plnt_heli_30050|rt_apr"}}
         -- CFG is metadata only. Legacy harnesses have no session field;
         -- known sessions refuse delayed work after a reconnect/link loss.
         local function session()

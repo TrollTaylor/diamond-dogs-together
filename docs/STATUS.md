@@ -1,3 +1,78 @@
+## October 31, 2026: fb1031 arrival - a guest stuck in the Mother Base helicopter can Restart out of it (`wp/mb-arrival`; shown in hidden run `0ca61fa1`)
+
+- **Shown in the game (hidden run `0ca61fa1`, lab, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile
+  research -SaveSeed real`, scenario `tools/worker/scenarios/mb-arrival-restart.txt`):** both copies took the host's ACC
+  sortie into Mother Base (lab `goto=30050`); the guest was riding in [O: `position -> helicopter`, host log
+  `remote=102(heli)`, frame]. Its pause-menu Restart (lab probe `guest_restart`: the engine's own UI `PauseMenuRestart`
+  message through `TppMission.OnMessage`, so through the guest suppression) ran locally 10 s after arrival [O:
+  `step=local_restart; fn=RestartMission; why=heli`, `result=ok`], `step=mb_foot; at=restart` 2 s later, a reload of
+  30050 (8 s), and the guest stood on foot at (9.0, 0.8, -42.0) on the Command platform helipad with its HUD [O frame],
+  walked 5.5 m with W [O position], paired again (epoch 5) and saw the host's body and nametag [O frame]. Nothing went
+  to the host (no `request_rx`/`host_only`) [O]; the host's partner went `102(heli)` -> `1(stand_idle)` ->
+  `2(stand_move)` with its body matching and was realized again after `partner_ride=foot_stable` [O host log]. One
+  restart only: one `local_restart`, one `mb_foot`, no `at=seeds`, no demo line [O]. The host itself is unchanged: it
+  rode its own helicopter in and its real-seed queued Mother Base demo (Ocelot and D-Dog) played [O frames], so every
+  host frame after the guest's restart is that cutscene: the guest's body **on the host's screen** is [U] (log only),
+  and the scenario stopped at its second `placebehind` (the host's position read `gameplay` during the demo).
+  Contact sheet `fb1031/frames/arrival/best-sheet-0ca61fa1.jpg` (nametag masked).
+- **Default arrival unchanged (hidden run `25226a97`, same route, no Restart):** the guest rode in (`position ->
+  helicopter` at +6, +31, +61 and +91 s), its helicopter landed on the Command platform (host log remote `102` ->
+  `103` -> `99`; frames: staff saluting, the vanilla [E] get-off prompt) and it waited there for E, which the scenario
+  never sends; no `mb_foot`, `mb_demo`, `local_restart` or `host_only` on either copy [O]. The host stood on foot at
+  Command and hid the riding guest (`partner_ride=hide; reason=ride`) [O]. So the lab arrival lands as vanilla; the
+  report's helicopter that never left act 102 is still not reproduced [U]. Sheet `best-sheet-25226a97.jpg`.
+- **Before that (this round):** run `89c796f9` reached Mother Base and stopped at `host worldtrigger goto=30050`:
+  `tools/lab/WorldSync.psm1` still refused `goto=30050` (fixed `5fb0aac0`/`c4a45e3e`). Run `09668f9e` was refused
+  in Start ("There is not enough space on the disk" after both package installs; C: 5.7 GB) and its cleanup refused
+  on the installer's first-install marker, leaving both game folders on the worker loader: fixed in Stop
+  (`0b1bb824`/`e795828c`: only that exact 16-byte `client-check-v1` marker where none was), then the worker's own
+  `Stop-WorkerSession` restored both baselines and verified the real saves (nothing touched by hand).
+
+Report (online 0.14.5 over Steam): the guest joined the host at Mother Base and was stuck "in a cutscene / the helicopter";
+the guest saw the host, the host never saw the guest. Host log only (the guest's Collect logs no longer held that launch).
+
+- **Diagnosis [O host log]:** on every guest entry into 30050 (the host's ACC sortie replayed as follow kind 6, then two
+  title Continues after relaunching) the guest's remote action stayed `102(heli)` and the host hid it the whole time
+  (`partner_ride=hide; reason=ride`; never realizing it is a consequence, not a second bug). The guest played its own
+  co-op save (save handoff STATE need=0 every time; no offer), saved at Mother Base still in the helicopter, so its
+  Continues came back into it. The host itself started on foot at f30050's default spot (9, 0.8, -42): [I] it had a
+  queued Mother Base opening demo (f30050 `IsUseRoute()` is false then) while the guest rode the host's route. Why
+  the guest's helicopter never landed is not visible without the guest's log [U]. The guest's pause-menu Restart
+  (REQ kind 3) and Continue (kind 4) were refused `host_only`: no way out.
+- **Way out (default on; `lua/coop/world_follow.lua` `F.arrival`, design 9.2):** a linked guest riding a helicopter
+  at Mother Base (not in a game over) gets its pause-menu Restart locally instead of the `host_only` refusal (Continue
+  runs that restart); that restart's `ReservePlayerLoadingPosition` (within 30 s) gets the vanilla
+  `TppMission.ResetMBFreeStartPositionToCommand()` (on foot at Command; the menu restart passes no return flag, so
+  vanilla does not) and the guest's queued MB demo is cleared before the pack list. Nothing is sent to the host.
+- **Review (14:40):** the first version reset EVERY linked guest helicopter arrival at 30050 to Command (also the
+  arrival that works, and it overwrote the host's seeded cluster) and cleared the guest demo at allocation, after the
+  vanilla pack list had already picked f30051/hangar packs for it. That broad rule is now off (`F.arrival.auto =
+  false`, kept for a lab proof run); switched on, the allocation clear skips `gvars.f30050_missionPackIndex ~= 0`.
+  Default arrival = 0.14.5 (the guest rides in with the host's route and cluster).
+- **Collect logs:** `script-observer.log` keeps up to the last 8 game launches, 2 MB each with the omission line
+  inside the budget (first quarter and end), 16 MB in all, from the log's last 24 MB (was the last 3 launches cut to
+  a 3 MB tail; the guest's session spanned 3 launches and a later session followed).
+- **Lab driver:** `world.trigger` `goto=30050` (Mother Base -> 40050 -> Mother Base on the Command platform 1 approach
+  route) and scenario `tools/worker/scenarios/mb-arrival-follow.txt`.
+- **Checks:** world_follow_lua_check 205 (the default arrival unchanged, the way out lands on foot within 30 s
+  and only on the restart Reserve, the guarded allocation clear; switched on: sortie replay with the host's helicopter seeds, restart/Continue of a
+  helicopter save, the W4 shared Continue keeping the host spawn, host/free roam/on-foot/unlinked unchanged, the way
+  out and its refusals, a throwing reset), ddt_core_tests CollectLogsLaunches, world_receipt/world_wire/world_goto,
+  worker_session_tests; world_follow_game_lua_check (exact extracted TppMain Reserve and vanilla
+  ResetMBFreeStartPositionToCommand: by default the guest rides in with the host's route and cluster; switched on,
+  it ends on foot at Command).
+  Full tools/build.ps1 337/337; partner contract check matches.
+- **Earlier hidden attempts (none reached the game).** `mb-arrival-follow` (`-Mode lab -WanSim bad -PartnerProfile native
+  -NativeStage gun -BuildProfile research -SaveSeed real`): 13:52 refused before admission (the guest game's overlay
+  `D3D11CreateDeviceAndSwapChain` hr=0x8007000E, as the camera and melee tracks' runs today); its retry (14:00) and runs
+  2 (14:06) and 3 (14:11) refused in the preflight: `Audited command timed out: worker-policy-fixture` with no output
+  at all (the same tests/worker_checks_tests.ps1 passes in 4 s run directly; the fb1031-mb track's preflights hit the
+  same timeout). d3dprobe passed before each of the 4 attempts (wrapper logs); the task's rule of one retry was
+  exceeded. Slim receipts: run archive `fb1031/arrival/`.
+- **Preflight refusal found and fixed (`35c80183`):** an audited worker-check child inheriting an open stdin pipe
+  hung before its first line (reproduced outside the lock: 150 s, no output; 2.5 s with the fix). `Invoke-WorkerCommand`
+  now redirects and closes stdin (`tests/worker_checks_tests.ps1` 219). Next: one `mb-arrival-follow` run with it.
+
 ## 2026-10-31: rider camera proof round (`wp/integ-fb1031`, local only) -- `partner_ride_follow` stays OFF unless named
 
 **Players get:** nothing new: the rider's camera is as in 0.14.5. The runs found no trailing camera of the kind the

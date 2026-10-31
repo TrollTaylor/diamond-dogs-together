@@ -877,7 +877,7 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key world -Value 'x' } '0..3' 'world x refused'
     Assert-Equal (ConvertTo-LabPartnerValue -Key world_probe -Value race_kill) 'race_kill' 'world_probe race_kill'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_probe -Value p2 } 'world_probe' 'unknown probe refused'
-    Assert-Equal (@(Get-WorldProbeNames) -join ' ') 'p1 p3 p3b p4 p12 p17 race_kill remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain clock_jump clock_fast shared_death host_continue shared_checkpoint' 'probe names and ids 1..18'
+    Assert-Equal (@(Get-WorldProbeNames) -join ' ') 'p1 p3 p3b p4 p12 p17 race_kill remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain clock_jump clock_fast shared_death host_continue shared_checkpoint guest_restart' 'probe names and ids 1..19'
     $worldOv = ConvertFrom-LabPartnerSettingArgs -Items @('world=2', 'host:world_probe=race_kill') -Role host
     Assert-Equal "$($worldOv['world'])/$($worldOv['world_probe'])" '2/race_kill' '-PartnerSetting world=2 host:world_probe=race_kill'
     $worldHost = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $worldOv)
@@ -896,9 +896,10 @@ try {
     $worldCases = @(
         @('goto=30010', 'goto=30010'), @('goto_lz=1 goto=30020', 'goto=30020 goto_lz=1'), @('world=0', 'world=0'),
         @('  world_probe=race_kill   world=3 ', 'world=3 world_probe=race_kill'), @('world_probe=off', 'world_probe=off'),
-        @('goto=30010 world=2 world_probe=p3b goto_lz=0', 'world=2 world_probe=p3b goto=30010 goto_lz=0'))
+        @('goto=30010 world=2 world_probe=p3b goto_lz=0', 'world=2 world_probe=p3b goto=30010 goto_lz=0'),
+        @('goto=30050', 'goto=30050'), @('world_probe=guest_restart', 'world_probe=guest_restart'))
     foreach ($case in $worldCases) { Assert-Equal (ConvertTo-WorldTriggerText -Text $case[0]) $case[1] "world trigger '$($case[0])'" }
-    foreach ($bad in @('', ' ', 'world=4', 'world=1 world=2', 'goto_lz=1', 'goto=30050', 'world_probe=none', 'world_probe=p2', 'stage=3', 'world', 'goto=30010 goto_lz=2')) {
+    foreach ($bad in @('', ' ', 'world=4', 'world=1 world=2', 'goto_lz=1', 'goto=30030', 'world_probe=none', 'world_probe=p2', 'stage=3', 'world', 'goto=30010 goto_lz=2')) {
         Assert-Throws { ConvertTo-WorldTriggerText -Text $bad } '' "world trigger refuses '$bad'"
         Assert-True (-not (Test-WorldTriggerText $bad)) "Test-WorldTriggerText is false for '$bad'"
     }
@@ -2032,7 +2033,7 @@ try {
     $r = Invoke-SetWorld @('-Role', 'host', '-Text', 'world=0', '-Force')
     Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.WorldTrigger) -eq "world=0`n") '-Force replaces it'
     foreach ($p in $prPaths.Values) { Remove-Item -LiteralPath $p.WorldTrigger }
-    $r = Invoke-SetWorld @('-Role', 'guest', '-Text', 'goto=30050')
+    $r = Invoke-SetWorld @('-Role', 'guest', '-Text', 'goto=30030')
     Assert-True ($r.Code -ne 0 -and !(Test-Path -LiteralPath $prPaths.guest.WorldTrigger)) 'invalid world trigger: nothing written'
     $runShort = New-PartnerFixtureRun 'e0-short' @{ host = (Select-Lines $fx['e0-host'] 20); guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runShort -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 -PollSec 1 2>&1)
