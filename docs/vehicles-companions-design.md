@@ -3520,6 +3520,36 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   a first-person shot, a get-off in first person), the -b rehearsal, the S1 stock control, the automatic first person;
   who calls SaveAimFpvModes `0x129F450`; whether the toggle write and the camera poller share a thread.
 
+### 8.48 Diagnosable overlay refusals; the stock F tap from a seat online (2026-10-30, branch `wp/seat-proof`)
+
+- **Refusal line** (`native/debug_overlay.cpp`, failing first `40076fd`): InstallOnce records the first failing step
+  (`window` CreateWindowExW, `device` D3D11CreateDeviceAndSwapChain, `present_hook`, `resize_hook`, `input`: system
+  directory, `dinput8_load`, `DirectInput8Create` export / HRESULT, `CreateDevice_keyboard|mouse`, each method / user32 /
+  xinput hook, `enable_hooks`: each queued hook, `apply_queued`) and logs it after the kept prefix with its HRESULT,
+  MH_STATUS name and number, Win32 error or `address=null`. debug_overlay_tests: the formatter for each kind and the
+  installed line. No tool or test matched the old line (grep); docs quote only the prefix.
+- **Run** `cbfda7f1b3fb4a768ef3f41764af6f19` (`m6m7f-seat-ftap-play.txt` plus a driver capture after each
+  first-person shot; play, `-WanSim bad`, native gun, research, shipped defaults) admitted, all four parts ran:
+  - F tap [O]: a clear scoped first-person view (Bambetov SV) for guest seat 1, host seat 2, host seat 1, guest seat 2;
+    the guest's seat-2 view had a dark shape over its right part. The shoulder aims before were blocked (panel, rear box).
+  - Prompt [O]: shown for guest seat 1 and host seat 2; absent for host seat 1 (the alert message stood there) and guest
+    seat 2; the tap worked in all four.
+  - Shot in first person [O]: guest seat 1 and host seat 2, frames at +50/+350/+650 ms keep the scope on the aim (no
+    8.27 climb), magazine -1, S1 `shot; result=shift` (`dist_cm` 3605 / 2159, `inside=1`). Landing [U]: the scripted aim
+    was 1.6 m above a lying, sleeping guard and no damage or death line followed. The other copy [O]: the driver's frame
+    right after shows the partner seated with the gun down; its puppet's magazine dropped only after the get-off [I: the
+    seated shot is not replayed there; README already says the partner does not see you aim].
+  - Get-off while aiming in first person [O]: the camera went to the normal third-person get-off view in both roles;
+    the get-off turn requested and checked (`view=1`, `yaw_err_mrad=0`) for guest seat 1, host seat 2, host seat 1.
+  - Toggle [O]: not sticky in this run; every new aim (seat and foot) started over the shoulder, unlike lab `9a0c1f27`
+    (why it differs is [U]).
+  - Never-lines 0 on both copies (`step=error`, faults, pass camera `state=refused`, turn `event=refused`,
+    `seat_fpv; event=set`).
+  - Seen, cause [U]: guards 1194 / 1195 / 1296 (not on the sleep list) fought from part 3; in part 4 the jeep broke on
+    the host (`VehicleBroken`, cause=2; no seat shot in part 4; the host's buddy killed two guards just before) and burned.
+- **Open:** a first-person seat shot aimed at a standing or body-height target (does it land, does the other copy see
+  the hit); the scenario's sleep list (add 1194 / 1195 / 1296); why the toggle stuck in the lab and not here.
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

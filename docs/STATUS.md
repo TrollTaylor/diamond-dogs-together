@@ -1,3 +1,24 @@
+## 2026-10-30: the stock F tap from a seat tested online; overlay refusals name their step (review m6m7g, branch `wp/seat-proof`, local only)
+
+**Players see no new behaviour** (no default changed); the README Seats tip now says what the online run showed: the F
+tap gives a clear first-person view from seat 1 and seat 2 in both roles, a shot fired that way does not pull the view
+up, getting out in first person returns to the normal camera, and each new aim starts over the shoulder again.
+- **Diagnostics** (failing first, `40076fd`): a refused overlay install keeps the prefix
+  `overlay=refused; reason=graphics_or_input_hook` and appends `step=` (window, device, present_hook, resize_hook, input,
+  enable_hooks), `detail=` (e.g. `dinput8_load`, `CreateDevice_mouse`, the hooked method or export, `apply_queued`) and
+  the code (`hr=0x...`, `mh=MH_STATUS(n)`, `error=`, `address=null`); the minhook / probe_class refusals carry theirs.
+- **Run** `cbfda7f1b3fb4a768ef3f41764af6f19` (`m6m7f-seat-ftap-play.txt`, play, `-WanSim bad`, native gun, shipped
+  defaults; afgh-quiet / afgh-horse) was **admitted** on both copies (the Snipping Tool closed; d3dprobe hr=0 on every
+  adapter). Configured on both: S1 on, seat-1 anchor on, pass camera `view`, seat first person off. [O] frames + logs:
+  the F tap gave a clear scoped first-person view in all four seat/role combos (the guest's seat-2 view partly covered
+  on the right); the switch prompt showed for guest seat 1 / host seat 2, not for host seat 1 / guest seat 2, and the tap
+  worked anyway; first-person shots from guest seat 1 and host seat 2 kept the view on the aim at +50/+350/+650 ms,
+  S1 `result=shift` (36 m, 22 m); no guard was hit (the scripted aim was 1.6 m above a lying guard), so landing is [U];
+  the driver's frames show the partner seated, gun down; get-offs from first person went to the normal third-person
+  view and the get-off turn checked `view=1`; every next aim (seat and foot) was over the shoulder; never-lines 0.
+- **Seen, cause [U]:** guards not on the scenario's sleep list (1194, 1195, 1296) started a fight in part 3; in part 4
+  the jeep broke on the host (`VehicleBroken`, no seat shot in that part) and burned. Design 8.48.
+
 ## 2026-10-30: the seat branches integrated, review m6m7f closed (branch `wp/seat-fpv2` with `wp/seat-checks` merged, local only)
 
 **Players see no new behaviour.** The README Seats tip about the F tap is narrowed to what was seen (a scoped rifle, the
