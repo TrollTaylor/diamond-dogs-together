@@ -13,6 +13,10 @@
 #   b) after the host's sleep auto wake (30 s, host-granted), the host stands 1 m behind the guest and strikes: the same
 #      lines with the roles swapped; the guest asleep on both screens.
 #   c) a combo 3 m away (the guest behind the host): partner_melee=strike; act=113; verdict=range; queued=0, no hit.
+# fb1031-on (run 9018ae47): placebehind teleports 3 m up and the drop carries the placed player about 1.4 m forward (the
+# guest placed 1.19 m behind the host landed 21 cm in front of it: the host copy's partner_body agreed with the guest's
+# own dist_cm=21; the host placed 1 m behind landed 40 cm past the guest). So 2.5 m placements give about 1 m, 4.5 m about
+# 3 m, and a is placed again after j's jab (a jab steps about 0.6 m forward).
 # Expected NEVER (sliced): friendly_hit=ignored; step=error; viewer_changed; faults.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-partner-play.txt
@@ -29,7 +33,7 @@ wait 2000
 host debug clear_enemies 100
 stance host stand
 stance guest stand
-placebehind guest host 1
+placebehind guest host 2.5
 wait 4000
 both capture j-before
 logmark both
@@ -37,7 +41,10 @@ guest press lmb 120
 waitlog guest 'partner_melee=strike; act=113; verdict=' 5
 wait 2500
 both capture j-after
-wait 1500
+stance host stand
+stance guest stand
+placebehind guest host 2.5
+wait 4000
 both capture a-before
 logmark both
 guest press lmb 100
@@ -59,7 +66,7 @@ wait 8000
 both capture a-woke
 stance host stand
 stance guest stand
-placebehind host guest 1
+placebehind host guest 2.5
 wait 4000
 both capture b-before
 logmark both
@@ -77,11 +84,11 @@ wait 1200
 both capture b-down
 wait 3000
 both capture b-down-2
-waitlog host 'step=sleep_auto_wake' 45
+waitlog guest 'step=sleep_auto_wake' 45
 wait 8000
 stance host stand
 stance guest stand
-placebehind guest host 3
+placebehind guest host 4.5
 wait 4000
 both capture c-before
 logmark both
