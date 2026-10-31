@@ -181,6 +181,25 @@ check(not ok and msg == "partner_not_linked", "bring needs a linked partner")
 ok, msg = c.T.command({"travel", "30010"})
 check(ok and msg:find("linked=0", 1, true) and #c.tx == 0, "Go to alone without a partner link")
 
+-- The ACC: refused while mission prep (any sequence but the main game) or the iDroid is open.
+c = setup(true); vars.missionCode = 40050
+TppSequence = {GetCurrentSequenceName = function() return c.seq end}
+TppUiCommand = {IsMbDvcTerminalOpened = function() return c.idroid end}
+c.seq = "Seq_Game_MissionPreparation"
+c.rx(9, 1, 30010, 0, 0, 0, 0, 0)
+check(not c.T.job and c.lasttx()[9] == 2, "ACC mission prep: an ask is refused (2)")
+c.seq = "Seq_Game_MainGame"; c.idroid = true
+c.rx(10, 1, 30010, 0, 0, 0, 0, 0)
+check(not c.T.job and c.lasttx()[9] == 2, "iDroid open: refused (2)")
+c.idroid = false
+c.rx(11, 1, 30010, 0, 0, 0, 0, 0)
+check(c.T.job and c.T.job.target == 30010, "ACC main game: the host leads at once")
+c.seq = "Seq_Game_MissionPreparation"; c.tick(100); c.tick(2500)
+check(not c.find("route"), "the sortie waits while the ACC is not in its main game")
+c.seq = "Seq_Game_MainGame"; c.tick(100); c.tick(2100)
+check(c.find("route"), "then the on-foot sortie")
+TppSequence, TppUiCommand = nil, nil
+
 -- Timeout: 240 s ends the job with note 6.
 c = setup(true)
 c.T.command({"travel", "30020"})
