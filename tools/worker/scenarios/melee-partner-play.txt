@@ -1,0 +1,68 @@
+# fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the play defaults, -WanSim
+# bad, seed afgh-ledge for both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
+# partner_melee is off unless named until a run shows it (f0b7e720), so this names it on both copies (labsetting).
+# Not run yet: 52fdd178 and its retry 79487b41 were refused (the guest's D3D11 device, E_OUTOFMEMORY).
+#   a) the guest stands 1 m behind the host, facing it, and presses LMB (no RMB: CQC). The guest's copy: local act 113
+#      (the strike) -> partner_melee=strike; ...; verdict=land; queued=1. The host's copy applies one friendly hit, cause
+#      sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep on the
+#      ground on both screens.
+#   b) after the host's sleep auto wake (30 s, host-granted), the host stands 1 m behind the guest and strikes: the same
+#      lines with the roles swapped; the guest asleep on both screens.
+#   c) a strike 3 m away (the guest behind the host): partner_melee=strike; ...; verdict=range; queued=0, no hit.
+# Expected NEVER (sliced): friendly_hit=ignored; step=error; viewer_changed; faults.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-partner-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+labsetting partner_melee=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+host debug clear_enemies 100
+stance host stand
+stance guest stand
+placebehind guest host 1
+wait 4000
+both capture a-before
+logmark both
+guest press lmb 120
+guest burst a-strike 4 250
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=' 5
+waitlog host 'friendly_hit=owner;' 6
+wait 1200
+both capture a-down
+wait 3000
+both capture a-down-2
+waitlog host 'step=sleep_auto_wake' 45
+wait 8000
+both capture a-woke
+stance host stand
+stance guest stand
+placebehind host guest 1
+wait 4000
+both capture b-before
+logmark both
+host press lmb 120
+host burst b-strike 4 250
+waitlog host 'partner_melee=strike; act=11[34]; verdict=' 5
+waitlog guest 'friendly_hit=owner;' 6
+wait 1200
+both capture b-down
+wait 3000
+both capture b-down-2
+waitlog host 'step=sleep_auto_wake' 45
+wait 8000
+stance host stand
+stance guest stand
+placebehind guest host 3
+wait 4000
+both capture c-before
+logmark both
+guest press lmb 120
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=range; queued=0' 5
+wait 3000
+both capture c-after

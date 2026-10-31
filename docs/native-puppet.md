@@ -2933,6 +2933,34 @@ leak captures, loadout, census, noise record).
   `switch3` -> `remote_slot` 1, no write (`same`), `weapon.gate=match`, and
   `switch-back-fire` shows suppressed shots.
 
+## Melee
+
+Melee on the other player (`wp/melee`, fb1031). Key `partner_melee` (lab.ini; `native/partner_melee.cpp`, the driver's
+`TickMelee`), **off unless named** in lab and play (a named 1 runs it in both) until a hidden run on both copies shows
+it: both fb1031 runs (`52fdd178`, retry `79487b41`) were refused before admission (the guest's D3D11 device on the
+private desktop failed with E_OUTOFMEMORY), so no game has run the strike yet.
+
+- **Why it did nothing (0.14.5 two-PC session, both copies):** guns are attacker-side: the shooter's real bullet hits
+  body 1 on the shooter's copy (`downed_defense` / `downed_damage` samples `target=1; attacker=0`), FriendlyReplicaHit
+  queues it, Lua sends FRIENDLY_HIT and the victim's copy applies it to its own player. The stock CQC strike never
+  reaches that path: ~100 strikes at 0.3-1.8 m logged no defense or damage sample for body 1 (the sample budgets were
+  not spent). The victim's copy never plays the strike either: the CQC bit 0x8000 is a world bit, never passed to body
+  1 (`partner_pad_dropped; cqc=N`). Those presses were census'd as the remote's act 113 (the strike, 0.2-1.1 s) then
+  114 (the combo's last strike, ~0.5 s); LMB without RMB is CQC (the same press also sets VEHICLE_FIRE and PLACE_MARKER).
+- **What it does:** the attacker's copy judges its own strike: the local act's edge into 113 or 114, body 1 realized and
+  shown, within 1.6 m horizontally and 1 m in height, inside 60 degrees of the local body facing, at most one hit per
+  1.5 s (a miss does not start that window). A landed strike is one friendly hit, cause sleep, into the queue the
+  damage hook uses (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it
+  wakes by itself after 30 s, or with a revive). No new wire op and no new read or patch site.
+- **Line:** `partner_melee=strike; act=113; verdict=land|range|height|angle|repeat|no_body|off; queued=0|1; dist_cm=..;
+  dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
+- **Not done:** the attacker's strike is not drawn on the victim's screen (the CQC bit on body 1 would act on the
+  victim's world: it can grab or punch that copy's soldiers; a DM overlay entry needs the strike's state or clip name,
+  not known); CQC grabs and throws of the other player; a soldier punched next to the other player is unchanged (the
+  strike is applied only on the attacker's copy, as before), but a strike aimed at a soldier with the other player
+  within reach in front also knocks the other player down.
+- Fixtures `partner_melee_tests`, `lab_config_tests`; scenario `melee-partner-play.txt`.
+
 ## Configuration
 
 lab.ini (`native/lab_config.cpp`, LabCommon key table):
@@ -2978,6 +3006,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_unrealize_all` | 0, 1 (G5: the other ride hides (the heli acts 97..108 or a heli ride, a vehicle drawn hidden by `partner_native_ride=hide` or a refused / unavailable seat, a horse rider by its ride kind 3 when `partner_native_mount` is off) unrealize body 1 through Lua's all-active mode like the mount hide, and the link-quality rebase after a ride logs `partner_ride=net_rebased` (the rebase itself is always on), see "Ride hides"; acts only where `partner_native_ride` hides; default 0 in lab and play until a hidden-worker FRAME proves it, a named 1 runs in lab only (play forces it off); a named value records `partner_native_unrealize_all_given`) |
 | `partner_seat_aim` | 0, 1 (the read-only back-seat aim census, see "Seat aim": the local player in a vehicle ride act and body 1 in the seat flow, `partner_seat_aim=sample\|end\|status` lines; lab only, default 0 with or without the gun profile, play forces it off; a named value records `partner_seat_aim_given`) |
 | `partner_seat_gun` | 0, 1 (M7, see "Seat gun": the remote back-seat passenger's raised gun on the seated body 1 through the gesture hook (GunHoldStart on graph 2, body 1's aim rates) and this copy's seated v6 direction; off unless named in lab and play, a named 1 runs in play too; the hold runs but draws no raised gun, runs 30a6a21a..d7cf5a4b; a named value records `partner_seat_gun_given`) |
+| `partner_melee` | 0, 1 (see "Melee": the local CQC strike that reaches body 1 knocks the other player down on their copy; off unless named in lab and play until a hidden run shows it, a named 1 runs it in both; a named value records `partner_melee_given`) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and

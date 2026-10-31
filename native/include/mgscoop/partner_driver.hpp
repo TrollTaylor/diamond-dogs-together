@@ -36,6 +36,7 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
 #include "mgscoop/partner_act_log.hpp"
+#include "mgscoop/partner_melee.hpp"
 #include "mgscoop/partner_dm_overlay.hpp"
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
@@ -471,6 +472,9 @@ struct Hooks {
                            std::uint32_t& after) noexcept = nullptr;
     bool (*seat_fpv_pollers)(void* context, const partner_player::State& state, std::uintptr_t (&rvas)[10]) noexcept = nullptr;
     int (*seat_fpv_override)(void* context) noexcept = nullptr;
+    // Melee on the partner (partner_melee.hpp): one friendly hit for the local player's strike that reached body 1, into
+    // the downed owner's queue (downed_player::QueueFriendlyHit(P, 0, cause 2)); true when queued. Null: nothing queued.
+    bool (*melee_hit)(void* context, std::uintptr_t player) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -671,6 +675,9 @@ struct Settings {
     // M7 seated shots, S1 (lab.ini partner_seat_shot; partner_seat_shot.hpp): the local seated passenger's bullets start
     // past the ridden vehicle. Key off: the lab copy still plans (census lines, nothing moved); play publishes nothing.
     bool seat_shot;
+    // Melee on the partner (lab.ini partner_melee; partner_melee.hpp): a local CQC strike that reaches body 1 hands one
+    // friendly hit (cause sleep) to the downed owner's queue (Hooks::melee_hit). Key off: verdict=off lines only.
+    bool melee;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
@@ -1384,6 +1391,9 @@ struct Mission {
     // --- Round-1 actions track (docs/anim-round1-actions.md).
     // The act census (log only) and the remote's dropped pad presses.
     partner_act_log::ActState act_log;
+    // Melee on the partner (partner_melee.hpp): the local strike machine and its line cap.
+    partner_melee::State melee;
+    LogCap melee_cap;
     partner_act_log::PadState pad_census;
     // The DM overlay lever: its machine, the last step (the next tick's native
     // suspend reason) and its line cap.

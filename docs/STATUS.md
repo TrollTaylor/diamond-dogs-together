@@ -68,6 +68,35 @@ yaw 62, Mother Base `22.61 1.80 -15.55` (the afgh-ledge, africa-jeep and mb-ladd
   Unproven: everything player-visible, the MB -> ACC hop (the lab goto once met an "Overall Completion" screen there),
   the cross-mission Bring.
 
+## 2026-10-31: melee on the other player (branch `wp/melee`, local only; fb1031 two-PC feedback)
+
+**Players get:** nothing yet. The strike is built and unit-tested but **off unless named** (`partner_melee=1`): no game
+has run it, because both hidden runs were refused before admission (below).
+- **Why melee did nothing in 0.14.5** (the 2026-10-31 two-PC session at Mother Base, both copies' logs): gun friendly
+  fire is attacker-side (the shooter's bullet hits body 1 on the shooter's copy: `downed_defense` / `downed_damage`
+  samples `target=1; attacker=0`, `friendly_hit=queued`; the victim's copy applies it, `friendly_hit=owner; ...;
+  cause=2; applied=1; down=1`). The stock CQC strike never reaches that path: ~100 strikes at 0.3-1.8 m logged no
+  defense or damage sample for body 1 while the sample budgets were unspent [I, strong]. And the victim's copy never
+  plays the strike: CQC 0x8000 is a world bit, never passed to body 1 (`partner_pad_dropped; cqc=N`). The census shows
+  those presses as the remote's act 113 (0.2-1.1 s) then 114 (~0.5 s), `match_ms=miss`; LMB without RMB is CQC.
+- **What is built** (`partner_melee`, the driver's `TickMelee`; docs/native-puppet.md "Melee"): the attacker's copy
+  judges its own strike (the local act's edge into 113 / 114; body 1 realized and shown; 1.6 m, 1 m height, 60 degrees
+  of the body facing; one hit per 1.5 s) and queues one friendly hit, cause sleep (`downed_player::QueueFriendlyHit(P,
+  0, 2)`, the damage hook's queue); Lua sends FRIENDLY_HIT and the victim's copy applies the stock player sleep (wakes
+  after 30 s or with a revive). No new wire op, read or patch site; soldier outcomes unchanged. Line
+  `partner_melee=strike; act=..; verdict=land|range|height|angle|repeat|no_body|off; queued=..; dist_cm=..`. Failing
+  first `a294e346` -> `f07b3c8c` (default on), driver test `2bde887e`, default off `f0b7e720` -> `96e6d1e1`; scenario
+  `melee-partner-play.txt`, which names `partner_melee=1` (the worker's labsetting allow-lists admit it: failing first
+  `f9e532d3` -> `b2773e3f`).
+- **Runs refused:** `52fdd178` (13:41) and its one retry `79487b41` (13:47), play, `-WanSim bad`, afgh-ledge: preflight
+  passed, the host was admitted, the guest `event=refused; reason=required_hooks_or_private_desktop`
+  (`child_exited_before_admission`, supervisor code 2); the guest's own overlay log: `D3D11CreateDeviceAndSwapChain
+  hr=0x8007000E`. The console probe passed before and after; the other fb1031 tracks hit the same refusal.
+- **Not done:** any game proof; the attacker's strike drawn on the victim's screen; CQC grabs and throws of the other
+  player; a strike aimed at a soldier with the other player within reach in front also knocks the other player down.
+- Full `tools/build.ps1` at `b2773e3f`: CTest 338/338 (at `96e6d1e1` 337/338: `debug_overlay_tests` hit the same
+  machine-wide D3D11 E_OUTOFMEMORY and passed on its rerun); contract `--check` 838 / 213.
+
 ## 2026-10-31: the split-second ties (branch `wp/seat-near`, local only, design 8.58)
 
 **Players get:** a guest who presses E a moment after the host started getting into the jeep (the host's ride already

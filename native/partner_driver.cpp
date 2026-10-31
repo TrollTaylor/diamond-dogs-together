@@ -4937,6 +4937,30 @@ void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clo
     if (po.capped_now) EmitFormat(h, "partner_pad_dropped=capped; limit=%u\r\n", pal::kPadLineCap);
 }
 
+// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): the local player's CQC strike (act 113 / 114)
+// that reaches body 1 (shown on this copy, not range- or ride-hidden) hands one friendly hit, cause sleep, to the downed
+// owner's queue; the partner's own copy applies it (FRIENDLY_HIT, the stock player sleep). One line per strike edge.
+void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool anim_ok, const pp::Anim& anim,
+               bool local_body, float local_body_yaw) noexcept {
+    Mission& m = d.mission;
+    namespace pm = partner_melee;
+    pm::In in{};
+    in.enabled = d.settings.melee && !terminating;
+    in.local_valid = anim_ok && st.slots_ok && st.local == 0;
+    in.act = anim_ok ? anim.act[0] : 0;
+    in.now_ms = clock.now_ms;
+    if (st.slots_ok) {
+        for (unsigned i = 0; i < 3; ++i) { in.pos0[i] = st.slot[0][i]; in.pos1[i] = st.slot[1][i]; }
+        in.yaw0 = local_body ? local_body_yaw : st.slot[0][3];
+    }
+    in.body_valid = st.slots_ok && pp::Realized(st, partner::partner_index) && !m.range_hidden && !m.visibility.hidden;
+    const pm::Out o = pm::Step(m.melee, in);
+    if (o.verdict == pm::Verdict::none) return;
+    const bool queued = o.queue && h.melee_hit && h.melee_hit(h.context, st.P);
+    char line[256]{};
+    if (pm::FormatStrike(m.melee, in.act, o, queued, line, sizeof(line))) EmitNativeN(h, m.melee_cap, pm::kLineCap, "partner_melee", "%s", line);
+}
+
 // The DM overlay's eligibility (a static reason, or nullptr): body 1 loaded and
 // on foot under the driver, apply=xform (the lever's placement), no carry,
 // ride or range hide, private pose lease, fault or DM latch, and body 1 not in
@@ -6632,6 +6656,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_gun = lab.partner_seat_gun;
     // M7 seated shots, S1 (partner_seat_shot; lab and play).
     d.settings.seat_shot = lab.partner_seat_shot;
+    // Melee on the partner (partner_melee; lab and play, with the gun profile).
+    d.settings.melee = lab.partner_melee;
     // G1 partner HUD hints (lab only, default 0; play forces it off in the loader).
     d.settings.ui_filter = lab.partner_native_ui_filter;
     // Mount riders (docs/mounts.md): lab and play (hide with the gun profile since the play rehearsal 5a044a4d).
@@ -7265,6 +7291,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // Round-1 actions: the act census (log only), before the ride/range guards.
     TickActLog(d, h, st, clock, anim_ok, anim, remote_anim, set.source == PartnerSource::net && sample_status == pose::Status::live,
                set.input_mask);
+    // Melee on the partner: the local strike that reaches body 1 (one friendly hit for the partner's copy).
+    TickMelee(d, h, st, clock, terminating, anim_ok, anim, local_body, local_body_yaw);
     const bool vehicle_job=VehicleJobCurrent(d,h,st,terminating);
     const bool vehicle_attached=VehicleAttached(h,st);
     if(m.vehicle_job&&!vehicle_job){

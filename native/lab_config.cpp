@@ -357,6 +357,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.partner_seat_shot);
         if (ok) result.partner_seat_shot_given = true;
     }
+    else if (Equals(key, "partner_melee")) {
+        // Melee on the partner: a local CQC strike reaching body 1 hands one friendly hit (lab and play); named: _given.
+        ok = ParseBool(value, result.partner_melee);
+        if (ok) result.partner_melee_given = true;
+    }
     else if (Equals(key, "partner_seat_aim")) {
         // G2: the read-only back-seat aim census (lab only, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_aim);
@@ -1756,6 +1761,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // line was shown to damage the east jeep (cat=2) in stock, and seat 1 has no stock control anywhere (seat 3: lab
     // 8a920ec8, Africa jeep, one line; 8.44)); a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
+    // Melee on the partner (docs/native-puppet.md "Melee"): off unless named, in lab and play, until a hidden run on both
+    // copies proves it (fb1031: every run was blocked before admission); a named 1 runs it in both.
+    if (!c.partner_melee_given) c.partner_melee = false;
     // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
     // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
     if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;

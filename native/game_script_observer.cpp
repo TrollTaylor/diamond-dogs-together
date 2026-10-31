@@ -1163,6 +1163,9 @@ bool PartnerSeatFpvPollers(void*, const pp::State& state, std::uintptr_t (&rvas)
     return mgscoop::partner_pass_camera::ReadSubjectivePollers(game_base, state.P, rvas);
 }
 int PartnerSeatFpvOverride(void*) noexcept { return mgscoop::partner_pass_camera::FpvOverride(); }
+// Melee on the partner (partner_melee.hpp): the local strike that reached body 1 is one friendly hit, cause sleep, for
+// the partner's own copy (the queue the damage hook's FriendlyReplicaHit uses; Lua sends it as FRIENDLY_HIT).
+bool PartnerMeleeHit(void*, std::uintptr_t player) noexcept { return mgscoop::downed_player::QueueFriendlyHit(player, 0.f, 2); }
 // M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
 void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
 void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
@@ -1269,7 +1272,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
-    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride};
+    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

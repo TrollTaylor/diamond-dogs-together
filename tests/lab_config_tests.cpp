@@ -610,6 +610,30 @@ int main() {
                   "an invalid seat shot value refuses");
         }
     }
+    // Melee on the partner (partner_melee, docs/native-puppet.md "Melee"): the local CQC strike that reaches body 1 hands
+    // one friendly hit (the stock sleep) to the partner's copy. Off unless named in lab AND play until a hidden run proves
+    // it; a named 1 runs it in both.
+    {
+        Check(!LabConfig{}.partner_melee && !LabConfig{}.partner_melee_given && !Lab("").partner_melee, "melee off without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            // Off unless named until a hidden run on both copies proves it (fb1031: every run was blocked before admission).
+            Check(!profile.partner_melee && !profile.partner_melee_given && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "melee stays off with the gun profile until proven (not named)");
+            const auto named = Lab(gun + mode + "partner_melee=1\n");
+            Check(named.partner_melee && named.partner_melee_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named melee 1 runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_melee=0\n");
+            Check(!off.partner_melee && off.partner_melee_given && off.play_refused == 0, "a named melee 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_melee=") + value + "\n");
+            Check(!invalid.partner_melee && !invalid.partner_melee_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid melee value refuses");
+        }
+    }
     // Seat 1 on the driver's seat matrix (partner_ride_seat1_anchor, design 8.33-8.36): follows the gun profile in lab AND
     // play since the seat-fixes merge (as partner_ride_front; design 8.43), off without it; a named 0 is its off switch,
     // a named 1 runs in lab and play (no refusal bit).
