@@ -37,11 +37,14 @@ struct Fixture {
         in.act = act;
         return pm::Step(s, in);
     }
-    // The vanilla combo: a jab (113), then the finisher straight out of it (114); returns the finisher's verdict.
+    // One press is a 113 then its 114 (run 1526e58a: one 120 ms LMB press with the partner 1.1 m in front gave 113 for
+    // 219 ms, then 114 for 549 ms). Two presses: returns the second press's 113 verdict (the one that lands in reach).
     pm::Out Combo() {
         Step(1);
         Step(113);
-        return Step(114, 200);
+        Step(114, 200);
+        Step(1, 300);
+        return Step(113, 200);
     }
 };
 
@@ -76,10 +79,14 @@ void TestJabAndFinisher() {
     Check(fin.verdict == pm::Verdict::repeat && !fin.queue, "the finisher inside 1.5 s of that land does not queue again");
     Check(f.s.strikes == 3 && f.s.lands == 1, "counters: two jabs, a finisher and one land");
     f.Step(1, pm::kRepeatMs);
-    const auto later = f.Combo();
-    Check(later.verdict == pm::Verdict::land && later.queue, "a jab then the finisher after the repeat window lands again");
-    f.Step(1, pm::kRepeatMs);
+    f.Step(1);
     Check(f.Step(113).verdict == pm::Verdict::jab, "after a land the pair starts over: one jab");
+    const auto same = f.Step(114, 219);
+    Check(same.verdict == pm::Verdict::jab && !same.queue, "one press (113 then its 114) never lands (run 1526e58a)");
+    f.Step(1, 549);
+    const auto next = f.Step(113, 200);
+    Check(next.verdict == pm::Verdict::land && next.queue, "the next press in reach within 2 s lands");
+    Check(f.Step(114, 219).verdict == pm::Verdict::repeat, "that press's 114 is inside the repeat window");
     f.Step(1, pm::kPairMs + 100);
     Check(f.Step(113).verdict == pm::Verdict::jab, "a second jab more than 2 s later is one jab again");
 }
@@ -131,7 +138,7 @@ void TestTakedown() {
         f.Step(113);
         f.Step(1, 100);
         const auto o = f.Step(114, 300);
-        Check(o.verdict == pm::Verdict::land && o.queue, "a 114 within the combo window of the last jab is the finisher");
+        Check(o.verdict == pm::Verdict::jab && !o.queue, "a 114 within the combo window of the last jab is that press's strike: no land alone");
     }
     {
         Fixture f;
@@ -140,7 +147,7 @@ void TestTakedown() {
         f.Step(1, 30);
         f.in.local_valid = true;
         const auto o = f.Step(114, 30);
-        Check(o.verdict == pm::Verdict::land, "a missed local read between the jab and the finisher keeps the combo");
+        Check(o.verdict == pm::Verdict::jab, "a missed local read between the jab and its 114 keeps the press (no takedown)");
     }
 }
 
@@ -214,7 +221,7 @@ void TestMisses() {
         const auto o = f.Combo();
         Check(o.verdict == pm::Verdict::off && !o.queue, "the key off: no hit");
         f.in.enabled = true;
-        Check(f.Step(114).verdict == pm::Verdict::none, "a strike already running when the key turns on is not a new strike");
+        Check(f.Step(113).verdict == pm::Verdict::none, "a strike already running when the key turns on is not a new strike");
     }
     {
         Fixture f; f.in.local_valid = false;
@@ -236,11 +243,11 @@ void TestFormat() {
     Fixture f;
     const auto o = f.Combo();
     char line[256]{};
-    Check(pm::FormatStrike(f.s, 114, o, true, line, sizeof(line)) > 0, "the strike line formats");
-    Check(std::string(line) == "partner_melee=strike; act=114; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=1\r\n",
+    Check(pm::FormatStrike(f.s, 113, o, true, line, sizeof(line)) > 0, "the strike line formats");
+    Check(std::string(line) == "partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=3; lands=1\r\n",
           "the strike line");
     char tiny[8]{};
-    Check(pm::FormatStrike(f.s, 114, o, true, tiny, sizeof(tiny)) == 0 && tiny[0] == 0, "a short buffer formats nothing");
+    Check(pm::FormatStrike(f.s, 113, o, true, tiny, sizeof(tiny)) == 0 && tiny[0] == 0, "a short buffer formats nothing");
 }
 
 } // namespace
@@ -253,8 +260,8 @@ int main() {
     TestPartnerState();
     TestMisses();
     TestFormat();
-    std::printf("%u partner melee checks passed: a jab (113) logs and never queues, the finisher (114 within 600 ms of a 113) "
-                "lands, a 114 from any other act is a soldier takedown, a partner in a CQC hold / box / ladder / ledge or prone "
+    std::printf("%u partner melee checks passed: one press (113 and its 114) logs and never queues, the next press "
+                "in reach within 2 s lands, a 114 from any other act is a soldier takedown, a partner in a CQC hold / box / ladder / ledge or prone "
                 "is not struck, reach 1.6 m, height 1 m, the 60 degree cone on the body facing, the 1.5 s repeat window, no body "
                 "/ key off / no local read, the strike line\n",
                 checks);
