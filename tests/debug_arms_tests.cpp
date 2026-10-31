@@ -7,6 +7,7 @@
 #include "mgscoop/world_wire.hpp"
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 namespace arms = mgscoop::debug_arms;
 namespace act = mgscoop::debug_actions;
