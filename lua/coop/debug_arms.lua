@@ -183,7 +183,8 @@ do
     local m = get(vars, "missionCode")
     if m ~= 30010 and m ~= 30020 and m ~= 30050 then return end
     local paired = type(W) == "table" and W.paired == true
-    if paired and not R.paired and W.host == true then send(2, R.ff) end
+    -- On pairing, and every 600 updates while off (a state lost at the pairing edge reaches the guest later).
+    if paired and W.host == true and (not R.paired or (not R.ff and R.frames % 600 == 0)) then send(2, R.ff) end
     R.paired = paired
     if R.frames % 30 ~= 1 then return end
     local list = resident()

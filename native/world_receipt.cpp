@@ -143,7 +143,8 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
     if (!Token(p, end, x) || p >= end || *p != ' ') return false;
     ++p;
     if (!Token(p, end, y) || p != end) return false;
-    if (c < 1 || c > 15 || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
+    // 1..15, and 18 ARMS (debug menu Friendly fire); 16 and 17 belong to other debug-menu tracks.
+    if (c < 1 || (c > 15 && c != 18) || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
     code = static_cast<std::uint8_t>(c);
     a = static_cast<std::uint32_t>(x);
     b = static_cast<std::uint32_t>(y);
