@@ -1052,8 +1052,12 @@ What the mod does (`partner_pass_camera_policy` FpvStep, TickPassCamera): with t
 or 2 and the gun ready (FpvReady: mode 7, 9 or 10; not during the raise, so the raise's muzzle probe sees the shoulder
 pose that first person then keeps), the hand slot's bit is set in `impl+0x60` (one interlocked compare-exchange under
 SEH; only bits in `0x11F`). The bits it set are cleared when the aim ends, at the get-off, a seat
-change, the key's end, and the mission end / stop (SeatFpvRelease). A bit seen set during an aim that goes clear while the
-aim goes on is the player's own F tap: nothing more is set for that boarding, and the player's own bits are never cleared.
+change, the key's end, and (SeatFpvRelease, design 8.47) the mission end, the stop (also while terminating), the next
+MissionStart and a refused or rejected tick. A clear stays pending until a read shows the bit clear (a failed write, or
+the game's plain store in ToggleAimFpvModeOnPad over our compare-exchange) and is retried on later ticks, on foot too,
+at most `kFpvClearTries` (30) times; the release needs only P (a refused state read during the unload still names the
+player). A bit seen set during an aim that goes clear while the aim goes on is the player's own F tap (our own pending
+bits never count): nothing more is set for that boarding, and the player's own bits are never cleared.
 No code patch and no game call. The blocks (`seat_fpv_blocks`, 10) are checked once per process before the first read;
 the module is found by its vtable among the six.
 

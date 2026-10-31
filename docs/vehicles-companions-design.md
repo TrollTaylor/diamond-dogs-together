@@ -3470,8 +3470,8 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   of `D3D11CreateDevice` returned `0x8007000E` on the NVIDIA adapter only, with 21-22 GB system commit free (so not the
   commit floor) and 13.9 / 16 GB GPU dedicated memory in use; it created again at 19:43. 19:45 the rerun
   (`784ea30ba3e04ec7ade024766066beaa`) ended `IsolationFailed=True` / `child_exited_before_admission`; the guest's overlay
-  refused (`graphics_or_input_hook`); stopped by rule. [I] GPU memory (the same hardware D3D11 path failed 19:34-19:41);
-  [U] the snipping tool (runs since 18:04 were admitted with it running).
+  refused (`graphics_or_input_hook`); stopped by rule. Cause [U] (8.47): the hardware D3D11 device failed 19:34-19:41,
+  but a later refusal came with it creating fine; the snipping tool ran through the admitted runs since 18:04.
 - **Open, unchanged from 8.44:** everything planned above; S1's play benefit stays [U].
 
 ### 8.46 Seat first person (2026-10-30, branch `wp/seat-fpv2`; built, not proven: the worker refused the probe)
@@ -3487,15 +3487,38 @@ Numbering: 8.33-8.36 are `wp/seat1-draw`'s, 8.37 was 8.33 on `wp/self-hit`, 8.38
   4 slots pinned (contract 836 / 213). Lab trace: `state=fpv_trace`, `state=pollers`. Details: native-puppet.md
   "Seat first person".
 - **Probe not run:** `caf8fbc7` (`m6m7f-seat-fpv-probe.txt`) ended `IsolationFailed` / `child_exited_before_admission`
-  (the guest's overlay `refused; reason=graphics_or_input_hook`), like the 19:45 run of 8.45. [I] The cause is the
-  hardware D3D11 device on the NVIDIA adapter (`0x8007000E` 19:34-19:41 and in the DX11 CTest fixture 19:58-20:02,
-  with 22-36 GB commit free; GPU memory nearly full); the snipping tool is [U] (admitted runs since 18:04 had it
-  running, and the fixture passed again at 20:09 with it still running). No retry (blocker).
+  (the guest's overlay `refused; reason=graphics_or_input_hook`), like the 19:45 run of 8.45. The hardware D3D11 device
+  failed (`0x8007000E`) 19:34-19:41 and in the DX11 CTest fixture 19:58-20:02, but the 20:31 refusal (8.47) came with the
+  device creating fine: the cause is [U]. No retry (blocker).
 - **Open** [U]: whether the 8.27 pull acts in first person (the shot guard is off there: GuardStep wants the aim module;
   a guard extension to the subjective module with references reset on a module change is drafted, not landed); whether
   a first-person shot from a seat lands (S1 moves the start along the line of sight [I]); who calls SaveModes `0x129F450`
   (a checkpoint during a seated aim could persist the bit); the get-off look-at of Deactivate against the get-off turn.
   The probe scenario is ready for the next round.
+
+### 8.47 The seat branches integrated: the review fixes (2026-10-30, branch `wp/seat-fpv2` with `wp/seat-checks` merged)
+
+- **Release fixes** (the key stays off; failing first `15d5ed2` -> `f5603bb`): a clear of our toggle bit stays pending
+  until a read shows the bit clear and is retried on later ticks, on foot too (`kFpvClearTries` 30, then given up); our
+  own pending bit never reads as the player's tap; SeatFpvRelease writes with P alone, keeps a failed clear for the next
+  MissionStart, and runs at the terminating stop, MissionStart and the `cfg_refused` / `tick_rejected` early returns.
+  FpvInstall publishes "done" only after its refusal is stored. The trace drops the unpinned `impl+0xE0` read (`st=`)
+  and uses the contract's flag-record constants. Driver tests: a failed clear, a cfg refusal mid-aim, the terminating
+  stop, a missed MissionEnd, a MissionEnd with the state read refused, the key off on every exit.
+- **Scenarios:** -b part C requires seat 1 (the partner boards 1.5 s after the driver's E; a lost race fails instead of
+  passing as seat 3); the seat-3 S1 wait accepts any result (judged when slicing). New
+  `m6m7f-seat-ftap-play.txt`: the stock F tap from seats 1 and 2 in both roles at the shipped play defaults.
+- **Run:** `5e5a2131d611489ba74f9c5e5589398a` (`m6m7f-seat-ftap-play.txt`, play, `-WanSim bad`, shipped defaults) was
+  refused before admission (`IsolationFailed`, `child_exited_before_admission`, 1067): the host's worker refused
+  (`required_hooks_or_private_desktop`), the host's overlay `refused; reason=graphics_or_input_hook`. The hardware D3D11
+  device created on every adapter at 20:30 and 20:32 (GPU 6.1 / 16.3 GB in use). Stopped by rule.
+- **Blocker** [U]: four refusals this round; the 20:31 one came with the device creating fine, so GPU memory does not
+  explain it, and the snipping tool ran through the admitted runs at 18:04-18:27. The refusal line names no step (device,
+  present hook, input hook); logging the failing step and its HRESULT is the next diagnostic (outside the sleeper
+  greyscale).
+- **Open:** everything of 8.44-8.46 that needs a game: the stock F tap at the shipped defaults (both roles, the prompt,
+  a first-person shot, a get-off in first person), the -b rehearsal, the S1 stock control, the automatic first person;
+  who calls SaveAimFpvModes `0x129F450`; whether the toggle write and the camera poller share a thread.
 
 ## 9. Milestones
 
