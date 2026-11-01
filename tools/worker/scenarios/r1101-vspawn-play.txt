@@ -1,0 +1,122 @@
+# Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua) in mode=play with the lab key
+# named (labsetting debug_vspawn=1: off unless named until this run shows it on both copies). Afghanistan free roam,
+# the Wakh Sind road (the seats scenarios' flat spot): the host faces north, the guest east, 12 m north of the host.
+#   A  the host presses Spawn jeep: one of the area's own light vehicles comes 6 m in front of the host, facing north, on
+#      both copies (host: event=vspawn; step=pick / apply / placed ok=1; guest: step=rx kind=2 / apply / placed ok=1, the
+#      same locator); frames on both screens (the guest turned south 3 m short of the concrete block that hid the jeep
+#      in run 5cdbfada: the same jeep at the same spot).
+#   B  the guest presses Spawn truck: its ask (kind 1) reaches the host, which brings a truck 6 m in front of the GUEST
+#      (step=pick ... for=guest) and answers kind 3; the guest applies the same locator; frames on both screens.
+#   C  the host drives the spawned jeep with the guest riding: goto_vehicle jeep puts the host 1.9 m on the jeep's +x
+#      side (the driver's door of the north-facing jeep in run 5cdbfada) and goto_vehicle jeep right the guest on the
+#      other side; each presses E (the door receipt is lab only); the guest sits by the seats module (board_seated; its
+#      vehicle_seats answers vehicle_not_riding: no ON_VEHICLE in that seat); the host holds the throttle (about 7 m
+#      before the concrete block ahead in 5cdbfada); frames on both screens while moving.
+#   D  a refusal: a press while driving is refused (busy: ON_VEHICLE; 5cdbfada took it and brought a second jeep), with
+#      note 20's toast; the guest's back-seat press too (by=seat). Frames on both screens while both toasts are up (run
+#      65b4005c captured only the host's).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-vspawn-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+# NEVER: event=vspawn; step=error, step=placed ... ok=0, bad_op, wrong_dir, unknown_op, GameOver.
+labsetting debug_vspawn=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug teleport 597.0 320.5 1157.5 0
+guest debug teleport 597.0 320.5 1169.5 90
+wait 5000
+both debug godmode 1
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+wait 1500
+stance host stand
+stance guest stand
+host run vspawn_status
+host expect ^vspawn;on=1;role=host;mission=30010;recent=none;moving=0;ask=0$
+guest run vspawn_status
+guest expect ^vspawn;on=1;role=guest;mission=30010;
+both capture a-before
+# --- A: the host's jeep ---------------------------------------------------------------------------------------------
+logmark both
+host run vspawn lv
+host expect ^vspawn;class=lv;loc=veh_lv_\d{4};sent=1$
+waitlog host 'world_lua=event=vspawn; step=pick; loc=veh_lv_[0-9]{4}; id=[0-9]+; alive=1;' 5
+waitlog host 'world_lua=event=vspawn; step=apply; loc=veh_lv_[0-9]{4}; id=[0-9]+; via=setpos; by=self;' 5
+waitlog guest 'world_lua=event=vspawn; step=rx; kind=2;' 10
+waitlog guest 'world_lua=event=vspawn; step=apply; loc=veh_lv_[0-9]{4}; id=[0-9]+; via=(setpos|respawn); by=host;' 10
+waitlog host 'world_lua=event=vspawn; step=placed; loc=veh_lv_[0-9]{4}; id=[0-9]+; d_m=[0-9.]+; dy_m=[-0-9.]+; ok=1; by=self' 10
+waitlog guest 'world_lua=event=vspawn; step=placed; loc=veh_lv_[0-9]{4}; id=[0-9]+; d_m=[0-9.]+; dy_m=[-0-9.]+; ok=1; by=host' 10
+wait 1500
+guest debug teleport 597.0 320.5 1168.5 180
+wait 2500
+both capture a-jeep
+host run vspawn_status
+guest run vspawn_status
+guest debug teleport 597.0 320.5 1169.5 90
+wait 2500
+# --- B: the guest's truck -------------------------------------------------------------------------------------------
+logmark both
+guest run vspawn trc
+guest expect ^vspawn_asked;class=trc;seq=\d+$
+waitlog host 'world_lua=event=vspawn; step=rx; kind=1;' 10
+waitlog host 'world_lua=event=vspawn; step=pick; loc=veh_trc_[0-9]{4}; id=[0-9]+; alive=[01]; d=[0-9]+; for=guest' 5
+waitlog host 'world_lua=event=vspawn; step=tx; kind=3;' 5
+waitlog guest 'world_lua=event=vspawn; step=apply; loc=veh_trc_[0-9]{4}; id=[0-9]+; via=(setpos|respawn); by=host;' 10
+waitlog guest 'world_lua=event=vspawn; step=placed; loc=veh_trc_[0-9]{4};.*ok=1; by=host' 10
+waitlog host 'world_lua=event=vspawn; step=placed; loc=veh_trc_[0-9]{4};.*ok=1; by=self' 10
+wait 1500
+both capture b-truck
+host run vspawn_status
+guest run vspawn_status
+# --- C: the host drives the spawned jeep, the guest rides ----------------------------------------------------------
+logmark both
+host debug goto_vehicle jeep
+wait 2500
+both capture c-door
+host press e 150
+wait 3500
+host run vehicle_seats
+host expect ^vehicle;id=\d+;seats=\d+;riders=.*localSeat=1;
+guest debug goto_vehicle jeep right
+wait 2500
+guest press e 150
+waitlog guest 'partner_ride=board_seated; vehicle=[0-9]+; seat=[1-3];' 10
+wait 2000
+guest run vehicle_seats
+both capture c-seated
+host hold w 1500
+host hold w 1500
+host release
+wait 500
+both burst c-drive 6 400
+host hold w 1500
+host release
+wait 1500
+both capture c-after
+# --- D: a refusal on both copies (the host driving, the guest in the back seat: BOARD_SEAT lpv, no ON_VEHICLE) ---------
+logmark both
+host run vspawn lv
+host expect ^vspawn_refused;reason=busy$
+waitlog host 'world_lua=event=vspawn; step=refused; reason=busy; by=on_vehicle' 5
+waitlog host 'world=note; code=20; a=3; b=5;' 5
+guest run vspawn trc
+guest expect ^vspawn_refused;reason=busy$
+waitlog guest 'world_lua=event=vspawn; step=refused; reason=busy; by=(seat|on_vehicle)' 5
+waitlog guest 'world=note; code=20; a=3; b=5;' 5
+wait 1000
+both capture d-refused
+guest press e 150
+wait 3000
+host press e 150
+wait 3000
+both capture d-end
+state

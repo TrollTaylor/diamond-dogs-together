@@ -297,6 +297,7 @@ std::uint32_t g_ring_prev[pi::kConsumers]{};
 volatile LONG g_r_on = 0, g_r_windows = 0, g_r_refused = 0, g_r_changed = 0, g_r_last = 0;
 // Placement and the weapon gate.
 volatile LONG g_n_neutral = 0, g_n_strip = 0, g_n_strip_bits = 0, g_n_drain_disarmed = 0;
+volatile LONG g_n_trig_zero = 0;  // r1101 animtruth: windows whose strip zeroed LT/RT
 // The partner's own reload (R1/R4): RELOAD edges seen, frozen drains,
 // reconciles and rec+0x3E8 writes (atomics for the driver); hook thread only:
 // the pending reconcile and last accepted slot live in g_mag_history.
@@ -537,6 +538,15 @@ struct WindowOpts {
     std::uint8_t consumer;
     bool icon;       // F3: the padop vtable copy (drain windows with a pending icon request)
 };
+// r1101 animtruth (Arm.truth_triggers, finder M8): a strip's HOLD / FIRE also
+// zero LT / RT (the tested pure StripWindow); windows that zeroed a non-zero
+// level are counted (trig_zeroed, with Compose's zeroed frames).
+pi::Injection TruthTriggers(const pi::Arm& a, const pi::Injection& j, std::uint32_t strip) noexcept {
+    bool zeroed = false;
+    const pi::Injection t = pi::StripWindow(a, j, strip, zeroed);
+    if (zeroed) InterlockedIncrement(&g_n_trig_zero);
+    return t;
+}
 // What a native window injects: the composed view, or Neutral() while the
 // body is placed (Arm.neutral), without the weapon gate's bits (Arm.strip).
 pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
@@ -555,7 +565,7 @@ pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (strip) {
         InterlockedIncrement(&g_n_strip);
         InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(strip));
-        return pi::Strip(j, strip);
+        return TruthTriggers(a, j, strip);
     }
     return j;
 }
@@ -1139,6 +1149,8 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     }
     pi::Injection j = pi::Compose(a.config, sc, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
                                   a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
+    // r1101 animtruth (review animtruth-4): a frame whose LT/RT Compose zeroed (strip_triggers).
+    if (j.trig_stripped) InterlockedIncrement(&g_n_trig_zero);
     // Native support (WS2): the stall freeze and the FIRE-edge buffer on the frame itself.
     if (a.native && a.config.mode == PartnerInput::net) j = SupportFrame(a, j, now_ms, s.valid ? s.age_ms : pi::kNoSample);
     if (j.hist_reset) g_hist = pi::HoldHistory{};
@@ -3378,7 +3390,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
                                                           NowMs() - g_frame_ms, a.config, &view));
     if(!support_window && partner_support_policy::Request(a.native_support,j.slot_valid,j.inv_slot,a.strip))
-        j=pi::Strip(j,0x8078u);
+        j=TruthTriggers(a,j,0x8078u);
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
     Save save{};native_work_timing::Token timing=native_work_timing::Begin(native_work_timing::Kind::pose_begin);
@@ -3759,6 +3771,7 @@ void DrainStats(Stats& out) noexcept {
     n.neutral_windows = static_cast<std::uint32_t>(g_n_neutral);
     n.strip_windows = static_cast<std::uint32_t>(g_n_strip);
     n.strip_bits = static_cast<std::uint32_t>(g_n_strip_bits);
+    n.trig_zero_windows = static_cast<std::uint32_t>(g_n_trig_zero);
     n.drain_disarmed = static_cast<std::uint32_t>(g_n_drain_disarmed);
     n.fire_requested = static_cast<std::uint32_t>(g_f_requested);
     n.fire_shot_drains = static_cast<std::uint32_t>(g_f_shot_drains);

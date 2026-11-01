@@ -781,6 +781,44 @@ int main() {
             Check(!late.partner_ride_getin_cut && late.invalid_values == 1, "an invalid get-in cut value after a valid 1 turns it off");
         }
     }
+    // r1101 vanim (partner_ride_steer, docs/vehicle-ws3.md "Driver pose"): follows the native gun profile in lab and play
+    // since the r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's
+    // hands level when straight and a turning pose for a and the other for d); off without the profile; a named 0 opts out
+    // (named); a named 1 runs without the profile; an invalid value is named and off, also after a valid 1.
+    {
+        Check(!LabConfig{}.partner_ride_steer && !LabConfig{}.partner_ride_steer_given && !Lab("").partner_ride_steer,
+              "the driver steer pose is off without the gun profile");
+        Check(Lab("enabled=1\nrole=host\npartner_ride_steer=1\n").partner_ride_steer, "a named steer pose runs without the gun profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string plainPlay = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                      "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        const auto plain = Lab(plainPlay);
+        Check(!plain.partner_ride_steer && plain.play_refused == 0, "the steer pose stays off in play without the gun profile");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_ride_steer && !profile.partner_ride_steer_given && profile.invalid_values == 0 &&
+                      profile.unknown_keys == 0 && profile.play_refused == 0,
+                  "the gun profile turns the steer pose on in lab and play (not named)");
+            const auto named = Lab(gun + mode + "partner_ride_steer=1\n");
+            Check(named.partner_ride_steer && named.partner_ride_steer_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
+                  "a named steer pose runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_ride_steer=0\n");
+            Check(!off.partner_ride_steer && off.partner_ride_steer_given && off.invalid_values == 0 && off.play_refused == 0,
+                  "a named steer pose 0 opts out with the gun profile");
+            const auto bad = Lab(gun + mode + "partner_ride_steer=maybe\n");
+            Check(!bad.partner_ride_steer && bad.partner_ride_steer_given && bad.invalid_values == 1,
+                  "an invalid steer pose value is named and off with the gun profile");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_steer=") + value + "\n");
+            Check(!invalid.partner_ride_steer && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid steer pose value refuses (off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_steer=1\npartner_ride_steer=") + value + "\n");
+            Check(!late.partner_ride_steer && late.invalid_values == 1, "an invalid steer pose value after a valid 1 turns it off");
+        }
+    }
     // fb1031 gear (partner_equip_midload): off unless named in lab and play (not run-proven yet), even with the gun
     // profile; a named 1 runs in lab and play; an invalid value is named and off, also after a valid 1.
     {
@@ -1844,6 +1882,135 @@ int main() {
             Check(!reBadPlay.world_relief && reBadPlay.invalid_values == 1, "an invalid world_relief keeps it off in play too");
             const auto reLater = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\nworld_relief=1\n");
             Check(reLater.world_relief && reLater.world_relief_given, "a later world_relief=1 wins");
+            // Debug menu Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): debug_vspawn follows the gun profile in lab and
+            // play since the r1101 Prove phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep, the
+            // guest's truck, the ride, and both riders' presses refused as busy); off without the profile; a named 1 runs in
+            // lab and play, a named 0 opts out, an invalid value is named and off (also after a valid 1).
+            const auto vsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\ndebug_vspawn=1\n");
+            const auto vsLab = Lab("enabled=1\nrole=guest\nworld=3\ndebug_vspawn=1\n");
+            const auto vsBad = Lab("enabled=1\nrole=host\ndebug_vspawn=2\n");
+            Check(!LabConfig{}.debug_vspawn && !def.debug_vspawn && !vehiclePlayDefault.debug_vspawn,
+                  "debug_vspawn stays off without the gun profile (lab and play)");
+            Check(vsLab.debug_vspawn && vsLab.invalid_values == 0 && vsLab.unknown_keys == 0, "debug_vspawn=1 parses in lab");
+            Check(vsPlay.mode == mgscoop::LabMode::play && vsPlay.debug_vspawn && vsPlay.play_refused == 0 && vsPlay.invalid_values == 0,
+                  "debug_vspawn=1 parses in play with no refusal bit");
+            Check(!vsBad.debug_vspawn && vsBad.invalid_values == 1, "an invalid debug_vspawn keeps it off");
+            const std::string vsGun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                      "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto vsProfile = Lab(vsGun + mode);
+                Check(vsProfile.debug_vspawn && vsProfile.invalid_values == 0 && vsProfile.unknown_keys == 0 && vsProfile.play_refused == 0,
+                      "the gun profile turns Spawn vehicle on in lab and play (not named)");
+                const auto vsOff = Lab(vsGun + mode + "debug_vspawn=0\n");
+                Check(!vsOff.debug_vspawn && vsOff.invalid_values == 0 && vsOff.play_refused == 0, "a named debug_vspawn 0 opts out with the gun profile");
+                const auto vsInvalid = Lab(vsGun + mode + "debug_vspawn=maybe\n");
+                Check(!vsInvalid.debug_vspawn && vsInvalid.invalid_values == 1, "an invalid debug_vspawn is named and off with the gun profile");
+                const auto vsLate = Lab(vsGun + mode + "debug_vspawn=1\ndebug_vspawn=2\n");
+                Check(!vsLate.debug_vspawn && vsLate.invalid_values == 1, "an invalid debug_vspawn after a valid 1 turns it off");
+            }
+        }
+        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the native gun profile in lab and play
+        // since the r1101 Prove phase (hidden play run 7d924fac, both copies: the partner puppet's Fulton attach and the
+        // receiver's balloon lift, soldiers both ways and a vehicle); off without the profile; a named 1 parses in lab and
+        // play with no refusal bit, a named 0 opts out, an invalid value is named and off. fulton_one_save (the receiver's
+        // soldier credit skipped: the Fultoner's save only, which reverses D1) is its own key, off unless named.
+        {
+            const auto fsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n");
+            const auto fsPlayDefault = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n");
+            const auto fsDef = Lab("enabled=1\nrole=guest\nworld=3\n");
+            const auto fsLab = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\n");
+            const auto fsOff = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=0\n");
+            const auto fsBad = Lab("enabled=1\nrole=host\nfulton_sync=2\n");
+            Check(!fsDef.fulton_sync && !fsDef.fulton_sync_given && !fsPlayDefault.fulton_sync && !fsPlayDefault.fulton_sync_given,
+                  "fulton_sync stays off without the gun profile (lab and play)");
+            const std::string fsGunBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                          "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto fsGun = Lab(fsGunBase + mode);
+                Check(fsGun.fulton_sync && !fsGun.fulton_sync_given && !fsGun.fulton_early && !fsGun.fulton_look && !fsGun.fulton_one_save &&
+                          fsGun.invalid_values == 0 && fsGun.unknown_keys == 0 && fsGun.play_refused == 0 && mgscoop::FultonCfgBits(fsGun) == 1,
+                      "the gun profile turns fulton_sync on in lab and play (not named); fulton_early, fulton_look, fulton_one_save stay off");
+                const auto fsGunOff = Lab(fsGunBase + mode + "fulton_sync=0\n");
+                Check(!fsGunOff.fulton_sync && fsGunOff.fulton_sync_given && fsGunOff.invalid_values == 0 && fsGunOff.play_refused == 0 &&
+                          mgscoop::FultonCfgBits(fsGunOff) == 0,
+                      "a named fulton_sync 0 opts out with the gun profile");
+                const auto fsGunBad = Lab(fsGunBase + mode + "fulton_sync=maybe\n");
+                Check(!fsGunBad.fulton_sync && fsGunBad.invalid_values == 1, "an invalid fulton_sync is named and off with the gun profile");
+                const auto fsGunOne = Lab(fsGunBase + mode + "fulton_one_save=1\n");
+                Check(fsGunOne.fulton_sync && fsGunOne.fulton_one_save && fsGunOne.fulton_one_save_given && fsGunOne.invalid_values == 0 &&
+                          fsGunOne.unknown_keys == 0 && fsGunOne.play_refused == 0 && mgscoop::FultonCfgBits(fsGunOne) == 9,
+                      "a named fulton_one_save=1 parses in lab and play with the gun profile (CFG r[18] bit 8)");
+            }
+            Check(fsLab.fulton_sync && fsLab.fulton_sync_given && fsLab.invalid_values == 0 && fsLab.unknown_keys == 0, "fulton_sync=1 parses in lab");
+            Check(fsPlay.mode == mgscoop::LabMode::play && fsPlay.fulton_sync && fsPlay.play_refused == 0 && fsPlay.invalid_values == 0,
+                  "fulton_sync=1 parses in play with no refusal bit");
+            Check(!fsOff.fulton_sync && fsOff.fulton_sync_given && fsOff.invalid_values == 0, "a named 0 keeps it off");
+            Check(!fsBad.fulton_sync && fsBad.invalid_values == 1 && fsBad.unknown_keys == 0, "an invalid fulton_sync keeps it off");
+            // Review fixes of 2026-11-01: the early vehicle lift (fulton_early) and the borrowed wormhole look (fulton_look)
+            // each have their own key, off unless named in lab and play, used only with fulton_sync (CFG r[18] bits 2, 4).
+            const auto feAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\n");
+            const auto feEarly = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\n");
+            const auto feLook = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_look=1\n");
+            const auto feNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_early=1\nfulton_look=1\n");
+            const auto feBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=2\nfulton_look=maybe\n");
+            const auto fePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n"
+                                    "fulton_early=1\nfulton_look=1\n");
+            Check(!fsDef.fulton_early && !fsDef.fulton_early_given && !fsDef.fulton_look && !fsDef.fulton_look_given &&
+                      !fsPlayDefault.fulton_early && !fsPlayDefault.fulton_look && !fsLab.fulton_early && !fsLab.fulton_look,
+                  "fulton_early and fulton_look default off (lab and play, also with fulton_sync=1)");
+            Check(feAll.fulton_early && feAll.fulton_early_given && feAll.fulton_look && feAll.fulton_look_given && feAll.invalid_values == 0 &&
+                      feAll.unknown_keys == 0 && fePlay.fulton_early && fePlay.fulton_look && fePlay.play_refused == 0 && fePlay.invalid_values == 0,
+                  "fulton_early=1 and fulton_look=1 parse in lab and play");
+            Check(!feBad.fulton_early && !feBad.fulton_look && feBad.invalid_values == 2 && feBad.unknown_keys == 0, "invalid values keep them off");
+            Check(mgscoop::FultonCfgBits(fsDef) == 0 && mgscoop::FultonCfgBits(fsLab) == 1 && mgscoop::FultonCfgBits(feEarly) == 3 &&
+                      mgscoop::FultonCfgBits(feLook) == 5 && mgscoop::FultonCfgBits(feAll) == 7 && mgscoop::FultonCfgBits(fePlay) == 7 &&
+                      mgscoop::FultonCfgBits(feNoSync) == 0,
+                  "CFG r[18]: 1 fulton_sync, 2 fulton_early, 4 fulton_look; nothing without fulton_sync");
+            // fulton_one_save (CFG r[18] bit 8): off unless named (lab, gun profile and play), only with fulton_sync.
+            const auto foAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\nfulton_one_save=1\n");
+            const auto foNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_one_save=1\n");
+            const auto foBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_one_save=maybe\n");
+            Check(!fsDef.fulton_one_save && !fsDef.fulton_one_save_given && !fsPlayDefault.fulton_one_save && !fsLab.fulton_one_save &&
+                      !fsPlay.fulton_one_save,
+                  "fulton_one_save defaults off (lab and play, also with fulton_sync=1)");
+            Check(foAll.fulton_one_save && foAll.fulton_one_save_given && foAll.invalid_values == 0 && foAll.unknown_keys == 0 &&
+                      mgscoop::FultonCfgBits(foAll) == 15 && mgscoop::FultonCfgBits(foNoSync) == 0,
+                  "CFG r[18]: 8 fulton_one_save (15 with every key); nothing without fulton_sync");
+            Check(!foBad.fulton_one_save && foBad.fulton_one_save_given && foBad.invalid_values == 1 && mgscoop::FultonCfgBits(foBad) == 1,
+                  "an invalid fulton_one_save is named and off");
+            // r1101 land: fulton_guest_vehicle (CFG r[18] bit 16): the guest's balloon lift of a vehicle the HOST Fultoned. Only
+            // the guest-to-host vehicle lift ran in a game (runs 7d924fac, 19882881); the host-to-guest one (it reaches the
+            // guest by the host's VEHICLE_GONE, another path) never ran, so it is off unless named (lab, gun profile and play)
+            // and the guest's copy removes such a vehicle as before (D14's Seize Instant / the Despawn).
+            const auto fgAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\nfulton_one_save=1\n"
+                                   "fulton_guest_vehicle=1\n");
+            const auto fgOne = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=1\n");
+            const auto fgNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_guest_vehicle=1\n");
+            const auto fgBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=maybe\n");
+            // The parse does not depend on the role (the key acts only on the guest's copy, world_vehicle_rules.lua).
+            const auto fgPlay = Lab(fsGunBase + "mode=play\nfulton_guest_vehicle=1\n");
+            Check(!fsDef.fulton_guest_vehicle && !fsDef.fulton_guest_vehicle_given && !fsPlayDefault.fulton_guest_vehicle &&
+                      !fsLab.fulton_guest_vehicle && !fsPlay.fulton_guest_vehicle && !foAll.fulton_guest_vehicle,
+                  "fulton_guest_vehicle defaults off (lab and play, also with fulton_sync=1 and every other fulton key)");
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto fgGun = Lab(fsGunBase + mode);
+                Check(fgGun.fulton_sync && !fgGun.fulton_guest_vehicle && !fgGun.fulton_guest_vehicle_given && mgscoop::FultonCfgBits(fgGun) == 1,
+                      "the gun profile leaves fulton_guest_vehicle off (lab and play)");
+            }
+            Check(fgOne.fulton_guest_vehicle && fgOne.fulton_guest_vehicle_given && fgOne.invalid_values == 0 && fgOne.unknown_keys == 0 &&
+                      mgscoop::FultonCfgBits(fgOne) == 17 && fgAll.fulton_guest_vehicle && mgscoop::FultonCfgBits(fgAll) == 31 &&
+                      mgscoop::FultonCfgBits(fgNoSync) == 0,
+                  "CFG r[18]: 16 fulton_guest_vehicle (31 with every key); nothing without fulton_sync");
+            Check(fgPlay.mode == mgscoop::LabMode::play && fgPlay.fulton_sync && fgPlay.fulton_guest_vehicle && fgPlay.play_refused == 0 &&
+                      fgPlay.invalid_values == 0 && fgPlay.unknown_keys == 0 && mgscoop::FultonCfgBits(fgPlay) == 17,
+                  "a named fulton_guest_vehicle=1 parses in play with the gun profile, no refusal bit");
+            Check(!fgBad.fulton_guest_vehicle && fgBad.fulton_guest_vehicle_given && fgBad.invalid_values == 1 &&
+                      mgscoop::FultonCfgBits(fgBad) == 1,
+                  "an invalid fulton_guest_vehicle is named and off");
         }
         // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
         // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
@@ -1957,6 +2124,46 @@ int main() {
             Check(dmgOff.mode == mgscoop::LabMode::play && !dmgOff.world_vehicle_damage && dmgOff.world_vehicle_damage_given,
                   "a named world_vehicle_damage=0 keeps it off in play");
         }
+        // Supply drops synced (r1101, docs/world-sync-protocol.md section 26, lua/coop/world_supply.lua): world_supply
+        // installs the supply-box observer and the SUPPLY op's Lua module. Lab and play (no refusal bit). It follows the
+        // native gun profile in lab and play since the r1101 Prove phase (hidden play run 69efd63b, both copies: the
+        // host's script and iDroid AMMO / FULTON drops and the guest's iDroid drop fell on both copies and were delivered
+        // on both, crossing drops kept each player's own box, a WEAPONS / ITEMS drop stayed local); off without the
+        // profile; a named 0 opts out, an invalid value is named and off (also after a valid 1).
+        {
+            const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+            const auto supplyPlain = Lab("enabled=1\nrole=host\n");
+            const auto supplyPlay = Lab(play);
+            Check(!LabConfig{}.world_supply && !supplyPlain.world_supply && !supplyPlain.world_supply_given && !supplyPlay.world_supply &&
+                      !supplyPlay.world_supply_given && supplyPlay.play_refused == 0,
+                  "world_supply stays off without the gun profile (lab and play)");
+            const std::string supplyGunBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                              "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto supplyProfile = Lab(supplyGunBase + mode);
+                Check(supplyProfile.world_supply && !supplyProfile.world_supply_given && supplyProfile.invalid_values == 0 &&
+                          supplyProfile.unknown_keys == 0 && supplyProfile.play_refused == 0,
+                      "the gun profile turns supply drops synced on in lab and play (not named)");
+                const auto supplyNamedOff = Lab(supplyGunBase + mode + "world_supply=0\n");
+                Check(!supplyNamedOff.world_supply && supplyNamedOff.world_supply_given && supplyNamedOff.invalid_values == 0 &&
+                          supplyNamedOff.play_refused == 0,
+                      "a named world_supply 0 opts out with the gun profile");
+                const auto supplyInvalid = Lab(supplyGunBase + mode + "world_supply=maybe\n");
+                Check(!supplyInvalid.world_supply && supplyInvalid.invalid_values == 1, "an invalid world_supply is named and off with the gun profile");
+                const auto supplyLate = Lab(supplyGunBase + mode + "world_supply=1\nworld_supply=2\n");
+                Check(!supplyLate.world_supply && supplyLate.invalid_values == 1, "an invalid world_supply after a valid 1 turns it off");
+            }
+            const auto supplyOn = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=1\n");
+            Check(supplyOn.world_supply && supplyOn.world_supply_given && supplyOn.invalid_values == 0 && supplyOn.unknown_keys == 0, "world_supply=1 parses in the lab");
+            const auto supplyOff = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=0\n");
+            Check(!supplyOff.world_supply && supplyOff.world_supply_given && supplyOff.invalid_values == 0, "world_supply=0 is named and off");
+            const auto supplyBad = Lab("enabled=1\nrole=host\nworld_supply=2\n");
+            Check(!supplyBad.world_supply && supplyBad.invalid_values == 1 && supplyBad.unknown_keys == 0, "an invalid world_supply keeps it off");
+            const auto supplyPlayOn = Lab(play + "world_supply=1\n");
+            Check(supplyPlayOn.mode == mgscoop::LabMode::play && supplyPlayOn.world_supply && supplyPlayOn.play_refused == 0 && supplyPlayOn.invalid_values == 0,
+                  "world_supply=1 parses in play with no refusal bit");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {
@@ -1969,6 +2176,54 @@ int main() {
             Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
                   "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
+            // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
+            // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
+            // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
+            // named 0 opts out, an invalid value is named and off (also after a valid 1); a named 1 runs without the profile.
+            Check(!mgscoop::LabConfig{}.partner_native_aim_truth && !def.partner_native_aim_truth && !def.partner_native_aim_truth_given &&
+                      gunDefault.partner_native_aim_truth && !gunDefault.partner_native_aim_truth_given &&
+                      Lab("enabled=1\nrole=host\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
+                      Lab("enabled=1\nrole=host\npartner_native_aim_truth=maybe\n").invalid_values == 1,
+                  "partner_native_aim_truth: off without the gun profile, on with it, =1 on, a bad value is invalid");
+            {
+                const std::string truthBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                              "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+                const std::string plainPlay = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+                const auto truthPlain = Lab(plainPlay);
+                Check(!truthPlain.partner_native_aim_truth && truthPlain.play_refused == 0, "partner_native_aim_truth stays off in play without the gun profile");
+                for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                    const auto truthProfile = Lab(truthBase + mode);
+                    Check(truthProfile.partner_native_aim_truth && !truthProfile.partner_native_aim_truth_given &&
+                              !truthProfile.partner_native_aim_truth_box && !truthProfile.partner_native_aim_truth_triggers &&
+                              !truthProfile.partner_native_aim_truth_stance && truthProfile.invalid_values == 0 &&
+                              truthProfile.unknown_keys == 0 && truthProfile.play_refused == 0,
+                          "the gun profile turns anim truth on in lab and play (not named), its box/triggers/stance parts stay off");
+                    const auto truthNamedOff = Lab(truthBase + mode + "partner_native_aim_truth=0\n");
+                    Check(!truthNamedOff.partner_native_aim_truth && truthNamedOff.partner_native_aim_truth_given &&
+                              truthNamedOff.invalid_values == 0 && truthNamedOff.play_refused == 0,
+                          "a named partner_native_aim_truth 0 opts out with the gun profile");
+                    const auto truthInvalid = Lab(truthBase + mode + "partner_native_aim_truth=maybe\n");
+                    Check(!truthInvalid.partner_native_aim_truth && truthInvalid.invalid_values == 1,
+                          "an invalid partner_native_aim_truth is named and off with the gun profile");
+                    const auto truthLate = Lab(truthBase + mode + "partner_native_aim_truth=1\npartner_native_aim_truth=2\n");
+                    Check(!truthLate.partner_native_aim_truth && truthLate.invalid_values == 1,
+                          "an invalid partner_native_aim_truth after a valid 1 turns it off");
+                }
+            }
+            // Review animtruth-1: the unproven parts are their own keys, off unless named (also with the main key).
+            {
+                const auto main = Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n");
+                const auto all = Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n"
+                                     "partner_native_aim_truth_box=1\npartner_native_aim_truth_triggers=1\npartner_native_aim_truth_stance=1\n");
+                Check(!def.partner_native_aim_truth_box && !def.partner_native_aim_truth_triggers && !def.partner_native_aim_truth_stance &&
+                          !main.partner_native_aim_truth_box && !main.partner_native_aim_truth_triggers &&
+                          !main.partner_native_aim_truth_stance && all.partner_native_aim_truth_box &&
+                          all.partner_native_aim_truth_triggers && all.partner_native_aim_truth_stance &&
+                          Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=1\npartner_native_aim_truth_stance=1\n").unknown_keys == 0 &&
+                          Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=2\n").invalid_values == 1,
+                      "partner_native_aim_truth_box/_triggers/_stance: off unless named (also with the main key), =1 on");
+            }
             Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&
                   mapOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::map && debugOverlay.invalid_values == 0,
                   "overlay debug/map and act census off parse");

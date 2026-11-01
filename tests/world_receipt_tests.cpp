@@ -2,6 +2,7 @@
 // (docs/world-sync-protocol.md "Receipts", "world.trigger"): exact
 // classification, strict integers, reply widths, the LOG sanitizer.
 #include "mgscoop/world_receipt.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -73,31 +74,31 @@ void Cfg() {
           "strict CFG");
     world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0,0,0") == 0,
           "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level, wait, handoff, lock and census");
     r.link = 0; r.session = 0;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
     r.link = 1; r.session = 7; r.remote_mission = 30010; r.remote_level = 3; r.wait = 9;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0,0,0") == 0,
           "the partner's mission, its world level and the raw pair-wait code are r[9..11]");
     // Save handoff (join-fix phase 2 P2-1): r[12] the handoff code, r[13] the travel lock.
     r.handoff = 3; r.lock = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0,0,0") == 0,
           "the handoff code and the travel lock are r[12..13]");
     // WS4 step 0 (lab key partner_placed_census): r[14] the attacker census flag.
     r.census = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0,0,0") == 0,
           "the WS4 attacker census flag is r[14]");
     // 0.13.6 online-vehicle-gone (lab key world_vehicle_gone, lab and play): r[15] the VEHICLE_GONE module.
     r.vehicle_gone = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0,0") == 0,
           "the VEHICLE_GONE module flag is r[15]");
     // M4 (lab key world_vehicle_state): r[15] is the vehicle modules bitmask, bit 2 VEHICLE_STATE.
     r.vehicle_gone = 2;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2,0,0,0") == 0,
           "VEHICLE_STATE alone is r[15] = 2");
     r.vehicle_gone = 3;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3,0,0,0") == 0,
           "both vehicle modules are r[15] = 3");
     // M4 review: bit 4 the wreck parity key (world_vehicle_wreck); world_link::HandleCfg composes r[15] with
     // world::VehicleModules (gone, state, wreck).
@@ -106,7 +107,7 @@ void Cfg() {
               world::VehicleModules(false, false, true) == 4 && world::VehicleModules(true, true, true) == 7,
           "r[15] bits: 1 VEHICLE_GONE, 2 VEHICLE_STATE, 4 the wreck parity");
     r.vehicle_gone = world::VehicleModules(true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0,0") == 0,
           "both vehicle modules and the wreck key are r[15] = 7");
     // The user's vehicle decisions of 2026-10-29: bit 8 D12 world_vehicle_break, bit 16 D14 world_vehicle_credit, bit 32
     // D11 world_loadout_block (lab and play); the three older bits keep their meaning.
@@ -116,7 +117,7 @@ void Cfg() {
               world::VehicleModules(true, true, false, true, true, true) == 59 && world::VehicleModules(true, true, true, true, true, true) == 63,
           "r[15] bits: 8 the guest's break request, 16 the receiver's Fulton credit, 32 the guest's LOADOUT block");
     r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0,0") == 0,
           "every vehicle key is r[15] = 63");
     // The vehicle fixes of 2026-10-29: bit 64 D12 world_vehicle_crew, bit 128 world_vehicle_damage (lab and play).
     Check(world::VehicleModules(false, false, false, false, false, false, true, false) == 64 &&
@@ -124,23 +125,39 @@ void Cfg() {
               world::VehicleModules(true, true, false, true, false, false, true, true) == 203,
           "r[15] bits: 64 the crewed vehicle wrecked at once, 128 the guest's vehicle damage report");
     r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,255,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,255,0,0,0") == 0,
           "every vehicle key, the fixes too, is r[15] = 255");
     r.vehicle_gone = world::VehicleModules(true, true, true);
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0,0") == 0,
           "the host-owned companion module flag is r[16]");
     // M3 sortie vehicle (lab key world_relief, lab and play): r[17] the relief module.
     r.relief = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,0") == 0,
           "the sortie vehicle module flag is r[17]");
+    // r1101 fulton (lab key fulton_sync, lab and play): r[18] the Fulton lift and FULTON 0x46 (world_enemy.lua W.fulton).
+    r.fulton = 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,1") == 0,
+          "the Fulton sync flag is r[18]");
+    // Review fixes of 2026-11-01: r[18] carries the fulton bits as is (2 fulton_early, 4 fulton_look).
+    r.fulton = 7;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,7") == 0,
+          "the fulton bits are r[18]");
+    // r1101 Prove: bit 8 fulton_one_save (the receiver's soldier credit skipped) rides r[18] as is too.
+    r.fulton = 15;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,15") == 0,
+          "the fulton bits with fulton_one_save are r[18]");
+    // r1101 land: bit 16 fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton) rides r[18] as is too.
+    r.fulton = 31;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31") == 0,
+          "the fulton bits with fulton_guest_vehicle are r[18]");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
-    r.relief = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255") == 0 &&
+    r.relief = 255; r.fulton = 255;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
-    r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0;
+    r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0; r.fulton = 0;
     char tiny[16];
     Check(!world::FormatCfgReply(r, tiny, sizeof(tiny)) && tiny[0] == 0, "CFG insufficient buffer produces no partial reply");
 }
@@ -170,10 +187,29 @@ void Note() {
     // fb1031 travel-1: note 14 (TRAVEL) is shown and logged with its values like 1..13; fb1031 mbgo: 15 (MISSION_END)
     // too; 18 ARMS (Friendly fire) and 19 HINT (arrival-prevent) as well. 16 and 17 are posted by native only.
     Check(world::NoteShown(1) && world::NoteShown(13) && world::NoteShown(14) && world::NoteShown(15) && !world::NoteShown(0) &&
-              !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && !world::NoteShown(20),
-          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18 and 19, never 0, 16, 17 or 20");
+              !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && world::NoteShown(20) &&
+              world::NoteShown(21) && !world::NoteShown(22) && !world::NoteShown(23),
+          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18, 19, 20 (VSPAWN) and 21 (SUPPLY), never 0, 16, 17, 22 or 23");
     Check(parse("15 3 0") && code == 15 && a == 3 && b == 0, "NOTE 15 parses");
-    Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("20 1 1"), "NOTE 19 parses, 17 and 20 do not");
+    Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("23 1 1"), "NOTE 19 parses, 17 and 23 do not");
+    // Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua): note 20 a=1 spawned for you | 2 your partner spawned | 3 refused.
+    Check(parse("20 3 8") && code == 20 && a == 3 && b == 8, "NOTE 20 (VSPAWN) parses");
+    {
+        namespace text = mgscoop::coop_text;
+        char s[256]{};
+        Check(text::FormatWorldNote(20, 1, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "jeep") && std::strstr(s, "in front of you"),
+              "note 20 a=1 b=1: a jeep in front of you");
+        Check(text::FormatWorldNote(20, 2, 2, 0, 0, s, sizeof(s)) && std::strstr(s, "Your partner") && std::strstr(s, "truck"),
+              "note 20 a=2 b=2: your partner spawned a truck");
+        Check(text::FormatWorldNote(20, 3, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "not available yet"), "note 20 refusal 1: key off");
+        Check(text::FormatWorldNote(20, 3, 2, 0, 0, s, sizeof(s)) && std::strstr(s, "free roam"), "note 20 refusal 2: free roam only");
+        // Review r1101: 9 the partner's copy did not take it, 10 a player on the spot; 11 is the first without a sentence.
+        for (std::uint32_t why = 3; why <= 10; ++why)
+            Check(text::FormatWorldNote(20, 3, why, 0, 0, s, sizeof(s)) && std::strlen(s) > 10, "note 20 refusals 3..10 have a sentence");
+        Check(!text::FormatWorldNote(20, 1, 3, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(20, 3, 11, 0, 0, s, sizeof(s)) &&
+                  !text::FormatWorldNote(20, 4, 1, 0, 0, s, sizeof(s)),
+              "note 20 other values: no toast");
+    }
     const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
     Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
 }

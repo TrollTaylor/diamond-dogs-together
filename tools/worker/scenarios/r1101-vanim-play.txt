@@ -1,0 +1,224 @@
+# r1101 vanim (docs/vehicle-ws3.md "Driver pose"; lab key partner_ride_steer, off unless named): the remote driver
+# seated in the viewer's jeep showed the full-left turning pose whatever the driver did, because body 1 never runs
+# RideVehicleAction and its rate record keeps the constructor's 0.0 steer blend (+0x34; the stock driver phase
+# 0x124FC37 writes 0.5 for straight, toward 0 for left and 1 for right every frame for the real driver). With the key
+# the driver's copy sends its own blends (+0x34 steer, +0x30 accel, +0x08 aux) on the ride wire's v5 steer addendum
+# and the viewer writes them into body 1's record while it seats the peer as the driver (neutral 0.5 without a live
+# packet), keeps it straight through the get-off and puts the originals back once body 1 is on foot. The driver's own
+# screen is unchanged (read only on that side).
+# Review vanim-2/3: the get-off is framed too, and any partner_ride_steer=drift line (a value body 1's record held that
+# we did not write: the host's saves held 0.325 / 0.600) means another writer: not proven.
+# Prove phase (run ba1a041a): the review form placed the viewer again beside the SEATED driver before 'press e'; the
+# harness's landing check needs the target's partner pose, which a seated partner does not give (as M6 run 11fe8abd),
+# so the run stopped there after A's steer. Now both get-offs happen from the standing jeep where the viewer was placed
+# (A1, B1), and B1 uses the same jeep spot and the same offset as A1 (B's old spot after A's drive had a bush between
+# the host and the driver's seat in 38714f32); the drives (A2, B2) come last, each viewer placed while its driver is
+# still on foot. Whoever stands at the driver's door steps away (a teleport) before the other's goto_vehicle.
+# Run bfd46ce5 (this form) met every waitlog on both copies: frames of the pose on both screens (B1 host watching, no
+# bush), drifts=0 on all four restores; the key follows the gun profile since (r1101-vanim-default-play.txt).
+# The wheels of the viewer's copy still do not turn (the copy is placed by SetPosition every frame: no wheel write was
+# found; docs/vehicle-ws3.md "Driver pose", "Not fixed").
+# Framing (run 6cea2ec9 showed the jeep only at a distance or behind the viewer's own body): the viewer stands 6 m
+# out from the driver's door and 3 m toward the jeep's nose, facing the door, and the driver first steers with the
+# jeep standing (a, then d, no throttle), so the turning pose is filmed close; then it rolls straight, left and right.
+# Run 002a187a (that framing) met every waitlog, but the viewer's own body hid the driver (placebehind faces the
+# target, which the over-the-shoulder camera keeps behind the viewer's back): the viewer's camera is now swung by a
+# mouse move after the placement, so the driver's seat shows beside the viewer's body.
+#   A1 the host sits at the wheel of the Masa Village jeep, steers a, then d standing, gets off; the guest watches.
+#   B1 the roles swap at the same standing jeep: the guest at the wheel, the host watches from the same spot.
+#   A2 / B2 each driver rolls w, w+a, w+d, stops and gets off, the other watching (the drive frames are a bonus).
+# Run (play, Africa free roam, the africa-jeep seed):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-vanim-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed africa-jeep
+# Expected (A; B the same with host and guest swapped):
+#   host   partner_ride_steer=tx; vehicle=J; seat=0; rev=..; steer=S; accel=..; aux=..; raw=..; epoch=..; n=..
+#          S about 125 standing straight, below 100 while a is held and above 150 while d is held
+#          (the driver phase's own value, read only)
+#   guest  partner_ride_steer=rx; vehicle=J; seat=0; ... (the same values)
+#          partner_ride_seat=confirmed; vehicle=J; seat=0; ...
+#          partner_ride_steer=save; vehicle=J; seat=0; steer=0.000; ... on the guest (the constructor's full left);
+#          the host's saves held 0.325 (002a187a) and 0.600 / aux 0.500 (38714f32): a mismatch (docs/vehicle-ws3.md)
+#          partner_ride_steer=write; vehicle=J; seat=0; source=neutral|remote; steer=0.500 while straight; a write
+#          below 0.4 for a and one above 0.7 for d, matching the host's tx values
+#          the get-off: partner_ride_steer=write; vehicle=J; seat=0; source=exit; steer=0.500 (straight while the
+#          get-off plays), then partner_ride_steer=restore; vehicle=J; seat=0; phase=idle; ok=1; ...
+#   frames (guest in A, host in B): a-seated: the driver's hands level on the wheel (no left lean);
+#          a-steer-left-NN / a-steer-right-NN: the driver's turning pose to each side with the jeep standing;
+#          a-roll / a-left / a-right: the pose follows the drive; the wheels: no spin, no steer (known)
+#          a-host-steer-left / -right (the driver's own screen): its own front wheels steer, unchanged by the key
+#          a-exiting-NN: the driver gets out without a left lean (the jeep in view)
+#   must NOT appear: partner_ride_steer=refused; partner_ride_steer=drift; a fault; step=error; viewer_changed
+labsetting partner_ride_steer=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+stance host stand
+stance guest stand
+wait 2000
+both capture start
+# --- A1: the host sits at the wheel of the standing jeep, the guest watches from beside the driver's door -----------
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind guest host 6 3
+wait 2500
+guest mouse 250 0
+wait 800
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=(neutral|remote); steer=0\.500;' 10
+both capture a-seated
+logmark both
+host hold a 1500 nowait
+wait 400
+host capture a-host-steer-left
+guest burst a-steer-left 3 300
+host release
+waitlog host 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0; rev=[0-9]+; steer=([0-9]|[1-9][0-9]);' 4
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote; steer=0\.[0-3][0-9][0-9];' 4
+wait 1200
+logmark both
+host hold d 1500 nowait
+wait 400
+host capture a-host-steer-right
+guest burst a-steer-right 3 300
+host release
+waitlog host 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0; rev=[0-9]+; steer=(1[5-9][0-9]|2[0-4][0-9]|250);' 4
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote; steer=(0\.[7-9][0-9][0-9]|1\.000);' 4
+wait 2000
+both capture a-straight
+# The get-off from the standing jeep: the viewer is still where it was placed (no placebehind beside a seated driver).
+logmark both
+host press e 150
+guest burst a-exiting 4 300
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=exit; steer=0\.500;' 10
+wait 2500
+waitlog guest 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; phase=idle; ok=1' 10
+both capture a-exited
+# --- B1: the roles swap at the same standing jeep: the guest at the wheel, the host watches from the same spot ------
+# The host steps away first (it stands at the driver's door the guest's goto_vehicle uses).
+host debug teleport -662.22 3.20 869.01 35
+wait 2500
+both debug godmode 1
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind host guest 6 3
+wait 2500
+host mouse 250 0
+wait 800
+logmark both
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=(neutral|remote); steer=0\.500;' 10
+both capture b-seated
+logmark both
+guest hold a 1500 nowait
+wait 400
+guest capture b-guest-steer-left
+host burst b-steer-left 3 300
+guest release
+waitlog guest 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0; rev=[0-9]+; steer=([0-9]|[1-9][0-9]);' 4
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote; steer=0\.[0-3][0-9][0-9];' 4
+wait 1200
+logmark both
+guest hold d 1500 nowait
+wait 400
+guest capture b-guest-steer-right
+host burst b-steer-right 3 300
+guest release
+waitlog guest 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0; rev=[0-9]+; steer=(1[5-9][0-9]|2[0-4][0-9]|250);' 4
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote; steer=(0\.[7-9][0-9][0-9]|1\.000);' 4
+wait 2000
+both capture b-straight
+logmark both
+guest press e 150
+host burst b-exiting 4 300
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=exit; steer=0\.500;' 10
+wait 2500
+waitlog host 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; phase=idle; ok=1' 10
+both capture b-exited
+# --- A2: the host drives off (straight, left, right), stops and gets off; the guest watches from the same spot ------
+guest debug teleport -662.22 3.20 869.01 35
+wait 2500
+both debug godmode 1
+host debug goto_vehicle jeep
+wait 3000
+placebehind guest host 6 3
+wait 2500
+guest mouse 250 0
+wait 800
+logmark both
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+host hold w 1200 nowait
+guest burst a-roll 4 250
+host release
+host hold w+a 1500 nowait
+guest burst a-left 4 250
+host release
+host hold w+d 1500 nowait
+guest burst a-right 4 250
+host release
+waitlog guest 'partner_ride_steer=rx; vehicle=256[0-9][0-9]; seat=0;' 5
+host hold s 1200
+host release
+wait 1500
+both capture a-stopped
+logmark both
+host press e 150
+waitlog guest 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; phase=idle; ok=1' 15
+# --- B2: the guest drives off the same way; the host watches -------------------------------------------------------
+host debug teleport -662.22 3.20 869.01 35
+wait 2500
+both debug godmode 1
+guest debug goto_vehicle jeep
+wait 3000
+placebehind host guest 6 3
+wait 2500
+host mouse 250 0
+wait 800
+logmark both
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+guest hold w 1200 nowait
+host burst b-roll 4 250
+guest release
+guest hold w+a 1500 nowait
+host burst b-left 4 250
+guest release
+guest hold w+d 1500 nowait
+host burst b-right 4 250
+guest release
+waitlog host 'partner_ride_steer=rx; vehicle=256[0-9][0-9]; seat=0;' 5
+guest hold s 1200
+guest release
+wait 1500
+both capture b-stopped
+logmark both
+guest press e 150
+waitlog host 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; phase=idle; ok=1' 15
+both capture b-exited
+host run position
+guest run position
+state

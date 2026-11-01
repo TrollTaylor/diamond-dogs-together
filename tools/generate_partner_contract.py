@@ -1538,6 +1538,20 @@ GESTURE_LEVER_SITES = [
 ]
 SITES += GESTURE_LEVER_SITES
 SITES += partner_aim_sites.SITES
+# --- r1101 vanim (lab.ini partner_ride_steer, docs/vehicle-ws3.md "Driver pose"): the driver phase's per-frame stores of
+# the three ride blends into the rider's rate record (the record chain above) and its enter case's straight steer.
+# partner_player::ReadRideRates reads +0x08 / +0x30 / +0x34 on body 0 (the sender) and WriteRideRates stores them
+# into body 1 (the viewer's seated driver, which never runs RideVehicleAction: its record keeps 0.0 = full left).
+RIDE_STEER_SITES = [
+    (0x124FC37, '498b4708488b4878488b8960020000488b01418bd6ff10488bd88b4e60894830',
+     "driver phase 2 (0x124E140): the rider's rate record *(PS+0x260) vt+0 (id); +0x30 accel = ride work +0x60"),
+    (0x124FC57, 'f30f105e68f6863402000001740ff30f10055f76e500f30f5cc30f28d84180ec034180fc01771bf30f1015c6e3ec00f30f100d5a1ff800'
+     '0f28c3e8aaaadcfe0f28d8f30f115b348b4664894308',
+     'driver phase 2: +0x34 steer = work+0x68 (1 - x with work+0x234 bit 0; clamped for seat kinds 3/4), +0x08 aux = work+0x64'),
+    (0x124E9A5, '498b4708488b4878488b8960020000488b01418bd6ff1044896030c740340000003f44896024',
+     'driver phase 3 (enter): the rate record +0x30 = 0, +0x34 = 0.5 (straight), +0x24 = 0'),
+]
+SITES += RIDE_STEER_SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
 

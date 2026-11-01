@@ -130,6 +130,21 @@ int main(int argc, char** argv) {
                     c.world_vehicle_break ? 1 : 0, c.world_vehicle_credit ? 1 : 0);
         // The vehicle fixes of 2026-10-29, lab and play.
         std::printf("world_vehicle_crew=%d\nworld_vehicle_damage=%d\n", c.world_vehicle_crew ? 1 : 0, c.world_vehicle_damage ? 1 : 0);
+        // r1101 supply drops synced (docs/world-sync-protocol.md section 26), lab and play.
+        std::printf("world_supply=%d\n", c.world_supply ? 1 : 0);
+        // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play (r1101 Prove phase).
+        std::printf("debug_vspawn=%d\n", c.debug_vspawn ? 1 : 0);
+        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the gun profile (r1101 Prove phase);
+        // fulton_early, fulton_look, fulton_one_save and fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton,
+        // never run in a game) stay off unless named.
+        std::printf("fulton_sync=%d\nfulton_early=%d\nfulton_look=%d\nfulton_one_save=%d\nfulton_guest_vehicle=%d\n", c.fulton_sync ? 1 : 0,
+                    c.fulton_early ? 1 : 0, c.fulton_look ? 1 : 0, c.fulton_one_save ? 1 : 0, c.fulton_guest_vehicle ? 1 : 0);
+        // r1101 animtruth (docs/anim-truth.md): the main key follows the gun profile (r1101 Prove phase); its box, triggers
+        // and stance parts stay off unless named.
+        std::printf("partner_native_aim_truth=%d\npartner_native_aim_truth_box=%d\npartner_native_aim_truth_triggers=%d\n"
+                    "partner_native_aim_truth_stance=%d\n",
+                    c.partner_native_aim_truth ? 1 : 0, c.partner_native_aim_truth_box ? 1 : 0, c.partner_native_aim_truth_triggers ? 1 : 0,
+                    c.partner_native_aim_truth_stance ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
@@ -213,6 +228,8 @@ int main(int argc, char** argv) {
         // Design 8.59: the follow carry (off unless named in lab and play) and whether it was named.
         std::printf("partner_ride_follow=%d\npartner_ride_follow_given=%d\n", c.partner_ride_follow ? 1 : 0,
                     c.partner_ride_follow_given ? 1 : 0);
+        // r1101 vanim: the driver steer pose (follows the gun profile since the r1101 Prove phase) and whether it was named.
+        std::printf("partner_ride_steer=%d\npartner_ride_steer_given=%d\n", c.partner_ride_steer ? 1 : 0, c.partner_ride_steer_given ? 1 : 0);
         // Design 8.60: the get-in camera cut and whether it was named.
         std::printf("partner_ride_getin_cut=%d\npartner_ride_getin_cut_given=%d\n", c.partner_ride_getin_cut ? 1 : 0,
                     c.partner_ride_getin_cut_given ? 1 : 0);

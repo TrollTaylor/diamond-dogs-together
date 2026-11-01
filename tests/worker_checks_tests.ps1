@@ -251,7 +251,7 @@ try {
     # test it neither runs nor excludes by name, so a new fixture is never silently left out of the receipt.
     $shipped=@('dog_guard_tests','partner_act_log_tests','partner_ammo_leak_tests','partner_dm_overlay_tests','partner_ride_seat_tests',
         'world_outcome_attclass_lua_check','world_companion_lua_check','world_buddy_companion_lua_check','world_companion_guard_lua_check',
-        'world_relief_lua_check','world_relief_sync_lua_check','launcher_icon_tests','ddt_local_watch_process')
+        'world_relief_lua_check','world_relief_sync_lua_check','world_supply_lua_check','supply_sync_tests','launcher_icon_tests','ddt_local_watch_process')
     Check (@($shipped | Where-Object { $release.tests -cnotcontains $_ }).Count -eq 0) 'release inventory audits every shipped module''s fixture (dog guard, companion/relief/outcome Lua, act log, ammo leak, overlay, ride seat, launcher icon, local-watch helper)'
     foreach ($left in @('ddt_runtime_dat_integration','ddt_launcher_screens','launcher_assets_current')) {
         Check ($release.tests -cnotcontains $left -and $release.excluded -ccontains $left) "excluded by name: $left"

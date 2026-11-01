@@ -171,6 +171,7 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     # G4 truck test levers: the native door spot (lab only, default 0)
     'debug_vehicle_door=1','debug_vehicle_door=0','guest:debug_vehicle_door=1','host:debug_vehicle_door=0',
     'partner_ride_front=1','partner_ride_front=0','guest:partner_ride_cab=1','host:partner_ride_cab=0','partner_ride_race=1',
+    'partner_ride_steer=1','guest:partner_ride_steer=0',
     'partner_ride_seat1_anchor=0','guest:partner_ride_seat1_anchor=1',
     # F2: the native cardboard box on body 1 (lab only, default 0)
     'partner_native_cbox=1','partner_native_cbox=0','guest:partner_native_cbox=1','host:partner_native_cbox=0',
@@ -214,6 +215,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_ride_board=1','partner_ride_board=','partner_ride_board=on','partner_ride_board=Block','partner_ride_board=passengers','both:partner_ride_board=block',
     'debug_vehicle_door=2','debug_vehicle_door=','debug_vehicle_door=on','both:debug_vehicle_door=1','debug_vehicle_doors=1',
     'partner_ride_front=2','partner_ride_front=on','partner_ride_cab=','both:partner_ride_cab=1','partner_ride_race=yes',
+    'partner_ride_steer=2','partner_ride_steer=on',
     'partner_ride_seat1_anchor=2','partner_ride_seat1_anchor=on',
     'partner_native_cbox=2','partner_native_cbox=','partner_native_cbox=on','both:partner_native_cbox=1','partner_native_box=1',
     'partner_native_gesture=2','partner_native_gesture=','partner_native_gesture=on','both:partner_native_gesture=1','partner_native_gestures=1',
@@ -243,7 +245,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_native_traverse=1','labsetting host partner_native_traverse=0',
         'labsetting partner_ride_board=passenger','labsetting guest partner_ride_board=block','labsetting host partner_ride_board=off',
         'labsetting debug_vehicle_door=1','labsetting guest debug_vehicle_door=1','labsetting host debug_vehicle_door=0',
-        'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1','labsetting partner_ride_race=1',
+        'labsetting partner_ride_front=1','labsetting guest partner_ride_cab=1','labsetting partner_ride_race=1','labsetting partner_ride_steer=1',
         'labsetting partner_ride_seat1_anchor=0','labsetting guest partner_ride_seat1_anchor=1',
         'labsetting partner_native_cbox=1','labsetting guest partner_native_cbox=0',
         'labsetting partner_native_gesture=1','labsetting guest partner_native_gesture=0',
@@ -276,7 +278,7 @@ Assert-True ('labsetting partner_native_support=2' -cnotmatch $lineMatch.Groups[
 foreach($bad in @('labsetting partner_ride_census=2','labsetting partner_ride_seat_id=on','labsetting both partner_ride_tilt=1',
         'labsetting partner_ride_board=1','labsetting partner_ride_board=drive','labsetting both partner_ride_board=block',
         'labsetting debug_vehicle_door=2','labsetting debug_vehicle_door=on','labsetting both debug_vehicle_door=1',
-        'labsetting partner_ride_cab=2','labsetting both partner_ride_front=1','labsetting partner_ride_seat1_anchor=2')){
+        'labsetting partner_ride_cab=2','labsetting both partner_ride_front=1','labsetting partner_ride_seat1_anchor=2','labsetting partner_ride_steer=yes')){
     Assert-True ($bad -cnotmatch $lineMatch.Groups[1].Value) ('scenario labsetting refuses '+$bad)
 }
 # 0.13.6 online-vehicle-gone: world_vehicle_gone=0|1 (the VEHICLE_GONE world op, lab and play) in both
@@ -295,6 +297,26 @@ foreach($bad in @('world_relief=2','world_relief=','world_relief=on','both:world
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 Assert-True ('labsetting world_relief=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting world_relief=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_relief=0|1 only'
+# r1101 fulton: fulton_sync=0|1 (lab and play) in both -LabSetting allow-lists and the scenario line (r1101-fulton-play.txt).
+foreach($ok in @('fulton_sync=1','fulton_sync=0','host:fulton_sync=1','guest:fulton_sync=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('fulton_sync=2','fulton_sync=','fulton_sync=on','both:fulton_sync=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting fulton_sync=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting fulton_sync=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting fulton_sync=0|1 only'
+# r1101 fulton review fixes: fulton_early=0|1 (the early vehicle lift) and fulton_look=0|1 (the borrowed wormhole look);
+# r1101 Prove: fulton_one_save=0|1 (the receiver's soldier credit skipped: the Fultoner's save only).
+# r1101 land: fulton_guest_vehicle=0|1 (the guest's balloon lift of a vehicle the host Fultoned; never run in a game).
+foreach($key in @('fulton_early','fulton_look','fulton_one_save','fulton_guest_vehicle')){
+    foreach($ok in @("$key=1","$key=0","host:$key=1","guest:$key=0")){
+        Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+    }
+    foreach($bad in @("$key=2","$key=","$key=on","both:$key=1")){
+        Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+    }
+    Assert-True ("labsetting $key=1" -cmatch $lineMatch.Groups[1].Value -and "labsetting $key=on" -cnotmatch $lineMatch.Groups[1].Value) "scenario labsetting $key=0|1 only"
+}
 # fb1031 gear: partner_equip_midload=0|1 (the mid-mission load of a late partner's gear, lab and play) in both
 # -LabSetting allow-lists and the scenario line (fb1031-gear-late-join.txt).
 foreach($ok in @('partner_equip_midload=1','partner_equip_midload=0','host:partner_equip_midload=1','guest:partner_equip_midload=0')){
@@ -326,7 +348,7 @@ foreach($bad in @('world_vehicle_wreck=2','world_vehicle_wreck=','world_vehicle_
 Assert-True ('labsetting world_vehicle_wreck=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_wreck=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_wreck=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_wreck=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_wreck=0|1 only'
 # The vehicle decisions of 2026-10-29: world_loadout_block (D11), world_vehicle_break (D12), world_vehicle_credit (D14), each 0|1.
-foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage')){
+foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage','world_supply')){
     foreach($ok in @("$vk=1","$vk=0","host:$vk=1","guest:$vk=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
     }

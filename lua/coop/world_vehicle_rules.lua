@@ -50,7 +50,7 @@ local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, ASK_MS, QUEUE_N = 300000, 3000, 4, 20000, 6, 60000, 32
 local OWN_MS, CREDIT_MS, GREY_MS, TOAST_MS, ARRIVAL_MS, UNATTRIBUTED, BLAST_MM = 5000, 10000, 2000, 3000, 130000, 4, 15000
 VR.BREAK_MM, VR.FRESH_MS, VR.RATE_N, VR.RATE_MS, VR.ASK_N, VR.QUEUE_N, VR.CREDIT_MS = BREAK_MM, FRESH_MS, RATE_N, RATE_MS, ASK_N, QUEUE_N, CREDIT_MS
-local PREPAIR_MS, HEAVY_BLAST_MM = 300000, 50000
+local PREPAIR_MS, HEAVY_BLAST_MM, LIFT_MS = 300000, 50000, 30000
 VR.UNATTRIBUTED, VR.BLAST_MM, VR.HEAVY_BLAST_MM, VR.PREPAIR_MS = UNATTRIBUTED, BLAST_MM, HEAVY_BLAST_MM, PREPAIR_MS
 -- The guest's iDroid drop items this module sets inactive: name, NOTE 13 a (the toast), log path.
 local ITEMS = {{"MSN_DROP_LOADOUT", 5, "idroid_drop_loadout"}, {"MSN_DROP_VEHICLE", 4, "idroid_drop_vehicle"}}
@@ -64,12 +64,33 @@ function VR.breakOn() return W.vehicleBreakOn == true and G.on() end
 -- world_vehicle.lua's REQ handler applies a cause 4 request only while this key runs on the host.
 G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
+-- r1101 fulton (lab key fulton_sync, CFG r[18]): a partner's vehicle Fulton is this copy's own engine lift. On the guest
+-- (a host's Fulton, by the host's VEHICLE_GONE: never run in a game) only with fulton_guest_vehicle (r[18] bit 16).
+function VR.liftOn() return W.fultonOn == true and G.on() and (W.host == true or W.fultonGuestVehicleOn == true) end
+-- The early lift (its own lab key fulton_early, CFG r[18] bit 2: a balloon that fails after the Fultoner's FultonInfo is
+-- not mirrored yet, so this stays off unless named until a probe settles that): world_enemy.lua calls
+-- G.early(id, vtype, x, y, z) on a partner's FULTON kind 2 (sent at its FultonInfo, with the vehicle's type and pose on
+-- the Fultoner's copy), about 6 s before VEHICLE_GONE's loss readback reaches this copy (probe 614ec20a). Pool indices
+-- can differ between copies, so VEHICLE_GONE's own decide judges it at the Fultoner's pose and type (far, other type or
+-- not nearest: matched to the one vehicle of that type within 5 m, else nothing) and its seat rules; no pose, nothing.
+-- The later VEHICLE_GONE or request finds it gone here (a matched id: the host answers the guest's index gone).
+function VR.early(id, vtype, x, y, z)
+  if not VR.liftOn() or W.fultonEarlyOn ~= true or not G.typed(id) or G.gone[id] or G.held[id] or id % 512 == 0 then return end
+  if not G.locator(id) then L("step=early_skip;id=%d;reason=no_locator", id); return end
+  local known = type(x) == "number" and type(y) == "number" and type(z) == "number" and not (x == 0 and y == 0 and z == 0)
+  if not known then L("step=early_skip;id=%d;reason=no_pose", id); return end
+  L("step=early;id=%d;role=%s", id, role())
+  local t = type(vtype) == "number" and vtype or 255
+  G.consider({id = id, cause = 1, actor = W.host and 1 or 0, rid = 0, vtype = t, x = x, y = y, z = z, src = "fulton"}, now())
+end
+G.early = VR.early
 function VR.loadoutOn() return W.vehicleLoadoutOn == true and W.active == true and not W.host end
 function VR.crewOn() return W.vehicleCrewOn == true and VR.breakOn() end
 -- The guest's VEHICLES drop item is this module's while its key runs (world_relief_sync.lua asks).
 function VR.ownsVehicleDrop() return W.vehicleLoadoutOn == true and not W.host end
 function VR.reset()
   VR.applied, VR.asked, VR.queue, VR.peak, VR.credits, VR.own, VR.unatt, VR.arrival = {}, {}, {}, {}, {}, {}, {}, {}
+  VR.skip = {}
   VR.st = {judged = 0, applied = 0, refused = 0, asked = 0, seized = 0, credited = 0}
   VR.nextTick, VR.greyAt, VR.greyLogged, VR.toastAt = 0, nil, nil, {}
 end
@@ -305,15 +326,29 @@ G.remove = function(id, cause, ...)
     end
     return form(id, {id = "SetBodyLife", life = 0}, "wreck", cause, ...)
   end
+  -- r1101 fulton (VR.liftOn): the lift is the engine's own vehicle Fulton (Seize {"Fulton"}: the balloon; W.fulton
+  -- matches the wormhole look) instead of Seize Instant or a Despawn, read back for up to 15 s (world_vehicle.lua).
+  local lift = cause == 1 and VR.liftOn()
+  if lift and type(W.fulton) == "table" and type(W.fulton.before) == "function" then pcall(W.fulton.before, 2, id) end
   -- D14: the receiver's own engine Fulton credit (Seize Instant: no balloon, removed at once, credited once).
   if cause == 1 and VR.creditOn() then
     -- Expected before the command: the engine may run its credit inside it.
     VR.credits[id] = {at = t}
-    local ok, via = form(id, {id = "Seize", options = {"Instant"}}, "seize", cause, ...)
-    if ok and via == "seize" then
+    local ok, via = form(id, {id = "Seize", options = {lift and "Fulton" or "Instant"}}, lift and "fulton" or "seize", cause, ...)
+    if ok and (via == "seize" or via == "fulton") then
       VR.st.seized = VR.st.seized + 1
-      L("step=credit_seize;id=%d;role=%s;mission=%d", id, role(), W.mission or 0)
+      if lift then L("step=fulton_lift;id=%d;credit=1;role=%s;mission=%d", id, role(), W.mission or 0)
+      else L("step=credit_seize;id=%d;role=%s;mission=%d", id, role(), W.mission or 0) end
     elseif not VR.credits[id].done then VR.credits[id] = nil end
+    return ok, via
+  end
+  -- Without D14 the lift stays visual: this copy's stock TppTerminal.OnFulton is skipped once for this vehicle (E17: no
+  -- OnFultonVehicle, no AddTempResource), so the copy that did not Fulton gains nothing.
+  if lift then
+    pcall(VR.install)
+    VR.skip[id] = t
+    local ok, via = form(id, {id = "Seize", options = {"Fulton"}}, "fulton", cause, ...)
+    if via == "fulton" then L("step=fulton_lift;id=%d;credit=0;role=%s;mission=%d", id, role(), W.mission or 0) else VR.skip[id] = nil end
     return ok, via
   end
   return baseRemove(id, cause, ...)
@@ -332,6 +367,20 @@ function VR.install()
   if VR.installed then return end
   VR.installed = true
   local T = W.get(_G, "TppTerminal")
+  -- r1101 fulton: the one-time skip of this copy's stock credit for a lift it ran for the partner (VR.skip).
+  local o = W.get(T, "OnFulton")
+  if type(o) == "function" then
+    local skip = function(...)
+      local id = ...
+      local at = type(id) == "number" and VR.skip[id]
+      if at then
+        VR.skip[id] = nil
+        if now() - at <= LIFT_MS then L("step=credit_skipped;fn=OnFulton;id=%d;why=fulton_lift;role=%s", id, role()); return end
+      end
+      return o(...)
+    end
+    L("step=lift_hook;ok=%d", (pcall(function() T.OnFulton = skip end) and W.get(T, "OnFulton") == skip) and 1 or 0)
+  end
   local f = W.get(T, "OnFultonVehicle")
   if type(f) ~= "function" then L("step=credit_hook;ok=0;reason=binding"); return end
   local wrapped = function(...)
@@ -470,7 +519,7 @@ W.startHooks[#W.startHooks + 1] = function()
     end)
     if ok then VR.ids = ids end
   end
-  if VR.creditOn() then pcall(VR.install) end
+  if VR.creditOn() or VR.liftOn() then pcall(VR.install) end
   local on = W.vehicleBreakOn == true or W.vehicleCreditOn == true or W.vehicleLoadoutOn == true
   if on then
     L("step=on;mission=%d;role=%s;break=%d;credit=%d;loadout=%d;gone=%d%s", W.mission or 0, role(), VR.breakOn() and 1 or 0,

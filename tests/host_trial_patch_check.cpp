@@ -25,6 +25,7 @@
 #include "debug_boot_source.hpp"
 #include "debug_rules_source.hpp"
 #include "debug_arms_source.hpp"
+#include "debug_vspawn_source.hpp"
 #include "marker_loading_source.hpp"
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
@@ -108,7 +109,7 @@ int main(int argc, char** argv) {
                                           world_buddy_ride_source,
 #endif
                                           world_place_source,world_place_guest_source,world_vehicle_source,world_vehicle_state_source,world_vehicle_rules_source,world_vehicle_damage_source,world_companion_source,
-                                          world_companion_dog_source,world_companion_guard_source,world_relief_source,world_relief_sync_source};
+                                          world_companion_dog_source,world_companion_guard_source,world_relief_source,world_relief_sync_source,world_supply_source};
         auto world_at=partner_at+partner_size;
         for(const auto& chunk : world_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);
@@ -116,7 +117,7 @@ int main(int argc, char** argv) {
             world_at+=chunk.size();
         }
         const auto world_end=world_at;
-        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source,debug_player_source,debug_spawn_source,debug_buddy_source,debug_vehicle_source,debug_boot_source,debug_character_source,debug_spawn_play_source,debug_rules_source,debug_arms_source};
+        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source,debug_player_source,debug_spawn_source,debug_buddy_source,debug_vehicle_source,debug_boot_source,debug_character_source,debug_spawn_play_source,debug_rules_source,debug_arms_source,debug_vspawn_source};
         for(const auto& chunk : debug_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);
             check(output.find(chunk)==world_at && output.find(chunk,world_at+1)==std::string::npos);

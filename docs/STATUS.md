@@ -1,3 +1,460 @@
+## November 1, 2026: r1101 land - the skeptic's corrections before the merge into dev (`wp/integ-1101`, local only)
+
+- **What players get (changed):** a vehicle the HOST Fultons now just vanishes on the guest's screen again, as before
+  r1101: the guest's balloon lift of it is off unless named. Everything else of r1101 stays on by default: Spawn
+  vehicle, supply drops, the Fulton attach on the puppet, the soldier balloon both ways, the guest-to-host vehicle
+  balloon, anim truth and the driver's steering pose.
+- **Why:** the land skeptic refuted two claims of the fulton track.
+  - README "Seen in testing on both screens, in both directions" covered vehicles, but only a guest-to-host vehicle
+    Fulton ran (part C of `7d924fac` and `19882881`). A vehicle the host Fultons reaches the guest by the host's
+    VEHICLE_GONE broadcast, another path, and never ran in a game. It now has its own key `fulton_guest_vehicle=0|1`
+    (CFG `r[18]` bit 16, `W.fultonGuestVehicleOn`, off unless named in lab and play, only with `fulton_sync`):
+    without it `VR.liftOn()` is false on the guest, so the guest removes such a vehicle as before (D14's
+    `Seize {"Instant"}`, else the Despawn) and runs no early lift. The host's lift of a guest's vehicle Fulton (the
+    proven direction) is unchanged. README What works / Known limits now say so.
+  - "`staff_add` only on the Fultoner's copy when `fulton_one_save` is named (run 1)": run `7d924fac` named
+    `fulton_sync`, `fulton_early`, `fulton_look` and `partner_act_log`; `fulton_one_save` did not exist at its build
+    `711c5c1`, where the credit skip was part of `fulton_sync`. The `fulton_one_save=1` path as built since `42c8cc3d`
+    has never run in a game. It was already off unless named (the shipped default keeps D1), so no code changes;
+    protocol section 25 now says it has not run. `r1101-fulton-play.txt` still names it for the next proof run.
+- **Other skeptic defects fixed in text:** README Spawn vehicle "Seen in testing on both screens" now says
+  Afghanistan only (every vspawn run was at 30010; Africa runs the same code, not tried). README supply limit: in
+  `93f27123` the receiver stood about 0.2-2 m from every landing spot and its after-frames show no "Surplus Supplies
+  Retrieved" and no GMP change, so the README now says a partner at the landing spot did not get the supplies (it said
+  "not tested"). README Spawn vehicle limit: a guest refusal (its key off, a player in the way, the vehicle occupied
+  there) leaves the vehicle moved only on the host's copy (the host moves before the guest answers; note 20 b=9 / 10
+  tells the host) [I, not exercised]. `native/lab_config.cpp`: the stale "OFF in both unless named" supply comment
+  removed.
+- **Weak evidence, kept as is (not refutations):** vspawn `e09fcf72` host `c-seated` caught the guest puppet still
+  climbing over the rear edge and the `c-drive` frames came after the jeep stopped (the seat is clear in
+  `c-drive-01..06` on both screens); fulton `19882881` host `b-hold-04` shows the guest's kneel mostly behind the host's
+  own body.
+- **Still not covered:** the guest's lift of a host's vehicle Fulton (`fulton_guest_vehicle=1`), `fulton_one_save=1`,
+  `fulton_early`, `fulton_look`, Spawn vehicle in Africa.
+- **Commits:** `b2d34010` red (lab_config_tests: `fulton_guest_vehicle` off by default in lab, gun profile and play,
+  a named 1 parses, `FultonCfgBits` 17 / 31, nothing without `fulton_sync`, an invalid value named and off;
+  world_vehicle_rules_lua_check: a guest without the key takes the host's VEHICLE_GONE cause 1 as Seize Instant / the
+  Despawn, no lift line, no skip left behind, no early lift, the host still lifts; world_sync_lua_check: `r[18]`
+  0..31 and bit 16; world_receipt_tests `r[18]` 31; worker_session_tests the key in both allow-lists;
+  friend_package_tests_2 play defaults it off), `cd9639e9` green (the parse, `ResolveWeaponDefaults`, bit 16,
+  world_link mask 31, `world_sync.lua`, `VR.liftOn()`, LabCommon, the worker allow-lists and help, the stale supply
+  comment), then README, protocol section 25 and this entry.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `cd9639e9`. Full
+  `tools/build.ps1 -Jobs 4` at `86e79304` and again at this entry's commit: CTest 347/347; every generator `--check`
+  passes (partner 858 / 213, soldier_warp 19 / 10, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller
+  with `--executable`); native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh
+  tree. `world_vehicle_rules.lua` 30478, `world_sync.lua` 23003 LF bytes. No game run this round. Nothing pushed,
+  tagged or released.
+
+## November 1, 2026: r1101 Prove - the partner's steering pose on by default (`partner_ride_steer` follows the gun profile in lab and play; hidden runs `ba1a041a`, `bfd46ce5`, `4c098120`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner drives a
+  jeep, the partner's character on this screen sits with both hands level on the wheel while they go straight, turns
+  the wheel one way while they steer left and the other way while they steer right, and gets off without a lean.
+  Before, the seated driver always showed the full-left turning pose (body 1's rate record keeps the constructor's 0.0
+  steer blend; docs/vehicle-ws3.md "Driver pose"). Both copies need the key (the driver's copy sends its ride blends
+  on the ride wire's v5 steer addendum, the viewer's copy writes them into body 1's record). A named
+  `partner_ride_steer=0` turns it off.
+- **Still not fixed:** the wheels of the viewer's copy of the vehicle neither turn nor spin (the copy is placed by
+  SetPosition every frame; the next step is the lab runtime read of the slot control block and wheel objects, docs
+  "Not fixed: the wheels"). Not exercised: a truck (same driver phase, same write [I]) and a gamepad driver.
+- **Proof** (hidden worker, play, `-WanSim bad`, africa-jeep seed, native gun profile, rtt ~178..183 ms; both copies'
+  sliced script-observer logs and frames looked at; sheets and crops under the run archive `r1101/frames/vanim/`,
+  nametags masked):
+  - `ba1a041a` (`r1101-vanim-play.txt` as merged, the key named): A met every waitlog (host `tx` 125 straight, down to
+    0 for a, up to 250 for d; guest `save` 0.000, writes 0.500 / 0.012 / 0.988, no `drift`) and the guest's frames
+    show the host's three seated poses, but the run stopped at the review form's second `placebehind` beside the seated
+    host: the harness's landing check needs the target's partner pose, which a seated partner does not give (as M6 run
+    `11fe8abd`). Scenario fix `5400cb28`: both get-offs from the standing jeep where the viewer stands, B at A's spot
+    and offset (B's old spot after A's drive had a bush in `38714f32`), the drives last.
+  - `c652248c`: refused before admission (`Start-WorkerSession`: "Access to the path is denied." on a file move,
+    before prepare; nothing launched, baseline and saves restored). The one retry followed.
+  - `bfd46ce5` (the fixed scenario, the key named): every waitlog met in A1, B1, A2 and B2. Host frames (B1, the
+    host watching from A's spot): the guest seated with both forearms level, then one arm over the top of the wheel
+    with the near arm low for a, the near arm raised on the wheel for d; guest frames (A1): the same three poses of
+    the host; the get-off on both screens: straight, hands level, then out over the side. Logs: the viewer wrote
+    0.004 .. 0.992 (accel up to 0.424 in the drives) and 0.500 through each exit; all four restores `phase=idle;
+    ok=1; drifts=0`; no `partner_ride_steer=drift` / `refused` line.
+  - `4c098120` (`r1101-vanim-default-play.txt`, NO key named: session lab settings empty; the green build): A1 and
+    B1, every waitlog met (the steer lines print only with the key on), restores `drifts=0`, the same three poses on
+    the host's screen and on the guest's.
+  - None of the three logged GameOver, `step=error`, `viewer_changed`, an exception, a non-zero fault count or a
+    non-zero `bad_op` / `wrong_dir` / `unknown_op`; one host `partner_ride_steer=held; queued=8` in `bfd46ce5` (the
+    vanim-4 hold under `-WanSim bad`, as designed).
+- **Mismatch vanim-3 settled for the default:** no per-frame writer fights the viewer's writes (no `drift` line in
+  `bfd46ce5` / `4c098120`). The value found before the first write (0.567 / 0.600, aux 0.500) shows only on a copy
+  whose own player drove earlier in the session; a copy whose player has not driven saves 0.000. What writes it after
+  the own ride is unknown [U]; the restore puts it back once body 1 is on foot.
+- **Commits:** `5400cb28` (scenario: get-offs from the standing jeep, B at A's spot), `9e0aaf4b` red (lab_config_tests:
+  the gun profile turns `partner_ride_steer` on in lab and play, off without it, a named 0 opts out, an invalid value
+  is named and off; friend_package_tests_2: play defaults it on, a named 0 turns it off), `9628e97f` green
+  (`partner_ride_steer_given`, `ResolveWeaponDefaults`, lab_ini_check prints `_given`, worker help, wire header
+  comment), `4e9478a7` (the shipped-default scenario; `r1101-vanim-play.txt` records `bfd46ce5`), then README (What
+  works, Known limits), docs/vehicle-ws3.md "Driver pose" and docs/anim-round1-seat.md.
+- **Checks:** -Fast 315/315 at the green `9628e97f`; friend_package / lab_scripts / worker_session / lab_config /
+  lab_ini / partner_driver / partner_ride 15/15; worker_session_tests 2/2 at `5400cb28` and `4e9478a7` (every shipped
+  scenario validates). No Lua file changed. Full `tools/build.ps1 -Jobs 4` at `d6037ba7` and at this entry's commit:
+  CTest 347/347; every generator `--check` passes (partner 858 sites / 213 slots, soldier_warp, carry_info /
+  sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph,
+  steam_shim, supply_cbox, vehicle_controller with `--executable`); native_ui / teammate_targeting stop at the
+  gitignored docs/evidence JSON, as in every fresh tree. Nothing pushed, tagged or released.
+
+## November 1, 2026: r1101 Prove - anim truth on by default (`partner_native_aim_truth` follows the gun profile in lab and play; hidden runs `3c5609bb`, `44391e17`, A/B `9fa2d353`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner holds RMB
+  or RMB+LMB but their own game refuses the aim (a lethal gun under Mother Base's stock no-lethal rule, or a body-owned
+  act such as the ladder), the partner's character on this screen keeps its gun down and fires nothing, as on the
+  partner's own screen; a real aim (the allowed pistol) still shows. Before, the puppet raised its gun and fired visual
+  shots there (the fb1031 report). A named `partner_native_aim_truth=0` turns it off.
+- **Still off unless named (no game run):** `partner_native_aim_truth_box` (the box EVADE strip),
+  `partner_native_aim_truth_triggers` (LT/RT zeroing for a gamepad remote), `partner_native_aim_truth_stance` (the
+  stance-hold change); each also needs the main key and its own hidden run. Deferred items are unchanged
+  (docs/anim-truth.md "Finder report").
+- **Proof** (hidden worker, play, `-WanSim bad`, mb-ladder seed, native gun profile, rtt ~186..190 ms; both copies'
+  sliced script-observer logs and frames looked at; sheets under the run archive `r1101/frames/animtruth/`):
+  - `3c5609bb` (`r1101-animtruth-play.txt`, the key named, all four steps, the reverse step for the first time): the
+    guest's rifle RMB and RMB+LMB: guest `partner_aim_local=no_aim; act=1` twice, host `partner_aim_truth=loco; ...;
+    strip=0x18` and `hold_run; result=refused; refused_ms=1551` / `1535`; host frames: the guest's puppet standing with
+    its rifle slung, no aim, no flash. The WU S.Pistol control: guest `aimed; act=11`, host `aim; remote_act=11`,
+    `hold_run; result=late; refused_ms=48; admitted_ms=1503`; host frame: the puppet aiming the pistol. RMB on the
+    ladder: host `act; remote_act=21; ...; strip=0x18`, refused 1520 ms; host frames: the puppet climbing, hands on the
+    rungs. The reverse: host `no_aim; act=1`, guest `loco; ...; strip=0x18`, `hold_run; result=refused;
+    refused_ms=1535`; guest frames: the host's puppet standing with its rifle slung.
+  - `44391e17` (`r1101-animtruth-default-play.txt`, NO key named: session lab settings empty; the green build): the
+    same four steps, the same lines (refused 1585 / 1522 ms, pistol `late` admitted 1521 ms, ladder refused 1553 ms,
+    reverse refused 1553 ms) and the same frames on both screens.
+  - `9fa2d353` (`r1101-animtruth-off-play.txt`, `partner_native_aim_truth=0` named, steps 1 and 4): no
+    `partner_aim_truth` line; the receivers logged `partner_aim_intent=on; source=pad; remote_act=1; flags=0x25;
+    pad_hold=1`, and in every RMB / RMB+LMB frame, both directions, the puppet held its rifle raised and shouldered
+    while the presser's own body kept it low: the report, reproduced with the key off at the same spots.
+  - None of the three logged GameOver, `step=error`, a non-zero fault count or a non-zero `bad_op` / `wrong_dir` /
+    `unknown_op`. Sheets `3c5609bb-sheet.jpg`, `44391e17-sheet.jpg`, `9fa2d353-sheet.jpg` and
+    `9fa2d353-vs-44391e17-zoom.jpg` (key off next to the shipped default).
+- **Still not covered:** a gamepad remote (the worker drives a keyboard; with `_triggers` off a held LT may still
+  raise the puppet's gun at Mother Base [I]); the box, triggers and stance parts; binoculars in an aim act still draw
+  a gun aim (needs BINOCLE on the wire); a LMB tap inside the ~15..50 ms before the remote's aim act arrives is not
+  drawn (a held LMB fires once the act confirms).
+- **Commits:** `9592c31a` red (lab_config_tests: the gun profile turns `partner_native_aim_truth` on in lab and play
+  and leaves its parts off, a named 0 opts out, an invalid value is named and off, also after a valid 1;
+  friend_package_tests_2: play defaults it on, its parts off, a named 0 turns it off; lab_ini_check prints the four
+  keys), `2ff5baab` green (`partner_native_aim_truth_given`, `ResolveWeaponDefaults`, LabCommon comment, worker help),
+  `d1c5aaa8` (the shipped-default scenario; `r1101-animtruth-play.txt` records `3c5609bb`), `6bbb8b51` (the key-off
+  A/B scenario), then README (What works, Known limits) and docs/anim-truth.md.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `2ff5baab`;
+  worker_session_tests 2/2 at `d1c5aaa8` and `6bbb8b51` (every shipped scenario validates). No Lua file changed. Full
+  `tools/build.ps1 -Jobs 4` at `25ba2a13` and at this entry's commit: CTest 347/347; every generator `--check` passes
+  (partner, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller with `--executable`);
+  native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh tree. Nothing pushed,
+  tagged or released.
+
+## November 1, 2026: r1101 Prove - the Fulton synced on by default (`fulton_sync` follows the gun profile in lab and play; hidden runs `7d924fac`, `19882881`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner Fultons a
+  guard, this screen shows the partner's character kneel at the guard to attach the balloon (the puppet's
+  `stateFultonStart` on a remote act 59 held 1 s) and the guard going up under a balloon here too; when the partner
+  Fultons a vehicle, it goes up under the engine's own vehicle balloon here (`Seize {"Fulton"}`) instead of vanishing
+  (correction at the land round: shown only for the guest's vehicle Fulton on the host's screen; the guest's lift of a
+  host's vehicle Fulton is off unless named since then, `fulton_guest_vehicle`).
+  A named `fulton_sync=0` turns it off.
+- **Kept as before (D1):** a partner's soldier Fulton still recruits into both saves. The credit skip that made the
+  receiver's lift visual only (the Fultoner's save only) reverses D1, the user's open decision, so it moved to its own
+  key `fulton_one_save` (CFG `r[18]` bit 8, off unless named in lab and play). Vehicles keep D14.
+- **Still off unless named:** `fulton_early` (the receiver's vehicle lift at the Fultoner's `FultonInfo` instead of
+  after VEHICLE_GONE's loss: no probe yet of a `FultonFailed` after `FultonInfo`, so a balloon shot down there could
+  leave the vehicle lifted on one copy only), `fulton_look` (the receiver's lift in the Fultoner's wormhole / balloon
+  look: shown in the log, not in a frame on the receiver), `fulton_one_save` (above).
+- **Proof** (hidden worker, play, `-WanSim bad`, africa-jeep seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/fulton/`):
+  - `7d924fac` (`r1101-fulton-play.txt`, `fulton_sync`, `fulton_early`, `fulton_look` named; the credit skip was still
+    part of `fulton_sync`): C the guest's hand Fulton of jeep 25608 reached the host 101 ms after the guest's
+    `FultonInfo`, the early lift ran (`step=early`, `step=fulton_lift;...;credit=1`) and the guest's later request was
+    answered gone (`step=applied;...;via=fulton;...;ok=1`), D14 once on each copy; host frames: a balloon inflating on
+    the jeep, then the jeep pulled up into the air. A / B the soldier Fultons both ways: the receiver's puppet played
+    `stateFultonStart` (~1.58 s) on the remote act 59, then `step=lift`, `credit_skipped`, `event=apply;...;state=6;
+    ...;readback=6`; frames: the host puppet kneeling at the guard on the guest's screen and the guard under a balloon
+    on the receiver's screen both ways. D the host's wormhole Fulton: the guest's lift borrowed the look (`worm=1;
+    own=0;set=1`) and restored it 5 s later [O log]; the wormhole on the guest's screen was not framed (its camera
+    looked at the ground) [U]. `staff_add` only on the Fultoner's copy. In C a still-awake guard shot the guest down
+    (`downed_damage` attacker 1080; not this track's code), so the default scenario puts the guards to sleep first.
+  - `19882881` (`r1101-fulton-default-play.txt`, NO key named: session lab settings empty; the green build): C no early
+    lift; VEHICLE_GONE's loss request 6.3 s after the guest's `FultonInfo` lifted the host's copy by `Seize {"Fulton"}`
+    (`step=fulton_lift;...;credit=1`, `step=applied;...;via=fulton;src=req;ok=1;ms=10143`), D14 once on each copy;
+    host frames: a balloon on the jeep and the jeep pulled up into the air while the guest's frame already showed it
+    gone. A / B: the receiver's puppet played `stateFultonStart` once per partner Fulton and nothing else did, the lift
+    line read `credit=1` and the stock credit ran on both copies (`step=staff_add` on each: D1); frames: each partner's
+    puppet kneeling at its guard and the guard hanging under a balloon right in front of the receiver, both ways.
+  - Neither run logged `step=error`, an echo, `viewer_changed`, `event=spare`, a non-zero `bad_op` / `wrong_dir` /
+    `unknown_op` or a GameOver; `19882881` logged no `credit_skipped`, `step=early` or `set=1`. Sheets
+    `r1101/frames/fulton/7d924fac-sheet.jpg` and `19882881-sheet.jpg`.
+- **Still not covered:** a host-to-guest vehicle Fulton (not in either scenario); the receiver's wormhole in a frame;
+  the receiver's soldier lift starts about 10 s after the Fultoner's attach (W1's FULTONED and FULTON come at the
+  Fultoner's `FultonInfo`, when the soldier is recovered) [O log]; a held interact over 1 s other than a Fulton could
+  start the puppet's Fulton kneel (act 59 is not Fulton-specific) [U: none seen, only the Fultons played it in both
+  runs]; a balloon shot down on the Fultoner's screen (soldier: no FULTONED follows, the receiver never lifts [I]).
+- **Commits:** `644cfa3e` red (lab_config_tests: the gun profile turns `fulton_sync` on in lab and play, a named 0 opts
+  out, an invalid value is named and off, `fulton_one_save` parses and is off unless named, `FultonCfgBits` 9 / 15;
+  world_sync_lua_check 6d: `r[18]` bit 8, the stock credit with `fulton_sync` alone (D1, `credit=1`), the skip only with
+  `fulton_one_save`; world_receipt_tests `r[18]` 15; worker_session_tests the key in both allow-lists;
+  friend_package_tests_2: play defaults `fulton_sync` on and its sub-keys off, a named 0 turns it off),
+  `42c8cc3d` green (`ResolveWeaponDefaults`, `fulton_one_save` parse and bit 8, world_link mask 15, `world_sync.lua`
+  bits 0..15, `world_enemy.lua` skip only with the key, LabCommon, the worker allow-lists and help), `83ad9f2e` (the
+  shipped-default scenario `r1101-fulton-default-play.txt`; `r1101-fulton-play.txt` names `fulton_one_save=1`), then
+  README (What works, Known limits), protocol section 25 and `docs/anim-round1-actions.md`.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `42c8cc3d`;
+  worker_session_tests 2/2 at `83ad9f2e` (every shipped scenario validates). `world_enemy.lua` 28270, `world_sync.lua`
+  22832 LF bytes. Full `tools/build.ps1 -Jobs 4` at `11445c2d` and at this entry's commit: CTest 347/347; every
+  generator `--check` passes (partner 858 / 213, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller
+  with `--executable`); native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh
+  tree. Nothing pushed, tagged or released.
+
+## November 1, 2026: r1101 Prove - supply drops synced on by default (`world_supply` follows the gun profile in lab and play; hidden runs `69efd63b`, `93f27123`; `wp/integ-1101`, local only)
+
+- **What players get:** an AMMO / FULTON supply drop either player orders from the iDroid now falls at the same spot on
+  both screens by default in play (Play-Coop's native gun profile) and in the lab: both screens show its landing marker
+  and its height counting down together, the partner gets "Your partner called a supply drop: the box lands at the same
+  spot for both of you.", and the player who ordered it gets the supplies as usual ("Surplus Supplies Retrieved"). The
+  F9 script AMMO box (lab row "supply drop") is shared the same way. Other drop types (WEAPONS / ITEMS, LOADOUT,
+  VEHICLES, ...) stay on the caller's screen only. A named `world_supply=0` turns it off.
+- **Proof** (hidden worker, play, `-WanSim bad`, afgh-ledge seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/supply/`):
+  - `69efd63b` (key named, `r1101-supply-play.txt`, the review-fixed module): the host's script drop aimed at the guest,
+    the host's own iDroid drop ("Supply Drop Expenses: [GMP -55780]") and the guest's own iDroid drop were each mirrored
+    on the other copy (`step=mirror; ...; ok=1`, note 21 a=1) and ended `step=delivered` on both copies; frames: the
+    expense line and an open supply case 2 m from each caller after its own drop, the box arriving on the guest [I:
+    a parachute panel at the camera], the toast on the receiver. Crossing script drops kept each player's own box (host
+    `mirror_held; origin=2; oseq=2; own=1.3`). The host's WEAPONS / ITEMS drop stayed local (`sent=0`, `sync=0`, nothing
+    on the guest). Its pickup by E (H3) did not happen [U] (the host lay on its back after the landing [I]).
+  - `93f27123` (key NOT named, `r1101-supply-default-play.txt`, the green build; session lab settings `nametag=1` only):
+    `supply=installed` and `step=on` on both copies; the three drops again, each mirrored and delivered on both; frames:
+    the landing marker on both screens with the falling height in step (host / guest 203 / 204 and 41 / 38 [I:
+    metres]), the toast on the receiver, the expense line on each caller, "Surplus Supplies Retrieved" x3 and GMP +3850
+    on the guest after its own drop.
+  - Neither run logged `step=error`, `rx_bad`, `echo`, `mirror_skip`, `remove`, `gone_unknown`, `refused`,
+    `accepted=0`, `supply=failed|refused`, note 21 a=2, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a
+    GameOver; no game exited early.
+- **Commits:** `eeba05cf` red (lab_config_tests check 1723: the gun profile turns `world_supply` on in lab and play, a
+  named 0 opts out, invalid is named and off; friend_package_tests_2: play defaults it on, a named 0 turns it off),
+  `f18fdf44` green (`ResolveWeaponDefaults` sets `world_supply` from the gun profile unless named; comments and worker
+  help; lab_scripts_tests: the offline fixture without the profile still reads 0), `0dd73a2d` (the shipped-default
+  scenario), then comments (`world_supply.lua` 20491 LF bytes), README (What works, Known limits) and protocol section 26.
+- **Still not covered:** no frame shows the box itself lying at the partner's spot on the partner's screen (in
+  `93f27123` each camera had the partner close in front [I: the teleport yaw faced the players away from each other]);
+  two players both on the landing spot (each copy delivered to its own player only, the partner about 3 m away [I]);
+  WEAPONS / ITEMS and the other types (not synced; each needs its own run); the remove path (kind 2, note 21 a=2; H2,
+  H3) and the WEAPONS / ITEMS pickup; a box landing on a guard; crossing drops still show the partner's toast on the
+  copy whose own request replaced the mirror a moment later. A partner on an older build drops `0x45` as unknown_op.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `f18fdf44`; full
+  `tools/build.ps1 -Jobs 4` at `fcfd41a7` and at this entry's commit: CTest 347/347; every generator `--check` passes
+  (partner, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller with `--executable`);
+  native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh tree.
+
+## November 1, 2026: r1101 Prove - F9 Spawn vehicle on by default (`debug_vspawn` follows the gun profile in lab and play; hidden runs `65b4005c`, `e09fcf72`, `6ffe824d`; `wp/integ-1101`, local only)
+
+- **What players get:** F9 > World > Vehicles **Spawn jeep** / **Spawn truck** now work by default in play (Play-Coop's
+  native gun profile) and in the lab: one of the area's own jeeps or trucks comes 6 m in front of whoever presses,
+  facing their way, on both screens (Afghanistan and Africa free roam); a guest's press asks the host. A press while
+  riding (driving, or in a back seat) is refused with "Get on foot first: no vehicle spawn while riding or in a
+  cutscene." A named `debug_vspawn=0` turns it off. The two rows lose their "unverified" mark.
+- **Proof** (hidden worker, play, `-WanSim bad`, afgh-ledge seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/vspawn/`):
+  - `65b4005c` (key named, `r1101-vspawn-play.txt`): A the host's jeep `veh_lv_0011` placed within 0.01 m on both
+    copies (frames: the jeep ahead of the host, the guest beyond it; the guest turned round sees the same jeep, the host
+    beyond). B the guest's ask: the host picks `veh_trc_0005` (an LRRP truck) for the guest, both copies place it
+    (frames: the truck and its toast on both screens). C the host drives the spawned jeep (localSeat 1, D-Dog in the
+    front seat), the guest sits in the back seat (`board_seated` seat 3); frames on both screens, also while moving.
+    D the host's press `vspawn_refused;reason=busy` with `by=on_vehicle`, the guest's `by=seat`, note 20 a=3 b=5 and the
+    toast on both copies; the host's frame shows the toast and no second jeep (the guest's was not captured: fixed in
+    the scenario, `394e3130`).
+  - `e09fcf72` (key named): A-D again with the same picks; the D frames on both screens show the toast and no second
+    vehicle; the guest's copy applied about 210 RIDE_FAST updates while the host drove.
+  - `6ffe824d` (key NOT named, `r1101-vspawn-default-play.txt`, the green build): the session's lab settings were
+    `nametag=1` only; `vspawn;on=1` on both copies; A and B again, with before / after frames on both screens.
+  - No run logged `event=vspawn; step=error`, a `placed ... ok=0`, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a
+    GameOver; no game exited early.
+- **Commits:** `394e3130` (scenario: D captured on both screens), `75be305c` red (lab_config_tests, debug_menu_tests,
+  friend_package_tests; `lab_ini_check` prints `debug_vspawn`), `3af5b29d` green (`debug_vspawn_given`;
+  `ResolveWeaponDefaults` sets `debug_vspawn` from the gun profile unless named; the rows lose `kUnverified`; comments and
+  worker help), `24a53f08` (the shipped-default scenario), then README (What works, Known limits), debug-menu.md and
+  protocol section 27.
+- **Still not covered:** armoured vehicle and tank rows (they need a load-time pack injection on both copies); the
+  sortie vehicle you bring (index 0, the M3 `world_relief` key, off); an LRRP truck can be taken back by each copy's own
+  AI later (until M8; all six Afghanistan trucks are LRRP trucks); the drive in C is short (about 7 m, to a concrete
+  block); a partner on an older build drops `0x44` as unknown_op and cannot answer; with the key named 0 the refusal
+  still reads "not available yet in this build". Mother Base and story missions refuse as before.
+- **Checks at `d89b62a9`** (worktree on C:, Debug, `-Jobs 4`): full `tools/build.ps1` CTest **347/347**; every generator
+  with `--check` passes (partner, soldier_warp, carry_info, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, sleep_plugin, steam_shim, supply_cbox, vehicle_controller); native_ui and
+  teammate_targeting stop at their gitignored `docs/evidence` JSON, as in every fresh tree. `debug_vspawn.lua` 15576 /
+  16000 LF bytes. Nothing pushed, tagged or released.
+
+## November 1, 2026: r1101 integration - five tracks in one build, every new key off unless named (`wp/integ-1101`, local only; no hidden runs this round)
+
+- **What players get in play:** nothing changes by default. All five r1101 features stay behind lab.ini keys that are
+  off unless named, in lab and play: `partner_ride_steer` (the seated driver's steer pose), `partner_native_aim_truth`
+  with `_box` / `_triggers` / `_stance` (the partner's native aim truth), `fulton_sync` with `fulton_early` /
+  `fulton_look` (the Fulton on both copies), `world_supply` (supply drops synced) and `debug_vspawn` (F9 Spawn vehicle;
+  both rows refuse with "Vehicle spawn is not available yet in this build." while it is off).
+- **Left for the Prove phase (none flipped here):** `world_supply` (run `5acbcb83` clean on both copies; the review
+  fixes after it and scenario `r1101-supply-play` phases 5-6 never ran), `partner_native_aim_truth` (run `a8a69ae9`
+  proved one direction, the guest pressing; step 4, the reverse, not run), `partner_ride_steer` (run `38714f32` A: the
+  guest watching; the review fixes `bd6af708` and the host side not run), `debug_vspawn` (A, B and C seen on both copies
+  in `5cdbfada`; D, the riding refusal, not run), `fulton_sync` (no frame shows a balloon or a wormhole on the receiver).
+- **Merged (`--no-ff`, onto dev `96415cb6`, in this order):** `wp/vehicle-anim` `e552f413` (`01fb29c3`, clean),
+  `wp/anim-truth` `f99cc286` (`1bfda423`), `wp/fulton-anim` `a8f2156b` (`a52a77fc`), `wp/supply-sync` `a43ab934`
+  (`844dc797`), `wp/vehicle-spawn` `583e575a` (`038bcb6a`). Conflicts kept both sides: the worker labsetting
+  allow-lists and help (every key of every track), LabCommon keys, the op constants and op table, the NOTE grammar,
+  `NoteShown` and toast texts, the SUPPLY and VSPAWN receipts, the `world_supply` and `debug_vspawn` splices, the worker
+  Lua check list, the FULTON and VSPAWN wire tests, the protocol doc and STATUS (vehicle spawn above fulton).
+- **Ids after the merge:** wire ops `0x44` VSPAWN, `0x45` SUPPLY, `0x46` FULTON (67 ops in the table); world notes 20
+  VSPAWN and 21 SUPPLY (22 reserved for the Fulton track, unused), so the NOTE grammar and `NoteShown` take 1..15 and
+  18..21. All three world tracks wrote their `docs/world-sync-protocol.md` section as 25: Fulton keeps **25**, Supply
+  drops is **26** and Vehicle spawn is **27**, with every reference in code, tests, scenarios and docs renumbered.
+- **Fallout commits:** `3bec8427` (66 ops once SUPPLY and FULTON were both in; 67 in the vehicle-spawn merge itself) and
+  `99a23cf7` (`supply_sync_tests` expected note 20 hidden; `world_receipt_tests` now also checks 21 shown, 22 hidden).
+- **Supply drops record** (the track's own STATUS entry never landed: the 08:50 PC crash zero-filled `docs/STATUS.md`
+  in its worktree before it was committed; that uncommitted file is still there and was left alone): observe-only
+  MinHook detours on the supply-box request core `0x15C3F00` and reset `0x15C4080`, pinned in
+  `native/supply_cbox_contract.hpp` (`tools/generate_supply_cbox_contract.py --check`), SUPPLY `0x45`, note 21 and
+  `lua/coop/world_supply.lua`; only the proven drop pairs (AMMO / FULTON `4:0`, the iDroid `0:431`) are synced. Hidden
+  runs: `c66d418b` (the guest's mirror skipped: fixed), `ddf44cee` (mirror works; a delivered box sent a false "gone":
+  fixed) and `5acbcb83` (three boxes mirrored once each, every box ended `step=delivered` on both copies, no false
+  gone). The review fixes at `a43ab934` (mirror held for an own box, refused requests not mirrored, the accepted read)
+  never ran in a game. Details: `docs/world-sync-protocol.md` section 26.
+- **Checks at `99a23cf7`** (worktree on C:, Debug): `tools/build.ps1 -Fast` after each merge and fix (312, then 314,
+  then 315 tests, all passing) and the affected `ctest -R` sets; full `tools/build.ps1` CTest **347/347**; every
+  generator with `--check` passes against exe `085c2f82...bb45` (partner 858 code sites / 213 slots, soldier_warp,
+  carry_info, carry_plugin, carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, sleep_plugin,
+  steam_shim, supply_cbox 6 sites, vehicle_controller 17 sites; native_ui and teammate_targeting stop at their gitignored
+  `docs/evidence` JSON, as in every fresh tree). Lua sizes (LF): `debug_vspawn.lua` 15569 / 16000, `world_supply.lua`
+  20495, `world_vehicle_rules.lua` 30293, `world_vehicle.lua` 30146, `world_enemy.lua` 28096 / 32000; `debug_menu.lua`
+  untouched at 15993. Nothing pushed, tagged or released.
+
+## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; spawn, guest ask and riding seen on both copies in hidden runs `e626471f` and `5cdbfada`; the riding refusal and the r1101 review fixes after them, not run yet)
+
+- **Review r1101 fixes (red/green, not run yet):** the back-seat check took every on-foot press as riding (world_ride_pose's
+  `S.sat` is `false`, not nil, on foot), so `082db232` refused every press: fixed, the refusal logs `by=`. The host's
+  press is refused unpaired and moves the vehicle only once VSPAWN went out; a wreck goes out once in place on the host.
+  Never onto a player (3.5 m: b=10). The guest's copy skips a host move while its own key is off or the vehicle is
+  occupied there (its own LRRP crew) and answers kind 4 (the host toasts "only on your screen", b=9). The pick skips
+  VEHICLE_GONE's watch / held ids; a re-created wreck leaves VEHICLE_GONE's gone and PAIRED re-send lists. Scenario D
+  now presses from the guest's back seat too.
+- **What players get once the key is on:** F9 > World > **Vehicles**: **Spawn jeep** / **Spawn truck** bring one of the
+  area's own vehicles 6 m in front of whoever presses, facing their way, on both screens (Afghanistan and Africa free
+  roam). A guest's press asks the host (VSPAWN `0x44`), who brings it in front of the guest. Afterwards it is that map
+  vehicle on both copies (ride together, drive, damage, Fulton, VEHICLE_GONE). Plain refusal toasts (world note 20):
+  key off, not free roam (Mother Base, story missions), none free, kind not in this area (tanks / armoured vehicles are
+  not loaded in free roam), not on foot (driving, on the horse, in a back seat), not paired, failed, no answer.
+- **Hidden runs (play, `labsetting debug_vspawn=1`, afgh-ledge, WAN sim bad; frames looked at, sheet
+  `mgs-coop-run-archive/r1101/frames/vspawn/5cdbfada-sheet.jpg`):**
+  - A, the host's jeep [O both logs + frames]: `veh_lv_0011` (4.2 km away) moved 6 m in front of the host, readback
+    `d_m=0.00 ok=1` on both copies; the host's frame shows it ahead, facing the host's way; toasts on both screens.
+  - B, the guest's truck [O both logs + frames]: kind 1 ask -> host pick `veh_trc_0005` (an LRRP truck, 2.9 km) -> kind 3
+    -> both `ok=1`; the truck 6 m in front of the guest on the guest's screen, beside the jeep on the host's.
+  - C, riding [O both logs + frames]: the host drove the spawned jeep (driver seat), the guest sat in its back seat by
+    the seats module (`partner_ride=board_seated`), the guest's copy showed the host's puppet in that jeep's driver seat
+    and followed it (RIDE_FAST); both screens show both players in the same jeep; it moved about 7 m to a concrete block.
+  - D, a refusal while driving FAILED in `5cdbfada` [O]: the stance reads STAND in a vehicle, so the press was taken and
+    a second jeep came in front of the moving one. Fixed in `082db232` (ON_VEHICLE / ON_HORSE / the seats module's
+    passenger seat -> `busy`), red/green tested, **not run yet**; the scenario now expects `vspawn_refused;reason=busy`.
+  - Run `e626471f` (first attempt) also passed A and B; its C never boarded (the jeep faced east, the host stood at its
+    bumper). Toasts: the "skipped" ones there were the toast log's per-code rate limit, the toasts showed on screen [O].
+- **How:** free roam loads only the faction's jeep and truck bodies, and the class command `Spawn` refuses a live name
+  (REA snapshot pseudocode of `0x140B31E70`; `Respawn` `0x140B31710` re-creates a named instance from its record), so
+  the host picks an authored `VEHICLE_SPAWN_LIST` locator (unridden, not the partner's ride, LRRP last, live before
+  wrecked, not brought before, farthest) and both copies move it with the stock `SetPosition{position, rotY}` (degrees,
+  `s10050_sequence.lua`); a wreck is re-created by `Respawn{name}` first. Each copy reads the pose back
+  (`event=vspawn; step=placed; ok=`). `lua/coop/debug_vspawn.lua` (new fragment after `debug_arms.lua`), native: VSPAWN
+  op, note 20 text, `MGS_COOP_VSPAWN_CFG_V1` (the key for Lua), World > Vehicles rows (S, U).
+- **Sortie vehicle you bring:** not fixed by this. It is TppVehicle2 index 0, which Lua can never spawn, respawn or
+  despawn (`ParseLuaSpawnIndex` `0x140B304E0`); the existing fix is the M3 `world_relief` key (guest `Vehicle.LoadCarry`
+  with the host's carry vars), off since the 2026-10-29 review until a FRAME proof and a play rehearsal of drive,
+  mission end and removal.
+- **Armoured vehicles and tanks (what it would take):** free roam (`f30010.fpk` / `f30020.fpk`, `TppMissionList.lua`)
+  loads no APC or tank body; story missions add them with `TppPackList.AddMissionPack(TppDefine.MISSION_COMMON_PACK.
+  WEST_WAV / WEST_TANK ...)`, and the reinforce block (`reinforce_vehicle_0000`, `Respawn{type=...}`) loads one only for
+  a CP's call. A row for them needs that pack added to free roam's pack list on BOTH copies before the mission loads
+  (a load-time hook, more memory, never measured), then a `Respawn{name, type=...}` of an authored slot (the parser takes
+  a type override) or an index `Spawn`; a probe first, since a body that is not loaded is [U] (likely a crash).
+- **Proof run:** `tools/worker/scenarios/r1101-vspawn-play.txt` (play, `labsetting debug_vspawn=1`, afgh-ledge seed):
+  host jeep, guest truck, host drives the spawned jeep with the guest riding, a refusal while driving. The key stays off
+  unless named until the Prove phase's run shows D refused.
+
+## November 1, 2026: r1101 fulton - the Fulton synced on both copies, behind `fulton_sync` (`wp/fulton-anim`, local only, off unless named)
+
+- **What players would get (key `fulton_sync=1` named on both copies; nothing changes with it unnamed):** when the
+  partner Fultons anything, their puppet plays the Fulton attach (`stateFultonStart`, the DM overlay's Fulton-only map:
+  remote act 59 held 1 s, also with `partner_native_overlay=off`); a partner's soldier Fulton lifts this copy's
+  soldier (W1's `RequestForceFulton`, as before), with sub-key `fulton_look=1` in the Fultoner's look (balloon or
+  wormhole: FULTON 0x46 carries the Fultoner's `EQP_IT_Fulton_WormHole` level; this copy borrows it for 5 s, restored,
+  never saved), and only visually when the partner announced it (this copy's `TppTerminal.OnFulton` skipped once: the
+  Fultoner keeps the recruit; a partner without the key gets D1 as before); a partner's vehicle Fulton lifts
+  this copy's vehicle with the engine's own vehicle Fulton (`Seize {"Fulton"}`, the balloon) instead of removing it
+  at once (D14 credit as before; without D14 no credit here). Mother Base spareStaff is unchanged (SetDisable).
+- **Open decision:** with the key on both copies, a partner's soldier Fulton no longer recruits on this copy, which
+  differs from D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until
+  the user decides and a hidden run shows both screens.
+- **The early vehicle lift (green 3, after probe `614ec20a`; sub-key `fulton_early=1` since the review):** a partner's
+  FULTON kind 2 (sent at its `FultonInfo`, with the vehicle's type and pose there) starts this copy's vehicle lift at
+  once, matched at the Fultoner's pose as VEHICLE_GONE matches, instead of after VEHICLE_GONE's loss readback about 6 s
+  later. [I] a balloon that fails after `FultonInfo` is not mirrored (a one-sided removal), hence its own key. Not run
+  in a game yet.
+- **Review fixes (2026-11-01, red `6c8df73b`, green `7a77eb8d`):** all seven findings held. (1) the early lift trusted the
+  Fultoner's raw pool index: FULTON now carries `vtype` and xyz (9 fields, 23 bytes) and the early item is judged at
+  that pose (mismatched indices matched within 5 m, else nothing; the host answers the guest's index gone). (2) no
+  failure parity for the early lift: behind its own key `fulton_early` (off unless named) until a FultonFailed-after-
+  FultonInfo probe. (3) the borrowed level changed this copy's own Fultons: behind its own key `fulton_look` (off unless
+  named). (4) the soldier credit skip without a partner announcement: decided at `OnFulton`, skipped only with the
+  partner's FULTON note (else D1, `step=credit_kept`). (5) a request joined to a held early lift was never answered:
+  it now takes the request's `src` (gone, or REJECT 9). (6) F9 Wormhole on/off during a borrowed look wrote the wrong
+  level back: the look ends first. (7) the puppet's Fulton map fired on acts 49/50 and any 59 over 500 ms: act 59 only,
+  held 1 s (a longer held interact still would [U]).
+- **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 23 bytes; `docs/world-sync-protocol.md` section 25);
+  CFG `r[18]` bits (1 `fulton_sync`, 2 `fulton_early`, 4 `fulton_look`); world note 22 reserved, unused.
+- **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`, `e85689f7`; green `000cf3c7`, `7e7ab625`, `9c026fcb`. partner_dm_overlay
+  TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
+  world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
+  debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
+- **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca` and again at `f7af51d9` (with the early lift); generators `--check` as at the rel0146
+  baseline (carry_info / sleep_plugin differ by line endings only there too).
+  After the review fixes: full `tools/build.ps1 -Jobs 4` CTest 344/344 at `7a77eb8d`; generators `--check` as at that
+  baseline (no pinned site changed).
+- **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep; names
+  `fulton_sync`, `fulton_early` and `fulton_look`).
+- **Probe `614ec20a` (lab, africa-jeep, key named; this track's second probe):** [O log] the guest's hand Fulton of the
+  jeep 25608: on the host the overlay played `stateFultonStart` 1598 ms over the guest's 2548 ms act 59; the guest's
+  `Fulton` / `FultonInfo` came 6.1 s after its attach began (FULTON kind 2 tx, the host's rx), its VEHICLE_GONE
+  `step=lost` 6.1 s later; the host then lifted its copy with `Seize {"Fulton"}` (`step=fulton_lift; ...; credit=0`,
+  its own `OnFulton` skipped, `step=applied; ...; via=fulton; ...; ok=1; ms=10276`). [O frame] guest `c-before` the
+  stock prompt (Fulton x24) at the jeep, `c-hold` the attach, `c-lift-02` the jeep gone from its view; host
+  `c-lift-06` the jeep still there, `c-hlift-01` (after its lift) gone. No frame covers the host's 10 s lift itself
+  (the burst waited for `step=applied`; the scenario now bursts at `step=fulton_lift`) [U balloon]. The soldier part
+  did not run: `enemy sleep nearest` slept 4158955462 while `enemy goto nearest` reached 2552560298 (awake); the
+  scenario now uses the spot's guards by hash. Archive
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\614ec20ad85a40fba59de4f952d2528e`, sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\614ec20a-sheet-c.jpg`.
+- **Hidden run `7e9856cb` (play, bad WAN, africa-jeep, key named; part A only, then stopped):** [O log] the host's
+  hand Fulton of sleeping guard 2552560298: on the guest the host's act 59 lasted 2569 ms and the overlay played
+  `stateFultonStart` for 1583 ms (`partner_overlay=request|play|playing|finished; ...; source=map`); host
+  `event=fulton; step=tx; kind=1; ...; worm=0; sent=1`, guest `step=rx` then `step=lift; ...; worm=0; own=0; set=0;
+  credit=0`, the guest's own `Fulton` message 3.7 s later with `step=credit_skipped; ...; why=partner_lift` and
+  `event=apply; ...; state=6; ...; result=ok; readback=6`; `step=staff_add` on the host only (n=1), none on the guest.
+  [O frame] host `a-before` shows the stock prompt with Fulton x24 and `a-hold-04` x23 (the Fulton used); guest
+  `a-hold-01` shows the host puppet low at the guard and `a-hold-03` standing again; guest `a-after` shows the guard's
+  spot empty. No frame shows a balloon on either screen (the cameras looked down at the ground) [U]. [O log] **The
+  receiver's lift starts late:** the Fultoner's `Fulton` / `FultonInfo` messages (and so W1's FULTONED and FULTON 0x46)
+  come about 10.7 s after its attach act, when the soldier is recovered; the guest's lift began 0.1 s after that. A
+  start at the attach is the next step (a start announcement plus FultonFailed parity, so a balloon shot down looks
+  the same on both). The run stopped in part B at `placebehind` (`viewer landing starts without a valid partner
+  pose`) with the host lying on the ground after a second hold of E (cause [U]); earlier the jeep 25608 broke on the
+  guest's copy (unattributed `VehicleBroken`) and the host despawned it (D12), so the vehicle lift did not run. The
+  scenario now runs the jeep first and uses one hold per soldier Fulton. Archive
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\7e9856cb8bc14348aded28cad627088d`, frames and sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\7e9856cb-*`.
+
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `6c25276` with Release receipt `20261101-025109-055c474332e94b7494b2639f486ea948` (passed, 331 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.6+6c25276` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.5.

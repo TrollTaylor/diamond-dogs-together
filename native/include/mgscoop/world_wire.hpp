@@ -106,6 +106,19 @@ inline constexpr std::uint8_t rules = 0x3E;
 // guest's Friendly fire ask (kind 1) and the host's friendly fire state (kind 2). 0x3C..0x3E belong to the other
 // debug-menu tracks (character, spawn, rules).
 inline constexpr std::uint8_t arms = 0x3F;
+// Debug menu Spawn vehicle (docs/world-sync-protocol.md section 27, lua/coop/debug_vspawn.lua): VSPAWN (68), both
+// directions, control queue, paired: the guest's ask and the host's spawn (class, authored locator number, pose) that
+// both copies apply. Sent only with the lab key debug_vspawn (on with the gun profile). 0x40..0x43 and 0x45..0x46 belong to
+// the other 10-31 / 11-01 tracks.
+inline constexpr std::uint8_t vspawn = 0x44;
+// Supply drops synced (r1101, docs/world-sync-protocol.md section 26): SUPPLY (69), both directions, world queue, paired:
+// a copy's own supply-box request (kind 1 drop: the partner requests the same box at the same aim point) and a synced
+// box that is gone on one copy (kind 2: the other copy removes its own). Sent and applied by Lua only with the lab.ini
+// key world_supply (on with the gun profile; lua/coop/world_supply.lua). A partner without the op skips it by its length
+// (unknown_op).
+inline constexpr std::uint8_t supply = 0x45;
+// r1101 fulton (docs/world-sync-protocol.md section 25): FULTON (70).
+inline constexpr std::uint8_t fulton = 0x46;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -269,6 +282,12 @@ struct CfgReply {
     // lua/coop/world_relief_sync.lua (lab key world_relief), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t relief;
+    // r1101 fulton (docs/world-sync-protocol.md section 25): r[18] bit 1 turns on the Fulton lift and FULTON 0x46
+    // (lua/coop/world_enemy.lua W.fulton, world_vehicle_rules.lua; lab key fulton_sync), with it bit 2 the early vehicle
+    // lift (fulton_early), bit 4 the borrowed wormhole look (fulton_look), bit 8 the receiver's soldier credit skipped
+    // (fulton_one_save) and bit 16 the guest's lift of a host's vehicle Fulton (fulton_guest_vehicle), else 0; filled only by
+    // world_link::HandleCfg.
+    std::uint8_t fulton;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

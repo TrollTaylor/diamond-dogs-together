@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "runtime_verified": false,
+  "scope": "supply-box observer: two observe-only detours (request_core, box_reset), a read of the box state Z+0xF0 / flags Z+0x124, and the lab-only remove lever (flags |= 2, the game's own reset bit)",
+  "sites": [
+    {
+      "name": "request_core",
+      "rva": 22822656,
+      "size": 341,
+      "bytes": "405556574883ec40488b05215458014833c44889442430488b4120488bf94883c120488beaff1084c00f851101000048895c2470488d9fe0040000488bd5488bcbe82a042bff488bd3488bcfe8af760000f6870d06000020755e4c8d87e0050000488d542420488bcfe8b2deffffe8ddb063ff488b8898000000488b89800000004885c97432b8ffff0000488d542420663987f0050000488b017413440fb787f00500004533c9ff90c0000000eb094533c0ff90b8000000488b4720488d4f2032dbff501884c07412f68724010000200fb6dbb8010000000f45d8e870b063ff488b8898000000488b8900010000488b01ff507084c07407c687f205000007838f24010000028b872401000084db488b5c2470741983bff00000000a751048c787f00000000c00000083c810eb0c33c983c80848898ff0000000898724010000488b4c24304833cce8f31a44004883c4405f5e5dc3",
+      "sha256": "8ea47b4d0ce2f92ad16025a8cd3f2220e0d2f11011dc24a375bd62696912c495",
+      "why": "hooked (observe only): core supply-box request(Z=rcx, request=rdx); copies the 0x130-byte request to Z+0x4E0 (call 0x874370), state Z+0xF0, flags Z+0x124 |= 2"
+    },
+    {
+      "name": "box_reset",
+      "rva": 22823040,
+      "size": 230,
+      "bytes": "40534883ec2080a10c010000f8488bd9e81b9d0000488b4b7081a324010000fffffdff33d2488b01ff90b8010000488b4b70ba02000000488b01ff90b8010000488b4b70ba01000000488b01ff90b8010000488b4b70ba02000000488b01ff9058020000488b4b70ba01000000488b01ff9058020000488b4b7049b87c8694bc027d0000488b0141b101ba01000000ff9000010000488b8b80000000838b240100000833c033d2488983f0000000488b01ff501884c0750f488b8b8000000033d2488b01ff5008488bcbe8d1b2ffff81a324010000ffffdb2383a328010000fb4883c4205bc3",
+      "sha256": "b5dff9f34bfd91e04b2f7eb137d7a3d3b51c83b5a97ad6b8ea24fbaaf49faecd",
+      "why": "hooked (observe only): the box reset(Z=rcx): hides the model, state Z+0xF0 = 0, flags Z+0x124 cleared"
+    },
+    {
+      "name": "request_funnel",
+      "rva": 22822528,
+      "size": 122,
+      "bytes": "40574883ec3048c7442420feffffff48895c24484889742450488bf2488bf9488d993007000048895c24400f1f440000488b0d79fd6901488b0141b9010000004533c0488bd3ff506085c075e3488d4fe0488bd6e82700000090488b0d4ffd6901488b01488bd3488b5c2448488b7424504883c4305f48ff6030",
+      "sha256": "05a87d7385b7ff1a31dc91b3a1f63fc9f766ecead8d55c57cff931dc67d4320f",
+      "why": "slot 0x48 of the supply iface: locks Z+0x750 (X+0x730) and calls request_core(X-0x20)"
+    },
+    {
+      "name": "lua_request_tail",
+      "rva": 10336255,
+      "size": 190,
+      "bytes": "33d241b830010000488d4c2460e87fa702010fb6958d00000080ca048b44242c894424608b442434894424648b442438894424680f297560f30f1044243cf30f114574f30f104c2430f30f114d78807c2424000f95c0c0e00332c2240832d00fb7442428668945700fb64424228845720fb6442420888580000000807c2421000f95c180e101c0e10280e2fa0aca0fb644242324010ac880c902888d8d000000e8ac372200488b8898000000488b8948020000488b01488d542460ff5048",
+      "sha256": "c8cffa134fafd0b4410605edb79e268552ebfa771771096cc5f41c514ad70a5d",
+      "why": "Player.RequestToSupplyCbox: the 0x130-byte request layout (+0 drop type, +4 equip, +8 parts, +0x100 aim position, +0x110 aim object, +0x112 wait level, +0x120 level, +0x12d flags) and the ([0x98]+0x248)->vt[0x48] call"
+    },
+    {
+      "name": "update_reset_bit",
+      "rva": 22810994,
+      "size": 32,
+      "bytes": "f686ec000000027417488d4ec8488d96a8040000e8e5a6000083a6ec000000fd",
+      "sha256": "d2c3ab7b12f392028b706b85f4c4914d1263968f06bf79180dfa804382d82417",
+      "why": "the update (this=Z+0x38): flags bit 2 (Z+0x124 = this+0xEC) calls the reset path 0x15CB870(Z) and clears the bit"
+    },
+    {
+      "name": "reset_path",
+      "rva": 22853744,
+      "size": 55,
+      "bytes": "48895c2408574883ec20488bfa488bd9e8fb87fffff68327010000017419488d9310060000488bcfe8d38a2aff81a324010000fffffffe",
+      "sha256": "20944c26b81f488dcfec8c720044dea8fb1b6787b8cc9db58ffac2c7849a0d6c",
+      "why": "0x15CB870: reset(Z), then copies a reserved request when Z+0x127 bit 0 is set"
+    }
+  ],
+  "slots": [
+    {
+      "vtable_rva": 37909664,
+      "offset": 72,
+      "target_rva": 22822528,
+      "why": "supply iface vt[0x48] = request_funnel"
+    },
+    {
+      "vtable_rva": 37910128,
+      "offset": 72,
+      "target_rva": 22822528,
+      "why": "second supply iface vtable, same funnel"
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+# r1101 supply drops synced at the shipped default (docs/world-sync-protocol.md section 26; lua/coop/world_supply.lua;
+# native/supply_cbox.cpp): the same drops as r1101-supply-play.txt phases 1, 3 and 4, but the lab key world_supply is NOT
+# named: with the gun profile it is on by default in lab and play since the r1101 Prove phase (run 69efd63b named it).
+# Here the two players face each other 3 m apart (the host at yaw 30 towards the guest, the guest at yaw -150 towards
+# the host; teleport yaw 0 faces +z, 90 faces +x), so each non-caller's camera looks at the caller's landing spot.
+# Seed afgh-ledge (30010) for both, PLAY mode with -WanSim bad.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-supply-default-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+# Expected (sliced script-observer logs of both copies + frames):
+#   0) both: supply=installed;detours=2;observe_only=1 and world_lua=event=supply; step=on with the key not named.
+#   A) the host's F9 script drop aimed at the guest: host step=drop_local; origin=1; oseq=1; ... sent=1, guest
+#      step=mirror; origin=1; oseq=1; ok=1, toast note 21 a=1 on the guest; delivered on both. Frames a-*: the host's
+#      screen shows the box falling on the guest ahead of it; the guest's screen the box arriving on itself.
+#   B) the host's own iDroid AMMO / FULTON drop (Tab, 3, Enter, Enter, Space): mirrored on the guest, delivered on both.
+#      Frames b-*: the guest's screen shows the box falling on the host ahead of it; the host's the expense line.
+#   C) the guest's own iDroid drop: the same with the roles swapped (origin=2). Frames c-*: the host's screen shows the
+#      box falling on the guest ahead of it.
+# NEVER (sliced): step=error, step=rx_bad, step=echo, step=mirror_skip, step=remove, step=gone_unknown, step=refused,
+# supply=failed, supply=refused, accepted=0, note 21 a=2, a non-zero bad_op / wrong_dir / unknown_op, GameOver.
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 30
+wait 2000
+guest debug teleport 806.5 342.1 1639.1 -150
+stance host stand
+stance guest stand
+wait 3000
+waitlog host 'supply=installed;detours=2;observe_only=1' 10
+waitlog guest 'supply=installed;detours=2;observe_only=1' 10
+waitlog host 'world_lua=event=supply; step=on' 60
+waitlog guest 'world_lua=event=supply; step=on' 60
+host run supply state
+host require ^on=1;box=
+guest run supply state
+guest require ^on=1;box=
+both capture a-before
+# --- A) the host's script drop aimed at the guest ----------------------------------------------------------------------
+logmark both
+host run supply drop 806.5 342.1 1639.1
+host require ^submitted_supply_drop
+waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=1;.* sent=1;' 10
+waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=1; ok=1' 10
+guest capture a-toast
+waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 15
+wait 4000
+both capture a-fall-1
+wait 4000
+both capture a-fall-2
+wait 4000
+both capture a-fall-3
+waitlog guest 'world_lua=event=supply; step=state; from=5; to=8;' 30
+both capture a-landed
+waitlog guest 'world_lua=event=supply; step=delivered; origin=1; oseq=1;' 10
+waitlog host 'world_lua=event=supply; step=delivered; origin=1; oseq=1;' 10
+both capture a-after
+host run supply state
+guest run supply state
+# --- B) the host's own iDroid AMMO / FULTON drop; the guest faces the host -------------------------------------------
+host debug teleport 805.0 342.1 1636.5 30
+wait 2000
+guest debug teleport 806.5 342.1 1639.1 -150
+wait 3000
+both capture b-before
+logmark both
+host press tab
+wait 3000
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press enter
+wait 2500
+host capture b-host-map
+host press space
+wait 2500
+host capture b-host-ok
+waitlog host 'supply=request;seq=[0-9]+;mirror=0;drop=0;equip=431;' 20
+waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=2;.* sent=1;' 5
+waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=2; ok=1' 10
+guest capture b-toast
+waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 20
+wait 4000
+both capture b-fall-1
+wait 4000
+both capture b-fall-2
+wait 4000
+both capture b-fall-3
+waitlog guest 'world_lua=event=supply; step=state; from=5; to=8;' 30
+both capture b-landed
+waitlog host 'world_lua=event=supply; step=delivered; origin=1; oseq=2;' 10
+waitlog guest 'world_lua=event=supply; step=delivered; origin=1; oseq=2;' 10
+both capture b-after
+host run supply state
+guest run supply state
+# --- C) the guest's own iDroid AMMO / FULTON drop; the host faces the guest ------------------------------------------
+host debug teleport 805.0 342.1 1636.5 30
+wait 2000
+guest debug teleport 806.5 342.1 1639.1 -150
+wait 3000
+both capture c-before
+logmark both
+guest press tab
+wait 3000
+guest press 3
+wait 2500
+guest press enter
+wait 2000
+guest press enter
+wait 2500
+guest press space
+wait 2500
+guest capture c-guest-ok
+waitlog guest 'world_lua=event=supply; step=drop_local; origin=2; oseq=1;.* sent=1;' 20
+waitlog host 'world_lua=event=supply; step=mirror; origin=2; oseq=1; ok=1' 10
+host capture c-toast
+waitlog host 'world_lua=event=supply; step=state; from=3; to=5;' 20
+wait 4000
+both capture c-fall-1
+wait 4000
+both capture c-fall-2
+wait 4000
+both capture c-fall-3
+waitlog host 'world_lua=event=supply; step=state; from=5; to=8;' 30
+both capture c-landed
+waitlog guest 'world_lua=event=supply; step=delivered; origin=2; oseq=1;' 10
+waitlog host 'world_lua=event=supply; step=delivered; origin=2; oseq=1;' 10
+both capture c-after
+host run supply state
+guest run supply state
+state

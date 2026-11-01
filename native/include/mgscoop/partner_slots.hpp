@@ -204,4 +204,115 @@ struct DryState {
 inline constexpr std::uint32_t kDryGraceMs = 50;
 // True while FIRE must be stripped.
 bool DryStep(DryState& state, const DryIn& in, std::uint32_t grace_ms = kDryGraceMs) noexcept;
+
+// Anim truth (r1101 animtruth; lab key partner_native_aim_truth, off unless
+// named): the puppet draws what the remote's body does, not what its pad
+// asked. fb1031 (Mother Base, stock KILLING_WEAPON rule): the remote held RMB,
+// its body stayed in stand_idle/stand_move (acts 1/2) and its v5 group still
+// said Aiming (flags 0x25: the gun record's hold bit follows the pad there), so
+// neither the pad nor the v5 flag is the authority; body 1 aimed and fired
+// visual shots on the partner's screen only. InHand alone is no authority
+// either (real aims log flags 0x25 without it). The remote's live ACT is: a
+// real aim reaches an aim act 15..50 ms after the press (friend log p50 31 ms,
+// n=48); 38 HOLD runs never did. In locomotion, InHand marks a real draw: all
+// 55 fb1031 HOLD-in-locomotion lines with InHand were followed by an aim act,
+// and no Mother Base refusal ever showed it (0x25/0x5/0x1).
+// Verdicts: off (key off), nostate (no live remote act), aim (an aim act:
+// pass), keep (locomotion within kTruthKeepMs of the last aim act: pass, so a
+// stance change while aiming never drops the gun), draw (locomotion with the
+// v5 InHand bit: the gun is coming out, pass so the puppet draws with it),
+// lane (support/arm lane or no v5 gun slot: pass, those lanes keep their own
+// gates), other (an act this rule does not judge: pass), loco (the gun lane in
+// plain locomotion 1..6 with no recent aim act and no gun in hand: HOLD and
+// FIRE stripped from the remote's sample), act (a
+// body-owned act: dead/dying, carried, stun, knockdown/cure, trash box,
+// rides, sleep, DM (AimBlockedAct) plus hit 29, damage 45 and the climb/hang
+// acts 21..24 / 54..56 (ladder, pipe, wall climb, step_on, ledge hang): HOLD and FIRE
+// stripped in every lane). The strip is state-based (never keyed on the pad),
+// so the first HOLD sample of a refused run is already stripped, and when the
+// act confirms the aim Compose sees the level rise and derives a clean press.
+enum class TruthVerdict : std::uint8_t { off, nostate, aim, keep, lane, other, loco, act, draw };
+const char* TruthVerdictName(TruthVerdict value) noexcept;
+inline constexpr std::uint32_t kTruthKeepMs = 300;
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept;  // AimBlockedAct, 29 (hit), 45 (damage), climb/hang 21..24, 54..56
+struct TruthIn {
+    bool enabled;          // partner_native_aim_truth=1 with the native gun stage
+    bool act_valid;        // the remote's live act (pose stream)
+    std::uint16_t act;
+    bool slot_valid;       // the remote's live v5 slot
+    std::uint8_t slot;     // 0..2: the gun lane
+    bool support_lane;     // the weapon gate judged Gate::support (thrown / placed / arm)
+    bool in_hand;          // the live v5 group says GunFlag::InHand (rec+0x3C0 bit 2)
+    std::uint64_t now_ms;
+    // Review animtruth-5: a pose-stream gap (no live act) up to gap_ms after the
+    // last live act keeps a refusal (loco/act) and its strip, so a refused HOLD
+    // never turns into a fresh press for the gap; longer, it fails open
+    // (nostate). 0: fails open at once (the driver passes stale_ms).
+    std::uint32_t gap_ms;
+};
+// One line per remote HOLD run on the receiver (partner_aim_truth=hold_run):
+// how long its raw HOLD was refused and admitted, its first and last act and
+// the v5 flags seen in it (OR).
+struct TruthRun {
+    bool open;
+    std::uint64_t since_ms, last_ms;
+    std::uint32_t refused_ms, admitted_ms;
+    std::uint16_t first_act, last_act;
+    std::uint8_t flags;
+    bool last_refused;     // the previous tick's verdict (credited to the interval since)
+    std::uint32_t runs;
+};
+struct TruthRunOut {
+    bool ended;
+    std::uint32_t refused_ms, admitted_ms, len_ms;
+    std::uint16_t first_act, last_act;
+    std::uint8_t flags;
+};
+// hold: the newest live sample carries HOLD; refused: this tick's strip has HOLD.
+TruthRunOut TruthRunStep(TruthRun& run, bool hold, bool refused, std::uint16_t act, std::uint8_t flags, std::uint64_t now_ms) noexcept;
+const char* TruthRunResult(const TruthRunOut& out) noexcept;  // refused | admitted | late (refused, then admitted)
+struct TruthState {
+    std::uint64_t aim_ms;          // the last tick the remote act was an aim act (0: none)
+    TruthVerdict last;
+    std::uint32_t refusals;        // entries into loco/act
+    std::uint32_t confirms;        // entries into aim
+    std::uint64_t valid_ms;        // the last tick with a live remote act (the gap bridge)
+};
+struct TruthOut {
+    TruthVerdict verdict;
+    std::uint32_t strip;           // bits for the Arm's sample_strip (HOLD|FIRE or 0)
+    bool changed;                  // verdict differs from the previous step
+};
+TruthOut TruthStep(TruthState& state, const TruthIn& in) noexcept;
+// Finder evidence M5: EVADE (partner_pad::kEvade) while the remote's act is its
+// box (77/78) and body 1's read act is not (the box refused or not yet worn):
+// the remote's box evade would be a dive in the open on body 1. 0 otherwise.
+std::uint32_t TruthBoxStrip(bool remote_valid, std::uint16_t remote_act, bool body_valid, std::uint16_t body_act) noexcept;
+
+// The sender's half (the copy whose player presses RMB): one event per HOLD
+// run. aimed: the local act reached an aim act during the run (after_ms from
+// the press); no_aim: HOLD held for no_aim_ms and the local act never was an
+// aim act in the run (Mother Base KILLING_WEAPON: the gun stays down).
+enum class LocalAimEvent : std::uint8_t { none, aimed, no_aim };
+const char* LocalAimEventName(LocalAimEvent value) noexcept;
+inline constexpr std::uint32_t kLocalNoAimMs = 250;
+struct LocalAimIn {
+    bool enabled;
+    bool hold;              // the local effective held word has HOLD
+    bool act_valid;         // the local act (Q+0x18[0]) was read
+    std::uint16_t act;
+    std::uint64_t now_ms;
+};
+struct LocalAimState {
+    bool run;               // a HOLD run is open
+    bool aimed;             // the run reached an aim act
+    bool reported;          // the run's event was emitted
+    std::uint64_t since_ms; // the run's press
+    std::uint32_t runs, aimed_runs, no_aim_runs;
+};
+struct LocalAimOut {
+    LocalAimEvent event;
+    std::uint32_t ms;       // after_ms (aimed) or held_ms (no_aim)
+};
+LocalAimOut LocalAimStep(LocalAimState& state, const LocalAimIn& in, std::uint32_t no_aim_ms = kLocalNoAimMs) noexcept;
 } // namespace mgscoop::partner_slots

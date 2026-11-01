@@ -142,6 +142,7 @@ mgs_add_lua_check(world_vehicle_state_lua_check "${_mgs_coop}/world_vehicle_stat
 mgs_add_lua_check(world_vehicle_rules_lua_check "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle.lua"
   "${_mgs_coop}/world_vehicle_state.lua")
 # The vehicle fixes of 2026-10-29: the guest's vehicle damage report (VEHICLE_DAMAGE) over VEHICLE_GONE, VEHICLE_STATE and the rules.
+mgs_add_lua_check(world_supply_lua_check "${_mgs_coop}/world_supply.lua")
 mgs_add_lua_check(world_vehicle_damage_lua_check "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_vehicle.lua"
   "${_mgs_coop}/world_vehicle_state.lua" "${_mgs_coop}/world_vehicle_rules.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
@@ -154,6 +155,10 @@ mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
 # Debug menu arms (docs/debug-menu.md "Give weapon" and "Friendly fire"): the picker and the host's switch.
 mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/arms-give-ff-play.txt")
+# Debug menu Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): the host brings an area vehicle in front of whoever
+# presses, on both copies (VSPAWN 0x44, world note 20), and its play scenario.
+mgs_add_lua_check(debug_vspawn_lua_check "${_mgs_coop}/debug_vspawn.lua"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/r1101-vspawn-play.txt")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # arrival-prevent (docs/world-sync-design.md 9.2): the arrival helicopter watchdog, start-state log and probe 20.
 mgs_add_lua_check(world_arrival_lua_check "${_mgs_coop}/world_arrival.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")
@@ -321,7 +326,7 @@ mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mg
   ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_arrival.lua"
   "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_sleep_clock.lua" "${_mgs_coop}/world_partner_sleep.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_friendly.lua" "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_ride_pose.lua" "${_mgs_coop}/world_horse_cargo.lua"
   ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua" "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_vehicle_state.lua"
-  "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_companion_dog.lua" "${_mgs_coop}/world_companion_guard.lua" "${_mgs_coop}/world_relief.lua" "${_mgs_coop}/world_relief_sync.lua")
+  "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_companion_dog.lua" "${_mgs_coop}/world_companion_guard.lua" "${_mgs_coop}/world_relief.lua" "${_mgs_coop}/world_relief_sync.lua" "${_mgs_coop}/world_supply.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
 # The documented two-argument form runs the fragment; the optional third
 # argument also executes the composed TppMain-trace.lua when it is built.
