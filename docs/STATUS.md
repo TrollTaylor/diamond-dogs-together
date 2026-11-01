@@ -1,3 +1,18 @@
+## October 31, 2026: fb1031 log fixes integrated (`wp/integ-log1031`, local only; no hidden runs)
+
+- **What players get:** nothing beyond the five entries below, now in one build: the late partner's gear note (mid-load
+  off), Mother Base staff kills refused and Game Overs explained, the put-down that no longer slides into the sea, a
+  partner hidden with a toast while their vehicle is missing here, and a launcher that waits for Steam or MGSV by
+  itself. None is run-proven yet.
+- **Merged (`--no-ff`, onto dev `e394a444`):** `wp/gear-rejoin` `d7799c65`, `wp/mb-gameover` `89c1072b`,
+  `wp/carry-sea` `a78d33ab`, `wp/vehicle-missing` `ca370ed6`, `wp/launcher-busy` `06f38a43`. Conflicts kept every
+  side: world notes 15 MISSION_END (mbgo) and 17 PARTNER_GEAR (gear) both in `FormatWorldNote` (the reserved-code test
+  now probes 0, 18 and 255), 13 a=8 (vehicles) beside them; the STATUS entries. No wire op added (0x40-0x43 unused).
+- **Checks at the head:** `-Fast` plus the tracks' `ctest -R` after each merge; full `tools/build.ps1` 339/339;
+  `generate_partner_contract.py --check` 855 code sites / 213 vtable slots; Lua LF bytes debug_menu 15993 (16000),
+  world_follow 30673, world_vehicle 29886, partner_sync 27848, world_downed 21752, world_recovery 13812; worker
+  preflight (normal profile, background worker) passed under the verify lock.
+
 ## October 31, 2026: fb1031 gear - a partner who joins after the mission loaded gets their gun, or is told when it shows (`wp/gear-rejoin`; not run-proven yet)
 
 - **What players get (once proven):** when your partner joins, or comes back after a dropped link, after your mission
