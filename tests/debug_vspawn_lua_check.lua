@@ -94,7 +94,10 @@ check(h:has("step=placed;loc=veh_lv_0001") and h:has("ok=1") and g:has("step=pla
 ok,msg=h:run("vspawn","lv");check(ok and msg:find("loc=veh_lv_0000",1,true),"second press: veh_lv_0000, not the one already brought")
 -- An occupied vehicle (a soldier or a player in a seat) is never taken.
 h=F();h.v.veh_lv_0001.rider=1234;ok,msg=h:run("vspawn","lv");check(ok and msg:find("loc=veh_lv_0000",1,true),"an occupied vehicle is skipped")
+-- An LRRP (soldier-driven) vehicle only when no other is free (Afghanistan's trucks are all LRRP trucks), never ridden.
 h=F();h.v.veh_lv_0001.rider=1234;h.v.veh_lv_0000.rider=77;ok,msg=h:run("vspawn","lv")
+check(ok and msg:find("loc=veh_lv_0002",1,true) and h:has("step=pick;loc=veh_lv_0002") and h:has("lrrp=1"),"the free LRRP vehicle comes last, not never")
+h=F();h.v.veh_lv_0001.rider=1234;h.v.veh_lv_0000.rider=77;h.v.veh_lv_0002.rider=5;ok,msg=h:run("vspawn","lv")
 check(not ok and msg=="vspawn_refused;reason=none_free" and h:note(3,3),"no free vehicle of that class: refused, note b=3")
 -- A wreck or removed vehicle is used only when no live one is free: Respawn{name} first, then moved once alive.
 h=F();h.v.veh_trc_0000.alive=false;h.v.veh_trc_0001.alive=false;h.v.veh_trc_0001.rider=5
