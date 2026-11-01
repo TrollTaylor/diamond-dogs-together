@@ -13,7 +13,8 @@
 #      vehicle_seats answers vehicle_not_riding: no ON_VEHICLE in that seat); the host holds the throttle (about 7 m
 #      before the concrete block ahead in 5cdbfada); frames on both screens while moving.
 #   D  a refusal: a press while driving is refused (busy: ON_VEHICLE; 5cdbfada took it and brought a second jeep), with
-#      note 20's toast.
+#      note 20's toast; the guest's back-seat press too (by=seat). Frames on both screens while both toasts are up (run
+#      65b4005c captured only the host's).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-vspawn-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
@@ -112,7 +113,7 @@ guest expect ^vspawn_refused;reason=busy$
 waitlog guest 'world_lua=event=vspawn; step=refused; reason=busy; by=(seat|on_vehicle)' 5
 waitlog guest 'world=note; code=20; a=3; b=5;' 5
 wait 1000
-host capture d-refused
+both capture d-refused
 guest press e 150
 wait 3000
 host press e 150
