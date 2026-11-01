@@ -6253,6 +6253,39 @@ void TestRideUnrealize() {
                   s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=112; kind=2; seat=blocked; vehicle=25609;") == 1,
               "the latched seat hides as blocked and is unrealized");
     }
+    for (const bool absent : {true, false}) {
+        // fb1031: the seat's absent latch (a vehicle this copy lacks: Fultoned here, the host's relief vehicle)
+        // unrealizes body 1 with the G5 key OFF (the play default): the bits-only hide leaves instance 1 standing at
+        // the get-on spot while Lua's all-active mode is on (0.13.5 horse / D-Walker). Any other latch keeps the
+        // key's rule (a category mismatch at Mother Base: bits only without the key, unchanged).
+        SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        s.driver.settings.unrealize_all = false;
+        s.driver.settings.seat_id = true;
+        s.hooks.vehicle_read = HookVehicleRead;
+        s.hooks.seat_target = HookSeatTarget;
+        if (!absent) s.fake.vehicles.push_back(VehicleRead(25603, 0x20));
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25603);
+        s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
+        s.fake.sample.act = 111;
+        bool cleared = false;
+        for (unsigned i = 0; i < 20; ++i)
+            if (s.Step(100) && (s.reply.op & op::clear_all_active)) cleared = true;
+        Check(s.driver.mission.seat.blocked && s.driver.mission.visibility.hidden, "latched and hidden");
+        if (!absent) {
+            Check(!cleared && s.fake.Containing("partner_ride=unrealize") == 0, "another latch, key off: bits only (unchanged)");
+            continue;
+        }
+        Check(cleared && s.fake.Containing("partner_ride=unrealize_begin; ride=vehicle; act=111; kind=2; seat=blocked; vehicle=25603;") == 1 &&
+                  s.fake.Containing("partner_ride=unrealize; ride=vehicle; act=111; kind=2; episode=1; op=clear_allactive") == 1,
+              "absent, key off: the hidden partner is unrealized (no body left standing at the get-on spot)");
+        Check(lua_unrealized(s), "absent: Lua reports all-active off (body 1 unrealized)");
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.ride_ep.active && !s.driver.mission.seat.blocked && !(s.reply.op & op::clear_all_active),
+              "absent: the get-off ends the episode and the latch");
+        Check(stable_show(s) && !s.driver.mission.visibility.hidden, "absent: on foot, shown again (SET_ALLACTIVE)");
+    }
     {
         // The heli acts (no ride packet: the legacy act rule).
         SeatSession s(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::hide);
@@ -6422,7 +6455,7 @@ void TestRideSeatById() {
         // Gates: key off, no addendum, another revision, category mismatch, unrealized, viewer's own vehicle.
         // A read refused for another link than the pool (object: a broken chain, not a missing vehicle) stays
         // local_read and keeps the named path in free roam; an id this copy lacks (live / index: absent) is
-        // TestRideSeatAbsent's (the visible fallback).
+        // TestRideSeatAbsent's (refused and hidden since fb1031).
         struct Case { const char* why; int setup; };
         const Case cases[] = {{"no_ext", 0}, {"remote_category", 1}, {"category", 2}, {"unrealized", 3}, {"local_read", 4},
                               {"remote_category", 5}, {"unavailable", 6}};
@@ -8937,8 +8970,10 @@ void TestRideRobust() {
     {
         // A Fultoned jeep (friend F:9631 Fulton, F:10059-10071): this copy has no vehicle 25603 while the
         // host drives it in Mother Base (seat by id only). 0.13.5 refused local_read and hid the host for
-        // 25 s; now body 1 stays shown at the host's streamed pose, and seats once the jeep exists here. Since
-        // the Africa fix the by-id read's live refusal (pool bit clear) is logged as absent.
+        // 25 s; 0.13.6 showed body 1 Warped along the host's streamed pose. Since the Africa fix the by-id
+        // read's live refusal (pool bit clear) is logged as absent. fb1031 (the two-PC session of 2026-10-31:
+        // 25603 / 25604 Fultoned on one copy, the partner drawn standing and gliding with no jeep for ~13 s):
+        // absent is refused and latched (hidden until the ride leaves that seat); Lua's toast says why.
         const auto mb = [](SeatSession& s) {
             s.driver.settings.seat_id = true;
             s.hooks.vehicle_read = HookVehicleRead;
@@ -8952,22 +8987,27 @@ void TestRideRobust() {
         mb(s);
         const auto hides = s.fake.Containing("partner_ride=hide");
         Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
-                  s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
                   s.fake.Containing("partner_ride_seat=byid; vehicle=25603; seat=0; offer=0; reason=absent;") == 1 &&
-                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=absent; show=warp; byid=0") == 1 &&
-                  s.fake.Containing("partner_ride_seat=refused;") == 0,
-              "Fultoned jeep: absent shows body 1 without a seat (nothing armed or played)");
-        Check(s.Step() && s.reply.op == op::warp && !s.driver.mission.visibility.hidden && !s.driver.mission.seat.blocked &&
-                  s.fake.Containing("partner_ride=hide") == hides && s.fake.Containing("partner_ride_seat=unavailable;") == 0,
-              "Fultoned jeep: visible, Warped every tick, never hidden");
-        // The vehicle appears on this copy (realized, same category): seated by id at the next check.
+                  s.fake.Containing("partner_ride_seat=refused; vehicle=25603; seat=0; name=-; state=-; reason=absent; manual=0") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback;") == 0 && s.driver.mission.seat.blocked,
+              "Fultoned jeep: absent is refused and latched (nothing armed or played, no fallback)");
+        unsigned mb_warps = 0;
+        for (unsigned i = 0; i < 40; ++i)
+            if (s.Step(100) && (s.reply.op & op::warp)) ++mb_warps;
+        Check(mb_warps == 0 && s.driver.mission.visibility.hidden && s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride=hide") > hides && s.fake.Containing("show=warp") == 0 &&
+                  s.driver.mission.seat.phase == pd::SeatPhase::idle,
+              "Fultoned jeep: hidden for the ride, never Warped along it (no gliding body)");
+        // The vehicle appears on this copy mid-ride: the latch holds (hidden) until the ride leaves that seat.
         s.fake.vehicles.push_back(VehicleRead(25603, 0x10));
         s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25603, 0, 1, 900));
-        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
-                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25603; seat=0; reason=absent; next=release;") == 1,
-              "the vehicle exists here again: seated by id");
-        // The remote gets off while shown in the fallback: nothing to stop, not latched.
+        Check(s.Step(2100) && !(s.reply.op & op::ride_seat) && s.driver.mission.seat.blocked && s.driver.mission.visibility.hidden,
+              "the vehicle appears mid-ride: still hidden (latched)");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.seat.blocked, "the get-off releases the latch");
+        // The remote gets off while shown in the fallback (an unrealized copy): nothing to stop, not latched.
         SeatSession g(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
+        g.fake.vehicles.push_back(VehicleRead(25603, 0x10, 0xFF));
         mb(g);
         Check(g.Step() && g.driver.mission.seat.phase == pd::SeatPhase::fallback, "fallback");
         const auto reverts = g.fake.seat_reverts;
@@ -8988,12 +9028,11 @@ void TestRideRobust() {
         u.ride_suffix = " ride=2 veh=25603 seat=1";
         Check(u.Step() && !(u.reply.op & op::warp) && u.driver.mission.seat.phase == pd::SeatPhase::fallback,
               "the viewer in that vehicle: no Warp");
-        // The copy vanishes between the offer and the id write (a target refusal, absent): not
-        // latched where only the id can seat; the next episode shows body 1 without a seat.
+        // The copy vanishes between the offer and the id write (a target refusal, absent): fb1031, latched
+        // (hidden for that ride), never a fallback episode that draws body 1 without its vehicle.
         SeatSession t(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
         t.fake.vehicles.push_back(VehicleRead(25603, 0x10));
         mb(t);
-        const auto t_hides = t.fake.Containing("partner_ride=hide");
         Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "offered by id and played");
         t.fake.vehicles.clear();
         t.Playing(kFrontLeftLoop);
@@ -9002,15 +9041,13 @@ void TestRideRobust() {
                   t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
               "target refused (absent): the seat DM is stopped");
         t.Ended();
-        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && t.driver.mission.seat.blocked &&
                   t.fake.Containing("partner_ride_seat=exit; vehicle=25603; seat=0; reason=absent; via=stop;") == 1,
-              "Mother Base target refusal for a missing copy: not latched");
-        reshow(t);
-        t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25603, 0, 1, 900));
-        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
-                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25603; seat=0; reason=absent; show=warp; byid=0") == 1 &&
-                  t.fake.Containing("partner_ride=hide") == t_hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
-              "the next episode shows body 1 without a seat instead of hiding it");
+              "Mother Base target refusal for a missing copy: latched");
+        for (unsigned i = 0; i < 40; ++i) t.Step(100);
+        Check(t.driver.mission.seat.blocked && t.driver.mission.visibility.hidden && t.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  t.fake.Containing("show=warp") == 0,
+              "Mother Base, a vanished copy: hidden for the rest of the ride, no fallback");
         // Mother Base (only the id can seat) keeps the fallback for any read refusal (local_read).
         SeatSession o(mgscoop::PartnerRideSeatExit::stop, mgscoop::PartnerRideSeatEnter::direct, mgscoop::PartnerNativeRide::seat, 30050);
         o.fake.vehicles.push_back(mgscoop::partner_vehicle::Read{});
@@ -9217,8 +9254,11 @@ void TestRideRobust() {
 // relief vehicle 25600 (TppVehicle2 index 0, brought from his sortie prep), which existed only on his copy. The
 // guest's by-id read refused live (the pool bit clear, G:11718), free roam ran the named path (Lua no_name ->
 // lua_refused, G:11715-11731) and hid the host for the whole 24.6 s ride. An id this copy lacks (live: the pool bit
-// clear; index: past the pool) is now "absent", and free roam takes the 0.13.6 visible fallback for it too; any
-// other read refusal (local_read) keeps the named path there.
+// clear; index: past the pool) is now "absent"; any other read refusal (local_read) keeps the named path there.
+// The Africa fix drew it with the 0.13.6 visible fallback (body 1 Warped along the streamed seat pose); in the
+// two-PC session of 2026-10-31 (fb1031) that was a standing partner gliding with no vehicle (25600 twice, ~6 s
+// each). fb1031: absent is refused and latched in every mission (hidden until the ride leaves that seat) and Lua
+// says why (world note 13 a=8, world_vehicle.lua).
 void TestRideSeatAbsent() {
     namespace rw = mgscoop::partner_ride_wire;
     constexpr std::uint64_t kFrontLeftLoop = 0x489157d7d94full;
@@ -9241,12 +9281,6 @@ void TestRideSeatAbsent() {
         if (ext) s.fake.channel2.push_back(ExtBytes(s.ride_rev, vehicle, 0, cat, 900));
         s.fake.sample.act = 111;
     };
-    const auto reshow = [](SeatSession& s) {
-        s.fake.Realize(false); s.fake.state.parts[1] = 0;
-        for (unsigned i = 0; i < 40 && !s.driver.mission.bits_set; ++i) s.Step(50);
-        Check(s.driver.mission.bits_set, "re-placed and re-realized");
-        s.fake.Realize(true); s.fake.state.parts[1] = 3;
-    };
     {
         // The session's case (G:11703-11731: remote_cat=0, local_cat=255) in both free-roam missions, and an
         // index past the pool.
@@ -9258,37 +9292,32 @@ void TestRideSeatAbsent() {
             board(s, 25600, 0, true);
             const auto hides = s.fake.Containing("partner_ride=hide");
             Check(s.Step() && !(s.reply.op & op::ride_seat) && s.fake.seat_arms == 0 && !s.fake.dm_patched &&
-                      s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
                       s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=absent; remote_cat=0; local_cat=255") ==
                           1 &&
-                      s.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1 &&
-                      s.fake.Containing("partner_ride_seat=refused;") == 0,
-                  "free roam, a vehicle this copy lacks: shown without a seat (nothing armed or played)");
+                      s.fake.Containing("partner_ride_seat=refused; vehicle=25600; seat=0; name=-; state=-; reason=absent; manual=0") == 1 &&
+                      s.fake.Containing("partner_ride_seat=fallback;") == 0 && s.driver.mission.seat.blocked,
+                  "free roam, a vehicle this copy lacks: refused and latched (nothing armed or played, no fallback)");
             unsigned warps = 0;
             for (unsigned i = 0; i < 100; ++i)
-                if (s.Step() && s.reply.op == op::warp) ++warps;
-            Check(warps == 100 && s.driver.mission.seat.phase == pd::SeatPhase::fallback && !s.driver.mission.visibility.hidden &&
-                      !s.driver.mission.seat.blocked && s.fake.Containing("partner_ride=hide") == hides &&
-                      s.fake.Containing("partner_ride_seat=unavailable;") == 0 && s.fake.Containing("partner_ride_seat=play;") == 0 &&
-                      s.fake.seat_targets.empty() && s.fake.seat_arms == 0,
-                  "free roam: Warped every tick through the 2 s re-checks, never hidden, never a seat play");
-            const auto reverts = s.fake.seat_reverts;
+                if (s.Step() && (s.reply.op & op::warp)) ++warps;
+            Check(warps == 0 && s.driver.mission.visibility.hidden && s.driver.mission.seat.blocked &&
+                      s.fake.Containing("partner_ride=hide") > hides && s.fake.Containing("show=warp") == 0 &&
+                      s.fake.Containing("partner_ride_seat=play;") == 0 && s.fake.seat_targets.empty() && s.fake.seat_arms == 0,
+                  "free roam: hidden for the ride, never Warped along it (no gliding body), never a seat play");
             s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
-            Check(s.Step() && !(s.reply.op & op::dm_stop) && s.driver.mission.seat.phase == pd::SeatPhase::idle &&
-                      !s.driver.mission.seat.blocked && s.fake.seat_reverts == reverts &&
-                      s.fake.Containing("partner_ride_seat=exit; vehicle=25600; seat=0; reason=foot; via=fallback;") == 1,
-                  "free roam: the get-off leaves the fallback without a stop, not latched");
+            Check(s.Step() && !s.driver.mission.seat.blocked, "free roam: the get-off releases the latch");
         }
     }
     {
         // The addendum not (yet) here: the id this copy lacks is absent all the same (no addendum can seat it
-        // by id, and no locator can anchor on it), so the fallback does not wait for the addendum.
+        // by id, and no locator can anchor on it), so the refusal does not wait for the addendum.
         SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
         board(s, 25600, 0, false);
-        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.driver.mission.seat.phase == pd::SeatPhase::fallback &&
+        Check(s.Step() && !(s.reply.op & op::ride_seat) && s.driver.mission.seat.blocked &&
                   s.fake.Containing("partner_ride_seat=byid; vehicle=25600; seat=0; offer=0; reason=absent;") == 1 &&
-                  s.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1,
-              "free roam, no addendum yet: an absent vehicle is shown without a seat");
+                  s.fake.Containing("partner_ride_seat=refused; vehicle=25600; seat=0; name=-; state=-; reason=absent;") == 1 &&
+                  s.fake.Containing("partner_ride_seat=fallback;") == 0,
+              "free roam, no addendum yet: an absent vehicle is refused (hidden)");
         // A present vehicle without the addendum keeps the named path (no_ext, unchanged).
         SeatSession p(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
         p.fake.vehicles.push_back(VehicleRead(25608, 0x10));
@@ -9315,26 +9344,25 @@ void TestRideSeatAbsent() {
               "free roam, local_read: Lua's no_name still refuses and latches (unchanged)");
     }
     {
-        // The vehicle appears on this copy during the fallback (realized, same category): the 2 s re-check
-        // ends the fallback and seats it by id.
+        // The vehicle appears on this copy mid-ride (realized, same category): the latch holds, body 1 stays
+        // hidden until the ride leaves that seat (never seated into a copy that came late, never drawn without one).
         SeatSession s(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
         board(s, 25600, 1, true);
-        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::fallback, "absent: fallback");
+        Check(s.Step() && s.driver.mission.seat.blocked && s.driver.mission.seat.phase != pd::SeatPhase::fallback, "absent: refused");
         s.fake.vehicles.push_back(VehicleRead(25600, 0x14));
         s.fake.channel2.push_back(ExtBytes(s.ride_rev, 25600, 0, 1, 900));
-        Check(s.Step(2100) && (s.reply.op & op::ride_seat) && s.reply.seat_entry == partner::seat_entry::by_id && s.driver.mission.seat.byid &&
-                  s.fake.Containing("partner_ride_seat=fallback_end; vehicle=25600; seat=0; reason=absent; next=release;") == 1,
-              "free roam: the vehicle exists here now, seated by id");
-        s.Playing(kFrontLeftLoop);
-        Check(s.Step() && s.fake.seat_targets.size() == 1 && s.driver.mission.seat.confirmed, "free roam: targeted by id and confirmed");
+        Check(s.Step(2100) && !(s.reply.op & op::ride_seat) && s.driver.mission.seat.blocked &&
+                  s.fake.Containing("partner_ride_seat=fallback_end;") == 0,
+              "free roam: the vehicle appears mid-ride, still hidden (latched)");
+        s.Ride(rw::Kind::foot); s.fake.sample.act = 1;
+        Check(s.Step() && !s.driver.mission.seat.blocked, "free roam: the get-off releases the latch");
     }
     {
-        // The copy vanishes between the offer and the id write: the target refusal (absent) is not latched in free
-        // roam either, so the next episode shows body 1 without a seat instead of hiding it.
+        // The copy vanishes between the offer and the id write: the target refusal (absent) is latched (hidden for
+        // that ride) in free roam too, never a fallback episode that draws body 1 without its vehicle.
         SeatSession t(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
         t.fake.vehicles.push_back(VehicleRead(25600, 0x14));
         board(t, 25600, 1, true);
-        const auto hides = t.fake.Containing("partner_ride=hide");
         Check(t.Step() && (t.reply.op & op::ride_seat) && t.reply.seat_entry == partner::seat_entry::by_id, "free roam: offered by id, played");
         t.fake.vehicles.clear();
         t.Playing(kFrontLeftLoop);
@@ -9342,15 +9370,13 @@ void TestRideSeatAbsent() {
                   t.reply.op == op::dm_stop && t.fake.seat_targets.empty(),
               "free roam: target refused (absent), the seat DM is stopped");
         t.Ended();
-        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && !t.driver.mission.seat.blocked &&
+        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::idle && t.driver.mission.seat.blocked &&
                   t.fake.Containing("partner_ride_seat=exit; vehicle=25600; seat=0; reason=absent; via=stop;") == 1,
-              "free roam: a target refusal for a vanished copy is not latched");
-        reshow(t);
-        t.fake.channel2.push_back(ExtBytes(t.ride_rev, 25600, 0, 1, 900));
-        Check(t.Step() && t.driver.mission.seat.phase == pd::SeatPhase::fallback &&
-                  t.fake.Containing("partner_ride_seat=fallback; vehicle=25600; seat=0; reason=absent; show=warp; byid=0") == 1 &&
-                  t.fake.Containing("partner_ride=hide") == hides && t.fake.Containing("partner_ride_seat=unavailable;") == 0,
-              "free roam: the next episode shows body 1 without a seat");
+              "free roam: a target refusal for a vanished copy is latched");
+        for (unsigned i = 0; i < 40; ++i) t.Step(100);
+        Check(t.driver.mission.seat.blocked && t.driver.mission.visibility.hidden && t.fake.Containing("partner_ride_seat=fallback;") == 0 &&
+                  t.fake.Containing("show=warp") == 0,
+              "free roam, a vanished copy: hidden for the rest of the ride, no fallback");
         // Another target refusal in free roam (unrealized) is latched as before (the named path's rule).
         SeatSession u(PartnerRideSeatExit::stop, PartnerRideSeatEnter::direct, PartnerNativeRide::seat, 30020);
         u.fake.vehicles.push_back(VehicleRead(25600, 0x14));

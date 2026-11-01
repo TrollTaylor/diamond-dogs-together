@@ -7560,7 +7560,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         {
             const bool hidden_as_ride = m.visibility.hidden && m.visibility.reason && std::strcmp(m.visibility.reason, "ride") == 0;
             const pm::Ride ride = pm::RideOf(visibility_sample.anim_valid, visibility_sample.act, vi.ride_live, vi.kind);
-            const bool rule = pm::RideRule(set.unrealize_all, ride, hidden_as_ride, m.mount.active);
+            // fb1031: the seat's absent latch (a vehicle this copy lacks) opens the episode whatever the key (play
+            // forces it off): the bits-only hide left body 1 standing at the get-on spot under Lua's all-active
+            // mode. The CLEAR / SET_ALLACTIVE cycle is the mount hide's (on in play with the gun profile).
+            const bool absent_hide = ride == pm::Ride::vehicle && SeatBlocked(m.seat, drawn_ride) && SeatAbsentHides(m.seat.block_reason);
+            const bool rule = pm::RideRule(set.unrealize_all || absent_hide, ride, hidden_as_ride, m.mount.active);
             const bool off = pm::OffRide(visibility_sample.anim_valid, visibility_sample.act, vi.ride_have, vi.ride_live, vi.kind);
             switch (pm::StepRide(m.ride_ep, pm::RideHolds(rule, m.ride_ep.active, m.visibility.hidden, off), ride,
                                  visibility_sample.act, static_cast<std::uint8_t>(vi.kind), now)) {

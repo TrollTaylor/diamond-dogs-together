@@ -2629,8 +2629,13 @@ void TestHud() {
                   std::strcmp(sentence, "Your partner reached the driver's seat first: take another seat or wait.") == 0 &&
                   std::strlen(sentence) < hud::kToastChars,
               "FormatWorldNote: the M6 seat race sentences");
+        // fb1031: a = 8 the partner rides a vehicle this copy lacks (they are hidden until they get out).
+        Check(text::FormatWorldNote(13, 8, 0, 30050, 30050, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner's vehicle isn't on your screen. You'll see them again when they get out.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "FormatWorldNote: the missing-vehicle sentence");
         Check(!text::FormatWorldNote(13, 0, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0 &&
-                  !text::FormatWorldNote(13, 8, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
+                  !text::FormatWorldNote(13, 9, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: an unknown companion reason has no toast");
         // fb1031 gear: note 17 PARTNER_GEAR{a=1 next load}, posted locally once per mission and link session.
         Check(text::FormatWorldNote(17, 1, 0, 0, 0, sentence, sizeof(sentence)) &&

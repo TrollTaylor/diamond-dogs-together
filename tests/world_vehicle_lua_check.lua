@@ -687,6 +687,54 @@ g.V.req = setmetatable({}, {__index = function() error('fixture') end})
 local recOk = pcall(g.H[3], {1, 47})
 check(recOk and g.V.failed, 'a RECEIVED wrapper error is caught')
 
+-- fb1031 (the two-PC session of 2026-10-31): the partner rides a vehicle this copy lacks (world_ride_pose's RIDE_FAST
+-- track found it absent: Fultoned here, or the host's relief vehicle). Native hides them (partner_ride_seat refused
+-- absent); world note 13 a=8 says why: once per ride of that vehicle, at most one every 20 s, whatever VEHICLE_GONE's
+-- key, mission or mode (Mother Base in play included).
+for _, case in ipairs({{true, 1}, {false, 2}, {true, 2}}) do
+    local a = Fixture('guest', case[1], case[2])
+    a.notes = {}
+    a.W.note = function(code, x, y) a.notes[#a.notes + 1] = {code, x, y}; return true end
+    a.W.ridePose = {fast = {tracks = {}}}
+    local tracks = a.W.ridePose.fast.tracks
+    a:poll()
+    check(#a.notes == 0, 'no partner ride: no toast')
+    tracks[25603] = {samples = {}, state = 'interpolate', absent = false}
+    a:poll()
+    check(#a.notes == 0, 'the partner rides a vehicle this copy has: no toast')
+    tracks[25603].absent, tracks[25603].state = true, 'absent'
+    a:poll()
+    check(#a.notes == 1 and a.notes[1][1] == 13 and a.notes[1][2] == 8 and a.notes[1][3] == 0 and
+        a:has('event=vehicle_absent;step=toast;id=25603;shown=1'), 'a missing vehicle: world note 13 a=8 and one log line')
+    for _ = 1, 10 do a:poll() end
+    tracks[25603].absent = false
+    a:poll()
+    tracks[25603].absent = true
+    a:poll()
+    check(#a.notes == 1, 'once per ride of that vehicle')
+    tracks[25603] = nil
+    a:poll(25000)
+    tracks[25604] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2 and a:has('event=vehicle_absent;step=toast;id=25604;shown=1'), 'the next ride of a missing vehicle: again')
+    tracks[25604] = nil
+    a:poll()
+    tracks[25604] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2, 'at most one toast every 20 s')
+    tracks[25604] = nil
+    a:poll(25000)
+    a.W.paired = false
+    tracks[25605] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2, 'unpaired: no toast')
+    a.W.paired = true
+    a.W.note = function() error('fixture') end
+    a:poll()
+    check(not a.V.failed, 'a toast error is caught and never turns VEHICLE_GONE off')
+    a:poll()
+end
+
 -- With world_sync.lua: the observer hook (an unmapped id goes to the vehicle module) and CFG r[15].
 if arg[2] then
     local syncSrc = slurp(arg[2])
