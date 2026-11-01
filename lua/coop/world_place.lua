@@ -161,6 +161,7 @@ do
                     if en and not P.live[h] and E.active(en.cp, h) and (not ps or now - ps.sampleAt >= 500) then
                         reads = reads + 1
                         if P.state(en) == 0 then
+                            if ps and ps.down then ps = nil; pat.s[h] = nil end
                             local x, y, z = pos(en.id)
                             if staff and x == 0 and z == 0 then x = nil end  -- no position: never shared
                             if x then
@@ -188,6 +189,8 @@ do
                                     end
                                 end
                             end
+                        elseif staff and ps then
+                            ps.down = true  -- kept for place-first: the standing ground y
                         else
                             pat.s[h] = nil
                         end
@@ -216,16 +219,17 @@ do
         end
         -- Mother Base staff (staffPlace), place first: right before the host's own outcome of a standing staff
         -- member, where they are (kind 3), so the guest places its copy there before applying it
-        -- (world_place_guest.lua W.staffHold). The standing ground y when the body rose (a Fulton lift).
+        -- (world_place_guest.lua W.staffHold): x, z now, the ground y of their last standing sample (a lying body
+        -- reads lower); the sampled x, z when the body rose (a Fulton lift). Never sampled standing (far from both
+        -- players): nothing.
         function W.staffAnnounce(h)
             if not (W.host and W.feature and W.feature.staffPlace and P.patrol) then return end
-            local en = W.ent[h]
-            local x, y, z = nil, nil, nil
-            if en then x, y, z = pos(en.id) end
+            local en, ps = W.ent[h], P.patrol.s[h]
+            if not (en and ps and ps.y) then return end
+            local x, y, z = pos(en.id)
             if not x then return end
-            y = y - 800
-            local ps = P.patrol.s[h]
-            if ps and ps.y and math.abs(y - ps.y) > 2000 then x, y, z = ps.x, ps.y, ps.z end
+            if math.abs(y - 800 - ps.y) > 2000 then x, z = ps.x, ps.z end
+            y = ps.y
             local seq = P.announce(3, h, x, y, z, ps and ps.yaw or 0, 0, 0)
             L("event=place_first;ent=%.0f;seq=%d;x=%d;y=%d;z=%d", h, seq or 0, x, y, z)
         end

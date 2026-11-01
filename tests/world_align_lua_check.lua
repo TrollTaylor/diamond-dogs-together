@@ -811,10 +811,12 @@ if arg[7] and arg[8] then
         sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
         'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
     -- A staff member never sampled standing (far from both players) gets no place-first; the OUTCOME still goes.
+    local keep = sh.tx
     sh.tx = {}
     sh.life[4] = 3
     sh.E.check(3000000004, 1)
     check(#sh.tx == 1 and sh.tx[1].op == 16, 'no standing sample: no place-first, the outcome is sent')
+    sh.tx = keep
     -- Guest: 3 m off is below the continuous threshold, but the outcome waits until this copy stands there.
     sg.positions[1] = {13.6, 1.8, 12.0}
     sg.warp = {{r = 0, h = 1, leaf = 'pinned'}}
