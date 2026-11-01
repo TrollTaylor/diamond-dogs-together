@@ -668,6 +668,12 @@ struct Settings {
     // strips the remote's raw HOLD/FIRE from its sample (Arm sample_strip) while
     // its body is not aiming; the sender logs partner_aim_local per HOLD run.
     bool naim_truth;
+    // Review animtruth-1: the parts of the rule no hidden run has exercised yet,
+    // each off unless named (lab.ini partner_native_aim_truth_box / _triggers /
+    // _stance) and each needing naim_truth: the box EVADE strip (TruthBoxStrip),
+    // the LT/RT zeroing (Compose and the hook's strips) and the stance change (a
+    // refused aim's Aiming bits and the Lua Reloading input no longer hold the fix).
+    bool naim_truth_box, naim_truth_triggers, naim_truth_stance;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
     // Set only in the effective copy: the native settings apply this tick.
@@ -1399,6 +1405,7 @@ struct Mission {
     unsigned truth_lines;
     partner_slots::TruthRun truth_run;   // the remote's current HOLD run (partner_aim_truth=hold_run)
     bool truth_box;                      // the box evade strip was on last tick (partner_aim_truth=box)
+    std::uint32_t truth_trig0;           // trig_zero_windows when the current HOLD run opened (review animtruth-4)
     partner_slots::LocalAimState aim_local;
     unsigned aim_local_lines;
     // Auto-fire stop (partner_slots DryStep) and its lines.

@@ -1953,6 +1953,44 @@ void TestAnimAimTruth() {
     in.act_valid = false;
     o = ps::TruthStep(t, in);
     Check(o.verdict == V::nostate && o.strip == 0, "no live remote act: the raw path is unchanged");
+    // Review animtruth-5: a short pose-stream gap inside a refused HOLD (input packets still arriving) keeps the
+    // refusal and its strip up to gap_ms after the last live act, so Compose never sees the HOLD level rise (no
+    // gun-raise flicker); a longer loss fails open (nostate), and a gap after an aim never strips.
+    {
+        ps::TruthState g{};
+        ps::TruthIn gi{};
+        gi.enabled = true; gi.act_valid = true; gi.act = 2; gi.slot_valid = true; gi.slot = 1; gi.now_ms = 20000; gi.gap_ms = 250;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF && g.valid_ms == 20000, "gap: refused before the gap");
+        gi.act_valid = false; gi.now_ms = 20100;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF && !o.changed && g.refusals == 1,
+              "a pose gap inside gap_ms after a refusal: still refused (no fresh press, no new refusal)");
+        gi.now_ms = 20250;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF, "the bridge lasts gap_ms after the last live act");
+        gi.now_ms = 20251;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0 && o.changed, "a longer loss fails open (nostate)");
+        gi.act_valid = true; gi.act = 11; gi.now_ms = 21000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 21010;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0, "a gap after a real aim: nothing stripped");
+        gi.act_valid = true; gi.act = 21; gi.now_ms = 23000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 23100;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::act && o.strip == kHF, "a body-owned act (the ladder) is bridged too");
+        gi.gap_ms = 0; gi.act_valid = true; gi.act = 2; gi.now_ms = 24000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 24010;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0, "gap_ms 0: fails open at once");
+        gi.enabled = false;
+        ps::TruthStep(g, gi);
+        Check(g.valid_ms == 0, "key off: the bridge forgets the last live act");
+    }
     // Key off: never strips and forgets the aim.
     in.act_valid = true; in.act = 11; in.now_ms = 5000;
     ps::TruthStep(t, in);
@@ -2026,11 +2064,21 @@ void TestAnimAimTruth() {
     s.packet.long12 = 0x8u;
     s.packet.lt = 255; s.packet.rt = 255;
     s.edge_press = 0x8u | 0x10u;
+    // Review animtruth-1: the trigger zeroing is its own key (strip_triggers); without it a HOLD/FIRE sample strip
+    // leaves the pad's LT/RT as before (no frame flagged).
+    {
+        pi::EdgeState e2{};
+        const pi::Injection k = pi::Compose(c, s, 0, pi::Overlay{}, e2);
+        Check(!(k.held & kHF) && k.lt > 0.99f && k.rt > 0.99f && !k.trig_stripped,
+              "strip_triggers off: the digital strip only, LT/RT kept (unchanged)");
+    }
+    c.strip_triggers = true;
     ++s.seq;
     j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
     Check(!(j.held & kHF) && !(j.edge_press & kHF) && !(j.w[1] & kHF) && !(j.long12 & kHF),
           "refused: no HOLD/FIRE level, press, word or long12 from the remote's sample");
     Check(j.lt == 0.0f && j.rt == 0.0f, "refused: the pad's LT/RT levels are zeroed too (M4: a stripped aim stays stripped on a pad)");
+    Check(j.trig_stripped, "review animtruth-4: Compose flags the frame whose LT/RT it zeroed (the hook counts it)");
     s.edge_press = 0;
     s.packet.w50 = 0;
     ++s.seq;
@@ -2045,7 +2093,9 @@ void TestAnimAimTruth() {
     c.sample_strip = 0x40u;
     ++s.seq;
     j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
-    Check(j.lt > 0.99f && j.rt > 0.99f && (j.held & 0x8u), "a RELOAD-only sample strip keeps LT/RT (no change for the existing strips)");
+    Check(j.lt > 0.99f && j.rt > 0.99f && (j.held & 0x8u) && !j.trig_stripped,
+          "a RELOAD-only sample strip keeps LT/RT (no change for the existing strips)");
+    c.strip_triggers = false;
     // Finder evidence M5 (fb1031 friend 35992 / 36073): the remote sits in its box (77/78) while body 1 is not
     // boxed (the box refused, e.g. viewer_changed_latched); the remote's box evade then reaches body 1 as a dive in
     // the open (57). EVADE leaves the sample while the remote is boxed and body 1 is not; a boxed body 1 keeps it.
@@ -2075,6 +2125,33 @@ void TestAnimAimTruth() {
         Check(tr.lt == 1.0f && tr.rt == 0.75f, "RELOAD only: both kept");
         tr = pi::StripTriggers(w, 0);
         Check(tr.lt == 1.0f && tr.rt == 0.75f, "no strip: both kept");
+    }
+    // Review animtruth-3: the hook's window strip (NativeView after a weapon strip, and the refused support
+    // request's 0x8078) is StripWindow: the digital strip always, the trigger levels only with Arm.truth_triggers;
+    // zeroed reports a non-zero level it zeroed (the hook's trig_zeroed count).
+    {
+        pi::Arm a{};
+        pi::Injection w{};
+        w.held = 0x18u; w.lt = 1.0f; w.rt = 0.75f;
+        bool z = true;
+        pi::Injection v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!(v.held & 0x18u) && v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers off: a weapon strip keeps LT/RT (unchanged)");
+        z = true;
+        v = pi::StripWindow(a, w, 0x8078u, z);
+        Check(!(v.held & 0x18u) && v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers off: the support strip 0x8078 keeps LT/RT");
+        a.truth_triggers = true;
+        v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!(v.held & 0x18u) && v.lt == 0.0f && v.rt == 0.0f && z, "truth_triggers: a weapon strip of HOLD|FIRE zeroes LT/RT, counted");
+        z = false;
+        v = pi::StripWindow(a, w, 0x8078u, z);
+        Check(!(v.held & 0x18u) && v.lt == 0.0f && v.rt == 0.0f && z, "truth_triggers: the refused support request 0x8078 zeroes both");
+        z = true;
+        v = pi::StripWindow(a, w, 0x40u, z);
+        Check(v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers: a RELOAD-only strip keeps both, not counted");
+        w.lt = 0.0f; w.rt = 0.0f;
+        z = true;
+        v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!z, "truth_triggers: levels already zero are not counted");
     }
 
     // The sender's half: one event per HOLD run.

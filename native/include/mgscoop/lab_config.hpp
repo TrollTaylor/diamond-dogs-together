@@ -721,8 +721,15 @@ struct LabConfig {
     // body does, not what its pad asked (partner_slots TruthStep): the remote's
     // raw HOLD/FIRE are stripped while its gun-lane act is plain locomotion with
     // no recent aim act (Mother Base KILLING_WEAPON) or a body-owned act (hit,
-    // knockdown, stun, carried, box...). Off unless named until a hidden run proves it.
+    // knockdown, stun, carried, trash box, ladder...). Off unless named until a
+    // hidden run proves it.
     bool partner_native_aim_truth = false;
+    // Review animtruth-1: its parts no hidden run has exercised, each off unless
+    // named and each needing partner_native_aim_truth: the box EVADE strip, the
+    // LT/RT zeroing and the stance change (docs/anim-truth.md).
+    bool partner_native_aim_truth_box = false;
+    bool partner_native_aim_truth_triggers = false;
+    bool partner_native_aim_truth_stance = false;
     // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
     // "Traversal icon"): ladders, drain pipes, wall climbs and step-ons the
     // remote starts through its action icon are replayed on body 1 as a

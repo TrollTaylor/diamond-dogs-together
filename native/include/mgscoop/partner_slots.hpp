@@ -244,6 +244,11 @@ struct TruthIn {
     bool support_lane;     // the weapon gate judged Gate::support (thrown / placed / arm)
     bool in_hand;          // the live v5 group says GunFlag::InHand (rec+0x3C0 bit 2)
     std::uint64_t now_ms;
+    // Review animtruth-5: a pose-stream gap (no live act) up to gap_ms after the
+    // last live act keeps a refusal (loco/act) and its strip, so a refused HOLD
+    // never turns into a fresh press for the gap; longer, it fails open
+    // (nostate). 0: fails open at once (the driver passes stale_ms).
+    std::uint32_t gap_ms;
 };
 // One line per remote HOLD run on the receiver (partner_aim_truth=hold_run):
 // how long its raw HOLD was refused and admitted, its first and last act and
@@ -271,6 +276,7 @@ struct TruthState {
     TruthVerdict last;
     std::uint32_t refusals;        // entries into loco/act
     std::uint32_t confirms;        // entries into aim
+    std::uint64_t valid_ms;        // the last tick with a live remote act (the gap bridge)
 };
 struct TruthOut {
     TruthVerdict verdict;

@@ -578,6 +578,13 @@ Injection StripTriggers(const Injection& injection, std::uint32_t bits) noexcept
     return j;
 }
 
+// RED stub (review animtruth-3): the digital strip only.
+Injection StripWindow(const Arm& arm, const Injection& injection, std::uint32_t bits, bool& zeroed) noexcept {
+    (void)arm;
+    zeroed = false;
+    return Strip(injection, bits);
+}
+
 Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept {
     Injection j = injection;
     const std::uint32_t keep = level & bits & config.mask;
