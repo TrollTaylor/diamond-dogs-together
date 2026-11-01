@@ -2,7 +2,22 @@
 
 Lab key `partner_native_aim_truth=0|1` (**off unless named**, also in play and in the gun profile; worker
 `labsetting partner_native_aim_truth=1`). Needs the native gun stage. Branch `wp/anim-truth`; proof scenario
-`tools/worker/scenarios/r1101-animtruth-play.txt` (not run yet).
+`tools/worker/scenarios/r1101-animtruth-play.txt`.
+
+**Hidden run `a8a69ae9`** (the scenario at `5340034f`+docs, mode=play, -WanSim bad, rtt ~175..182 ms, mb-ladder; the
+guest presses, the host films; logs of both copies and frames looked at, archive
+`mgs-coop-run-archive/r1101/animtruth/a8a69ae9...`, sheet `r1101/frames/animtruth/a8a69ae9-sheet.jpg`):
+- Lethal rifle (slot 1, 873) at Mother Base, RMB and RMB+LMB: guest `partner_aim_local=no_aim; act=1` twice, its own
+  frame standing with the rifle slung and the magazine unchanged (8/34); host `partner_aim_truth=loco; ... strip=0x18`
+  and `hold_run; result=refused; refused_ms=1567` / `1549` (flags 0x25 / 0x5), no body-1 aim edge, and its frames
+  show the puppet standing with the rifle slung, no muzzle flash.
+- The WU S.Pistol (slot 2, 875, allowed at Mother Base): guest `partner_aim_local=aimed; act=11`, its frame aiming;
+  host `partner_aim_truth=aim; remote_act=11`, body 1 in 11 `match_ms=17`, `hold_run; result=late; refused_ms=67;
+  admitted_ms=1488`, and the puppet aims the pistol in its frame.
+- RMB on the ladder: guest act 21, `no_aim; act=21`; host body 1 on the ladder through the traversal replay (21/21),
+  `partner_aim_truth=act; remote_act=21; ... strip=0x18`, `hold_run; result=refused; first_act=21`; the puppet climbs
+  with no gun raised in its frame.
+- Not covered: the reverse direction (the host pressing), a gamepad, and a key-off A/B in the same run.
 
 ## The report
 
