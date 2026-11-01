@@ -1185,5 +1185,23 @@ do
     a.native.pos, b.native.pos = {50000, 800, 0}, {50000, 1700, 0}
     for _ = 1, 6 do step(a, b, 100) end
     check(#b.warps == 0, 'a carrier teleport while carrying never warps the carried body')
+
+    -- The carrier's pickup plays act 39 for about 3.3 s (the session: 28682968..28686250); only
+    -- a later 39 is its put-down. A long pickup neither warps nor uses up the carry's episode.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    b.native.act, b.native.peer = 42, 39
+    for _ = 1, 33 do step(a, b, 100) end
+    b.native.act, b.native.peer = 43, 2
+    for _ = 1, 20 do step(a, b, 100) end
+    check(#b.warps == 0, 'a 3.3 s pickup and the carry never warp')
+    b.native.peer, b.native.pos = 39, {0, 830, 4700}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'the carrier\'s put-down after a long pickup still rescues the slide')
+    -- The session's copy stayed "carried" with the replica in 39: one episode, then no more warps.
+    for _ = 1, 40 do step(a, b, 100) end
+    n = #b.warps
+    for _ = 1, 40 do step(a, b, 100) end
+    check(n <= 6 and #b.warps == n, 'a stuck carried state warps at most one episode (no warp storm)')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')
