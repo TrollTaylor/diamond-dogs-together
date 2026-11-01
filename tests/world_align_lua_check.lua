@@ -770,6 +770,123 @@ if arg[7] and arg[8] then
     mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
     mbp.now = mbp.now + 600; mbp.P.tick(mbp.now)
     check(#placeTx(mbp, 34) == 0, 'Mother Base: no patrol position corrections (feature patrol = false)')
+    -- Mother Base staff placement (feature staffPlace, mb-staff-sync): the host shares the standing position of the
+    -- staff near EITHER player (the partner body, TppPlayer2 index 1), never a combat flag (no SetDiscoveryPlayer on
+    -- staff, even in ALERT), at most 2 reads per tick.
+    local MB = {enemies = true, allCp = true, spareStaff = true, staffPlace = true}
+    local function staffFixture(host)
+        local c = placeFixture(host)
+        c.W.w1, c.W.feature, c.W.activeCp = true, MB, nil
+        c.env.vars.playerPosX, c.env.vars.playerPosZ = 0, 0
+        c.env.GameObject = {GetGameObjectIdByIndex = function(kind, index)
+            c.partnerLookups = (c.partnerLookups or 0) + 1
+            return kind == 'TppPlayer2' and index == 1 and 900 or nil
+        end}
+        return c
+    end
+    local function runE(c, frames)
+        for _ = 1, frames do c.now = c.now + 33; c.E.tick(c.now); c.P.tick(c.now) end
+    end
+    local sh, sg = staffFixture(true), staffFixture(false)
+    sh.positions[1] = {10.0, 1.8, 12.0}     -- near the host
+    sh.positions[2] = {100.0, 1.8, 100.0}   -- near the partner only
+    for i = 3, 5 do sh.positions[i] = {300.0, 0, 300.0} end
+    sh.positions[900] = {98.0, 1.8, 97.0}   -- the partner body on the host
+    sh.W.cp[100].localPhase = 3
+    sh.P.patrol.combat[ENT1] = sh.now
+    for _ = 1, 4 do sh.now = sh.now + 600; sh.P.tick(sh.now) end
+    local stx = placeTx(sh, 34)
+    check(#stx == 2 and stx[1].v[2] == ENT1 and stx[1].v[3] == 3 and stx[1].v[8] == 0 and stx[2].v[2] == 3000000002 and
+        stx[2].v[4] == 100000 and stx[2].v[8] == 0, 'Mother Base: staff near either player shared (kind 3), flags 0 in ALERT')
+    check(sh.partnerLookups ~= nil and sh.partnerLookups <= 4, 'partner position read at most once per tick')
+    -- Place first: the host's own knockout of a standing staff member announces where they are (kind 3) BEFORE the
+    -- OUTCOME, on the same reliable channel.
+    -- The lying body reads lower (1.0 m) and the scanner may read it asleep first: the standing ground y is kept.
+    sh.positions[1] = {10.6, 1.0, 12.0}
+    sh.life[1] = 3
+    for _ = 1, 3 do sh.now = sh.now + 600; sh.P.tick(sh.now) end
+    sh.tx = {}
+    sh.E.check(ENT1, 1)
+    check(#sh.tx == 2 and sh.tx[1].op == 34 and sh.tx[1].v[2] == ENT1 and sh.tx[1].v[3] == 3 and sh.tx[1].v[4] == 10600 and
+        sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
+        'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
+    -- A staff member never sampled standing (far from both players) gets no place-first; the OUTCOME still goes.
+    local keep = sh.tx
+    sh.tx = {}
+    sh.life[4] = 3
+    sh.E.check(3000000004, 1)
+    check(#sh.tx == 1 and sh.tx[1].op == 16, 'no standing sample: no place-first, the outcome is sent')
+    sh.tx = keep
+    -- Guest: 3 m off is below the continuous threshold, but the outcome waits until this copy stands there.
+    sg.positions[1] = {13.6, 1.8, 12.0}
+    sg.warp = {{r = 0, h = 1, leaf = 'pinned'}}
+    deliver(sh, sg, 34)
+    check(#sg.P.q == 0, 'a 3 m divergence alone queues no correction')
+    deliver(sh, sg, 16)
+    runE(sg, 1)
+    check(#sg.P.q + (sg.P.cur and 1 or 0) == 1 and sent(sg, 1, 'ChangeLifeState') == 0 and logged(sg, 'event=place_first;'),
+        'guest: the staff outcome is held while this copy is placed first')
+    sg.positions[1] = {10.6, 1.8, 12.0}
+    runE(sg, 6)
+    check(receiptCount(sg, 'WORLD_WARP_V1') >= 1 and sent(sg, 1, 'ChangeLifeState') == 1 and sg.P.cur == nil and
+        logged(sg, 'kind=correct;result=applied'), 'guest: placed where the host has them, then asleep')
+    check(#sg.setOut == 0, 'Mother Base corrections never pin SetOutOfArea')
+    -- A placement that never lands holds the outcome for at most 4 s.
+    local th, tg = staffFixture(true), staffFixture(false)
+    th.positions[2] = {5.0, 1.8, 5.0}
+    for _ = 1, 3 do th.now = th.now + 600; th.P.tick(th.now) end
+    th.tx = {}
+    th.life[2] = 3
+    th.E.check(3000000002, 1)
+    tg.positions[2] = {25.0, 1.8, 5.0}
+    tg.warp = {{r = 0, h = 0, leaf = 'pinned'}}
+    deliver(th, tg, 34); deliver(th, tg, 16)
+    runE(tg, 60)
+    check(sent(tg, 2, 'ChangeLifeState') == 0, 'still held at 2 s')
+    runE(tg, 70)
+    check(sent(tg, 2, 'ChangeLifeState') == 1, 'applied after the 4 s hold even when the placement never lands')
+    -- A staff member not realized on this copy is never force-realized: the placement ends, the outcome applies.
+    local uh, ug = staffFixture(true), staffFixture(false)
+    uh.positions[3] = {6.0, 1.8, 6.0}
+    for _ = 1, 3 do uh.now = uh.now + 600; uh.P.tick(uh.now) end
+    uh.tx = {}
+    uh.life[3] = 3
+    uh.E.check(3000000003, 1)
+    ug.positions[3] = {26.0, 1.8, 6.0}
+    ug.warp = {{r = -1, h = 0, leaf = 'pinned'}}
+    deliver(uh, ug, 34); deliver(uh, ug, 16)
+    runE(ug, 6)
+    check(sent(ug, 3, 'SetForceRealize') == 0 and sent(ug, 3, 'ChangeLifeState') == 1 and logged(ug, 'why=realize_timeout'),
+        'Mother Base: an unrealized copy is never force-realized; the outcome applies')
+    -- Mother Base staff: corrected tighter than free roam (more than 2 m on two samples, or 5 m once), so both
+    -- screens show them on the same spot.
+    local function sample(c, seq, h, x, z) c.W.handlers[34]({seq, h, 3, x, 1000, z, 0, 0, 0, 2}, c.now) end
+    local dg = staffFixture(false)
+    dg.positions[2] = {12.5, 1.8, 0}
+    sample(dg, 1, 3000000002, 10000, 0)
+    check(#dg.P.q == 0, 'one 2.5 m sample: no correction yet')
+    dg.now = dg.now + 3000
+    sample(dg, 2, 3000000002, 10000, 0)
+    check(#dg.P.q == 1, 'Mother Base staff: 2.5 m on two samples queues a correction')
+    local eg = staffFixture(false)
+    eg.positions[2] = {15.5, 1.8, 0}
+    sample(eg, 1, 3000000002, 10000, 0)
+    check(#eg.P.q == 1, 'Mother Base staff: 5.5 m once queues a correction')
+    -- A staff member read at exactly (0, 0, 0) (no position) is never shared.
+    local zh = staffFixture(true)
+    zh.positions[1] = {0, 0, 0}
+    for i = 2, 5 do zh.positions[i] = {300.0, 0, 300.0} end
+    for _ = 1, 4 do zh.now = zh.now + 600; zh.P.tick(zh.now) end
+    check(#placeTx(zh, 34) == 0, 'Mother Base: a staff member at the origin (no position) is not shared')
+    -- Without staffPlace (free roam), an outcome applies at once.
+    local fh, fg = placeFixture(true), placeFixture(false)
+    fg.W.w1 = true
+    fh.life[1] = 3
+    fh.E.check(ENT1, 1)
+    check(#placeTx(fh, 34) == 0, 'free roam: no place-first announcement')
+    deliver(fh, fg, 16)
+    fg.now = fg.now + 33; fg.E.tick(fg.now)
+    check(sent(fg, 1, 'ChangeLifeState') == 1, 'free roam: the outcome applies at once')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest
@@ -823,5 +940,114 @@ do
         'Mother Base: the guest kill and dying requests are committed on the host')
     check(reserved == 0 and sh.life[1] == 4 and sh.life[2] == 4 and logged(sh, 'event=spare;ent=3000000001;state=5;as=3'),
         'Mother Base: the host copy knocks the staff member out and never reserves its own TARGET_DEAD game over')
+end
+do
+    -- arrival-prevent (docs/world-sync-design.md 9.2): a guest still riding its arrival helicopter in free roam or Mother
+    -- Base holds the host's checkpoint (0.14.5 saved it into a frozen helicopter, which every later Continue rebuilt) and
+    -- applies it once off the helicopter (world_follow F.arrival.heli).
+    for _, mb in ipairs({true, false}) do
+        local ah, ag = fixture(true, 3, mb), fixture(false, 3, mb)
+        pairReady(ah, ag)
+        local riding = true
+        ag.W.follow.arrival = {heli = function() return riding end, holdCheckpoint = true}
+        ah.env.TppMission.UpdateCheckPoint({atCurrentPosition = true})
+        ah.A.tick(ah.now); transfer(ah, ag, function(p) return p.op == OP.CHECKPOINT end)
+        ag.A.tick(ag.now)
+        check(ag.R.pending and not ag.saves and not ag.checkpointCalls and logCount(ag, 'step=checkpoint_wait;reason=arrival_heli;ver=1') == 1,
+            'riding in: the shared checkpoint waits and nothing is saved (' .. ag.W.mission .. ')')
+        ag.now = ag.now + 600; ag.A.tick(ag.now)
+        check(ag.R.pending and not ag.saves and logCount(ag, 'reason=arrival_heli') == 1, 'still riding: still held, logged once')
+        riding = false
+        ag.now = ag.now + 600; ag.A.tick(ag.now)
+        check(not ag.R.pending and ag.saves == 1 and ag.R.seen == 1 and logCount(ag, 'step=checkpoint;hash=0;ver=1;receipt=1') == 1,
+            'off the helicopter: the held checkpoint applies and saves once')
+    end
+    -- Named off (F.arrival.holdCheckpoint = false; world_follow's default is on since 0.14.6): riding in applies at once.
+    local default = fixture(false, 3, true)
+    default.W.w1 = true
+    default.W.follow.arrival = {heli = function() return true end, holdCheckpoint = false}
+    default.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); default.A.tick(default.now)
+    check(default.R.seen == 1 and default.saves == 1 and logCount(default, 'arrival_heli') == 0, 'named off: the hold is off')
+    -- In a helicopter space (the ACC) or without world_follow's way out, nothing is held.
+    local acc = fixture(false)
+    acc.W.mission, acc.W.w1 = 40050, true
+    acc.W.follow.arrival = {heli = function() return true end, holdCheckpoint = true}
+    acc.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); acc.A.tick(acc.now)
+    check(acc.R.seen == 1 and acc.saves == 1 and logCount(acc, 'arrival_heli') == 0, 'the ACC applies at once')
+    local older = fixture(false)
+    older.W.w1 = true
+    older.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); older.A.tick(older.now)
+    check(older.R.seen == 1 and older.saves == 1, 'no F.arrival (older follow chunk): applies at once')
+end
+-- fb1031 (b): a host Game Over for a non-player reason (stock f30050 TARGET_DEAD: a staff member died) stays the host's
+-- own, but the guest is told why it reloads: GAME_OVER {kind, radio, cause 4} -> world note 15 a=2 (b=1 a staff member
+-- died at Mother Base, 0 another reason), repeated every 3 s until the reload (at most 60 s); never a guest Game Over.
+do
+    local function notes(c) c.notes = {}; c.W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end end
+    local th, tg = fixture(true, 3, true), fixture(false, 3, true)
+    for _, c in ipairs({th, tg}) do
+        notes(c)
+        c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD, c.env.TppDefine.GAME_OVER_RADIO.PLAYER_KILL_DD = 5, 9
+    end
+    pairReady(th, tg)
+    check(th.env.TppMission.ReserveGameOver(5, 9) == true and th.reserved == 1 and th.gameType == 5 and not th.R.dead and
+        th.W.w1, 'host TARGET_DEAD: the stock reserve runs, no shared death, W1 stays on')
+    check(logCount(th, 'step=host_game_over;type=5;cause=4') == 1, 'host logs its non-player game over')
+    th.env.TppMission.ReserveGameOver(5, 9)
+    th.A.tick(th.now)
+    local sent = {}
+    for _, p in ipairs(th.tx) do if p.op == OP.GAME_OVER then sent[#sent + 1] = p.v end end
+    check(#sent == 1 and sent[1][1] == 5 and sent[1][2] == 9 and sent[1][3] == 4,
+        'host sends GAME_OVER {kind, radio, cause 4} once (f30050 Dead and Dying both reserve)')
+    transfer(th, tg, function(p) return p.op == OP.GAME_OVER end)
+    check(not tg.reserved and not tg.R.dead and tg.A.dead ~= true, 'guest never reserves a non-player game over')
+    check(#tg.notes == 1 and tg.notes[1][1] == 15 and tg.notes[1][2] == 2 and tg.notes[1][3] == 1,
+        'guest: note 15 a=2 b=1 (a staff member died at Mother Base)')
+    check(logCount(tg, 'step=partner_game_over;type=5;why=1') == 1, 'guest logs the partner game over')
+    transfer(th, tg, function(p) return p.op == OP.GAME_OVER end)
+    check(#tg.notes == 1, 'a duplicate broadcast adds no note')
+    tg.now = tg.now + 2999; tg.A.tick(tg.now)
+    check(#tg.notes == 1, 'no repeat before 3 s')
+    tg.now = tg.now + 1; tg.A.tick(tg.now)
+    check(#tg.notes == 2 and tg.notes[2][2] == 2, 'repeated every 3 s while the host is on its Game Over screen')
+    tg.now = tg.now + 60000; tg.A.tick(tg.now)
+    check(#tg.notes == 2, 'never repeated past 60 s')
+    for _, f in ipairs(tg.W.startHooks) do f() end
+    for _, f in ipairs(th.W.startHooks) do f() end
+    check(not tg.R.ended and not th.R.ended, 'the reload clears both sides')
+    -- Another non-player kind (or TARGET_DEAD outside Mother Base): b=0; an abort (aborting=true) is not a failure.
+    local fh, fg = fixture(true), fixture(false)
+    for _, c in ipairs({fh, fg}) do notes(c); c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD = 5 end
+    pairReady(fh, fg)
+    fh.env.TppMission.ReserveGameOver(7, 3, true)
+    fh.A.tick(fh.now)
+    local aborts = 0
+    for _, p in ipairs(fh.tx) do if p.op == OP.GAME_OVER then aborts = aborts + 1 end end
+    check(aborts == 0 and fh.reserved == 1, 'an aborting reserve is not forwarded')
+    for _, f in ipairs(fh.W.startHooks) do f() end
+    fh.env.TppMission.ReserveGameOver(5, 3)
+    fh.A.tick(fh.now)
+    transfer(fh, fg, function(p) return p.op == OP.GAME_OVER end)
+    check(#fg.notes == 1 and fg.notes[1][2] == 2 and fg.notes[1][3] == 0 and not fg.reserved, 'free roam: note 15 a=2 b=0')
+    -- A refused host reserve sends nothing; a shared player death still shares as before (cause 1).
+    local rh = fixture(true); notes(rh)
+    rh.gameRefuse = true
+    rh.env.TppMission.ReserveGameOver(5, 9); rh.A.tick(rh.now)
+    local refused = 0
+    for _, p in ipairs(rh.tx) do if p.op == OP.GAME_OVER then refused = refused + 1 end end
+    check(refused == 0 and not rh.R.ended, 'a refused host reserve sends nothing')
+    -- Lab probe host_target_dead (id 21, lab mode only): the host's stock TARGET_DEAD reserve, as f30050 does when a
+    -- staff member dies, through the co-op wrapper.
+    local ph, pg = fixture(true, 3, true), fixture(false, 3, true)
+    for _, c in ipairs({ph, pg}) do
+        c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD, c.env.TppDefine.GAME_OVER_RADIO.PLAYER_KILL_DD = 5, 9
+    end
+    check(ph.W.probe.NAMES[21] == 'host_target_dead' and type(ph.W.probe.handlers.host_target_dead) == 'function',
+        'probe 21 is host_target_dead')
+    ph.W.probe.handlers.host_target_dead({name = 'host_target_dead'})
+    check(ph.reserved == 1 and ph.gameType == 5 and ph.gameRadio == 9 and ph.R.ended and
+        logCount(ph, 'event=probe;id=host_target_dead;step=done;result=ok') == 1, 'the probe reserves TARGET_DEAD on the host')
+    pg.W.probe.handlers.host_target_dead({name = 'host_target_dead'})
+    check(not pg.reserved and logCount(pg, 'event=probe;id=host_target_dead;step=done;result=refused') == 1, 'never on the guest')
 end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

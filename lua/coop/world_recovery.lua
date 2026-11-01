@@ -6,6 +6,7 @@ do
     local R, A, OP, H = {version = 0, seen = 0}, W.align, W.OP, W.handlers
     W.recovery = R
     local function log(text) W.log("event=recovery;" .. text) end
+    local function note(code, a, b) if type(W.note) == "function" then pcall(W.note, code, a, b) end end
     local function valid(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
     local function hash(n)
         if not valid(n, -2147483648, 4294967295) then return nil end
@@ -68,9 +69,24 @@ do
     end
     R.applyCheckpoint = checkpoint
     H[OP.CHECKPOINT] = checkpoint
+    -- arrival-prevent (docs/world-sync-design.md 9.2): a guest still riding its arrival helicopter in free roam or Mother
+    -- Base holds a received checkpoint until it is off (0.14.5 saved the host's checkpoint into a frozen helicopter, which
+    -- every later Continue rebuilt). world_follow's F.arrival.heli: Tpp.IsHelicopter or PlayerStatus ON_HELICOPTER.
+    local function riding()
+        local m, a = W.mission, W.follow and W.follow.arrival
+        if (m ~= 30010 and m ~= 30020 and m ~= 30050) or type(a) ~= "table" or a.holdCheckpoint ~= true or
+            type(a.heli) ~= "function" then return false end
+        local ok, v = pcall(a.heli)
+        return ok and v == true
+    end
     local function applyCheckpoint(now)
         local v = R.pending
         if not v or not ready() or now < (R.retryAt or 0) then return end
+        if riding() then
+            R.retryAt = now + 500
+            if R.why ~= "heli" then log(fmt("step=checkpoint_wait;reason=arrival_heli;ver=%d", v[2])); R.why = "heli" end
+            return
+        end
         local options = {ignoreAlert = true, permitHelicopter = true}
         if v[1] == 0 then
             if type(W.get(TppPlayer, "SetInitialPosition")) ~= "function" then return end
@@ -108,6 +124,15 @@ do
         local ok, result = W.follow.run(R.originalReserve, v[2], rd)
         if ok and result == true then markDead(v[2], rd, 2) end
     end
+    -- fb1031 mbgo: the guest's note for the host's non-player Game Over (15 a=2), every 3 s until the reload, at
+    -- most 60 s.
+    local function ended(now)
+        local e = R.ended
+        if not e or now < e.at then return end
+        if now >= e.stop then R.ended = nil; return end
+        e.at = now + 3000
+        note(15, 2, e.why)
+    end
     local function applyGame(now)
         local v = R.inGame
         if not v or now < (R.gameAt or 0) then return end
@@ -119,7 +144,20 @@ do
         end
     end
     H[OP.GAME_OVER] = function(v, now)
-        if W.host or not on() or R.dead or not death(v[1]) or not valid(v[2], 0, 255) then return end
+        if W.host or not on() or R.dead then return end
+        -- Cause 4: the host's mission failed for a non-player reason (stock f30050 TARGET_DEAD when a staff member
+        -- dies). Never a Game Over here: the host's Continue reloads this copy (world_follow); b=1 names the staff.
+        if v[3] == 4 and not death(v[1]) then
+            if R.ended then return end
+            now = now or W.now()
+            local t = W.get(TppDefine, "GAME_OVER_TYPE")
+            local why = W.mission == 30050 and v[1] == W.get(t, "TARGET_DEAD") and 1 or 0
+            R.ended = {why = why, at = now, stop = now + 60000}
+            log(fmt("step=partner_game_over;type=%d;why=%d", v[1], why))
+            ended(now)
+            return
+        end
+        if not death(v[1]) or not valid(v[2], 0, 255) then return end
         if type(R.originalReserve) ~= "function" then return end
         if not R.inGame then R.inGame, R.gameAt = v, 0 end
         applyGame(now or W.now())
@@ -142,7 +180,14 @@ do
                 end
                 if death(kind) and R.dead then return true end
                 local result = reserve(kind, radio, aborting)
-                if result == true and death(kind) and valid(radio, 0, 255) then markDead(kind, radio, 1) end
+                if result == true and death(kind) and valid(radio, 0, 255) then markDead(kind, radio, 1)
+                elseif result == true and not death(kind) and aborting ~= true and not R.dead and not R.ended and
+                    valid(kind, 0, 255) and valid(radio, 0, 4294967295) then
+                    -- fb1031 mbgo: a Game Over for a non-player reason stays this copy's own (online 0.14.5: the guest
+                    -- saw only a sudden reload); the guest is told why (GAME_OVER cause 4, once per mission).
+                    R.ended, R.game = true, {kind, radio, 4}
+                    log(fmt("step=host_game_over;type=%d;cause=4", kind))
+                end
                 return result
             end
         end
@@ -174,7 +219,7 @@ do
         local B = W.probe and W.probe.handlers
         if B then
             local names = W.probe.NAMES
-            if names then names[16], names[17], names[18] = "shared_death", "host_continue", "shared_checkpoint" end
+            if names then names[16], names[17], names[18], names[21] = "shared_death", "host_continue", "shared_checkpoint", "host_target_dead" end
             local function probe(pr, permitted, fn, receipt)
                 local result = "refused"
                 if W.mode == 1 and on() and permitted and type(fn) == "function" then
@@ -189,6 +234,13 @@ do
                     return TppMission.ReserveGameOver(t.PLAYER_DEAD, r.PLAYER_DEAD)
                 end, function(v) return v == true or R.req ~= nil end)
             end
+            -- fb1031 mbgo probe 20: the host's stock TARGET_DEAD reserve, as f30050 does when a staff member dies.
+            B.host_target_dead = function(pr)
+                probe(pr, W.host and not R.dead, function()
+                    local t, r = W.get(TppDefine, "GAME_OVER_TYPE"), W.get(TppDefine, "GAME_OVER_RADIO")
+                    return TppMission.ReserveGameOver(t.TARGET_DEAD, r.PLAYER_KILL_DD)
+                end, function(v) return v == true end)
+            end
             B.host_continue = function(pr)
                 probe(pr, W.host and R.dead, function() return TppMission.ContinueFromCheckPoint({isNoFade = true}) end)
             end
@@ -202,7 +254,7 @@ do
     end
     W.startHooks[#W.startHooks + 1] = function()
         R.dead, R.game, R.req, R.out, R.pending, R.applying, R.version, R.seen = false, nil, nil, nil, nil, nil, 0, 0
-        R.inGame, R.reqAt, R.gameAt = nil, 0, 0
+        R.inGame, R.reqAt, R.gameAt, R.ended = nil, 0, 0, nil
     end
     W.unpairedHooks[#W.unpairedHooks + 1] = function() R.game, R.req, R.out, R.pending, R.inGame = nil, nil, nil, nil, nil end
     function R.tick(now)
@@ -210,6 +262,7 @@ do
         if R.req and now >= (R.reqAt or 0) and W.tx(OP.REQ_GAME_OVER, unpack(R.req)) then R.reqAt = now + 500 end
         if R.game and W.tx(OP.GAME_OVER, unpack(R.game)) then R.game = nil end
         if R.inGame then applyGame(now) end
+        if R.ended and not W.host then ended(now) end
         if R.out and ready() and W.tx(OP.CHECKPOINT, unpack(R.out)) then
             local v = R.out
             log(fmt("step=checkpoint_tx;hash=%.0f;ver=%d;x_mm=%d;y_mm=%d;z_mm=%d;yaw_mdeg=%d", unpack(v)))

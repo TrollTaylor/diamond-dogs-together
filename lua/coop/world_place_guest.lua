@@ -39,6 +39,7 @@ do
         function P.sample(c)
             local en = W.ent[c.h]
             if not en or P.come[c.h] or type(en.id) ~= "number" then return end
+            P.lastS[c.h] = c
             if not W.w1 and c.flags % 2 == 1 then return end
             -- Never while this guard's placement is pending; a queued correction takes the
             -- newest target (and its newer grant) in place.
@@ -62,15 +63,18 @@ do
             P.div[c.h] = div
             local fix
             if W.w1 then
-                div.n = d > 3500 and div.n + 1 or 0
-                fix = (div.n >= 2 or d > 8000) and P.state(en) == 0 and c.at - div.at >= 2500 and #P.q < 8
+                -- Mother Base staff (staffPlace): tighter, so both screens show them on the same spot.
+                local staff = W.feature and W.feature.staffPlace
+                div.n = d > (staff and 2000 or 3500) and div.n + 1 or 0
+                fix = (div.n >= 2 or d > (staff and 5000 or 8000)) and P.state(en) == 0 and c.at - div.at >= 2500 and #P.q < 8
             else
                 div.n = d > 6000 and div.n + 1 or 0
                 local cp = W.cp[en.cp]
                 fix = div.n >= 2 and P.state(en) == 0 and not (cp and cp.localPhase >= 3) and div.fixes < 10 and
                     c.at - div.at >= 5000 and #P.q < 8
             end
-            L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d", c.seq, c.h, d / 1000, div.n, fix and 1 or 0)
+            L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d;host_xz=%.1f,%.1f;here_xz=%.1f,%.1f", c.seq, c.h, d / 1000,
+                div.n, fix and 1 or 0, c.x / 1000, c.z / 1000, x / 1000, z / 1000)
             if fix then
                 div.n, div.fixes, div.at = 0, div.fixes + 1, c.at
                 P.q[#P.q + 1] = c
@@ -135,7 +139,8 @@ do
                 m.ignored[en.name] = nil  -- as the host: a "come" warp of an ignoring guard notices again
             end
             if c.flags % 2 == 1 then P.come[c.h] = true end
-            P.pinOn(c.h)
+            -- Mother Base corrections never pin SetOutOfArea (allCp counts every CP active anyway).
+            if not (k == 3 and W.feature and W.feature.staffPlace) then P.pinOn(c.h) end
             if k == 2 then
                 local route = P.route(c.route)
                 if not route then return "route_unknown" end
@@ -169,6 +174,8 @@ do
                 return P.done(c, NATIVE[c.native] or "native_other")
             end
             if r.h == 1 then c.landed, c.leaf = c.frames, tostring(r.leaf)
+            -- Mother Base staff: never force-realize a staff member this copy has not loaded.
+            elseif r.r == -1 and c.kind == 3 and W.feature and W.feature.staffPlace then return P.done(c, "realize_timeout")
             elseif r.r == -1 and not c.forced then c.forced = true; pcall(send, id, {id = "SetForceRealize"}) end
             if not c.landed and (c.frames >= 150 or now - c.t0 > 10000) then return P.done(c, "realize_timeout") end
         end
@@ -218,9 +225,41 @@ do
             c.frames = c.frames + 1
             P.step(c, now)
         end
+        -- Mother Base staff (staffPlace): a host outcome of a staff member waits until this copy stands where the
+        -- host's does: a placement of h queued or running, or the newest sample (at most 2 s old: the host's place
+        -- first) more than 1.5 m away while NORMAL is queued now (no 2-sample rule, no cooldown). At most 4 s: then
+        -- the placement is dropped and the outcome applies anyway.
+        function W.staffHold(h, now)
+            if W.host or not (W.feature and W.feature.staffPlace) then return false end
+            local c = P.cur
+            if c and c.h == h then
+                if now - c.at < 4000 then return true end
+                P.done(c, "context")
+                return false
+            end
+            for i, q in ipairs(P.q) do
+                if q.h == h then
+                    if now - q.at < 4000 then return true end
+                    table.remove(P.q, i)
+                    return false
+                end
+            end
+            local s = P.lastS[h]
+            if not s or s.used or now - s.at > 2000 then return false end
+            s.used = true
+            local en = W.ent[h]
+            if not en or type(en.id) ~= "number" or P.state(en) ~= 0 then return false end
+            local x, _, z = pos(en.id)
+            if not x then return false end
+            local d = flat(x, z, s.x, s.z)
+            local fix = d >= 1500 and #P.q < 8
+            L("event=place_first;seq=%d;ent=%.0f;div_m=%.1f;fix=%d", s.seq, h, d / 1000, fix and 1 or 0)
+            if fix then P.q[#P.q + 1] = s end
+            return fix
+        end
         W.unpairedHooks[#W.unpairedHooks + 1] = function()
             W.rosterMatch = false
-            P.out, P.q = {}, {}
+            P.out, P.q, P.lastS = {}, {}, {}
             local c = P.cur
             P.release(c)
             P.cur = nil

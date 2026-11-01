@@ -582,23 +582,23 @@ int main() {
         }
     }
     // Spawn enemy here for players (spawn_warp, docs/debug-menu.md "Spawn enemy here"): the engine set-transform
-    // placement in play mode, off until a play run proves it: on only when named 1 (lab keeps debug_soldier_warp, which
-    // play still refuses).
+    // placement in play mode, ON by default (spawn-enemy-play, a hidden play run); a named 0 opts out (play then keeps
+    // the route snap). Lab keeps debug_soldier_warp, which play still refuses.
     {
-        Check(!LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp off by default (not run-proven in play)");
+        Check(LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp on by default (play run-proven)");
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
             const auto plain = Lab(base);
-            Check(!plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp off when not named (lab and play)");
+            Check(plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp on when not named (lab and play)");
             const auto named = Lab(base + "spawn_warp=1\n");
             Check(named.spawn_warp && named.spawn_warp_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0, "a named spawn_warp 1 runs in lab and play");
             const auto off = Lab(base + "spawn_warp=0\n");
-            Check(!off.spawn_warp && off.spawn_warp_given && off.play_refused == 0, "a named spawn_warp 0 stays off");
+            Check(!off.spawn_warp && off.spawn_warp_given && off.play_refused == 0, "a named spawn_warp 0 opts out");
         }
         const auto play = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\ndebug_soldier_warp=1\n");
-        Check(!play.debug_soldier_warp && !play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
-              "play still refuses the lab key; spawn_warp stays off");
+        Check(!play.debug_soldier_warp && play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
+              "play still refuses the lab key; spawn_warp stays on (its own key)");
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\nspawn_warp=") + value + "\n");
             Check(!invalid.spawn_warp && !invalid.spawn_warp_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
@@ -779,6 +779,33 @@ int main() {
                   "an invalid get-in cut value refuses (named, off)");
             const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_getin_cut=1\npartner_ride_getin_cut=") + value + "\n");
             Check(!late.partner_ride_getin_cut && late.invalid_values == 1, "an invalid get-in cut value after a valid 1 turns it off");
+        }
+    }
+    // fb1031 gear (partner_equip_midload): off unless named in lab and play (not run-proven yet), even with the gun
+    // profile; a named 1 runs in lab and play; an invalid value is named and off, also after a valid 1.
+    {
+        Check(!LabConfig{}.partner_equip_midload && !LabConfig{}.partner_equip_midload_given && !Lab("").partner_equip_midload,
+              "mid-mission gear load defaults off");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto profile = Lab(gun + mode);
+            Check(!profile.partner_equip_midload && !profile.partner_equip_midload_given && profile.invalid_values == 0,
+                  "the gun profile leaves the mid-mission gear load off");
+            const auto named = Lab(gun + mode + "partner_equip_midload=1\n");
+            Check(named.partner_equip_midload && named.partner_equip_midload_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named mid-mission gear load runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_equip_midload=0\n");
+            Check(!off.partner_equip_midload && off.partner_equip_midload_given, "a named mid-mission gear load 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_equip_midload=") + value + "\n");
+            Check(!invalid.partner_equip_midload && invalid.partner_equip_midload_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid mid-mission gear load value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_equip_midload=1\npartner_equip_midload=") + value + "\n");
+            Check(!late.partner_equip_midload && late.invalid_values == 1, "an invalid mid-mission gear load value after a valid 1 turns it off");
         }
     }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
@@ -1426,7 +1453,7 @@ int main() {
     Check(worldSeven.world == 0 && worldSeven.invalid_values == 1, "invalid world keeps 0");
     const char* probes[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
                             "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
-                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart"};
+                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "guest_frozen_heli", "host_target_dead"};
     static_assert(sizeof(probes) / sizeof(probes[0]) == kWorldProbeMax + 1u);
     for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
         const auto c = Lab(std::string("enabled=1\nrole=guest\nworld=2\nworld_probe=") + probes[i] + "\n");
@@ -1440,9 +1467,17 @@ int main() {
               !ParseWorldProbe("race_kill ", 10, unchanged) && unchanged == WorldProbe::p1,
           "ParseWorldProbe is exact");
     WorldProbe restart = WorldProbe::none;
-    Check(kWorldProbeMax == 19 && ParseWorldProbe("guest_restart", 13, restart) && static_cast<unsigned>(restart) == 19 &&
+    Check(kWorldProbeMax >= 19 && ParseWorldProbe("guest_restart", 13, restart) && static_cast<unsigned>(restart) == 19 &&
               std::strcmp(WorldProbeName(restart), "guest_restart") == 0,
           "probe 19 is guest_restart (fb1031 arrival: the guest's pause-menu Restart)");
+    WorldProbe frozen = WorldProbe::none;
+    Check(ParseWorldProbe("guest_frozen_heli", 17, frozen) && static_cast<unsigned>(frozen) == 20 &&
+              std::strcmp(WorldProbeName(frozen), "guest_frozen_heli") == 0,
+          "probe 20 is guest_frozen_heli (arrival-prevent: the 0.14.5 frozen arrival for the watchdog)");
+    WorldProbe fail = WorldProbe::none;
+    Check(kWorldProbeMax == 21 && ParseWorldProbe("host_target_dead", 16, fail) && static_cast<unsigned>(fail) == 21 &&
+              std::strcmp(WorldProbeName(fail), "host_target_dead") == 0,
+          "probe 21 is host_target_dead (fb1031 mbgo: the host's stock TARGET_DEAD Game Over; 20 until the merge with arrival-prevent)");
     Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(kWorldProbeMax + 1)), "?") == 0, "out-of-range probe name");
     const auto badProbe = Lab("enabled=1\nrole=host\nworld_probe=p2\n");
     Check(badProbe.world_probe == WorldProbe::none && badProbe.invalid_values == 1, "unknown probe invalid");

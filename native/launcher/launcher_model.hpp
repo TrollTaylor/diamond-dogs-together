@@ -102,6 +102,9 @@ public:
     virtual std::string game_dir() const = 0;
     virtual std::vector<SetupStep> setup_steps() const = 0;
     virtual void start_setup() = 0;                          // runs on a worker thread; poll setup_steps()
+    // While the automatic setup waits for something the player closes or starts (MGSV still running, Steam not logged
+    // in, another window's setup): what to do, in one plain sentence; empty otherwise. The setup then runs by itself.
+    virtual std::string setup_wait_text() const { return {}; }
     virtual Character character() const = 0;
     virtual void set_character(Character) = 0;               // persisted
     virtual std::string hud() const = 0;                     // "compact" | "full" | "off"

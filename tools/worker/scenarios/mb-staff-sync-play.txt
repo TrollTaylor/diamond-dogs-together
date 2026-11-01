@@ -1,0 +1,155 @@
+# Mother Base staff placement (mb-staff-sync; docs/world-sync-design.md 7.7, feature staffPlace) in play over
+# -WanSim bad, mb-ladder seed on both copies. The host shares where the staff near either player stand (ENEMY_DEBUG
+# kind 3); the guest's copy is placed there by the native soldier warp (GuestWarpReceipt, Mother Base staff rule:
+# play, mission 30050, corrections only). A host outcome of a standing staff member is preceded by their position,
+# and the guest applies it only once its copy stands there (W.staffHold, at most 4 s).
+#   0. A = staff member 1325835864 (nearest to the mb-ladder spot): the host 2.5 m from A, the guest 2.5 m behind
+#      the host (about 5 m from A); both cameras on the nearest staff member: A on both screens, same spot.
+#   1. host 'enemy sleep nearest' (A): asleep on both screens.
+#   2. host 'enemy fulton nearest' (A): balloon on the host, gone on both (guest: event=spare; state=6; as=7).
+#   3. B = 981153145: the host puts B to sleep, the guest goes 1 m from its copy of B and Fultons it (E held):
+#      guest act -> host commit actor=guest -> host copy disabled (spare as=7): gone on the host's screen too.
+#   4. the staff member nearest to the host: frames on both copies every 5 s for 30 s, positions in place_div lines.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/mb-staff-sync-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# Expected: guest soldier_warp=ready; key=mb_staff; guest world_place=warp ... refused=none and event=place;
+# kind=correct; result=applied lines; guest event=place_div lines with host_xz / here_xz; the commit/apply pairs.
+# NEVER: step=error, event=error, roster_mismatch, reason=game_over, GameOver, RequestForceFulton on the guest copy,
+# soldier_warp=disabled.
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+wait 15000
+# A stock Mother Base cutscene (Ocelot, D-Dog) may start on both copies within 15 s of gameplay; wait it out.
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'world_lua=event=align; step=ready; id=[0-9]+; w1=1' 90
+waitlog guest 'world_lua=event=align; step=accepted; id=[0-9]+;' 30
+stance host stand
+stance guest stand
+# --- 0. A: both near ONE staff member, the guest about 5 m off -----------------------------------------------------
+logmark both
+host run enemy goto 1325835864
+host expect ^(enemy_goto;ent=1325835864;submitted_warp|warp_position_readback)
+wait 1500
+placebehind guest host 2.5 1
+stance guest stand
+wait 5000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+guest expect ^aim_nearest;ent=1325835864;
+wait 800
+both capture s0-standing
+host run enemy info nearest
+guest run enemy info nearest
+host run position
+guest run position
+# --- 1. host puts A to sleep ---------------------------------------------------------------------------------------
+logmark both
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=1325835864;
+waitlog host 'world_lua=event=commit; ent=1325835864; state=2; ver=[0-9]+; actor=host;' 10
+waitlog guest 'world_lua=event=apply; ent=1325835864; state=2; ver=[0-9]+; src=outcome; result=ok' 10
+wait 1200
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture s1-asleep
+host run enemy info nearest
+guest run enemy info nearest
+# --- 2. host Fultons A ---------------------------------------------------------------------------------------------
+logmark both
+host run enemy fulton nearest
+host expect ^enemy_fulton;ent=1325835864;
+host burst s2-host 6 500
+guest burst s2-guest 8 500
+waitlog host 'world_lua=event=commit; ent=1325835864; state=6; ver=[0-9]+; actor=host;' 25
+waitlog guest 'world_lua=event=spare; ent=1325835864; state=6; as=7' 25
+wait 1500
+both capture s2-gone
+# --- 3. B: the host puts B to sleep, the guest Fultons B -------------------------------------------------------------
+host run enemy goto 981153145
+host expect ^(enemy_goto;ent=981153145;submitted_warp|warp_position_readback)
+wait 1500
+placebehind guest host 2.5 1
+stance guest stand
+wait 5000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-standing
+host run enemy info nearest
+guest run enemy info nearest
+logmark both
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=981153145;
+waitlog guest 'world_lua=event=apply; ent=981153145; state=2; ver=[0-9]+; src=outcome; result=ok' 10
+guest run enemy goto 981153145 1
+guest expect ^(enemy_goto;ent=981153145;submitted_warp|warp_position_readback)
+wait 1500
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 600
+both capture s3-asleep
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst s3-guest 6 500
+host burst s3-host 6 500
+waitlog host 'world_lua=event=commit; ent=981153145; state=6; ver=[0-9]+; actor=guest;' 20
+waitlog host 'world_lua=event=spare; ent=981153145; state=6; as=7' 10
+wait 1500
+both capture s3-gone
+# --- 4. the nearest staff member for 30 s ----------------------------------------------------------------------------
+host run enemy goto nearest 4
+wait 1500
+placebehind guest host 2 1
+stance guest stand
+wait 4000
+host run enemy info nearest
+guest run enemy info nearest
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-00
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-05
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-10
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-15
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-20
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-25
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-30
+host run enemy info nearest
+guest run enemy info nearest
+host run position
+guest run position
+state

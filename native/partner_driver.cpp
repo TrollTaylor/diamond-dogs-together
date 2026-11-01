@@ -5132,6 +5132,10 @@ void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& cloc
     in.remote_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
     in.remote_act = remote_anim.act;
     in.remote_stance = remote_anim.stance;
+    // melee-target: what the stock strike is aimed at. CQC_CONTINUOUS in this tick's st= census (partner_ride.lua) is the
+    // stock CQC acting on a soldier or staff member; a strike in reach waits for it (partner_melee Resolve).
+    in.status_valid = m.status_have;
+    in.cqc = m.status_have && (m.status_bits & partner::status_bit::cqc_continuous) != 0;
     // The body readback and the ride checks run only while the local act is a strike act (an edge may be pending).
     if (in.local_valid && pm::StrikeAct(in.act) && st.slots_ok && pp::Realized(st, partner::partner_index) && !m.range_hidden &&
         !m.visibility.hidden && !m.visibility.seated && !m.ride_seated && m.seat.phase == SeatPhase::idle && !m.vehicle_job) {
@@ -5144,10 +5148,16 @@ void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& cloc
             for (unsigned i = 0; i < 3; ++i) in.pos1[i] = body_pos[i];
         }
     }
+    // The held strike's decision first (a new press's edge decides the last one), then this tick's edge.
+    char line[320]{};
+    const pm::Out r = pm::Resolve(m.melee, in);
+    if (r.verdict != pm::Verdict::none) {
+        const bool queued = r.queue && h.melee_hit && h.melee_hit(h.context, st.P);
+        if (pm::FormatStrike(m.melee, r.act, r, queued, line, sizeof(line))) EmitNativeN(h, m.melee_cap, pm::kLineCap, "partner_melee", "%s", line);
+    }
     const pm::Out o = pm::Step(m.melee, in);
     if (o.verdict == pm::Verdict::none) return;
     const bool queued = o.queue && h.melee_hit && h.melee_hit(h.context, st.P);
-    char line[256]{};
     if (pm::FormatStrike(m.melee, in.act, o, queued, line, sizeof(line))) EmitNativeN(h, m.melee_cap, pm::kLineCap, "partner_melee", "%s", line);
 }
 
@@ -7566,7 +7576,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         {
             const bool hidden_as_ride = m.visibility.hidden && m.visibility.reason && std::strcmp(m.visibility.reason, "ride") == 0;
             const pm::Ride ride = pm::RideOf(visibility_sample.anim_valid, visibility_sample.act, vi.ride_live, vi.kind);
-            const bool rule = pm::RideRule(set.unrealize_all, ride, hidden_as_ride, m.mount.active);
+            // fb1031: the seat's absent latch (a vehicle this copy lacks) opens the episode whatever the key (play
+            // forces it off): the bits-only hide left body 1 standing at the get-on spot under Lua's all-active
+            // mode. The CLEAR / SET_ALLACTIVE cycle is the mount hide's (on in play with the gun profile).
+            const bool absent_hide = ride == pm::Ride::vehicle && SeatBlocked(m.seat, drawn_ride) && SeatAbsentHides(m.seat.block_reason);
+            const bool rule = pm::RideRule(set.unrealize_all || absent_hide, ride, hidden_as_ride, m.mount.active);
             const bool off = pm::OffRide(visibility_sample.anim_valid, visibility_sample.act, vi.ride_have, vi.ride_live, vi.kind);
             switch (pm::StepRide(m.ride_ep, pm::RideHolds(rule, m.ride_ep.active, m.visibility.hidden, off), ride,
                                  visibility_sample.act, static_cast<std::uint8_t>(vi.kind), now)) {

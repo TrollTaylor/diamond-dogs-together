@@ -9,7 +9,7 @@ writing <game>/mgs-coop/world.trigger (docs/world-sync-protocol.md
 The text is validated against the trigger grammar first: any of world=0..3,
 world_probe=<probe>|off (p1 p3 p3b p4 p12 p17 race_kill remote_area_kill
 kill_near sleep_near fulton_near alert_near weather_rain clock_jump
-clock_fast shared_death host_continue shared_checkpoint guest_restart), goto=30010|30020|30050 and goto_lz=0|1 (only with goto), each at most
+clock_fast shared_death host_continue shared_checkpoint guest_restart guest_frozen_heli host_target_dead), goto=30010|30020|30050 and goto_lz=0|1 (only with goto), each at most
 once, separated by blanks. It is written in canonical form (one ASCII line,
 at most 255 bytes with the newline) to a temporary file in the instance's
 mgs-coop folder, which is then renamed over world.trigger, so the native side

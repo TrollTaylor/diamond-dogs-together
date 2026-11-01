@@ -5,12 +5,13 @@ do
         {"rev_revengeLv", "revenge"}, {"missionStartClock"}, {"missionStartWeather"},
         {"missionStartWeatherNextTime", nil, 1000}, {"missionStartExtraWeatherInterval", nil, 1000},
         {"heli_missionStartRoute"}, {"mis_isStartFromHelispace", nil, "bool"}, {"mis_isStartFromFreePlay", nil, "bool"},
-        {"ply_initialPlayerState"}, {"ply_useMissionStartPos", nil, "bool"}, {"ply_missionStartPos", 3, 1000},
-        {"ply_missionStartRot", nil, 1}, {"ply_useMissionStartPosForNoOrderBox", nil, "bool"},
+        {"ply_initialPlayerState"}, {"ply_useMissionStartPos", nil, "bool", nil, nil, nil, "pose"},
+        {"ply_missionStartPos", 3, 1000, nil, nil, nil, "pose"}, {"ply_missionStartRot", nil, 1, nil, nil, nil, "pose"},
+        {"ply_useMissionStartPosForNoOrderBox", nil, "bool"},
         {"ply_missionStartPosForNoOrderBox", 3, 1000}, {"ply_missionStartRotForNoOrderBox", nil, 1},
-        {"initialPlayerFlag", nil, nil, true}, {"initialPlayerPosX", nil, 1000, true},
-        {"initialPlayerPosY", nil, 1000, true}, {"initialPlayerPosZ", nil, 1000, true},
-        {"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"},
+        {"initialPlayerFlag", nil, nil, true, nil, nil, "pose"}, {"initialPlayerPosX", nil, 1000, true, nil, nil, "pose"},
+        {"initialPlayerPosY", nil, 1000, true, nil, nil, "pose"}, {"initialPlayerPosZ", nil, 1000, true, nil, nil, "pose"},
+        {"initialPlayerRotY", nil, 1000, true, nil, nil, "pose"}, {"mis_checkPoint"},
         {"ini_isTitleMode", nil, "bool", nil, true}, {"ini_isReturnToTitle", nil, "bool", nil, true},
         {"isContinueFromTitle", nil, "bool", nil, true}, {"ply_isUsedPlayerInitialAction", nil, "bool", "svars"}}}
     -- M1 host-owned companion (docs/vehicles-companions-design.md 6.1): the host's buddy vars (types
@@ -37,6 +38,9 @@ do
         {"reliefVehicleCarryAmmo", 3}, {"reliefVehicleCarryState"}, {"userPresetVehiclePaintType", 10}}) do
         S.keys[#S.keys + 1] = {k[1], k[2], k[3], true, nil, "relief"}
     end
+    -- key[7] "pose" (arrival-prevent, docs/world-sync-design.md 9.2): the host's start position. A guest whose seeds
+    -- start it riding a helicopter in on a route (S.ride) gets vanilla's ride-on reset for these instead (0.14.5 copied the
+    -- host's stored helicopter start position, and a helicopter started there never flew in or landed).
     W.followSeeds = S
     local floor = math.floor
     function S.data(key) return key[4] == "svars" and svars or key[4] and vars or gvars end
@@ -109,6 +113,18 @@ do
             end
         end
         return true
+    end
+    -- True when the seeds start the player riding a helicopter in on a route (a Continue: only while that entry is unused).
+    function S.ride(s, kind)
+        local heli, got = W.get(W.get(TppDefine, "INITIAL_PLAYER_STATE"), "RIDEON_HELICOPTER"), {}
+        for _, v in ipairs(s.values) do
+            local key = S.keys[v[1]]
+            if key and (key[1] == "ply_initialPlayerState" or key[1] == "heli_missionStartRoute" or key[1] == "ply_isUsedPlayerInitialAction") then
+                got[key[1]] = S.decode(key, v[3])
+            end
+        end
+        return heli ~= nil and got.ply_initialPlayerState == heli and (got.heli_missionStartRoute or 0) ~= 0 and
+            (kind ~= 4 or got.ply_isUsedPlayerInitialAction ~= true)
     end
     function S.context(s, id)
         local function flag(name)

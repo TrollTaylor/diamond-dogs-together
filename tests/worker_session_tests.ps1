@@ -295,6 +295,16 @@ foreach($bad in @('world_relief=2','world_relief=','world_relief=on','both:world
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 Assert-True ('labsetting world_relief=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting world_relief=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_relief=0|1 only'
+# fb1031 gear: partner_equip_midload=0|1 (the mid-mission load of a late partner's gear, lab and play) in both
+# -LabSetting allow-lists and the scenario line (fb1031-gear-late-join.txt).
+foreach($ok in @('partner_equip_midload=1','partner_equip_midload=0','host:partner_equip_midload=1','guest:partner_equip_midload=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('partner_equip_midload=2','partner_equip_midload=','partner_equip_midload=on','both:partner_equip_midload=1','partner_equip_midloads=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting partner_equip_midload=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting host partner_equip_midload=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting partner_equip_midload=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both partner_equip_midload=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting partner_equip_midload=0|1 only'
 Assert-True ('labsetting world_vehicle_gone=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_gone=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_gone=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_gone=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_gone=0|1 only'
 # M4: world_vehicle_state=0|1 (the VEHICLE_STATE world op, lab and play) likewise (vehicle-state.txt).
@@ -924,12 +934,15 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
     }
     foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','host worldtrigger goto=30050','waitmission guest 30020 120','waitmission guest 30010 240 only',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
-        'guest worldtrigger world_probe=guest_restart','host worldtrigger world=0','guest worldtrigger world=0')){
+        'guest worldtrigger world_probe=guest_restart','guest worldtrigger world_probe=guest_frozen_heli','host worldtrigger goto=30050 goto_lz=1',
+        'host worldtrigger world_probe=host_target_dead','host worldtrigger world=0','guest worldtrigger world=0')){
         $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
     }
     foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','both worldtrigger world=0','host worldtrigger world=1','host worldtrigger world=0 extra',
         'host worldtrigger goto=30030','guest worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
         'host worldtrigger world_probe=guest_restart','both worldtrigger world_probe=guest_restart',
+        'host worldtrigger world_probe=guest_frozen_heli','both worldtrigger world_probe=guest_frozen_heli',
+        'guest worldtrigger world_probe=host_target_dead','both worldtrigger world_probe=host_target_dead',
         'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401','waitmission guest 30010 240 alone','waitmission guest 30010 240 only x')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('hidden travel refuses '+$step)

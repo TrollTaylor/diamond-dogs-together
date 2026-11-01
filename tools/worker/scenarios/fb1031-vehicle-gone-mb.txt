@@ -1,0 +1,86 @@
+# fb1031 vehicles, Mother Base half (the two-PC session of 2026-10-31, 0.14.5): each player Fultoned a parked jeep on
+# its own copy (user 25603, friend 25604); VEHICLE_GONE ran at 30050 in the lab only (0.14.5 play: step=off; reason=mb_lab_only),
+# so the other copy kept it, the other player drove it and was drawn gliding with no jeep. This run is the proof the
+# play flip of VEHICLE_GONE at Mother Base waits for (its index Despawn never ran: coop-vehicle-gone-mb.txt): the
+# engine's own vehicle Fulton (the lab lever vehicle_remove nearest fulton: the stock Seize {"Fulton"}, watched like a
+# player's FultonInfo) on one copy removes the jeep on both, in both directions.
+#   A (the user's case): the GUEST Fultons the parked sortie jeep J: REQ_VEHICLE_GONE -> the host removes its copy by
+#     pool index (no authored locator at Mother Base) and announces it.
+#   B (the friend's case): the HOST Fultons the next parked sortie jeep K: VEHICLE_GONE -> the guest removes its copy by
+#     pool index.
+# Needs live unnamed sortie jeeps (25601..25607) on both copies. If goto_vehicle sortie answers vehicle_none, this seed
+# has none: rerun with -SaveSeed real (coop-vehicle-gone-mb.txt's route) and report it. If only one exists, B answers
+# vehicle_none after A: A alone is still the proof of the guest-to-host path.
+# Coordinator only, hidden worker (never visible), copied saves, MGS_GAME_LUA_DIR unset, no build running, under the
+# shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-vehicle-gone-mb.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder
+# Expected:
+#   both   world_lua=event=vehicle_gone; step=on; mission=30050; role=host|guest; wreck=0
+#   A guest  vehicle_remove;id=J;via=seize;sync=1;fulton=1, step=watch; id=J; m=Seize; cause=1; att=lever, then
+#            step=req; rid=R; id=J; cause=1; sent=1; try=1 and step=req_done; rid=R; id=J; result=gone
+#     host   step=rx_req; rid=R; id=J; cause=1, step=applied; id=J; via=index; src=req; ok=1 (ok=0: the index Despawn
+#            left the instance alive: report it, the play flip stays off), step=tx; id=J; cause=1; actor=1; rid=R
+#     frames mb-a-before (the jeep on both screens), mb-a-after (the jeep gone on both screens)
+#   B host   vehicle_remove;id=K;via=seize;sync=1;fulton=1, step=lost; id=K; cause=1; role=host,
+#            step=tx; id=K; cause=1; actor=0; rid=0
+#     guest  step=rx; id=K; seq=..; cause=1; actor=0; rid=0, step=applied; id=K; via=index; src=rx; ok=1
+#     frames mb-b-before, mb-b-after (gone on both screens)
+#   both   vehicle_gone_status: vgone;on=1;role=..;gone=<J and K>;held=none;watch=none
+# NEVER: a removal of index 0 (25600, the relief vehicle: refused as index0), step=error, ok=0 counted as a pass, a
+#   jeep still drawn on the other screen in the after frames.
+labsetting world_vehicle_gone=1
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30050 22.61 1.80 -15.55 0 time=12:00 weather=sunny
+wait 2000
+both debug godmode 1
+waitlog host 'event=vehicle_gone; step=on; mission=30050; role=host' 30
+waitlog guest 'event=vehicle_gone; step=on; mission=30050; role=guest' 30
+stance host stand
+stance guest stand
+# A: both by the same parked sortie jeep; the guest Fultons it.
+host run goto_vehicle sortie
+host expect warp_position_readback
+guest run goto_vehicle sortie
+guest expect warp_position_readback
+wait 4000
+both capture mb-a-before
+logmark both
+guest run vehicle_remove nearest fulton
+guest expect vehicle_remove;id=2560[1-7];via=seize;sync=1;fulton=1
+waitlog guest 'event=vehicle_gone; step=req; rid=[0-9]+; id=2560[1-7]; cause=1; sent=1' 40
+waitlog host 'event=vehicle_gone; step=rx_req; rid=[0-9]+; id=2560[1-7]; cause=1' 10
+waitlog host 'event=vehicle_gone; step=applied; id=2560[1-7]; via=index; src=req; ok=1' 10
+waitlog guest 'event=vehicle_gone; step=req_done; rid=[0-9]+; id=2560[1-7]; result=gone' 10
+wait 2000
+both capture mb-a-after
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=2560[1-7]
+guest run vehicle_gone_status
+guest expect vgone;on=1;role=guest;gone=2560[1-7]
+# B: both by the next parked sortie jeep (the nearest live one left); the host Fultons it.
+host run goto_vehicle sortie
+host expect warp_position_readback
+guest run goto_vehicle sortie
+guest expect warp_position_readback
+wait 4000
+both capture mb-b-before
+logmark both
+host run vehicle_remove nearest fulton
+host expect vehicle_remove;id=2560[1-7];via=seize;sync=1;fulton=1
+waitlog host 'event=vehicle_gone; step=lost; id=2560[1-7]; cause=1; role=host' 40
+waitlog host 'event=vehicle_gone; step=tx; id=2560[1-7]; cause=1; actor=0; rid=0' 10
+waitlog guest 'event=vehicle_gone; step=rx; id=2560[1-7]; seq=[0-9]+; cause=1; actor=0; rid=0' 10
+waitlog guest 'event=vehicle_gone; step=applied; id=2560[1-7]; via=index; src=rx; ok=1' 10
+wait 2000
+both capture mb-b-after
+host run vehicle_gone_status
+host expect vgone;on=1;role=host;gone=2560[1-7],2560[1-7];
+guest run vehicle_gone_status
+guest expect vgone;on=1;role=guest;gone=2560[1-7],2560[1-7];
+host run position
+guest run position
+state

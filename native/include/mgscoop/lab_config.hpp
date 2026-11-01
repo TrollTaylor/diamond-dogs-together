@@ -374,9 +374,10 @@ inline constexpr std::uint8_t kTravelLockAbsent = 0xFF;
 // PROBE_SYNC and the Lua probe number, in this order.
 enum class WorldProbe : std::uint8_t {
     none, p1, p3, p3b, p4, p12, p17, race_kill, remote_area_kill, kill_near, sleep_near, fulton_near, alert_near,
-    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint, guest_restart
+    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint, guest_restart, guest_frozen_heli,
+    host_target_dead
 };
-inline constexpr std::uint8_t kWorldProbeMax = 19;
+inline constexpr std::uint8_t kWorldProbeMax = 21;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
 
 // Two-PC play's native partner (docs/two-pc-play.md "Native partner",
@@ -654,6 +655,13 @@ struct LabConfig {
     // that too); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_getin_cut = false;
     bool partner_ride_getin_cut_given = false;
+    // fb1031 gear (equipment_stock_probe LateGear): a partner who pairs after this mission's allocation gets one
+    // mid-mission public TppEquip.RequestLoadToEquipMissionBlock of their stock bases (the allocation preload's
+    // read-only preflight; a mid-mission call is an unverified lifecycle). Off unless named, in lab and play, until
+    // a hidden run shows the partner's gun; without it the viewer is told once that the gun shows after the next
+    // load. An invalid value refuses (named, off), also after a valid 1.
+    bool partner_equip_midload = false;
+    bool partner_equip_midload_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
@@ -687,9 +695,9 @@ struct LabConfig {
     bool debug_travel_given = false;
     // Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here"): in play mode the engine set-transform
     // placement of debug_soldier_warp (lab only) is admitted by this key, host warp and the guest copy's warp alike,
-    // with the same pinned contract, gates and latch. Lab keeps debug_soldier_warp. Off until a play run proves it
-    // (spawn-enemy-play): play keeps the route snap unless named 1.
-    bool spawn_warp = false;
+    // with the same pinned contract, gates and latch. Lab keeps debug_soldier_warp. On by default (the spawn-enemy-play
+    // hidden play run); a named 0 opts out and play then keeps the route snap.
+    bool spawn_warp = true;
     bool spawn_warp_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire

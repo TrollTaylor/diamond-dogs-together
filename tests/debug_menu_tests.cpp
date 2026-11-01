@@ -701,16 +701,17 @@ int main() {
                   (act::FindAction(id)->flags & act::kHostOnly) && (act::FindAction(id)->flags & act::kSyncs) &&
                   !(act::FindAction(id)->flags & (act::kNeedsPartner | act::kParam)),
               "Mother Base weapons rows: host only, syncs to the guest, no partner needed, fixed text");
-    // Not run-proven yet: the four rows are marked unverified and say so (play refuses them: not_available_yet).
+    // On in lab and play (0.14.6, the user's release of every built feature; no play run yet): the four rows are not
+    // marked unverified and never say "Not available yet".
     for (const char* id : {"rules_wormhole_off", "rules_wormhole_on", "rules_mb_weapons_on", "rules_mb_weapons_off"})
-        Check(act::FindAction(id) && (act::FindAction(id)->flags & act::kUnverified) &&
-                  std::strstr(act::FindAction(id)->tooltip, "Not available yet in play"),
-              "Game rules rows: unverified until a play run proves them");
-    // Arms: not run-proven yet (2026-10-31 run not admitted): unverified, and the tooltip says play refuses them.
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & act::kUnverified) &&
+                  !std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+              "Game rules rows: on in play");
+    // Arms: on in lab and play (Give weapon, its pick list and Friendly fire).
     for (const char* id : {"arms_give", "arms_friendly_fire"})
-        Check(act::FindAction(id) && (act::FindAction(id)->flags & act::kUnverified) &&
-                  std::strstr(act::FindAction(id)->tooltip, "Not available yet in play"),
-              "Arms rows: unverified until a play run proves them");
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & act::kUnverified) &&
+                  !std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+              "Arms rows: on in play");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
     // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,

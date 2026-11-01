@@ -14,7 +14,7 @@ $script:WorldTriggerMaxBytes = 255  # native reads at most 255 bytes (world_rece
 # Probe ids in this order (lab_config.hpp WorldProbe).
 $script:WorldProbeNames = @('p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 'remote_area_kill', 'kill_near', 'sleep_near',
     'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast', 'shared_death', 'host_continue', 'shared_checkpoint',
-    'guest_restart')
+    'guest_restart', 'guest_frozen_heli', 'host_target_dead')
 $script:WorldTriggerOrder = @('world', 'world_probe', 'goto', 'goto_lz')
 $script:WorldTriggerUsage = 'world=0..3 world_probe=<probe>|off goto=30010|30020|30050 goto_lz=0|1 (goto_lz only with goto)'
 

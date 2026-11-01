@@ -149,11 +149,6 @@ do
   end
   function R.run(a, id)
     local cmd = a[1]
-    -- Lab only until a play run proves the track (STATUS 2026-10-31): play refuses in plain words.
-    if cmd ~= "give_list" and (type(W) ~= "table" or W.mode ~= 1) then
-      say("Not available yet in this build.")
-      return false, "not_available_yet"
-    end
     if cmd == "friendly_fire" and #a == 2 and (a[2] == "0" or a[2] == "1") then
       local on = a[2] == "1"
       local active = type(W) == "table" and W.active == true

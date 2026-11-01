@@ -318,7 +318,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
                     first);
     case 13:  // COMPANION{a=1 orders | 2 call refused | 3 Quiet locked} (M1, docs/vehicles-companions-design.md 6.1);
               // M3 (6.3): a=4 vehicle drop refused | 5 loadout drop refused (it can carry a vehicle);
-              // M6 seat races: a=6 the guest lost the driver's seat | 7 the host yielded it
+              // M6 seat races: a=6 the guest lost the driver's seat | 7 the host yielded it;
+              // fb1031: a=8 the partner rides a vehicle this copy lacks (hidden until they get out)
         switch (a) {
         case 1: return Put(out, capacity, "Only the host gives companion orders in co-op: your call menu is off.");
         case 2: return Put(out, capacity, "Only the host can call, change or send away the companion in co-op.");
@@ -330,6 +331,9 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         // the driver's seat to the guest, who reached it first.
         case 6: return Put(out, capacity, "Your partner is getting into the driver's seat: take another seat or wait.");
         case 7: return Put(out, capacity, "Your partner reached the driver's seat first: take another seat or wait.");
+        // fb1031 (world_vehicle.lua): the partner's vehicle is gone on this copy (Fultoned or destroyed here, or the
+        // host's relief vehicle); the native seat hides them for that ride instead of drawing them without it.
+        case 8: return Put(out, capacity, "Your partner's vehicle isn't on your screen. You'll see them again when they get out.");
         default: return false;
         }
     case 14:  // TRAVEL{a=mission, b=1 travelling | 2 brought there | 3 brought here | 4 bringing | 5 refused | 6 stopped
@@ -350,12 +354,29 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 7: return Put(out, capacity, "Your partner is in another area: use Go to first.");
         default: return false;
         }
+    case 15:  // MISSION_END (fb1031 mbgo){a=1 a debug kill of Mother Base staff refused | 2 the host's mission failed for a
+              // non-player reason (b=1 a staff member died at Mother Base, 0 another) | 3 the guest's Continue waits}
+        switch (a) {
+        case 1: return b == 0 && Put(out, capacity, "Killing staff at Mother Base fails the mission.");
+        case 2:
+            if (b > 1) return false;
+            return Put(out, capacity, b == 1 ? "Your partner's mission failed: a staff member died. Reloading."
+                                             : "Your partner's mission failed. Reloading.");
+        case 3: return b == 0 && Put(out, capacity, "Waiting for your partner to continue.");
+        default: return false;
+        }
+    case 17:  // PARTNER_GEAR{a=1 the late partner's gun shows after the next load} (fb1031 gear; posted locally by native)
+        return a == 1 ? Put(out, capacity, "Your partner's gun will show after the next loading screen.") : false;
     case 18:  // ARMS{a=1 friendly fire, b=0 off | 1 on} (debug menu Friendly fire, the host's switch, both screens)
         if (a != 1) return false;
         if (b == 0) return Put(out, capacity, "Friendly fire is OFF: you and your partner cannot hurt each other.");
         if (b == 1) return Put(out, capacity, "Friendly fire is ON: you and your partner can hurt each other.");
         return false;
-    default:  // 15, 17 free (16 MISMATCH is above) or unknown: no toast
+    case 19:  // HINT{a=mission, b=1 stuck in the arrival helicopter} (arrival-prevent: the host's 0.14.5 frozen arrival;
+              // 15 until the merge with fb1031 mbgo's MISSION_END)
+        if (b != 1) return false;
+        return Put(out, capacity, "Stuck in the helicopter? Pause and choose Restart.");
+    default:  // unknown (16 MISMATCH is above): no toast
         return false;
     }
 }

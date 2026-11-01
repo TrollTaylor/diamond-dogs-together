@@ -88,6 +88,10 @@ do
 
         function E.commit(h, st, actor, rid, cause, flags)
             local s, e = E.s, W.ent[h]
+            -- Mother Base staff (staffPlace): the host's own act on a standing staff member says where first.
+            if actor == 0 and e.committed == 0 and st ~= 0 and W.staffAnnounce and W.paired and W.eff >= 2 then
+                pcall(W.staffAnnounce, h)
+            end
             if e.ver == 0 then s.count = s.count + 1 end
             if e.ver < 65535 then e.ver, s.sum = e.ver + 1, (s.sum + 1) % 4294967296 end
             e.committed, e.known, e.kver = st, st, e.ver
@@ -161,6 +165,8 @@ do
             if not W.w1 then return end
             if s.rb[h] then return "defer" end
             if not E.active(e.cp, h) then return E.hold(h, st, ver, src, "out_of_area") end
+            -- Mother Base staff (staffPlace): this copy is placed where the host's is first (world_place_guest.lua).
+            if st ~= 0 and src == "outcome" and W.staffHold and W.staffHold(h, now or W.now()) then return "defer" end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
             -- Mother Base (spareStaff): a partner never kills or removes a staff member in this copy's save (stock

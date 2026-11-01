@@ -1,0 +1,55 @@
+# arrival-prevent (docs/world-sync-design.md 9.2): the friend's 0.14.5 stuck Mother Base arrival. The host's ACC sortie
+# into 30050 stores the helicopter start position its 0.14.5 iDroid gave (goto_lz=1: 9.116, 8.75, -42.43 over the
+# Command platform 1 pad, TppMission.SetHelicopterMissionStartPosition); the guest replays the sortie (world_follow kind 6).
+#   run-hidden.ps1 -Scenario tools/worker/scenarios/mb-arrival-stored.txt -ExtraJoined '-Mode lab -WanSim bad
+#       -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real -TimeoutSec 600'
+# The bug (0.14.5, dev 876a8abd): the guest's helicopter stays at its start (same position at +3/+30/+60/+90 s, the host
+# sees remote act 102 only, no 103/99, no LandedAtLandingZone). Fixed: it flies in from the route start and lands (host
+# 102 -> 103 -> 99), the guest gets off with E and both see each other.
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+# A real-seed copy can play its queued Mother Base demo after the Continue: let it finish.
+wait 45000
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+host run godmode 1
+guest run godmode 1
+logmark both
+host worldtrigger goto=30050 goto_lz=1
+waitmission host 40050 180
+waitmission guest 40050 180
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40050; next=30050; kind=6' 150
+waitmission host 30050 200
+waitmission guest 30050 200
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30050' 90
+wait 3000
+both capture s-heli
+guest run position
+wait 25000
+both capture s-30s
+guest run position
+host run position
+wait 30000
+both capture s-60s
+guest run position
+wait 30000
+both capture s-90s
+guest run position
+host run position
+guest press e 150
+wait 8000
+both capture s-geton
+guest run position
+heldcapture guest host w s-walk 3
+guest run position
+placebehind host guest 6
+wait 3000
+both capture s-host-sees-guest
+placebehind guest host 6
+wait 3000
+both capture s-guest-sees-host
+host run position
+guest run position
+state

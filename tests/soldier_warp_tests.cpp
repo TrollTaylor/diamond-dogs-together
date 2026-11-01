@@ -294,6 +294,20 @@ int main() {
     for (const char* text : bad_receipts) Check(!parse(text, command, parsed), text);
     Check(!sw::ParseReceipt(nullptr, 4, command, parsed) && !sw::ParseReceipt("1 1027 0 0 0 0", 0, command, parsed),
           "null or empty receipt refused");
+    // Guest grant admission (GuestWarpReceipt): the lab key rule (any kind) and the Mother Base staff rule (play or
+    // lab, mission 30050, corrections only: each staff member stands where the host's copy is).
+    bool staff = true;
+    Check(sw::GuestAdmit({true, false, true, 30010, false}, staff) == nullptr && !staff, "lab key: a warp grant anywhere");
+    Check(sw::GuestAdmit({true, false, true, 30050, true}, staff) == nullptr && !staff, "lab key first: never the staff rule");
+    Check(std::strcmp(sw::GuestAdmit({true, false, false, 30010, true}, staff), "disabled") == 0, "lab without the key, free roam");
+    Check(sw::GuestAdmit({false, true, false, 30050, true}, staff) == nullptr && staff, "play at Mother Base: a correction");
+    Check(sw::GuestAdmit({true, false, false, 30050, true}, staff) == nullptr && staff, "lab without the key at Mother Base: a correction");
+    Check(std::strcmp(sw::GuestAdmit({false, true, false, 30050, false}, staff), "disabled") == 0 && !staff,
+          "play at Mother Base: never a warp, route or come grant");
+    Check(std::strcmp(sw::GuestAdmit({false, true, true, 30010, true}, staff), "disabled") == 0, "play in free roam: refused (key ignored)");
+    Check(std::strcmp(sw::GuestAdmit({false, false, true, 30050, true}, staff), "role") == 0, "neither play nor lab: refused");
+    Check(sw::GuestMayWarp(true, false, true) && sw::GuestMayWarp(false, true, false) && sw::GuestMayWarp(true, false, false) &&
+          !sw::GuestMayWarp(false, false, true), "Verify runs for a play or lab guest");
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);
     return 0;

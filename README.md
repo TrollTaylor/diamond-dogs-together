@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Two-player online co-op for Metal Gear Solid V: The Phantom Pain</b><br>
-  Windows · Steam · version 0.14.5 (development build)
+  Windows · Steam · version 0.14.6 (development build)
 </p>
 
 <p align="center">
@@ -59,20 +59,28 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - **Your partner's body:** you see their body, gear and weapons as they walk, run, crouch, crawl, aim, reload and throw.
 - **Movement:** ladders, ledges, the cardboard box and item pickups.
-- **Vehicles:** your partner drives; you can ride in the front or back seat of a jeep. In Afghanistan and Africa free roam, a world vehicle that nobody drives stays where it was left on both screens and has the body damage the host's PC gives it; either player's Fulton of it removes it on both screens and adds it to both players' Mother Base, one destroyed on the host's PC disappears from the partner's screen, and one the guest blows up near them is destroyed on the host's screen too.
-- **Helping each other:** revive a downed partner, wake a sleeping one, and carry them.
-- **Melee:** one CQC press on your partner knocks them down; they wake after about 30 s or when you wake them.
-- **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather.
-- **Shared progress:** the host's travel, checkpoints, and game over with continue for both players.
+- **Vehicles:** your partner drives; you can ride in the front or back seat of a jeep. In Afghanistan and Africa free roam, a world vehicle that nobody drives stays where it was left on both screens and has the body damage the host's PC gives it; either player's Fulton of it removes it on both screens and adds it to both players' Mother Base, one destroyed on the host's PC disappears from the partner's screen, and one the guest blows up near them is destroyed on the host's screen too. At Mother Base too, a Fulton or the destruction of a parked vehicle removes it on both screens. If your partner's vehicle is missing on your screen, your partner is hidden and a message says so, instead of them gliding along with no vehicle.
+- **Helping each other:** revive a downed partner, wake a sleeping one, and carry them. Putting your partner down while you run no longer slides them over a deck edge or a cliff.
+- **Melee:** one CQC press on your partner knocks them down; they wake after about 30 s or when you wake them. A CQC press aimed at a soldier next to your partner takes only the soldier.
+- **Shared world:** enemy kills, sleeps and Fultons, alerts, time and weather. At Mother Base the staff stand in the same spots on both screens, and what happens to them is shared too.
+- **Shared progress:** the host's travel, checkpoints, and game over with continue for both players. When the host's mission fails because a Mother Base staff member died, the guest is told why before both reload; a guest who presses Continue on a Game Over screen is told it waits for the host. The F9 kill rows refuse at Mother Base (a dead staff member fails the mission).
+- **Arriving together:** a joiner flying in to free roam or Mother Base starts from the helicopter's route like a normal arrival, and a checkpoint the host saves waits until the joiner is off the helicopter. If an arrival helicopter still freezes, the joiner's arrival restarts by itself after 20 s; a host whose own helicopter freezes is told "Stuck in the helicopter? Pause and choose Restart."
 - **Online play:** through Steam, with no port forwarding.
 - **Character (F9 debug menu > Player > Character (you)):** either player switches to Snake, a Diamond Dogs soldier (male or female), their custom character, or back to their default, right away and for the rest of the session; the partner sees the new look (a custom character as Snake). After a fresh start in Africa the host stayed Snake on both screens. Ocelot and Quiet: pick them in the launcher.
 - **Travel (F9 debug menu > World):** **Go to Afghanistan**, **Go to Africa** or **Go to Mother Base** takes both players there with no helicopter ride, in under half a minute, with the camera behind each player when you land; either player can press it. **Bring partner here** puts your partner right in front of you when you are in the same area; if your partner is somewhere else it says "Your partner is in another area: use Go to first." A short message tells each player what happened.
+- **Game rules (F9 debug menu > World):** **Wormhole Fulton off** gives you the balloon Fulton back (**Wormhole Fulton on** returns the instant one); nothing changes in your save. The host's **Weapons at Mother Base** lets both players use their loadout weapons there (**Stock Mother Base rules** goes back); any kill at Mother Base still fails the mission.
+- **Give weapon (F9 debug menu > Player):** pick a gun or item from the list and you get it with full ammo; your old gun in that slot drops at your feet.
+- **Friendly fire (F9 debug menu > Partner):** the host turns friendly fire on or off for both players; a guest's press asks the host.
+- **Spawn enemy here (F9 debug menu > Enemies, host):** brings the nearest guard 5 m in front of you, facing you and armed, in Afghanistan and Africa free roam; your partner sees the same guard there.
+- **Launcher:** opened before Steam has logged in, or while MGSV still runs, it now gets co-op ready by itself once Steam is logged in or MGSV has closed, and Play waits for Steam to let go of the last game.
+
+Game rules, Give weapon, Friendly fire, Spawn enemy here, the Mother Base staff and vehicle sharing, the arrival fixes and the other changes above that are new in 0.14.6 have not been tried in a two-player game yet.
 
 ## Known limits
 
 - Story missions, the hospital prologue, side ops and cutscenes are not co-op yet.
 - **Enemies:** each PC still moves its own enemies. Only what happens to them (killed, asleep, Fultoned, alerted) is shared.
-- **Vehicles:** trucks that enemies drive move separately on each PC, and so does an enemy vehicle that drives off in a fight: one the guest destroys after it has moved stays destroyed only on the guest's screen. Wheel damage and fire are not shared, and damage the guest does to a vehicle without destroying it is undone within about 10 seconds. A vehicle the guest destroys from more than about 300 m away (or while the host sits in it on the host's PC) stays destroyed only on the guest's screen. A vehicle the guest destroys is destroyed on the host's PC with the game's own explosion there, soldiers inside included, unless either player stands near the host's copy (within 15 m of a jeep, 50 m of a truck, armoured vehicle or tank): then a named one just disappears on the host's PC, and others (one with soldiers inside, or an unnamed one) wait until both players are clear, for up to 2 minutes; after that the vehicle stays destroyed only on the guest's screen. While D-Dog still sits in the host's copy, the host waits up to 2 minutes for the seat to empty. A vehicle destroyed on the host's PC leaves no wreck on the guest's screen. In Mother Base a parked vehicle's position, damage, Fulton and destruction are not shared yet.
+- **Vehicles:** trucks that enemies drive move separately on each PC, and so does an enemy vehicle that drives off in a fight: one the guest destroys after it has moved stays destroyed only on the guest's screen. Wheel damage and fire are not shared, and damage the guest does to a vehicle without destroying it is undone within about 10 seconds. A vehicle the guest destroys from more than about 300 m away (or while the host sits in it on the host's PC) stays destroyed only on the guest's screen. A vehicle the guest destroys is destroyed on the host's PC with the game's own explosion there, soldiers inside included, unless either player stands near the host's copy (within 15 m of a jeep, 50 m of a truck, armoured vehicle or tank): then a named one just disappears on the host's PC, and others (one with soldiers inside, or an unnamed one) wait until both players are clear, for up to 2 minutes; after that the vehicle stays destroyed only on the guest's screen. While D-Dog still sits in the host's copy, the host waits up to 2 minutes for the seat to empty. A vehicle destroyed on the host's PC leaves no wreck on the guest's screen. In Mother Base a parked vehicle's position and damage are not shared yet.
 - **Melee:** the striker's punch is not drawn on the victim's screen.
 - **Animals and prisoners** are not shared.
 - **Buddies** (D-Dog, D-Horse, Quiet, D-Walker) are not shared yet: each PC keeps its own.
@@ -81,13 +89,17 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Supply drops:** only the host can order a LOADOUT or VEHICLES supply drop in co-op (both can bring a vehicle), also while the host's game is still loading after you travel together; the guest's iDroid says so.
 - **Mounts:** a partner riding D-Horse or D-Walker is hidden.
 - **Look:** your custom character may look like Snake on your partner's screen.
+- **Ocelot and Quiet** are picked in the launcher; the F9 Character rows do not switch to them.
+- **Give weapon** only offers guns the game has already loaded in the area (about 9 in free roam, 4 at Mother Base).
+- **Mother Base arrival:** your body can show in the host's Mother Base arrival cutscene.
+- **Joining late:** if your partner joins, or reconnects, after your mission has loaded, you see them without a gun and their shots show no muzzle flash until your next loading screen (a message tells you once).
 - **Players:** two only.
 
 ## Troubleshooting
 
 - **Won't connect:** both of you need the same version and Steam online, and the game must be started from the launcher. The launcher's **In game** page and the in-game **CO-OP** line say what is wrong.
 - **Different missions:** you only pair in the same Mother Base, free roam or helicopter. If one save always continues into a story mission, use **Tools → Share save** first.
-- **Joiner stuck in the helicopter at Mother Base:** open the pause menu and choose **Restart** (or **Continue**): you start again on foot on the Command Platform.
+- **Joiner stuck in the helicopter at Mother Base:** if the joiner's helicopter has not moved 20 s after arriving, the game now restarts the joiner's arrival by itself and they start again on foot on the Command Platform. You can also open the pause menu and choose **Restart** (or **Continue**).
 - **Red "Co-op did NOT start" banner:** you are playing normally on your real save. Quit and start the game from the launcher.
 - **Reporting a bug:** quit the game, use **Tools → Collect logs** on both PCs, and send the zips it puts on the Desktop. Codes and personal IDs are removed. The zip keeps up to your last 8 game starts (very long ones are shortened, and short failed starts count too), so collect logs soon after the session.
 

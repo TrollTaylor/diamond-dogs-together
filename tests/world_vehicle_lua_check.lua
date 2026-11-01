@@ -325,15 +325,12 @@ do
     n.H[46]({1, 25611, 2, 0, 0, 1, 300000, 1000, 300000})
     check(not n.pool[25611].alive and n:has('step=applied;id=25611;via=wreck;src=rx;ok=1'), 'the re-sent announcement retries it')
 end
--- Mother Base (30050) runs only in the lab since the M4 review: no hidden run covered it there (finding 3); in play
--- the module stays off at 30050 (one step=off line) and on at 30010 / 30020.
+-- Mother Base (30050) runs in lab and play since 0.14.6 (fb1031 vehicles; lab only from the M4 review until then, no
+-- hidden run covered it there): play is on at 30050 as at 30010 / 30020.
 do
     local p = Fixture('guest', true, 2)
-    p:add(25603, 210.9, 290.1, 1, 'veh_lv_0003')
-    p.H[46]({1, 25603, 1, 0, 0, 1, 210900, 1000, 290100})
-    p.V.observe('FultonInfo', 25603, 'local')
-    check(not p.V.on() and p.pool[25603].alive and #p.despawns == 0 and next(p.V.watch) == nil and p:has('step=off;mission=30050;reason=mb_lab_only') and
-        not p:has('step=on;'), 'play at Mother Base: off (step=off; reason=mb_lab_only), nothing removed or watched')
+    check(p.V.on() and p:has('step=on;mission=30050;role=guest') and not p:has('reason=mb_lab_only'),
+        'play at Mother Base: on (0.14.6)')
     p.W.mission = 30020
     for _, f in ipairs(p.W.startHooks) do f() end
     check(p.V.on() and p:has('step=on;mission=30020;role=guest;wreck=0'), 'play in Africa: on (step=on names the wreck key: off)')
@@ -686,6 +683,54 @@ g = Fixture('guest')
 g.V.req = setmetatable({}, {__index = function() error('fixture') end})
 local recOk = pcall(g.H[3], {1, 47})
 check(recOk and g.V.failed, 'a RECEIVED wrapper error is caught')
+
+-- fb1031 (the two-PC session of 2026-10-31): the partner rides a vehicle this copy lacks (world_ride_pose's RIDE_FAST
+-- track found it absent: Fultoned here, or the host's relief vehicle). Native hides them (partner_ride_seat refused
+-- absent); world note 13 a=8 says why: once per ride of that vehicle, at most one every 20 s, whatever VEHICLE_GONE's
+-- key, mission or mode (Mother Base in play included).
+for _, case in ipairs({{true, 1}, {false, 2}, {true, 2}}) do
+    local a = Fixture('guest', case[1], case[2])
+    a.notes = {}
+    a.W.note = function(code, x, y) a.notes[#a.notes + 1] = {code, x, y}; return true end
+    a.W.ridePose = {fast = {tracks = {}}}
+    local tracks = a.W.ridePose.fast.tracks
+    a:poll()
+    check(#a.notes == 0, 'no partner ride: no toast')
+    tracks[25603] = {samples = {}, state = 'interpolate', absent = false}
+    a:poll()
+    check(#a.notes == 0, 'the partner rides a vehicle this copy has: no toast')
+    tracks[25603].absent, tracks[25603].state = true, 'absent'
+    a:poll()
+    check(#a.notes == 1 and a.notes[1][1] == 13 and a.notes[1][2] == 8 and a.notes[1][3] == 0 and
+        a:has('event=vehicle_absent;step=toast;id=25603;shown=1'), 'a missing vehicle: world note 13 a=8 and one log line')
+    for _ = 1, 10 do a:poll() end
+    tracks[25603].absent = false
+    a:poll()
+    tracks[25603].absent = true
+    a:poll()
+    check(#a.notes == 1, 'once per ride of that vehicle')
+    tracks[25603] = nil
+    a:poll(25000)
+    tracks[25604] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2 and a:has('event=vehicle_absent;step=toast;id=25604;shown=1'), 'the next ride of a missing vehicle: again')
+    tracks[25604] = nil
+    a:poll()
+    tracks[25604] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2, 'at most one toast every 20 s')
+    tracks[25604] = nil
+    a:poll(25000)
+    a.W.paired = false
+    tracks[25605] = {samples = {}, state = 'absent', absent = true}
+    a:poll()
+    check(#a.notes == 2, 'unpaired: no toast')
+    a.W.paired = true
+    a.W.note = function() error('fixture') end
+    a:poll()
+    check(not a.V.failed, 'a toast error is caught and never turns VEHICLE_GONE off')
+    a:poll()
+end
 
 -- With world_sync.lua: the observer hook (an unmapped id goes to the vehicle module) and CFG r[15].
 if arg[2] then

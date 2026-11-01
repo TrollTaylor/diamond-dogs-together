@@ -121,8 +121,8 @@ void Wire() {
 void Note() {
     namespace text = mgscoop::coop_text;
     char s[256]{};
-    Check(mgscoop::world::NoteShown(18) && !mgscoop::world::NoteShown(15) && !mgscoop::world::NoteShown(19),
-          "note 18 is shown (15..17 stay for the other tracks)");
+    Check(mgscoop::world::NoteShown(18) && !mgscoop::world::NoteShown(16) && !mgscoop::world::NoteShown(20),
+          "note 18 is shown (15, 17 and 19 are the other tracks'; 16 is local)");
     Check(text::FormatWorldNote(18, 1, 0, 0, 0, s, sizeof(s)) && std::strstr(s, "Friendly fire is OFF"), "note 18 off sentence");
     Check(text::FormatWorldNote(18, 1, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "Friendly fire is ON"), "note 18 on sentence");
     Check(!text::FormatWorldNote(18, 1, 2, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(18, 2, 0, 0, 0, s, sizeof(s)),
@@ -136,7 +136,7 @@ void Note() {
         return mgscoop::world::ParseNote(receipt, std::strlen(receipt), code, a, b);
     };
     Check(parse("18 1 0") && code == 18 && a == 1 && b == 0, "the NOTE_V1 receipt admits note 18");
-    Check(!parse("16 1 0") && !parse("17 1 0") && !parse("19 1 0"), "16, 17 and 19 stay refused");
+    Check(!parse("16 1 0") && !parse("17 1 0") && !parse("20 1 0"), "16, 17 (posted by native) and 20 stay refused; 19 is the arrival hint");
 }
 } // namespace
 
