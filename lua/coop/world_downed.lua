@@ -219,12 +219,12 @@ end
 -- carried act 43 while the carrier's replica played its put-down (act 39).
 -- While carried (own act 42/43), keep the carrier's own reported spot. An
 -- episode opens at the stock put-down (own act 44), at the carrier's put-down
--- after the first second of a carry (peer act 39), or when the carried body is
--- not on the shoulder (more than 5 m away or 2 m below the carrier). For PUT_MS
--- a body more than 2 m from that spot or 1 m below it is warped back to the
--- carrier's feet, on the side the carrier came from. Never for cargo or a body
--- in a vehicle, never after it settled, never outside the window (a real fall
--- stays lethal), one episode per carry.
+-- (peer act 39 after the carrier left the pickup's 39), or when the carried
+-- body is not on the shoulder (more than 5 m away or 2 m below the carrier).
+-- For PUT_MS a body more than 2 m from that spot or 1 m below it is warped back
+-- to the carrier's feet, on the side the carrier came from. Never for cargo or
+-- a body in a vehicle, never after it settled, never outside the window (a
+-- real fall stays lethal); a carry stuck in 39 opens no second episode.
 local PUT_MS,PUT_XZ,PUT_DY,PUT_BACK,PUT_GAP,PUT_TRIES,PUT_AGE=3000,2000,1000,700,250,6,1000
 local LOST_XZ,LOST_DY,LOST_MS=5000,2000,300
 local function riding()
@@ -244,26 +244,26 @@ local function putDown(r,now)
   local act,peer,P=valid(r.act,0,65535) and r.act or 0,valid(r.peer,0,65535) and r.peer or 0,D.put
   local carried=act == 42 or act == 43
   if r.carry == 3 or r.carry == 4 or not P and not carried then D.put=nil; return end
-  if P and P.spent then if not carried then D.put=nil end; return end
-  P=P or {since=now}; D.put=P
+  P=P or {}; D.put=P
   if not P.start then
     if carried then
       local c=D.records[3 - W.role]
       if fresh(c,now) then P.anchor,P.anchorAt={c.pos[1],c.pos[2],c.pos[3]},now end
       P.carriedAt=now
+      if peer ~= 39 then P.peerLeft=true end
     end
     local a=P.anchor
     if not a or now - P.anchorAt > PUT_AGE then if not carried then D.put=nil end; return end
     local d,dy=apart(r,a)
     if carried then
       -- Off the shoulder only when it lasts LOST_MS (a carrier teleport or a late status is not).
-      local lost=d > LOST_XZ or dy > LOST_DY
+      local lost=not P.noLost and (d > LOST_XZ or dy > LOST_DY)
       P.lostAt=lost and (P.lostAt or now) or nil
-      if not (peer == 39 and now - P.since >= PUT_AGE) and not (lost and now - P.lostAt >= LOST_MS) then return end
+      if not (peer == 39 and P.peerLeft) and not (lost and now - P.lostAt >= LOST_MS) then return end
     elseif act ~= 44 or now - P.carriedAt > PUT_AGE then D.put=nil; return end
     P.start,P.tries,P.next=now,0,now
   end
-  if now - P.start > PUT_MS then D.put=carried and {spent=true} or nil; return end
+  if now - P.start > PUT_MS then D.put=carried and {noLost=true} or nil; return end
   local a=P.anchor
   local d,dy,dx,dz=apart(r,a)
   if d <= PUT_XZ and dy <= PUT_DY then
