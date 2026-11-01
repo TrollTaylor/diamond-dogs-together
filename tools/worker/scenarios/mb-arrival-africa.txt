@@ -1,0 +1,46 @@
+# arrival-prevent regression (docs/world-sync-design.md 9.2): the host's sortie from Mother Base into Africa free roam
+# (goto=30020, no stored start position). The host rides in and lands as in vanilla; the guest replays it with its seeds
+# (now: vanilla's ride-on reset for the start position, the same values a route start already had) and lands too; the
+# watchdog ends its watch on both (step=watch_end; why=moving) and never fires.
+#   run-hidden.ps1 -Scenario tools/worker/scenarios/mb-arrival-africa.txt -ExtraJoined '-Mode lab -WanSim bad
+#       -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real -TimeoutSec 600'
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+host run godmode 1
+guest run godmode 1
+logmark both
+host worldtrigger goto=30020
+waitmission host 40050 180
+waitmission guest 40050 180
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40050; next=30020; kind=6' 150
+waitmission host 30020 200
+waitmission guest 30020 200
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30020' 90
+wait 3000
+both capture a-heli
+host run position
+guest run position
+wait 30000
+both capture a-30s
+host run position
+guest run position
+wait 30000
+both capture a-60s
+host press e 150
+guest press e 150
+wait 8000
+both capture a-off
+host run position
+guest run position
+placebehind host guest 6
+wait 3000
+both capture a-host-sees-guest
+placebehind guest host 6
+wait 3000
+both capture a-guest-sees-host
+state
