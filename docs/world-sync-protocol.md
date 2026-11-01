@@ -1924,12 +1924,16 @@ without sending, the target never queues or applies one). World note 18 ARMS{a=1
 16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.
 
-## 25. Fulton (r1101 fulton; lab key `fulton_sync`, off unless named, lab and play)
+## 25. Fulton (r1101 fulton; lab key `fulton_sync`, follows the gun profile in lab and play since the r1101 Prove phase)
 
-Lab key `fulton_sync=0|1` (CFG `r[18]` bit 1, Lua `W.fultonOn`; no refusal bit). Since the review of 2026-11-01 two
-sub-keys, each off unless named in lab and play and used only with `fulton_sync=1`: `fulton_early=0|1` (`r[18]` bit 2,
-`W.fultonEarlyOn`: the early vehicle lift below) and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed
-wormhole look below); `FultonCfgBits` (lab_config) builds `r[18]`. Three parts, all off with the key off:
+Lab key `fulton_sync=0|1` (CFG `r[18]` bit 1, Lua `W.fultonOn`; no refusal bit). It follows the native gun profile in
+lab and play since the r1101 Prove phase (hidden play runs `7d924fac` with the keys named and `19882881` at the
+shipped default; a named 0 opts out). Since the review of 2026-11-01 two sub-keys, each off unless named in lab and play
+and used only with `fulton_sync=1`: `fulton_early=0|1` (`r[18]` bit 2, `W.fultonEarlyOn`: the early vehicle lift below)
+and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed wormhole look below); since the Prove phase a third,
+`fulton_one_save=0|1` (`r[18]` bit 8, `W.fultonOneSaveOn`: the receiver's soldier credit skipped, below; it reverses D1,
+the user's open decision, so it is off unless named). `FultonCfgBits` (lab_config) builds `r[18]`. Three parts, all off
+with the key off:
 
 - **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
   held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`).
@@ -1957,14 +1961,17 @@ wormhole look below); `FultonCfgBits` (lab_config) builds `r[18]`. Three parts, 
   between writes the real level (`TppSave.SaveVarsToSlot` wrap), Game rules Wormhole off leaves the borrowed level
   alone, and an F9 Wormhole on/off press ends the look first (`debug_rules.lua`). The level is global: this copy's own
   Fultons in that window use it too, which is why the look has its own key (review of 2026-11-01). Without
-  `fulton_look` the line reads `set=0` and nothing changes. The lift is **visual only when the partner announced it**:
-  this copy's `TppTerminal.OnFulton` decides at its call (about 3.7 s after the lift) and is skipped once for that
-  soldier only if the partner's FULTON note has arrived by then (`step=credit_skipped;id=;why=partner_lift`: the
-  Fultoner keeps the recruit, this save gains nobody); with no note (a partner on 0.14.6 or with the key off) the stock
-  credit runs, D1 (`step=credit_kept;id=;why=no_partner_note`).
-  Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0`. `TppTerminal.AddTempStaffFulton` is
-  counted in the log only (`step=staff_add;n=`, the roster check). **This differs from D1 (both saves) while both
-  copies run the key.** A vehicle: VEHICLE_GONE cause 1 on the receiver is the engine's own vehicle Fulton
+  `fulton_look` the line reads `set=0` and nothing changes. **The credit (D1 by default):** without `fulton_one_save`
+  the receiver's stock `TppTerminal.OnFulton` runs as before (D1: the soldier recruits into both saves; the lift line
+  reads `credit=1`). With `fulton_one_save` the lift is **visual only when the partner announced it**: this copy's
+  `TppTerminal.OnFulton` decides at its call (about 3.7 s after the lift) and is skipped once for that soldier only if
+  the partner's FULTON note has arrived by then (`step=credit_skipped;id=;why=partner_lift`: the Fultoner keeps the
+  recruit, this save gains nobody); with no note (a partner on 0.14.6 or with the key off) the stock credit runs, D1
+  (`step=credit_kept;id=;why=no_partner_note`).
+  Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0|1` (0 only with `fulton_one_save`).
+  `TppTerminal.AddTempStaffFulton` is counted in the log only (`step=staff_add;n=`, the roster check). **Only
+  `fulton_one_save` differs from D1 (both saves), and only while both copies run it.** A vehicle: VEHICLE_GONE cause 1
+  on the receiver is the engine's own vehicle Fulton
   (`Seize {"Fulton"}`, the balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`;
   `step=fulton_lift;id=;credit=`); with D14 on it is credited once as before, without D14 this copy's
   `TppTerminal.OnFulton` is skipped once for it; the readback gives it 15 s before the Despawn fallback (`via=fulton`).
@@ -1989,6 +1996,29 @@ covers a later read). Hidden run `7e9856cb` (docs/STATUS.md 2026-11-01) showed t
 receiver's lift with its credit skipped and the staff add on the Fultoner's copy only [O log], but no balloon in a
 frame [U], and a late lift: the Fultoner's `Fulton` / `FultonInfo` (hence FULTONED and FULTON) come about 10.7 s after
 its attach act, when the soldier is recovered [O log]. World note 22 is reserved for this track and unused.
+
+**Prove (r1101, `wp/integ-1101`).** Hidden play run `7d924fac` (`r1101-fulton-play.txt`, `-WanSim bad`, africa-jeep,
+`fulton_sync`, `fulton_early`, `fulton_look` named; the credit skip was still part of `fulton_sync` then): C the guest's
+hand Fulton of jeep 25608, FULTON kind 2 on the host 101 ms after the guest's `FultonInfo`, the early lift
+(`step=early`, `step=fulton_lift;...;credit=1`), the guest's later request answered gone, `step=applied;...;via=fulton;
+...;ok=1;ms=10293`, D14 credited once on each copy [O logs both]; host frames show a balloon inflating on the jeep and
+the jeep pulled up into the air [O frame]. A / B the soldier Fultons both ways: the receiver's overlay played
+`stateFultonStart` (1574 / 1586 ms) on the remote act 59, FULTON rx, `step=lift`, `credit_skipped`, `event=apply;
+...;state=6;...;readback=6` [O logs both]; frames show the host puppet kneeling at the guard on the guest's screen and
+the guard under a balloon on the receiver's screen both ways [O frame]. D the host's wormhole Fulton: the guest's lift
+`worm=1;own=0;set=1`, `step=restore;level=0;ok=1` 5 s later [O log]; the wormhole on the guest's screen was not framed
+[U]. `staff_add` only on the Fultoner's copy; no `step=error`, echo, `bad_op` / `wrong_dir` / `unknown_op` or GameOver
+on either copy.
+Hidden play run `19882881` (`r1101-fulton-default-play.txt`, no key named: the shipped default after the flip, with
+`fulton_early`, `fulton_look` and `fulton_one_save` off): C the guest's jeep Fulton, no early lift; VEHICLE_GONE's loss
+request 6.3 s after the guest's `FultonInfo` lifted the host's copy (`step=fulton_lift;...;credit=1`, `step=applied;
+...;via=fulton;src=req;ok=1;ms=10143`), D14 once on each copy [O logs both]; host frames show a balloon on the jeep and
+the jeep pulled up into the air while it was already gone on the guest's screen [O frame]. A / B: the receiver's
+overlay played `stateFultonStart` once per partner Fulton (no other start), the lift line `credit=1`, and the stock
+credit ran on both copies (`step=staff_add` on the Fultoner's copy and the receiver's: D1) [O logs both]; frames show
+each partner's puppet kneeling at its guard and the guard under a balloon on the receiver's screen, both ways
+[O frame]. Run `19882881` logged no `credit_skipped`, `step=early`, `set=1`, `step=error`, echo or non-zero `bad_op`.
+
 ## 26. Supply drops (r1101; lua/coop/world_supply.lua, native/supply_cbox.cpp)
 
 Lab key `world_supply=0|1` (lab and play; no refusal bit). **On with the native gun profile** (Play-Coop, the worker gun

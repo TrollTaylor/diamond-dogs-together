@@ -1,3 +1,58 @@
+## November 1, 2026: r1101 Prove - the Fulton synced on by default (`fulton_sync` follows the gun profile in lab and play; hidden runs `7d924fac`, `19882881`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner Fultons a
+  guard, this screen shows the partner's character kneel at the guard to attach the balloon (the puppet's
+  `stateFultonStart` on a remote act 59 held 1 s) and the guard going up under a balloon here too; when the partner
+  Fultons a vehicle, it goes up under the engine's own vehicle balloon here (`Seize {"Fulton"}`) instead of vanishing.
+  A named `fulton_sync=0` turns it off.
+- **Kept as before (D1):** a partner's soldier Fulton still recruits into both saves. The credit skip that made the
+  receiver's lift visual only (the Fultoner's save only) reverses D1, the user's open decision, so it moved to its own
+  key `fulton_one_save` (CFG `r[18]` bit 8, off unless named in lab and play). Vehicles keep D14.
+- **Still off unless named:** `fulton_early` (the receiver's vehicle lift at the Fultoner's `FultonInfo` instead of
+  after VEHICLE_GONE's loss: no probe yet of a `FultonFailed` after `FultonInfo`, so a balloon shot down there could
+  leave the vehicle lifted on one copy only), `fulton_look` (the receiver's lift in the Fultoner's wormhole / balloon
+  look: shown in the log, not in a frame on the receiver), `fulton_one_save` (above).
+- **Proof** (hidden worker, play, `-WanSim bad`, africa-jeep seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/fulton/`):
+  - `7d924fac` (`r1101-fulton-play.txt`, `fulton_sync`, `fulton_early`, `fulton_look` named; the credit skip was still
+    part of `fulton_sync`): C the guest's hand Fulton of jeep 25608 reached the host 101 ms after the guest's
+    `FultonInfo`, the early lift ran (`step=early`, `step=fulton_lift;...;credit=1`) and the guest's later request was
+    answered gone (`step=applied;...;via=fulton;...;ok=1`), D14 once on each copy; host frames: a balloon inflating on
+    the jeep, then the jeep pulled up into the air. A / B the soldier Fultons both ways: the receiver's puppet played
+    `stateFultonStart` (~1.58 s) on the remote act 59, then `step=lift`, `credit_skipped`, `event=apply;...;state=6;
+    ...;readback=6`; frames: the host puppet kneeling at the guard on the guest's screen and the guard under a balloon
+    on the receiver's screen both ways. D the host's wormhole Fulton: the guest's lift borrowed the look (`worm=1;
+    own=0;set=1`) and restored it 5 s later [O log]; the wormhole on the guest's screen was not framed (its camera
+    looked at the ground) [U]. `staff_add` only on the Fultoner's copy. In C a still-awake guard shot the guest down
+    (`downed_damage` attacker 1080; not this track's code), so the default scenario puts the guards to sleep first.
+  - `19882881` (`r1101-fulton-default-play.txt`, NO key named: session lab settings empty; the green build): C no early
+    lift; VEHICLE_GONE's loss request 6.3 s after the guest's `FultonInfo` lifted the host's copy by `Seize {"Fulton"}`
+    (`step=fulton_lift;...;credit=1`, `step=applied;...;via=fulton;src=req;ok=1;ms=10143`), D14 once on each copy;
+    host frames: a balloon on the jeep and the jeep pulled up into the air while the guest's frame already showed it
+    gone. A / B: the receiver's puppet played `stateFultonStart` once per partner Fulton and nothing else did, the lift
+    line read `credit=1` and the stock credit ran on both copies (`step=staff_add` on each: D1); frames: each partner's
+    puppet kneeling at its guard and the guard hanging under a balloon right in front of the receiver, both ways.
+  - Neither run logged `step=error`, an echo, `viewer_changed`, `event=spare`, a non-zero `bad_op` / `wrong_dir` /
+    `unknown_op` or a GameOver; `19882881` logged no `credit_skipped`, `step=early` or `set=1`. Sheets
+    `r1101/frames/fulton/7d924fac-sheet.jpg` and `19882881-sheet.jpg`.
+- **Still not covered:** a host-to-guest vehicle Fulton (not in either scenario); the receiver's wormhole in a frame;
+  the receiver's soldier lift starts about 10 s after the Fultoner's attach (W1's FULTONED and FULTON come at the
+  Fultoner's `FultonInfo`, when the soldier is recovered) [O log]; a held interact over 1 s other than a Fulton could
+  start the puppet's Fulton kneel (act 59 is not Fulton-specific) [U: none seen, only the Fultons played it in both
+  runs]; a balloon shot down on the Fultoner's screen (soldier: no FULTONED follows, the receiver never lifts [I]).
+- **Commits:** `644cfa3e` red (lab_config_tests: the gun profile turns `fulton_sync` on in lab and play, a named 0 opts
+  out, an invalid value is named and off, `fulton_one_save` parses and is off unless named, `FultonCfgBits` 9 / 15;
+  world_sync_lua_check 6d: `r[18]` bit 8, the stock credit with `fulton_sync` alone (D1, `credit=1`), the skip only with
+  `fulton_one_save`; world_receipt_tests `r[18]` 15; worker_session_tests the key in both allow-lists;
+  friend_package_tests_2: play defaults `fulton_sync` on and its sub-keys off, a named 0 turns it off),
+  `42c8cc3d` green (`ResolveWeaponDefaults`, `fulton_one_save` parse and bit 8, world_link mask 15, `world_sync.lua`
+  bits 0..15, `world_enemy.lua` skip only with the key, LabCommon, the worker allow-lists and help), `83ad9f2e` (the
+  shipped-default scenario `r1101-fulton-default-play.txt`; `r1101-fulton-play.txt` names `fulton_one_save=1`), then
+  README (What works, Known limits), protocol section 25 and `docs/anim-round1-actions.md`.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `42c8cc3d`;
+  worker_session_tests 2/2 at `83ad9f2e` (every shipped scenario validates). `world_enemy.lua` 28270, `world_sync.lua`
+  22832 LF bytes.
+
 ## November 1, 2026: r1101 Prove - supply drops synced on by default (`world_supply` follows the gun profile in lab and play; hidden runs `69efd63b`, `93f27123`; `wp/integ-1101`, local only)
 
 - **What players get:** an AMMO / FULTON supply drop either player orders from the iDroid now falls at the same spot on
