@@ -6,7 +6,8 @@
 #   A. The host Fultons a sleeping guard by hand (both copies' Wormhole off: the balloon). The guest sees the host
 #      puppet play the Fulton attach (remote act 59 held >= 500 ms -> the overlay's stateFultonStart, source=map) and
 #      the guard lifted by the balloon (W1 RequestForceFulton on the guest's copy) instead of vanishing.
-#   B. The guest Fultons a sleeping guard: the host sees the same (the guest puppet's attach, the balloon).
+#   B. The guest Fultons a sleeping guard (placed and put to sleep by the host's levers, which are host-only): the host
+#      sees the same (the guest puppet's attach, the balloon).
 #   C. The guest Fultons the jeep 25608 by hand from the vehicle-gone-play.txt spot: REQ_VEHICLE_GONE -> the host's
 #      copy is lifted by the engine's own vehicle Fulton (Seize {"Fulton"}: the balloon), D14 credited once as before.
 #   D. Wormhole on for the host only (Game rules): the host Fultons a sleeping guard; FULTON 0x46 carries worm=1, the
@@ -65,8 +66,9 @@ host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;
 guest run spawn_sync
 wait 2000
-host debug forward 3.6
-wait 2000
+host run enemy goto nearest 1
+host expect ^enemy_goto;ent=\d+;
+wait 1500
 host run enemy_aim_nearest 0.3
 placebehind guest host 5 1.5
 wait 2500
@@ -88,19 +90,23 @@ both capture a-after
 host run enemy info nearest
 guest run enemy info nearest
 # --- B: the guest Fultons a sleeping guard; the host watches from behind ----------------------------------------------
-guest debug goto_vehicle jeep
+# (spawn_enemy and enemy sleep are host-only levers: the host places and puts the guard to sleep, the guest goes to him)
+host debug goto_vehicle jeep
 wait 2500
-guest debug forward -12
+host debug forward -12
 wait 3000
-guest run spawn_enemy here
-guest expect ^guard_here;ent=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
 wait 2500
-guest run enemy sleep nearest
-guest expect ^enemy_sleep;ent=\d+;
-host run spawn_sync
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
 wait 2000
-guest debug forward 3.6
-wait 2000
+placebehind guest host 3
+wait 2500
+guest run enemy goto nearest 1
+guest expect ^enemy_goto;ent=\d+;
+wait 1500
 guest run enemy_aim_nearest 0.3
 placebehind host guest 5 1.5
 wait 2500
@@ -152,8 +158,9 @@ host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;
 guest run spawn_sync
 wait 2000
-host debug forward 3.6
-wait 2000
+host run enemy goto nearest 1
+host expect ^enemy_goto;ent=\d+;
+wait 1500
 host run enemy_aim_nearest 0.3
 placebehind guest host 5 1.5
 wait 2500
