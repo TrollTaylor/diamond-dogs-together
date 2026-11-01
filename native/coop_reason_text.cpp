@@ -376,6 +376,26 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
               // 15 until the merge with fb1031 mbgo's MISSION_END)
         if (b != 1) return false;
         return Put(out, capacity, "Stuck in the helicopter? Pause and choose Restart.");
+    case 20:  // VSPAWN{a=1 spawned in front of you | 2 your partner spawned one (b=1 jeep, 2 truck) | 3 refused (b=reason)}
+              // (debug menu Spawn vehicle, lua/coop/debug_vspawn.lua; both screens)
+        if (a == 1 || a == 2) {
+            if (b != 1 && b != 2) return false;
+            const char* what = b == 1 ? "a jeep" : "a truck";
+            return a == 1 ? PutF(out, capacity, "Vehicle spawned: %s in front of you, on both screens.", what)
+                          : PutF(out, capacity, "Your partner spawned %s in front of them.", what);
+        }
+        if (a != 3) return false;
+        switch (b) {
+        case 1: return Put(out, capacity, "Vehicle spawn is not available yet in this build.");
+        case 2: return Put(out, capacity, "Vehicle spawn works only in Afghanistan and Africa free roam.");
+        case 3: return Put(out, capacity, "No free vehicle of that kind in this area right now.");
+        case 4: return Put(out, capacity, "That vehicle kind is not loaded in this area.");
+        case 5: return Put(out, capacity, "Get on foot first: no vehicle spawn while riding or in a cutscene.");
+        case 6: return Put(out, capacity, "Not paired with the host yet: vehicle spawn waits for the pairing.");
+        case 7: return Put(out, capacity, "The vehicle could not be brought here. Try again.");
+        case 8: return Put(out, capacity, "The host did not answer the vehicle spawn. Try again.");
+        default: return false;
+        }
     default:  // unknown (16 MISMATCH is above): no toast
         return false;
     }

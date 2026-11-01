@@ -212,6 +212,14 @@ constexpr OpSpec kOps[] = {
     // state), friendly fire (0 off, 1 on). Control queue, both directions, paired, never a request. 4 bytes. A partner
     // without the op skips it by its length (unknown_op): its friendly fire stays on.
     {op::arms, "ARMS", 0, Dir::both, Wire::reliable, 3, false, false, 3, 0, 0, 4, {U16(1), U8(1, 2), U8(0, 1)}},
+    // VSPAWN (debug menu Spawn vehicle, world-sync-protocol.md section 25): seq, kind (1 the guest's ask, 2 the host's
+    // press, 3 the host's spawn for an ask, 4 the host's refusal of it), class (1 light vehicle, 2 truck), the authored
+    // locator number veh_<class>_NNNN (255 none), xyz mm and yaw mdeg (the presser's pose in an ask, else the spot),
+    // reason (0 ok, else the refusal 1..15). Control queue, both directions, paired, never a request. 22 bytes. A partner
+    // without the op skips it by its length (unknown_op): nothing is spawned there.
+    {op::vspawn, "VSPAWN", 0, Dir::both, Wire::reliable, 3, false, false, 9, 0, 0, 22,
+     {U16(1), U8(1, 4), U8(1, 2), U8(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-360000, 360000), U8(0, 15)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

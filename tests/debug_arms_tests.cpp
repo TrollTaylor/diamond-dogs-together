@@ -136,7 +136,7 @@ void Note() {
         return mgscoop::world::ParseNote(receipt, std::strlen(receipt), code, a, b);
     };
     Check(parse("18 1 0") && code == 18 && a == 1 && b == 0, "the NOTE_V1 receipt admits note 18");
-    Check(!parse("16 1 0") && !parse("17 1 0") && !parse("20 1 0"), "16, 17 (posted by native) and 20 stay refused; 19 is the arrival hint");
+    Check(!parse("16 1 0") && !parse("17 1 0") && !parse("23 1 0"), "16, 17 (posted by native) and 23 stay refused; 19 is the arrival hint, 20 VSPAWN");
 }
 } // namespace
 
