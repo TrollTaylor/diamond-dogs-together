@@ -22,7 +22,9 @@
 #   3) the host's own iDroid AMMO / FULTON drop (Tab, 3 MISSIONS, Enter SUPPLY DROP, Enter AMMO / FULTON, Space OK) on
 #      the host: the same sync; the host's screen "Surplus Supplies Retrieved", the guest's (3 m away) none.
 #   4) the guest's own iDroid drop: the same with the roles swapped (origin=2).
-#   5) the host's iDroid WEAPONS / ITEMS drop (S, Enter, Enter the first item, Space OK) [U]: the same sync; a box that
+#   5) the host's iDroid WEAPONS / ITEMS drop [U] (run 5acbcb83: Enter on WEAPONS / ITEMS opens "Select weapons." with
+#      the equipped WU S.PISTOL first; Enter + Space there ordered nothing): S to the next pistol, Enter to select it,
+#      Space (OK), then Space (OK) on the map. The same sync; a box that
 #      stays until picked up would end with step=pickup; ...; cur=1.3 then step=gone_local; ...; why=pickup on the
 #      taker and step=remove; ...; ok=1 + the toast on the partner. Frames e-* show the menus.
 # A box landing on a guard (optional, no guard is placed here: none is known to stand close on afgh-ledge): host run
@@ -133,7 +135,12 @@ host capture e-host-weapons-items
 host press enter
 wait 2500
 host capture e-host-list
+host press s
+wait 800
 host press enter
+wait 1500
+host capture e-host-selected
+host press space
 wait 2500
 host capture e-host-map
 host press space

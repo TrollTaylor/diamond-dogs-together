@@ -2010,3 +2010,13 @@ game's own end on both copies (`step=delivered`, nothing sent). [I] the mirror b
 notice, magazine unchanged) with that player about 3 m from the landing point; whether two players both standing on
 the spot would both get the contents is [U]. A remove that finds no box (`ok=0`) shows no toast. The WEAPONS / ITEMS
 drops (a box that stays until `OnPickUpSupplyCbox`?) are not run yet [U].
+
+Hidden run `5acbcb83` (2026-11-01, play, afgh-ledge; the delivered rule): [O] three boxes (the host's script drop aimed
+at the guest, the host's and the guest's own iDroid AMMO / FULTON drops) each mirrored once (`step=mirror; ...; ok=1`
+and the toast note 21 a=1 on the receiver) and ended with `step=delivered` on both copies; no kind 2, no remove, no
+"partner took" toast, no `step=error|rx_bad|echo|mirror_skip`. [O] Frames: at the script box's landing the guest's
+screen shows a large olive dithered panel close to the camera (the parachute [I]) and the host's none; after the
+host's own iDroid drop the host lies prone beside an open yellow supply case 2 m away (a dark case from the script drop
+3 m away), while the guest's screen at that moment shows no notice and the same magazine. The script AMMO box
+(drop 4, equip 0) gave no visible "Surplus Supplies Retrieved" in any run [U]. The WEAPONS / ITEMS list opens with the
+equipped pistol first; Enter and Space on it ordered nothing (the scenario now selects the next pistol first) [U].
