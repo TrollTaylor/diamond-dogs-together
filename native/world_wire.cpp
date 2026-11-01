@@ -212,6 +212,11 @@ constexpr OpSpec kOps[] = {
     // state), friendly fire (0 off, 1 on). Control queue, both directions, paired, never a request. 4 bytes. A partner
     // without the op skips it by its length (unknown_op): its friendly fire stays on.
     {op::arms, "ARMS", 0, Dir::both, Wire::reliable, 3, false, false, 3, 0, 0, 4, {U16(1), U8(1, 2), U8(0, 1)}},
+    // FULTON (r1101 fulton, world-sync-protocol.md section 25): seq, kind (1 soldier, 2 vehicle), the Fultoner's game object
+    // id, the soldier's entity hash (0 for a vehicle), wormhole (0 balloon, 1 wormhole). The Fultoner's copy sends it at its
+    // own FultonInfo (lab key fulton_sync); the other copy matches the look of its own lift. World queue, both ways, level 2
+    // (W1), never a request. 10 bytes. A partner without 0x46 skips it by its length (unknown_op).
+    {op::fulton, "FULTON", 1, Dir::both, Wire::reliable, 2, false, false, 5, 0, 0, 10, {U16(1), U8(1, 2), U16(), U32(), U8(0, 1)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

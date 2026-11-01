@@ -1670,6 +1670,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.vehicle_gone = labc.world_vehicle_gone;
     world.companion = labc.companion_host_owned;
     world.relief = labc.world_relief;
+    world.fulton = labc.fulton_sync;
     world.vehicle_state = labc.world_vehicle_state;
     world.vehicle_wreck = labc.world_vehicle_wreck;
     world.vehicle_break = labc.world_vehicle_break;

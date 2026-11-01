@@ -291,6 +291,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_relief_given = true;
         if (!ok) result.world_relief = false;
     }
+    // r1101 fulton (docs/world-sync-protocol.md section 25): lab and play, off unless named.
+    else if (Equals(key, "fulton_sync")) {
+        ok = ParseBool(value, result.fulton_sync);
+        result.fulton_sync_given = true;
+        if (!ok) result.fulton_sync = false;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -1808,6 +1814,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // credited twice with VEHICLE_GONE off (fixed since), and the guest's LOADOUT block (D11) is the
     // user's open decision. It flips again only after a FRAME proof and a play rehearsal of those lines.
     if (!c.world_relief_given) c.world_relief = false;
+    // r1101 fulton: off unless named, in lab and play, until a hidden run shows the puppet's Fulton attach and the
+    // receiver's lift on both screens.
+    if (!c.fulton_sync_given) c.fulton_sync = false;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

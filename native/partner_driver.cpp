@@ -5198,7 +5198,7 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     release_map = false;
     const bool pending = d.overlay_pending;
     d.overlay_pending = false;
-    if (set.noverlay == PartnerNativeOverlay::off && !pending && !pdo::Active(m.overlay)) {
+    if (set.noverlay == PartnerNativeOverlay::off && !set.fulton_sync && !pending && !pdo::Active(m.overlay)) {
         m.overlay_out = pdo::Out{};
         return false;
     }
@@ -5206,6 +5206,7 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     pdo::In in{};
     in.now_ms = now;
     in.mode = set.noverlay;
+    in.fulton = set.fulton_sync;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -6849,6 +6850,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.edge_repeats = lab.partner_input_edge_repeats;
     // Round-1 actions track (docs/anim-round1-actions.md).
     d.settings.noverlay = lab.partner_native_overlay;
+    d.settings.fulton_sync = lab.fulton_sync;
     d.settings.act_log = lab.partner_act_log;
     d.settings.stance_fast = lab.partner_native_stance_fast;
     d.settings.traverse = lab.partner_native_traverse;
@@ -6969,6 +6971,10 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (d.settings.noverlay != PartnerNativeOverlay::off)
         EmitFormat(h, "partner_actions=configured; overlay=%s; act_log=%u\r\n", PartnerNativeOverlayName(d.settings.noverlay),
                d.settings.act_log ? 1u : 0u);
+    // r1101 fulton: the Fulton act map (acts 49/50/59 held fulton_hold_ms -> stateFultonStart on body 1).
+    if (d.settings.fulton_sync)
+        EmitFormat(h, "partner_fulton=configured; overlay=%s; hold_ms=%u; acts=49,50,59\r\n", PartnerNativeOverlayName(d.settings.noverlay),
+                   unsigned(partner_dm_overlay::Params{}.fulton_hold_ms));
     // Mount riders: an enabled act rule says so once per mission (it acts only where partner_native_ride hides).
     if (d.settings.nmount != PartnerNativeMount::off)
         EmitFormat(h, "partner_mount=configured; mode=%s; ride=%s; acts=%u..%u\r\n", PartnerNativeMountName(d.settings.nmount),

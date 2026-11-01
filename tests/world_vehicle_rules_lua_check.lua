@@ -691,7 +691,7 @@ check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and #g.seized[1].opt
 check(#g.credits == 1 and g:has('event=vehicle_rules;step=fulton_lift;id=25610;credit=1;role=guest;mission=30020') and
     g:has('event=vehicle_gone;step=applied;id=25610;via=fulton;src=rx;ok=1'), 'credited once as D14, the lift logged and read back')
 g.V.observe('FultonInfo', 25610, 'local')
-check(g.V.watch[25610] == nil and #g:sent(47) == 0, 'the lift's own Fulton messages are never a loss here')
+check(g.V.watch[25610] == nil and #g:sent(47) == 0, 'the Fulton messages of the lift itself are never a loss here')
 g = Fixture('guest', {fulton = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
 g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})

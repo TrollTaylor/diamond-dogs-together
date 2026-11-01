@@ -682,6 +682,8 @@ struct Settings {
     std::uint32_t edge_repeats;
     // Round-1 actions track: the DM overlay lever and the act census lines.
     PartnerNativeOverlay noverlay;
+    // r1101 fulton (lab key fulton_sync): the overlay's Fulton act map, also with noverlay off.
+    bool fulton_sync;
     bool act_log;
     bool stance_fast;  // the native stance window (partner_native_stance_fast)
     bool traverse;     // traversal replay (partner_native_traverse)

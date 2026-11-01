@@ -57,6 +57,7 @@ constexpr Entry kEntries[] = {
 constexpr std::uint8_t kCount = static_cast<std::uint8_t>(sizeof(kEntries) / sizeof(kEntries[0]));
 static_assert(kCount <= kMaxEntries, "the reply value carries a 5-bit index");
 constexpr std::uint8_t kFront = 0, kDead = 4, kBoxIdle = 5, kBoxMove = 6, kElude = 7, kClimbIdle = 8, kClimbUp = 9, kClimbDown = 10;
+constexpr std::uint8_t kFulton = 16;  // stateFultonStart
 
 std::uint32_t Ms(std::uint64_t from, std::uint64_t now) noexcept {
     if (now < from) return 0;
@@ -108,7 +109,7 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept {
     }
 }
 
-std::uint8_t MapFulton(std::uint16_t) noexcept { return kNone; }
+std::uint8_t MapFulton(std::uint16_t act) noexcept { return act == 49 || act == 50 || act == 59 ? kFulton : kNone; }
 
 const char* PhaseName(Phase phase) noexcept {
     switch (phase) {
@@ -164,8 +165,12 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     }
     // The map candidate (mode map) and its holds; a new remote episode clears
     // the finished one-shot entry.
-    const bool map_mode = in.mode == PartnerNativeOverlay::map;
-    const std::uint8_t want = map_mode && in.remote_valid ? MapAct(in.remote_act, static_cast<std::int32_t>(s.vy)) : kNone;
+    // r1101 fulton: In::fulton adds the Fulton act map (the attach), also with the setting off or debug.
+    const bool full_map = in.mode == PartnerNativeOverlay::map;
+    const bool map_mode = full_map || in.fulton;
+    std::uint8_t want = full_map && in.remote_valid ? MapAct(in.remote_act, static_cast<std::int32_t>(s.vy)) : kNone;
+    const bool fulton_act = in.fulton && in.remote_valid && want == kNone && MapFulton(in.remote_act) != kNone;
+    if (fulton_act) want = MapFulton(in.remote_act);
     if (want != s.map_cand) {
         s.map_cand = want;
         s.map_cand_ms = now;
@@ -175,7 +180,8 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     } else {
         s.unmapped_ms = 0;
     }
-    const bool want_held = want != kNone && now - s.map_cand_ms >= p.map_hold_ms;
+    // A Fulton act starts only after fulton_hold_ms: a short act-59 press (boarding, a door) is not an attach.
+    const bool want_held = want != kNone && now - s.map_cand_ms >= (fulton_act ? p.fulton_hold_ms : p.map_hold_ms);
     const bool unmapped_long = s.unmapped_ms && now - s.unmapped_ms >= p.map_exit_ms;
     if (unmapped_long || (want != kNone && want != s.done_index)) s.done_index = kNone;
 
@@ -251,7 +257,8 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         begin(Source::map, want, map_entry(want), map_ms(want));
         event("request", "map", map_ms(want));
     }
-    if (in.mode == PartnerNativeOverlay::off && s.phase != Phase::idle && !s.stop_reason) s.stop_reason = "setting_off";
+    if (in.mode == PartnerNativeOverlay::off && !(in.fulton && s.source == Source::map) && s.phase != Phase::idle && !s.stop_reason)
+        s.stop_reason = "setting_off";
     // The map source: before playing, a new candidate retargets; the remote
     // leaving the mapped acts cancels (a one-shot already playing runs out).
     if (s.source == Source::map && s.phase != Phase::idle && !s.stop_reason) {

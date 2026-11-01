@@ -35,6 +35,8 @@ W.OP.VEHICLE_GONE, W.OP.REQ_VEHICLE_GONE = GONE, REQ
 local fmt, floor, sqrt, H = string.format, math.floor, math.sqrt, W.handlers
 local NULL, FAR_MM, MATCH_MM, TRUST_MM, NEAR_M, SCAN = 65535, 40000, 5000, 1000, 60, 127
 local WATCH_MS, POLL_MS, HOLD_MS, HIT_MS, ACK_MS, REQ_MS, READ_MS = 30000, 250, 120000, 10000, 5000, 150000, 2000
+-- r1101 fulton: the engine's own lift (via=fulton, world_vehicle_rules.lua) rises for seconds before the vehicle goes.
+local LIFT_MS = 15000
 local RIDE_MS, SETTLE_MS = 10000, 10000
 V.FAR_MM, V.MATCH_MM, V.HOLD_MS, V.WATCH_MS, V.ACK_MS, V.RIDE_MS, V.SETTLE_MS = FAR_MM, MATCH_MM, HOLD_MS, WATCH_MS, ACK_MS, RIDE_MS, SETTLE_MS
 local FULTON, DESTROYED, LAB, UNATTRIBUTED = 1, 2, 3, 4
@@ -279,9 +281,9 @@ local function readback(id, t)
   local q = V.reads[id]
   if not q then return end
   local alive = V.alive(id)
-  if alive and t - q.at < READ_MS then return end
+  if alive and t - q.at < (q.via == "fulton" and LIFT_MS or READ_MS) then return end
   L("event=vehicle_gone;step=applied;id=%d;via=%s;src=%s;ok=%d;ms=%d", id, q.via, q.src, alive and 0 or 1, floor(t - q.at))
-  if alive and (q.via == "wreck" or q.via == "seize") then
+  if alive and (q.via == "wreck" or q.via == "seize" or q.via == "fulton") then
     -- A wreck (or D14's Seize Instant, world_vehicle_rules.lua) that did not take: the Despawn, read back again
     -- (the entry stays); with no Despawn form this copy has not lost it (a re-sent announcement retries it).
     local ok, via = V.despawn(id)
