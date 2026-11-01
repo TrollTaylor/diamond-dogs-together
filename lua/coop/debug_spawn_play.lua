@@ -1,4 +1,4 @@
--- Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here"); spliced after debug_spawn.lua.
+-- Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here") and cp_phase; spliced after debug_spawn.lua.
 -- Mother Base has no enemies: every spawn row refuses there in plain words (spawn_mother_base).
 -- Recycled pool: before a host spawn, a placed guard who is dead, asleep, fainted, Fultoned,
 -- disabled, gone or more than 150 m away frees his place (an awake one may be placed again),
@@ -43,7 +43,27 @@ do
       return freed
     end
     S.recycle = recycle
+    -- cp_phase (moved here unchanged from debug_spawn.lua, which is at its 16000-byte limit).
+    local PHASES = {sneak = "SNEAK", caution = "CAUTION", evasion = "EVASION", alert = "ALERT"}
+    local function phase(a)
+      if not A.hostOnly() then return false, "host_only" end
+      if #a ~= 3 or not PHASES[a[3]] then return false, "phase_args" end
+      local k = "PHASE_" .. PHASES[a[3]]
+      local v = get(TppGameObject, k)
+      if v == nil then return false, "missing_" .. k end
+      local cp = a[2]
+      if cp == "nearest" then
+        local list = R.camps()
+        cp = list and list[1] and list[1].name
+      end
+      if not R.name(cp) or type(get(get(mvars, "ene_soldierDefine"), cp)) ~= "table" then return false, "cp_unknown" end
+      local cid = call(GameObject, "GetGameObjectId", cp)
+      if not integer(cid, 0, 65534) then return false, "cp_unknown" end
+      send(cid, {id = "SetPhase", phase = v})
+      return true, string.format("submitted_phase;cp=%s;phase=%s;%s", cp, a[3], A.sync("enemy"))
+    end
     function S.run(a, id)
+      if a[1] == "cp_phase" then return phase(a) end
       if a[1] == "spawn_enemy" then
         if D.mission == 30050 then return false, "spawn_mother_base" end
         if A.hostOnly() then recycle() end
