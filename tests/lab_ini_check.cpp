@@ -134,6 +134,10 @@ int main(int argc, char** argv) {
         std::printf("world_supply=%d\n", c.world_supply ? 1 : 0);
         // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play (r1101 Prove phase).
         std::printf("debug_vspawn=%d\n", c.debug_vspawn ? 1 : 0);
+        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the gun profile (r1101 Prove phase);
+        // fulton_early, fulton_look and fulton_one_save stay off unless named.
+        std::printf("fulton_sync=%d\nfulton_early=%d\nfulton_look=%d\nfulton_one_save=%d\n", c.fulton_sync ? 1 : 0, c.fulton_early ? 1 : 0,
+                    c.fulton_look ? 1 : 0, c.fulton_one_save ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),

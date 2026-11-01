@@ -1895,8 +1895,11 @@ int main() {
                 Check(!vsLate.debug_vspawn && vsLate.invalid_values == 1, "an invalid debug_vspawn after a valid 1 turns it off");
             }
         }
-        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync off unless named in lab, gun profile and play;
-        // a named 1 parses in lab and play with no refusal bit, a named 0 keeps it off, an invalid value keeps it off.
+        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the native gun profile in lab and play
+        // since the r1101 Prove phase (hidden play run 7d924fac, both copies: the partner puppet's Fulton attach and the
+        // receiver's balloon lift, soldiers both ways and a vehicle); off without the profile; a named 1 parses in lab and
+        // play with no refusal bit, a named 0 opts out, an invalid value is named and off. fulton_one_save (the receiver's
+        // soldier credit skipped: the Fultoner's save only, which reverses D1) is its own key, off unless named.
         {
             const auto fsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n");
@@ -1907,7 +1910,25 @@ int main() {
             const auto fsOff = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=0\n");
             const auto fsBad = Lab("enabled=1\nrole=host\nfulton_sync=2\n");
             Check(!fsDef.fulton_sync && !fsDef.fulton_sync_given && !fsPlayDefault.fulton_sync && !fsPlayDefault.fulton_sync_given,
-                  "fulton_sync defaults off (lab and play)");
+                  "fulton_sync stays off without the gun profile (lab and play)");
+            const std::string fsGunBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                          "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto fsGun = Lab(fsGunBase + mode);
+                Check(fsGun.fulton_sync && !fsGun.fulton_sync_given && !fsGun.fulton_early && !fsGun.fulton_look && !fsGun.fulton_one_save &&
+                          fsGun.invalid_values == 0 && fsGun.unknown_keys == 0 && fsGun.play_refused == 0 && mgscoop::FultonCfgBits(fsGun) == 1,
+                      "the gun profile turns fulton_sync on in lab and play (not named); fulton_early, fulton_look, fulton_one_save stay off");
+                const auto fsGunOff = Lab(fsGunBase + mode + "fulton_sync=0\n");
+                Check(!fsGunOff.fulton_sync && fsGunOff.fulton_sync_given && fsGunOff.invalid_values == 0 && fsGunOff.play_refused == 0 &&
+                          mgscoop::FultonCfgBits(fsGunOff) == 0,
+                      "a named fulton_sync 0 opts out with the gun profile");
+                const auto fsGunBad = Lab(fsGunBase + mode + "fulton_sync=maybe\n");
+                Check(!fsGunBad.fulton_sync && fsGunBad.invalid_values == 1, "an invalid fulton_sync is named and off with the gun profile");
+                const auto fsGunOne = Lab(fsGunBase + mode + "fulton_one_save=1\n");
+                Check(fsGunOne.fulton_sync && fsGunOne.fulton_one_save && fsGunOne.fulton_one_save_given && fsGunOne.invalid_values == 0 &&
+                          fsGunOne.unknown_keys == 0 && fsGunOne.play_refused == 0 && mgscoop::FultonCfgBits(fsGunOne) == 9,
+                      "a named fulton_one_save=1 parses in lab and play with the gun profile (CFG r[18] bit 8)");
+            }
             Check(fsLab.fulton_sync && fsLab.fulton_sync_given && fsLab.invalid_values == 0 && fsLab.unknown_keys == 0, "fulton_sync=1 parses in lab");
             Check(fsPlay.mode == mgscoop::LabMode::play && fsPlay.fulton_sync && fsPlay.play_refused == 0 && fsPlay.invalid_values == 0,
                   "fulton_sync=1 parses in play with no refusal bit");
@@ -1934,6 +1955,18 @@ int main() {
                       mgscoop::FultonCfgBits(feLook) == 5 && mgscoop::FultonCfgBits(feAll) == 7 && mgscoop::FultonCfgBits(fePlay) == 7 &&
                       mgscoop::FultonCfgBits(feNoSync) == 0,
                   "CFG r[18]: 1 fulton_sync, 2 fulton_early, 4 fulton_look; nothing without fulton_sync");
+            // fulton_one_save (CFG r[18] bit 8): off unless named (lab, gun profile and play), only with fulton_sync.
+            const auto foAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\nfulton_one_save=1\n");
+            const auto foNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_one_save=1\n");
+            const auto foBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_one_save=maybe\n");
+            Check(!fsDef.fulton_one_save && !fsDef.fulton_one_save_given && !fsPlayDefault.fulton_one_save && !fsLab.fulton_one_save &&
+                      !fsPlay.fulton_one_save,
+                  "fulton_one_save defaults off (lab and play, also with fulton_sync=1)");
+            Check(foAll.fulton_one_save && foAll.fulton_one_save_given && foAll.invalid_values == 0 && foAll.unknown_keys == 0 &&
+                      mgscoop::FultonCfgBits(foAll) == 15 && mgscoop::FultonCfgBits(foNoSync) == 0,
+                  "CFG r[18]: 8 fulton_one_save (15 with every key); nothing without fulton_sync");
+            Check(!foBad.fulton_one_save && foBad.fulton_one_save_given && foBad.invalid_values == 1 && mgscoop::FultonCfgBits(foBad) == 1,
+                  "an invalid fulton_one_save is named and off");
         }
         // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
         // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).

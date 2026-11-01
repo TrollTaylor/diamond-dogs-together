@@ -630,6 +630,14 @@ try {
             $file = Join-Path $fixture 'play-vspawn-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "debug_vspawn=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['debug_vspawn'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named debug_vspawn 0 turns Spawn vehicle off in play'
+            # The Fulton synced (docs/world-sync-protocol.md section 25; hidden play run 7d924fac): Play-Coop never names
+            # fulton_sync; play defaults it on with the gun profile, the sub-keys and fulton_one_save off (D1: a partner's
+            # soldier Fulton still recruits into both saves); a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('fulton_') -and !$guestIni.Contains('fulton_') -and !$clipsIni.Contains('fulton_')) 'Play-Coop lab.ini never names a fulton key'
+            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])" '1000' 'native: play defaults the Fulton synced on, its sub-keys off'
+            $file = Join-Path $fixture 'play-fulton-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_sync=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['fulton_sync'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named fulton_sync 0 turns the Fulton synced off in play'
             # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and

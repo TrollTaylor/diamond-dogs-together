@@ -103,7 +103,7 @@ local function fixture(options)
                 local p = c.peer
                 if options.fulton ~= nil then
                     -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
-                    -- fulton_look 4; a number is passed as is).
+                    -- fulton_look 4, fulton_one_save 8; a number is passed as is).
                     local fb = type(options.fulton) == 'number' and options.fulton or (options.fulton and 1 or 0)
                     return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
                         options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, fb
@@ -745,16 +745,20 @@ do
     check(#F.tx(c, OPF) == 0 and c.W.fultonOn == false, 'key off: no FULTON')
     -- CFG r[18] bits (review fixes of 2026-11-01): 1 fulton_sync, 2 fulton_early (the early vehicle lift), 4 fulton_look
     -- (the borrowed wormhole look); the sub-keys only with fulton_sync.
-    for _, b in ipairs({{0, false, false, false}, {1, true, false, false}, {3, true, true, false}, {5, true, false, true},
-        {7, true, true, true}, {6, false, false, false}}) do
+    -- r1101 Prove: 8 fulton_one_save (the receiver's soldier credit skipped: the Fultoner's save only), also only with
+    -- fulton_sync.
+    for _, b in ipairs({{0, false, false, false, false}, {1, true, false, false, false}, {3, true, true, false, false},
+        {5, true, false, true, false}, {7, true, true, true, false}, {6, false, false, false, false}, {9, true, false, false, true},
+        {13, true, false, true, true}, {15, true, true, true, true}, {8, false, false, false, false}, {14, false, false, false, false}}) do
         env, c = rig(1, b[1], 1)
-        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4], 'CFG r[18] = ' .. b[1] .. ': the fulton bits')
+        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4] and c.W.fultonOneSaveOn == b[5],
+            'CFG r[18] = ' .. b[1] .. ': the fulton bits')
     end
     -- The receiver (guest, no wormhole): FULTON first, then the host's FULTONED outcome. With fulton_look (bit 4) the
-    -- level is raised to the Fultoner's look before RequestForceFulton, the stock credit is skipped once (the partner
-    -- announced its Fulton), the level comes back after 5 s.
+    -- level is raised to the Fultoner's look before RequestForceFulton; with fulton_one_save (bit 8) the stock credit is
+    -- skipped once (the partner announced its Fulton); the level comes back after 5 s.
     local term
-    env, c, lv, term = rig(2, 5, 0)
+    env, c, lv, term = rig(2, 13, 0)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
@@ -786,20 +790,30 @@ do
     F.tick(env, c, 1)
     check(#early == 1 and early[1].id == 25610 and early[1].note and early[1].t == 1 and early[1].x == 120500 and early[1].y == 2300 and
         early[1].z == -45000, 'FULTON kind 2: the early vehicle lift at the Fultoner\'s type and pose, after the note')
-    -- fulton_sync without fulton_look: FULTON noted, the lift in this copy's own look (no level change); the credit is
-    -- still skipped (the partner announced its Fulton, so its copy keeps the recruit).
+    -- fulton_sync alone (the shipped default since the r1101 Prove phase): FULTON noted, the lift in this copy's own look
+    -- (no level change), and the stock credit runs at OnFulton (D1: a partner's soldier Fulton recruits into both saves).
     env, c, lv, term = rig(2, true, 0)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
     check(c.fultonAsked == 1 and #lv.sets == 0 and lv.cur == 0 and
-        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=0'),
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=1'),
         'fulton_look off (the default): the partner\'s look is never borrowed')
+    check(env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0) == 'stock' and #term.calls == 1 and not has(c.logs, 'step=credit_skipped') and
+        not has(c.logs, 'step=credit_kept'),
+        'fulton_one_save off (the default): the stock credit runs here too (D1, both saves)')
+    -- fulton_one_save without fulton_look: visual only (the partner announced, so its copy keeps the recruit).
+    env, c, lv, term = rig(2, 9, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
     env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
-    check(#term.calls == 0 and has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
-        'fulton_look off: still visual only (the partner announced)')
+    check(#lv.sets == 0 and #term.calls == 0 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=0') and
+        has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'fulton_one_save: visual only (the partner announced)')
     -- No FULTON (an older partner, or theirs is off): this copy's own look, and the stock credit (D1) runs at OnFulton.
-    env, c, lv, term = rig(2, 5, 0)
+    env, c, lv, term = rig(2, 13, 0)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
     check(c.fultonAsked == 1 and #lv.sets == 0 and
@@ -809,7 +823,7 @@ do
     check(#term.calls == 1 and has(c.logs, 'event=fulton;step=credit_kept;id=' .. c.ids.sol_a1 .. ';why=no_partner_note'),
         'without FULTON (the mixed-key case): the stock credit runs here too (D1, both saves)')
     -- The partner's FULTON that arrives after the lift but before OnFulton (about 3.7 s later) still skips it.
-    env, c, lv, term = rig(2, 5, 0)
+    env, c, lv, term = rig(2, 13, 0)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 0)

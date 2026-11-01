@@ -305,8 +305,9 @@ foreach($bad in @('fulton_sync=2','fulton_sync=','fulton_sync=on','both:fulton_s
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 Assert-True ('labsetting fulton_sync=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting fulton_sync=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting fulton_sync=0|1 only'
-# r1101 fulton review fixes: fulton_early=0|1 (the early vehicle lift) and fulton_look=0|1 (the borrowed wormhole look).
-foreach($key in @('fulton_early','fulton_look')){
+# r1101 fulton review fixes: fulton_early=0|1 (the early vehicle lift) and fulton_look=0|1 (the borrowed wormhole look);
+# r1101 Prove: fulton_one_save=0|1 (the receiver's soldier credit skipped: the Fultoner's save only).
+foreach($key in @('fulton_early','fulton_look','fulton_one_save')){
     foreach($ok in @("$key=1","$key=0","host:$key=1","guest:$key=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
     }
