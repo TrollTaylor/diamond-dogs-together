@@ -1,3 +1,35 @@
+## October 31, 2026: fb1031 vehicles - a partner whose vehicle is missing on your screen is hidden with a toast, not drawn gliding (`wp/vehicle-missing`; not run-proven yet)
+
+- **What players get (built and unit-tested, no hidden run yet):** when your partner drives or rides a vehicle that
+  your game does not have, you no longer see their body glide along on foot. They are hidden for that ride and you get
+  "Your partner's vehicle isn't on your screen. You'll see them again when they get out." They show again on foot
+  when they get out. On by default in lab and play.
+- **Why vehicles were missing (0.14.5 two-PC session, rtt ~145 ms) [O]:** Africa: the host drove its relief vehicle
+  25600 (index 0). It exists only on the host's copy because `world_relief` is off by default (friend log
+  `vehicle_state ... refused; id=25600; reason=index0`). Mother Base: each player Fultoned a parked jeep on their own copy
+  (user 25603, friend 25604, `att=local`). VEHICLE_GONE is lab-only at 30050 (`step=off; reason=mb_lab_only`), so the
+  other copy kept the jeep and the other player then drove it. In all four rides the seat's by-id read said `absent` and
+  the 0.13.6 / Africa fallback Warped body 1 along the streamed seat pose (`show=warp`) while it played `stand_idle`:
+  about 6 s twice in Africa and about 13 s at Mother Base.
+- **Fix:** `native/partner_driver_seat.inc` `SeatAbsentHides`: `absent` is refused and latched in every mission (the
+  proven ride hide until the ride leaves that seat). `local_read` / `unrealized` keep the Mother Base fallback. In
+  `native/partner_driver.cpp` the absent latch opens G5's ride episode whatever `partner_native_unrealize_all` says
+  (play forces that key off): CLEAR_ALLACTIVE while hidden, so no body is left standing at the get-on spot, then
+  SET_ALLACTIVE on foot (the mount hide's cycle). `lua/coop/world_vehicle.lua` `V.absentTick`: a RIDE_FAST track
+  found absent shows **world note 13 a=8** (appended) once per ride of that vehicle, at most once every 20 s, whatever
+  the VEHICLE_GONE key (`event=vehicle_absent; step=toast; id=..; shown=..`). No wire change, no new game address
+  (contract 855 / 213 unchanged).
+- **Not changed:** VEHICLE_GONE at Mother Base stays lab-only in play, and `world_relief` (the relief vehicle on both
+  copies) stays off. `fb1031-vehicle-gone-mb.txt` is the run the Mother Base play flip waits for: the engine's own
+  vehicle Fulton by the guest and then by the host, removed on both copies by the never-run index Despawn.
+- **Checks:** red `1fce7337` -> green `2e066334`; red `056a63ce` -> green `914eeace` (`partner_driver_tests`,
+  `world_vehicle_lua_check`, `steam_transport_tests`). Scenarios `fb1031-vehicle-absent-hide.txt` (africa-jeep, lab:
+  hidden + toast, both-copies control) and `fb1031-vehicle-gone-mb.txt` (mb-ladder, lab), both not run.
+  `coop-vehicle-absent-30020.txt` part B is marked superseded. Full `tools/build.ps1` (Debug, worktree on C:) CTest
+  319/319. A first full run had one failure, `ddt_core_tests_5` (launcher `CloseDuringSetup`, which waits only 2 s for
+  a log line, with other workflows' builds loading the machine). It passed alone, and the rerun passed in full.
+  `generate_partner_contract.py --check` passes.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
