@@ -605,6 +605,30 @@ int main() {
                   "an invalid spawn_warp value refuses");
         }
     }
+    // Enemy follow (soldier_follow, docs/world-sync-design.md 7.8): the guest's copies of the guards near either player
+    // stand where the host's do (the follow rule of soldier_warp::GuestAdmit, CFG r[19]). Lab and play; off unless named
+    // until its hidden run passes (also with the gun profile); a named 1 runs in both, no refusal bit.
+    {
+        Check(!LabConfig{}.soldier_follow && !LabConfig{}.soldier_follow_given, "soldier_follow off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
+            const auto plain = Lab(base);
+            Check(!plain.soldier_follow && !plain.soldier_follow_given && plain.play_refused == 0, "soldier_follow off when not named");
+            const auto gun = Lab(base + "net=1\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\n"
+                                        "partner_dm=map\npartner_native_profile=gun\nworld=3\n");
+            Check(!gun.soldier_follow && !gun.soldier_follow_given && gun.fulton_sync, "soldier_follow stays off with the gun profile");
+            const auto named = Lab(base + "soldier_follow=1\n");
+            Check(named.soldier_follow && named.soldier_follow_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named soldier_follow 1 runs in lab and play");
+            const auto off = Lab(base + "soldier_follow=0\n");
+            Check(!off.soldier_follow && off.soldier_follow_given && off.play_refused == 0, "a named soldier_follow 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=guest\nsoldier_follow=") + value + "\n");
+            Check(!invalid.soldier_follow && !invalid.soldier_follow_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid soldier_follow value refuses");
+        }
+    }
     // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
     // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
     // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs

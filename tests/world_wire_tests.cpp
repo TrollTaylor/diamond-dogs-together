@@ -1374,7 +1374,9 @@ void SpawnSync() {
     Check(Tx(g_host, op::enemy_debug, {0, 9, 1, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "seq 0 refused");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 100000001, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "position bound");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 8001, 0, 0, 0}, 103) == world::TxStatus::bad_args, "yaw bound");
-    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 4, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 8, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound");
+    // Enemy follow (docs/world-sync-design.md 7.8): flag 4 first, the host's place-first correction.
+    Check(world::place::flag_first == 4, "flag 4 is place first");
     Exchange(104);
     Check(!g_guest.FindGrant(1, 104, grant) && g_guest.grant_count() == 0, "no grant before the guest's Lua pops the message");
     Check(Drain(g_guest, 1, 104).empty(), "ENEMY_DEBUG never rides the control queue");
@@ -1401,22 +1403,26 @@ void SpawnSync() {
     const auto acks = Drain(g_host, 3, 108);
     Check(acks.size() == 1 && acks[0].op == op::enemy_debug_ack && acks[0].v[1] == ent && acks[0].v[4] == 12 && acks[0].v[5] == 34,
           "ACK reaches the host world queue");
-    // Twenty corrections: the pending warp grant survives, the oldest corrections go.
-    Check(world::kGrants == 16, "16 grant slots");
-    for (std::int64_t seq = 10; seq < 30; ++seq)
-        Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
+    // Eighty corrections: the pending warp grant survives, the oldest corrections go. 64 slots (enemy follow samples the
+    // guards near both players: the 16 of 0.14.7 could evict a grant whose correction still waited in the guest's FIFO).
+    Check(world::kGrants == 64, "64 grant slots");
+    for (std::int64_t seq = 10; seq < 90; ++seq) {
+        Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, seq == 89 ? 4 : 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
+        if (seq % 20 == 0) Exchange(111);
+    }
     Exchange(111);
     std::uint64_t at = 112;
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 80; ++i) {
         world::RxReply r{};
         g_guest.Rx(3, 40, at++, r);
         Check(!r.empty && r.op == op::enemy_debug && r.v[2] == 3, "correction popped");
     }
     Check(g_guest.grant_count() == world::kGrants && g_guest.FindGrant(1, at, grant) && grant.kind == 1 && grant.serial == first_serial,
           "the warp grant is kept with its serial");
-    Check(g_guest.FindGrant(29, at, grant) && grant.kind == 3 && grant.serial == first_serial + 20 && g_guest.FindGrant(15, at, grant) &&
-              grant.serial == first_serial + 6 && !g_guest.FindGrant(14, at, grant) && !g_guest.FindGrant(10, at, grant),
-          "the oldest corrections are replaced; every recorded grant gets the next serial");
+    Check(g_guest.FindGrant(89, at, grant) && grant.kind == 3 && grant.flags == 4 && grant.serial == first_serial + 80 &&
+              g_guest.FindGrant(27, at, grant) && grant.serial == first_serial + 18 && !g_guest.FindGrant(26, at, grant) &&
+              !g_guest.FindGrant(10, at, grant),
+          "the oldest corrections are replaced; every recorded grant gets the next serial; a place-first keeps flag 4");
     // Resets: unpair (link session), local mission start/end, a new host epoch.
     g_guest.OnLinkState(true, 2, 200);
     Check(g_guest.grant_count() == 0 && !g_guest.FindGrant(19, 200, grant), "a link session change clears the grants");

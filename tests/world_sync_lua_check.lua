@@ -101,6 +101,11 @@ local function fixture(options)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
                 local p = c.peer
+                if options.follow ~= nil then
+                    -- Enemy follow: a 19-value loader, r[19] the follow flag (lab key soldier_follow).
+                    return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, options.follow and 1 or 0
+                end
                 if options.fulton ~= nil then
                     -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
                     -- fulton_look 4, fulton_one_save 8; a number is passed as is).
@@ -186,7 +191,7 @@ local function fixture(options)
             if k == 'ChangeLifeState' and not c.inert then c.life[id] = cmd.state end
             if k == 'RequestForceFulton' and not c.inert then c.fultonAsked = (c.fultonAsked or 0) + 1 end
             if k == 'SetPhase' and not c.inert then c.phase[names[id]] = cmd.phase end
-            if k == 'RecoveryLife' then c.life[id] = 0 end
+            if k == 'RecoveryLife' and not c.noWake then c.life[id] = 0 end
         end}
     env.TppGameObject = {NPC_LIFE_STATE_DEAD = LIFE.DEAD, NPC_LIFE_STATE_DYING = LIFE.DYING, NPC_LIFE_STATE_SLEEP = LIFE.SLEEP,
         NPC_LIFE_STATE_FAINT = LIFE.FAINT, PHASE_SNEAK = PHASE.SNEAK, PHASE_CAUTION = PHASE.CAUTION, PHASE_EVASION = PHASE.EVASION,
@@ -1759,6 +1764,101 @@ do
     local frozen = n.W.now()
     for _ = 1, 100 do F.call(envn, 'OnUpdate') end
     check(n.W.now() == frozen and n.W.held == 0 and not has(n.logs, 'event=raw_clock;'), 'no wall clock: nothing held')
+end
+
+-- 17. Enemy follow (CFG r[19], lab key soldier_follow; docs/world-sync-design.md 7.8): W.followOn; the guest requests an
+-- unattributed change too (REQ_OUTCOME v[8] 2 another attacker, 3 none); the host's authority rules (attributed commits as
+-- before, an unattributed terminal state wins within 150 m of the partner body, anything else REJECT 12); REJECT 12 applies
+-- the host's state on the guest; d_m on every apply with a wire position; a failed wake-up retried every 5 s, 3 times.
+do
+    local env0, c0 = fixture({role = 2, fulton = 0})
+    F.start(env0, c0)
+    check(c0.W.followOn == false, 'an 18-value CFG: follow off')
+    local env, c = fixture({role = 2, follow = true})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    check(c.W.followOn == true, 'CFG r[19] 1: follow on')
+    F.pair(env, c, 3)
+    F.push(c, 1, OP.AREA, 2, 30010)
+    F.tick(env, c, 1)
+    F.clear(c)
+    c.life[c.ids.sol_a2] = LIFE.DEAD
+    F.msg(env, 'GameObject', 'Dead', c.ids.sol_a2, 55, 5)
+    F.tick(env, c, 1)
+    local req = F.tx(c, OP.REQ_OUTCOME)[1]
+    check(req and req.v[2] == u32('sol_a2') and req.v[4] == 5 and req.v[8] == 2 and not has(c.logs, 'why=not_attributed') and
+        has(c.logs, ';att=2'), 'follow: a crossfire death is requested with attribution 2, no divergence')
+    F.clear(c)
+    c.life[c.ids.sol_a3] = LIFE.SLEEP
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_a3)
+    F.tick(env, c, 1)
+    req = F.tx(c, OP.REQ_OUTCOME)[1]
+    check(req and req.v[2] == u32('sol_a3') and req.v[4] == 2 and req.v[8] == 3, 'follow: an unattributed knockout is attribution 3')
+    local sleepRid = req.v[1]
+    F.clear(c)
+    c.life[c.ids.sol_a1] = LIFE.DEAD
+    F.msg(env, 'GameObject', 'Dead', c.ids.sol_a1, 0, 77)
+    F.tick(env, c, 1)
+    req = F.tx(c, OP.REQ_OUTCOME)[1]
+    check(req and req.v[2] == u32('sol_a1') and req.v[8] == 0, 'follow: the local player\'s kill is attribution 0')
+    -- REJECT 12: the host's state (NORMAL, ver 0) applies here: the asleep copy wakes up.
+    F.clear(c)
+    F.push(c, 0, OP.REJECT, sleepRid, OP.REQ_OUTCOME, 12, u32('sol_a3'), 0, 0)
+    F.tick(env, c, 2)
+    check(F.callCount(c, 'RecoveryLife:sol_a3:') == 1 and has(c.logs, 'event=req_done;rid=' .. sleepRid .. ';result=reject;reason=12'),
+        'REJECT 12: the host state wakes this copy')
+    -- d_m: the distance between the sender's copy (OUTCOME x, z) and this copy when applied.
+    F.clear(c)
+    F.push(c, 1, OP.OUTCOME, u32('sol_b2'), 1, 2, 1, 3, 0, 0, 0, 5000, 0, 1000)
+    F.tick(env, c, 15)
+    check(has(c.logs, 'event=apply;ent=' .. hs('sol_b2') .. ';state=2;ver=1;src=outcome;result=ok;readback=2;d_m=4.0'),
+        'the apply line carries d_m (copies 4 m apart)')
+    -- A wake-up that fails is retried every 5 s, at most 3 times (each attempt sends RecoveryLife twice: +0 and +1 s).
+    F.clear(c)
+    c.noWake = true
+    F.push(c, 1, OP.OUTCOME, u32('sol_b2'), 1, 0, 2, 9, 0, 0, 2, 0, 0, 0)
+    F.tick(env, c, 30 * 30, 33)
+    check(F.callCount(c, 'RecoveryLife:sol_b2:') == 8 and has(c.logs, 'event=ledger;ent=' .. hs('sol_b2') .. ';op=hold;reason=apply_failed'),
+        'a failed wake-up: tried 4 times in all (8 RecoveryLife), then held')
+    F.tick(env, c, 20 * 30, 33)
+    check(F.callCount(c, 'RecoveryLife:sol_b2:') == 8, 'no fifth try')
+    c.noWake = nil
+    -- Host: the authority rules.
+    local henv, h = fixture({follow = true})
+    F.start(henv, h, function() h.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(henv, h, 3)
+    h.W.place = {partnerXZ = function() return h.partnerX, h.partnerZ end, tick = function() end}
+    h.pos[h.ids.sol_a1] = vec(10, 0, 10)
+    h.partnerX, h.partnerZ = 20000, 10000
+    F.clear(h)
+    F.push(h, 1, OP.REQ_OUTCOME, 41, u32('sol_a1'), 1, 5, 0, 1, 55, 2, 12000, 0, 10000)
+    F.tick(henv, h, 15)
+    check(has(h.logs, 'event=terminal_win;rid=41;ent=' .. hs('sol_a1') .. ';state=5;att=2;partner_m=10.0') and
+        F.callCount(h, 'ChangeLifeState:sol_a1:' .. LIFE.DEAD) == 1 and F.tx(h, OP.OUTCOME)[1] and #F.tx(h, OP.REJECT) == 0,
+        'host: a crossfire death within 150 m of the partner body wins')
+    check(has(h.logs, 'event=apply;ent=' .. hs('sol_a1') .. ';state=5;ver=1;src=commit;result=ok;readback=5;d_m=2.0'),
+        'host: d_m between the guest\'s copy (wire) and the host copy')
+    F.clear(h)
+    h.partnerX, h.partnerZ = 400000, 0
+    F.push(h, 1, OP.REQ_OUTCOME, 42, u32('sol_a2'), 1, 5, 0, 1, 55, 2, 0, 0, 0)
+    F.push(h, 1, OP.REQ_OUTCOME, 43, u32('sol_a3'), 1, 2, 0, 3, 0, 3, 0, 0, 0)
+    F.push(h, 1, OP.REQ_OUTCOME, 44, u32('sol_b1'), 1, 2, 0, 3, 0, 0, 0, 0, 0)
+    F.tick(henv, h, 2)
+    local rej = F.tx(h, OP.REJECT)
+    check(#rej == 2 and rej[1].v[1] == 42 and rej[1].v[3] == 12 and rej[2].v[1] == 43 and rej[2].v[3] == 12 and
+        F.callCount(h, 'ChangeLifeState:sol_a2:' .. LIFE.DEAD) == 0 and F.callCount(h, 'ChangeLifeState:sol_a3:' .. LIFE.SLEEP) == 0,
+        'host: a crossfire death far from the partner and an unattributed knockout are refused (REJECT 12)')
+    check(has(h.logs, 'event=req_rx;rid=43;ent=' .. hs('sol_a3') .. ';state=2;result=reject;reason=12;att=3') and
+        has(h.logs, 'event=commit;ent=' .. hs('sol_b1') .. ';state=2;ver=1;actor=guest;rid=44'),
+        'host: an attributed knockout commits as before')
+    -- Without follow on the host, every unattributed request is refused (12).
+    local oenv, o = fixture({follow = false})
+    F.start(oenv, o, function() o.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(oenv, o, 3)
+    o.W.place = {partnerXZ = function() return 0, 0 end, tick = function() end}
+    F.clear(o)
+    F.push(o, 1, OP.REQ_OUTCOME, 51, u32('sol_a1'), 1, 5, 0, 1, 55, 2, 0, 0, 0)
+    F.tick(oenv, o, 2)
+    check(F.tx(o, OP.REJECT)[1] and F.tx(o, OP.REJECT)[1].v[3] == 12, 'host without follow: an unattributed death is refused (12)')
 end
 
 -- 16. Errors and originals.

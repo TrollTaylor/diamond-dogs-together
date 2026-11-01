@@ -237,9 +237,22 @@ int main() {
     r = sw::Warp(base, span, request);
     Check(std::strcmp(r.refusal, "anomaly") == 0 && r.out == 0 && r.handled == 0 && seen.calls == 3,
           "a getter-shaped hop writes a qword into the 16-byte answer and is an anomaly");
+    // Enemy follow multiplies warps: an anomaly counts against its guard; the second on one guard latches that guard off,
+    // the fifth across guards latches the feature off.
     sw::Gate latch{};
-    Check(latch.Admit(1, go) == nullptr && std::strcmp(latch.Record(r), "anomaly") == 0 &&
-          std::strcmp(latch.Admit(2, go), "latched") == 0, "an anomaly latches the feature off");
+    Check(latch.Admit(1, go) == nullptr && latch.Record(r) == nullptr && latch.SoldierAnomalies(go) == 1 && latch.anomalies == 1 &&
+          !latch.latched && latch.Admit(2, go) == nullptr, "a first anomaly counts against its guard only");
+    Check(std::strcmp(latch.Record(r), "soldier") == 0 && latch.SoldierAnomalies(go) == 2 && !latch.latched &&
+          std::strcmp(latch.Admit(3, go), "soldier") == 0, "a guard's second anomaly latches that guard off");
+    Check(latch.Admit(4, go + 1) == nullptr && latch.Record(r) == nullptr && latch.Admit(5, go + 2) == nullptr &&
+          latch.Record(r) == nullptr && latch.anomalies == 4 && !latch.latched, "other guards still move");
+    Check(latch.Admit(6, go + 3) == nullptr && std::strcmp(latch.Record(r), "anomaly") == 0 && latch.anomalies == 5 &&
+          std::strcmp(latch.Admit(7, go + 4), "latched") == 0, "the fifth anomaly latches the feature off");
+    sw::Gate faulted{};
+    sw::Result fault_result{};
+    fault_result.refusal = "fault";
+    Check(faulted.Admit(1, go) == nullptr && std::strcmp(faulted.Record(fault_result), "fault") == 0 &&
+          std::strcmp(faulted.Admit(2, go + 1), "latched") == 0, "a fault still latches the feature off at once");
     // A recognized forwarder that does not reach the verified handler on a soldier subobject refuses unsent.
     handle_vt[0x10 / 8] = base + c::forwarder_rva;
     alignas(16) static unsigned char other[0x100]{};
@@ -294,18 +307,57 @@ int main() {
     for (const char* text : bad_receipts) Check(!parse(text, command, parsed), text);
     Check(!sw::ParseReceipt(nullptr, 4, command, parsed) && !sw::ParseReceipt("1 1027 0 0 0 0", 0, command, parsed),
           "null or empty receipt refused");
-    // Guest grant admission (GuestWarpReceipt): the lab key rule (any kind) and the Mother Base staff rule (play or
-    // lab, mission 30050, corrections only: each staff member stands where the host's copy is).
-    bool staff = true;
-    Check(sw::GuestAdmit({true, false, true, 30010, false}, staff) == nullptr && !staff, "lab key: a warp grant anywhere");
-    Check(sw::GuestAdmit({true, false, true, 30050, true}, staff) == nullptr && !staff, "lab key first: never the staff rule");
-    Check(std::strcmp(sw::GuestAdmit({true, false, false, 30010, true}, staff), "disabled") == 0, "lab without the key, free roam");
-    Check(sw::GuestAdmit({false, true, false, 30050, true}, staff) == nullptr && staff, "play at Mother Base: a correction");
-    Check(sw::GuestAdmit({true, false, false, 30050, true}, staff) == nullptr && staff, "lab without the key at Mother Base: a correction");
-    Check(std::strcmp(sw::GuestAdmit({false, true, false, 30050, false}, staff), "disabled") == 0 && !staff,
+    // Guest grant admission (GuestWarpReceipt): the lab key rule (any kind), the enemy follow rule (play or lab with
+    // soldier_follow, 30010 / 30020 / 30050, corrections only) and the Mother Base staff rule (play or lab, mission
+    // 30050, corrections only: each staff member stands where the host's copy is).
+    using G = sw::GuestGrant;
+    G staff = G::staff;
+    Check(sw::GuestAdmit({true, false, true, 30010, false}, staff) == nullptr && staff == G::lab, "lab key: a warp grant anywhere");
+    Check(sw::GuestAdmit({true, false, true, 30050, true}, staff) == nullptr && staff == G::lab, "lab key first: never the staff rule");
+    Check(std::strcmp(sw::GuestAdmit({true, false, false, 30010, true}, staff), "disabled") == 0 && staff == G::none,
+          "lab without the key, free roam");
+    Check(sw::GuestAdmit({false, true, false, 30050, true}, staff) == nullptr && staff == G::staff, "play at Mother Base: a correction");
+    Check(sw::GuestAdmit({true, false, false, 30050, true}, staff) == nullptr && staff == G::staff,
+          "lab without the key at Mother Base: a correction");
+    Check(std::strcmp(sw::GuestAdmit({false, true, false, 30050, false}, staff), "disabled") == 0 && staff == G::none,
           "play at Mother Base: never a warp, route or come grant");
     Check(std::strcmp(sw::GuestAdmit({false, true, true, 30010, true}, staff), "disabled") == 0, "play in free roam: refused (key ignored)");
     Check(std::strcmp(sw::GuestAdmit({false, false, true, 30050, true}, staff), "role") == 0, "neither play nor lab: refused");
+    // Enemy follow (docs/world-sync-design.md 7.8).
+    const unsigned short follow_missions[] = {30010, 30020, 30050};
+    for (const unsigned short mission : follow_missions) {
+        Check(sw::GuestAdmit({false, true, false, mission, true, true}, staff) == nullptr && staff == G::follow,
+              "follow: a play correction in free roam and at Mother Base");
+        Check(sw::GuestAdmit({true, false, false, mission, true, true}, staff) == nullptr && staff == G::follow,
+              "follow: a lab correction without the lab key");
+        Check(std::strcmp(sw::GuestAdmit({false, true, false, mission, false, true}, staff), "disabled") == 0 && staff == G::none,
+              "follow: never a warp, route or come grant");
+    }
+    Check(std::strcmp(sw::GuestAdmit({false, true, false, 30010, true, false}, staff), "disabled") == 0, "follow off: free roam refused");
+    Check(std::strcmp(sw::GuestAdmit({false, true, false, 10033, true, true}, staff), "disabled") == 0 &&
+          std::strcmp(sw::GuestAdmit({false, true, false, 40010, true, true}, staff), "disabled") == 0,
+          "follow: never in a story mission or an ACC");
+    Check(std::strcmp(sw::GuestAdmit({false, false, false, 30010, true, true}, staff), "role") == 0, "follow: neither play nor lab refused");
+    Check(sw::GuestAdmit({true, false, true, 30010, true, true}, staff) == nullptr && staff == G::lab, "the lab key comes first");
+    Check(sw::FollowMission(30010) && sw::FollowMission(30020) && sw::FollowMission(30050) && !sw::FollowMission(40050) &&
+          !sw::FollowMission(10010), "follow missions: free roam and Mother Base");
+    // The nearer player (the follow and staff range) and the 250 m far bound.
+    const float target[3] = {100.0f, 0.0f, 0.0f}, host_at[3] = {0.0f, 0.0f, 0.0f}, self_at[3] = {90.0f, 0.0f, 0.0f};
+    bool self_nearer = false;
+    Check(std::fabs(sw::NearerSquared(target, host_at, self_at, true, true, self_nearer) - 100.0f) < 1e-3f && self_nearer,
+          "the guest's own player is nearer");
+    Check(std::fabs(sw::NearerSquared(target, host_at, self_at, true, false, self_nearer) - 10000.0f) < 1e-2f && !self_nearer,
+          "no own pose: the host's remote pose");
+    const float host_near[3] = {99.0f, 0.0f, 0.0f};
+    Check(std::fabs(sw::NearerSquared(target, host_near, self_at, true, true, self_nearer) - 1.0f) < 1e-3f && !self_nearer,
+          "the host nearer: the host's remote pose");
+    Check(std::fabs(sw::NearerSquared(target, host_near, self_at, false, true, self_nearer) - 100.0f) < 1e-3f && self_nearer,
+          "a stale remote pose: only the guest's own player counts");
+    Check(!(sw::NearerSquared(target, host_near, self_at, false, false, self_nearer) <= sw::kFollowFarM * sw::kFollowFarM) &&
+          !self_nearer, "neither pose: beyond every bound");
+    const float far_target[3] = {400.0f, 0.0f, 0.0f};
+    Check(!(sw::NearerSquared(far_target, host_at, self_at, true, true, self_nearer) <= sw::kFollowFarM * sw::kFollowFarM) &&
+          sw::kFollowFarM == 250.0f, "a target 310 m from the nearer player is beyond the far bound");
     Check(sw::GuestMayWarp(true, false, true) && sw::GuestMayWarp(false, true, false) && sw::GuestMayWarp(true, false, false) &&
           !sw::GuestMayWarp(false, false, true), "Verify runs for a play or lab guest");
     VirtualFree(image, 0, MEM_RELEASE);
