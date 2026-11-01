@@ -1,3 +1,52 @@
+## November 1, 2026: r1101 Prove - the partner's steering pose on by default (`partner_ride_steer` follows the gun profile in lab and play; hidden runs `ba1a041a`, `bfd46ce5`, `4c098120`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner drives a
+  jeep, the partner's character on this screen sits with both hands level on the wheel while they go straight, turns
+  the wheel one way while they steer left and the other way while they steer right, and gets off without a lean.
+  Before, the seated driver always showed the full-left turning pose (body 1's rate record keeps the constructor's 0.0
+  steer blend; docs/vehicle-ws3.md "Driver pose"). Both copies need the key (the driver's copy sends its ride blends
+  on the ride wire's v5 steer addendum, the viewer's copy writes them into body 1's record). A named
+  `partner_ride_steer=0` turns it off.
+- **Still not fixed:** the wheels of the viewer's copy of the vehicle neither turn nor spin (the copy is placed by
+  SetPosition every frame; the next step is the lab runtime read of the slot control block and wheel objects, docs
+  "Not fixed: the wheels"). Not exercised: a truck (same driver phase, same write [I]) and a gamepad driver.
+- **Proof** (hidden worker, play, `-WanSim bad`, africa-jeep seed, native gun profile, rtt ~178..183 ms; both copies'
+  sliced script-observer logs and frames looked at; sheets and crops under the run archive `r1101/frames/vanim/`,
+  nametags masked):
+  - `ba1a041a` (`r1101-vanim-play.txt` as merged, the key named): A met every waitlog (host `tx` 125 straight, down to
+    0 for a, up to 250 for d; guest `save` 0.000, writes 0.500 / 0.012 / 0.988, no `drift`) and the guest's frames
+    show the host's three seated poses, but the run stopped at the review form's second `placebehind` beside the seated
+    host: the harness's landing check needs the target's partner pose, which a seated partner does not give (as M6 run
+    `11fe8abd`). Scenario fix `5400cb28`: both get-offs from the standing jeep where the viewer stands, B at A's spot
+    and offset (B's old spot after A's drive had a bush in `38714f32`), the drives last.
+  - `c652248c`: refused before admission (`Start-WorkerSession`: "Access to the path is denied." on a file move,
+    before prepare; nothing launched, baseline and saves restored). The one retry followed.
+  - `bfd46ce5` (the fixed scenario, the key named): every waitlog met in A1, B1, A2 and B2. Host frames (B1, the
+    host watching from A's spot): the guest seated with both forearms level, then one arm over the top of the wheel
+    with the near arm low for a, the near arm raised on the wheel for d; guest frames (A1): the same three poses of
+    the host; the get-off on both screens: straight, hands level, then out over the side. Logs: the viewer wrote
+    0.004 .. 0.992 (accel up to 0.424 in the drives) and 0.500 through each exit; all four restores `phase=idle;
+    ok=1; drifts=0`; no `partner_ride_steer=drift` / `refused` line.
+  - `4c098120` (`r1101-vanim-default-play.txt`, NO key named: session lab settings empty; the green build): A1 and
+    B1, every waitlog met (the steer lines print only with the key on), restores `drifts=0`, the same three poses on
+    the host's screen and on the guest's.
+  - None of the three logged GameOver, `step=error`, `viewer_changed`, an exception, a non-zero fault count or a
+    non-zero `bad_op` / `wrong_dir` / `unknown_op`; one host `partner_ride_steer=held; queued=8` in `bfd46ce5` (the
+    vanim-4 hold under `-WanSim bad`, as designed).
+- **Mismatch vanim-3 settled for the default:** no per-frame writer fights the viewer's writes (no `drift` line in
+  `bfd46ce5` / `4c098120`). The value found before the first write (0.567 / 0.600, aux 0.500) shows only on a copy
+  whose own player drove earlier in the session; a copy whose player has not driven saves 0.000. What writes it after
+  the own ride is unknown [U]; the restore puts it back once body 1 is on foot.
+- **Commits:** `5400cb28` (scenario: get-offs from the standing jeep, B at A's spot), `9e0aaf4b` red (lab_config_tests:
+  the gun profile turns `partner_ride_steer` on in lab and play, off without it, a named 0 opts out, an invalid value
+  is named and off; friend_package_tests_2: play defaults it on, a named 0 turns it off), `9628e97f` green
+  (`partner_ride_steer_given`, `ResolveWeaponDefaults`, lab_ini_check prints `_given`, worker help, wire header
+  comment), `4e9478a7` (the shipped-default scenario; `r1101-vanim-play.txt` records `bfd46ce5`), then README (What
+  works, Known limits), docs/vehicle-ws3.md "Driver pose" and docs/anim-round1-seat.md.
+- **Checks:** -Fast 315/315 at the green `9628e97f`; friend_package / lab_scripts / worker_session / lab_config /
+  lab_ini / partner_driver / partner_ride 15/15; worker_session_tests 2/2 at `5400cb28` and `4e9478a7` (every shipped
+  scenario validates). No Lua file changed. Nothing pushed, tagged or released.
+
 ## November 1, 2026: r1101 Prove - anim truth on by default (`partner_native_aim_truth` follows the gun profile in lab and play; hidden runs `3c5609bb`, `44391e17`, A/B `9fa2d353`; `wp/integ-1101`, local only)
 
 - **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner holds RMB

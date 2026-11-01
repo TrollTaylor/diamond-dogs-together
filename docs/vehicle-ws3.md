@@ -177,7 +177,7 @@ seat-mode hide of a live vehicle ride, once per reason).
 - Known limit: a large move (>= 1 m or >= 0.1 rad, e.g. after a relay burst) still takes 0xBA9710's
   yaw-only branch for one frame.
 
-## Driver pose (r1101 vanim, `partner_ride_steer`, off unless named)
+## Driver pose (r1101 vanim, `partner_ride_steer`, follows the gun profile since the r1101 Prove phase)
 
 User report (2026-11-01): "the driver seems to always be in the turning left animation? and the tires never move on
 the other player screen". Branch `wp/vehicle-anim`.
@@ -198,7 +198,8 @@ for seat kinds 3 and 4), `+0x08` = aux. Sub-phase 3 (enter, `0x124E9A5`, pinned)
 stays 0.0, the full-left end, for the whole ride. That the seated loop state reads `+0x34` for its turn blend is
 inferred from this code and the clip names (`snapplv_s_dve_lp`, `_dve_tun_l`, `_dve_trn_r`); a frame is the proof.
 
-**Fix.** With `partner_ride_steer=1` on both copies:
+**Fix.** With `partner_ride_steer` on on both copies (the default with the native gun profile in lab and play since
+the r1101 Prove phase; a named `partner_ride_steer=0` turns it off):
 
 - the driver's copy (read only) reads its own body 0 blends while its player drives (seat 0 of the vehicle its ride
   packet names; `partner_player::ReadRideRates`) and sends them on the ride wire's **v5 steer addendum** (16 bytes,
@@ -264,13 +265,17 @@ Second static pass (2026-11-01, capstone over the read-only RE copy) [I unless m
 neutral before a packet, the peer's blends, the lease back to neutral, a drift, the refused write, straight through
 the exit, the restore once idle; MissionEnd / MissionStart with the same code drop the originals unwritten; a
 passenger and the key off never write),
-`lab_config_tests` (off unless named in lab and play; invalid values), `worker_session_tests` (the allow-lists).
+`lab_config_tests` (follows the gun profile in lab and play, off without it, a named 0 opts out; invalid values),
+`friend_package_tests` (play defaults it on, a named 0 turns it off), `worker_session_tests` (the allow-lists).
 
 **Proof scenario.** `tools/worker/scenarios/r1101-vanim-play.txt` (play, `-WanSim bad`, `-SaveSeed africa-jeep`):
 the viewer stands 6 m out from the driver's door, 3 m toward the nose; the driver steers a, then d with the jeep
-standing (both screens captured), then rolls straight, left and right; then the roles swap. The viewer's camera is
-swung by a mouse move after the placement (placebehind faces the target, which the over-the-shoulder camera keeps
-behind the viewer's own back).
+standing (both screens captured) and gets off there (A1); the roles swap at the same jeep spot and offset (B1); then
+each driver rolls straight, left and right, stops and gets off (A2, B2). The viewer's camera is swung by a mouse move
+after the placement (placebehind faces the target, which the over-the-shoulder camera keeps behind the viewer's own
+back). The viewer is never placed beside a seated driver: the harness's landing check needs the target's partner pose,
+which a seated partner does not give (run `ba1a041a` stopped there, as M6 run `11fe8abd`).
+`r1101-vanim-default-play.txt` is A1 and B1 with no key named (the shipped default).
 
 **Hidden runs (play, `-WanSim bad`, africa-jeep, key named).**
 
@@ -281,7 +286,22 @@ behind the viewer's own back).
 | `38714f32` | the same, camera swung | **[O] A (guest watching):** the host seated with both hands level on the wheel, then a distinct turning pose for a and the opposite one for d with the jeep standing (frames `guest-a-seated`, `guest-a-steer-left-01..03`, `guest-a-steer-right-01..03`; the host's own screen shows the same two poses and its own front wheels turned). **[O] the copy's front wheels do not turn** (the same crop in all three frames: the known limit). B (host watching): logs as in A (host save 0.600, writes 0.008 .. 0.980, restore ok=1), frames inconclusive (a bush between the host and the driver's seat). No refusal, error or fault on either copy |
 
 Frames and labelled sheets: the run archive `r1101/frames/vanim/` (`sheet-38714f32.jpg`, the driver and front-wheel
-crops). The pose fix is proven on the guest-watching side by frame. The key stays off unless named.
+crops). The pose fix was then proven on the guest-watching side by frame; the key stayed off unless named.
+
+**Prove phase (r1101, `wp/integ-1101`): proven on both copies, on by default.**
+
+| Run | Scenario | Result |
+|---|---|---|
+| `ba1a041a` | `r1101-vanim-play.txt` (review form), key named | A met every waitlog (host `tx` 125 straight, down to 0 for a, up to 250 for d; guest `save` 0.000, writes 0.500 / 0.012 / 0.988, no `drift`); **[O]** guest frames: the host's hands level, then the two turning poses (as `38714f32`). Stopped at the second `placebehind` beside the seated host (the landing check above); B never ran |
+| `c652248c` | the reordered scenario | Refused before admission (`Start-WorkerSession`: "Access to the path is denied." on a file move, before prepare; nothing launched, baseline and saves restored); the one retry followed |
+| `bfd46ce5` | the reordered scenario, key named | Every waitlog met (A1, B1, A2, B2). **[O] B1 (host watching, A1's spot, no bush):** the guest seated with both forearms level, one arm over the top of the wheel and the near arm low for a, the near arm raised on the wheel for d; **[O] A1 (guest watching):** the same three poses of the host. **[O] the get-off on both screens:** the driver sits straight, hands level, then climbs out over the side; no left lean. Logs: the viewer wrote 0.004 .. 0.992 (with accel up to 0.424 in the drives) and 0.500 through each exit; all four restores `phase=idle; ok=1; drifts=0`; no `drift` / `refused` line, no `step=error`, `viewer_changed`, GameOver or fault; `bad_op` / `wrong_dir` / `unknown_op` 0 on both. One `partner_ride_steer=held; queued=8` on the host (the vanim-4 hold, as designed) |
+| `4c098120` | `r1101-vanim-default-play.txt`, **no key named** (the green build) | Every waitlog met: the steer lines print at the shipped default on both copies; restores `drifts=0`; **[O]** the same three poses on the host's screen (B1) and on the guest's (A1); no refusal, error or fault |
+
+Sheets and crops (nametags masked): `r1101/frames/vanim/ba1a041a-sheet.jpg`, `bfd46ce5-sheet.jpg`,
+`4c098120-sheet.jpg`, `*-poses-crop.jpg`, `bfd46ce5-*-getoff-crop.jpg`. `partner_ride_steer` now follows the native
+gun profile in lab and play (`ResolveWeaponDefaults`, `partner_ride_steer_given`); a named 0 turns it off. Not
+exercised: a truck (the africa-jeep seed has none at the jeep; the same driver phase, so the same write [I]), a
+gamepad driver (the worker drives a keyboard: a stick gives partial blends between the ends [I]).
 
 **Mismatch (review vanim-3): the host copy's record had another writer.** The root cause above says body 1's record
 keeps the constructor's 0.0 because nothing else writes it, and the scenario expected `save; ... steer=0.000`. The
@@ -298,6 +318,13 @@ exit get-off is held straight. Before any default flip:
    view (the viewer placed again before `press e`): no `drift` lines on the host means no per-frame writer;
 2. if drift lines appear, a lab read of body 1's `+0x08`/`+0x30`/`+0x34` every tick from the seat start through
    confirmed on the host copy with the writes off, to find the other writer.
+
+Result (Prove phase): step 1 done in `bfd46ce5` and `4c098120` (B framed from A's spot, the get-off from the standing
+jeep): **no `drift` line on either copy**, every restore `drifts=0`. The pre-write value is there once, not every
+frame [O log]: it shows on a copy whose own player drove earlier in the session (host B1 0.600 / aux 0.500 and B2
+0.600 in `bfd46ce5`, 0.567 / aux 0.500 in `4c098120`; the guest's A2 save 0.600 after its own B1 drive), while a copy
+whose player has not driven yet saves 0.000 (every guest A1). What writes it after the own ride is still unknown [U];
+it does not fight the viewer's writes, and the restore puts it back once body 1 is on foot. Step 2 is not needed.
 
 **Channel 2 budget (review vanim-4).** The addendum is a latest-wins value appended on reliable channel 2, whose
 32-message window (counted from the oldest unacknowledged id) it shares with the carry START/DROP events (sent once, no
