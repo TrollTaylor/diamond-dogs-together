@@ -3024,13 +3024,28 @@ One `friendly_hit=owner` per copy; no `friendly_hit=ignored`, `step=error`, `vie
   113 before it is `verdict=takedown`. A landed strike is one friendly hit, cause sleep, into the queue the damage hook uses
   (`downed_player::QueueFriendlyHit(P, 0, 2)`); the victim's copy applies the stock player sleep (it wakes by itself
   after 30 s, or with a revive). No new wire op and no new read or patch site.
-- **Line:** `partner_melee=strike; act=113|114; verdict=land|repeat|takedown|busy|prone|range|height|angle|no_body|no_local|off;
-  queued=0|1; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..` (64 per mission).
+- **What the strike is aimed at (`wp/melee-target`, red `d043ec28`, green `16e2a455`):** a press aimed at a soldier or a
+  Mother Base staff member is the stock CQC acting on that target, and the stock game then sets PlayerStatus
+  `CQC_CONTINUOUS` (bit 0x100 of the tick's `st=` census from `partner_ride.lua`, already sent every tick; static RE:
+  set in the CQC plugin's target state 0x116BDA0 at 0x116BF2B, the state that reads the target id rec+0x78). Evidence
+  before the fix: in the fb1031 Mother Base log the one 113 -> 114 press on staff showed the bit right after its 114
+  (no status change during the 113) and three staff takedowns showed it; no press at the other player ever did (runs
+  `4bc7b732` both copies, `1526e58a`, `9018ae47`, `af0b88b6`). So a strike that passes the reach test is now **held**
+  (`verdict=hold`); `Resolve` (called before `Step` every tick) decides it once: the bit seen since the press's 113
+  edge -> `verdict=target`, no hit (the press's other edge is `target` too); otherwise it lands 250 ms
+  (`kTargetGraceMs`) after the press's 113 ends (its 114 edge), at 900 ms (`kHoldCapMs`), or when a new press starts.
+  Key off or no local read while held: no hit. Without the `st=` census (an old Lua) it lands at once, as before. No new
+  read or patch site. Not chosen: the CQC plugin's own target field rec+0x78 (no known pointer path to the plugin
+  instance: a new pinned read plus a probe), the soldier's `Damage` message (arrival time unobserved, a new receipt)
+  and a Lua soldier-position scan (a geometry guess that would also block intended hits while staff gather).
+- **Line:** `partner_melee=strike; act=113|114; verdict=land|hold|target|repeat|takedown|busy|prone|range|height|angle|
+  no_body|no_local|off; queued=0|1; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..; hold_ms=..; cqc_ms=..;
+  end_ms=..; targets=..` (64 per mission). `hold_ms`: the held edge to the decision; `cqc_ms`: the press's 113 edge to
+  `CQC_CONTINUOUS`; `end_ms`: the press's 113 end (its 114 edge) to the decision; -1 when not applicable.
 - **Not done:** the attacker's strike is not drawn on the victim's screen (the CQC bit on body 1 would act on the
   victim's world: it can grab or punch that copy's soldiers; a DM overlay entry needs the strike's state or clip name,
   not known); CQC grabs and throws of the other player; a soldier punched next to the other player is unchanged (the
-  strike is applied only on the attacker's copy, as before), but a press aimed at a soldier with the other player
-  standing within reach in front also knocks the other player down (the target of the stock strike is not read).
+  strike is applied only on the attacker's copy, as before).
 - Fixtures `partner_melee_tests`, `partner_driver_tests` (`TestMeleeDriver`), `lab_config_tests`; scenario
   `melee-partner-play.txt`.
 
