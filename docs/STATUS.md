@@ -34,8 +34,11 @@
   WEAPONS / ITEMS and the other types (not synced; each needs its own run); the remove path (kind 2, note 21 a=2; H2,
   H3) and the WEAPONS / ITEMS pickup; a box landing on a guard; crossing drops still show the partner's toast on the
   copy whose own request replaced the mirror a moment later. A partner on an older build drops `0x45` as unknown_op.
-- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green; the full build at the
-  final head follows.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `f18fdf44`; full
+  `tools/build.ps1 -Jobs 4` at `fcfd41a7` and at this entry's commit: CTest 347/347; every generator `--check` passes
+  (partner, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller with `--executable`);
+  native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh tree.
 
 ## November 1, 2026: r1101 Prove - F9 Spawn vehicle on by default (`debug_vspawn` follows the gun profile in lab and play; hidden runs `65b4005c`, `e09fcf72`, `6ffe824d`; `wp/integ-1101`, local only)
 
