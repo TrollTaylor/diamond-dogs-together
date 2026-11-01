@@ -177,6 +177,65 @@ seat-mode hide of a live vehicle ride, once per reason).
 - Known limit: a large move (>= 1 m or >= 0.1 rad, e.g. after a relay burst) still takes 0xBA9710's
   yaw-only branch for one frame.
 
+## Driver pose (r1101 vanim, `partner_ride_steer`, off unless named)
+
+User report (2026-11-01): "the driver seems to always be in the turning left animation? and the tires never move on
+the other player screen". Branch `wp/vehicle-anim`.
+
+**Root cause [I, static].** The viewer draws the remote driver with a targeted direct motion
+(`stateVehicleFrontLeftLoop`, docs/anim-round1-seat.md). The real driver runs `RideVehicleAction`; its driver phase
+callback `0x124E140` (the vehicle controller's phase 3) is a 13-way sub-phase switch (table `0x124FD4C`). Sub-phase 2
+(`0x124F2D0`, every frame) smooths three blends in the ride work record (`*(plugin+0x78) + (id - base) * 0x240`):
+
+- `+0x68` steer: the pad stick X (`*(*(P+0x138)+0xB0)` vt+0x68(0)) maps to a target `0.5 + 0.5|x|` (right),
+  `0.5 (1 - |x|)` (left) or the neutral 0.5, approached at a fixed rate;
+- `+0x60` accel and `+0x64` aux (from the throttle, brake and the vehicle's speed `+0x40`), both 0..1;
+
+then (`0x124FC37`, pinned) writes them into the rider's rate record (`*(PS+0x260)` vt+0 (id), the record of
+docs/native-puppet.md "Rates"): `+0x30` = accel, `+0x34` = steer (`1 - x` when work `+0x234` bit 0 is set; clamped
+for seat kinds 3 and 4), `+0x08` = aux. Sub-phase 3 (enter, `0x124E9A5`, pinned) sets `+0x34` = 0.5. Body 1 never runs
+`RideVehicleAction`, and the record constructor (`0xFDD69C`, already pinned) zeroes `+0x08..+0x38`: its steer blend
+stays 0.0, the full-left end, for the whole ride. That the seated loop state reads `+0x34` for its turn blend is
+inferred from this code and the clip names (`snapplv_s_dve_lp`, `_dve_tun_l`, `_dve_trn_r`); a frame is the proof.
+
+**Fix.** With `partner_ride_steer=1` on both copies:
+
+- the driver's copy (read only) reads its own body 0 blends while its player drives (seat 0 of the vehicle its ride
+  packet names; `partner_player::ReadRideRates`) and sends them on the ride wire's **v5 steer addendum** (16 bytes,
+  channel 2, the ride magic; `[2]` seat, `[4..5]` the ride revision, `[6..7]` vehicle, `[8]` steer, `[9]` accel,
+  `[10]` aux in 1/250 units, `[12..15]` sender ms): a change of 2 units after 50 ms, else a 500 ms heartbeat. Line
+  `partner_ride_steer=tx; vehicle=..; seat=0; rev=..; steer=..; accel=..; aux=..; raw=..`;
+- the viewer's copy stores it (`partner_ride_steer=rx`, lease 1.5 s, the exact ride revision, vehicle and seat) and,
+  while its seat episode has the peer seated and confirmed as the driver, writes the three blends into body 1's rate
+  record every tick (`partner_player::WriteRideRates`: index 1, the set guards, the `ReadRates` chain and vtables,
+  0..1, read back). Without a live packet it writes the neutral blends (steer 0.5, accel 0, aux 0): an older peer, a
+  stale packet or a dropped heartbeat shows a straight driver, never the full left. The record's originals are saved
+  before the first write (`partner_ride_steer=save`) and put back when the episode leaves the seated driver
+  (`=restore; ...; ok=1`); a mission change drops them unwritten. Passenger seats are never written (their loops have
+  no steer). Lines `=write; source=neutral|remote; steer=..` (on a source change or a 10-unit move, at most every
+  250 ms) and `=refused; side=driver|viewer; reason=..` (once per reason).
+- An older receiver drops the v5 packet as an invalid ride packet (version 5; one
+  `partner_ride=refused; reason=packet_or_session` line) and keeps its state; an older sender sends none (neutral).
+
+The truck uses the same driver phase (`stateTruckFrontLeftLoop`; seat kinds 3/4 are the clamped case), so the same
+write applies [I]. APC and tank drivers are not drawn seated (hidden), so nothing changes for them.
+
+**Not fixed: the wheels [U].** The viewer's copy of the partner's vehicle is placed every frame by `TppVehicle2`
+`SetPosition` (`world_ride_pose.lua` RIDE_FAST: V vt+0x70 `0x16FBEC0` -> RB vt+0x78 `0x16FDDC0` -> category vt+0x1F0
+`0xBA9710`, a teleport of the physics pose), so its physics wheels never roll or steer. The wheel visuals follow the
+physics wheel constraints (`WheelAssociationAnimPlugin`, `PhxWheelConstraintParam`); no command or field that turns
+or steers a wheel was found statically. The vehicle service has a per-index forced route speed (`0x84692F8D` `speed`
+-> V vt+0x78 `0x16F9070`: move slot `+0x20` value, `+0x24` bit 0; cleared by V vt+0x80 `0x16F8240`), read by the AI
+speed governor `0x16F6CE5`; whether it rolls the wheels of a copy that SetPosition also places is the next probe.
+
+**Tests.** `partner_ride_wire_tests` (the v5 codec, store, lease, the send rule, `PlanSteer`), `partner_driver_tests`
+`TestRideSteerDriver` (sender: key, seat 0 only, read only, refusals; viewer: neutral before a packet, the peer's
+blends, the lease back to neutral, the refused write, the restore once; a passenger and the key off never write),
+`lab_config_tests` (off unless named in lab and play; invalid values), `worker_session_tests` (the allow-lists).
+
+**Proof scenario.** `tools/worker/scenarios/r1101-vanim-play.txt` (play, `-WanSim bad`, `-SaveSeed africa-jeep`):
+the host drives straight, left, right; the guest watches; then the roles swap.
+
 ## Contract (`tools/generate_partner_contract.py`)
 
 18 new code sites (607 total, was 589) and 13 new vtable slots (135, was 122):
