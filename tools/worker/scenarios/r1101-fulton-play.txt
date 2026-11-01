@@ -50,10 +50,16 @@
 #   Probe 614ec20a (lab): the jeep lifted on the host by Seize {"Fulton"} (via=fulton; ok=1) but no frame during the
 #   lift (the burst waits for step=fulton_lift now); "enemy sleep nearest" slept another guard than the one
 #   "enemy goto nearest" reached, so the soldier parts use the four guards of this spot by hash.
+#   Run 7d924fac (r1101 Prove, this file before fulton_one_save existed): every waitlog met on both copies; C, A, B and D
+#   as described above [O logs]; frames: the balloon on the jeep and the jeep going up on the host's screen, the guard
+#   under a balloon on the receiver's screen both ways; the receiver's wormhole was not framed (the guest camera looked
+#   at the ground). In C the still-awake guard 4158955462 shot the guest down (not this track's code).
 labsetting fulton_sync=1
 # Review fixes of 2026-11-01: the early vehicle lift (C) and the borrowed wormhole look (D) have their own keys.
 labsetting fulton_early=1
 labsetting fulton_look=1
+# r1101 Prove: the receiver's soldier credit skip (the Fultoner's save only, reverses D1) has its own key since 42c8cc3d.
+labsetting fulton_one_save=1
 labsetting partner_act_log=1
 title 200
 waitgameplay host 120
