@@ -22,6 +22,10 @@ do
   -- The stock base support items (the common equip block, no mission-block load).
   local SUPPORT = {"Grenade", "StunGrenade", "SmokeGrenade", "SleepingGusGrenade", "Decoy", "C4", "Magazine"}
   local function wlog(s) if type(W) == "table" and type(W.log) == "function" then pcall(W.log, s) end end
+  local function say(text)
+    local f = get(TppUiCommand, "AnnounceLogView")
+    if type(f) == "function" then pcall(f, text) end
+  end
   -- The census: {mission, id, type, ...} of the protected stock guns, nil without one.
   local function resident()
     local r = A.receipt("return 'MGS_COOP_ARMS_RESIDENT_V1'")
@@ -145,6 +149,11 @@ do
   end
   function R.run(a, id)
     local cmd = a[1]
+    -- Lab only until a play run proves the track (STATUS 2026-10-31): play refuses in plain words.
+    if cmd ~= "give_list" and (type(W) ~= "table" or W.mode ~= 1) then
+      say("Not available yet in this build.")
+      return false, "not_available_yet"
+    end
     if cmd == "friendly_fire" and #a == 2 and (a[2] == "0" or a[2] == "1") then
       local on = a[2] == "1"
       local active = type(W) == "table" and W.active == true

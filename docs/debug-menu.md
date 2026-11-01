@@ -307,7 +307,8 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
 ### Give weapon (both players)
 
 At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on
-`wp/give-weapons`, **not run-proven yet**. On in lab and play, for the host and the guest, each for its own player only.
+`wp/give-weapons`, **not run-proven yet**: lab only; play refuses it ("Not available yet in this build.",
+`not_available_yet`; 2026-10-31 run not admitted). For the host and the guest, each for its own player only.
 
 - The list shows the guns the game has loaded in this area ("Assault rifle (East_ar_010)": the soldiers', yours and
   your partner's; read from the equip writer's census, so it fills once the partner's body has loaded here), then the
@@ -326,7 +327,7 @@ At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`)
 ### Friendly fire (both players; the host decides)
 
 At the end of the Partner page: **Friendly fire: ON / OFF** (`friendly_fire 0|1`). Default ON (as before).
-**Not run-proven yet.** The host's press sets it for both copies; a guest's press asks the host
+**Not run-proven yet**: lab only; play refuses it (`not_available_yet`) and keeps it ON. The host's press sets it for both copies; a guest's press asks the host
 (`friendly_fire_asked;want=..`), and an unpaired guest is refused (`friendly_fire_refused;reason=not_paired`).
 
 - OFF: your partner's bullets, explosives and melee never hurt or down you, and no hit is sent between the copies.

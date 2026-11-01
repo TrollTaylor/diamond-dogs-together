@@ -46,10 +46,10 @@ constexpr ActionDef kActions[] = {
      "Not available yet in this build: pick Quiet in the launcher.", U},
     {"character_default", C::player, "Back to my default", "character default", "character switch reset default",
      "Back to the character you started with (the host: Snake).", 0},
-    // Arms (docs/debug-menu.md "Give weapon"): both players, play and lab; this PC's own player only.
+    // Arms (docs/debug-menu.md "Give weapon"): both players, lab only until a play run proves it; this PC's own player only.
     {"arms_give", C::player, "Give weapon", "give_weapon equip", "weapon spawn give gun rifle pistol grenade ammo item pick",
-     "Gives you the weapon or item chosen in the list, with full ammo. Guns: only the ones the game loaded in this area "
-     "(the soldiers', yours and your partner's). Your old gun in that slot drops at your feet.", P},
+     "Not available yet in play (lab only until a play run proves it). Gives you the weapon or item chosen in the list, with full ammo. Guns: only the ones the game loaded in this area "
+     "(the soldiers', yours and your partner's). Your old gun in that slot drops at your feet.", P | U},
     // Enemies
     {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me warp",
      "Brings the nearest living guard (15-250 m; a farther one goes to the nearest patrol route) 5 m in front of you, facing you, armed. Afghanistan and Africa free roam only. Play: lab.ini spawn_warp=1 (off until run-proven); lab: debug_soldier_warp=1. When refused he goes to the nearest patrol route. The guest's copy of him is moved the same way (spawn sync).", H | P | S},
@@ -133,8 +133,8 @@ constexpr ActionDef kActions[] = {
      "Reads the host dog follow state and guest position error.", 0},
     // Arms (docs/debug-menu.md "Friendly fire"): the host decides for both copies; a guest's press asks the host.
     {"arms_friendly_fire", C::partner, "Friendly fire", "friendly_fire 0", "friendly fire team damage partner hurt shoot off on",
-     "Turns friendly fire on or off for both players (the host decides; a guest's press asks the host). Off: your partner's "
-     "bullets, explosives and melee never hurt you. Soldiers are not affected.", P | T | S},
+     "Not available yet in play (lab only until a play run proves it). Turns friendly fire on or off for both players (the host decides; a guest's press asks the host). Off: your partner's "
+     "bullets, explosives and melee never hurt you. Soldiers are not affected.", P | T | S | U},
     // World
     {"world_time_dawn", C::world, "Dawn 06:00", "time 21600", "clock morning", "Sets the clock to 06:00.", H | S},
     {"world_time_noon", C::world, "Noon 12:00", "time 43200", "clock day midday", "Sets the clock to 12:00.", H | S},
