@@ -1,3 +1,5 @@
+# SUPERSEDED for part B by fb1031-vehicle-absent-hide.txt: since wp/vehicle-missing (fb1031) an absent vehicle is
+# refused and hidden with a toast, never show=warp; part B's expectations below describe the 0.13.6 fallback.
 # Africa vehicle (docs/two-pc-test-2026-10-23.md bug 2; docs/anim-round1-seat.md "Fallback"): the host drives a
 # vehicle that exists only on HIS copy while the guest watches, in Africa free roam (30020). In the two-PC session of
 # 2026-10-23 that vehicle was the host's relief vehicle 25600 (TppVehicle2 index 0, from his sortie prep; the guest's
