@@ -56,6 +56,25 @@ ok,msg=c:run("wormhole","1")
 check(ok and msg=="wormhole=on;level=1" and c.levels[WORM]==1 and c.env.vars.itemLevels[SLOT]==1,"on: the real level is back")
 c:tick(60);check(c.levels[WORM]==1,"on: never forced again")
 c.env.TppSave.SaveVarsToSlot("slot");check(c.saved[#c.saved].level==1 and c.env.vars.itemLevels[SLOT]==1,"on: the save is untouched")
+-- r1101 fulton (world_enemy.lua W.fulton): while a partner's wormhole look is shown here (W.fulton.real set), the off
+-- rule leaves the level alone and never takes it for this save's own development.
+c=F({level=0});c:run("wormhole","0");c.W.fulton={real=0};c.levels[WORM]=1;c:tick()
+check(c.levels[WORM]==1 and not c:has(c.logs,"step=worm_off"),"off: a partner's wormhole look is left alone")
+c.W.fulton.real=nil;c:tick();check(c.levels[WORM]==0,"off: forced again once the look is restored")
+-- Review fix (2026-11-01): Wormhole on (or off) pressed while a partner's look is shown ends that look first
+-- (W.fulton.restore writes this save's level back), so the rule works on the real level, never on the borrowed one.
+c=F();c:run("wormhole","0")
+local looks=0
+c.W.fulton={real=0,restore=function() looks=looks+1;c.levels[WORM]=c.W.fulton.real;c.W.fulton.real=nil end}
+c.levels[WORM]=1
+ok,msg=c:run("wormhole","1")
+check(ok and looks==1 and c.W.fulton.real==nil and c.levels[WORM]==1 and msg=="wormhole=on;level=1","on during a partner's look: the look ends, the real level is back")
+c:tick(60);check(c.levels[WORM]==1,"on during a partner's look: the level stays")
+c=F();looks=0
+c.W.fulton={real=1,restore=function() looks=looks+1;c.levels[WORM]=c.W.fulton.real;c.W.fulton.real=nil end}
+c.levels[WORM]=0
+ok,msg=c:run("wormhole","0")
+check(ok and looks==1 and c.levels[WORM]==0 and msg:find("seen=1",1,true),"off during a partner's look: the real level is remembered, then forced to 0")
 -- The save fix only when vars.itemLevels follows SetItemLevel (the stock slot): else no var is written.
 c=F({follow=false});c:run("wormhole","0");c.env.vars.itemLevels[SLOT]=0
 c.env.TppSave.SaveVarsToSlot("slot");check(c.saved[1].level==0 and c.env.vars.itemLevels[SLOT]==0,"an unverified slot is never written")

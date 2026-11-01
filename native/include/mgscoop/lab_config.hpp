@@ -895,6 +895,20 @@ struct LabConfig {
     // until the review of 2026-10-29; ResolveWeaponDefaults); a named value wins.
     bool world_relief = false;
     bool world_relief_given = false;
+    // r1101 fulton (docs/world-sync-protocol.md section 25, docs/anim-round1-actions.md 4.4): fulton_sync=0|1, off unless
+    // named in lab and play until a hidden run proves it. On: the partner puppet plays the Fulton attach (the DM overlay's
+    // Fulton act map, also while partner_native_overlay=off), and a partner's Fulton lifts this copy's vehicle with the
+    // engine's own Fulton (CFG r[18]) and carries the Fultoner's wormhole choice (FULTON 0x46). No refusal bit.
+    bool fulton_sync = false;
+    bool fulton_sync_given = false;
+    // r1101 fulton review fixes (2026-11-01): fulton_early=0|1 (a partner's vehicle FULTON lifts this copy at once, at
+    // the Fultoner's pose and type; a balloon that fails after FultonInfo is not mirrored yet) and fulton_look=0|1 (the
+    // receiver borrows the Fultoner's wormhole level for its lift; the level is global, so its own Fultons in that window
+    // use it too). Each off unless named in lab and play, used only with fulton_sync (CFG r[18] bits 2 and 4).
+    bool fulton_early = false;
+    bool fulton_early_given = false;
+    bool fulton_look = false;
+    bool fulton_look_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is
@@ -988,6 +1002,8 @@ const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
 // otherwise on in play and off in lab.
 bool EffectiveTravelLock(const LabConfig& config) noexcept;
+// r1101 fulton: CFG r[18] (world_link): 1 fulton_sync, 2 fulton_early, 4 fulton_look; 0 without fulton_sync.
+std::uint8_t FultonCfgBits(const LabConfig& config) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
 bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept;

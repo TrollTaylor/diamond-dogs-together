@@ -37,6 +37,7 @@ bool g_vehicle_crew = false;   // D12 crew: CFG r[15] bit 64 (lab key world_vehi
 bool g_vehicle_damage = false; // VEHICLE_DAMAGE: CFG r[15] bit 128 (lab key world_vehicle_damage, lab and play)
 bool g_companion = false;      // M1 host-owned companion: CFG r[16] (lab key companion_host_owned, lab and play)
 bool g_relief = false;         // M3 sortie vehicle: CFG r[17] (lab key world_relief, lab and play)
+std::uint8_t g_fulton = 0;     // r1101 fulton: CFG r[18] bits (lab keys fulton_sync 1, fulton_early 2, fulton_look 4)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
@@ -224,6 +225,7 @@ void Configure(const Config& config) noexcept {
     g_vehicle_gone = config.vehicle_gone;
     g_companion = config.companion;
     g_relief = config.relief;
+    g_fulton = static_cast<std::uint8_t>(config.fulton & 7u);
     g_vehicle_state = config.vehicle_state;
     g_vehicle_wreck = config.vehicle_wreck;
     g_vehicle_break = config.vehicle_break;
@@ -305,6 +307,8 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.companion = g_companion ? 1 : 0;
     // M3: r[17] the sortie vehicle module (lab and play).
     reply.relief = g_relief ? 1 : 0;
+    // r1101 fulton: r[18] the Fulton lift and FULTON 0x46 (lab and play).
+    reply.fulton = g_fulton;
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }

@@ -199,6 +199,8 @@ do
                 result, cur = "ok", 7
             elseif RANK[cur] < RANK[st] and st == 6 then
                 if s.fpend[h] then return E.hold(h, st, ver, src, "fulton_pending") end
+                -- r1101 fulton (W.fulton below): the lift in the Fultoner's look, visual only on this copy.
+                if W.fultonOn and W.fulton then pcall(W.fulton.before, 1, e.id, h) end
                 W.api.send(e.id, {id = "RequestForceFulton"})
                 s.rb[h] = {st = 6, ver = ver, src = src, at = now, next = now + 250}
                 return "sent"
@@ -358,6 +360,158 @@ do
                 if all then s.allAt = now + 10000 end
                 E.recheck(now, all)
             end
+            local F = W.fulton
+            if F and F.restoreAt and now >= F.restoreAt then F.restore() end
+        end
+
+        -- r1101 fulton (lab key fulton_sync, CFG r[18] W.fultonOn; docs/world-sync-protocol.md section 25): FULTON 0x46
+        -- {seq, kind 1 soldier / 2 vehicle, id, entity hash, wormhole}. The Fultoner's copy announces its own Fulton at
+        -- FultonInfo (wormhole: its EQP_IT_Fulton_WormHole level >= 1, the stock test; a vehicle: its type and xyz mm
+        -- there, 255 and 0, 0, 0 unknown). The other copy's lift (W1's RequestForceFulton above; a vehicle's
+        -- Seize {"Fulton"} in world_vehicle_rules.lua) takes that look only with fulton_look (r[18] bit 4: the level is
+        -- global, so this copy's own Fultons in that window use it too): this copy's level for HOLD_MS, restored after
+        -- and never saved. A soldier's lift is visual only when the partner announced it: this copy's
+        -- TppTerminal.OnFulton is skipped once for it (the Fultoner keeps the recruit); with no FULTON from the partner
+        -- by then (an older partner, or its key off) the stock credit runs (D1). Vehicles: world_vehicle_rules.lua.
+        local FU = {}
+        W.fulton = FU
+        OP.FULTON = OP.FULTON or 70
+        local NOTE_MS, HOLD_MS, SKIP_MS = 60000, 5000, 30000
+        function FU.reset() FU.seq, FU.note, FU.lift, FU.skip, FU.real, FU.want, FU.restoreAt = 0, {}, {}, {}, nil, nil, nil end
+        FU.reset()
+        function FU.on() return W.fultonOn == true and W.active == true end
+        local function equip() return W.get(TppEquip, "EQP_IT_Fulton_WormHole") end
+        local function level()
+            local f, q = W.get(Player, "GetItemLevel"), equip()
+            if type(f) ~= "function" or type(q) ~= "number" then return nil end
+            local ok, v = pcall(f, q)
+            if ok and type(v) == "number" then return v end
+        end
+        local function setLevel(n)
+            local f, q = W.get(Player, "SetItemLevel"), equip()
+            if type(f) ~= "function" or type(q) ~= "number" then return false end
+            return (pcall(f, q, n))
+        end
+        -- This copy's own look: the real level while a partner's look is shown.
+        function FU.own()
+            if FU.real ~= nil then return FU.real end
+            return level()
+        end
+        function FU.restore()
+            FU.restoreAt = nil
+            local r = FU.real
+            if r == nil then return end
+            FU.real, FU.want = nil, nil
+            L("event=fulton;step=restore;level=%d;ok=%d", r, setLevel(r) and 1 or 0)
+        end
+        -- The two wraps (once per binding: a reloaded TppTerminal / TppSave is wrapped again).
+        function FU.install()
+            local T, S = W.get(_G, "TppTerminal") or TppTerminal, W.get(_G, "TppSave") or TppSave
+            local o = W.get(T, "OnFulton")
+            local t1 = type(o) == "function" and o == FU.wrap
+            if type(o) == "function" and not t1 then
+                FU.wrap = function(...)
+                    local id = ...
+                    local k = type(id) == "number" and FU.skip[id]
+                    if k then
+                        FU.skip[id] = nil
+                        local t = W.now()
+                        local n = FU.note[k.h]
+                        if t - k.at <= SKIP_MS and n and t - n.at <= NOTE_MS then
+                            L("event=fulton;step=credit_skipped;id=%d;why=partner_lift", id)
+                            return
+                        end
+                        if t - k.at <= SKIP_MS then L("event=fulton;step=credit_kept;id=%d;why=no_partner_note", id) end
+                    end
+                    return o(...)
+                end
+                t1 = pcall(function() T.OnFulton = FU.wrap end) and W.get(T, "OnFulton") == FU.wrap
+            end
+            -- Log only: the stock staff add, counted (the roster check: the Fultoner's copy only).
+            local add = W.get(T, "AddTempStaffFulton")
+            if type(add) == "function" and add ~= FU.addWrap then
+                FU.addWrap = function(...)
+                    FU.adds = (FU.adds or 0) + 1
+                    if FU.adds <= 20 then L("event=fulton;step=staff_add;n=%d", FU.adds) end
+                    return add(...)
+                end
+                pcall(function() T.AddTempStaffFulton = FU.addWrap end)
+            end
+            local save = W.get(S, "SaveVarsToSlot")
+            local t2 = type(save) == "function" and save == FU.saveWrap
+            if type(save) == "function" and not t2 then
+                FU.saveWrap = function(...)
+                    local real, want = FU.real, FU.want
+                    if real ~= nil then setLevel(real) end
+                    local r = {pcall(save, ...)}
+                    if real ~= nil and FU.real == real and want ~= nil then setLevel(want) end
+                    if not r[1] then error(r[2], 0) end
+                    return unpack(r, 2)
+                end
+                t2 = pcall(function() S.SaveVarsToSlot = FU.saveWrap end) and W.get(S, "SaveVarsToSlot") == FU.saveWrap
+            end
+            if not FU.logged then FU.logged = true; L("event=fulton;step=install;terminal=%d;save=%d", t1 and 1 or 0, t2 and 1 or 0) end
+        end
+        W.startHooks[#W.startHooks + 1] = function()
+            FU.restore()
+            FU.reset()
+            if W.fultonOn then pcall(FU.install) end
+        end
+        W.stopHooks[#W.stopHooks + 1] = function() FU.restore() end
+        -- The Fultoner (W.observe: this copy's FultonInfo, att local).
+        function FU.observe(h, id)
+            if not FU.on() or not W.paired or type(id) ~= "number" then return end
+            local t, V = W.now(), W.vehicleGone
+            local l = FU.lift[id]
+            if l and t - l <= SKIP_MS then return end
+            local kind = h and 1 or (type(V) == "table" and type(V.typed) == "function" and V.typed(id) and 2)
+            if not kind then return end
+            local lv = FU.own()
+            local worm = type(lv) == "number" and lv >= 1 and 1 or 0
+            local vt, x, y, z = 255, 0, 0, 0
+            if kind == 2 then
+                local okp, px, py, pz = pcall(V.pose, id)
+                local okt, pt = pcall(V.vtype, id)
+                if okp and type(px) == "number" and type(py) == "number" and type(pz) == "number" then x, y, z = floor(px), floor(py), floor(pz) end
+                if okt and type(pt) == "number" and pt >= 0 and pt <= 255 then vt = pt end
+            end
+            FU.seq = FU.seq % 65535 + 1
+            local ok = W.tx(OP.FULTON, FU.seq, kind, id, h or 0, worm, vt, x, y, z)
+            L("event=fulton;step=tx;kind=%d;id=%d;ent=%.0f;worm=%d;sent=%d", kind, id, h or 0, worm, ok and 1 or 0)
+        end
+        W.handlers[OP.FULTON] = function(v)
+            if not FU.on() or type(v) ~= "table" then return end
+            local seq, kind, id, h, worm = v[1], v[2], v[3], v[4], v[5] == 1 and 1 or 0
+            if (kind ~= 1 and kind ~= 2) or type(id) ~= "number" or type(seq) ~= "number" then return end
+            FU.note[kind == 1 and h or id] = {worm = worm, at = W.now()}
+            L("event=fulton;step=rx;seq=%d;kind=%d;id=%d;ent=%.0f;worm=%d", seq, kind, id, h or 0, worm)
+            -- A vehicle: this copy's lift at once (world_vehicle_rules.lua G.early, key fulton_early), at the Fultoner's
+            -- type and pose (an older frame has none: no early lift there), not after VEHICLE_GONE's readback.
+            local V = W.vehicleGone
+            if kind == 2 and type(V) == "table" and type(V.early) == "function" then pcall(V.early, id, v[6], v[7], v[8], v[9]) end
+        end
+        -- The receiver, just before its lift (kind 1: soldier id + entity hash; kind 2: vehicle id).
+        function FU.before(kind, id, h)
+            if not FU.on() or type(id) ~= "number" then return end
+            local t = W.now()
+            local n = FU.note[kind == 1 and h or id]
+            if n and t - n.at > NOTE_MS then n = nil end
+            FU.lift[id] = t
+            if kind == 1 then
+                -- Decided at OnFulton (about 3.7 s later): skipped only if the partner's FULTON has arrived by then.
+                FU.skip[id] = {at = t, h = h}
+                pcall(FU.install)
+            end
+            local own, set = FU.own(), 0
+            local mine = type(own) == "number" and own >= 1 and 1 or 0
+            if n and W.fultonLookOn == true and type(own) == "number" and mine ~= n.worm then
+                local want = n.worm == 1 and 1 or 0
+                if FU.real == nil then FU.real = own end
+                if setLevel(want) then set, FU.want = 1, want end
+            end
+            if FU.real ~= nil then FU.restoreAt = t + HOLD_MS end
+            L("event=fulton;step=lift;kind=%d;id=%d;ent=%.0f;worm=%s;own=%d;set=%d;credit=%s", kind, id, h or 0,
+                n and tostring(n.worm) or "own", mine, set, kind == 1 and "0" or "vr")
         end
 
     end

@@ -1,3 +1,75 @@
+## November 1, 2026: r1101 fulton - the Fulton synced on both copies, behind `fulton_sync` (`wp/fulton-anim`, local only, off unless named)
+
+- **What players would get (key `fulton_sync=1` named on both copies; nothing changes with it unnamed):** when the
+  partner Fultons anything, their puppet plays the Fulton attach (`stateFultonStart`, the DM overlay's Fulton-only map:
+  remote act 59 held 1 s, also with `partner_native_overlay=off`); a partner's soldier Fulton lifts this copy's
+  soldier (W1's `RequestForceFulton`, as before), with sub-key `fulton_look=1` in the Fultoner's look (balloon or
+  wormhole: FULTON 0x46 carries the Fultoner's `EQP_IT_Fulton_WormHole` level; this copy borrows it for 5 s, restored,
+  never saved), and only visually when the partner announced it (this copy's `TppTerminal.OnFulton` skipped once: the
+  Fultoner keeps the recruit; a partner without the key gets D1 as before); a partner's vehicle Fulton lifts
+  this copy's vehicle with the engine's own vehicle Fulton (`Seize {"Fulton"}`, the balloon) instead of removing it
+  at once (D14 credit as before; without D14 no credit here). Mother Base spareStaff is unchanged (SetDisable).
+- **Open decision:** with the key on both copies, a partner's soldier Fulton no longer recruits on this copy, which
+  differs from D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until
+  the user decides and a hidden run shows both screens.
+- **The early vehicle lift (green 3, after probe `614ec20a`; sub-key `fulton_early=1` since the review):** a partner's
+  FULTON kind 2 (sent at its `FultonInfo`, with the vehicle's type and pose there) starts this copy's vehicle lift at
+  once, matched at the Fultoner's pose as VEHICLE_GONE matches, instead of after VEHICLE_GONE's loss readback about 6 s
+  later. [I] a balloon that fails after `FultonInfo` is not mirrored (a one-sided removal), hence its own key. Not run
+  in a game yet.
+- **Review fixes (2026-11-01, red `6c8df73b`, green `7a77eb8d`):** all seven findings held. (1) the early lift trusted the
+  Fultoner's raw pool index: FULTON now carries `vtype` and xyz (9 fields, 23 bytes) and the early item is judged at
+  that pose (mismatched indices matched within 5 m, else nothing; the host answers the guest's index gone). (2) no
+  failure parity for the early lift: behind its own key `fulton_early` (off unless named) until a FultonFailed-after-
+  FultonInfo probe. (3) the borrowed level changed this copy's own Fultons: behind its own key `fulton_look` (off unless
+  named). (4) the soldier credit skip without a partner announcement: decided at `OnFulton`, skipped only with the
+  partner's FULTON note (else D1, `step=credit_kept`). (5) a request joined to a held early lift was never answered:
+  it now takes the request's `src` (gone, or REJECT 9). (6) F9 Wormhole on/off during a borrowed look wrote the wrong
+  level back: the look ends first. (7) the puppet's Fulton map fired on acts 49/50 and any 59 over 500 ms: act 59 only,
+  held 1 s (a longer held interact still would [U]).
+- **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 23 bytes; `docs/world-sync-protocol.md` section 25);
+  CFG `r[18]` bits (1 `fulton_sync`, 2 `fulton_early`, 4 `fulton_look`); world note 22 reserved, unused.
+- **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`, `e85689f7`; green `000cf3c7`, `7e7ab625`, `9c026fcb`. partner_dm_overlay
+  TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
+  world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
+  debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
+- **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca` and again at `f7af51d9` (with the early lift); generators `--check` as at the rel0146
+  baseline (carry_info / sleep_plugin differ by line endings only there too).
+  After the review fixes: full `tools/build.ps1 -Jobs 4` CTest 344/344 at `7a77eb8d`; generators `--check` as at that
+  baseline (no pinned site changed).
+- **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep; names
+  `fulton_sync`, `fulton_early` and `fulton_look`).
+- **Probe `614ec20a` (lab, africa-jeep, key named; this track's second probe):** [O log] the guest's hand Fulton of the
+  jeep 25608: on the host the overlay played `stateFultonStart` 1598 ms over the guest's 2548 ms act 59; the guest's
+  `Fulton` / `FultonInfo` came 6.1 s after its attach began (FULTON kind 2 tx, the host's rx), its VEHICLE_GONE
+  `step=lost` 6.1 s later; the host then lifted its copy with `Seize {"Fulton"}` (`step=fulton_lift; ...; credit=0`,
+  its own `OnFulton` skipped, `step=applied; ...; via=fulton; ...; ok=1; ms=10276`). [O frame] guest `c-before` the
+  stock prompt (Fulton x24) at the jeep, `c-hold` the attach, `c-lift-02` the jeep gone from its view; host
+  `c-lift-06` the jeep still there, `c-hlift-01` (after its lift) gone. No frame covers the host's 10 s lift itself
+  (the burst waited for `step=applied`; the scenario now bursts at `step=fulton_lift`) [U balloon]. The soldier part
+  did not run: `enemy sleep nearest` slept 4158955462 while `enemy goto nearest` reached 2552560298 (awake); the
+  scenario now uses the spot's guards by hash. Archive
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\614ec20ad85a40fba59de4f952d2528e`, sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\614ec20a-sheet-c.jpg`.
+- **Hidden run `7e9856cb` (play, bad WAN, africa-jeep, key named; part A only, then stopped):** [O log] the host's
+  hand Fulton of sleeping guard 2552560298: on the guest the host's act 59 lasted 2569 ms and the overlay played
+  `stateFultonStart` for 1583 ms (`partner_overlay=request|play|playing|finished; ...; source=map`); host
+  `event=fulton; step=tx; kind=1; ...; worm=0; sent=1`, guest `step=rx` then `step=lift; ...; worm=0; own=0; set=0;
+  credit=0`, the guest's own `Fulton` message 3.7 s later with `step=credit_skipped; ...; why=partner_lift` and
+  `event=apply; ...; state=6; ...; result=ok; readback=6`; `step=staff_add` on the host only (n=1), none on the guest.
+  [O frame] host `a-before` shows the stock prompt with Fulton x24 and `a-hold-04` x23 (the Fulton used); guest
+  `a-hold-01` shows the host puppet low at the guard and `a-hold-03` standing again; guest `a-after` shows the guard's
+  spot empty. No frame shows a balloon on either screen (the cameras looked down at the ground) [U]. [O log] **The
+  receiver's lift starts late:** the Fultoner's `Fulton` / `FultonInfo` messages (and so W1's FULTONED and FULTON 0x46)
+  come about 10.7 s after its attach act, when the soldier is recovered; the guest's lift began 0.1 s after that. A
+  start at the attach is the next step (a start announcement plus FultonFailed parity, so a balloon shot down looks
+  the same on both). The run stopped in part B at `placebehind` (`viewer landing starts without a valid partner
+  pose`) with the host lying on the ground after a second hold of E (cause [U]); earlier the jeep 25608 broke on the
+  guest's copy (unattributed `VehicleBroken`) and the host despawned it (D12), so the vehicle lift did not run. The
+  scenario now runs the jeep first and uses one hold per soldier Fulton. Archive
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\7e9856cb8bc14348aded28cad627088d`, frames and sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\7e9856cb-*`.
+
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `6c25276` with Release receipt `20261101-025109-055c474332e94b7494b2639f486ea948` (passed, 331 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.6+6c25276` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.5.

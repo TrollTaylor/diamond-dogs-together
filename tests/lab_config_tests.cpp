@@ -1868,6 +1868,46 @@ int main() {
             const auto reLater = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\nworld_relief=1\n");
             Check(reLater.world_relief && reLater.world_relief_given, "a later world_relief=1 wins");
         }
+        // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync off unless named in lab, gun profile and play;
+        // a named 1 parses in lab and play with no refusal bit, a named 0 keeps it off, an invalid value keeps it off.
+        {
+            const auto fsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n");
+            const auto fsPlayDefault = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n");
+            const auto fsDef = Lab("enabled=1\nrole=guest\nworld=3\n");
+            const auto fsLab = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\n");
+            const auto fsOff = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=0\n");
+            const auto fsBad = Lab("enabled=1\nrole=host\nfulton_sync=2\n");
+            Check(!fsDef.fulton_sync && !fsDef.fulton_sync_given && !fsPlayDefault.fulton_sync && !fsPlayDefault.fulton_sync_given,
+                  "fulton_sync defaults off (lab and play)");
+            Check(fsLab.fulton_sync && fsLab.fulton_sync_given && fsLab.invalid_values == 0 && fsLab.unknown_keys == 0, "fulton_sync=1 parses in lab");
+            Check(fsPlay.mode == mgscoop::LabMode::play && fsPlay.fulton_sync && fsPlay.play_refused == 0 && fsPlay.invalid_values == 0,
+                  "fulton_sync=1 parses in play with no refusal bit");
+            Check(!fsOff.fulton_sync && fsOff.fulton_sync_given && fsOff.invalid_values == 0, "a named 0 keeps it off");
+            Check(!fsBad.fulton_sync && fsBad.invalid_values == 1 && fsBad.unknown_keys == 0, "an invalid fulton_sync keeps it off");
+            // Review fixes of 2026-11-01: the early vehicle lift (fulton_early) and the borrowed wormhole look (fulton_look)
+            // each have their own key, off unless named in lab and play, used only with fulton_sync (CFG r[18] bits 2, 4).
+            const auto feAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\n");
+            const auto feEarly = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\n");
+            const auto feLook = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_look=1\n");
+            const auto feNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_early=1\nfulton_look=1\n");
+            const auto feBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=2\nfulton_look=maybe\n");
+            const auto fePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n"
+                                    "fulton_early=1\nfulton_look=1\n");
+            Check(!fsDef.fulton_early && !fsDef.fulton_early_given && !fsDef.fulton_look && !fsDef.fulton_look_given &&
+                      !fsPlayDefault.fulton_early && !fsPlayDefault.fulton_look && !fsLab.fulton_early && !fsLab.fulton_look,
+                  "fulton_early and fulton_look default off (lab and play, also with fulton_sync=1)");
+            Check(feAll.fulton_early && feAll.fulton_early_given && feAll.fulton_look && feAll.fulton_look_given && feAll.invalid_values == 0 &&
+                      feAll.unknown_keys == 0 && fePlay.fulton_early && fePlay.fulton_look && fePlay.play_refused == 0 && fePlay.invalid_values == 0,
+                  "fulton_early=1 and fulton_look=1 parse in lab and play");
+            Check(!feBad.fulton_early && !feBad.fulton_look && feBad.invalid_values == 2 && feBad.unknown_keys == 0, "invalid values keep them off");
+            Check(mgscoop::FultonCfgBits(fsDef) == 0 && mgscoop::FultonCfgBits(fsLab) == 1 && mgscoop::FultonCfgBits(feEarly) == 3 &&
+                      mgscoop::FultonCfgBits(feLook) == 5 && mgscoop::FultonCfgBits(feAll) == 7 && mgscoop::FultonCfgBits(fePlay) == 7 &&
+                      mgscoop::FultonCfgBits(feNoSync) == 0,
+                  "CFG r[18]: 1 fulton_sync, 2 fulton_early, 4 fulton_look; nothing without fulton_sync");
+        }
         // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
         // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
         {
