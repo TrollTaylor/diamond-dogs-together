@@ -1987,3 +1987,13 @@ Open [U] until a hidden run: H1 every falling box passes `0x15C3F00` (the iDroid
 removes the box without a new one; H3 the stock pickup sends `OnPickUpSupplyCbox` on the taker's copy (the reset or
 state 0 path stays as the fallback); whether the iDroid request aims at the player object; a guard hit by the falling box on
 both copies (each copy's own box hits its own copy of the guard; the outcome sync judges the knockout).
+
+Hidden run `c66d418b` (2026-11-01, play, afgh-ledge; worker timeout in phase 4): [O] both copies installed the observer.
+The host's script drop passed `0x15C3F00` from the funnel (caller `0x15c3ed9`; drop 4 = `DROP_TYPE_AMMO`, level 0,
+wait 7, flags 0x6) and was sent (`drop_local; ...; sent=1; aim=point`). The host's box core went state 1 -> 3 (+3 s)
+-> 5 (+7 s) -> 8 (+24 s) -> 14 (+25 s) and reset itself 2 s later (caller `0x15c0793`: a fade timer, Z+0x100 =
+1 - Z+0xF4 * k, reset at 0), which the host sent as gone. The guest skipped the mirror (`step=mirror_skip;
+reason=missing_api`): the module required `type(Vector3) == "function"`, but the game's Vector3 is a callable object;
+fixed (the request and its Vector3 are built inside one pcall). The iDroid's SUPPLY DROP list is AMMO / FULTON,
+WEAPONS / ITEMS, LOADOUT, VEHICLES; AMMO / FULTON opens a map where Space (OK) confirms the delivery point (the run
+pressed Tab there, so H1 is still [U]). Whether state 14 means "landed and opened" or "faded unopened" is [U].

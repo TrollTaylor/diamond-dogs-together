@@ -191,13 +191,15 @@ local function apply(v, t)
     end
     if not W.inGame() then L("step=mirror_skip;origin=%d;oseq=%d;reason=not_in_game", origin, oseq); return end
     local f = get(Player, "RequestToSupplyCbox")
-    if type(f) ~= "function" or type(Vector3) ~= "function" then L("step=mirror_skip;reason=missing_api"); return end
+    -- Vector3 is a callable object in the game (run c66d418b), not a function: built inside the pcall.
+    if type(f) ~= "function" or Vector3 == nil then L("step=mirror_skip;reason=missing_api"); return end
     local b = {origin = origin, oseq = oseq, drop = v[5], equip = v[6], parts = v[7], x = v[8], y = v[9], z = v[10], level = v[11],
       wait = v[12], flags = v[13], at = t}
     receipt("mirror 1")
-    local ok, err = pcall(f, {dropType = b.drop, equipId = b.equip, partsType = b.parts,
-      aimPosition = Vector3(b.x / 1000, b.y / 1000, b.z / 1000), level = b.level, waitLevel = b.wait,
-      callHeliSound = floor(b.flags / 4) % 2 == 1})
+    local ok, err = pcall(function()
+      return f({dropType = b.drop, equipId = b.equip, partsType = b.parts, aimPosition = Vector3(b.x / 1000, b.y / 1000, b.z / 1000),
+        level = b.level, waitLevel = b.wait, callHeliSound = floor(b.flags / 4) % 2 == 1})
+    end)
     receipt("mirror 0")
     S.cur, S.lastReqAt = b, t
     S.n.mirror = S.n.mirror + 1
@@ -281,13 +283,13 @@ function S.command(a)
     if not (px and py and pz) then return false, "command_args" end
     local f, ammo = get(Player, "RequestToSupplyCbox"), get(get(_G, "SupplyCbox"), "DROP_TYPE_AMMO")
     if type(f) ~= "function" or type(ammo) ~= "number" then return false, "missing_api" end
-    local ok = pcall(f, {dropType = ammo, aimPosition = Vector3(px, py, pz)})
+    local ok = pcall(function() return f({dropType = ammo, aimPosition = Vector3(px, py, pz)}) end)
     L("step=debug_drop;ok=%d;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d", ok and 1 or 0, ammo, mm(px), mm(py), mm(pz))
     return ok, fmt("submitted_supply_drop;drop=%d;x=%.1f;y=%.1f;z=%.1f", ammo, px, py, pz)
   elseif c == "bullet" and #a == 2 then
     local f = get(TppSupportRequest, "RequestDropBullet")
     if type(f) ~= "function" or not px then return false, "missing_api" end
-    local ok = pcall(f, {pos = Vector3(px, py, pz)})
+    local ok = pcall(function() return f({pos = Vector3(px, py, pz)}) end)
     L("step=debug_bullet;ok=%d;x_mm=%d;y_mm=%d;z_mm=%d", ok and 1 or 0, mm(px), mm(py), mm(pz))
     return ok, "submitted_supply_bullet"
   elseif c == "remove" and #a == 2 then
