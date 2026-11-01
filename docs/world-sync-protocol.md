@@ -1955,6 +1955,13 @@ Lab key `fulton_sync=0|1` (CFG `r[18]` = 1, Lua `W.fultonOn`; no refusal bit). T
   balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`; `step=fulton_lift;id=;credit=`);
   with D14 on it is credited once as before, without D14 this copy's `TppTerminal.OnFulton` is skipped once for it;
   the readback gives it 15 s before the Despawn fallback (`via=fulton`). Index 0 is never lifted (refused as before).
+  **The early vehicle lift (green 3):** a FULTON kind 2 is sent at the Fultoner's `FultonInfo` (the Fulton
+  succeeded there), about 6 s before VEHICLE_GONE's loss readback (probe `614ec20a`), so the receiver lifts at the
+  note: `world_vehicle_rules.lua` `G.early(id)` runs VEHICLE_GONE's own consider at this copy's position
+  (`src=fulton`; rider and seat holds, index 0 refused) for an authored vehicle only (a locator name, the same pool
+  index on both copies; otherwise `step=early_skip;id=;reason=no_locator` and VEHICLE_GONE as before). Line
+  `event=vehicle_rules;step=early;id=;role=`. The later VEHICLE_GONE finds it gone; the host answers the guest's later
+  request gone.
   Mother Base (spareStaff) is unchanged: a partner's Fulton of a staff member is `SetDisable` there (no roster change).
 
 [I] whether the engine reads the wormhole level when `RequestForceFulton` / `Seize {"Fulton"}` start (the 5 s hold

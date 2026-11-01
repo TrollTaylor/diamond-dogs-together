@@ -30,9 +30,12 @@
 #                result=ok; readback=6
 #          frames a-hold-NN (guest: the host puppet low at the guard), a-lift-NN (guest: the guard under the balloon)
 #   B      the same with the roles swapped (frames b-hold-NN on the host, b-lift-NN on both)
-#   C      guest event=vehicle_gone; step=watch; id=25608; m=FultonInfo; cause=1; att=local, step=req; cause=1;
-#          host event=vehicle_rules; step=fulton_lift; id=25608; credit=1, event=vehicle_gone; step=applied;
-#          id=25608; via=fulton; src=req; ok=1; frames c-lift-NN: the jeep under the balloon on BOTH screens
+#   C      guest event=fulton; step=tx; kind=2; id=25608 (its FultonInfo) and event=vehicle_gone; step=watch;
+#          id=25608; m=FultonInfo; cause=1; att=local; host event=fulton; step=rx; ...; kind=2, at once
+#          event=vehicle_rules; step=early; id=25608; role=host (the early lift, green 3), step=fulton_lift; id=25608;
+#          credit=1, event=vehicle_gone; step=applied; id=25608; via=fulton; src=fulton; ok=1; the guest's later
+#          step=req is answered gone (host step=tx; ...; rid=R); frames c-hlift-NN: the jeep under the balloon on the
+#          host's screen within about 1 s of the guest's FultonInfo (probe 614ec20a without the early lift: 6 s)
 #   D      host event=fulton; step=tx; kind=1; ...; worm=1; guest step=lift; ...; worm=1; ...; then step=restore
 #          frames d-lift-NN: the wormhole on both screens
 # NEVER: step=error, viewer_changed, faults; a guest event=fulton; step=tx for a lift it ran (an echo); a staff_add
@@ -80,7 +83,8 @@ guest hold e 1500
 guest release
 both burst c-lift 8 400
 waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
-waitlog host 'event=vehicle_rules; step=fulton_lift; id=25608; ' 40
+waitlog host 'event=vehicle_rules; step=early; id=25608; role=host' 30
+waitlog host 'event=vehicle_rules; step=fulton_lift; id=25608; ' 10
 both burst c-hlift 6 500
 waitlog host 'event=vehicle_gone; step=applied; id=25608; via=fulton; ' 25
 wait 2000

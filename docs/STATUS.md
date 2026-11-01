@@ -11,9 +11,12 @@
 - **Open decision:** with the key on, a partner's soldier Fulton no longer recruits on this copy, which differs from
   D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until the user
   decides and a hidden run shows both screens.
+- **The early vehicle lift (green 3, after probe `614ec20a`):** a partner's FULTON kind 2 (sent at its
+  `FultonInfo`) now starts this copy's vehicle lift at once for an authored vehicle, instead of after VEHICLE_GONE's
+  loss readback about 6 s later. Not run in a game yet.
 - **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 10 bytes; `docs/world-sync-protocol.md` section 25);
   CFG `r[18]`; world note 22 reserved, unused.
-- **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`; green `000cf3c7`, `7e7ab625`. partner_dm_overlay
+- **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`, `e85689f7`; green `000cf3c7`, `7e7ab625`, `9c026fcb`. partner_dm_overlay
   TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
   world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
   debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
