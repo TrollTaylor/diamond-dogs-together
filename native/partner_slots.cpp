@@ -206,10 +206,40 @@ const char* TruthVerdictName(TruthVerdict value) noexcept {
     }
 }
 
-// RED stub (r1101 animtruth): never ends a run.
+// Each interval is credited to the state that held during it (the previous
+// tick's refused), the last one up to the tick that saw the release.
 TruthRunOut TruthRunStep(TruthRun& r, bool hold, bool refused, std::uint16_t act, std::uint8_t flags, std::uint64_t now_ms) noexcept {
-    (void)r; (void)hold; (void)refused; (void)act; (void)flags; (void)now_ms;
-    return TruthRunOut{};
+    TruthRunOut o{};
+    if (r.open) {
+        const std::uint32_t dt = now_ms >= r.last_ms ? static_cast<std::uint32_t>(now_ms - r.last_ms) : 0u;
+        if (r.last_refused) r.refused_ms += dt;
+        else r.admitted_ms += dt;
+        r.last_ms = now_ms;
+        if (!hold) {
+            r.open = false;
+            o.ended = true;
+            o.refused_ms = r.refused_ms;
+            o.admitted_ms = r.admitted_ms;
+            o.len_ms = now_ms >= r.since_ms ? static_cast<std::uint32_t>(now_ms - r.since_ms) : 0u;
+            o.first_act = r.first_act;
+            o.last_act = r.last_act;
+            o.flags = r.flags;
+            return o;
+        }
+        r.last_act = act;
+        r.flags = static_cast<std::uint8_t>(r.flags | flags);
+        r.last_refused = refused;
+        return o;
+    }
+    if (!hold) return o;
+    r.open = true;
+    r.since_ms = r.last_ms = now_ms;
+    r.refused_ms = r.admitted_ms = 0;
+    r.first_act = r.last_act = act;
+    r.flags = flags;
+    r.last_refused = refused;
+    ++r.runs;
+    return o;
 }
 
 const char* TruthRunResult(const TruthRunOut& out) noexcept {
@@ -238,8 +268,8 @@ TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
         o.verdict = TruthVerdict::lane;
     } else if (in.act >= 1 && in.act <= 6) {
         const bool keep = s.aim_ms && in.now_ms >= s.aim_ms && in.now_ms - s.aim_ms < kTruthKeepMs;
-        o.verdict = keep ? TruthVerdict::keep : TruthVerdict::loco;
-        if (!keep) o.strip = refuse;
+        o.verdict = keep ? TruthVerdict::keep : in.in_hand ? TruthVerdict::draw : TruthVerdict::loco;
+        if (o.verdict == TruthVerdict::loco) o.strip = refuse;
     } else {
         o.verdict = TruthVerdict::other;
     }

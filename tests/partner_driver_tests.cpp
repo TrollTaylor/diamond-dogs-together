@@ -9623,9 +9623,11 @@ void TestAnimTruthDriver() {
     s.fake.sample.act = 11;
     s.N();
     Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
-              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::aim &&
-              s.fake.Containing("partner_aim_truth=aim; remote_act=11;") == 1,
-          "a real aim: the act confirms, HOLD passes, logged");
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::aim,
+          "a real aim: the act confirms, HOLD passes");
+    // The draw line was one tick ago: the aim line coalesces into the next line (kAimIntentLineMs spacing).
+    s.N(120);
+    Check(s.fake.Containing("partner_aim_truth=aim; remote_act=11;") == 1, "a real aim: logged (after the line spacing)");
     // Knocked down with RMB still held (cure 76): stripped.
     s.N(400);
     s.fake.sample.act = 76;

@@ -253,6 +253,7 @@ struct TruthRun {
     std::uint32_t refused_ms, admitted_ms;
     std::uint16_t first_act, last_act;
     std::uint8_t flags;
+    bool last_refused;     // the previous tick's verdict (credited to the interval since)
     std::uint32_t runs;
 };
 struct TruthRunOut {

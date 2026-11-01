@@ -4581,21 +4581,35 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
     ti.slot_valid = m.remote_v5 && m.remote_slot <= pin::kInvSlotMax;
     ti.slot = m.remote_slot;
     ti.support_lane = m.weapon_gate == partner_slots::Gate::support;
+    ti.in_hand = m.remote_v5 && (m.remote_gun_flags & pin::GunFlag::InHand) != 0;
     ti.now_ms = now;
     const partner_slots::TruthOut to = partner_slots::TruthStep(m.truth, ti);
     m.truth_verdict = to.verdict;
     m.truth_strip = to.strip;
     if (!ti.enabled) {
         m.truth_logged = partner_slots::TruthVerdict::off;
+        m.truth_run = partner_slots::TruthRun{};
         return;
+    }
+    const bool live = latest_ok && latest.age_ms <= set.stale_ms;
+    const std::uint32_t held = live ? latest.packet.held : 0u;
+    // One line per remote HOLD run: how long its raw HOLD was refused / admitted.
+    const partner_slots::TruthRunOut ro =
+        partner_slots::TruthRunStep(m.truth_run, (held & partner_pad::kHold) != 0, (to.strip & partner_pad::kHold) != 0,
+                                    act_valid ? remote_anim.act : static_cast<std::uint16_t>(0),
+                                    live ? latest.packet.gun_flags : static_cast<std::uint8_t>(0), now);
+    if (ro.ended && m.truth_lines < kAimTruthLineCap) {
+        ++m.truth_lines;
+        EmitFormat(h, "partner_aim_truth=hold_run; result=%s; refused_ms=%u; admitted_ms=%u; len_ms=%u; first_act=%u; last_act=%u; "
+                      "flags=0x%x; runs=%u\r\n",
+                   partner_slots::TruthRunResult(ro), ro.refused_ms, ro.admitted_ms, ro.len_ms, unsigned(ro.first_act),
+                   unsigned(ro.last_act), unsigned(ro.flags), m.truth_run.runs);
     }
     if (to.verdict == m.truth_logged || (m.truth_line_ms && now - m.truth_line_ms < kAimIntentLineMs) || m.truth_lines >= kAimTruthLineCap)
         return;
     ++m.truth_lines;
     m.truth_logged = to.verdict;
     m.truth_line_ms = now ? now : 1;
-    const bool live = latest_ok && latest.age_ms <= set.stale_ms;
-    const std::uint32_t held = live ? latest.packet.held : 0u;
     EmitFormat(h, "partner_aim_truth=%s; remote_act=%u; slot=%u; gate=%s; pad_hold=%u; fire=%u; flags=0x%x; strip=0x%x; refusals=%u; "
                   "confirms=%u%s\r\n",
                partner_slots::TruthVerdictName(to.verdict), act_valid ? unsigned(remote_anim.act) : 0u, unsigned(m.remote_slot),

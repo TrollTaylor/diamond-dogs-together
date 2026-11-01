@@ -1397,6 +1397,7 @@ struct Mission {
     std::uint64_t truth_line_ms;
     partner_slots::TruthVerdict truth_logged;
     unsigned truth_lines;
+    partner_slots::TruthRun truth_run;   // the remote's current HOLD run (partner_aim_truth=hold_run)
     partner_slots::LocalAimState aim_local;
     unsigned aim_local_lines;
     // Auto-fire stop (partner_slots DryStep) and its lines.
