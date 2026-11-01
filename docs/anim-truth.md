@@ -10,10 +10,11 @@ What the key turns on, and what is proven:
 - **Run-proven (`a8a69ae9`; Prove runs `3c5609bb`, `44391e17`, A/B `9fa2d353`):** the HOLD/FIRE strip on the `loco`
   and `act` verdicts (Mother Base RMB / RMB+LMB both directions, the pistol control, RMB on the ladder), with the
   short pose gap that keeps a refusal (below). This is the part that follows the gun profile.
-- **Not run in a game: their own keys, off unless named** (each needs `partner_native_aim_truth=1`; review
-  animtruth-1): `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT
+- **Not run in a game: their own keys, on with the gun profile since 0.14.7** (off unless named until then; turned
+  on without a game run by the user's "enable it all" of 2026-11-01; a named 0 opts out; each needs
+  `partner_native_aim_truth=1`; review animtruth-1): `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT
   zeroing in Compose and the hook), `partner_native_aim_truth_stance` (the stance-hold change). The scenario has no
-  box, gamepad or stance step; each needs its own hidden run before it goes on in play.
+  box, gamepad or stance step; none of the three has had its own hidden run.
 
 **Hidden run `a8a69ae9`** (the scenario at `5340034f`+docs, mode=play, -WanSim bad, rtt ~175..182 ms, mb-ladder; the
 guest presses, the host films; logs of both copies and frames looked at, archive
@@ -93,7 +94,7 @@ same strip. It is state-based:
 the first RMB sample of a refused run is already stripped, and when the real aim act arrives the level rise gives one
 clean press. It is not a weapon strip: DASH and `hold_stripped` stay untouched (the real body may sprint).
 
-Behind their own keys (off unless named, not run in a game; each also needs the main key):
+Behind their own keys (on with the gun profile since 0.14.7, not run in a game; each also needs the main key):
 - **Triggers (finder M8), `partner_native_aim_truth_triggers`:** `Config.strip_triggers` (Compose zeroes LT for a
   HOLD and RT for a FIRE sample strip) and `Arm.truth_triggers` (the hook's window strip, `partner_input::StripWindow`,
   zeroes them after every weapon strip and after the refused support request's 0x8078 strip), so a gamepad remote's
@@ -142,7 +143,7 @@ Fixed behind the main key (code and unit tests; not run in a game; the same stri
 - A short pose gap inside a refused HOLD (review animtruth-5): the refusal holds up to `stale_ms`.
 - Aim parity's `remote_aiming` from the verdict (code-intent M6, telemetry only).
 
-Fixed behind their own keys (code and unit tests; not run in a game; off unless named):
+Fixed behind their own keys (code and unit tests; not run in a game; on with the gun profile since 0.14.7):
 - Gamepad triggers past a strip (code-intent M8): `partner_native_aim_truth_triggers`.
 - Dives in the open while the remote is boxed and body 1 is not (evidence M5, fb1031 friend 35992 / 36073):
   `TruthBoxStrip` takes EVADE out of the remote's sample then (`partner_aim_truth=box; on=1`):

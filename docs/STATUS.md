@@ -1,3 +1,50 @@
+## November 1, 2026: 0.14.7 turn-on - the r1101 keys that waited only for a game run (`wp/rel0147`, local only)
+
+- **What players get (changed):** the user asked to enable it all without tests and release. Turned on WITHOUT a game
+  run (each follows the native gun profile in lab and play like its parent; a named 0 opts out, an invalid value is
+  named and off):
+  - `fulton_guest_vehicle` (CFG `r[18]` bit 16): a vehicle the HOST Fultons goes up under the engine's own balloon on
+    the guest's screen too (the host's VEHICLE_GONE path), instead of D14's `Seize {"Instant"}` / the Despawn.
+  - `fulton_early` (bit 2): a partner's vehicle Fulton lifts this copy at the Fultoner's `FultonInfo` (about 6 s
+    earlier), at the Fultoner's pose and type. Open: a balloon that fails after `FultonInfo` is not mirrored, so the
+    vehicle can be lifted on the receiver only (README Known limits).
+  - `fulton_look` (bit 4): the receiver's lift takes the Fultoner's wormhole level for 5 s. Open: the level is global,
+    so this copy's own Fultons in that window use it too (README Known limits).
+  - `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT zeroed with the
+    HOLD/FIRE strip for a gamepad remote), `partner_native_aim_truth_stance` (a refused aim's Aiming bits and the Lua
+    Reloading bit no longer hold off the stance fix). Each acts only with `partner_native_aim_truth` (on since the
+    r1101 Prove phase). They gained `_given` flags so the gun profile can turn them on.
+  - The gun profile's CFG `r[18]` is now 23 (1 + 2 + 4 + 16; 31 with a named `fulton_one_save=1`).
+- **Already on before this round (proven in hidden runs, unchanged):** `debug_vspawn`, `world_supply`, `fulton_sync`,
+  `partner_native_aim_truth`, `partner_ride_steer`.
+- **Kept off (unchanged):** `fulton_one_save` (reverses D1: a partner's soldier Fulton still recruits into both saves;
+  the user's open design choice, not a player feature); `partner_equip_midload` (a run showed it cannot work); the
+  Ocelot / Quiet F9 rows; lab-only research / diagnostic keys and probes; `world_relief` and Mother Base
+  VEHICLE_STATE (off after reviews, not only for lack of runs).
+- **Supply WEAPONS / ITEMS: left local (ALLOW unchanged, `0:431` and `4:0` only).** The existing path does not cover
+  them: (1) the only WEAPONS / ITEMS request seen (`69efd63b`) was `3:0`, so the box request names no weapon or item
+  and a mirror's contents are unknown; (2) its end was never seen (`step=pickup`, H3, is [U]: the host's E presses took
+  nothing, the box waited at state 10), and the state-14 `delivered` rule ends any synced box with nothing sent, so a
+  pickup that passes through 14 before `OnPickUpSupplyCbox` is observed could leave the partner's copy in place to be
+  collected again. Syncing them needs a new end rule and a contents check, which this round does not build. LOADOUT /
+  VEHICLES stay local too.
+- **Not built (out of scope):** the viewer's wheels turning / spinning, APC / tank spawn, binoculars on the wire.
+- **Tests:** lab_config_tests (the gun profile turns the six keys on in lab and play, not named; a named 0 opts each
+  out; an invalid value is named and off, also after a valid 1; without the gun profile they stay off unless named;
+  `FultonCfgBits` 23 / 31 / 7 / 1), friend_package_tests (play defaults `fulton_*` 11101 and anim truth 1111; a named
+  0 turns each sub-key off in play). Comments and help text updated (lab_config, lab_ini_check, LabCommon,
+  Invoke-WorkerScenario, partner_driver.hpp, world_vehicle_rules.lua, world_sync_lua_check, worker_session_tests),
+  the 0.14.6-default scenarios (`r1101-fulton-default-play.txt`, `r1101-animtruth-default-play.txt`,
+  `r1101-animtruth-play.txt`) say they describe the 0.14.6 default; protocol section 25 and docs/anim-truth.md give
+  the new defaults. README: the newly-on behaviour moved from Known limits to What works, with a line that it is new
+  in 0.14.7 and not tried in a game.
+- **No game run, smoke run or review panel** this round (the user's "without tests").
+- **Checks:** full `tools/build.ps1 -Jobs 4` at `da2fe2b1` (fresh worktree on C:): CTest **347/347**; every generator
+  `--check`: 13 pass (partner 858 / 213, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller);
+  native_ui / teammate_targeting stop at the absent gitignored `docs/evidence` JSON as in earlier rounds. Lua LF bytes:
+  world_vehicle_rules.lua 30496 (32000).
+
 ## November 1, 2026: r1101 land - the skeptic's corrections before the merge into dev (`wp/integ-1101`, local only)
 
 - **What players get (changed):** a vehicle the HOST Fultons now just vanishes on the guest's screen again, as before
