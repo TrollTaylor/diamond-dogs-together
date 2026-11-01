@@ -305,7 +305,7 @@ $r=Invoke-Queue $submit @('-Owner','tester-1','-Repo',$jobRepo,'-ScenarioPath','
     '-Mode','play','-WanSim','bad','-PartnerProfile','native','-NativeStage','gun','-BuildProfile','research','-SaveSeed','afgh-ledge','-NoStart')
 Check ($r.Code -eq 0) "submit -NoStart ($($r.Output))"
 $id1=Get-JobId $r.Output
-$jobs=Get-Jobs 'jobs'
+$jobs=@(Get-Jobs 'jobs')
 Check ($jobs.Count -eq 1 -and $jobs[0].Name -ceq "$id1.json") 'the job waits in %TEMP%\mgs-coop-queue\jobs'
 $job=Get-Content -LiteralPath $jobs[0].FullName -Raw|ConvertFrom-Json -AsHashtable
 Check ($job.owner -ceq 'tester-1' -and $job.repo -ceq $jobRepo -and (@($job.scenarios) -join '|') -ceq "$pass1|$pass2") 'the job names its repo and its scenarios (relative to the repo)'
@@ -320,12 +320,12 @@ foreach($bad in @(@('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath','tools\wo
     $r=Invoke-Queue $submit $bad
     Check ($r.Code -ne 0) ('submit refuses: '+($bad -join ' '))
 }
-Check ((Get-Jobs 'jobs').Count -eq 2) 'a refused submit writes no job'
+Check (@(Get-Jobs 'jobs').Count -eq 2) 'a refused submit writes no job'
 
 # The runner takes the jobs in order under the verify lock, then releases it.
 $r=Invoke-Queue $runner @()
 Check ($r.Code -eq 0) "the runner ran ($($r.Output))"
-Check ((Get-Jobs 'jobs').Count -eq 0 -and (Get-Jobs 'running').Count -eq 0) 'the runner empties the queue'
+Check (@(Get-Jobs 'jobs').Count -eq 0 -and @(Get-Jobs 'running').Count -eq 0) 'the runner empties the queue'
 Check (!(Test-Path -LiteralPath $lockDir) -and !(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))) 'the runner releases the verify lock and its own lock'
 $runs=@(Get-Content -LiteralPath (Join-Path $jobRepo 'fake-runs.jsonl')|ConvertFrom-Json -AsHashtable)
 Check ($runs.Count -eq 2 -and (@($runs[0].files) -join '|') -ceq "$pass1|$pass2" -and (@($runs[1].files) -join '|') -ceq $failing) 'jobs run oldest first, each in one call'
@@ -377,10 +377,10 @@ $me=Get-Process -Id $PID
 [IO.File]::WriteAllText((Join-Path $queue 'runner.lock'),"pid=$PID start=$($me.StartTime.ToUniversalTime().ToFileTimeUtc()) time=x")
 $r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$pass1,'-NoStart');$id=Get-JobId $r.Output
 $r=Invoke-Queue $runner @()
-Check ($r.Code -eq 0 -and (Get-Jobs 'jobs').Count -eq 1 -and $r.Output.Contains('already')) 'a second runner leaves the queue to the live one'
+Check ($r.Code -eq 0 -and @(Get-Jobs 'jobs').Count -eq 1 -and $r.Output.Contains('already')) 'a second runner leaves the queue to the live one'
 [IO.File]::WriteAllText((Join-Path $queue 'runner.lock'),"pid=$PID start=1 time=x")
 $r=Invoke-Queue $runner @()
-Check ((Get-Jobs 'jobs').Count -eq 0 -and (Read-Result $id).status -ceq 'passed' -and !(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))) 'a stale runner lock (pid gone or reused) is taken over'
+Check (@(Get-Jobs 'jobs').Count -eq 0 -and (Read-Result $id).status -ceq 'passed' -and !(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))) 'a stale runner lock (pid gone or reused) is taken over'
 
 # A job left in running by a runner that died is closed as interrupted (never rerun on its own).
 $null=New-Item -ItemType Directory -Force -Path (Join-Path $queue 'running')
@@ -388,7 +388,7 @@ $ghost='20261101-000000-000-abcdef'
 [IO.File]::WriteAllText((Join-Path $queue "running\$ghost.json"),(@{format='mgs-coop-worker-job';v=1;id=$ghost;owner='ghost';repo=$jobRepo;scenarios=@($pass1);args=@{};
     submitted_utc='2026-11-01T00:00:00Z';phase='running';runner_pid=$PID;runner_start='1'}|ConvertTo-Json))
 $null=Invoke-Queue $runner @()
-Check ((Read-Result $ghost).status -ceq 'interrupted' -and (Get-Jobs 'running').Count -eq 0) 'an orphaned running job is closed as interrupted'
+Check ((Read-Result $ghost).status -ceq 'interrupted' -and @(Get-Jobs 'running').Count -eq 0) 'an orphaned running job is closed as interrupted'
 
 # A job repo whose runner predates several parts: one scenario still runs (-ScenarioPath), several are refused.
 $oldRepo=Join-Path $sandbox 'oldrepo';$null=New-Item -ItemType Directory -Force -Path (Join-Path $oldRepo 'tools\worker')
