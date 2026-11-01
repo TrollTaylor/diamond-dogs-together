@@ -2807,17 +2807,23 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (labc.role != mgscoop::LabRole::guest) return refuse("role");
-    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
-    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     const auto grant = mgscoop::world_link::FindGrant(seq);
     if (!grant.found) return refuse("grant");
-    // Play (spawn_warp) admits only the spawn placement (kind 1); patrol/combat corrections stay lab only (the old
-    // play refusal, so the guest's Lua still logs native_off;native=role for them).
-    if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
+    // Three rules: the lab key (mode lab + debug_soldier_warp, any kind), the Mother Base staff rule (play or lab,
+    // mission 30050, a correction only: docs/world-sync-design.md 7.7), and play spawn_warp (on unless named 0) for the
+    // spawn placement (kind 1) only: play refuses its patrol/combat corrections with "role" (the old play refusal, so the
+    // guest's Lua still logs native_off;native=role for them).
+    bool staff = false;
+    const sw::GuestRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.debug_soldier_warp,
+                             mission, grant.kind == mgscoop::world::place::correct};
+    if (const char* why = sw::GuestAdmit(rule, staff)) {
+        if (labc.mode != mgscoop::LabMode::play || !labc.spawn_warp) return refuse(why);
+        if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
+    }
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
@@ -2827,6 +2833,17 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = grant.pos[i];
         request.player[i] = snapshot.remote_pos[i];
+    }
+    // Mother Base staff near either player: the range is from the nearer of the host
+    // (remote pose) and this guest's own player.
+    if (staff && snapshot.pose_valid) {
+        float to_host = 0.0f, to_self = 0.0f;
+        for (unsigned i = 0; i < 3; ++i) {
+            to_host += (grant.pos[i] - snapshot.remote_pos[i]) * (grant.pos[i] - snapshot.remote_pos[i]);
+            to_self += (grant.pos[i] - snapshot.player_pos[i]) * (grant.pos[i] - snapshot.player_pos[i]);
+        }
+        if (to_self < to_host)
+            for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     }
     request.yaw = grant.yaw;
     request.max_range = grant.kind == mgscoop::world::place::correct ? sw::kMaxRangeLimitM : sw::kMaxRangeM;
@@ -6316,14 +6333,21 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
-                    if (labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp) {
+                    // Lab: debug_soldier_warp; play: spawn_warp (a host "spawn_enemy here" or a guest spawn-sync grant);
+                    // a play or lab guest also for the Mother Base staff rule (GuestWarpReceipt, world-sync-design.md 7.7).
+                    const bool warp_key = labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp;
+                    const bool warp_guest = labc.role == mgscoop::LabRole::guest &&
+                        mgscoop::soldier_warp::GuestMayWarp(labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play,
+                                                            labc.debug_soldier_warp);
+                    if (warp_key || warp_guest) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
-                        // or a guest spawn-sync grant (GuestWarpReceipt). Lab: debug_soldier_warp; play: spawn_warp.
+                        // or a guest grant (GuestWarpReceipt: spawn sync, or a Mother Base staff correction).
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
                         if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; call=manager_vt38_send; hop=runtime_census\r\n",
-                                                          labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
+                                                          !warp_key ? "mb_staff"
+                                                          : labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

@@ -44,7 +44,7 @@ do
         function P.reset()
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
-            P.patrol = {rr = 0, s = {}, combat = {}}
+            P.patrol, P.lastS = {rr = 0, s = {}, combat = {}}, {}
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
@@ -149,6 +149,10 @@ do
                 local n = type(list) == "table" and #list or 0
                 local hx, hz = (W.get(vars, "playerPosX") or 0) * 1000, (W.get(vars, "playerPosZ") or 0) * 1000
                 local pat, scans, reads = P.patrol, 0, 0
+                -- Mother Base staff (staffPlace): staff near either player; never a combat flag on staff.
+                local staff = W.feature and W.feature.staffPlace
+                local qx, qz = nil, nil
+                if staff and n > 0 then qx, qz = P.partnerXZ(now) end
                 while scans < 8 and reads < 2 and scans < n do
                     pat.rr, scans = pat.rr % n + 1, scans + 1
                     local h = list[pat.rr]
@@ -157,19 +161,23 @@ do
                     if en and not P.live[h] and E.active(en.cp, h) and (not ps or now - ps.sampleAt >= 500) then
                         reads = reads + 1
                         if P.state(en) == 0 then
+                            if ps and ps.down then ps = nil; pat.s[h] = nil end
                             local x, y, z = pos(en.id)
+                            if staff and x == 0 and z == 0 then x = nil end  -- no position: never shared
                             if x then
                                 local d2 = (x - hx) ^ 2 + (z - hz) ^ 2
+                                if qx and d2 > 3025000000 then d2 = (x - qx) ^ 2 + (z - qz) ^ 2 end
                                 if d2 <= 3025000000 then
                                     local cp = W.cp and W.cp[en.cp]
-                                    local alert = (cp and cp.localPhase == 3) or (pat.combat[h] and now - pat.combat[h] <= 5000)
+                                    local alert = not staff and ((cp and cp.localPhase == 3) or
+                                        (pat.combat[h] and now - pat.combat[h] <= 5000)) or false
                                     local flags = alert and 1 or 0
                                     if not ps then
-                                        ps = {x = x, z = z, yaw = 0, sent = now, sampleAt = now, alert = alert}
+                                        ps = {x = x, y = y - 800, z = z, yaw = 0, sent = now, sampleAt = now, alert = alert}
                                         pat.s[h] = ps
                                         P.announce(3, h, x, y - 800, z, 0, flags, 0)
                                     else
-                                        ps.sampleAt = now
+                                        ps.sampleAt, ps.y = now, y - 800
                                         local moved = flat(x, z, ps.x, ps.z)
                                         local combatNew = alert and not ps.alert
                                         if moved >= 1500 or now - ps.sent >= 3000 or combatNew then
@@ -181,12 +189,49 @@ do
                                     end
                                 end
                             end
+                        elseif staff and ps then
+                            ps.down = true  -- kept for place-first: the standing ground y
                         else
                             pat.s[h] = nil
                         end
                     end
                 end
             end
+        end
+        -- The partner body's position on the host (TppPlayer2 index 1), read at most every 500 ms; nil when unreadable.
+        function P.partnerXZ(now)
+            local pat = P.patrol
+            if now - (pat.pAt or -1e9) >= 500 then
+                pat.pAt, pat.px, pat.pz = now, nil, nil
+                local by = W.get(GameObject, "GetGameObjectIdByIndex")
+                local ok, id = false, nil
+                if type(by) == "function" then ok, id = pcall(by, "TppPlayer2", 1) end
+                if ok and type(id) == "number" and id ~= W.api.null then
+                    local x, _, z = pos(id)
+                    pat.px, pat.pz = x, z
+                end
+                if not pat.logged then
+                    pat.logged = true
+                    L("event=staff_scan;partner=%d", pat.px and 1 or 0)
+                end
+            end
+            return pat.px, pat.pz
+        end
+        -- Mother Base staff (staffPlace), place first: right before the host's own outcome of a standing staff
+        -- member, where they are (kind 3), so the guest places its copy there before applying it
+        -- (world_place_guest.lua W.staffHold): x, z now, the ground y of their last standing sample (a lying body
+        -- reads lower); the sampled x, z when the body rose (a Fulton lift). Never sampled standing (far from both
+        -- players): nothing.
+        function W.staffAnnounce(h)
+            if not (W.host and W.feature and W.feature.staffPlace and P.patrol) then return end
+            local en, ps = W.ent[h], P.patrol.s[h]
+            if not (en and ps and ps.y) then return end
+            local x, y, z = pos(en.id)
+            if not x then return end
+            if math.abs(y - 800 - ps.y) > 2000 then x, z = ps.x, ps.z end
+            y = ps.y
+            local seq = P.announce(3, h, x, y, z, ps and ps.yaw or 0, 0, 0)
+            L("event=place_first;ent=%.0f;seq=%d;x=%d;y=%d;z=%d", h, seq or 0, x, y, z)
         end
         H[OP.ENEMY_DEBUG_ACK] = function(v)
             if not W.host then return end

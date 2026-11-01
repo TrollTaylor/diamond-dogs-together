@@ -1,8 +1,8 @@
 -- Original host guard placement and per-soldier debug actions on the owner update.
--- Placement reuses a living guard: "here" moves him 5 m in front of the player by
--- the native set-transform message (lab.ini debug_soldier_warp=1); else, and for
--- camp/route modes, an authored patrol route snap (retail TppDebug sequence).
--- Placements and come/ignore/notice/disable/enable reach the guest's copy (R.share).
+-- Placement reuses a living guard: "here" moves him 5 m ahead by the native
+-- set-transform message (lab.ini debug_soldier_warp=1); else, and for camp/route
+-- modes, a patrol route snap (retail TppDebug). Placements and come/ignore/notice/
+-- disable/enable reach the guest's copy (R.share).
 do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local E = D.enemy
@@ -29,7 +29,7 @@ do
   local function flags(s)
     return (E.marked[s.name] and 1 or 0) + (E.ignored[s.name] and 2 or 0) + (E.used[s.name] and 4 or 0)
   end
-  -- Eligible: unused, living NORMAL, readable, 30 m to 500 m from the player.
+  -- Eligible: unused, living NORMAL, readable, 30-500 m from the player.
   local function eligible(s, normal)
     return not E.used[s.name] and s.distance and s.distance > 900 and s.distance <= 250000
       and send(s.id, {id = "GetLifeStatus"}) == normal
@@ -56,7 +56,7 @@ do
   end
   local function place(s, route, id, o)
     E.used[s.name] = true
-    -- Retail TppDebug's route placement, never an unknown XYZ Warp/Spawn.
+    -- Retail TppDebug's route placement, never an XYZ Warp/Spawn.
     local ok = pcall(function()
       call(TppEnemy, "SetDisable", s.id)
       send(s.id, {id = "SetSneakRoute", route = route, point = 0})
@@ -85,7 +85,7 @@ do
     D.pending = q
     return true, fmt("%s;ent=%.0f;scope=local", o.submitted, s.hash)
   end
-  -- WARP_V1: {r=,h=,leaf=} from the native engine message, else nil and why.
+  -- WARP_V1: {r=,h=,leaf=} from the native message, else nil, why.
   local function warp(s, id)
     local c = pose()
     local y = math.rad(c[4])
@@ -97,7 +97,7 @@ do
     if why ~= nil then return nil, R.name(why) and why or "refused" end
     return r
   end
-  -- Nearest unused NORMAL, enabled, on-foot guard 15-500 m away.
+  -- Nearest unused NORMAL, enabled, on-foot guard 15-500 m.
   local function nearest(list, normal)
     local null, off, best = get(GameObject, "NULL_ID"), get(TppGameObject, "NPC_STATE_DISABLE")
     for _, c in ipairs(list) do
@@ -118,7 +118,7 @@ do
     local q, forced = {kind = "spawn", id = id, mission = D.mission, frames = 0}
     local function release() if forced then forced = nil; pcall(send, s.id, {id = "SetForceRealize", forceRealize = false}) end end
     q.cancel = release
-    -- Route snap fallback, never once the command or mission has ended natively.
+    -- Route snap fallback, never once the command or mission ended natively.
     local function route(why)
       if why == "command" or why == "mission" then return false, "spawn_context;why=" .. why end
       release()
@@ -234,20 +234,20 @@ do
   end
   local function op(a, id)
     local o = a[2]
-    local far = o == "goto" and #a == 4 and number(a[4], .8, 5)
-    if (#a ~= 3 and not far) or not OPS[o] then return false, "enemy_args" end
+    local d = #a == 4 and o == "goto" and number(a[4], .5, 10)
+    if #a ~= 3 and not d or not OPS[o] then return false, "enemy_args" end
     if o ~= "info" and o ~= "goto" and not A.hostOnly() then return false, "host_only" end
     local s, why = target(o, a[3])
     if not s then return false, why end
     if o == "goto" then
-      -- This copy's player, 2.5 m (or the 0.8..5 m given) from the soldier on its side, facing him.
+      -- This copy's player, d m (2.5, or the 0.5..10 m given) from the soldier on its side, facing him.
       local v, p = R.position(s), pose()
       if not v then return false, "enemy_position_unavailable" end
       local dx, dz = p[1] - v[1], p[3] - v[3]
       local n = sqrt(dx * dx + dz * dz)
       if n < .1 then dx, dz, n = 1, 0, 1 end
-      n = n / (far or 2.5)
-      local x, z = v[1] + dx / n, v[3] + dz / n
+      d = d or 2.5
+      local x, z = v[1] + d * dx / n, v[3] + d * dz / n
       local ok, msg = A.warp({x, v[2] + .3, z, math.deg(math.atan2(v[1] - x, v[3] - z))}, id)
       return ok, fmt("enemy_goto;ent=%.0f;%s", s.hash, tostring(msg))
     end
