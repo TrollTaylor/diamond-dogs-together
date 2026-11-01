@@ -161,6 +161,8 @@ do
    local c, v = a[1], a[2]
    if c == "rules" and #a == 1 then return true, R.status() end
    if c == "rules" or #a ~= 2 or (v ~= "0" and v ~= "1") then return false, "command_args" end
+   -- Lab only until a play run proves both rules (STATUS 2026-10-31): play refuses in plain words.
+   if type(W) ~= "table" or W.mode ~= 1 then say("Not available yet in this build."); return false, "not_available_yet" end
    if c == "wormhole" then
     if v == "0" then
      R.wormOff = true

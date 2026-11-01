@@ -293,13 +293,16 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   the HUD's `EquipHudAll` `ALL_KILL_NOUSE`). On, both copies lift exactly that flag and the
   HUD mark (as f30050's own debug sequence does), again after a cutscene or the Paz room;
   any other flag (Paz room, side ops) is left alone. Live, no reload. Saves write the stock
-  flag. **Killing a staff member still fails the mission** (stock f30050 game over on any
-  staff death). The host's choice reaches the guest (RULES `0x3E`, docs/world-sync-protocol.md
-  section 23) on each press and each new pairing; the guest keeps it through a mission load
+  flag. **Any kill at Mother Base still fails the mission** (stock f30050 reserves a game over
+  on any non-player Dead or Dying, staff or not). The host's choice reaches the guest (RULES `0x3E`,
+  docs/world-sync-protocol.md section 23) on each press and after every pairing (a same-epoch
+  re-pair too); the guest keeps it through a mission load
   and drops it after 60 s without the pairing. The guest's buttons are greyed (`host_only`).
 - `rules` reads the state: `rules;wormhole=on|off;level=N;seen=N;mb_weapons=0|1;from=self|host;applied=0|1`.
 - Logs: `world_lua=event=rules; step=worm_off|worm_on|worm_failed|mb_on|mb_off|rx|save|host_rule_dropped`.
-- Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet).
+- **Play: not available yet.** Until `rules-play.txt` passes, `wormhole` and `mb_weapons` refuse in play
+  (`not_available_yet`, "Not available yet in this build."); the rows show "unverified". Lab mode keeps them.
+- Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet; 2026-10-31 not admitted: D: under 3 GB).
 
 ### Give weapon (both players)
 

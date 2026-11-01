@@ -161,14 +161,15 @@ constexpr ActionDef kActions[] = {
     // Game rules (docs/debug-menu.md "Game rules", lua/coop/debug_rules.lua): the wormhole is this player's own; the Mother
     // Base weapons rule is the host's, for both copies (RULES 0x3E). Nothing changes in the save.
     {"rules_wormhole_off", C::world, "Wormhole Fulton off", "wormhole 0", "rules fulton wormhole balloon instant extract",
-     "Your Fulton uses the balloon again instead of the instant wormhole. Only you; the development stays in your save.", 0},
+     "Not available yet in play (lab only until a play run proves it). Your Fulton uses the balloon again instead of the instant wormhole. Only you; the development stays in your "
+     "save.", U},
     {"rules_wormhole_on", C::world, "Wormhole Fulton on", "wormhole 1", "rules fulton wormhole instant extract",
-     "Turns your wormhole Fulton back on (when your save has it).", 0},
+     "Not available yet in play (lab only until a play run proves it). Turns your wormhole Fulton back on (when your save has it).", U},
     {"rules_mb_weapons_on", C::world, "Weapons at Mother Base", "mb_weapons 1", "rules mother base mb weapons lethal guns",
-     "Both players can use their loadout weapons at Mother Base (stock: no lethal weapons there). The host decides for both. "
-     "Any kill at Mother Base still fails the mission.", H | S},
+     "Not available yet in play (lab only until a play run proves it). Both players can use their loadout weapons at Mother Base (stock: no lethal weapons "
+     "there). The host decides for both. Any kill at Mother Base still fails the mission.", H | S | U},
     {"rules_mb_weapons_off", C::world, "Stock Mother Base rules", "mb_weapons 0", "rules mother base mb weapons stock",
-     "Mother Base back to stock for both players: no lethal weapons.", H | S},
+     "Not available yet in play (lab only until a play run proves it). Mother Base back to stock for both players: no lethal weapons.", H | S | U},
     // Tools
     {"mission_status", C::tools, "Status", "status", "session guard readiness mission", "Reports mission, guard state and active toggles.", 0},
     {"tools_console", C::tools, "Send", "console text", "console command type", "Sends the console line as a text command.", P},
