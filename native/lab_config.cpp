@@ -286,6 +286,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.world_vehicle_damage = false;
     }
     // Supply drops synced (r1101; lab and play, OFF in both unless named until a hidden run proves it).
+    // Supply drops synced (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
     else if (Equals(key, "world_supply")) {
         ok = ParseBool(value, result.world_supply);
         result.world_supply_given = true;
@@ -1857,6 +1858,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.fulton_sync_given) c.fulton_sync = false;
     if (!c.fulton_early_given) c.fulton_early = false;
     if (!c.fulton_look_given) c.fulton_look = false;
+    // Supply drops synced (docs/world-sync-protocol.md section 26): follows the gun profile in lab and play since the r1101
+    // Prove phase (hidden play run 69efd63b, both copies: the host's script and iDroid AMMO / FULTON drops and the guest's
+    // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named
+    // 0 opts out.
+    if (!c.world_supply_given) c.world_supply = gun;
     // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play since the r1101 Prove
     // phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep and the guest's truck on both screens,
     // the ride, and both riders' presses refused as busy); a named 0 opts out.

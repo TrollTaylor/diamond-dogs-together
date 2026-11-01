@@ -1123,8 +1123,9 @@ try {
         $file = Join-Path $fixture 'vehicle-fixes-guest-lab.ini'; [IO.File]::WriteAllText($file, $vfIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_crew'])$($n['world_vehicle_damage'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '11|lab|0x0|0/0' 'native: the crew / damage keys parse'
-        # r1101 supply drops synced (world_supply, docs/world-sync-protocol.md section 26): off by default; LabCommon writes it; native parses it.
-        Assert-Equal "$($vdDefault['world_supply'])" '0' 'native: world_supply defaults off'
+        # r1101 supply drops synced (world_supply, docs/world-sync-protocol.md section 26): off without the gun profile (this
+        # offline fixture names none; play's gun profile turns it on: friend_package_tests); LabCommon writes it; native parses it.
+        Assert-Equal "$($vdDefault['world_supply'])" '0' 'native: world_supply off without the gun profile'
         $suOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_supply=1') -Role guest
         $suIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $suOverrides)
         Assert-Equal ((ConvertFrom-IniText $suIni)['world_supply']) '1' 'LabCommon writes world_supply=1'

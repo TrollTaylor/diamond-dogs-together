@@ -188,8 +188,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    default 0; docs/vehicles-companions-design.md 6.3);
                                    r1101: fulton_sync=0|1, the partner's Fulton attach on the puppet and the
                                    receiver's lift (lab and play, default 0; docs/world-sync-protocol.md section 25);
-                                   r1101: world_supply=0|1, supply drops synced (lab and play, off unless named;
-                                   docs/world-sync-protocol.md section 26);
+                                   r1101: world_supply=0|1, supply drops synced (lab and play; default follows the
+                                   gun profile, run 69efd63b; docs/world-sync-protocol.md section 26);
                                    r1101: debug_vspawn=0|1, F9 Spawn jeep / Spawn truck on both copies (lab and play;
                                    default follows the gun profile, runs 65b4005c / e09fcf72; docs/debug-menu.md)
 

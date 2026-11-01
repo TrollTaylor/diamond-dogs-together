@@ -879,8 +879,9 @@ struct LabConfig {
     bool world_vehicle_damage_given = false;
     // world_supply=0|1 (r1101, docs/world-sync-protocol.md section 26; lua/coop/world_supply.lua): supply drops
     // synced. Installs the supply-box observer (native/supply_cbox.cpp: two observe-only detours, the box state read
-    // and the remove lever) and turns on the SUPPLY op's Lua module. Lab and play (no refusal bit), OFF in both unless
-    // named until a hidden run proves it.
+    // and the remove lever) and turns on the SUPPLY op's Lua module. Lab and play (no refusal bit). Follows the gun
+    // profile in lab and play since the r1101 Prove phase (hidden play run 69efd63b, both copies; ResolveWeaponDefaults);
+    // a named 0 opts out, an invalid value is named and off.
     bool world_supply = false;
     bool world_supply_given = false;
     // companion_host_owned=0|1 (docs/vehicles-companions-design.md 6.1, M1): the host's

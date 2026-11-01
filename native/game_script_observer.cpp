@@ -6376,7 +6376,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
-                    // Supply drops synced (r1101, lab.ini world_supply=1, OFF unless named): the supply-box observer's
+                    // Supply drops synced (r1101, lab.ini world_supply, on with the gun profile): the supply-box observer's
                     // two observe-only detours, after its exact contract matches (native/supply_cbox_contract.hpp).
                     mgscoop::supply_cbox::SetEnabled(labc.world_supply);
                     if (labc.world_supply) {
