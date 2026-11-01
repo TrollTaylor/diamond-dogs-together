@@ -4166,6 +4166,15 @@ real Steam session (rtt 134-174 ms, avg 145; jitter avg 7, max 17 ms; loss 0; in
   `ride-lag/frames/sheet-c54aae04-before.jpg`, `sheet-f71126c0-after.jpg`.
 - **Not shown.** A board of a jeep that is already moving (the user's own seat-1 boards; the cut handles it the same way:
   module 0 seen, 0.3 m, cut); a two-PC Steam session; the truck cab (module 0 not observed there); Mother Base's jeep.
+- **One episode per seated ride (ride-cut-2, branch `wp/ride-cut-2`).** The skeptic found the write cap counted per
+  module-0 activation: `GetInCutStep` reset writes, done and the anchor on the first tick module 0 was inactive, so a
+  module 0 that came back within the ride would have been cut again every time (a possible flicker; not observed). The
+  episode is now the seated ride (local passenger valid in one vehicle): writes (at most 8), the cut and the stand-down
+  last until the passenger gets out or changes vehicle, and a module 0 that returns after the cut is left alone with one
+  `event=returned` line; before any cut a returning module 0 anchors anew; the key off keeps the ride. Failing first
+  `24397847` -> `72f26610`. The shipped-default runs of the open case (`fb1031-ride-cut-moving.txt`: seat 1 boarded
+  while the host already drives, twice; `fb1031-ride-cut-mb.txt`: the Mother Base sortie jeep) are written but did not
+  run in that round (the machine stayed under the run floors) [U].
 
 ## 9. Milestones
 

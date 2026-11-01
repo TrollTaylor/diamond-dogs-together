@@ -864,11 +864,49 @@ void TestGetInCut() {
     // Module 0 still active the next tick (the selection runs on the camera update): written again, no second event.
     o = pc::GetInCutStep(c, GetInIn(1616, 1157.6f));
     Check(o.write && o.event == pc::GetInCutEvent::none && c.cuts == 1 && c.writes == 2, "still active: written again, no new event");
-    // Module 0 gone (the fallback took over): the episode ends; a later get-in anchors again.
+    // Module 0 gone (the fallback took over): no write; the cut counts for the whole seated ride.
     o = pc::GetInCutStep(c, GetInIn(1632, 1157.8f, false));
-    Check(!o.write && !c.have && c.cuts == 1, "module 0 gone: episode over, the mission count kept");
-    o = pc::GetInCutStep(c, GetInIn(5000, 1200.0f));
-    Check(!o.write && c.have && c.anchor[2] == 1200.0f && c.writes == 0, "the next get-in anchors anew");
+    Check(!o.write && c.cuts == 1, "module 0 gone: no write, the count kept");
+    // ride-cut-2 (the 8.60 skeptic): module 0 comes back within the same seated ride while the jeep keeps moving, again
+    // and again. The episode is the seated ride, not one module-0 activation: never a second cut, never a write (no
+    // flicker between module 0 and the fallback).
+    unsigned again = 0, again_writes = 0, returned_events = 0;
+    for (unsigned k = 0; k < 6; ++k) {
+        for (unsigned i = 0; i < 4; ++i) {
+            const pc::GetInCutOut r =
+                pc::GetInCutStep(c, GetInIn(2000 + 400 * k + 16 * i, 1160.0f + 2.0f * static_cast<float>(k) + 0.5f * static_cast<float>(i)));
+            if (r.event == pc::GetInCutEvent::cut) ++again;
+            if (r.event == pc::GetInCutEvent::returned) ++returned_events;
+            if (r.write) ++again_writes;
+        }
+        pc::GetInCutStep(c, GetInIn(2000 + 400 * k + 100, 1161.0f + 2.0f * static_cast<float>(k), false));
+    }
+    Check(again == 0 && again_writes == 0 && c.cuts == 1, "module 0 back within the same ride: no second cut, no write");
+    Check(returned_events == 1 && c.returned == 1 && c.done && c.have && c.writes == 2,
+          "module 0 back: one returned event, the ride stands down (writes kept)");
+    // The key or the camera off for a moment mid-ride (on=false) keeps the ride: still no second cut afterwards.
+    pc::GetInCutIn blip = GetInIn(4500, 1180.0f);
+    blip.on = false;
+    pc::GetInCutStep(c, blip);
+    pc::GetInCutStep(c, GetInIn(4516, 1180.0f));
+    o = pc::GetInCutStep(c, GetInIn(4532, 1181.0f));
+    Check(!o.write && c.cuts == 1, "on=false for a tick mid-ride: the ride kept, no second cut");
+    // Getting out ends the ride; boarding the same jeep again is a new ride: anchored anew and cut once more.
+    pc::GetInCutIn out = GetInIn(5000, 1200.0f, false);
+    out.seated = false;
+    pc::GetInCutStep(c, out);
+    o = pc::GetInCutStep(c, GetInIn(5100, 1200.0f));
+    Check(!o.write && c.have && c.anchor[2] == 1200.0f && c.writes == 0, "boarded again: the next get-in anchors anew");
+    o = pc::GetInCutStep(c, GetInIn(5116, 1200.5f));
+    Check(o.write && o.event == pc::GetInCutEvent::cut && c.cuts == 2, "the second ride: cut once");
+    // Module 0 ending on its own before any cut (the jeep stood) and coming back later in that ride while it moves: one cut.
+    pc::GetInCut s{};
+    pc::GetInCutStep(s, GetInIn(1000, 50.0f));
+    pc::GetInCutStep(s, GetInIn(4500, 50.0f, false));
+    o = pc::GetInCutStep(s, GetInIn(9000, 80.0f));
+    Check(!o.write && s.anchor[2] == 80.0f, "module 0 back before any cut: anchored where it came back");
+    o = pc::GetInCutStep(s, GetInIn(9016, 80.4f));
+    Check(o.write && o.event == pc::GetInCutEvent::cut && s.cuts == 1, "then cut once it moved");
     // A get-in into a jeep that is already moving (the user's front-seat rides): cut on the next ticks.
     pc::GetInCut m{};
     pc::GetInCutStep(m, GetInIn(2000, 100.0f));

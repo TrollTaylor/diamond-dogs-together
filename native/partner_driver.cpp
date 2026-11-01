@@ -3789,6 +3789,8 @@ void TickFollowCarry(Driver& d, const Hooks& h, const pp::State& st, std::uint64
 // (the front-seat get-in camera, which holds the view where the get-in began) is the active module, a ridden vehicle
 // that has moved kGetInCutMove since module 0 was first seen ends module 0 (its active bit and request word cleared; the
 // stock selection deactivates it and the fallback follows the seated body). One line per cut, one when it gives up.
+// ride-cut-2: the episode is the seated ride (at most one cut until the passenger gets out or changes vehicle); a module 0
+// that comes back after the cut in the same ride is left alone, with one returned line.
 void TickGetInCut(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, bool terminating) noexcept {
     namespace pc = partner_pass_camera;
     auto& c = d.mission.pass_camera;
@@ -3812,7 +3814,7 @@ void TickGetInCut(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t 
             for (unsigned i = 0; i < 3; ++i) in.veh[i] = vr.unit.pos[i];
         }
     }
-    if (!(in.on && in.seated && in.getin) && !c.getin.have) return;
+    if (!(in.on && in.seated && in.getin) && !c.getin.have) return;  // no ride open and nothing to open one
     const pc::GetInCutOut o = pc::GetInCutStep(c.getin, in);
     const char* why = nullptr;
     if (o.write) why = h.ride_getin_cut(h.context, st);
@@ -3827,6 +3829,10 @@ void TickGetInCut(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t 
         EmitNativeN(h, c.getin_cap, kRideGetInCutCap, "partner_ride_getin_cut",
                     "partner_ride=pass_camera; state=getin_cut; event=gave_up; vehicle=%u; seat=%u; moved_cm=%d; ms=%llu; writes=%u\r\n",
                     unsigned(lp.vehicle), unsigned(lp.seat), cm(o.moved), static_cast<unsigned long long>(o.ms), c.getin.writes);
+    else if (o.event == pc::GetInCutEvent::returned)
+        EmitNativeN(h, c.getin_cap, kRideGetInCutCap, "partner_ride_getin_cut",
+                    "partner_ride=pass_camera; state=getin_cut; event=returned; vehicle=%u; seat=%u; ms=%llu; writes=%u; returned=%u\r\n",
+                    unsigned(lp.vehicle), unsigned(lp.seat), static_cast<unsigned long long>(o.ms), c.getin.writes, c.getin.returned);
 }
 
 // fb1031 (design 8.59): the ride camera census, lab and play, read only. While the local player rides a vehicle (the

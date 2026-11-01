@@ -1120,10 +1120,14 @@ view where the get-in began, so a jeep the partner drives off leaves the rider's
 sits (passenger camera installed, not off, no latch) and module 0 is the active module, `TickGetInCut` anchors the
 vehicle's position; once it moved 0.3 m (`kGetInCutMove`) `CutGetIn` clears module 0's flags `+0x147C` bit 5 (the bit its
 CanActivate `0x1184D80` returns) and its request word `+0xAE0` when it is 1 (which would set the bit again); the stock
-selection then runs module 0's own Deactivate (`0x1182B40`) and the fallback takes over. At most 8 writes a get-in.
+selection then runs module 0's own Deactivate (`0x1182B40`) and the fallback takes over. One cut episode per seated
+ride (ride-cut-2): the writes (at most 8), the cut and the stand-down last until the local passenger gets out or changes
+vehicle, so a module 0 that comes back within the ride after the cut is left alone (one `event=returned` line) instead of
+being cut again (no flicker); before any cut a returning module 0 anchors anew; the key off keeps the ride.
 Five pinned blocks (`getin_cut_blocks`), verified once per process. Lines: `partner_pass_camera=getin_cut;
 result=installed; blocks=5` (once); `partner_ride=pass_camera; state=getin_cut; event=cut; vehicle; seat; moved_cm; ms;
-result; cuts` or `event=gave_up; ...; writes` (cap 100 a mission). Runs `c54aae04` (before) and `f71126c0` (named 1).
+result; cuts`, `event=gave_up; ...; writes` or `event=returned; vehicle; seat; ms; writes; returned` (cap 100 a
+mission). Runs `c54aae04` (before) and `f71126c0` (named 1).
 
 ## Traversal icon
 
