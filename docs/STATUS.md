@@ -1,3 +1,26 @@
+## November 1, 2026: r1101 fulton - the Fulton synced on both copies, behind `fulton_sync` (`wp/fulton-anim`, local only, off unless named)
+
+- **What players would get (key `fulton_sync=1` named on both copies; nothing changes with it unnamed):** when the
+  partner Fultons anything, their puppet plays the Fulton attach (`stateFultonStart`, the DM overlay's Fulton-only map:
+  remote act 49/50/59 held 500 ms, also with `partner_native_overlay=off`); a partner's soldier Fulton lifts this copy's
+  soldier (W1's `RequestForceFulton`, as before) in the Fultoner's look (balloon or wormhole: FULTON 0x46 carries the
+  Fultoner's `EQP_IT_Fulton_WormHole` level; this copy borrows it for 5 s, restored, never saved) and only visually
+  (this copy's `TppTerminal.OnFulton` skipped once: the Fultoner keeps the recruit); a partner's vehicle Fulton lifts
+  this copy's vehicle with the engine's own vehicle Fulton (`Seize {"Fulton"}`, the balloon) instead of removing it
+  at once (D14 credit as before; without D14 no credit here). Mother Base spareStaff is unchanged (SetDisable).
+- **Open decision:** with the key on, a partner's soldier Fulton no longer recruits on this copy, which differs from
+  D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until the user
+  decides and a hidden run shows both screens.
+- **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 10 bytes; `docs/world-sync-protocol.md` section 25);
+  CFG `r[18]`; world note 22 reserved, unused.
+- **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`; green `000cf3c7`, `7e7ab625`. partner_dm_overlay
+  TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
+  world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
+  debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
+- **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca`; generators `--check` as at the rel0146
+  baseline (carry_info / sleep_plugin differ by line endings only there too).
+- **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep).
+
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `6c25276` with Release receipt `20261101-025109-055c474332e94b7494b2639f486ea948` (passed, 331 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.6+6c25276` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.5.
