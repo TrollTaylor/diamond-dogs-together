@@ -747,12 +747,17 @@ do
     -- (the borrowed wormhole look); the sub-keys only with fulton_sync.
     -- r1101 Prove: 8 fulton_one_save (the receiver's soldier credit skipped: the Fultoner's save only), also only with
     -- fulton_sync.
-    for _, b in ipairs({{0, false, false, false, false}, {1, true, false, false, false}, {3, true, true, false, false},
-        {5, true, false, true, false}, {7, true, true, true, false}, {6, false, false, false, false}, {9, true, false, false, true},
-        {13, true, false, true, true}, {15, true, true, true, true}, {8, false, false, false, false}, {14, false, false, false, false}}) do
+    -- r1101 land: 16 fulton_guest_vehicle (the guest's balloon lift of a vehicle the host Fultoned; never run in a game),
+    -- also only with fulton_sync; a value past 31 reads as 0.
+    for _, b in ipairs({{0, false, false, false, false, false}, {1, true, false, false, false, false}, {3, true, true, false, false, false},
+        {5, true, false, true, false, false}, {7, true, true, true, false, false}, {6, false, false, false, false, false},
+        {9, true, false, false, true, false}, {13, true, false, true, true, false}, {15, true, true, true, true, false},
+        {8, false, false, false, false, false}, {14, false, false, false, false, false}, {17, true, false, false, false, true},
+        {25, true, false, false, true, true}, {31, true, true, true, true, true}, {16, false, false, false, false, false},
+        {30, false, false, false, false, false}, {32, false, false, false, false, false}}) do
         env, c = rig(1, b[1], 1)
-        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4] and c.W.fultonOneSaveOn == b[5],
-            'CFG r[18] = ' .. b[1] .. ': the fulton bits')
+        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4] and c.W.fultonOneSaveOn == b[5] and
+            c.W.fultonGuestVehicleOn == b[6], 'CFG r[18] = ' .. b[1] .. ': the fulton bits')
     end
     -- The receiver (guest, no wormhole): FULTON first, then the host's FULTONED outcome. With fulton_look (bit 4) the
     -- level is raised to the Fultoner's look before RequestForceFulton; with fulton_one_save (bit 8) the stock credit is

@@ -148,6 +148,10 @@ void Cfg() {
     r.fulton = 15;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,15") == 0,
           "the fulton bits with fulton_one_save are r[18]");
+    // r1101 land: bit 16 fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton) rides r[18] as is too.
+    r.fulton = 31;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31") == 0,
+          "the fulton bits with fulton_guest_vehicle are r[18]");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
     r.relief = 255; r.fulton = 255;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255") == 0 &&

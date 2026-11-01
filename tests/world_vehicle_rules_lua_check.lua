@@ -50,7 +50,7 @@ local function Fixture(role, opts)
         host = role == 'host', role = role == 'host' and 1 or 2, mode = opts.mode or 1, vehicleGoneOn = opts.gone ~= false,
         vehicleStateOn = opts.state == true, vehicleWreckOn = opts.wreck == true, vehicleBreakOn = opts.brk == true,
         vehicleCreditOn = opts.credit == true, vehicleLoadoutOn = opts.loadout == true, vehicleCrewOn = opts.crew == true,
-        fultonOn = opts.fulton == true, fultonEarlyOn = opts.early == true}
+        fultonOn = opts.fulton == true, fultonEarlyOn = opts.early == true, fultonGuestVehicleOn = opts.gv == true}
     -- World sync's soldier roster (world_sync.lua W.byId: GameObject id -> entity hash) and the type index fallback.
     W.byId = {[4321] = 1856151639, [4322] = 1856151640}
     env.TppGameObject = {GAME_OBJECT_TYPE_SOLDIER2 = 2}
@@ -683,7 +683,7 @@ check(g:has('event=vehicle_rules;step=credit_missing;id=25610;role=guest') and #
 -- engine's own vehicle Fulton (Seize {"Fulton"}: the balloon) instead of Seize {"Instant"} or a Despawn. The credit stays
 -- what it was: with D14 the stock credit once; without it this copy's TppTerminal.OnFulton is skipped for that vehicle
 -- (visual only: no resource, no Mother Base credit on the copy that did not Fulton).
-g = Fixture('guest', {credit = true, fulton = true})
+g = Fixture('guest', {credit = true, fulton = true, gv = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
 g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
 check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and #g.seized[1].options == 1 and g.seized[1].markedGone and
@@ -692,7 +692,7 @@ check(#g.credits == 1 and g:has('event=vehicle_rules;step=fulton_lift;id=25610;c
     g:has('event=vehicle_gone;step=applied;id=25610;via=fulton;src=rx;ok=1'), 'credited once as D14, the lift logged and read back')
 g.V.observe('FultonInfo', 25610, 'local')
 check(g.V.watch[25610] == nil and #g:sent(47) == 0, 'the Fulton messages of the lift itself are never a loss here')
-g = Fixture('guest', {fulton = true})
+g = Fixture('guest', {fulton = true, gv = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
 g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
 check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and #g.despawns == 0 and #g.credits == 0 and g.onFulton == nil and
@@ -705,17 +705,42 @@ h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {res = 14})
 hostReq(h, 25608, 9, 1)
 check(#h.seized == 1 and h.seized[1].options[1] == 'Fulton' and #h.despawns == 0 and #h.credits == 0 and
     h:has('step=applied;id=25608;via=fulton;src=req;ok=1'), 'host receiver of a guest Fulton: the balloon, no credit without D14')
--- A destruction (cause 2) and index 0 never lift; the key off keeps Seize Instant / the Despawn.
+-- r1101 land: only the guest-to-host vehicle lift ran in a game (runs 7d924fac, 19882881). The guest's lift of a vehicle
+-- the HOST Fultoned (the host's VEHICLE_GONE, another path) never ran, so it needs its own key fulton_guest_vehicle
+-- (CFG r[18] bit 16, W.fultonGuestVehicleOn, off unless named): without it the guest removes it as before r1101.
+g = Fixture('guest', {credit = true, fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 1 and g.seized[1].options[1] == 'Instant' and #g.despawns == 0 and #g.credits == 1 and
+    g:has('event=vehicle_rules;step=credit_seize;id=25610;role=guest') and not g:has('step=fulton_lift') and
+    not g:has('via=fulton'), 'guest, fulton_guest_vehicle off (the default): the host\'s vehicle Fulton is D14\'s Seize Instant here')
 g = Fixture('guest', {fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 0 and #g.despawns == 1 and not g:has('step=fulton_lift') and not g:has('step=credit_skipped'),
+    'guest, fulton_guest_vehicle off, no D14: the Despawn as before, no lift')
+g.env.TppTerminal.OnFulton(25610, 0, 0, 14)
+check(#g.credits == 1, 'guest, fulton_guest_vehicle off: no OnFulton skip is left behind')
+g = Fixture('guest', {fulton = true, early = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002')
+g.V.early(25610, 1, 100000, 1000, 100000)
+check(#g.seized == 0 and #g.despawns == 0 and not g:has('step=early'), 'guest, fulton_guest_vehicle off: no early lift either')
+h = Fixture('host', {fulton = true, credit = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {res = 14})
+hostReq(h, 25608, 9, 1)
+check(#h.seized == 1 and h.seized[1].options[1] == 'Fulton' and h:has('event=vehicle_rules;step=fulton_lift;id=25608;credit=1;role=host'),
+    'host, without fulton_guest_vehicle: a guest\'s vehicle Fulton still lifts here (the proven direction)')
+-- A destruction (cause 2) and index 0 never lift; the key off keeps Seize Instant / the Despawn.
+g = Fixture('guest', {fulton = true, gv = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.H[46]({1, 25610, 2, 0, 0, 1, 100000, 1000, 100000})
 check(#g.seized == 0 and #g.despawns == 1, 'a destruction: the Despawn, no lift')
-g = Fixture('guest', {fulton = true, credit = true})
+g = Fixture('guest', {fulton = true, gv = true, credit = true})
 g:add(RID, 5, 5, 1)
 g.H[46]({1, RID, 1, 0, 0, 1, 5000, 1000, 5000})
 check(#g.seized == 0 and g:has('step=refused;id=25600;src=rx;reason=index0'), 'index 0: never lifted')
 -- A lift that does not take is given 15 s (the balloon rises for seconds), then the Despawn.
-g = Fixture('guest', {fulton = true})
+g = Fixture('guest', {fulton = true, gv = true})
 g.seizeFails = true
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
@@ -728,7 +753,7 @@ check(#g.despawns == 1 and g:has('step=fallback;id=25610;from=fulton;via=locator
 -- later VEHICLE_GONE / request finds it gone here and changes nothing more. Review fixes of 2026-11-01: its own lab key
 -- fulton_early (CFG r[18] bit 2, W.fultonEarlyOn; a balloon that fails after FultonInfo is not mirrored yet), and the item
 -- is judged at the Fultoner's pose and type (FULTON kind 2 carries them; pool indices can differ between copies).
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
 g.V.early(25610, 1, 100000, 1000, 100000)
 check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and g.seized[1].markedGone and
@@ -745,7 +770,7 @@ hostReq(h, 25608, 9, 1)
 check(#h.seized == 1 and h:has('event=vehicle_gone;step=tx;id=25608;cause=1;actor=1;rid=9'), 'early on the host: the guest\'s request is answered gone')
 -- Mismatched pool indices (an earlier despawn and respawn, a vehicle spawned on one copy only): this copy's 25610 is
 -- another jeep 400 m from the Fultoner's pose; the vehicle at that pose (25612 here) is lifted, never 25610.
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g:add(25612, 500, 100, 1, 'veh_lv_0004')
 g.V.early(25610, 1, 500000, 1000, 100000)
@@ -761,12 +786,12 @@ hostReq(h, 25608, 9, 1, -300, 877.7)
 check(#h.seized == 1 and h.pool[25608].alive and h:has('event=vehicle_gone;step=tx;id=25608;cause=1;actor=1;rid=9') and #h:sent(4) == 0,
     'mismatched indices: the guest\'s later request (its own index) is answered gone, nothing more lifted')
 -- No vehicle of that type near the Fultoner's pose here: nothing lifted (VEHICLE_GONE's readback decides later).
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.V.early(25610, 1, 900000, 1000, 100000)
 check(#g.seized == 0 and #g.despawns == 0 and g.pool[25610].alive and not g.V.gone[25610], 'early: nothing near the Fultoner\'s pose, nothing lifted')
 -- A FULTON without the pose (vtype 255 and 0, 0, 0: the Fultoner could not read it): no early lift.
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.V.early(25610)
 g.V.early(25610, 255, 0, 0, 0)
@@ -794,15 +819,15 @@ g = Fixture('guest', {fulton = false, early = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.V.early(25610, 1, 100000, 1000, 100000)
 check(#g.seized == 0 and #g.despawns == 0 and not g:has('step=early'), 'early: fulton_sync off, nothing')
-g = Fixture('guest', {fulton = true})
+g = Fixture('guest', {fulton = true, gv = true})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')
 g.V.early(25610, 1, 100000, 1000, 100000)
 check(#g.seized == 0 and #g.despawns == 0 and not g:has('step=early'), 'early: fulton_early off (the default), nothing')
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(25611, 100, 100, 1)
 g.V.early(25611, 1, 100000, 1000, 100000)
 check(#g.seized == 0 and g:has('event=vehicle_rules;step=early_skip;id=25611;reason=no_locator'), 'early: an unnamed vehicle waits for VEHICLE_GONE')
-g = Fixture('guest', {fulton = true, early = true})
+g = Fixture('guest', {fulton = true, gv = true, early = true})
 g:add(RID, 5, 5, 1)
 g.V.early(RID, 1, 5000, 1000, 5000)
 check(#g.seized == 0, 'early: index 0 never')

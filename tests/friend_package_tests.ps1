@@ -634,7 +634,7 @@ try {
             # fulton_sync; play defaults it on with the gun profile, the sub-keys and fulton_one_save off (D1: a partner's
             # soldier Fulton still recruits into both saves); a named 0 turns it off in play (no refusal bit).
             Assert-True (!$hostIni.Contains('fulton_') -and !$guestIni.Contains('fulton_') -and !$clipsIni.Contains('fulton_')) 'Play-Coop lab.ini never names a fulton key'
-            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])" '1000' 'native: play defaults the Fulton synced on, its sub-keys off'
+            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])$($n['fulton_guest_vehicle'])" '10000' 'native: play defaults the Fulton synced on, its sub-keys off (also the guest''s lift of a host''s vehicle Fulton)'
             $file = Join-Path $fixture 'play-fulton-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_sync=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['fulton_sync'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named fulton_sync 0 turns the Fulton synced off in play'

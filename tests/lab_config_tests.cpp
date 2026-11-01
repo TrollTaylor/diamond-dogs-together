@@ -1982,6 +1982,36 @@ int main() {
                   "CFG r[18]: 8 fulton_one_save (15 with every key); nothing without fulton_sync");
             Check(!foBad.fulton_one_save && foBad.fulton_one_save_given && foBad.invalid_values == 1 && mgscoop::FultonCfgBits(foBad) == 1,
                   "an invalid fulton_one_save is named and off");
+            // r1101 land: fulton_guest_vehicle (CFG r[18] bit 16): the guest's balloon lift of a vehicle the HOST Fultoned. Only
+            // the guest-to-host vehicle lift ran in a game (runs 7d924fac, 19882881); the host-to-guest one (it reaches the
+            // guest by the host's VEHICLE_GONE, another path) never ran, so it is off unless named (lab, gun profile and play)
+            // and the guest's copy removes such a vehicle as before (D14's Seize Instant / the Despawn).
+            const auto fgAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\nfulton_one_save=1\n"
+                                   "fulton_guest_vehicle=1\n");
+            const auto fgOne = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=1\n");
+            const auto fgNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_guest_vehicle=1\n");
+            const auto fgBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=maybe\n");
+            const auto fgPlay = Lab("enabled=1\nrole=guest\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n"
+                                    "world=3\nfulton_guest_vehicle=1\n");
+            Check(!fsDef.fulton_guest_vehicle && !fsDef.fulton_guest_vehicle_given && !fsPlayDefault.fulton_guest_vehicle &&
+                      !fsLab.fulton_guest_vehicle && !fsPlay.fulton_guest_vehicle && !foAll.fulton_guest_vehicle,
+                  "fulton_guest_vehicle defaults off (lab and play, also with fulton_sync=1 and every other fulton key)");
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto fgGun = Lab(fsGunBase + mode);
+                Check(fgGun.fulton_sync && !fgGun.fulton_guest_vehicle && !fgGun.fulton_guest_vehicle_given && mgscoop::FultonCfgBits(fgGun) == 1,
+                      "the gun profile leaves fulton_guest_vehicle off (lab and play)");
+            }
+            Check(fgOne.fulton_guest_vehicle && fgOne.fulton_guest_vehicle_given && fgOne.invalid_values == 0 && fgOne.unknown_keys == 0 &&
+                      mgscoop::FultonCfgBits(fgOne) == 17 && fgAll.fulton_guest_vehicle && mgscoop::FultonCfgBits(fgAll) == 31 &&
+                      mgscoop::FultonCfgBits(fgNoSync) == 0,
+                  "CFG r[18]: 16 fulton_guest_vehicle (31 with every key); nothing without fulton_sync");
+            Check(fgPlay.mode == mgscoop::LabMode::play && fgPlay.fulton_sync && fgPlay.fulton_guest_vehicle && fgPlay.play_refused == 0 &&
+                      fgPlay.invalid_values == 0 && fgPlay.unknown_keys == 0 && mgscoop::FultonCfgBits(fgPlay) == 17,
+                  "a named fulton_guest_vehicle=1 parses in play with the gun profile, no refusal bit");
+            Check(!fgBad.fulton_guest_vehicle && fgBad.fulton_guest_vehicle_given && fgBad.invalid_values == 1 &&
+                      mgscoop::FultonCfgBits(fgBad) == 1,
+                  "an invalid fulton_guest_vehicle is named and off");
         }
         // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
         // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).
