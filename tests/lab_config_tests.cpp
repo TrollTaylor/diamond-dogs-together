@@ -1969,6 +1969,12 @@ int main() {
             Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
                   "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
+            // r1101 animtruth: off unless named (also in the gun profile and in play); =1 turns it on.
+            Check(!def.partner_native_aim_truth && !gunDefault.partner_native_aim_truth &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
+                  Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
+                  Lab("enabled=1\nrole=host\npartner_native_aim_truth=maybe\n").invalid_values == 1,
+                  "partner_native_aim_truth: off by default, =1 on (lab and play), a bad value is invalid");
             Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&
                   mapOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::map && debugOverlay.invalid_values == 0,
                   "overlay debug/map and act census off parse");

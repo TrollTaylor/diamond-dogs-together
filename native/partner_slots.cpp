@@ -192,4 +192,43 @@ bool DryStep(DryState& s, const DryIn& in, std::uint32_t grace_ms) noexcept {
     return s.dry;
 }
 
+const char* TruthVerdictName(TruthVerdict value) noexcept {
+    switch (value) {
+    case TruthVerdict::nostate: return "nostate";
+    case TruthVerdict::aim: return "aim";
+    case TruthVerdict::keep: return "keep";
+    case TruthVerdict::lane: return "lane";
+    case TruthVerdict::other: return "other";
+    case TruthVerdict::loco: return "loco";
+    case TruthVerdict::act: return "act";
+    default: return "off";
+    }
+}
+
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept { return AimBlockedAct(act); }
+
+// RED stub (r1101 animtruth): never strips.
+TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
+    (void)in;
+    TruthOut o{};
+    o.verdict = TruthVerdict::off;
+    o.changed = o.verdict != s.last;
+    s.last = o.verdict;
+    return o;
+}
+
+const char* LocalAimEventName(LocalAimEvent value) noexcept {
+    switch (value) {
+    case LocalAimEvent::aimed: return "aimed";
+    case LocalAimEvent::no_aim: return "no_aim";
+    default: return "none";
+    }
+}
+
+// RED stub (r1101 animtruth): never reports.
+LocalAimOut LocalAimStep(LocalAimState& s, const LocalAimIn& in, std::uint32_t no_aim_ms) noexcept {
+    (void)s; (void)in; (void)no_aim_ms;
+    return LocalAimOut{};
+}
+
 } // namespace mgscoop::partner_slots

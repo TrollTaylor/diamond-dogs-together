@@ -663,6 +663,10 @@ struct Settings {
     // C4 place / detonate mirrored into body 1's record (partner_place_mirror).
     bool nplace_mirror;
     PartnerNativeAimIntent naim_intent;
+    // r1101 animtruth (lab.ini partner_native_aim_truth): partner_slots TruthStep
+    // strips the remote's raw HOLD/FIRE from its sample (Arm sample_strip) while
+    // its body is not aiming; the sender logs partner_aim_local per HOLD run.
+    bool naim_truth;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
     // Set only in the effective copy: the native settings apply this tick.
@@ -1383,6 +1387,17 @@ struct Mission {
     std::uint64_t aim_intent_key, aim_intent_ms;
     bool aim_intent_logged;
     unsigned aim_intent_lines;
+    // r1101 animtruth: the receiver's verdict (partner_slots TruthStep), the
+    // Arm's sample_strip bits, its partner_aim_truth lines (own cap, change
+    // lines at most every kAimIntentLineMs) and the sender's HOLD runs.
+    partner_slots::TruthState truth;
+    partner_slots::TruthVerdict truth_verdict;
+    std::uint32_t truth_strip;
+    std::uint64_t truth_line_ms;
+    partner_slots::TruthVerdict truth_logged;
+    unsigned truth_lines;
+    partner_slots::LocalAimState aim_local;
+    unsigned aim_local_lines;
     // Auto-fire stop (partner_slots DryStep) and its lines.
     partner_slots::DryState dry;
     bool dry_strip;

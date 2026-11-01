@@ -717,6 +717,12 @@ struct LabConfig {
     // The native stance level fix: 1 = the round-1 window (500 ms behind the
     // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
     bool partner_native_stance_fast = true;
+    // r1101 animtruth (docs/anim-truth.md): the puppet draws what the remote's
+    // body does, not what its pad asked (partner_slots TruthStep): the remote's
+    // raw HOLD/FIRE are stripped while its gun-lane act is plain locomotion with
+    // no recent aim act (Mother Base KILLING_WEAPON) or a body-owned act (hit,
+    // knockdown, stun, carried, box...). Off unless named until a hidden run proves it.
+    bool partner_native_aim_truth = false;
     // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
     // "Traversal icon"): ladders, drain pipes, wall climbs and step-ons the
     // remote starts through its action icon are replayed on body 1 as a

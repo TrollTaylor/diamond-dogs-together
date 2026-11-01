@@ -204,4 +204,78 @@ struct DryState {
 inline constexpr std::uint32_t kDryGraceMs = 50;
 // True while FIRE must be stripped.
 bool DryStep(DryState& state, const DryIn& in, std::uint32_t grace_ms = kDryGraceMs) noexcept;
+
+// Anim truth (r1101 animtruth; lab key partner_native_aim_truth, off unless
+// named): the puppet draws what the remote's body does, not what its pad
+// asked. fb1031 (Mother Base, stock KILLING_WEAPON rule): the remote held RMB,
+// its body stayed in stand_idle/stand_move (acts 1/2) and its v5 group still
+// said Aiming (flags 0x25: the gun record's hold bit follows the pad there), so
+// neither the pad nor the v5 flag is the authority; body 1 aimed and fired
+// visual shots on the partner's screen only. InHand is no authority either
+// (real aims log flags 0x25 without it). The remote's live ACT is: a real aim
+// reaches an aim act 15..50 ms after the press (friend log p50 31 ms, n=48);
+// 38 HOLD runs never did.
+// Verdicts: off (key off), nostate (no live remote act), aim (an aim act:
+// pass), keep (locomotion within kTruthKeepMs of the last aim act: pass, so a
+// stance change while aiming never drops the gun), lane (support/arm lane or
+// no v5 gun slot: pass, those lanes keep their own gates), other (an act this
+// rule does not judge: pass), loco (the gun lane in plain locomotion 1..6 with
+// no recent aim act: HOLD and FIRE stripped from the remote's sample), act (a
+// body-owned act: dead/dying, carried, stun, knockdown/cure, trash box,
+// rides, sleep, DM (AimBlockedAct) plus hit 29 and damage 45: HOLD and FIRE
+// stripped in every lane). The strip is state-based (never keyed on the pad),
+// so the first HOLD sample of a refused run is already stripped, and when the
+// act confirms the aim Compose sees the level rise and derives a clean press.
+enum class TruthVerdict : std::uint8_t { off, nostate, aim, keep, lane, other, loco, act };
+const char* TruthVerdictName(TruthVerdict value) noexcept;
+inline constexpr std::uint32_t kTruthKeepMs = 300;
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept;  // AimBlockedAct, 29 (hit), 45 (damage)
+struct TruthIn {
+    bool enabled;          // partner_native_aim_truth=1 with the native gun stage
+    bool act_valid;        // the remote's live act (pose stream)
+    std::uint16_t act;
+    bool slot_valid;       // the remote's live v5 slot
+    std::uint8_t slot;     // 0..2: the gun lane
+    bool support_lane;     // the weapon gate judged Gate::support (thrown / placed / arm)
+    std::uint64_t now_ms;
+};
+struct TruthState {
+    std::uint64_t aim_ms;          // the last tick the remote act was an aim act (0: none)
+    TruthVerdict last;
+    std::uint32_t refusals;        // entries into loco/act
+    std::uint32_t confirms;        // entries into aim
+};
+struct TruthOut {
+    TruthVerdict verdict;
+    std::uint32_t strip;           // bits for the Arm's sample_strip (HOLD|FIRE or 0)
+    bool changed;                  // verdict differs from the previous step
+};
+TruthOut TruthStep(TruthState& state, const TruthIn& in) noexcept;
+
+// The sender's half (the copy whose player presses RMB): one event per HOLD
+// run. aimed: the local act reached an aim act during the run (after_ms from
+// the press); no_aim: HOLD held for no_aim_ms and the local act never was an
+// aim act in the run (Mother Base KILLING_WEAPON: the gun stays down).
+enum class LocalAimEvent : std::uint8_t { none, aimed, no_aim };
+const char* LocalAimEventName(LocalAimEvent value) noexcept;
+inline constexpr std::uint32_t kLocalNoAimMs = 250;
+struct LocalAimIn {
+    bool enabled;
+    bool hold;              // the local effective held word has HOLD
+    bool act_valid;         // the local act (Q+0x18[0]) was read
+    std::uint16_t act;
+    std::uint64_t now_ms;
+};
+struct LocalAimState {
+    bool run;               // a HOLD run is open
+    bool aimed;             // the run reached an aim act
+    bool reported;          // the run's event was emitted
+    std::uint64_t since_ms; // the run's press
+    std::uint32_t runs, aimed_runs, no_aim_runs;
+};
+struct LocalAimOut {
+    LocalAimEvent event;
+    std::uint32_t ms;       // after_ms (aimed) or held_ms (no_aim)
+};
+LocalAimOut LocalAimStep(LocalAimState& state, const LocalAimIn& in, std::uint32_t no_aim_ms = kLocalNoAimMs) noexcept;
 } // namespace mgscoop::partner_slots
