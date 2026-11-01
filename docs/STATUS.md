@@ -20,6 +20,18 @@
 - **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca`; generators `--check` as at the rel0146
   baseline (carry_info / sleep_plugin differ by line endings only there too).
 - **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep).
+- **Probe `614ec20a` (lab, africa-jeep, key named; this track's second probe):** [O log] the guest's hand Fulton of the
+  jeep 25608: on the host the overlay played `stateFultonStart` 1598 ms over the guest's 2548 ms act 59; the guest's
+  `Fulton` / `FultonInfo` came 6.1 s after its attach began (FULTON kind 2 tx, the host's rx), its VEHICLE_GONE
+  `step=lost` 6.1 s later; the host then lifted its copy with `Seize {"Fulton"}` (`step=fulton_lift; ...; credit=0`,
+  its own `OnFulton` skipped, `step=applied; ...; via=fulton; ...; ok=1; ms=10276`). [O frame] guest `c-before` the
+  stock prompt (Fulton x24) at the jeep, `c-hold` the attach, `c-lift-02` the jeep gone from its view; host
+  `c-lift-06` the jeep still there, `c-hlift-01` (after its lift) gone. No frame covers the host's 10 s lift itself
+  (the burst waited for `step=applied`; the scenario now bursts at `step=fulton_lift`) [U balloon]. The soldier part
+  did not run: `enemy sleep nearest` slept 4158955462 while `enemy goto nearest` reached 2552560298 (awake); the
+  scenario now uses the spot's guards by hash. Archive
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\614ec20ad85a40fba59de4f952d2528e`, sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\614ec20a-sheet-c.jpg`.
 - **Hidden run `7e9856cb` (play, bad WAN, africa-jeep, key named; part A only, then stopped):** [O log] the host's
   hand Fulton of sleeping guard 2552560298: on the guest the host's act 59 lasted 2569 ms and the overlay played
   `stateFultonStart` for 1583 ms (`partner_overlay=request|play|playing|finished; ...; source=map`); host
