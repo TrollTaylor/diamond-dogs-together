@@ -1,6 +1,7 @@
 # fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the play defaults, -WanSim
 # bad, seed afgh-ledge for both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
-# This names partner_melee=1 on both copies (labsetting), so it runs whatever the default is.
+# This names partner_melee=1 on both copies (labsetting), so it runs whatever the default is (run 4bc7b732 proved a-d;
+# since then the key follows the gun profile).
 # melee-one (the user's decision): ONE connecting CQC press knocks the other player down, as it does a soldier. A press
 # is its 113 edge and the 114 out of it (run 1526e58a: 113 for 219 ms, then 114 for 549 ms); either strike in reach
 # lands, the other logs verdict=repeat (no second hit).
@@ -8,9 +9,10 @@
 #      partner_melee=strike; act=113 (or 114); verdict=land; queued=1 once; the host's copy applies one friendly hit,
 #      cause sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep
 #      (ASLEEP screen) on the host's screen; the host down and the HOLD E WAKE UP prompt on the guest's.
-#   b) after the host's sleep auto wake (30 s, host-granted: step=sleep_auto_wake on the host's log), the host stands about
+#   b) after the host's own sleep ends (about 30 s; run 4bc7b732: the host's own wake logs no step=sleep_auto_wake, the
+#      guest's census shows the host's body in remote=133 sleep_wake), the host stands about
 #      1 m behind the guest and presses once: the same lines with the roles swapped; the guest asleep on its own screen.
-#   c) after the guest's auto wake, the guest placed 6 m behind the host (about 4.5 m after the drop) presses once:
+#   c) after the guest's auto wake (host-granted: step=sleep_auto_wake; role=2 on the host's log), the guest placed 6 m behind the host (about 4.5 m after the drop) presses once:
 #      verdict=range; queued=0 for its 113 and 114, no friendly_hit on the host.
 #   d) the guest placed about 1 m behind the host (the host facing away from it), the HOST presses once: the guest is at
 #      the host's back, verdict=angle; queued=0, no friendly_hit on the guest.
@@ -43,7 +45,7 @@ wait 1500
 both capture a-down
 wait 3000
 both capture a-down-2
-waitlog host 'step=sleep_auto_wake;role=' 45
+waitlog guest 'edge=remote; remote=133' 45
 wait 8000
 both capture a-woke
 stance host stand
@@ -59,7 +61,7 @@ wait 1500
 both capture b-down
 wait 3000
 both capture b-down-2
-waitlog host 'step=sleep_auto_wake;role=' 45
+waitlog host 'step=sleep_auto_wake; role=2' 45
 wait 8000
 both capture b-woke
 stance host stand
