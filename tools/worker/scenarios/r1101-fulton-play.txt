@@ -1,0 +1,175 @@
+# r1101 fulton (docs/world-sync-protocol.md section 25, docs/anim-round1-actions.md 4.4): the Fulton synced on both
+# copies, the player's attach animation on the partner puppet and the target's lift (balloon or wormhole), with the
+# lab key fulton_sync=1 NAMED on both copies (off unless named, lab and play). Play rehearsal (-Mode play: the
+# shipped defaults, VEHICLE_GONE and D14 on), Africa (30020, africa-jeep seed: four guards and the Masa Village jeep
+# veh_lv_0000 = 25608 near the seed spot; spawn_enemy here through spawn_warp, on in play).
+#   A. The host Fultons a sleeping guard by hand (both copies' Wormhole off: the balloon). The guest sees the host
+#      puppet play the Fulton attach (remote act 59 held >= 500 ms -> the overlay's stateFultonStart, source=map) and
+#      the guard lifted by the balloon (W1 RequestForceFulton on the guest's copy) instead of vanishing.
+#   B. The guest Fultons a sleeping guard: the host sees the same (the guest puppet's attach, the balloon).
+#   C. The guest Fultons the jeep 25608 by hand from the vehicle-gone-play.txt spot: REQ_VEHICLE_GONE -> the host's
+#      copy is lifted by the engine's own vehicle Fulton (Seize {"Fulton"}: the balloon), D14 credited once as before.
+#   D. Wormhole on for the host only (Game rules): the host Fultons a sleeping guard; FULTON 0x46 carries worm=1, the
+#      guest's copy takes the wormhole look for 5 s (step=lift; worm=1; set=1 when its own level differs), restored.
+# Roster: the copy that did not Fulton gains nobody: its stock TppTerminal.OnFulton for a partner's soldier is skipped
+#   (event=fulton; step=credit_skipped; why=partner_lift); event=fulton; step=staff_add lines (TppTerminal
+#   .AddTempStaffFulton, counted, log only) must appear on the Fultoner's copy only.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, no build running, under
+# the shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-fulton-play.txt
+#        -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected (world_lua lines read "event=fulton; step=...", ';' expanded to '; '):
+#   both   partner_fulton=configured; overlay=off; hold_ms=500; acts=49,50,59 and event=fulton; step=install;
+#          terminal=1; save=1
+#   A      host  event=obs; m=FultonInfo; ...; att=local, event=fulton; step=tx; kind=1; ...; worm=0; sent=1
+#          guest event=fulton; step=rx; ...; kind=1; ...; worm=0, partner_overlay=request|playing;
+#                state=stateFultonStart; ...; source=map; ...; remote_act=59, then (after W1's FULTONED)
+#                event=fulton; step=lift; kind=1; ...; worm=0; ...; credit=0, event=apply; ...; state=6; ...;
+#                result=ok; readback=6
+#          frames a-hold-NN (guest: the host puppet low at the guard), a-lift-NN (guest: the guard under the balloon)
+#   B      the same with the roles swapped (frames b-hold-NN on the host, b-lift-NN on both)
+#   C      guest event=vehicle_gone; step=watch; id=25608; m=FultonInfo; cause=1; att=local, step=req; cause=1;
+#          host event=vehicle_rules; step=fulton_lift; id=25608; credit=1, event=vehicle_gone; step=applied;
+#          id=25608; via=fulton; src=req; ok=1; frames c-lift-NN: the jeep under the balloon on BOTH screens
+#   D      host event=fulton; step=tx; kind=1; ...; worm=1; guest step=lift; ...; worm=1; ...; then step=restore
+#          frames d-lift-NN: the wormhole on both screens
+# NEVER: step=error, viewer_changed, faults; a guest event=fulton; step=tx for a lift it ran (an echo); a staff_add
+#   on the copy that did not Fulton; event=spare lines (not Mother Base); a game over.
+labsetting fulton_sync=1
+labsetting partner_act_log=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug time 43200
+host debug weather sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_fulton=configured; overlay=' 30
+waitlog guest 'partner_fulton=configured; overlay=' 30
+waitlog host 'event=fulton; step=install; terminal=' 30
+waitlog guest 'event=fulton; step=install; terminal=' 30
+host run wormhole 0
+guest run wormhole 0
+host run rules
+guest run rules
+# --- A: the host Fultons a sleeping guard; the guest watches from behind ----------------------------------------------
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host debug forward 3.6
+wait 2000
+host run enemy_aim_nearest 0.3
+placebehind guest host 5 1.5
+wait 2500
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture a-before
+logmark both
+host hold e 1500 nowait
+both burst a-hold 4 350
+host hold e 1500
+host release
+both burst a-lift 8 400
+waitlog host 'event=fulton; step=tx; kind=1; ' 15
+waitlog guest 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog guest 'partner_overlay=(request|playing); state=stateFultonStart' 10
+waitlog guest 'event=fulton; step=lift; kind=1; ' 30
+wait 3000
+both capture a-after
+host run enemy info nearest
+guest run enemy info nearest
+# --- B: the guest Fultons a sleeping guard; the host watches from behind ----------------------------------------------
+guest debug goto_vehicle jeep
+wait 2500
+guest debug forward -12
+wait 3000
+guest run spawn_enemy here
+guest expect ^guard_here;ent=\d+;
+wait 2500
+guest run enemy sleep nearest
+guest expect ^enemy_sleep;ent=\d+;
+host run spawn_sync
+wait 2000
+guest debug forward 3.6
+wait 2000
+guest run enemy_aim_nearest 0.3
+placebehind host guest 5 1.5
+wait 2500
+host run enemy_aim_nearest 0.3
+wait 800
+both capture b-before
+logmark both
+guest hold e 1500 nowait
+both burst b-hold 4 350
+guest hold e 1500
+guest release
+both burst b-lift 8 400
+waitlog guest 'event=fulton; step=tx; kind=1; ' 15
+waitlog host 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog host 'partner_overlay=(request|playing); state=stateFultonStart' 10
+waitlog host 'event=fulton; step=lift; kind=1; ' 30
+wait 3000
+both capture b-after
+# --- C: the guest Fultons the jeep 25608 (the vehicle-gone-play.txt spot), the host at the seed spot -----------------
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 4000
+both capture c-before
+logmark both
+guest hold e 1500 nowait
+wait 700
+guest capture c-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+both burst c-lift 8 400
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog host 'event=vehicle_rules; step=fulton_lift; id=25608; ' 40
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=fulton; ' 25
+wait 2000
+both capture c-after
+# --- D: wormhole on for the host only; the host Fultons a sleeping guard ---------------------------------------------
+host run wormhole 1
+host run rules
+guest run rules
+host debug goto_vehicle jeep
+wait 2500
+host debug forward -12
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host debug forward 3.6
+wait 2000
+host run enemy_aim_nearest 0.3
+placebehind guest host 5 1.5
+wait 2500
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture d-before
+logmark both
+host hold e 1500 nowait
+both burst d-hold 4 350
+host hold e 1500
+host release
+both burst d-lift 8 400
+waitlog host 'event=fulton; step=tx; kind=1; ' 15
+waitlog guest 'event=fulton; step=lift; kind=1; ' 30
+wait 6000
+both capture d-after
+host run rules
+guest run rules
+state
