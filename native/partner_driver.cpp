@@ -696,6 +696,8 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     // aiming (TickAimIntent: partner_slots TruthStep). Not a weapon strip: DASH
     // and hold_stripped are untouched (the real body may sprint).
     if (gun_stage && set.naim_truth) a.config.sample_strip |= m.truth_strip;
+    // ... and the hook zeroes a weapon strip's trigger level too (finder M8).
+    a.truth_triggers = gun_stage && set.naim_truth;
     // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
     // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
     // stale Arm drops it.
@@ -1275,8 +1277,12 @@ const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remo
                                                 m.truth_verdict == partner_slots::TruthVerdict::act);
     const std::uint8_t v5_gun = aim_refused ? std::uint8_t(pin::GunFlag::Reloading | pin::GunFlag::Changing)
                                             : std::uint8_t(pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing);
-    const std::uint8_t lua_gun = aim_refused ? std::uint8_t(sync::ActionFlag::Firing | sync::ActionFlag::Reloading)
-                                             : std::uint8_t(sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading);
+    std::uint8_t lua_gun = aim_refused ? std::uint8_t(sync::ActionFlag::Firing | sync::ActionFlag::Reloading)
+                                       : std::uint8_t(sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading);
+    // The Lua Reloading bit is the R INPUT (R is also CARRY; finder M6): with the
+    // key and a live v5 group, whose Reloading is the gun record's real mode
+    // 11/12, the input alone never holds the stance fix.
+    if (set.naim_truth && m.remote_v5) lua_gun = static_cast<std::uint8_t>(lua_gun & ~sync::ActionFlag::Reloading);
     if (m.remote_v5 && (m.remote_gun_flags & v5_gun)) return "gun";
     if (remote_flags & lua_gun) return "gun";
     return nullptr;
@@ -4571,7 +4577,7 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
 // partner_aim_truth line per verdict change (at most every kAimIntentLineMs,
 // own cap; a change inside the interval is logged by a later tick).
 void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& latest, const sync::AnimState& remote_anim,
-                  bool act_valid, std::uint64_t now) noexcept {
+                  bool act_valid, const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
     Mission& m = d.mission;
     const Settings& set = d.settings;
     partner_slots::TruthIn ti{};
@@ -4601,9 +4607,9 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
     if (ro.ended && m.truth_lines < kAimTruthLineCap) {
         ++m.truth_lines;
         EmitFormat(h, "partner_aim_truth=hold_run; result=%s; refused_ms=%u; admitted_ms=%u; len_ms=%u; first_act=%u; last_act=%u; "
-                      "flags=0x%x; runs=%u\r\n",
+                      "flags=0x%x; runs=%u; trig_zeroed=%u\r\n",
                    partner_slots::TruthRunResult(ro), ro.refused_ms, ro.admitted_ms, ro.len_ms, unsigned(ro.first_act),
-                   unsigned(ro.last_act), unsigned(ro.flags), m.truth_run.runs);
+                   unsigned(ro.last_act), unsigned(ro.flags), m.truth_run.runs, ns.trig_zero_windows);
     }
     if (to.verdict == m.truth_logged || (m.truth_line_ms && now - m.truth_line_ms < kAimIntentLineMs) || m.truth_lines >= kAimTruthLineCap)
         return;
@@ -4677,7 +4683,7 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
                        set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u,
                        set.nsupport && set.nplaced && set.nplace_mirror ? 1u : 0u);
     }
-    TickAimTruth(d, h, latest_ok, latest, remote_anim, act_valid, now);
+    TickAimTruth(d, h, latest_ok, latest, remote_anim, act_valid, ns, now);
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;

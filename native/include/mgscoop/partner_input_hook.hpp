@@ -230,6 +230,8 @@ struct NativeStats {
     // Placement and the weapon gate: native windows that injected Neutral()
     // (Arm.neutral) and windows that stripped bits (Arm.strip, last bits).
     std::uint32_t neutral_windows, strip_windows, strip_bits;
+    // r1101 animtruth (Arm.truth_triggers): windows whose strip zeroed LT/RT.
+    std::uint32_t trig_zero_windows;
     // Drains whose job ran without a window because the published Arm was
     // not an enabled native Arm (a disarm under the native drive).
     std::uint32_t drain_disarmed;

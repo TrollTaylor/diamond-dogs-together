@@ -571,10 +571,11 @@ Injection Strip(const Injection& injection, std::uint32_t bits) noexcept {
     return j;
 }
 
-// RED stub (r1101 animtruth): the triggers pass unchanged.
 Injection StripTriggers(const Injection& injection, std::uint32_t bits) noexcept {
-    (void)bits;
-    return injection;
+    Injection j = injection;
+    if (bits & partner_pad::kHold) j.lt = 0.0f;
+    if (bits & partner_pad::kFire) j.rt = 0.0f;
+    return j;
 }
 
 Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept {
