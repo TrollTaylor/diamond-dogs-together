@@ -2,7 +2,7 @@
 # copies, the player's attach animation on the partner puppet and the target's lift (balloon or wormhole), with the
 # lab key fulton_sync=1 NAMED on both copies (off unless named, lab and play). Play rehearsal (-Mode play: the
 # shipped defaults, VEHICLE_GONE and D14 on), Africa (30020, africa-jeep seed: four guards and the Masa Village jeep
-# veh_lv_0000 = 25608 near the seed spot; spawn_enemy here through spawn_warp, on in play).
+# veh_lv_0000 = 25608 near the seed spot; the soldier parts use the spot's four guards by hash).
 #   A. The host Fultons a sleeping guard by hand (both copies' Wormhole off: the balloon). The guest sees the host
 #      puppet play the Fulton attach (remote act 59 held >= 500 ms -> the overlay's stateFultonStart, source=map) and
 #      the guard lifted by the balloon (W1 RequestForceFulton on the guest's copy) instead of vanishing.
@@ -44,6 +44,9 @@
 #   ground next to the guest for 30 s (cause unknown). Earlier on the guest's copy the jeep 25608 broke (VehicleBroken,
 #   unattributed) and the host despawned its copy (D12). Since: one hold e per soldier Fulton (the first hold used the
 #   Fulton, x24 -> x23), the jeep part first, the seed spot by teleport, and the cameras raised onto the lifted soldier.
+#   Probe 614ec20a (lab): the jeep lifted on the host by Seize {"Fulton"} (via=fulton; ok=1) but no frame during the
+#   lift (the burst waits for step=fulton_lift now); "enemy sleep nearest" slept another guard than the one
+#   "enemy goto nearest" reached, so the soldier parts use the four guards of this spot by hash.
 labsetting fulton_sync=1
 labsetting partner_act_log=1
 title 200
@@ -84,17 +87,15 @@ wait 2000
 both capture c-after
 host run vehicle_gone_status
 guest run vehicle_gone_status
-# --- A: the host Fultons a sleeping guard (one hold); the guest watches from behind ------------------------------------
-host debug teleport -656.01 1.20 877.73 62
-wait 3000
-host run spawn_enemy here
-host expect ^guard_here;ent=\d+;
-wait 2500
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;
-guest run spawn_sync
+# The four guards of this spot (m6m7c-self-hit-lab.txt) asleep by hash: each part Fultons its own guard by hash.
+host run enemy sleep 2552560298
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 1480013509
 wait 2000
-host run enemy goto nearest 1
+# --- A: the host Fultons sleeping guard 2552560298 (one hold); the guest watches from behind ---------------------------
+host run enemy goto 2552560298 1
+host expect ^(enemy_goto;ent=2552560298;submitted_warp|warp_position_readback)
 wait 1500
 host run enemy_aim_nearest 0.3
 placebehind guest host 5 1.5
@@ -121,20 +122,10 @@ wait 2000
 both capture a-after
 host run enemy info nearest
 guest run enemy info nearest
-# --- B: the guest Fultons a sleeping guard (host-only levers place him); the host watches from behind -----------------
+# --- B: the guest Fultons sleeping guard 4158955462; the host watches from behind ---------------------------------
 stance host stand
-host debug teleport -656.01 1.20 877.73 62
-wait 3000
-host run spawn_enemy here
-host expect ^guard_here;ent=\d+;
-wait 2500
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;
-guest run spawn_sync
-wait 2000
-guest debug teleport -656.01 1.20 877.73 62
-wait 3000
-guest run enemy goto nearest 1
+guest run enemy goto 4158955462 1
+guest expect ^(enemy_goto;ent=4158955462;submitted_warp|warp_position_readback)
 wait 1500
 guest run enemy_aim_nearest 0.3
 placebehind host guest 5 1.5
@@ -159,21 +150,13 @@ host run enemy_aim_nearest 2
 host burst b-hlift2 4 400
 wait 2000
 both capture b-after
-# --- D: wormhole on for the host only; the host Fultons a sleeping guard ---------------------------------------------
+# --- D: wormhole on for the host only; the host Fultons sleeping guard 138337336 ------------------------------------
 host run wormhole 1
 host run rules
 guest run rules
 stance guest stand
-host debug teleport -656.01 1.20 877.73 62
-wait 3000
-host run spawn_enemy here
-host expect ^guard_here;ent=\d+;
-wait 2500
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;
-guest run spawn_sync
-wait 2000
-host run enemy goto nearest 1
+host run enemy goto 138337336 1
+host expect ^(enemy_goto;ent=138337336;submitted_warp|warp_position_readback)
 wait 1500
 host run enemy_aim_nearest 0.3
 placebehind guest host 5 1.5
