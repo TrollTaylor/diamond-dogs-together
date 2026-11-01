@@ -9599,6 +9599,7 @@ void TestAnimTruthDriver() {
     Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0x18u &&
               s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::loco,
           "Mother Base: the remote's raw HOLD and FIRE are stripped from its sample (no phantom aim, no visual shot)");
+    Check(s.fake.arms.back().truth_triggers, "with the key the Arm asks the hook to zero a stripped trigger (finder M8)");
     Check(s.fake.Containing("partner_aim_truth=loco; remote_act=2; slot=1; gate=match; pad_hold=1; fire=0; flags=0x25; strip=0x18;") == 1,
           "the receiver logs the gate: partner_aim_truth=loco with the act, slot, gate, pad and flags");
     Check(!s.driver.mission.hold_stripped && !(s.fake.arms.back().strip & 0x4u),
@@ -9640,8 +9641,8 @@ void TestAnimTruthDriver() {
     s.driver.settings.naim_truth = false;
     s.N();
     Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
-              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::off,
-          "partner_native_aim_truth=0: the raw pad HOLD passes as before");
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::off && !s.fake.arms.back().truth_triggers,
+          "partner_native_aim_truth=0: the raw pad HOLD passes as before (and no trigger strip)");
     // The sender's half: this copy's own HOLD run with its body in stand_idle (Mother Base).
     s.driver.settings.naim_truth = true;
     s.fake.anim_ok = true;
@@ -9838,6 +9839,32 @@ void TestRound1Actions() {
         s.fake.sample.flags = 0;
         for (int i = 0; i < 5; ++i) s.N();
         Check(s.fake.Count("partner_recon=stance_fix; remote=1; body=2; via=tap;") == 1, "native stance: fixed once the aim ended");
+    }
+    {   // r1101 animtruth (finder M6): the Lua Reloading bit is the R INPUT (R is also CARRY: a pickup, or a
+        // press the game refused); with a live v5 group (whose Reloading is the gun record's real mode 11/12) and
+        // partner_native_aim_truth, it no longer holds the stance fix. Key off: the old hold (stance_wait gun).
+        for (int key = 0; key < 2; ++key) {
+            NativeSession s;
+            idle(s);
+            s.driver.settings.ngun = true;
+            s.driver.settings.naim_truth = key != 0;
+            s.fake.latest.packet.version = 5;
+            s.fake.latest.packet.gun_flags = mgscoop::partner_input::GunFlag::Valid;
+            s.fake.latest.packet.inv_slot = 0;
+            Check(s.Until(pn::Mode::active, 9000), "lua reload stance: active");
+            for (int i = 0; i < 40; ++i) s.N();
+            s.fake.lines.clear();
+            s.fake.sample.flags = mgscoop::sync::ActionFlag::Reloading;  // R held, no reload (v5 mode 0)
+            s.fake.sample.anim_stance = 2;
+            for (int i = 0; i < 40; ++i) s.N();
+            if (key) {
+                Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1;") == 1 && s.fake.Count("reason=gun") == 0,
+                      "animtruth: an R press with no real reload (v5 live) never holds the stance fix");
+            } else {
+                Check(s.fake.Count("partner_recon=stance_fix;") == 0 && s.fake.Count("partner_recon=stance_wait; reason=gun;") == 1,
+                      "key off: the Lua Reloading bit still holds the fix (unchanged)");
+            }
+        }
     }
     {   // partner_native_stance_fast=0: the previous 2 s rule.
         NativeSession s;

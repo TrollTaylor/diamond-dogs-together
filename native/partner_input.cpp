@@ -571,6 +571,12 @@ Injection Strip(const Injection& injection, std::uint32_t bits) noexcept {
     return j;
 }
 
+// RED stub (r1101 animtruth): the triggers pass unchanged.
+Injection StripTriggers(const Injection& injection, std::uint32_t bits) noexcept {
+    (void)bits;
+    return injection;
+}
+
 Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept {
     Injection j = injection;
     const std::uint32_t keep = level & bits & config.mask;

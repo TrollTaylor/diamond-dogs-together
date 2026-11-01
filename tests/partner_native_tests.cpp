@@ -2046,6 +2046,24 @@ void TestAnimAimTruth() {
     ++s.seq;
     j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
     Check(j.lt > 0.99f && j.rt > 0.99f && (j.held & 0x8u), "a RELOAD-only sample strip keeps LT/RT (no change for the existing strips)");
+    // The weapon strips (finder M8: mismatch / switching FIRE|RELOAD, unsupported 0x58, dry stop FIRE, the
+    // refused support request 0x8078) clear only the digital words; with the key the hook's NativeView also
+    // zeroes the matching trigger level (StripTriggers), so a gamepad remote's held LT/RT never aims or fires
+    // past a strip.
+    {
+        pi::Injection w{};
+        w.held = 0x18u; w.lt = 1.0f; w.rt = 0.75f;
+        pi::Injection tr = pi::StripTriggers(w, 0x8u);
+        Check(tr.lt == 0.0f && tr.rt == 0.75f && tr.held == 0x18u, "HOLD stripped: LT zeroed, RT and the words untouched");
+        tr = pi::StripTriggers(w, 0x50u);
+        Check(tr.lt == 1.0f && tr.rt == 0.0f, "FIRE|RELOAD (mismatch): RT zeroed, LT kept");
+        tr = pi::StripTriggers(w, 0x8078u);
+        Check(tr.lt == 0.0f && tr.rt == 0.0f, "the refused support request: both zeroed");
+        tr = pi::StripTriggers(w, 0x40u);
+        Check(tr.lt == 1.0f && tr.rt == 0.75f, "RELOAD only: both kept");
+        tr = pi::StripTriggers(w, 0);
+        Check(tr.lt == 1.0f && tr.rt == 0.75f, "no strip: both kept");
+    }
 
     // The sender's half: one event per HOLD run.
     using E = ps::LocalAimEvent;
