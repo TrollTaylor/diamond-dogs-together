@@ -45,7 +45,11 @@
   works, Known limits), docs/vehicle-ws3.md "Driver pose" and docs/anim-round1-seat.md.
 - **Checks:** -Fast 315/315 at the green `9628e97f`; friend_package / lab_scripts / worker_session / lab_config /
   lab_ini / partner_driver / partner_ride 15/15; worker_session_tests 2/2 at `5400cb28` and `4e9478a7` (every shipped
-  scenario validates). No Lua file changed. Nothing pushed, tagged or released.
+  scenario validates). No Lua file changed. Full `tools/build.ps1 -Jobs 4` at `d6037ba7` and at this entry's commit:
+  CTest 347/347; every generator `--check` passes (partner 858 sites / 213 slots, soldier_warp, carry_info /
+  sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph,
+  steam_shim, supply_cbox, vehicle_controller with `--executable`); native_ui / teammate_targeting stop at the
+  gitignored docs/evidence JSON, as in every fresh tree. Nothing pushed, tagged or released.
 
 ## November 1, 2026: r1101 Prove - anim truth on by default (`partner_native_aim_truth` follows the gun profile in lab and play; hidden runs `3c5609bb`, `44391e17`, A/B `9fa2d353`; `wp/integ-1101`, local only)
 
