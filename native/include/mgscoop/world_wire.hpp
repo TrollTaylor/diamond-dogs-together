@@ -106,6 +106,11 @@ inline constexpr std::uint8_t rules = 0x3E;
 // guest's Friendly fire ask (kind 1) and the host's friendly fire state (kind 2). 0x3C..0x3E belong to the other
 // debug-menu tracks (character, spawn, rules).
 inline constexpr std::uint8_t arms = 0x3F;
+// Debug menu Spawn vehicle (docs/world-sync-protocol.md section 25, lua/coop/debug_vspawn.lua): VSPAWN (68), both
+// directions, control queue, paired: the guest's ask and the host's spawn (class, authored locator number, pose) that
+// both copies apply. Sent only with the lab key debug_vspawn (off unless named). 0x40..0x43 and 0x45..0x46 belong to
+// the other 10-31 / 11-01 tracks.
+inline constexpr std::uint8_t vspawn = 0x44;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;

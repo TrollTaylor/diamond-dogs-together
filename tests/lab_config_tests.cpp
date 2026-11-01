@@ -1844,6 +1844,17 @@ int main() {
             Check(!reBadPlay.world_relief && reBadPlay.invalid_values == 1, "an invalid world_relief keeps it off in play too");
             const auto reLater = Lab("enabled=1\nrole=guest\nworld=3\nworld_relief=0\nworld_relief=1\n");
             Check(reLater.world_relief && reLater.world_relief_given, "a later world_relief=1 wins");
+            // Debug menu Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): debug_vspawn off unless named, in lab, the gun
+            // profile and play, until a hidden run shows the spawned vehicle on both copies; a named 1 parses in lab and play.
+            const auto vsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\ndebug_vspawn=1\n");
+            const auto vsLab = Lab("enabled=1\nrole=guest\nworld=3\ndebug_vspawn=1\n");
+            const auto vsBad = Lab("enabled=1\nrole=host\ndebug_vspawn=2\n");
+            Check(!def.debug_vspawn && !vehicleGun.debug_vspawn && !vehiclePlayDefault.debug_vspawn, "debug_vspawn defaults off (lab, gun profile, play)");
+            Check(vsLab.debug_vspawn && vsLab.invalid_values == 0 && vsLab.unknown_keys == 0, "debug_vspawn=1 parses in lab");
+            Check(vsPlay.mode == mgscoop::LabMode::play && vsPlay.debug_vspawn && vsPlay.play_refused == 0 && vsPlay.invalid_values == 0,
+                  "debug_vspawn=1 parses in play with no refusal bit");
+            Check(!vsBad.debug_vspawn && vsBad.invalid_values == 1, "an invalid debug_vspawn keeps it off");
         }
         // M4 VEHICLE_STATE (docs/vehicles-companions-design.md 6.4): world_vehicle_state likewise (off by default in the
         // lab, on by default in play after the lab FRAMEs and the play rehearsals e235bda6 and d9b48fcb, -WanSim bad).

@@ -154,6 +154,10 @@ mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
 # Debug menu arms (docs/debug-menu.md "Give weapon" and "Friendly fire"): the picker and the host's switch.
 mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/arms-give-ff-play.txt")
+# Debug menu Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): the host brings an area vehicle in front of whoever
+# presses, on both copies (VSPAWN 0x44, world note 20), and its play scenario.
+mgs_add_lua_check(debug_vspawn_lua_check "${_mgs_coop}/debug_vspawn.lua"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/r1101-vspawn-play.txt")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # arrival-prevent (docs/world-sync-design.md 9.2): the arrival helicopter watchdog, start-state log and probe 20.
 mgs_add_lua_check(world_arrival_lua_check "${_mgs_coop}/world_arrival.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")

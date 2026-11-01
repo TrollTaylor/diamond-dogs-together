@@ -114,9 +114,9 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 64, "64 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 65, "65 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
-                       "M6 seat, debug travel, game rules, debug arms, and local ops)");
+                       "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -2098,6 +2098,47 @@ void RulesOp() {
     Pair(30050, 200);
     Check(Tx(g_host, op::rules, {1, 1}, 201) == world::TxStatus::disabled, "RULES needs world level 3");
 }
+// Debug menu Spawn vehicle (docs/world-sync-protocol.md section 25, lua/coop/debug_vspawn.lua): VSPAWN 0x44, both
+// directions, control queue, reliable, level 3, play too, never a request, paired only: seq, kind (1 the guest's ask,
+// 2 the host's press, 3 the host's spawn for an ask, 4 the host's refusal), class (1 light vehicle, 2 truck), locator
+// number (255 none), xyz mm, yaw mdeg, reason (0 ok). 22 bytes.
+void VspawnOp() {
+    const auto* s = world::FindOp(op::vspawn);
+    Check(op::vspawn == 0x44 && s && std::strcmp(s->name, "VSPAWN") == 0, "VSPAWN 0x44 exists (the vspawn track's code)");
+    if (!s) return;
+    Check(s->queue == 0 && s->wire == world::Wire::reliable && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::both && s->lua == 9 && s->native == 0 && s->rx == 0 && s->body == 22,
+          "VSPAWN: control queue, reliable, level 3, play too, both directions, 9 fields, 22 bytes");
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_guest, op::vspawn, {1, 1, 2, 255, 20000, 10000, 40000, 90000, 0}, 101) == world::TxStatus::ok,
+          "the guest asks for a truck at its pose");
+    Check(Tx(g_host, op::vspawn, {1, 2, 1, 1, 0, 10800, 6000, 0, 0}, 101) == world::TxStatus::ok &&
+              Tx(g_host, op::vspawn, {2, 3, 2, 0, 26000, 10800, 40000, 90000, 0}, 101) == world::TxStatus::ok &&
+              Tx(g_host, op::vspawn, {3, 4, 1, 255, 0, 0, 0, 0, 3}, 101) == world::TxStatus::ok,
+          "the host sends its press, the answer to the ask and a refusal");
+    Check(Tx(g_host, op::vspawn, {0, 2, 1, 1, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vspawn, {4, 5, 1, 1, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vspawn, {4, 2, 3, 1, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vspawn, {4, 2, 1, 1, 0, 0, 0, 360001, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::vspawn, {4, 2, 1, 1, 0, 0, 0, 0, 16}, 101) == world::TxStatus::bad_args,
+          "seq 1.., kind 1..4, class 1..2, yaw within 360 deg, reason 0..15");
+    Exchange(102);
+    auto h = Drain(g_host, 1, 103);
+    Check(Count(h, op::vspawn) == 1 && h[0].v[1] == 1 && h[0].v[2] == 2 && h[0].v[3] == 255 && h[0].v[7] == 90000,
+          "the host hears the guest's ask with its pose");
+    auto g = Drain(g_guest, 1, 103);
+    Check(Count(g, op::vspawn) == 3 && g[0].v[1] == 2 && g[0].v[3] == 1 && g[0].v[5] == 10800 && g[1].v[1] == 3 &&
+              g[1].v[4] == 26000 && g[2].v[1] == 4 && g[2].v[8] == 3,
+          "the guest's control queue delivers the three, in order");
+    g_host.LocalMissionEnd(105);
+    Check(Tx(g_host, op::vspawn, {5, 2, 1, 1, 0, 0, 0, 0, 0}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
+    Setup(2, 2, true);
+    Pair(30010, 200);
+    Check(Tx(g_host, op::vspawn, {1, 2, 1, 1, 0, 0, 0, 0, 0}, 201) == world::TxStatus::disabled, "VSPAWN needs world level 3");
+}
 int main() {
     Table();
     Codec();
@@ -2126,6 +2167,7 @@ int main() {
     SeatOp();
     TravelOp();
     RulesOp();
+    VspawnOp();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

@@ -1,0 +1,1 @@
+-- Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle"); stub until the green commit.
