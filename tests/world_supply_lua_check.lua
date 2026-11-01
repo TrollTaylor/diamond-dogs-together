@@ -36,6 +36,7 @@ local function F(o)
  local W={host=o.host~=false,mode=o.mode or 1,paired=o.paired~=false,epoch=5,OP={},handlers={},startHooks={},stopHooks={},
   pairedHooks={},unpairedHooks={},observers={},mission=o.mission or 30010,isStarted=true,active=true}
  W.role=W.host and 1 or 2
+ W.api={str32=function(s)return "h:"..s end}
  function W.log(s)c.logs[#c.logs+1]=s end
  function W.now()return c.now end
  function W.inGame()return c.inGame~=false end
@@ -145,6 +146,22 @@ c=F();c:request(1000,2000,3000);c:tick();c.W.observe(11,22,33,44,55,66)
 check(c.observed==1 and c:has(c.logs,"step=msg;class=11;msg=22;a0=33;a1=44;a2=55;a3=66"),"lab census logs and passes on")
 c=F({mode=2});c:request(1000,2000,3000);c:tick();c.W.observe(11,22,33,44,55,66)
 check(c.observed==1 and not c:has(c.logs,"step=msg"),"no census in play")
+-- The stock messages (Player OnPickUpSupplyCbox / OnComeOutSupplyCbox; the game's s10030_sequence.lua): this player took
+-- the synced box -> kind 2 reason 1 (collected) at once, whatever the box state or the distance; lab and play.
+c=F({host=false,mode=2,px=900,py=0,pz=900});c:rx(9,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);c:tick()
+c.W.observe("h:Player","h:OnComeOutSupplyCbox",1,2)
+check(#c.tx==0 and c:has(c.logs,"event=supply;step=come_out;") and c.S.cur,"OnComeOutSupplyCbox is logged, the box stays")
+c.W.observe("h:Player","h:OnPickUpSupplyCbox",1,2)
+check(#c.tx==1 and c.tx[1][3]==2 and c.tx[1][4]==1 and c.tx[1][5]==4 and c.tx[1][15]==1 and c.S.cur==nil,
+ "OnPickUpSupplyCbox: gone at once, the host's box 4, reason 1 collected (far from the aim point too)")
+check(c:has(c.logs,"event=supply;step=pickup;") and c:has(c.logs,"step=gone_local;origin=1;oseq=4;reason=1;why=pickup"),"logged")
+check(c.observed==2,"the stock messages still reach the previous observer")
+c.nat.st=0;c:reset();c:tick(12);check(#c.tx==1,"the box's own reset after the pickup sends nothing more")
+c=F();c.W.observe("h:Player","h:OnPickUpSupplyCbox",1,2)
+check(#c.tx==0 and c:has(c.logs,"event=supply;step=pickup;") and c:has(c.logs,"cur=none"),"a pickup with no synced box: logged only")
+c=F();c:request(1000,2000,3000);c:tick();c.W.observe("h:GameObject","h:OnPickUpSupplyCbox",1,2)
+check(#c.tx==1 and c.S.cur and not c:has(c.logs,"step=pickup"),"the same message name in another class: ignored")
+c=F({on=false});c:tick();c.W.observe("h:Player","h:OnPickUpSupplyCbox",1,2);check(#c.tx==0,"key off: a pickup sends nothing")
 -- Debug commands (the player module's dispatch, wrapped on the first tick).
 c=F();c:tick()
 check(c.P.handles.supply==true,"the supply command is registered")

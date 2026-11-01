@@ -589,7 +589,7 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 1)/$(ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 0)" '1/0' 'world_vehicle_wreck values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_vehicle_wreck -Value 2 } '' 'world_vehicle_wreck=2 refused'
     # The vehicle decisions of 2026-10-29: D11 world_loadout_block, D12 world_vehicle_break, D14 world_vehicle_credit likewise.
-    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit', 'world_vehicle_crew', 'world_vehicle_damage')) {
+    foreach ($vk in @('world_loadout_block', 'world_vehicle_break', 'world_vehicle_credit', 'world_vehicle_crew', 'world_vehicle_damage', 'world_supply')) {
         Assert-Equal "$(ConvertTo-LabPartnerValue -Key $vk -Value 1)/$(ConvertTo-LabPartnerValue -Key $vk -Value 0)" '1/0' "$vk values"
         Assert-Throws { ConvertTo-LabPartnerValue -Key $vk -Value 2 } '' "$vk=2 refused"
     }
@@ -1123,6 +1123,14 @@ try {
         $file = Join-Path $fixture 'vehicle-fixes-guest-lab.ini'; [IO.File]::WriteAllText($file, $vfIni)
         $n = Invoke-IniCheck lab $file
         Assert-Equal "$($n['world_vehicle_crew'])$($n['world_vehicle_damage'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '11|lab|0x0|0/0' 'native: the crew / damage keys parse'
+        # r1101 supply drops synced (world_supply, docs/world-sync-protocol.md section 25): off by default; LabCommon writes it; native parses it.
+        Assert-Equal "$($vdDefault['world_supply'])" '0' 'native: world_supply defaults off'
+        $suOverrides = ConvertFrom-LabPartnerSettingArgs -Items @('world_supply=1') -Role guest
+        $suIni = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides $suOverrides)
+        Assert-Equal ((ConvertFrom-IniText $suIni)['world_supply']) '1' 'LabCommon writes world_supply=1'
+        $file = Join-Path $fixture 'supply-guest-lab.ini'; [IO.File]::WriteAllText($file, $suIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['world_supply'])|$($n['mode'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|lab|0x0|0/0' 'native: world_supply=1 parses'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
         Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
         $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')
