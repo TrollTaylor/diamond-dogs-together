@@ -131,6 +131,9 @@ h=F({mission=30020});ok,msg=h:run("vspawn","trc");check(not ok and msg=="vspawn_
 h=F();h.onFoot=false;ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and h:note(3,5),"riding: refused, b=5")
 -- The host's copy did not take the pose: the readback says so (ok=0) after 90 updates.
 h=F();h.stuck=true;h:run("vspawn","lv");h:tick(100);check(h:has("step=placed;loc=veh_lv_0001") and h:has("ok=0"),"a move that does not take logs ok=0")
+-- A handler error is logged and stays inside the fragment (never world sync's).
+h=F();h.env.GameObject.SendCommand=function()error("boom")end;h.env.GameObject.GetGameObjectId=function()error("boom")end
+h.W.handlers[OP]({1,1,1,255,0,0,0,0,0});check(true,"a throwing binding does not escape the handler")
 -- Status.
 h=F();h:run("vspawn","lv");ok,msg=h:run("vspawn_status")
 check(ok and msg:find("vspawn;on=1;role=host;mission=30010;recent=veh_lv_0001",1,true),"status: key, role, mission, spawned locators")

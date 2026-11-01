@@ -190,9 +190,7 @@ do
    V.ask = {seq = V.seq, class = class, at = V.tick}
    return true, fmt("vspawn_asked;class=%s;seq=%d", CNAME[class], V.seq)
   end
-  if type(W) == "table" and type(W.handlers) == "table" then
-   W.handlers[OP] = function(v)
-    if type(v) ~= "table" then return end
+  local function handle(v)
     local kind, class, num, x, y, z, yaw, reason = v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]
     log(fmt("step=rx;kind=%s;seq=%s;class=%s;num=%s;reason=%s", tostring(kind), tostring(v[1]), tostring(class), tostring(num), tostring(reason)))
     if not CNAME[class] or not int(x, -1e9, 1e9) or not int(z, -1e9, 1e9) or not int(y, -1e9, 1e9) or not int(yaw, -360000, 360000) then return end
@@ -215,6 +213,13 @@ do
      V.ask = nil
      note(3, int(reason, 1, 8) and reason or WHY.failed)
     end
+  end
+  -- A handler error stays here (never world sync's): it is logged.
+  if type(W) == "table" and type(W.handlers) == "table" then
+   W.handlers[OP] = function(v)
+    if type(v) ~= "table" then return end
+    local ok, err = pcall(handle, v)
+    if not ok then log("step=error;msg=" .. tostring(err):sub(1, 80)) end
    end
   end
   -- Each update: re-created wrecks are moved once alive; every move is read back (within 3 m, or ok=0 after 90).
