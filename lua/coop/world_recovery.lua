@@ -73,7 +73,8 @@ do
     -- every later Continue rebuilt). world_follow's F.arrival.heli: Tpp.IsHelicopter or PlayerStatus ON_HELICOPTER.
     local function riding()
         local m, a = W.mission, W.follow and W.follow.arrival
-        if (m ~= 30010 and m ~= 30020 and m ~= 30050) or type(a) ~= "table" or type(a.heli) ~= "function" then return false end
+        if (m ~= 30010 and m ~= 30020 and m ~= 30050) or type(a) ~= "table" or a.holdCheckpoint ~= true or
+            type(a.heli) ~= "function" then return false end
         local ok, v = pcall(a.heli)
         return ok and v == true
     end

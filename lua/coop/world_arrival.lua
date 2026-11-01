@@ -9,7 +9,8 @@ do
     if type(A) == "table" then
         -- on: the watchdog (default on; the logs always run); wait: still for this long (ms, in game, outside cutscenes);
         -- radius: metres; window: the arrival watch (ms); offFoot: off the helicopter this long ends the watch (ms).
-        local G = {on = true, wait = 20000, radius = 1, window = 180000, offFoot = 5000, msgCap = 16}
+        -- hint: the host's note 15 toast (off until a run shows it).
+        local G = {on = true, hint = false, wait = 20000, radius = 1, window = 180000, offFoot = 5000, msgCap = 16}
         W.arrivalWatch = G
         local fmt, floor, sqrt = string.format, math.floor, math.sqrt
         local FIELD = {[30010] = true, [30020] = true, [30050] = true}
@@ -86,8 +87,8 @@ do
             local m, pos = W.mission, fmt("pos=%d,%d,%d", mm(x), mm(y), mm(z))
             if W.host then
                 if not linked(1) then return log(fmt("step=watch_end;why=solo;m=%d", m)) end
-                log(fmt("step=host_hint;why=static_heli;m=%d;%s", m, pos))
-                if type(W.note) == "function" then pcall(W.note, 15, m, 1) end
+                log(fmt("step=host_hint;why=static_heli;m=%d;shown=%d;%s", m, G.hint and 1 or 0, pos))
+                if G.hint and type(W.note) == "function" then pcall(W.note, 15, m, 1) end
                 return
             end
             if not A.linked() then return log(fmt("step=watch_end;why=solo;m=%d", m)) end

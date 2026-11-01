@@ -40,7 +40,8 @@ F.run = run
 -- foot at Command (vanilla ResetMBFreeStartPositionToCommand, as the vanilla MB restart) without its queued MB demo.
 -- A.auto (off: unproven in game, and it would move every working guest helicopter arrival to the Command cluster)
 -- gives every linked guest helicopter arrival at 30050 that start.
-local A = {auto = false}
+-- routeStart / holdCheckpoint (arrival-prevent, world_follow_seed S.ride, world_recovery): off until a run proves them.
+local A = {auto = false, routeStart = false, holdCheckpoint = false}
 F.arrival = A
 function A.linked()
 if type(W.cfg) ~= "function" then return false end
@@ -219,7 +220,7 @@ local buddy = C and C.applies and C.applies() and C.keep("seed")
 local R = W.reliefSync
 local relief = R and R.applies and R.applies() and R.keep("seed")
 -- arrival-prevent: a helicopter start on a route takes vanilla's ride-on reset for the host's pose keys (S.ride).
-local route = floor(t[4] / 10000) == 3 and S.ride and S.ride(s, t[2]) and not A.legacyPose
+local route = A.routeStart == true and floor(t[4] / 10000) == 3 and S.ride and S.ride(s, t[2]) and not A.legacyPose
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
     if route and key[7] then if key[3] == "bool" then value = false else value = 0 end end
