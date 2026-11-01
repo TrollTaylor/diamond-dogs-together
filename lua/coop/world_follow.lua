@@ -56,7 +56,9 @@ end
 -- continuing: a checkpoint Continue whose helicopter entry was used (vanilla VarSaveOnUpdateCheckPoint off the
 -- helicopter sets ply_isUsedPlayerInitialAction) keeps its spawn (the W4 shared Continue keeps the host's).
 function A.foot(at, continuing)
-if W.get(vars, "missionCode") ~= 30050 or not A.linked() then return end
+if not A.linked() then return end
+-- arrival-prevent: the watchdog's restart in free roam (world_arrival.lua A.field) starts at the route start instead.
+if W.get(vars, "missionCode") ~= 30050 then if at == "restart" and A.field then A.field(at) end; return end
 A.demo(at)
 local route, state = W.get(gvars, "heli_missionStartRoute") or 0, W.get(gvars, "ply_initialPlayerState")
 local heli = W.get(W.get(TppDefine, "INITIAL_PLAYER_STATE"), "RIDEON_HELICOPTER")
@@ -69,7 +71,7 @@ log(fmt("step=mb_foot;at=%s;route=%.0f;state=%s", at, route, tostring(state)))
 end
 function A.restarting()
 local p, now = A.pending, W.now()
-return p ~= nil and p.mission == 30050 and now - p.at >= 0 and now - p.at < 30000
+return p ~= nil and p.mission == W.mission and now - p.at >= 0 and now - p.at < 30000
 end
 function A.heli()
 local f, id = W.get(Tpp, "IsHelicopter"), W.get(vars, "playerVehicleGameObjectId")
@@ -86,8 +88,8 @@ end
 local LOCAL = {RestartMission = 1, ExecuteRestartMission = 1, ContinueFromCheckPoint = 2, ExecuteContinueFromCheckPoint = 2}
 function A.unstick(name)
 local kind, now, p = LOCAL[name], W.now(), A.pending
-if not kind or W.mission ~= 30050 then return nil end
 if kind == 1 and p and p.mission == W.mission and now - p.at >= 0 and now - p.at < 30000 then return 1 end
+if not kind or W.mission ~= 30050 then return nil end
 if W.get(svars, "mis_isDefiniteGameOver") == true or W.get(mvars, "mis_isReserveGameOver") == true or not A.heli() then return nil end
 A.pending = {mission = W.mission, at = now}
 log(fmt("step=local_restart;fn=%s;why=heli", name))
@@ -216,8 +218,11 @@ local buddy = C and C.applies and C.applies() and C.keep("seed")
 -- guest's own are kept first (its saves write them).
 local R = W.reliefSync
 local relief = R and R.applies and R.applies() and R.keep("seed")
+-- arrival-prevent: a helicopter start on a route takes vanilla's ride-on reset for the host's pose keys (S.ride).
+local route = floor(t[4] / 10000) == 3 and S.ride and S.ride(s, t[2]) and not A.legacyPose
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
+    if route and key[7] then if key[3] == "bool" then value = false else value = 0 end end
     if not key[5] and (key[6] == nil or key[6] == "buddy" and buddy or key[6] == "relief" and relief) then
     local data = S.data(key)
     if key[2] then
@@ -228,7 +233,7 @@ for _, v in ipairs(s.values) do
 end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
-log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
+log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values) .. (route and ";start=route" or ""))
 if t[4] == 30050 and A.auto then pcall(A.foot, "seeds", t[2] == 4) end
 if buddy then C.seeded(t[4], t[2]) end
 if relief then R.seeded(t[4], t[2]) end

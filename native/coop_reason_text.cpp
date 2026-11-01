@@ -350,7 +350,10 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 7: return Put(out, capacity, "Your partner is in another area: use Go to first.");
         default: return false;
         }
-    default:  // 15 reserved or unknown: no toast
+    case 15:  // HINT{a=mission, b=1 stuck in the arrival helicopter} (arrival-prevent: the host's 0.14.5 frozen arrival)
+        if (b != 1) return false;
+        return Put(out, capacity, "Stuck in the helicopter? Pause and choose Restart.");
+    default:  // unknown: no toast
         return false;
     }
 }

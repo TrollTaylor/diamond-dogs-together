@@ -312,7 +312,7 @@ if(MGS_LOCAL_BUDDY_CAPACITY_TEST)
   list(APPEND _mgs_buddy_ride_composed "${_mgs_coop}/world_buddy_ride.lua")
 endif()
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
-  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_arrival.lua"
   "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_sleep_clock.lua" "${_mgs_coop}/world_partner_sleep.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_friendly.lua" "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_ride_pose.lua" "${_mgs_coop}/world_horse_cargo.lua"
   ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua" "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_vehicle_state.lua"
   "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_companion_dog.lua" "${_mgs_coop}/world_companion_guard.lua" "${_mgs_coop}/world_relief.lua" "${_mgs_coop}/world_relief_sync.lua")

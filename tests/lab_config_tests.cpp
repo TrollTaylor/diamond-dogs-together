@@ -1369,7 +1369,7 @@ int main() {
     Check(worldSeven.world == 0 && worldSeven.invalid_values == 1, "invalid world keeps 0");
     const char* probes[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
                             "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
-                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart"};
+                            "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "guest_frozen_heli"};
     static_assert(sizeof(probes) / sizeof(probes[0]) == kWorldProbeMax + 1u);
     for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
         const auto c = Lab(std::string("enabled=1\nrole=guest\nworld=2\nworld_probe=") + probes[i] + "\n");
