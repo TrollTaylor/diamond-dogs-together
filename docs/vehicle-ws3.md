@@ -228,13 +228,38 @@ or steers a wheel was found statically. The vehicle service has a per-index forc
 -> V vt+0x78 `0x16F9070`: move slot `+0x20` value, `+0x24` bit 0; cleared by V vt+0x80 `0x16F8240`), read by the AI
 speed governor `0x16F6CE5`; whether it rolls the wheels of a copy that SetPosition also places is the next probe.
 
+Second static pass (2026-11-01, capstone over the read-only RE copy) [I unless marked]:
+
+- The per-frame small move is a set-transform, not a velocity. `0xBA9710` calls the category's physics set
+  (`cat+0x288`, built by `0xBC9890`, vtable `0x2300150`) vt+0xB8 `0xBD4C00` with the
+  slot, the new position and rotation: it stores them in the chassis body (`*(*(slot obj+0x98)+0x80)`) through
+  `0x1CFFDA0` (`+0x10` pos, `+0x20` rot, `+0x244 |= 8`, a pending transform) and clears bits `0x180` of the
+  slot's control block (`*(cat+0x288)+0x38` + slot * `0x210`, `+0x200`) [O, code]. A large move adds vt+0xA8
+  `0xBD3B80` and vt+0xA0 `0xBD3A20`, which zero the block's `+0x190`/`+0x194`, clear `+0x20A` and reset per-wheel
+  `+0xC0` floats to 1.0 [O, code]. The copy's chassis therefore jumps each frame with no velocity, and nothing
+  makes its wheels roll.
+- The wheel bones come from `WheelAssociationAnimPlugin` (constructor `0x1D66650`, vtable `0x2531418`; vt+0x18
+  `0x1D666E0` forwards three update steps to the implementation object at `+0x68`) [O, code], fed by the physics
+  wheel constraints (`PhxWheelConstraintParam`: `wheelFront`, `wheelUp`, `wheelRadius`, `wheelInertia`, ... at
+  `0x1D5EBE8..0x1D5F08D`; `steeringMargin` at `0x1C91464`).
+- The driver phase does not hand the throttle or the steer to the vehicle: its vt+0x170 calls (`0x124F830`,
+  `0x124FBA3`, `0x124FC31`) are motion requests by name; the vehicle reads its driver's input on another path (not
+  found). So sending the steer blend (above) cannot turn the copy's wheels by itself.
+- Next step (needs a runtime read, not more static work): a lab-only read of the copy's slot control block and its
+  wheel bodies on both copies while one player drives, to find the fields the driver's copy changes (wheel spin,
+  steer angle); then a viewer-side write of those fields from RIDE_FAST's speed along the heading and yaw rate (or
+  the v5 steer blend), behind its own key.
+
 **Tests.** `partner_ride_wire_tests` (the v5 codec, store, lease, the send rule, `PlanSteer`), `partner_driver_tests`
 `TestRideSteerDriver` (sender: key, seat 0 only, read only, refusals; viewer: neutral before a packet, the peer's
 blends, the lease back to neutral, the refused write, the restore once; a passenger and the key off never write),
 `lab_config_tests` (off unless named in lab and play; invalid values), `worker_session_tests` (the allow-lists).
 
 **Proof scenario.** `tools/worker/scenarios/r1101-vanim-play.txt` (play, `-WanSim bad`, `-SaveSeed africa-jeep`):
-the host drives straight, left, right; the guest watches; then the roles swap.
+the viewer stands 6 m out from the driver's door, 3 m toward the nose; the driver steers a, then d with the jeep
+standing (both screens captured), then rolls straight, left and right; then the roles swap. Run `6cea2ec9` (an
+earlier framing) met every log expectation but its frames show the jeep only far away or behind the viewer's own
+body, so they prove nothing about the pose.
 
 ## Contract (`tools/generate_partner_contract.py`)
 
