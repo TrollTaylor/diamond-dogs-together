@@ -692,8 +692,8 @@ struct LabConfig {
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
     // Melee on the partner (docs/native-puppet.md "Melee"; partner_melee.hpp): the local CQC strike (act 113 / 114) that
-    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Off unless
-    // named, in lab and play, until a hidden run on both copies shows it; a named 1 runs it in both (no refusal bit).
+    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Follows the
+    // gun profile in lab and play (hidden run 4bc7b732); a named 0 opts out, a named 1 runs in both (no refusal bit).
     bool partner_melee = false;
     bool partner_melee_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
