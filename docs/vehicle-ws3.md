@@ -257,9 +257,21 @@ blends, the lease back to neutral, the refused write, the restore once; a passen
 
 **Proof scenario.** `tools/worker/scenarios/r1101-vanim-play.txt` (play, `-WanSim bad`, `-SaveSeed africa-jeep`):
 the viewer stands 6 m out from the driver's door, 3 m toward the nose; the driver steers a, then d with the jeep
-standing (both screens captured), then rolls straight, left and right; then the roles swap. Run `6cea2ec9` (an
-earlier framing) met every log expectation but its frames show the jeep only far away or behind the viewer's own
-body, so they prove nothing about the pose.
+standing (both screens captured), then rolls straight, left and right; then the roles swap. The viewer's camera is
+swung by a mouse move after the placement (placebehind faces the target, which the over-the-shoulder camera keeps
+behind the viewer's own back).
+
+**Hidden runs (play, `-WanSim bad`, africa-jeep, key named).**
+
+| Run | Framing | Result |
+|---|---|---|
+| `6cea2ec9` | viewer 14 m to the side | Every waitlog met on both copies; frames show the jeep only far away or behind the viewer's body: nothing about the pose |
+| `002a187a` | 6 m out of the door, facing it | Every waitlog met, incl. the standing steer (the guest wrote 0.012 for a and 0.992 for d; the host the same in B); no `refused`, `step=error`, `viewer_changed`, faults 0. The viewer's own body hides the driver in every viewer frame |
+| `38714f32` | the same, camera swung | **[O] A (guest watching):** the host seated with both hands level on the wheel, then a distinct turning pose for a and the opposite one for d with the jeep standing (frames `guest-a-seated`, `guest-a-steer-left-01..03`, `guest-a-steer-right-01..03`; the host's own screen shows the same two poses and its own front wheels turned). **[O] the copy's front wheels do not turn** (the same crop in all three frames: the known limit). B (host watching): logs as in A (host save 0.600, writes 0.008 .. 0.980, restore ok=1), frames inconclusive (a bush between the host and the driver's seat). No refusal, error or fault on either copy |
+
+Frames and labelled sheets: the run archive `r1101/frames/vanim/` (`sheet-38714f32.jpg`, the driver and front-wheel
+crops). The pose fix is proven on one side by frame and on both sides by log; the key stays off unless named until
+the integration decides the default.
 
 ## Contract (`tools/generate_partner_contract.py`)
 
