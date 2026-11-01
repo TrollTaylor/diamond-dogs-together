@@ -1,3 +1,45 @@
+## November 1, 2026: r1101 integration - five tracks in one build, every new key off unless named (`wp/integ-1101`, local only; no hidden runs this round)
+
+- **What players get in play:** nothing changes by default. All five r1101 features stay behind lab.ini keys that are
+  off unless named, in lab and play: `partner_ride_steer` (the seated driver's steer pose), `partner_native_aim_truth`
+  with `_box` / `_triggers` / `_stance` (the partner's native aim truth), `fulton_sync` with `fulton_early` /
+  `fulton_look` (the Fulton on both copies), `world_supply` (supply drops synced) and `debug_vspawn` (F9 Spawn vehicle;
+  both rows refuse with "Vehicle spawn is not available yet in this build." while it is off).
+- **Left for the Prove phase (none flipped here):** `world_supply` (run `5acbcb83` clean on both copies; the review
+  fixes after it and scenario `r1101-supply-play` phases 5-6 never ran), `partner_native_aim_truth` (run `a8a69ae9`
+  proved one direction, the guest pressing; step 4, the reverse, not run), `partner_ride_steer` (run `38714f32` A: the
+  guest watching; the review fixes `bd6af708` and the host side not run), `debug_vspawn` (A, B and C seen on both copies
+  in `5cdbfada`; D, the riding refusal, not run), `fulton_sync` (no frame shows a balloon or a wormhole on the receiver).
+- **Merged (`--no-ff`, onto dev `96415cb6`, in this order):** `wp/vehicle-anim` `e552f413` (`01fb29c3`, clean),
+  `wp/anim-truth` `f99cc286` (`1bfda423`), `wp/fulton-anim` `a8f2156b` (`a52a77fc`), `wp/supply-sync` `a43ab934`
+  (`844dc797`), `wp/vehicle-spawn` `583e575a` (`038bcb6a`). Conflicts kept both sides: the worker labsetting
+  allow-lists and help (every key of every track), LabCommon keys, the op constants and op table, the NOTE grammar,
+  `NoteShown` and toast texts, the SUPPLY and VSPAWN receipts, the `world_supply` and `debug_vspawn` splices, the worker
+  Lua check list, the FULTON and VSPAWN wire tests, the protocol doc and STATUS (vehicle spawn above fulton).
+- **Ids after the merge:** wire ops `0x44` VSPAWN, `0x45` SUPPLY, `0x46` FULTON (67 ops in the table); world notes 20
+  VSPAWN and 21 SUPPLY (22 reserved for the Fulton track, unused), so the NOTE grammar and `NoteShown` take 1..15 and
+  18..21. All three world tracks wrote their `docs/world-sync-protocol.md` section as 25: Fulton keeps **25**, Supply
+  drops is **26** and Vehicle spawn is **27**, with every reference in code, tests, scenarios and docs renumbered.
+- **Fallout commits:** `3bec8427` (66 ops once SUPPLY and FULTON were both in; 67 in the vehicle-spawn merge itself) and
+  `99a23cf7` (`supply_sync_tests` expected note 20 hidden; `world_receipt_tests` now also checks 21 shown, 22 hidden).
+- **Supply drops record** (the track's own STATUS entry never landed: the 08:50 PC crash zero-filled `docs/STATUS.md`
+  in its worktree before it was committed; that uncommitted file is still there and was left alone): observe-only
+  MinHook detours on the supply-box request core `0x15C3F00` and reset `0x15C4080`, pinned in
+  `native/supply_cbox_contract.hpp` (`tools/generate_supply_cbox_contract.py --check`), SUPPLY `0x45`, note 21 and
+  `lua/coop/world_supply.lua`; only the proven drop pairs (AMMO / FULTON `4:0`, the iDroid `0:431`) are synced. Hidden
+  runs: `c66d418b` (the guest's mirror skipped: fixed), `ddf44cee` (mirror works; a delivered box sent a false "gone":
+  fixed) and `5acbcb83` (three boxes mirrored once each, every box ended `step=delivered` on both copies, no false
+  gone). The review fixes at `a43ab934` (mirror held for an own box, refused requests not mirrored, the accepted read)
+  never ran in a game. Details: `docs/world-sync-protocol.md` section 26.
+- **Checks at `99a23cf7`** (worktree on C:, Debug): `tools/build.ps1 -Fast` after each merge and fix (312, then 314,
+  then 315 tests, all passing) and the affected `ctest -R` sets; full `tools/build.ps1` CTest **347/347**; every
+  generator with `--check` passes against exe `085c2f82...bb45` (partner 858 code sites / 213 slots, soldier_warp,
+  carry_info, carry_plugin, carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, sleep_plugin,
+  steam_shim, supply_cbox 6 sites, vehicle_controller 17 sites; native_ui and teammate_targeting stop at their gitignored
+  `docs/evidence` JSON, as in every fresh tree). Lua sizes (LF): `debug_vspawn.lua` 15569 / 16000, `world_supply.lua`
+  20495, `world_vehicle_rules.lua` 30293, `world_vehicle.lua` 30146, `world_enemy.lua` 28096 / 32000; `debug_menu.lua`
+  untouched at 15993. Nothing pushed, tagged or released.
+
 ## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; spawn, guest ask and riding seen on both copies in hidden runs `e626471f` and `5cdbfada`; the riding refusal and the r1101 review fixes after them, not run yet)
 
 - **Review r1101 fixes (red/green, not run yet):** the back-seat check took every on-foot press as riding (world_ride_pose's
