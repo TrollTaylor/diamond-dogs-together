@@ -1869,7 +1869,7 @@ int main() {
             const auto feEarly = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\n");
             const auto feLook = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_look=1\n");
             const auto feNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_early=1\nfulton_look=1\n");
-            const auto feBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=2\nfulton_look=on\n");
+            const auto feBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=2\nfulton_look=maybe\n");
             const auto fePlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n"
                                     "fulton_early=1\nfulton_look=1\n");

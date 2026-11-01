@@ -243,10 +243,11 @@ local function reject(q, reason)
   if q.src == "req" and W.paired then W.tx(W.OP.REJECT, q.rid, REQ, reason, q.from or q.id, 0, 0) end
 end
 -- Host: answers the guest's request in the GUEST's index space (q.from when it was matched
--- to another pool index here), so it ends that request and removes nothing more there.
+-- to another pool index here), so it ends that request and removes nothing more there. An
+-- early lift (src fulton, world_vehicle_rules.lua) matched here marks the guest's index too.
 local function answer(q)
+  if q.from and W.host and (q.src == "req" or q.src == "fulton") then V.reqGone[q.from] = true end
   if q.src ~= "req" then return end
-  if q.from then V.reqGone[q.from] = true end
   V.broadcast(q.from or q.id, q, 1, q.rid)
 end
 -- Host: announces a vehicle its copy lost (kept for a re-send at the next PAIRED).
@@ -436,7 +437,8 @@ H[REQ] = guarded(function(v)
     L("event=vehicle_gone;step=refused;id=%d;src=req;reason=break_off;d_mm=-1", id)
     return reject(q, 11)
   end
-  if V.held[id] then V.held[id].rid = rid; return end
+  -- A held item (an early lift, src fulton) that this request joins is answered as the request (gone, or REJECT 9).
+  if V.held[id] then V.held[id].rid, V.held[id].src = rid, "req"; return end
   V.consider(q, t)
 end)
 -- Wraps world_sync's handler for op: the original runs as before, this module's part in pcall.

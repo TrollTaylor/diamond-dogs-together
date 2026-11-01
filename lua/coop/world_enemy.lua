@@ -366,10 +366,13 @@ do
 
         -- r1101 fulton (lab key fulton_sync, CFG r[18] W.fultonOn; docs/world-sync-protocol.md section 25): FULTON 0x46
         -- {seq, kind 1 soldier / 2 vehicle, id, entity hash, wormhole}. The Fultoner's copy announces its own Fulton at
-        -- FultonInfo (wormhole: its EQP_IT_Fulton_WormHole level >= 1, the stock test). The other copy's lift (W1's
-        -- RequestForceFulton above; a vehicle's Seize {"Fulton"} in world_vehicle_rules.lua) takes that look: this
-        -- copy's level for HOLD_MS, restored after and never saved. A soldier's lift is visual only: this copy's
-        -- TppTerminal.OnFulton is skipped once for it (the Fultoner keeps the recruit; vehicles: world_vehicle_rules.lua).
+        -- FultonInfo (wormhole: its EQP_IT_Fulton_WormHole level >= 1, the stock test; a vehicle: its type and xyz mm
+        -- there, 255 and 0, 0, 0 unknown). The other copy's lift (W1's RequestForceFulton above; a vehicle's
+        -- Seize {"Fulton"} in world_vehicle_rules.lua) takes that look only with fulton_look (r[18] bit 4: the level is
+        -- global, so this copy's own Fultons in that window use it too): this copy's level for HOLD_MS, restored after
+        -- and never saved. A soldier's lift is visual only when the partner announced it: this copy's
+        -- TppTerminal.OnFulton is skipped once for it (the Fultoner keeps the recruit); with no FULTON from the partner
+        -- by then (an older partner, or its key off) the stock credit runs (D1). Vehicles: world_vehicle_rules.lua.
         local FU = {}
         W.fulton = FU
         OP.FULTON = OP.FULTON or 70
@@ -409,10 +412,16 @@ do
             if type(o) == "function" and not t1 then
                 FU.wrap = function(...)
                     local id = ...
-                    local at = type(id) == "number" and FU.skip[id]
-                    if at then
+                    local k = type(id) == "number" and FU.skip[id]
+                    if k then
                         FU.skip[id] = nil
-                        if W.now() - at <= SKIP_MS then L("event=fulton;step=credit_skipped;id=%d;why=partner_lift", id); return end
+                        local t = W.now()
+                        local n = FU.note[k.h]
+                        if t - k.at <= SKIP_MS and n and t - n.at <= NOTE_MS then
+                            L("event=fulton;step=credit_skipped;id=%d;why=partner_lift", id)
+                            return
+                        end
+                        if t - k.at <= SKIP_MS then L("event=fulton;step=credit_kept;id=%d;why=no_partner_note", id) end
                     end
                     return o(...)
                 end
@@ -459,8 +468,15 @@ do
             if not kind then return end
             local lv = FU.own()
             local worm = type(lv) == "number" and lv >= 1 and 1 or 0
+            local vt, x, y, z = 255, 0, 0, 0
+            if kind == 2 then
+                local okp, px, py, pz = pcall(V.pose, id)
+                local okt, pt = pcall(V.vtype, id)
+                if okp and type(px) == "number" and type(py) == "number" and type(pz) == "number" then x, y, z = floor(px), floor(py), floor(pz) end
+                if okt and type(pt) == "number" and pt >= 0 and pt <= 255 then vt = pt end
+            end
             FU.seq = FU.seq % 65535 + 1
-            local ok = W.tx(OP.FULTON, FU.seq, kind, id, h or 0, worm)
+            local ok = W.tx(OP.FULTON, FU.seq, kind, id, h or 0, worm, vt, x, y, z)
             L("event=fulton;step=tx;kind=%d;id=%d;ent=%.0f;worm=%d;sent=%d", kind, id, h or 0, worm, ok and 1 or 0)
         end
         W.handlers[OP.FULTON] = function(v)
@@ -469,9 +485,10 @@ do
             if (kind ~= 1 and kind ~= 2) or type(id) ~= "number" or type(seq) ~= "number" then return end
             FU.note[kind == 1 and h or id] = {worm = worm, at = W.now()}
             L("event=fulton;step=rx;seq=%d;kind=%d;id=%d;ent=%.0f;worm=%d", seq, kind, id, h or 0, worm)
-            -- A vehicle: this copy's lift at once (world_vehicle_rules.lua G.early), not after VEHICLE_GONE's readback.
+            -- A vehicle: this copy's lift at once (world_vehicle_rules.lua G.early, key fulton_early), at the Fultoner's
+            -- type and pose (an older frame has none: no early lift there), not after VEHICLE_GONE's readback.
             local V = W.vehicleGone
-            if kind == 2 and type(V) == "table" and type(V.early) == "function" then pcall(V.early, id) end
+            if kind == 2 and type(V) == "table" and type(V.early) == "function" then pcall(V.early, id, v[6], v[7], v[8], v[9]) end
         end
         -- The receiver, just before its lift (kind 1: soldier id + entity hash; kind 2: vehicle id).
         function FU.before(kind, id, h)
@@ -481,12 +498,13 @@ do
             if n and t - n.at > NOTE_MS then n = nil end
             FU.lift[id] = t
             if kind == 1 then
-                FU.skip[id] = t
+                -- Decided at OnFulton (about 3.7 s later): skipped only if the partner's FULTON has arrived by then.
+                FU.skip[id] = {at = t, h = h}
                 pcall(FU.install)
             end
             local own, set = FU.own(), 0
             local mine = type(own) == "number" and own >= 1 and 1 or 0
-            if n and type(own) == "number" and mine ~= n.worm then
+            if n and W.fultonLookOn == true and type(own) == "number" and mine ~= n.worm then
                 local want = n.worm == 1 and 1 or 0
                 if FU.real == nil then FU.real = own end
                 if setLevel(want) then set, FU.want = 1, want end

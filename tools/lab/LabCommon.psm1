@@ -470,6 +470,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world_vehicle_damage'; Json = 'world_vehicle_damage'; Kind = 'bool' },
     # r1101 fulton (lab and play, off unless named): the puppet's Fulton attach and the receiver's lift (CFG r[18]).
     @{ Key = 'fulton_sync'; Json = 'fulton_sync'; Kind = 'bool' },
+    # r1101 fulton review fixes (lab and play, off unless named, only with fulton_sync): the early vehicle lift and the
+    # borrowed wormhole look (CFG r[18] bits 2 and 4).
+    @{ Key = 'fulton_early'; Json = 'fulton_early'; Kind = 'bool' },
+    @{ Key = 'fulton_look'; Json = 'fulton_look'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

@@ -297,6 +297,17 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.fulton_sync_given = true;
         if (!ok) result.fulton_sync = false;
     }
+    // r1101 fulton review fixes: the early vehicle lift and the borrowed look, lab and play, off unless named.
+    else if (Equals(key, "fulton_early")) {
+        ok = ParseBool(value, result.fulton_early);
+        result.fulton_early_given = true;
+        if (!ok) result.fulton_early = false;
+    }
+    else if (Equals(key, "fulton_look")) {
+        ok = ParseBool(value, result.fulton_look);
+        result.fulton_look_given = true;
+        if (!ok) result.fulton_look = false;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     else if (Equals(key, "partner_ride_board")) {
@@ -1231,6 +1242,10 @@ bool EffectiveTravelLock(const LabConfig& config) noexcept {
     if (config.travel_lock != kTravelLockAbsent) return config.travel_lock != 0;
     return config.mode == LabMode::play;
 }
+std::uint8_t FultonCfgBits(const LabConfig& config) noexcept {
+    if (!config.fulton_sync) return 0;
+    return static_cast<std::uint8_t>(1u | (config.fulton_early ? 2u : 0u) | (config.fulton_look ? 4u : 0u));
+}
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
 const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }
@@ -1817,6 +1832,8 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // r1101 fulton: off unless named, in lab and play, until a hidden run shows the puppet's Fulton attach and the
     // receiver's lift on both screens.
     if (!c.fulton_sync_given) c.fulton_sync = false;
+    if (!c.fulton_early_given) c.fulton_early = false;
+    if (!c.fulton_look_given) c.fulton_look = false;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

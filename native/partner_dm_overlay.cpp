@@ -109,7 +109,7 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept {
     }
 }
 
-std::uint8_t MapFulton(std::uint16_t act) noexcept { return act == 49 || act == 50 || act == 59 ? kFulton : kNone; }
+std::uint8_t MapFulton(std::uint16_t act) noexcept { return act == 59 ? kFulton : kNone; }
 
 const char* PhaseName(Phase phase) noexcept {
     switch (phase) {

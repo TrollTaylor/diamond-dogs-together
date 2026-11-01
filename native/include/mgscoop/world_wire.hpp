@@ -271,8 +271,9 @@ struct CfgReply {
     // lua/coop/world_relief_sync.lua (lab key world_relief), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t relief;
-    // r1101 fulton (docs/world-sync-protocol.md section 25): r[18] 1 turns on the Fulton lift and FULTON 0x46
-    // (lua/coop/world_enemy.lua W.fulton, world_vehicle_rules.lua; lab key fulton_sync), else 0; filled only by
+    // r1101 fulton (docs/world-sync-protocol.md section 25): r[18] bit 1 turns on the Fulton lift and FULTON 0x46
+    // (lua/coop/world_enemy.lua W.fulton, world_vehicle_rules.lua; lab key fulton_sync), with it bit 2 the early vehicle
+    // lift (fulton_early) and bit 4 the borrowed wormhole look (fulton_look), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t fulton;
 };

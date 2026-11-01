@@ -203,7 +203,7 @@ do
     W.eff, W.epoch, W.rid, W.flags, W.obsCount, W.badAt = 0, 0, 0, 0, 0, nil
     W.census, W.censusKills, W.censusDamage, W.vehicleGoneOn, W.vehicleStateOn, W.vehicleWreckOn = false, 0, 0, false, false, false
     W.vehicleBreakOn, W.vehicleCreditOn, W.vehicleLoadoutOn, W.vehicleCrewOn, W.vehicleDamageOn = false, false, false, false, false
-    W.companionOn, W.fultonOn = false, false
+    W.companionOn, W.fultonOn, W.fultonEarlyOn, W.fultonLookOn = false, false, false, false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -229,8 +229,11 @@ do
     W.vehicleCrewOn, W.vehicleDamageOn = vm % 128 >= 64, vm >= 128
     -- M1 host-owned companion (lab key companion_host_owned): r[16] turns on world_companion.lua.
     W.companionOn = r[16] == 1
-    -- r1101 fulton (lab key fulton_sync): r[18] the Fulton lift (world_vehicle_rules.lua) and FULTON 0x46 (world_enemy.lua).
-    W.fultonOn = r[18] == 1
+    -- r1101 fulton: r[18] bits, 1 (lab key fulton_sync) the Fulton lift (world_vehicle_rules.lua) and FULTON 0x46
+    -- (world_enemy.lua); with it 2 (fulton_early) the early vehicle lift, 4 (fulton_look) the borrowed wormhole look.
+    local fb = type(r[18]) == "number" and r[18] >= 0 and r[18] <= 7 and floor(r[18]) == r[18] and r[18] or 0
+    W.fultonOn = fb % 2 == 1
+    W.fultonEarlyOn, W.fultonLookOn = W.fultonOn and fb % 4 >= 2, W.fultonOn and fb >= 4
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     -- enemiesLab (30050): W1 and staff placement in the lab only until a hidden run shows staff on both screens in play.

@@ -69,9 +69,11 @@ std::uint64_t ExpectedRec18(std::uint8_t index) noexcept;
 inline constexpr std::int32_t kClimbMmps = 250;
 std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept;
 // r1101 fulton (lab key fulton_sync, In::fulton): the Fultoner's own act while attaching the balloon is 59, held
-// ~2.5 s in every manual Fulton on record (rel0144 60cf2a2c, rel0145 3293bbf1; the act census also names 49/50 Fulton
-// acts) -> stateFultonStart (16, a one-shot; probe fc6037ab: 1582 ms on body 1, the body goes low and stands up).
-// kNone for every other act. Short act-59 presses (160-190 ms: boarding, doors) never last Params::fulton_hold_ms.
+// ~2.5 s in every manual Fulton on record (rel0144 60cf2a2c, rel0145 3293bbf1) -> stateFultonStart (16, a one-shot;
+// probe fc6037ab: 1582 ms on body 1, the body goes low and stands up). kNone for every other act, 49/50 included (the
+// census labels them 'interact?', no Fulton frame; review of 2026-11-01). Short act-59 presses (160-190 ms: boarding,
+// doors) and other held interacts under Params::fulton_hold_ms (1 s) never play; 59 is not Fulton-specific, so a
+// longer held interact still would (the false-positive rate is the next run's question).
 std::uint8_t MapFulton(std::uint16_t act) noexcept;
 
 enum class Phase : std::uint8_t { idle, suspend, patch, play_sent, playing, stop_sent };
@@ -92,7 +94,7 @@ struct Params {
     std::uint32_t debug_ms = 3000;     // a debug request without ms
     std::uint32_t max_ms = 60000;      // a debug request's ms bound
     std::uint32_t replays = 1;         // a loop the game ended is replayed this often
-    std::uint32_t fulton_hold_ms = 500;  // r1101 fulton: a remote Fulton act held this long starts
+    std::uint32_t fulton_hold_ms = 1000;  // r1101 fulton: a remote Fulton act held this long starts
 };
 
 // A debug command (applied on the next tick).

@@ -165,6 +165,9 @@ do
    if c == "rules" and #a == 1 then return true, R.status() end
    if c == "rules" or #a ~= 2 or (v ~= "0" and v ~= "1") then return false, "command_args" end
    if c == "wormhole" then
+    -- r1101 fulton: a partner's lift look shown here ends first, so the rule works on this save's own level.
+    local fu = type(W) == "table" and get(W, "fulton")
+    if type(fu) == "table" and fu.real ~= nil and type(fu.restore) == "function" then pcall(fu.restore) end
     if v == "0" then
      R.wormOff = true
      R.worm()

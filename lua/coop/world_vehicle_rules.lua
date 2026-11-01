@@ -66,17 +66,21 @@ G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
 -- r1101 fulton (lab key fulton_sync, CFG r[18]): a partner's vehicle Fulton is this copy's own engine lift.
 function VR.liftOn() return W.fultonOn == true and G.on() end
--- The early lift: world_enemy.lua calls G.early(id) on a partner's FULTON kind 2 (sent at its FultonInfo, so the Fulton
--- succeeded there), about 6 s before VEHICLE_GONE's loss readback reaches this copy (probe 614ec20a). Only an authored
--- vehicle (a locator name: the same pool index on both copies); VEHICLE_GONE's own decide (rider, seat) still runs, at
--- this copy's own position. The later VEHICLE_GONE or request finds it gone here.
-function VR.early(id)
-  if not VR.liftOn() or not G.typed(id) or G.gone[id] or G.held[id] or id % 512 == 0 then return end
+-- The early lift (its own lab key fulton_early, CFG r[18] bit 2: a balloon that fails after the Fultoner's FultonInfo is
+-- not mirrored yet, so this stays off unless named until a probe settles that): world_enemy.lua calls
+-- G.early(id, vtype, x, y, z) on a partner's FULTON kind 2 (sent at its FultonInfo, with the vehicle's type and pose on
+-- the Fultoner's copy), about 6 s before VEHICLE_GONE's loss readback reaches this copy (probe 614ec20a). Pool indices
+-- can differ between copies, so VEHICLE_GONE's own decide judges it at the Fultoner's pose and type (far, other type or
+-- not nearest: matched to the one vehicle of that type within 5 m, else nothing) and its seat rules; no pose, nothing.
+-- The later VEHICLE_GONE or request finds it gone here (a matched id: the host answers the guest's index gone).
+function VR.early(id, vtype, x, y, z)
+  if not VR.liftOn() or W.fultonEarlyOn ~= true or not G.typed(id) or G.gone[id] or G.held[id] or id % 512 == 0 then return end
   if not G.locator(id) then L("step=early_skip;id=%d;reason=no_locator", id); return end
-  local x, y, z = G.pose(id)
-  if not x then L("step=early_skip;id=%d;reason=no_pose", id); return end
+  local known = type(x) == "number" and type(y) == "number" and type(z) == "number" and not (x == 0 and y == 0 and z == 0)
+  if not known then L("step=early_skip;id=%d;reason=no_pose", id); return end
   L("step=early;id=%d;role=%s", id, role())
-  G.consider({id = id, cause = 1, actor = W.host and 1 or 0, rid = 0, vtype = G.vtype(id), x = x, y = y, z = z, src = "fulton"}, now())
+  local t = type(vtype) == "number" and vtype or 255
+  G.consider({id = id, cause = 1, actor = W.host and 1 or 0, rid = 0, vtype = t, x = x, y = y, z = z, src = "fulton"}, now())
 end
 G.early = VR.early
 function VR.loadoutOn() return W.vehicleLoadoutOn == true and W.active == true and not W.host end
