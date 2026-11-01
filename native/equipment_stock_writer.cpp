@@ -398,6 +398,7 @@ template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,voi
         if(++general.plan_waits>=kPlanWaitLimit) Refuse(log,slot,"no_manifest",true,c.now_ms,true);
         return;
     }
+    RecordA1Cache(s,nullptr);
     // The remote carries nothing in this slot (no alias, no base): nothing to follow.
     if(!s.want && !c.alias[slot]) {Refuse(log,slot,"no_base",true,c.now_ms,true);return;}
     const std::uintptr_t engine=general.lease.engine;
@@ -431,6 +432,8 @@ template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,voi
         t.measured=c.measured;
     }
     Tier tier=why ? Tier::d : t.shared ? Tier::a1s : Tier::a1;
+    // fb1031 gear-1: kept when tier C then refuses the stand-ins for good (MissingCacheSlot).
+    RecordA1Cache(s,why);
     bool permanent=PermanentReason(why);
     if(why && c.substitute) {
         if(log) {
@@ -553,7 +556,7 @@ void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const s
             ++foreign;
             // Keep only our earlier dispatched identity. This foreign handle
             // must not become ours at the next realize generation.
-            s.state=SlotState::refused;SetReason(s,"foreign_handle");++status.refused;
+            s.state=SlotState::refused;SetReason(s,"foreign_handle");s.a1_cache=false;++status.refused;
         }
     }
     ++status.resyncs;status.kept+=kept;

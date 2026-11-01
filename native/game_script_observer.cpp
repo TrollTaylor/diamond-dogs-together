@@ -2102,8 +2102,7 @@ void ObserveLateGear(const mgscoop::equipment_stock_writer::GeneralContext& cont
     late.covered=sp::LateGearCovered(equip_alloc_manifest,remote,partner_driver.preload_mission==partner_mission ?
         partner_driver.preload_ids : nullptr,count);
     for(const auto& slot:partner_driver.equip_status.slots)
-        late.missing=late.missing || ((slot.state==w::SlotState::backoff || slot.state==w::SlotState::refused) &&
-            w::CacheReadinessReason(slot.reason));
+        late.missing=late.missing || w::MissingCacheSlot(slot);  // fb1031 gear-1: an A1 cache refusal tier C closed counts
     late.midload=midload; late.attempted=equip_midload.Attempted(); late.returned=equip_midload.Returned();
     const sp::LateGear decision=sp::DecideLateGear(late);
     equip_late_gear=decision;

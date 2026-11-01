@@ -367,19 +367,30 @@ inline bool CacheReadinessReason(const char* reason) noexcept {
     }
     return false;
 }
-inline void RecordA1Cache(SlotStatus& slot,const char* a1_why) noexcept {(void)slot;(void)a1_why;}
+// fb1031 gear-1: Plan records whether A1 was refused for cache readiness. A missing type-1/type-2 base never
+// ends with that reason: tier C then refuses the always-resident stand-ins for good (stock_optional_dict,
+// stock_optional_header), and the record keeps the slot missing.
+inline void RecordA1Cache(SlotStatus& slot,const char* a1_why) noexcept {slot.a1_cache=CacheReadinessReason(a1_why);}
+// A slot the viewer could not fill for want of the partner's own base here (the late path's `missing`, and
+// what a manifest or residency renewal re-plans): its reason is a cache readiness wait, or the plan refused
+// it (tier d) after an A1 cache refusal. Never a foreign handle or anything after a dispatch.
 inline bool MissingCacheSlot(const SlotStatus& slot) noexcept {
-    return (slot.state==SlotState::backoff || slot.state==SlotState::refused) && CacheReadinessReason(slot.reason);
+    if(slot.state!=SlotState::backoff && slot.state!=SlotState::refused) return false;
+    if(CacheReadinessReason(slot.reason)) return true;
+    if(!slot.a1_cache || slot.tier!=Tier::d || slot.handle) return false;
+    const char* a="foreign_handle";const char* b=slot.reason;
+    while(*a && *a==*b) {++a;++b;}
+    return *a || *b;
 }
 // Only a genuine new manifest renews an exhausted missing-cache check on the
 // same body. Never renew a dispatched, uncertain, owned or foreign slot, and
 // never reclassify an ownership/cache-change refusal as missing readiness.
 inline bool RenewCacheReadiness(SlotStatus& slot,SlotSchedule& schedule,
                                std::uint32_t dispatched,std::uint32_t live) noexcept {
-    if((slot.state!=SlotState::backoff && slot.state!=SlotState::refused) || !CacheReadinessReason(slot.reason) ||
+    if(!MissingCacheSlot(slot) ||
        schedule.uncertain || schedule.dispatches || schedule.gen_dispatches || slot.handle || dispatched || !EmptyHandle(live)) return false;
     schedule.retries=0;schedule.retry_at=0;schedule.visited=false;
-    slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;
+    slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;slot.a1_cache=false;
     return true;
 }
 // The plan wait for a manifest (no_manifest): the slot waited kPlanWaitLimit
