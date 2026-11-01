@@ -962,6 +962,13 @@ check(f:send('enemy goto nearest')[3] == 'enemy_goto;ent=4294967295;submitted_wa
 w = f.calls[#f.calls][2]
 check(math.abs(w.pos[1] - 8.5) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
     'enemy goto lands 2.5 m from the soldier on the player side, facing him')
+-- melee-target: enemy goto <target> <0.8..5 m> (a CQC press at a staff member 1 m in front: melee-soldier-play.txt).
+check(f:send('enemy goto nearest 1.0')[3] == 'enemy_goto;ent=4294967295;submitted_warp', 'goto a soldier at a given distance')
+w = f.calls[#f.calls][2]
+check(math.abs(w.pos[1] - 10) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
+    'enemy goto nearest 1.0 lands 1.0 m from the soldier on the player side, facing him')
+check(f:send('enemy goto nearest 0.5')[3] == 'enemy_args' and f:send('enemy goto nearest 6')[3] == 'enemy_args' and
+    f:send('enemy info nearest 1.0')[3] == 'enemy_args', 'goto distance 0.8..5 m only, and only for goto')
 f = fixture(); f.env.e.MgsCoopWorld = {paired = true, w1 = true}
 check(f:send('enemy_kill_nearest')[3] == 'submitted=1;dead_readback=1;sync=world;max=16', 'kill alias keeps text with the sync tag')
 -- cp_phase
