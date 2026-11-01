@@ -139,6 +139,10 @@ void Cfg() {
     r.fulton = 1;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,1") == 0,
           "the Fulton sync flag is r[18]");
+    // Review fixes of 2026-11-01: r[18] carries the fulton bits as is (2 fulton_early, 4 fulton_look).
+    r.fulton = 7;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,7") == 0,
+          "the fulton bits are r[18]");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
     r.relief = 255; r.fulton = 255;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255") == 0 &&

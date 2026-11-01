@@ -456,11 +456,14 @@ void TestMapFlow() {
 void TestFultonMap() {
     const std::uint8_t fulton = pdo::Find("stateFultonStart", 16);
     Check(fulton == 16 && !pdo::At(fulton)->loop && !pdo::At(fulton)->path, "the Fulton entry: index 16, a one-shot graph-0 state");
-    Check(pdo::MapFulton(59) == fulton && pdo::MapFulton(49) == fulton && pdo::MapFulton(50) == fulton, "Fulton acts 59 / 49 / 50");
-    for (const int act : {0, 1, 2, 3, 5, 11, 21, 29, 39, 51, 52, 53, 58, 60, 77, 109, 139})
+    // Review fix of 2026-11-01: act 59 only; the census labels 49 / 50 'interact?' with no Fulton frame (anim-round1-actions).
+    Check(pdo::MapFulton(59) == fulton && pdo::MapFulton(49) == pdo::kNone && pdo::MapFulton(50) == pdo::kNone, "the Fulton act: 59 only");
+    for (const int act : {0, 1, 2, 3, 5, 11, 21, 29, 39, 49, 50, 51, 52, 53, 58, 60, 77, 109, 139})
         Check(pdo::MapFulton(static_cast<std::uint16_t>(act)) == pdo::kNone, "other acts: no Fulton entry");
     Check(pdo::MapAct(59, 0) == pdo::kNone && pdo::MapAct(49, 0) == pdo::kNone, "the full map never plays the Fulton entry by itself");
-    Check(pdo::Params{}.fulton_hold_ms >= 400 && pdo::Params{}.fulton_hold_ms <= 800, "the Fulton hold sits between a press and the attach");
+    // Review fix of 2026-11-01: the hold is 1 s (the attach holds 59 for ~2.55 s; the 1.6 s entry then ends with it), so a
+    // held interact under 1 s (a slow boarding) never plays.
+    Check(pdo::Params{}.fulton_hold_ms == 1000, "the Fulton hold: 1 s, well past a press, well inside the attach");
     // Setting off, fulton on: a short 59 press (180 ms) never plays.
     Game g;
     g.in.mode = PartnerNativeOverlay::off;
@@ -473,10 +476,22 @@ void TestFultonMap() {
     g.in.remote_act = 1;
     g.Run(600);
     Check(!pdo::Active(g.s) && g.plays == 0, "a 180 ms act-59 press: nothing");
+    g.in.remote_act = 59;
+    g.Run(850);
+    g.in.remote_act = 1;
+    g.Run(600);
+    Check(!pdo::Active(g.s) && g.plays == 0, "an 850 ms act-59 hold (another held interact): nothing");
+    g.in.remote_act = 49;
+    g.Run(2500);
+    g.in.remote_act = 50;
+    g.Run(2500);
+    g.in.remote_act = 1;
+    g.Run(600);
+    Check(!pdo::Active(g.s) && g.plays == 0, "acts 49 / 50 held 2.5 s: nothing");
     // The attach (59 held 2.5 s): one play of the Fulton entry after the hold, a one-shot, never stopped as setting_off.
     g.in.remote_act = 59;
-    g.Run(400);
-    Check(!pdo::Active(g.s), "held 400 ms: not yet");
+    g.Run(900);
+    Check(!pdo::Active(g.s), "held 900 ms: not yet");
     g.Run(200);
     Check(pdo::Active(g.s) && g.s.source == pdo::Source::map && g.s.index == fulton && !g.s.loop, "held past the hold: the Fulton entry");
     g.Run(600);
@@ -492,7 +507,7 @@ void TestFultonMap() {
     Check(g.plays == 1 && g.native_active, "back to native, no replay");
     // A second Fulton later: a new episode plays again.
     g.in.remote_act = 59;
-    g.Run(700);
+    g.Run(1200);
     Check(pdo::Active(g.s) && g.plays == 2, "the next Fulton plays again");
     // fulton off (the default): nothing at all, whatever the setting.
     for (const PartnerNativeOverlay mode : {PartnerNativeOverlay::off, PartnerNativeOverlay::debug, PartnerNativeOverlay::map}) {

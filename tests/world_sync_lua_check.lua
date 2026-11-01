@@ -102,9 +102,11 @@ local function fixture(options)
             return function()
                 local p = c.peer
                 if options.fulton ~= nil then
-                    -- r1101 fulton: an 18-value loader, r[18] the fulton flag (lab key fulton_sync).
+                    -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
+                    -- fulton_look 4; a number is passed as is).
+                    local fb = type(options.fulton) == 'number' and options.fulton or (options.fulton and 1 or 0)
                     return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
-                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, options.fulton and 1 or 0
+                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, fb
                 end
                 if p and p.census ~= nil then
                     -- A WS4 step 0 loader: r[14] the attacker census flag (lab key partner_placed_census).
@@ -717,25 +719,42 @@ do
     F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a2, NULL_ID, 0)
     F.tick(env, c, 1)
     check(#F.tx(c, OPF) == 0, 'a Fulton by nobody here is never announced')
-    -- A vehicle Fulton (an unmapped id world_vehicle.lua types): kind 2, entity 0, the balloon (level 0).
-    c.W.vehicleGone = {typed = function(id) return id == 900 end}
+    -- A vehicle Fulton (an unmapped id world_vehicle.lua types): kind 2, entity 0, the balloon (level 0), and the
+    -- vehicle's type and pose on the Fultoner's copy (review fix: the receiver matches by them, not by the pool index).
+    c.W.vehicleGone = {typed = function(id) return id == 900 or id == 902 end, vtype = function(id) return id == 900 and 1 or 255 end,
+        pose = function(id) if id == 900 then return 120500, 2300, -45000 end end}
     lv.cur = 0
     F.msg(env, 'GameObject', 'FultonInfo', 900, 0, 0)
     F.msg(env, 'GameObject', 'FultonInfo', 901, 0, 0)
     F.tick(env, c, 1)
     f = F.tx(c, OPF)
-    check(#f == 1 and f[1].v[1] == 2 and f[1].v[2] == 2 and f[1].v[3] == 900 and f[1].v[4] == 0 and f[1].v[5] == 0,
-        'fulton_sync: a vehicle Fulton is announced (kind 2, balloon); an untyped id never')
+    check(#f == 1 and f[1].v[1] == 2 and f[1].v[2] == 2 and f[1].v[3] == 900 and f[1].v[4] == 0 and f[1].v[5] == 0 and
+        f[1].v[6] == 1 and f[1].v[7] == 120500 and f[1].v[8] == 2300 and f[1].v[9] == -45000,
+        'fulton_sync: a vehicle Fulton is announced (kind 2, balloon, its type and pose); an untyped id never')
+    F.clear(c)
+    F.msg(env, 'GameObject', 'FultonInfo', 902, 0, 0)
+    F.tick(env, c, 1)
+    f = F.tx(c, OPF)
+    check(#f == 1 and f[1].v[3] == 902 and f[1].v[6] == 255 and f[1].v[7] == 0 and f[1].v[8] == 0 and f[1].v[9] == 0,
+        'an unreadable pose goes out as type 255 at 0, 0, 0 (the receiver lifts nothing early)')
     -- Key off: nothing on the wire.
     env, c = rig(1, false, 1)
     c.recovered.sol_a1 = true
     F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a1, 0, 0)
     F.tick(env, c, 1)
     check(#F.tx(c, OPF) == 0 and c.W.fultonOn == false, 'key off: no FULTON')
-    -- The receiver (guest, no wormhole): FULTON first, then the host's FULTONED outcome. The level is raised to the
-    -- Fultoner's look before RequestForceFulton, the stock credit is skipped once, the level comes back after 5 s.
+    -- CFG r[18] bits (review fixes of 2026-11-01): 1 fulton_sync, 2 fulton_early (the early vehicle lift), 4 fulton_look
+    -- (the borrowed wormhole look); the sub-keys only with fulton_sync.
+    for _, b in ipairs({{0, false, false, false}, {1, true, false, false}, {3, true, true, false}, {5, true, false, true},
+        {7, true, true, true}, {6, false, false, false}}) do
+        env, c = rig(1, b[1], 1)
+        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4], 'CFG r[18] = ' .. b[1] .. ': the fulton bits')
+    end
+    -- The receiver (guest, no wormhole): FULTON first, then the host's FULTONED outcome. With fulton_look (bit 4) the
+    -- level is raised to the Fultoner's look before RequestForceFulton, the stock credit is skipped once (the partner
+    -- announced its Fulton), the level comes back after 5 s.
     local term
-    env, c, lv, term = rig(2, true, 0)
+    env, c, lv, term = rig(2, 5, 0)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
@@ -758,21 +777,46 @@ do
     check(#F.tx(c, OPF) == 0, 'the lift is never echoed')
     F.tick(env, c, 160, 33)
     check(lv.cur == 0 and has(c.logs, 'event=fulton;step=restore;level=0'), 'the level comes back after 5 s')
-    -- A partner's vehicle FULTON (kind 2) starts this copy's lift at once (world_vehicle_rules.lua G.early), after the note.
+    -- A partner's vehicle FULTON (kind 2) hands its type and pose to this copy's lift (world_vehicle_rules.lua G.early,
+    -- which runs only with fulton_early), after the note.
     local early = {}
-    c.W.vehicleGone = {early = function(id) early[#early + 1] = {id = id, note = c.W.fulton.note[id] ~= nil} end}
-    F.push(c, 1, OPF, 2, 2, 25610, 0, 0)
+    c.W.vehicleGone = {early = function(id, t, x, y, z)
+        early[#early + 1] = {id = id, t = t, x = x, y = y, z = z, note = c.W.fulton.note[id] ~= nil} end}
+    F.push(c, 1, OPF, 2, 2, 25610, 0, 0, 1, 120500, 2300, -45000)
     F.tick(env, c, 1)
-    check(#early == 1 and early[1].id == 25610 and early[1].note, 'FULTON kind 2: the early vehicle lift, after the note')
-    -- No FULTON (an older partner, or theirs is off): this copy's own look, still visual only.
+    check(#early == 1 and early[1].id == 25610 and early[1].note and early[1].t == 1 and early[1].x == 120500 and early[1].y == 2300 and
+        early[1].z == -45000, 'FULTON kind 2: the early vehicle lift at the Fultoner\'s type and pose, after the note')
+    -- fulton_sync without fulton_look: FULTON noted, the lift in this copy's own look (no level change); the credit is
+    -- still skipped (the partner announced its Fulton, so its copy keeps the recruit).
     env, c, lv, term = rig(2, true, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    check(c.fultonAsked == 1 and #lv.sets == 0 and lv.cur == 0 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=0'),
+        'fulton_look off (the default): the partner\'s look is never borrowed')
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#term.calls == 0 and has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'fulton_look off: still visual only (the partner announced)')
+    -- No FULTON (an older partner, or theirs is off): this copy's own look, and the stock credit (D1) runs at OnFulton.
+    env, c, lv, term = rig(2, 5, 0)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
     F.tick(env, c, 1)
     check(c.fultonAsked == 1 and #lv.sets == 0 and
         has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=own;own=0;set=0;credit=0'),
         'without FULTON: the lift in this copy\'s own look')
     env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
-    check(#term.calls == 0, 'still visual only')
+    check(#term.calls == 1 and has(c.logs, 'event=fulton;step=credit_kept;id=' .. c.ids.sol_a1 .. ';why=no_partner_note'),
+        'without FULTON (the mixed-key case): the stock credit runs here too (D1, both saves)')
+    -- The partner's FULTON that arrives after the lift but before OnFulton (about 3.7 s later) still skips it.
+    env, c, lv, term = rig(2, 5, 0)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 0)
+    F.tick(env, c, 1)
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#term.calls == 0 and has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'a FULTON that arrives after the lift, before OnFulton: skipped')
     -- Key off on the receiver: today's W1 (RequestForceFulton, the stock credit: D1 both saves), no level change.
     env, c, lv, term = rig(2, false, 0)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 1)

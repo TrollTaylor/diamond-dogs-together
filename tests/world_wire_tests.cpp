@@ -2100,26 +2100,31 @@ void RulesOp() {
 }
 // r1101 fulton (docs/world-sync-protocol.md section 25): FULTON 0x46, both directions, world queue, reliable, level 2
 // (W1: a soldier's Fulton), play too, never a request: seq, kind (1 soldier, 2 vehicle), the Fultoner's game object id,
-// the soldier's entity hash (0 for a vehicle), wormhole (0 balloon, 1 wormhole). 10 bytes.
+// the soldier's entity hash (0 for a vehicle), wormhole (0 balloon, 1 wormhole), and since the review of 2026-11-01 the
+// vehicle's type (255 unknown or a soldier) and xyz mm on the Fultoner's copy (0, 0, 0 unknown): pool indices can differ
+// between copies, so the receiver matches its early lift by pose and type. 23 bytes.
 void FultonOp() {
     const auto* s = world::FindOp(op::fulton);
     Check(op::fulton == 0x46 && s && std::strcmp(s->name, "FULTON") == 0, "FULTON 0x46 exists (the fulton track's code)");
     if (!s) return;
     Check(s->queue == 1 && s->wire == world::Wire::reliable && s->level == 2 && !s->lab_only && !s->request &&
-              s->dir == world::Dir::both && s->lua == 5 && s->native == 0 && s->rx == 0 && s->body == 10,
-          "FULTON: world queue, reliable, level 2, play too, both directions, 5 fields, 10 bytes");
+              s->dir == world::Dir::both && s->lua == 9 && s->native == 0 && s->rx == 0 && s->body == 23,
+          "FULTON: world queue, reliable, level 2, play too, both directions, 9 fields, 23 bytes");
     Setup(2, 2, true);
     Pair(30010, 100);
     Drain(g_host, 3, 100);
     Drain(g_guest, 3, 100);
-    Check(Tx(g_host, op::fulton, {1, 1, 1063, 1325835864, 1}, 101) == world::TxStatus::ok &&
-              Tx(g_guest, op::fulton, {1, 2, 25610, 0, 0}, 101) == world::TxStatus::ok,
+    Check(Tx(g_host, op::fulton, {1, 1, 1063, 1325835864, 1, 255, 0, 0, 0}, 101) == world::TxStatus::ok &&
+              Tx(g_guest, op::fulton, {1, 2, 25610, 0, 0, 1, -653000, 1000, 877700}, 101) == world::TxStatus::ok,
           "each copy announces its own Fulton");
-    Check(Tx(g_host, op::fulton, {0, 1, 1063, 1, 1}, 101) == world::TxStatus::bad_args &&
-              Tx(g_host, op::fulton, {2, 0, 1063, 1, 1}, 101) == world::TxStatus::bad_args &&
-              Tx(g_host, op::fulton, {2, 3, 1063, 1, 1}, 101) == world::TxStatus::bad_args &&
-              Tx(g_host, op::fulton, {2, 1, 1063, 1, 2}, 101) == world::TxStatus::bad_args,
-          "seq 1.., kind 1..2, wormhole 0..1");
+    Check(Tx(g_host, op::fulton, {0, 1, 1063, 1, 1, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 0, 1063, 1, 1, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 3, 1063, 1, 1, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 1, 1063, 1, 2, 255, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 2, 25610, 0, 0, 256, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 2, 25610, 0, 0, 1, 1000000001, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::fulton, {2, 2, 25610, 0, 0, 1, 0, 0}, 101) == world::TxStatus::bad_args,
+          "seq 1.., kind 1..2, wormhole 0..1, type 0..255, xyz within 1e9 mm, all nine fields");
     Exchange(102);
     auto g = Drain(g_guest, 3, 103);
     auto h = Drain(g_host, 3, 103);
@@ -2128,10 +2133,13 @@ void FultonOp() {
         if (r.op == op::fulton)
             Check(r.v[0] == 1 && r.v[1] == 1 && r.v[2] == 1063 && r.v[3] == 1325835864 && r.v[4] == 1, "the host's soldier Fulton, wormhole");
     for (const auto& r : h)
-        if (r.op == op::fulton) Check(r.v[1] == 2 && r.v[2] == 25610 && r.v[3] == 0 && r.v[4] == 0, "the guest's vehicle Fulton, balloon");
+        if (r.op == op::fulton)
+            Check(r.v[1] == 2 && r.v[2] == 25610 && r.v[3] == 0 && r.v[4] == 0 && r.v[5] == 1 && r.v[6] == -653000 && r.v[7] == 1000 &&
+                      r.v[8] == 877700,
+                  "the guest's vehicle Fulton, balloon, its type and pose");
     Setup(1, 1, true);
     Pair(30010, 200);
-    Check(Tx(g_host, op::fulton, {3, 1, 1063, 1, 0}, 201) == world::TxStatus::disabled, "FULTON needs world level 2");
+    Check(Tx(g_host, op::fulton, {3, 1, 1063, 1, 0, 255, 0, 0, 0}, 201) == world::TxStatus::disabled, "FULTON needs world level 2");
 }
 int main() {
     Table();
