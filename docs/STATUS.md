@@ -1,3 +1,25 @@
+## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; not run-proven yet)
+
+- **What players get once the key is on:** F9 > World > **Vehicles**: **Spawn jeep** / **Spawn truck** bring one of the
+  area's own vehicles 6 m in front of whoever presses, facing their way, on both screens (Afghanistan and Africa free
+  roam). A guest's press asks the host (VSPAWN `0x44`), who brings it in front of the guest. Afterwards it is that map
+  vehicle on both copies (ride together, drive, damage, Fulton, VEHICLE_GONE). Plain refusal toasts (world note 20):
+  key off, not free roam (Mother Base, story missions), none free, kind not in this area (tanks / armoured vehicles are
+  not loaded in free roam), not on foot, not paired, failed, no answer.
+- **How:** free roam loads only the faction's jeep and truck bodies, and the class command `Spawn` refuses a live name
+  (REA snapshot pseudocode of `0x140B31E70`; `Respawn` `0x140B31710` re-creates a named instance from its record), so
+  the host picks an authored `VEHICLE_SPAWN_LIST` locator (unridden, not the partner's ride, LRRP last, live before
+  wrecked, not brought before, farthest) and both copies move it with the stock `SetPosition{position, rotY}` (degrees,
+  `s10050_sequence.lua`); a wreck is re-created by `Respawn{name}` first. Each copy reads the pose back
+  (`event=vspawn; step=placed; ok=`). `lua/coop/debug_vspawn.lua` (new fragment after `debug_arms.lua`), native: VSPAWN
+  op, note 20 text, `MGS_COOP_VSPAWN_CFG_V1` (the key for Lua), World > Vehicles rows (S, U).
+- **Sortie vehicle you bring:** not fixed by this. It is TppVehicle2 index 0, which Lua can never spawn, respawn or
+  despawn (`ParseLuaSpawnIndex` `0x140B304E0`); the existing fix is the M3 `world_relief` key (guest `Vehicle.LoadCarry`
+  with the host's carry vars), off since the 2026-10-29 review until a FRAME proof and a play rehearsal of drive,
+  mission end and removal.
+- **Proof run:** `tools/worker/scenarios/r1101-vspawn-play.txt` (play, `labsetting debug_vspawn=1`, afgh-ledge seed):
+  host jeep, guest truck, host drives the spawned jeep with the guest riding, a refusal while riding.
+
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
 **Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `6c25276` with Release receipt `20261101-025109-055c474332e94b7494b2639f486ea948` (passed, 331 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.6+6c25276` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.5.

@@ -1923,3 +1923,22 @@ without sending, the target never queues or applies one). World note 18 ARMS{a=1
 (the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
 16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.
+
+## 25. Vehicle spawn (debug menu Spawn vehicle; docs/debug-menu.md "Spawn vehicle")
+
+Op `0x44` VSPAWN (68), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
+9 fields, 22 bytes: `seq` (u16 1..), `kind` (u8 1 the guest's ask / 2 the host's press / 3 the host's spawn for an ask /
+4 the host's refusal of an ask), `class` (u8 1 light vehicle / 2 truck), `num` (u8, the authored locator
+`veh_<class>_NNNN`; 255 none), `x`, `y`, `z` (i32 mm), `yaw` (i32 mdeg, -360000..360000), `reason` (u8 0 ok, else the
+refusal 1..15). Sent only while the lab key `debug_vspawn` is on (off unless named; `MGS_COOP_VSPAWN_CFG_V1` answers it
+to Lua). The host decides: its own press picks and moves the vehicle and sends kind 2 with the locator and the spot; a
+guest's press sends kind 1 with the guest's own pose, the host picks for the spot 6 m in front of the guest, moves it
+and answers kind 3 (or kind 4 with the reason). A guest applies kinds 2 and 3 (the same locator to the same pose) and
+never kind 1; the host never applies 2..4. Lua (`lua/coop/debug_vspawn.lua`): the vehicle is one of the area's own
+(an authored `VEHICLE_SPAWN_LIST` locator), moved by the instance command `SetPosition{position, rotY}` (degrees), a
+wreck first re-created by `Respawn{name}`; both copies read the pose back (`event=vspawn; step=placed; ok=`). Because
+the same locator stands at the same pose on both copies, VEHICLE_GONE / VEHICLE_STATE and the ride sync treat it as that
+map vehicle. World note 20 VSPAWN{a=1 spawned in front of you (b 1 jeep / 2 truck) | 2 your partner spawned one (b class) |
+3 refused (b 1 key off, 2 not free roam, 3 none free, 4 not in this area, 5 not on foot, 6 not paired, 7 failed, 8 no
+answer)} toasts on the presser's and the partner's screen. 0x45 / 0x46 and notes 21 / 22 belong to the 11-01 supply and
+Fulton tracks. A partner without the op skips it by its length (unknown_op): nothing moves there.

@@ -310,6 +310,35 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
 - **Play: on since 0.14.6** (the user's release of every built feature), the same as the lab. Not run in a game yet:
   `tools/worker/scenarios/rules-play.txt` (2026-10-31 not admitted: D: under 3 GB) is the proof run.
 
+### Spawn vehicle (end of the World page; both players; lab key, not run-proven yet)
+
+| Button | Command |
+|---|---|
+| Spawn jeep (S, U) | `vspawn lv` |
+| Spawn truck (S, U) | `vspawn trc` |
+| (typed only) | `vspawn_status` |
+
+- A jeep (light vehicle) or a truck comes **6 m in front of whoever presses, facing their way, on both screens**.
+  Afghanistan and Africa free roam only. The host picks the vehicle; a guest's press asks the host (VSPAWN `0x44`,
+  docs/world-sync-protocol.md section 25), which brings it in front of the guest.
+- It is one of the area's own vehicles (free roam loads only that faction's jeeps and trucks; the stock `Spawn`
+  refuses a vehicle that already exists): an authored map vehicle that nobody rides, not the partner's ride, a
+  soldier-driven (LRRP) one only as the last resort (all six Afghanistan trucks are LRRP trucks), live before
+  wrecked, not one brought before (else the oldest), then the farthest away. It leaves its old place. A wreck is
+  re-created first. Afterwards it is that map vehicle on both copies: ride together, drive, damage, Fulton.
+- Refusals (chip and toast, world note 20): not available yet (the key is off), not free roam (Mother Base, story
+  missions), no free vehicle of that kind right now, that kind is not in this area (tanks and armoured vehicles are
+  not loaded in free roam), not on foot, not paired (guest), could not be brought, no answer from the host.
+- Results: `vspawn;class=lv|trc;loc=veh_<class>_NNNN;sent=0|1` (host), `vspawn_asked;class=;seq=` (guest),
+  `vspawn_refused;reason=off|mission|none_free|not_loaded|busy|unpaired|failed|pending`. `vspawn_status`:
+  `vspawn;on=0|1;role=host|guest;mission=;recent=<locators>;moving=N;ask=0|1`.
+- Logs: `world_lua=event=vspawn; step=press|pick|apply|tx|rx|placed|refused|ask_refused|ask_timeout|skip|error`;
+  `step=placed; ...; ok=1` is each copy's readback (within 3 m), `ok=0` a move that did not take.
+- **Lab key `debug_vspawn=1`** (lab.ini, lab and play; off unless named): off, both rows refuse "Vehicle spawn is not
+  available yet in this build." The proof run is `tools/worker/scenarios/r1101-vspawn-play.txt`.
+- Not covered: the sortie (relief) vehicle you bring is TppVehicle2 index 0, which Lua can never spawn or move by
+  index; showing it on the partner's screen is the separate M3 `world_relief` key (off).
+
 ### Give weapon (both players)
 
 At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on
