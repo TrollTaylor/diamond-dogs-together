@@ -6,10 +6,11 @@
 #       guard keeps the host copy's route, freezes or walks back (quiet, then ALERT);
 #   P2  what a warp does to a guard in combat (crouched / prone / in cover) on the leaf=engine path, where the native
 #       stance check never runs (every play warp of 0.14.7 logged leaf=engine).
-# The host stands 6 m from guard 2305481811 at the outpost north-west of the travel spot (the 0.14.7 friend session's
-# guards drifted 8.7 m median / 95.3 m max there), the guest 8 m from guard 3970963356 (about 20-40 m from the host),
-# 60 s; then the guest 3 m behind the host, 60 s (both cameras on the nearest guard: frame pairs); then the host raises
-# ALERT on the nearest CP (cp_phase) and both stay 150 s.
+# The host stands 6 m from guard 2961503 (sol_field_0000) of afgh_field_cp, the outpost north-west of the travel spot
+# where the 0.14.7 friend session's guards drifted 8.7 m median / 95.3 m max, the guest 8 m from guard 3268415846
+# (sol_field_0007, about 20-40 m away), 60 s; then the guest 3 m behind the host, 60 s (both cameras on the nearest
+# guard: frame pairs); then the host raises ALERT on the nearest CP (cp_phase) and both stay 150 s. (Run 24d6e544 used
+# 2305481811 = sol_16_29_0001, an LRRP walker, and stopped at a placebehind right after the 500 m teleport.)
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/enemy-follow-p1-lab.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode lab -WanSim bad
@@ -28,15 +29,13 @@ host run world_status
 host expect ^world;paired=1;eff=3;w1=1;roster=match;
 guest run world_status
 guest expect ^world;paired=1;eff=3;w1=1;roster=match;
-host run enemy info 2305481811
-host run enemy goto 2305481811 6
-host expect ^(enemy_goto;ent=2305481811;submitted_warp|warp_position_readback)
-wait 4000
-placebehind guest host 3 1
-wait 2000
-guest run enemy goto 3970963356 8
-guest expect ^(enemy_goto;ent=3970963356;submitted_warp|warp_position_readback)
-wait 3000
+host run enemy info 2961503
+guest run enemy info 3268415846
+host run enemy goto 2961503 6
+host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 3268415846 8
+guest expect ^(enemy_goto;ent=3268415846;submitted_warp|warp_position_readback)
+wait 8000
 stance host stand
 stance guest stand
 host run position
