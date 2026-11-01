@@ -1,3 +1,48 @@
+## 2026-10-31: Mother Base staff placement (`wp/mb-staff-sync`, local only) -- built, lab only in play, no run admitted
+
+**Players get:** nothing new yet. At Mother Base each PC still moves its own staff, so a staff member can stand in
+different places on the two screens and a knockout or Fulton can happen to someone the partner does not see (the
+online report "fulton in mother base didn't work", "soldiers in mother base don't seem synced"). The fix that keeps the
+staff near both players on the same spot is built and unit-tested but stays lab only in play: no hidden play run could
+be started to show it on both screens.
+
+- **Code** (`wp/mb-staff-sync`): Mother Base staff placement, feature `staffPlace` at 30050 (design 7.7).
+  - Native: `soldier_warp::GuestAdmit` (red `2d6e576f`, green `04d8d6cf`) admits a guest grant by the lab key rule (lab +
+    `debug_soldier_warp`, any kind, unchanged) or the new Mother Base staff rule (play or lab, mission 30050, a correction
+    only: never a warp, route or come). `GuestWarpReceipt` applies it after the role / contract / mission / grant checks;
+    for staff the range is from the nearer of the host (remote pose) and the guest's own player. `Verify` (read-only
+    bytes) also runs for a play or lab guest (`soldier_warp=ready; key=mb_staff`). Same `Warp()`, grant, pose
+    freshness, budget and fault latch; no new game address. `generate_soldier_warp_contract.py` pins `GuestAdmit` and
+    the correction-only kind.
+  - Host (`world_place.lua`): the scanner covers staff within 55 m of either player (the partner body, `TppPlayer2`
+    index 1, read every 500 ms), at most 2 reads per tick, never a combat flag on staff, nothing read at the origin;
+    `W.staffAnnounce` sends kind 3 (x, z now, the standing ground y of the last sample) right before the host's own
+    outcome of a standing staff member.
+  - Guest (`world_place_guest.lua`): staff are corrected beyond 2 m on two samples or 5 m once (free roam: 3.5 / 8 m);
+    `W.staffHold` holds a staff outcome until the copy is placed (a queued or running placement, or the newest sample
+    over 1.5 m away), at most 4 s; never force-realizes a staff member; no `SetOutOfArea` pin at Mother Base.
+    `event=place_div` lines now carry `host_xz` / `here_xz`.
+  - `world_enemy.lua`: `E.commit` calls `staffAnnounce`; `E.applyOne` defers on `staffHold`.
+  - Debug: `enemy goto <target> [0.5-10 m]` (red/green `f025c798`).
+  - Play flip: on for the runs (red `2b06942d`, green `3922379a`), back to lab only (`enemiesLab` drops `enemies` and
+    `staffPlace` in play; red `5e6ee098`, green `5968e9bb`).
+  - Scenario `tools/worker/scenarios/mb-staff-sync-play.txt` (`68b95a93`): A = 1325835864 with the guest 5 m off, host
+    sleep then Fulton; B = 981153145 slept by the host and Fultoned by the guest (E held); 30 s of the nearest staff
+    member with frames every 5 s; positions from `event=place_div ... host_xz= ... here_xz=`.
+- **Runs:** none admitted. Four wrapper launches (19:12, 19:32, 19:52, 20:13; play, `-WanSim bad`, native gun research,
+  mb-ladder) waited for the run floors: commit free stayed 3-15 GB (floor 15 GB) and once D: was 2.96 GB (floor 3 GB,
+  `LOW DISK`, lock taken and released, nothing launched). No game started, no refusal, no frames.
+- [U] everything in game: whether the native soldier warp places Mother Base staff (stance refusals for posed staff,
+  ground y of the y - 800 mm convention on the decks), whether `TppPlayer2` index 1 `GetPosition` reads the partner body
+  on the host, the hold-E guest Fulton stimulus, and how corrections look on a walking staff member.
+- **Checks:** -Fast 307/307 after each green; full `tools/build.ps1` 338/339 at `162293bd`
+  (`partner_defer_pose_held_generation_tests`, native partner defer, untouched, failed once under load and passes 3/3
+  alone); final head: see below. `generate_partner_contract.py --check` and `generate_soldier_warp_contract.py --check`
+  pass.
+- **Next:** one hidden play run of `mb-staff-sync-play.txt` on a machine above the floors; if both copies' frames show
+  A on the same spot, asleep, then gone, and the 30 s frames keep the walking staff member together: drop `enemiesLab`
+  (red/green) and add the README line "Mother Base: knocking out or Fultoning a staff member shows on both screens".
+
 ## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
 
 **Players get:** **Go to Afghanistan** in the F9 debug menu takes both players to the Afghanistan free roam in about
