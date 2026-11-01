@@ -962,12 +962,12 @@ do
         check(not ag.R.pending and ag.saves == 1 and ag.R.seen == 1 and logCount(ag, 'step=checkpoint;hash=0;ver=1;receipt=1') == 1,
             'off the helicopter: the held checkpoint applies and saves once')
     end
-    -- Off by default (F.arrival.holdCheckpoint): riding in still applies at once.
+    -- Named off (F.arrival.holdCheckpoint = false; world_follow's default is on since 0.14.6): riding in applies at once.
     local default = fixture(false, 3, true)
     default.W.w1 = true
-    default.W.follow.arrival = {heli = function() return true end}
+    default.W.follow.arrival = {heli = function() return true end, holdCheckpoint = false}
     default.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); default.A.tick(default.now)
-    check(default.R.seen == 1 and default.saves == 1 and logCount(default, 'arrival_heli') == 0, 'default: the hold is off')
+    check(default.R.seen == 1 and default.saves == 1 and logCount(default, 'arrival_heli') == 0, 'named off: the hold is off')
     -- In a helicopter space (the ACC) or without world_follow's way out, nothing is held.
     local acc = fixture(false)
     acc.W.mission, acc.W.w1 = 40050, true

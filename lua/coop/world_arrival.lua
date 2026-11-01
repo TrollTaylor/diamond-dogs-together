@@ -9,8 +9,8 @@ do
     if type(A) == "table" then
         -- on: the watchdog (default on; the logs always run); wait: still for this long (ms, in game, outside cutscenes);
         -- radius: metres; window: the arrival watch (ms); offFoot: off the helicopter this long ends the watch (ms).
-        -- hint: the host's note 19 toast (off until a run shows it).
-        local G = {on = true, hint = false, wait = 20000, radius = 1, window = 180000, offFoot = 5000, msgCap = 16}
+        -- hint: the host's note 19 toast (on since 0.14.6; never run in a game).
+        local G = {on = true, hint = true, wait = 20000, radius = 1, window = 180000, offFoot = 5000, msgCap = 16}
         W.arrivalWatch = G
         local fmt, floor, sqrt = string.format, math.floor, math.sqrt
         local FIELD = {[30010] = true, [30020] = true, [30050] = true}

@@ -325,15 +325,12 @@ do
     n.H[46]({1, 25611, 2, 0, 0, 1, 300000, 1000, 300000})
     check(not n.pool[25611].alive and n:has('step=applied;id=25611;via=wreck;src=rx;ok=1'), 'the re-sent announcement retries it')
 end
--- Mother Base (30050) runs only in the lab since the M4 review: no hidden run covered it there (finding 3); in play
--- the module stays off at 30050 (one step=off line) and on at 30010 / 30020.
+-- Mother Base (30050) runs in lab and play since 0.14.6 (fb1031 vehicles; lab only from the M4 review until then, no
+-- hidden run covered it there): play is on at 30050 as at 30010 / 30020.
 do
     local p = Fixture('guest', true, 2)
-    p:add(25603, 210.9, 290.1, 1, 'veh_lv_0003')
-    p.H[46]({1, 25603, 1, 0, 0, 1, 210900, 1000, 290100})
-    p.V.observe('FultonInfo', 25603, 'local')
-    check(not p.V.on() and p.pool[25603].alive and #p.despawns == 0 and next(p.V.watch) == nil and p:has('step=off;mission=30050;reason=mb_lab_only') and
-        not p:has('step=on;'), 'play at Mother Base: off (step=off; reason=mb_lab_only), nothing removed or watched')
+    check(p.V.on() and p:has('step=on;mission=30050;role=guest') and not p:has('reason=mb_lab_only'),
+        'play at Mother Base: on (0.14.6)')
     p.W.mission = 30020
     for _, f in ipairs(p.W.startHooks) do f() end
     check(p.V.on() and p:has('step=on;mission=30020;role=guest;wreck=0'), 'play in Africa: on (step=on names the wreck key: off)')

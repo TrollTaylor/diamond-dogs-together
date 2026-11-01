@@ -40,8 +40,9 @@ F.run = run
 -- foot at Command (vanilla ResetMBFreeStartPositionToCommand, as the vanilla MB restart) without its queued MB demo.
 -- A.auto (off: unproven in game, and it would move every working guest helicopter arrival to the Command cluster)
 -- gives every linked guest helicopter arrival at 30050 that start.
--- routeStart / holdCheckpoint (arrival-prevent, world_follow_seed S.ride, world_recovery): off until a run proves them.
-local A = {auto = false, routeStart = false, holdCheckpoint = false}
+-- routeStart / holdCheckpoint (arrival-prevent, world_follow_seed S.ride, world_recovery): on since 0.14.6 (never run in
+-- a game); false turns either off.
+local A = {auto = false, routeStart = true, holdCheckpoint = true}
 F.arrival = A
 function A.linked()
 if type(W.cfg) ~= "function" then return false end

@@ -173,11 +173,12 @@ check(called(field, 'restart') == 1 and #field.tx == 0 and called(field, 'mb_foo
 
 -- The host in the same state (a 0.14.5 save): a hint toast (note 19), never an action.
 local hostDefault = fixture(1)
+hostDefault.G.hint = false
 at(hostDefault, 1000); at(hostDefault, 21000)
-check(hostDefault.G.hint ~= true and #hostDefault.notes == 0 and count(hostDefault, 'step=host_hint;why=static_heli;m=30050;shown=0') == 1,
-    'default: the host hint toast is off (logged only)')
+check(#hostDefault.notes == 0 and count(hostDefault, 'step=host_hint;why=static_heli;m=30050;shown=0') == 1,
+    'named off: the host hint toast is off (logged only)')
 local host = fixture(1)
-host.G.hint = true
+check(host.G.hint == true, 'default: the host hint toast is on (0.14.6)')
 at(host, 1000); at(host, 21000); at(host, 60000)
 check(called(host, 'restart_menu') == 0 and #host.notes == 1 and host.notes[1][1] == 19 and host.notes[1][2] == 30050 and
     host.notes[1][3] == 1 and count(host, 'step=host_hint;why=static_heli;m=30050;shown=1') == 1, 'host: one hint toast, no restart')

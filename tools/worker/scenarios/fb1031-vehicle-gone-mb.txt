@@ -1,5 +1,5 @@
 # fb1031 vehicles, Mother Base half (the two-PC session of 2026-10-31, 0.14.5): each player Fultoned a parked jeep on
-# its own copy (user 25603, friend 25604); VEHICLE_GONE runs at 30050 in the lab only (play: step=off; reason=mb_lab_only),
+# its own copy (user 25603, friend 25604); VEHICLE_GONE ran at 30050 in the lab only (0.14.5 play: step=off; reason=mb_lab_only),
 # so the other copy kept it, the other player drove it and was drawn gliding with no jeep. This run is the proof the
 # play flip of VEHICLE_GONE at Mother Base waits for (its index Despawn never ran: coop-vehicle-gone-mb.txt): the
 # engine's own vehicle Fulton (the lab lever vehicle_remove nearest fulton: the stock Seize {"Fulton"}, watched like a

@@ -249,15 +249,18 @@ for _, bad in ipairs({"friendly_fire", "friendly_fire 2", "friendly_fire on"}) d
   c = F(true); ok = c:run(bad)
   check(not ok and #c.tx == 0, "bad friendly_fire arguments refused: " .. bad)
 end
--- Play (mode 0) until a play run proves the track: give and friendly fire refuse in plain words and change nothing.
+-- Play (mode 0) runs the same as the lab (0.14.6): give, pick and friendly fire are accepted, never "not_available_yet".
 for _, host in ipairs({true, false}) do
-  c = F(host, {mode = 0})
-  for _, cmd in ipairs({"give_weapon 39", "give_pick 1", "friendly_fire 0"}) do
-    local said = #c.said
-    ok, msg = c:run(cmd)
-    check(not ok and msg == "not_available_yet" and #c.equips == 0 and #c.tx == 0 and c.R.ff == true and #c.said == said + 1 and
-      c.said[#c.said] == "Not available yet in this build.", "play refuses until a play run proves it: " .. cmd)
-  end
+  c = F(host, {mode = 0}); c:tick()
+  ok, msg = c:run("give_weapon 39")
+  check(ok and msg:find("submitted_give;equip=39", 1, true) and #c.equips == 1, "play: give_weapon is submitted")
+  c:poll()
+  ok, msg = c:run("give_pick 2")
+  check(ok and msg:find("submitted_give;equip=24", 1, true) and #c.equips == 2, "play: give_pick is submitted")
+  c:poll()
+  ok, msg = c:run("friendly_fire 0")
+  check(ok and msg ~= "not_available_yet" and (host and c.R.ff == false or not host and msg == "friendly_fire_asked;want=0"),
+    "play: friendly fire switches (host) or asks the host (guest)")
   ok, msg = c:run("give_list")
   check(ok and msg:find("give_list;guns=", 1, true), "play keeps the read-only list")
 end

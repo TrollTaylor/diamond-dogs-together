@@ -112,8 +112,8 @@ is local to the PC that sends it.
 Who presses what (play and lab): **Spawn enemy here**, Spawn at closest camp and Spawn on
 selected route are host only (the guest's row reads "Host only: use the host's menu").
 In Afghanistan and Africa free roam a play press sends the nearest guard to the nearest
-patrol route (the in-front placement needs lab.ini `spawn_warp=1` until a play run proves it;
-with it the host gets a soldier 5 m in front, facing them); the guest sees the same soldier
+patrol route only when lab.ini names `spawn_warp=0` (on by default since 0.14.6, not run in a
+game yet: the host gets a soldier 5 m in front, facing them); the guest sees the same soldier
 (spawn sync). Placed guards that are dead, asleep, Fultoned, gone or over 150 m away free
 their place, so presses keep working past 8. At Mother Base every spawn row refuses:
 "No enemies at Mother Base: spawn works in Afghanistan and Africa free roam." The row's
@@ -307,15 +307,14 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   and drops it after 60 s without the pairing. The guest's buttons are greyed (`host_only`).
 - `rules` reads the state: `rules;wormhole=on|off;level=N;seen=N;mb_weapons=0|1;from=self|host;applied=0|1`.
 - Logs: `world_lua=event=rules; step=worm_off|worm_on|worm_failed|mb_on|mb_off|rx|save|host_rule_dropped`.
-- **Play: not available yet.** Until `rules-play.txt` passes, `wormhole` and `mb_weapons` refuse in play
-  (`not_available_yet`, "Not available yet in this build."); the rows show "unverified". Lab mode keeps them.
-- Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet; 2026-10-31 not admitted: D: under 3 GB).
+- **Play: on since 0.14.6** (the user's release of every built feature), the same as the lab. Not run in a game yet:
+  `tools/worker/scenarios/rules-play.txt` (2026-10-31 not admitted: D: under 3 GB) is the proof run.
 
 ### Give weapon (both players)
 
 At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on
-`wp/give-weapons`, **not run-proven yet**: lab only; play refuses it ("Not available yet in this build.",
-`not_available_yet`; 2026-10-31 run not admitted). For the host and the guest, each for its own player only.
+`wp/give-weapons`; on in lab and play since 0.14.6, **not run in a game yet** (2026-10-31 run not admitted). For the
+host and the guest, each for its own player only.
 
 - The list shows the guns the game has loaded in this area ("Assault rifle (East_ar_010)": the soldiers', yours and
   your partner's; read from the equip writer's census, so it fills once the partner's body has loaded here), then the
@@ -334,7 +333,7 @@ At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`)
 ### Friendly fire (both players; the host decides)
 
 At the end of the Partner page: **Friendly fire: ON / OFF** (`friendly_fire 0|1`). Default ON (as before).
-**Not run-proven yet**: lab only; play refuses it (`not_available_yet`) and keeps it ON. The host's press sets it for both copies; a guest's press asks the host
+On in lab and play since 0.14.6, **not run in a game yet**. The host's press sets it for both copies; a guest's press asks the host
 (`friendly_fire_asked;want=..`), and an unpaired guest is refused (`friendly_fire_refused;reason=not_paired`).
 
 - OFF: your partner's bullets, explosives and melee never hurt or down you, and no hit is sent between the copies.
@@ -365,7 +364,7 @@ existing one:
 2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
    you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
    landed (he attacks).
-3. **Native placement** (play: lab.ini `spawn_warp=1`, off until a play run proves it; lab:
+3. **Native placement** (play: lab.ini `spawn_warp`, on unless named 0; lab:
    `debug_soldier_warp=1`, which play still refuses): the menu sends the engine's own set-transform message `0x287158b07327` to
    his GameObjectId through the GameObject manager's SendCommand, the same call the
    player carry code makes. The target is 5 m along your heading at your height, and

@@ -1012,10 +1012,11 @@ do
             v.initialPlayerRotY == 0 and gv.ply_useMissionStartPos == false and gv.ply_missionStartPos[0] == 0 and
             gv.ply_missionStartPos[1] == 0 and gv.ply_missionStartPos[2] == 0 and gv.ply_missionStartRot == 0
     end
-    -- Off by default until a hidden run shows the guest's helicopter landing from the route start (A.routeStart).
+    -- On by default since 0.14.6 (A.routeStart, A.holdCheckpoint; never run in a game); false keeps the 0.14.5 seeds.
     local plain = replay(1, false, 6, false, false)
-    check(mbApis(fixture(2)).F.arrival.routeStart ~= true and host(plain) and count(plain, ';start=route') == 0,
-        'default: the route-start seeds are off (0.14.5 seeds; the watchdog is the way out)')
+    check(mbApis(fixture(2)).F.arrival.routeStart == true and mbApis(fixture(2)).F.arrival.holdCheckpoint == true and
+        host(plain) and count(plain, ';start=route') == 0,
+        'default: the route-start seeds and the checkpoint hold are on; named off keeps the 0.14.5 seeds')
     local ride = replay(1, false)
     check(ride.loaded == 30050 and reset(ride) and ride.env.gvars.ply_initialPlayerState == 1 and
         ride.env.gvars.heli_missionStartRoute == 4294967295 and ride.env.gvars.solface_groupNumber == 111,

@@ -108,13 +108,13 @@ c=F();h=c.W.handlers[62];c.W.host=true;h({1,1});check(c.D.rules.hostMb==nil,"the
 -- Status.
 c=F({mission=30050});c:run("mb_weapons","1");c:run("wormhole","0");ok,msg=c:run("rules")
 check(ok and msg=="rules;wormhole=off;level=0;seen=1;mb_weapons=1;from=self;applied=1","status line")
--- Play (mode 0) until a play run proves the rules: both commands refuse in plain words and change nothing; status stays.
+-- Play (mode 0) runs the same as the lab (0.14.6): the wormhole is each player's own; Mother Base weapons the host's.
 for _,role in ipairs({true,false})do
  c=F({mode=0,mission=30050,host=role});ok,msg=c:run("wormhole","0")
- check(not ok and msg=="not_available_yet" and #c.sets==0 and c.levels[WORM]==1,"play: wormhole off refused, level untouched")
- check(c.says[1]=="Not available yet in this build.","play: one plain sentence")
- ok,msg=c:run("mb_weapons","1");check(not ok and msg=="not_available_yet" and #c.tx==0 and c.env.vars.playerDisableActionFlag==MB,"play: weapons at Mother Base refused, nothing sent")
- c:tick(60);check(c.env.vars.playerDisableActionFlag==MB and c.levels[WORM]==1,"play: nothing forced later")
- ok,msg=c:run("rules");check(ok and msg:find("^rules;wormhole=on"),"play: status still answers")
+ check(ok and msg:find("^wormhole=off") and c.levels[WORM]==0,"play: wormhole off applies")
+ ok,msg=c:run("mb_weapons","1")
+ if role then check(ok and msg:find("mb_weapons=on;sent=1;applied=1",1,true) and c.env.vars.playerDisableActionFlag==0,"play: the host's weapons at Mother Base apply and are sent")
+ else check(not ok and msg=="host_only" and #c.tx==0,"play: the guest's press is still host only") end
+ ok,msg=c:run("rules");check(ok and msg:find("^rules;wormhole=off"),"play: status answers")
 end
 print("debug_rules_lua_check: "..checks.." checks passed")
