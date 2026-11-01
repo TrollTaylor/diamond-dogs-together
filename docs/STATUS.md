@@ -20,7 +20,7 @@
   TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
   world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
   debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
-- **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca`; generators `--check` as at the rel0146
+- **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca` and again at `f7af51d9` (with the early lift); generators `--check` as at the rel0146
   baseline (carry_info / sleep_plugin differ by line endings only there too).
 - **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep).
 - **Probe `614ec20a` (lab, africa-jeep, key named; this track's second probe):** [O log] the guest's hand Fulton of the
