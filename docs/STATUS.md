@@ -1,3 +1,64 @@
+## 2026-10-31: Joiner frozen in the arrival helicopter, prevention round (`wp/arrival-prevent`, local only, design 9.2) -- root cause reproduced; watchdog proven; route-start seeds and the checkpoint hold built but off (their proof run never reached the lock)
+
+**Players get:** a joiner whose arrival helicopter at Mother Base has not moved for 20 s after arriving
+(the friend's 0.14.5 "stuck in the helicopter") is now restarted by the game itself and starts again on foot on the
+Command Platform, without pausing; the README says so. Nothing else changes by default: the fix that should stop the
+helicopter freezing at all (the joiner keeps its own route start) and the hold that keeps a frozen helicopter out of the
+joiner's save are built and tested but stay off, because their proof run could not start (this PC's free commit memory
+stayed under the 15 GB floor for most of the round).
+
+- **Root cause (from the friend's full 0.14.5 log, confirmed in a hidden run):** the joiner's helicopter started at the
+  host's stored helicopter start position over the Command platform 1 pad (9.116, 8.75, -42.43; the iDroid's
+  `MbDvcActHeliLandStartPos`, written by the host's vanilla Reserve) because the sortie seeds copied the host's
+  start-position keys; a helicopter started there never flew, landed or offered the get-off. 0.14.5 then saved the
+  host's checkpoint into it (`world_recovery`), so every Continue rebuilt it.
+- **Code** (red `55f2486c` + `0a5799f3`, green `fd9e90bb`, test follow-ups `d506e9f5`; lab repro `2b8191ef` / `0266553d`;
+  scenarios `0a80c58a`, `3028e511`, `e3568def`, `c0035598`; design 9.2 `5b968f2a`):
+  - Seeds: a guest whose seeds start it riding a helicopter in on a route into free roam or Mother Base (a Continue only
+    while that entry is unused) takes vanilla's ride-on reset for `initialPlayerFlag/Pos/RotY` and
+    `ply_useMissionStartPos/Pos/Rot` at every apply (`step=seeds_apply;...;start=route`). On foot, a used entry and the
+    helicopter spaces keep the host's start position (W3/W4 unchanged). OFF by default (`F.arrival.routeStart`, red
+    `d83987b4`, green `bcecc2f7`).
+  - Checkpoint: a guest riding a helicopter at 30010/30020/30050 holds a received shared checkpoint
+    (`event=recovery; step=checkpoint_wait; reason=arrival_heli`) and applies it once off. OFF by default
+    (`F.arrival.holdCheckpoint`).
+  - Watchdog (new chunk `lua/coop/world_arrival.lua`, `W.arrivalWatch.on`, default ON): ON_HELICOPTER, still under 1 m
+    for 20 s in game outside cutscenes within 180 s of the start and no landing / get-off message: a linked guest runs
+    the way out itself (`event=arrival; step=unstick; why=static_heli`; local restart; Mother Base on foot at Command,
+    free roam at the route start); a linked host logs `step=host_hint` and, with `W.arrivalWatch.hint` (OFF by default),
+    gets note 15 "Stuck in the helicopter? Pause and choose Restart.".
+  - Logs: `event=arrival; step=start / start_pos` at every 30010/30020/30050 start, `step=heli_msg` (16 a mission).
+  - Lab: `goto=30050 goto_lz=1` stores the friend's position on the host; probe 20 `guest_frozen_heli` keeps the 0.14.5
+    pose seeds for the guest's next sortie.
+- **Run W `15eda621`** (hidden worker, lab, real seed, `-WanSim bad`, native gun research, `mb-arrival-watchdog.txt`, head
+  `e3568def`; 20:08, C: 90 GB, D: 4.51 GB, commit 15.07 GB, nvidia-smi 4423 MiB 14 %, d3dprobe HARDWARE hr=0; admitted;
+  Closed / BaselineRestored / RealSavesUnchanged True):
+  - [O] host `event=goto; step=2; heli_start_pos=9116,8750,-42430`; host start `flag=1; pos=9116,8750,-42430; state=1`
+    with its queued MB demo `LongTimeNoSee_DdogSuperHighLikability` (on foot in its demo, like the friend's host).
+  - [O] guest (probe 20: 0.14.5 seeds) start `flag=1; pos=9116,8750,-42430; state=2; used=0; route=2691558836; heli=1` =
+    the friend's numbers; `on_helicopter`; no landing message; host remote act 102 only (no 103/99). Frames +13 s and
+    ~+21 s show the same elevated view over the Command platform deck.
+  - [O] watchdog: `step=unstick; why=static_heli; m=30050; still_ms=20003; pos=9116,8750,-42430`, then
+    `step=mb_foot; at=restart` and the reload (tips screen frame); the host saw `unpaired; reason=remote_end`.
+  - [U] the guest on foot after this watchdog in this run (the reload took over 20 s and the scenario stopped; the same
+    restart path landed on foot in run `0ca61fa1`). `c0035598` waits for `watch_end; why=on_foot` instead.
+- **Not proven [U]:** the route-start seeds landing the joiner (scenario `mb-arrival-stored.txt` is ready; the
+  same route from its start landed in run `25226a97`), the checkpoint hold in a game, the host hint toast, the free-roam
+  watchdog restart (`A.field`), Africa / Afghanistan arrivals with this build (scenario `mb-arrival-africa.txt` ready;
+  the default seeds there are unchanged from 0.14.5).
+- **Refused / not run:** RUN 1 (the dev-only repro, head `0a80c58a`) was refused in its preflight (19:29: "Required
+  audited test is missing: player_package_mission_list_lua_check"; this worktree's `build/` lacked the
+  `mission-list-inspection-20260909` game input, now a junction to the main checkout's copy like the others); its one
+  retry never reached the lock in 30 min (commit free 0.9-14.7 GB, D: 2.9 GB), so run W (probe 20 = the 0.14.5 seeds
+  with the fix around them) reproduced the freeze instead. Moved this worktree's own `build/native` (4.6 GB) to C: with
+  a junction back (nothing deleted).
+- **Play-mode evidence:** none new (play has no scripted sortie); the lab runs use the same Lua chunks as play.
+- **Checks:** red/green Lua fixtures (world_follow 221, world_follow_game 132, world_align 190, world_arrival 35). Final
+  full tools/build.ps1 at `b8f53015` (docs only after it): 338/340 in a real-path clone (two timing tests under load,
+  partner_defer_pose_held_generation_tests and friend_package_tests_2, pass alone); in this worktree 339/340
+  (ddt_local_watch_process compares the image path and `build/native` is now a junction to C:; passes at a real path).
+  `tools/generate_partner_contract.py --check`: match (850 code sites, 213 vtable slots).
+
 ## October 31, 2026: ride-cut-2 - the get-in camera cut is one episode per seated ride (`wp/ride-cut-2`, local only)
 
 - **What players get:** nothing new is shown in a run yet. The front-seat get-in camera cut (8.60, on with the gun

@@ -378,7 +378,7 @@ foreach($line in $steps){
                     ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020|30050)$' -and
                         ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
                     ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-                        ($t[0] -ceq 'guest' -and $t[2] -cmatch '^world_probe=(shared_death|guest_restart)$'))))}
+                        ($t[0] -ceq 'guest' -and $t[2] -cmatch '^world_probe=(shared_death|guest_restart|guest_frozen_heli)$'))))}
                 'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
                 'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'require'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
@@ -422,7 +422,7 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     $canonical=ConvertTo-WorldTriggerText -Text $Text
     $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020|30050)( goto_lz=[01])?$'
     $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-        ($Role -ceq 'guest' -and $canonical -cmatch '^world_probe=(shared_death|guest_restart)$')
+        ($Role -ceq 'guest' -and $canonical -cmatch '^world_probe=(shared_death|guest_restart|guest_frozen_heli)$')
     $disable=$Role -cin 'host','guest' -and $canonical -ceq 'world=0'
     if(!$travel -and !$recovery -and !$disable){throw 'Worker world travel accepts only free-roam destinations, role-bound recovery probes or exact world=0.'}
     $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')

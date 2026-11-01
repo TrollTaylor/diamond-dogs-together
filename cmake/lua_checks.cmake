@@ -155,6 +155,8 @@ mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
 mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/arms-give-ff-play.txt")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
+# arrival-prevent (docs/world-sync-design.md 9.2): the arrival helicopter watchdog, start-state log and probe 20.
+mgs_add_lua_check(world_arrival_lua_check "${_mgs_coop}/world_arrival.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
 mgs_add_lua_check(world_handoff_lua_check "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
@@ -316,7 +318,7 @@ if(MGS_LOCAL_BUDDY_CAPACITY_TEST)
   list(APPEND _mgs_buddy_ride_composed "${_mgs_coop}/world_buddy_ride.lua")
 endif()
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
-  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_arrival.lua"
   "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_sleep_clock.lua" "${_mgs_coop}/world_partner_sleep.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_friendly.lua" "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/world_ride_pose.lua" "${_mgs_coop}/world_horse_cargo.lua"
   ${_mgs_buddy_ride_composed} "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua" "${_mgs_coop}/world_vehicle.lua" "${_mgs_coop}/world_vehicle_state.lua"
   "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_companion.lua" "${_mgs_coop}/world_companion_dog.lua" "${_mgs_coop}/world_companion_guard.lua" "${_mgs_coop}/world_relief.lua" "${_mgs_coop}/world_relief_sync.lua")

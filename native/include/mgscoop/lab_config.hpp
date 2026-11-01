@@ -374,9 +374,9 @@ inline constexpr std::uint8_t kTravelLockAbsent = 0xFF;
 // PROBE_SYNC and the Lua probe number, in this order.
 enum class WorldProbe : std::uint8_t {
     none, p1, p3, p3b, p4, p12, p17, race_kill, remote_area_kill, kill_near, sleep_near, fulton_near, alert_near,
-    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint, guest_restart
+    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint, guest_restart, guest_frozen_heli
 };
-inline constexpr std::uint8_t kWorldProbeMax = 19;
+inline constexpr std::uint8_t kWorldProbeMax = 20;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
 
 // Two-PC play's native partner (docs/two-pc-play.md "Native partner",

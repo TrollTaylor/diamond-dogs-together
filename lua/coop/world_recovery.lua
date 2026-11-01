@@ -68,9 +68,24 @@ do
     end
     R.applyCheckpoint = checkpoint
     H[OP.CHECKPOINT] = checkpoint
+    -- arrival-prevent (docs/world-sync-design.md 9.2): a guest still riding its arrival helicopter in free roam or Mother
+    -- Base holds a received checkpoint until it is off (0.14.5 saved the host's checkpoint into a frozen helicopter, which
+    -- every later Continue rebuilt). world_follow's F.arrival.heli: Tpp.IsHelicopter or PlayerStatus ON_HELICOPTER.
+    local function riding()
+        local m, a = W.mission, W.follow and W.follow.arrival
+        if (m ~= 30010 and m ~= 30020 and m ~= 30050) or type(a) ~= "table" or a.holdCheckpoint ~= true or
+            type(a.heli) ~= "function" then return false end
+        local ok, v = pcall(a.heli)
+        return ok and v == true
+    end
     local function applyCheckpoint(now)
         local v = R.pending
         if not v or not ready() or now < (R.retryAt or 0) then return end
+        if riding() then
+            R.retryAt = now + 500
+            if R.why ~= "heli" then log(fmt("step=checkpoint_wait;reason=arrival_heli;ver=%d", v[2])); R.why = "heli" end
+            return
+        end
         local options = {ignoreAlert = true, permitHelicopter = true}
         if v[1] == 0 then
             if type(W.get(TppPlayer, "SetInitialPosition")) ~= "function" then return end

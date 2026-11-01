@@ -304,11 +304,17 @@ for _ = 1, 4 do deploymentHost.F.tick(deploymentHost.time) end
 transfer(deploymentHost, deploymentGuest)
 deploymentGuest.F.current = deploymentGuest.F.queue[1]
 deploymentGuest.F.current.session = 55
+deploymentGuest.F.arrival.routeStart = true
 deploymentGuest.env.mvars.mis_helicopterMissionStartPosition = {900, 901, 902}
 deploymentGuest.env.TppMain.ReservePlayerLoadingPosition(1, true)
-local stage = deploymentGuest.stages[#deploymentGuest.stages]
-check(deploymentHost.F.outgoing[2] == 6 and stage[3] == -123.125 and stage[4] == 456.875 and stage[5] == 34.625,
-    'real source-helicopter deployment Reserve cannot stage stale guest landing-zone prep over host seed pose')
+-- arrival-prevent (docs/world-sync-design.md 9.2): the host's stored helicopter start position never reaches the guest
+-- (0.14.5 copied it, and a guest helicopter started there never flew in); the guest takes vanilla's ride-on reset, so it
+-- stages neither that position nor its own stale landing-zone prep and its helicopter starts at the route start.
+check(deploymentHost.F.outgoing[2] == 6 and deploymentHost.env.vars.initialPlayerFlag == 1 and #deploymentGuest.stages == 0 and
+    deploymentGuest.stageEnabled == false and deploymentGuest.env.vars.initialPlayerFlag == 0 and
+    deploymentGuest.env.vars.initialPlayerPosX == 0 and deploymentGuest.env.gvars.ply_useMissionStartPos == false and
+    deploymentGuest.env.gvars.ply_initialPlayerState == 1 and deploymentGuest.env.gvars.heli_missionStartRoute == 444,
+    'real source-helicopter deployment Reserve: the guest rides in from the route start, no host or stale guest start position')
 -- fb1031 arrival against the exact bodies: the host's sortie into Mother Base rides its helicopter (real Reserve);
 -- the guest replays it and its seeds, and the exact vanilla ResetMBFreeStartPositionToCommand leaves it on foot at
 -- Command (route 0, ON_FOOT, initial position reset, cluster Command) with its queued MB demo cleared.
@@ -341,12 +347,18 @@ do
     plain.F.current = plain.F.queue[1]
     plain.F.current.session = 55
     plain.mbDemo = 'X'
+    plain.F.arrival.routeStart = true
     plain.env.vars.missionCode = 30050
     plain.env.TppMain.ReservePlayerLoadingPosition(1, true)
     plain.env.TppMission.Load(30050, 40050)
     check(plain.loaded and plain.loaded[1] == 30050 and plain.env.gvars.ply_initialPlayerState == 1 and
         plain.env.gvars.heli_missionStartRoute == 444 and plain.env.vars.mbClusterId == mh.env.vars.mbClusterId and plain.mbDemo == 'X',
         'default exact guest Reserve: rides in with the host route and cluster, its MB demo kept')
+    -- arrival-prevent: the friend's case on the exact bodies: the host's stored helicopter start position stays the host's.
+    check(mh.env.vars.initialPlayerFlag == 1 and mh.env.vars.initialPlayerPosX == 9 and plain.env.vars.initialPlayerFlag == 0 and
+        plain.env.vars.initialPlayerPosX == 0 and plain.env.vars.initialPlayerPosY == 0 and plain.env.gvars.ply_useMissionStartPos == false and
+        plain.env.gvars.ply_missionStartPos[0] == 0 and plain.env.gvars.ply_missionStartRot == 0,
+        'exact guest Reserve and Load: the host stored helicopter start position is not copied; the guest starts at the route start')
     -- Switched on (F.arrival.auto, for a lab proof run): on foot at Command.
     mg.F.arrival.auto = true
     mg.F.current = mg.F.queue[1]

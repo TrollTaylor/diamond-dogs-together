@@ -824,4 +824,42 @@ do
     check(reserved == 0 and sh.life[1] == 4 and sh.life[2] == 4 and logged(sh, 'event=spare;ent=3000000001;state=5;as=3'),
         'Mother Base: the host copy knocks the staff member out and never reserves its own TARGET_DEAD game over')
 end
+do
+    -- arrival-prevent (docs/world-sync-design.md 9.2): a guest still riding its arrival helicopter in free roam or Mother
+    -- Base holds the host's checkpoint (0.14.5 saved it into a frozen helicopter, which every later Continue rebuilt) and
+    -- applies it once off the helicopter (world_follow F.arrival.heli).
+    for _, mb in ipairs({true, false}) do
+        local ah, ag = fixture(true, 3, mb), fixture(false, 3, mb)
+        pairReady(ah, ag)
+        local riding = true
+        ag.W.follow.arrival = {heli = function() return riding end, holdCheckpoint = true}
+        ah.env.TppMission.UpdateCheckPoint({atCurrentPosition = true})
+        ah.A.tick(ah.now); transfer(ah, ag, function(p) return p.op == OP.CHECKPOINT end)
+        ag.A.tick(ag.now)
+        check(ag.R.pending and not ag.saves and not ag.checkpointCalls and logCount(ag, 'step=checkpoint_wait;reason=arrival_heli;ver=1') == 1,
+            'riding in: the shared checkpoint waits and nothing is saved (' .. ag.W.mission .. ')')
+        ag.now = ag.now + 600; ag.A.tick(ag.now)
+        check(ag.R.pending and not ag.saves and logCount(ag, 'reason=arrival_heli') == 1, 'still riding: still held, logged once')
+        riding = false
+        ag.now = ag.now + 600; ag.A.tick(ag.now)
+        check(not ag.R.pending and ag.saves == 1 and ag.R.seen == 1 and logCount(ag, 'step=checkpoint;hash=0;ver=1;receipt=1') == 1,
+            'off the helicopter: the held checkpoint applies and saves once')
+    end
+    -- Off by default (F.arrival.holdCheckpoint): riding in still applies at once.
+    local default = fixture(false, 3, true)
+    default.W.w1 = true
+    default.W.follow.arrival = {heli = function() return true end}
+    default.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); default.A.tick(default.now)
+    check(default.R.seen == 1 and default.saves == 1 and logCount(default, 'arrival_heli') == 0, 'default: the hold is off')
+    -- In a helicopter space (the ACC) or without world_follow's way out, nothing is held.
+    local acc = fixture(false)
+    acc.W.mission, acc.W.w1 = 40050, true
+    acc.W.follow.arrival = {heli = function() return true end, holdCheckpoint = true}
+    acc.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); acc.A.tick(acc.now)
+    check(acc.R.seen == 1 and acc.saves == 1 and logCount(acc, 'arrival_heli') == 0, 'the ACC applies at once')
+    local older = fixture(false)
+    older.W.w1 = true
+    older.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); older.A.tick(older.now)
+    check(older.R.seen == 1 and older.saves == 1, 'no F.arrival (older follow chunk): applies at once')
+end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

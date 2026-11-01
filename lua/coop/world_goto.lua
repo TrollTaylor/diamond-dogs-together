@@ -99,6 +99,13 @@ do
                 TppMission.SelectNextMissionHeliStartRoute(g.target, route, false)
                 W.log(fmt("event=goto;step=2;next=%.0f;route=%.0f;want=%.0f", W.get(gvars, "mis_nextMissionCodeForMissionClear") or -1,
                     W.get(gvars, "heli_missionStartRoute") or -1, route))
+                -- arrival-prevent repro (lz 1 into Mother Base): the 0.14.5 host's stored helicopter start position over
+                -- the Command platform 1 pad (the iDroid MbDvcActHeliLandStartPos call), which its Reserve writes as start.
+                local store = W.get(TppMission, "SetHelicopterMissionStartPosition")
+                if g.target == 30050 and g.lz == 1 and type(store) == "function" then
+                    store(1, 9.116, 8.75, -42.43)
+                    W.log("event=goto;step=2;heli_start_pos=9116,8750,-42430")
+                end
                 TppMission.OnEndMissionPreparation(TppClock.DEPLOY_TIME.CURRENT, nil)
                 g.check = true
             elseif not g.waiting then

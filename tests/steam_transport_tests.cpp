@@ -2564,8 +2564,14 @@ void TestHud() {
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
         // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
-        // menu Travel (TRAVEL{a=mission, b=kind}); 15 stays reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
+        // menu Travel (TRAVEL{a=mission, b=kind}), 15 since arrival-prevent (HINT{a=mission, b=1 stuck helicopter}).
+        Check(text::FormatWorldNote(15, 30050, 1, 0, 30050, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Stuck in the helicopter? Pause and choose Restart.") == 0 &&
+                  text::FormatWorldNote(15, 30010, 1, 0, 30010, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(15, 30050, 0, 0, 30050, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(15, 30050, 2, 0, 30050, sentence, sizeof(sentence)),
+              "FormatWorldNote: note 15 the stuck-helicopter hint");
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{17}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         {
@@ -2636,7 +2642,7 @@ void TestHud() {
         hud::PostWorldNote(3, 30020, 4, 30050, 40050);
         hud::PostWorldNote(3, 30020, 3, 40050, 40050);
         hud::PostWorldNote(1, 40010, 0, 0, 40010);
-        hud::PostWorldNote(15, 1, 1, 0, 0);  // reserved (7 since join-fix phase 2, 13 since M1, 14 since Travel have sentences)
+        hud::PostWorldNote(15, 1, 2, 0, 0);  // no sentence (7 since join-fix phase 2, 13 since M1, 14 since Travel, 15 b=1 since arrival-prevent)
         hud::Event notes[8]{};
         const unsigned taken = hud::Take(notes, 8, model.cursor());
         Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&
@@ -3096,8 +3102,8 @@ void TestSaveHandoffHud() {
               text::FormatWorldNote(9, 100, 0, 0, 0, sentence, sizeof(sentence)) && std::strstr(sentence, "(100%)"),
           "CONTINUE_DURING_HANDOFF needs a percent 0..100");
     for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{15}})
-        Check(!text::FormatWorldNote(code, 30010, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
-              "FormatWorldNote: code 13 (and the reserved 15) returns false (14 is Travel since the debug menu Travel)");
+        Check(!text::FormatWorldNote(code, 30010, code == 15 ? 2u : 1u, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: code 13 a=30010 and 15 b=2 return false (14 is Travel; 15 b=1 the stuck-helicopter hint)");
     Check(text::FormatWorldNote(11, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(12, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(5, 4294967295u, 4294967295u, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars,
