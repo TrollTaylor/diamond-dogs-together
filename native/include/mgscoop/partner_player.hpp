@@ -366,6 +366,21 @@ struct RateRead {
     float f[6];
 };
 bool ReadRates(const Addresses& addresses, const State& state, std::uint32_t index, RateRead& out) noexcept;
+// r1101 vanim (docs/vehicle-ws3.md "Driver pose"): the three ride blends of instance `index`'s rate record (the
+// ReadRates chain) that the stock driver phase writes every frame (0x124FC37..0x124FCA1, pinned in the code sites):
+// +0x08 aux (ride work +0x64), +0x30 accel (+0x60), +0x34 steer (+0x68: 0.5 straight, 0 full left, 1 full right).
+// ReadRideRates reads them (any index; all finite); WriteRideRates stores `in`'s three blends into body 1's record
+// only (index 1, the set guards, the same chain, each value finite and inside 0..1): nullptr when written and read
+// back, else a static reason (the ReadRates refusals | value | fault | readback).
+inline constexpr std::size_t kRideRateAux = 0x08, kRideRateAccel = 0x30, kRideRateSteer = 0x34;
+struct RideRates {
+    const char* refusal;
+    std::uintptr_t rec;
+    std::uint32_t id;
+    float aux, accel, steer;
+};
+bool ReadRideRates(const Addresses& addresses, const State& state, std::uint32_t index, RideRates& out) noexcept;
+const char* WriteRideRates(const Addresses& addresses, const State& state, const RideRates& in) noexcept;
 
 // The same for instance k (0 = the local player: the input sender's magazine).
 bool ReadGun(const Addresses& addresses, const State& state, std::uint32_t k, Gun1& out) noexcept;

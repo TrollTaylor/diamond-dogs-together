@@ -6731,6 +6731,263 @@ void TestRideExtAndCensus() {
     Check(ktick(" ride=2 veh=25600 seat=0", 1100) && k.fake.Containing("partner_ride_census;") == lines, "never in play");
 }
 
+// --- r1101 vanim (lab.ini partner_ride_steer, docs/vehicle-ws3.md "Driver pose"): the driver sends its ride blends
+// (rate record +0x34 steer, +0x30 accel, +0x08 aux) on the v5 steer addendum; the viewer writes them (else neutral)
+// into body 1's record while it seats the peer as the driver, and puts the originals back when that ends.
+struct SteerFake {
+    bool read_ok = true;
+    float local[3] = {0.2f, 0.6f, 0.1f};  // body 0: aux, accel, steer (steering left)
+    float body1[3] = {0.0f, 0.0f, 0.0f};  // body 1: the constructor's zeros (steer 0 = full left)
+    const char* write_why = nullptr;
+    std::vector<unsigned> reads;
+    std::vector<pp::RideRates> writes;
+} g_steer;
+bool HookSteerRead(void*, const pp::State&, std::uint32_t index, pp::RideRates& out) noexcept {
+    g_steer.reads.push_back(index);
+    out = pp::RideRates{};
+    if (!g_steer.read_ok) { out.refusal = "rec_vtable"; return false; }
+    const float* v = index == 0 ? g_steer.local : g_steer.body1;
+    out.aux = v[0]; out.accel = v[1]; out.steer = v[2];
+    out.id = index; out.rec = 0x5000 + index * 0x88;
+    return true;
+}
+const char* HookSteerWrite(void*, const pp::State&, const pp::RideRates& in) noexcept {
+    g_steer.writes.push_back(in);
+    if (g_steer.write_why) return g_steer.write_why;
+    g_steer.body1[0] = in.aux; g_steer.body1[1] = in.accel; g_steer.body1[2] = in.steer;
+    return nullptr;
+}
+unsigned SteerSent(const Session& s, mgscoop::partner_ride_wire::Steer& last) {
+    namespace rw = mgscoop::partner_ride_wire;
+    unsigned n = 0;
+    for (const auto& item : s.fake.reliable_sent)
+        if (rw::IsSteer(item.data(), item.size()) && rw::DecodeSteer(item.data(), item.size(), last)) ++n;
+    return n;
+}
+bool SteerNear(float a, float b) { return a - b < 1e-5f && b - a < 1e-5f; }
+// Review vanim-4: the reliable channel's unacknowledged messages (partner_net::ReliableQueued).
+unsigned g_steer_queued = 0;
+std::vector<unsigned> g_steer_queued_channels;
+unsigned HookSteerQueued(void*, std::uint8_t channel) noexcept {
+    g_steer_queued_channels.push_back(channel);
+    return g_steer_queued;
+}
+void TestRideSteerDriver() {
+    namespace rw = mgscoop::partner_ride_wire;
+    {
+        // The driver's copy: sent only with the key, only while its player drives (seat 0), read only.
+        Session s(0);
+        AddNativeHooks(s.hooks);
+        s.hooks.send_reliable_append = HookSendReliable;
+        s.hooks.ride_steer_read = HookSteerRead;
+        s.hooks.ride_steer_write = HookSteerWrite;
+        g_steer = SteerFake{};
+        const auto tick = [&](const char* suffix, std::uint64_t step) {
+            s.now += step;
+            const auto source = TickSource(++s.frame, 0) + " 0 0" + suffix;
+            return pd::Tick(s.driver, s.hooks, s.lab, source.data(), source.size(), pd::Clock{s.now, s.now}, false, s.reply);
+        };
+        rw::Steer last{};
+        Check(!s.driver.settings.ride_steer, "the key defaults off");
+        Check(tick(" ride=2 veh=25608 seat=0", 33) && SteerSent(s, last) == 0 && g_steer.reads.empty(), "key off: nothing sent, nothing read");
+        s.driver.settings.ride_steer = true;
+        Check(tick(" ride=2 veh=25608 seat=0", 33) && SteerSent(s, last) == 1 && last.vehicle == 25608 && last.seat == 0 &&
+                  last.revision == s.driver.ride_tx.revision && last.steer == 25 && last.accel == 150 && last.aux == 50 &&
+                  g_steer.reads.size() == 1 && g_steer.reads[0] == 0 && g_steer.writes.empty(),
+              "driving: body 0's blends go out (steer 0.1 -> 25 units), read only");
+        Check(s.fake.Containing("partner_ride_steer=tx; vehicle=25608; seat=0; rev=") == 1 && s.fake.Containing("steer=25; accel=150; aux=50;") == 1,
+              "the tx line");
+        Check(tick(" ride=2 veh=25608 seat=0", 33) && SteerSent(s, last) == 1, "unchanged: nothing before the heartbeat");
+        g_steer.local[2] = 0.9f;  // now steering right
+        Check(tick(" ride=2 veh=25608 seat=0", 10) && SteerSent(s, last) == 1, "a change inside kSteerMinMs waits");
+        Check(tick(" ride=2 veh=25608 seat=0", 40) && SteerSent(s, last) == 1, "still inside 100 ms: waits (at most 10 Hz)");
+        Check(tick(" ride=2 veh=25608 seat=0", 50) && SteerSent(s, last) == 2 && last.steer == 225, "then goes out (right: 225 units)");
+        Check(tick(" ride=2 veh=25608 seat=0", rw::kSteerHeartbeatMs) && SteerSent(s, last) == 3, "the heartbeat");
+        // Review vanim-4: held back while the shared channel 2 has kSteerQueueMax or more unacknowledged messages.
+        s.hooks.reliable_queued = HookSteerQueued;
+        g_steer_queued = 8;
+        g_steer_queued_channels.clear();
+        g_steer.local[2] = 0.5f;  // straight again
+        Check(tick(" ride=2 veh=25608 seat=0", 200) && SteerSent(s, last) == 3 && !g_steer_queued_channels.empty() &&
+                  g_steer_queued_channels.back() == rw::kChannel,
+              "8 messages wait on channel 2: the due packet is held back");
+        Check(s.fake.Containing("partner_ride_steer=held; vehicle=25608; queued=8;") == 1, "one held line");
+        Check(tick(" ride=2 veh=25608 seat=0", 200) && SteerSent(s, last) == 3 && s.fake.Containing("partner_ride_steer=held;") == 1,
+              "still held, logged once");
+        g_steer_queued = 7;
+        Check(tick(" ride=2 veh=25608 seat=0", 33) && SteerSent(s, last) == 4 && last.steer == 125, "the window drained: the newest goes out");
+        g_steer_queued = 0;
+        s.hooks.reliable_queued = nullptr;
+        g_steer.local[2] = 0.9f;
+        Check(tick(" ride=2 veh=25608 seat=0", rw::kSteerMinMs) && SteerSent(s, last) == 5 && last.steer == 225, "steering right again");
+        Check(tick(" ride=2 veh=25608 seat=2", 600) && SteerSent(s, last) == 5, "a back seat: no steer");
+        Check(tick(" ride=0", 600) && SteerSent(s, last) == 5, "on foot: no steer");
+        g_steer.read_ok = false;
+        Check(tick(" ride=2 veh=25608 seat=0", 600) && SteerSent(s, last) == 5 &&
+                  s.fake.Containing("partner_ride_steer=refused; side=driver; vehicle=25608; reason=rec_vtable") == 1,
+              "an unreadable record: nothing sent, one refused line");
+        Check(tick(" ride=2 veh=25608 seat=0", 600) && s.fake.Containing("partner_ride_steer=refused; side=driver;") == 1, "logged once");
+    }
+    {
+        // The viewer's copy: neutral once seated without a packet, the peer's blends with one, the originals back after.
+        constexpr std::uint64_t kLoop = 0x489157d7d94full;  // stateVehicleFrontLeftLoop
+        SeatSession s;
+        s.hooks.ride_steer_read = HookSteerRead;
+        s.hooks.ride_steer_write = HookSteerWrite;
+        g_steer = SteerFake{};
+        g_steer.body1[0] = 0.0f; g_steer.body1[1] = 0.25f; g_steer.body1[2] = 0.0f;  // what the record held before
+        s.driver.settings.ride_steer = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step() && (s.reply.op & op::ride_seat) && g_steer.writes.empty(), "the seat starts: nothing written before it is seated");
+        s.Playing(kLoop);
+        for (unsigned i = 0; i < 4 && !s.driver.mission.seat.confirmed; ++i) Check(s.Step(), "seat ticks");
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::seated && s.driver.mission.seat.confirmed, "seated and confirmed");
+        Check(s.Step() && !g_steer.writes.empty() && SteerNear(g_steer.body1[2], 0.5f) && SteerNear(g_steer.body1[1], 0.0f) &&
+                  SteerNear(g_steer.body1[0], 0.0f),
+              "seated without a steer packet: neutral (0.5 straight, never the constructor's full left)");
+        Check(s.fake.Containing("partner_ride_steer=save; vehicle=25600; seat=0; steer=0.000; accel=0.250; aux=0.000;") == 1 &&
+                  s.fake.Containing("partner_ride_steer=write; vehicle=25600; seat=0; source=neutral; steer=0.500;") == 1,
+              "the save and the neutral write are logged");
+        // Review vanim-3: another writer between two ticks (the host copy's unexplained 0.325 / 0.600) is seen by the
+        // next tick's read before its write, not by the write's own readback.
+        Check(s.Step() && s.fake.Containing("partner_ride_steer=drift;") == 0 && s.driver.ride_steer_write.drifts == 0,
+              "our own value found again: no drift");
+        g_steer.body1[2] = 0.6f; g_steer.body1[0] = 0.5f;  // someone else wrote body 1's record since our last write
+        Check(s.Step() && s.driver.ride_steer_write.drifts == 1 &&
+                  s.fake.Containing("partner_ride_steer=drift; vehicle=25600; seat=0; steer=0.600/0.500; accel=0.000/0.000; aux=0.500/0.000;") == 1 &&
+                  SteerNear(g_steer.body1[2], 0.5f),
+              "a value we did not write is logged (found/ours), then written over");
+        Check(s.Step() && s.fake.Containing("partner_ride_steer=drift;") == 1 && s.driver.ride_steer_write.drifts == 1, "no drift after it");
+        rw::Steer e{};
+        e.seat = 0; e.steer = 30; e.accel = 200; e.aux = 100; e.revision = s.ride_rev; e.vehicle = 25600; e.sender_ms = 5000;
+        std::uint8_t bytes[rw::kSteerSize]{};
+        Check(rw::EncodeSteer(e, bytes), "steer encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        Check(s.Step() && SteerNear(g_steer.body1[2], 0.12f) && SteerNear(g_steer.body1[1], 0.8f) && SteerNear(g_steer.body1[0], 0.4f) &&
+                  s.fake.Containing("partner_ride_steer=rx; vehicle=25600; seat=0; rev=") == 1 &&
+                  s.fake.Containing("partner_ride_steer=write; vehicle=25600; seat=0; source=remote; steer=0.120; accel=0.800; aux=0.400;") == 1,
+              "the peer's live blends (steering left) are written");
+        e.steer = 220; e.sender_ms = 5100;
+        Check(rw::EncodeSteer(e, bytes), "steer encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        Check(s.Step(300) && SteerNear(g_steer.body1[2], 0.88f), "then steering right");
+        // Lease: after kSteerLeaseMs without a packet the pose goes back to neutral, not the last turn.
+        for (unsigned i = 0; i < 8; ++i) Check(s.Step(250), "seated ticks");
+        Check(SteerNear(g_steer.body1[2], 0.5f) && SteerNear(g_steer.body1[1], 0.0f), "an expired steer: neutral again");
+        const auto writes = g_steer.writes.size();
+        g_steer.write_why = "readback";
+        Check(s.Step() && g_steer.writes.size() == writes + 1 &&
+                  s.fake.Containing("partner_ride_steer=refused; side=viewer; vehicle=25600; seat=0; reason=readback; step=write") == 1,
+              "a refused write is logged once");
+        Check(s.Step() && s.fake.Containing("partner_ride_steer=refused; side=viewer;") == 1, "and not again for the same reason");
+        g_steer.write_why = nullptr;
+        // The ride ends (on foot). Review vanim-2: while the exit plays on body 1 (still in the seat, the DM running) the
+        // record stays straight (neutral), never the saved full left; the originals go back once the episode is idle.
+        g_steer.body1[2] = 0.88f;  // the last remote turn, so the exit's neutral write shows
+        s.Ride(rw::Kind::foot);
+        s.fake.sample.act = 1;
+        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::exit &&
+                  s.fake.Containing("partner_ride_seat=exit_request; vehicle=25600; seat=0; reason=foot;") == 1,
+              "the exit is requested, the DM still plays");
+        Check(s.fake.Containing("partner_ride_steer=restore;") == 0 && s.driver.ride_steer_write.saved && SteerNear(g_steer.body1[2], 0.5f) &&
+                  SteerNear(g_steer.body1[1], 0.0f) && SteerNear(g_steer.body1[0], 0.0f) &&
+                  s.fake.Containing("partner_ride_steer=write; vehicle=25600; seat=0; source=exit; steer=0.500;") == 1,
+              "during the exit: straight (neutral), nothing put back yet");
+        Check(s.Step() && s.driver.mission.seat.phase == pd::SeatPhase::exit && s.fake.Containing("partner_ride_steer=restore;") == 0 &&
+                  SteerNear(g_steer.body1[2], 0.5f),
+              "the next exit tick: still straight");
+        s.Ended();
+        for (unsigned i = 0; i < 6; ++i) Check(s.Step(), "exit ticks");
+        Check(s.driver.mission.seat.phase == pd::SeatPhase::idle, "the episode is idle (body 1 on foot)");
+        Check(s.fake.Containing("partner_ride_steer=restore; vehicle=25600; seat=0; phase=idle;") == 1, "one restore line, once idle");
+        Check(SteerNear(g_steer.body1[2], 0.0f) && SteerNear(g_steer.body1[1], 0.25f) && SteerNear(g_steer.body1[0], 0.0f), "restored values");
+        Check(
+                  s.fake.Containing("; ok=1; reason=none; steer=0.000; accel=0.250; aux=0.000;") == 1 && !s.driver.ride_steer_write.saved,
+              "the seat episode ended: the originals are back, once");
+        const auto after = g_steer.writes.size();
+        for (unsigned i = 0; i < 4; ++i) Check(s.Step(), "foot ticks");
+        Check(g_steer.writes.size() == after, "on foot: no more writes");
+    }
+    {
+        // A passenger seat and the key off: never written.
+        constexpr std::uint64_t kBackLeftLoop = 0xc40b38a1a985ull;
+        SeatSession s;
+        s.hooks.ride_steer_read = HookSteerRead;
+        s.hooks.ride_steer_write = HookSteerWrite;
+        g_steer = SteerFake{};
+        s.driver.settings.ride_steer = true;
+        s.Show();
+        s.Ride(rw::Kind::vehicle, 2, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step(), "the back seat starts");
+        s.Playing(kBackLeftLoop);
+        for (unsigned i = 0; i < 6; ++i) Check(s.Step(), "seat ticks");
+        Check(s.driver.mission.seat.confirmed && g_steer.writes.empty() && g_steer.reads.empty(), "a passenger: no read, no write");
+        SeatSession k;
+        k.hooks.ride_steer_read = HookSteerRead;
+        k.hooks.ride_steer_write = HookSteerWrite;
+        g_steer = SteerFake{};
+        k.Show();
+        k.Ride(rw::Kind::vehicle, 0, 25600);
+        k.fake.sample.act = 111;
+        Check(k.Step(), "the driver seat starts");
+        k.Playing(0x489157d7d94full);
+        for (unsigned i = 0; i < 6; ++i) Check(k.Step(), "seat ticks");
+        Check(k.driver.mission.seat.confirmed && g_steer.writes.empty() && g_steer.reads.empty(), "key off: no read, no write");
+    }
+    // Review vanim-1: the saved originals never outlive the mission, also when the next mission has the same code (a
+    // checkpoint reload or restart): MissionEnd and MissionStart drop them unwritten.
+    const auto seated_writing = [](SeatSession& s) {
+        g_steer = SteerFake{};
+        g_steer.body1[1] = 0.25f;  // the old body's record
+        s.driver.settings.ride_steer = true;
+        s.Show();
+        s.Ride(mgscoop::partner_ride_wire::Kind::vehicle, 0, 25600);
+        s.fake.sample.act = 111;
+        Check(s.Step(), "the driver seat starts");
+        s.Playing(0x489157d7d94full);
+        for (unsigned i = 0; i < 6; ++i) Check(s.Step(), "seat ticks");
+        Check(s.driver.ride_steer_write.saved && !g_steer.writes.empty(), "seated: saved and writing");
+    };
+    const auto old_values_written = []() {
+        for (const auto& w : g_steer.writes)
+            if (SteerNear(w.steer, 0.0f) && SteerNear(w.accel, 0.25f)) return true;
+        return false;
+    };
+    {
+        SeatSession s;
+        s.hooks.ride_steer_read = HookSteerRead;
+        s.hooks.ride_steer_write = HookSteerWrite;
+        seated_writing(s);
+        const unsigned writes = s.driver.ride_steer_write.writes;
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(!s.driver.ride_steer_write.saved && s.driver.ride_steer_write.writes == writes &&
+                  s.fake.Containing("partner_ride_steer=drop; vehicle=25600; seat=0; reason=mission_end;") == 1,
+              "MissionEnd drops the originals unwritten (the counters stay)");
+        g_steer.writes.clear();
+        pd::MissionStart(s.driver, s.hooks, 30010);
+        Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "the same mission again (a checkpoint reload)");
+        for (unsigned i = 0; i < 4; ++i) Check(s.Step(), "new mission ticks");
+        Check(s.fake.Containing("partner_ride_steer=restore;") == 0 && !old_values_written(),
+              "the old mission's originals are never written into the new body");
+    }
+    {
+        SeatSession s;
+        s.hooks.ride_steer_read = HookSteerRead;
+        s.hooks.ride_steer_write = HookSteerWrite;
+        seated_writing(s);
+        g_steer.writes.clear();
+        pd::MissionStart(s.driver, s.hooks, 30010);  // a missed MissionEnd
+        Check(!s.driver.ride_steer_write.saved && s.fake.Containing("partner_ride_steer=drop; vehicle=25600; seat=0; reason=mission_start;") == 1,
+              "MissionStart drops them too");
+        Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "cfg");
+        for (unsigned i = 0; i < 4; ++i) Check(s.Step(), "new mission ticks");
+        Check(s.fake.Containing("partner_ride_steer=restore;") == 0 && !old_values_written(), "nothing put back");
+    }
+}
+
 // --- F1 vehicles (docs/native-puppet.md "Vehicle boarding"): the board hook's driver side
 // (install, policy, counters, the local passenger report, the surprise latch) and the
 // receiver's seat gates (the viewer's own vehicle, shared_seat, the far latch).
@@ -10370,6 +10627,7 @@ int main() {
     TestRideRobust();
     TestRideSeatAbsent();
     TestRideExtAndCensus();
+    TestRideSteerDriver();
     TestBoardDriver();
     TestBoardSeatExt();
     TestBoardRemap();

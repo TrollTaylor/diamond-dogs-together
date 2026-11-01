@@ -832,6 +832,15 @@ std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_h
 bool PartnerReadRates(void*, const pp::State& state, std::uint32_t index, pp::RateRead& out) noexcept {
     return pp::ReadRates(partner_addresses, state, index, out);
 }
+// r1101 vanim (lab.ini partner_ride_steer): the ride blends of instance `index` and body 1's write.
+bool PartnerRideSteerRead(void*, const pp::State& state, std::uint32_t index, pp::RideRates& out) noexcept {
+    if (!game_base || !partner_gate_ok) { out = pp::RideRates{}; out.refusal = "gate"; return false; }
+    return pp::ReadRideRates(partner_addresses, state, index, out);
+}
+const char* PartnerRideSteerWrite(void*, const pp::State& state, const pp::RideRates& in) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return pp::WriteRideRates(partner_addresses, state, in);
+}
 // The ending mission's epoch (MissionStart/End): the rates mirror and the
 // aim-target mirror drop their state without writing; that epoch never
 // writes again.
@@ -887,6 +896,10 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
 }
 bool PartnerSendReliableAppend(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
     return PartnerSendReliable(context, channel, bytes, size);
+}
+// r1101 vanim review vanim-4: the steer addendum waits while channel 2's window is busy.
+unsigned PartnerReliableQueued(void*, std::uint8_t channel) noexcept {
+    return mgscoop::partner_net::ReliableQueued(channel);
 }
 // Teammate carry events (coop_carry) on reliable channel 2, appended like the
 // manifest and capability messages.
@@ -1313,7 +1326,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
     PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
-    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut};
+    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut,
+    PartnerRideSteerRead, PartnerRideSteerWrite, PartnerReliableQueued};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

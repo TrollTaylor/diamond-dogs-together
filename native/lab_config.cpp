@@ -293,6 +293,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    // r1101 vanim: the driver's steer pose (off unless named, lab and play); an invalid value refuses (off).
+    else if (Equals(key, "partner_ride_steer")) {
+        ok = ParseBool(value, result.partner_ride_steer);
+        if (!ok) result.partner_ride_steer = false;
+    }
     else if (Equals(key, "partner_ride_board")) {
         // F1 vehicles: the board block / passenger hook (defaults in ResolveWeaponDefaults); a named value records _given.
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);

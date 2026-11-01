@@ -485,6 +485,16 @@ struct Hooks {
     // not. Null: no cut.
     bool (*ride_getin_active)(void* context, const partner_player::State& state) noexcept = nullptr;
     const char* (*ride_getin_cut)(void* context, const partner_player::State& state) noexcept = nullptr;
+    // r1101 vanim (lab.ini partner_ride_steer; docs/vehicle-ws3.md "Driver pose"): instance `index`'s ride blends
+    // (partner_player::ReadRideRates; 0 = this copy's driver, the v5 sender) and body 1's write
+    // (WriteRideRates: nullptr when written and read back). Null: no steer is sent and nothing is written.
+    bool (*ride_steer_read)(void* context, const partner_player::State& state, std::uint32_t index,
+                            partner_player::RideRates& out) noexcept = nullptr;
+    const char* (*ride_steer_write)(void* context, const partner_player::State& state, const partner_player::RideRates& in) noexcept =
+        nullptr;
+    // r1101 vanim review vanim-4: messages queued and not yet acknowledged on reliable channel `channel`
+    // (partner_net::ReliableQueued). Null: never held back.
+    unsigned (*reliable_queued)(void* context, std::uint8_t channel) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -648,6 +658,8 @@ struct Settings {
     bool ride_follow = false;
     // lab.ini partner_ride_getin_cut (design 8.60): the get-in camera cut while the local passenger rides.
     bool ride_getin_cut = false;
+    // lab.ini partner_ride_steer (r1101 vanim): the driver's steer pose on the seated peer (sender and viewer).
+    bool ride_steer = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -1573,6 +1585,36 @@ struct Driver {
     bool ride_seat_ext_tx_have;
     std::uint32_t ride_seat_ext_tx_epoch;
     std::uint64_t ride_seat_ext_tx_ms;
+    // r1101 vanim (lab.ini partner_ride_steer; docs/vehicle-ws3.md "Driver pose"): the v5 steer addendum, received
+    // (link-session scoped) and sent (while this copy's player drives; held back while channel 2's window is busy),
+    // and the viewer's writes into body 1's rate record while it seats the peer as the driver (the originals saved
+    // before the first write, kept straight through the exit and put back once the episode is idle; MissionEnd and
+    // MissionStart drop them unwritten, also for the same mission code, so they never reach another body).
+    partner_ride_wire::SteerStore ride_steer_rx;
+    partner_ride_wire::Steer ride_steer_tx;
+    bool ride_steer_tx_have;
+    std::uint32_t ride_steer_tx_epoch;
+    std::uint64_t ride_steer_tx_ms;
+    unsigned ride_steer_tx_count, ride_steer_rx_logged;
+    const char* ride_steer_read_refusal;
+    unsigned ride_steer_tx_held;  // review vanim-4: due packets held back (one held line per streak)
+    bool ride_steer_tx_holding;
+    struct RideSteerWrite {
+        bool saved = false;
+        float aux = 0.0f, accel = 0.0f, steer = 0.0f;  // the originals
+        std::uint32_t mission = 0;                     // the mission code of the saved record
+        std::uint16_t vehicle = 0xFFFF;                // the seated ride the originals were saved for
+        std::uint8_t seat = 0xFF;
+        // Review vanim-3: our last successful write; the next tick's read before its write compares with it (a
+        // value nobody of ours wrote = another writer between two ticks: a drift line, found/ours).
+        bool wrote = false;
+        float last_aux = 0.0f, last_accel = 0.0f, last_steer = 0.0f;
+        unsigned writes = 0, restores = 0, refusals = 0, drifts = 0;
+        const char* refusal = nullptr;                 // the last logged refusal
+        const char* source = nullptr;                  // the last logged source
+        std::uint8_t steer_units = 0xFF;               // the last logged steer (units)
+        std::uint64_t log_ms = 0;
+    } ride_steer_write;
     std::uint16_t seat_rider_vehicle, seat_rider_value;
     bool seat_rider_read;
     std::uint64_t seat_rider_ms;

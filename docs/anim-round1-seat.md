@@ -393,6 +393,10 @@ no DM in free roam; the dm=map `cam_connect` refusal is unchanged).
 - The vehicle copy itself is still a SetPosition teleport (no wheels or steering); WS3 "A1"
   (`partner_ride_tilt`, default on in lab and play, docs/vehicle-ws3.md) adds the driver's
   pitch/roll (census `same=1`, hidden run `0a2314f2`).
+- The seated driver's loop showed the full-left turning pose for the whole ride: body 1's rate record keeps the
+  constructor's 0.0 steer blend (+0x34), which the stock driver phase writes only for the real driver. Lab key
+  `partner_ride_steer` (off unless named; docs/vehicle-ws3.md "Driver pose") sends the driver's blends on the ride
+  wire's v5 steer addendum and writes them (else the neutral 0.5) into body 1's record while it is seated as driver.
 - The 3 m / 1 s sanity distance compares two 100 ms-delayed streams; watch `err_mm` in the status
   lines at speed before tightening or loosening it.
 
