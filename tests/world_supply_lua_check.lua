@@ -14,7 +14,8 @@ local function F(o)
   nat={on=o.on~=false and 1 or 0,st=0,fl=0,last=0,ev={}}}
  local env=setmetatable({},{__index=_G});env._G=env
  env.vars={missionCode=o.mission or 30010,playerPosX=o.px or 10,playerPosY=o.py or 300,playerPosZ=o.pz or -20}
- env.Vector3=function(x,y,z)return {x=x,y=y,z=z}end
+ -- As in the game (run c66d418b: step=mirror_skip;reason=missing_api): Vector3 is a callable object, not a function.
+ env.Vector3=setmetatable({},{__call=function(_,x,y,z)return {x=x,y=y,z=z}end})
  env.SupplyCbox={DROP_TYPE_AMMO=3}
  function c:push(e)
   self.nat.last=self.nat.last+1;e.seq=self.nat.last;self.nat.ev[#self.nat.ev+1]=e;return e.seq
@@ -105,6 +106,9 @@ check(c:has(c.logs,"event=supply;step=mirror;origin=1;oseq=4;ok=1"),"logged")
 c:tick();check(#c.tx==0 and c:has(c.logs,"step=mirror_seen"),"the mirror's own request is seen and never sent back")
 -- A repeated drop (same origin and box) is mirrored once.
 c:rx(10,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);check(#c.calls==1,"a duplicate drop is not requested twice")
+-- A Vector3 that fails is caught inside the request: logged ok=0, the mirror window closed.
+c=F({host=false});c.env.Vector3=setmetatable({},{__call=function()error("bad vector")end});c:rx(9,1,1,4,3,5,0,1000,2000,3000,1,7,6,0)
+check(c:has(c.logs,"event=supply;step=mirror;origin=1;oseq=4;ok=0") and not c.mirror and #c.calls==0,"a failing Vector3: ok=0, window closed")
 -- Echo guard: a request seen outside the mirror window within 3 s of a mirror and within 1 m of its aim point is the
 -- mirror's own (should the game ever run it outside Lua's call): never sent back, so two copies never ping-pong.
 c=F({host=false});c:rx(9,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);c:request(-1234300,321100,5600);c:tick()
