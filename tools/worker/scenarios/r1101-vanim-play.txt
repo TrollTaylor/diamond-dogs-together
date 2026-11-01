@@ -14,6 +14,8 @@
 # (A1, B1), and B1 uses the same jeep spot and the same offset as A1 (B's old spot after A's drive had a bush between
 # the host and the driver's seat in 38714f32); the drives (A2, B2) come last, each viewer placed while its driver is
 # still on foot. Whoever stands at the driver's door steps away (a teleport) before the other's goto_vehicle.
+# Run bfd46ce5 (this form) met every waitlog on both copies: frames of the pose on both screens (B1 host watching, no
+# bush), drifts=0 on all four restores; the key follows the gun profile since (r1101-vanim-default-play.txt).
 # The wheels of the viewer's copy still do not turn (the copy is placed by SetPosition every frame: no wheel write was
 # found; docs/vehicle-ws3.md "Driver pose", "Not fixed").
 # Framing (run 6cea2ec9 showed the jeep only at a distance or behind the viewer's own body): the viewer stands 6 m
