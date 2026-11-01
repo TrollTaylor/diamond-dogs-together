@@ -24,6 +24,7 @@ local OP, NOTE = 69, 21
 if type(W.OP) == "table" then W.OP.SUPPLY = OP end
 local PRE = "return 'MGS_COOP_SUPPLY_V1' -- "
 local POLL_MS, GRACE_MS, NEAR_MM, CENSUS_MS, CENSUS_N, STATE_N = 200, 2000, 6000, 15000, 300, 200
+local ECHO_MS, ECHO_MM = 3000, 1000
 S.POLL_MS, S.GRACE_MS, S.NEAR_MM = POLL_MS, GRACE_MS, NEAR_MM
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
 local function L(...)
@@ -65,8 +66,21 @@ local function send(kind, b, reason)
   if sent then S.n.tx = S.n.tx + 1 end
   return sent
 end
+-- Echo guard: a request outside the mirror window within ECHO_MS of a mirror and within ECHO_MM of its aim point is the
+-- mirror's own (should the game ever run it outside Lua's call): never sent back, so two copies never ping-pong.
+local function echo(ev, t)
+  local m = S.cur
+  if not (m and m.origin ~= role() and t - m.at <= ECHO_MS) then return false end
+  local dx, dy, dz = (ev[7] or 0) - m.x, (ev[8] or 0) - m.y, (ev[9] or 0) - m.z
+  return sqrt(dx * dx + dy * dy + dz * dz) <= ECHO_MM
+end
 -- A request this copy made: its box, sent to the partner.
 function S.mine(ev, t)
+  if echo(ev, t) then
+    L("step=echo;seq=%s;origin=%d;oseq=%d;x_mm=%s;y_mm=%s;z_mm=%s", tostring(ev[1]), S.cur.origin, S.cur.oseq, tostring(ev[7]),
+      tostring(ev[8]), tostring(ev[9]))
+    return
+  end
   S.seq = S.seq % 65535 + 1
   local b = {origin = role(), oseq = S.seq, drop = ev[4], equip = ev[5], parts = ev[6], x = ev[7], y = ev[8], z = ev[9],
     level = ev[10], wait = ev[11], flags = ev[12], at = t}

@@ -1965,7 +1965,9 @@ request's fields (the aim point, or this player's position when the request aims
 `aim=player`); `event=supply;step=drop_local;origin=;oseq=;...;sent=;aim=;caller=`. The receiver (key on, in game)
 requests the same box with `Player.RequestToSupplyCbox{dropType, equipId, partsType, aimPosition, level, waitLevel,
 callHeliSound}` inside the mirror window (`step=mirror;origin=;oseq=;ok=`; its own request event is `step=mirror_seen`,
-never sent back) and shows world note 21 a=1. The receiver's request goes straight to the box system, not to the
+never sent back) and shows world note 21 a=1. Echo guard: a request seen outside the mirror window within 3 s of a
+mirror and within 1 m of its aim point is the mirror's own (`step=echo`; should the game ever run the request outside
+Lua's call), so the two copies never ping-pong. The receiver's request goes straight to the box system, not to the
 support request that charges GMP. A synced box that was live (state not 0) and then resets or reads state 0, outside
 the 2 s after a request (the game's own reset of the previous box: `step=reset_request`) and not followed by a request
 in the same poll (`step=reset_replaced`), is gone here: kind 2 (`step=gone_local;reason=1|2;why=reset_0x<caller>|state_0`).
