@@ -1,14 +1,15 @@
 # Anim truth: the puppet draws what the other player really does (r1101 animtruth)
 
-Lab key `partner_native_aim_truth=0|1` (**off unless named**, also in play and in the gun profile; worker
-`labsetting partner_native_aim_truth=1`). Needs the native gun stage. Branch `wp/anim-truth`; proof scenario
-`tools/worker/scenarios/r1101-animtruth-play.txt`.
+Lab key `partner_native_aim_truth=0|1`: **on by default with the native gun profile in lab and play** since the r1101
+Prove phase (`ResolveWeaponDefaults`; Play-Coop's play profile and the worker gun stage); a named 0 opts out, an
+invalid value is named and off. Needs the native gun stage. Branch `wp/anim-truth`, merged in `wp/integ-1101`; proof
+scenarios `tools/worker/scenarios/r1101-animtruth-play.txt` (key named), `r1101-animtruth-default-play.txt` (the
+shipped default) and `r1101-animtruth-off-play.txt` (the key-off A/B).
 
 What the key turns on, and what is proven:
-- **Run-proven (`a8a69ae9`):** the HOLD/FIRE strip on the `loco` and `act` verdicts (Mother Base RMB / RMB+LMB, the
-  pistol control, RMB on the ladder). Since the review, a short pose gap keeps a refusal (below); the Prove run at
-  the final head covers it with the rest of the strip. This is the only part to turn on in play once the scenario's
-  Prove run passes.
+- **Run-proven (`a8a69ae9`; Prove runs `3c5609bb`, `44391e17`, A/B `9fa2d353`):** the HOLD/FIRE strip on the `loco`
+  and `act` verdicts (Mother Base RMB / RMB+LMB both directions, the pistol control, RMB on the ladder), with the
+  short pose gap that keeps a refusal (below). This is the part that follows the gun profile.
 - **Not run in a game: their own keys, off unless named** (each needs `partner_native_aim_truth=1`; review
   animtruth-1): `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT
   zeroing in Compose and the hook), `partner_native_aim_truth_stance` (the stance-hold change). The scenario has no
@@ -27,7 +28,29 @@ guest presses, the host films; logs of both copies and frames looked at, archive
 - RMB on the ladder: guest act 21, `no_aim; act=21`; host body 1 on the ladder through the traversal replay (21/21),
   `partner_aim_truth=act; remote_act=21; ... strip=0x18`, `hold_run; result=refused; first_act=21`; the puppet climbs
   with no gun raised in its frame.
-- Not covered: the reverse direction (the host pressing), a gamepad, and a key-off A/B in the same run.
+- Not covered then: the reverse direction (the host pressing), a gamepad, and a key-off A/B in the same run. The
+  Prove runs below cover the first and the third.
+
+**Prove runs** (r1101 Prove phase, `wp/integ-1101`, mode=play, -WanSim bad, rtt ~186..190 ms, mb-ladder; logs of both
+copies and frames looked at; archive `mgs-coop-run-archive/r1101/animtruth/<run>`, sheets under
+`r1101/frames/animtruth/`):
+- `3c5609bb` (`r1101-animtruth-play.txt` at `3296320c`, the key named; all four steps): 1 guest `no_aim; act=1` twice,
+  host `loco ... strip=0x18`, `hold_run; result=refused; refused_ms=1551` / `1535`, the puppet standing with its rifle
+  slung in every step-1 frame; 2 guest `aimed; act=11`, host `aim; remote_act=11`, `hold_run; result=late;
+  refused_ms=48; admitted_ms=1503`, the puppet aims the pistol; 3 host `act; remote_act=21; ... strip=0x18`, refused
+  1520 ms, the puppet climbs with its hands on the rungs; 4 (reverse, first run) host `no_aim; act=1`, guest `loco ...
+  strip=0x18`, `hold_run; result=refused; refused_ms=1535`, the host puppet standing with its rifle slung on the
+  guest's screen.
+- `44391e17` (`r1101-animtruth-default-play.txt` at `d1c5aaa8`, NO key named: session lab settings empty; the green
+  build): the same four steps and the same lines (refused 1585 / 1522 ms; pistol `late`, admitted 1521 ms; ladder
+  refused 1553 ms; reverse refused 1553 ms) and the same frames: the shipped default runs the strip.
+- `9fa2d353` (`r1101-animtruth-off-play.txt`, `partner_native_aim_truth=0` named; steps 1 and 4): no
+  `partner_aim_truth` line; the receivers logged `partner_aim_intent=on; source=pad; remote_act=1; flags=0x25;
+  pad_hold=1` and the puppet held its rifle raised and shouldered in every RMB / RMB+LMB frame, both directions, while
+  the pressers' own bodies kept the rifle low: the user's report, reproduced with the key off at the same spots
+  (sheet `9fa2d353-vs-44391e17-zoom.jpg`, key off next to the shipped default).
+- None of the three logged GameOver, `step=error`, a non-zero fault count or a non-zero `bad_op` / `wrong_dir` /
+  `unknown_op`. Still not run in a game: a gamepad remote, the box / triggers / stance parts (their own keys).
 
 ## The report
 
@@ -106,7 +129,7 @@ aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with
 
 ## Finder report (r1101): every mismatch and its state
 
-Fixed behind the main key and run-proven (hidden run `a8a69ae9`):
+Fixed behind the main key and run-proven (hidden run `a8a69ae9`; Prove runs `3c5609bb`, `44391e17`, A/B `9fa2d353`):
 - Mother Base RMB aim (code-intent M1, state-gates M1, evidence M0) and RMB+LMB visual fire (M2): verdict `loco`.
 - RMB on the ladder (code-intent M4, state-gates M8): verdict `act`.
 

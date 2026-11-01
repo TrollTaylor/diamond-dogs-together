@@ -1,3 +1,47 @@
+## November 1, 2026: r1101 Prove - anim truth on by default (`partner_native_aim_truth` follows the gun profile in lab and play; hidden runs `3c5609bb`, `44391e17`, A/B `9fa2d353`; `wp/integ-1101`, local only)
+
+- **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner holds RMB
+  or RMB+LMB but their own game refuses the aim (a lethal gun under Mother Base's stock no-lethal rule, or a body-owned
+  act such as the ladder), the partner's character on this screen keeps its gun down and fires nothing, as on the
+  partner's own screen; a real aim (the allowed pistol) still shows. Before, the puppet raised its gun and fired visual
+  shots there (the fb1031 report). A named `partner_native_aim_truth=0` turns it off.
+- **Still off unless named (no game run):** `partner_native_aim_truth_box` (the box EVADE strip),
+  `partner_native_aim_truth_triggers` (LT/RT zeroing for a gamepad remote), `partner_native_aim_truth_stance` (the
+  stance-hold change); each also needs the main key and its own hidden run. Deferred items are unchanged
+  (docs/anim-truth.md "Finder report").
+- **Proof** (hidden worker, play, `-WanSim bad`, mb-ladder seed, native gun profile, rtt ~186..190 ms; both copies'
+  sliced script-observer logs and frames looked at; sheets under the run archive `r1101/frames/animtruth/`):
+  - `3c5609bb` (`r1101-animtruth-play.txt`, the key named, all four steps, the reverse step for the first time): the
+    guest's rifle RMB and RMB+LMB: guest `partner_aim_local=no_aim; act=1` twice, host `partner_aim_truth=loco; ...;
+    strip=0x18` and `hold_run; result=refused; refused_ms=1551` / `1535`; host frames: the guest's puppet standing with
+    its rifle slung, no aim, no flash. The WU S.Pistol control: guest `aimed; act=11`, host `aim; remote_act=11`,
+    `hold_run; result=late; refused_ms=48; admitted_ms=1503`; host frame: the puppet aiming the pistol. RMB on the
+    ladder: host `act; remote_act=21; ...; strip=0x18`, refused 1520 ms; host frames: the puppet climbing, hands on the
+    rungs. The reverse: host `no_aim; act=1`, guest `loco; ...; strip=0x18`, `hold_run; result=refused;
+    refused_ms=1535`; guest frames: the host's puppet standing with its rifle slung.
+  - `44391e17` (`r1101-animtruth-default-play.txt`, NO key named: session lab settings empty; the green build): the
+    same four steps, the same lines (refused 1585 / 1522 ms, pistol `late` admitted 1521 ms, ladder refused 1553 ms,
+    reverse refused 1553 ms) and the same frames on both screens.
+  - `9fa2d353` (`r1101-animtruth-off-play.txt`, `partner_native_aim_truth=0` named, steps 1 and 4): no
+    `partner_aim_truth` line; the receivers logged `partner_aim_intent=on; source=pad; remote_act=1; flags=0x25;
+    pad_hold=1`, and in every RMB / RMB+LMB frame, both directions, the puppet held its rifle raised and shouldered
+    while the presser's own body kept it low: the report, reproduced with the key off at the same spots.
+  - None of the three logged GameOver, `step=error`, a non-zero fault count or a non-zero `bad_op` / `wrong_dir` /
+    `unknown_op`. Sheets `3c5609bb-sheet.jpg`, `44391e17-sheet.jpg`, `9fa2d353-sheet.jpg` and
+    `9fa2d353-vs-44391e17-zoom.jpg` (key off next to the shipped default).
+- **Still not covered:** a gamepad remote (the worker drives a keyboard; with `_triggers` off a held LT may still
+  raise the puppet's gun at Mother Base [I]); the box, triggers and stance parts; binoculars in an aim act still draw
+  a gun aim (needs BINOCLE on the wire); a LMB tap inside the ~15..50 ms before the remote's aim act arrives is not
+  drawn (a held LMB fires once the act confirms).
+- **Commits:** `9592c31a` red (lab_config_tests: the gun profile turns `partner_native_aim_truth` on in lab and play
+  and leaves its parts off, a named 0 opts out, an invalid value is named and off, also after a valid 1;
+  friend_package_tests_2: play defaults it on, its parts off, a named 0 turns it off; lab_ini_check prints the four
+  keys), `2ff5baab` green (`partner_native_aim_truth_given`, `ResolveWeaponDefaults`, LabCommon comment, worker help),
+  `d1c5aaa8` (the shipped-default scenario; `r1101-animtruth-play.txt` records `3c5609bb`), `6bbb8b51` (the key-off
+  A/B scenario), then README (What works, Known limits) and docs/anim-truth.md.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `2ff5baab`;
+  worker_session_tests 2/2 at `d1c5aaa8` and `6bbb8b51` (every shipped scenario validates).
+
 ## November 1, 2026: r1101 Prove - the Fulton synced on by default (`fulton_sync` follows the gun profile in lab and play; hidden runs `7d924fac`, `19882881`; `wp/integ-1101`, local only)
 
 - **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner Fultons a
