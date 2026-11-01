@@ -1,0 +1,105 @@
+# melee-target: a CQC press aimed at a Mother Base staff member must not knock the other player down; a press at the
+# other player still does (docs/native-puppet.md "Melee"). Play mode at the SHIPPED defaults: nothing here names the melee
+# key (it follows the gun profile), so this also proves the default. Mother Base, mb-ladder seed on both copies,
+# -WanSim bad. Punching staff at Mother Base is the common real case.
+# The fix (partner_melee Resolve): a strike in reach is held (verdict=hold); PlayerStatus CQC_CONTINUOUS (st= bit 0x100,
+# the stock CQC acting on a target) since the press's 113 edge -> verdict=target, no hit; else one land 250 ms after
+# the press's 113 ends (its 114 edge).
+#   a) the guest about 1 m behind the host, facing it, presses LMB once (no RMB: CQC): guest log verdict=hold, then
+#      verdict=land; queued=1; host log friendly_hit=owner (cause 2, down=1). Frames: host ASLEEP on its own screen, the
+#      guest sees the host down with HOLD E WAKE UP.
+#   f) the guest holds E next to the sleeping host: host downed_status back to down=0 / healthy, both standing.
+#   e1) the host goes 1.0 m from the nearest staff member on its copy, facing them (enemy goto nearest 1.0), the guest is
+#      placed IN FRONT of the host, to its right (placebehind with a negative distance; about 1.3 m at about 40 degrees
+#      after the drop drift), the host goes 1.0 m from the staff member again (staff walk their routes) and presses LMB
+#      once: the staff member takes the strike, host log verdict=target; queued=0 with cqc_ms, NO friendly_hit on the
+#      guest copy, the guest standing on both screens.
+#   e2) the same with the roles swapped (the guest strikes its own copy's nearest staff member, the host ahead-left).
+# Each PC moves its own staff (mb-staff-gone-play: the guest's copy of a staff member is elsewhere), so each striker
+# aims at the staff on its own copy; the partner is placed by coordinates relative to the striker.
+# Expected NEVER (sliced): a friendly_hit=owner line in e1/e2; step=error; viewer_changed; faults; GameOver.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-soldier-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# Run 1bc18e9c (mb-staff-gone-play): a stock Mother Base cutscene can start within 15 s of gameplay; wait it out.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+# --- a) one press at the partner: asleep ------------------------------------------------------------------------------
+stance host stand
+stance guest stand
+placebehind guest host 2.5
+wait 4000
+both capture a-before
+logmark both
+guest press lmb 120
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=land; queued=1' 5
+waitlog host 'friendly_hit=owner;' 6
+wait 1500
+both capture a-down
+host run downed_status
+host expect down=1.*cause=2.*state=asleep
+wait 2500
+both capture a-down-2
+# --- f) the striker holds E to wake the partner -----------------------------------------------------------------------
+logmark both
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 9000
+host run downed_status
+host expect down=0.*state=healthy
+both capture f-woken
+# --- e1) the host presses at a staff member with the guest ahead-right ------------------------------------------------
+stance host stand
+stance guest stand
+host run enemy goto nearest 1.0
+host expect ^(enemy_goto;ent=\d+;|warp_position_readback)
+wait 1500
+placebehind guest host -2.15 1.8
+host run enemy goto nearest 1.0
+host expect ^(enemy_goto;ent=\d+;|warp_position_readback)
+wait 700
+both capture e1-before
+logmark both
+host press lmb 120
+waitlog host 'partner_melee=strike; act=11[34]; verdict=' 5
+wait 1200
+both capture e1-after
+wait 1500
+guest run downed_status
+guest expect down=0
+both capture e1-after-2
+# --- e2) the guest presses at a staff member on its copy with the host ahead-left -------------------------------------
+stance host stand
+stance guest stand
+guest run enemy goto nearest 1.0
+guest expect ^(enemy_goto;ent=\d+;|warp_position_readback)
+wait 1500
+placebehind host guest -2.15 -1.8
+guest run enemy goto nearest 1.0
+guest expect ^(enemy_goto;ent=\d+;|warp_position_readback)
+wait 700
+both capture e2-before
+logmark both
+guest press lmb 120
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=' 5
+wait 1200
+both capture e2-after
+wait 1500
+host run downed_status
+host expect down=0
+both capture e2-after-2

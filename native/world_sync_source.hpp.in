@@ -39,6 +39,10 @@ constexpr char world_align_source[] = R"MGS_WORLD(
 constexpr char world_recovery_source[] = R"MGS_WORLD(
 @MGS_WORLD_RECOVERY_SOURCE@
 )MGS_WORLD";
+// arrival-prevent: the arrival helicopter watchdog, start-state and landing-message logs (after recovery).
+constexpr char world_arrival_source[] = R"MGS_WORLD(
+@MGS_WORLD_ARRIVAL_SOURCE@
+)MGS_WORLD";
 constexpr char world_downed_source[] = R"MGS_WORLD(
 @MGS_WORLD_DOWNED_SOURCE@
 )MGS_WORLD";

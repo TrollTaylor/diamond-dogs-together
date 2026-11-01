@@ -55,7 +55,12 @@ pushed in PAIRED, used for native TX gating and by Lua. A remote HELLO with
 
 Per mission (Lua `W.MISSIONS`): 30010 `{enemies, clock, weather=all,
 areaEnemy=f30010_enemy}`, 30020 `{enemies, clock, weather=nofog,
-areaEnemy=f30020_enemy}`, 30050 `{clock, weather=all}`; every other mission (the ACC 40050
+areaEnemy=f30020_enemy}`, 30050 `{enemies, clock, weather=all, allCp, staffPlace, spareStaff, enemiesLab}` (Mother Base
+staff, fb1031 + mb-staff-sync; W1 and staffPlace in the lab only, `enemiesLab`; spareStaff: a partner's DYING / DEAD applies as FAINT and a
+partner's FULTONED as VANISHED (`TppEnemy.SetDisable`, `event=spare; state=6; as=7`); design 7.7: no area trap there, so every CP counts as loaded for the W4 snapshot reads and the
+whole outcome ledger is re-checked every 10 s; staffPlace: ENEMY_DEBUG kind 3 for staff near either player, placed
+on the guest by the native Mother Base staff rule, and a host outcome of a standing staff member is preceded by kind 3
+and held on the guest until placed, at most 4 s); every other mission (the ACC 40050
 included) runs the level-1 plumbing only for enemy/environment sync. W3/W4
 travel and shared game over also support 40010/40020/40050.
 
@@ -112,7 +117,7 @@ Control (queue 0):
 | 0x05 | RESYNC | G->H | rid, what 1..7 (1 outcomes, 2 phases, 4 clock + weather) | - | 3 |
 | 0x06 | RESYNC_END | H->G | rid, what, count, outcomeSeq (queued as a world op, see below) | - | 7 |
 | 0x07 | MISSION_END | both | missionCode | epoch | 6 |
-| 0x08 | PROBE_SYNC | both (lab) | probeId 1..18, step 1..4, entHash, arg | atMs (step 1) | 14 |
+| 0x08 | PROBE_SYNC | both (lab) | probeId 1..20, step 1..4, entHash, arg | atMs (step 1) | 14 |
 
 REJECT reasons: 1 unknown_entity, 2 terminal, 3 not_forward, 5 epoch, 6
 not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive (4
@@ -249,8 +254,8 @@ refused receipt stays literal and Lua treats it as inactive or not sent.
 `lab.ini`: `world=0..3` (lab and play; other values count as invalid and keep
 the previous value) and `world_probe=none|p1|p3|p3b|p4|p12|p17|race_kill|
 remote_area_kill|kill_near|sleep_near|fulton_near|alert_near|weather_rain|
-clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint` (ids
-1..18 in this order after `none`; lab only: play forces none,
+clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint|guest_restart|guest_frozen_heli|host_target_dead` (ids
+1..21 in this order after `none`; lab only: play forces none,
 sets `play_refused |= 0x8000` and counts one invalid value). `lab_ini_check
 lab` prints `world=` and `world_probe=` after `link_keys=1`.
 
@@ -565,8 +570,11 @@ refused|fail` (refusals: `reason=role|level|mission|paired|mode|busy`).
 | shared_death | either, supported W3/W4 scene at eff >= 3 | reserve PLAYER_DEAD shared game over through the wrapped `TppMission.ReserveGameOver` |
 | host_continue | host, shared game over at eff >= 3 | `TppMission.ContinueFromCheckPoint({isNoFade = true})`; guest follows and aligns in the new epoch |
 | shared_checkpoint | host, ready alignment at eff >= 3 | request a current-position checkpoint through `TppMission.UpdateCheckPoint`; require an accepted save/version change |
+| guest_restart | guest (fb1031 arrival, `lua/coop/world_follow.lua`) | the pause-menu Restart as the engine sends it: `TppMission.OnMessage(UI, PauseMenuRestart)`, so it passes the guest suppression; `result=ok` only when the Mother Base helicopter way out took it (`step=local_restart`) |
+| guest_frozen_heli | guest (arrival-prevent, `lua/coop/world_arrival.lua`) | the next replayed sortie keeps the host's start position seeds as 0.14.5 did (`F.arrival.legacyPose`, until the next free roam or Mother Base arrival), so with `goto=30050 goto_lz=1` (the host's stored helicopter start position) the guest's arrival helicopter freezes and the watchdog must take the way out |
+| host_target_dead | host (fb1031 mbgo, `lua/coop/world_recovery.lua`) | the stock `ReserveGameOver(TARGET_DEAD, PLAYER_KILL_DD)` that f30050 makes when a staff member dies, through the co-op wrapper |
 
-Probe ids 1..18 are assigned; ids 16..18 exercise W4 recovery and are
+Probe ids 1..21 are assigned (20 guest_frozen_heli, 21 host_target_dead); ids 16..18 exercise W4 recovery and are
 single-call lab probes. A probe's `result=ok` is an API/receipt result, not
 proof that both games reached the expected state; record both readbacks.
 
@@ -797,7 +805,7 @@ are used; the exact body schemas are in `native/world_wire.cpp`.
 | 0x0F | ALIGN_END | H->G | id, soldierCount, cpCount, digest, outcomeSeq (+ native epoch) | world | 16 |
 | 0x18 | ALIGN_RECORD | H->G | id, type (1 soldier, 2 CP), index, hash, readable, state, version | world | 15 |
 | 0x19 | ALIGN_ACK | G->H | id, mission, epoch, accepted | control | 11 |
-| 0x1A | GAME_OVER | H->G | type, radio, cause | control | 6 |
+| 0x1A | GAME_OVER | H->G | type, radio, cause (1..3 a shared player death; fb1031 mbgo: 4 the host's own non-player Game Over, e.g. f30050 TARGET_DEAD: the guest never reserves it and shows note 15 a=2) | control | 6 |
 | 0x1B | REQ_GAME_OVER | G->H | rid, type, radio, cause | control | 8 |
 | 0x1C | CHECKPOINT | H->G | hash, version, x/y/z mm, yaw millidegrees | control | 22 |
 
@@ -1866,3 +1874,52 @@ holds=,ref=,rage=}` (`ref` / `rage`: the Fulton guard's vehicle and its age, -1 
 section 3): the guest's claims go unanswered, its hold drops after 1.5 s and nothing is denied (the stock
 behaviour). Play pairing refuses mismatched builds anyway (`build_mismatch`). Codes 0x1D-0x1F, 0x32, 0x35 and 0x37
 stay reserved; 0x3B onward are free.
+
+## 22. Travel (debug menu Travel and Bring partner here; docs/debug-menu.md "Travel")
+
+Op `0x3B` TRAVEL (59), both directions, reliable, **control** queue, level 3, lab and play, never a request; 8 fields,
+24 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 go / 3 bring / 4 answer), `mission` (the target, the caller's mission
+or the answered one), `x`, `y`, `z` (i32 mm; the landing spot or the caller), `yaw` (i32 mdeg, |yaw| <= 360000),
+`reason` (u8; an answer's 0 accepted, 1 travelling, 2 gameplay, 3 on_foot, 4 downed, 5 demo, 6 mission, 7 off, 8 other_area). Unlike every
+other level-3 op after FOLLOW_ACK it does **not** need the pairing: the partner may be in another mission or the
+helicopter. TX and RX need only the link session's HELLO gates (both level 3, copied saves, roles differ), as
+MISSION_TRANSITION; a received TRAVEL survives a local mission start (kept in the control queue like W3 control). A
+partner without the op (0.14.5 and older) skips it by its length (unknown_op). A copy whose own `lab.ini` debug_travel is
+off (`world::Config::travel`) never sends TRAVEL (`disabled`) and native answers a received ask, go or bring with
+kind 4, the same `seq` and mission, reason 7 (off) without queueing it for Lua; a received answer is dropped.
+
+Lua (`lua/coop/world_goto.lua` "Travel", `W.travel`): ask = a linked guest's Go to (the host leads it and answers);
+go = the host's announced trip with its spot (a paired guest follows through world follow kind 1 and kind 6 and only
+does the landing; a guest elsewhere does its own two hops); bring = the caller's pose (the receiver warps 3 m in front
+of it; fb1031-on: a caller whose partner reads another mission (CFG r[9], nonzero) does not send it and shows note 14
+b=7, a receiver in another mission answers 8 other_area; a receiver with its own Bring outstanding, until answered or
+30 s, refuses it with 1 if it is the host, while a guest yields to the host's); answer = the receiver's verdict (a
+refusal shows world note 14 b=5, reason 8 b=7). After a landing or a Bring warp the camera turns behind the player
+(`Player.RequestToSetCameraRotation`). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World
+note 14 TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped, 7 another
+area (Bring across missions refused)}. fb1031 mbgo: note 15 MISSION_END{a=1 an F9 kill of Mother Base staff refused
+(`mb_staff`), 2 the host's mission failed for a non-player reason (GAME_OVER cause 4; b=1 a staff member died at Mother
+Base, 0 another), 3 the guest's Continue/Restart on a Game Over waits for the host's}; 2 and 3 repeat every 3 s until the
+reload (at most 60 s / 120 s). `NoteShown` takes 1..15, 18 and 19.
+
+## 23. Game rules (debug menu; docs/debug-menu.md "Game rules")
+
+**RULES 0x3E** (62; host to guest, control queue, reliable, level 3, lab and play, never a request; 2 fields, 3 bytes):
+seq, Mother Base weapons (0 stock, 1 allowed). The host sends it on each press of Weapons at Mother Base / Stock Mother
+Base rules and again on each new pairing once it chose (`lua/coop/debug_rules.lua`); it needs the pairing (a refused
+send waits 2 s). The guest applies the host's value at 30050, keeps it through a mission load and drops it after 60 s
+without the pairing. A partner without the op skips it by its length (unknown_op). The wormhole toggle is each
+player's own and sends nothing.
+
+## 24. Arms (debug menu Friendly fire; docs/debug-menu.md "Friendly fire")
+
+Op `0x3F` ARMS (63), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
+3 fields, 4 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 state), `ff` (u8 0 off / 1 on). The host decides: a guest's
+press sends kind 1 (its wanted value), the host applies it and answers with kind 2; the host's own press sends kind 2;
+the host repeats kind 2 whenever a guest pairs. A guest never applies kind 1, the host never applies kind 2. Lua
+(`lua/coop/debug_arms.lua`) keeps the switch in `W.arms.ff` (default on, kept across missions); off,
+`world_friendly.lua` drops the partner's hits at both ends of FRIENDLY_HIT (the shooter consumes its queued hit
+without sending, the target never queues or applies one). World note 18 ARMS{a=1, b=0 off | 1 on} toasts the switch
+(the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
+16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
+A partner without the op skips it by its length (unknown_op): its own switch stays on.

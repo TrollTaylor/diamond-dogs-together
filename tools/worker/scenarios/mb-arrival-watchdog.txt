@@ -1,0 +1,54 @@
+# arrival-prevent watchdog proof (docs/world-sync-design.md 9.2): lab probe guest_frozen_heli makes the guest keep the
+# host's start position seeds once more (the 0.14.5 behaviour), and the host's sortie into Mother Base stores the friend's
+# helicopter start position (goto_lz=1), so the guest's arrival helicopter freezes as in the friend's log. The watchdog
+# (lua/coop/world_arrival.lua) must run the way out by itself within about 25 s: step=unstick; why=static_heli, a local
+# restart, on foot at Command (step=mb_foot; at=restart), and both players see each other.
+#   run-hidden.ps1 -Scenario tools/worker/scenarios/mb-arrival-watchdog.txt -ExtraJoined '-Mode lab -WanSim bad
+#       -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed real -TimeoutSec 600'
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+# A real-seed copy can play its queued Mother Base demo after the Continue: let it finish.
+wait 45000
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+host run godmode 1
+guest run godmode 1
+logmark both
+guest worldtrigger world_probe=guest_frozen_heli
+waitlog guest 'id=guest_frozen_heli; step=done; result=ok' 40
+host worldtrigger goto=30050 goto_lz=1
+waitmission host 40050 180
+waitmission guest 40050 180
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=40050; next=30050; kind=6' 150
+waitmission host 30050 200
+waitmission guest 30050 200
+waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30050' 90
+wait 3000
+both capture w-heli
+guest run position
+# The frozen window (the 0.14.5 arrival): still at its start 13 s in.
+wait 10000
+both capture w-frozen
+guest run position
+waitlog guest 'step=unstick; why=static_heli; m=30050' 60
+both capture w-unstick
+waitlog guest 'step=mb_foot; at=restart' 60
+# The restart reload can take over 20 s (run 15eda621): wait for the watchdog's own on-foot end at the new start.
+waitlog guest 'step=watch_end; why=on_foot; m=30050' 120
+wait 3000
+both capture w-foot
+guest run position
+host run position
+heldcapture guest host w w-walk 3
+guest run position
+placebehind host guest 6
+wait 3000
+both capture w-host-sees-guest
+placebehind guest host 6
+wait 3000
+both capture w-guest-sees-host
+host run position
+guest run position
+state

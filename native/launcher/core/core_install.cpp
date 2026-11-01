@@ -468,10 +468,11 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
     auto step = [&](int index, StepState state, const std::string& detail, float progress) {
         if (report) report(StepReport{index, state, detail, progress});
     };
-    auto fail = [&](int index, const std::string& message) {
+    // `reason` (step 0, fb1031): which check stopped it, in launcher.log.
+    auto fail = [&](int index, const std::string& message, const char* reason = nullptr) {
         error = message;
         step(index, StepState::failed, message, 0.0f);
-        LauncherLog(env, paths, "setup=failed; step=" + std::to_string(index));
+        LauncherLog(env, paths, "setup=failed; step=" + std::to_string(index) + (reason ? std::string("; reason=") + reason : std::string()));
         return false;
     };
     auto cancelled = [&]() { return cancel && cancel->load(); };
@@ -480,30 +481,32 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
     // ---- 0: the game ----
     step(0, StepState::running, "Checking the game files (a few seconds)...", 0.1f);
     std::string problem = GamePathProblem(paths.game);
-    if (!problem.empty()) return fail(0, problem);
+    if (!problem.empty()) return fail(0, problem, "path");
     Settings settings;
     LoadSettings(paths, settings);
     const PackageInfo package = ReadPackage(paths);
     problem = GameFileProblem(paths, settings, package);
-    if (!problem.empty()) return fail(0, problem);
-    if (AnyGameRunningIn(env, paths.game)) return fail(0, "MGSV is running from this folder. Quit it normally, then try again.");
+    if (!problem.empty()) return fail(0, problem, "files");
+    if (AnyGameRunningIn(env, paths.game))
+        return fail(0, "Metal Gear Solid V is still running. Close it first, then press Try again.", "game_running");
     if (PlaySessionLive(env, paths))
         return fail(0, "Co-op is still on for a game started from this folder. Quit MGSV (or close the other Diamond Dogs Together "
-                       "window), then try again.");
-    if (IsDir(paths.mod) && HasReparsePoint(paths.mod, paths.game)) return fail(0, "The mgs-coop folder is a link; that is not supported.");
+                       "window), then try again.", "session_live");
+    if (IsDir(paths.mod) && HasReparsePoint(paths.mod, paths.game))
+        return fail(0, "The mgs-coop folder is a link; that is not supported.", "mod_link");
     if (IsDir(paths.mod)) {
         CleanupSession(env, paths, false);
         RemoveStaleHandoff(env, paths);
     }
     step(0, StepState::running, "Finding your Steam account...", 0.6f);
     const SteamAccount account = ResolveSteamAccount(env);
-    if (!account.ok) return fail(0, account.problem);
+    if (!account.ok) return fail(0, account.problem, account.steam_root.empty() ? "steam_missing" : "steam_login");
     std::vector<std::string> save_files;
     for (const wchar_t* app : {L"287700", L"311340"})
         for (const ManifestRow& r : HashManifest(account.userdata, {app})) save_files.push_back(r.path);
     problem = GamePathProblem(paths.game, save_files);
-    if (!problem.empty()) return fail(0, problem);
-    if (cancelled()) return fail(0, "Setup was stopped.");
+    if (!problem.empty()) return fail(0, problem, "save_path");
+    if (cancelled()) return fail(0, "Setup was stopped.", "stopped");
     step(0, StepState::done, "Game version OK (Steam 1.0.15.4, original files).", 1.0f);
 
     // ---- 1: real-save backup ----
@@ -607,6 +610,28 @@ bool SetupRunningElsewhere(const std::wstring& game_root) {
     if (taken) ReleaseMutex(h);
     CloseHandle(h);
     return !taken;
+}
+
+std::string SetupBusyReason(Env& env, const InstancePaths& paths) {
+    if (SetupRunningElsewhere(paths.game)) return "other_setup";
+    if (AnyGameRunningIn(env, paths.game)) return "game_running";
+    if (PlaySessionLive(env, paths)) return "session_live";
+    // Steam is installed for this Windows user but nobody is logged in, and the saves alone do not name the account.
+    const SteamAccount account = ResolveSteamAccount(env);
+    if (!account.ok && !account.steam_root.empty()) return "steam_login";
+    return {};
+}
+
+std::string SetupBusyText(const std::string& reason) {
+    if (reason == "game_running") return "Close Metal Gear Solid V first. Co-op gets ready by itself once the game has closed.";
+    if (reason == "steam_login") return "Start Steam and log in. Co-op gets ready by itself once you are logged in.";
+    if (reason == "session_live")
+        return "Quit MGSV (or close the other Diamond Dogs Together window): co-op is still on for a game started from this folder. "
+               "This window carries on by itself afterwards.";
+    if (reason == "other_setup")
+        return "Co-op is being set up by another Diamond Dogs Together window for this game folder. This window carries on by itself "
+               "once it has finished.";
+    return {};
 }
 
 // ---- Uninstall --------------------------------------------------------------------------
@@ -726,6 +751,43 @@ std::string LimitTextTail(const std::string& text, std::size_t max_chars) {
     return "[... " + std::to_string(start) + " earlier characters omitted ...]\n" + text.substr(start);
 }
 
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total) {
+    if (text.empty() || count < 1 || marker.empty()) return {};
+    // The line starts of the last `count` marker lines, newest first; the text before them is one more launch.
+    std::vector<std::size_t> starts;
+    std::size_t from = text.size();
+    while (from > 0 && static_cast<int>(starts.size()) < count) {
+        const std::size_t at = text.rfind(marker, from - 1);
+        if (at == std::string::npos) break;
+        const std::size_t nl = at == 0 ? std::string::npos : text.rfind('\n', at - 1);
+        const std::size_t line = nl == std::string::npos ? 0 : nl + 1;
+        starts.push_back(line);
+        if (line == 0) break;
+        from = line;
+    }
+    if (static_cast<int>(starts.size()) < count && (starts.empty() || starts.back() > 0)) starts.push_back(0);
+    std::vector<std::string> launches;
+    for (std::size_t i = starts.size(); i-- > 0;) {
+        const std::size_t end = i == 0 ? text.size() : starts[i - 1];
+        std::string launch = text.substr(starts[i], end - starts[i]);
+        if (launch.size() > per_launch && per_launch >= 1024) {
+            // Its first quarter (configuration, the first scenes) and its end (the scene it closed in).
+            std::size_t head = launch.rfind('\n', per_launch / 4);
+            head = head == std::string::npos ? per_launch / 4 : head + 1;
+            // The omission line (under 64 characters) counts inside the budget, so 8 cut launches fit 8 budgets.
+            launch = launch.substr(0, head) + LimitTextTail(launch.substr(head), per_launch - head - 64);
+        }
+        launches.push_back(std::move(launch));
+    }
+    std::size_t size = 0;
+    for (const std::string& l : launches) size += l.size();
+    std::size_t first = 0;
+    while (size > total && launches.size() - first > 1) size -= launches[first++].size();
+    std::string out;
+    for (std::size_t i = first; i < launches.size(); ++i) out += launches[i];
+    return out.size() > total ? LimitTextTail(out, total) : out;
+}
+
 bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_dir, std::wstring& zip_out, std::string& error) {
     zip_out.clear();
     if (!IsDir(paths.mod)) {
@@ -771,9 +833,10 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
         if (zip.AddFile(folder + "/" + name, clean.data(), clean.size(), add_error)) ++entries;
     };
     const std::uint64_t max_log = 1u << 20;
-    const std::string observer = ReadTail(JoinPath2(paths.mod, L"script-observer.log"), max_log * 8);
+    // fb1031: the last 8 game launches (a stuck guest relaunches; a report comes a session later), 2 MB each, 16 MB in all.
+    const std::string observer = ReadTail(JoinPath2(paths.mod, L"script-observer.log"), max_log * 24);
     if (!observer.empty()) {
-        save("script-observer.log", LimitTextTail(TextFromLastMarkers(observer, "MGS Co-op script adapter", 3), 3 * max_log));
+        save("script-observer.log", LastLaunches(observer, "MGS Co-op script adapter", 8, 2 * max_log, 16 * max_log));
         included.push_back("script-observer.log");
     } else {
         missing.push_back("script-observer.log");

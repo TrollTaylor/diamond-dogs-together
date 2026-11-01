@@ -4053,6 +4053,129 @@ Lua's a=7 rule reads.
 - Full `tools/build.ps1` at `a2b9f5ab`: CTest 336/336; at `d15fb340` (review): CTest 336/336; contract `--check`
   838 / 213 at both.
 
+### 8.59 The rider's camera trails a jeep that drives off (2026-10-31, branch `wp/ride-camera`, fb1031)
+
+The user's two-PC report on 0.14.5 (Mother Base, the guest riding while the host drove): "camera lags behind when
+getting in and moving".
+
+- **What the logs show.** The guest boarded natively (`local_passenger seat=3 via=p120`); the passenger camera connected
+  with `mode=5; prev=2` (the fallback module took over from another module: a camera transition at the get-in), later
+  `mode=5; prev=3` after a get-off's VehicleCamera and `mode=0; prev=5` in seat 1. On the guest's copy the host-driven
+  jeep is placed every frame by RIDE_FAST while it moves. The host body's seat error on the guest's copy (`err_mm` up
+  to 868) is the partner's drawn body, not the guest's camera.
+- **Cause [O static: the pinned bytes; I: that a get-in and an aim's end start a blend, not run-observed].** The fallback camera module (live vtable `0x23B2AB0`,
+  the on-foot player's and a seated passenger's camera; update `0x101D950`) writes its follow point
+  `CAM+0x170 = S + alpha * (T - S)`: T follows the body, S and alpha belong to a timed blend object (`module+0x30`,
+  vtable `0x23B7EC0`, made by `CAM vt+0x218` `0x1113F60`): `reset(dur)` sets `+0x18 = dur`, `+0x1C = +0x20 = 0`, `set(S)`
+  `+0x30`, `step(dt)` grows the elapsed time to `dur` and alpha (`+0x20`) to 1 along a curve. The update resets it on the
+  module's flag (P+0x48 object `+0x2C4` bit 1) with `S = CAM+0x100` and `dur` = that object's `+0x284`. S is a fixed
+  world point, so a jeep that drives off during a blend leaves the camera `(1 - alpha) x` the distance driven behind and
+  it catches up as alpha reaches 1. Outside a blend (alpha 1) the camera follows the body rigidly: the lab traces of
+  m6m7b (`049aa5ed`, `a64c40d4`, `d60dbb48`) kept the eye 5.05 m from the seated body at 2.5-4.4 m/s.
+- **Fix: the follow carry** (`partner_ride_follow`, **off unless named** in lab and play until a hidden run proves it;
+  it rides on the passenger camera, so it also needs that, and `partner_pass_camera=off` turns it off). Each driver tick while the local
+  passenger rides and the active module's blend runs (`0 < elapsed < dur`, alpha < 1), `TickFollowCarry` moves S
+  rigidly with the ridden vehicle (its position and yaw since the last tick, pure `CarryStep`), so the blend happens in
+  the vehicle's frame: the camera still eases from where it was, but no longer falls behind the moving jeep. Never at
+  alpha 1 (S unused), never across a vehicle step over 5 m (a warp) or a pose older than 200 ms, never under another
+  module (aim, VehicleCamera, first person), never when S changed since the read (a stock reset in between wins). No
+  code patched, no game function called; 12 pinned blocks (`ride_follow_blocks`: the update's blend use and reset, the
+  blend object's maker and its five methods, the module's init) are verified once per process
+  (`partner_pass_camera=follow; result=installed; blocks=12`). Lines: `partner_ride=pass_camera; state=follow;
+  event=open|close` (the blend's duration, its writes and the distance carried).
+- **The census** (`partner_ride_cam=frame|line|episode`, lab and play, read only): while the local player rides (a
+  passenger, or the vehicle it drives), the body's position in the camera's view against its value at rest (`lag_cm`,
+  `d_cm`: a camera that follows rigidly keeps it, one that trails moves it), the vehicle's speed, the body's drift in
+  the vehicle and the blend (`blend=alpha,elapsed,dur` in milli; `carry=` writes): per-tick lines for the first 90
+  ticks of an episode (the vehicle leaving standstill), then every 250 ms, and a summary when it stops.
+- Failing first `ca1c11b1` -> `fb298535` (the carry), `599b14df` -> `f20616a0` (off unless named); scenarios
+  `fb1031-ride-camera-play.txt` (names the key 1) and `-play-off.txt` (the shipped default: the 0.14.5 camera), the same
+  legs: the host drives off as soon as the guest reports its seat (3, then 2), the guest aims while driven and lets go,
+  then the guest drives off with the host aboard.
+- **Not run-proven.** Both hidden runs were refused before admission (`d671ace6` with the census only, `4232a7bd` the
+  -off scenario at `fb298535`): the host copy was admitted, the guest copy's overlay could not create its DX11 device
+  (`overlay=refused; reason=graphics_or_input_hook; step=device; detail=D3D11CreateDeviceAndSwapChain; hr=0x8007000E`,
+  worker `refused; reason=required_hooks_or_private_desktop`); the machine's hardware D3D11 probe failed the same way
+  from 13:00 to 13:33. Next: run the -off and on scenarios (before / after: `partner_ride_cam` lag and
+  `state=follow` lines, frames `a-in-NN` on both copies), then turn the key on by default.
+- **Runs (fb1031 proof round, `wp/integ-fb1031` at `0d2eff33`, play, `-WanSim bad`, native gun research, africa-jeep;
+  both copies admitted and in gameplay at 30020):** `703d886a` (`-play-off.txt`, the carry off) and `70eefcea`
+  (`-play.txt`, `partner_ride_follow=1` in `session.json`). [O] **No trail of the kind the carry targets.** Every rider row
+  (fallback camera, `cmode=5`) on both copies in both runs read `blend=0,0,0` (no blend running: 222 guest rows each run,
+  111 host rows in `703d886a`); the aim rows read `cmode=2`, and after the aim's end the fallback came back with
+  `blend=0,0,0`. With the key on the carry never opened (no `state=follow` line, `carry=0` everywhere). Outside the
+  drive-off zoom below and the aim's return (54-61 cm on the first fallback row after the aim at 3-4 m/s, 4-6 cm 250 ms
+  later), the rider's camera kept the body within 1-2 cm of its rest place in the view at up to 11.5 m/s (`703d886a`)
+  and 14.9 m/s (`70eefcea`).
+  [O] **What the census did show instead, the same in both runs:** (1) right after the host drove off with the guest
+  in seat 3, the guest's camera moved about 1.5 m CLOSER to the rider along the view (`d_cm=0,0,-151` at 5.4 m/s, about
+  0.55 s, then back; `-152` in `70eefcea`); frames `guest-a-run-01` show the rider and driver much larger than at rest
+  and `a-run-02` back at the rest framing. That is a zoom-in, not a trail; its cause is [U] (camera collision near the
+  start spot or a stock pull-in, not told apart). (2) The driver's own VehicleCamera (`cmode=3`, stock) trails up to
+  0.7-0.9 m (`lag_ms` 62-108) on both copies, host and guest alike. (3) In `703d886a` leg C (the guest drove off while
+  the host was still getting in), the host's rider camera stayed rigid (`lag_cm` 0-1) while the host's body drifted up
+  to 1.46 m in the jeep (the get-in animation still playing; frames `host-c-in-04/05`).
+  [O] Scenario limits: the host's first `hold w` right after the seat report did not move the jeep (its census episode
+  started about 4.4 s later, at the second hold), and the `burst` captures run one role after the other, so the
+  `a-in` frames show the jeep at rest; leg B (left door) never boarded in either run; leg C failed in `70eefcea` (the
+  guest never drove). **Decision:** the carry is not turned on (nothing to carry was seen); `partner_ride_follow` stays
+  off unless named. Sheets `fb1031/frames/camera/best-sheet-703d886a.jpg`, `best-sheet-70eefcea.jpg`.
+
+### 8.60 Riding while the partner drives: the front-seat get-in camera stays behind (2026-10-31, branch `wp/ride-lag`, fb1031)
+
+The user's report "camera lags behind when getting in and moving", confirmed as riding while the friend (the host) drove,
+real Steam session (rtt 134-174 ms, avg 145; jitter avg 7, max 17 ms; loss 0; interp_ms 67).
+
+- **The user's log [O].** Four rides as passenger with the host driving vehicle 25603 at Mother Base: seat 3 for 0.3 s
+  (boarded while the jeep moved, got off at once), seat 3 for 11 s (about 6.5 s of it moving), seat 1 for 27 s and
+  seat 1 for 21 s, both seat-1 rides boarded while the jeep was moving. So 48 of the about 55 s it rode a moving jeep
+  were in the front seat. Every seat-1 board logged `pass_camera; state=connect; ...; mode=0; prev=5` (camera module 0
+  active right after the get-in); every seat-3 board `mode=5`. On the guest's copy RIDE_FAST placed the jeep once per frame
+  (+120 per 2 s, `state=interpolate`, never hold or stale while moving). The 0.14.5 log has no camera poses, and the
+  8.59 census runs covered seat 3 only (the africa-jeep D-Dog holds seat 1), so the seat-1 camera was unmeasured.
+- **Reproduced [O, run `c54aae04`, play, `-WanSim bad` (the preset closest to the user's rtt: 80 ms one-way + 25 ms
+  jitter, about 180 ms rtt in the overlay), gun research, host seed `afgh-quiet` / guest `afgh-horse` (no D-Dog, seat 1
+  free), Wakh Sind jeep 25608, scenario `fb1031-ride-lag-play.txt`].** The guest boards seat 1 and the host drives off
+  at once: the census (`veh_cm` / `eye_cm` added for this round) shows module 0 (`cmode=0`) for 2.77 s of the drive with
+  the eye fixed where the get-in began: `lag_cm` 6 -> 1699, eye to jeep 3.2 m -> 18.5 m at up to 8.7 m/s, then the
+  fallback (`cmode=5`) jumps to the jeep (8.9 m, then 6.2 m). Frames `guest-f-in-06` (+1.4 s) and `-f-in2-03` (+2.8 s)
+  show only the wall and the ground where the guest got in, `-f-in2-04` the fallback behind the seated rider. Module 0 is
+  the vtable the m6m7g trace saw for about 3.5 s after any seat-1 get-in (`2a394a64`, `mvt=0x23be5e0`), so in the
+  user's seat-1 boards of a moving jeep the view stayed at the boarding spot for about 3.5 s and then snapped: "lags
+  behind when getting in and moving" [I: their session logged the same `mode=0; prev=5`].
+- **Not the cause [O, same runs].** The rider copy's jeep against the driver's own (same machine clock): 133 cm apart at
+  the same instant at over 3 m/s, which a pure 200-210 ms delay explains to 1-3 cm (100 ms RIDE_FAST render delay plus
+  the simulated one-way latency); per-tick steps as even as the driver's own (speed cv 0.40-0.49 both copies, no zero
+  steps, no snaps). After module 0 the fallback held the body within 0-2 cm at up to 12 m/s (seat 1 and seat 2).
+- **Fix: the get-in camera cut** (`partner_ride_getin_cut`; native-puppet "Get-in camera cut"). While the local
+  passenger sits and module 0 is the active camera module, once the ridden vehicle moved 0.3 m since module 0 was first
+  seen, clear module 0's active bit (`+0x147C` bit 5) and its request word (`+0xAE0` = 1); the stock selection then
+  deactivates it and the fallback follows the seated body. A parked jeep keeps the stock get-in view. Five pinned
+  blocks; contract 855 code sites / 213 vtable slots. Failing first `18505451` -> `1ebdf964` (off unless named),
+  `4ee88c91` -> `9526d21c` (follows the gun profile in lab and play).
+- **Proven [O, run `f71126c0`, the same route with the key named, `fb1031-ride-lag-play-cut.txt`].** `partner_ride=
+  pass_camera; state=getin_cut; event=cut; vehicle=25608; seat=1; moved_cm=31; ms=783; result=ok; cuts=1` (one write);
+  module 0 lasted 121 ms of the drive (`lag_cm` at most 25), then the fallback eased out from the get-in framing (eye
+  3.2 m -> 5.25 m from the jeep in about 0.4 s) and held 5.2-5.3 m at up to 11.9 m/s. The second seat-1
+  episode (after the aim) read up to 63 cm, all of it the eye moving closer to the body along the view (a pull-in like
+  the 8.59 drive-off zoom, not a trail). Frames `guest-f-in-06` (+1.4 s,
+  7.9 m/s) and `-f-in2-03` (+2.8 s, 11.9 m/s): the jeep with both riders in view. The seat-1 scope aim afterwards
+  (`f-aim-02`, the jeep standing at a shed wall), its end (`f-aimend-03`) and the get-off and on-foot camera
+  (`f-exit-03`) as before; the back seat 2 (`connect ... mode=5; prev=3`, no module 0) logged no cut and kept the body
+  within 1-2 cm at up to 11.6 m/s (`r-in-05`); the host's driver camera trailed 0.5-1.2 m as stock in both runs. Sheets
+  `ride-lag/frames/sheet-c54aae04-before.jpg`, `sheet-f71126c0-after.jpg`.
+- **Not shown.** A board of a jeep that is already moving (the user's own seat-1 boards; the cut handles it the same way:
+  module 0 seen, 0.3 m, cut); a two-PC Steam session; the truck cab (module 0 not observed there); Mother Base's jeep.
+- **One episode per seated ride (ride-cut-2, branch `wp/ride-cut-2`).** The skeptic found the write cap counted per
+  module-0 activation: `GetInCutStep` reset writes, done and the anchor on the first tick module 0 was inactive, so a
+  module 0 that came back within the ride would have been cut again every time (a possible flicker; not observed). The
+  episode is now the seated ride (local passenger valid in one vehicle): writes (at most 8), the cut and the stand-down
+  last until the passenger gets out or changes vehicle, and a module 0 that returns after the cut is left alone with one
+  `event=returned` line; before any cut a returning module 0 anchors anew; the key off keeps the ride. Failing first
+  `24397847` -> `72f26610`. The shipped-default runs of the open case (`fb1031-ride-cut-moving.txt`: seat 1 boarded
+  while the host already drives, twice; `fb1031-ride-cut-mb.txt`: the Mother Base sortie jeep) are written but did not
+  run in that round (the machine stayed under the run floors) [U].
+
 ## 9. Milestones
 
 Ordered by value and risk. Each milestone ships behind a lab key first. Before its play default flips: a hidden-worker

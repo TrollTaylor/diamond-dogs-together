@@ -77,6 +77,24 @@ struct Gate {
     const char* Record(const Result& result) noexcept;
 };
 
+// Guest grant admission (game_script_observer.cpp GuestWarpReceipt), after the
+// role, contract, mission and grant checks. Two rules:
+// - lab key: lab mode with lab.ini debug_soldier_warp=1, any grant kind (spawn sync);
+// - Mother Base staff (docs/world-sync-design.md 7.7): play or lab, the current mission
+//   is 30050 and the grant is a correction (world_place kind 3) only, never a warp,
+//   route or come, so the guest's copy of a staff member stands where the host's does.
+// nullptr admits (`staff` tells which rule); else "role" (neither play nor lab) or
+// "disabled" (no rule applies).
+inline constexpr unsigned short kStaffMission = 30050;
+struct GuestRule {
+    bool lab{}, play{}, key{};  // lab mode, play mode, lab.ini debug_soldier_warp
+    unsigned short mission{};   // current mission
+    bool correct{};             // the grant is a correction (kind 3)
+};
+const char* GuestAdmit(const GuestRule& rule, bool& staff) noexcept;
+// Whether a guest process needs the startup Verify() byte gate for either rule.
+bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
+
 // One "soldier_warp_census; ..." line ("\r\n" terminated); 0 on failure.
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,
                          std::size_t capacity) noexcept;

@@ -3,7 +3,7 @@
 -- world-synced: in the 2026-10-22 two-PC session the guest Fultoned jeep 25603, the
 -- host drove his copy of it, the guest's seat-by-id read failed (local_read) and hid
 -- him. With lab.ini world_vehicle_gone=1 (CFG r[15] bit 1; off in the lab, on in play unless named, M4) on both copies
--- (30010, 30020; Mother Base 30050 in the lab only until a hidden run covers it, M4 review):
+-- (30010, 30020 and Mother Base 30050; 30050 in play since 0.14.6, never run there in a game):
 --   host:     a vehicle its copy loses (Fulton/FultonInfo, Dead, VehicleBroken, then
 --             IsAlive read back false within 30 s) is announced as VEHICLE_GONE.
 --   guest:    one it loses by its own hand (FultonInfo or Dead by the local player,
@@ -52,8 +52,8 @@ function V.reset()
   V.seq, V.nextPoll, V.failed, V.offLogged = 0, 0, false, false
 end
 V.reset()
--- Mother Base only in the lab (mode 1): no hidden run has covered 30050 (its index Despawn, the M4 review).
-function V.mission() return MISSIONS[W.mission] == true and (W.mission ~= 30050 or W.mode == 1) end
+-- Mother Base in lab and play since 0.14.6 (fb1031 vehicles; its index Despawn never ran in a game).
+function V.mission() return MISSIONS[W.mission] == true end
 function V.on() return W.vehicleGoneOn == true and W.active == true and V.mission() and not V.failed end
 local function fail(err)
   V.failed = true
@@ -469,9 +469,6 @@ also(W.OP.RIDE_BODY, function(v)
 end)
 W.startHooks[#W.startHooks + 1] = guarded(function()
   V.reset()
-  if W.vehicleGoneOn == true and W.active == true and MISSIONS[W.mission] and not V.mission() then
-    L("event=vehicle_gone;step=off;mission=%d;reason=mb_lab_only", W.mission)
-  end
   if not V.on() then return end
   local M, str32 = W.M, type(W.api) == "table" and W.api.str32
   if type(M) == "table" and type(W.kind) == "table" and type(str32) == "function" then
@@ -500,9 +497,32 @@ end)
 W.stopHooks[#W.stopHooks + 1] = function(final)
   if final then V.watch, V.held, V.reads, V.rides = {}, {}, {}, {} end
 end
+-- fb1031 (two-PC session 2026-10-31): the partner rides a vehicle this copy lacks (a RIDE_FAST track
+-- world_ride_pose found absent: Fultoned or destroyed here, or the host's relief vehicle). Native hides
+-- them (partner_ride_seat refused absent); world note 13 a=8 says why, once per ride of that vehicle and
+-- at most one every ABSENT_MS, whatever this module's key, mission or mode. Errors stay here.
+local ABSENT_MS = 20000
+V.absentSeen, V.absentAt = {}, nil
+function V.absentTick(t)
+  local rp = W.ridePose
+  local tracks = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if type(tracks) ~= "table" or not linked() then V.absentSeen = {}; return end
+  for id in pairs(V.absentSeen) do if tracks[id] == nil then V.absentSeen[id] = nil end end
+  for id, track in pairs(tracks) do
+    if type(track) == "table" and track.absent == true and V.typed(id) and not V.absentSeen[id] then
+      V.absentSeen[id] = true
+      if not V.absentAt or t >= V.absentAt then
+        V.absentAt = t + ABSENT_MS
+        local ok, shown = pcall(W.note, 13, 8, 0)
+        L("event=vehicle_absent;step=toast;id=%d;shown=%d", id, ok and shown == true and 1 or 0)
+      end
+    end
+  end
+end
 local tick = W.tick
 function W.tick(...)
   if tick then tick(...) end
+  pcall(V.absentTick, now())
   if not V.on() then return end
   local t = now()
   if t < V.nextPoll then return end

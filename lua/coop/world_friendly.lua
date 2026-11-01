@@ -31,6 +31,15 @@ do
         return r and r.ready and not r.down and r.generation == v[2] and sent and
             sent.generation == v[2] and now >= sent.at and now - sent.at <= 1500
     end
+    -- Friendly fire off (debug menu, the host's switch for both copies: debug_arms.lua sets W.arms.ff): the
+    -- partner's bullets, explosives and melee (all through this queue) are dropped at both ends.
+    local function ffOff() local a = W.arms; return type(a) == "table" and a.ff == false end
+    local function dropped(side, seq)
+        local now = W.now()
+        if F.dropLog and now >= F.dropLog and now - F.dropLog < 500 then return end
+        F.dropLog = now
+        W.log(fmt("event=friendly_fire;step=dropped;side=%s;seq=%.0f", side, seq))
+    end
     W.handlers[W.OP.FRIENDLY_HIT] = function(v, now)
         now = now or W.now()
         if not on() or type(v) ~= "table" or #v ~= 5 or not valid(v[1], 1, U32 - 1) or
@@ -38,11 +47,13 @@ do
             not valid(v[4], 0, 1000000000) or (v[5] ~= 0 and v[5] ~= 2) or
             not newer(v[1], F.seen) then return end
         F.seen = v[1]
+        if ffOff() then dropped("target", v[1]); return end
         if not current(v, now) or #F.pending >= 8 then return end
         F.pending[#F.pending + 1] = {v = v, at = now}
     end
     function D.hitTick(r, now)
         if not on() then return end
+        if ffOff() then F.pending = {} end
         -- Preserve FIFO order across temporary input-window/native refusals.
         while #F.pending > 0 do
             local p = F.pending[1]
@@ -54,6 +65,10 @@ do
         end
         local seq, damage, cause = r.hitSequence, r.hitDamageMilli, r.hitCause
         if not valid(seq, 1, U32 - 1) or not valid(damage, 0, 1000000000) or (cause ~= 0 and cause ~= 2) then return end
+        if ffOff() then
+            if receipt(0, seq, 0, 0, 0) then dropped("shooter", seq) end
+            return
+        end
         local target = D.records[3 - W.role]
         if not target or not target.ready or now < target.at or now - target.at > 500 then return end
         if target.down or W.tx(W.OP.FRIENDLY_HIT, seq, target.generation, target.sequence, damage, cause) then

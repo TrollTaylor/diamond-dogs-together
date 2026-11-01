@@ -143,12 +143,16 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
     if (!Token(p, end, x) || p >= end || *p != ' ') return false;
     ++p;
     if (!Token(p, end, y) || p != end) return false;
-    if (c < 1 || c > 15 || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
+    // 1..15, 18 ARMS (debug menu Friendly fire) and 19 HINT (arrival-prevent). 16 is MISMATCH and 17 PARTNER_GEAR, both
+    // posted by native only.
+    if (c < 1 || (c > 15 && c != 18 && c != 19) || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
     code = static_cast<std::uint8_t>(c);
     a = static_cast<std::uint32_t>(x);
     b = static_cast<std::uint32_t>(y);
     return true;
 }
+
+bool NoteShown(std::uint8_t code) noexcept { return (code >= 1 && code <= 15) || code == 18 || code == 19; }
 
 bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
                std::uint32_t& d, std::uint32_t& e) noexcept {
@@ -290,6 +294,7 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out, char* canoni
             if (result.has_goto) { reason = "repeat"; return false; }
             if (SameText(value, vlen, "30010")) result.goto_target = 30010;
             else if (SameText(value, vlen, "30020")) result.goto_target = 30020;
+            else if (SameText(value, vlen, "30050")) result.goto_target = 30050;
             else return false;
             result.has_goto = true;
         } else if (SameText(key, eq, "goto_lz")) {

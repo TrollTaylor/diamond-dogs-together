@@ -190,6 +190,8 @@ foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','par
     'partner_seat_gun=1','partner_seat_gun=0','guest:partner_seat_gun=1','host:partner_seat_gun=0',
     # M7 S1: the seated passenger's bullets past the ridden vehicle (lab and play)
     'partner_seat_shot=1','partner_seat_shot=0','guest:partner_seat_shot=1','host:partner_seat_shot=0',
+    # Melee on the other player (lab and play; off unless named until a hidden run shows it)
+    'partner_melee=1','partner_melee=0','guest:partner_melee=1','host:partner_melee=0',
     # Design 8.27: the passenger camera's mode (lab and play) and its lab trace
     'partner_pass_camera=off','partner_pass_camera=connect','partner_pass_camera=drop','partner_pass_camera=aim','partner_pass_camera=view','guest:partner_pass_camera=aim',
     'partner_pass_camera_trace=1','host:partner_pass_camera_trace=0',
@@ -222,6 +224,7 @@ foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_
     'partner_seat_aim=2','partner_seat_aim=','partner_seat_aim=on','both:partner_seat_aim=1','partner_seat_aims=1',
     'partner_seat_gun=2','partner_seat_gun=','partner_seat_gun=on','both:partner_seat_gun=1','partner_seat_guns=1',
     'partner_seat_shot=2','partner_seat_shot=','partner_seat_shot=on','both:partner_seat_shot=1','partner_seat_shots=1',
+    'partner_melee=2','partner_melee=','partner_melee=on','both:partner_melee=1','partner_melees=1',
     'partner_pass_camera=on','partner_pass_camera=','partner_pass_camera=Aim','partner_pass_camera=1','partner_pass_camera_trace=2',
     'both:partner_pass_camera=aim',
     'save_handoff=auto','save_handoff=','save_handoff=SCENE','travel_lock=2','travel_lock=on','both:save_handoff=stage',
@@ -251,6 +254,7 @@ foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partne
         'labsetting partner_seat_aim=1','labsetting guest partner_seat_aim=0',
         'labsetting partner_seat_gun=1','labsetting host partner_seat_gun=0',
         'labsetting partner_seat_shot=1','labsetting guest partner_seat_shot=0',
+        'labsetting partner_melee=1','labsetting host partner_melee=0',
         'labsetting partner_pass_camera=aim','labsetting partner_pass_camera=view','labsetting guest partner_pass_camera=off','labsetting partner_pass_camera_trace=1',
         'labsetting save_handoff=stage','labsetting guest save_handoff=scene','labsetting travel_lock=1','labsetting host travel_lock=0',
         'labsetting host link_session_skew=2','labsetting link_session_skew=0')){
@@ -262,6 +266,7 @@ foreach($bad in @('labsetting save_handoff=auto','labsetting travel_lock=2','lab
         'labsetting partner_native_mount=seat','labsetting partner_native_mount=1','labsetting partner_seat_aim=on',
         'labsetting both partner_seat_aim=1','labsetting partner_seat_gun=on','labsetting both partner_seat_gun=1',
         'labsetting partner_seat_shot=on','labsetting both partner_seat_shot=1',
+        'labsetting partner_melee=on','labsetting both partner_melee=1',
         'labsetting partner_pass_camera=on','labsetting partner_pass_camera_trace=yes',
         'labsetting host link_session_skew=1000','labsetting both link_session_skew=2','labsetting link_session_skew=',
         'labsetting partner_native_unrealize_all=2','labsetting partner_native_unrealize_all=on','labsetting both partner_native_unrealize_all=1')){
@@ -290,6 +295,16 @@ foreach($bad in @('world_relief=2','world_relief=','world_relief=on','both:world
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 Assert-True ('labsetting world_relief=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting world_relief=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_relief=0|1 only'
+# fb1031 gear: partner_equip_midload=0|1 (the mid-mission load of a late partner's gear, lab and play) in both
+# -LabSetting allow-lists and the scenario line (fb1031-gear-late-join.txt).
+foreach($ok in @('partner_equip_midload=1','partner_equip_midload=0','host:partner_equip_midload=1','guest:partner_equip_midload=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('partner_equip_midload=2','partner_equip_midload=','partner_equip_midload=on','both:partner_equip_midload=1','partner_equip_midloads=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern -and $bad -cnotmatch $sessionPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting partner_equip_midload=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting host partner_equip_midload=0' -cmatch $lineMatch.Groups[1].Value -and
+    'labsetting partner_equip_midload=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both partner_equip_midload=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting partner_equip_midload=0|1 only'
 Assert-True ('labsetting world_vehicle_gone=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting guest world_vehicle_gone=0' -cmatch $lineMatch.Groups[1].Value -and
     'labsetting world_vehicle_gone=2' -cnotmatch $lineMatch.Groups[1].Value -and 'labsetting both world_vehicle_gone=1' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_vehicle_gone=0|1 only'
 # M4: world_vehicle_state=0|1 (the VEHICLE_STATE world op, lab and play) likewise (vehicle-state.txt).
@@ -682,6 +697,43 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
     }
+    # Spawn enemy here for players (docs/debug-menu.md): spawn-enemy-play.txt validates in PLAY mode at the shipped defaults
+    # (no labsetting line: spawn_warp is on), 10+ host presses, 3 guest presses and the Mother Base refusal.
+    & {
+        $Mode='play'
+        $spawnPath=Join-Path $RepoRoot 'tools\worker\scenarios\spawn-enemy-play.txt'
+        $spawnLines=[IO.File]::ReadAllLines($spawnPath)
+        $steps=@($spawnLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('spawn-enemy-play steps valid in play mode '+$failure)
+        Assert-True (@($spawnLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'spawn-enemy-play names no labsetting line'
+        $hostPresses=@($steps|Where-Object{$_ -cmatch '^host run (spawn_enemy here|menu press spawn_enemy_here$)'})
+        $guestPresses=@($steps|Where-Object{$_ -cmatch '^guest run (spawn_enemy here|menu press spawn_enemy_here$)'})
+        Assert-True ($hostPresses.Count -ge 11 -and $guestPresses.Count -ge 3) 'spawn-enemy-play: 10+ host presses in free roam and 3 guest presses'
+        Assert-True ($steps -ccontains 'host expect ^spawn_mother_base$' -and $steps -ccontains 'host run travel 30050') 'spawn-enemy-play: the Mother Base refusal'
+        Assert-True ([IO.File]::ReadAllText($spawnPath).Contains('-Mode play')) 'spawn-enemy-play runs in play mode'
+    }
+    # Game rules (docs/debug-menu.md "Game rules"): rules-play.txt is a play run at the shipped defaults (no labsetting
+    # line); it turns the wormhole off and on on both copies around a soldier's Fulton, then allows and stops weapons at
+    # Mother Base (host press, the guest's refused press) with frames on both screens.
+    & {
+        $Mode='play'
+        $rulesPath=Join-Path $RepoRoot 'tools\worker\scenarios\rules-play.txt'
+        Assert-True (Test-Path -LiteralPath $rulesPath -PathType Leaf) 'shipped Game rules scenario rules-play.txt'
+        $rulesLines=[IO.File]::ReadAllLines($rulesPath)
+        $steps=@($rulesLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('rules-play steps valid in play mode '+$failure)
+        Assert-True (@($rulesLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'rules-play names no labsetting line'
+        foreach($step in @('host run wormhole 0','guest run wormhole 0','host run wormhole 1','guest run wormhole 1','host hold e 1500 nowait',
+            'host run enemy fulton nearest','host run travel 30050','host run mb_weapons 1','guest run mb_weapons 0','host run mb_weapons 0',
+            'host press lmb 120','guest press lmb 120')){
+            Assert-True ($steps -ccontains $step) ('rules-play step: '+$step)
+        }
+        Assert-True ([IO.File]::ReadAllText($rulesPath).Contains('-SaveSeed afgh-ledge -Mode play')) 'rules-play runs on the afgh-ledge seed in play'
+    }
     # F5 (docs/mounts.md section 8): partner-mount.txt is play-rehearsal friendly. The D-Walker part runs before every
     # horse part; a horse dismount E follows "host require localMounted=1" (the play rehearsal fbde3dcc stopped after a
     # second E mounted the host's horse); the lab-only overlay probes sit in the marked Part 5; and the play copy the
@@ -880,13 +932,17 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ([regex]::IsMatch($cmakeText,'if\(MGS_BACKGROUND_WORKER\)\s+target_compile_definitions\(mgs_coop_lab PRIVATE MGS_BACKGROUND_WORKER=1\)\s+endif\(\)')) 'only the worker build compiles the stall into partner_net'
         Assert-True ($cmakeText.Contains('option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)')) 'the background worker stays default OFF'
     }
-    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120','waitmission guest 30010 240 only',
+    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','host worldtrigger goto=30050','waitmission guest 30020 120','waitmission guest 30010 240 only',
         'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
-        'host worldtrigger world=0','guest worldtrigger world=0')){
+        'guest worldtrigger world_probe=guest_restart','guest worldtrigger world_probe=guest_frozen_heli','host worldtrigger goto=30050 goto_lz=1',
+        'host worldtrigger world_probe=host_target_dead','host worldtrigger world=0','guest worldtrigger world=0')){
         $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
     }
     foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','both worldtrigger world=0','host worldtrigger world=1','host worldtrigger world=0 extra',
-        'host worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
+        'host worldtrigger goto=30030','guest worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
+        'host worldtrigger world_probe=guest_restart','both worldtrigger world_probe=guest_restart',
+        'host worldtrigger world_probe=guest_frozen_heli','both worldtrigger world_probe=guest_frozen_heli',
+        'guest worldtrigger world_probe=host_target_dead','both worldtrigger world_probe=host_target_dead',
         'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401','waitmission guest 30010 240 alone','waitmission guest 30010 240 only x')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
         Assert-True $failed ('hidden travel refuses '+$step)
@@ -1438,6 +1494,21 @@ try {
     }
     $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
     Assert-True ([IO.File]::ReadAllText(($guest.LabIni+'.user-20260101-000000')) -ceq "historical unrelated user INI`n") 'historical user backup is untouched and never selected'
+
+    # fb1031 run 09668f9e: Start failed (out of disk space) after the package install and before the role marker.
+    # The installer's own first-install marker where none was belongs to this run: Stop removes it and restores.
+    $case=New-WorkerCleanupFixture 'install-marker'
+    $script:fixtureSession=$case.session;$script:packageCalls=0;$script:processCalls=0
+    $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    [IO.File]::WriteAllText($guest.Marker,"client-check-v1`n")
+    Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report
+    Assert-True (!(Test-Path -LiteralPath $guest.Marker) -and $case.report.roles.guest.configuration_restored) 'the installer first-install marker on an absent baseline is removed with the restore'
+    $case=New-WorkerCleanupFixture 'other-marker'
+    $script:fixtureSession=$case.session;$script:packageCalls=0
+    $guest=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+    [IO.File]::WriteAllText($guest.Marker,"online-v1`n")
+    Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'any other new marker still refuses'
+    Assert-True ($script:packageCalls -eq 0 -and [IO.File]::ReadAllText($guest.Marker) -ceq "online-v1`n") 'an unknown marker survives untouched'
 
     # A changed config in the SECOND role must stop the whole restoration before
     # the FIRST role installer/config mutations. Unknown secret bytes survive.

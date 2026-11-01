@@ -11,6 +11,7 @@
 #include <bcrypt.h>
 #include <strsafe.h>
 #include "mgscoop/equipment_stock_writer.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/equipment_stock_writer_contract.hpp"
 #include "equipment_stock_writer_pins.hpp"
 #include "partner_player_contract.hpp"
@@ -225,6 +226,7 @@ struct General {
     BodyLease lease{};
     bool manifest_set=false;
     ManifestKey manifest_key{};
+    std::uint32_t residency_seen=0;  // fb1031 gear: the last residency generation renewed
     std::uint32_t dispatched_handles[kSlots]{};
     std::uint16_t dispatched_equips[kSlots]{};  // never a tier C candidate of another slot
     unsigned candidate_lines=0,body_lines=0,retry_lines=0;
@@ -396,6 +398,7 @@ template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,voi
         if(++general.plan_waits>=kPlanWaitLimit) Refuse(log,slot,"no_manifest",true,c.now_ms,true);
         return;
     }
+    RecordA1Cache(s,nullptr);
     // The remote carries nothing in this slot (no alias, no base): nothing to follow.
     if(!s.want && !c.alias[slot]) {Refuse(log,slot,"no_base",true,c.now_ms,true);return;}
     const std::uintptr_t engine=general.lease.engine;
@@ -429,6 +432,8 @@ template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,voi
         t.measured=c.measured;
     }
     Tier tier=why ? Tier::d : t.shared ? Tier::a1s : Tier::a1;
+    // fb1031 gear-1: kept when tier C then refuses the stand-ins for good (MissingCacheSlot).
+    RecordA1Cache(s,why);
     bool permanent=PermanentReason(why);
     if(why && c.substitute) {
         if(log) {
@@ -551,7 +556,7 @@ void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const s
             ++foreign;
             // Keep only our earlier dispatched identity. This foreign handle
             // must not become ours at the next realize generation.
-            s.state=SlotState::refused;SetReason(s,"foreign_handle");++status.refused;
+            s.state=SlotState::refused;SetReason(s,"foreign_handle");s.a1_cache=false;++status.refused;
         }
     }
     ++status.resyncs;status.kept+=kept;
@@ -801,6 +806,19 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
             }
         }
         g.manifest_key=key;g.manifest_set=true;
+    }
+    // fb1031 gear: a returned mid-mission load of the manifest's bases (the partner paired after this
+    // allocation) renews the missing-cache slots once, under the same rules as a new manifest's renewal.
+    if(c.residency_gen && c.residency_gen!=g.residency_seen) {
+        std::uint32_t live[kSlots]{};
+        if(!LiveHandles(v,g.lease.inventory,live)) {Waiting(log,pending,"body_handles");return;}
+        equipment_stock_probe::ResidencyRenewal(g.residency_seen,c.residency_gen);
+        for(unsigned slot=0;slot<kSlots;++slot) {
+            if(!RenewCacheReadiness(status.slots[slot],g.sched[slot],g.dispatched_handles[slot],live[slot])) continue;
+            ResetReadiness(slot);
+            SetReason(status.slots[slot],"midload_renewed");
+            if(g.retry_lines<kRetryLines) {++g.retry_lines;GeneralReceipt(log,"midload_renewed",slot,"residency");}
+        }
     }
     SlotState states[kSlots]{};
     for(unsigned s=0;s<kSlots;++s) states[s]=status.slots[s].state;

@@ -374,9 +374,10 @@ inline constexpr std::uint8_t kTravelLockAbsent = 0xFF;
 // PROBE_SYNC and the Lua probe number, in this order.
 enum class WorldProbe : std::uint8_t {
     none, p1, p3, p3b, p4, p12, p17, race_kill, remote_area_kill, kill_near, sleep_near, fulton_near, alert_near,
-    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint
+    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint, guest_restart, guest_frozen_heli,
+    host_target_dead
 };
-inline constexpr std::uint8_t kWorldProbeMax = 18;
+inline constexpr std::uint8_t kWorldProbeMax = 21;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
 
 // Two-PC play's native partner (docs/two-pc-play.md "Native partner",
@@ -641,6 +642,26 @@ struct LabConfig {
     // lever passcam seatfpv overrides it.
     bool partner_seat_fpv = false;
     bool partner_seat_fpv_given = false;
+    // fb1031 follow carry (docs/vehicles-companions-design.md 8.59): while the local passenger rides, the fallback camera's
+    // follow blend leaves from a point carried with the vehicle (no trailing after getting in or an aim's end). Off
+    // unless named, in lab and play, until a hidden run proves it (it rides on the passenger camera, so it needs
+    // that too); a named 1 turns it on; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_follow = false;
+    bool partner_ride_follow_given = false;
+    // fb1031 ride lag, the get-in camera cut (docs/vehicles-companions-design.md 8.60): while the local passenger sits
+    // and camera module 0 (the front-seat get-in camera, which holds the view where the get-in began) is active, a
+    // ridden vehicle that has moved 0.3 m ends module 0, so the fallback camera follows the seated body at once. Follows
+    // the gun profile in lab and play (hidden runs c54aae04 / f71126c0; it rides on the passenger camera, so it needs
+    // that too); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_getin_cut = false;
+    bool partner_ride_getin_cut_given = false;
+    // fb1031 gear (equipment_stock_probe LateGear): a partner who pairs after this mission's allocation gets one
+    // mid-mission public TppEquip.RequestLoadToEquipMissionBlock of their stock bases (the allocation preload's
+    // read-only preflight; a mid-mission call is an unverified lifecycle). Off unless named, in lab and play, until
+    // a hidden run shows the partner's gun; without it the viewer is told once that the gun shows after the next
+    // load. An invalid value refuses (named, off), also after a valid 1.
+    bool partner_equip_midload = false;
+    bool partner_equip_midload_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
@@ -666,12 +687,29 @@ struct LabConfig {
     // a play rehearsal; the body-1 half needs partner_native_gesture (the hook).
     bool partner_seat_gun = false;
     bool partner_seat_gun_given = false;
+    // Debug menu Travel (docs/debug-menu.md "Travel"; lua/coop/world_goto.lua "Travel"): the F9 commands `travel
+    // <30010|30020|30050>` and `bring_partner`. On in lab and play unless named 0 (hidden run 409cb374 showed Go to
+    // and Bring on both copies); off, native refuses them before Lua (`travel=refused; reason=off`) and answers a
+    // partner's TRAVEL refused (world::Config::travel).
+    bool debug_travel = true;
+    bool debug_travel_given = false;
+    // Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here"): in play mode the engine set-transform
+    // placement of debug_soldier_warp (lab only) is admitted by this key, host warp and the guest copy's warp alike,
+    // with the same pinned contract, gates and latch. Lab keeps debug_soldier_warp. On by default (the spawn-enemy-play
+    // hidden play run); a named 0 opts out and play then keeps the route snap.
+    bool spawn_warp = true;
+    bool spawn_warp_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
     // logs the plan of every seated shot (census, nothing moved); the lab lever seatshot overrides it.
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
+    // Melee on the partner (docs/native-puppet.md "Melee"; partner_melee.hpp): the local CQC strike (act 113 / 114) that
+    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Follows the
+    // gun profile in lab and play (hidden run 4bc7b732); a named 0 opts out, a named 1 runs in both (no refusal bit).
+    bool partner_melee = false;
+    bool partner_melee_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census
     // telemetry (partner_act / partner_pad_dropped lines, log only; on).
     PartnerNativeOverlay partner_native_overlay = PartnerNativeOverlay::off;

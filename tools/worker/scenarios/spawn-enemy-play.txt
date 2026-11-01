@@ -1,0 +1,142 @@
+# Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here") in mode=play at the SHIPPED defaults (no labsetting
+# line: lab.ini spawn_warp is on unless named 0, so play now admits the engine set-transform placement).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/spawn-enemy-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play
+# (africa-jeep works too: the same steps, 30020.)
+# Before this branch every play press was a route snap 120-450 m away (guard_here;...;far=1;mode=route;why=disabled) and
+# the ninth press of a mission said spawn_pool_limit_8 forever.
+# Expected:
+#   - host log soldier_warp=ready; key=spawn_warp at startup (play); guest the same.
+#   - 10 host presses: guard_here;...;d=<=6 m;far=0;mode=warp;come=0;sync=world;seq=n (press 10: come=1, the opt-in box) (each placed soldier is killed
+#     before the next press for presses 1-6, so the pool is recycled, never spawn_pool_limit_8); presses 7-10 are left
+#     alive (4 placed soldiers near the host).
+#   - guest spawn_sync: remote_spawn;seq=n;state=landed;mode=warp;come=0 (press 10 come=1);...;partner_m=<=10 (the same soldier in front of
+#     the host on the guest's screen); captures press-N on both copies.
+#   - 3 guest presses: host_only (the row is host only; the guest's menu shows "Host only: use the host's menu.").
+#   - Mother Base (Travel): spawn_mother_base, the chip reads "No enemies at Mother Base: ..." (capture mb-refusal).
+# NEVER: soldier_warp=disabled; reason=fault|anomaly, soldier_warp=refused, spawn_context, faults, GameOver.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+wait 3000
+both debug godmode 1
+host run world_status
+host expect ^world;paired=1;eff=3;
+guest run world_status
+guest expect ^world;paired=1;eff=3;
+host run enemy_camps
+host expect ^camps=[1-9]
+placebehind guest host 3
+wait 2000
+both capture start
+# Press 1 through the real button (the chip shows the plain result), then presses 2-10 as the button's command.
+host run menu open enemies
+wait 1500
+logmark both
+host run menu press spawn_enemy_here
+waitlog host 'message=guard_here;ent=' 20
+wait 2500
+host capture press-1-menu
+guest run spawn_sync
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
+both capture press-1
+host run menu close
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;life_readback=5;
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;frames=\d+;leaf=(pinned|engine)$
+wait 2500
+guest run spawn_sync
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
+both capture press-2
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;life_readback=5;
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-3
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;life_readback=5;
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-4
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-5
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;life_readback=5;
+wait 2000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+guest run spawn_sync
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
+both capture press-6
+host run enemy kill nearest
+host expect ^enemy_kill;ent=\d+;life_readback=5;
+wait 2000
+# Presses 7-10: left alive (the host is in god mode; they attack).
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-7
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-8
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
+wait 2500
+both capture press-9
+host run spawn_enemy here come
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+wait 2500
+guest run spawn_sync
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=1;
+both capture press-10
+host run enemy_list 60
+host expect ^nearby=([4-9]|1[0-2]);
+# Three guest presses: the row is host only.
+guest run spawn_enemy here come
+guest expect ^host_only$
+guest run spawn_enemy here
+guest expect ^host_only$
+guest run menu open enemies
+wait 1500
+guest run menu press spawn_enemy_here
+wait 1500
+guest capture guest-press
+guest run menu close
+host run clear_enemies 60
+host expect ^submitted=[1-9]\d*;
+wait 2000
+# Mother Base: the refusal in plain words.
+logmark both
+host run travel 30050
+host expect travel_started;target=30050;linked=1
+waitlog host 'event=travel; step=arrived; mission=30050' 240
+waitlog guest 'event=travel; step=arrived; mission=30050' 240
+waitlog host 'event=paired' 90
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+host run spawn_enemy here come
+host expect ^spawn_mother_base$
+host run menu open enemies
+wait 1500
+host run menu press spawn_enemy_here
+wait 2000
+host capture mb-refusal
+host run menu close

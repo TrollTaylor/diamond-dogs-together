@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_rules_source[] = R"MGS_RULES(
+@MGS_DEBUG_RULES_SOURCE@
+)MGS_RULES";

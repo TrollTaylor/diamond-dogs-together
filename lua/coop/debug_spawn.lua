@@ -1,8 +1,8 @@
 -- Original host guard placement and per-soldier debug actions on the owner update.
--- Placement reuses a living guard: "here" moves him 5 m in front of the player by
--- the native set-transform message (lab.ini debug_soldier_warp=1); else, and for
--- camp/route modes, an authored patrol route snap (retail TppDebug sequence).
--- Placements and come/ignore/notice/disable/enable reach the guest's copy (R.share).
+-- Placement reuses a living guard: "here" moves him 5 m ahead by the native
+-- set-transform message (lab.ini debug_soldier_warp=1); else, and for camp/route
+-- modes, a patrol route snap (retail TppDebug). Placements and come/ignore/notice/
+-- disable/enable reach the guest's copy (R.share).
 do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local E = D.enemy
@@ -29,7 +29,7 @@ do
   local function flags(s)
     return (E.marked[s.name] and 1 or 0) + (E.ignored[s.name] and 2 or 0) + (E.used[s.name] and 4 or 0)
   end
-  -- Eligible: unused, living NORMAL, readable, 30 m to 500 m from the player.
+  -- Eligible: unused, living NORMAL, readable, 30-500 m from the player.
   local function eligible(s, normal)
     return not E.used[s.name] and s.distance and s.distance > 900 and s.distance <= 250000
       and send(s.id, {id = "GetLifeStatus"}) == normal
@@ -56,7 +56,7 @@ do
   end
   local function place(s, route, id, o)
     E.used[s.name] = true
-    -- Retail TppDebug's route placement, never an unknown XYZ Warp/Spawn.
+    -- Retail TppDebug's route placement, never an XYZ Warp/Spawn.
     local ok = pcall(function()
       call(TppEnemy, "SetDisable", s.id)
       send(s.id, {id = "SetSneakRoute", route = route, point = 0})
@@ -85,7 +85,7 @@ do
     D.pending = q
     return true, fmt("%s;ent=%.0f;scope=local", o.submitted, s.hash)
   end
-  -- WARP_V1: {r=,h=,leaf=} from the native engine message, else nil and why.
+  -- WARP_V1: {r=,h=,leaf=} from the native message, else nil, why.
   local function warp(s, id)
     local c = pose()
     local y = math.rad(c[4])
@@ -97,7 +97,7 @@ do
     if why ~= nil then return nil, R.name(why) and why or "refused" end
     return r
   end
-  -- Nearest unused NORMAL, enabled, on-foot guard 15-500 m away.
+  -- Nearest unused NORMAL, enabled, on-foot guard 15-500 m.
   local function nearest(list, normal)
     local null, off, best = get(GameObject, "NULL_ID"), get(TppGameObject, "NPC_STATE_DISABLE")
     for _, c in ipairs(list) do
@@ -118,7 +118,7 @@ do
     local q, forced = {kind = "spawn", id = id, mission = D.mission, frames = 0}
     local function release() if forced then forced = nil; pcall(send, s.id, {id = "SetForceRealize", forceRealize = false}) end end
     q.cancel = release
-    -- Route snap fallback, never once the command or mission has ended natively.
+    -- Route snap fallback, never once the command or mission ended natively.
     local function route(why)
       if why == "command" or why == "mission" then return false, "spawn_context;why=" .. why end
       release()
@@ -133,6 +133,7 @@ do
       local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route;why=" .. why})
       return ok, msg .. ";mode=route;why=" .. why
     end
+    if s.distance > 62500 then return route("far") end
     local r, why = warp(s, id)
     if not r then return route(why) end
     local function landed() if get(r, "h") == 1 then q.done = q.frames end end
@@ -220,7 +221,7 @@ do
   local LIFE = {kill = "DEAD", sleep = "SLEEP", faint = "FAINT"}
   local ANY = {enable = true, info = true, unmark = true, notice = true}
   local OPS = {kill = 1, sleep = 1, faint = 1, fulton = 1, come = 1, ignore = 1, notice = 1, disable = 1, enable = 1,
-    mark = 1, unmark = 1, info = 1}
+    mark = 1, unmark = 1, info = 1, ["goto"] = 1}
   local function target(o, t)
     if t == "nearest" then
       for _, s in ipairs(R.nearby(150)) do if ANY[o] or R.usable(s) then return s end end
@@ -231,12 +232,25 @@ do
     for _, s in ipairs(R.soldiers()) do if s.hash == hash then return s end end
     return nil, "enemy_not_authored"
   end
-  local function op(a)
+  local function op(a, id)
     local o = a[2]
-    if #a ~= 3 or not OPS[o] then return false, "enemy_args" end
-    if o ~= "info" and not A.hostOnly() then return false, "host_only" end
+    local d = #a == 4 and o == "goto" and number(a[4], .5, 10)
+    if #a ~= 3 and not d or not OPS[o] then return false, "enemy_args" end
+    if o ~= "info" and o ~= "goto" and not A.hostOnly() then return false, "host_only" end
     local s, why = target(o, a[3])
     if not s then return false, why end
+    if o == "goto" then
+      -- This copy's player, d m (2.5, or the 0.5..10 m given) from the soldier on its side, facing him.
+      local v, p = R.position(s), pose()
+      if not v then return false, "enemy_position_unavailable" end
+      local dx, dz = p[1] - v[1], p[3] - v[3]
+      local n = sqrt(dx * dx + dz * dz)
+      if n < .1 then dx, dz, n = 1, 0, 1 end
+      d = d or 2.5
+      local x, z = v[1] + d * dx / n, v[3] + d * dz / n
+      local ok, msg = A.warp({x, v[2] + .3, z, math.deg(math.atan2(v[1] - x, v[3] - z))}, id)
+      return ok, fmt("enemy_goto;ent=%.0f;%s", s.hash, tostring(msg))
+    end
     local head, tag = fmt("enemy_%s;ent=%.0f", o, s.hash), A.sync("enemy")
     if LIFE[o] then
       local k = "NPC_LIFE_STATE_" .. LIFE[o]
@@ -268,30 +282,12 @@ do
     return true, fmt("enemy_info;ent=%.0f;name=%s;cp=%s;state=%d;distance_m=%s", s.hash, s.name, tostring(s.cp), wire(s),
       v and fmt("%.1f", dist(v, pose())) or "unknown")
   end
-  local PHASES = {sneak = "SNEAK", caution = "CAUTION", evasion = "EVASION", alert = "ALERT"}
-  local function phase(a)
-    if not A.hostOnly() then return false, "host_only" end
-    if #a ~= 3 or not PHASES[a[3]] then return false, "phase_args" end
-    local k = "PHASE_" .. PHASES[a[3]]
-    local v = get(TppGameObject, k)
-    if v == nil then return false, "missing_" .. k end
-    local cp = a[2]
-    if cp == "nearest" then
-      local list = R.camps()
-      cp = list and list[1] and list[1].name
-    end
-    if not R.name(cp) or type(get(get(mvars, "ene_soldierDefine"), cp)) ~= "table" then return false, "cp_unknown" end
-    local cid = call(GameObject, "GetGameObjectId", cp)
-    if not integer(cid, 0, 65534) then return false, "cp_unknown" end
-    send(cid, {id = "SetPhase", phase = v})
-    return true, fmt("submitted_phase;cp=%s;phase=%s;%s", cp, a[3], A.sync("enemy"))
-  end
+  -- cp_phase is answered by debug_spawn_play.lua (spliced later; this file's 16000-byte limit).
   function S.run(a, id)
     local cmd = a[1]
     if cmd == "spawn_enemy" then return spawn(a, id)
     elseif cmd == "enemy_list" then return nearbyList(a, id)
-    elseif cmd == "enemy" then return op(a)
-    elseif cmd == "cp_phase" then return phase(a)
+    elseif cmd == "enemy" then return op(a, id)
     elseif cmd == "enemy_unmark" and #a == 1 then
       if not A.hostOnly() then return false, "host_only" end
       local n = 0

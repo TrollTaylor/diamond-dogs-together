@@ -444,7 +444,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'world'; Json = 'world'; Kind = 'int'; Min = 0; Max = 3 },
     @{ Key = 'world_probe'; Json = 'world_probe'; Kind = 'enum'; Values = @('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill',
             'remote_area_kill', 'kill_near', 'sleep_near', 'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
-            'shared_death', 'host_continue', 'shared_checkpoint') },
+            'shared_death', 'host_continue', 'shared_checkpoint', 'guest_restart', 'guest_frozen_heli', 'host_target_dead') },
     # 0.13.6 online-vehicle-gone (docs/world-sync-protocol.md section 16): the host-authoritative
     # VEHICLE_GONE world op (lab and play, written only when set; M4: off in the lab, on in play unless named).
     @{ Key = 'world_vehicle_gone'; Json = 'world_vehicle_gone'; Kind = 'bool' },

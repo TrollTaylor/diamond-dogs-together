@@ -93,7 +93,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                      every 6 s presses E only for a verified helicopter state,
                                      otherwise escape then enter to try skipping a cutscene
   placebehind <viewer> <target> <back_m> [side_m]
-                                     (back_m 1..40; or 0..40 with |side_m| 1..40, e.g. beside a seated driver: M6)
+                                     (back_m 1..40; or 0..40 with |side_m| 1..40, e.g. beside a seated driver: M6;
+                                     or -40..-1: IN FRONT of the target, melee-target: a partner ahead of a striker)
                                      teleport viewer behind (and to the right of) target, facing it,
                                      with a 3 m upward margin; require fresh position to settle within 3 s
   state                            print both roles' mission / gameplay-ready state
@@ -156,6 +157,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_seat_aim=0|1, the read-only back-seat aim census (the local player in a vehicle
                                    ride act, the partner body in the seat flow; docs/native-puppet.md "Seat aim"; lab only, default off);
                                    partner_seat_shot=0|1, M7 S1: the seated passenger's bullets start past the ridden vehicle (default on with the gun profile);
+                                   partner_melee=0|1, a local CQC strike that reaches the partner knocks them down on their copy (lab and play; default follows the gun profile, run 4bc7b732);
                                    partner_seat_gun=0|1, M7: the remote back-seat passenger's raised gun on the seated partner
                                    body and this copy's seated aim direction (docs/native-puppet.md "Seat gun"; lab and play,
                                    default off);
@@ -234,7 +236,7 @@ param(
     # copies, docs/test-boot.md), preserve in the play rehearsal.
     [ValidateSet('','preserve','low')][string]$GraphicsQuality='',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|partner_pass_camera=(off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_seat_fpv=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(off|(30010|30020|30050)( -?[0-9]{1,6}(\.[0-9]{1,3})?){3} -?[0-9]{1,3}(\.[0-9]{1,3})?( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?|(30010|30020|30050|40010|40020|40050)( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?))$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide|seat)|partner_ride_seat_enter=(direct|getin)|partner_ride_seat_exit=(stop|getoff)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(pad|state)|partner_native_reload_rate=(off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(off|block|passenger)|partner_pass_camera=(off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|debug_travel=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_melee=[01]|partner_seat_fpv=[01]|partner_ride_follow=[01]|partner_ride_getin_cut=[01]|partner_equip_midload=[01]|partner_native_overlay=(off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(off|(30010|30020|30050)( -?[0-9]{1,6}(\.[0-9]{1,3})?){3} -?[0-9]{1,3}(\.[0-9]{1,3})?( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?|(30010|30020|30050|40010|40020|40050)( time=([01][0-9]|2[0-3]):[0-5][0-9])?( weather=(sunny|cloudy|rainy|sandstorm|foggy))?))$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -295,7 +297,7 @@ if($bootLines.Count){
 }
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|partner_pass_camera=(?:off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_seat_fpv=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|partner_pass_camera=(?:off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|debug_travel=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_melee=[01]|partner_seat_fpv=[01]|partner_ride_follow=[01]|partner_ride_getin_cut=[01]|partner_equip_midload=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|companion_host_owned=[01]|world_relief=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -355,7 +357,8 @@ foreach($line in $steps){
         '^waitmission$' {$t.Count -in 4,5 -and $t[1] -cin 'host','guest' -and $t[2] -cin '30010','30020','30050','40010','40020','40050' -and [int]$t[3] -ge 5 -and [int]$t[3] -le 400 -and ($t.Count -eq 4 -or $t[4] -ceq 'only')}
         '^waitgameplay$' {$t.Count -eq 3 -and $t[1] -in 'host','guest' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
         '^placebehind$' {$t.Count -in 4,5 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -le 40 -and
-            ([double]$t[3] -ge 1 -or ($t.Count -eq 5 -and [double]$t[3] -ge 0 -and [Math]::Abs([double]$t[4]) -ge 1 -and [Math]::Abs([double]$t[4]) -le 40))}
+            ([double]$t[3] -ge 1 -or ([double]$t[3] -le -1 -and [double]$t[3] -ge -40) -or
+             ($t.Count -eq 5 -and [double]$t[3] -ge 0 -and [Math]::Abs([double]$t[4]) -ge 1 -and [Math]::Abs([double]$t[4]) -le 40))}
         '^stance$' {$t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'stand','crouch','prone'}
         '^heldcapture$' {$t.Count -eq 6 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
             (Test-ScenarioKeys $t[3]) -and (Test-ScenarioLabel $t[4]) -and [int]$t[5] -ge 1 -and [int]$t[5] -le 5}
@@ -374,10 +377,10 @@ foreach($line in $steps){
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
                 'worldtrigger'{$Mode -ceq 'lab' -and (
                     ($t[0] -cin 'host','guest' -and $t.Count -eq 3 -and $t[2] -ceq 'world=0') -or
-                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020)$' -and
+                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020|30050)$' -and
                         ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
-                    ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-                        ($t[0] -ceq 'guest' -and $t[2] -ceq 'world_probe=shared_death'))))}
+                    ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue|host_target_dead)$') -or
+                        ($t[0] -ceq 'guest' -and $t[2] -cmatch '^world_probe=(shared_death|guest_restart|guest_frozen_heli)$'))))}
                 'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
                 'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'require'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
@@ -419,9 +422,9 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     # Validate the live owned process/context lease and release virtual keys before transition.
     $null=Send-Step $Role @{Operation='release'}
     $canonical=ConvertTo-WorldTriggerText -Text $Text
-    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020)( goto_lz=[01])?$'
-    $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
-        ($Role -ceq 'guest' -and $canonical -ceq 'world_probe=shared_death')
+    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020|30050)( goto_lz=[01])?$'
+    $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue|host_target_dead)$') -or
+        ($Role -ceq 'guest' -and $canonical -cmatch '^world_probe=(shared_death|guest_restart|guest_frozen_heli)$')
     $disable=$Role -cin 'host','guest' -and $canonical -ceq 'world=0'
     if(!$travel -and !$recovery -and !$disable){throw 'Worker world travel accepts only free-roam destinations, role-bound recovery probes or exact world=0.'}
     $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
@@ -436,8 +439,11 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     if(Test-Path -LiteralPath $trigger){throw 'Another world trigger is pending.'}
     # Capture both current allocations before submission; game-over need not
     # report gameplay_ready. A later same-mission wait must observe a new one.
+    # guest_restart (fb1031 arrival): only the guest reloads its mission; its next waitmission needs a new allocation.
     $captured=if($Role -ceq 'host' -and $canonical -ceq 'world_probe=host_continue'){
         Read-ContinueGenerations
+    }elseif($Role -ceq 'guest' -and $canonical -ceq 'world_probe=guest_restart'){
+        Read-ContinueGenerations @('guest')
     }else{$null}
     Write-WorkerAtomicText $trigger $canonical
     $limit=[Environment]::TickCount64+15000
@@ -451,7 +457,7 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
         }finally{$stream.Dispose()}
         $result=Find-WorldTriggerResult -LogText $text -Canonical $canonical
         if($result.State -ceq 'applied'){
-            if($captured){foreach($r in 'host','guest'){$continueRequirements[$r]=$captured[$r]}}
+            if($captured){foreach($r in @($captured.Keys)){$continueRequirements[$r]=$captured[$r]}}
             Write-Host "  $Role world travel: $canonical applied";return
         }
         if($result.State -cin 'rejected','different'){throw "Worker world travel refused: $($result.Reason)"}
@@ -530,9 +536,9 @@ function Get-ScenarioWaitAction([string]$Role,[string]$Result,[Collections.IDict
        $tick -lt 0 -or $tick -gt $Now -or $Now-$tick -gt 1000){return 'skip'}
     return 'e'
 }
-function Read-ContinueGenerations {
+function Read-ContinueGenerations([string[]]$Roles=@('host','guest')) {
     $captured=@{}
-    foreach($r in 'host','guest'){
+    foreach($r in $Roles){
         $s=Read-RoleRaw $r;$now=Get-ScenarioTick
         $generation=[uint32]0;$tick=[int64]0
         if(!$s -or $s['run_id'] -cne $runId -or $s['role'] -cne $r -or $s['terminating'] -or

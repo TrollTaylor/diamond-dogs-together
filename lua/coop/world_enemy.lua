@@ -88,6 +88,10 @@ do
 
         function E.commit(h, st, actor, rid, cause, flags)
             local s, e = E.s, W.ent[h]
+            -- Mother Base staff (staffPlace): the host's own act on a standing staff member says where first.
+            if actor == 0 and e.committed == 0 and st ~= 0 and W.staffAnnounce and W.paired and W.eff >= 2 then
+                pcall(W.staffAnnounce, h)
+            end
             if e.ver == 0 then s.count = s.count + 1 end
             if e.ver < 65535 then e.ver, s.sum = e.ver + 1, (s.sum + 1) % 4294967296 end
             e.committed, e.known, e.kver = st, st, e.ver
@@ -161,8 +165,18 @@ do
             if not W.w1 then return end
             if s.rb[h] then return "defer" end
             if not E.active(e.cp, h) then return E.hold(h, st, ver, src, "out_of_area") end
+            -- Mother Base staff (staffPlace): this copy is placed where the host's is first (world_place_guest.lua).
+            if st ~= 0 and src == "outcome" and W.staffHold and W.staffHold(h, now or W.now()) then return "defer" end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
+            -- Mother Base (spareStaff): a partner never kills or removes a staff member in this copy's save (stock
+            -- f30050 reserves TARGET_DEAD on any staff Dead or Dying): dying and dead land as a knockout; a Fulton
+            -- disables the staff member for this mission load (TppEnemy.SetDisable: gone, no Fulton message).
+            if W.feature and W.feature.spareStaff and (st == 4 or st == 5 or st == 6) and not TERMINAL[cur] then
+                local as = st == 6 and 7 or 3
+                L("event=spare;ent=%.0f;state=%d;as=%d", h, st, as)
+                st = as
+            end
             local result = "noop"
             if TERMINAL[cur] then result = "terminal_local"
             elseif st == 0 then
@@ -338,7 +352,11 @@ do
                 end
                 if s.qHead > #q then s.queue, s.qHead = later, 1
                 else for _, a in ipairs(later) do q[#q + 1] = a end end
-                E.recheck(now, false)
+                -- Mother Base (allCp): no area change re-checks the ledger, so every 10 s all of it
+                -- (an apply that failed while the staff member's platform was not loaded here).
+                local all = W.feature and W.feature.allCp and now >= (s.allAt or 0)
+                if all then s.allAt = now + 10000 end
+                E.recheck(now, all)
             end
         end
 

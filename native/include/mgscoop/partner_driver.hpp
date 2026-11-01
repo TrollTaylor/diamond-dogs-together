@@ -36,6 +36,7 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
 #include "mgscoop/partner_act_log.hpp"
+#include "mgscoop/partner_melee.hpp"
 #include "mgscoop/partner_dm_overlay.hpp"
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
@@ -471,6 +472,19 @@ struct Hooks {
                            std::uint32_t& after) noexcept = nullptr;
     bool (*seat_fpv_pollers)(void* context, const partner_player::State& state, std::uintptr_t (&rvas)[10]) noexcept = nullptr;
     int (*seat_fpv_override)(void* context) noexcept = nullptr;
+    // Melee on the partner (partner_melee.hpp): one friendly hit for the local player's strike that reached body 1, into
+    // the downed owner's queue (downed_player::QueueFriendlyHit(P, 0, cause 2)); true when queued. Null: nothing queued.
+    bool (*melee_hit)(void* context, std::uintptr_t player) noexcept = nullptr;
+    // fb1031 (design 8.59): the follow carry's read of the active fallback module's blend (partner_pass_camera::ReadFollow
+    // after FollowInstall) and its start-point write (WriteFollowStart). Null: no carry, no census blend fields.
+    bool (*ride_follow_read)(void* context, const partner_player::State& state, partner_pass_camera::Follow& out) noexcept = nullptr;
+    bool (*ride_follow_write)(void* context, const partner_player::State& state, std::uintptr_t blend, const float (&expect)[3],
+                              const float (&start)[3]) noexcept = nullptr;
+    // fb1031 ride lag (design 8.60): whether the local camera's active module is the get-in camera (module 0,
+    // partner_pass_camera::GetInActive after GetInCutInstall) and the cut (CutGetIn): nullptr when written, else why
+    // not. Null: no cut.
+    bool (*ride_getin_active)(void* context, const partner_player::State& state) noexcept = nullptr;
+    const char* (*ride_getin_cut)(void* context, const partner_player::State& state) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -521,6 +535,8 @@ inline constexpr std::uint64_t kBoardLogMs = 1000;
 inline constexpr unsigned kBoardLogCap = 200;
 // Design 8.27: the passenger camera's aim drop / restore lines per mission (the lab trace has its own cap).
 inline constexpr unsigned kPassCameraAimCap = 120;
+// fb1031: the ride camera census caps per mission (per-tick lines; 250 ms lines and episode summaries).
+inline constexpr unsigned kRideCamFrameCap = 400, kRideCamCap = 400, kRideFollowCap = 200, kRideGetInCutCap = 100;
 // Design 8.46: the per-mission cap of the seat first-person lines (state=seat_fpv) and of the trace's fpv_trace lines.
 inline constexpr unsigned kSeatFpvCap = 200, kSeatFpvTraceCap = 600;
 // The seat flow's phases (Mission::seat.phase). fallback (0.13.6): the remote
@@ -628,6 +644,10 @@ struct Settings {
     // lab.ini partner_seat_fpv (design 8.46): the automatic first-person aim from seats 1 and 2 (the lab lever passcam
     // seatfpv overrides it on a lab copy).
     bool seat_fpv = false;
+    // lab.ini partner_ride_follow (design 8.59): the follow carry while the local passenger rides.
+    bool ride_follow = false;
+    // lab.ini partner_ride_getin_cut (design 8.60): the get-in camera cut while the local passenger rides.
+    bool ride_getin_cut = false;
     // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
     PartnerNativeStandin nstandin;
     // Anim round 1 weapons (docs/anim-round1-weapons.md; lab.ini
@@ -671,6 +691,9 @@ struct Settings {
     // M7 seated shots, S1 (lab.ini partner_seat_shot; partner_seat_shot.hpp): the local seated passenger's bullets start
     // past the ridden vehicle. Key off: the lab copy still plans (census lines, nothing moved); play publishes nothing.
     bool seat_shot;
+    // Melee on the partner (lab.ini partner_melee; partner_melee.hpp): a local CQC strike that reaches body 1 hands one
+    // friendly hit (cause sleep) to the downed owner's queue (Hooks::melee_hit). Key off: verdict=off lines only.
+    bool melee;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
@@ -816,6 +839,16 @@ struct Mission {
         std::uint8_t fpv_mode_logged;
         std::uint64_t fpv_trace_key, fpv_trace_ms;
         bool pollers_logged;
+        // fb1031 (design 8.59): the ride camera census (lab and play), its per-tick lines at an episode's start
+        // (census_frame_cap), the 250 ms lines and the episode summaries (census_cap).
+        partner_pass_camera::Census census;
+        LogCap census_cap, census_frame_cap;
+        // fb1031 (design 8.59): the follow carry and its open / close lines.
+        partner_pass_camera::Carry carry;
+        LogCap carry_cap;
+        // fb1031 ride lag (design 8.60): the get-in camera cut and its lines.
+        partner_pass_camera::GetInCut getin;
+        LogCap getin_cap;
     } pass_camera;
     // M7 seated shots, S1: the configured line, the published (vehicle, seat, apply) and the last refusal logged, the
     // last plan seq logged and the hook's counters at this mission's start (lines under cap).
@@ -1384,6 +1417,9 @@ struct Mission {
     // --- Round-1 actions track (docs/anim-round1-actions.md).
     // The act census (log only) and the remote's dropped pad presses.
     partner_act_log::ActState act_log;
+    // Melee on the partner (partner_melee.hpp): the local strike machine and its line cap.
+    partner_melee::State melee;
+    LogCap melee_cap;
     partner_act_log::PadState pad_census;
     // The DM overlay lever: its machine, the last step (the next tick's native
     // suspend reason) and its line cap.

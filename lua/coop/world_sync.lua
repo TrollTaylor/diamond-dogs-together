@@ -13,7 +13,10 @@ do
   e.MgsCoopWorld = W
   W.MISSIONS = {[30010] = {enemies = true, clock = true, weather = "all", areaEnemy = "f30010_enemy"},
     [30020] = {enemies = true, clock = true, weather = "nofog", areaEnemy = "f30020_enemy"},
-    [30050] = {clock = true, weather = "all"}}
+    -- Mother Base: staff outcomes too; no area trap there (allCp: every CP counts as loaded); staffPlace: the staff near
+    -- either player stand where the host's copy is (world_place); spareStaff: a partner's kill or dying lands on this
+    -- copy as a knockout, a Fulton as disabled (world_enemy).
+    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, staffPlace = true, spareStaff = true}}
   local fmt, floor, sub, gsub, concat = string.format, math.floor, string.sub, string.gsub, table.concat
   local PRE = "return 'MGS_COOP_WORLD_"
   local function index(t, k) return t[k] end
@@ -228,6 +231,12 @@ do
     W.companionOn = r[16] == 1
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
+    -- enemiesLab (30050): W1 and staff placement in the lab only until a hidden run shows staff on both screens in play.
+    if W.feature.enemiesLab and W.mode ~= 1 then
+      local f = {}
+      for k, v in pairs(W.feature) do f[k] = v end
+      f.enemies, f.staffPlace, W.feature = nil, nil, f
+    end
     local missing, required = W.bind()
     if not required then W.log("event=inactive;reason=missing_required;names=" .. missing); return end
     W.isStarted, W.active, W.observing = true, true, W.api.resend ~= nil

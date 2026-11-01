@@ -1240,8 +1240,57 @@ do
     env3.vars.weather = 2
     F.tick(env3, c3, 40)
     local mbWeather = F.tx(c3, OP.WEATHER)
-    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and not c3.W.w1,
-        '30050: actual host rain is sent once and in digests; enemy authority stays off')
+    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and c3.W.w1,
+        '30050: actual host rain is sent once and in digests; enemy outcomes (W1) run at Mother Base too')
+    -- Mother Base staff: every CP counts as loaded (no area trap there), no patrol corrections; a host knockout is
+    -- sent and the guest copy of the staff member faints.
+    check(c3.W.feature.allCp == true and c3.W.feature.patrol == nil and c3.W.feature.staffPlace == true and c3.W.activeCp == nil,
+        '30050: every CP loaded, staff placement on (staffPlace: host-authoritative positions, mb-staff-sync)')
+    local mbHenv, mbH = fixture({role = 1, mission = 30050})
+    F.start(mbHenv, mbH)
+    F.pair(mbHenv, mbH, 3)
+    F.clear(mbH)
+    mbH.life[mbH.ids.sol_b1] = LIFE.FAINT
+    F.msg(mbHenv, 'GameObject', 'Unconscious', mbH.ids.sol_b1)
+    F.tick(mbHenv, mbH, 1)
+    local mbOut = F.tx(mbH, OP.OUTCOME)
+    check(#mbOut == 1 and mbOut[1].v[1] == u32('sol_b1') and mbOut[1].v[3] == 3, '30050: the host knockout of a staff member is sent')
+    local mbGenv, mbG = fixture({role = 2, mission = 30050})
+    F.start(mbGenv, mbG)
+    F.pair(mbGenv, mbG, 3)
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b1'), 1, 3, 1, 3, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    check(F.callCount(mbG, 'ChangeLifeState:sol_b1:' .. LIFE.FAINT) == 1, '30050: the guest copy of the staff member faints')
+    -- A partner never kills or removes a staff member in this copy's save (stock f30050 reserves TARGET_DEAD on any
+    -- staff Dead or Dying): a partner's kill, dying or Fulton is applied here as a knockout (FAINT).
+    F.clear(mbG)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b2'), 1, 5, 2, 1, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_b3'), 1, 6, 3, 5, 0, 0, 0, 0, 0, 0)
+    F.push(mbG, 1, OP.OUTCOME, u32('sol_a1'), 1, 4, 4, 4, 0, 0, 0, 0, 0, 0)
+    F.tick(mbGenv, mbG, 15)
+    local lethal = 0
+    for _, v in ipairs(mbG.calls) do
+        if v:find('^RequestForceFulton:') or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DEAD .. '$')
+            or v:find('^ChangeLifeState:[^:]+:' .. LIFE.DYING .. '$') then lethal = lethal + 1 end
+    end
+    check(lethal == 0 and F.callCount(mbG, 'ChangeLifeState:sol_b2:' .. LIFE.FAINT) == 1
+        and F.callCount(mbG, 'ChangeLifeState:sol_a1:' .. LIFE.FAINT) == 1
+        and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b2')) .. ';state=5;as=3'),
+        '30050: a partner kill or dying knocks the staff member out on this copy, never kills them')
+    -- fb1031-on: a partner's Fulton makes the staff member disappear on this copy for this mission load
+    -- (TppEnemy.SetDisable, the debug menu's disable: no Fulton message, no roster change), never RequestForceFulton.
+    check(F.callCount(mbG, 'SetEnabled:sol_b3:') == 1 and F.callCount(mbG, 'ChangeLifeState:sol_b3:' .. LIFE.FAINT) == 0
+        and has(mbG.logs, 'event=spare;ent=' .. string.format('%.0f', u32('sol_b3')) .. ';state=6;as=7'),
+        '30050: a partner Fulton disables the staff member on this copy (gone), never a knockout or a Fulton')
+    -- Play at Mother Base (mb-staff-sync): W1 and staff placement on, so a knockout or Fulton happens to the staff
+    -- member both players see in the same place.
+    local mbPlayEnv, mbPlay = fixture({role = 1, mission = 30050, mode = 2})
+    F.start(mbPlayEnv, mbPlay)
+    F.pair(mbPlayEnv, mbPlay, 3)
+    check(mbPlay.W.w1 and mbPlay.W.feature.enemies == true and mbPlay.W.feature.allCp == true
+        and mbPlay.W.feature.spareStaff == true and mbPlay.W.feature.staffPlace == true and mbPlay.W.feature.enemiesLab == nil,
+        '30050 in play: W1 and staff placement on')
     local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
     F.start(mbEnv, mbGuest)
     F.pair(mbEnv, mbGuest, 3)
@@ -1776,7 +1825,8 @@ if arg[8] then
         at = at + #spliced
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
-    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua'}) do
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua', 'debug_character.lua',
+        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')

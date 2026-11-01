@@ -44,6 +44,7 @@ generated `lab.ini` is byte-for-byte what it was before.
 | `partner_anim_probe` | `0`/`1` (`0`) | |
 | `crash_probe` | `0`/`1` (`1`) | |
 | `debug_soldier_warp` | `0`/`1` (`0`; written only when set) | lab only: play forces it off (`play_refused` bit `0x10000`). F9 **Spawn enemy here** native placement ([debug-menu.md](debug-menu.md)) |
+| `spawn_warp` | `0`/`1` (`1`) | play: admits the F9 **Spawn enemy here** native placement (host and the guest copy), same contract and gates; lab uses `debug_soldier_warp` ([debug-menu.md](debug-menu.md)) |
 | `nametag`, `nametag_crosshair`, `nametag_name`, `nametag_max_m` | `0`/`1`, `aim`/`always`/`off`, 1..24 of `[A-Za-z0-9 _.-]`, `50`..`1000` (natively on, `aim`, the name sources, `300`; written only when set) | allowed in play. Partner name tag and friendly crosshair ([partner-nametag.md](partner-nametag.md)); `lab.ini` wins over `coop.ini` `nametag=`/`friendly_crosshair=` |
 | `net_latency_ms`, `net_loss_permille` | existing keys, written only when set (`-PartnerSetting guest:net_latency_ms=100`) | 0..2000, 0..1000 |
 
@@ -355,7 +356,7 @@ realization line is inside the stage 3 segment).
 unchanged): `world=0..3` (0 inert, 1 plumbing, 2 enemies + alert, 3 also clock/
 weather, host travel and reload recovery) and `world_probe=<probe>` (lab only; `p1 p3 p3b p4 p12 p17 race_kill
 remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain
-clock_jump clock_fast shared_death host_continue shared_checkpoint`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
+clock_jump clock_fast shared_death host_continue shared_checkpoint guest_restart guest_frozen_heli host_target_dead`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
 sets them on both copies (or `Prepare-LabInstance.ps1 -Offline -PartnerSetting
 world=N`). World sync needs offline-v1, `partner=1`, `net=1`, `net_link=v2` and
 redirected saves; it logs `world=configured` or `world=disabled; reason=...`.

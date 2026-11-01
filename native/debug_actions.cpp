@@ -32,9 +32,27 @@ constexpr ActionDef kActions[] = {
     {"player_drop_hip", C::player, "Drop hip gun", "drop_item current_hip n", "drop pickup weapon", "Drops a pickup of the current hip weapon.", P},
     {"player_drop_back", C::player, "Drop back gun", "drop_item current_back n", "drop pickup weapon", "Drops a pickup of the current back weapon.", P},
     {"player_drop_secondary", C::player, "Drop secondary gun", "drop_item current_secondary n", "drop pickup weapon pistol", "Drops a pickup of the current secondary weapon.", P},
+    // Character (docs/debug-menu.md "Character"): your own character, now and for the rest of the session; both players.
+    {"character_snake", C::player, "Snake", "character snake", "character switch play as snake model", "Play as Snake from now on. Your partner sees it.", 0},
+    {"character_dd_male", C::player, "DD soldier (male)", "character dd_male", "character switch play as diamond dogs soldier staff male",
+     "Play as a male Diamond Dogs soldier (your deployed staff member's face when you deployed one).", 0},
+    {"character_dd_female", C::player, "DD soldier (female)", "character dd_female", "character switch play as diamond dogs soldier staff female",
+     "Play as a female Diamond Dogs soldier (your deployed staff member's face when you deployed one).", 0},
+    {"character_avatar", C::player, "My avatar", "character avatar", "character switch play as avatar",
+     "Play as your avatar. Your partner sees Snake instead (known limit).", 0},
+    {"character_ocelot", C::player, "Ocelot", "character ocelot", "character switch play as ocelot",
+     "Not available yet in this build: pick Ocelot in the launcher.", U},
+    {"character_quiet", C::player, "Quiet", "character quiet", "character switch play as quiet",
+     "Not available yet in this build: pick Quiet in the launcher.", U},
+    {"character_default", C::player, "Back to my default", "character default", "character switch reset default",
+     "Back to the character you started with (the host: Snake).", 0},
+    // Arms (docs/debug-menu.md "Give weapon"): both players, lab and play; this PC's own player only.
+    {"arms_give", C::player, "Give weapon", "give_weapon equip", "weapon spawn give gun rifle pistol grenade ammo item pick",
+     "Gives you the weapon or item chosen in the list, with full ammo. Guns: only the ones the game loaded in this area "
+     "(the soldiers', yours and your partner's). Your old gun in that slot drops at your feet.", P},
     // Enemies
     {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me warp",
-     "Moves the nearest living guard (15-500 m) 5 m in front of you, facing you, armed. Needs lab.ini debug_soldier_warp=1; otherwise or when refused he is snapped to the nearest patrol route (5-60 m). The guest's copy of him is moved the same way (spawn sync).", H | P | S},
+     "Brings the nearest living guard (15-250 m; a farther one goes to the nearest patrol route) 5 m in front of you, facing you, armed. Afghanistan and Africa free roam only. Play: on (lab.ini spawn_warp=0 turns it off); lab: debug_soldier_warp=1. When refused he goes to the nearest patrol route. The guest's copy of him is moved the same way (spawn sync).", H | P | S},
     {"spawn_enemy_closest", C::enemies, "Spawn at closest camp", "spawn_enemy closest", "enemy soldier guard camp", "Moves a guard of the closest camp onto its patrol route.", H | S},
     {"spawn_enemy_route", C::enemies, "Spawn on selected route", "spawn_enemy camp route", "enemy soldier guard patrol", "Moves a guard onto the selected camp route (point 0).", H | P | kNeedsRoutes | S},
     {"enemy_goto_spawn", C::enemies, "Go to spawned guard", "goto_spawn", "teleport travel guard", "Teleports next to the last confirmed spawned guard.", kNeedsSpawn},
@@ -66,6 +84,9 @@ constexpr ActionDef kActions[] = {
     {"cp_phase_alert", C::enemies, "Phase: alert", "cp_phase nearest alert", "command post combat", "Sets the nearest command post to alert.", H | S},
     // Partner / co-op
     {"partner_goto", C::partner, "Go to partner", "goto_partner", "teleport travel join coop", "Teleports 2 m from the partner, facing him.", kNeedsPartner},
+    {"partner_bring", C::partner, "Bring partner here", "bring_partner", "teleport travel summon bring partner here coop",
+     "Brings your partner beside you in your area (in another area, use Go to first). Refused while they ride, are carried, "
+     "downed, in a cutscene or already travelling.", S},
     {"partner_show", C::partner, "Show partner", "partner stage=3 source=net look=net", "visible body", "Shows the partner body driven by the network.", 0},
     {"partner_hide", C::partner, "Hide partner", "partner stage=0", "invisible body", "Hides the partner body.", 0},
     {"partner_default_net", C::partner, "Default network movement", "partner stage=3 source=net apply=xform anim=off input=off dm=map look=net", "preset animation", "The default animated partner profile.", 0},
@@ -110,6 +131,10 @@ constexpr ActionDef kActions[] = {
      "Reads the current vehicle native seats and your actual seat. Shared riding is still unverified.", 0},
     {"buddy_follow_status", C::partner, "D-Dog follow status", "buddy_status", "dog buddy follow sync companion",
      "Reads the host dog follow state and guest position error.", 0},
+    // Arms (docs/debug-menu.md "Friendly fire"): the host decides for both copies; a guest's press asks the host.
+    {"arms_friendly_fire", C::partner, "Friendly fire", "friendly_fire 0", "friendly fire team damage partner hurt shoot off on",
+     "Turns friendly fire on or off for both players (the host decides; a guest's press asks the host). Off: your partner's "
+     "bullets, explosives and melee never hurt you. Soldiers are not affected.", P | T | S},
     // World
     {"world_time_dawn", C::world, "Dawn 06:00", "time 21600", "clock morning", "Sets the clock to 06:00.", H | S},
     {"world_time_noon", C::world, "Noon 12:00", "time 43200", "clock day midday", "Sets the clock to 12:00.", H | S},
@@ -123,6 +148,28 @@ constexpr ActionDef kActions[] = {
     {"world_weather_sandstorm", C::world, "Sandstorm", "weather sandstorm", "weather sand dust", "Forces a sandstorm.", H | S},
     {"world_weather_foggy", C::world, "Foggy", "weather foggy", "weather fog mist", "Forces fog (not in Africa).", H | S},
     {"world_weather_auto", C::world, "Weather auto", "weather auto", "weather release normal", "Releases the forced weather.", H | S},
+    // Travel (docs/debug-menu.md "Travel"): both players, every button; a guest's press asks the host, who leads.
+    {"travel_afghanistan", C::world, "Go to Afghanistan", "travel 30010", "travel teleport location afghanistan free roam both",
+     "Takes both players to Afghanistan free roam (the rock shelf above the road), no helicopter ride or menus. Refused in story "
+     "missions, cutscenes, while riding, carried, downed or already travelling.", S},
+    {"travel_africa", C::world, "Go to Africa", "travel 30020", "travel teleport location africa free roam both",
+     "Takes both players to Africa free roam (Masa Village, beside the jeep), no helicopter ride or menus. Refused in story "
+     "missions, cutscenes, while riding, carried, downed or already travelling.", S},
+    {"travel_mother_base", C::world, "Go to Mother Base", "travel 30050", "travel teleport location mother base mb both",
+     "Takes both players to Mother Base (the command platform deck), no helicopter ride or menus. Refused in story missions, "
+     "cutscenes, while riding, carried, downed or already travelling.", S},
+    // Game rules (docs/debug-menu.md "Game rules", lua/coop/debug_rules.lua): the wormhole is this player's own; the Mother
+    // Base weapons rule is the host's, for both copies (RULES 0x3E). Nothing changes in the save.
+    {"rules_wormhole_off", C::world, "Wormhole Fulton off", "wormhole 0", "rules fulton wormhole balloon instant extract",
+     "Your Fulton uses the balloon again instead of the instant wormhole. Only you; the development stays in your "
+     "save.", 0},
+    {"rules_wormhole_on", C::world, "Wormhole Fulton on", "wormhole 1", "rules fulton wormhole instant extract",
+     "Turns your wormhole Fulton back on (when your save has it).", 0},
+    {"rules_mb_weapons_on", C::world, "Weapons at Mother Base", "mb_weapons 1", "rules mother base mb weapons lethal guns",
+     "Both players can use their loadout weapons at Mother Base (stock: no lethal weapons "
+     "there). The host decides for both. Any kill at Mother Base still fails the mission.", H | S},
+    {"rules_mb_weapons_off", C::world, "Stock Mother Base rules", "mb_weapons 0", "rules mother base mb weapons stock",
+     "Mother Base back to stock for both players: no lethal weapons.", H | S},
     // Tools
     {"mission_status", C::tools, "Status", "status", "session guard readiness mission", "Reports mission, guard state and active toggles.", 0},
     {"tools_console", C::tools, "Send", "console text", "console command type", "Sends the console line as a text command.", P},
@@ -250,6 +297,25 @@ const char* LifeCodeName(std::uint32_t code) noexcept {
     case 8: return "disabled";
     default: return "unknown";
     }
+}
+const char* ResultText(const char* result) noexcept {
+    if (!result || !result[0]) return nullptr;
+    const auto starts = [result](const char* prefix) noexcept { return std::strncmp(result, prefix, std::strlen(prefix)) == 0; };
+    const auto has = [result](const char* part) noexcept { return std::strstr(result, part) != nullptr; };
+    if (starts("spawn_mother_base")) return "No enemies at Mother Base: spawn works in Afghanistan and Africa free roam.";
+    if (starts("spawn_pool_limit_8")) return "8 spawned soldiers are already near you. Deal with one first.";
+    if (starts("spawn_no_guard")) return "No soldier within 500 m to bring. Go nearer a base or outpost.";
+    if (starts("spawn_no_route") || starts("spawn_route_limit")) return "No patrol route near you to put a soldier on.";
+    if (starts("spawn_context")) return "Stopped: the mission or the menu command changed.";
+    if (starts("spawn_terminal_unknown")) return "The soldier died or was taken before he arrived.";
+    if (starts("spawn_position_timeout")) return "The soldier did not show up. Try again.";
+    if (starts("spawn_binding_error")) return "The game refused to move that soldier. Try again.";
+    if (starts("submitted_guard_here")) return "Bringing a soldier to you...";
+    if (starts("guard_here;") && has(";mode=warp;")) return "A soldier is in front of you.";
+    if (starts("guard_here;") && has(";why=far;")) return "The nearest soldier is over 250 m away: he went to the nearest patrol route.";
+    if (starts("guard_here;") && has(";why=latched;")) return "In-front placement is off until the game restarts: a soldier went to a patrol route.";
+    if (starts("guard_here;") && has(";mode=route;")) return "No in-front placement: a soldier went to the nearest patrol route.";
+    return nullptr;
 }
 bool IsMenuText(const char* text) noexcept {
     return text && std::strncmp(text, "menu ", 5) == 0;

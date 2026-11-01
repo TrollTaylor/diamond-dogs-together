@@ -146,6 +146,10 @@ do
  local WEATHER = {sunny = "SUNNY", cloudy = "CLOUDY", rainy = "RAINY", sandstorm = "SANDSTORM", foggy = "FOGGY"}
  local function run(a, id)
   local cmd = a[1]
+  if D.mission == 30050 and (cmd == "clear_enemies" or cmd == "enemy_kill_nearest" or cmd == "enemy" and a[2] == "kill") then
+   pcall(get(get(e, "MgsCoopWorld"), "note"), 15, 1, 0)
+   return false, "mb_staff" -- f30050 TARGET_DEAD
+  end
   for _, k in ipairs({"player", "spawn", "buddy", "vehicle"}) do
    local m = D[k]
    if m and m.handles[cmd] then return m.run(a, id) end
@@ -225,8 +229,7 @@ do
   elseif cmd == "partner" and #a >= 2 then
    local keys = {stage = true, source = true, apply = true, anim = true, aset = true, reset = true,
     look = true, dm = true, input = true, dmplay = true, dmstop = true,
-    -- The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): rtap=1 is the
-    -- receiver's one-shot test tap; nreload/nslot select the A/B variants (the native side re-checks).
+    -- rtap/nreload/nslot: the partner's own reload and weapon switch (docs/native-puppet.md "Weapons").
     rtap = true, nreload = true, nslot = true}
    local seen = {}
    local fields = {}

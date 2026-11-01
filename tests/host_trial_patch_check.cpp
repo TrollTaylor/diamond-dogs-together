@@ -20,7 +20,11 @@
 #include "debug_spawn_source.hpp"
 #include "debug_buddy_source.hpp"
 #include "debug_vehicle_source.hpp"
+#include "debug_character_source.hpp"
+#include "debug_spawn_play_source.hpp"
 #include "debug_boot_source.hpp"
+#include "debug_rules_source.hpp"
+#include "debug_arms_source.hpp"
 #include "marker_loading_source.hpp"
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
@@ -98,7 +102,7 @@ int main(int argc, char** argv) {
         check(output.find(partner_ride_source)==partner_at-ride_size && output.find(partner_ride_source,partner_at-ride_size+1)==std::string::npos);
         check(output.compare(partner_at,partner_size,partner_sync_source)==0);
         const std::string world_chunks[]={world_sync_source,world_enemy_source,world_outcome_source,world_phase_source,world_env_source,
-                                          world_probe_source,world_goto_source,world_follow_seed_source,world_follow_source,world_handoff_source,world_align_source,world_recovery_source,
+                                          world_probe_source,world_goto_source,world_follow_seed_source,world_follow_source,world_handoff_source,world_align_source,world_recovery_source,world_arrival_source,
                                           world_downed_source,world_sleep_clock_source,world_partner_sleep_source,world_revive_input_source,world_friendly_source,world_buddy_source,world_ride_pose_source,world_horse_cargo_source,
 #if defined(MGS_LOCAL_BUDDY_CAPACITY_TEST) && MGS_LOCAL_BUDDY_CAPACITY_TEST
                                           world_buddy_ride_source,
@@ -112,7 +116,7 @@ int main(int argc, char** argv) {
             world_at+=chunk.size();
         }
         const auto world_end=world_at;
-        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source,debug_player_source,debug_spawn_source,debug_buddy_source,debug_vehicle_source,debug_boot_source};
+        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source,debug_player_source,debug_spawn_source,debug_buddy_source,debug_vehicle_source,debug_boot_source,debug_character_source,debug_spawn_play_source,debug_rules_source,debug_arms_source};
         for(const auto& chunk : debug_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);
             check(output.find(chunk)==world_at && output.find(chunk,world_at+1)==std::string::npos);

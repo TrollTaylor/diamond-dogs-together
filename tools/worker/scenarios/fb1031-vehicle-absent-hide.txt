@@ -1,0 +1,124 @@
+# fb1031 vehicles (the two-PC session of 2026-10-31, 0.14.5): the partner drove a vehicle the viewer's copy did not
+# have, and the viewer saw the partner's body glide along on foot with no vehicle: Africa 30020, the host's relief
+# vehicle 25600 (index 0, only on the host's copy; world_relief is off) twice for ~6 s; Mother Base, jeeps 25603 /
+# 25604 Fultoned on one copy (MB vehicle sync is lab only) for ~13 s. 0.13.6 / the Africa fix drew that case with the
+# seat fallback: body 1 Warped along the streamed seat pose but playing stand_idle (show=warp).
+# The fix (wp/vehicle-missing; not run-proven yet): a vehicle this copy lacks (by-id read refused live / index: absent)
+# is refused and latched in every mission (native/partner_driver_seat.inc SeatAbsentHides): hidden for that ride, and
+# unrealized whatever partner_native_unrealize_all says (the G5 ride episode, CLEAR_ALLACTIVE: no body left standing at
+# the get-on spot); world_vehicle.lua shows world note 13 a=8 "Your partner's vehicle isn't on your screen. You'll see
+# them again when they get out." once per ride of that vehicle.
+# Same route as coop-vehicle-absent-30020.txt (hidden run 31adc898): the guest's copy alone loses the Masa Village
+# jeep (the lab lever vehicle_remove nearest: the retail Despawn by locator, this copy only, nothing on the wire;
+# world_vehicle_gone stays at its lab default, off), then the host boards and drives his copy of it.
+#   A (control): the host drives the jeep while BOTH copies have it: seated by name, no toast, nothing hidden.
+#   B (the fix): the guest's copy loses the jeep; the host drives it: hidden + toast on the guest, then on foot again.
+# Coordinator only, hidden worker (never visible), copied saves, MGS_GAME_LUA_DIR unset, no build running, under the
+# shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-vehicle-absent-hide.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# Expected:
+#   A guest  partner_ride_seat=byid; vehicle=J; seat=0; offer=1; reason=none
+#            partner_ride_seat=confirmed; vehicle=J; seat=0; ...   (no event=vehicle_absent line in A)
+#     frames control-drive-NN (guest): the host SEATED in the jeep
+#   B guest  vehicle_remove;id=J;via=locator;sync=0;alive=0
+#     host   partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=J; seat=0
+#     guest  partner_ride_seat=byid; vehicle=J; seat=0; offer=0; reason=absent; ...
+#            partner_ride_seat=refused; vehicle=J; seat=0; name=-; state=-; reason=absent; manual=0
+#            partner_ride=hide; reason=ride; ...
+#            partner_ride=unrealize_begin; ride=vehicle; act=..; kind=2; seat=blocked; vehicle=J; ...
+#            partner_ride=unrealize; ride=vehicle; ...; op=clear_allactive   (then partner_sync event=allactive_cleared)
+#            world_lua=event=ride_fast; tracks=1; ...; state=absent; ...
+#            world_lua=event=vehicle_absent; step=toast; id=J; shown=1
+#            hud=toast; kind=world_note; code=13; a=8;
+#            after the get-off: partner_ride=unrealize_end; ride=vehicle; ..., then event=allactive_set, partner_realized=1
+#     frames absent-boarded / absent-drive-NN / absent-turn-NN (guest): NO host body anywhere (not gliding with the
+#            drive, not standing at the get-on spot), the toast on screen; absent-exited (guest): the host on foot
+#            where the ride ended
+# Must NOT appear on the guest in B (check the log after the run): partner_ride_seat=fallback; ... show=warp,
+#   partner_ride_seat=play; vehicle=J, a second vehicle_absent toast for the same ride, step=error, viewer_changed,
+#   a fault. Before the fix (HEAD e394a444) B logs show=warp and the drive frames show the host standing and gliding.
+labsetting partner_native_ride=seat
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30020 -656.01 1.20 877.73 62 time=12:00 weather=sunny
+wait 2000
+both debug godmode 1
+host debug clear_enemies 100
+stance host stand
+stance guest stand
+wait 2000
+both capture control-start
+# A: the watcher ahead of the jeep and off its line, facing the host.
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind guest host 5 14
+wait 2500
+logmark both
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=256[0-9][0-9]; seat=0' 10
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+both capture control-boarded
+host hold w 1000 nowait
+guest burst control-drive 6 200
+host release
+host hold s 1200
+host release
+wait 2000
+both capture control-stopped
+host press e 150
+wait 3000
+waitlog guest 'partner_ride_seat=exit; vehicle=256[0-9][0-9]; seat=0; reason=(foot|getoff_act); via=(getoff|stop);' 10
+both capture control-exited
+# B: the guest's copy alone loses that jeep (the nearest free vehicle within 60 m of the guest).
+guest debug goto_vehicle jeep
+wait 3000
+guest run vehicle_remove nearest
+guest expect vehicle_remove;id=256[0-9][0-9];via=(locator|index);sync=0;alive=0
+wait 1500
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind guest host 6 24
+wait 2500
+both capture absent-watch
+logmark both
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_status=local; st=0x400; names=on_vehicle; ride=2; vehicle=256[0-9][0-9]; seat=0' 10
+waitlog guest 'partner_ride_seat=byid; vehicle=256[0-9][0-9]; seat=0; offer=0; reason=absent;' 10
+waitlog guest 'partner_ride_seat=refused; vehicle=256[0-9][0-9]; seat=0; name=-; state=-; reason=absent; manual=0' 10
+waitlog guest 'partner_ride=unrealize; ride=vehicle; .*op=clear_allactive' 10
+waitlog guest 'world_lua=event=vehicle_absent; step=toast; id=256[0-9][0-9]; shown=1' 10
+waitlog guest 'hud=toast; kind=world_note; code=13; a=8;' 10
+both capture absent-boarded
+host hold w 1500 nowait
+guest burst absent-drive 8 200
+host release
+host hold w+a 1200 nowait
+guest burst absent-turn 6 200
+host release
+host hold s 1200
+host release
+wait 1500
+both capture absent-stopped
+waitlog guest 'world_lua=event=ride_fast; tracks=1; .*; state=absent; .*; absent=[1-9][0-9]*; t_ms=' 10
+host press e 150
+wait 3000
+waitlog guest 'partner_ride=unrealize_end; ride=vehicle;' 15
+waitlog guest 'partner_realized=1' 20
+# The host is on foot again: the watcher 2 m from him, then 7 m back, facing him.
+guest debug goto_partner
+guest debug forward -7
+wait 2500
+both capture absent-exited
+host run position
+guest run position
+state

@@ -124,6 +124,7 @@
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_arms.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -189,6 +190,21 @@ bool stock46_groups_authorized=false,stock46_groups_returned=false;
 mgscoop::equipment_stock_probe::GeneralAuthorization equip_preload_authorization;
 mgscoop::equipment_preload_contract::Snapshot equip_preload_before;
 mgscoop::equipment_preload_contract::Snapshot equip_preload_after;
+// fb1031 gear: a partner who paired after this mission's allocation (equipment_stock_probe LateGear).
+mgscoop::equipment_stock_probe::MidLoadAuthorization equip_midload;
+mgscoop::equipment_preload_contract::Snapshot equip_midload_before;
+mgscoop::equipment_preload_contract::Snapshot equip_midload_after;
+mgscoop::equipment_stock_probe::LateGear equip_late_gear=mgscoop::equipment_stock_probe::LateGear::none;
+mgscoop::equipment_stock_probe::LateGear equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none;
+std::uint32_t equip_residency_gen=0;
+// This allocation's preload query had the partner's manifest (source remote): no late path (LateGearCovered).
+bool equip_alloc_manifest=false;
+// Every allocation (and the mission's end) starts the late-gear state over.
+void ResetLateGear() noexcept {
+    equip_midload.End(); equip_midload_before={}; equip_midload_after={};
+    equip_late_gear=equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none; equip_residency_gen=0;
+    equip_alloc_manifest=false;
+}
 std::uint64_t equipment_observation_requested_ms = 0;
 unsigned short equipment_observation_mission = 0;
 unsigned short allocation_mission = 0;
@@ -1117,6 +1133,30 @@ const char* PartnerPassCameraTurn(void*, const pp::State& state, float pitch, fl
     if (!game_base || !partner_gate_ok || !mgscoop::partner_pass_camera::Installed()) return "install";
     return mgscoop::partner_pass_camera::RequestTurn(game_base, state.P, pitch, yaw, interp);
 }
+// fb1031 (design 8.59): the follow carry's read (after the blocks' one-time check) and write.
+bool PartnerRideFollowRead(void*, const pp::State& state, mgscoop::partner_pass_camera::Follow& out) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    out = pc::Follow{};
+    if (!game_base || !partner_gate_ok || pc::FollowInstall(game_base, game_span)) return false;
+    return pc::ReadFollow(game_base, state.P, out);
+}
+bool PartnerRideFollowWrite(void*, const pp::State& state, std::uintptr_t blend, const float (&expect)[3], const float (&start)[3]) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok || pc::FollowInstall(game_base, game_span)) return false;
+    return pc::WriteFollowStart(game_base, state.P, blend, expect, start);
+}
+// fb1031 ride lag (design 8.60): the get-in camera cut's read and write (after the blocks' one-time check).
+bool PartnerRideGetInActive(void*, const pp::State& state) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok || pc::GetInCutInstall(game_base, game_span)) return false;
+    return pc::GetInActive(game_base, state.P);
+}
+const char* PartnerRideGetInCut(void*, const pp::State& state) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok) return "gate";
+    if (pc::GetInCutInstall(game_base, game_span)) return "install";
+    return pc::CutGetIn(game_base, state.P);
+}
 // Design 8.46 (lab.ini partner_seat_fpv): the seat first person's read (the subjective module after its blocks' one-time
 // check, the local gun's hand slot rec+0x3DA, the local flag record's words 0 and 3), its toggle write, the pollers and
 // the passcam seatfpv lever.
@@ -1163,6 +1203,9 @@ bool PartnerSeatFpvPollers(void*, const pp::State& state, std::uintptr_t (&rvas)
     return mgscoop::partner_pass_camera::ReadSubjectivePollers(game_base, state.P, rvas);
 }
 int PartnerSeatFpvOverride(void*) noexcept { return mgscoop::partner_pass_camera::FpvOverride(); }
+// Melee on the partner (partner_melee.hpp): the local strike that reached body 1 is one friendly hit, cause sleep, for
+// the partner's own copy (the queue the damage hook's FriendlyReplicaHit uses; Lua sends it as FRIENDLY_HIT).
+bool PartnerMeleeHit(void*, std::uintptr_t player) noexcept { return mgscoop::downed_player::QueueFriendlyHit(player, 0.f, 2); }
 // M7 seated shots, S1 (partner_seat_shot.hpp): the fire filter's publication, its counters and the seatshot lever.
 void PartnerSeatShotPublish(void*, const mgscoop::partner_seat_shot::Pub& pub) noexcept { mgscoop::partner_fire_filter::PublishSeatShot(pub); }
 void PartnerSeatShotWithdraw(void*) noexcept { mgscoop::partner_fire_filter::WithdrawSeatShot(); }
@@ -1269,7 +1312,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSeatRider, PartnerBoardRemap, PartnerPassCameraView, PartnerPassCameraOverride, PartnerPassCameraPitch,
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
-    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride};
+    PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
+    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1633,6 +1677,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.loadout_block = labc.world_loadout_block;
     world.vehicle_crew = labc.world_vehicle_crew;
     world.vehicle_damage = labc.world_vehicle_damage;
+    world.travel = labc.debug_travel;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -2038,6 +2083,43 @@ void ObserveStock46Writer() noexcept {
 // run on the natural mission owner, behind the same gates
 // as stock46 except the mission (any partner-body mission of this
 // allocation) and the admission (lab or paired play; EquipPiecesAdmitted).
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+// fb1031 gear (equipment_stock_probe LateGear): after the writer's turn, on the runtime owner. A partner who
+// paired after this mission's allocation: their bases were not preloaded (or not covered) and a writer slot
+// gave up for want of a resident entry. With partner_equip_midload the Lua mid-mission query is answered once
+// (SelectEquipPreloadReceipt); otherwise, or when it was refused or failed, the viewer is told once (note 17).
+void ObserveLateGear(const mgscoop::equipment_stock_writer::GeneralContext& context,bool admitted,bool midload) noexcept {
+    namespace w=mgscoop::equipment_stock_writer;
+    namespace sp=mgscoop::equipment_stock_probe;
+    const std::uint32_t link=mgscoop::partner_net::GetLinkInfo().session;
+    equip_midload.Track(partner_mission,link);
+    sp::LateGearInput late{};
+    late.admitted=admitted; late.manifest=context.manifest;
+    late.gameplay=context.owner && context.gates && context.body_ready;
+    const std::uint16_t remote[3]={context.want[0],context.want[1],context.want[2]};
+    unsigned wanted=0;
+    const unsigned count=partner_driver.preload_count<=3 ? partner_driver.preload_count : 3u;
+    const unsigned covered=sp::PreloadCover(remote,partner_driver.preload_ids,count,wanted);
+    late.covered=sp::LateGearCovered(equip_alloc_manifest,remote,partner_driver.preload_mission==partner_mission ?
+        partner_driver.preload_ids : nullptr,count);
+    for(const auto& slot:partner_driver.equip_status.slots)
+        late.missing=late.missing || w::MissingCacheSlot(slot);  // fb1031 gear-1: an A1 cache refusal tier C closed counts
+    late.midload=midload; late.attempted=equip_midload.Attempted(); late.returned=equip_midload.Returned();
+    const sp::LateGear decision=sp::DecideLateGear(late);
+    equip_late_gear=decision;
+    if(decision!=sp::LateGear::none && decision!=equip_late_gear_logged) {
+        equip_late_gear_logged=decision;
+        LogFormat("equip_late_gear=%s; mission=%u; link=%u; preload=%s; covered=%u/%u; missing=1; midload=%u; attempted=%u; returned=%u\r\n",
+            sp::LateGearName(decision),unsigned(partner_mission),unsigned(link),
+            partner_driver.preload_verdict[0] ? partner_driver.preload_verdict : "none",covered,wanted,unsigned(midload),
+            unsigned(late.attempted),unsigned(late.returned));
+    }
+    if(equip_midload.TakeNote(decision)) {
+        mgscoop::coop_hud::PostWorldNote(17,1,0,0,0);
+        LogFormat("equip_late_gear=noted; note=17; mission=%u; link=%u; midload=%u\r\n",unsigned(partner_mission),unsigned(link),unsigned(midload));
+    }
+}
+#endif
 void ObserveEquipWriter() noexcept {
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     namespace w=mgscoop::equipment_stock_writer;
@@ -2092,8 +2174,10 @@ void ObserveEquipWriter() noexcept {
     // The remote's current slot: the live v5 slot, else the manifest's (never a zeroed manifest's 0).
     context.remote_slot=mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot
         : context.manifest && manifest.inv_slot<w::kSlots ? manifest.inv_slot : std::uint8_t(0xFF);
+    context.residency_gen=equip_residency_gen;
     w::ObserveGeneral(context,Log);
     w::ReadStatus(partner_driver.equip_status);
+    ObserveLateGear(context,admission==nullptr,config.partner_equip_midload);
 #endif
 }
 
@@ -2659,10 +2743,11 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!sw::ParseReceipt(text, size, id, request)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
+    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
-    if (labc.role == mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("host");
+    if (labc.role == mgscoop::LabRole::guest) return refuse("host");
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     if (!debug::DispatchedCommand(id, "spawn_enemy here")) return refuse("command");
@@ -2721,14 +2806,24 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (labc.role != mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("role");
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    if (labc.role != mgscoop::LabRole::guest) return refuse("role");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     const auto grant = mgscoop::world_link::FindGrant(seq);
     if (!grant.found) return refuse("grant");
+    // Three rules: the lab key (mode lab + debug_soldier_warp, any kind), the Mother Base staff rule (play or lab,
+    // mission 30050, a correction only: docs/world-sync-design.md 7.7), and play spawn_warp (on unless named 0) for the
+    // spawn placement (kind 1) only: play refuses its patrol/combat corrections with "role" (the old play refusal, so the
+    // guest's Lua still logs native_off;native=role for them).
+    bool staff = false;
+    const sw::GuestRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.debug_soldier_warp,
+                             mission, grant.kind == mgscoop::world::place::correct};
+    if (const char* why = sw::GuestAdmit(rule, staff)) {
+        if (labc.mode != mgscoop::LabMode::play || !labc.spawn_warp) return refuse(why);
+        if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
+    }
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
@@ -2738,6 +2833,17 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = grant.pos[i];
         request.player[i] = snapshot.remote_pos[i];
+    }
+    // Mother Base staff near either player: the range is from the nearer of the host
+    // (remote pose) and this guest's own player.
+    if (staff && snapshot.pose_valid) {
+        float to_host = 0.0f, to_self = 0.0f;
+        for (unsigned i = 0; i < 3; ++i) {
+            to_host += (grant.pos[i] - snapshot.remote_pos[i]) * (grant.pos[i] - snapshot.remote_pos[i]);
+            to_self += (grant.pos[i] - snapshot.player_pos[i]) * (grant.pos[i] - snapshot.player_pos[i]);
+        }
+        if (to_self < to_host)
+            for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     }
     request.yaw = grant.yaw;
     request.max_range = grant.kind == mgscoop::world::place::correct ? sw::kMaxRangeLimitM : sw::kMaxRangeM;
@@ -3444,6 +3550,12 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             // vehicle_remove (Lua refuses them outside mode=lab too); in the lab they go on to Lua below.
             debug::Result(pending.id, 0, "vehicle_lever=refused;reason=lab_only");
             LogFormat("debug_menu=vehicle_lever; id=%u; ok=0; reason=lab_only\r\n", pending.id);
+        } else if (pending.id && ((std::strncmp(pending.text, "travel", 6) == 0 && (pending.text[6] == 0 || pending.text[6] == ' ')) ||
+                                  std::strcmp(pending.text, "bring_partner") == 0) && !mgscoop::GetLabConfig().debug_travel) {
+            // Debug menu Travel (docs/debug-menu.md "Travel"): on unless lab.ini names debug_travel=0; off, refused
+            // here before Lua, so nothing travels and no TRAVEL op is sent.
+            debug::Result(pending.id, 0, "travel=refused;reason=off");
+            LogFormat("debug_menu=travel; id=%u; ok=0; reason=off\r\n", pending.id);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};
@@ -3700,19 +3812,31 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
     const auto equals=[&](const char* value,std::size_t bytes) noexcept {
         return buffer && name && size==bytes && std::memcmp(buffer,value,bytes)==0 && std::strcmp(name,value)==0;
     };
-    const bool is_query=equals(query,sizeof(query)-1),is_returned=equals(returned,sizeof(returned)-1);
-    if(!is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
+    // fb1031 gear: the same preflight for ONE mid-mission load of a late partner's bases (partner_sync.lua,
+    // the runtime owner, lab.ini partner_equip_midload; equipment_stock_probe LateGear / MidLoadAuthorization).
+    constexpr char mid_query[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_QUERY_V1'";
+    constexpr char mid_returned[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_RETURNED_V1'";
+    constexpr char mid_failed[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_FAILED_V1'";
+    const bool mid_is_query=equals(mid_query,sizeof(mid_query)-1),mid_is_returned=equals(mid_returned,sizeof(mid_returned)-1);
+    const bool mid=mid_is_query || mid_is_returned || equals(mid_failed,sizeof(mid_failed)-1);
+    const bool is_query=mid_is_query || equals(query,sizeof(query)-1);
+    const bool is_returned=mid_is_returned || equals(returned,sizeof(returned)-1);
+    if(!mid && !is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
     namespace pc=mgscoop::equipment_preload_contract;
     bool enabled=false;
 #ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
     enabled=true;
 #endif
     const char* admission=enabled ? EquipAdmissionReason() : "not_compiled";
+    if(mid && !admission && !mgscoop::GetLabConfig().partner_equip_midload) admission="midload_off";
     enabled=enabled && admission==nullptr;
     unsigned short mission=0;
     const bool mission_read=ReadMission(mission);
+    // The allocation preload: the natural allocation owner. The mid-mission load: the runtime owner of this
+    // mission's gameplay (the writer's owner), never while it terminates.
+    const bool thread_owner=mid ? OnRuntimeThread() && !mission_terminating && mission==partner_mission : OnAllocationThread();
     const bool owner=enabled && allocation_enabled && archive_mounted && host_source_selected &&
-        OnAllocationThread() && !termination_scope.Active() && !gameplay_restore_pending &&
+        thread_owner && !termination_scope.Active() && !gameplay_restore_pending &&
         !HasDynamiteSessionOwnership() && mission_read && mgscoop::SupportsPartnerBody(mission) && mission==allocation_mission;
     const auto reader=[](std::uintptr_t address,void* destination,std::size_t bytes) noexcept {
         if(!address || address>UINTPTR_MAX-bytes) return false;
@@ -3724,6 +3848,12 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
     const auto base=reinterpret_cast<std::uintptr_t>(game_base);
     static constexpr char yes[]="return true",no[]="return false";
     static char reply[64]{};
+    namespace lg=mgscoop::equipment_stock_probe;
+    // The mid-mission query comes every ~60 frames: quiet unless the late-gear decision asks for the one load.
+    if(mid_is_query && (!enabled || equip_late_gear!=lg::LateGear::request || equip_midload.Attempted())) {
+        replacement={no,sizeof(no)-1};
+        return true;
+    }
     if(is_query) {
         // The remote's manifest may have arrived just now (it is sent from the title
         // and the ACC too): drain channel 2 once before planning (nothing is sent here).
@@ -3739,7 +3869,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         // this copy's own loadout first: its own manifest predicts the ids.
         namespace sp=mgscoop::equipment_stock_probe;
         const bool remote=enabled && EquipManifest(manifest);
-        const bool handed=enabled && mgscoop::save_handoff::PeerOnHandedSave();
+        const bool handed=!mid && enabled && mgscoop::save_handoff::PeerOnHandedSave();
         mgscoop::partner_equip_wire::Manifest own{};
         const bool own_ok=handed && !remote && pd::OwnManifest(partner_driver,own);
         const sp::PreloadSource source=sp::ChoosePreloadSource(remote,handed,own_ok);
@@ -3749,7 +3879,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         std::uint16_t ids[pc::kIds]{};unsigned count=0;
         char dropped[96]{};
         const char* sample_reason="not_sampled";
-        pc::Snapshot& candidate=equip_preload_before;
+        pc::Snapshot& candidate=mid ? equip_midload_before : equip_preload_before;
         candidate={};
         if(context.manifest) {
             mgscoop::equipment_stock_writer_contract::View<decltype(read)> v{read,base,game_span};
@@ -3791,6 +3921,36 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         std::uintptr_t mismatch=0;
         if(owner && count && !sample_reason && !mgscoop::equipment_stock_writer::PinsIntact(base,game_span,mismatch)) sample_reason="full_body_gate";
         context.preflight_ok=owner && count && sample_reason==nullptr;
+        if(mid) {
+            const char* why=equip_midload.Try(owner,mission,mgscoop::partner_net::GetLinkInfo().session,equip_late_gear,
+                                              context.preflight_ok);
+            char ids_text[48]{};
+            for(unsigned i=0;i<count && !why;++i) {
+                char one[12]{};StringCchPrintfA(one,sizeof(one),"%s%u",i ? "," : "",unsigned(ids[i]));
+                StringCchCatA(ids_text,sizeof(ids_text),one);
+            }
+            char mid_actions[96]{};
+            for(unsigned i=0;i<candidate.item_count && !why;++i) {
+                char one[32]{};
+                StringCchPrintfA(one,sizeof(one),"%s%u:%s@%u",i ? "," : "",unsigned(candidate.items[i].equip),
+                    pc::ActionName(candidate.items[i].action),unsigned(candidate.items[i].entry));
+                StringCchCatA(mid_actions,sizeof(mid_actions),one);
+            }
+            const unsigned new_hashes=candidate.new_hashes,queue_count=candidate.queue_count,queue_capacity=candidate.queue_capacity;
+            if(!why) {
+                StringCchPrintfA(reply,sizeof(reply),"return {%s}",ids_text);
+                replacement={reply,std::strlen(reply)};
+            } else {
+                candidate={};
+                replacement={no,sizeof(no)-1};
+            }
+            LogFormat("equip_midload=%s; reason=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; public_calls=lua_only; evict=0\r\n",
+                why ? "refused" : "authorized",why ? why : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
+                unsigned(context.manifest),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),
+                unsigned(manifest.slots[2].base_id),ids_text[0] ? ids_text : "none",dropped[0] ? dropped : "none",
+                mid_actions[0] ? mid_actions : "none",new_hashes,queue_count,queue_capacity);
+            return true;
+        }
         const char* reason=equip_preload_authorization.Try(context);
         partner_driver.preload_mission=mission;
         partner_driver.preload_count=0;partner_driver.preload_new_hashes=0;
@@ -3811,6 +3971,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         StringCchCopyA(partner_driver.preload_verdict,sizeof(partner_driver.preload_verdict),reason ? "refused" : "authorized");
         StringCchCopyA(partner_driver.preload_reason,sizeof(partner_driver.preload_reason),reason ? reason : "ok");
         partner_driver.preload_source=static_cast<std::uint8_t>(source);
+        equip_alloc_manifest=source==sp::PreloadSource::remote;
         partner_driver.preload_late_watch=enabled && source!=sp::PreloadSource::remote;
         char actions[96]{};
         for(unsigned i=0;i<candidate.item_count && !reason;++i) {
@@ -3824,6 +3985,22 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
             unsigned(context.manifest),sp::PreloadSourceName(source),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
             list[0] ? list : "none",dropped[0] ? dropped : "none",actions[0] ? actions : "none",candidate.new_hashes,
             candidate.queue_count,candidate.queue_capacity,unsigned(equip_preload_authorization.Attempted()));
+    } else if(mid) {
+        // The receipt of the one mid-mission call: a returned call renews the writer's missing-cache slots
+        // once (equip_residency_gen) whatever the readback says (the writer's own preflights decide binding).
+        pc::Snapshot& after=equip_midload_after;
+        after={};
+        const char* sample_reason="not_sampled";
+        if(owner && is_returned && equip_midload_before.item_count)
+            sample_reason=pc::Verify(base,game_span,read,equip_midload_before,after);
+        const bool returned_ok=equip_midload.Receipt(owner,mission,is_returned);
+        if(returned_ok && !++equip_residency_gen) equip_residency_gen=1;
+        replacement=returned_ok && !sample_reason ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+                                                  : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        LogFormat("equip_midload=%s; readback=%s; mission=%u; public_returned=%u; queue_before=%u; queue_after=%u; new_hashes=%u; residency_gen=%u; packages_loaded=unverified\r\n",
+            !returned_ok ? "receipt_refused" : sample_reason ? "returned_unverified" : "queued_verified",
+            sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(is_returned),equip_midload_before.queue_count,
+            after.queue_count,equip_midload_before.new_hashes,unsigned(equip_residency_gen));
     } else {
         pc::Snapshot& after=equip_preload_after;
         after={};
@@ -3981,7 +4158,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::unavailable,mission,worker_loading_generation});
             equipment_allocation_authorization.Begin(mission);
             stock46_authorization.Begin(mission); stock46_before={};
-            equip_preload_authorization.Begin(mission); equip_preload_before={};
+            equip_preload_authorization.Begin(mission); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::BeginAllocation(mission);
             stock46_groups_authorized=stock46_groups_returned=false;
             equipment_observation_requested_ms=0; equipment_observation_mission=0;
@@ -4034,7 +4211,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             accepted=termination_scope.Returned(cleanup_thread);
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
-            equip_preload_authorization.End(); equip_preload_before={};
+            equip_preload_authorization.End(); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_phase=MissionPhase::idle; allocation_thread=0;
@@ -4924,14 +5101,21 @@ bool DownedAdmitted(std::uint32_t mission, std::uint16_t epoch) noexcept {
 }
 bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge::Replacement& replacement) noexcept {
     static char reply[512]{};
+    // act/peer: the local body's and the teammate replica's current actions
+    // (Q+0x18[0..1], coop_carry's existing reads; 0 unread). world_downed.lua
+    // bounds a carried player's put-down: own 44, or the carrier's 39 while
+    // the own body still reads carried 43 (the 10-31 session's sea slide).
+    const auto carry=mgscoop::coop_carry::GetStatus();
+    const unsigned act=carry.body[0].read?unsigned(carry.body[0].action):0u;
+    const unsigned peer=carry.body[1].read?unsigned(carry.body[1].action):0u;
     if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s}",
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s,act=%u,peer=%u}",
         r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
         static_cast<unsigned long>(r.generation),unsigned(r.cause),
         static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
         static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
         r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false",
-        mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false"))) return false;
+        mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false",act,peer))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
 // --- Teammate rescue state (docs/STATUS.md) -----------------------------
@@ -5297,6 +5481,38 @@ void CoopRescueTick() noexcept {
         if(now-logged>2000){logged=now;Log(state.peerWake?"coop_rescue=put_down; reason=teammate_wake_granted\r\n":"coop_rescue=put_down; reason=teammate_recovered\r\n");}
     }
 }
+// Debug menu arms (lua/coop/debug_arms.lua, docs/debug-menu.md "Give weapon"): MGS_COOP_ARMS_RESIDENT_V1 answers the
+// protected stock guns of the equip writer's last census of this mission (a copy of its status: no new game read,
+// no call); MGS_COOP_ARMS_STATE_V1 stores Lua's friendly fire switch and gun list for the menu. Both only while the
+// debug menu is enabled, on the runtime thread.
+bool SelectArmsReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_ARMS_RESIDENT_V1'";
+    constexpr char state[]="return 'MGS_COOP_ARMS_STATE_V1' -- ";
+    if(!buffer) return false;
+    const bool is_query=size==sizeof(query)-1 && std::memcmp(buffer,query,size)==0;
+    const bool is_state=size>sizeof(state)-1 && size<=768 && std::memcmp(buffer,state,sizeof(state)-1)==0;
+    if(!is_query && !is_state) return false;
+    static constexpr char none[]="return nil";
+    replacement={none,sizeof(none)-1};
+    if(!mgscoop::debug_menu::Enabled() || !OnRuntimeThread()) return true;
+    if(is_state) {
+        mgscoop::debug_arms::State s{};
+        if(mgscoop::debug_arms::ParseState(buffer+sizeof(state)-1,size-(sizeof(state)-1),s)) mgscoop::debug_arms::Store(s);
+        return true;
+    }
+    unsigned short mission=0;
+    mgscoop::equipment_stock_writer::Status status{};
+    mgscoop::equipment_stock_writer::ReadStatus(status);
+    mgscoop::debug_arms::Entry census[48]{};
+    const std::size_t count=status.resident_count<48 ? status.resident_count : 48;
+    for(std::size_t i=0;i<count;++i)
+        census[i]={status.resident[i].equip,status.resident[i].type,status.resident[i].flags};
+    const bool ok=status.census_ok && ReadMission(mission) && status.mission==mission;
+    static char reply[256]{};
+    const auto n=mgscoop::debug_arms::FormatResidentReply(ok,status.mission,census,count,reply,sizeof(reply));
+    if(n) replacement={reply,n};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5489,6 +5705,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectTeamReceipt(buffer, size, replacement)) return true;
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
+    if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -5635,7 +5852,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("mission_terminating");
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
-            equip_preload_authorization.End(); equip_preload_before={};
+            equip_preload_authorization.End(); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
@@ -6116,13 +6333,21 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
-                    if (labc.debug_soldier_warp) {
+                    // Lab: debug_soldier_warp; play: spawn_warp (a host "spawn_enemy here" or a guest spawn-sync grant);
+                    // a play or lab guest also for the Mother Base staff rule (GuestWarpReceipt, world-sync-design.md 7.7).
+                    const bool warp_key = labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp;
+                    const bool warp_guest = labc.role == mgscoop::LabRole::guest &&
+                        mgscoop::soldier_warp::GuestMayWarp(labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play,
+                                                            labc.debug_soldier_warp);
+                    if (warp_key || warp_guest) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
-                        // or a guest spawn-sync grant (GuestWarpReceipt).
+                        // or a guest grant (GuestWarpReceipt: spawn sync, or a Mother Base staff correction).
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
-                        if (soldier_warp_ready) Log("soldier_warp=ready; key=debug_soldier_warp; call=manager_vt38_send; hop=runtime_census\r\n");
+                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; call=manager_vt38_send; hop=runtime_census\r\n",
+                                                          !warp_key ? "mb_staff"
+                                                          : labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

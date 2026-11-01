@@ -1,0 +1,86 @@
+# 0.14.6 carry track (the 10-31 Steam session, friend log 63053-63410 / user log 7412-7450): the user darted the friend
+# on the Mother Base command deck, picked them up and ran ~17 m at 6.6 m/s toward the deck edge (+z at x 16.7), then
+# put them down while still moving. The stock put-down released the carried player's body, which slid on BOTH copies
+# at ~8.4 m/s (own copy: z 30.66 carrier -> 35.41 body 1 s later, deck level), left the deck and fell to the sea; the
+# downed shield lets the sea kill through on purpose (protected=1) -> shared Game Over.
+# The fix (lua/coop/world_downed.lua putDown): the carried player's own copy keeps the carrier's reported spot while
+# carried; from the put-down (its own act 44, or the carrier replica's put-down act 39 while it still reads carried 43:
+# the session's case), for at most 3 s, a body more than 2 m from that spot or 1 m below it is warped back to the
+# carrier's feet (the side the carrier came from). The carrier's copy follows the streamed pose (its
+# put-down guard places a body that drops 2 m below the target). The sea death for real falls is unchanged
+# (body-safety-sea-death*.txt).
+# Run (hidden worker, coordinator only, one session at a time, no builds running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-carry-putdown-run.txt
+#     -PartnerProfile native -NativeStage gun -SaveSeed real -Mode play -WanSim bad
+# Flow: coop-carry-sleep.txt / body-safety-putdown-edge.txt (friendly dart, carry), then the session's run: the host
+# sprints with the sleeping guest along +z from z 24 and puts it down while still sprinting near z 30.
+#
+# Expect (guest, the carried player):
+#   if the stock put-down slides the body more than 2 m: world_lua=event=downed; step=putdown_place; try=1; ok=1;
+#   slide_mm=>2000 (or drop_mm=>1000); act=43|44; peer=39|.. (at most 6 tries); its own pose back next to the host
+#   no downed_damage=stock_death; no world_lua=event=recovery; step=game_over_applied
+#   downed_status after the put-down: down=1 cause=2 (still asleep on the deck, no reload)
+# Expect (host, the carrier): partner_act ... body=44(carried_putdown); no world_lua=event=recovery; step=shared_game_over;
+#   partner_body R=1 ends within ~2.5 m of the host at deck height (y about 0.8)
+# Frames putdown-run-NN / putdown-run-after: the guest lying on the deck at the host's feet on both screens.
+# If no putdown_place line appears and the body stayed on the deck, the run did not reproduce the slide: record the
+# put-down distance (host/guest position lines) here.
+# Result: not run yet.
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 45000
+wait 15000
+host debug godmode 1
+guest debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+# The session's deck: the friend's own pose ran z 23.5 -> 30.7 at x 16.6..17.0, y 0.80 (deck), the edge just past z 35.
+host debug teleport 16.7 0.8 18.0 0
+guest debug teleport 16.7 0.8 24.0 0
+wait 3000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+both capture putdown-run-before
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 6500
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require b1=1,a2b
+guest run coop_carry_bodies
+host debug teleport 16.7 0.8 22.0 0
+wait 2500
+host run position
+both capture putdown-run-carried
+host hold w+shift 1500 nowait
+wait 1000
+host hold w+shift+r 900 nowait
+host burst putdown-run 10 150
+host release
+wait 1000
+host run coop_carry_bodies
+guest run coop_carry_bodies
+waitlog host 'partner_act; .*edge=body; remote=[0-9]+\([a-z_]+\); body=44\(carried_putdown\)' 10
+wait 4000
+both capture putdown-run-after
+host run position
+guest run position
+guest run downed_status
+guest require down=1.*cause=2
+host debug position
+guest debug position
+state

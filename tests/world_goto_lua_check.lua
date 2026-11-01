@@ -60,4 +60,28 @@ c=setup();vars.missionCode=30050;c.arm(1,0);c.ready=true;c.tick(29999);check(c.c
 c.tick(30000);check(c.W.gt==nil and c.ack==0,"expired readback cannot ACK newer native request")
 c=setup();c.W.cfg=nil;c.arm(2,0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
 check(c.calls==2,"legacy metadata-less fixture behavior preserved before deadline")
+-- fb1031 arrival: step 2 into Mother Base selects the Command platform 1 approach route (f30050 DROP_ROUTE_USE_SORTIE_DEMO).
+c=setup();local routes={};c.W.api.str32=function(s)routes[#routes+1]=s;return 23 end
+TppMission.SelectNextMissionHeliStartRoute=function(m,r)c.calls=c.calls+1;c.next,c.route=m,r end
+c.W.handlers[1]({2,30050,0},0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
+check(c.next==30050 and c.route==23 and routes[1]=="ly003_cl00_30050_heli0000|cl00pl0_mb_fndt_plnt_heli_30050|rt_apr","MB step 2 route")
+check(c.stored==nil,"MB step 2 lz 0 stores no helicopter start position")
+-- fb1031 arrival-prevent repro: lz 1 into Mother Base also stores the friend's 0.14.5 host helicopter start position (the
+-- iDroid MbDvcActHeliLandStartPos call, TppMission.SetHelicopterMissionStartPosition) before the sortie; lz 0 never does.
+for _,lz in ipairs{0,1}do
+ c=setup();local order={}
+ TppMission.SetHelicopterMissionStartPosition=function(f,x,y,z)order[#order+1]="store";c.stored={f,x,y,z}end
+ TppMission.SelectNextMissionHeliStartRoute=function()order[#order+1]="route"end
+ TppMission.OnEndMissionPreparation=function()order[#order+1]="deploy"end
+ c.W.handlers[1]({2,30050,lz},0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
+ if lz==1 then
+  check(c.stored and c.stored[1]==1 and c.stored[2]==9.116 and c.stored[3]==8.75 and c.stored[4]==-42.43,"lz 1 stores the 0.14.5 start position")
+  check(table.concat(order,",")=="route,store,deploy","the stored position is set after the route and before the sortie")
+  local found=false;for _,s in ipairs(c.logs)do if s:find("event=goto;step=2;heli_start_pos=9116,8750,-42430",1,true)then found=true end end
+  check(found,"lz 1 logs the stored start position")
+ else check(c.stored==nil and table.concat(order,",")=="route,deploy","lz 0 keeps the plain route start") end
+end
+c=setup();TppMission.SetHelicopterMissionStartPosition=function()c.stored=true end
+c.W.handlers[1]({2,30020,1},0);c.ready=true;c.paired=true;c.seq="Seq_Game_MainGame";c.tick(1)
+check(c.stored==nil,"free roam lz 1 stores no helicopter start position")
 print("world_goto_lua_check: "..count.." checks passed")

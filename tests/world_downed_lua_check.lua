@@ -164,6 +164,11 @@ local function fixture(host)
         if c.maskDelay then c.maskReleaseAt = c.now + c.maskDelay else c.mask = false end
     end
     env.TppUiCommand = {AnnounceLogView = function(text) c.announces[#c.announces + 1] = text end}
+    c.warps = {}
+    env.GameObject = {SendCommand = function(target, command)
+        c.warps[#c.warps + 1] = {target = target, command = command, at = c.now}
+        return true
+    end}
     env.e.MgsCoopWorld = W
     local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
     chunk = assert(loadfile(assert(arg[3], 'partner sleep adapter argument required'))); setfenv(chunk, env); chunk()
@@ -624,6 +629,36 @@ if arg[2] then
     a,b=pair(); b.W.paired=false
     b.W.handlers[OP.FRIENDLY_HIT]({1,0,1,100000,2},b.now)
     check(not b.appliedHits, 'unpaired friendly packet cannot change native state')
+    -- Friendly fire off (debug menu, the host's switch; debug_arms.lua sets W.arms.ff on both copies): the
+    -- partner's bullets, explosives and melee all arrive through this queue and are dropped at both ends.
+    local function sent(c, op) local n = 0; for _, p in ipairs(c.tx) do if p.op == op then n = n + 1 end end; return n end
+    local function logged(c, text) for _, l in ipairs(c.logs) do if l:find(text, 1, true) then return true end end end
+    for _, cause in ipairs({0, 2}) do
+        a, b = pair(); a.W.arms, b.W.arms = {ff = false}, {ff = false}
+        a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 5, cause == 2 and 0 or 1000000, cause
+        a.now, b.now = a.now + 100, b.now + 100; a.D.tick(a.now); b.D.tick(b.now)
+        check(sent(a, OP.FRIENDLY_HIT) == 0 and a.hitAcks == 1 and a.native.hitSequence == nil,
+            'friendly fire off: the shooter consumes its queued hit and sends no FRIENDLY_HIT')
+        pump(a, b); pump(b, a); step(a, b, 100); step(a, b, 100)
+        check(not b.appliedHits and not b.native.down and logged(a, 'event=friendly_fire;step=dropped;side=shooter;seq=5'),
+            'friendly fire off: a lethal bullet or a sleep strike never downs or hurts the partner')
+    end
+    -- A FRIENDLY_HIT from a copy that still has it on (an older switch in flight) is dropped by the target.
+    a, b = pair(); b.W.arms = {ff = false}
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 6, 100000, 0
+    step(a, b, 100); step(a, b, 100)
+    check(not b.appliedHits and b.native.life == nil and
+        logged(b, 'event=friendly_fire;step=dropped;side=target;seq=6'), 'friendly fire off on the target: never queued, never applied')
+    -- Hits queued before the switch are flushed, never applied after it.
+    a, b = pair(); b.failFriendly = true
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 7, 100000, 0
+    step(a, b, 100); b.W.arms = {ff = false}; b.failFriendly = false; step(a, b, 100); step(a, b, 100)
+    check(not b.appliedHits, 'a hit queued before friendly fire went off is flushed')
+    -- On again (the default): the same hit lands.
+    a, b = pair(); a.W.arms, b.W.arms = {ff = true}, {ff = true}
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 8, 100000, 0
+    step(a, b, 100); step(a, b, 100)
+    check(b.appliedHits == 1 and b.native.life == 900, 'friendly fire on again: the partner is hurt as before')
 end
 -- Actual composed sleep authority: host accumulates certified fresh gameplay
 -- per accepted generation; interruptions pause it, and Action can wake early.
@@ -1053,5 +1088,150 @@ do
     check(r.down and not h.D.acceptStatus(status(r.sequence % 65535 + 1, r.generation, false, 0), 2, h.now),
         'standing up under the same generation still needs the grant')
     check(h.D.records[2].down, 'the refused stand-up leaves the downed record')
+end
+
+-- Put-down clamp on the carried player's own copy (10-31 Steam session: a
+-- running carrier put the sleeping partner down, the released body slid 4.7 m
+-- past the carrier off the Mother Base deck and the sea kill ended the run).
+do
+    local function carry(a, b, carrierPos, ownPos)
+        down(b); step(a, b, 100); step(a, b, 100)
+        a.native.pos = carrierPos
+        b.native.pos, b.native.carry, b.native.act = ownPos, 2, 43
+        for _ = 1, 5 do step(a, b, 100) end
+        b.warps = {}
+    end
+    local function lastWarp(c)
+        local w = c.warps[#c.warps]
+        return w and w.command and w.command.id == 'Warp' and w.target.type == 'TppPlayer2' and w.target.index == 0 and w or nil
+    end
+    -- The session's slide: carrier at z 30.66 m, own body put down at z 35.41 m.
+    local a, b = pair()
+    carry(a, b, {16536, 800, 30661}, {16540, 1700, 30600})
+    check(#b.warps == 0, 'a carried body on the carrier is never warped')
+    b.native.act, b.native.pos = 44, {16600, 1500, 31400}
+    step(a, b, 100)
+    check(#b.warps == 0, 'a put-down within 2 m of the carrier is left to the stock animation')
+    b.native.pos = {16683, 830, 35410}
+    step(a, b, 100)
+    local w = lastWarp(b)
+    check(w ~= nil, 'a put-down body that slides more than 2 m past the carrier is warped back')
+    local p = w and w.command.pos or {0, 0, 0}
+    local dx, dz = p[1] - 16.536, p[3] - 30.661
+    check(dx * dx + dz * dz <= 1.0 and p[2] >= 0.8 and p[2] <= 1.3,
+        'the warp lands at the carrier\'s feet, at the carrier\'s height')
+    check(p[3] < 30.661, 'the warp lands on the carrier\'s side away from the slide (ground the carrier walked)')
+    local n = #b.warps
+    step(a, b, 100)
+    check(#b.warps == n, 'warps are spaced (no warp every tick)')
+    for _ = 1, 30 do step(a, b, 100) end
+    check(#b.warps <= 6, 'an episode warps at most six times')
+    local found = false
+    for _, text in ipairs(b.logs) do if text:find('step=putdown_place', 1, true) then found = true end end
+    check(found, 'each put-down placement is logged')
+    -- After the window the sea-death policy is unchanged: no warp.
+    n = #b.warps; b.native.pos = {16683, -9000, 38000}
+    step(a, b, 100)
+    check(#b.warps == n, 'outside the put-down window a fall is not rescued (sea death stays)')
+
+    -- A body put down at the edge that drops more than 1 m is warped back too.
+    a, b = pair()
+    carry(a, b, {1000, 800, 2000}, {1000, 1700, 2000})
+    b.native.act, b.native.pos = 44, {1000, 800, 3100}
+    step(a, b, 100)
+    check(#b.warps == 0, 'a normal put-down in front of the carrier is untouched')
+    b.native.pos = {1000, -900, 3300}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a put-down body falling more than 1 m below the carrier is warped back')
+
+    -- No carry first: an own put-down act or a fall alone never warps.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    a.native.pos = {0, 800, 0}
+    b.native.act, b.native.pos = 44, {0, 800, 9000}
+    for _ = 1, 3 do step(a, b, 100) end
+    check(#b.warps == 0, 'no warp without an observed carry')
+
+    -- Loaded onto a horse or a vehicle as cargo: never pulled back.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    b.native.carry, b.native.act, b.native.pos = 4, 44, {0, 800, 5000}
+    for _ = 1, 3 do step(a, b, 100) end
+    check(#b.warps == 0, 'cargo on a horse or vehicle is never warped')
+
+    -- A stale carrier position is not a safe spot.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    b.native.carry, b.native.act, b.native.pos = 2, 43, {0, 1700, 0}
+    for _ = 1, 15 do b.now = b.now + 100; b.D.tick(b.now); b.tx = {} end
+    b.native.act, b.native.pos = 44, {0, 800, 6000}
+    b.now = b.now + 100; b.D.tick(b.now)
+    check(#b.warps == 0, 'no warp to a stale carrier position')
+
+    -- The session's own copy never left the carried act: the streamed act stayed 43 while the
+    -- carrier's replica played its put-down (act 39, peer) and the body slid 4.7 m and fell.
+    a, b = pair()
+    carry(a, b, {16536, 800, 30661}, {16540, 1700, 30600})
+    for _ = 1, 10 do step(a, b, 100) end
+    b.native.peer, b.native.pos = 39, {16550, 1500, 31600}
+    step(a, b, 100)
+    check(#b.warps == 0, 'the carrier\'s put-down with the body still at the carrier: no warp')
+    b.native.pos = {16683, 830, 35410}
+    step(a, b, 100)
+    w = lastWarp(b)
+    check(w ~= nil, 'carried act 43 under the carrier\'s put-down, body 4.7 m away: warped back')
+    p = w and w.command.pos or {0, 0, 0}
+    dx, dz = p[1] - 16.536, p[3] - 30.661
+    check(dx * dx + dz * dz <= 1.0 and p[3] < 30.661, 'the warp lands at the carrier\'s feet, away from the slide')
+
+    -- The pickup also plays the carrier's act 39: the first second of a carry is never a put-down.
+    a, b = pair()
+    down(b); step(a, b, 100); step(a, b, 100)
+    a.native.pos = {0, 800, 0}
+    b.native.carry, b.native.act, b.native.peer, b.native.pos = 2, 42, 39, {0, 800, 2600}
+    for _ = 1, 5 do step(a, b, 100) end
+    check(#b.warps == 0, 'the pickup (carrier act 39 within the first second) never warps')
+
+    -- A carried body lagging on a lagging carrier copy (runaway, 3 m) is left to the attachment;
+    -- a carried body far away (more than 5 m) or 2 m below the carrier is not on the shoulder: warp.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 3000})
+    for _ = 1, 15 do step(a, b, 100) end
+    check(#b.warps == 0, 'a carried body 3 m from the carrier\'s reported spot is never warped')
+    b.native.pos = {0, 1700, 5600}
+    step(a, b, 100); step(a, b, 100)
+    check(#b.warps == 0, 'off the shoulder for 100 ms only (a carrier teleport, a late status): no warp yet')
+    step(a, b, 100); step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a carried body more than 5 m from the carrier for 300 ms is warped back')
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 500})
+    for _ = 1, 15 do step(a, b, 100) end
+    b.native.pos = {0, -1500, 900}
+    for _ = 1, 4 do step(a, b, 100) end
+    check(lastWarp(b) ~= nil, 'a carried body 2 m below the carrier\'s feet is warped back')
+    -- The carrier teleports while carrying: one stale status is never a rescue.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    a.native.pos, b.native.pos = {50000, 800, 0}, {50000, 1700, 0}
+    for _ = 1, 6 do step(a, b, 100) end
+    check(#b.warps == 0, 'a carrier teleport while carrying never warps the carried body')
+
+    -- The carrier's pickup plays act 39 for about 3.3 s (the session: 28682968..28686250); only
+    -- a later 39 is its put-down. A long pickup neither warps nor uses up the carry's episode.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    b.native.act, b.native.peer = 42, 39
+    for _ = 1, 33 do step(a, b, 100) end
+    b.native.act, b.native.peer = 43, 2
+    for _ = 1, 20 do step(a, b, 100) end
+    check(#b.warps == 0, 'a 3.3 s pickup and the carry never warp')
+    b.native.peer, b.native.pos = 39, {0, 830, 4700}
+    step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'the carrier\'s put-down after a long pickup still rescues the slide')
+    -- The session's copy stayed "carried" with the replica in 39: one episode, then no more warps.
+    for _ = 1, 40 do step(a, b, 100) end
+    n = #b.warps
+    for _ = 1, 40 do step(a, b, 100) end
+    check(n <= 6 and #b.warps == n, 'a stuck carried state warps at most one episode (no warp storm)')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')

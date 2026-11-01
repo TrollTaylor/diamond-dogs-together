@@ -1,0 +1,106 @@
+# fb1031 mbgo (online 0.14.5: a debug kill of a Mother Base staff member reloaded both players without a word, and the
+# guest's Continue on a shared Game Over was refused host_only with nothing on screen). Lab, mb-ladder on both copies.
+#   1. F9 kill rows at Mother Base are refused (stock f30050 reserves TARGET_DEAD when any staff member dies): result
+#      mb_staff, toast "Killing staff at Mother Base fails the mission." (world note 15 a=1), nobody dies, no reload.
+#   2. A forced host Game Over for a non-player reason (lab probe 20 host_target_dead: the host's stock TARGET_DEAD
+#      reserve): the host's own MISSION FAILED menu; the guest gets no Game Over but the toast "Your partner's mission
+#      failed: a staff member died. Reloading." (note 15 a=2 b=1, every 3 s) until the host's Continue reloads both.
+#   3. A shared Game Over (shared_death): the guest presses Continue first -> "Waiting for your partner to continue."
+#      (note 15 a=3, every 3 s; the host logs decision=host_only); the host's Continue then reloads both.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/mb-gameover-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode lab -WanSim bad
+# Frames that prove it: a-refused (host toast), b-guest-toast / b-guest-toast-2 (guest toast, guest still playing),
+# c-guest-waiting / c-guest-waiting-2 (guest toast over its Game Over screen), c-continued (both back on the deck).
+# NEVER: step=error, event=error; in part 1 any obs m=Dead, step=shared_game_over, event=follow; step=tx; in part 2 a
+# guest game_over_applied or a guest ReserveGameOver.
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 150
+wait 15000
+# A stock Mother Base cutscene (Ocelot, D-Dog) can start within 15 s of gameplay (run 1bc18e9c): wait it out.
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'event=paired' 60
+waitlog guest 'event=paired' 60
+stance host stand
+stance guest stand
+both capture mb-start
+# --- 1. kill rows refused at Mother Base ---------------------------------------------------------------------------
+logmark both
+host run enemy kill nearest
+host expect ^mb_staff$
+waitlog host 'world=note; code=15; a=1; b=0' 10
+host capture a-refused
+host run clear_enemies 50
+host expect ^mb_staff$
+host run enemy_kill_nearest
+host expect ^mb_staff$
+host run enemy info nearest
+host expect ^enemy_info;ent=\d+;
+wait 8000
+both capture a-still-playing
+host run position
+guest run position
+# --- 2. the host's mission fails for a non-player reason -----------------------------------------------------------
+logmark both
+host worldtrigger world_probe=host_target_dead
+waitlog host 'event=probe; id=host_target_dead; step=done; result=ok' 20
+waitlog host 'event=recovery; step=host_game_over; type=[0-9]+; cause=4' 10
+waitlog guest 'event=recovery; step=partner_game_over; type=[0-9]+; why=1' 20
+waitlog guest 'world=note; code=15; a=2; b=1' 10
+guest capture b-guest-toast
+wait 4000
+both capture b-host-menu
+guest capture b-guest-toast-2
+wait 12000
+host capture b-host-menu-2
+host press enter
+wait 2500
+# A lab save can ask "Equip the Chicken Hat?" (NO focused): Enter keeps NO and continues.
+host capture b-host-popup
+host press enter
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=30050; next=30050; kind=4' 60
+waitlog guest 'event=follow; step=replay; id=[0-9]+; src=30050; next=30050; kind=4' 120
+waitgameplay host 150
+waitgameplay guest 150
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both capture b-continued
+# --- 3. shared Game Over: the guest presses Continue first ---------------------------------------------------------
+logmark both
+host worldtrigger world_probe=shared_checkpoint
+wait 5000
+guest worldtrigger world_probe=shared_death
+waitlog host 'event=recovery; step=shared_game_over; type=[0-9]+; cause=2' 30
+waitlog guest 'event=recovery; step=game_over_applied; type=[0-9]+; cause=2' 30
+wait 18000
+both capture c-menu
+guest press enter
+waitlog guest 'event=follow; step=request; kind=4; mission=30050' 15
+waitlog guest 'event=follow; step=wait_partner; kind=4' 5
+waitlog guest 'world=note; code=15; a=3; b=0' 10
+waitlog host 'event=follow; step=request_rx; rid=[0-9]+; kind=4; mission=30050; decision=host_only' 15
+guest capture c-guest-waiting
+wait 3500
+guest capture c-guest-waiting-2
+host press enter
+wait 2500
+host capture c-host-popup
+host press enter
+waitlog host 'event=follow; step=tx; id=[0-9]+; src=30050; next=30050; kind=4' 60
+waitlog guest 'event=follow; step=replay; id=[0-9]+; src=30050; next=30050; kind=4' 120
+waitgameplay host 150
+waitgameplay guest 150
+wait 10000
+both capture c-continued
+host run position
+guest run position
+state

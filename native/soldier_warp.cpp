@@ -222,6 +222,16 @@ const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
     return nullptr;
 }
 
+const char* GuestAdmit(const GuestRule& rule, bool& staff) noexcept {
+    staff = false;
+    if (!rule.lab && !rule.play) return "role";
+    if (rule.lab && rule.key) return nullptr;  // lab key: spawn sync, any kind
+    if (rule.mission == kStaffMission && rule.correct) { staff = true; return nullptr; }
+    return "disabled";
+}
+
+bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
+
 const char* Gate::Record(const Result& result) noexcept {
     if (!result.refusal && result.out == 0 && result.handled == 1) landed = true;
     if (latched || !result.refusal || (std::strcmp(result.refusal, "fault") != 0 && std::strcmp(result.refusal, "anomaly") != 0))

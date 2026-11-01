@@ -120,7 +120,7 @@ param(
     # A world sync lab probe (needs -World 1..3).
     [ValidateSet('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 'remote_area_kill', 'kill_near', 'sleep_near',
         'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
-        'shared_death', 'host_continue', 'shared_checkpoint')][string]$WorldProbe = 'none'
+        'shared_death', 'host_continue', 'shared_checkpoint', 'guest_restart', 'guest_frozen_heli', 'host_target_dead')][string]$WorldProbe = 'none'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'

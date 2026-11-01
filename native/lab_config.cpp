@@ -325,6 +325,25 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_seat1_anchor_given = true;
         if (!ok) result.partner_ride_seat1_anchor = false;
     }
+    else if (Equals(key, "partner_ride_follow")) {
+        // The follow carry (design 8.59): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_ride_follow);
+        result.partner_ride_follow_given = true;
+        if (!ok) result.partner_ride_follow = false;
+    }
+    else if (Equals(key, "partner_equip_midload")) {
+        // fb1031 gear, the mid-mission load of a late partner's gear: off unless named (lab and play); an invalid
+        // value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_equip_midload);
+        result.partner_equip_midload_given = true;
+        if (!ok) result.partner_equip_midload = false;
+    }
+    else if (Equals(key, "partner_ride_getin_cut")) {
+        // The get-in camera cut (design 8.60): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_ride_getin_cut);
+        result.partner_ride_getin_cut_given = true;
+        if (!ok) result.partner_ride_getin_cut = false;
+    }
     else if (Equals(key, "partner_seat_fpv")) {
         // Seat first person (design 8.46): an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_seat_fpv);
@@ -341,6 +360,18 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.debug_vehicle_door);
         if (ok) result.debug_vehicle_door_given = true;
     }
+    else if (Equals(key, "debug_travel")) {
+        // Debug menu Travel (lab and play, default off until proven); a named value records _given.
+        ok = ParseBool(value, result.debug_travel);
+        if (ok) result.debug_travel_given = true;
+        else result.debug_travel = false;
+    }
+    else if (Equals(key, "spawn_warp")) {
+        // Spawn enemy here in play mode (on unless named 0; lab keeps debug_soldier_warp); a named value records _given.
+        ok = ParseBool(value, result.spawn_warp);
+        if (ok) result.spawn_warp_given = true;
+        else result.spawn_warp = false;
+    }
     else if (Equals(key, "partner_seat_gun")) {
         // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_gun);
@@ -350,6 +381,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         // M7 S1: the seated passenger's bullets start past the ridden vehicle (lab and play); a named value records _given.
         ok = ParseBool(value, result.partner_seat_shot);
         if (ok) result.partner_seat_shot_given = true;
+    }
+    else if (Equals(key, "partner_melee")) {
+        // Melee on the partner: a local CQC strike reaching body 1 hands one friendly hit (lab and play); named: _given.
+        ok = ParseBool(value, result.partner_melee);
+        if (ok) result.partner_melee_given = true;
     }
     else if (Equals(key, "partner_seat_aim")) {
         // G2: the read-only back-seat aim census (lab only, default off); a named value records _given.
@@ -1197,7 +1233,7 @@ const char* NetLossModelName(NetLossModel value) noexcept { return value == NetL
 namespace {
 constexpr const char* kWorldProbeNames[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill",
     "kill_near", "sleep_near", "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
-    "shared_death", "host_continue", "shared_checkpoint"};
+    "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "guest_frozen_heli", "host_target_dead"};
 static_assert(sizeof(kWorldProbeNames) / sizeof(kWorldProbeNames[0]) == kWorldProbeMax + 1u);
 }
 
@@ -1750,12 +1786,22 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // line was shown to damage the east jeep (cat=2) in stock, and seat 1 has no stock control anywhere (seat 3: lab
     // 8a920ec8, Africa jeep, one line; 8.44)); a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
+    // Melee on the partner (docs/native-puppet.md "Melee"): follows the gun profile in lab and play since melee-one (hidden
+    // play run 4bc7b732, both copies: one CQC press each way put the other player to sleep on their own screen; a press
+    // from 4.4 m and one with the partner at the striker's back did nothing); a named 0 opts out.
+    if (!c.partner_melee_given) c.partner_melee = gun;
     // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
     // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
     if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;
     // Seat first person (design 8.46, 8.49): follows the gun profile in lab and play (the automatic first person from seats
     // 1 and 2; lab runs 61384aab / m6m7g run 2, the play run of 8.49); a named 0 opts out.
     if (!c.partner_seat_fpv_given) c.partner_seat_fpv = gun;
+    // The follow carry (design 8.59): off unless named, in lab and play, until a hidden run proves it (fb1031: both runs
+    // were refused before admission); a named 1 turns it on.
+    if (!c.partner_ride_follow_given) c.partner_ride_follow = false;
+    // The get-in camera cut (design 8.60): follows the gun profile in lab and play (hidden runs c54aae04 before / f71126c0
+    // after, play, -WanSim bad: the front-seat rider's camera stays with the jeep the partner drives off); a named 0 opts out.
+    if (!c.partner_ride_getin_cut_given) c.partner_ride_getin_cut = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was

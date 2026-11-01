@@ -572,6 +572,10 @@ int main() {
           flags.pending_frames == 34 && flags.god_mode && !flags.fulton_infinite && flags.slowmo_active && flags.game_clock_s == 43200 &&
           flags.player_life == 3000 && flags.player_life_max == 6000 && std::strcmp(flags.guard_reason, "ok") == 0, "twelve-field state parsed");
     Check(parse("0 0 0 none 0 0 0 0 0 -1 -1 on_foot") && flags.player_life == -1 && std::strcmp(flags.guard_reason, "on_foot") == 0, "unreadable life is -1");
+    // The F9 character switch and give weapon poll as pending "character" / "give" (debug_character.lua, debug_arms.lua).
+    Check(parse("0 0 9 character 31 0 0 0 0 -1 -1 ok") && std::strcmp(flags.pending_kind, "character") == 0 && flags.pending_id == 9,
+          "pending character switch state accepted");
+    Check(parse("0 0 4 give 2 0 0 0 0 -1 -1 ok") && std::strcmp(flags.pending_kind, "give") == 0, "pending give weapon state accepted");
     for (const auto* bad : {"1", "1 2 3", "0 0 0 none 0 0 0 0 0 -1 -1", "0 0 0 none 0 0 0 0 0 -1 -1 ok extra", "2 0", "1 256",
          "0 0 0 teleport 0 0 0 0 0 -1 -1 ok", "0 0 0 none 0 2 0 0 0 -1 -1 ok", "0 0 0 none 0 0 0 0 86400 -1 -1 ok",
          "0 0 0 none 0 0 0 0 0 -2 -1 ok", "0 0 0 none 0 0 0 0 0 -1 -1 OK", "0  0", " 0 0", "0 0 ", "0 0 0 none 0 0 0 0 0 -1 -1 ok;x",
@@ -672,8 +676,77 @@ int main() {
           std::strcmp(act::FindAction("enemy_unmark_all")->command, "enemy_unmark") == 0 &&
           std::strcmp(act::FindAction("mission_status")->command, "status") == 0 &&
           std::strcmp(act::FindAction("world_time_noon")->command, "time 43200") == 0, "registry command texts");
+    // Debug menu Travel (docs/debug-menu.md "Travel"): both players can use every button (a guest asks the host).
+    Check(act::FindAction("travel_afghanistan") && !std::strcmp(act::FindAction("travel_afghanistan")->command, "travel 30010") &&
+              act::FindAction("travel_africa") && !std::strcmp(act::FindAction("travel_africa")->command, "travel 30020") &&
+              act::FindAction("travel_mother_base") && !std::strcmp(act::FindAction("travel_mother_base")->command, "travel 30050") &&
+              act::FindAction("partner_bring") && !std::strcmp(act::FindAction("partner_bring")->command, "bring_partner"),
+          "Travel and Bring partner here commands");
+    for (const char* id : {"travel_afghanistan", "travel_africa", "travel_mother_base", "partner_bring"})
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & (act::kHostOnly | act::kNeedsPartner | act::kParam)),
+              "Travel rows: guest too, no partner pose needed (the partner may be elsewhere), fixed text");
+    // Game rules (docs/debug-menu.md "Game rules"): the wormhole rows are this player's own (both players); the Mother Base
+    // weapons rows are the host's and reach the guest (RULES).
+    Check(act::FindAction("rules_wormhole_off") && !std::strcmp(act::FindAction("rules_wormhole_off")->command, "wormhole 0") &&
+              act::FindAction("rules_wormhole_on") && !std::strcmp(act::FindAction("rules_wormhole_on")->command, "wormhole 1") &&
+              act::FindAction("rules_mb_weapons_on") && !std::strcmp(act::FindAction("rules_mb_weapons_on")->command, "mb_weapons 1") &&
+              act::FindAction("rules_mb_weapons_off") && !std::strcmp(act::FindAction("rules_mb_weapons_off")->command, "mb_weapons 0"),
+          "Game rules commands");
+    for (const char* id : {"rules_wormhole_off", "rules_wormhole_on"})
+        Check(act::FindAction(id) && act::FindAction(id)->category == act::Category::world &&
+                  !(act::FindAction(id)->flags & (act::kHostOnly | act::kSyncs | act::kNeedsPartner | act::kParam)),
+              "Wormhole rows: either player, local, fixed text");
+    for (const char* id : {"rules_mb_weapons_on", "rules_mb_weapons_off"})
+        Check(act::FindAction(id) && act::FindAction(id)->category == act::Category::world &&
+                  (act::FindAction(id)->flags & act::kHostOnly) && (act::FindAction(id)->flags & act::kSyncs) &&
+                  !(act::FindAction(id)->flags & (act::kNeedsPartner | act::kParam)),
+              "Mother Base weapons rows: host only, syncs to the guest, no partner needed, fixed text");
+    // On in lab and play (0.14.6, the user's release of every built feature; no play run yet): the four rows are not
+    // marked unverified and never say "Not available yet".
+    for (const char* id : {"rules_wormhole_off", "rules_wormhole_on", "rules_mb_weapons_on", "rules_mb_weapons_off"})
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & act::kUnverified) &&
+                  !std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+              "Game rules rows: on in play");
+    // Arms: on in lab and play (Give weapon, its pick list and Friendly fire).
+    for (const char* id : {"arms_give", "arms_friendly_fire"})
+        Check(act::FindAction(id) && !(act::FindAction(id)->flags & act::kUnverified) &&
+                  !std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+              "Arms rows: on in play");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
+    // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,
+    // one contiguous block closing the Player rows; the partner sees the look through partner_look.
+    {
+        const char* ids[] = {"character_snake", "character_dd_male", "character_dd_female", "character_avatar",
+                             "character_ocelot", "character_quiet", "character_default"};
+        const char* texts[] = {"character snake", "character dd_male", "character dd_female", "character avatar",
+                               "character ocelot", "character quiet", "character default"};
+        std::size_t first = action_count, last_player = 0;
+        for (std::size_t i = 0; i < action_count; ++i) {
+            if (!std::strcmp(actions[i].id, ids[0])) first = i;
+            if (actions[i].category == act::Category::player) last_player = i;
+        }
+        for (int i = 0; i < 7; ++i) {
+            const auto* a = act::FindAction(ids[i]);
+            Check(a && a->category == act::Category::player && a->command && !std::strcmp(a->command, texts[i]) &&
+                      !(a->flags & (act::kHostOnly | act::kSyncs | act::kParam | act::kNeedsPartner | act::kConfirm)) &&
+                      first < action_count && a == &actions[first + i],
+                  "character rows: both players, local, fixed text, in order");
+        }
+        // The other debug-menu tracks append their own Player rows after this block (Give weapon closes the list).
+        Check(first > 0 && first < action_count && !std::strcmp(actions[first - 1].id, "player_drop_secondary") && first + 6 <= last_player,
+              "character rows follow the stock Player rows");
+        Check(act::SearchActions("character", found, 32) == 7, "search character lists the seven rows");
+        debug::Snapshot guest{}; guest.enabled = guest.gameplay_ready = true; guest.host = false;
+        Check(act::DisabledReason(*act::FindAction("character_dd_female"), guest, false) == nullptr, "a guest can press them");
+        // Hidden-worker runs 315fa18e and 308c7879 (both screens): Snake, DD male/female, avatar and Back to my default are
+        // proven; Ocelot/Quiet in place are not (the worker had no bypass), so they stay unverified and off the page.
+        for (const char* id : {"character_snake", "character_dd_male", "character_dd_female", "character_avatar", "character_default"})
+            Check(!(act::FindAction(id)->flags & act::kUnverified), "run-proven character rows are verified");
+        for (const char* id : {"character_ocelot", "character_quiet"})
+            Check((act::FindAction(id)->flags & act::kUnverified) && std::strstr(act::FindAction(id)->tooltip, "Not available yet"),
+                  "Ocelot/Quiet rows: unverified, not available yet");
+    }
     Check(std::strcmp(act::FindAction("buddy_horse_spawn")->command, "horse_spawn") == 0 &&
           std::strcmp(act::FindAction("buddy_horse_status")->command, "horse_status") == 0, "normal-release horse commands in F9 registry");
     auto n = act::SearchActions("horse", found, 32);
@@ -734,6 +807,28 @@ int main() {
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "settling: partner_pose");
     avail.world_pair_wait = 9; avail.world_partner_mission = 30050;
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "the same mission: partner_pose");
+    // Spawn enemy here: the row's result chip says what happened in plain words (the raw result stays in the tooltip).
+    {
+        const auto plain = [](const char* result) { const char* t = act::ResultText(result); return t ? t : ""; };
+        Check(std::strstr(plain("spawn_mother_base"), "Mother Base") != nullptr, "Mother Base refusal in plain words");
+        Check(std::strstr(plain("spawn_pool_limit_8"), "8 spawned soldiers") != nullptr, "pool refusal in plain words");
+        Check(std::strstr(plain("spawn_no_guard"), "500 m") != nullptr, "no guard in range in plain words");
+        Check(std::strstr(plain("guard_here;ent=1;d=5.0;moved=40.0;far=0;mode=warp;come=1;sync=world;seq=1;frames=0;leaf=engine"),
+                          "in front of you") != nullptr, "a warp placement reads as in front of you");
+        Check(std::strstr(plain("guard_here;ent=1;d=119.7;moved=0.2;far=1;mode=route;why=disabled;come=0;sync=world;seq=1;route=r"),
+                          "patrol route") != nullptr, "a route snap says he went to a patrol route");
+        Check(std::strstr(plain("submitted_guard_here;ent=1;scope=local;mode=warp"), "Bringing") != nullptr, "the interim reads as bringing");
+        Check(std::strstr(plain("guard_here;ent=1;d=300.0;moved=0.2;far=1;mode=route;why=far;come=0;sync=world;seq=1;route=r"),
+                          "over 250 m") != nullptr, "a far guard says why he went to a route");
+        Check(std::strstr(plain("guard_here;ent=1;d=300.0;moved=0.2;far=1;mode=route;why=latched;come=0;sync=world;seq=1;route=r"),
+                          "until the game restarts") != nullptr, "a latched warp says it is off until a restart");
+        Check(std::strstr(plain("spawn_context;why=mission"), "mission") != nullptr, "context refusal in plain words");
+        Check(act::ResultText("position=1,2,3;yaw=0") == nullptr && act::ResultText(nullptr) == nullptr && act::ResultText("") == nullptr,
+              "other results keep their raw text");
+        for (const char* r : {"spawn_mother_base", "spawn_pool_limit_8", "spawn_no_guard", "spawn_context;why=command",
+                              "spawn_terminal_unknown", "spawn_position_timeout", "spawn_no_route;why=x", "spawn_binding_error"})
+            Check(act::ResultText(r) && std::strlen(act::ResultText(r)) < 96, "spawn results fit the chip");
+    }
     avail.world_partner_mission = 0;
     Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "an unknown partner mission: partner_pose");
     avail.world_partner_mission = 30010; avail.world_paired = true;

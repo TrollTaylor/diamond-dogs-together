@@ -972,6 +972,57 @@ SEAT_FPV_SITES = [
      'its slot table: slot 0 -> bit 0, 1 -> 1, 2 -> 2, 3 -> 4, 4 none, 5 -> 3, 6 -> 8'),
 ]
 SITES += SEAT_FPV_SITES
+# fb1031 (design 8.59, partner_pass_camera follow carry): the fallback camera module (live vtable 0x23B2AB0, the always-true
+# module a seated passenger and the on-foot player use; its update vt+0x20 0x101D950) writes the follow point CAM+0x170 =
+# S + alpha * (T - S): S is its blend object's start point (module+0x30 -> +0x30), alpha its weight (+0x20). The blend
+# object (CAM vt+0x218 0x1113F60 with kind 1, vtable 0x23B7EC0, 0x40 bytes) is a timed blend: reset(dur) +0x18 = dur,
+# +0x1C = elapsed = 0, +0x20 = alpha = 0; set(S) +0x30; step(dt) elapsed += dt (clamped to dur), alpha = curve. The update
+# resets it on the module's flag (P+0x48 object +0x2C4 bit 1) with S = CAM+0x100: a transition leaves from a fixed world
+# point. partner_pass_camera moves S with the ridden vehicle while a blend runs (no code patched, no game function called).
+RIDE_FOLLOW_SITES = [
+    (0x101DC31, '488b4b30488b4308488b11f30f1088c8020000ff5218488b4b30488d542430488b01ff5020',
+     'FallbackCameraModule_Update 0x101D950: blend = module+0x30; blend vt+0x18(CAM+0x2C8 = dt) steps it, vt+0x20 gives S'),
+    (0x101DD08, '488b4b30488b01ff50280f5c7c2430488b43080f287424704c8bb424b00000000fc6c0000f59f80f587c24300f29b870010000',
+     'FallbackCameraModule_Update: alpha = blend vt+0x28; CAM+0x170 = S + alpha * (T - S)'),
+    (0x101D9E0, 'f680c4020000020f84d200000080a0c4020000fdf643240440b60174050f57c9eb0c488b4328f30f10888402',
+     'FallbackCameraModule_Update: on the flag (P+0x48 obj +0x2C4 bit 1, cleared) blend vt+0x08(dur = obj+0x284, 0 with '
+     'module+0x24 bit 2)'),
+    (0x101DA0C, '0000488b4b30488b01ff5008488b4308488b4b300f288000010000488d542420660f7f442420488b01ff5010',
+     'FallbackCameraModule_Update: then blend vt+0x10(S = CAM+0x100)'),
+    (0x101B740, '40534883ec20488bd9488b0a488b8148030000488b504848895348488b01ba01000000ff901802000048894350488bc8f30f101538a50a01'
+     'f30f100de0900e01488b104883c4205b48ff22',
+     'fallback module init 0x101B740 (outer object; the module is outer+0x20): module+0x28 = P+0x48, module+0x30 = '
+     'CAM vt+0x218(1), init(0.4, 0.8)'),
+    (0x1113F85, '488d0d5c6d3d01488908488d0d42981a014889480889581033c9488948144889481c48894824488d0d0e3f2a01488908488d0d3c3f2a01'
+     '488948080f57c00f294030',
+     'PlayerCamera vt+0x218 0x1113F60: the 0x40-byte blend object, vtable 0x23B7EC0, kind +0x10, zeroed +0x14..+0x2B, +0x30'),
+    (0x1D72530, '0f284130488bc2660f7f02c3', 'blend vt+0x20: S = +0x30'),
+    (0x1D01320, 'f30f104120c3', 'blend vt+0x28: alpha = +0x20'),
+    (0x111A9C0, '33c0f30f1149184889411cc3', 'blend vt+0x08 reset(dur): +0x18 = dur, +0x1C = +0x20 = 0'),
+    (0x1AD4160, '0f28020f294130c3', 'blend vt+0x10 set(S): +0x30 = S'),
+    (0x111E9E0, '40534883ec30f30f105118488d59080f297424200f28f10f57c0f30f587314f30f5cd60f2fd07305f30f10',
+     'blend vt+0x18 step(dt): elapsed +0x1C += dt, clamped to dur +0x18'),
+    (0x111EA0B, '7310488bcbf30f117314e84643ffff0f2f7310f30f1143187207c7430c000000000f287424204883c4305bc3',
+     'blend vt+0x18 step(dt): alpha +0x20 = curve 0x1112D60; done: +0x14 = 0'),
+]
+SITES += RIDE_FOLLOW_SITES
+# fb1031 ride lag (design 8.60, partner_pass_camera get-in cut): camera module 0 (live vtable 0x23BE5E0), active for about
+# 3.5 s after a front-seat get-in and holding the camera where the get-in began. Its CanActivate (vt+0x18 0x1184D80)
+# returns flags +0x147C bit 5 and, while its request word +0xAE0 is 1, sets that bit again; its Deactivate (vt+0x08
+# 0x1182B40) clears the request (the qword at +0xADC) and the flags (bit 5 last). The cut clears bit 5 and a request word of
+# 1 so the stock selection deactivates module 0 (no code patched, no game function called).
+GETIN_CUT_SITES = [
+    (0x1184DB6, '83bbe00a00000175468b837c140000a8087430488d542430488d4be0e849e0ffff488b4424304885c075088983e00a0000eb1c',
+     'module 0 CanActivate 0x1184D80: while the request +0xAE0 == 1 (flags bit 3: the 0x1182E20 lookup) ...'),
+    (0x1184DE9, '838b7c1400002448898338060000eb0c83e0fb83c82089837c1400008b837c140000488b5c2438c1e80583e0014883c4205fc3',
+     'module 0 CanActivate: ... flags +0x147C |= 0x24, or flags = (flags & ~4) | 0x20; returns (flags >> 5) & 1'),
+    (0x1182B46, 'f6817c14000004488bd90f840201000083b9dc0a000001',
+     'module 0 Deactivate 0x1182B40: the hand-over path only with flags bit 2 and +0xADC == 1'),
+    (0x1182C58, '488b4b2883a37c140000fc33c0488983dc0a0000488b01ff502883a37c140000f3',
+     'module 0 Deactivate: flags &= ~3, the qword +0xADC (and the request word +0xAE0) = 0, flags &= ~0xC'),
+    (0x1182CEC, '83a37c140000df', 'module 0 Deactivate: flags &= ~0x20 (bit 5, the active bit CanActivate returns)'),
+]
+SITES += GETIN_CUT_SITES
 # --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers"): the door spot of one
 # vehicle for the lab's goto levers. RideVehicle CanExec 0x1246650 switches on GetVehicleType 0x55E7F0 (table
 # 0x1246EC8: types 3/4, the trucks, -> 0x1246B13; 1/2 -> 0x1246CBB, no gate): the seat world matrices 0xB7AF90(unit,
@@ -3664,6 +3715,15 @@ w('inline constexpr std::uintptr_t pass_subj_module_vtable_rva=0x23d1f00, pass_s
 w('inline constexpr std::size_t pass_subj_impl=0x20, pass_subj_mask=0x48, pass_subj_first=0x4c, pass_subj_first_poller=0xc8, pass_subj_pollers=0x78, pass_subj_count=10, pass_subj_toggles=0x60, pass_subj_started=0xe0;')
 w('inline constexpr std::uint32_t pass_subj_toggle_mask=0x11f;')
 w('inline constexpr std::uintptr_t seat_fpv_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in SEAT_FPV_SITES) + '};')
+w('// fb1031 (design 8.59): the fallback camera module (live vtable 0x23b2ab0) and its follow blend (module+0x30, vtable')
+w('// 0x23b7ec0): duration +0x18, elapsed +0x1c, alpha +0x20, start point S +0x30 (CAM+0x170 = S + alpha * (T - S)).')
+w('inline constexpr std::uintptr_t follow_module_vtable_rva=0x23b2ab0, follow_blend_vtable_rva=0x23b7ec0;')
+w('inline constexpr std::size_t follow_module_blend=0x30, follow_blend_dur=0x18, follow_blend_elapsed=0x1c, follow_blend_alpha=0x20, follow_blend_start=0x30;')
+w('inline constexpr std::uintptr_t ride_follow_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in RIDE_FOLLOW_SITES) + '};')
+w('// fb1031 ride lag (design 8.60): camera module 0 (vtable 0x23be5e0), its flags +0x147c (bit 5 active) and request +0xae0.')
+w('inline constexpr std::uintptr_t getin_module_vtable_rva=0x23be5e0;')
+w('inline constexpr std::size_t getin_flags=0x147c, getin_request=0xae0;')
+w('inline constexpr std::uintptr_t getin_cut_blocks[]={' + ','.join(f'0x{rva:x}' for rva, _, _ in GETIN_CUT_SITES) + '};')
 w('// --- G4 truck test levers (vehicle_door, lab only; docs/native-puppet.md "Truck test levers") ---------------------')
 w('// The stock truck door gate (RideVehicle CanExec types 3/4, 0x1246b13): door = seat_s + door_offset * unit(seat_s -')
 w('// seat_o) for the front seat s (0 driver, 1 passenger) and the other o, the seat world matrix 0xb7af90(unit, out, seat)')
