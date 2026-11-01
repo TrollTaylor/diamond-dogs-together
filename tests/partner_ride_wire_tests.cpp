@@ -297,11 +297,16 @@ void TestSteer() {
     Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs) && !rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs - 1),
           "a kSteerStep change is due after kSteerMinMs, not before");
     want = e; want.accel = static_cast<std::uint8_t>(e.accel - rw::kSteerStep);
-    Check(rw::SteerSendDue(true, last, 1000, want, 1060), "an accel drop of kSteerStep is due");
+    Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs), "an accel drop of kSteerStep is due");
     want = e; want.revision = 10;
-    Check(rw::SteerSendDue(true, last, 1000, want, 1060) && !rw::SteerSendDue(true, last, 1000, want, 1010), "a new ride is due after kSteerMinMs");
+    Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs) && !rw::SteerSendDue(true, last, 1000, want, 1010),
+          "a new ride is due after kSteerMinMs");
     want = e; want.vehicle = 25609;
-    Check(rw::SteerSendDue(true, last, 1000, want, 1060), "a new vehicle is due");
+    Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs), "a new vehicle is due");
+    // Review vanim-4: the addendum shares reliable channel 2 (32-message window) with carry events, 'V' receipts, ride
+    // revisions, gestures, caps and the manifest: at most 10 Hz, held back while a quarter of the window waits.
+    Check(rw::kSteerMinMs >= 100, "at most one steer packet per 100 ms (10 Hz) on the shared reliable channel");
+    Check(rw::kSteerQueueMax > 0 && rw::kSteerQueueMax <= 8, "held back while 8 or more messages wait unacknowledged");
     Check(rw::SteerSendDue(true, last, 5000, e, 1000), "a clock before the last send: due (never stuck)");
     // The viewer's plan.
     rw::SteerPlanIn in{};

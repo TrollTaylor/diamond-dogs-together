@@ -492,6 +492,9 @@ struct Hooks {
                             partner_player::RideRates& out) noexcept = nullptr;
     const char* (*ride_steer_write)(void* context, const partner_player::State& state, const partner_player::RideRates& in) noexcept =
         nullptr;
+    // r1101 vanim review vanim-4: messages queued and not yet acknowledged on reliable channel `channel`
+    // (partner_net::ReliableQueued). Null: never held back.
+    unsigned (*reliable_queued)(void* context, std::uint8_t channel) noexcept = nullptr;
 };
 // M7 seated shots: the per-mission cap of the partner_seat_shot lines.
 inline constexpr unsigned kSeatShotLogCap = 300;
@@ -1599,7 +1602,7 @@ struct Driver {
         std::uint32_t mission = 0;                     // the mission code of the saved record
         std::uint16_t vehicle = 0xFFFF;                // the seated ride the originals were saved for
         std::uint8_t seat = 0xFF;
-        unsigned writes = 0, restores = 0, refusals = 0;
+        unsigned writes = 0, restores = 0, refusals = 0, drifts = 0;
         const char* refusal = nullptr;                 // the last logged refusal
         const char* source = nullptr;                  // the last logged source
         std::uint8_t steer_units = 0xFF;               // the last logged steer (units)

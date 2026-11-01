@@ -170,6 +170,9 @@ inline constexpr std::uint8_t kSteerUnits = 250, kSteerNeutral = 125;
 // once, else a heartbeat every kSteerHeartbeatMs; the viewer uses a packet for kSteerLeaseMs.
 inline constexpr std::uint64_t kSteerMinMs = 50, kSteerHeartbeatMs = 500, kSteerLeaseMs = 1500;
 inline constexpr std::uint8_t kSteerStep = 2;
+// Review vanim-4: a due packet is held back (latest wins: the next due tick sends the newest) while this many messages
+// or more wait unacknowledged on the shared reliable channel 2 (its window is 32).
+inline constexpr unsigned kSteerQueueMax = 0;
 struct Steer {
     std::uint8_t seat=kSeatUnknown, steer=kSteerNeutral, accel{}, aux{};
     std::uint16_t revision{}, vehicle=kVehicleUnknown;
