@@ -1923,3 +1923,40 @@ without sending, the target never queues or applies one). World note 18 ARMS{a=1
 (the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
 16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.
+
+## 25. Fulton (r1101 fulton; lab key `fulton_sync`, off unless named, lab and play)
+
+Lab key `fulton_sync=0|1` (CFG `r[18]` = 1, Lua `W.fultonOn`; no refusal bit). Three parts, all off with the key off:
+
+- **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
+  held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`; the act census also names 49/50).
+  With the key on, the DM overlay (`partner_dm_overlay`, `docs/anim-round1-actions.md` 4.4) runs a Fulton-only map
+  also while `partner_native_overlay=off`: a remote act 49/50/59 held `fulton_hold_ms` (500 ms) plays
+  `stateFultonStart` (overlay index 16, a one-shot; probe `fc6037ab`: 1582 ms on body 1). Short act-59 presses
+  (160-190 ms: boarding, doors) never start it. Log `partner_fulton=configured; overlay=...; hold_ms=500;
+  acts=49,50,59` once per mission and the usual `partner_overlay=...; state=stateFultonStart; ...; source=map` lines.
+- **Op `0x46` FULTON** (70), both directions, reliable, **world** queue, level 2 (W1), lab and play, never a request;
+  5 fields, 10 bytes: `seq` (u16 1..), `kind` (u8 1 soldier / 2 vehicle), `id` (u16, the Fultoner's game object id),
+  `ent` (u32, the soldier's entity hash, 0 for a vehicle), `worm` (u8 0 balloon / 1 wormhole: the Fultoner's
+  `EQP_IT_Fulton_WormHole` level >= 1, the stock test, so Game rules Wormhole off sends 0). The Fultoner's copy sends
+  it at its own `FultonInfo` (att local; `lua/coop/world_enemy.lua` `W.fulton`); a vehicle only for an id
+  `world_vehicle.lua` types (25600..26111). The lift's own `FultonInfo` on the other copy is never sent back. A partner
+  without the op skips it by its length (unknown_op). Lines: `event=fulton;step=tx;kind=;id=;ent=;worm=;sent=` and
+  `event=fulton;step=rx;seq=;kind=;id=;ent=;worm=`.
+- **The other copy's lift (Lua).** A soldier: W1's `RequestForceFulton` (free roam, as before) now first takes the
+  Fultoner's look: when a FULTON note (60 s) says another wormhole level than this copy's own, this copy's
+  `EQP_IT_Fulton_WormHole` level is set to it for 5 s and restored (`step=restore`, also at stop); a save in between
+  writes the real level (`TppSave.SaveVarsToSlot` wrap), and Game rules Wormhole off leaves the borrowed level alone
+  (`debug_rules.lua`). The lift is **visual only**: this copy's `TppTerminal.OnFulton` is skipped once for that
+  soldier (`step=credit_skipped;id=;why=partner_lift`), so the Fultoner keeps the recruit and this save gains nobody.
+  Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0`. `TppTerminal.AddTempStaffFulton` is
+  counted in the log only (`step=staff_add;n=`, the roster check). **This differs from D1 (both saves) while the key
+  is on.** A vehicle: VEHICLE_GONE cause 1 on the receiver is the engine's own vehicle Fulton (`Seize {"Fulton"}`, the
+  balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`; `step=fulton_lift;id=;credit=`);
+  with D14 on it is credited once as before, without D14 this copy's `TppTerminal.OnFulton` is skipped once for it;
+  the readback gives it 15 s before the Despawn fallback (`via=fulton`). Index 0 is never lifted (refused as before).
+  Mother Base (spareStaff) is unchanged: a partner's Fulton of a staff member is `SetDisable` there (no roster change).
+
+[I] whether the engine reads the wormhole level when `RequestForceFulton` / `Seize {"Fulton"}` start (the 5 s hold
+covers a later read). [U] until the hidden run `tools/worker/scenarios/r1101-fulton-play.txt`: the balloon on the
+receiver's screen, the puppet's attach, and the roster lines. World note 22 is reserved for this track and unused.

@@ -257,6 +257,10 @@ same strings in the same order.
   `overlay_args`, `overlay_refused`. They reach the driver as partner one-shots `overlay=<entry>|stop`,
   `oloop=0|1`, `oms=<ms>` (also valid in `partner.trigger`). An unknown entry is refused by the
   native parser.
+- r1101 fulton: lab.ini `fulton_sync=0|1` (off unless named, lab and play) adds the Fulton act map (`In::fulton`,
+  `MapFulton`): a remote act 49/50/59 held `Params::fulton_hold_ms` (500 ms) plays `stateFultonStart` (16) once, also
+  with `partner_native_overlay=off` (the setting off never stops a Fulton entry). Short act-59 presses never start it.
+  `docs/world-sync-protocol.md` section 25 has the rest of the track (FULTON 0x46, the receiver's lift).
 
 ### 4.5 Log lines (own cap 400 per mission, then `partner_overlay=capped; limit=400`)
 
