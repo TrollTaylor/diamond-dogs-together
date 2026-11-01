@@ -691,6 +691,11 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
         a.config.mask |= partner_pad::kAction;
         a.config.sample_strip |= partner_pad::kAction;
     }
+    // r1101 animtruth (partner_native_aim_truth): the remote's raw HOLD/FIRE
+    // (and the pad's LT/RT, Compose) leave its sample while its body is not
+    // aiming (TickAimIntent: partner_slots TruthStep). Not a weapon strip: DASH
+    // and hold_stripped are untouched (the real body may sprint).
+    if (gun_stage && set.naim_truth) a.config.sample_strip |= m.truth_strip;
     // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
     // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
     // stale Arm drops it.
@@ -1264,8 +1269,16 @@ const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remo
     if (!set.ngun) return nullptr;
     if (m.reload_out.hold || m.reload_out.reconcile) return "reload";
     if (m.body_switching) return "switch";
-    if (m.remote_v5 && (m.remote_gun_flags & (pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing))) return "gun";
-    if (remote_flags & (sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading)) return "gun";
+    // r1101 animtruth: a refused aim (the body is not aiming: loco/act) is input
+    // only, so its Aiming bits never hold off the stance fix.
+    const bool aim_refused = set.naim_truth && (m.truth_verdict == partner_slots::TruthVerdict::loco ||
+                                                m.truth_verdict == partner_slots::TruthVerdict::act);
+    const std::uint8_t v5_gun = aim_refused ? std::uint8_t(pin::GunFlag::Reloading | pin::GunFlag::Changing)
+                                            : std::uint8_t(pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing);
+    const std::uint8_t lua_gun = aim_refused ? std::uint8_t(sync::ActionFlag::Firing | sync::ActionFlag::Reloading)
+                                             : std::uint8_t(sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading);
+    if (m.remote_v5 && (m.remote_gun_flags & v5_gun)) return "gun";
+    if (remote_flags & lua_gun) return "gun";
     return nullptr;
 }
 bool RemoteDowned(std::uint64_t tick_ms) noexcept {
@@ -4552,6 +4565,68 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
     }
 }
 
+// --- r1101 animtruth (docs/anim-truth.md) ------------------------------------
+// The receiver's half: partner_slots TruthStep on the remote's live act, gun
+// slot and lane; the strip joins the next Arm's sample_strip (BuildArm). One
+// partner_aim_truth line per verdict change (at most every kAimIntentLineMs,
+// own cap; a change inside the interval is logged by a later tick).
+void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& latest, const sync::AnimState& remote_anim,
+                  bool act_valid, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    partner_slots::TruthIn ti{};
+    ti.enabled = set.ngun && set.naim_truth;
+    ti.act_valid = act_valid;
+    ti.act = remote_anim.act;
+    ti.slot_valid = m.remote_v5 && m.remote_slot <= pin::kInvSlotMax;
+    ti.slot = m.remote_slot;
+    ti.support_lane = m.weapon_gate == partner_slots::Gate::support;
+    ti.now_ms = now;
+    const partner_slots::TruthOut to = partner_slots::TruthStep(m.truth, ti);
+    m.truth_verdict = to.verdict;
+    m.truth_strip = to.strip;
+    if (!ti.enabled) {
+        m.truth_logged = partner_slots::TruthVerdict::off;
+        return;
+    }
+    if (to.verdict == m.truth_logged || (m.truth_line_ms && now - m.truth_line_ms < kAimIntentLineMs) || m.truth_lines >= kAimTruthLineCap)
+        return;
+    ++m.truth_lines;
+    m.truth_logged = to.verdict;
+    m.truth_line_ms = now ? now : 1;
+    const bool live = latest_ok && latest.age_ms <= set.stale_ms;
+    const std::uint32_t held = live ? latest.packet.held : 0u;
+    EmitFormat(h, "partner_aim_truth=%s; remote_act=%u; slot=%u; gate=%s; pad_hold=%u; fire=%u; flags=0x%x; strip=0x%x; refusals=%u; "
+                  "confirms=%u%s\r\n",
+               partner_slots::TruthVerdictName(to.verdict), act_valid ? unsigned(remote_anim.act) : 0u, unsigned(m.remote_slot),
+               partner_slots::GateName(m.weapon_gate), (held & partner_pad::kHold) ? 1u : 0u, (held & partner_pad::kFire) ? 1u : 0u,
+               live ? unsigned(latest.packet.gun_flags) : 0u, to.strip, m.truth.refusals, m.truth.confirms,
+               m.truth_lines == kAimTruthLineCap ? "; capped=1" : "");
+}
+
+// The sender's half (this copy's own HOLD runs): partner_slots LocalAimStep on
+// the local effective held word and the local act; one partner_aim_local line
+// per run (no_aim / aimed) with the local gun record's 0x3C0 word and mode.
+void TickAimLocal(Driver& d, const Hooks& h, bool anim_ok, const pp::Anim& anim, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    partner_slots::LocalAimIn li{};
+    li.enabled = set.ngun && set.naim_truth && set.isend;
+    li.hold = m.sender.have_last && (m.sender.last_held & partner_pad::kHold) != 0;
+    li.act_valid = anim_ok;
+    li.act = anim_ok ? anim.act[0] : static_cast<std::uint16_t>(0);
+    li.now_ms = now;
+    const partner_slots::LocalAimOut lo = partner_slots::LocalAimStep(m.aim_local, li);
+    if (lo.event == partner_slots::LocalAimEvent::none || m.aim_local_lines >= kAimTruthLineCap) return;
+    ++m.aim_local_lines;
+    const bool gun = m.gun0_ok && m.gun0.fields_ok;
+    EmitFormat(h, "partner_aim_local=%s; act=%u; %s=%u; gun3c0=0x%x; mode=%u; slot=%u; runs=%u; aimed=%u; no_aim=%u\r\n",
+               partner_slots::LocalAimEventName(lo.event), unsigned(li.act),
+               lo.event == partner_slots::LocalAimEvent::aimed ? "after_ms" : "held_ms", lo.ms, gun ? m.gun0.gun3c0 : 0u,
+               gun ? unsigned(m.gun0.mode_cur) : 0u, m.slots0_ok ? unsigned(m.slots0.nibble) : 0xFFu, m.aim_local.runs,
+               m.aim_local.aimed_runs, m.aim_local.no_aim_runs);
+}
+
 // --- Anim round 1 weapons (docs/anim-round1-weapons.md) -------------------------
 // The state-driven aim intent's gate (partner_slots AimGate) for the next Arm,
 // the remote's aim act, and the partner_aim_intent line (own cap, change lines
@@ -4588,6 +4663,7 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
                        set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u,
                        set.nsupport && set.nplaced && set.nplace_mirror ? 1u : 0u);
     }
+    TickAimTruth(d, h, latest_ok, latest, remote_anim, act_valid, now);
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;
@@ -5588,7 +5664,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     m.remote_mag_ok = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Mag);
     m.remote_mag = m.remote_mag_ok ? latest.packet.mag : static_cast<std::uint16_t>(0);
     m.remote_mag_cap = m.remote_mag_ok ? latest.packet.mag_cap : static_cast<std::uint16_t>(0);
-    const bool remote_aiming = (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
+    // r1101 animtruth: with partner_native_aim_truth the remote "aims" only while
+    // its body does (the last truth verdict: aim or keep), never on the pad alone.
+    const bool truth_known = set.ngun && set.naim_truth && m.truth_verdict != partner_slots::TruthVerdict::off &&
+                             m.truth_verdict != partner_slots::TruthVerdict::nostate;
+    const bool remote_aiming = truth_known ? (m.truth_verdict == partner_slots::TruthVerdict::aim ||
+                                              m.truth_verdict == partner_slots::TruthVerdict::keep)
+                                           : (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
     const bool body_aiming = gun_ok && gun.node_active && (gun.gun3c0 & c::gun_flag_hold);
     if (remote_aiming == body_aiming) {
         if (!m.aim_since_ms) m.aim_since_ms = now ? now : 1;
@@ -5606,6 +5688,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         // Anim round 1: the aim intent's gate, the weapon context line, the census
         // and the reload rate the hook applied (at body 1's reload exit).
         TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_live, is.native, now);
+        TickAimLocal(d, h, anim_ok, anim, now);
         TickWeaponCtx(d, h, remote_anim, pose_live, gun_ok, gun, is.native, now);
         TickFireCensus(d, h, now);
         if (set.ngun && set.nreload_rate == PartnerNativeReloadRate::adapt && m.reload_out.body_event &&
@@ -6837,6 +6920,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nunsupported = lab.partner_native_unsupported;
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;
+    d.settings.naim_truth = lab.partner_native_aim_truth;
     d.settings.nreload_rate = lab.partner_native_reload_rate;
     d.settings.fire_census = lab.partner_fire_census;
 

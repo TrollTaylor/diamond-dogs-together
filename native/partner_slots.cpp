@@ -205,14 +205,34 @@ const char* TruthVerdictName(TruthVerdict value) noexcept {
     }
 }
 
-bool TruthBodyOwnedAct(std::uint16_t act) noexcept { return AimBlockedAct(act); }
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept { return AimBlockedAct(act) || act == 29 || act == 45; }
 
-// RED stub (r1101 animtruth): never strips.
 TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
-    (void)in;
     TruthOut o{};
-    o.verdict = TruthVerdict::off;
+    const std::uint32_t refuse = partner_pad::kHold | partner_native::kPadFire;
+    if (!in.enabled) {
+        s.aim_ms = 0;
+        o.verdict = TruthVerdict::off;
+    } else if (!in.act_valid) {
+        o.verdict = TruthVerdict::nostate;
+    } else if (AimAct(in.act)) {
+        s.aim_ms = in.now_ms ? in.now_ms : 1;
+        o.verdict = TruthVerdict::aim;
+    } else if (TruthBodyOwnedAct(in.act)) {
+        o.verdict = TruthVerdict::act;
+        o.strip = refuse;
+    } else if (!in.slot_valid || in.slot > 2 || in.support_lane) {
+        o.verdict = TruthVerdict::lane;
+    } else if (in.act >= 1 && in.act <= 6) {
+        const bool keep = s.aim_ms && in.now_ms >= s.aim_ms && in.now_ms - s.aim_ms < kTruthKeepMs;
+        o.verdict = keep ? TruthVerdict::keep : TruthVerdict::loco;
+        if (!keep) o.strip = refuse;
+    } else {
+        o.verdict = TruthVerdict::other;
+    }
     o.changed = o.verdict != s.last;
+    if (o.changed && o.strip) ++s.refusals;
+    if (o.changed && o.verdict == TruthVerdict::aim) ++s.confirms;
     s.last = o.verdict;
     return o;
 }
@@ -225,10 +245,34 @@ const char* LocalAimEventName(LocalAimEvent value) noexcept {
     }
 }
 
-// RED stub (r1101 animtruth): never reports.
 LocalAimOut LocalAimStep(LocalAimState& s, const LocalAimIn& in, std::uint32_t no_aim_ms) noexcept {
-    (void)s; (void)in; (void)no_aim_ms;
-    return LocalAimOut{};
+    LocalAimOut o{};
+    if (!in.enabled || !in.hold) {
+        s.run = false;
+        return o;
+    }
+    if (!s.run) {
+        s.run = true;
+        s.aimed = s.reported = false;
+        s.since_ms = in.now_ms;
+        ++s.runs;
+    }
+    const std::uint32_t ms = in.now_ms >= s.since_ms ? static_cast<std::uint32_t>(in.now_ms - s.since_ms) : 0u;
+    if (in.act_valid && AimAct(in.act)) {
+        // The first aim act of the run (also after a no_aim: a late aim is reported with its delay).
+        if (!s.aimed) {
+            s.aimed = s.reported = true;
+            ++s.aimed_runs;
+            o.event = LocalAimEvent::aimed;
+            o.ms = ms;
+        }
+    } else if (!s.aimed && !s.reported && ms >= no_aim_ms) {
+        s.reported = true;
+        ++s.no_aim_runs;
+        o.event = LocalAimEvent::no_aim;
+        o.ms = ms;
+    }
+    return o;
 }
 
 } // namespace mgscoop::partner_slots

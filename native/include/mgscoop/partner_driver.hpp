@@ -178,6 +178,7 @@ inline constexpr std::uint64_t kNativeGunChangeMs = 100;    // partner_native_gu
 inline constexpr unsigned kNativeGunChangeCap = 3600;
 inline constexpr std::uint64_t kAimIntentLineMs = 100;      // partner_aim_intent change lines
 inline constexpr unsigned kAimIntentLineCap = 2000;
+inline constexpr unsigned kAimTruthLineCap = 1000;          // partner_aim_truth / partner_aim_local lines per mission
 inline constexpr unsigned kAnimWeaponCap = 256;             // partner_weapon=unsupported / dry / rate lines (each family)
 inline constexpr unsigned kCensusLinesPerSecond = 20;       // partner_fire_census per-request lines
 inline constexpr unsigned kCensusLineCap = 4000;

@@ -398,6 +398,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
     @{ Key = 'partner_act_log'; Json = 'act_log'; Kind = 'bool' },
     @{ Key = 'partner_native_stance_fast'; Json = 'native_stance_fast'; Kind = 'bool' },
+    # r1101 animtruth (docs/anim-truth.md): the puppet draws what the remote's body does (off unless named).
+    @{ Key = 'partner_native_aim_truth'; Json = 'native_aim_truth'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # The developer test boot (docs/test-boot.md; lab only: play forces both off, and only a background-worker build's
     # owned private worker acts on them): skip the logos and the title, and land at a spot after the title.

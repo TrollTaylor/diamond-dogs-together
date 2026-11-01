@@ -3,6 +3,7 @@
 #include "mgscoop/partner_rates.hpp"
 #include <cmath>
 #include <cstring>
+#include "mgscoop/partner_pad_bits.hpp"
 
 namespace mgscoop::partner_input {
 namespace {
@@ -441,9 +442,11 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.rdir = static_cast<float>((rx != 0.0 || ry != 0.0) ? std::atan2(rx, ry) : 0.0);
         }
         // Analog triggers (aim/fire on a pad) only from a live sample, never held through a stall.
+        // r1101 animtruth: a sample strip of HOLD (aim) / FIRE also zeroes the pad's
+        // LT / RT level, so a refused aim stays refused on a gamepad.
         if (c.triggers && live) {
-            j.lt = static_cast<float>(p.lt / 255.0);
-            j.rt = static_cast<float>(p.rt / 255.0);
+            j.lt = (c.sample_strip & partner_pad::kHold) ? 0.0f : static_cast<float>(p.lt / 255.0);
+            j.rt = (c.sample_strip & partner_pad::kFire) ? 0.0f : static_cast<float>(p.rt / 255.0);
         }
         if (p.version >= 3) {
             j.look_valid = (p.xflags & XFlag::Look) != 0;
