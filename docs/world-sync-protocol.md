@@ -1928,17 +1928,24 @@ A partner without the op skips it by its length (unknown_op): its own switch sta
 
 Op `0x44` VSPAWN (68), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
 9 fields, 22 bytes: `seq` (u16 1..), `kind` (u8 1 the guest's ask / 2 the host's press / 3 the host's spawn for an ask /
-4 the host's refusal of an ask), `class` (u8 1 light vehicle / 2 truck), `num` (u8, the authored locator
+4 a refusal: the host's of an ask, or the guest's copy not taking a 2 / 3, answered to the host), `class` (u8 1 light vehicle / 2 truck), `num` (u8, the authored locator
 `veh_<class>_NNNN`; 255 none), `x`, `y`, `z` (i32 mm), `yaw` (i32 mdeg, -360000..360000), `reason` (u8 0 ok, else the
 refusal 1..15). Sent only while the lab key `debug_vspawn` is on (off unless named; `MGS_COOP_VSPAWN_CFG_V1` answers it
-to Lua). The host decides: its own press picks and moves the vehicle and sends kind 2 with the locator and the spot; a
-guest's press sends kind 1 with the guest's own pose, the host picks for the spot 6 m in front of the guest, moves it
-and answers kind 3 (or kind 4 with the reason). A guest applies kinds 2 and 3 (the same locator to the same pose) and
-never kind 1; the host never applies 2..4. Lua (`lua/coop/debug_vspawn.lua`): the vehicle is one of the area's own
+to Lua). The host decides: its own press (refused while unpaired) picks the vehicle and sends kind 2 with the locator
+and the spot, and moves it only once that went out; a guest's press sends kind 1 with the guest's own pose, the host
+picks for the spot 6 m in front of the guest, sends kind 3 and moves it (or answers kind 4 with the reason). A wreck is
+re-created on the host first and its kind 2 / 3 goes out only once the host's copy reads it back in place (never: the
+press toasts b=7, an ask gets kind 4 reason 7). A guest applies kinds 2 and 3 (the same locator to the same pose) unless
+its own key is off, its player stands within 3.5 m of the spot, or its copy has the vehicle occupied (its own LRRP crew)
+or being lost (VEHICLE_GONE watch / held); then it answers kind 4 (reason 1 off, 10 in the way, else 9) and the host
+toasts b=10 or b=9. The host refuses (b=10) a spot within 3.5 m of the other player: the partner's last pose (the debug
+command's `pp`) for its own press, its own player for an ask. The guest never applies kind 1; the host never applies
+2..4. Lua (`lua/coop/debug_vspawn.lua`): the vehicle is one of the area's own
 (an authored `VEHICLE_SPAWN_LIST` locator), moved by the instance command `SetPosition{position, rotY}` (degrees), a
 wreck first re-created by `Respawn{name}`; both copies read the pose back (`event=vspawn; step=placed; ok=`). Because
 the same locator stands at the same pose on both copies, VEHICLE_GONE / VEHICLE_STATE and the ride sync treat it as that
 map vehicle. World note 20 VSPAWN{a=1 spawned in front of you (b 1 jeep / 2 truck) | 2 your partner spawned one (b class) |
 3 refused (b 1 key off, 2 not free roam, 3 none free, 4 not in this area, 5 not on foot, 6 not paired, 7 failed, 8 no
-answer)} toasts on the presser's and the partner's screen. 0x45 / 0x46 and notes 21 / 22 belong to the 11-01 supply and
-Fulton tracks. A partner without the op skips it by its length (unknown_op): nothing moves there.
+answer, 9 only on your screen: the partner's copy did not take it, 10 a player on the spot)} toasts on the presser's and the partner's screen. 0x45 / 0x46 and notes 21 / 22 belong to the 11-01 supply and
+Fulton tracks. A partner without the op skips it by its length (unknown_op): nothing moves there and no kind 4 comes back (the
+host's toast still says both screens; pairing across builds shows the MISMATCH note).

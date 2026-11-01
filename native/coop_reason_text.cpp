@@ -391,9 +391,12 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 3: return Put(out, capacity, "No free vehicle of that kind in this area right now.");
         case 4: return Put(out, capacity, "That vehicle kind is not loaded in this area.");
         case 5: return Put(out, capacity, "Get on foot first: no vehicle spawn while riding or in a cutscene.");
-        case 6: return Put(out, capacity, "Not paired with the host yet: vehicle spawn waits for the pairing.");
+        case 6: return Put(out, capacity, "Not paired yet: vehicle spawn waits for the pairing.");
         case 7: return Put(out, capacity, "The vehicle could not be brought here. Try again.");
         case 8: return Put(out, capacity, "The host did not answer the vehicle spawn. Try again.");
+        // 9: the guest's copy did not take the host's vehicle (its key off, occupied there); 10: a player on the spot.
+        case 9: return Put(out, capacity, "Your partner's game did not take the vehicle: it is only on your screen.");
+        case 10: return Put(out, capacity, "Someone stands where the vehicle would go. Step aside and try again.");
         default: return false;
         }
     default:  // unknown (16 MISMATCH is above): no toast

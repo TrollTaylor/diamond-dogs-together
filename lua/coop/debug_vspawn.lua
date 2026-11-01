@@ -1,28 +1,16 @@
--- Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle"; lab key debug_vspawn, off unless named, lab and play).
--- F9 World > Vehicles: vspawn lv|trc brings a jeep (light vehicle) or a truck 6 m in front of whoever presses, facing
--- their way, on both screens; vspawn_status is read only. Afghanistan and Africa free roam only.
--- Free roam loads only the faction's light vehicle and truck bodies (docs/vehicles-companions-design.md 3.5, 3.6) and
--- the class command Spawn refuses a live name, so the host brings one of the area's own vehicles of that class: an
--- authored locator of the area VEHICLE_SPAWN_LIST (veh_lv_NNNN, veh_trc_NNNN) that is unridden, not an LRRP
--- (soldier-driven) vehicle and not the partner's ride (an unridden LRRP one only as the last resort: each copy's AI
--- drives those, and Afghanistan's six trucks are all LRRP); live before wrecked, never brought before (else the oldest),
--- then the farthest from the spot. The stock instance command SetPosition{position, rotY in degrees}
--- (s10050_sequence.lua) moves it; a wreck is first re-created by the class command Respawn{name} (0xB31710: the name
--- binding stays). The same locator at the same pose on both copies is the same vehicle for world_vehicle.lua (by
--- locator, nearest of its type): riding together, driving, damage, Fulton and VEHICLE_GONE as for any map vehicle.
--- VSPAWN 0x44 (docs/world-sync-protocol.md section 25): seq, kind (1 the guest's ask, 2 the host's press, 3 the host's
--- spawn for the guest's ask, 4 the host's refusal of it), class (1 lv, 2 trc), locator number (255 none), xyz mm, yaw
--- mdeg, reason. World note 20: a=1 spawned in front of you (b class), 2 your partner spawned one (b class), 3 refused
--- (b reason: 1 off, 2 not free roam, 3 none free, 4 not in this area, 5 not on foot, 6 not paired, 7 failed, 8 no answer).
+-- Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle", docs/world-sync-protocol.md section 25 VSPAWN 0x44, note
+-- 20; lab key debug_vspawn, off unless named): vspawn lv|trc brings one of the area's authored vehicles of that class
+-- 6 m in front of whoever presses, on both screens (the host picks; a wreck is re-created by Respawn{name} first).
 do
  local D, W = e.MgsCoopDebug, e.MgsCoopWorld
  local P = type(D) == "table" and D.player
  if type(P) == "table" and type(P.handles) == "table" and type(P.run) == "function" and type(D.api) == "table" then
   local A = D.api
   local get, fmt, floor, sqrt = A.get, string.format, math.floor, math.sqrt
-  local OP, NOTE, FRONT, UP, NULL = 68, 20, 6, 0.8, 65535
-  local CLASS, CNAME, CWORD = {lv = 1, trc = 2}, {"lv", "trc"}, {"jeep", "truck"}
-  local WHY = {off = 1, mission = 2, none_free = 3, not_loaded = 4, busy = 5, unpaired = 6, failed = 7, timeout = 8}
+  local OP, NOTE, FRONT, UP, NEAR, NULL = 68, 20, 6, 0.8, 3.5, 65535
+  local CLASS, CNAME = {lv = 1, trc = 2}, {"lv", "trc"}
+  local WHY = {off = 1, mission = 2, none_free = 3, not_loaded = 4, busy = 5, unpaired = 6, failed = 7, timeout = 8,
+   partner = 9, in_way = 10}
   local V = {seq = 0, tick = 0, recent = {}, moves = {}}
   D.vspawn = V
   if type(W) == "table" and type(W.OP) == "table" then W.OP.VSPAWN = OP end
@@ -37,7 +25,6 @@ do
    local ok, r = pcall(f, id, cmd)
    if ok then return r end
   end
-  -- The lab key, answered by native (an older loader leaves the receipt unanswered: off).
   function V.on() return A.receipt("return 'MGS_COOP_VSPAWN_CFG_V1'") == 1 end
   local function isHost()
    if type(W) == "table" and W.active == true then return W.host == true end
@@ -45,28 +32,31 @@ do
   end
   local function paired() return type(W) == "table" and W.paired == true end
   local function freeRoam() local m = get(vars, "missionCode"); return m == 30010 or m == 30020 end
-  -- Gameplay, on foot (never while riding, in a cutscene or loading).
-  local function onFoot()
+  -- nil on foot, else the check that refused (by=): STAND in a vehicle too (run 5cdbfada D); S.sat is false on foot.
+  local function riding()
    local f, o = get(TppMission, "CheckMissionState"), get(PlayerInfo, "OrCheckStatus")
-   if type(f) ~= "function" or type(o) ~= "function" or f() ~= true then return false end
-   -- The stance still reads STAND in a vehicle (hidden run 5cdbfada D): ON_VEHICLE / ON_HORSE first, then a back seat
-   -- of the seats module (BOARD_SEAT lpv: a guest passenger has no ON_VEHICLE).
+   if type(f) ~= "function" or type(o) ~= "function" or f() ~= true then return "state" end
    for _, k in ipairs({"ON_VEHICLE", "ON_HORSE"}) do
     local s = get(PlayerStatus, k)
-    if s ~= nil and o({s}) == true then return false end
+    if s ~= nil and o({s}) == true then return k:lower() end
    end
    local S = get(get(W, "ridePose"), "seat")
    if type(S) == "table" and type(S.board) == "function" and type(S.sat) == "function" then
     local ok, v = pcall(function() return S.sat(S.board("poll")) end)
-    if ok and v ~= nil then return false end
+    if ok and v then return "seat" end
    end
-   return o({get(PlayerStatus, "STAND"), get(PlayerStatus, "SQUAT"), get(PlayerStatus, "CRAWL")}) == true
+   if o({get(PlayerStatus, "STAND"), get(PlayerStatus, "SQUAT"), get(PlayerStatus, "CRAWL")}) ~= true then return "stance" end
+  end
+  local function near(x, z, px, pz) return type(px) == "number" and type(pz) == "number" and sqrt((px - x) ^ 2 + (pz - z) ^ 2) < NEAR end
+  local function me() return get(vars, "playerPosX"), get(vars, "playerPosZ") end
+  local function partner()
+   local p = get(D, "partnerPose")
+   if type(p) == "table" and type(p[1]) == "number" and type(p[3]) == "number" then return p[1] / 1000, p[3] / 1000 end
   end
   local function vid(loc)
    local f = get(GameObject, "GetGameObjectId")
    if type(f) ~= "function" then return nil end
    local ok, v = pcall(f, "TppVehicle2", loc)
-   -- Index 0 (25600) is the relief vehicle: never one of these.
    if ok and int(v, 25601, 26111) then return v end
   end
   local function pose(id)
@@ -76,11 +66,11 @@ do
    if ok and type(x) == "number" and type(y) == "number" and type(z) == "number" then return x, y, z end
   end
   local function alive(id) return send(id, {id = "IsAlive"}) == true end
-  -- Why `id` must not be taken (nil: free): world_vehicle.lua's verdict (the local rider, an occupied seat, the
-  -- partner's ride), else the stock rider array.
+  -- Why `id` must not be taken (nil: free): VEHICLE_GONE's watch / held / verdict, else the stock rider array.
   local function busy(id)
    local G = get(W, "vehicleGone")
    if type(G) == "table" and type(G.busy) == "function" then
+    for _, k in ipairs({"watch", "held"}) do if get(get(G, k), id) then return k end end
     local ok, why = pcall(G.busy, id)
     if not ok then return "busy_error" end
     return why
@@ -89,7 +79,6 @@ do
    if type(r) ~= "table" then return "riders_unreadable" end
    for _, v in pairs(r) do if v ~= NULL then return "occupied" end end
   end
-  -- The area's authored locators of one class: {loc, num}.
   local function authored(class)
    local m = get(get(W, "MISSIONS"), get(vars, "missionCode"))
    local name = get(m, "areaEnemy")
@@ -114,7 +103,6 @@ do
    for i = 1, #a do if a[i] ~= b[i] then return a[i] < b[i] end end
    return false
   end
-  -- The host's pick for the spot (x, z), or nil, reason.
   function V.pick(class, x, z)
    local list = authored(class)
    if #list == 0 then return nil, "not_loaded" end
@@ -136,22 +124,27 @@ do
    m.placed = V.tick
    return ok
   end
-  -- Both copies: locator `num` of `class` to (x, y, z) facing yaw degrees. A live one moves at once; a wreck is
-  -- re-created first and moved once it answers IsAlive (90 updates at most).
-  function V.apply(class, num, x, y, z, yaw, by)
+  -- Both copies: true, or false, why. kind: the host's VSPAWN for a wreck, sent once placed.
+  function V.apply(class, num, x, y, z, yaw, by, kind)
    local loc = fmt("veh_%s_%04d", CNAME[class], num)
    local id = vid(loc)
-   if not id then log(fmt("step=apply;loc=%s;ok=0;reason=no_id", loc)); return false end
+   if not id then log(fmt("step=apply;loc=%s;ok=0;reason=no_id", loc)); return false, "no_id" end
    local why = busy(id)
-   if why == "local_rider" then log(fmt("step=apply;loc=%s;id=%d;ok=0;reason=local_rider", loc, id)); return false end
-   local m = {loc = loc, id = id, x = x, y = y, z = z, yaw = yaw, by = by, at = V.tick}
+   -- The guest: never one occupied (its LRRP crew) or being lost here; the partner's latched ride is the same.
+   if why == "local_rider" or why and not isHost() and why ~= "partner_ride" and why ~= "riders_unreadable" then
+    log(fmt("step=apply;loc=%s;id=%d;ok=0;reason=%s", loc, id, why))
+    return false, why
+   end
+   local m = {class = class, num = num, loc = loc, id = id, x = x, y = y, z = z, yaw = yaw, by = by, at = V.tick, kind = kind}
    if alive(id) then V.place(m)
    else
     m.respawn = true
     send({type = "TppVehicle2"}, {id = "Respawn", name = loc})
-    -- world_vehicle.lua counts a lost id as gone for good: it is back now.
+    -- Back: out of VEHICLE_GONE's gone and its PAIRED re-send list.
     local G = get(W, "vehicleGone")
-    if type(G) == "table" and type(G.gone) == "table" then G.gone[id] = nil end
+    if type(get(G, "gone")) == "table" then G.gone[id] = nil end
+    local s = get(G, "sent")
+    if type(s) == "table" then for i = #s, 1, -1 do if get(s[i], "id") == id then table.remove(s, i) end end end
    end
    V.moves[id], V.recent[loc] = m, V.tick
    log(fmt("step=apply;loc=%s;id=%d;via=%s;by=%s;x=%.2f;y=%.2f;z=%.2f;yaw=%.1f;busy=%s", loc, id, m.respawn and "respawn" or "setpos",
@@ -165,37 +158,47 @@ do
    log(fmt("step=tx;kind=%d;seq=%d;class=%d;num=%d;reason=%d;sent=%d", kind, V.seq, class, num, reason, ok and 1 or 0))
    return ok
   end
-  -- The host: pick and apply for a presser at (x, y, z) facing yaw degrees; the move, or nil, reason.
-  local function hostSpawn(class, x, y, z, yaw, by)
+  local function hostPick(class, x, y, z, yaw, by)
    if not freeRoam() then return nil, "mission" end
    local r = math.rad(yaw)
    local sx, sz = x + FRONT * math.sin(r), z + FRONT * math.cos(r)
+   -- Not onto the other player (3.5 m, as world_vehicle_state): the partner (pp), or the host for an ask.
+   local px, pz
+   if by == "host" then px, pz = partner() else px, pz = me() end
+   if near(sx, sz, px, pz) then return nil, "in_way" end
    local c, why = V.pick(class, sx, sz)
    if not c then return nil, why end
    log(fmt("step=pick;loc=%s;id=%d;alive=%d;d=%.0f;for=%s;lrrp=%d", c.loc, c.id, c.live and 1 or 0, c.d, by, c.lrrp))
-   if not V.apply(class, c.num, sx, y + UP, sz, yaw, "self") then return nil, "failed" end
-   return {num = c.num, loc = c.loc, x = sx, y = y + UP, z = sz, yaw = yaw}
+   c.class, c.x, c.y, c.z, c.yaw = class, sx, y + UP, sz, yaw
+   return c
   end
-  local function refuse(why)
+  local function txm(kind, m, num, b) return tx(kind, m.class, num or m.num, mm(m.x), mm(m.y), mm(m.z), mdeg(m.yaw), b or 0) end
+  -- The host sends, then applies; a wreck goes out from poll once in place.
+  local function hostGo(m, kind)
+   if m.live and not txm(kind, m) then return "failed" end
+   if not V.apply(m.class, m.num, m.x, m.y, m.z, m.yaw, "self", not m.live and kind or nil) then return "failed" end
+   if m.live then note(kind == 2 and 1 or 2, m.class) end
+  end
+  local function refuse(why, by)
    note(3, WHY[why] or WHY.failed)
-   log("step=refused;reason=" .. why)
+   log("step=refused;reason=" .. why .. (by and ";by=" .. by or ""))
    return false, "vspawn_refused;reason=" .. why
   end
   function V.press(class)
    if not V.on() then return refuse("off") end
    if not freeRoam() then return refuse("mission") end
-   if not onFoot() then return refuse("busy") end
+   local by = riding()
+   if by then return refuse("busy", by) end
    local ok, p = pcall(A.pose)
-   if not ok or type(p) ~= "table" then return refuse("busy") end
+   if not ok or type(p) ~= "table" then return refuse("busy", "pose") end
+   if not paired() then return refuse("unpaired") end
    log(fmt("step=press;class=%s;role=%s;x=%.2f;z=%.2f;yaw=%.1f", CNAME[class], isHost() and "host" or "guest", p[1], p[3], p[4]))
    if isHost() then
-    local m, why = hostSpawn(class, p[1], p[2], p[3], p[4], "host")
-    if not m then return refuse(why) end
-    local sent = tx(2, class, m.num, mm(m.x), mm(m.y), mm(m.z), mdeg(m.yaw), 0)
-    note(1, class)
-    return true, fmt("vspawn;class=%s;loc=%s;sent=%d", CNAME[class], m.loc, sent and 1 or 0)
+    local m, why = hostPick(class, p[1], p[2], p[3], p[4], "host")
+    why = why or hostGo(m, 2)
+    if why then return refuse(why) end
+    return true, fmt("vspawn;class=%s;loc=%s;sent=%s", CNAME[class], m.loc, m.live and "1" or "later")
    end
-   if not paired() then return refuse("unpaired") end
    if V.ask then return false, "vspawn_refused;reason=pending" end
    if not tx(1, class, 255, mm(p[1]), mm(p[2]), mm(p[3]), mdeg(p[4]), 0) then return refuse("failed") end
    V.ask = {seq = V.seq, class = class, at = V.tick}
@@ -208,24 +211,31 @@ do
     if kind == 1 and W.host == true then
      local m, why
      if not V.on() then why = "off" end
-     if not why then m, why = hostSpawn(class, x / 1000, y / 1000, z / 1000, yaw / 1000, "guest") end
-     if not m then
+     if not why then m, why = hostPick(class, x / 1000, y / 1000, z / 1000, yaw / 1000, "guest") end
+     why = why or hostGo(m, 3)
+     if why then
       log("step=ask_refused;reason=" .. tostring(why))
       tx(4, class, 255, x, y, z, yaw, WHY[why] or WHY.failed)
-      return
      end
-     tx(3, class, m.num, mm(m.x), mm(m.y), mm(m.z), mdeg(m.yaw), 0)
-     note(2, class)
     elseif W.host == false and (kind == 2 or kind == 3) and int(num, 0, 254) then
      if kind == 3 then V.ask = nil end
-     if not freeRoam() then log("step=skip;reason=mission"); return end
-     if V.apply(class, num, x / 1000, y / 1000, z / 1000, yaw / 1000, "host") then note(kind == 3 and 1 or 2, class) end
+     -- Its own key, free roam, its player off the spot; a refusal is answered (kind 4).
+     local why = not V.on() and "off" or not freeRoam() and "mission" or near(x / 1000, z / 1000, me()) and "in_way" or nil
+     local ok
+     if not why then ok, why = V.apply(class, num, x / 1000, y / 1000, z / 1000, yaw / 1000, "host") end
+     if ok then note(kind == 3 and 1 or 2, class); return end
+     log("step=skip;reason=" .. tostring(why))
+     local b = (why == "in_way" or why == "off") and WHY[why] or WHY.partner
+     tx(4, class, num, x, y, z, yaw, b)
+     if kind == 3 then note(3, b == WHY.in_way and b or WHY.failed) end
     elseif W.host == false and kind == 4 then
      V.ask = nil
-     note(3, int(reason, 1, 8) and reason or WHY.failed)
+     note(3, int(reason, 1, 10) and reason or WHY.failed)
+    elseif W.host == true and kind == 4 then
+     log(fmt("step=partner_refused;num=%s;reason=%s", tostring(num), tostring(reason)))
+     note(3, reason == WHY.in_way and reason or WHY.partner)
     end
   end
-  -- A handler error stays here (never world sync's): it is logged.
   if type(W) == "table" and type(W.handlers) == "table" then
    W.handlers[OP] = function(v)
     if type(v) ~= "table" then return end
@@ -233,7 +243,11 @@ do
     if not ok then log("step=error;msg=" .. tostring(err):sub(1, 80)) end
    end
   end
-  -- Each update: re-created wrecks are moved once alive; every move is read back (within 3 m, or ok=0 after 90).
+  local function later(m, good)
+   if good and txm(m.kind, m) then note(m.kind == 2 and 1 or 2, m.class); return end
+   if m.kind == 3 then txm(4, m, 255, WHY.failed)
+   else note(3, good and WHY.partner or WHY.failed) end
+  end
   local function poll()
    for id, m in pairs(V.moves) do
     if m.respawn and not m.placed then
@@ -241,6 +255,7 @@ do
      elseif V.tick - m.at > 90 then
       V.moves[id] = nil
       log(fmt("step=placed;loc=%s;id=%d;ok=0;reason=respawn;by=%s", m.loc, id, m.by))
+      if m.kind then later(m, false) end
      end
     elseif m.placed and V.tick - m.placed >= 15 then
      local x, y, z = pose(id)
@@ -249,6 +264,7 @@ do
       V.moves[id] = nil
       log(fmt("step=placed;loc=%s;id=%d;d_m=%s;dy_m=%s;ok=%d;by=%s", m.loc, id, d and fmt("%.2f", d) or "nil",
        y and fmt("%.2f", y - m.y) or "nil", d and d <= 3 and 1 or 0, m.by))
+      if m.kind then later(m, d and d <= 3) end
      end
     end
    end

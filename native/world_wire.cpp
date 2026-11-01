@@ -213,7 +213,8 @@ constexpr OpSpec kOps[] = {
     // without the op skips it by its length (unknown_op): its friendly fire stays on.
     {op::arms, "ARMS", 0, Dir::both, Wire::reliable, 3, false, false, 3, 0, 0, 4, {U16(1), U8(1, 2), U8(0, 1)}},
     // VSPAWN (debug menu Spawn vehicle, world-sync-protocol.md section 25): seq, kind (1 the guest's ask, 2 the host's
-    // press, 3 the host's spawn for an ask, 4 the host's refusal of it), class (1 light vehicle, 2 truck), the authored
+    // press, 3 the host's spawn for an ask, 4 a refusal: the host's of an ask, or the guest's copy not taking a 2 or 3,
+    // answered to the host), class (1 light vehicle, 2 truck), the authored
     // locator number veh_<class>_NNNN (255 none), xyz mm and yaw mdeg (the presser's pose in an ask, else the spot),
     // reason (0 ok, else the refusal 1..15). Control queue, both directions, paired, never a request. 22 bytes. A partner
     // without the op skips it by its length (unknown_op): nothing is spawned there.

@@ -1,5 +1,12 @@
-## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; spawn, guest ask and riding seen on both copies in hidden runs `e626471f` and `5cdbfada`; the riding refusal fixed after them, not run yet)
+## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; spawn, guest ask and riding seen on both copies in hidden runs `e626471f` and `5cdbfada`; the riding refusal and the r1101 review fixes after them, not run yet)
 
+- **Review r1101 fixes (red/green, not run yet):** the back-seat check took every on-foot press as riding (world_ride_pose's
+  `S.sat` is `false`, not nil, on foot), so `082db232` refused every press: fixed, the refusal logs `by=`. The host's
+  press is refused unpaired and moves the vehicle only once VSPAWN went out; a wreck goes out once in place on the host.
+  Never onto a player (3.5 m: b=10). The guest's copy skips a host move while its own key is off or the vehicle is
+  occupied there (its own LRRP crew) and answers kind 4 (the host toasts "only on your screen", b=9). The pick skips
+  VEHICLE_GONE's watch / held ids; a re-created wreck leaves VEHICLE_GONE's gone and PAIRED re-send lists. Scenario D
+  now presses from the guest's back seat too.
 - **What players get once the key is on:** F9 > World > **Vehicles**: **Spawn jeep** / **Spawn truck** bring one of the
   area's own vehicles 6 m in front of whoever presses, facing their way, on both screens (Afghanistan and Africa free
   roam). A guest's press asks the host (VSPAWN `0x44`), who brings it in front of the guest. Afterwards it is that map
