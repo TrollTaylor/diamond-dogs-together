@@ -166,6 +166,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_native_overlay=off|debug|map, the DM overlay lever (native profile) and
                                    partner_act_log=0|1, the partner_act census lines, partner_native_stance_fast=0|1, the
                                    native stance window (0: the previous 2 s rule); docs/anim-round1-actions.md);
+                                   r1101: partner_native_aim_truth=0|1, the puppet draws the remote body's aim, not its
+                                   pad (lab and play; default follows the gun profile, run 3c5609bb; docs/anim-truth.md);
+                                   partner_native_aim_truth_box|_triggers|_stance=0|1: off unless named;
                                    join-fix phase 2: save_handoff=off|stage|scene|always, travel_lock=0|1;
                                    0.13.6 online-net-epoch: link_session_skew=0..999, the copy's link-session
                                    counter starts there (lab and the play rehearsal only; play refuses it), so

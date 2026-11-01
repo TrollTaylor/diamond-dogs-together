@@ -203,8 +203,12 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
-    // r1101 animtruth: off unless named.
-    else if (Equals(key, "partner_native_aim_truth")) ok = ParseBool(value, result.partner_native_aim_truth);
+    // r1101 animtruth: follows the gun profile unless named (ResolveWeaponDefaults); an invalid value counts as named, off.
+    else if (Equals(key, "partner_native_aim_truth")) {
+        ok = ParseBool(value, result.partner_native_aim_truth);
+        result.partner_native_aim_truth_given = true;
+        if (!ok) result.partner_native_aim_truth = false;
+    }
     // Review animtruth-1: its parts no hidden run has exercised, off unless named.
     else if (Equals(key, "partner_native_aim_truth_box")) ok = ParseBool(value, result.partner_native_aim_truth_box);
     else if (Equals(key, "partner_native_aim_truth_triggers")) ok = ParseBool(value, result.partner_native_aim_truth_triggers);
@@ -1875,6 +1879,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named
     // 0 opts out.
     if (!c.world_supply_given) c.world_supply = gun;
+    // Anim truth (docs/anim-truth.md): the loco / act HOLD-FIRE strip follows the gun profile in lab and play since the r1101
+    // Prove phase (hidden play run 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and
+    // RMB on the ladder left the puppet's gun down on the viewer's screen; the allowed pistol still aimed); a named 0 opts
+    // out. Its box / triggers / stance parts (no game run yet) stay off unless named.
+    if (!c.partner_native_aim_truth_given) c.partner_native_aim_truth = gun;
     // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play since the r1101 Prove
     // phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep and the guest's truck on both screens,
     // the ride, and both riders' presses refused as busy); a named 0 opts out.
