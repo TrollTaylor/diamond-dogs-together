@@ -1950,6 +1950,43 @@ void TestAnimAimTruth() {
     Check(ps::TruthVerdictName(V::loco)[0] == 'l' && ps::TruthVerdictName(V::keep)[0] == 'k' &&
               ps::TruthVerdictName(V::act)[0] == 'a' && ps::TruthVerdictName(V::off)[0] == 'o',
           "verdict names");
+    // A holstered gun coming out: in locomotion with the v5 InHand bit (fb1031: all 55 such HOLD lines were
+    // followed by an aim act) the draw passes, so the puppet draws with the real body; without it (Mother Base
+    // 0x25) refused.
+    in.in_hand = true;
+    in.act = 2; in.now_ms = 9000;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::draw && o.strip == 0 && Is(ps::TruthVerdictName(V::draw), "draw"), "InHand in locomotion: a real draw passes");
+    in.in_hand = false;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF, "no InHand (Mother Base 0x25): refused");
+    in.in_hand = true; in.act = 76;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::act && o.strip == kHF, "a body-owned act refuses even with a gun in hand");
+    in.in_hand = false;
+    // The receiver's HOLD run line: refused, admitted and late runs.
+    {
+        ps::TruthRun r{};
+        ps::TruthRunOut ro = ps::TruthRunStep(r, true, true, 2, 0x25, 100);
+        Check(!ro.ended && r.open && r.runs == 1, "HOLD opens a run");
+        ro = ps::TruthRunStep(r, true, true, 1, 0x21, 1100);
+        Check(!ro.ended, "still held");
+        ro = ps::TruthRunStep(r, false, true, 1, 0x1, 1450);
+        Check(ro.ended && ro.refused_ms == 1350 && ro.admitted_ms == 0 && ro.len_ms == 1350 && ro.first_act == 2 && ro.last_act == 1 &&
+                  ro.flags == 0x25 && Is(ps::TruthRunResult(ro), "refused") && !r.open,
+              "Mother Base: a run refused for its whole length (flags OR 0x25)");
+        ro = ps::TruthRunStep(r, false, false, 1, 0x1, 1500);
+        Check(!ro.ended, "no run, nothing ends");
+        ps::TruthRunStep(r, true, true, 2, 0x5, 2000);
+        ps::TruthRunStep(r, true, false, 11, 0x25, 2033);
+        ps::TruthRunStep(r, true, false, 11, 0x25, 2500);
+        ro = ps::TruthRunStep(r, false, false, 11, 0x25, 2516);
+        Check(ro.ended && ro.refused_ms == 33 && ro.admitted_ms == 483 && ro.len_ms == 516 && Is(ps::TruthRunResult(ro), "late") && r.runs == 2,
+              "a real aim: refused until the act confirmed (33 ms), then admitted");
+        ps::TruthRunStep(r, true, false, 11, 0x27, 3000);
+        ro = ps::TruthRunStep(r, false, false, 11, 0x27, 3200);
+        Check(ro.ended && Is(ps::TruthRunResult(ro), "admitted") && ro.admitted_ms == 200, "an admitted run");
+    }
 
     // The receiver window (Compose): HOLD|FIRE in sample_strip remove the raw press, its edges and the LT/RT
     // levels; when the act confirms (strip lifted) the level rise is a clean press.

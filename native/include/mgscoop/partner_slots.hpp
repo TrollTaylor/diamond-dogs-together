@@ -211,22 +211,26 @@ bool DryStep(DryState& state, const DryIn& in, std::uint32_t grace_ms = kDryGrac
 // its body stayed in stand_idle/stand_move (acts 1/2) and its v5 group still
 // said Aiming (flags 0x25: the gun record's hold bit follows the pad there), so
 // neither the pad nor the v5 flag is the authority; body 1 aimed and fired
-// visual shots on the partner's screen only. InHand is no authority either
-// (real aims log flags 0x25 without it). The remote's live ACT is: a real aim
-// reaches an aim act 15..50 ms after the press (friend log p50 31 ms, n=48);
-// 38 HOLD runs never did.
+// visual shots on the partner's screen only. InHand alone is no authority
+// either (real aims log flags 0x25 without it). The remote's live ACT is: a
+// real aim reaches an aim act 15..50 ms after the press (friend log p50 31 ms,
+// n=48); 38 HOLD runs never did. In locomotion, InHand marks a real draw: all
+// 55 fb1031 HOLD-in-locomotion lines with InHand were followed by an aim act,
+// and no Mother Base refusal ever showed it (0x25/0x5/0x1).
 // Verdicts: off (key off), nostate (no live remote act), aim (an aim act:
 // pass), keep (locomotion within kTruthKeepMs of the last aim act: pass, so a
-// stance change while aiming never drops the gun), lane (support/arm lane or
-// no v5 gun slot: pass, those lanes keep their own gates), other (an act this
-// rule does not judge: pass), loco (the gun lane in plain locomotion 1..6 with
-// no recent aim act: HOLD and FIRE stripped from the remote's sample), act (a
+// stance change while aiming never drops the gun), draw (locomotion with the
+// v5 InHand bit: the gun is coming out, pass so the puppet draws with it),
+// lane (support/arm lane or no v5 gun slot: pass, those lanes keep their own
+// gates), other (an act this rule does not judge: pass), loco (the gun lane in
+// plain locomotion 1..6 with no recent aim act and no gun in hand: HOLD and
+// FIRE stripped from the remote's sample), act (a
 // body-owned act: dead/dying, carried, stun, knockdown/cure, trash box,
 // rides, sleep, DM (AimBlockedAct) plus hit 29 and damage 45: HOLD and FIRE
 // stripped in every lane). The strip is state-based (never keyed on the pad),
 // so the first HOLD sample of a refused run is already stripped, and when the
 // act confirms the aim Compose sees the level rise and derives a clean press.
-enum class TruthVerdict : std::uint8_t { off, nostate, aim, keep, lane, other, loco, act };
+enum class TruthVerdict : std::uint8_t { off, nostate, aim, keep, lane, other, loco, act, draw };
 const char* TruthVerdictName(TruthVerdict value) noexcept;
 inline constexpr std::uint32_t kTruthKeepMs = 300;
 bool TruthBodyOwnedAct(std::uint16_t act) noexcept;  // AimBlockedAct, 29 (hit), 45 (damage)
@@ -237,8 +241,29 @@ struct TruthIn {
     bool slot_valid;       // the remote's live v5 slot
     std::uint8_t slot;     // 0..2: the gun lane
     bool support_lane;     // the weapon gate judged Gate::support (thrown / placed / arm)
+    bool in_hand;          // the live v5 group says GunFlag::InHand (rec+0x3C0 bit 2)
     std::uint64_t now_ms;
 };
+// One line per remote HOLD run on the receiver (partner_aim_truth=hold_run):
+// how long its raw HOLD was refused and admitted, its first and last act and
+// the v5 flags seen in it (OR).
+struct TruthRun {
+    bool open;
+    std::uint64_t since_ms, last_ms;
+    std::uint32_t refused_ms, admitted_ms;
+    std::uint16_t first_act, last_act;
+    std::uint8_t flags;
+    std::uint32_t runs;
+};
+struct TruthRunOut {
+    bool ended;
+    std::uint32_t refused_ms, admitted_ms, len_ms;
+    std::uint16_t first_act, last_act;
+    std::uint8_t flags;
+};
+// hold: the newest live sample carries HOLD; refused: this tick's strip has HOLD.
+TruthRunOut TruthRunStep(TruthRun& run, bool hold, bool refused, std::uint16_t act, std::uint8_t flags, std::uint64_t now_ms) noexcept;
+const char* TruthRunResult(const TruthRunOut& out) noexcept;  // refused | admitted | late (refused, then admitted)
 struct TruthState {
     std::uint64_t aim_ms;          // the last tick the remote act was an aim act (0: none)
     TruthVerdict last;

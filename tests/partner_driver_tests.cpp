@@ -9605,6 +9605,20 @@ void TestAnimTruthDriver() {
           "the truth strip is no weapon strip: DASH still passes (the real body may sprint)");
     for (int i = 0; i < 5; ++i) s.N();
     Check(s.fake.Containing("partner_aim_truth=loco;") == 1, "one line per verdict change");
+    // The remote releases RMB: one hold_run line, refused for its whole length.
+    s.fake.latest.packet.held = 0;
+    s.N();
+    Check(s.fake.Containing("partner_aim_truth=hold_run; result=refused; refused_ms=") == 1 &&
+              s.fake.Containing("; admitted_ms=0; ") == 1 && s.fake.Containing("first_act=2; last_act=2; flags=0x25; runs=1") == 1,
+          "the receiver logs the refused HOLD run (Mother Base)");
+    // A holstered gun coming out for real: InHand in locomotion passes (the puppet draws with the real body).
+    s.fake.latest.packet.held = 0x8u;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::AimDir;  // 0x27
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::draw,
+          "InHand in locomotion: the draw passes");
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Aiming | pi::GunFlag::AimDir;
     // The remote's body really aims: the act arrives, the strip lifts at once.
     s.fake.sample.act = 11;
     s.N();

@@ -201,8 +201,21 @@ const char* TruthVerdictName(TruthVerdict value) noexcept {
     case TruthVerdict::other: return "other";
     case TruthVerdict::loco: return "loco";
     case TruthVerdict::act: return "act";
+    case TruthVerdict::draw: return "draw";
     default: return "off";
     }
+}
+
+// RED stub (r1101 animtruth): never ends a run.
+TruthRunOut TruthRunStep(TruthRun& r, bool hold, bool refused, std::uint16_t act, std::uint8_t flags, std::uint64_t now_ms) noexcept {
+    (void)r; (void)hold; (void)refused; (void)act; (void)flags; (void)now_ms;
+    return TruthRunOut{};
+}
+
+const char* TruthRunResult(const TruthRunOut& out) noexcept {
+    if (!out.admitted_ms) return "refused";
+    if (!out.refused_ms) return "admitted";
+    return "late";
 }
 
 bool TruthBodyOwnedAct(std::uint16_t act) noexcept { return AimBlockedAct(act) || act == 29 || act == 45; }
