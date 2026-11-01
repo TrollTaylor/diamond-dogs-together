@@ -187,9 +187,10 @@ void Note() {
               "note 20 a=2 b=2: your partner spawned a truck");
         Check(text::FormatWorldNote(20, 3, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "not available yet"), "note 20 refusal 1: key off");
         Check(text::FormatWorldNote(20, 3, 2, 0, 0, s, sizeof(s)) && std::strstr(s, "free roam"), "note 20 refusal 2: free roam only");
-        for (std::uint32_t why = 3; why <= 8; ++why)
-            Check(text::FormatWorldNote(20, 3, why, 0, 0, s, sizeof(s)) && std::strlen(s) > 10, "note 20 refusals 3..8 have a sentence");
-        Check(!text::FormatWorldNote(20, 1, 3, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(20, 3, 9, 0, 0, s, sizeof(s)) &&
+        // Review r1101: 9 the partner's copy did not take it, 10 a player on the spot; 11 is the first without a sentence.
+        for (std::uint32_t why = 3; why <= 10; ++why)
+            Check(text::FormatWorldNote(20, 3, why, 0, 0, s, sizeof(s)) && std::strlen(s) > 10, "note 20 refusals 3..10 have a sentence");
+        Check(!text::FormatWorldNote(20, 1, 3, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(20, 3, 11, 0, 0, s, sizeof(s)) &&
                   !text::FormatWorldNote(20, 4, 1, 0, 0, s, sizeof(s)),
               "note 20 other values: no toast");
     }
