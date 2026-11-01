@@ -9,7 +9,9 @@
 --   gone:   a synced box that was live (state not 0) and then reset or reads state 0, outside the 2 s after a request
 --           (the game's own reset of the old box), is gone here: kind 2 with reason 1 (this player stood within NEAR_MM:
 --           collected) or 2 (vanished). The partner removes its own copy with the lab remove lever (the box core's
---           reset bit) and shows note 21 a=2. A reset followed by a request in the same poll is a replacement: no gone.
+--           reset bit) and shows note 21 a=2 (only when it removed one). A reset followed by a request in the same poll
+--           is a replacement: no gone. A reset at state 14 is the game's own end on both copies (landed -> delivered ->
+--           faded, run ddf44cee): step=delivered, nothing sent.
 -- Each copy's request charges only its own player (the mirror goes straight to the box system, not the support
 -- request that costs GMP). A soldier a falling box knocks out is mirrored by the world outcomes like any knockout.
 -- The stock Player message OnPickUpSupplyCbox (this player took a supply box) ends the synced box at once: kind 2,
@@ -25,6 +27,8 @@ if type(W.OP) == "table" then W.OP.SUPPLY = OP end
 local PRE = "return 'MGS_COOP_SUPPLY_V1' -- "
 local POLL_MS, GRACE_MS, NEAR_MM, CENSUS_MS, CENSUS_N, STATE_N = 200, 2000, 6000, 15000, 300, 200
 local ECHO_MS, ECHO_MM = 3000, 1000
+-- The box core's state when the game delivered the box's contents (run ddf44cee: 8 landed -> 14, then a fade reset).
+local DELIVERED = 14
 S.POLL_MS, S.GRACE_MS, S.NEAR_MM = POLL_MS, GRACE_MS, NEAR_MM
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
 local function L(...)
@@ -134,6 +138,12 @@ function S.event(list, t)
           L("step=reset_replaced;state=%s", tostring(ev[15]))
         elseif t - S.lastReqAt <= GRACE_MS then
           L("step=reset_request;state=%s;caller=0x%x", tostring(ev[15]), ev[14] or 0)
+        elseif ev[15] == DELIVERED and S.cur then
+          -- The game's own end (run ddf44cee): landed (8) -> delivered (14) -> the fade timer resets it, on both copies.
+          local b = S.cur
+          S.cur = nil
+          S.done[key(b.origin, b.oseq)] = true
+          L("step=delivered;origin=%d;oseq=%d;caller=0x%x", b.origin, b.oseq, ev[14] or 0)
         elseif S.cur and S.cur.live then
           S.gone(t, fmt("reset_0x%x", ev[14] or 0))
         else
@@ -221,7 +231,8 @@ local function apply(v, t)
     L("step=remove;origin=%d;oseq=%d;ok=%d;why=%s;st=%s;reason=%d", origin, oseq, r.ok == 1 and 1 or 0, tostring(r.why or "none"),
       tostring(r.st), v[14])
     censusOn(t)
-    pcall(W.note, NOTE, 2, v[14])
+    -- The toast only when this screen changed (a refused remove, e.g. no_box, changed nothing).
+    if r.ok == 1 then pcall(W.note, NOTE, 2, v[14]) end
   end
 end
 W.handlers[OP] = function(v)

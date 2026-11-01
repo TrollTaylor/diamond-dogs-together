@@ -1997,3 +1997,16 @@ reason=missing_api`): the module required `type(Vector3) == "function"`, but the
 fixed (the request and its Vector3 are built inside one pcall). The iDroid's SUPPLY DROP list is AMMO / FULTON,
 WEAPONS / ITEMS, LOADOUT, VEHICLES; AMMO / FULTON opens a map where Space (OK) confirms the delivery point (the run
 pressed Tab there, so H1 is still [U]). Whether state 14 means "landed and opened" or "faded unopened" is [U].
+
+Hidden run `ddf44cee` (2026-11-01, play, afgh-ledge; every scenario expectation met): [O] the guest mirrored the host's
+script drop (`step=mirror; ...; ok=1`, `supply=request;...;mirror=1` with the host's x/y/z, the toast). [O] H1: the
+iDroid AMMO / FULTON drop (Tab, 3, Enter, Enter, Space OK) passes `0x15C3F00` from the funnel on both roles (drop 0,
+equip 431, wait 5, level 0, flags 0x4, the aim point = the caller's own position, GMP -55780), and the partner mirrored
+it both ways. [O] Every box on both copies went 1 -> 3 -> 5 -> 8 (landed, about 23 s after the request) -> 14 (1 s
+later) and was reset by its fade timer 2 s after that, both copies about 0.1 s apart, with nobody pressing anything;
+the caller's screen showed "Surplus Supplies Retrieved" and a GMP bonus (the drop landed on the caller, who went prone).
+So state 14 is "delivered": AMMO / FULTON contents are taken automatically on landing, and a reset at state 14 is the
+game's own end on both copies (`step=delivered`, nothing sent). [I] the mirror box gave the other player nothing (no
+notice, magazine unchanged) with that player about 3 m from the landing point; whether two players both standing on
+the spot would both get the contents is [U]. A remove that finds no box (`ok=0`) shows no toast. The WEAPONS / ITEMS
+drops (a box that stays until `OnPickUpSupplyCbox`?) are not run yet [U].

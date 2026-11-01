@@ -1,28 +1,30 @@
 # r1101 supply drops synced (docs/world-sync-protocol.md section 25; lua/coop/world_supply.lua; native/supply_cbox.cpp):
-# a supply box one player calls falls at the same spot on both screens; the player who opens it gets its contents (the
-# stock pickup on that copy) and the box is gone on both screens. The key world_supply is OFF unless named, so it is
+# a supply box one player calls falls at the same spot on both screens; the player it lands on gets its contents (the
+# stock delivery on that copy) and the box is gone on both screens. The key world_supply is OFF unless named, so it is
 # named below (lab and play). Seed afgh-ledge (30010) for both, PLAY mode with -WanSim bad.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-supply-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
-# Known from run c66d418b (host only; the guest's mirror was skipped by the Vector3 check fixed since): a script drop
-# passes 0x15C3F00 through the funnel (caller 0x15c3ed9); the box core goes state 1 -> 3 (+3 s) -> 5 (+7 s) -> 8 (+24 s,
-# landed) -> 14 (+25 s) and resets itself 2 s later (a fade timer, caller 0x15c0793). The iDroid's AMMO / FULTON item
-# opens a map: Space (OK) confirms the delivery point (GMP shown).
+# Known from runs c66d418b and ddf44cee (section 25): every request (script or iDroid) passes 0x15C3F00; the box core
+# goes state 1 -> 3 -> 5 -> 8 (landed, ~23 s) -> 14 (delivered: AMMO / FULTON contents are taken automatically by the
+# player it lands on, "Surplus Supplies Retrieved") and its fade timer resets it 2 s later, on both copies in step. The
+# iDroid's AMMO / FULTON item opens a map: Space (OK) confirms the delivery point (the caller's position) and closes
+# the iDroid ("Supply Drop Expenses: [GMP -55780]"); a Tab after it would open the iDroid again.
 # Expected (sliced script-observer logs of both copies + the frames named below; the Lua lines are written
 # event=supply;step=... and appear in the log as world_lua=event=supply; step=...; the native ones as supply=...):
 #   0) both: supply=installed;detours=2;observe_only=1 and world_lua=event=supply; step=on.
-#   1) the host's script drop (F9 row "supply drop x y z": Player.RequestToSupplyCbox, an AMMO box) 1.4 m from the
-#      guest: host supply=request;...;mirror=0 and step=drop_local; origin=1; oseq=1; ... sent=1; guest step=mirror;
-#      origin=1; oseq=1; ok=1, supply=request;...;mirror=1 with the host's x/y/z, the toast (note 21 a=1). Frames
-#      a-*: the box falls and lands at the same spot on both screens (state 8 on both).
-#   2) the guest opens it (E) as it lands: guest step=pickup; ...; cur=1.1 then step=gone_local; origin=1; oseq=1;
-#      reason=1; why=pickup (H3 [U]: else a reset or state 0 after live, why=reset_0x...|state_0); host step=remove;
-#      origin=1; oseq=1 (ok=1, or ok=0 why=no_box when the host's copy already faded) and the toast (note 21 a=2).
-#      Frames b-*: the box gone on both screens.
-#   3) the host's own iDroid AMMO drop (Tab, 3 MISSIONS, Enter SUPPLY DROP, Enter AMMO / FULTON, Space OK): the same
-#      sync; H1 [U] (the iDroid request passes 0x15C3F00) and whether it aims at the player (aim=point|player).
-#   4) the guest's own iDroid AMMO drop: the same with the roles swapped (origin=2).
+#   1) the host's script drop (F9 row "supply drop x y z": Player.RequestToSupplyCbox, an AMMO box) aimed at the guest:
+#      host step=drop_local; origin=1; oseq=1; ... sent=1; guest step=mirror; origin=1; oseq=1; ok=1 and
+#      supply=request;...;mirror=1 with the host's x/y/z, the toast (note 21 a=1); the landing marker on both screens.
+#   2) it lands on the guest: state 8 then 14 on both copies, then step=delivered; origin=1; oseq=1 on both (nothing
+#      sent, no "partner took" toast). Frames b-*: the guest's screen "Surplus Supplies Retrieved" or more ammo [U: the
+#      script AMMO box carries equip 0], the host's screen no notice (the contents went to the guest only).
+#   3) the host's own iDroid AMMO / FULTON drop (Tab, 3 MISSIONS, Enter SUPPLY DROP, Enter AMMO / FULTON, Space OK) on
+#      the host: the same sync; the host's screen "Surplus Supplies Retrieved", the guest's (3 m away) none.
+#   4) the guest's own iDroid drop: the same with the roles swapped (origin=2).
+#   5) the host's iDroid WEAPONS / ITEMS drop (S, Enter, Enter the first item, Space OK) [U]: the same sync; a box that
+#      stays until picked up would end with step=pickup; ...; cur=1.3 then step=gone_local; ...; why=pickup on the
+#      taker and step=remove; ...; ok=1 + the toast on the partner. Frames e-* show the menus.
 # A box landing on a guard (optional, no guard is placed here: none is known to stand close on afgh-ledge): host run
 # supply drop <x y z> at a guard; the knockout is mirrored by the world outcomes (event=obs; m=Unconscious on both).
 # Expected NEVER (sliced): step=error, step=rx_bad, step=echo, step=mirror_skip, supply=failed, supply=refused.
@@ -51,30 +53,27 @@ host require ^on=1;box=
 guest run supply state
 guest require ^on=1;box=
 both capture start
-# --- 1) the host's script drop 1.4 m from the guest ------------------------------------------------------------------
+# --- 1) the host's script drop aimed at the guest ----------------------------------------------------------------------
 logmark both
-host run supply drop 807.5 342.1 1640.0
+host run supply drop 806.5 342.1 1639.1
 host require ^submitted_supply_drop
 waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=1;' 10
 waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=1; ok=1' 10
 waitlog guest 'supply=request;seq=[0-9]+;mirror=1;' 5
 waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 15
 guest burst a-fall-guest 4 1500
+# --- 2) it lands on the guest: delivered on both copies ---------------------------------------------------------------
 waitlog guest 'world_lua=event=supply; step=state; from=5; to=8;' 30
-both capture a-landed
-# --- 2) the guest opens the host's box as it lands ---------------------------------------------------------------------
-guest press e 150
-wait 700
-guest hold e 1500
-wait 1000
-both capture b-guest-open
-waitlog guest 'world_lua=event=supply; step=(pickup|gone_local);' 10
-waitlog host 'world_lua=event=supply; step=(remove|gone_local); origin=1; oseq=1;' 10
-wait 3000
-both capture b-gone
+both capture b-landed
+wait 1500
+both capture b-delivered
+waitlog guest 'world_lua=event=supply; step=delivered; origin=1; oseq=1;' 10
+waitlog host 'world_lua=event=supply; step=delivered; origin=1; oseq=1;' 10
+wait 1500
+both capture b-after
 host run supply state
 guest run supply state
-# --- 3) the host's own iDroid AMMO drop -----------------------------------------------------------------------------------
+# --- 3) the host's own iDroid AMMO / FULTON drop ---------------------------------------------------------------------
 logmark both
 host press tab
 wait 3000
@@ -88,18 +87,18 @@ host capture c-host-map
 host press space
 wait 2500
 host capture c-host-ok
-host press tab
-wait 1500
 waitlog host 'supply=request;seq=[0-9]+;mirror=0;' 20
 waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=2;' 5
 waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=2; ok=1' 10
 waitlog host 'world_lua=event=supply; step=state; from=5; to=8;' 60
 both capture c-landed
-wait 4000
-both capture c-after
+wait 2500
+both capture c-delivered
+waitlog host 'world_lua=event=supply; step=delivered; origin=1; oseq=2;' 10
+waitlog guest 'world_lua=event=supply; step=delivered; origin=1; oseq=2;' 10
 host run supply state
 guest run supply state
-# --- 4) the guest's own iDroid AMMO drop -----------------------------------------------------------------------------------
+# --- 4) the guest's own iDroid AMMO / FULTON drop --------------------------------------------------------------------
 logmark both
 guest press tab
 wait 3000
@@ -112,14 +111,40 @@ wait 2500
 guest press space
 wait 2500
 guest capture d-guest-ok
-guest press tab
-wait 1500
 waitlog guest 'world_lua=event=supply; step=drop_local; origin=2; oseq=1;' 20
 waitlog host 'world_lua=event=supply; step=mirror; origin=2; oseq=1; ok=1' 10
 waitlog guest 'world_lua=event=supply; step=state; from=5; to=8;' 60
 both capture d-landed
+wait 2500
+both capture d-delivered
+waitlog guest 'world_lua=event=supply; step=delivered; origin=2; oseq=1;' 10
+waitlog host 'world_lua=event=supply; step=delivered; origin=2; oseq=1;' 10
+# --- 5) the host's iDroid WEAPONS / ITEMS drop [U] --------------------------------------------------------------------
+logmark both
+host press tab
+wait 3000
+host press 3
+wait 2500
+host press enter
+wait 2000
+host press s
+wait 800
+host capture e-host-weapons-items
+host press enter
+wait 2500
+host capture e-host-list
+host press enter
+wait 2500
+host capture e-host-map
+host press space
+wait 2500
+host capture e-host-ok
+waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=3;' 20
+waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=3; ok=1' 10
+waitlog host 'world_lua=event=supply; step=state; from=5; to=8;' 60
+both capture e-landed
 wait 4000
-both capture d-after
+both capture e-after
 host run supply state
 guest run supply state
 state
