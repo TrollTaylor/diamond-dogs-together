@@ -180,12 +180,15 @@ do
   -- mission the census is read again and the menu state is sent when it changed.
   function R.tick()
     R.frames = (R.frames or 0) + 1
+    local paired = type(W) == "table" and W.paired == true
+    -- A guest that loses its host goes back to ON (the default); the host resends its switch at the next pairing.
+    if not paired and R.paired and not R.ff and W.host ~= true then R.ff = true; pcall(publish, true) end
     local m = get(vars, "missionCode")
     if m ~= 30010 and m ~= 30020 and m ~= 30050 then return end
-    local paired = type(W) == "table" and W.paired == true
-    -- On pairing, and every 600 updates while off (a state lost at the pairing edge reaches the guest later).
-    if paired and W.host == true and (not R.paired or (not R.ff and R.frames % 600 == 0)) then send(2, R.ff) end
-    R.paired = paired
+    -- On pairing (until it went out), and every 600 updates while off.
+    local ok = true
+    if paired and W.host == true and (not R.paired or (not R.ff and R.frames % 600 == 0)) then ok = send(2, R.ff) end
+    R.paired = paired and ok
     if R.frames % 30 ~= 1 then return end
     local list = resident()
     if list then
