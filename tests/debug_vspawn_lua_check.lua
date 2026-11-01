@@ -35,8 +35,10 @@ local function F(o)
     if not c.stuck then v.x,v.y,v.z=cmd.position.x,cmd.position.y,cmd.position.z end;return true end
   end}
  env.TppMission={CheckMissionState=function()return c.gameplay~=false end}
- env.PlayerStatus={STAND=1,SQUAT=2,CRAWL=3,ON_VEHICLE=4}
- env.PlayerInfo={OrCheckStatus=function(s)if s[1]==4 then return c.onFoot==false end;return c.onFoot end}
+ env.PlayerStatus={STAND=1,SQUAT=2,CRAWL=3,ON_VEHICLE=4,ON_HORSE=5}
+ -- c.riding / c.horse: in a vehicle or on the horse with the stance still STAND (hidden run 5cdbfada D).
+ env.PlayerInfo={OrCheckStatus=function(s)if s[1]==4 then return c.onFoot==false or c.riding==true end
+  if s[1]==5 then return c.horse==true end;return c.onFoot end}
  local W={host=c.host,active=true,mode=o.mode or 2,paired=o.paired~=false,epoch=5,OP={},handlers={},
   MISSIONS={[30010]={areaEnemy="f30010_enemy"},[30020]={areaEnemy="f30020_enemy"},[30050]={}},
   log=function(s)c.logs[#c.logs+1]=s end,note=function(code,a,b)c.notes[#c.notes+1]={code,a,b};return true end}
@@ -129,6 +131,15 @@ h=F({mission=30050});ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_r
 h=F({mission=30020});ok,msg=h:run("vspawn","trc");check(not ok and msg=="vspawn_refused;reason=not_loaded" and h:note(3,4),"no truck here: not_loaded")
 -- Riding or not in gameplay: busy.
 h=F();h.onFoot=false;ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and h:note(3,5),"riding: refused, b=5")
+-- Hidden run 5cdbfada D: the host's press while driving the spawned jeep was taken (the stance still reads STAND in a
+-- vehicle) and brought another jeep. ON_VEHICLE / ON_HORSE come first; a guest in a back seat (the seats module's
+-- passenger seat, BOARD_SEAT lpv, without ON_VEHICLE) is riding too.
+h=F();h.riding=true;ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and h:note(3,5) and #h.sets==0 and #h.tx==0,"driving with the stance STAND: refused, nothing moved")
+h=F();h.horse=true;ok,msg=h:run("vspawn","trc");check(not ok and msg=="vspawn_refused;reason=busy" and #h.sets==0,"on the horse: refused")
+local g=F({host=false});g.W.ridePose={seat={board=function(cmd)return cmd=="poll" and {ok=true,on=1,lpv=25602} or nil end,sat=function(r)return r and r.lpv end}}
+ok,msg=g:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and #g.tx==0,"a guest in a back seat: refused, no ask sent")
+g.W.ridePose.seat.board=function()return {ok=true,on=1,lpv=65535}end;g.W.ridePose.seat.sat=function()return nil end
+ok,msg=g:run("vspawn","lv");check(ok and msg:find("vspawn_asked;class=lv",1,true),"on foot again: the ask goes out")
 -- The host's copy did not take the pose: the readback says so (ok=0) after 90 updates.
 h=F();h.stuck=true;h:run("vspawn","lv");h:tick(100);check(h:has("step=placed;loc=veh_lv_0001") and h:has("ok=0"),"a move that does not take logs ok=0")
 -- A handler error is logged and stays inside the fragment (never world sync's).
