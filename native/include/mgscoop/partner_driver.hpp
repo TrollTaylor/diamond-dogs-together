@@ -1398,6 +1398,7 @@ struct Mission {
     partner_slots::TruthVerdict truth_logged;
     unsigned truth_lines;
     partner_slots::TruthRun truth_run;   // the remote's current HOLD run (partner_aim_truth=hold_run)
+    bool truth_box;                      // the box evade strip was on last tick (partner_aim_truth=box)
     partner_slots::LocalAimState aim_local;
     unsigned aim_local_lines;
     // Auto-fire stop (partner_slots DryStep) and its lines.

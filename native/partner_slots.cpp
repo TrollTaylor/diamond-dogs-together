@@ -284,10 +284,9 @@ TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
     return o;
 }
 
-// RED stub (r1101 animtruth): nothing stripped.
 std::uint32_t TruthBoxStrip(bool remote_valid, std::uint16_t remote_act, bool body_valid, std::uint16_t body_act) noexcept {
-    (void)remote_valid; (void)remote_act; (void)body_valid; (void)body_act;
-    return 0;
+    const auto box = [](std::uint16_t act) noexcept { return act == 77 || act == 78; };
+    return remote_valid && body_valid && box(remote_act) && !box(body_act) ? partner_pad::kEvade : 0u;
 }
 
 const char* LocalAimEventName(LocalAimEvent value) noexcept {

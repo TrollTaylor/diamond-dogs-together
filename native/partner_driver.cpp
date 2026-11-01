@@ -4577,7 +4577,8 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
 // partner_aim_truth line per verdict change (at most every kAimIntentLineMs,
 // own cap; a change inside the interval is logged by a later tick).
 void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& latest, const sync::AnimState& remote_anim,
-                  bool act_valid, const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
+                  bool act_valid, bool body_ok, std::uint16_t body_act, const partner_input_hook::NativeStats& ns,
+                  std::uint64_t now) noexcept {
     Mission& m = d.mission;
     const Settings& set = d.settings;
     partner_slots::TruthIn ti{};
@@ -4595,8 +4596,18 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
     if (!ti.enabled) {
         m.truth_logged = partner_slots::TruthVerdict::off;
         m.truth_run = partner_slots::TruthRun{};
+        m.truth_box = false;
         return;
     }
+    // Finder evidence M5: the remote's box evade never reaches an unboxed body 1.
+    const std::uint32_t box = partner_slots::TruthBoxStrip(act_valid, remote_anim.act, body_ok, body_act);
+    m.truth_strip |= box;
+    if ((box != 0) != m.truth_box && m.truth_lines < kAimTruthLineCap) {
+        ++m.truth_lines;
+        EmitFormat(h, "partner_aim_truth=box; on=%u; remote_act=%u; body_act=%u; strip=0x%x\r\n",
+                   box ? 1u : 0u, act_valid ? unsigned(remote_anim.act) : 0u, body_ok ? unsigned(body_act) : 0u, m.truth_strip);
+    }
+    m.truth_box = box != 0;
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;
     const std::uint32_t held = live ? latest.packet.held : 0u;
     // One line per remote HOLD run: how long its raw HOLD was refused / admitted.
@@ -4652,7 +4663,8 @@ void TickAimLocal(Driver& d, const Hooks& h, bool anim_ok, const pp::Anim& anim,
 // the remote's aim act, and the partner_aim_intent line (own cap, change lines
 // at most every kAimIntentLineMs; the hook decides per window, AimFrame).
 void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& latest, const sync::AnimState& remote_anim,
-                   bool pose_live, const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
+                   bool pose_live, bool body_ok, std::uint16_t body_act, const partner_input_hook::NativeStats& ns,
+                   std::uint64_t now) noexcept {
     Mission& m = d.mission;
     const Settings& set = d.settings;
     const bool act_valid = pose_live && (remote_anim.flags & sync::AnimFlag::Valid) != 0;
@@ -4683,7 +4695,7 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
                        set.nsupport && set.nplaced ? 1u : 0u, set.nsupport && set.narm ? 1u : 0u,
                        set.nsupport && set.nplaced && set.nplace_mirror ? 1u : 0u);
     }
-    TickAimTruth(d, h, latest_ok, latest, remote_anim, act_valid, ns, now);
+    TickAimTruth(d, h, latest_ok, latest, remote_anim, act_valid, body_ok, body_act, ns, now);
     if (!gi.enabled) return;
     // The driver's view of the frame rule on the newest sample (telemetry only).
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;
@@ -5707,7 +5719,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         TickSlots(d, h, st, realized, gun_ok, gun, is.native);
         // Anim round 1: the aim intent's gate, the weapon context line, the census
         // and the reload rate the hook applied (at body 1's reload exit).
-        TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_live, is.native, now);
+        TickAimIntent(d, h, latest_ok, latest, remote_anim, pose_live, anim_ok, anim_ok ? anim.act[1] : std::uint16_t(0), is.native, now);
         TickAimLocal(d, h, anim_ok, anim, now);
         TickWeaponCtx(d, h, remote_anim, pose_live, gun_ok, gun, is.native, now);
         TickFireCensus(d, h, now);
