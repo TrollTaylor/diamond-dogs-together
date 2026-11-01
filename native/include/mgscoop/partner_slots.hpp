@@ -226,14 +226,15 @@ bool DryStep(DryState& state, const DryIn& in, std::uint32_t grace_ms = kDryGrac
 // plain locomotion 1..6 with no recent aim act and no gun in hand: HOLD and
 // FIRE stripped from the remote's sample), act (a
 // body-owned act: dead/dying, carried, stun, knockdown/cure, trash box,
-// rides, sleep, DM (AimBlockedAct) plus hit 29 and damage 45: HOLD and FIRE
+// rides, sleep, DM (AimBlockedAct) plus hit 29, damage 45 and the climb/hang
+// acts 21..24 / 54..56 (ladder, pipe, wall climb, step_on, ledge hang): HOLD and FIRE
 // stripped in every lane). The strip is state-based (never keyed on the pad),
 // so the first HOLD sample of a refused run is already stripped, and when the
 // act confirms the aim Compose sees the level rise and derives a clean press.
 enum class TruthVerdict : std::uint8_t { off, nostate, aim, keep, lane, other, loco, act, draw };
 const char* TruthVerdictName(TruthVerdict value) noexcept;
 inline constexpr std::uint32_t kTruthKeepMs = 300;
-bool TruthBodyOwnedAct(std::uint16_t act) noexcept;  // AimBlockedAct, 29 (hit), 45 (damage)
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept;  // AimBlockedAct, 29 (hit), 45 (damage), climb/hang 21..24, 54..56
 struct TruthIn {
     bool enabled;          // partner_native_aim_truth=1 with the native gun stage
     bool act_valid;        // the remote's live act (pose stream)

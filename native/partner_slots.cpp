@@ -248,7 +248,11 @@ const char* TruthRunResult(const TruthRunOut& out) noexcept {
     return "late";
 }
 
-bool TruthBodyOwnedAct(std::uint16_t act) noexcept { return AimBlockedAct(act) || act == 29 || act == 45; }
+// AimBlockedAct, hit 29, damage 45, and the climb/hang acts (ladder 21, pipe 22,
+// wall climb 23, step_on 24, ledge hang 54..56): no hand is free for a gun.
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept {
+    return AimBlockedAct(act) || act == 29 || act == 45 || (act >= 21 && act <= 24) || (act >= 54 && act <= 56);
+}
 
 TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
     TruthOut o{};
