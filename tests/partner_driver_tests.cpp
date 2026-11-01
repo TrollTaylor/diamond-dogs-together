@@ -7418,15 +7418,17 @@ void TestMeleeDriver() {
         Session s(0);
         MeleeSetup(s, true);
         Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=") == 0, "melee driver: no strike, no line");
+        // The user's decision: ONE connecting CQC press knocks the partner down (as it does a soldier).
         s.fake.anim.act[0] = 113;
-        Check(s.Tick(0) && g_melee_hits.empty() &&
-                  s.fake.Containing("partner_melee=strike; act=113; verdict=jab; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=0") == 1,
-              "melee driver: one jab logs and hands nothing to the hook (vanilla CQC feel)");
+        Check(s.Tick(0) && g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P, "melee driver: one press in reach hands P to the hook");
+        Check(s.fake.Containing("partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1") == 1,
+              "melee driver: the press's line");
+        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.size() == 1 && s.fake.Containing("partner_melee=") == 1, "melee driver: a held strike is one hit");
+        // One press is a 113 then its 114 (run 1526e58a): the 114 is the same press, no second hit.
         s.fake.anim.act[0] = 114;
-        Check(s.Tick(0) && g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P, "melee driver: the finisher hands P to the hook");
-        Check(s.fake.Containing("partner_melee=strike; act=114; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=1") == 1,
-              "melee driver: the finisher line");
-        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.size() == 1 && s.fake.Containing("partner_melee=") == 2, "melee driver: a held finisher is one hit");
+        Check(s.Tick(0) && g_melee_hits.size() == 1 &&
+                  s.fake.Containing("partner_melee=strike; act=114; verdict=repeat; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=1") == 1,
+              "melee driver: the press's 114 hands nothing more to the hook");
         s.fake.anim.act[0] = 1;
         Check(s.Tick(0, 2000), "melee driver: idle");
         s.fake.state.slot[1][2] = -2.5f;

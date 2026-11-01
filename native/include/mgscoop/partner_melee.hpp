@@ -12,28 +12,29 @@
 
 namespace mgscoop::partner_melee {
 
-// The vanilla CQC feel (fb1031 review): one jab does not put the partner to sleep, the combo's finishing strike does.
-// The 2026-10-31 census of the remote's presses: each jab is its own edge into 113 (held 0.2-1.1 s, back to stand
-// between jabs); the finisher is 114 straight out of 113 (same tick, held about 0.5 s). A 114 from any other act
+// The user's decision (melee-one): ONE connecting CQC press knocks the partner down, as it does a soldier.
+// Hidden run 1526e58a: ONE press with the partner 1.1 m in front gave 113 (219 ms) then 114 (549 ms), so a 114 straight
+// out of a 113 is that press's own strike (counted by `presses`, one per 113 edge): the press lands once, on its 113 or
+// on that 114 (run 9018ae47: 113 at 142 cm, its 114 at 84 cm), never twice.
+// The 2026-10-31 census of the remote's presses: each press is its own edge into 113 (held 0.2-1.1 s, back to stand
+// between presses); its 114 comes straight out of 113 (same tick, held about 0.5 s). A 114 from any other act
 // (running 2 -> 114, held up to 3 s) was the start of a CQC takedown of a soldier (the host's Neutralize att=local
 // lined up with both), so it is not a strike on the partner.
-inline constexpr std::uint16_t kStrikeAct = 113;     // one CQC jab of the punch combo: logged, never queued
-inline constexpr std::uint16_t kFinisherAct = 114;   // the combo's finishing strike when a 113 was seen within kComboMs
+inline constexpr std::uint16_t kStrikeAct = 113;     // a CQC press's strike (one 113 edge per press)
+inline constexpr std::uint16_t kFinisherAct = 114;   // the press's strike out of its 113 (seen within kComboMs)
 inline constexpr std::uint32_t kComboMs = 600;       // the last 113 tick to the 114 edge
-// Run af0b88b6 (hidden, both copies): four scripted presses at ~350 ms gave two 113 edges 1.6 s apart and no 114, so the
-// finisher alone is not reliable: two jabs in reach within kPairMs land too (the coordinator's fallback).
-inline constexpr std::uint32_t kPairMs = 2000;
 inline constexpr float kReachM = 1.6f;               // horizontal, body origin to body origin
 inline constexpr float kHeightM = 1.0f;              // |y1 - y0|
 inline constexpr float kConeCos = 0.5f;              // +-60 degrees around the attacker's facing
-inline constexpr std::uint32_t kRepeatMs = 1500;     // one hit per strike edge, at most one per 1.5 s
+inline constexpr std::uint32_t kRepeatMs = 1500;     // one hit per press, at most one per 1.5 s
 inline constexpr unsigned kLineCap = 64;             // partner_melee lines per mission
 
 bool StrikeAct(std::uint16_t act) noexcept;
 
-// jab: a 113 in reach (the finisher decides); takedown: a 114 without a 113 before it; busy: the partner is in a CQC
-// hold (91..96), a trash box or toilet (79..89), on a ladder or pipe (21..24) or a ledge (54..56); prone: stance 3.
-enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat, jab, takedown, busy, prone };
+// repeat: the press already landed, or a land less than kRepeatMs ago; takedown: a 114 without a 113 before it; busy:
+// the partner is in a CQC hold (91..96), a trash box or toilet (79..89), on a ladder or pipe (21..24) or a ledge
+// (54..56); prone: stance 3 (prone or asleep).
+enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat, takedown, busy, prone };
 bool PartnerBusyAct(std::uint16_t act) noexcept;
 const char* VerdictName(Verdict v) noexcept;
 
@@ -56,8 +57,8 @@ struct State {
     bool landed = false;
     bool jab_seen = false;
     std::uint64_t last_jab_ms = 0;  // the last tick the local act was 113
-    bool jab_reach = false;         // a jab in reach that a second one within kPairMs completes
-    std::uint64_t jab_reach_ms = 0;
+    std::uint32_t presses = 0;       // 113 edges (one per press; the 114 out of a 113 is the same press)
+    std::uint32_t landed_press = 0;  // the press of the last land (its other strike edge is no second hit)
     std::uint32_t strikes = 0, lands = 0;
 };
 struct Out {

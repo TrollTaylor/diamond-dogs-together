@@ -221,7 +221,7 @@ do
   local LIFE = {kill = "DEAD", sleep = "SLEEP", faint = "FAINT"}
   local ANY = {enable = true, info = true, unmark = true, notice = true}
   local OPS = {kill = 1, sleep = 1, faint = 1, fulton = 1, come = 1, ignore = 1, notice = 1, disable = 1, enable = 1,
-    mark = 1, unmark = 1, info = 1}
+    mark = 1, unmark = 1, info = 1, ["goto"] = 1}
   local function target(o, t)
     if t == "nearest" then
       for _, s in ipairs(R.nearby(150)) do if ANY[o] or R.usable(s) then return s end end
@@ -232,12 +232,23 @@ do
     for _, s in ipairs(R.soldiers()) do if s.hash == hash then return s end end
     return nil, "enemy_not_authored"
   end
-  local function op(a)
+  local function op(a, id)
     local o = a[2]
     if #a ~= 3 or not OPS[o] then return false, "enemy_args" end
-    if o ~= "info" and not A.hostOnly() then return false, "host_only" end
+    if o ~= "info" and o ~= "goto" and not A.hostOnly() then return false, "host_only" end
     local s, why = target(o, a[3])
     if not s then return false, why end
+    if o == "goto" then
+      -- This copy's player, 2.5 m from the soldier on its side, facing him.
+      local v, p = R.position(s), pose()
+      if not v then return false, "enemy_position_unavailable" end
+      local dx, dz = p[1] - v[1], p[3] - v[3]
+      local n = sqrt(dx * dx + dz * dz)
+      if n < .1 then dx, dz, n = 1, 0, 1 end
+      local x, z = v[1] + 2.5 * dx / n, v[3] + 2.5 * dz / n
+      local ok, msg = A.warp({x, v[2] + .3, z, math.deg(math.atan2(v[1] - x, v[3] - z))}, id)
+      return ok, fmt("enemy_goto;ent=%.0f;%s", s.hash, tostring(msg))
+    end
     local head, tag = fmt("enemy_%s;ent=%.0f", o, s.hash), A.sync("enemy")
     if LIFE[o] then
       local k = "NPC_LIFE_STATE_" .. LIFE[o]
@@ -291,7 +302,7 @@ do
     local cmd = a[1]
     if cmd == "spawn_enemy" then return spawn(a, id)
     elseif cmd == "enemy_list" then return nearbyList(a, id)
-    elseif cmd == "enemy" then return op(a)
+    elseif cmd == "enemy" then return op(a, id)
     elseif cmd == "cp_phase" then return phase(a)
     elseif cmd == "enemy_unmark" and #a == 1 then
       if not A.hostOnly() then return false, "host_only" end

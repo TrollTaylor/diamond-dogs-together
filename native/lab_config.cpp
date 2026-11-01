@@ -331,6 +331,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_follow_given = true;
         if (!ok) result.partner_ride_follow = false;
     }
+    else if (Equals(key, "partner_ride_getin_cut")) {
+        // The get-in camera cut (design 8.60): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_ride_getin_cut);
+        result.partner_ride_getin_cut_given = true;
+        if (!ok) result.partner_ride_getin_cut = false;
+    }
     else if (Equals(key, "partner_seat_fpv")) {
         // Seat first person (design 8.46): an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_seat_fpv);
@@ -1773,9 +1779,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // line was shown to damage the east jeep (cat=2) in stock, and seat 1 has no stock control anywhere (seat 3: lab
     // 8a920ec8, Africa jeep, one line; 8.44)); a named 0 opts out.
     if (!c.partner_seat_shot_given) c.partner_seat_shot = gun;
-    // Melee on the partner (docs/native-puppet.md "Melee"): off unless named, in lab and play, until a hidden run on both
-    // copies proves it (fb1031: every run was blocked before admission); a named 1 runs it in both.
-    if (!c.partner_melee_given) c.partner_melee = false;
+    // Melee on the partner (docs/native-puppet.md "Melee"): follows the gun profile in lab and play since melee-one (hidden
+    // play run 4bc7b732, both copies: one CQC press each way put the other player to sleep on their own screen; a press
+    // from 4.4 m and one with the partner at the striker's back did nothing); a named 0 opts out.
+    if (!c.partner_melee_given) c.partner_melee = gun;
     // Seat 1 on the driver's seat matrix (design 8.33-8.36): follows the gun profile in lab and play, as the front seat
     // (play runs 086d8043 / 54a885b2 / 01174cfd with the key named; the seat-fixes merge, design 8.43); a named 0 opts out.
     if (!c.partner_ride_seat1_anchor_given) c.partner_ride_seat1_anchor = gun;
@@ -1785,6 +1792,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // The follow carry (design 8.59): off unless named, in lab and play, until a hidden run proves it (fb1031: both runs
     // were refused before admission); a named 1 turns it on.
     if (!c.partner_ride_follow_given) c.partner_ride_follow = false;
+    // The get-in camera cut (design 8.60): follows the gun profile in lab and play (hidden runs c54aae04 before / f71126c0
+    // after, play, -WanSim bad: the front-seat rider's camera stays with the jeep the partner drives off); a named 0 opts out.
+    if (!c.partner_ride_getin_cut_given) c.partner_ride_getin_cut = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was

@@ -217,6 +217,198 @@ new look, and the choice holds for later missions of that game session.
   partner's copy draws each look (DD faces, Quiet); that a switch saved at a checkpoint restores the own character at
   the next mission without an override.
 
+## 2026-10-31: melee on the other player, one-press round (`wp/melee-one`, local only) -- one CQC press knocks the other player down; `partner_melee` ON by default
+
+**Players get:** melee on your partner now works like it does on a soldier: one CQC press (left mouse, no aim) that
+connects puts your partner to sleep on their own screen, and you get the HOLD E WAKE UP prompt next to them. They wake
+after about 30 s, or when you wake them. A press from about 4.5 m away, or with your partner behind you, does nothing,
+and one press never counts twice. It is on by default with the native gun profile, in lab and play (`lab.ini`
+`partner_melee=0` turns it off). Not yet: the striker's punch is not drawn on the victim's screen.
+
+- **Code (red `b3aa1644`, green `248b91da`):** `partner_melee::Step` lands the first strike edge of a press that reaches
+  body 1 (its 113, or the 114 out of it when the 113 missed: run `9018ae47` had the 113 at 142 cm and its 114 at
+  84 cm); the press's other edge logs `verdict=repeat` (`State::landed_press`), and the 1.5 s repeat window stays.
+  The two-press pair of `9dd5dcaa` (`kPairMs`, `verdict=jab`) is gone. Guards unchanged: a 114 from any other act is a
+  soldier takedown, a busy (CQC hold, box, ladder, ledge) or prone/asleep partner, a seated or riding partner
+  (`no_body`), out of reach (1.6 m, 1 m height, 60 degree cone) and the key off hand nothing. Fixtures
+  `partner_melee_tests` 223, `partner_driver_tests` 9393 (`TestMeleeDriver`).
+- **Default (red `7176ca58`, green `c83dd4a8`):** `partner_melee` follows the gun profile in lab and play (as
+  `partner_seat_shot`); a named 0 opts out (`lab_config_tests` 1669). README: a What works line and the known limit.
+- **Run `4bc7b732`** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, `melee-partner-play.txt`
+  `d3669a3e` naming `partner_melee=1`; 18:54, C: 112.86 GB, D: 8.72 GB, commit 16.05 GB, nvidia-smi 4264 MiB 7 %,
+  d3dprobe HARDWARE hr=0; both copies admitted at 30010, not refused; Closed / BaselineRestored / RealSavesUnchanged
+  True). Every case is one 120 ms LMB press; logs sliced from both copies, frames looked at on both:
+  - [O] **a) guest on host, ~1.1 m:** guest `act=113; verdict=land; queued=1; dist_cm=113; angle_deg=2`, its 114
+    `verdict=repeat`; host `friendly_hit=owner;seq=1;damage_milli=0;cause=2;applied=1;down=1`, `event=downed;
+    step=entered; role=1; cause=2`. Host frame: ASLEEP greyscale, "Your teammate can wake you or carry you",
+    "Teammate 1 m". Guest frame: "Teammate asleep." and HOLD E WAKE UP. The host stood again about 30 s later (the
+    guest's census: the host's body in 133 `sleep_wake` at +30.1 s; frame `a-woke` shows both standing).
+  - [O] **b) host on guest, ~0.9 m:** host `verdict=land; queued=1; dist_cm=93; angle_deg=1`, then `repeat`; guest one
+    `friendly_hit=owner`, applied, down, `entered; role=2`. Guest frame ASLEEP; host frame HOLD E WAKE UP with the
+    guest lying in front of the host. The guest's auto wake was granted at 31 s (`step=sleep_auto_wake; role=2`).
+  - [O] **c) 4.4 m:** guest `verdict=range; dist_cm=443`; no `friendly_hit` on the host; both standing in the frames.
+  - [O] **d) partner behind:** the guest ~1.1 m at the host's back, the host presses: `verdict=angle; dist_cm=109;
+    angle_deg=180`; no `friendly_hit` on the guest; both standing.
+  - One `friendly_hit=owner` per copy; no `friendly_hit=ignored`, `step=error`, `viewer_changed` or fault. The two
+    ExpectFailures were the scenario's wake waits (the host's own sleep logs no `step=sleep_auto_wake`; the guest's
+    line has a space after the semicolon); fixed in `f4e4ca2d`. Sheet `melee-one/frames/best-sheet-4bc7b732.jpg` in the
+    run archive.
+- **Run 2 (the shipped default, the scenario without the key): not started (resource blocker).** The helper waited
+  for its floors from 19:14 to 19:42 (commit free 5.3-16.9 GB, mostly below the 15 GB floor; D: 2.92-2.96 GB from
+  19:32, below 3 GB, while other workflows ran); one attempt at 19:20 took the lock, read 14.47 GB commit and released
+  it without starting. Nothing was deleted or closed.
+- **Open:** [U] the default path in a game (run 2 did not start; `lab_config_tests` shows the gun profile turns it on,
+  and `4bc7b732` named the key); [I] waking by hand (HOLD E) after a melee sleep is the existing team wake, not pressed
+  in this run; [U] a press aimed at a soldier with the other player in reach in front also knocks them down (the
+  stock strike's target is not read); the striker's punch is not drawn on the victim's screen; a real two-PC Steam
+  session.
+- **Checks:** full `tools/build.ps1` 339/339 at `d3669a3e` (green + scenario) and at `b98ecb71` (default flip, README,
+  docs); `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+
+## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
+
+- **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
+  jeep) keeps the jeep in view. Before, the stock get-in camera (camera module 0, about 3.5 s after a front-seat get-in)
+  stayed where the passenger got in while the jeep drove away, then jumped to it: the user's "camera lags behind when
+  getting in and moving". On by default in lab and play with the gun profile (`partner_ride_getin_cut`, a named 0 opts
+  out); README line added.
+- **The user's log [O]:** 48 of the about 55 s they rode a jeep the host drove were in the front seat, both front-seat
+  boards of a moving jeep, each logged `pass_camera; state=connect; ...; mode=0; prev=5`; Steam rtt 134-174 ms (avg 145),
+  jitter at most 17 ms, no loss. The 0.14.5 log has no camera poses; the 8.59 census runs covered seat 3 only.
+- **Reproduced [O, `c54aae04`, play, `-WanSim bad` (the preset closest to that rtt), gun research, seeds afgh-quiet /
+  afgh-horse, scenario `fb1031-ride-lag-play.txt`, both copies admitted]:** the guest in seat 1, the host drives off at
+  once: module 0 kept the eye where the get-in began for 2.77 s of the drive (eye to jeep 3.2 m -> 18.5 m, census
+  `lag_cm` up to 1699), then the fallback jumped to the jeep; frames `guest-f-in-06` / `-f-in2-03` show only the wall and
+  ground. Not the cause: the rider copy's jeep is a clean 200-210 ms delayed copy of the driver's (residual 1-3 cm,
+  per-tick steps as even as the driver's own); the fallback camera holds the body within 0-2 cm at up to 12 m/s.
+- **Fix [O, `f71126c0`, the same route with `partner_ride_getin_cut=1`, scenario `fb1031-ride-lag-play-cut.txt`]:** once
+  the ridden vehicle moved 0.3 m while module 0 is active, its active bit and request word are cleared and the stock
+  selection hands over to the fallback (five pinned blocks; no code patched, no game function called). One cut
+  (`moved_cm=31; ms=783; result=ok`); module 0 lasted 121 ms of the drive; the eye held 5.2-5.3 m from the jeep at up to
+  11.9 m/s (frames `guest-f-in-06` / `-f-in2-03`: jeep and both riders in view). Unchanged: the back seat 2 (no module 0,
+  no cut, 1-2 cm), the seat-1 scope aim and its end, the get-off and the on-foot camera, the host's driver camera (0.5-1.2 m
+  stock trail) on both copies. Sheets `ride-lag/frames/sheet-c54aae04-before.jpg`, `sheet-f71126c0-after.jpg` (run
+  archive). Census rows now carry `veh_cm` / `eye_cm`. Design 8.60; native-puppet "Get-in camera cut".
+- **Not shown:** boarding an already moving jeep (the user's case; same trigger), a two-PC session, Mother Base's jeep,
+  the truck cab. Commits `e7e60bcb` (census fields, scenario), `18505451` red -> `1ebdf964` green (off unless named),
+  `4ee88c91` red -> `9526d21c` green (default on), `f94047a4` docs. Contract 855 code sites / 213 vtable slots.
+
+## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
+
+**Players get:** **Go to Afghanistan** in the F9 debug menu takes both players to the Afghanistan free roam in about
+14-17 s, like Go to Africa and Go to Mother Base (Travel stays ON by default). After every Travel landing and after a
+Bring, the camera now sits behind your own character instead of facing it. **Bring partner here** works when you are both
+in the same area; when your partner is in another mission it no longer tries to fly them over (never run in a game) and
+says "Your partner is in another area: use Go to first." instead, so nobody gets stranded.
+
+- **Code:** red `d28f9c1e`, green `c109796f` (`lua/coop/world_goto.lua` Travel): the caller refuses a Bring when the
+  partner's mission (CFG r[9], nonzero) differs (`bring_refused;reason=other_area`, `event=travel; step=bring_other_area`,
+  world note 14 b=7); a receiver in another mission answers reason 8 `other_area` (the caller shows b=7); the
+  cross-mission travel path of `brought()` is gone. `arrive()` and the Bring warp call the stock
+  `Player.RequestToSetCameraRotation{rotX=0, rotY=player yaw}` (wrapped to -180..180). Native: the b=7 sentence in
+  `coop_text::FormatWorldNote`; the Bring button texts. No wire change (reason is a free u8). Scenario
+  `tools/worker/scenarios/travel-afgh-play.txt` (`1bb20c7b`).
+- **Run** `2ed8f9e8` (hidden worker, play, shipped defaults, `-WanSim bad`, native gun research, mb-ladder; 18:03, C:
+  133.23 GB, D: 16.32 GB, commit 18.69 GB, nvidia-smi 4227 MiB 9 %, d3dprobe HARDWARE hr=0; admitted, not refused;
+  Closed / BaselineRestored / RealSavesUnchanged True; ExpectFailures none).
+- [O] **Go to Afghanistan, both copies:** host `step=start; target=30010; from=30050; lead=1` -> `hop1 from=30050 ok=1`
+  -> `hop2 from=40050; target=30010; ok=1` -> `arrived; mission=30010; err_m=0.00; ms=13909`; guest `start; target=30010;
+  lead=0; by=partner` -> `arrived; mission=30010; err_m=0.18; ms=16725` (one 4 m warp) with toast b=2 "Your partner
+  brought you to Afghanistan free roam." Frames: host Snake from behind on the rock shelf, the partner landed ahead on
+  the rocks facing the host; guest screen from behind its own character with that toast.
+- [O] **Bring in Afghanistan:** the guest placed 10 m behind the host; host `bring_sent;mission=30010`; guest `step=brought;
+  mission=30010; x=831.17; z=1630.25` (3 m in front of the host's 828.18 / 1630.51 at yaw 95); toasts "Bringing your
+  partner to you." (host) and "Your partner brought you here." (guest) on screen.
+- [O] **Bring pressed the moment the host landed** (guest still landing, already in 30010): the guest answered reason 1
+  `travelling`, nothing moved (host `refused_by_partner; reason=travelling`, note b=5). [U] whether that b=5 toast
+  showed on the host's screen (no `hud=toast` line for it; the frame still shows "Bringing your partner to you.").
+- [O] **Guest Go to Mother Base:** `travel_asked` -> host leads (`by=partner`), both `arrived; mission=30050` (host
+  ms=16035, guest err 1.16 ms=18719); frames from behind each player at the deck ladder.
+- [O] camera behind the player in every landing frame on both copies (Afghanistan, the Bring, Mother Base); [I] that this
+  is the new `RequestToSetCameraRotation` call (no log line for it; the 5e166b4c host frame faced Snake).
+- [U] **Cross-mission Bring in a game:** no scenario way to hold the copies in different missions (a paired guest is
+  carried by world follow; a linked guest's Go to asks the host); the refusal is proven by `world_travel_lua_check`
+  only. Sheet `fb1031-on/frames/travel/best-sheet-2ed8f9e8.jpg` (run archive).
+
+## 2026-10-31: Mother Base staff outcomes, run round (`wp/fb1031-on`, local only, design 7.7) -- W1 at 30050 stays lab only in play
+
+**Players get:** nothing new in play: at Mother Base each player's staff knockouts and Fultons stay on their own screen,
+as in 0.14.5. Two hidden play runs showed the host's side working on screen and both copies agreeing in the logs, but
+no frame from the guest's screen showed the staff member, so the feature stays off in play.
+
+- **Decision applied (coordinator):** a partner's Fulton of a staff member now makes them disappear on the other copy
+  for this mission load instead of fainting: `E.applyOne` maps a partner's FULTONED to VANISHED (`event=spare;
+  state=6; as=7`, the existing `TppEnemy.SetDisable` apply); a partner's kill or dying stays a knockout. Why it is safe
+  for the other player's save [I, stock Lua read-only]: `TppEnemy.SetDisable` is only `SendCommand{id="SetEnabled",
+  enabled=false}`; f30050's `TARGET_DEAD` comes only from its `Dead` / `Dying` handlers; no extracted Lua reacts to a
+  disabled staff member; the roster is native `TppMotherBaseManagement` data; the soldier state sits in mission svars
+  (`svars.solState`) that `TppEnemy.RestoreOnMissionStart2` zeroes at every Mother Base load. Red `be5f624d`, green
+  `c0dd77e2` (with the new debug lever `enemy goto nearest|hash`: this copy's player 2.5 m from that soldier, facing
+  him). It runs wherever W1 runs at 30050, which is the lab only.
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, mb-ladder, `mb-staff-gone-play.txt`, both admitted,
+  neither refused; W1 at 30050 on in that build): `3781890d` (17:37; C: 133.65 GB, D: 23.68 GB, commit 19.39 GB;
+  nvidia-smi 3730 MiB 8 %; d3dprobe HARDWARE hr=0) and `8ce9d986` (17:43; nvidia-smi 3731 MiB 9 %, d3dprobe hr=0).
+  Closed / BaselineRestored / RealSavesUnchanged True both times.
+- [O] **Logs, both copies, both runs:** host `align step=ready w1=1`, guest `step=accepted soldiers=126 cps=7 unknown=0
+  divergence=0 w1=1`; host commit state=2 for staff member 1325835864 -> guest apply state=2 `result=ok; readback=2`;
+  host commit state=6 (cause 5) -> guest `event=spare; state=6; as=7` and apply state=7 `result=ok; readback=7`. No
+  `RequestForceFulton`, game over or error line on either copy.
+- [O] **Host's screen, both runs:** the staff member saluting 2.5 m ahead, then lying asleep with the Fulton prompt, then
+  lifted by the balloon, then gone. Sheets `fb1031-on/frames/mb/best-sheet-3781890d.jpg` and `best-sheet-8ce9d986.jpg`.
+- [O] **Guest's screen: not shown.** Each PC moves its own staff. In `3781890d` the guest stood next to the host, but its
+  copy of the staff member was elsewhere (its nearest soldier was another one, 9.2 m off). In `8ce9d986` the guest went
+  to its own copy of him (`enemy goto 1325835864`; logged 3.3 m away, asleep), yet no guest frame shows him before or
+  after the Fulton: the camera stayed level behind the guest's own body.
+- **Decision:** W1 at 30050 stays lab only in play (red `5532ffa5`, green `1ce60874`: `enemiesLab` back). No README line.
+- **Missing for the flip:** one guest frame of the staff member asleep and then gone (stand the guest about 5 m off and
+  level, or crouched, so the body on the deck is in view). The user's "soldiers in Mother Base don't seem synced" is
+  partly this: staff positions are never shared, only what happens to them (README Known limits, Enemies).
+- **Checks:** `pwsh -File tools/build.ps1 -Fast` 307/307 at `c0dd77e2` and `1ce60874`; full `tools/build.ps1` 339/339 at `c0dd77e2` and at `1ce60874` (the code head); `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+
+## 2026-10-31: melee on the other player, run round (`wp/fb1031-on`, local only) -- `partner_melee` stays OFF unless named
+
+**Players get:** nothing new by default: melee on the other player stays off. Two hidden play runs showed the core of
+it working (a CQC strike from about 1 m puts the other player to sleep on their own screen, and the striker sees the
+wake-up prompt), but the host's strike on the guest, a single press after this round's fix, and a combo from a true
+3 m have not run yet. With `lab.ini` `partner_melee=1` on both PCs, one CQC press never puts the other player to
+sleep now; a second press in reach within 2 s does.
+
+- **Runs** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, `melee-partner-play.txt` naming
+  `partner_melee=1`; both copies admitted, gameplay at 30010): `9018ae47` (16:57, before admission: C: 133.88 GB,
+  D: 27.88 GB, commit 17.04 GB; nvidia-smi 3708 MiB 9 %; d3dprobe HARDWARE hr=0) and `1526e58a` (17:09, nvidia-smi
+  3915 MiB 13 %, d3dprobe HARDWARE hr=0). Neither was refused.
+- [O] **The strike lands and the stock sleep follows on both copies.** `9018ae47` case c: the guest's 113
+  (`verdict=jab; dist_cm=142; angle_deg=0`), then 114 (`verdict=land; queued=1; dist_cm=84; angle_deg=4`); the host's
+  copy logged `friendly_hit=owner;seq=1;damage_milli=0;cause=2;applied=1;down=1`. Host frame: ASLEEP greyscale, "Your
+  teammate can wake you or carry you"; guest frame: HOLD E WAKE UP. A third strike on the sleeping host logged
+  `verdict=prone` (no second hit). `1526e58a` case j: the same at `dist_cm=110` / `88`, `angle_deg=0` / `2`, the same
+  two frames. Sheets `fb1031-on/frames/melee/best-sheet-9018ae47.jpg` and `best-sheet-1526e58a.jpg`.
+- [O] **The geometry is right; the scenario's placement was wrong.** `placebehind` teleports 3 m up, and the drop
+  carries the placed player about 1.4 m forward. In `9018ae47` the guest placed 1.19 m behind the host landed 21 cm in
+  front of it: the host copy's `partner_body` for the guest (803426, 1637408) and the guest copy's body 1 (803619,
+  1637279) agree with the guest's own `dist_cm=21; angle_deg=175`. So cases j, a and b never stood 1 m apart (the
+  host in b landed 40 cm past the guest), and no hit was right there. The same drift explains last round's `af0b88b6`
+  21 cm: it was not a stale slot. Scenario `01bbeadc` places at 2.5 m (about 1 m; `1526e58a` read 110 cm) and 4.5 m.
+- [O] **One press is 113 then 114.** In `1526e58a` one 120 ms LMB press by the guest, with the host 1.1 m in front,
+  gave 113 for 219 ms and then 114 for 549 ms (the host's `partner_act` census of the remote), and that 114 landed as
+  the "finisher": the host slept from a single press. The run then stopped at the next `stance host stand` (the
+  host was asleep).
+- **Fix (red `b0a4ee52`, green `9dd5dcaa`):** the driver counts presses (one per 113 edge). The 113 and the 114 of
+  one press log `verdict=jab`; the strike of the next press in reach within 2 s lands; strikes inside the 1.5 s
+  repeat window do not start a new pair. Not run in a game yet.
+- **Decision:** not every case is proven, so `partner_melee` stays off unless named in lab and play. There is no README
+  line.
+- **Open [U]:** the host's strike on the guest after a wake; the single press with `9dd5dcaa` (expected: two
+  `verdict=jab` lines and no hit); a combo from a true 3 m (the run-1 "3 m" case started about 1.5 m away after the
+  drop and landed at 84 cm after a jab's step); whether one connecting CQC press should rather knock the other player
+  down, as the stock CQC throw does to a soldier (the coordinator's vanilla-feel decision says no); the striker's
+  punch is still not drawn on the victim's screen.
+- **Checks:** `pwsh -File tools/build.ps1` 339/339 at `01bbeadc` (the scenario fix); at `2e81dc09` (the code head)
+  338/339: `partner_defer_tests` check 185 (a drain-window timing check, untouched here) failed under the parallel
+  load and passes alone; fast 307/307 and `partner_melee_tests` / `partner_driver_tests` / `lab_config_tests` pass at
+  `9dd5dcaa`; 339/339 again at `226a2846` (this entry's commit). `tools/generate_partner_contract.py --check` passes
+  (850 sites, 213 vtable slots).
+
 ## October 31, 2026: fb1031 arrival - a guest stuck in the Mother Base helicopter can Restart out of it (`wp/mb-arrival`; shown in hidden run `0ca61fa1`)
 
 - **Shown in the game (hidden run `0ca61fa1`, lab, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile

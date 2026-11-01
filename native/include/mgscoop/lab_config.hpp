@@ -647,6 +647,13 @@ struct LabConfig {
     // that too); a named 1 turns it on; an invalid value refuses (named, off), also after a valid 1.
     bool partner_ride_follow = false;
     bool partner_ride_follow_given = false;
+    // fb1031 ride lag, the get-in camera cut (docs/vehicles-companions-design.md 8.60): while the local passenger sits
+    // and camera module 0 (the front-seat get-in camera, which holds the view where the get-in began) is active, a
+    // ridden vehicle that has moved 0.3 m ends module 0, so the fallback camera follows the seated body at once. Follows
+    // the gun profile in lab and play (hidden runs c54aae04 / f71126c0; it rides on the passenger camera, so it needs
+    // that too); a named 0 opts out; an invalid value refuses (named, off), also after a valid 1.
+    bool partner_ride_getin_cut = false;
+    bool partner_ride_getin_cut_given = false;
     // M6 seat races (docs/vehicles-companions-design.md 4 rule 3, 5 SEAT, 8.21; partner_board "seat races",
     // site C; lua/coop/world_ride_pose.lua SEAT op 54): the host decides who takes the driver's seat of an
     // empty vehicle both players reach; the guest waits for the host's grant; the loser gets no ride icon
@@ -691,8 +698,8 @@ struct LabConfig {
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
     // Melee on the partner (docs/native-puppet.md "Melee"; partner_melee.hpp): the local CQC strike (act 113 / 114) that
-    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Off unless
-    // named, in lab and play, until a hidden run on both copies shows it; a named 1 runs it in both (no refusal bit).
+    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Follows the
+    // gun profile in lab and play (hidden run 4bc7b732); a named 0 opts out, a named 1 runs in both (no refusal bit).
     bool partner_melee = false;
     bool partner_melee_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census

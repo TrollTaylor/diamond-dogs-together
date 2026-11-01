@@ -85,7 +85,7 @@ constexpr ActionDef kActions[] = {
     // Partner / co-op
     {"partner_goto", C::partner, "Go to partner", "goto_partner", "teleport travel join coop", "Teleports 2 m from the partner, facing him.", kNeedsPartner},
     {"partner_bring", C::partner, "Bring partner here", "bring_partner", "teleport travel summon bring partner here coop",
-     "Brings your partner beside you, even from another mission (they travel to yours). Refused while they ride, are carried, "
+     "Brings your partner beside you in your area (in another area, use Go to first). Refused while they ride, are carried, "
      "downed, in a cutscene or already travelling.", S},
     {"partner_show", C::partner, "Show partner", "partner stage=3 source=net look=net", "visible body", "Shows the partner body driven by the network.", 0},
     {"partner_hide", C::partner, "Hide partner", "partner stage=0", "invisible body", "Hides the partner body.", 0},

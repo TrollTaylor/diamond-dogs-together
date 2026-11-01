@@ -1130,6 +1130,18 @@ bool PartnerRideFollowWrite(void*, const pp::State& state, std::uintptr_t blend,
     if (!game_base || !partner_gate_ok || pc::FollowInstall(game_base, game_span)) return false;
     return pc::WriteFollowStart(game_base, state.P, blend, expect, start);
 }
+// fb1031 ride lag (design 8.60): the get-in camera cut's read and write (after the blocks' one-time check).
+bool PartnerRideGetInActive(void*, const pp::State& state) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok || pc::GetInCutInstall(game_base, game_span)) return false;
+    return pc::GetInActive(game_base, state.P);
+}
+const char* PartnerRideGetInCut(void*, const pp::State& state) noexcept {
+    namespace pc = mgscoop::partner_pass_camera;
+    if (!game_base || !partner_gate_ok) return "gate";
+    if (pc::GetInCutInstall(game_base, game_span)) return "install";
+    return pc::CutGetIn(game_base, state.P);
+}
 // Design 8.46 (lab.ini partner_seat_fpv): the seat first person's read (the subjective module after its blocks' one-time
 // check, the local gun's hand slot rec+0x3DA, the local flag record's words 0 and 3), its toggle write, the pollers and
 // the passcam seatfpv lever.
@@ -1286,7 +1298,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
     PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
-    PartnerRideFollowRead, PartnerRideFollowWrite};
+    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

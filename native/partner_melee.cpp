@@ -23,7 +23,6 @@ const char* VerdictName(Verdict v) noexcept {
     case Verdict::height: return "height";
     case Verdict::angle: return "angle";
     case Verdict::repeat: return "repeat";
-    case Verdict::jab: return "jab";
     case Verdict::takedown: return "takedown";
     case Verdict::busy: return "busy";
     case Verdict::prone: return "prone";
@@ -51,8 +50,9 @@ Out Step(State& s, const In& in) noexcept {
     s.last_act = in.act;
     if (in.act == kStrikeAct) { s.jab_seen = true; s.last_jab_ms = in.now_ms; }
     if (!edge) return o;
+    if (in.act == kStrikeAct) ++s.presses;  // each press starts with its own 113 edge
     if (!in.enabled) { o.verdict = Verdict::off; return o; }
-    // The finisher is a 114 straight out of the combo's jabs; a 114 from any other act starts a soldier takedown.
+    // The press's 114 comes straight out of its 113; a 114 from any other act starts a soldier takedown.
     const bool finisher = in.act == kFinisherAct;
     if (finisher && !(s.jab_seen && in.now_ms >= s.last_jab_ms && in.now_ms - s.last_jab_ms <= kComboMs)) {
         o.verdict = Verdict::takedown;
@@ -77,20 +77,14 @@ Out Step(State& s, const In& in) noexcept {
     if (dist > 1e-6 && cosine < kConeCos) { o.verdict = Verdict::angle; return o; }
     if (in.remote_valid && PartnerBusyAct(in.remote_act)) { o.verdict = Verdict::busy; return o; }
     if (in.remote_valid && in.remote_stance == 3) { o.verdict = Verdict::prone; return o; }
-    if (!finisher) {
-        // One jab never puts the partner to sleep; a second jab in reach within kPairMs does (run af0b88b6).
-        const bool pair = s.jab_reach && in.now_ms >= s.jab_reach_ms && in.now_ms - s.jab_reach_ms <= kPairMs;
-        if (!pair) {
-            s.jab_reach = true;
-            s.jab_reach_ms = in.now_ms;
-            o.verdict = Verdict::jab;
-            return o;
-        }
-    }
+    // One connecting press knocks the partner down (the user's decision, as it does a soldier). Run 1526e58a: ONE press
+    // with the partner 1.1 m in front gave 113 (219 ms) then 114 (549 ms), so the press's 113 and the 114 out of it are
+    // one strike: whichever reaches first lands, the other is no second hit. At most one hit per kRepeatMs.
+    if (s.landed && s.landed_press == s.presses) { o.verdict = Verdict::repeat; return o; }
     if (s.landed && in.now_ms >= s.last_land_ms && in.now_ms - s.last_land_ms < kRepeatMs) { o.verdict = Verdict::repeat; return o; }
     s.landed = true;
     s.last_land_ms = in.now_ms;
-    s.jab_reach = false;
+    s.landed_press = s.presses;
     ++s.lands;
     o.verdict = Verdict::land;
     o.queue = true;

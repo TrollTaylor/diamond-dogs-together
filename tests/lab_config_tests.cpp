@@ -634,17 +634,17 @@ int main() {
         }
     }
     // Melee on the partner (partner_melee, docs/native-puppet.md "Melee"): the local CQC strike that reaches body 1 hands
-    // one friendly hit (the stock sleep) to the partner's copy. Off unless named in lab AND play until a hidden run proves
-    // it; a named 1 runs it in both.
+    // one friendly hit (the stock sleep) to the partner's copy. Follows the gun profile in lab AND play since melee-one
+    // (hidden play run 4bc7b732: one press each way put the other player to sleep on their own screen, a press from
+    // 4.4 m and one with the partner at the striker's back did nothing); a named 0 opts out, a named 1 runs in both.
     {
         Check(!LabConfig{}.partner_melee && !LabConfig{}.partner_melee_given && !Lab("").partner_melee, "melee off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            // Off unless named until a hidden run on both copies proves it (fb1031: every run was blocked before admission).
-            Check(!profile.partner_melee && !profile.partner_melee_given && profile.invalid_values == 0 && profile.play_refused == 0,
-                  "melee stays off with the gun profile until proven (not named)");
+            Check(profile.partner_melee && !profile.partner_melee_given && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "the gun profile turns melee on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_melee=1\n");
             Check(named.partner_melee && named.partner_melee_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0, "a named melee 1 runs in lab and play");
@@ -746,6 +746,39 @@ int main() {
                   "an invalid follow carry value refuses (named, off)");
             const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_follow=1\npartner_ride_follow=") + value + "\n");
             Check(!late.partner_ride_follow && late.invalid_values == 1, "an invalid follow carry value after a valid 1 turns it off");
+        }
+    }
+    // Get-in camera cut (partner_ride_getin_cut, design 8.60): follows the gun profile in lab and play (hidden runs c54aae04
+    // before / f71126c0 after, play, -WanSim bad); a named 1 runs in lab and play; a named 0 turns it off; an invalid value
+    // is named and off, also after a valid 1.
+    {
+        Check(!LabConfig{}.partner_ride_getin_cut && !LabConfig{}.partner_ride_getin_cut_given && !Lab("").partner_ride_getin_cut,
+              "get-in cut defaults off without a profile");
+        const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string noprofile = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                      "partner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const auto bare = Lab(noprofile + mode);
+            Check(!bare.partner_ride_getin_cut && !bare.partner_ride_getin_cut_given, "get-in cut stays off without the gun profile");
+            const auto profile = Lab(gun + mode);
+            Check(profile.partner_ride_getin_cut && !profile.partner_ride_getin_cut_given && profile.invalid_values == 0 &&
+                      profile.play_refused == 0,
+                  "the gun profile turns the get-in cut on in lab and play (not named)");
+            const auto named = Lab(gun + mode + "partner_ride_getin_cut=1\n");
+            Check(named.partner_ride_getin_cut && named.partner_ride_getin_cut_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0,
+                  "a named get-in cut runs in lab and play");
+            const auto off = Lab(gun + mode + "partner_ride_getin_cut=0\n");
+            Check(!off.partner_ride_getin_cut && off.partner_ride_getin_cut_given, "a named get-in cut 0 stays off");
+        }
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_getin_cut=") + value + "\n");
+            Check(!invalid.partner_ride_getin_cut && invalid.partner_ride_getin_cut_given && invalid.invalid_values == 1 &&
+                      invalid.unknown_keys == 0,
+                  "an invalid get-in cut value refuses (named, off)");
+            const auto late = Lab(std::string("enabled=1\nrole=host\npartner_ride_getin_cut=1\npartner_ride_getin_cut=") + value + "\n");
+            Check(!late.partner_ride_getin_cut && late.invalid_values == 1, "an invalid get-in cut value after a valid 1 turns it off");
         }
     }
     // WS4 v1: native placed C4 and arm holds, two lab keys. Not named, they follow the native gun profile in lab AND play
