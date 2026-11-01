@@ -66,6 +66,19 @@ G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
 -- r1101 fulton (lab key fulton_sync, CFG r[18]): a partner's vehicle Fulton is this copy's own engine lift.
 function VR.liftOn() return W.fultonOn == true and G.on() end
+-- The early lift: world_enemy.lua calls G.early(id) on a partner's FULTON kind 2 (sent at its FultonInfo, so the Fulton
+-- succeeded there), about 6 s before VEHICLE_GONE's loss readback reaches this copy (probe 614ec20a). Only an authored
+-- vehicle (a locator name: the same pool index on both copies); VEHICLE_GONE's own decide (rider, seat) still runs, at
+-- this copy's own position. The later VEHICLE_GONE or request finds it gone here.
+function VR.early(id)
+  if not VR.liftOn() or not G.typed(id) or G.gone[id] or G.held[id] or id % 512 == 0 then return end
+  if not G.locator(id) then L("step=early_skip;id=%d;reason=no_locator", id); return end
+  local x, y, z = G.pose(id)
+  if not x then L("step=early_skip;id=%d;reason=no_pose", id); return end
+  L("step=early;id=%d;role=%s", id, role())
+  G.consider({id = id, cause = 1, actor = W.host and 1 or 0, rid = 0, vtype = G.vtype(id), x = x, y = y, z = z, src = "fulton"}, now())
+end
+G.early = VR.early
 function VR.loadoutOn() return W.vehicleLoadoutOn == true and W.active == true and not W.host end
 function VR.crewOn() return W.vehicleCrewOn == true and VR.breakOn() end
 -- The guest's VEHICLES drop item is this module's while its key runs (world_relief_sync.lua asks).

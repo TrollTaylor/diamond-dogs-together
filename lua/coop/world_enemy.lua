@@ -469,6 +469,9 @@ do
             if (kind ~= 1 and kind ~= 2) or type(id) ~= "number" or type(seq) ~= "number" then return end
             FU.note[kind == 1 and h or id] = {worm = worm, at = W.now()}
             L("event=fulton;step=rx;seq=%d;kind=%d;id=%d;ent=%.0f;worm=%d", seq, kind, id, h or 0, worm)
+            -- A vehicle: this copy's lift at once (world_vehicle_rules.lua G.early), not after VEHICLE_GONE's readback.
+            local V = W.vehicleGone
+            if kind == 2 and type(V) == "table" and type(V.early) == "function" then pcall(V.early, id) end
         end
         -- The receiver, just before its lift (kind 1: soldier id + entity hash; kind 2: vehicle id).
         function FU.before(kind, id, h)
