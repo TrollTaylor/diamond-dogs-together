@@ -2689,7 +2689,7 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!sw::ParseReceipt(text, size, id, request)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (off unless named 1).
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
     if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
@@ -2753,7 +2753,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (labc.role != mgscoop::LabRole::guest) return refuse("role");
-    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (off unless named 1).
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (on unless named 0).
     if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;

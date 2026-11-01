@@ -360,7 +360,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         else result.debug_travel = false;
     }
     else if (Equals(key, "spawn_warp")) {
-        // Spawn enemy here in play mode (off unless named 1; lab keeps debug_soldier_warp); a named value records _given.
+        // Spawn enemy here in play mode (on unless named 0; lab keeps debug_soldier_warp); a named value records _given.
         ok = ParseBool(value, result.spawn_warp);
         if (ok) result.spawn_warp_given = true;
         else result.spawn_warp = false;
