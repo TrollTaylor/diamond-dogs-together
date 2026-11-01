@@ -234,18 +234,20 @@ do
   end
   local function op(a, id)
     local o = a[2]
-    if #a ~= 3 or not OPS[o] then return false, "enemy_args" end
+    local far = o == "goto" and #a == 4 and number(a[4], .8, 5)
+    if (#a ~= 3 and not far) or not OPS[o] then return false, "enemy_args" end
     if o ~= "info" and o ~= "goto" and not A.hostOnly() then return false, "host_only" end
     local s, why = target(o, a[3])
     if not s then return false, why end
     if o == "goto" then
-      -- This copy's player, 2.5 m from the soldier on its side, facing him.
+      -- This copy's player, 2.5 m (or the 0.8..5 m given) from the soldier on its side, facing him.
       local v, p = R.position(s), pose()
       if not v then return false, "enemy_position_unavailable" end
       local dx, dz = p[1] - v[1], p[3] - v[3]
       local n = sqrt(dx * dx + dz * dz)
       if n < .1 then dx, dz, n = 1, 0, 1 end
-      local x, z = v[1] + 2.5 * dx / n, v[3] + 2.5 * dz / n
+      n = n / (far or 2.5)
+      local x, z = v[1] + dx / n, v[3] + dz / n
       local ok, msg = A.warp({x, v[2] + .3, z, math.deg(math.atan2(v[1] - x, v[3] - z))}, id)
       return ok, fmt("enemy_goto;ent=%.0f;%s", s.hash, tostring(msg))
     end
