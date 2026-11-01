@@ -203,17 +203,26 @@ inferred from this code and the clip names (`snapplv_s_dve_lp`, `_dve_tun_l`, `_
 - the driver's copy (read only) reads its own body 0 blends while its player drives (seat 0 of the vehicle its ride
   packet names; `partner_player::ReadRideRates`) and sends them on the ride wire's **v5 steer addendum** (16 bytes,
   channel 2, the ride magic; `[2]` seat, `[4..5]` the ride revision, `[6..7]` vehicle, `[8]` steer, `[9]` accel,
-  `[10]` aux in 1/250 units, `[12..15]` sender ms): a change of 2 units after 50 ms, else a 500 ms heartbeat. Line
-  `partner_ride_steer=tx; vehicle=..; seat=0; rev=..; steer=..; accel=..; aux=..; raw=..`;
+  `[10]` aux in 1/250 units, `[12..15]` sender ms): a change of 2 units after 100 ms (at most 10 Hz; 50 ms before
+  review vanim-4), else a 500 ms heartbeat; a due packet waits while 8 or more messages are unacknowledged on channel
+  2 (`partner_net::ReliableQueued`; one `partner_ride_steer=held; queued=..` line per streak; the next due tick sends
+  the newest blends). Line `partner_ride_steer=tx; vehicle=..; seat=0; rev=..; steer=..; accel=..; aux=..; raw=..`;
 - the viewer's copy stores it (`partner_ride_steer=rx`, lease 1.5 s, the exact ride revision, vehicle and seat) and,
   while its seat episode has the peer seated and confirmed as the driver, writes the three blends into body 1's rate
   record every tick (`partner_player::WriteRideRates`: index 1, the set guards, the `ReadRates` chain and vtables,
   0..1, read back). Without a live packet it writes the neutral blends (steer 0.5, accel 0, aux 0): an older peer, a
   stale packet or a dropped heartbeat shows a straight driver, never the full left. The record's originals are saved
-  before the first write (`partner_ride_steer=save`) and put back when the episode leaves the seated driver
-  (`=restore; ...; ok=1`); a mission change drops them unwritten. Passenger seats are never written (their loops have
-  no steer). Lines `=write; source=neutral|remote; steer=..` (on a source change or a 10-unit move, at most every
-  250 ms) and `=refused; side=driver|viewer; reason=..` (once per reason).
+  before the first write (`partner_ride_steer=save`). While the episode then plays its exit on body 1 (the get-off or
+  the stop, body 1 still in the seat) the record stays neutral (`=write; source=exit; steer=0.500`, review vanim-2:
+  before, the restore ran at the exit request and put back the saved 0.0 for the whole get-off); the originals go back
+  once the episode left it (settle, idle: body 1 on foot; `=restore; ...; phase=idle; ok=1; ...; drifts=..`).
+  MissionEnd and MissionStart drop them unwritten (`=drop; reason=mission_end|mission_start`, review vanim-1: also when
+  the next mission has the same code, a checkpoint reload or restart, which builds a new body 1). Each write first reads
+  the record: a value we did not write since the last tick is `=drift; steer=found/ours; accel=..; aux=..; phase=..`
+  (the first 20, then every 100th; review vanim-3: `WriteRideRates`' readback runs right after its own store and cannot
+  see a writer once per frame). Passenger seats are never written (their loops have no steer). Lines
+  `=write; source=neutral|remote|exit; steer=..` (on a source change or a 10-unit move, at most every 250 ms) and
+  `=refused; side=driver|viewer; reason=..` (once per reason).
 - An older receiver drops the v5 packet as an invalid ride packet (version 5; one
   `partner_ride=refused; reason=packet_or_session` line) and keeps its state; an older sender sends none (neutral).
 
@@ -251,8 +260,10 @@ Second static pass (2026-11-01, capstone over the read-only RE copy) [I unless m
   the v5 steer blend), behind its own key.
 
 **Tests.** `partner_ride_wire_tests` (the v5 codec, store, lease, the send rule, `PlanSteer`), `partner_driver_tests`
-`TestRideSteerDriver` (sender: key, seat 0 only, read only, refusals; viewer: neutral before a packet, the peer's
-blends, the lease back to neutral, the refused write, the restore once; a passenger and the key off never write),
+`TestRideSteerDriver` (sender: key, seat 0 only, read only, refusals, 10 Hz, held while 8 wait on channel 2; viewer:
+neutral before a packet, the peer's blends, the lease back to neutral, a drift, the refused write, straight through
+the exit, the restore once idle; MissionEnd / MissionStart with the same code drop the originals unwritten; a
+passenger and the key off never write),
 `lab_config_tests` (off unless named in lab and play; invalid values), `worker_session_tests` (the allow-lists).
 
 **Proof scenario.** `tools/worker/scenarios/r1101-vanim-play.txt` (play, `-WanSim bad`, `-SaveSeed africa-jeep`):
@@ -270,8 +281,32 @@ behind the viewer's own back).
 | `38714f32` | the same, camera swung | **[O] A (guest watching):** the host seated with both hands level on the wheel, then a distinct turning pose for a and the opposite one for d with the jeep standing (frames `guest-a-seated`, `guest-a-steer-left-01..03`, `guest-a-steer-right-01..03`; the host's own screen shows the same two poses and its own front wheels turned). **[O] the copy's front wheels do not turn** (the same crop in all three frames: the known limit). B (host watching): logs as in A (host save 0.600, writes 0.008 .. 0.980, restore ok=1), frames inconclusive (a bush between the host and the driver's seat). No refusal, error or fault on either copy |
 
 Frames and labelled sheets: the run archive `r1101/frames/vanim/` (`sheet-38714f32.jpg`, the driver and front-wheel
-crops). The pose fix is proven on one side by frame and on both sides by log; the key stays off unless named until
-the integration decides the default.
+crops). The pose fix is proven on the guest-watching side by frame. The key stays off unless named.
+
+**Mismatch (review vanim-3): the host copy's record had another writer.** The root cause above says body 1's record
+keeps the constructor's 0.0 because nothing else writes it, and the scenario expected `save; ... steer=0.000`. The
+guest's saves held 0.000/0.000/0.000 in all three runs, but **the host's did not**: `002a187a` host
+`partner_ride_steer=save; ... steer=0.325; accel=0.000; aux=0.000` and `38714f32` host `... steer=0.600; accel=0.000;
+aux=0.500`, before our first write. Something on the host copy writes body 1's `+0x08`/`+0x34` (unknown: once, or
+every frame). The B logs (every write ok, no readback refusal) do not rule out a per-frame fight between that writer
+and ours, because the readback compares right after our own store, and no B frame shows the pose (a bush). So the
+host-watching side is **not proven** ("works" and "flickers" look the same in these logs). Since the review fix the
+viewer reads the record before each write and logs `partner_ride_steer=drift` for any value it did not write; the
+exit get-off is held straight. Before any default flip:
+
+1. a hidden run with the key named on both copies where B frames the jeep (another side offset) and the get-off is in
+   view (the viewer placed again before `press e`): no `drift` lines on the host means no per-frame writer;
+2. if drift lines appear, a lab read of body 1's `+0x08`/`+0x30`/`+0x34` every tick from the seat start through
+   confirmed on the host copy with the writes off, to find the other writer.
+
+**Channel 2 budget (review vanim-4).** The addendum is a latest-wins value appended on reliable channel 2, whose
+32-message window (counted from the oldest unacknowledged id) it shares with the carry START/DROP events (sent once, no
+retry), the `V` receipts, ride revisions, gestures, caps and the manifest. Since the review it is sent at most every
+100 ms and waits while 8 messages are unacknowledged there, so an ack stall never fills the window with steer packets
+(at most 8 of 32). Not done: a datagram path (`partner_net::SendDatagram` is drained only by the world hooks on channel
+1: a new receive dispatch in the shared transport) and a capability gate (a new `partner_caps_wire` feature bit is
+refused by a 0.14.6 peer's strict decode, which then drops the whole caps message: worse than the cost it guards). A
+0.14.6 peer still drops each v5 packet as an invalid ride packet; only a sender with the key named sends any.
 
 ## Contract (`tools/generate_partner_contract.py`)
 
