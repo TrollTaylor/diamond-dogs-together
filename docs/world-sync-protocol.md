@@ -1932,8 +1932,11 @@ shipped default; a named 0 opts out). Since the review of 2026-11-01 two sub-key
 and used only with `fulton_sync=1`: `fulton_early=0|1` (`r[18]` bit 2, `W.fultonEarlyOn`: the early vehicle lift below)
 and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed wormhole look below); since the Prove phase a third,
 `fulton_one_save=0|1` (`r[18]` bit 8, `W.fultonOneSaveOn`: the receiver's soldier credit skipped, below; it reverses D1,
-the user's open decision, so it is off unless named). `FultonCfgBits` (lab_config) builds `r[18]`. Three parts, all off
-with the key off:
+the user's open decision, so it is off unless named; as built since `42c8cc3d` it has not run in a game: run `7d924fac`
+ran the earlier skip that was part of `fulton_sync`); since the land round a fourth, `fulton_guest_vehicle=0|1`
+(`r[18]` bit 16, `W.fultonGuestVehicleOn`: the guest's lift of a vehicle the host Fultoned, below; only the
+guest-to-host vehicle lift ran in a game, so it is off unless named). `FultonCfgBits` (lab_config) builds `r[18]`.
+Three parts, all off with the key off:
 
 - **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
   held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`).
@@ -1971,7 +1974,9 @@ with the key off:
   Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0|1` (0 only with `fulton_one_save`).
   `TppTerminal.AddTempStaffFulton` is counted in the log only (`step=staff_add;n=`, the roster check). **Only
   `fulton_one_save` differs from D1 (both saves), and only while both copies run it.** A vehicle: VEHICLE_GONE cause 1
-  on the receiver is the engine's own vehicle Fulton
+  on the receiver is the engine's own vehicle Fulton (on the guest, a vehicle the host Fultoned, only with
+  `fulton_guest_vehicle`: that path, the host's VEHICLE_GONE broadcast, never ran in a game; without it the guest removes
+  it as before, D14's `Seize {"Instant"}` or the Despawn, and runs no early lift)
   (`Seize {"Fulton"}`, the balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`;
   `step=fulton_lift;id=;credit=`); with D14 on it is credited once as before, without D14 this copy's
   `TppTerminal.OnFulton` is skipped once for it; the readback gives it 15 s before the Despawn fallback (`via=fulton`).
@@ -2007,8 +2012,10 @@ the jeep pulled up into the air [O frame]. A / B the soldier Fultons both ways: 
 ...;state=6;...;readback=6` [O logs both]; frames show the host puppet kneeling at the guard on the guest's screen and
 the guard under a balloon on the receiver's screen both ways [O frame]. D the host's wormhole Fulton: the guest's lift
 `worm=1;own=0;set=1`, `step=restore;level=0;ok=1` 5 s later [O log]; the wormhole on the guest's screen was not framed
-[U]. `staff_add` only on the Fultoner's copy; no `step=error`, echo, `bad_op` / `wrong_dir` / `unknown_op` or GameOver
-on either copy.
+[U]. `staff_add` only on the Fultoner's copy (the credit skip that was then part of `fulton_sync`; `fulton_one_save`,
+which carries it since `42c8cc3d`, has not run in a game); no `step=error`, echo, `bad_op` / `wrong_dir` / `unknown_op`
+or GameOver on either copy. Neither run Fultoned a vehicle from the host's side: the guest's lift of a host's vehicle
+Fulton has its own key since the land round (`fulton_guest_vehicle`, off unless named).
 Hidden play run `19882881` (`r1101-fulton-default-play.txt`, no key named: the shipped default after the flip, with
 `fulton_early`, `fulton_look` and `fulton_one_save` off): C the guest's jeep Fulton, no early lift; VEHICLE_GONE's loss
 request 6.3 s after the guest's `FultonInfo` lifted the host's copy (`step=fulton_lift;...;credit=1`, `step=applied;

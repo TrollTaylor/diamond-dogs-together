@@ -1,3 +1,45 @@
+## November 1, 2026: r1101 land - the skeptic's corrections before the merge into dev (`wp/integ-1101`, local only)
+
+- **What players get (changed):** a vehicle the HOST Fultons now just vanishes on the guest's screen again, as before
+  r1101: the guest's balloon lift of it is off unless named. Everything else of r1101 stays on by default: Spawn
+  vehicle, supply drops, the Fulton attach on the puppet, the soldier balloon both ways, the guest-to-host vehicle
+  balloon, anim truth and the driver's steering pose.
+- **Why:** the land skeptic refuted two claims of the fulton track.
+  - README "Seen in testing on both screens, in both directions" covered vehicles, but only a guest-to-host vehicle
+    Fulton ran (part C of `7d924fac` and `19882881`). A vehicle the host Fultons reaches the guest by the host's
+    VEHICLE_GONE broadcast, another path, and never ran in a game. It now has its own key `fulton_guest_vehicle=0|1`
+    (CFG `r[18]` bit 16, `W.fultonGuestVehicleOn`, off unless named in lab and play, only with `fulton_sync`):
+    without it `VR.liftOn()` is false on the guest, so the guest removes such a vehicle as before (D14's
+    `Seize {"Instant"}`, else the Despawn) and runs no early lift. The host's lift of a guest's vehicle Fulton (the
+    proven direction) is unchanged. README What works / Known limits now say so.
+  - "`staff_add` only on the Fultoner's copy when `fulton_one_save` is named (run 1)": run `7d924fac` named
+    `fulton_sync`, `fulton_early`, `fulton_look` and `partner_act_log`; `fulton_one_save` did not exist at its build
+    `711c5c1`, where the credit skip was part of `fulton_sync`. The `fulton_one_save=1` path as built since `42c8cc3d`
+    has never run in a game. It was already off unless named (the shipped default keeps D1), so no code changes;
+    protocol section 25 now says it has not run. `r1101-fulton-play.txt` still names it for the next proof run.
+- **Other skeptic defects fixed in text:** README Spawn vehicle "Seen in testing on both screens" now says
+  Afghanistan only (every vspawn run was at 30010; Africa runs the same code, not tried). README supply limit: in
+  `93f27123` the receiver stood about 0.2-2 m from every landing spot and its after-frames show no "Surplus Supplies
+  Retrieved" and no GMP change, so the README now says a partner at the landing spot did not get the supplies (it said
+  "not tested"). README Spawn vehicle limit: a guest refusal (its key off, a player in the way, the vehicle occupied
+  there) leaves the vehicle moved only on the host's copy (the host moves before the guest answers; note 20 b=9 / 10
+  tells the host) [I, not exercised]. `native/lab_config.cpp`: the stale "OFF in both unless named" supply comment
+  removed.
+- **Weak evidence, kept as is (not refutations):** vspawn `e09fcf72` host `c-seated` caught the guest puppet still
+  climbing over the rear edge and the `c-drive` frames came after the jeep stopped (the seat is clear in
+  `c-drive-01..06` on both screens); fulton `19882881` host `b-hold-04` shows the guest's kneel mostly behind the host's
+  own body.
+- **Still not covered:** the guest's lift of a host's vehicle Fulton (`fulton_guest_vehicle=1`), `fulton_one_save=1`,
+  `fulton_early`, `fulton_look`, Spawn vehicle in Africa.
+- **Commits:** `b2d34010` red (lab_config_tests: `fulton_guest_vehicle` off by default in lab, gun profile and play,
+  a named 1 parses, `FultonCfgBits` 17 / 31, nothing without `fulton_sync`, an invalid value named and off;
+  world_vehicle_rules_lua_check: a guest without the key takes the host's VEHICLE_GONE cause 1 as Seize Instant / the
+  Despawn, no lift line, no skip left behind, no early lift, the host still lifts; world_sync_lua_check: `r[18]`
+  0..31 and bit 16; world_receipt_tests `r[18]` 31; worker_session_tests the key in both allow-lists;
+  friend_package_tests_2 play defaults it off), `cd9639e9` green (the parse, `ResolveWeaponDefaults`, bit 16,
+  world_link mask 31, `world_sync.lua`, `VR.liftOn()`, LabCommon, the worker allow-lists and help, the stale supply
+  comment), then README, protocol section 25 and this entry.
+
 ## November 1, 2026: r1101 Prove - the partner's steering pose on by default (`partner_ride_steer` follows the gun profile in lab and play; hidden runs `ba1a041a`, `bfd46ce5`, `4c098120`; `wp/integ-1101`, local only)
 
 - **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner drives a
@@ -105,7 +147,9 @@
 - **What players get:** by default in play (Play-Coop's native gun profile) and in the lab, when the partner Fultons a
   guard, this screen shows the partner's character kneel at the guard to attach the balloon (the puppet's
   `stateFultonStart` on a remote act 59 held 1 s) and the guard going up under a balloon here too; when the partner
-  Fultons a vehicle, it goes up under the engine's own vehicle balloon here (`Seize {"Fulton"}`) instead of vanishing.
+  Fultons a vehicle, it goes up under the engine's own vehicle balloon here (`Seize {"Fulton"}`) instead of vanishing
+  (correction at the land round: shown only for the guest's vehicle Fulton on the host's screen; the guest's lift of a
+  host's vehicle Fulton is off unless named since then, `fulton_guest_vehicle`).
   A named `fulton_sync=0` turns it off.
 - **Kept as before (D1):** a partner's soldier Fulton still recruits into both saves. The credit skip that made the
   receiver's lift visual only (the Fultoner's save only) reverses D1, the user's open decision, so it moved to its own
