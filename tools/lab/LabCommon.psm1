@@ -480,6 +480,8 @@ $script:LabPartnerKeys = @(
     # borrowed wormhole look (CFG r[18] bits 2 and 4).
     @{ Key = 'fulton_early'; Json = 'fulton_early'; Kind = 'bool' },
     @{ Key = 'fulton_look'; Json = 'fulton_look'; Kind = 'bool' },
+    # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lab and play, off in both unless named).
+    @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

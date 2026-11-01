@@ -116,7 +116,7 @@ void Table() {
     const world::OpSpec* ops = world::OpTable(count);
     Check(count == 65, "65 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
-                       "M6 seat, debug travel, game rules, debug arms, r1101 fulton, and local ops)");
+                       "M6 seat, debug travel, game rules, debug arms, r1101 supply, r1101 fulton, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;

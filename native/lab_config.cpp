@@ -285,6 +285,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_vehicle_damage_given = true;
         if (!ok) result.world_vehicle_damage = false;
     }
+    // Supply drops synced (r1101; lab and play, OFF in both unless named until a hidden run proves it).
+    else if (Equals(key, "world_supply")) {
+        ok = ParseBool(value, result.world_supply);
+        result.world_supply_given = true;
+        if (!ok) result.world_supply = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
