@@ -16,6 +16,10 @@
 -- request that costs GMP). A soldier a falling box knocks out is mirrored by the world outcomes like any knockout.
 -- The stock Player message OnPickUpSupplyCbox (this player took a supply box) ends the synced box at once: kind 2,
 -- reason 1. Lab only: every game message is logged for a while around a box (step=msg).
+-- Review r1101: only the proven drop / equip pairs sync (ALLOW; any other request stays this copy's own box, sync=0);
+-- a partner's drop never replaces this copy's own live or just requested box (step=mirror_held: one box per copy, so
+-- each player keeps the box they paid for); a request the box core refused (the observer's accepted=0) is no box; a
+-- mirror is adopted only when the observer saw the box core take it; the ring is read before a partner's op is applied.
 -- Debug rows (the player module's dispatch): supply state | drop [x y z] | bullet | remove.
 do
 local W = e.MgsCoopWorld
@@ -29,7 +33,13 @@ local POLL_MS, GRACE_MS, NEAR_MM, CENSUS_MS, CENSUS_N, STATE_N = 200, 2000, 6000
 local ECHO_MS, ECHO_MM = 3000, 1000
 -- The box core's state when the game delivered the box's contents (run ddf44cee: 8 landed -> 14, then a fade reset).
 local DELIVERED = 14
-S.POLL_MS, S.GRACE_MS, S.NEAR_MM = POLL_MS, GRACE_MS, NEAR_MM
+-- The synced drop types, "drop:equip", each seen in a hidden run: the iDroid AMMO / FULTON drop (0:431, ddf44cee) and
+-- the script AMMO box (SupplyCbox.DROP_TYPE_AMMO 4:0, c66d418b). Both are delivered by the game itself on landing
+-- (state 14), so the 14 rule ends them. WEAPONS / ITEMS, SUIT, LOADOUT ... stay off until a run shows what the receiver
+-- gets and how the box ends (a type that needs a pickup must not take the 14 rule).
+local ALLOW = {["0:431"] = true, ["4:0"] = true}
+local function allowed(drop, equip) return ALLOW[tostring(drop) .. ":" .. tostring(equip)] == true end
+S.POLL_MS, S.GRACE_MS, S.NEAR_MM, S.allowed = POLL_MS, GRACE_MS, NEAR_MM, allowed
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
 local function L(...)
   local ok, text = pcall(fmt, ...)
@@ -94,10 +104,18 @@ function S.mine(ev, t)
     if px then b.x, b.y, b.z, aim = mm(px), mm(py), mm(pz), "player" end
   end
   S.cur = b
-  local sent = W.paired == true and int(b.drop, 0, 255) and int(b.level, 0, 255) and send(1, b, 0) or false
-  L("step=drop_local;origin=%d;oseq=%d;drop=%s;equip=%s;parts=%s;x_mm=%d;y_mm=%d;z_mm=%d;sent=%d;aim=%s;caller=0x%x", b.origin,
-    b.oseq, tostring(b.drop), tostring(b.equip), tostring(b.parts), b.x, b.y, b.z, sent and 1 or 0, aim, ev[14] or 0)
+  b.sync = allowed(b.drop, b.equip)
+  local sent = b.sync and W.paired == true and int(b.drop, 0, 255) and int(b.level, 0, 255) and send(1, b, 0) or false
+  L("step=drop_local;origin=%d;oseq=%d;drop=%s;equip=%s;parts=%s;x_mm=%d;y_mm=%d;z_mm=%d;sent=%d;aim=%s;caller=0x%x;sync=%d", b.origin,
+    b.oseq, tostring(b.drop), tostring(b.equip), tostring(b.parts), b.x, b.y, b.z, sent and 1 or 0, aim, ev[14] or 0, b.sync and 1 or 0)
 end
+-- This copy's own box is live or was just requested (its state may read 0 for a frame after the request).
+local function ownBox(t)
+  local b = S.cur
+  return b and b.origin == role() and (S.st ~= 0 or t - b.at <= GRACE_MS) and b or nil
+end
+-- The synced box (origin, oseq): never a box that only this copy tracks (sync false).
+local function is(b, origin, oseq) return b and b.sync and b.origin == origin and b.oseq == oseq end
 local function near(b)
   local px, py, pz = pos()
   if not px or not b then return false end
@@ -111,7 +129,7 @@ function S.gone(t, why, reason)
   S.cur = nil
   S.done[key(b.origin, b.oseq)] = true
   reason = reason or (near(b) and 1 or 2)
-  local sent = W.paired == true and send(2, b, reason) or false
+  local sent = b.sync and W.paired == true and send(2, b, reason) or false
   S.n.gone = S.n.gone + 1
   L("step=gone_local;origin=%d;oseq=%d;reason=%d;why=%s;sent=%d", b.origin, b.oseq, reason, why, sent and 1 or 0)
   censusOn(t)
@@ -119,17 +137,31 @@ end
 function S.event(list, t)
   for i, ev in ipairs(list) do
     if type(ev) == "table" and type(ev[2]) == "number" then
-      if ev[2] == 1 then
+      if ev[2] == 1 and ev[16] == 0 then
+        -- The box core refused it (its first branch returns before touching the box): no box, nothing to send.
+        if ev[3] == 1 then S.mirrorAcc = 0 end
+        L("step=refused;seq=%d;mirror=%d;drop=%s;equip=%s", ev[1], ev[3] == 1 and 1 or 0, tostring(ev[4]), tostring(ev[5]))
+      elseif ev[2] == 1 then
         S.lastReqAt = t
         censusOn(t)
+        local later = false
+        for j = i + 1, #list do
+          local n = list[j]
+          if type(n) == "table" and n[2] == 1 and n[16] ~= 0 then later = true end
+        end
         if ev[3] == 1 then
+          S.mirrorAcc = 1
           L("step=mirror_seen;seq=%d;x_mm=%s;y_mm=%s;z_mm=%s", ev[1], tostring(ev[7]), tostring(ev[8]), tostring(ev[9]))
+        elseif later then
+          -- One box per copy: a later request in the same poll replaced this one.
+          L("step=superseded;seq=%d;drop=%s;x_mm=%s;y_mm=%s;z_mm=%s", ev[1], tostring(ev[4]), tostring(ev[7]), tostring(ev[8]),
+            tostring(ev[9]))
         else
           S.mine(ev, t)
         end
       elseif ev[2] == 2 then
         local later = false
-        for j = i + 1, #list do if type(list[j]) == "table" and list[j][2] == 1 then later = true end end
+        for j = i + 1, #list do if type(list[j]) == "table" and list[j][2] == 1 and list[j][16] ~= 0 then later = true end end
         if S.removing and t - S.removing <= 5000 then
           S.removing = nil
           S.n.removed = S.n.removed + 1
@@ -138,8 +170,9 @@ function S.event(list, t)
           L("step=reset_replaced;state=%s", tostring(ev[15]))
         elseif t - S.lastReqAt <= GRACE_MS then
           L("step=reset_request;state=%s;caller=0x%x", tostring(ev[15]), ev[14] or 0)
-        elseif ev[15] == DELIVERED and S.cur then
-          -- The game's own end (run ddf44cee): landed (8) -> delivered (14) -> the fade timer resets it, on both copies.
+        elseif ev[15] == DELIVERED and S.cur and S.cur.sync then
+          -- The game's own end of a synced (self-delivering, ALLOW) type (run ddf44cee): landed (8) -> delivered (14) -> the
+          -- fade timer resets it, on both copies. Any other box reset at 14 falls through to the gone rule.
           local b = S.cur
           S.cur = nil
           S.done[key(b.origin, b.oseq)] = true
@@ -188,7 +221,8 @@ function S.poll(t)
 end
 -- The partner's SUPPLY.
 local function apply(v, t)
-  if S.on == nil then S.poll(t) end
+  -- The ring first (review r1101): this copy's newest request is S.cur before a partner's op is applied.
+  S.poll(t)
   for i = 1, 14 do if type(v[i]) ~= "number" or v[i] ~= floor(v[i]) then L("step=rx_bad;field=%d", i); return end end
   local kind, origin, oseq = v[2], v[3], v[4]
   S.n.rx = S.n.rx + 1
@@ -196,30 +230,47 @@ local function apply(v, t)
   if origin ~= 1 and origin ~= 2 then return end
   if kind == 1 then
     if origin == role() then L("step=rx_own;oseq=%d", oseq); return end
-    if S.done[key(origin, oseq)] or (S.cur and S.cur.origin == origin and S.cur.oseq == oseq) then
+    if S.done[key(origin, oseq)] or is(S.cur, origin, oseq) then
       L("step=mirror_dup;origin=%d;oseq=%d", origin, oseq); return
+    end
+    if not allowed(v[5], v[6]) then
+      S.done[key(origin, oseq)] = true
+      L("step=mirror_skip;origin=%d;oseq=%d;reason=drop_type;drop=%d;equip=%d", origin, oseq, v[5], v[6]); return
+    end
+    -- One box per copy: a mirror request would reset this copy's own box (paid for here). Each player keeps theirs.
+    local own = ownBox(t)
+    if own then
+      S.done[key(origin, oseq)] = true
+      L("step=mirror_held;origin=%d;oseq=%d;own=%d.%d;st=%d", origin, oseq, own.origin, own.oseq, S.st); return
     end
     if not W.inGame() then L("step=mirror_skip;origin=%d;oseq=%d;reason=not_in_game", origin, oseq); return end
     local f = get(Player, "RequestToSupplyCbox")
     -- Vector3 is a callable object in the game (run c66d418b), not a function: built inside the pcall.
     if type(f) ~= "function" or Vector3 == nil then L("step=mirror_skip;reason=missing_api"); return end
     local b = {origin = origin, oseq = oseq, drop = v[5], equip = v[6], parts = v[7], x = v[8], y = v[9], z = v[10], level = v[11],
-      wait = v[12], flags = v[13], at = t}
+      wait = v[12], flags = v[13], at = t, sync = true}
+    S.mirrorAcc = nil
     receipt("mirror 1")
     local ok, err = pcall(function()
       return f({dropType = b.drop, equipId = b.equip, partsType = b.parts, aimPosition = Vector3(b.x / 1000, b.y / 1000, b.z / 1000),
         level = b.level, waitLevel = b.wait, callHeliSound = floor(b.flags / 4) % 2 == 1})
     end)
     receipt("mirror 0")
+    -- The mirror's own request event (the request runs synchronously inside the call): adopted only when the core took it.
+    S.poll(t)
+    local why = not ok and "err=" .. string.sub(tostring(err), 1, 60) or S.mirrorAcc == 0 and "refused" or S.mirrorAcc ~= 1 and "unseen"
+    censusOn(t)
+    if why then
+      L("step=mirror;origin=%d;oseq=%d;ok=0;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d;why=%s", origin, oseq, b.drop, b.x, b.y, b.z, why)
+      return
+    end
     S.cur, S.lastReqAt = b, t
     S.n.mirror = S.n.mirror + 1
-    censusOn(t)
-    L("step=mirror;origin=%d;oseq=%d;ok=%d;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d%s", origin, oseq, ok and 1 or 0, b.drop, b.x, b.y, b.z,
-      ok and "" or ";err=" .. string.sub(tostring(err), 1, 60))
+    L("step=mirror;origin=%d;oseq=%d;ok=1;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d", origin, oseq, b.drop, b.x, b.y, b.z)
     pcall(W.note, NOTE, 1, b.drop)
   elseif kind == 2 then
     local b = S.cur
-    if not (b and b.origin == origin and b.oseq == oseq) then
+    if not is(b, origin, oseq) then
       S.done[key(origin, oseq)] = true
       L("step=gone_unknown;origin=%d;oseq=%d", origin, oseq); return
     end
@@ -240,7 +291,17 @@ W.handlers[OP] = function(v)
   if not ok then L("step=error;msg=%s", string.sub(tostring(err), 1, 100)) end
 end
 W.stopHooks = W.stopHooks or {}
-W.stopHooks[#W.stopHooks + 1] = function() S.reset(true) end
+-- A real stop only (true); W.w1off runs the stop hooks with false mid-mission, with the boxes still down.
+W.stopHooks[#W.stopHooks + 1] = function(full) if full then S.reset(true) end end
+-- A new pairing epoch (e.g. the partner restarted its game; its box seq starts at 1 again): forget the dedupe keys; the
+-- old pairing's partner box is this copy's alone now (sync false: never matched, never sent).
+W.pairedHooks = W.pairedHooks or {}
+W.pairedHooks[#W.pairedHooks + 1] = function(changed)
+  if not changed then return end
+  S.done = {}
+  if S.cur and S.cur.origin ~= role() then S.cur.sync = false end
+  L("step=epoch;cur=%s", S.cur and fmt("%d.%d", S.cur.origin, S.cur.oseq) or "none")
+end
 W.startHooks = W.startHooks or {}
 W.startHooks[#W.startHooks + 1] = function() S.reset(true); S.skipOld = true end
 -- The stock Player messages (the game's s10030_sequence.lua): OnPickUpSupplyCbox (this player took a supply box: the

@@ -66,6 +66,11 @@ bool DecodeRequest(const unsigned char* request, std::size_t size, Event& out) n
     return true;
 }
 
+bool RequestAccepted(const CoreView& before, const CoreView& after) noexcept {
+    if (!before.ok || !after.ok) return true;
+    return before.state != after.state || before.flags != after.flags || std::memcmp(before.stored, after.stored, kRequestSize) != 0;
+}
+
 std::uint32_t Ring::Push(const Event& e) noexcept {
     last_ = last_ == 0xFFFFFFFFu ? 1 : last_ + 1;
     Event copy = e;
@@ -124,11 +129,11 @@ std::size_t FormatPoll(const Snapshot& s, const Event* events, std::size_t count
           static_cast<unsigned long>(last), static_cast<unsigned long>(lost));
     for (std::size_t i = 0; events && i < count; ++i) {
         const Event& e = events[i];
-        w.Put("%s{%lu,%u,%u,%lu,%lu,%lu,%ld,%ld,%ld,%u,%u,%u,%u,%lu,%lu}", i ? "," : "", static_cast<unsigned long>(e.seq),
+        w.Put("%s{%lu,%u,%u,%lu,%lu,%lu,%ld,%ld,%ld,%u,%u,%u,%u,%lu,%lu,%u}", i ? "," : "", static_cast<unsigned long>(e.seq),
               unsigned(e.kind), unsigned(e.mirror), static_cast<unsigned long>(e.drop_type), static_cast<unsigned long>(e.equip_id),
               static_cast<unsigned long>(e.parts_type), static_cast<long>(e.pos_mm[0]), static_cast<long>(e.pos_mm[1]),
               static_cast<long>(e.pos_mm[2]), unsigned(e.level), unsigned(e.wait_level), unsigned(e.flags), unsigned(e.aim_object),
-              static_cast<unsigned long>(e.caller_rva), static_cast<unsigned long>(e.state));
+              static_cast<unsigned long>(e.caller_rva), static_cast<unsigned long>(e.state), unsigned(e.accepted));
     }
     w.Put("}}");
     return w.ok ? w.n : 0;
@@ -139,11 +144,12 @@ std::size_t FormatLogLine(const Event& e, char* out, std::size_t capacity) noexc
     Writer w{out, capacity};
     if (e.kind == kRequest)
         w.Put("supply=request;seq=%lu;mirror=%u;drop=%lu;equip=%lu;parts=%lu;x_mm=%ld;y_mm=%ld;z_mm=%ld;level=%u;wait=%u;flags=0x%x;"
-              "aim=%u;caller=0x%lx;state=%lu\r\n",
+              "aim=%u;caller=0x%lx;state=%lu;accepted=%u\r\n",
               static_cast<unsigned long>(e.seq), unsigned(e.mirror), static_cast<unsigned long>(e.drop_type),
               static_cast<unsigned long>(e.equip_id), static_cast<unsigned long>(e.parts_type), static_cast<long>(e.pos_mm[0]),
               static_cast<long>(e.pos_mm[1]), static_cast<long>(e.pos_mm[2]), unsigned(e.level), unsigned(e.wait_level),
-              unsigned(e.flags), unsigned(e.aim_object), static_cast<unsigned long>(e.caller_rva), static_cast<unsigned long>(e.state));
+              unsigned(e.flags), unsigned(e.aim_object), static_cast<unsigned long>(e.caller_rva), static_cast<unsigned long>(e.state),
+              unsigned(e.accepted));
     else
         w.Put("supply=reset;seq=%lu;mirror=%u;caller=0x%lx;state=%lu\r\n", static_cast<unsigned long>(e.seq), unsigned(e.mirror),
               static_cast<unsigned long>(e.caller_rva), static_cast<unsigned long>(e.state));

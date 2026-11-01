@@ -1946,12 +1946,12 @@ its own arguments. Static RE of 1.0.15.4 (own capstone scans of the exe, nothing
 
 Receipt `return 'MGS_COOP_SUPPLY_V1' -- poll <after> | mirror <0|1> | remove <token>` (`mgscoop/supply_sync.hpp`):
 poll answers `{on=1,inst=,box=,st=<Z+0xF0>,fl=<Z+0x124>,last=,lost=,ev={{seq,kind,mirror,drop,equip,parts,x,y,z,level,
-wait,flags,aim,caller,state},...}}` (x y z mm; kind 1 request, 2 reset; mirror 1 while Lua's mirror window is open) or
-`{on=0}`; mirror opens/closes the window (the detour runs inside Lua's own call); remove is the lab remove lever:
+wait,flags,aim,caller,state,accepted},...}}` (x y z mm; kind 1 request, 2 reset; mirror 1 while Lua's mirror window is
+open; accepted 0 when the box core refused the request) or `{on=0}`; mirror opens/closes the window (the detour runs inside Lua's own call); remove is the lab remove lever:
 `Z+0x124 |= 2` (the game's own reset bit; the next update resets the box) -> `{ok=1,st=}` or `{ok=0,why=}` (`no_core`,
 `no_box`, `unreadable`, `not_writable`, `fault`, `off`). Native log lines: `supply=installed;detours=2;observe_only=1;
 remove_lever=reset_bit`, `supply=request;seq=;mirror=;drop=;equip=;parts=;x_mm=;y_mm=;z_mm=;level=;wait=;flags=;aim=;
-caller=;state=`, `supply=reset;seq=;mirror=;caller=;state=`, `supply=remove;token=;ok=;state=;why=` (at most 400 per
+caller=;state=;accepted=`, `supply=reset;seq=;mirror=;caller=;state=`, `supply=remove;token=;ok=;state=;why=` (at most 400 per
 process), `supply=off;reason=key_off`, `supply=refused;reason=site|slot`.
 
 Op `0x45` SUPPLY (69), both directions, reliable, **world** queue, level 3, paired, never a request; 14 Lua fields,
@@ -2020,3 +2020,29 @@ host's own iDroid drop the host lies prone beside an open yellow supply case 2 m
 3 m away), while the guest's screen at that moment shows no notice and the same magazine. The script AMMO box
 (drop 4, equip 0) gave no visible "Surplus Supplies Retrieved" in any run [U]. The WEAPONS / ITEMS list opens with the
 equipped pistol first; Enter and Space on it ordered nothing (the scenario now selects the next pistol first) [U].
+
+Review fixes (r1101, after run `5acbcb83`; Lua and native tests only, not yet in a run):
+- One box per copy, so a mirror request resets the receiver's own box. A partner's drop is never mirrored over this
+  copy's own live or just requested box (state not 0, or within 2 s of the request): `step=mirror_held;origin=;oseq=;
+  own=;st=`, no request, no toast; each player keeps the box they paid for, crossing drops included (each copy then
+  shows only its own box). Once the own box has ended, the next partner drop is mirrored again; a newer partner drop
+  still replaces an older partner box.
+- The request detour calls the original first and records `accepted` (`supply_sync::RequestAccepted`): the core's
+  refused branch (`[Z+0x20]->vt[0]()` true: `jnz` to the epilogue at +0x140) touches nothing in Z, an accepted request
+  copies itself to Z+0x4E0 and writes the state and the flags. A refused own request is `step=refused` (not sent, not
+  this copy's box); a mirror is adopted (S.cur, note 21 a=1) only when its own request event was seen and accepted
+  (`step=mirror;...;ok=0;...;why=err=..|refused|unseen` otherwise, the previous box kept, no toast).
+- Only the proven drop / equip pairs sync: the iDroid AMMO / FULTON drop 0:431 and the script AMMO box 4:0 (both
+  delivered by the game on landing, so the state-14 rule is their end). Any other request (WEAPONS / ITEMS, SUIT,
+  LOADOUT, ...) stays this copy's own box (`step=drop_local;...;sync=0`, never sent; it still holds partner mirrors off
+  and ends as `gone_local` with nothing sent, never `delivered`); a partner's other type is `step=mirror_skip;
+  reason=drop_type`. Each further type needs a hidden run that shows what the receiver gets and how the box ends.
+- The partner's op is applied after this copy's ring is read (a poll at the start of every SUPPLY), so a kind 2 for
+  the partner's old box can never remove this copy's newer box; a later accepted request in the same poll supersedes an
+  earlier one (`step=superseded`, one kind 1).
+- The stop hook resets only on a real stop (W.w1off's `false` keeps the box); a new pairing epoch forgets the dedupe
+  keys and turns the old pairing's partner box into this copy's alone (`step=epoch`).
+- The remove path (kind 2, the lever, note 21 a=2) can no longer be reached by the synced types in normal play (they
+  end at state 14 on both copies); it stays [U] (H2, H3) and is not a reason to turn the key on. The proof scenario
+  now shows crossing drops (`mirror_held`) and that a WEAPONS / ITEMS drop is not synced, and asks for its pickup
+  (`step=pickup`, `gone_local;...;why=pickup;sent=0`) as the H3 evidence for a later type.

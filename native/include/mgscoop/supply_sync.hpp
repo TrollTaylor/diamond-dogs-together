@@ -8,8 +8,8 @@
 // Receipts (Lua -> native, lab key world_supply; OFF unless named, lab and play):
 //   return 'MGS_COOP_SUPPLY_V1' -- poll <after>     the box state and the events with seq > after
 //        -> return {on=1,inst=1,box=1,st=<state>,fl=<flags>,last=<seq>,lost=<n>,ev={{seq,kind,mirror,drop,equip,parts,
-//                   x,y,z,level,wait,flags,aim,caller,state},...}}       (x y z mm; kind 1 request, 2 reset; mirror 1 while
-//                   Lua's own mirror request ran) | return {on=0}
+//                   x,y,z,level,wait,flags,aim,caller,state,accepted},...}}  (x y z mm; kind 1 request, 2 reset; mirror 1
+//                   while Lua's own mirror request ran; accepted 0 when the box core refused the request) | return {on=0}
 //   return 'MGS_COOP_SUPPLY_V1' -- mirror <0|1>     Lua's mirror request begins (1) / ends (0) on this thread
 //        -> return {ok=1}
 //   return 'MGS_COOP_SUPPLY_V1' -- remove <token>   the lab remove lever: the box core's flags |= 2 (the game's own
@@ -28,7 +28,7 @@ inline constexpr std::int32_t kPosLimitMm = 1000000000;  // the wire's I32 range
 
 struct Event {
     std::uint32_t seq = 0;
-    std::uint8_t kind = 0, mirror = 0, level = 0, wait_level = 0, flags = 0;
+    std::uint8_t kind = 0, mirror = 0, level = 0, wait_level = 0, flags = 0, accepted = 1;
     std::uint16_t aim_object = 0xFFFF;
     std::uint32_t drop_type = 0, equip_id = 0, parts_type = 0;
     std::int32_t pos_mm[3]{};
@@ -40,6 +40,18 @@ struct Event {
 // +8 parts, +0x100 aim position (3 floats, metres), +0x110 aim object, +0x112 wait level, +0x120 level, +0x12d flags. False (out untouched)
 // for a short buffer or a position that is not finite or beyond +-1e6 m.
 bool DecodeRequest(const unsigned char* request, std::size_t size, Event& out) noexcept;
+
+// The box core around a request (review r1101): the request detour calls the original first. The core's refused branch
+// ([Z+0x20]->vt[0]() true: jnz to the epilogue) touches nothing in Z; an accepted request copies itself to the stored
+// request (Z+0x4E0) and writes the state (Z+0xF0) and the flags (Z+0x124 |= 2 and 8 or 0x10). Accepted = the state, the
+// flags or the stored request changed, or a read failed (unknown: as before). A request that changes nothing (the same
+// bytes again before the update ran) is no new box either.
+struct CoreView {
+    bool ok = false;
+    std::uint32_t state = 0, flags = 0;
+    unsigned char stored[kRequestSize]{};
+};
+bool RequestAccepted(const CoreView& before, const CoreView& after) noexcept;
 
 // Events in order; seq 1.. (0 never used: Lua's "nothing seen").
 class Ring {

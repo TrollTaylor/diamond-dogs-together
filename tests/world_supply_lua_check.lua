@@ -99,8 +99,9 @@ check(#c.calls==1,"one Player.RequestToSupplyCbox")
 local q=c.calls[1]
 check(q.dropType==4 and q.equipId==0 and q.partsType==0 and q.level==1 and q.waitLevel==7 and q.callHeliSound==true,"the host's request fields")
 check(math.abs(q.aimPosition.x+1234.567)<1e-6 and math.abs(q.aimPosition.y-321)<1e-6 and math.abs(q.aimPosition.z-5)<1e-6,"the same aim point in m")
-check(c.receipts[#c.receipts-1]:find("mirror 1",1,true) and c.receipts[#c.receipts]:find("mirror 0",1,true) and not c.mirror,
- "the request ran inside the mirror window, closed after")
+-- The window, then a poll that reads the mirror's own request event (accepted or refused by the box core).
+check(c.receipts[#c.receipts-2]:find("mirror 1",1,true) and c.receipts[#c.receipts-1]:find("mirror 0",1,true) and
+ c.receipts[#c.receipts]:find("poll ",1,true) and not c.mirror,"the request ran inside the mirror window, closed after, then a poll")
 check(c.S.cur and c.S.cur.origin==1 and c.S.cur.oseq==4,"the guest's current box is the host's box 4")
 check(#c.notes==1 and c.notes[1][1]==21 and c.notes[1][2]==1,"note 21 a=1: the partner's drop toast")
 check(c:has(c.logs,"event=supply;step=mirror;origin=1;oseq=4;ok=1"),"logged")

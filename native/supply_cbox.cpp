@@ -63,28 +63,39 @@ void Record(ss::Event& e) noexcept {
     if (ss::FormatLogLine(e, line, sizeof(line))) LogLine(line);
 }
 
+// The box core's state, flags and stored request (contract box_state / box_flags / box_request).
+void View(std::uintptr_t z, ss::CoreView& v) noexcept {
+    v.ok = ReadU32(z + c::box_state, v.state) && ReadU32(z + c::box_flags, v.flags) && Read(z + c::box_request, v.stored, sizeof(v.stored));
+}
+
+// Review r1101: the original runs first, then the event records whether the core took the request (its refused branch,
+// [Z+0x20]->vt[0]() true, returns before touching Z), so Lua neither sends nor adopts a refused request.
 std::uintptr_t RequestDetour(void* core, void* request) {
     Preserve keep;
-    if (g_ready.load(std::memory_order_acquire) && g_enabled.load(std::memory_order_relaxed)) {
-        const auto z = reinterpret_cast<std::uintptr_t>(core);
-        unsigned char bytes[ss::kRequestSize]{};
-        ss::Event e{};
-        if (Read(reinterpret_cast<std::uintptr_t>(request), bytes, sizeof(bytes)) && ss::DecodeRequest(bytes, sizeof(bytes), e)) {
-            const auto previous = g_core.exchange(z, std::memory_order_acq_rel);
-            if (previous != z) {
-                char line[96]{};
-                std::snprintf(line, sizeof(line), "supply=core;changed=%u\r\n", previous ? 1u : 0u);
-                LogLine(line);
-            }
-            e.mirror = g_mirror.load(std::memory_order_relaxed) ? 1 : 0;
-            e.caller_rva = CallerRva(_ReturnAddress());
-            ReadU32(z + c::box_state, e.state);
-            Record(e);
-        } else {
-            LogLine("supply=request_unreadable\r\n");
-        }
+    if (!g_ready.load(std::memory_order_acquire) || !g_enabled.load(std::memory_order_relaxed)) return g_request(core, request);
+    const auto z = reinterpret_cast<std::uintptr_t>(core);
+    unsigned char bytes[ss::kRequestSize]{};
+    ss::Event e{};
+    if (!Read(reinterpret_cast<std::uintptr_t>(request), bytes, sizeof(bytes)) || !ss::DecodeRequest(bytes, sizeof(bytes), e)) {
+        LogLine("supply=request_unreadable\r\n");
+        return g_request(core, request);
     }
-    return g_request(core, request);
+    const auto previous = g_core.exchange(z, std::memory_order_acq_rel);
+    if (previous != z) {
+        char line[96]{};
+        std::snprintf(line, sizeof(line), "supply=core;changed=%u\r\n", previous ? 1u : 0u);
+        LogLine(line);
+    }
+    e.mirror = g_mirror.load(std::memory_order_relaxed) ? 1 : 0;
+    e.caller_rva = CallerRva(_ReturnAddress());
+    ss::CoreView before{}, after{};
+    View(z, before);
+    e.state = before.state;
+    const auto result = g_request(core, request);
+    View(z, after);
+    e.accepted = ss::RequestAccepted(before, after) ? 1 : 0;
+    Record(e);
+    return result;
 }
 
 std::uintptr_t ResetDetour(void* core) {
