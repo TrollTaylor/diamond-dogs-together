@@ -928,6 +928,12 @@ struct LabConfig {
     // decision, so it is off unless named in lab and play.
     bool fulton_one_save = false;
     bool fulton_one_save_given = false;
+    // r1101 land: fulton_guest_vehicle=0|1 (CFG r[18] bit 16, used only with fulton_sync): the guest's copy lifts a vehicle
+    // the HOST Fultoned with the engine's own balloon (it arrives by the host's VEHICLE_GONE). Only the guest-to-host
+    // vehicle lift ran in a game (runs 7d924fac, 19882881), so this direction is off unless named in lab and play; without
+    // it the guest removes such a vehicle as before r1101 (D14's Seize Instant, else the Despawn).
+    bool fulton_guest_vehicle = false;
+    bool fulton_guest_vehicle_given = false;
     // debug_vspawn=0|1 (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua): F9 World > Vehicles brings an
     // area vehicle in front of whoever presses, on both copies (VSPAWN 0x44). MGS_COOP_VSPAWN_CFG_V1 answers it to Lua.
     // Follows the gun profile in lab and play since the r1101 Prove phase (hidden play runs 65b4005c and e09fcf72, both
@@ -1027,8 +1033,8 @@ const char* LabModeName(LabMode value) noexcept;
 // The effective travel lock (P2-11): the lab.ini travel_lock when given,
 // otherwise on in play and off in lab.
 bool EffectiveTravelLock(const LabConfig& config) noexcept;
-// r1101 fulton: CFG r[18] (world_link): 1 fulton_sync, 2 fulton_early, 4 fulton_look, 8 fulton_one_save; 0 without
-// fulton_sync.
+// r1101 fulton: CFG r[18] (world_link): 1 fulton_sync, 2 fulton_early, 4 fulton_look, 8 fulton_one_save, 16
+// fulton_guest_vehicle; 0 without fulton_sync.
 std::uint8_t FultonCfgBits(const LabConfig& config) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;

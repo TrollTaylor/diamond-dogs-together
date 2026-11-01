@@ -64,8 +64,9 @@ function VR.breakOn() return W.vehicleBreakOn == true and G.on() end
 -- world_vehicle.lua's REQ handler applies a cause 4 request only while this key runs on the host.
 G.breakOn = VR.breakOn
 function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
--- r1101 fulton (lab key fulton_sync, CFG r[18]): a partner's vehicle Fulton is this copy's own engine lift.
-function VR.liftOn() return W.fultonOn == true and G.on() end
+-- r1101 fulton (lab key fulton_sync, CFG r[18]): a partner's vehicle Fulton is this copy's own engine lift. On the guest
+-- (a host's Fulton, by the host's VEHICLE_GONE: never run in a game) only with fulton_guest_vehicle (r[18] bit 16).
+function VR.liftOn() return W.fultonOn == true and G.on() and (W.host == true or W.fultonGuestVehicleOn == true) end
 -- The early lift (its own lab key fulton_early, CFG r[18] bit 2: a balloon that fails after the Fultoner's FultonInfo is
 -- not mirrored yet, so this stays off unless named until a probe settles that): world_enemy.lua calls
 -- G.early(id, vtype, x, y, z) on a partner's FULTON kind 2 (sent at its FultonInfo, with the vehicle's type and pose on

@@ -289,8 +289,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_vehicle_damage_given = true;
         if (!ok) result.world_vehicle_damage = false;
     }
-    // Supply drops synced (r1101; lab and play, OFF in both unless named until a hidden run proves it).
-    // Supply drops synced (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
+    // Supply drops synced (r1101; lab and play, follows the gun profile unless named): an invalid value counts as named, off.
     else if (Equals(key, "world_supply")) {
         ok = ParseBool(value, result.world_supply);
         result.world_supply_given = true;
@@ -331,6 +330,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.fulton_one_save);
         result.fulton_one_save_given = true;
         if (!ok) result.fulton_one_save = false;
+    }
+    // r1101 land: the guest's lift of a host's vehicle Fulton (never run in a game), off unless named.
+    else if (Equals(key, "fulton_guest_vehicle")) {
+        ok = ParseBool(value, result.fulton_guest_vehicle);
+        result.fulton_guest_vehicle_given = true;
+        if (!ok) result.fulton_guest_vehicle = false;
     }
     // Debug menu Spawn vehicle (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
     else if (Equals(key, "debug_vspawn")) {
@@ -1282,7 +1287,7 @@ bool EffectiveTravelLock(const LabConfig& config) noexcept {
 std::uint8_t FultonCfgBits(const LabConfig& config) noexcept {
     if (!config.fulton_sync) return 0;
     return static_cast<std::uint8_t>(1u | (config.fulton_early ? 2u : 0u) | (config.fulton_look ? 4u : 0u) |
-                                     (config.fulton_one_save ? 8u : 0u));
+                                     (config.fulton_one_save ? 8u : 0u) | (config.fulton_guest_vehicle ? 16u : 0u));
 }
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
@@ -1876,6 +1881,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.fulton_early_given) c.fulton_early = false;
     if (!c.fulton_look_given) c.fulton_look = false;
     if (!c.fulton_one_save_given) c.fulton_one_save = false;
+    // The guest's lift of a vehicle the host Fultoned (another path: the host's VEHICLE_GONE) never ran in a game; only
+    // the guest-to-host vehicle lift did (runs 7d924fac, 19882881). Off unless named.
+    if (!c.fulton_guest_vehicle_given) c.fulton_guest_vehicle = false;
     // Supply drops synced (docs/world-sync-protocol.md section 26): follows the gun profile in lab and play since the r1101
     // Prove phase (hidden play run 69efd63b, both copies: the host's script and iDroid AMMO / FULTON drops and the guest's
     // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named

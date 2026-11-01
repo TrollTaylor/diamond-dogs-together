@@ -484,6 +484,9 @@ $script:LabPartnerKeys = @(
     # r1101 Prove (lab and play, off unless named, only with fulton_sync): the receiver's soldier credit skipped (the
     # Fultoner's save only; reverses D1). fulton_sync itself follows the gun profile since the r1101 Prove phase.
     @{ Key = 'fulton_one_save'; Json = 'fulton_one_save'; Kind = 'bool' },
+    # r1101 land (lab and play, off unless named, only with fulton_sync): the guest's balloon lift of a vehicle the host
+    # Fultoned (never run in a game; CFG r[18] bit 16).
+    @{ Key = 'fulton_guest_vehicle'; Json = 'fulton_guest_vehicle'; Kind = 'bool' },
     # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lab and play, off in both unless named).
     @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.

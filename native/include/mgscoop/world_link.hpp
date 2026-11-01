@@ -42,8 +42,8 @@ struct Config {
     // relief module (lua/coop/world_relief_sync.lua).
     bool relief = false;
     // r1101 fulton: lab.ini fulton_sync (lab and play): CFG r[18] bit 1 turns on the Fulton lift (world_vehicle_rules.lua)
-    // and FULTON 0x46 (world_enemy.lua W.fulton); with it bit 2 fulton_early, bit 4 fulton_look, bit 8 fulton_one_save
-    // (FultonCfgBits).
+    // and FULTON 0x46 (world_enemy.lua W.fulton); with it bit 2 fulton_early, bit 4 fulton_look, bit 8 fulton_one_save,
+    // bit 16 fulton_guest_vehicle (FultonCfgBits).
     std::uint8_t fulton = 0;
     // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
     // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.

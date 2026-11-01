@@ -284,8 +284,8 @@ struct CfgReply {
     std::uint8_t relief;
     // r1101 fulton (docs/world-sync-protocol.md section 25): r[18] bit 1 turns on the Fulton lift and FULTON 0x46
     // (lua/coop/world_enemy.lua W.fulton, world_vehicle_rules.lua; lab key fulton_sync), with it bit 2 the early vehicle
-    // lift (fulton_early), bit 4 the borrowed wormhole look (fulton_look) and bit 8 the receiver's soldier credit skipped
-    // (fulton_one_save), else 0; filled only by
+    // lift (fulton_early), bit 4 the borrowed wormhole look (fulton_look), bit 8 the receiver's soldier credit skipped
+    // (fulton_one_save) and bit 16 the guest's lift of a host's vehicle Fulton (fulton_guest_vehicle), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t fulton;
 };

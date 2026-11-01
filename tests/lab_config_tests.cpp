@@ -1991,9 +1991,8 @@ int main() {
             const auto fgOne = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=1\n");
             const auto fgNoSync = Lab("enabled=1\nrole=guest\nworld=3\nfulton_guest_vehicle=1\n");
             const auto fgBad = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=maybe\n");
-            const auto fgPlay = Lab("enabled=1\nrole=guest\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
-                                    "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n"
-                                    "world=3\nfulton_guest_vehicle=1\n");
+            // The parse does not depend on the role (the key acts only on the guest's copy, world_vehicle_rules.lua).
+            const auto fgPlay = Lab(fsGunBase + "mode=play\nfulton_guest_vehicle=1\n");
             Check(!fsDef.fulton_guest_vehicle && !fsDef.fulton_guest_vehicle_given && !fsPlayDefault.fulton_guest_vehicle &&
                       !fsLab.fulton_guest_vehicle && !fsPlay.fulton_guest_vehicle && !foAll.fulton_guest_vehicle,
                   "fulton_guest_vehicle defaults off (lab and play, also with fulton_sync=1 and every other fulton key)");
