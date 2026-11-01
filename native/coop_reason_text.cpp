@@ -350,6 +350,8 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         case 7: return Put(out, capacity, "Your partner is in another area: use Go to first.");
         default: return false;
         }
+    case 17:  // PARTNER_GEAR{a=1 the late partner's gun shows after the next load} (fb1031 gear; posted locally by native)
+        return a == 1 ? Put(out, capacity, "Your partner's gun will show after the next loading screen.") : false;
     default:  // 15 reserved or unknown: no toast
         return false;
     }

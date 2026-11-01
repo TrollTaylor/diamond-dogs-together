@@ -180,6 +180,9 @@ struct GeneralContext {
     // renew only cache-unavailable slots that have never dispatched.
     std::uint16_t manifest_revision=0;
     std::uint32_t manifest_epoch=0;
+    // fb1031 gear: the observer's residency generation, bumped once per returned mid-mission load of the
+    // manifest's bases (equipment_stock_probe::ResidencyRenewal; 0 none): it renews the missing-cache slots once.
+    std::uint32_t residency_gen=0;
     // Body 1 switches or reloads (gun mode 8/11/12, rec+0x3C0 bit 7): nothing is dispatched.
     bool body_busy=false;
     SharedMode shared=SharedMode::off;

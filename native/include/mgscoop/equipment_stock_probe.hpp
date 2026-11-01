@@ -114,6 +114,84 @@ constexpr PreloadSource ChoosePreloadSource(bool remote, bool peer_on_handed_sav
 constexpr const char* PreloadSourceName(PreloadSource s) noexcept {
     return s==PreloadSource::remote ? "remote" : s==PreloadSource::predicted ? "predicted" : "none";
 }
+// fb1031 gear (0.14.5 online, the friend's log): the host reloaded Mother Base
+// while the link was down (equip_preload=refused; admission=link_not_connected),
+// the partner paired 4 min later and for 216 s had no gun and no muzzle flash on
+// the host's screen (writer no_resident: their bases were never requested in
+// that mission) until a Game Over reload preloaded them. A partner who pairs
+// after this mission's allocation (a late join, a link that was down at the
+// load) gets, once per mission and link session: a mid-mission load of their
+// bases (lab.ini partner_equip_midload; the same read-only preflight as the
+// allocation's), else one note that their gun shows after the next load.
+struct LateGearInput {
+    bool admitted=false;   // EquipAdmissionReason: a connected link (play) or the one-PC lab
+    bool manifest=false;   // the peer's manifest of this link session
+    bool gameplay=false;   // the writer's gates (a partner-body mission's gameplay, not terminating)
+    bool covered=false;    // this allocation's verified preload covered every non-zero remote base
+    bool missing=false;    // a writer slot gave up for want of a resident entry (no_resident / no_cache_entry)
+    bool midload=false;    // lab.ini partner_equip_midload
+    bool attempted=false;  // the mid-mission load of this mission and link session was asked for
+    bool returned=false;   // ... and its one public call returned
+};
+enum class LateGear : unsigned char { none, request, loading, next_load };
+// none: nothing to do (not paired, no manifest, not in gameplay, preloaded, or
+// resident anyway); request: ask for the mid-mission load; loading: its call
+// returned (the writer re-plans); next_load: the gun shows after the next load.
+constexpr LateGear DecideLateGear(const LateGearInput& c) noexcept {
+    return !c.admitted || !c.manifest || !c.gameplay || c.covered || !c.missing ? LateGear::none
+        : c.midload && !c.attempted ? LateGear::request
+        : c.midload && c.returned ? LateGear::loading
+        : LateGear::next_load;
+}
+constexpr const char* LateGearName(LateGear g) noexcept {
+    return g==LateGear::request ? "request" : g==LateGear::loading ? "loading" : g==LateGear::next_load ? "next_load" : "none";
+}
+// One mid-mission load per mission and link session (a new pair may ask once
+// more), on the runtime owner, only when DecideLateGear asks for it; the note
+// once per mission and link session.
+class MidLoadAuthorization {
+    std::uint32_t mission_=0, link_=0;
+    bool attempted_=false, permitted_=false, returned_=false, noted_=false;
+public:
+    // The mission's gameplay and this link session; a new mission or link session starts over.
+    void Track(std::uint32_t mission, std::uint32_t link) noexcept {
+        if(mission==mission_ && link==link_) return;
+        mission_=mission; link_=link; attempted_=permitted_=returned_=noted_=false;
+    }
+    void End() noexcept { mission_=link_=0; attempted_=permitted_=returned_=noted_=false; }
+    bool Attempted() const noexcept { return attempted_; }
+    bool Returned() const noexcept { return returned_; }
+    // The query: consumes the one attempt once the decision asks for it, before the preflight verdict.
+    const char* Try(bool owner, std::uint32_t mission, std::uint32_t link, LateGear decision, bool preflight_ok) noexcept {
+        if(!owner) return "not_runtime_owner";
+        if(!mission_ || mission!=mission_ || link!=link_) return "mission";
+        if(attempted_) return "already_attempted";
+        if(decision!=LateGear::request) return "not_needed";
+        attempted_=true;
+        if(!preflight_ok) return "midload_preflight";
+        permitted_=true;
+        return nullptr;
+    }
+    // The receipt after the one public call: true when it returned (the writer then re-plans).
+    bool Receipt(bool owner, std::uint32_t mission, bool returned) noexcept {
+        if(!owner || !permitted_ || mission!=mission_) return false;
+        permitted_=false;
+        returned_=returned;
+        return returned_;
+    }
+    bool TakeNote(LateGear decision) noexcept {
+        if(decision!=LateGear::next_load || noted_) return false;
+        noted_=true;
+        return true;
+    }
+};
+// The writer re-plans its missing-cache slots once per returned mid-mission
+// load (the residency generation the observer bumps; 0 = none yet).
+inline bool ResidencyRenewal(std::uint32_t& seen, std::uint32_t now) noexcept {
+    if(!now || now==seen) return false;
+    seen=now;
+    return true;
+}
 // The late-manifest receipt: how many of the remote's non-zero base ids the
 // allocation's preload covered (`wanted` = the non-zero ones).
 inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16_t* ids, unsigned count, unsigned& wanted) noexcept {
@@ -124,5 +202,18 @@ inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16
         for(unsigned i=0;ids && i<count;++i) if(ids[i]==id) { ++covered; break; }
     }
     return covered;
+}
+// LateGearInput::covered: this allocation already did what it could for this
+// partner. Its preload query had their manifest (source remote: a base it
+// dropped, such as a type mismatch or an eviction, would fail mid-mission and
+// at the next load alike, so no load and no note), or its preloaded ids cover
+// every non-zero remote base. Only an allocation WITHOUT their manifest
+// (refused link_not_connected, no_manifest, predicted) leaves the late path.
+inline bool LateGearCovered(bool allocation_had_manifest, const std::uint16_t (&remote)[3], const std::uint16_t* ids,
+                            unsigned count) noexcept {
+    if(allocation_had_manifest) return true;
+    unsigned wanted=0;
+    const unsigned covered=PreloadCover(remote,ids,count,wanted);
+    return wanted && covered==wanted;
 }
 }

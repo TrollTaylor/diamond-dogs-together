@@ -52,6 +52,23 @@ do
     -- the native bounds: +-1e6 m positions, +-36000 degree angles.
     local function within(v, limit) return finite(v) and v > -limit and v < limit end
     local function integer(v, low, high) return type(v) == "number" and v == floor(v) and v >= low and v <= high end
+    -- fb1031 gear: a partner who paired after this mission's allocation has no
+    -- preloaded guns. Native answers 1..3 stock ids for ONE mid-mission load
+    -- (lab.ini partner_equip_midload, its read-only preflight) or false.
+    local function midload()
+        local request = get(TppEquip, "RequestLoadToEquipMissionBlock")
+        if type(request) ~= "function" then return end
+        local ids = receipt("return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_QUERY_V1'")
+        if type(ids) ~= "table" or #ids < 1 or #ids > 3 then return end
+        local list = {}
+        for i = 1, #ids do
+            if not integer(ids[i], 1, 559) then return end
+            list[i] = ids[i]
+        end
+        local ok = pcall(request, list)
+        receipt(ok and "return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_RETURNED_V1'" or "return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_FAILED_V1'")
+        note("event=equip_midload;ok=" .. (ok and 1 or 0) .. ";ids=" .. table.concat(list, ","))
+    end
     -- Resolves the bindings; returns the missing names and whether the
     -- required ones (vars, Player.IsInstanceValid) exist.
     local function resolve()
@@ -283,6 +300,7 @@ do
         local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
         if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then clearActions(); return end
         frame = frame + 1
+        if frame % 60 == 0 then midload() end
         publishVehicleNames()
         if not actionCfgDone and frame % 30 == 0 then configureActions() end
         local stance = (has(api.CRAWL) and 2) or (has(api.SQUAT) and 1) or 0

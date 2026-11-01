@@ -1,3 +1,25 @@
+## October 31, 2026: fb1031 gear - a partner who joins after the mission loaded gets their gun, or is told when it shows (`wp/gear-rejoin`; not run-proven yet)
+
+- **What players get (once proven):** when your partner joins, or comes back after a dropped link, after your mission
+  had already loaded, their gun now loads during play (behind `partner_equip_midload`, off until a hidden run shows it).
+  With it off (the shipped default), you are told once: "Your partner's gun will show after the next loading screen."
+- **The friend's log [O]:** session 2, the friend hosted Mother Base and pressed Restart while the user's link was down
+  (55868); that reload's preload was refused (`equip_preload=refused; reason=disabled; admission=link_not_connected`,
+  55903). The user paired at 56436; for 216 s (56473-61069) the friend saw them empty-handed with no muzzle flash
+  (`partner_weapon=absent`, `partner_fire=masked; reason=weapon_mismatch`, writer `backoff`/`refused no_resident`: bases
+  46 and 9 were never requested in that mission) until the Game Over reload preloaded them (60839, `partner_fire=live`).
+- **Fix [code, fixtures]:** the preload only runs at the allocation. Now, once per mission and link session, when the
+  allocation had no manifest from the partner (`LateGearCovered`) and a writer slot gives up for want of a resident entry,
+  `equipment_stock_probe::DecideLateGear` picks: `request` with `partner_equip_midload=1` (partner_sync.lua asks every 60
+  frames; native answers on the runtime owner with the ids that pass the allocation's read-only preflight; Lua makes one
+  public `TppEquip.RequestLoadToEquipMissionBlock`; the receipt reads back and bumps a residency generation that renews
+  the writer's missing-cache slots, `equip_writer=midload_renewed`), else `next_load` (world note 17 PARTNER_GEAR, posted
+  locally once). Logs `equip_late_gear=...`, `equip_midload=...`, partner `event=equip_midload`. No wire change; world
+  note id 17 appended. A mid-mission call is an unverified lifecycle (vanilla calls it in MissionPrepare).
+- **To prove:** `tools/worker/scenarios/fb1031-gear-late-join.txt` (key on: frames of the guest's gun and muzzle flash on
+  the host's screen, no crash) and `fb1031-gear-late-join-note.txt` (the default: the note frame). Commits: red
+  `42518113` / `5ef5c4e7`, green `7a6637d0` / `8d22c87b`, scenarios `5301a0e9`.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
