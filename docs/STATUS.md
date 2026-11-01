@@ -20,6 +20,24 @@
 - **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca`; generators `--check` as at the rel0146
   baseline (carry_info / sleep_plugin differ by line endings only there too).
 - **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep).
+- **Hidden run `7e9856cb` (play, bad WAN, africa-jeep, key named; part A only, then stopped):** [O log] the host's
+  hand Fulton of sleeping guard 2552560298: on the guest the host's act 59 lasted 2569 ms and the overlay played
+  `stateFultonStart` for 1583 ms (`partner_overlay=request|play|playing|finished; ...; source=map`); host
+  `event=fulton; step=tx; kind=1; ...; worm=0; sent=1`, guest `step=rx` then `step=lift; ...; worm=0; own=0; set=0;
+  credit=0`, the guest's own `Fulton` message 3.7 s later with `step=credit_skipped; ...; why=partner_lift` and
+  `event=apply; ...; state=6; ...; result=ok; readback=6`; `step=staff_add` on the host only (n=1), none on the guest.
+  [O frame] host `a-before` shows the stock prompt with Fulton x24 and `a-hold-04` x23 (the Fulton used); guest
+  `a-hold-01` shows the host puppet low at the guard and `a-hold-03` standing again; guest `a-after` shows the guard's
+  spot empty. No frame shows a balloon on either screen (the cameras looked down at the ground) [U]. [O log] **The
+  receiver's lift starts late:** the Fultoner's `Fulton` / `FultonInfo` messages (and so W1's FULTONED and FULTON 0x46)
+  come about 10.7 s after its attach act, when the soldier is recovered; the guest's lift began 0.1 s after that. A
+  start at the attach is the next step (a start announcement plus FultonFailed parity, so a balloon shot down looks
+  the same on both). The run stopped in part B at `placebehind` (`viewer landing starts without a valid partner
+  pose`) with the host lying on the ground after a second hold of E (cause [U]); earlier the jeep 25608 broke on the
+  guest's copy (unattributed `VehicleBroken`) and the host despawned it (D12), so the vehicle lift did not run. The
+  scenario now runs the jeep first and uses one hold per soldier Fulton. Archive
+  `%USERPROFILE%\mgs-coop-run-archive1101ultone9856cb8bc14348aded28cad627088d`, frames and sheet
+  `...1101ramesultone9856cb-*`.
 
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 

@@ -1958,5 +1958,7 @@ Lab key `fulton_sync=0|1` (CFG `r[18]` = 1, Lua `W.fultonOn`; no refusal bit). T
   Mother Base (spareStaff) is unchanged: a partner's Fulton of a staff member is `SetDisable` there (no roster change).
 
 [I] whether the engine reads the wormhole level when `RequestForceFulton` / `Seize {"Fulton"}` start (the 5 s hold
-covers a later read). [U] until the hidden run `tools/worker/scenarios/r1101-fulton-play.txt`: the balloon on the
-receiver's screen, the puppet's attach, and the roster lines. World note 22 is reserved for this track and unused.
+covers a later read). Hidden run `7e9856cb` (docs/STATUS.md 2026-11-01) showed the puppet's attach, FULTON tx/rx, the
+receiver's lift with its credit skipped and the staff add on the Fultoner's copy only [O log], but no balloon in a
+frame [U], and a late lift: the Fultoner's `Fulton` / `FultonInfo` (hence FULTONED and FULTON) come about 10.7 s after
+its attach act, when the soldier is recovered [O log]. World note 22 is reserved for this track and unused.
