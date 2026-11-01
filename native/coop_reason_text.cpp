@@ -376,6 +376,11 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
               // 15 until the merge with fb1031 mbgo's MISSION_END)
         if (b != 1) return false;
         return Put(out, capacity, "Stuck in the helicopter? Pause and choose Restart.");
+    case 21:  // SUPPLY{a=1 the partner's supply drop (b its drop type), 2 the partner took the synced box} (r1101,
+              // lua/coop/world_supply.lua, lab key world_supply)
+        if (a == 1) return Put(out, capacity, "Your partner called a supply drop: the box lands at the same spot for both of you.");
+        if (a == 2) return Put(out, capacity, "Your partner took the supply drop: the box is gone here too.");
+        return false;
     default:  // unknown (16 MISMATCH is above): no toast
         return false;
     }

@@ -1923,3 +1923,62 @@ without sending, the target never queues or applies one). World note 18 ARMS{a=1
 (the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
 16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.
+
+## 25. Supply drops (r1101; lua/coop/world_supply.lua, native/supply_cbox.cpp)
+
+Lab key `world_supply=0|1` (lab and play, **OFF in both unless named** until a hidden run proves it; no refusal bit).
+With the key on, `native/supply_cbox.cpp` installs two observe-only MinHook detours after every site of
+`native/supply_cbox_contract.hpp` matches (`tools/generate_supply_cbox_contract.py --check`, sites in
+`tools/supply_cbox_sites.json`): the supply-box request core `0x15C3F00` (rcx = the box core Z, rdx = the 0x130-byte
+request) and the box reset `0x15C4080` (rcx = Z). Each records an event in a 16-entry ring and calls the original with
+its own arguments. Static RE of 1.0.15.4 (own capstone scans of the exe, nothing executed):
+
+- `Player.RequestToSupplyCbox{dropType, equipId, partsType, aimPosition, forceAngle, advancedRate, useForceAngle,
+  aimObjectId, waitLevel, level, pauseAtStart, callHeliSound}` (binding `0x9DB510`) fills the request: +0 drop type,
+  +4 equip, +8 parts, +0x100 aim position, +0x110 aim object (0xFFFF none), +0x112 wait level (default 7), +0x120
+  level, +0x12D flags (bit 2 callHeliSound), and calls `([0x98]+0x248)->vt[0x48]` = the funnel `0x15C3E80` (locks
+  Z+0x750) -> `0x15C3F00`. `Player.RequestToDropCbox` (f30050) uses the same system; `TppSupportRequest.RequestDropBullet
+  {pos, waitLevel}` (`0xB64D70`) goes through the support manager `[0x98]+0x180` (the iDroid's ammo drop [I]).
+- ONE box per copy: the core copies the request to Z+0x4E0 and sets flags (Z+0x124) bit 2; the update (`0x15C1020`,
+  this = Z+0x38) resets the old box on bit 2 (`0x15CB870` -> `0x15C4080`: model hidden, state Z+0xF0 = 0). The save
+  vars `supCbox*` are scalars. `TppSupplyCboxSystem`'s SendCommand (`0x79DA5D0`) knows only StoreRequest and
+  RestoreRequest: no script command removes a box.
+
+Receipt `return 'MGS_COOP_SUPPLY_V1' -- poll <after> | mirror <0|1> | remove <token>` (`mgscoop/supply_sync.hpp`):
+poll answers `{on=1,inst=,box=,st=<Z+0xF0>,fl=<Z+0x124>,last=,lost=,ev={{seq,kind,mirror,drop,equip,parts,x,y,z,level,
+wait,flags,aim,caller,state},...}}` (x y z mm; kind 1 request, 2 reset; mirror 1 while Lua's mirror window is open) or
+`{on=0}`; mirror opens/closes the window (the detour runs inside Lua's own call); remove is the lab remove lever:
+`Z+0x124 |= 2` (the game's own reset bit; the next update resets the box) -> `{ok=1,st=}` or `{ok=0,why=}` (`no_core`,
+`no_box`, `unreadable`, `not_writable`, `fault`, `off`). Native log lines: `supply=installed;detours=2;observe_only=1;
+remove_lever=reset_bit`, `supply=request;seq=;mirror=;drop=;equip=;parts=;x_mm=;y_mm=;z_mm=;level=;wait=;flags=;aim=;
+caller=;state=`, `supply=reset;seq=;mirror=;caller=;state=`, `supply=remove;token=;ok=;state=;why=` (at most 400 per
+process), `supply=off;reason=key_off`, `supply=refused;reason=site|slot`.
+
+Op `0x45` SUPPLY (69), both directions, reliable, **world** queue, level 3, paired, never a request; 14 Lua fields,
+31 bytes: `seq` (u16 1..), `kind` (u8 1 drop / 2 gone), `origin` (u8 1 host / 2 guest: whose request made the box),
+`oseq` (u16 1..: the origin's box number), `drop` (u8), `equip` (u32), `parts` (u32), `x`, `y`, `z` (i32 mm, the aim
+point), `level` (u8), `wait` (u8), `flags` (u8), `reason` (u8 0..3; kind 2: 1 collected near the box, 2 vanished).
+A partner without the op skips it by its length (unknown_op).
+
+Lua (`W.supply`, polled every 200 ms): a request outside the mirror window is this copy's box: kind 1 with the
+request's fields (the aim point, or this player's position when the request aims at an object or at no point:
+`aim=player`); `event=supply;step=drop_local;origin=;oseq=;...;sent=;aim=;caller=`. The receiver (key on, in game)
+requests the same box with `Player.RequestToSupplyCbox{dropType, equipId, partsType, aimPosition, level, waitLevel,
+callHeliSound}` inside the mirror window (`step=mirror;origin=;oseq=;ok=`; its own request event is `step=mirror_seen`,
+never sent back) and shows world note 21 a=1. The receiver's request goes straight to the box system, not to the
+support request that charges GMP. A synced box that was live (state not 0) and then resets or reads state 0, outside
+the 2 s after a request (the game's own reset of the previous box: `step=reset_request`) and not followed by a request
+in the same poll (`step=reset_replaced`), is gone here: kind 2 (`step=gone_local;reason=1|2;why=reset_0x<caller>|state_0`).
+The other copy removes its copy with the remove lever (`step=remove;origin=;oseq=;ok=;why=;st=;reason=`, then
+`step=removed` on the lever's reset) and shows note 21 a=2. A gone for another box removes nothing
+(`step=gone_unknown`). Lab census (W.mode 1 only): every game message while a synced box exists and 15 s after a box
+event, at most 300 per mission (`step=msg;class=;msg=;a0..a3`): the stock pickup message is not known yet [U]. F9 rows
+on the player module's dispatch (the key on): `supply state | drop [x y z] | bullet | remove`.
+
+World note 21 SUPPLY{a=1 the partner's drop (b its drop type), 2 the partner took the synced box (b the reason)}
+(`coop_text::FormatWorldNote`). 20 and 22 are the other r1101 tracks' (vehicle spawn, Fulton visual).
+
+Open [U] until a hidden run: H1 every falling box passes `0x15C3F00` (the iDroid AMMO drop too); H2 the reset bit
+removes the box without a new one; H3 the stock pickup ends in a reset or state 0 (otherwise the opened box stays
+"live" and no kind 2 is sent); whether the iDroid request aims at the player object; a guard hit by the falling box on
+both copies (each copy's own box hits its own copy of the guard; the outcome sync judges the knockout).

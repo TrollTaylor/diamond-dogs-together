@@ -112,3 +112,7 @@ constexpr char world_relief_source[] = R"MGS_WORLD(
 constexpr char world_relief_sync_source[] = R"MGS_WORLD(
 @MGS_WORLD_RELIEF_SYNC_SOURCE@
 )MGS_WORLD";
+// Supply drops synced (r1101; SUPPLY op 0x45, lab key world_supply; spliced last).
+constexpr char world_supply_source[] = R"MGS_WORLD(
+@MGS_WORLD_SUPPLY_SOURCE@
+)MGS_WORLD";

@@ -1,0 +1,285 @@
+-- Supply drops synced (r1101; docs/world-sync-protocol.md section 25). Spliced last, after world_relief_sync.lua.
+-- With lab.ini world_supply=1 (lab and play; OFF in both unless named until a hidden run proves it) on both copies.
+-- The game keeps ONE supply box per copy (the TppSupplyCboxSystem core). The native observer (native/supply_cbox.cpp,
+-- MGS_COOP_SUPPLY_V1) records every box request (iDroid, script) and every box reset; this module:
+--   drop:   a request this copy made itself (not inside our mirror window) is this copy's box: SUPPLY 0x45 kind 1 with
+--           the request's drop type, equip, parts, aim point (this player's position when the request aims at an object
+--           or at no point), level, wait level and flags. The partner requests the same box at the same aim point with
+--           Player.RequestToSupplyCbox inside a mirror window (never sent back), with world note 21 a=1.
+--   gone:   a synced box that was live (state not 0) and then reset or reads state 0, outside the 2 s after a request
+--           (the game's own reset of the old box), is gone here: kind 2 with reason 1 (this player stood within NEAR_MM:
+--           collected) or 2 (vanished). The partner removes its own copy with the lab remove lever (the box core's
+--           reset bit) and shows note 21 a=2. A reset followed by a request in the same poll is a replacement: no gone.
+-- Each copy's request charges only its own player (the mirror goes straight to the box system, not the support
+-- request that costs GMP). A soldier a falling box knocks out is mirrored by the world outcomes like any knockout.
+-- Lab only: every game message is logged for a while around a box (step=msg; the pickup message is unknown [U]).
+-- Debug rows (the player module's dispatch): supply state | drop [x y z] | bullet | remove.
+do
+local W = e.MgsCoopWorld
+if type(W) == "table" and type(W.handlers) == "table" then
+local S = {}
+W.supply = S
+local OP, NOTE = 69, 21
+if type(W.OP) == "table" then W.OP.SUPPLY = OP end
+local PRE = "return 'MGS_COOP_SUPPLY_V1' -- "
+local POLL_MS, GRACE_MS, NEAR_MM, CENSUS_MS, CENSUS_N, STATE_N = 200, 2000, 6000, 15000, 300, 200
+S.POLL_MS, S.GRACE_MS, S.NEAR_MM = POLL_MS, GRACE_MS, NEAR_MM
+local fmt, floor, sqrt = string.format, math.floor, math.sqrt
+local function L(...)
+  local ok, text = pcall(fmt, ...)
+  if ok and type(W.log) == "function" then pcall(W.log, "event=supply;" .. text) end
+end
+local function now() return W.now() end
+local function int(v, lo, hi) return type(v) == "number" and v == floor(v) and v >= lo and v <= hi end
+local function role() return W.host and 1 or 2 end
+local function get(t, k)
+  if t == nil then return nil end
+  local ok, v = pcall(function() return t[k] end)
+  if ok then return v end
+end
+function S.reset(keepAfter)
+  if not keepAfter then S.after = 0 end
+  S.cur, S.removing, S.lastReqAt, S.st, S.box, S.census, S.censusUntil, S.stateLines = nil, nil, -1e9, 0, 0, 0, nil, 0
+  S.done = {}
+end
+S.reset()
+S.seq, S.txSeq = 0, 0
+S.n = {tx = 0, rx = 0, mirror = 0, gone = 0, removed = 0}
+local function receipt(cmd)
+  local ok, r = pcall(W.receipt, PRE .. cmd)
+  if ok and type(r) == "table" then return r end
+end
+local function pos()
+  local x, y, z = get(vars, "playerPosX"), get(vars, "playerPosY"), get(vars, "playerPosZ")
+  if type(x) == "number" and type(y) == "number" and type(z) == "number" then return x, y, z end
+end
+local function mm(v) return floor(v * 1000 + 0.5) end
+local function key(o, s) return o * 65536 + s end
+local function censusOn(t) S.censusUntil = t + CENSUS_MS end
+local function send(kind, b, reason)
+  S.txSeq = S.txSeq % 65535 + 1
+  local ok, sent = pcall(W.tx, OP, S.txSeq, kind, b.origin, b.oseq, b.drop, b.equip, b.parts, b.x, b.y, b.z, b.level, b.wait,
+    b.flags, reason)
+  sent = ok and sent == true
+  if sent then S.n.tx = S.n.tx + 1 end
+  return sent
+end
+-- A request this copy made: its box, sent to the partner.
+function S.mine(ev, t)
+  S.seq = S.seq % 65535 + 1
+  local b = {origin = role(), oseq = S.seq, drop = ev[4], equip = ev[5], parts = ev[6], x = ev[7], y = ev[8], z = ev[9],
+    level = ev[10], wait = ev[11], flags = ev[12], at = t}
+  local aim = "point"
+  if ev[13] ~= 65535 or math.abs(b.x) + math.abs(b.y) + math.abs(b.z) < 1000 then
+    local px, py, pz = pos()
+    if px then b.x, b.y, b.z, aim = mm(px), mm(py), mm(pz), "player" end
+  end
+  S.cur = b
+  local sent = W.paired == true and int(b.drop, 0, 255) and int(b.level, 0, 255) and send(1, b, 0) or false
+  L("step=drop_local;origin=%d;oseq=%d;drop=%s;equip=%s;parts=%s;x_mm=%d;y_mm=%d;z_mm=%d;sent=%d;aim=%s;caller=0x%x", b.origin,
+    b.oseq, tostring(b.drop), tostring(b.equip), tostring(b.parts), b.x, b.y, b.z, sent and 1 or 0, aim, ev[14] or 0)
+end
+local function near(b)
+  local px, py, pz = pos()
+  if not px or not b then return false end
+  local dx, dy, dz = px * 1000 - b.x, py * 1000 - b.y, pz * 1000 - b.z
+  return sqrt(dx * dx + dy * dy + dz * dz) <= NEAR_MM
+end
+-- A synced box is gone on this copy.
+function S.gone(t, why)
+  local b = S.cur
+  if not b then return end
+  S.cur = nil
+  S.done[key(b.origin, b.oseq)] = true
+  local reason = near(b) and 1 or 2
+  local sent = W.paired == true and send(2, b, reason) or false
+  S.n.gone = S.n.gone + 1
+  L("step=gone_local;origin=%d;oseq=%d;reason=%d;why=%s;sent=%d", b.origin, b.oseq, reason, why, sent and 1 or 0)
+  censusOn(t)
+end
+function S.event(list, t)
+  for i, ev in ipairs(list) do
+    if type(ev) == "table" and type(ev[2]) == "number" then
+      if ev[2] == 1 then
+        S.lastReqAt = t
+        censusOn(t)
+        if ev[3] == 1 then
+          L("step=mirror_seen;seq=%d;x_mm=%s;y_mm=%s;z_mm=%s", ev[1], tostring(ev[7]), tostring(ev[8]), tostring(ev[9]))
+        else
+          S.mine(ev, t)
+        end
+      elseif ev[2] == 2 then
+        local later = false
+        for j = i + 1, #list do if type(list[j]) == "table" and list[j][2] == 1 then later = true end end
+        if S.removing and t - S.removing <= 5000 then
+          S.removing = nil
+          S.n.removed = S.n.removed + 1
+          L("step=removed;state=%s", tostring(ev[15]))
+        elseif later then
+          L("step=reset_replaced;state=%s", tostring(ev[15]))
+        elseif t - S.lastReqAt <= GRACE_MS then
+          L("step=reset_request;state=%s;caller=0x%x", tostring(ev[15]), ev[14] or 0)
+        elseif S.cur and S.cur.live then
+          S.gone(t, fmt("reset_0x%x", ev[14] or 0))
+        else
+          L("step=reset_idle;state=%s;caller=0x%x", tostring(ev[15]), ev[14] or 0)
+        end
+      end
+    end
+  end
+end
+function S.poll(t)
+  local r = receipt("poll " .. S.after)
+  if not r or r.on ~= 1 then
+    if S.on ~= false then L("step=off") end
+    S.on = false
+    return
+  end
+  if S.on ~= true then L("step=on;inst=%s", tostring(r.inst)) end
+  S.on = true
+  local last = int(r.last, 0, 4294967295) and r.last or S.after
+  if S.skipOld then
+    S.skipOld = nil
+  elseif type(r.ev) == "table" then
+    if (r.lost or 0) > 0 then L("step=lost;n=%s", tostring(r.lost)) end
+    S.event(r.ev, t)
+  end
+  S.after = last
+  local st = int(r.st, 0, 4294967295) and r.st or 0
+  S.box = r.box == 1 and 1 or 0
+  if st ~= S.st and S.stateLines < STATE_N then
+    S.stateLines = S.stateLines + 1
+    L("step=state;from=%d;to=%d;fl=0x%x", S.st, st, int(r.fl, 0, 4294967295) and r.fl or 0)
+  end
+  S.st = st
+  local b = S.cur
+  if b then
+    if st ~= 0 then
+      if not b.live then b.live = true; L("step=live;origin=%d;oseq=%d;st=%d", b.origin, b.oseq, st) end
+    elseif b.live and t - S.lastReqAt > GRACE_MS then
+      S.gone(t, "state_0")
+    end
+  end
+end
+-- The partner's SUPPLY.
+local function apply(v, t)
+  if S.on == nil then S.poll(t) end
+  for i = 1, 14 do if type(v[i]) ~= "number" or v[i] ~= floor(v[i]) then L("step=rx_bad;field=%d", i); return end end
+  local kind, origin, oseq = v[2], v[3], v[4]
+  S.n.rx = S.n.rx + 1
+  if S.on ~= true then L("step=rx_off;kind=%d", kind); return end
+  if origin ~= 1 and origin ~= 2 then return end
+  if kind == 1 then
+    if origin == role() then L("step=rx_own;oseq=%d", oseq); return end
+    if S.done[key(origin, oseq)] or (S.cur and S.cur.origin == origin and S.cur.oseq == oseq) then
+      L("step=mirror_dup;origin=%d;oseq=%d", origin, oseq); return
+    end
+    if not W.inGame() then L("step=mirror_skip;origin=%d;oseq=%d;reason=not_in_game", origin, oseq); return end
+    local f = get(Player, "RequestToSupplyCbox")
+    if type(f) ~= "function" or type(Vector3) ~= "function" then L("step=mirror_skip;reason=missing_api"); return end
+    local b = {origin = origin, oseq = oseq, drop = v[5], equip = v[6], parts = v[7], x = v[8], y = v[9], z = v[10], level = v[11],
+      wait = v[12], flags = v[13], at = t}
+    receipt("mirror 1")
+    local ok, err = pcall(f, {dropType = b.drop, equipId = b.equip, partsType = b.parts,
+      aimPosition = Vector3(b.x / 1000, b.y / 1000, b.z / 1000), level = b.level, waitLevel = b.wait,
+      callHeliSound = floor(b.flags / 4) % 2 == 1})
+    receipt("mirror 0")
+    S.cur, S.lastReqAt = b, t
+    S.n.mirror = S.n.mirror + 1
+    censusOn(t)
+    L("step=mirror;origin=%d;oseq=%d;ok=%d;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d%s", origin, oseq, ok and 1 or 0, b.drop, b.x, b.y, b.z,
+      ok and "" or ";err=" .. string.sub(tostring(err), 1, 60))
+    pcall(W.note, NOTE, 1, b.drop)
+  elseif kind == 2 then
+    local b = S.cur
+    if not (b and b.origin == origin and b.oseq == oseq) then
+      S.done[key(origin, oseq)] = true
+      L("step=gone_unknown;origin=%d;oseq=%d", origin, oseq); return
+    end
+    S.cur = nil
+    S.done[key(origin, oseq)] = true
+    S.removing = t
+    local r = receipt("remove " .. oseq) or {}
+    if r.ok ~= 1 then S.removing = nil end
+    L("step=remove;origin=%d;oseq=%d;ok=%d;why=%s;st=%s;reason=%d", origin, oseq, r.ok == 1 and 1 or 0, tostring(r.why or "none"),
+      tostring(r.st), v[14])
+    censusOn(t)
+    pcall(W.note, NOTE, 2, v[14])
+  end
+end
+W.handlers[OP] = function(v)
+  local ok, err = pcall(apply, v, now())
+  if not ok then L("step=error;msg=%s", string.sub(tostring(err), 1, 100)) end
+end
+W.stopHooks = W.stopHooks or {}
+W.stopHooks[#W.stopHooks + 1] = function() S.reset(true) end
+W.startHooks = W.startHooks or {}
+W.startHooks[#W.startHooks + 1] = function() S.reset(true); S.skipOld = true end
+-- Lab census: every game message while a box is around (the pickup message is unknown).
+local observe = W.observe
+if type(observe) == "function" then
+  function W.observe(class, msg, a0, a1, a2, a3)
+    if W.mode == 1 and S.censusUntil and (S.cur or now() <= S.censusUntil) and S.census < CENSUS_N then
+      S.census = S.census + 1
+      L("step=msg;class=%s;msg=%s;a0=%s;a1=%s;a2=%s;a3=%s", tostring(class), tostring(msg), tostring(a0), tostring(a1),
+        tostring(a2), tostring(a3))
+    end
+    return observe(class, msg, a0, a1, a2, a3)
+  end
+end
+-- Debug rows.
+function S.command(a)
+  local c = a[2]
+  if c == "state" and #a == 2 then
+    local b = S.cur
+    return true, fmt("on=%d;box=%d;st=%d;cur=%s;tx=%d;rx=%d;mirror=%d;gone=%d;removed=%d", S.on and 1 or 0, S.box or 0, S.st or 0,
+      b and fmt("%d.%d", b.origin, b.oseq) or "none", S.n.tx, S.n.rx, S.n.mirror, S.n.gone, S.n.removed)
+  end
+  if S.on ~= true then return false, "supply_off" end
+  local px, py, pz = pos()
+  if c == "drop" and (#a == 2 or #a == 5) then
+    if #a == 5 then px, py, pz = tonumber(a[3]), tonumber(a[4]), tonumber(a[5]) end
+    if not (px and py and pz) then return false, "command_args" end
+    local f, ammo = get(Player, "RequestToSupplyCbox"), get(get(_G, "SupplyCbox"), "DROP_TYPE_AMMO")
+    if type(f) ~= "function" or type(ammo) ~= "number" then return false, "missing_api" end
+    local ok = pcall(f, {dropType = ammo, aimPosition = Vector3(px, py, pz)})
+    L("step=debug_drop;ok=%d;drop=%d;x_mm=%d;y_mm=%d;z_mm=%d", ok and 1 or 0, ammo, mm(px), mm(py), mm(pz))
+    return ok, fmt("submitted_supply_drop;drop=%d;x=%.1f;y=%.1f;z=%.1f", ammo, px, py, pz)
+  elseif c == "bullet" and #a == 2 then
+    local f = get(TppSupportRequest, "RequestDropBullet")
+    if type(f) ~= "function" or not px then return false, "missing_api" end
+    local ok = pcall(f, {pos = Vector3(px, py, pz)})
+    L("step=debug_bullet;ok=%d;x_mm=%d;y_mm=%d;z_mm=%d", ok and 1 or 0, mm(px), mm(py), mm(pz))
+    return ok, "submitted_supply_bullet"
+  elseif c == "remove" and #a == 2 then
+    S.removing = now()
+    local r = receipt("remove 0") or {}
+    L("step=debug_remove;ok=%d;why=%s", r.ok == 1 and 1 or 0, tostring(r.why or "none"))
+    return r.ok == 1, fmt("supply_remove;ok=%d;why=%s", r.ok == 1 and 1 or 0, tostring(r.why or "none"))
+  end
+  return false, "command_args"
+end
+local function hookDebug()
+  local D = get(e, "MgsCoopDebug")
+  local P = type(D) == "table" and D.player
+  if type(P) ~= "table" or type(P.handles) ~= "table" or type(P.run) ~= "function" then return end
+  S.debugHooked = true
+  P.handles.supply = true
+  local base = P.run
+  P.run = function(a, id)
+    if type(a) == "table" and a[1] == "supply" then return S.command(a) end
+    return base(a, id)
+  end
+end
+local tick = W.tick
+function W.tick(...)
+  if tick then tick(...) end
+  if not S.debugHooked then pcall(hookDebug) end
+  local t = now()
+  if t < (S.nextPoll or 0) then return end
+  S.nextPoll = t + POLL_MS
+  local ok, err = pcall(S.poll, t)
+  if not ok then L("step=error;msg=%s", string.sub(tostring(err), 1, 100)) end
+end
+end
+end

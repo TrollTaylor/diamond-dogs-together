@@ -106,6 +106,11 @@ inline constexpr std::uint8_t rules = 0x3E;
 // guest's Friendly fire ask (kind 1) and the host's friendly fire state (kind 2). 0x3C..0x3E belong to the other
 // debug-menu tracks (character, spawn, rules).
 inline constexpr std::uint8_t arms = 0x3F;
+// Supply drops synced (r1101, docs/world-sync-protocol.md section 25): SUPPLY (69), both directions, world queue, paired:
+// a copy's own supply-box request (kind 1 drop: the partner requests the same box at the same aim point) and a synced
+// box that is gone on one copy (kind 2: the other copy removes its own). Sent and applied by Lua only with the lab.ini
+// key world_supply=1 (lua/coop/world_supply.lua). A partner without the op skips it by its length (unknown_op).
+inline constexpr std::uint8_t supply = 0x45;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;

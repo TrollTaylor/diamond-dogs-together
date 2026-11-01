@@ -212,6 +212,13 @@ constexpr OpSpec kOps[] = {
     // state), friendly fire (0 off, 1 on). Control queue, both directions, paired, never a request. 4 bytes. A partner
     // without the op skips it by its length (unknown_op): its friendly fire stays on.
     {op::arms, "ARMS", 0, Dir::both, Wire::reliable, 3, false, false, 3, 0, 0, 4, {U16(1), U8(1, 2), U8(0, 1)}},
+    // SUPPLY (r1101, world-sync-protocol.md section 25): seq, kind (1 drop, 2 gone), origin (1 host, 2 guest: whose request
+    // made the box), the origin's box seq, drop type, equip id, parts type, the aim point xyz mm, level, wait level, the
+    // request's flags byte, reason (kind 2: 1 collected near the box, 2 vanished, 3 removed for a new box; kind 1: 0).
+    // World queue, both directions, paired, never a request. 31 bytes. A partner without 0x45 skips it by its length.
+    {op::supply, "SUPPLY", 1, Dir::both, Wire::reliable, 3, false, false, 14, 0, 0, 31,
+     {U16(1), U8(1, 2), U8(1, 2), U16(1), U8(), U32(), U32(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), U8(), U8(), U8(), U8(0, 3)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

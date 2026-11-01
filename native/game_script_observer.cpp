@@ -125,6 +125,7 @@
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_arms.hpp"
+#include "mgscoop/supply_cbox.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -5513,6 +5514,19 @@ bool SelectArmsReceipt(const char* buffer,std::size_t size,mgscoop::script_bridg
     if(n) replacement={reply,n};
     return true;
 }
+// Supply drops synced (r1101, docs/world-sync-protocol.md section 25, lua/coop/world_supply.lua): MGS_COOP_SUPPLY_V1
+// poll / mirror / remove (mgscoop/supply_sync.hpp grammar). Answers {on=0} with the key off or off the runtime thread.
+bool SelectSupplyReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_SUPPLY_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>96 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    static constexpr char off[]="return {on=0}";
+    replacement={off,sizeof(off)-1};
+    if(!mgscoop::supply_cbox::Enabled() || !OnRuntimeThread()) return true;
+    static char reply[2048]{};
+    const auto n=mgscoop::supply_cbox::HandleReceipt(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),GetTickCount64(),reply,sizeof(reply));
+    if(n) replacement={reply,n};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5706,6 +5720,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
+    if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -6332,6 +6347,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    // Supply drops synced (r1101, lab.ini world_supply=1, OFF unless named): the supply-box observer's
+                    // two observe-only detours, after its exact contract matches (native/supply_cbox_contract.hpp).
+                    mgscoop::supply_cbox::SetEnabled(labc.world_supply);
+                    if (labc.world_supply) {
+                        if (!mgscoop::supply_cbox::Install(const_cast<void*>(base), span, Log)) mgscoop::supply_cbox::SetEnabled(false);
+                    } else {
+                        Log("supply=off;reason=key_off\r\n");
+                    }
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
                     // Lab: debug_soldier_warp; play: spawn_warp (a host "spawn_enemy here" or a guest spawn-sync grant);
                     // a play or lab guest also for the Mother Base staff rule (GuestWarpReceipt, world-sync-design.md 7.7).
