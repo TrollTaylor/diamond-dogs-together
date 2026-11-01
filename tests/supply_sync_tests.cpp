@@ -100,8 +100,8 @@ void Poll() {
     const auto n = ss::FormatPoll(s, ev, 2, 4, 1, out, sizeof(out));
     Check(n && n == std::strlen(out), "poll reply length");
     Check(Has(out, "return {on=1,inst=1,box=1,st=12,fl=8,last=4,lost=1,ev={"), "the state header");
-    Check(Has(out, "{3,1,0,3,5,0,-100,200,300,1,7,4,65535,22822617,0}"), "a request event");
-    Check(Has(out, "{4,2,1,0,0,0,0,0,0,0,0,0,65535,22853765,14}"), "a reset event");
+    Check(Has(out, "{3,1,0,3,5,0,-100,200,300,1,7,4,65535,22822617,0,1}"), "a request event (accepted 1 by default)");
+    Check(Has(out, "{4,2,1,0,0,0,0,0,0,0,0,0,65535,22853765,14,1}"), "a reset event");
     Check(out[n - 1] == '}' && out[n - 2] == '}', "closed");
     Check(ss::FormatPoll(s, ev, 2, 4, 0, out, 40) == 0, "a reply that does not fit is 0");
     ss::Snapshot noBox = s;
@@ -110,10 +110,40 @@ void Poll() {
           "no box core seen yet: box=0 and no state");
     char line[256]{};
     Check(ss::FormatLogLine(ev[0], line, sizeof(line)) && Has(line, "supply=request;seq=3;mirror=0;drop=3;equip=5;parts=0;") &&
-              Has(line, "x_mm=-100;y_mm=200;z_mm=300;level=1;wait=7;flags=0x4;aim=65535;caller=0x15c3ed9;state=0") &&
+              Has(line, "x_mm=-100;y_mm=200;z_mm=300;level=1;wait=7;flags=0x4;aim=65535;caller=0x15c3ed9;state=0;accepted=1") &&
               Has(line, "\r\n"), "request log line");
     Check(ss::FormatLogLine(ev[1], line, sizeof(line)) && Has(line, "supply=reset;seq=4;mirror=1;caller=0x15cb885;state=14"),
           "reset log line");
+}
+
+// Review r1101 (supply-refused-request-mirrored): the detour calls the original first and records whether the box core took
+// the request. The core's refused branch ([Z+0x20]->vt[0]() true: jnz to the epilogue at +0x140) touches nothing in Z;
+// an accepted request copies itself to Z+0x4E0 and writes the state (Z+0xF0) and the flags (Z+0x124 |= 2 | 8 or 0x10).
+void Accepted() {
+    ss::CoreView before{};
+    before.ok = true; before.state = 8; before.flags = 0x8;
+    std::memset(before.stored, 0x11, sizeof(before.stored));
+    ss::CoreView after = before;
+    Check(!ss::RequestAccepted(before, after), "nothing in Z changed: refused");
+    after.flags = 0x8 | 0x2;
+    Check(ss::RequestAccepted(before, after), "the reset bit newly set: accepted");
+    after = before; after.state = 0;
+    Check(ss::RequestAccepted(before, after), "the state written: accepted");
+    after = before; after.stored[0x100] = 0x22;
+    Check(ss::RequestAccepted(before, after), "the stored request changed: accepted");
+    after = before; after.ok = false;
+    Check(ss::RequestAccepted(before, after), "an unreadable core after the call: accepted (as before the fix)");
+    ss::CoreView unread{};
+    Check(ss::RequestAccepted(unread, before), "an unreadable core before the call: accepted");
+    ss::Snapshot s{};
+    s.on = s.installed = s.box_known = true;
+    ss::Event ev{};
+    ev.seq = 9; ev.kind = ss::kRequest; ev.accepted = 0; ev.aim_object = 0xFFFF;
+    char out[512]{};
+    Check(ss::FormatPoll(s, &ev, 1, 9, 0, out, sizeof(out)) && Has(out, "{9,1,0,0,0,0,0,0,0,0,0,0,65535,0,0,0}"),
+          "a refused request: the 16th field is 0");
+    char line[256]{};
+    Check(ss::FormatLogLine(ev, line, sizeof(line)) && Has(line, ";accepted=0\r\n"), "and its log line says accepted=0");
 }
 
 void Wire() {
@@ -160,6 +190,7 @@ int main() {
     RingOrder();
     Parse();
     Poll();
+    Accepted();
     Wire();
     Note();
     std::printf("supply_sync_tests: %u checks, %u failures\n", checks, failures);
