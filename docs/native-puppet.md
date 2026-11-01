@@ -2951,11 +2951,25 @@ leak captures, loadout, census, noise record).
 
 ## Melee
 
-Melee on the other player (`wp/melee`, fb1031). Key `partner_melee` (lab.ini; `native/partner_melee.cpp`, the driver's
-`TickMelee`), **off unless named** in lab and play (a named 1 runs it in both) until a hidden run on both copies shows
-every case. Hidden play runs `9018ae47` and `1526e58a` (fb1031-on) showed the guest's strike on the host from about
-1 m: the host asleep on the host's own screen and the HOLD E WAKE UP prompt on the guest's; the host's strike on the
-guest, the single press after this round's fix and a combo from a true 3 m have not run yet.
+Melee on the other player (`wp/melee`, fb1031; `wp/melee-one`). Key `partner_melee` (lab.ini; `native/partner_melee.cpp`,
+the driver's `TickMelee`), **follows the gun profile** in lab and play since melee-one (green `c83dd4a8`; a named 0
+opts out). Hidden play run `4bc7b732` (`-WanSim bad`, native gun research, afgh-ledge, the key named; both copies
+admitted at 30010) showed every case with ONE 120 ms LMB press, logs and frames on both copies:
+
+- a) the guest ~1.1 m behind the host: `act=113; verdict=land; queued=1; dist_cm=113; angle_deg=2`, its 114
+  `verdict=repeat`; the host's copy `friendly_hit=owner;seq=1;...;cause=2;applied=1;down=1`. Host frame ASLEEP
+  ("Your teammate can wake you or carry you"), guest frame "Teammate asleep." and HOLD E WAKE UP. The host's own sleep
+  ended after about 30 s (the guest's census: the host's body in 133 `sleep_wake` at +30.1 s; no
+  `step=sleep_auto_wake` line for the host's own sleep).
+- b) the host ~0.9 m behind the guest: `verdict=land; dist_cm=93; angle_deg=1`, then `repeat`; the guest's copy one
+  `friendly_hit=owner`, applied, down. Guest frame ASLEEP, host frame HOLD E WAKE UP with the guest lying in front. The
+  guest's auto wake was granted at 31 s (`step=sleep_auto_wake; role=2` on the host).
+- c) the guest 4.4 m behind the host: `verdict=range; dist_cm=443`, no hit; both standing in the frames.
+- d) the guest ~1.1 m at the host's back, the host presses: `verdict=angle; dist_cm=109; angle_deg=180`, no hit; both
+  standing.
+
+One `friendly_hit=owner` per copy; no `friendly_hit=ignored`, `step=error`, `viewer_changed` or fault. Sheet
+`melee-one/frames/best-sheet-4bc7b732.jpg` in the run archive (outside the repo).
 
 - **Placement drift, not a stale read (run `9018ae47`):** the scenario's `placebehind` teleports 3 m up and the drop
   carries the placed player about 1.4 m forward. The guest placed 1.19 m behind the host landed 21 cm in front of it:
