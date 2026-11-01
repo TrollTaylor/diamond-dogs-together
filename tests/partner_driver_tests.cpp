@@ -7547,7 +7547,7 @@ void TestMeleeDriver() {
         Check(s.Tick(0) && g_melee_hits.empty(), "melee driver target: its 114 edge, still held");
         for (unsigned i = 0; i < 12 && g_melee_hits.empty(); ++i) Check(s.Tick(0), "melee driver target: the grace");
         Check(g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P &&
-                  s.fake.Containing("partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1; hold_ms=") == 1,
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=1; hold_ms=") == 1,
               "melee driver target: no stock target, one hit after the grace");
         for (unsigned i = 0; i < 20; ++i) Check(s.Tick(0), "melee driver target: the rest of the strike");
         Check(g_melee_hits.size() == 1, "melee driver target: one press, one hit");
@@ -7564,7 +7564,7 @@ void TestMeleeDriver() {
         Check(s.Tick(0) && g_melee_hits.empty(), "melee driver soldier: its 114 edge");
         s.ride_suffix = " ride=0 st=0x100";
         Check(s.Tick(0) && g_melee_hits.empty() &&
-                  s.fake.Containing("partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=0; hold_ms=") == 1,
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=0; hold_ms=") == 1,
               "melee driver soldier: CQC_CONTINUOUS, verdict=target");
         for (unsigned i = 0; i < 40; ++i) Check(s.Tick(0), "melee driver soldier: the rest of the strike");
         Check(g_melee_hits.empty() && s.fake.Containing("verdict=land") == 0, "melee driver soldier: the partner is never knocked down");

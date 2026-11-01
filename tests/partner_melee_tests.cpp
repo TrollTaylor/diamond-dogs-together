@@ -423,7 +423,7 @@ void TestTarget() {
         const pm::Out r = f.Tick(114, 16);
         char line[256]{};
         Check(pm::FormatStrike(f.s, r.act, r, false, line, sizeof(line)) > 0, "the target line formats");
-        Check(std::string(line) == "partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=0; "
+        Check(std::string(line) == "partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=0; "
                                    "hold_ms=250; cqc_ms=250; end_ms=16; targets=1\r\n",
               "the target line");
         Check(std::strcmp(pm::VerdictName(pm::Verdict::hold), "hold") == 0 && std::strcmp(pm::VerdictName(pm::Verdict::target), "target") == 0,
