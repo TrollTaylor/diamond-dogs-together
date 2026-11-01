@@ -1,3 +1,21 @@
+## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
+
+**Package (2026-10-31):** `dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `6c25276` with Release receipt `20261101-025109-055c474332e94b7494b2639f486ea948` (passed, 331 audited tests, 0 failures, no rerun). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.6+6c25276` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.5.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.6.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,191,085 | `AAC21444BCA59C9729B58785DB42510E75F7BF44E2C628AAC3E6E93B7A08CFB0` |
+| `DDT-source-0.14.6.zip` (1,547 source files plus `source-files.json`) | 9,179,811 | `419F34B7CD6F96E8B08FAAA379957F45E055C2CC0127702779056CDB611A1630` |
+| `DiamondDogsTogether.exe` | 2,380,288 | `4DC80F18EBA2A5E75DB1B2A68CD7E1DB5BB5F59F6C54B23678944C8EBAF85677` |
+| `dinput8.dll` | 7,350,272 | `89FD277E02E4ADA2B57C0047A9B329E9BC272AF37E3FB0889B22B5159B63B182` |
+
+- **Package audit:** 34/34 (both zips present; the player zip holds exactly its 9 files, the same paths as 0.14.5, and no source or script; exe and dll are the receipt's; `package.json` version 0.14.6, `source_commit` `6c25276`, `source_dirty` false, every `files[]` hash and `source_archive` match; every source file is in the source zip with its hash and matches the tree; `tools/check-release.ps1` accepts a simulated draft release carrying both zips). Against the git tree: the files the package rules leave out are the same 16 as for 0.14.5, the 49 files added since 0.14.5 are all in, none removed, and beside the receipt's MinHook files the zip adds the same MinHook `AUTHORS.txt`, `README.md` and `build/MinGW/make.bat`. The licences are those of 0.14.5 (`ImGui-LICENSE.txt` differs only in line endings: this package was built in a fresh worktree checkout). No profile path, checkout path, e-mail or persona name in either zip; the source zip's SteamID-like numbers and join codes are the same placeholders and test vectors as before.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.58.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** `git grep` at `af9de635` for a Windows profile path (both slash styles), the persona name and the user's e-mail: no hits; nothing to reword. History was not rewritten.
+- **Version.** 0.14.6 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.6 and still 0.14.5; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.7", "0.14.6")`.
+- **Checks at the bump commit `6c25276`:** `pwsh -File tools/build.ps1 -Fast` 312/312; `pwsh -File tools/build.ps1` (Debug) 344/344; the Release receipt above (331 audited tests). No hidden-game run, smoke run or review panel for this release (the user asked for the release without tests); what never ran in a game is listed in the integration section below.
+- **To release:** upload **both** zips to the GitHub release `v0.14.6`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.14.6 -PackageDir dist/DiamondDogsTogether-0.14.6-20261101T025326Z-781aa5c5` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## October 31, 2026: 0.14.6 integration - every feature built today in one build, the run-less ones on (`wp/rel0146`, local only; no hidden runs)
 
 - **What players get (on in play; none of it ran in a game this round):** F9 **Game rules** (Wormhole Fulton off/on,
