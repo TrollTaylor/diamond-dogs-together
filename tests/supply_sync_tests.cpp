@@ -170,8 +170,8 @@ void Wire() {
 void Note() {
     namespace text = mgscoop::coop_text;
     char s[256]{};
-    Check(mgscoop::world::NoteShown(21) && !mgscoop::world::NoteShown(20) && !mgscoop::world::NoteShown(22),
-          "note 21 is shown (20 and 22 are the other tracks')");
+    Check(mgscoop::world::NoteShown(21) && mgscoop::world::NoteShown(20) && !mgscoop::world::NoteShown(22),
+          "note 21 is shown beside 20 (VSPAWN); 22 (reserved for the Fulton track, unused) is not");
     Check(text::FormatWorldNote(21, 1, 0, 0, 0, s, sizeof(s)) && Has(s, "supply drop") && Has(s, "both"), "note 21 a=1: the partner's drop");
     Check(text::FormatWorldNote(21, 2, 0, 0, 0, s, sizeof(s)) && Has(s, "partner") && Has(s, "supply"), "note 21 a=2: the partner took it");
     Check(!text::FormatWorldNote(21, 3, 0, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(21, 0, 0, 0, 0, s, sizeof(s)),

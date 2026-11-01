@@ -180,8 +180,8 @@ void Note() {
     // too; 18 ARMS (Friendly fire) and 19 HINT (arrival-prevent) as well. 16 and 17 are posted by native only.
     Check(world::NoteShown(1) && world::NoteShown(13) && world::NoteShown(14) && world::NoteShown(15) && !world::NoteShown(0) &&
               !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && world::NoteShown(20) &&
-              !world::NoteShown(23),
-          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18, 19 and 20 (VSPAWN), never 0, 16, 17 or 23");
+              world::NoteShown(21) && !world::NoteShown(22) && !world::NoteShown(23),
+          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18, 19, 20 (VSPAWN) and 21 (SUPPLY), never 0, 16, 17, 22 or 23");
     Check(parse("15 3 0") && code == 15 && a == 3 && b == 0, "NOTE 15 parses");
     Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("23 1 1"), "NOTE 19 parses, 17 and 23 do not");
     // Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua): note 20 a=1 spawned for you | 2 your partner spawned | 3 refused.
