@@ -1,11 +1,25 @@
-## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; not run-proven yet)
+## November 1, 2026: F9 Spawn vehicle, synced on both screens (`wp/vehicle-spawn`, lab key `debug_vspawn`, off unless named; spawn, guest ask and riding seen on both copies in hidden runs `e626471f` and `5cdbfada`; the riding refusal fixed after them, not run yet)
 
 - **What players get once the key is on:** F9 > World > **Vehicles**: **Spawn jeep** / **Spawn truck** bring one of the
   area's own vehicles 6 m in front of whoever presses, facing their way, on both screens (Afghanistan and Africa free
   roam). A guest's press asks the host (VSPAWN `0x44`), who brings it in front of the guest. Afterwards it is that map
   vehicle on both copies (ride together, drive, damage, Fulton, VEHICLE_GONE). Plain refusal toasts (world note 20):
   key off, not free roam (Mother Base, story missions), none free, kind not in this area (tanks / armoured vehicles are
-  not loaded in free roam), not on foot, not paired, failed, no answer.
+  not loaded in free roam), not on foot (driving, on the horse, in a back seat), not paired, failed, no answer.
+- **Hidden runs (play, `labsetting debug_vspawn=1`, afgh-ledge, WAN sim bad; frames looked at, sheet
+  `mgs-coop-run-archive/r1101/frames/vspawn/5cdbfada-sheet.jpg`):**
+  - A, the host's jeep [O both logs + frames]: `veh_lv_0011` (4.2 km away) moved 6 m in front of the host, readback
+    `d_m=0.00 ok=1` on both copies; the host's frame shows it ahead, facing the host's way; toasts on both screens.
+  - B, the guest's truck [O both logs + frames]: kind 1 ask -> host pick `veh_trc_0005` (an LRRP truck, 2.9 km) -> kind 3
+    -> both `ok=1`; the truck 6 m in front of the guest on the guest's screen, beside the jeep on the host's.
+  - C, riding [O both logs + frames]: the host drove the spawned jeep (driver seat), the guest sat in its back seat by
+    the seats module (`partner_ride=board_seated`), the guest's copy showed the host's puppet in that jeep's driver seat
+    and followed it (RIDE_FAST); both screens show both players in the same jeep; it moved about 7 m to a concrete block.
+  - D, a refusal while driving FAILED in `5cdbfada` [O]: the stance reads STAND in a vehicle, so the press was taken and
+    a second jeep came in front of the moving one. Fixed in `082db232` (ON_VEHICLE / ON_HORSE / the seats module's
+    passenger seat -> `busy`), red/green tested, **not run yet**; the scenario now expects `vspawn_refused;reason=busy`.
+  - Run `e626471f` (first attempt) also passed A and B; its C never boarded (the jeep faced east, the host stood at its
+    bumper). Toasts: the "skipped" ones there were the toast log's per-code rate limit, the toasts showed on screen [O].
 - **How:** free roam loads only the faction's jeep and truck bodies, and the class command `Spawn` refuses a live name
   (REA snapshot pseudocode of `0x140B31E70`; `Respawn` `0x140B31710` re-creates a named instance from its record), so
   the host picks an authored `VEHICLE_SPAWN_LIST` locator (unridden, not the partner's ride, LRRP last, live before
@@ -17,8 +31,15 @@
   despawn (`ParseLuaSpawnIndex` `0x140B304E0`); the existing fix is the M3 `world_relief` key (guest `Vehicle.LoadCarry`
   with the host's carry vars), off since the 2026-10-29 review until a FRAME proof and a play rehearsal of drive,
   mission end and removal.
+- **Armoured vehicles and tanks (what it would take):** free roam (`f30010.fpk` / `f30020.fpk`, `TppMissionList.lua`)
+  loads no APC or tank body; story missions add them with `TppPackList.AddMissionPack(TppDefine.MISSION_COMMON_PACK.
+  WEST_WAV / WEST_TANK ...)`, and the reinforce block (`reinforce_vehicle_0000`, `Respawn{type=...}`) loads one only for
+  a CP's call. A row for them needs that pack added to free roam's pack list on BOTH copies before the mission loads
+  (a load-time hook, more memory, never measured), then a `Respawn{name, type=...}` of an authored slot (the parser takes
+  a type override) or an index `Spawn`; a probe first, since a body that is not loaded is [U] (likely a crash).
 - **Proof run:** `tools/worker/scenarios/r1101-vspawn-play.txt` (play, `labsetting debug_vspawn=1`, afgh-ledge seed):
-  host jeep, guest truck, host drives the spawned jeep with the guest riding, a refusal while riding.
+  host jeep, guest truck, host drives the spawned jeep with the guest riding, a refusal while driving. The key stays off
+  unless named until the Prove phase's run shows D refused.
 
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
