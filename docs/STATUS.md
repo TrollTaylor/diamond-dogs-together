@@ -53,8 +53,11 @@ stayed under the 15 GB floor for most of the round).
   with the fix around them) reproduced the freeze instead. Moved this worktree's own `build/native` (4.6 GB) to C: with
   a junction back (nothing deleted).
 - **Play-mode evidence:** none new (play has no scripted sortie); the lab runs use the same Lua chunks as play.
-- **Checks:** red/green Lua fixtures (world_follow 221, world_follow_game 132, world_align 190, world_arrival 35); final
-  full tools/build.ps1 and contract --check: see the next lines once run.
+- **Checks:** red/green Lua fixtures (world_follow 221, world_follow_game 132, world_align 190, world_arrival 35). Final
+  full tools/build.ps1 at `b8f53015` (docs only after it): 338/340 in a real-path clone (two timing tests under load,
+  partner_defer_pose_held_generation_tests and friend_package_tests_2, pass alone); in this worktree 339/340
+  (ddt_local_watch_process compares the image path and `build/native` is now a junction to C:; passes at a real path).
+  `tools/generate_partner_contract.py --check`: match (850 code sites, 213 vtable slots).
 
 ## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
 
