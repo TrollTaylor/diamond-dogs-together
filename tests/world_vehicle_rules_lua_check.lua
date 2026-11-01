@@ -723,6 +723,38 @@ g:polls(10, 300)
 check(#g.despawns == 0 and not g:has('step=fallback;id=25610'), 'still alive after 3 s: the lift keeps going')
 g:polls(45, 300)
 check(#g.despawns == 1 and g:has('step=fallback;id=25610;from=fulton;via=locator;ok=1'), 'still alive after 15 s: the Despawn')
+-- r1101 fulton, the early lift (G.early, called by world_enemy.lua on a partner's FULTON kind 2: its FultonInfo, so the
+-- Fulton succeeded there): this copy lifts an authored vehicle (a locator name: the same pool index on both copies) at
+-- once instead of after VEHICLE_GONE's loss readback (run 614ec20a: about 6 s later); the later VEHICLE_GONE / request
+-- finds it gone here and changes nothing more.
+g = Fixture('guest', {fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
+g.V.early(25610)
+check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and g.seized[1].markedGone and
+    g:has('event=vehicle_rules;step=early;id=25610;role=guest') and g:has('step=applied;id=25610;via=fulton;src=fulton;ok=1') and
+    #g:sent(47) == 0, 'early: the partner\'s FULTON lifts this copy at once (no request back)')
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 1 and #g.despawns == 0, 'early: the host\'s later VEHICLE_GONE changes nothing more')
+h = Fixture('host', {fulton = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {res = 14})
+h.V.early(25608)
+check(#h.seized == 1 and h.seized[1].options[1] == 'Fulton' and h:has('event=vehicle_rules;step=early;id=25608;role=host') and
+    #h:sent(46) == 0, 'early on the host: lifted at once, nothing announced before the request')
+hostReq(h, 25608, 9, 1)
+check(#h.seized == 1 and h:has('event=vehicle_gone;step=tx;id=25608;cause=1;actor=1;rid=9'), 'early on the host: the guest\'s request is answered gone')
+-- Never: the key off, an unnamed vehicle (pool indices can differ between copies), index 0, a vehicle already gone.
+g = Fixture('guest', {fulton = false})
+g:add(25610, 100, 100, 1, 'veh_lv_0002')
+g.V.early(25610)
+check(#g.seized == 0 and #g.despawns == 0 and not g:has('step=early'), 'early: key off, nothing')
+g = Fixture('guest', {fulton = true})
+g:add(25611, 100, 100, 1)
+g.V.early(25611)
+check(#g.seized == 0 and g:has('event=vehicle_rules;step=early_skip;id=25611;reason=no_locator'), 'early: an unnamed vehicle waits for VEHICLE_GONE')
+g = Fixture('guest', {fulton = true})
+g:add(RID, 5, 5, 1)
+g.V.early(RID)
+check(#g.seized == 0, 'early: index 0 never')
 -- VEHICLE_GONE off: the credit key does nothing (it rides on VEHICLE_GONE).
 g = Fixture('guest', {credit = true, gone = false})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')

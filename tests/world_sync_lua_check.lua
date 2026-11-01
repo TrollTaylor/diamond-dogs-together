@@ -758,6 +758,12 @@ do
     check(#F.tx(c, OPF) == 0, 'the lift is never echoed')
     F.tick(env, c, 160, 33)
     check(lv.cur == 0 and has(c.logs, 'event=fulton;step=restore;level=0'), 'the level comes back after 5 s')
+    -- A partner's vehicle FULTON (kind 2) starts this copy's lift at once (world_vehicle_rules.lua G.early), after the note.
+    local early = {}
+    c.W.vehicleGone = {early = function(id) early[#early + 1] = {id = id, note = c.W.fulton.note[id] ~= nil} end}
+    F.push(c, 1, OPF, 2, 2, 25610, 0, 0)
+    F.tick(env, c, 1)
+    check(#early == 1 and early[1].id == 25610 and early[1].note, 'FULTON kind 2: the early vehicle lift, after the note')
     -- No FULTON (an older partner, or theirs is off): this copy's own look, still visual only.
     env, c, lv, term = rig(2, true, 0)
     F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
