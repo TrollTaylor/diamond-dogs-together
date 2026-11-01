@@ -105,6 +105,14 @@ check(c:has(c.logs,"event=supply;step=mirror;origin=1;oseq=4;ok=1"),"logged")
 c:tick();check(#c.tx==0 and c:has(c.logs,"step=mirror_seen"),"the mirror's own request is seen and never sent back")
 -- A repeated drop (same origin and box) is mirrored once.
 c:rx(10,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);check(#c.calls==1,"a duplicate drop is not requested twice")
+-- Echo guard: a request seen outside the mirror window within 3 s of a mirror and within 1 m of its aim point is the
+-- mirror's own (should the game ever run it outside Lua's call): never sent back, so two copies never ping-pong.
+c=F({host=false});c:rx(9,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);c:request(-1234300,321100,5600);c:tick()
+check(#c.tx==0 and c:has(c.logs,"event=supply;step=echo;") and c.S.cur and c.S.cur.oseq==4,"an echo of the mirror is not sent")
+c:request(-1200000,321000,5000);c:tick()
+check(#c.tx==1 and c.tx[1][3]==1 and c.tx[1][4]==2,"a request 34 m away right after is this player's own: sent")
+c=F({host=false});c:rx(9,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);c:tick(13);c:request(-1234567,321000,5000);c:tick()
+check(#c.tx==1 and c.tx[1][4]==2,"the same spot more than 3 s after the mirror: this player's own drop, sent")
 -- (3) The guest collects the host's box: live, then reset outside the request grace -> kind 2 gone, reason 1 near.
 c=F({host=false,px=-1234.5,py=321,pz=5});c:rx(9,1,1,4,3,5,0,-1234567,321000,5000,1,7,6,0);c:tick()
 c.nat.st=14;c:tick(12)
