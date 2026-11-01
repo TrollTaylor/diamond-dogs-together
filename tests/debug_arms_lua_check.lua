@@ -228,6 +228,17 @@ check(#h.tx == sends + 1 and h:lasttx()[3] == 2 and h:lasttx()[4] == 0, "while o
 h:run("friendly_fire 1"); sends = #h.tx; h:tick(1200)
 check(#h.tx == sends, "while on (the guest's default), no repeats")
 h:run("friendly_fire 0")
+-- A failed send at the pairing edge is retried; a guest that loses its host goes back to ON (the default).
+local f = F(true); f.txFail = true; f:tick()
+check(#f.tx == 1, "the host sends its state on pairing")
+f.txFail = false; f:tick()
+check(#f.tx == 2 and f:lasttx()[3] == 2, "a failed send on pairing is retried on the next update")
+f:tick(5)
+check(#f.tx == 2, "and only until it went out")
+local s = F(false); s.W.handlers[63]({1, 2, 0}); s:tick()
+check(s.R.ff == false, "the guest takes the host's OFF")
+s.W.paired = false; s:tick()
+check(s.R.ff == true and s.states[#s.states]:sub(1, 2) == "1 ", "a guest that loses its host goes back to friendly fire ON")
 -- A mission change keeps the switch (session-wide) but drops the gun list.
 h.R.stop()
 check(h.R.ff == false and #h.R.list == 0, "stop keeps friendly fire and clears the gun list")
