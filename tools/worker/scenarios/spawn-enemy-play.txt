@@ -8,10 +8,10 @@
 # the ninth press of a mission said spawn_pool_limit_8 forever.
 # Expected:
 #   - host log soldier_warp=ready; key=spawn_warp at startup (play); guest the same.
-#   - 10 host presses: guard_here;...;d=<=6 m;far=0;mode=warp;come=1;sync=world;seq=n (each placed soldier is killed
+#   - 10 host presses: guard_here;...;d=<=6 m;far=0;mode=warp;come=0;sync=world;seq=n (press 10: come=1, the opt-in box) (each placed soldier is killed
 #     before the next press for presses 1-6, so the pool is recycled, never spawn_pool_limit_8); presses 7-10 are left
 #     alive (4 placed soldiers near the host).
-#   - guest spawn_sync: remote_spawn;seq=n;state=landed;mode=warp;come=1;...;partner_m=<=10 (the same soldier in front of
+#   - guest spawn_sync: remote_spawn;seq=n;state=landed;mode=warp;come=0 (press 10 come=1);...;partner_m=<=10 (the same soldier in front of
 #     the host on the guest's screen); captures press-N on both copies.
 #   - 3 guest presses: host_only (the row is host only; the guest's menu shows "Host only: use the host's menu.").
 #   - Mother Base (Travel): spawn_mother_base, the chip reads "No enemies at Mother Base: ..." (capture mb-refusal).
@@ -41,62 +41,62 @@ waitlog host 'message=guard_here;ent=' 20
 wait 2500
 host capture press-1-menu
 guest run spawn_sync
-guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=1;
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
 both capture press-1
 host run menu close
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;life_readback=5;
 wait 2000
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;frames=\d+;leaf=(pinned|engine)$
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;frames=\d+;leaf=(pinned|engine)$
 wait 2500
 guest run spawn_sync
-guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=1;
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
 both capture press-2
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;life_readback=5;
 wait 2000
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-3
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;life_readback=5;
 wait 2000
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-4
 host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;
 wait 2000
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-5
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;life_readback=5;
 wait 2000
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 guest run spawn_sync
-guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=1;
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=0;
 both capture press-6
 host run enemy kill nearest
 host expect ^enemy_kill;ent=\d+;life_readback=5;
 wait 2000
 # Presses 7-10: left alive (the host is in god mode; they attack).
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-7
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-8
-host run spawn_enemy here come
-host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=1;sync=world;seq=\d+;
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=[0-6]\.\d;moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=\d+;
 wait 2500
 both capture press-9
 host run spawn_enemy here come

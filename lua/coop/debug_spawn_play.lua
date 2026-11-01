@@ -26,9 +26,19 @@ do
       local normal = get(get(TppEnemy, "LIFE_STATUS"), "NORMAL")
       if not integer(normal, 0, 4) then return 0 end
       local p, freed = A.pose(), 0
+      local W = get(e, "MgsCoopWorld")
+      local pins, ent = get(W, "pinned"), get(W, "ent")
       for name in pairs(E.used) do
         local ok, held = pcall(holds, name, normal, p)
-        if not (ok and held) then E.used[name] = nil; freed = freed + 1 end
+        if not (ok and held) then
+          E.used[name] = nil; freed = freed + 1
+          -- Release what the placement took: his force-realize and his area pin (bounded by the pool).
+          local id = call(GameObject, "GetGameObjectId", "TppSoldier2", name)
+          if integer(id, 0, 65535) and id ~= get(GameObject, "NULL_ID") then pcall(send, id, {id = "SetForceRealize", forceRealize = false}) end
+          if type(pins) == "table" and type(ent) == "table" then
+            for h in pairs(pins) do if get(ent[h], "name") == name then pins[h] = nil end end
+          end
+        end
       end
       return freed
     end

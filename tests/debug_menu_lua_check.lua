@@ -874,8 +874,8 @@ check(forced(sp, false) == 1 and sp:count('SetDiscoveryPlayer') == 1, 'force rea
 sp = warpFixture({{r = 0, h = 0, leaf = 'engine'}}); sp.positions[5], sp.positions[6], sp.positions[9] = {300, 20, 30}, {320, 20, 30}, {400, 20, 30}
 check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=far' and sp.warps == nil and forced(sp, true) == 0,
     'far guard: route snap, no native warp request')
-sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';far=1;mode=route;why=far;', 1, true), 'far route final keeps why=far')
-sp = warpFixture({{r = 0, h = 1, leaf = 'engine'}}); sp.positions[5] = {240, 20, 30}
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;why=far;', 1, true), 'far route final keeps why=far: ' .. sp.logs[#sp.logs][3])
+sp = warpFixture({{r = 0, h = 1, leaf = 'engine'}}); sp.positions[5], sp.positions[6], sp.positions[9] = {240, 20, 30}, {320, 20, 30}, {400, 20, 30}
 check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=warp' and #sp.warps == 1, 'a guard within 250 m is still warped')
 sp = warpFixture({{r = -1, h = 0}, {refused = 'dispatch'}})
 sp:send('spawn_enemy here'); sp:tick()

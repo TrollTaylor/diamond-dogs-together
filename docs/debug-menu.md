@@ -105,7 +105,7 @@ is local to the PC that sends it.
 
 | Button | Command |
 |---|---|
-| **Spawn enemy here** (H, S) | `spawn_enemy here come` ("He comes at me", checked by default), `spawn_enemy here` unchecked |
+| **Spawn enemy here** (H, S) | `spawn_enemy here` ("He comes at me" unchecked, the default: he ignores you and stays in sync on both screens), `spawn_enemy here come` checked (each copy chases its own player) |
 | Spawn at closest camp (H, S) | `spawn_enemy closest` |
 | Go to spawned guard | `goto_spawn` |
 
@@ -343,7 +343,11 @@ existing one:
 
 1. It takes the nearest unused guard that is alive (NORMAL), enabled, on foot (no
    vehicle) and 15 to 500 m away, among the guards of the command posts with patrol
-   routes.
+   routes. A guard more than 250 m away never gets the native placement (a far guard
+   once answered `r=0 h=0`, which latches the warp off until the game restarts): he goes
+   to the nearest patrol route (`why=far`; the chip says he was over 250 m away).
+   A placed guard freed from the pool (dead, asleep, Fultoned, gone or over 150 m away)
+   has his force-realize released and his area pin dropped on the host.
 2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
    you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
    landed (he attacks).
@@ -475,8 +479,9 @@ grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
 asserts that `Warp()` has exactly these two callers and their gates. In play mode
-`spawn_warp` (on unless named 0) admits both callers; with it named 0 only route
-placements (kind 2) move the guest's copy.
+`spawn_warp` (on unless named 0) admits both callers, the guest one only for the spawn
+placement (kind 1): patrol and combat corrections (kind 3) stay lab only (`native_off;
+native=role` in play); with it named 0 only route placements (kind 2) move the guest's copy.
 
 **Settle window.** For 60 s after a native landing the host samples its guard once a
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The

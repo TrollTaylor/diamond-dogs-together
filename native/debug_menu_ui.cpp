@@ -44,7 +44,7 @@ struct State {
     float teleport[3]{}, yaw{}, step[3]{0, 0, 2};
     bool teleport_set{};
     int bookmark{}, payload{1};
-    bool spawn_come{true};  // "Spawn enemy here" brings a hostile soldier unless unchecked
+    bool spawn_come{false};  // opt-in: a "come" soldier's two copies each chase their own player (never corrected)
     int nearby_radius{80}, clear_radius{25};
     std::uint32_t selected{};
     char camp[65]{};
@@ -632,8 +632,8 @@ void Enemies(const Snapshot& s) noexcept {
         Row("spawn_enemy_here", s, {"Spawn enemy here", 260.0f, ImGui::GetFrameHeight() * 1.8f, true});
         ImGui::SameLine();
         ImGui::Checkbox("He comes at me (hostile)", &ui.spawn_come);
-        Wrapped("Brings the nearest living guard (15-500 m) 5 m in front of you, facing you. Checked he attacks; unchecked "
-                "he ignores you. Afghanistan and Africa free roam only (no enemies at Mother Base). If the in-front placement "
+        Wrapped("Brings the nearest living guard (15-250 m) 5 m in front of you, facing you. Unchecked he ignores you and "
+                "stays in sync; checked he attacks (your partner's copy chases them instead). Afghanistan and Africa free roam only (no enemies at Mother Base). If the in-front placement "
                 "is refused he goes to the nearest patrol route instead. Host only; your partner sees the same soldier. At most "
                 "8 spawned soldiers alive near you: dead, asleep, Fultoned or far ones free their place. He is armed.");
         Rows({"spawn_enemy_closest", "enemy_goto_spawn"}, s);

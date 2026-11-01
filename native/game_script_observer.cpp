@@ -2749,6 +2749,9 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
         return refuse("mission");
     const auto grant = mgscoop::world_link::FindGrant(seq);
     if (!grant.found) return refuse("grant");
+    // Play (spawn_warp) admits only the spawn placement (kind 1); patrol/combat corrections stay lab only (the old
+    // play refusal, so the guest's Lua still logs native_off;native=role for them).
+    if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();

@@ -133,6 +133,7 @@ do
       local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route;why=" .. why})
       return ok, msg .. ";mode=route;why=" .. why
     end
+    if s.distance > 62500 then return route("far") end
     local r, why = warp(s, id)
     if not r then return route(why) end
     local function landed() if get(r, "h") == 1 then q.done = q.frames end end
