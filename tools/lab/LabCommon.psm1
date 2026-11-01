@@ -468,6 +468,8 @@ $script:LabPartnerKeys = @(
     # report off unless named): D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
     @{ Key = 'world_vehicle_crew'; Json = 'world_vehicle_crew'; Kind = 'bool' },
     @{ Key = 'world_vehicle_damage'; Json = 'world_vehicle_damage'; Kind = 'bool' },
+    # r1101 supply drops synced (docs/world-sync-protocol.md section 25; lab and play, off in both unless named).
+    @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

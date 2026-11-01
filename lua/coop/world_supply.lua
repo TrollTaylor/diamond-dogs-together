@@ -12,7 +12,8 @@
 --           reset bit) and shows note 21 a=2. A reset followed by a request in the same poll is a replacement: no gone.
 -- Each copy's request charges only its own player (the mirror goes straight to the box system, not the support
 -- request that costs GMP). A soldier a falling box knocks out is mirrored by the world outcomes like any knockout.
--- Lab only: every game message is logged for a while around a box (step=msg; the pickup message is unknown [U]).
+-- The stock Player message OnPickUpSupplyCbox (this player took a supply box) ends the synced box at once: kind 2,
+-- reason 1. Lab only: every game message is logged for a while around a box (step=msg).
 -- Debug rows (the player module's dispatch): supply state | drop [x y z] | bullet | remove.
 do
 local W = e.MgsCoopWorld
@@ -85,13 +86,13 @@ local function near(b)
   local dx, dy, dz = px * 1000 - b.x, py * 1000 - b.y, pz * 1000 - b.z
   return sqrt(dx * dx + dy * dy + dz * dz) <= NEAR_MM
 end
--- A synced box is gone on this copy.
-function S.gone(t, why)
+-- A synced box is gone on this copy (reason: 1 collected, 2 vanished; nil = by this player's distance to the box).
+function S.gone(t, why, reason)
   local b = S.cur
   if not b then return end
   S.cur = nil
   S.done[key(b.origin, b.oseq)] = true
-  local reason = near(b) and 1 or 2
+  reason = reason or (near(b) and 1 or 2)
   local sent = W.paired == true and send(2, b, reason) or false
   S.n.gone = S.n.gone + 1
   L("step=gone_local;origin=%d;oseq=%d;reason=%d;why=%s;sent=%d", b.origin, b.oseq, reason, why, sent and 1 or 0)
@@ -215,10 +216,34 @@ W.stopHooks = W.stopHooks or {}
 W.stopHooks[#W.stopHooks + 1] = function() S.reset(true) end
 W.startHooks = W.startHooks or {}
 W.startHooks[#W.startHooks + 1] = function() S.reset(true); S.skipOld = true end
--- Lab census: every game message while a box is around (the pickup message is unknown).
+-- The stock Player messages (the game's s10030_sequence.lua): OnPickUpSupplyCbox (this player took a supply box: the
+-- synced box is gone here, collected) and OnComeOutSupplyCbox (logged). Raw Fox.StrCode32 values, bound once.
+local function ids()
+  if S.ids == nil then
+    local s = get(W.api, "str32")
+    if type(s) ~= "function" then return nil end
+    local ok, player, pick, come = pcall(function() return s("Player"), s("OnPickUpSupplyCbox"), s("OnComeOutSupplyCbox") end)
+    S.ids = ok and {player = player, pick = pick, come = come} or false
+  end
+  return S.ids or nil
+end
+function S.stock(pick, a0, a1)
+  if S.on == nil then S.poll(now()) end
+  if S.on ~= true then return end
+  local b = S.cur
+  L("step=%s;a0=%s;a1=%s;cur=%s", pick and "pickup" or "come_out", tostring(a0), tostring(a1),
+    b and fmt("%d.%d", b.origin, b.oseq) or "none")
+  if pick and b then S.gone(now(), "pickup", 1) end
+end
+-- Lab census: every game message while a box is around.
 local observe = W.observe
 if type(observe) == "function" then
   function W.observe(class, msg, a0, a1, a2, a3)
+    local I = ids()
+    if I and class == I.player and (msg == I.pick or msg == I.come) then
+      local ok, err = pcall(S.stock, msg == I.pick, a0, a1)
+      if not ok then L("step=error;msg=%s", string.sub(tostring(err), 1, 100)) end
+    end
     if W.mode == 1 and S.censusUntil and (S.cur or now() <= S.censusUntil) and S.census < CENSUS_N then
       S.census = S.census + 1
       L("step=msg;class=%s;msg=%s;a0=%s;a1=%s;a2=%s;a3=%s", tostring(class), tostring(msg), tostring(a0), tostring(a1),

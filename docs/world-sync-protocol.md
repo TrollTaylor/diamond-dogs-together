@@ -1971,14 +1971,17 @@ the 2 s after a request (the game's own reset of the previous box: `step=reset_r
 in the same poll (`step=reset_replaced`), is gone here: kind 2 (`step=gone_local;reason=1|2;why=reset_0x<caller>|state_0`).
 The other copy removes its copy with the remove lever (`step=remove;origin=;oseq=;ok=;why=;st=;reason=`, then
 `step=removed` on the lever's reset) and shows note 21 a=2. A gone for another box removes nothing
-(`step=gone_unknown`). Lab census (W.mode 1 only): every game message while a synced box exists and 15 s after a box
-event, at most 300 per mission (`step=msg;class=;msg=;a0..a3`): the stock pickup message is not known yet [U]. F9 rows
+(`step=gone_unknown`). The stock Player message `OnPickUpSupplyCbox` (this player took a supply box; the game's
+`s10030_sequence.lua` handles it, with `OnComeOutSupplyCbox`) ends the synced box at once, lab and play:
+`step=pickup;a0=;a1=;cur=<origin.oseq|none>` then kind 2 with reason 1 (`why=pickup`), whatever the box state or the
+distance; `OnComeOutSupplyCbox` is logged (`step=come_out`). Lab census (W.mode 1 only): every game message while a
+synced box exists and 15 s after a box event, at most 300 per mission (`step=msg;class=;msg=;a0..a3`). F9 rows
 on the player module's dispatch (the key on): `supply state | drop [x y z] | bullet | remove`.
 
 World note 21 SUPPLY{a=1 the partner's drop (b its drop type), 2 the partner took the synced box (b the reason)}
 (`coop_text::FormatWorldNote`). 20 and 22 are the other r1101 tracks' (vehicle spawn, Fulton visual).
 
 Open [U] until a hidden run: H1 every falling box passes `0x15C3F00` (the iDroid AMMO drop too); H2 the reset bit
-removes the box without a new one; H3 the stock pickup ends in a reset or state 0 (otherwise the opened box stays
-"live" and no kind 2 is sent); whether the iDroid request aims at the player object; a guard hit by the falling box on
+removes the box without a new one; H3 the stock pickup sends `OnPickUpSupplyCbox` on the taker's copy (the reset or
+state 0 path stays as the fallback); whether the iDroid request aims at the player object; a guard hit by the falling box on
 both copies (each copy's own box hits its own copy of the guard; the outcome sync judges the knockout).
