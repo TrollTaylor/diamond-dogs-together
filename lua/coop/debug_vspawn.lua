@@ -4,7 +4,8 @@
 -- Free roam loads only the faction's light vehicle and truck bodies (docs/vehicles-companions-design.md 3.5, 3.6) and
 -- the class command Spawn refuses a live name, so the host brings one of the area's own vehicles of that class: an
 -- authored locator of the area VEHICLE_SPAWN_LIST (veh_lv_NNNN, veh_trc_NNNN) that is unridden, not an LRRP
--- (soldier-driven) vehicle and not the partner's ride; live before wrecked, never brought before (else the oldest),
+-- (soldier-driven) vehicle and not the partner's ride (an unridden LRRP one only as the last resort: each copy's AI
+-- drives those, and Afghanistan's six trucks are all LRRP); live before wrecked, never brought before (else the oldest),
 -- then the farthest from the spot. The stock instance command SetPosition{position, rotY in degrees}
 -- (s10050_sequence.lua) moves it; a wreck is first re-created by the class command Respawn{name} (0xB31710: the name
 -- binding stays). The same locator at the same pose on both copies is the same vehicle for world_vehicle.lua (by
@@ -109,11 +110,11 @@ do
    local skip, best, key = lrrp(), nil, nil
    for _, c in ipairs(list) do
     local id = vid(c.loc)
-    if id and not skip[c.loc] and not busy(id) then
+    if id and not busy(id) then
      local live, px, _, pz = alive(id), pose(id)
      local d = px and sqrt((px - x) ^ 2 + (pz - z) ^ 2) or 0
-     local k = {live and 0 or 1, V.recent[c.loc] or -1, -d}
-     if not key or before(k, key) then best, key = {loc = c.loc, num = c.num, id = id, live = live, d = d}, k end
+     local k = {skip[c.loc] and 1 or 0, live and 0 or 1, V.recent[c.loc] or -1, -d}
+     if not key or before(k, key) then best, key = {loc = c.loc, num = c.num, id = id, live = live, d = d, lrrp = k[1]}, k end
     end
    end
    if not best then return nil, "none_free" end
@@ -160,7 +161,7 @@ do
    local sx, sz = x + FRONT * math.sin(r), z + FRONT * math.cos(r)
    local c, why = V.pick(class, sx, sz)
    if not c then return nil, why end
-   log(fmt("step=pick;loc=%s;id=%d;alive=%d;d=%.0f;for=%s", c.loc, c.id, c.live and 1 or 0, c.d, by))
+   log(fmt("step=pick;loc=%s;id=%d;alive=%d;d=%.0f;for=%s;lrrp=%d", c.loc, c.id, c.live and 1 or 0, c.d, by, c.lrrp))
    if not V.apply(class, c.num, sx, y + UP, sz, yaw, "self") then return nil, "failed" end
    return {num = c.num, loc = c.loc, x = sx, y = y + UP, z = sz, yaw = yaw}
   end
