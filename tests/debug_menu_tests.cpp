@@ -706,6 +706,11 @@ int main() {
         Check(act::FindAction(id) && (act::FindAction(id)->flags & act::kUnverified) &&
                   std::strstr(act::FindAction(id)->tooltip, "Not available yet in play"),
               "Game rules rows: unverified until a play run proves them");
+    // Arms: not run-proven yet (2026-10-31 run not admitted): unverified, and the tooltip says play refuses them.
+    for (const char* id : {"arms_give", "arms_friendly_fire"})
+        Check(act::FindAction(id) && (act::FindAction(id)->flags & act::kUnverified) &&
+                  std::strstr(act::FindAction(id)->tooltip, "Not available yet in play"),
+              "Arms rows: unverified until a play run proves them");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
     // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,

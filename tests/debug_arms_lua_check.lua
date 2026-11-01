@@ -70,7 +70,9 @@ local function F(host, opts)
       error("unexpected receipt " .. text)
     end}
   D.update = function() c.updates = (c.updates or 0) + 1 end
-  local W = {active = true, paired = c.paired, host = host, OP = {FRIENDLY_HIT = 41}, handlers = {}}
+  local W = {active = true, paired = c.paired, host = host, mode = opts.mode or 1, OP = {FRIENDLY_HIT = 41}, handlers = {}}
+  c.said = {}
+  env.TppUiCommand = {AnnounceLogView = function(t) c.said[#c.said + 1] = t end}
   W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return c.txFail ~= true end
   W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
   -- The real log path: world_sync.lua W.log sanitiser, then native FormatLogLine turns each ";" into "; ".
@@ -246,5 +248,17 @@ check(h.R.ff == false and #h.R.list == 0, "stop keeps friendly fire and clears t
 for _, bad in ipairs({"friendly_fire", "friendly_fire 2", "friendly_fire on"}) do
   c = F(true); ok = c:run(bad)
   check(not ok and #c.tx == 0, "bad friendly_fire arguments refused: " .. bad)
+end
+-- Play (mode 0) until a play run proves the track: give and friendly fire refuse in plain words and change nothing.
+for _, host in ipairs({true, false}) do
+  c = F(host, {mode = 0})
+  for _, cmd in ipairs({"give_weapon 39", "give_pick 1", "friendly_fire 0"}) do
+    local said = #c.said
+    ok, msg = c:run(cmd)
+    check(not ok and msg == "not_available_yet" and #c.equips == 0 and #c.tx == 0 and c.R.ff == true and #c.said == said + 1 and
+      c.said[#c.said] == "Not available yet in this build.", "play refuses until a play run proves it: " .. cmd)
+  end
+  ok, msg = c:run("give_list")
+  check(ok and msg:find("give_list;guns=", 1, true), "play keeps the read-only list")
 end
 print("debug_arms_lua_check: " .. checks .. " checks passed")
