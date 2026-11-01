@@ -1,0 +1,109 @@
+# r1101 animtruth (docs/anim-truth.md): the puppet draws what the other player's body really does, not what their
+# input asked. Lab key partner_native_aim_truth (OFF unless named; named here). Mother Base, mb-ladder seed (title
+# Continue at the ladder spot, lab saves 871/873/875 in slots 0/1/2), mode=play over -WanSim bad, so the stock f30050
+# no-lethal rule is live on both copies (vars.playerDisableActionFlag = CQC_KNIFE_KILL + KILLING_WEAPON).
+# The guest presses; the host films its body 1 (the puppet) from behind-right; every step captures BOTH screens.
+#   1. The user's report: the guest holds RMB with a lethal gun. The guest's own body never aims (weapons disabled),
+#      so the host's puppet must not aim either. Then RMB+LMB: no aim and no visual shot on the host's screen.
+#        guest: partner_aim_local=no_aim; act=[12]; held_ms=...
+#        host:  partner_aim_truth=loco; remote_act=[12]; ...; pad_hold=1; ...; strip=0x18 and, on release,
+#               partner_aim_truth=hold_run; result=refused; refused_ms=N; admitted_ms=0
+#   2. The positive control: the other key selects a gun the rule allows (or the same refusal again: the slot= and
+#      no_aim/aimed fields say which). A real aim still shows on the puppet, ~30 ms after the guest's own body:
+#        guest: partner_aim_local=aimed; act=1[1-7]; after_ms=...
+#        host:  partner_aim_truth=aim; remote_act=1[1-7]; ... and hold_run; result=late|admitted
+#   3. The ladder (act 21): the guest grabs the ladder at 22.61,-14.86, climbs a little and holds RMB on it. No hand
+#      is free: the puppet (on the ladder through the traversal replay, or at its foot) must not aim.
+#        host:  partner_aim_truth=act; remote_act=21; ...; strip=0x18
+# Frames: mb-rmb-*, mb-fire-*, ctl-rmb-*, lad-rmb-* on both screens (host = the puppet, guest = the real body).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, no build running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-animtruth-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# NEVER: partner_aim_truth=loco while the guest logs partner_aim_local=aimed for the same press; a host frame with
+# the puppet's gun raised during steps 1 and 3; faults, GameOver / reason=game_over.
+labsetting partner_native_aim_truth=1
+labsetting partner_act_log=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 15000
+# Run 1bc18e9c: a stock Mother Base cutscene can start within 15 s of gameplay; wait it out (waitgameplay skips it).
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+stance host stand
+stance guest stand
+waitlog host 'partner_weapon=settings;' 60
+placebehind host guest 5 2
+stance host stand
+wait 2500
+both capture at-start
+# --- 1. the lethal gun at Mother Base: RMB, then RMB+LMB ------------------------------------------------------------
+logmark both
+guest press 1 120
+wait 2500
+both capture mb-ready
+guest hold rmb 1500 nowait
+wait 700
+both capture mb-rmb-a
+wait 600
+both capture mb-rmb-b
+guest release
+waitlog guest 'partner_aim_local=(no_aim|aimed);' 10
+waitlog host 'partner_aim_truth=hold_run; result=' 10
+wait 1500
+logmark both
+guest hold rmb+lmb 1500 nowait
+wait 700
+both capture mb-fire-a
+wait 600
+both capture mb-fire-b
+guest release
+waitlog host 'partner_aim_truth=hold_run; result=' 10
+wait 2000
+# --- 2. the positive control: the other gun key ---------------------------------------------------------------------
+logmark both
+guest press 2 120
+wait 2500
+both capture ctl-ready
+guest hold rmb 1500 nowait
+wait 700
+both capture ctl-rmb-a
+wait 600
+both capture ctl-rmb-b
+guest release
+waitlog guest 'partner_aim_local=(no_aim|aimed);' 10
+waitlog host 'partner_aim_truth=hold_run; result=' 10
+wait 2000
+# --- 3. RMB on the ladder ---------------------------------------------------------------------------------------------
+guest debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance guest stand
+guest debug position
+placebehind host guest 5 -3
+stance host stand
+wait 2500
+both capture lad-start
+logmark both
+guest hold w 300
+guest hold w+e 200
+guest hold w 700
+guest hold rmb 1500 nowait
+wait 600
+both capture lad-rmb-a
+wait 600
+both capture lad-rmb-b
+guest release
+waitlog host 'partner_aim_truth=(act|other|loco|aim|keep|draw|lane); remote_act=' 5
+wait 1000
+guest hold w 1500
+guest hold w 1500
+both capture lad-end
+host debug position
+guest debug position
+state
