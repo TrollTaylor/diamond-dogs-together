@@ -2048,17 +2048,35 @@ int main() {
                   "a named world_vehicle_damage=0 keeps it off in play");
         }
         // Supply drops synced (r1101, docs/world-sync-protocol.md section 26, lua/coop/world_supply.lua): world_supply
-        // installs the supply-box observer and the SUPPLY op's Lua module. Lab and play (no refusal bit), OFF in both
-        // unless named until a hidden run proves it (project rule).
+        // installs the supply-box observer and the SUPPLY op's Lua module. Lab and play (no refusal bit). It follows the
+        // native gun profile in lab and play since the r1101 Prove phase (hidden play run 69efd63b, both copies: the
+        // host's script and iDroid AMMO / FULTON drops and the guest's iDroid drop fell on both copies and were delivered
+        // on both, crossing drops kept each player's own box, a WEAPONS / ITEMS drop stayed local); off without the
+        // profile; a named 0 opts out, an invalid value is named and off (also after a valid 1).
         {
             const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                      "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
             const auto supplyPlain = Lab("enabled=1\nrole=host\n");
-            const auto supplyGun = Lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
             const auto supplyPlay = Lab(play);
-            Check(!supplyPlain.world_supply && !supplyPlain.world_supply_given && !supplyGun.world_supply && !supplyPlay.world_supply &&
+            Check(!LabConfig{}.world_supply && !supplyPlain.world_supply && !supplyPlain.world_supply_given && !supplyPlay.world_supply &&
                       !supplyPlay.world_supply_given && supplyPlay.play_refused == 0,
-                  "world_supply defaults off in the lab (plain, gun profile) and in play");
+                  "world_supply stays off without the gun profile (lab and play)");
+            const std::string supplyGunBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                              "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+            for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                const auto supplyProfile = Lab(supplyGunBase + mode);
+                Check(supplyProfile.world_supply && !supplyProfile.world_supply_given && supplyProfile.invalid_values == 0 &&
+                          supplyProfile.unknown_keys == 0 && supplyProfile.play_refused == 0,
+                      "the gun profile turns supply drops synced on in lab and play (not named)");
+                const auto supplyNamedOff = Lab(supplyGunBase + mode + "world_supply=0\n");
+                Check(!supplyNamedOff.world_supply && supplyNamedOff.world_supply_given && supplyNamedOff.invalid_values == 0 &&
+                          supplyNamedOff.play_refused == 0,
+                      "a named world_supply 0 opts out with the gun profile");
+                const auto supplyInvalid = Lab(supplyGunBase + mode + "world_supply=maybe\n");
+                Check(!supplyInvalid.world_supply && supplyInvalid.invalid_values == 1, "an invalid world_supply is named and off with the gun profile");
+                const auto supplyLate = Lab(supplyGunBase + mode + "world_supply=1\nworld_supply=2\n");
+                Check(!supplyLate.world_supply && supplyLate.invalid_values == 1, "an invalid world_supply after a valid 1 turns it off");
+            }
             const auto supplyOn = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=1\n");
             Check(supplyOn.world_supply && supplyOn.world_supply_given && supplyOn.invalid_values == 0 && supplyOn.unknown_keys == 0, "world_supply=1 parses in the lab");
             const auto supplyOff = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=0\n");

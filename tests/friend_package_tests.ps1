@@ -614,6 +614,14 @@ try {
             $file = Join-Path $fixture 'play-seat-fpv-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_fpv=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_fpv'])|$($m['partner_seat_fpv_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat first person 0 turns it off in play'
+            # Supply drops synced (docs/world-sync-protocol.md section 26; hidden play run 69efd63b): Play-Coop never names
+            # world_supply; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('world_supply') -and !$guestIni.Contains('world_supply') -and
+                !$clipsIni.Contains('world_supply')) 'Play-Coop lab.ini never names world_supply'
+            Assert-Equal "$($n['world_supply'])" '1' 'native: play defaults supply drops synced on'
+            $file = Join-Path $fixture 'play-supply-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "world_supply=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['world_supply'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named world_supply 0 turns supply drops synced off in play'
             # F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"; hidden play runs 65b4005c and e09fcf72): Play-Coop never
             # names debug_vspawn; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
             Assert-True (!$hostIni.Contains('debug_vspawn') -and !$guestIni.Contains('debug_vspawn') -and
