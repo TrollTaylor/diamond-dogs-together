@@ -37,8 +37,8 @@ be started to show it on both screens.
   on the host, the hold-E guest Fulton stimulus, and how corrections look on a walking staff member.
 - **Checks:** -Fast 307/307 after each green; full `tools/build.ps1` 338/339 at `162293bd`
   (`partner_defer_pose_held_generation_tests`, native partner defer, untouched, failed once under load and passes 3/3
-  alone); final head: see below. `generate_partner_contract.py --check` and `generate_soldier_warp_contract.py --check`
-  pass.
+  alone); full `tools/build.ps1` 339/339 at `a2fdf8d0` and again at this entry's commit. `generate_partner_contract.py
+  --check` (850 sites / 213 slots) and `generate_soldier_warp_contract.py --check` (19 sites / 10 slots) pass.
 - **Next:** one hidden play run of `mb-staff-sync-play.txt` on a machine above the floors; if both copies' frames show
   A on the same spot, asleep, then gone, and the 30 s frames keep the walking staff member together: drop `enemiesLab`
   (red/green) and add the README line "Mother Base: knocking out or Fultoning a staff member shows on both screens".
