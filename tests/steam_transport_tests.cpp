@@ -2573,7 +2573,10 @@ void TestHud() {
                   !text::FormatWorldNote(19, 30050, 0, 0, 30050, sentence, sizeof(sentence)) &&
                   !text::FormatWorldNote(19, 30050, 2, 0, 30050, sentence, sizeof(sentence)),
               "FormatWorldNote: note 19 the stuck-helicopter hint");
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{20}, std::uint8_t{255}})
+        // Note 20 is VSPAWN (debug menu Spawn vehicle, lua/coop/debug_vspawn.lua): a=1 b=1 the jeep sentence.
+        Check(text::FormatWorldNote(20, 1, 1, 30010, 30010, sentence, sizeof(sentence)) && std::strstr(sentence, "jeep"),
+              "FormatWorldNote: note 20 the vehicle spawn toast");
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{23}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         {
