@@ -1,0 +1,68 @@
+# fb1031 gear (docs/STATUS.md "fb1031 gear"): a partner who pairs after the host's mission was loaded without them.
+# 0.14.5 online, the friend's log: the host reloaded Mother Base while the link was down (equip_preload=refused;
+# reason=disabled; admission=link_not_connected), the partner paired 4 min later, and for 216 s the host saw them
+# empty-handed with no muzzle flash (partner_weapon=absent, partner_fire=masked; reason=weapon_mismatch, writer
+# backoff/refused no_resident: their bases were never requested in that mission) until a Game Over reload preloaded them.
+# wp/gear-rejoin: once the writer gives up for want of a resident entry and the allocation preload did not cover the
+# partner's bases, the host logs equip_late_gear=request and partner_sync.lua's mid-mission query gets ONE public
+# TppEquip.RequestLoadToEquipMissionBlock of those bases (the allocation preload's read-only preflight), then the writer
+# re-plans (equip_writer=midload_renewed). partner_equip_midload is off unless named (this run names it).
+# Staging (as partner-equip-late-manifest.txt, run c07b8136): the host continues into Mother Base while the guest is
+# still at its boot screens (no manifest yet), the guest continues later into the same Mother Base and pairs mid-mission.
+# Coordinator only, hidden worker (never visible: stop if it is not invisible), copied lab saves, MGS_GAME_LUA_DIR
+# unset, no build running in any worktree, under the shared verify lock, one worker session.
+# Run (play rehearsal, the gun stage, Mother Base seeds):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research
+#        -HostSaveSeed mb-ladder -GuestSaveSeed mb-ladder -GraphicsQuality low -WanSim bad
+#        -ScenarioPath tools/worker/scenarios/fb1031-gear-late-join.txt
+# Expected (host):
+#   equip_preload=refused; reason=no_manifest (or admission=link_not_connected); ...; source=none at its 30050 allocation
+#   after the guest pairs: equip_writer=a1_refused/backoff; reason=no_resident (or no_cache_entry), then
+#   equip_late_gear=request; mission=30050; ...; covered=0/<n>; missing=1; midload=1; attempted=0
+#   equip_midload=authorized; reason=ok; preflight=ok; ...; ids=<the guest's bases>; actions=<id>:build@<entry>,..; evict=0
+#   partner log event=equip_midload;ok=1;ids=<the same ids>
+#   equip_midload=queued_verified (or returned_unverified: the readback differs; report its readback=) ...; residency_gen=1
+#   equip_writer=midload_renewed; ...; then equip_writer=plan / handle_bound for the partner's slots
+#   partner_weapon=present|match|standin and partner_fire=live; reason=ok within ~10 s of the call; NO equip_late_gear=noted
+# Frames (host): host-paired (before the call, the partner empty-handed), then g-aim / g-fire* with the guest's gun in
+# hand and a muzzle flash. The game must stay up (no crash_probe hit, no SEH) through the call and 30 s after it.
+# Report as NOT staged: the guest's bases already resident on the host (no equip_late_gear line, the writer binds
+# without a call: the lab loadouts share bases), or the guest's manifest reaching the host before its allocation
+# (equip_preload=authorized; source=remote).
+# Expected (guest): its own allocation preloads the host's bases (equip_preload=authorized; ...; source=remote).
+labsetting partner_equip_midload=1
+labsetting partner_act_log=1
+titlemenu host 240
+title host 240
+waitgameplay host 120
+waitlog host 'equip_preload=(refused|authorized); .*source=' 60
+host capture host-alone
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+both debug godmode 1
+stance host stand
+stance guest stand
+placebehind host guest 4 3
+wait 2500
+host capture host-paired
+waitlog host 'equip_late_gear=(request|next_load); ' 90
+waitlog host 'equip_midload=(authorized|refused); ' 30
+waitlog host 'equip_midload=(queued_verified|returned_unverified|receipt_refused); ' 30
+waitlog host 'partner_fire=live; reason=ok' 60
+placebehind host guest 4 3
+wait 1500
+host capture g-idle
+guest hold rmb 1500 nowait
+wait 500
+host capture g-aim
+guest hold rmb+lmb 120 nowait
+host burst g-fire1 5 100
+guest hold rmb 1500 nowait
+wait 300
+guest hold rmb+lmb 1200 nowait
+host burst g-firehold 6 150
+guest release
+wait 30000
+host capture host-after-30s
+state

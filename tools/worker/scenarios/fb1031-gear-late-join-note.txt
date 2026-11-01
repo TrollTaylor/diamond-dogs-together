@@ -1,0 +1,24 @@
+# fb1031 gear, the shipped default (partner_equip_midload not named, so off): fb1031-gear-late-join.txt without the
+# mid-mission load. The host is told once that the partner's gun shows after the next loading screen.
+# Run as fb1031-gear-late-join.txt (play, gun stage, mb-ladder seeds, -WanSim bad) with this -ScenarioPath.
+# Expected (host): equip_late_gear=next_load; mission=30050; ...; midload=0, then equip_late_gear=noted; note=17 and
+# hud=toast; kind=world_note; code=17; a=1 ONCE (frame host-note: "Your partner's gun will show after the next loading
+# screen."); NO equip_midload= line (the query stays quiet); partner_fire stays masked until the next load.
+labsetting partner_act_log=1
+titlemenu host 240
+title host 240
+waitgameplay host 120
+waitlog host 'equip_preload=(refused|authorized); .*source=' 60
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+both debug godmode 1
+stance host stand
+stance guest stand
+placebehind host guest 4 3
+waitlog host 'equip_late_gear=noted; note=17;' 90
+wait 500
+host capture host-note
+wait 20000
+host capture host-after-20s
+state
