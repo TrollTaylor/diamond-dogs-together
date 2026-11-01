@@ -2564,8 +2564,14 @@ void TestHud() {
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
         // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
-        // menu Travel (TRAVEL{a=mission, b=kind}); 15 stays reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
+        // menu Travel (TRAVEL{a=mission, b=kind}), 15 since arrival-prevent (HINT{a=mission, b=1 stuck helicopter}).
+        Check(text::FormatWorldNote(15, 30050, 1, 0, 30050, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Stuck in the helicopter? Pause and choose Restart.") == 0 &&
+                  text::FormatWorldNote(15, 30010, 1, 0, 30010, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(15, 30050, 0, 0, 30050, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(15, 30050, 2, 0, 30050, sentence, sizeof(sentence)),
+              "FormatWorldNote: note 15 the stuck-helicopter hint");
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{17}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         {

@@ -149,6 +149,8 @@ mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
 mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
+# arrival-prevent (docs/world-sync-design.md 9.2): the arrival helicopter watchdog, start-state log and probe 20.
+mgs_add_lua_check(world_arrival_lua_check "${_mgs_coop}/world_arrival.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
 mgs_add_lua_check(world_handoff_lua_check "${_mgs_coop}/world_handoff.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")

@@ -980,4 +980,91 @@ do
         check(stage.mbDemo == 'X' and count(stage, 'step=mb_demo') == 0, 'auto: pack index ' .. index .. ' keeps its demo at allocation')
     end
 end
+do
+    -- arrival-prevent (docs/world-sync-design.md 9.2; the friend's 0.14.5 log): a guest replaying the host's helicopter
+    -- sortie (ride-on start status, a route) never takes the host's start position seeds (initialPlayerFlag/Pos/RotY,
+    -- ply_useMissionStartPos/ply_missionStartPos/Rot): vanilla's ride-on reset instead, so its helicopter starts at the
+    -- route start. Every other seed, the route and the start status still come from the host.
+    local function replay(state, used, kind, legacy)
+        local g = mbApis(fixture(2))
+        g.W.mission, g.env.vars.missionCode = 40050, 40050
+        if legacy then g.F.arrival.legacyPose = true end
+        send(g, OP.TRANSITION, {1, kind or 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
+        mbSeeds(g, 1, state, used)
+        g.F.tick(g.time)
+        g.env.vars.missionCode, g.env.gvars.solface_groupNumber = 30050, 999
+        g.env.vars.initialPlayerFlag, g.env.vars.initialPlayerPosX = 7, 7
+        g.env.e.ReservePlayerLoadingPosition(kind == 4 and 4 or 1)
+        g.env.TppMission.Load(30050)
+        return g
+    end
+    local function host(g)
+        local v, gv = g.env.vars, g.env.gvars
+        return v.initialPlayerFlag == 1 and v.initialPlayerPosX == -123.125 and v.initialPlayerPosY == 34.625 and
+            v.initialPlayerPosZ == 456.875 and v.initialPlayerRotY == -45.125 and gv.ply_useMissionStartPos == true and
+            gv.ply_missionStartPos[0] == -2.25 and gv.ply_missionStartPos[1] == 3.5 and gv.ply_missionStartPos[2] == 10 and
+            gv.ply_missionStartRot == -90
+    end
+    local function reset(g)
+        local v, gv = g.env.vars, g.env.gvars
+        return v.initialPlayerFlag == 0 and v.initialPlayerPosX == 0 and v.initialPlayerPosY == 0 and v.initialPlayerPosZ == 0 and
+            v.initialPlayerRotY == 0 and gv.ply_useMissionStartPos == false and gv.ply_missionStartPos[0] == 0 and
+            gv.ply_missionStartPos[1] == 0 and gv.ply_missionStartPos[2] == 0 and gv.ply_missionStartRot == 0
+    end
+    local ride = replay(1, false)
+    check(ride.loaded == 30050 and reset(ride) and ride.env.gvars.ply_initialPlayerState == 1 and
+        ride.env.gvars.heli_missionStartRoute == 4294967295 and ride.env.gvars.solface_groupNumber == 111,
+        'helicopter sortie: the guest keeps vanilla ride-on start (route start), the other seeds are the host')
+    check(count(ride, 'step=seeds_apply;id=1;mission=30050;n=') >= 1 and count(ride, ';start=route') >= 1,
+        'the route start is logged on the seed apply')
+    local usedRide = replay(1, true)
+    check(reset(usedRide), 'a sortie ignores the host ACC initial-action flag: still the route start')
+    local foot = replay(0, false)
+    check(foot.loaded == 30050 and host(foot) and count(foot, ';start=route') == 0, 'an on-foot start keeps the host start position (W3/W4)')
+    local cont = replay(1, true, 4)
+    check(called(cont, 'continue') == 1 and host(cont) and count(cont, ';start=route') == 0,
+        'a Continue whose helicopter entry was used keeps the host checkpoint spawn (W4)')
+    local contRide = replay(1, false, 4)
+    check(called(contRide, 'continue') == 1 and reset(contRide), 'a Continue that still rides in starts at the route start')
+    -- Into a helicopter space (the ACC, kind 1 from Mother Base) the host's seeds are applied as before.
+    local acc = mbApis(fixture(2))
+    acc.W.mission, acc.env.vars.missionCode = 30050, 30050
+    send(acc, OP.TRANSITION, {1, 1, 30050, 40050, 6, 4294967295, 0, 2, 0, 0, 8})
+    local donorHost = fixture(1)
+    donorHost.env.vars.missionCode, donorHost.env.gvars.ply_initialPlayerState = 40050, 1
+    donorHost.env.e.ReservePlayerLoadingPosition(1)
+    donorHost.env.TppMission.Load(40050)
+    for _ = 1, 4 do donorHost.F.tick(donorHost.time) end
+    local n, digest = 0, 0
+    for _, p in ipairs(donorHost.tx) do
+        if p.op == OP.SEED then
+            local v = {1, 40050, p.v[3], p.v[4], p.v[5]}
+            send(acc, OP.SEED, v)
+            n, digest = n + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+        end
+    end
+    send(acc, OP.SEEDS_END, {1, 40050, n, digest})
+    acc.F.tick(acc.time)
+    acc.env.vars.missionCode = 40050
+    acc.env.TppMission.Load(40050)
+    check(acc.loaded == 40050 and host(acc) and count(acc, ';start=route') == 0, 'a helicopter space (ACC) keeps the host start position seeds')
+    local legacy = replay(1, false, 6, true)
+    check(host(legacy) and count(legacy, ';start=route') == 0, 'the lab probe (A.legacyPose) keeps the 0.14.5 host start position')
+    -- The way out in free roam (arrival-prevent watchdog): a pending local restart passes ExecuteRestartMission there too,
+    -- and its restart Reserve calls A.field (world_arrival.lua) instead of the Mother Base Command reset.
+    local field = mbApis(fixture(2), 'X')
+    field.W.mission, field.env.vars.missionCode = 30020, 30020
+    local at
+    field.F.arrival.field = function(a) at = a end
+    field.F.arrival.pending = {mission = 30020, at = field.time}
+    field.env.TppMission.ExecuteRestartMission()
+    field.env.e.ReservePlayerLoadingPosition(3)
+    check(called(field, 'restart') == 1 and #field.tx == 0 and at == 'restart' and called(field, 'mb_foot') == 0 and field.mbDemo == 'X',
+        'free roam: a pending local restart runs locally and resets to the route start, never the Command start')
+    local stale = mbApis(fixture(2), 'X')
+    stale.W.mission, stale.env.vars.missionCode = 30020, 30020
+    stale.F.arrival.pending = {mission = 30050, at = stale.time}
+    stale.env.TppMission.ExecuteRestartMission()
+    check(called(stale, 'restart') == 0 and stale.tx[1].op == OP.REQ_MISSION, 'a pending restart of another mission keeps the host_only rule')
+end
 print('world_follow_lua_check: ' .. checks .. ' checks passed')
