@@ -16,7 +16,8 @@ do
     -- Mother Base: staff outcomes too; no area trap there (allCp: every CP counts as loaded); staffPlace: the staff near
     -- either player stand where the host's copy is (world_place); spareStaff: a partner's kill or dying lands on this
     -- copy as a knockout, a Fulton as disabled (world_enemy).
-    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, staffPlace = true, spareStaff = true}}
+    [30050] = {enemies = true, clock = true, weather = "all", allCp = true, staffPlace = true, spareStaff = true,
+      enemiesLab = true}}
   local fmt, floor, sub, gsub, concat = string.format, math.floor, string.sub, string.gsub, table.concat
   local PRE = "return 'MGS_COOP_WORLD_"
   local function index(t, k) return t[k] end
