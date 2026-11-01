@@ -1,14 +1,14 @@
 # Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua) in mode=play with the lab key
 # named (labsetting debug_vspawn=1: off unless named until this run shows it on both copies). Afghanistan free roam,
-# the Wakh Sind road (the seats scenarios' flat spot), both players facing east.
-#   A  the host presses Spawn jeep: one of the area's own light vehicles comes 6 m in front of the host, facing east, on
+# the Wakh Sind road (the seats scenarios' flat spot): the host faces north, the guest east, 12 m north of the host.
+#   A  the host presses Spawn jeep: one of the area's own light vehicles comes 6 m in front of the host, facing north, on
 #      both copies (host: event=vspawn; step=pick / apply / placed ok=1; guest: step=rx kind=2 / apply / placed ok=1, the
-#      same locator); frames on both screens (the same jeep at the same spot).
+#      same locator); frames on both screens (the guest turned south to see it: the same jeep at the same spot).
 #   B  the guest presses Spawn truck: its ask (kind 1) reaches the host, which brings a truck 6 m in front of the GUEST
 #      (step=pick ... for=guest) and answers kind 3; the guest applies the same locator; frames on both screens.
-#   C  the host drives the spawned jeep with the guest riding: the host gets in beside it (goto_vehicle jeep: the
-#      nearest jeep, the spawned one), then the guest beside the host's jeep (the door receipt is lab only); the host
-#      holds the throttle; frames on both screens while moving.
+#   C  the host drives the spawned jeep with the guest riding: goto_vehicle jeep puts the host 1.9 m on the jeep's +x
+#      side (its right-hand doors, since it faces north) and goto_vehicle jeep right the guest on its left; each presses
+#      E (the door receipt is lab only); the host holds the throttle; frames on both screens while moving.
 #   D  a refusal: a press while riding is refused (busy, or the menu's own on-foot guard), with note 20's toast.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-vspawn-play.txt
@@ -25,11 +25,14 @@ wait 3000
 both debug godmode 1
 host debug time 43200
 host debug weather sunny
-host debug clear_enemies 100
-host debug teleport 597.0 320.5 1157.5 90
+host debug teleport 597.0 320.5 1157.5 0
 guest debug teleport 597.0 320.5 1169.5 90
 wait 5000
 both debug godmode 1
+host debug clear_enemies 100
+wait 1500
+host debug clear_enemies 100
+wait 1500
 stance host stand
 stance guest stand
 host run vspawn_status
@@ -48,9 +51,13 @@ waitlog guest 'world_lua=event=vspawn; step=apply; loc=veh_lv_[0-9]{4}; id=[0-9]
 waitlog host 'world_lua=event=vspawn; step=placed; loc=veh_lv_[0-9]{4}; id=[0-9]+; d_m=[0-9.]+; dy_m=[-0-9.]+; ok=1; by=self' 10
 waitlog guest 'world_lua=event=vspawn; step=placed; loc=veh_lv_[0-9]{4}; id=[0-9]+; d_m=[0-9.]+; dy_m=[-0-9.]+; ok=1; by=host' 10
 wait 1500
+guest debug teleport 597.0 320.5 1171.5 180
+wait 2500
 both capture a-jeep
 host run vspawn_status
 guest run vspawn_status
+guest debug teleport 597.0 320.5 1169.5 90
+wait 2500
 # --- B: the guest's truck -------------------------------------------------------------------------------------------
 logmark both
 guest run vspawn trc
@@ -74,7 +81,7 @@ host press e 150
 wait 3500
 host run vehicle_seats
 host expect ^vehicle;id=\d+;seats=\d+;riders=.*localSeat=1;
-guest debug goto_vehicle jeep
+guest debug goto_vehicle jeep right
 wait 2500
 guest press e 150
 wait 4500
