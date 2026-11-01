@@ -118,7 +118,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    WS3 vehicles (docs/vehicle-ws3.md; census lab only, default off; seat id and tilt default on): partner_ride_census=0|1
                                    the read-only vehicle census, partner_ride_seat_id=0|1 the seat by id (unnamed
                                    vehicles), partner_ride_tilt=0|1 RIDE_TILT (the driver's vehicle angles);
-                                   partner_ride_steer=0|1 the driver's steer pose on the seated partner (ride wire v5; off unless named);
+                                   partner_ride_steer=0|1 the driver's steer pose on the seated partner (ride wire v5;
+                                   default follows the gun profile, runs ba1a041a and bfd46ce5);
                                    partner_ride_board=off|block|passenger, F1 vehicles: the viewer cannot board as a
                                    second driver of the partner's vehicle (block) or boards its free back seat
                                    (passenger, with the passenger camera; trucks and the rest block);

@@ -609,9 +609,11 @@ struct LabConfig {
     bool partner_ride_tilt = true;
     // r1101 vanim (docs/vehicle-ws3.md "Driver pose"): the driver's ride blends (rate record +0x34 steer, +0x30
     // accel, +0x08 aux) on the ride wire's v5 steer addendum, written into body 1's record while this copy seats the
-    // peer as the driver (neutral without a packet: never the constructor's full left). Off unless named, in lab and
-    // play, until a hidden run proves it; an invalid value refuses (off), also after a valid 1.
+    // peer as the driver (neutral without a packet: never the constructor's full left). Follows the gun profile in lab
+    // and play since the r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching;
+    // ResolveWeaponDefaults); a named 0 opts out; an invalid value is named and off, also after a valid 1.
     bool partner_ride_steer = false;
+    bool partner_ride_steer_given = false;
     // F1 vehicles (partner_board, see PartnerRideBoard): off here; the native gun
     // profile resolves it to passenger in lab and play; a named value records _given.
     PartnerRideBoard partner_ride_board = PartnerRideBoard::off;

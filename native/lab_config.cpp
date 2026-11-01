@@ -340,9 +340,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
-    // r1101 vanim: the driver's steer pose (off unless named, lab and play); an invalid value refuses (off).
+    // r1101 vanim: the driver's steer pose (follows the gun profile unless named, lab and play; ResolveWeaponDefaults); an
+    // invalid value counts as named, off.
     else if (Equals(key, "partner_ride_steer")) {
         ok = ParseBool(value, result.partner_ride_steer);
+        result.partner_ride_steer_given = true;
         if (!ok) result.partner_ride_steer = false;
     }
     else if (Equals(key, "partner_ride_board")) {
@@ -1884,6 +1886,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // RMB on the ladder left the puppet's gun down on the viewer's screen; the allowed pistol still aimed); a named 0 opts
     // out. Its box / triggers / stance parts (no game run yet) stay off unless named.
     if (!c.partner_native_aim_truth_given) c.partner_native_aim_truth = gun;
+    // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
+    // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
+    // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both
+    // copies need it (the driver's copy sends, the viewer's copy writes); the wheels of the viewer's copy still do not turn.
+    if (!c.partner_ride_steer_given) c.partner_ride_steer = gun;
     // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play since the r1101 Prove
     // phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep and the guest's truck on both screens,
     // the ride, and both riders' presses refused as busy); a named 0 opts out.

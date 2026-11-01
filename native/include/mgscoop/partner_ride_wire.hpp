@@ -153,8 +153,8 @@ bool AcceptSeatExt(SeatExtStore&, const std::uint8_t*, std::size_t, std::uint32_
 // describes that exact revision and vehicle of a vehicle ride.
 std::uint8_t SeatFlagsFor(const SeatExtStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept;
 
-// Version 5 steer addendum (r1101 vanim, docs/vehicle-ws3.md "Driver pose"; lab.ini partner_ride_steer, off unless
-// named): 16 bytes, the same magic, sent NEXT TO the v1/v2 packet only while the sender's own player drives (seat 0)
+// Version 5 steer addendum (r1101 vanim, docs/vehicle-ws3.md "Driver pose"; lab.ini partner_ride_steer, follows the
+// gun profile since the r1101 Prove phase): 16 bytes, the same magic, sent NEXT TO the v1/v2 packet only while the sender's own player drives (seat 0)
 // with the key on. It carries the three ride blends the stock driver phase (0x124E140 sub-phase 2, 0x124FC37) writes
 // into the driver's rate record every frame: +0x34 steer (0.5 straight, 0 full left, 1 full right), +0x30 accel and
 // +0x08 aux (the speed blend), each 0..1 in 1/250 steps. The viewer writes them into body 1's rate record while it

@@ -227,8 +227,8 @@ int main(int argc, char** argv) {
         // Design 8.59: the follow carry (off unless named in lab and play) and whether it was named.
         std::printf("partner_ride_follow=%d\npartner_ride_follow_given=%d\n", c.partner_ride_follow ? 1 : 0,
                     c.partner_ride_follow_given ? 1 : 0);
-        // r1101 vanim: the driver steer pose (off unless named).
-        std::printf("partner_ride_steer=%d\n", c.partner_ride_steer ? 1 : 0);
+        // r1101 vanim: the driver steer pose (follows the gun profile since the r1101 Prove phase) and whether it was named.
+        std::printf("partner_ride_steer=%d\npartner_ride_steer_given=%d\n", c.partner_ride_steer ? 1 : 0, c.partner_ride_steer_given ? 1 : 0);
         // Design 8.60: the get-in camera cut and whether it was named.
         std::printf("partner_ride_getin_cut=%d\npartner_ride_getin_cut_given=%d\n", c.partner_ride_getin_cut ? 1 : 0,
                     c.partner_ride_getin_cut_given ? 1 : 0);
