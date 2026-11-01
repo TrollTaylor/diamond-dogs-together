@@ -28,13 +28,23 @@ inline constexpr float kHeightM = 1.0f;              // |y1 - y0|
 inline constexpr float kConeCos = 0.5f;              // +-60 degrees around the attacker's facing
 inline constexpr std::uint32_t kRepeatMs = 1500;     // one hit per press, at most one per 1.5 s
 inline constexpr unsigned kLineCap = 64;             // partner_melee lines per mission
+// melee-target: what the stock strike is aimed at. A press aimed at a soldier or a Mother Base staff member is the stock
+// CQC acting on that target, which sets PlayerStatus CQC_CONTINUOUS (the tick's st= bit 0x100; set in the CQC plugin's
+// target state, which reads the target id). fb1031 (Mother Base): the one 113 -> 114 press on staff showed the bit right
+// after its 114 (none during the 113), and three staff takedowns showed it; no press at the partner ever did (runs
+// 4bc7b732, 1526e58a, 9018ae47, af0b88b6). So a strike in reach is HELD at its edge: the bit seen since the press's 113
+// edge is verdict=target (no hit; the press stays blocked), else it lands kTargetGraceMs after the press's 113 ends (its
+// 114 edge), or kHoldCapMs after the held edge. Without the st= census (an old Lua) it lands at once, as before.
+inline constexpr std::uint32_t kTargetGraceMs = 250;
+inline constexpr std::uint32_t kHoldCapMs = 900;
 
 bool StrikeAct(std::uint16_t act) noexcept;
 
 // repeat: the press already landed, or a land less than kRepeatMs ago; takedown: a 114 without a 113 before it; busy:
 // the partner is in a CQC hold (91..96), a trash box or toilet (79..89), on a ladder or pipe (21..24) or a ledge
-// (54..56); prone: stance 3 (prone or asleep).
-enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat, takedown, busy, prone };
+// (54..56); prone: stance 3 (prone or asleep); hold: in reach, waiting for the stock target (Resolve decides); target:
+// the stock CQC acted on another target (a soldier or staff member) during the press: no hit.
+enum class Verdict : std::uint8_t { none, land, off, no_local, no_body, range, height, angle, repeat, takedown, busy, prone, hold, target };
 bool PartnerBusyAct(std::uint16_t act) noexcept;
 const char* VerdictName(Verdict v) noexcept;
 
@@ -50,6 +60,8 @@ struct In {
     std::uint16_t remote_act = 0;
     std::uint8_t remote_stance = 0;  // 1 stand, 2 squat, 3 crawl
     std::uint64_t now_ms = 0;
+    bool status_valid = false;    // the local PlayerStatus census (the tick's st=) is known
+    bool cqc = false;             // CQC_CONTINUOUS this tick: the stock CQC is acting on a target
 };
 struct State {
     std::uint16_t last_act = 0;
@@ -60,15 +72,37 @@ struct State {
     std::uint32_t presses = 0;       // 113 edges (one per press; the 114 out of a 113 is the same press)
     std::uint32_t landed_press = 0;  // the press of the last land (its other strike edge is no second hit)
     std::uint32_t strikes = 0, lands = 0;
+    // melee-target: the current press's stock target signal, and the strike held until it is known.
+    std::uint64_t press_ms = 0;      // the current press's 113 edge
+    bool cqc_seen = false;           // CQC_CONTINUOUS seen since press_ms
+    std::uint64_t cqc_ms = 0;        // its first tick
+    bool held = false;
+    std::uint32_t held_press = 0;
+    std::uint16_t held_act = 0;
+    std::uint64_t held_ms = 0;       // the held edge
+    bool held_ended = false;         // the local act left 113 since the held edge (its 114 edge)
+    std::uint64_t held_end_ms = 0;
+    std::int32_t held_dist_cm = 0, held_dy_cm = 0, held_angle_deg = 0;
+    bool blocked = false;            // a press decided verdict=target: its other edge is no hit either
+    std::uint32_t blocked_press = 0;
+    std::uint32_t targets = 0;
 };
 struct Out {
-    Verdict verdict = Verdict::none;  // none: no new strike this tick
+    Verdict verdict = Verdict::none;  // none: no new strike (or no decision) this tick
     bool queue = false;               // hand one hit to the friendly-hit queue
     std::int32_t dist_cm = 0, dy_cm = 0, angle_deg = 0;
+    std::uint16_t act = 0;            // the strike act the line is about (Resolve: the held edge's act)
+    std::int32_t hold_ms = -1;        // Resolve: the held edge to the decision (-1: not held)
+    std::int32_t cqc_ms = -1;         // the press's 113 edge to CQC_CONTINUOUS (-1: not seen)
+    std::int32_t end_ms = -1;         // Resolve: the press's 113 end (its 114 edge) to the decision (-1: still in 113)
 };
 void Reset(State& s) noexcept;
+// Call Resolve, then Step, on every tick: Resolve decides a held strike (land, target, off, no_local; none while it still
+// waits), Step judges a new strike edge.
+Out Resolve(State& s, const In& in) noexcept;
 Out Step(State& s, const In& in) noexcept;
-// "partner_melee=strike; act=..; verdict=..; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=.."
+// "partner_melee=strike; act=..; verdict=..; queued=..; dist_cm=..; dy_cm=..; angle_deg=..; strikes=..; lands=..;
+//  hold_ms=..; cqc_ms=..; end_ms=..; targets=.."
 std::size_t FormatStrike(const State& s, std::uint16_t act, const Out& o, bool queued, char* out, std::size_t capacity) noexcept;
 
 } // namespace mgscoop::partner_melee

@@ -7532,6 +7532,43 @@ void TestMeleeDriver() {
         Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=no_local; queued=0;") == 1,
               "melee driver: no local body readback, no strike judged");
     }
+    {
+        // melee-target: the tick's st= census known (ride=, no CQC_CONTINUOUS): a press at the partner alone is held at its
+        // 113 and lands once, kTargetGraceMs after its 114 edge, with P.
+        Session s(0);
+        MeleeSetup(s, true);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "melee driver target: idle with the census");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && g_melee_hits.empty() && s.fake.Containing("partner_melee=strike; act=113; verdict=hold; queued=0; dist_cm=100;") == 1,
+              "melee driver target: the press in reach is held, no hit yet");
+        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.empty(), "melee driver target: held through the 113");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty(), "melee driver target: its 114 edge, still held");
+        for (unsigned i = 0; i < 12 && g_melee_hits.empty(); ++i) Check(s.Tick(0), "melee driver target: the grace");
+        Check(g_melee_hits.size() == 1 && g_melee_hits[0] == s.fake.state.P &&
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1; hold_ms=") == 1,
+              "melee driver target: no stock target, one hit after the grace");
+        for (unsigned i = 0; i < 20; ++i) Check(s.Tick(0), "melee driver target: the rest of the strike");
+        Check(g_melee_hits.size() == 1, "melee driver target: one press, one hit");
+    }
+    {
+        // melee-target: CQC_CONTINUOUS (st=0x100) after the press's 114: the press was aimed at a soldier, no hit at all.
+        Session s(0);
+        MeleeSetup(s, true);
+        s.ride_suffix = " ride=0";
+        Check(s.Tick(0), "melee driver soldier: idle with the census");
+        s.fake.anim.act[0] = 113;
+        Check(s.Tick(0) && s.Tick(0) && g_melee_hits.empty(), "melee driver soldier: the press is held");
+        s.fake.anim.act[0] = 114;
+        Check(s.Tick(0) && g_melee_hits.empty(), "melee driver soldier: its 114 edge");
+        s.ride_suffix = " ride=0 st=0x100";
+        Check(s.Tick(0) && g_melee_hits.empty() &&
+                  s.fake.Containing("partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=0; hold_ms=") == 1,
+              "melee driver soldier: CQC_CONTINUOUS, verdict=target");
+        for (unsigned i = 0; i < 40; ++i) Check(s.Tick(0), "melee driver soldier: the rest of the strike");
+        Check(g_melee_hits.empty() && s.fake.Containing("verdict=land") == 0, "melee driver soldier: the partner is never knocked down");
+    }
 }
 
 // M7 seated shots, S1 (partner_seat_shot.hpp): the driver publishes the local seated passenger for the fire filter's

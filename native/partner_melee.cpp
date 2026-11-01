@@ -26,11 +26,16 @@ const char* VerdictName(Verdict v) noexcept {
     case Verdict::takedown: return "takedown";
     case Verdict::busy: return "busy";
     case Verdict::prone: return "prone";
+    case Verdict::hold: return "hold";
+    case Verdict::target: return "target";
     }
     return "none";
 }
 
 void Reset(State& s) noexcept { s = State{}; }
+
+// melee-target red: no held strike yet.
+Out Resolve(State&, const In&) noexcept { return Out{}; }
 
 namespace {
 std::int32_t Cm(double metres) noexcept {
