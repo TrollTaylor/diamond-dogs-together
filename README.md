@@ -81,6 +81,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 - **Supply drops:** only the host can order a LOADOUT or VEHICLES supply drop in co-op (both can bring a vehicle), also while the host's game is still loading after you travel together; the guest's iDroid says so.
 - **Mounts:** a partner riding D-Horse or D-Walker is hidden.
 - **Look:** your custom character may look like Snake on your partner's screen.
+- **Joining late:** if your partner joins, or reconnects, after your mission has loaded, you see them without a gun and their shots show no muzzle flash until your next loading screen.
 - **Players:** two only.
 
 ## Troubleshooting

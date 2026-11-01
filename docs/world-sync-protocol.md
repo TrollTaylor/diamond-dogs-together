@@ -252,8 +252,8 @@ refused receipt stays literal and Lua treats it as inactive or not sent.
 `lab.ini`: `world=0..3` (lab and play; other values count as invalid and keep
 the previous value) and `world_probe=none|p1|p3|p3b|p4|p12|p17|race_kill|
 remote_area_kill|kill_near|sleep_near|fulton_near|alert_near|weather_rain|
-clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint|guest_restart|guest_frozen_heli` (ids
-1..20 in this order after `none`; lab only: play forces none,
+clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint|guest_restart|guest_frozen_heli|host_target_dead` (ids
+1..21 in this order after `none`; lab only: play forces none,
 sets `play_refused |= 0x8000` and counts one invalid value). `lab_ini_check
 lab` prints `world=` and `world_probe=` after `link_keys=1`.
 
@@ -570,8 +570,9 @@ refused|fail` (refusals: `reason=role|level|mission|paired|mode|busy`).
 | shared_checkpoint | host, ready alignment at eff >= 3 | request a current-position checkpoint through `TppMission.UpdateCheckPoint`; require an accepted save/version change |
 | guest_restart | guest (fb1031 arrival, `lua/coop/world_follow.lua`) | the pause-menu Restart as the engine sends it: `TppMission.OnMessage(UI, PauseMenuRestart)`, so it passes the guest suppression; `result=ok` only when the Mother Base helicopter way out took it (`step=local_restart`) |
 | guest_frozen_heli | guest (arrival-prevent, `lua/coop/world_arrival.lua`) | the next replayed sortie keeps the host's start position seeds as 0.14.5 did (`F.arrival.legacyPose`, until the next free roam or Mother Base arrival), so with `goto=30050 goto_lz=1` (the host's stored helicopter start position) the guest's arrival helicopter freezes and the watchdog must take the way out |
+| host_target_dead | host (fb1031 mbgo, `lua/coop/world_recovery.lua`) | the stock `ReserveGameOver(TARGET_DEAD, PLAYER_KILL_DD)` that f30050 makes when a staff member dies, through the co-op wrapper |
 
-Probe ids 1..20 are assigned; ids 16..18 exercise W4 recovery and are
+Probe ids 1..21 are assigned (20 guest_frozen_heli, 21 host_target_dead); ids 16..18 exercise W4 recovery and are
 single-call lab probes. A probe's `result=ok` is an API/receipt result, not
 proof that both games reached the expected state; record both readbacks.
 
@@ -802,7 +803,7 @@ are used; the exact body schemas are in `native/world_wire.cpp`.
 | 0x0F | ALIGN_END | H->G | id, soldierCount, cpCount, digest, outcomeSeq (+ native epoch) | world | 16 |
 | 0x18 | ALIGN_RECORD | H->G | id, type (1 soldier, 2 CP), index, hash, readable, state, version | world | 15 |
 | 0x19 | ALIGN_ACK | G->H | id, mission, epoch, accepted | control | 11 |
-| 0x1A | GAME_OVER | H->G | type, radio, cause | control | 6 |
+| 0x1A | GAME_OVER | H->G | type, radio, cause (1..3 a shared player death; fb1031 mbgo: 4 the host's own non-player Game Over, e.g. f30050 TARGET_DEAD: the guest never reserves it and shows note 15 a=2) | control | 6 |
 | 0x1B | REQ_GAME_OVER | G->H | rid, type, radio, cause | control | 8 |
 | 0x1C | CHECKPOINT | H->G | hash, version, x/y/z mm, yaw millidegrees | control | 22 |
 
@@ -1894,7 +1895,10 @@ b=7, a receiver in another mission answers 8 other_area; a receiver with its own
 refusal shows world note 14 b=5, reason 8 b=7). After a landing or a Bring warp the camera turns behind the player
 (`Player.RequestToSetCameraRotation`). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World
 note 14 TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped, 7 another
-area (Bring across missions refused)}.
+area (Bring across missions refused)}. fb1031 mbgo: note 15 MISSION_END{a=1 an F9 kill of Mother Base staff refused
+(`mb_staff`), 2 the host's mission failed for a non-player reason (GAME_OVER cause 4; b=1 a staff member died at Mother
+Base, 0 another), 3 the guest's Continue/Restart on a Game Over waits for the host's}; 2 and 3 repeat every 3 s until the
+reload (at most 60 s / 120 s). `NoteShown` takes 1..15, 18 and 19.
 
 ## 23. Game rules (debug menu; docs/debug-menu.md "Game rules")
 
@@ -1914,6 +1918,6 @@ the host repeats kind 2 whenever a guest pairs. A guest never applies kind 1, th
 (`lua/coop/debug_arms.lua`) keeps the switch in `W.arms.ff` (default on, kept across missions); off,
 `world_friendly.lua` drops the partner's hits at both ends of FRIENDLY_HIT (the shooter consumes its queued hit
 without sending, the target never queues or applies one). World note 18 ARMS{a=1, b=0 off | 1 on} toasts the switch
-(the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Notes 15 and 17 are
-free; 16 is MISMATCH (posted by native world_link).
+(the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
+16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.

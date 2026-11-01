@@ -2564,16 +2564,36 @@ void TestHud() {
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
         // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
-        // menu Travel (TRAVEL{a=mission, b=kind}), 15 since arrival-prevent (HINT{a=mission, b=1 stuck helicopter}).
-        Check(text::FormatWorldNote(15, 30050, 1, 0, 30050, sentence, sizeof(sentence)) &&
+        // menu Travel (TRAVEL{a=mission, b=kind}), 15 since fb1031 mbgo (MISSION_END{a=kind, b=reason}), 17 since fb1031
+        // gear (PARTNER_GEAR, below), 18 since the debug menu Friendly fire (ARMS), 19 since arrival-prevent (HINT{a=mission,
+        // b=1 stuck helicopter}; 15 before the merge with fb1031 mbgo).
+        Check(text::FormatWorldNote(19, 30050, 1, 0, 30050, sentence, sizeof(sentence)) &&
                   std::strcmp(sentence, "Stuck in the helicopter? Pause and choose Restart.") == 0 &&
-                  text::FormatWorldNote(15, 30010, 1, 0, 30010, sentence, sizeof(sentence)) &&
-                  !text::FormatWorldNote(15, 30050, 0, 0, 30050, sentence, sizeof(sentence)) &&
-                  !text::FormatWorldNote(15, 30050, 2, 0, 30050, sentence, sizeof(sentence)),
-              "FormatWorldNote: note 15 the stuck-helicopter hint");
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{17}, std::uint8_t{255}})
+                  text::FormatWorldNote(19, 30010, 1, 0, 30010, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(19, 30050, 0, 0, 30050, sentence, sizeof(sentence)) &&
+                  !text::FormatWorldNote(19, 30050, 2, 0, 30050, sentence, sizeof(sentence)),
+              "FormatWorldNote: note 19 the stuck-helicopter hint");
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{20}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
+        {
+            // fb1031 mbgo: a=1 a debug kill of Mother Base staff refused, a=2 the host's mission failed for a non-player
+            // reason (b=1 a staff member died, 0 another), a=3 the guest's Continue waits for the host's.
+            struct EndNote { std::uint32_t a, b; const char* sentence; };
+            const EndNote ends[] = {
+                {1, 0, "Killing staff at Mother Base fails the mission."},
+                {2, 1, "Your partner's mission failed: a staff member died. Reloading."},
+                {2, 0, "Your partner's mission failed. Reloading."},
+                {3, 0, "Waiting for your partner to continue."},
+            };
+            for (const auto& t : ends)
+                Check(text::FormatWorldNote(15, t.a, t.b, 30050, 30050, sentence, sizeof(sentence)) &&
+                          std::strcmp(sentence, t.sentence) == 0,
+                      "FormatWorldNote: the MISSION_END sentences");
+            for (const auto& bad : {EndNote{0, 0, ""}, EndNote{4, 0, ""}, EndNote{1, 1, ""}, EndNote{2, 2, ""}, EndNote{3, 1, ""}})
+                Check(!text::FormatWorldNote(15, bad.a, bad.b, 30050, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+                      "FormatWorldNote: unknown MISSION_END values have no toast");
+        }
         {
             struct TravelNote { std::uint32_t a, b; const char* sentence; };
             const TravelNote travel[] = {
@@ -2616,9 +2636,22 @@ void TestHud() {
                   std::strcmp(sentence, "Your partner reached the driver's seat first: take another seat or wait.") == 0 &&
                   std::strlen(sentence) < hud::kToastChars,
               "FormatWorldNote: the M6 seat race sentences");
+        // fb1031: a = 8 the partner rides a vehicle this copy lacks (they are hidden until they get out).
+        Check(text::FormatWorldNote(13, 8, 0, 30050, 30050, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner's vehicle isn't on your screen. You'll see them again when they get out.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "FormatWorldNote: the missing-vehicle sentence");
         Check(!text::FormatWorldNote(13, 0, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0 &&
-                  !text::FormatWorldNote(13, 8, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
+                  !text::FormatWorldNote(13, 9, 0, 30010, 30010, sentence, sizeof(sentence)) && sentence[0] == 0,
               "FormatWorldNote: an unknown companion reason has no toast");
+        // fb1031 gear: note 17 PARTNER_GEAR{a=1 next load}, posted locally once per mission and link session.
+        Check(text::FormatWorldNote(17, 1, 0, 0, 0, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner's gun will show after the next loading screen.") == 0 &&
+                  std::strlen(sentence) < hud::kToastChars,
+              "FormatWorldNote: the partner gear note");
+        Check(!text::FormatWorldNote(17, 0, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
+                  !text::FormatWorldNote(17, 2, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: an unknown partner gear reason has no toast");
         Check(text::FormatWorldNote(16, 40010, 40050, 40050, 40010, sentence, sizeof(sentence)) &&
                   std::strcmp(sentence,
                               "Your partner is in the Mother Base helicopter; you are in the Afghanistan helicopter. Co-op only pairs when "

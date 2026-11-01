@@ -116,6 +116,24 @@ if not F.reqAt or now - F.reqAt >= 2000 then
     log(fmt("step=request;kind=%d;mission=%d", kind, W.mission))
 end
 end
+-- fb1031 mbgo (online 0.14.5: the guest's Continue on a shared Game Over was refused host_only with nothing on screen):
+-- a guest Restart/Continue (kind 3/4) while a Game Over is current shows note 15 a=3 every 3 s until the host's Continue
+-- reloads it (start hook), at most 120 s.
+function F.waitHost(kind, now)
+if (kind ~= 3 and kind ~= 4) or F.waitNote then return end
+local R = W.recovery
+if not (R and R.dead) and W.get(svars, "mis_isDefiniteGameOver") ~= true and W.get(mvars, "mis_isReserveGameOver") ~= true then return end
+F.waitNote = {at = now, stop = now + 120000}
+log(fmt("step=wait_partner;kind=%d", kind))
+F.waitTick(now)
+end
+function F.waitTick(now)
+local w = F.waitNote
+if not w or now < w.at then return end
+if now >= w.stop then F.waitNote = nil; return end
+w.at = now + 3000
+note(15, 3, 0)
+end
 function F.pump()
 local t = F.outgoing
 if not t or t.sent then return end
@@ -365,6 +383,7 @@ if F.armed and not W.paired and #F.queue == 0 and not F.current and now - (F.dis
         log(fmt("step=disarm;reason=%s;partner=%s", gone and "partner_mission" or "unpaired_timeout", p and tostring(p.mission) or "nil"))
     end
 end
+F.waitTick(now)
 local t = F.queue[1]
 if not t or F.current then return end
 if now - t.since > 120000 then
@@ -418,7 +437,7 @@ end
 W.startHooks[#W.startHooks + 1] = function()
 F.enabled = W.level >= 3 and SUPPORTED[W.mission] ~= nil
 F.reqAt = nil
-F.hostDeploy, F.refused, F.disarmAt, A.pending = nil, nil, nil, nil
+F.hostDeploy, F.refused, F.disarmAt, A.pending, F.waitNote = nil, nil, nil, nil, nil
 if F.armed then F.unpairedAt = W.now() end
 F.title = nil
 -- D11 pre-pair gap (world_vehicle_rules.lua, world_relief_sync.lua, later chunks): this start replays the host's
@@ -475,7 +494,8 @@ for name, spec in pairs(suppressed) do
                 local alt = A.unstick(name)
                 if alt == 1 then return original(...) end
                 if alt == 2 then return TppMission.RestartMission() end
-                F.request(spec[1]); if spec[2] then return false end; return
+                F.request(spec[1]); F.waitHost(spec[1], W.now())
+                if spec[2] then return false end; return
             end
             if on() and W.host and (name == "Reload" or name == "ExecuteReload" or name == "ReturnToMission") then
                 log("step=refused;reason=unsupported_reload"); return

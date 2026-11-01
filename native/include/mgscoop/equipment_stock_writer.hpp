@@ -144,6 +144,9 @@ struct SlotStatus {
     std::uint8_t type=0,cache_index=0xFF;
     std::uint32_t handle=0;     // the expected handle once dispatched
     char reason[32]{};
+    // fb1031 gear-1: the last plan's A1 was refused for cache readiness (no_cache_entry, no_resident), even
+    // when tier C then refused for good (RecordA1Cache; MissingCacheSlot).
+    bool a1_cache=false;
     // Weapons4: transient refusals this gen, the entry's refs bracketing the
     // dispatch (the census refs at plan time until then), the bank entry of
     // the bound resource and the binder record words last read.
@@ -180,6 +183,9 @@ struct GeneralContext {
     // renew only cache-unavailable slots that have never dispatched.
     std::uint16_t manifest_revision=0;
     std::uint32_t manifest_epoch=0;
+    // fb1031 gear: the observer's residency generation, bumped once per returned mid-mission load of the
+    // manifest's bases (equipment_stock_probe::ResidencyRenewal; 0 none): it renews the missing-cache slots once.
+    std::uint32_t residency_gen=0;
     // Body 1 switches or reloads (gun mode 8/11/12, rec+0x3C0 bit 7): nothing is dispatched.
     bool body_busy=false;
     SharedMode shared=SharedMode::off;
@@ -361,15 +367,30 @@ inline bool CacheReadinessReason(const char* reason) noexcept {
     }
     return false;
 }
+// fb1031 gear-1: Plan records whether A1 was refused for cache readiness. A missing type-1/type-2 base never
+// ends with that reason: tier C then refuses the always-resident stand-ins for good (stock_optional_dict,
+// stock_optional_header), and the record keeps the slot missing.
+inline void RecordA1Cache(SlotStatus& slot,const char* a1_why) noexcept {slot.a1_cache=CacheReadinessReason(a1_why);}
+// A slot the viewer could not fill for want of the partner's own base here (the late path's `missing`, and
+// what a manifest or residency renewal re-plans): its reason is a cache readiness wait, or the plan refused
+// it (tier d) after an A1 cache refusal. Never a foreign handle or anything after a dispatch.
+inline bool MissingCacheSlot(const SlotStatus& slot) noexcept {
+    if(slot.state!=SlotState::backoff && slot.state!=SlotState::refused) return false;
+    if(CacheReadinessReason(slot.reason)) return true;
+    if(!slot.a1_cache || slot.tier!=Tier::d || slot.handle) return false;
+    const char* a="foreign_handle";const char* b=slot.reason;
+    while(*a && *a==*b) {++a;++b;}
+    return *a || *b;
+}
 // Only a genuine new manifest renews an exhausted missing-cache check on the
 // same body. Never renew a dispatched, uncertain, owned or foreign slot, and
 // never reclassify an ownership/cache-change refusal as missing readiness.
 inline bool RenewCacheReadiness(SlotStatus& slot,SlotSchedule& schedule,
                                std::uint32_t dispatched,std::uint32_t live) noexcept {
-    if((slot.state!=SlotState::backoff && slot.state!=SlotState::refused) || !CacheReadinessReason(slot.reason) ||
+    if(!MissingCacheSlot(slot) ||
        schedule.uncertain || schedule.dispatches || schedule.gen_dispatches || slot.handle || dispatched || !EmptyHandle(live)) return false;
     schedule.retries=0;schedule.retry_at=0;schedule.visited=false;
-    slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;
+    slot.retries=0;slot.state=SlotState::idle;slot.tier=Tier::none;slot.equip=0;slot.a1_cache=false;
     return true;
 }
 // The plan wait for a manifest (no_manifest): the slot waited kPlanWaitLimit

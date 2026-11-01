@@ -331,6 +331,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_follow_given = true;
         if (!ok) result.partner_ride_follow = false;
     }
+    else if (Equals(key, "partner_equip_midload")) {
+        // fb1031 gear, the mid-mission load of a late partner's gear: off unless named (lab and play); an invalid
+        // value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_equip_midload);
+        result.partner_equip_midload_given = true;
+        if (!ok) result.partner_equip_midload = false;
+    }
     else if (Equals(key, "partner_ride_getin_cut")) {
         // The get-in camera cut (design 8.60): an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_ride_getin_cut);
@@ -1226,7 +1233,7 @@ const char* NetLossModelName(NetLossModel value) noexcept { return value == NetL
 namespace {
 constexpr const char* kWorldProbeNames[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill",
     "kill_near", "sleep_near", "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
-    "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "guest_frozen_heli"};
+    "shared_death", "host_continue", "shared_checkpoint", "guest_restart", "guest_frozen_heli", "host_target_dead"};
 static_assert(sizeof(kWorldProbeNames) / sizeof(kWorldProbeNames[0]) == kWorldProbeMax + 1u);
 }
 

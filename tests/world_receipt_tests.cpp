@@ -167,10 +167,13 @@ void Note() {
               !parse("1 1 1 1") && !parse("+1 1 1") && !parse("1 1.0 1") && !parse(" 1 1 1") && !parse(""),
           "strict NOTE grammar");
     Check(code == 9 && a == 9 && b == 9, "outputs untouched on failure");
-    // fb1031 travel-1: note 14 (TRAVEL) is shown and logged with its values like 1..13; 15 stays unknown.
+    // fb1031 travel-1: note 14 (TRAVEL) is shown and logged with its values like 1..13; fb1031 mbgo: 15 (MISSION_END)
+    // too; 18 ARMS (Friendly fire) and 19 HINT (arrival-prevent) as well. 16 and 17 are posted by native only.
     Check(world::NoteShown(1) && world::NoteShown(13) && world::NoteShown(14) && world::NoteShown(15) && !world::NoteShown(0) &&
-              !world::NoteShown(16),
-          "HandleNote shows notes 1..14 (14 TRAVEL), never 0 or 15");
+              !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && !world::NoteShown(20),
+          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18 and 19, never 0, 16, 17 or 20");
+    Check(parse("15 3 0") && code == 15 && a == 3 && b == 0, "NOTE 15 parses");
+    Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("20 1 1"), "NOTE 19 parses, 17 and 20 do not");
     const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
     Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
 }
@@ -340,6 +343,9 @@ void Triggers() {
     Check(Trigger("world_probe=guest_frozen_heli", t, canonical, reason) && static_cast<unsigned>(t.probe) == 20 &&
               canonical == "world_probe=guest_frozen_heli",
           "guest_frozen_heli trigger round trips");
+    Check(Trigger("world_probe=host_target_dead", t, canonical, reason) && static_cast<unsigned>(t.probe) == 21 &&
+              canonical == "world_probe=host_target_dead",
+          "host_target_dead trigger round trips");
 }
 // Guest spawn sync: "<seq> <goId>", strict integers, nothing else.
 void Warp() {

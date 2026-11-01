@@ -13,6 +13,9 @@ local LOG = "return 'MGS_COOP_PARTNER_LOG_V1' -- "
 local ACTION_CFG = "return 'MGS_COOP_ACTION_EVENTS_CFG_V1'"
 local ACTION_CLEAR = "return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'"
 local ACTION_TICK = "return 'MGS_COOP_PARTNER_ACTIONS_V1' -- "
+local MIDLOAD = "return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_QUERY_V1'"
+local MIDLOAD_RETURNED = "return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_RETURNED_V1'"
+local MIDLOAD_FAILED = "return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_FAILED_V1'"
 local sentinel = {}
 local STATUS = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15,
     GUN_FIRE = 7, GUN_FIRE_SUPPRESSOR = 8, ON_HELICOPTER = 16, BINOCLE = 17, SUBJECT = 18, DEAD = 19, ON_VEHICLE = 26, ON_HORSE = 25}
@@ -121,8 +124,29 @@ local function fixture(options)
             c.logs[#c.logs + 1] = source:sub(#LOG + 1)
             return function() return true end
         end
+        -- fb1031 gear: the mid-mission load query answers c.midload (default false) once, then false.
+        if source == MIDLOAD then
+            c.midloadQueries = (c.midloadQueries or 0) + 1
+            return function()
+                local ids = c.midload
+                c.midload = false
+                return ids or false
+            end
+        end
+        if source == MIDLOAD_RETURNED or source == MIDLOAD_FAILED then
+            c.midloadReceipts = c.midloadReceipts or {}
+            c.midloadReceipts[#c.midloadReceipts + 1] = source
+            return function() return true end
+        end
         error('unexpected receipt ' .. source)
     end
+    env.TppEquip = {RequestLoadToEquipMissionBlock = function(ids)
+        c.midloadCalls = c.midloadCalls or {}
+        local copy = {}
+        for i = 1, #ids do copy[i] = ids[i] end
+        c.midloadCalls[#c.midloadCalls + 1] = copy
+        if c.midloadThrow then error('fixture load failure') end
+    end}
     local function record(text) c.calls[#c.calls + 1] = text; c.order[#c.order + 1] = text end
     env.Player = {
         IsInstanceValid = function() if c.validThrow then error('valid failed') end return c.valid end,
@@ -1186,6 +1210,46 @@ do
     check(#c.ticks == 8, 'failed name lookup preserves ordinary movement callbacks')
     call(env, 'OnTerminate'); update(env, 16)
     check(c.vehicleQueries == 1, 'no vehicle lookups after termination')
+end
+
+-- 10. fb1031 gear: a partner who paired after this mission's allocation. Every
+-- 60 frames one mid-mission load query; native's ids (1..3 stock ids) get one
+-- public TppEquip.RequestLoadToEquipMissionBlock, then its receipt; false or
+-- bad ids get no call; nothing after termination.
+do
+    env, c = fixture()
+    call(env, 'OnMissionGameStart')
+    update(env, 59)
+    check((c.midloadQueries or 0) == 0, 'no mid-mission load query before frame 60')
+    c.midload = {46, 9}
+    update(env, 1)
+    check(c.midloadQueries == 1, 'one mid-mission load query at frame 60')
+    check(c.midloadCalls and #c.midloadCalls == 1 and #c.midloadCalls[1] == 2 and c.midloadCalls[1][1] == 46 and
+        c.midloadCalls[1][2] == 9, 'one public call with the answered ids')
+    check(c.midloadReceipts and #c.midloadReceipts == 1 and c.midloadReceipts[1] == MIDLOAD_RETURNED, 'the returned receipt')
+    check(hasLog(c, 'event=equip_midload;ok=1;ids=46,9'), 'the call is noted')
+    check(#c.ticks == 60, 'movement ticks unchanged')
+    update(env, 60)
+    check(c.midloadQueries == 2 and #c.midloadCalls == 1, 'false: no call')
+    for _, bad in ipairs({{}, {0}, {46, 9.5}, {46, 9, 1, 2}, {600}, 'x'}) do
+        c.midload = bad; update(env, 60)
+    end
+    check(c.midloadQueries == 8 and #c.midloadCalls == 1 and #c.midloadReceipts == 1, 'bad ids: no call, no receipt')
+    c.midload = {46}; c.midloadThrow = true
+    update(env, 60)
+    check(#c.midloadCalls == 2 and #c.midloadReceipts == 2 and c.midloadReceipts[2] == MIDLOAD_FAILED and
+        hasLog(c, 'event=equip_midload;ok=0;ids=46'), 'a raising call: the failed receipt')
+    check(not hasLog(c, 'event=error;msg=fixture load failure'), 'a raising call never stops the partner sync')
+    update(env, 1)
+    check(#c.ticks == 9 * 60 + 1, 'the partner sync keeps ticking')
+    call(env, 'OnTerminate')
+    local queries = c.midloadQueries
+    update(env, 120)
+    check(c.midloadQueries == queries, 'no mid-mission load query after termination')
+    env, c = fixture()
+    env.TppEquip = nil
+    call(env, 'OnMissionGameStart'); c.midload = {46}; update(env, 60)
+    check((c.midloadQueries or 0) == 0 and #c.ticks == 60, 'without TppEquip.RequestLoadToEquipMissionBlock: no query')
 end
 
 print(checks .. ' partner sync Lua checks passed: inactive unless CFG is true, strict tick format, op bits 1/2/4/8/16/32/64, ' ..

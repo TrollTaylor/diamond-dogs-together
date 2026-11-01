@@ -500,9 +500,32 @@ end)
 W.stopHooks[#W.stopHooks + 1] = function(final)
   if final then V.watch, V.held, V.reads, V.rides = {}, {}, {}, {} end
 end
+-- fb1031 (two-PC session 2026-10-31): the partner rides a vehicle this copy lacks (a RIDE_FAST track
+-- world_ride_pose found absent: Fultoned or destroyed here, or the host's relief vehicle). Native hides
+-- them (partner_ride_seat refused absent); world note 13 a=8 says why, once per ride of that vehicle and
+-- at most one every ABSENT_MS, whatever this module's key, mission or mode. Errors stay here.
+local ABSENT_MS = 20000
+V.absentSeen, V.absentAt = {}, nil
+function V.absentTick(t)
+  local rp = W.ridePose
+  local tracks = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if type(tracks) ~= "table" or not linked() then V.absentSeen = {}; return end
+  for id in pairs(V.absentSeen) do if tracks[id] == nil then V.absentSeen[id] = nil end end
+  for id, track in pairs(tracks) do
+    if type(track) == "table" and track.absent == true and V.typed(id) and not V.absentSeen[id] then
+      V.absentSeen[id] = true
+      if not V.absentAt or t >= V.absentAt then
+        V.absentAt = t + ABSENT_MS
+        local ok, shown = pcall(W.note, 13, 8, 0)
+        L("event=vehicle_absent;step=toast;id=%d;shown=%d", id, ok and shown == true and 1 or 0)
+      end
+    end
+  end
+end
 local tick = W.tick
 function W.tick(...)
   if tick then tick(...) end
+  pcall(V.absentTick, now())
   if not V.on() then return end
   local t = now()
   if t < V.nextPoll then return end
