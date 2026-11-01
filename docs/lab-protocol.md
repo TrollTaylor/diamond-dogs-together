@@ -355,7 +355,7 @@ realization line is inside the stage 3 segment).
 unchanged): `world=0..3` (0 inert, 1 plumbing, 2 enemies + alert, 3 also clock/
 weather, host travel and reload recovery) and `world_probe=<probe>` (lab only; `p1 p3 p3b p4 p12 p17 race_kill
 remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain
-clock_jump clock_fast shared_death host_continue shared_checkpoint guest_restart`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
+clock_jump clock_fast shared_death host_continue shared_checkpoint guest_restart host_target_dead`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
 sets them on both copies (or `Prepare-LabInstance.ps1 -Offline -PartnerSetting
 world=N`). World sync needs offline-v1, `partner=1`, `net=1`, `net_link=v2` and
 redirected saves; it logs `world=configured` or `world=disabled; reason=...`.

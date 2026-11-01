@@ -824,4 +824,75 @@ do
     check(reserved == 0 and sh.life[1] == 4 and sh.life[2] == 4 and logged(sh, 'event=spare;ent=3000000001;state=5;as=3'),
         'Mother Base: the host copy knocks the staff member out and never reserves its own TARGET_DEAD game over')
 end
+-- fb1031 (b): a host Game Over for a non-player reason (stock f30050 TARGET_DEAD: a staff member died) stays the host's
+-- own, but the guest is told why it reloads: GAME_OVER {kind, radio, cause 4} -> world note 15 a=2 (b=1 a staff member
+-- died at Mother Base, 0 another reason), repeated every 3 s until the reload (at most 60 s); never a guest Game Over.
+do
+    local function notes(c) c.notes = {}; c.W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end end
+    local th, tg = fixture(true, 3, true), fixture(false, 3, true)
+    for _, c in ipairs({th, tg}) do
+        notes(c)
+        c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD, c.env.TppDefine.GAME_OVER_RADIO.PLAYER_KILL_DD = 5, 9
+    end
+    pairReady(th, tg)
+    check(th.env.TppMission.ReserveGameOver(5, 9) == true and th.reserved == 1 and th.gameType == 5 and not th.R.dead and
+        th.W.w1, 'host TARGET_DEAD: the stock reserve runs, no shared death, W1 stays on')
+    check(logCount(th, 'step=host_game_over;type=5;cause=4') == 1, 'host logs its non-player game over')
+    th.env.TppMission.ReserveGameOver(5, 9)
+    th.A.tick(th.now)
+    local sent = {}
+    for _, p in ipairs(th.tx) do if p.op == OP.GAME_OVER then sent[#sent + 1] = p.v end end
+    check(#sent == 1 and sent[1][1] == 5 and sent[1][2] == 9 and sent[1][3] == 4,
+        'host sends GAME_OVER {kind, radio, cause 4} once (f30050 Dead and Dying both reserve)')
+    transfer(th, tg, function(p) return p.op == OP.GAME_OVER end)
+    check(not tg.reserved and not tg.R.dead and tg.A.dead ~= true, 'guest never reserves a non-player game over')
+    check(#tg.notes == 1 and tg.notes[1][1] == 15 and tg.notes[1][2] == 2 and tg.notes[1][3] == 1,
+        'guest: note 15 a=2 b=1 (a staff member died at Mother Base)')
+    check(logCount(tg, 'step=partner_game_over;type=5;why=1') == 1, 'guest logs the partner game over')
+    transfer(th, tg, function(p) return p.op == OP.GAME_OVER end)
+    check(#tg.notes == 1, 'a duplicate broadcast adds no note')
+    tg.now = tg.now + 2999; tg.A.tick(tg.now)
+    check(#tg.notes == 1, 'no repeat before 3 s')
+    tg.now = tg.now + 1; tg.A.tick(tg.now)
+    check(#tg.notes == 2 and tg.notes[2][2] == 2, 'repeated every 3 s while the host is on its Game Over screen')
+    tg.now = tg.now + 60000; tg.A.tick(tg.now)
+    check(#tg.notes == 2, 'never repeated past 60 s')
+    for _, f in ipairs(tg.W.startHooks) do f() end
+    for _, f in ipairs(th.W.startHooks) do f() end
+    check(not tg.R.ended and not th.R.ended, 'the reload clears both sides')
+    -- Another non-player kind (or TARGET_DEAD outside Mother Base): b=0; an abort (aborting=true) is not a failure.
+    local fh, fg = fixture(true), fixture(false)
+    for _, c in ipairs({fh, fg}) do notes(c); c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD = 5 end
+    pairReady(fh, fg)
+    fh.env.TppMission.ReserveGameOver(7, 3, true)
+    fh.A.tick(fh.now)
+    local aborts = 0
+    for _, p in ipairs(fh.tx) do if p.op == OP.GAME_OVER then aborts = aborts + 1 end end
+    check(aborts == 0 and fh.reserved == 1, 'an aborting reserve is not forwarded')
+    for _, f in ipairs(fh.W.startHooks) do f() end
+    fh.env.TppMission.ReserveGameOver(5, 3)
+    fh.A.tick(fh.now)
+    transfer(fh, fg, function(p) return p.op == OP.GAME_OVER end)
+    check(#fg.notes == 1 and fg.notes[1][2] == 2 and fg.notes[1][3] == 0 and not fg.reserved, 'free roam: note 15 a=2 b=0')
+    -- A refused host reserve sends nothing; a shared player death still shares as before (cause 1).
+    local rh = fixture(true); notes(rh)
+    rh.gameRefuse = true
+    rh.env.TppMission.ReserveGameOver(5, 9); rh.A.tick(rh.now)
+    local refused = 0
+    for _, p in ipairs(rh.tx) do if p.op == OP.GAME_OVER then refused = refused + 1 end end
+    check(refused == 0 and not rh.R.ended, 'a refused host reserve sends nothing')
+    -- Lab probe host_target_dead (id 20, lab mode only): the host's stock TARGET_DEAD reserve, as f30050 does when a
+    -- staff member dies, through the co-op wrapper.
+    local ph, pg = fixture(true, 3, true), fixture(false, 3, true)
+    for _, c in ipairs({ph, pg}) do
+        c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD, c.env.TppDefine.GAME_OVER_RADIO.PLAYER_KILL_DD = 5, 9
+    end
+    check(ph.W.probe.NAMES[20] == 'host_target_dead' and type(ph.W.probe.handlers.host_target_dead) == 'function',
+        'probe 20 is host_target_dead')
+    ph.W.probe.handlers.host_target_dead({name = 'host_target_dead'})
+    check(ph.reserved == 1 and ph.gameType == 5 and ph.gameRadio == 9 and ph.R.ended and
+        logCount(ph, 'event=probe;id=host_target_dead;step=done;result=ok') == 1, 'the probe reserves TARGET_DEAD on the host')
+    pg.W.probe.handlers.host_target_dead({name = 'host_target_dead'})
+    check(not pg.reserved and logCount(pg, 'event=probe;id=host_target_dead;step=done;result=refused') == 1, 'never on the guest')
+end
 print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

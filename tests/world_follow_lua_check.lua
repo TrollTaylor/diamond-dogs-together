@@ -980,4 +980,44 @@ do
         check(stage.mbDemo == 'X' and count(stage, 'step=mb_demo') == 0, 'auto: pack index ' .. index .. ' keeps its demo at allocation')
     end
 end
+-- fb1031 (c): a guest's Continue or Restart on a Game Over screen stays the host's call (host_only, online 0.14.5: the
+-- refused press showed nothing): the guest is told so with world note 15 a=3 ("Waiting for your partner to continue."),
+-- repeated every 3 s until the host's Continue reloads it (at most 120 s). The follow request itself is unchanged.
+do
+    local function waits(c) return noted(c, 15, 3, 0) end
+    for _, case in ipairs({{'ContinueFromCheckPoint', 'dead'}, {'ExecuteContinueFromCheckPoint', 'definite'},
+        {'RestartMission', 'reserve'}, {'ExecuteRestartMission', 'dead'}}) do
+        local w = fixture(2)
+        if case[2] == 'dead' then w.W.recovery = {dead = true}
+        elseif case[2] == 'definite' then w.env.svars.mis_isDefiniteGameOver = true
+        else w.env.mvars.mis_isReserveGameOver = true end
+        w.env.TppMission[case[1]]()
+        check(#w.calls == 0 and w.tx[1] and w.tx[1].op == OP.REQ_MISSION and waits(w) == 1,
+            case[1] .. ' on a Game Over: the request goes to the host and the waiting note shows')
+        check(logged(w, 'step=wait_partner;kind=' .. w.tx[1].v[2]), case[1] .. ': the wait is logged')
+        w.time = w.time + 1000
+        w.env.TppMission[case[1]]()
+        check(waits(w) == 1, case[1] .. ': a second press adds no note')
+        w.time = w.time + 1999; w.F.tick(w.time)
+        check(waits(w) == 1, case[1] .. ': no repeat before 3 s')
+        w.time = w.time + 1; w.F.tick(w.time)
+        check(waits(w) == 2, case[1] .. ': repeated every 3 s')
+        for _, f in ipairs(w.W.startHooks) do f() end
+        w.time = w.time + 3000; w.F.tick(w.time)
+        check(waits(w) == 2 and w.F.waitNote == nil, case[1] .. ': the reload ends it')
+    end
+    local cap = fixture(2)
+    cap.W.recovery = {dead = true}
+    cap.env.TppMission.ContinueFromCheckPoint()
+    for _ = 1, 50 do cap.time = cap.time + 3000; cap.F.tick(cap.time) end
+    check(waits(cap) == 40 and cap.F.waitNote == nil, 'at most 120 s of waiting notes')
+    local play = fixture(2)
+    play.env.TppMission.ExecuteContinueFromCheckPoint()
+    play.time = play.time + 3000; play.F.tick(play.time)
+    check(play.tx[1].op == OP.REQ_MISSION and waits(play) == 0, 'no Game Over: no waiting note (unchanged)')
+    local host = fixture(1)
+    host.W.recovery = {dead = true}
+    host.env.TppMission.ContinueFromCheckPoint()
+    check(called(host, 'continue_menu') == 1 and waits(host) == 0, 'the host continues itself, no note')
+end
 print('world_follow_lua_check: ' .. checks .. ' checks passed')

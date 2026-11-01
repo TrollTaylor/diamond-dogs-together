@@ -20,6 +20,35 @@
   the host's screen, no crash) and `fb1031-gear-late-join-note.txt` (the default: the note frame). Commits: red
   `42518113` / `5ef5c4e7`, green `7a6637d0` / `8d22c87b`, scenarios `5301a0e9`.
 
+## October 31, 2026: fb1031 mbgo - Mother Base Game Overs explained, staff kills refused (`wp/mb-gameover`; not run-proven yet)
+
+- **What players should get (not run in a game yet):** at Mother Base the F9 kill rows (Kill nearest, Kill selected,
+  Clear nearby, console `enemy_kill_nearest`) kill nobody and show "Killing staff at Mother Base fails the mission."
+  When the host's mission fails for a reason that is not a player's death (stock f30050 TARGET_DEAD: a staff member
+  died), the guest sees "Your partner's mission failed: a staff member died. Reloading." until the host's Continue
+  reloads both, instead of a sudden reload. A guest who presses Continue or Restart on a Game Over screen sees "Waiting
+  for your partner to continue." until the host continues (it still follows the host's Continue).
+- **The 0.14.5 online logs [O]:** friend log 64641-64643 `debug_menu ... enemy kill nearest; ok=1; ... sync=none`, then
+  `obs; m=Dead`; no `shared_game_over` before the host's Continue `follow step=tx kind=4` (64936); the user's guest log
+  8975-9000 has that follow with no `game_over_applied`. After Game Over #3 the guest's `follow step=request kind=4`
+  met `decision=host_only` (friend 70232) and the host continued 2 s later; no toast in between. [I, stock
+  f30050_sequence.lua] Dead/Dying of any non-player reserves `TARGET_DEAD, PLAYER_KILL_DD`.
+- **Code:** red `f3231742`; green `d8c8b5e9` (a: `debug_menu.lua` refuses `mb_staff` at 30050 with note 15 a=1),
+  `03c6c3ca` (b: `world_recovery.lua` host sends the existing GAME_OVER op with cause 4 once per mission for a
+  non-death, non-aborting reserve; the guest never reserves it, `step=partner_game_over`, note 15 a=2 every 3 s for at
+  most 60 s; lab probe 20 `host_target_dead`), `519666f9` (c: `world_follow.lua` `step=wait_partner`, note 15 a=3 every
+  3 s for at most 120 s), `43cc5a02` (native note 15 MISSION_END sentences, `NoteShown` 1..15, probe 20 in lab_config /
+  world.trigger / lab scripts); worker admission red `f3828a55` -> green `06ba8540` (`host worldtrigger
+  world_probe=host_target_dead`, host only). No new wire op (cause is a free u8; a 0.14.5 guest ignores non-death
+  kinds). World note id taken: **15** (the last code of the NOTE grammar). Probe id taken: **20**.
+- **Scenario (not run):** `tools/worker/scenarios/mb-gameover-lab.txt` (lab, mb-ladder, `-WanSim bad`): kill rows
+  refused, probe 20 -> guest toast -> host Continue, shared death -> guest Continue first -> waiting toast -> host
+  Continue. [U] whether the toasts draw over the Game Over screen and the reload fade; the F9 rows still look enabled
+  (the result chip reads `mb_staff`).
+- **Checks:** full `tools/build.ps1` 339/339 at `3e9e3d24` (a first full run had 338/339:
+  `partner_defer_pose_nested_foreign_tests` check 185 under load, 12.3 s; it passed alone in 3.4 s and in the rerun);
+  `tools/generate_partner_contract.py --check` passes (855 code sites, 213 vtable slots). No game run.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving

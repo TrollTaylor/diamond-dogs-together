@@ -379,7 +379,8 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     // 8 TRAVEL_ALONE, 9 CONTINUE_DURING_HANDOFF, 10 HANDOFF_KEPT_OWN,
     // 11 GUEST_LANDING_ELSEWHERE, 12 SORTIE_HELD; M1: 13 COMPANION (a = 1 orders, 2 call
     // refused, 3 Quiet locked; M3: 4 vehicle drop, 5 loadout drop refused); 14 TRAVEL (debug menu
-    // Travel, b = the sentence); 15 has no meaning yet (world::NoteShown).
+    // Travel, b = the sentence); fb1031 mbgo: 15 MISSION_END (a = 1 staff kill refused, 2 the host's mission failed,
+    // 3 the guest's Continue waits).
     const bool known = world::NoteShown(code);
     const std::uint64_t now = partner_net::NowMs();
     std::uint32_t partner = 0, local = 0;

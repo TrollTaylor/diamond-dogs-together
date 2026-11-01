@@ -2564,10 +2564,29 @@ void TestHud() {
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
         // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
-        // menu Travel (TRAVEL{a=mission, b=kind}), 17 since fb1031 gear (PARTNER_GEAR, below); 15 stays reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{18}, std::uint8_t{255}})
+        // menu Travel (TRAVEL{a=mission, b=kind}), 15 since fb1031 mbgo (MISSION_END{a=kind, b=reason}), 17 since fb1031
+        // gear (PARTNER_GEAR, below).
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{18}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
+        {
+            // fb1031 mbgo: a=1 a debug kill of Mother Base staff refused, a=2 the host's mission failed for a non-player
+            // reason (b=1 a staff member died, 0 another), a=3 the guest's Continue waits for the host's.
+            struct EndNote { std::uint32_t a, b; const char* sentence; };
+            const EndNote ends[] = {
+                {1, 0, "Killing staff at Mother Base fails the mission."},
+                {2, 1, "Your partner's mission failed: a staff member died. Reloading."},
+                {2, 0, "Your partner's mission failed. Reloading."},
+                {3, 0, "Waiting for your partner to continue."},
+            };
+            for (const auto& t : ends)
+                Check(text::FormatWorldNote(15, t.a, t.b, 30050, 30050, sentence, sizeof(sentence)) &&
+                          std::strcmp(sentence, t.sentence) == 0,
+                      "FormatWorldNote: the MISSION_END sentences");
+            for (const auto& bad : {EndNote{0, 0, ""}, EndNote{4, 0, ""}, EndNote{1, 1, ""}, EndNote{2, 2, ""}, EndNote{3, 1, ""}})
+                Check(!text::FormatWorldNote(15, bad.a, bad.b, 30050, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+                      "FormatWorldNote: unknown MISSION_END values have no toast");
+        }
         {
             struct TravelNote { std::uint32_t a, b; const char* sentence; };
             const TravelNote travel[] = {

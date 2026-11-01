@@ -911,6 +911,18 @@ check(math.abs(w.pos[1] - 8.5) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and m
     'enemy goto lands 2.5 m from the soldier on the player side, facing him')
 f = fixture(); f.env.e.MgsCoopWorld = {paired = true, w1 = true}
 check(f:send('enemy_kill_nearest')[3] == 'submitted=1;dead_readback=1;sync=world;max=16', 'kill alias keeps text with the sync tag')
+-- fb1031 (a): at Mother Base any staff death makes stock f30050 reserve a TARGET_DEAD Game Over, so every kill row
+-- (nearest, selected, clear nearby, the legacy alias) refuses there with world note 15 a=1 and kills nobody.
+f = fixture({mission = 30050})
+f.env.e.MgsCoopWorld = {paired = true, w1 = true, note = function(...) f.calls[#f.calls + 1] = {'note', ...} end}
+for _, text in ipairs({'enemy kill nearest', 'enemy kill 2147483648', 'clear_enemies 50', 'enemy_kill_nearest'}) do
+    check(f:send(text)[3] == 'mb_staff', 'Mother Base refuses ' .. text)
+end
+check(f:count('ChangeLifeState') == 0 and f:count('note') == 4 and f.calls[#f.calls][2] == 15 and f.calls[#f.calls][3] == 1 and
+    f.calls[#f.calls][4] == 0, 'Mother Base: no staff member killed, note 15 a=1 for each refusal')
+check(f:send('enemy sleep nearest')[3]:find('^enemy_sleep;') and f:count('ChangeLifeState') == 1, 'Mother Base: sleep still works')
+f.env.e.MgsCoopWorld = nil
+check(f:send('enemy kill nearest')[3] == 'mb_staff', 'Mother Base: refused without a world link too')
 -- cp_phase
 f = fixture(); f.cpIds = {cp_a = 300}
 check(f:send('cp_phase cp_a alert')[3] == 'submitted_phase;cp=cp_a;phase=alert;sync=none', 'phase by name')
