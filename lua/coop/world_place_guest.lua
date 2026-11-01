@@ -63,8 +63,10 @@ do
             P.div[c.h] = div
             local fix
             if W.w1 then
-                div.n = d > 3500 and div.n + 1 or 0
-                fix = (div.n >= 2 or d > 8000) and P.state(en) == 0 and c.at - div.at >= 2500 and #P.q < 8
+                -- Mother Base staff (staffPlace): tighter, so both screens show them on the same spot.
+                local staff = W.feature and W.feature.staffPlace
+                div.n = d > (staff and 2000 or 3500) and div.n + 1 or 0
+                fix = (div.n >= 2 or d > (staff and 5000 or 8000)) and P.state(en) == 0 and c.at - div.at >= 2500 and #P.q < 8
             else
                 div.n = d > 6000 and div.n + 1 or 0
                 local cp = W.cp[en.cp]
