@@ -1957,6 +1957,28 @@ int main() {
             Check(dmgOff.mode == mgscoop::LabMode::play && !dmgOff.world_vehicle_damage && dmgOff.world_vehicle_damage_given,
                   "a named world_vehicle_damage=0 keeps it off in play");
         }
+        // Supply drops synced (r1101, docs/world-sync-protocol.md section 25, lua/coop/world_supply.lua): world_supply
+        // installs the supply-box observer and the SUPPLY op's Lua module. Lab and play (no refusal bit), OFF in both
+        // unless named until a hidden run proves it (project rule).
+        {
+            const std::string play = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+            const auto supplyPlain = Lab("enabled=1\nrole=host\n");
+            const auto supplyGun = Lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+            const auto supplyPlay = Lab(play);
+            Check(!supplyPlain.world_supply && !supplyPlain.world_supply_given && !supplyGun.world_supply && !supplyPlay.world_supply &&
+                      !supplyPlay.world_supply_given && supplyPlay.play_refused == 0,
+                  "world_supply defaults off in the lab (plain, gun profile) and in play");
+            const auto supplyOn = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=1\n");
+            Check(supplyOn.world_supply && supplyOn.world_supply_given && supplyOn.invalid_values == 0 && supplyOn.unknown_keys == 0, "world_supply=1 parses in the lab");
+            const auto supplyOff = Lab("enabled=1\nrole=guest\nworld=3\nworld_supply=0\n");
+            Check(!supplyOff.world_supply && supplyOff.world_supply_given && supplyOff.invalid_values == 0, "world_supply=0 is named and off");
+            const auto supplyBad = Lab("enabled=1\nrole=host\nworld_supply=2\n");
+            Check(!supplyBad.world_supply && supplyBad.invalid_values == 1 && supplyBad.unknown_keys == 0, "an invalid world_supply keeps it off");
+            const auto supplyPlayOn = Lab(play + "world_supply=1\n");
+            Check(supplyPlayOn.mode == mgscoop::LabMode::play && supplyPlayOn.world_supply && supplyPlayOn.play_refused == 0 && supplyPlayOn.invalid_values == 0,
+                  "world_supply=1 parses in play with no refusal bit");
+        }
         // Round-1 actions track (docs/anim-round1-actions.md): the DM overlay lever is off and the act census on by
         // default, in every profile; both keys are explicit only.
         {

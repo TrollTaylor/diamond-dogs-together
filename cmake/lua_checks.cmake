@@ -142,6 +142,7 @@ mgs_add_lua_check(world_vehicle_state_lua_check "${_mgs_coop}/world_vehicle_stat
 mgs_add_lua_check(world_vehicle_rules_lua_check "${_mgs_coop}/world_vehicle_rules.lua" "${_mgs_coop}/world_vehicle.lua"
   "${_mgs_coop}/world_vehicle_state.lua")
 # The vehicle fixes of 2026-10-29: the guest's vehicle damage report (VEHICLE_DAMAGE) over VEHICLE_GONE, VEHICLE_STATE and the rules.
+mgs_add_lua_check(world_supply_lua_check "${_mgs_coop}/world_supply.lua")
 mgs_add_lua_check(world_vehicle_damage_lua_check "${_mgs_coop}/world_vehicle_damage.lua" "${_mgs_coop}/world_vehicle.lua"
   "${_mgs_coop}/world_vehicle_state.lua" "${_mgs_coop}/world_vehicle_rules.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
