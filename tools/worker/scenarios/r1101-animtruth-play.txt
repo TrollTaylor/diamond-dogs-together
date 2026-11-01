@@ -1,6 +1,6 @@
 # r1101 animtruth (docs/anim-truth.md): the puppet draws what the other player's body really does, not what their
-# input asked. Lab key partner_native_aim_truth (OFF unless named; named here). Mother Base, mb-ladder seed (title
-# Continue at the ladder spot, lab saves 871/873/875 in slots 0/1/2), mode=play over -WanSim bad, so the stock f30050
+# input asked. Lab key partner_native_aim_truth (follows the gun profile since run 3c5609bb; named here). Mother Base,
+# mb-ladder seed (title Continue at the ladder spot, lab saves 871/873/875 in slots 0/1/2), mode=play over -WanSim bad, so the stock f30050
 # no-lethal rule is live on both copies (vars.playerDisableActionFlag = CQC_KNIFE_KILL + KILLING_WEAPON).
 # The guest presses; the host films its body 1 (the puppet) from behind-right; every step captures BOTH screens.
 #   1. The user's report: the guest holds RMB with a lethal gun. The guest's own body never aims (weapons disabled),
@@ -18,6 +18,8 @@
 #   4. Reversed (the host holds RMB+LMB with its lethal rifle, the guest films): the same refusal on the guest's copy.
 #        host:  partner_aim_local=no_aim; guest: partner_aim_truth=loco ... and hold_run; result=refused
 # Hidden run a8a69ae9 (steps 1-3, before step 4 was added): all expectations met on both copies (docs/anim-truth.md).
+# Hidden run 3c5609bb (all four steps, the r1101 Prove phase): all expectations met on both copies, logs and frames.
+# The shipped default (no key named): r1101-animtruth-default-play.txt.
 # The waitlogs of steps 1, 3 and 4 assert the claim (result=refused; act on a climb act), so a regression fails the
 # run; step 2 stays permissive (the slot decides). The sub-keys partner_native_aim_truth_box / _triggers / _stance
 # stay off here: this scenario has no box, gamepad or stance step and proves only the loco/act strip.
