@@ -71,6 +71,7 @@ aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with
 - `partner_aim_truth=hold_run; result=refused|admitted|late; refused_ms; admitted_ms; len_ms; first_act; last_act;
   flags; runs; trig_zeroed` when a remote HOLD run ends.
 - `partner_aim_local=no_aim|aimed; act; held_ms|after_ms; gun3c0; mode; slot; runs; aimed; no_aim` (the sender).
+- `partner_aim_truth=box; on=0|1; remote_act; body_act; strip` when the box EVADE strip changes.
 
 ## Known limits
 
@@ -91,11 +92,15 @@ Fixed behind the key (code and unit tests; not run in a game yet):
   hit, damage, and now ladder, pipe, wall climb, step_on and the ledge hang (`act`). CQC hold 91..96 passes: the real
   body can aim its one-handed gun there.
 - Gamepad triggers past a strip (code-intent M8): `truth_triggers`.
+- Dives in the open while the remote is boxed and body 1 is not (evidence M5, fb1031 friend 35992 / 36073):
+  `TruthBoxStrip` takes EVADE out of the remote's sample then (`partner_aim_truth=box; on=1`). Not run in a game.
 - The Lua Aiming/Reloading input bits in the stance hold and aim parity (code-intent M6). The dm=map fallback's
   gun_busy still reads them (fallback only).
 
 Deferred (why):
-- Binoculars drawn as a gun aim (code-intent M7, evidence M2): needs BINOCLE on the wire (see Known limits).
+- Binoculars drawn as a gun aim (code-intent M7): needs BINOCLE on the wire (see Known limits). Evidence M2's log
+  lines are NOT binoculars: none of the 86 fb1031 `source=act; pad_hold=0` lines had SUBJECT (0x400) in the nearest
+  input lines, most had HOLD (0x8) there: they are the edges of real aims.
 - The viewer's own binoculars make body 1 aim (evidence M1, 7 of 23 SUBJECT edges): the cause (process-wide subject
   or camera state read inside body 1's window) needs a census run first.
 - Aim lingering 5 s after release with a stand-in (evidence M3): suspected toggle aim on the viewer; needs a run.
@@ -106,9 +111,11 @@ Deferred (why):
 - Holstered reload tap read as CARRY (code-intent M10): suspected, not observed.
 - A stand-in gun of another type fires (code-intent M11): by design (weapons4).
 - The box stays on the puppet after the remote leaves it (evidence M4, observed 4-10 s): the off reads ok (sub 0),
-  so a retry cannot help; the exit needs a probe of what ends state 0xB on body 1.
-- Box refused for the rest of the mission and dives in the open (evidence M5): the latch and the dive's cause (the
-  remote's EVADE or the stance fix) need a run.
+  so a retry cannot help. In friend 53470..53730 body 1 kept act 77 for 9.5 s with stick input and never moved (no 78),
+  and the remote's exit presses 0x1000001 (DECIDE + keyboard binding 24) were dropped by the mask: what ends state
+  0xB on body 1 needs RE and a probe.
+- Box refused for the rest of the mission (evidence M5): the viewer_changed latch itself is the cbox lane's; only
+  its dives in the open are handled here (see Fixed).
 - dm=map clip stuck in 139 (evidence M6), stuck in act 32 (M7), ledge-hang desync (M8), remote aims while body 1 has
   no gun (M9: no resident weapon), NPC carry not drawn (M10), snap fall/land (M11), stance-fix dive (M12), empty
   vehicle seat (M13): other lanes (recon, traverse, equip writer, seats); none is an input-truth gate.
