@@ -189,6 +189,18 @@ bool stock46_groups_authorized=false,stock46_groups_returned=false;
 mgscoop::equipment_stock_probe::GeneralAuthorization equip_preload_authorization;
 mgscoop::equipment_preload_contract::Snapshot equip_preload_before;
 mgscoop::equipment_preload_contract::Snapshot equip_preload_after;
+// fb1031 gear: a partner who paired after this mission's allocation (equipment_stock_probe LateGear).
+mgscoop::equipment_stock_probe::MidLoadAuthorization equip_midload;
+mgscoop::equipment_preload_contract::Snapshot equip_midload_before;
+mgscoop::equipment_preload_contract::Snapshot equip_midload_after;
+mgscoop::equipment_stock_probe::LateGear equip_late_gear=mgscoop::equipment_stock_probe::LateGear::none;
+mgscoop::equipment_stock_probe::LateGear equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none;
+std::uint32_t equip_residency_gen=0;
+// Every allocation (and the mission's end) starts the late-gear state over.
+void ResetLateGear() noexcept {
+    equip_midload.End(); equip_midload_before={}; equip_midload_after={};
+    equip_late_gear=equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none; equip_residency_gen=0;
+}
 std::uint64_t equipment_observation_requested_ms = 0;
 unsigned short equipment_observation_mission = 0;
 unsigned short allocation_mission = 0;
@@ -2067,6 +2079,44 @@ void ObserveStock46Writer() noexcept {
 // run on the natural mission owner, behind the same gates
 // as stock46 except the mission (any partner-body mission of this
 // allocation) and the admission (lab or paired play; EquipPiecesAdmitted).
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+// fb1031 gear (equipment_stock_probe LateGear): after the writer's turn, on the runtime owner. A partner who
+// paired after this mission's allocation: their bases were not preloaded (or not covered) and a writer slot
+// gave up for want of a resident entry. With partner_equip_midload the Lua mid-mission query is answered once
+// (SelectEquipPreloadReceipt); otherwise, or when it was refused or failed, the viewer is told once (note 17).
+void ObserveLateGear(const mgscoop::equipment_stock_writer::GeneralContext& context,bool admitted,bool midload) noexcept {
+    namespace w=mgscoop::equipment_stock_writer;
+    namespace sp=mgscoop::equipment_stock_probe;
+    const std::uint32_t link=mgscoop::partner_net::GetLinkInfo().session;
+    equip_midload.Track(partner_mission,link);
+    sp::LateGearInput late{};
+    late.admitted=admitted; late.manifest=context.manifest;
+    late.gameplay=context.owner && context.gates && context.body_ready;
+    const std::uint16_t remote[3]={context.want[0],context.want[1],context.want[2]};
+    unsigned wanted=0;
+    const unsigned count=partner_driver.preload_count<=3 ? partner_driver.preload_count : 3u;
+    const unsigned covered=sp::PreloadCover(remote,partner_driver.preload_ids,count,wanted);
+    late.covered=equip_preload_authorization.QueuedFor(partner_mission) && partner_driver.preload_mission==partner_mission &&
+        wanted && covered==wanted;
+    for(const auto& slot:partner_driver.equip_status.slots)
+        late.missing=late.missing || ((slot.state==w::SlotState::backoff || slot.state==w::SlotState::refused) &&
+            w::CacheReadinessReason(slot.reason));
+    late.midload=midload; late.attempted=equip_midload.Attempted(); late.returned=equip_midload.Returned();
+    const sp::LateGear decision=sp::DecideLateGear(late);
+    equip_late_gear=decision;
+    if(decision!=sp::LateGear::none && decision!=equip_late_gear_logged) {
+        equip_late_gear_logged=decision;
+        LogFormat("equip_late_gear=%s; mission=%u; link=%u; preload=%s; covered=%u/%u; missing=1; midload=%u; attempted=%u; returned=%u\r\n",
+            sp::LateGearName(decision),unsigned(partner_mission),unsigned(link),
+            partner_driver.preload_verdict[0] ? partner_driver.preload_verdict : "none",covered,wanted,unsigned(midload),
+            unsigned(late.attempted),unsigned(late.returned));
+    }
+    if(equip_midload.TakeNote(decision)) {
+        mgscoop::coop_hud::PostWorldNote(17,1,0,0,0);
+        LogFormat("equip_late_gear=noted; note=17; mission=%u; link=%u; midload=%u\r\n",unsigned(partner_mission),unsigned(link),unsigned(midload));
+    }
+}
+#endif
 void ObserveEquipWriter() noexcept {
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     namespace w=mgscoop::equipment_stock_writer;
@@ -2121,8 +2171,10 @@ void ObserveEquipWriter() noexcept {
     // The remote's current slot: the live v5 slot, else the manifest's (never a zeroed manifest's 0).
     context.remote_slot=mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot
         : context.manifest && manifest.inv_slot<w::kSlots ? manifest.inv_slot : std::uint8_t(0xFF);
+    context.residency_gen=equip_residency_gen;
     w::ObserveGeneral(context,Log);
     w::ReadStatus(partner_driver.equip_status);
+    ObserveLateGear(context,admission==nullptr,config.partner_equip_midload);
 #endif
 }
 
@@ -3735,19 +3787,31 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
     const auto equals=[&](const char* value,std::size_t bytes) noexcept {
         return buffer && name && size==bytes && std::memcmp(buffer,value,bytes)==0 && std::strcmp(name,value)==0;
     };
-    const bool is_query=equals(query,sizeof(query)-1),is_returned=equals(returned,sizeof(returned)-1);
-    if(!is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
+    // fb1031 gear: the same preflight for ONE mid-mission load of a late partner's bases (partner_sync.lua,
+    // the runtime owner, lab.ini partner_equip_midload; equipment_stock_probe LateGear / MidLoadAuthorization).
+    constexpr char mid_query[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_QUERY_V1'";
+    constexpr char mid_returned[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_RETURNED_V1'";
+    constexpr char mid_failed[]="return 'MGS_COOP_REMOTE_EQUIP_MIDLOAD_FAILED_V1'";
+    const bool mid_is_query=equals(mid_query,sizeof(mid_query)-1),mid_is_returned=equals(mid_returned,sizeof(mid_returned)-1);
+    const bool mid=mid_is_query || mid_is_returned || equals(mid_failed,sizeof(mid_failed)-1);
+    const bool is_query=mid_is_query || equals(query,sizeof(query)-1);
+    const bool is_returned=mid_is_returned || equals(returned,sizeof(returned)-1);
+    if(!mid && !is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
     namespace pc=mgscoop::equipment_preload_contract;
     bool enabled=false;
 #ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
     enabled=true;
 #endif
     const char* admission=enabled ? EquipAdmissionReason() : "not_compiled";
+    if(mid && !admission && !mgscoop::GetLabConfig().partner_equip_midload) admission="midload_off";
     enabled=enabled && admission==nullptr;
     unsigned short mission=0;
     const bool mission_read=ReadMission(mission);
+    // The allocation preload: the natural allocation owner. The mid-mission load: the runtime owner of this
+    // mission's gameplay (the writer's owner), never while it terminates.
+    const bool thread_owner=mid ? OnRuntimeThread() && !mission_terminating && mission==partner_mission : OnAllocationThread();
     const bool owner=enabled && allocation_enabled && archive_mounted && host_source_selected &&
-        OnAllocationThread() && !termination_scope.Active() && !gameplay_restore_pending &&
+        thread_owner && !termination_scope.Active() && !gameplay_restore_pending &&
         !HasDynamiteSessionOwnership() && mission_read && mgscoop::SupportsPartnerBody(mission) && mission==allocation_mission;
     const auto reader=[](std::uintptr_t address,void* destination,std::size_t bytes) noexcept {
         if(!address || address>UINTPTR_MAX-bytes) return false;
@@ -3759,6 +3823,12 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
     const auto base=reinterpret_cast<std::uintptr_t>(game_base);
     static constexpr char yes[]="return true",no[]="return false";
     static char reply[64]{};
+    namespace lg=mgscoop::equipment_stock_probe;
+    // The mid-mission query comes every ~60 frames: quiet unless the late-gear decision asks for the one load.
+    if(mid_is_query && (!enabled || equip_late_gear!=lg::LateGear::request || equip_midload.Attempted())) {
+        replacement={no,sizeof(no)-1};
+        return true;
+    }
     if(is_query) {
         // The remote's manifest may have arrived just now (it is sent from the title
         // and the ACC too): drain channel 2 once before planning (nothing is sent here).
@@ -3774,7 +3844,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         // this copy's own loadout first: its own manifest predicts the ids.
         namespace sp=mgscoop::equipment_stock_probe;
         const bool remote=enabled && EquipManifest(manifest);
-        const bool handed=enabled && mgscoop::save_handoff::PeerOnHandedSave();
+        const bool handed=!mid && enabled && mgscoop::save_handoff::PeerOnHandedSave();
         mgscoop::partner_equip_wire::Manifest own{};
         const bool own_ok=handed && !remote && pd::OwnManifest(partner_driver,own);
         const sp::PreloadSource source=sp::ChoosePreloadSource(remote,handed,own_ok);
@@ -3784,7 +3854,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         std::uint16_t ids[pc::kIds]{};unsigned count=0;
         char dropped[96]{};
         const char* sample_reason="not_sampled";
-        pc::Snapshot& candidate=equip_preload_before;
+        pc::Snapshot& candidate=mid ? equip_midload_before : equip_preload_before;
         candidate={};
         if(context.manifest) {
             mgscoop::equipment_stock_writer_contract::View<decltype(read)> v{read,base,game_span};
@@ -3826,6 +3896,36 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         std::uintptr_t mismatch=0;
         if(owner && count && !sample_reason && !mgscoop::equipment_stock_writer::PinsIntact(base,game_span,mismatch)) sample_reason="full_body_gate";
         context.preflight_ok=owner && count && sample_reason==nullptr;
+        if(mid) {
+            const char* why=equip_midload.Try(owner,mission,mgscoop::partner_net::GetLinkInfo().session,equip_late_gear,
+                                              context.preflight_ok);
+            char ids_text[48]{};
+            for(unsigned i=0;i<count && !why;++i) {
+                char one[12]{};StringCchPrintfA(one,sizeof(one),"%s%u",i ? "," : "",unsigned(ids[i]));
+                StringCchCatA(ids_text,sizeof(ids_text),one);
+            }
+            char mid_actions[96]{};
+            for(unsigned i=0;i<candidate.item_count && !why;++i) {
+                char one[32]{};
+                StringCchPrintfA(one,sizeof(one),"%s%u:%s@%u",i ? "," : "",unsigned(candidate.items[i].equip),
+                    pc::ActionName(candidate.items[i].action),unsigned(candidate.items[i].entry));
+                StringCchCatA(mid_actions,sizeof(mid_actions),one);
+            }
+            const unsigned new_hashes=candidate.new_hashes,queue_count=candidate.queue_count,queue_capacity=candidate.queue_capacity;
+            if(!why) {
+                StringCchPrintfA(reply,sizeof(reply),"return {%s}",ids_text);
+                replacement={reply,std::strlen(reply)};
+            } else {
+                candidate={};
+                replacement={no,sizeof(no)-1};
+            }
+            LogFormat("equip_midload=%s; reason=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; public_calls=lua_only; evict=0\r\n",
+                why ? "refused" : "authorized",why ? why : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
+                unsigned(context.manifest),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),
+                unsigned(manifest.slots[2].base_id),ids_text[0] ? ids_text : "none",dropped[0] ? dropped : "none",
+                mid_actions[0] ? mid_actions : "none",new_hashes,queue_count,queue_capacity);
+            return true;
+        }
         const char* reason=equip_preload_authorization.Try(context);
         partner_driver.preload_mission=mission;
         partner_driver.preload_count=0;partner_driver.preload_new_hashes=0;
@@ -3859,6 +3959,22 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
             unsigned(context.manifest),sp::PreloadSourceName(source),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
             list[0] ? list : "none",dropped[0] ? dropped : "none",actions[0] ? actions : "none",candidate.new_hashes,
             candidate.queue_count,candidate.queue_capacity,unsigned(equip_preload_authorization.Attempted()));
+    } else if(mid) {
+        // The receipt of the one mid-mission call: a returned call renews the writer's missing-cache slots
+        // once (equip_residency_gen) whatever the readback says (the writer's own preflights decide binding).
+        pc::Snapshot& after=equip_midload_after;
+        after={};
+        const char* sample_reason="not_sampled";
+        if(owner && is_returned && equip_midload_before.item_count)
+            sample_reason=pc::Verify(base,game_span,read,equip_midload_before,after);
+        const bool returned_ok=equip_midload.Receipt(owner,mission,is_returned);
+        if(returned_ok && !++equip_residency_gen) equip_residency_gen=1;
+        replacement=returned_ok && !sample_reason ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+                                                  : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        LogFormat("equip_midload=%s; readback=%s; mission=%u; public_returned=%u; queue_before=%u; queue_after=%u; new_hashes=%u; residency_gen=%u; packages_loaded=unverified\r\n",
+            !returned_ok ? "receipt_refused" : sample_reason ? "returned_unverified" : "queued_verified",
+            sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(is_returned),equip_midload_before.queue_count,
+            after.queue_count,equip_midload_before.new_hashes,unsigned(equip_residency_gen));
     } else {
         pc::Snapshot& after=equip_preload_after;
         after={};
@@ -4016,7 +4132,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::unavailable,mission,worker_loading_generation});
             equipment_allocation_authorization.Begin(mission);
             stock46_authorization.Begin(mission); stock46_before={};
-            equip_preload_authorization.Begin(mission); equip_preload_before={};
+            equip_preload_authorization.Begin(mission); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::BeginAllocation(mission);
             stock46_groups_authorized=stock46_groups_returned=false;
             equipment_observation_requested_ms=0; equipment_observation_mission=0;
@@ -4069,7 +4185,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             accepted=termination_scope.Returned(cleanup_thread);
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
-            equip_preload_authorization.End(); equip_preload_before={};
+            equip_preload_authorization.End(); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_phase=MissionPhase::idle; allocation_thread=0;
@@ -5670,7 +5786,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("mission_terminating");
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
-            equip_preload_authorization.End(); equip_preload_before={};
+            equip_preload_authorization.End(); equip_preload_before={}; ResetLateGear();
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");

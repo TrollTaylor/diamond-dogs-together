@@ -134,7 +134,15 @@ struct LateGearInput {
     bool returned=false;   // ... and its one public call returned
 };
 enum class LateGear : unsigned char { none, request, loading, next_load };
-constexpr LateGear DecideLateGear(const LateGearInput&) noexcept { return LateGear::none; }
+// none: nothing to do (not paired, no manifest, not in gameplay, preloaded, or
+// resident anyway); request: ask for the mid-mission load; loading: its call
+// returned (the writer re-plans); next_load: the gun shows after the next load.
+constexpr LateGear DecideLateGear(const LateGearInput& c) noexcept {
+    return !c.admitted || !c.manifest || !c.gameplay || c.covered || !c.missing ? LateGear::none
+        : c.midload && !c.attempted ? LateGear::request
+        : c.midload && c.returned ? LateGear::loading
+        : LateGear::next_load;
+}
 constexpr const char* LateGearName(LateGear g) noexcept {
     return g==LateGear::request ? "request" : g==LateGear::loading ? "loading" : g==LateGear::next_load ? "next_load" : "none";
 }
@@ -145,17 +153,45 @@ class MidLoadAuthorization {
     std::uint32_t mission_=0, link_=0;
     bool attempted_=false, permitted_=false, returned_=false, noted_=false;
 public:
-    void Track(std::uint32_t, std::uint32_t) noexcept {}
+    // The mission's gameplay and this link session; a new mission or link session starts over.
+    void Track(std::uint32_t mission, std::uint32_t link) noexcept {
+        if(mission==mission_ && link==link_) return;
+        mission_=mission; link_=link; attempted_=permitted_=returned_=noted_=false;
+    }
     void End() noexcept { mission_=link_=0; attempted_=permitted_=returned_=noted_=false; }
     bool Attempted() const noexcept { return attempted_; }
     bool Returned() const noexcept { return returned_; }
-    const char* Try(bool, std::uint32_t, std::uint32_t, LateGear, bool) noexcept { return "not_needed"; }
-    bool Receipt(bool, std::uint32_t, bool) noexcept { return false; }
-    bool TakeNote(LateGear) noexcept { return false; }
+    // The query: consumes the one attempt once the decision asks for it, before the preflight verdict.
+    const char* Try(bool owner, std::uint32_t mission, std::uint32_t link, LateGear decision, bool preflight_ok) noexcept {
+        if(!owner) return "not_runtime_owner";
+        if(!mission_ || mission!=mission_ || link!=link_) return "mission";
+        if(attempted_) return "already_attempted";
+        if(decision!=LateGear::request) return "not_needed";
+        attempted_=true;
+        if(!preflight_ok) return "midload_preflight";
+        permitted_=true;
+        return nullptr;
+    }
+    // The receipt after the one public call: true when it returned (the writer then re-plans).
+    bool Receipt(bool owner, std::uint32_t mission, bool returned) noexcept {
+        if(!owner || !permitted_ || mission!=mission_) return false;
+        permitted_=false;
+        returned_=returned;
+        return returned_;
+    }
+    bool TakeNote(LateGear decision) noexcept {
+        if(decision!=LateGear::next_load || noted_) return false;
+        noted_=true;
+        return true;
+    }
 };
 // The writer re-plans its missing-cache slots once per returned mid-mission
-// load (the residency generation the observer bumps).
-inline bool ResidencyRenewal(std::uint32_t&, std::uint32_t) noexcept { return false; }
+// load (the residency generation the observer bumps; 0 = none yet).
+inline bool ResidencyRenewal(std::uint32_t& seen, std::uint32_t now) noexcept {
+    if(!now || now==seen) return false;
+    seen=now;
+    return true;
+}
 // The late-manifest receipt: how many of the remote's non-zero base ids the
 // allocation's preload covered (`wanted` = the non-zero ones).
 inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16_t* ids, unsigned count, unsigned& wanted) noexcept {

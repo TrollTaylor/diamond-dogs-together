@@ -2564,8 +2564,8 @@ void TestHud() {
                       std::strcmp(sentence, note.sentence) == 0,
                   "FormatWorldNote exact sentences");
         // Codes 5..12 have sentences since join-fix phase 2 (below), 13 since M1 (companion), 14 since the debug
-        // menu Travel (TRAVEL{a=mission, b=kind}); 15 stays reserved.
-        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{17}, std::uint8_t{255}})
+        // menu Travel (TRAVEL{a=mission, b=kind}), 17 since fb1031 gear (PARTNER_GEAR, below); 15 stays reserved.
+        for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{15}, std::uint8_t{18}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");
         {

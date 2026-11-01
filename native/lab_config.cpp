@@ -331,6 +331,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_follow_given = true;
         if (!ok) result.partner_ride_follow = false;
     }
+    else if (Equals(key, "partner_equip_midload")) {
+        // fb1031 gear, the mid-mission load of a late partner's gear: off unless named (lab and play); an invalid
+        // value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_equip_midload);
+        result.partner_equip_midload_given = true;
+        if (!ok) result.partner_equip_midload = false;
+    }
     else if (Equals(key, "partner_ride_getin_cut")) {
         // The get-in camera cut (design 8.60): an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_ride_getin_cut);
