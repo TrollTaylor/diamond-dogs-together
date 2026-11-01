@@ -480,6 +480,9 @@ $script:LabPartnerKeys = @(
     # borrowed wormhole look (CFG r[18] bits 2 and 4).
     @{ Key = 'fulton_early'; Json = 'fulton_early'; Kind = 'bool' },
     @{ Key = 'fulton_look'; Json = 'fulton_look'; Kind = 'bool' },
+    # r1101 Prove (lab and play, off unless named, only with fulton_sync): the receiver's soldier credit skipped (the
+    # Fultoner's save only; reverses D1). fulton_sync itself follows the gun profile since the r1101 Prove phase.
+    @{ Key = 'fulton_one_save'; Json = 'fulton_one_save'; Kind = 'bool' },
     # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lab and play, off in both unless named).
     @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.

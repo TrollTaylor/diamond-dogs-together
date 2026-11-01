@@ -304,7 +304,8 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_relief_given = true;
         if (!ok) result.world_relief = false;
     }
-    // r1101 fulton (docs/world-sync-protocol.md section 25): lab and play, off unless named.
+    // r1101 fulton (docs/world-sync-protocol.md section 25): lab and play, follows the gun profile unless named; an
+    // invalid value counts as named, off.
     else if (Equals(key, "fulton_sync")) {
         ok = ParseBool(value, result.fulton_sync);
         result.fulton_sync_given = true;
@@ -320,6 +321,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.fulton_look);
         result.fulton_look_given = true;
         if (!ok) result.fulton_look = false;
+    }
+    // r1101 Prove: the receiver's soldier credit skipped (the Fultoner's save only; reverses D1), off unless named.
+    else if (Equals(key, "fulton_one_save")) {
+        ok = ParseBool(value, result.fulton_one_save);
+        result.fulton_one_save_given = true;
+        if (!ok) result.fulton_one_save = false;
     }
     // Debug menu Spawn vehicle (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
     else if (Equals(key, "debug_vspawn")) {
@@ -1268,7 +1275,8 @@ bool EffectiveTravelLock(const LabConfig& config) noexcept {
 }
 std::uint8_t FultonCfgBits(const LabConfig& config) noexcept {
     if (!config.fulton_sync) return 0;
-    return static_cast<std::uint8_t>(1u | (config.fulton_early ? 2u : 0u) | (config.fulton_look ? 4u : 0u));
+    return static_cast<std::uint8_t>(1u | (config.fulton_early ? 2u : 0u) | (config.fulton_look ? 4u : 0u) |
+                                     (config.fulton_one_save ? 8u : 0u));
 }
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
@@ -1853,11 +1861,15 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // credited twice with VEHICLE_GONE off (fixed since), and the guest's LOADOUT block (D11) is the
     // user's open decision. It flips again only after a FRAME proof and a play rehearsal of those lines.
     if (!c.world_relief_given) c.world_relief = false;
-    // r1101 fulton: off unless named, in lab and play, until a hidden run shows the puppet's Fulton attach and the
-    // receiver's lift on both screens.
-    if (!c.fulton_sync_given) c.fulton_sync = false;
+    // r1101 fulton: follows the gun profile in lab and play since the r1101 Prove phase (hidden play run 7d924fac, both
+    // copies: the partner puppet's Fulton attach, the receiver's balloon lift of a soldier both ways and of the guest's
+    // jeep); a named 0 opts out. The early vehicle lift (no FultonFailed-after-FultonInfo probe yet), the borrowed
+    // wormhole look (no receiver frame yet) and fulton_one_save (reverses D1, the user's open decision) stay off unless
+    // named.
+    if (!c.fulton_sync_given) c.fulton_sync = gun;
     if (!c.fulton_early_given) c.fulton_early = false;
     if (!c.fulton_look_given) c.fulton_look = false;
+    if (!c.fulton_one_save_given) c.fulton_one_save = false;
     // Supply drops synced (docs/world-sync-protocol.md section 26): follows the gun profile in lab and play since the r1101
     // Prove phase (hidden play run 69efd63b, both copies: the host's script and iDroid AMMO / FULTON drops and the guest's
     // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named

@@ -370,9 +370,10 @@ do
         -- there, 255 and 0, 0, 0 unknown). The other copy's lift (W1's RequestForceFulton above; a vehicle's
         -- Seize {"Fulton"} in world_vehicle_rules.lua) takes that look only with fulton_look (r[18] bit 4: the level is
         -- global, so this copy's own Fultons in that window use it too): this copy's level for HOLD_MS, restored after
-        -- and never saved. A soldier's lift is visual only when the partner announced it: this copy's
-        -- TppTerminal.OnFulton is skipped once for it (the Fultoner keeps the recruit); with no FULTON from the partner
-        -- by then (an older partner, or its key off) the stock credit runs (D1). Vehicles: world_vehicle_rules.lua.
+        -- and never saved. With fulton_one_save (r[18] bit 8, off unless named: it reverses D1) a soldier's lift is
+        -- visual only when the partner announced it: this copy's TppTerminal.OnFulton is skipped once for it (the
+        -- Fultoner keeps the recruit); without the key, or with no FULTON from the partner by then (an older partner, or
+        -- its key off), the stock credit runs (D1). Vehicles: world_vehicle_rules.lua.
         local FU = {}
         W.fulton = FU
         OP.FULTON = OP.FULTON or 70
@@ -497,7 +498,8 @@ do
             local n = FU.note[kind == 1 and h or id]
             if n and t - n.at > NOTE_MS then n = nil end
             FU.lift[id] = t
-            if kind == 1 then
+            local one = kind == 1 and W.fultonOneSaveOn == true
+            if one then
                 -- Decided at OnFulton (about 3.7 s later): skipped only if the partner's FULTON has arrived by then.
                 FU.skip[id] = {at = t, h = h}
                 pcall(FU.install)
@@ -511,7 +513,7 @@ do
             end
             if FU.real ~= nil then FU.restoreAt = t + HOLD_MS end
             L("event=fulton;step=lift;kind=%d;id=%d;ent=%.0f;worm=%s;own=%d;set=%d;credit=%s", kind, id, h or 0,
-                n and tostring(n.worm) or "own", mine, set, kind == 1 and "0" or "vr")
+                n and tostring(n.worm) or "own", mine, set, one and "0" or kind == 1 and "1" or "vr")
         end
 
     end
