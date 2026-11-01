@@ -631,18 +631,26 @@ try {
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['debug_vspawn'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named debug_vspawn 0 turns Spawn vehicle off in play'
             # The Fulton synced (docs/world-sync-protocol.md section 25; hidden play run 7d924fac): Play-Coop never names
-            # fulton_sync; play defaults it on with the gun profile, the sub-keys and fulton_one_save off (D1: a partner's
+            # fulton_sync; play defaults it on with the gun profile, and since 0.14.7 fulton_early, fulton_look and
+            # fulton_guest_vehicle too (no game run of them); fulton_one_save stays off (D1: a partner's
             # soldier Fulton still recruits into both saves); a named 0 turns it off in play (no refusal bit).
             Assert-True (!$hostIni.Contains('fulton_') -and !$guestIni.Contains('fulton_') -and !$clipsIni.Contains('fulton_')) 'Play-Coop lab.ini never names a fulton key'
-            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])$($n['fulton_guest_vehicle'])" '10000' 'native: play defaults the Fulton synced on, its sub-keys off (also the guest''s lift of a host''s vehicle Fulton)'
+            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])$($n['fulton_guest_vehicle'])" '11101' 'native: play defaults the Fulton synced on with the early lift, the borrowed look and the guest''s lift of a host''s vehicle Fulton; fulton_one_save off'
+            $file = Join-Path $fixture 'play-fulton-sub-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_early=0`nfulton_look=0`nfulton_guest_vehicle=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['fulton_sync'])$($m['fulton_early'])$($m['fulton_look'])$($m['fulton_one_save'])$($m['fulton_guest_vehicle'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '10000|0x0|0/0' 'native: a named 0 turns each Fulton sub-key off in play'
             $file = Join-Path $fixture 'play-fulton-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_sync=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['fulton_sync'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named fulton_sync 0 turns the Fulton synced off in play'
             # Anim truth (docs/anim-truth.md; hidden play run 3c5609bb): Play-Coop never names partner_native_aim_truth; play
-            # defaults it on with the gun profile, its box / triggers / stance parts off; a named 0 turns it off in play.
+            # defaults it on with the gun profile, and since 0.14.7 its box / triggers / stance parts too (no game run of
+            # them); a named 0 turns each off in play.
             Assert-True (!$hostIni.Contains('partner_native_aim_truth') -and !$guestIni.Contains('partner_native_aim_truth') -and
                 !$clipsIni.Contains('partner_native_aim_truth')) 'Play-Coop lab.ini never names an anim truth key'
-            Assert-Equal "$($n['partner_native_aim_truth'])$($n['partner_native_aim_truth_box'])$($n['partner_native_aim_truth_triggers'])$($n['partner_native_aim_truth_stance'])" '1000' 'native: play defaults anim truth on, its parts off'
+            Assert-Equal "$($n['partner_native_aim_truth'])$($n['partner_native_aim_truth_box'])$($n['partner_native_aim_truth_triggers'])$($n['partner_native_aim_truth_stance'])" '1111' 'native: play defaults anim truth on with its box / triggers / stance parts'
+            $file = Join-Path $fixture 'play-aim-truth-parts-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth_box=0`npartner_native_aim_truth_triggers=0`npartner_native_aim_truth_stance=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_aim_truth'])$($m['partner_native_aim_truth_box'])$($m['partner_native_aim_truth_triggers'])$($m['partner_native_aim_truth_stance'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1000|0x0|0/0' 'native: a named 0 turns each anim truth part off in play'
             $file = Join-Path $fixture 'play-aim-truth-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_aim_truth'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_native_aim_truth 0 turns anim truth off in play'

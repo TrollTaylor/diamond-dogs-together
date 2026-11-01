@@ -209,10 +209,23 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         result.partner_native_aim_truth_given = true;
         if (!ok) result.partner_native_aim_truth = false;
     }
-    // Review animtruth-1: its parts no hidden run has exercised, off unless named.
-    else if (Equals(key, "partner_native_aim_truth_box")) ok = ParseBool(value, result.partner_native_aim_truth_box);
-    else if (Equals(key, "partner_native_aim_truth_triggers")) ok = ParseBool(value, result.partner_native_aim_truth_triggers);
-    else if (Equals(key, "partner_native_aim_truth_stance")) ok = ParseBool(value, result.partner_native_aim_truth_stance);
+    // Review animtruth-1: its parts no hidden run has exercised; each follows the gun profile unless named since 0.14.7
+    // (ResolveWeaponDefaults); an invalid value counts as named, off.
+    else if (Equals(key, "partner_native_aim_truth_box")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_box);
+        result.partner_native_aim_truth_box_given = true;
+        if (!ok) result.partner_native_aim_truth_box = false;
+    }
+    else if (Equals(key, "partner_native_aim_truth_triggers")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_triggers);
+        result.partner_native_aim_truth_triggers_given = true;
+        if (!ok) result.partner_native_aim_truth_triggers = false;
+    }
+    else if (Equals(key, "partner_native_aim_truth_stance")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_stance);
+        result.partner_native_aim_truth_stance_given = true;
+        if (!ok) result.partner_native_aim_truth_stance = false;
+    }
     else if (Equals(key, "partner_native_traverse")) {
         // Traversal replay (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_traverse);
@@ -1874,16 +1887,18 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.world_relief_given) c.world_relief = false;
     // r1101 fulton: follows the gun profile in lab and play since the r1101 Prove phase (hidden play run 7d924fac, both
     // copies: the partner puppet's Fulton attach, the receiver's balloon lift of a soldier both ways and of the guest's
-    // jeep); a named 0 opts out. The early vehicle lift (no FultonFailed-after-FultonInfo probe yet), the borrowed
-    // wormhole look (no receiver frame yet) and fulton_one_save (reverses D1, the user's open decision) stay off unless
-    // named.
+    // jeep); a named 0 opts out. The early vehicle lift (no FultonFailed-after-FultonInfo probe yet) and the borrowed
+    // wormhole look (no receiver frame yet) follow the gun profile too since 0.14.7, without a game run (the user's
+    // "enable it all", 2026-11-01); a named 0 opts out. fulton_one_save (reverses D1, the user's open decision) stays
+    // off unless named.
     if (!c.fulton_sync_given) c.fulton_sync = gun;
-    if (!c.fulton_early_given) c.fulton_early = false;
-    if (!c.fulton_look_given) c.fulton_look = false;
+    if (!c.fulton_early_given) c.fulton_early = gun;
+    if (!c.fulton_look_given) c.fulton_look = gun;
     if (!c.fulton_one_save_given) c.fulton_one_save = false;
     // The guest's lift of a vehicle the host Fultoned (another path: the host's VEHICLE_GONE) never ran in a game; only
-    // the guest-to-host vehicle lift did (runs 7d924fac, 19882881). Off unless named.
-    if (!c.fulton_guest_vehicle_given) c.fulton_guest_vehicle = false;
+    // the guest-to-host vehicle lift did (runs 7d924fac, 19882881). Follows the gun profile since 0.14.7 all the same
+    // (the user's "enable it all"); a named 0 opts out.
+    if (!c.fulton_guest_vehicle_given) c.fulton_guest_vehicle = gun;
     // Supply drops synced (docs/world-sync-protocol.md section 26): follows the gun profile in lab and play since the r1101
     // Prove phase (hidden play run 69efd63b, both copies: the host's script and iDroid AMMO / FULTON drops and the guest's
     // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named
@@ -1892,8 +1907,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Anim truth (docs/anim-truth.md): the loco / act HOLD-FIRE strip follows the gun profile in lab and play since the r1101
     // Prove phase (hidden play run 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and
     // RMB on the ladder left the puppet's gun down on the viewer's screen; the allowed pistol still aimed); a named 0 opts
-    // out. Its box / triggers / stance parts (no game run yet) stay off unless named.
+    // out. Its box / triggers / stance parts (no game run yet) follow the gun profile too since 0.14.7 (the user's
+    // "enable it all", 2026-11-01); each acts only with partner_native_aim_truth; a named 0 opts out.
     if (!c.partner_native_aim_truth_given) c.partner_native_aim_truth = gun;
+    if (!c.partner_native_aim_truth_box_given) c.partner_native_aim_truth_box = gun;
+    if (!c.partner_native_aim_truth_triggers_given) c.partner_native_aim_truth_triggers = gun;
+    if (!c.partner_native_aim_truth_stance_given) c.partner_native_aim_truth_stance = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

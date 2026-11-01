@@ -681,8 +681,9 @@ struct Settings {
     // its body is not aiming; the sender logs partner_aim_local per HOLD run.
     bool naim_truth;
     // Review animtruth-1: the parts of the rule no hidden run has exercised yet,
-    // each off unless named (lab.ini partner_native_aim_truth_box / _triggers /
-    // _stance) and each needing naim_truth: the box EVADE strip (TruthBoxStrip),
+    // each its own lab.ini key (partner_native_aim_truth_box / _triggers /
+    // _stance; on with the gun profile since 0.14.7, a named 0 opts out) and
+    // each needing naim_truth: the box EVADE strip (TruthBoxStrip),
     // the LT/RT zeroing (Compose and the hook's strips) and the stance change (a
     // refused aim's Aiming bits and the Lua Reloading input no longer hold the fix).
     bool naim_truth_box, naim_truth_triggers, naim_truth_stance;

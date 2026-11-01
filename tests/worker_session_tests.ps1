@@ -308,6 +308,7 @@ Assert-True ('labsetting fulton_sync=1' -cmatch $lineMatch.Groups[1].Value -and 
 # r1101 fulton review fixes: fulton_early=0|1 (the early vehicle lift) and fulton_look=0|1 (the borrowed wormhole look);
 # r1101 Prove: fulton_one_save=0|1 (the receiver's soldier credit skipped: the Fultoner's save only).
 # r1101 land: fulton_guest_vehicle=0|1 (the guest's balloon lift of a vehicle the host Fultoned; never run in a game).
+# Since 0.14.7 fulton_early, fulton_look and fulton_guest_vehicle follow the gun profile; a named 0 opts out.
 foreach($key in @('fulton_early','fulton_look','fulton_one_save','fulton_guest_vehicle')){
     foreach($ok in @("$key=1","$key=0","host:$key=1","guest:$key=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
