@@ -142,9 +142,17 @@ c:reset();c:tick();check(#c.tx==1 and c:has(c.logs,"step=removed"),"the lever's 
 -- A gone for another box removes nothing.
 c=F();c:request(1000,2000,3000);c:tick();c:rx(3,2,1,7,0,0,0,0,0,0,0,0,0,1)
 check(not c.removed and c.S.cur and c:has(c.logs,"step=gone_unknown"),"gone for another box: nothing removed")
--- A refused remove is logged.
+-- A refused remove is logged; it changed nothing on this screen, so no toast.
 c=F();c:request(1000,2000,3000);c:tick();c.removeReply={ok=0,why="no_box"};c:rx(3,2,1,1,0,0,0,0,0,0,0,0,0,1)
 check(c:has(c.logs,"ok=0;why=no_box"),"a refused remove is logged")
+check(#c.notes==0,"a refused remove shows no toast")
+-- The game's own end of a delivered box (run ddf44cee: every AMMO / FULTON box goes state 8 landed -> 14 delivered, then
+-- its fade timer resets it 2 s later, on both copies at once): step=delivered, nothing sent, no toast on the partner.
+c=F();c:request(1000,2000,3000);c:tick();c.nat.st=8;c:tick(12);c.nat.st=14;c:tick();c:reset();c.nat.st=0;c:tick()
+check(#c.tx==1 and c.S.cur==nil and c:has(c.logs,"event=supply;step=delivered;origin=1;oseq=1;"),"a reset at state 14: delivered, not sent")
+c:tick(4);check(#c.tx==1 and not c:has(c.logs,"step=gone_local"),"and no gone later (state 0)")
+c=F({host=false});c:rx(9,1,1,4,3,5,0,1000,2000,3000,1,7,6,0);c:tick();c.nat.st=8;c:tick(12);c.nat.st=14;c:tick();c:reset();c.nat.st=0;c:tick()
+check(#c.tx==0 and c.S.cur==nil and c:has(c.logs,"event=supply;step=delivered;origin=1;oseq=4;"),"the mirrored box's delivery: not sent either")
 -- Bad values refuse.
 c=F({host=false});c:rx(9,1,1,4,3,5,0,"x",321000,5000,1,7,6,0);check(#c.calls==0,"a bad value is never requested")
 c:rx(9,3,1,4,3,5,0,1,2,3,1,7,6,0);check(#c.calls==0,"an unknown kind is ignored")
