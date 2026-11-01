@@ -4,6 +4,16 @@ Lab key `partner_native_aim_truth=0|1` (**off unless named**, also in play and i
 `labsetting partner_native_aim_truth=1`). Needs the native gun stage. Branch `wp/anim-truth`; proof scenario
 `tools/worker/scenarios/r1101-animtruth-play.txt`.
 
+What the key turns on, and what is proven:
+- **Run-proven (`a8a69ae9`):** the HOLD/FIRE strip on the `loco` and `act` verdicts (Mother Base RMB / RMB+LMB, the
+  pistol control, RMB on the ladder). Since the review, a short pose gap keeps a refusal (below); the Prove run at
+  the final head covers it with the rest of the strip. This is the only part to turn on in play once the scenario's
+  Prove run passes.
+- **Not run in a game: their own keys, off unless named** (each needs `partner_native_aim_truth=1`; review
+  animtruth-1): `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT
+  zeroing in Compose and the hook), `partner_native_aim_truth_stance` (the stance-hold change). The scenario has no
+  box, gamepad or stance step; each needs its own hidden run before it goes on in play.
+
 **Hidden run `a8a69ae9`** (the scenario at `5340034f`+docs, mode=play, -WanSim bad, rtt ~175..182 ms, mb-ladder; the
 guest presses, the host films; logs of both copies and frames looked at, archive
 `mgs-coop-run-archive/r1101/animtruth/a8a69ae9...`, sheet `r1101/frames/animtruth/a8a69ae9-sheet.jpg`):
@@ -48,18 +58,29 @@ Each tick, on the remote's live act (the pose stream), its v5 slot and the weapo
 | `other` | an act the rule does not judge (cover, dive, CQC hold with its one-handed gun, the box) | pass |
 | `nostate` / `off` | no live remote act / key off | pass (the old raw path) |
 
-The strip joins the Arm's `sample_strip` (`BuildArm`), so Compose removes the raw level, edges, words, long12/tap12 and
-the pad's LT/RT; the aim intent's synthesized HOLD (flag/act sources) goes through the same strip. It is state-based:
+A pose gap (no live act while input packets still arrive) up to `stale_ms` (250 ms) after the last live act keeps a
+`loco`/`act` refusal and its strip (`TruthIn.gap_ms`, review animtruth-5): a lifted strip would make Compose see the
+held HOLD level rise and press, so the puppet would flicker its gun up for the gap. A longer loss fails open
+(`nostate`); a gap after an aim never strips. Cost: an aim that starts inside such a gap reaches the puppet at most
+250 ms late.
+
+The strip joins the Arm's `sample_strip` (`BuildArm`), so Compose removes the raw level, edges, words and long12/tap12
+(and, with `_triggers` only, the pad's LT/RT); the aim intent's synthesized HOLD (flag/act sources) goes through the
+same strip. It is state-based:
 the first RMB sample of a refused run is already stripped, and when the real aim act arrives the level rise gives one
 clean press. It is not a weapon strip: DASH and `hold_stripped` stay untouched (the real body may sprint).
 
-With the key also:
-- **Triggers (finder M8):** `Arm.truth_triggers`; the hook's `NativeView` zeroes LT for a stripped HOLD and RT for a
-  stripped FIRE after every weapon strip and after the refused support request's 0x8078 strip
-  (`partner_input::StripTriggers`), so a gamepad remote's held trigger follows the digital strip.
-- **Stance (finder M6):** a refused aim's Aiming bits (v5 and Lua) and the Lua Reloading bit (the R input; R is also
-  CARRY) no longer hold off the stance fix while a v5 group is live; the v5 Reloading (gun mode 11/12) still does.
-- **Telemetry:** aim parity's `remote_aiming` follows the verdict (aim/keep), not the pad.
+Behind their own keys (off unless named, not run in a game; each also needs the main key):
+- **Triggers (finder M8), `partner_native_aim_truth_triggers`:** `Config.strip_triggers` (Compose zeroes LT for a
+  HOLD and RT for a FIRE sample strip) and `Arm.truth_triggers` (the hook's window strip, `partner_input::StripWindow`,
+  zeroes them after every weapon strip and after the refused support request's 0x8078 strip), so a gamepad remote's
+  held trigger follows the digital strip.
+- **Stance (finder M6), `partner_native_aim_truth_stance`:** a refused aim's Aiming bits (v5 and Lua) and the Lua
+  Reloading bit (the R input; R is also CARRY) no longer hold off the stance fix while a v5 group is live; the v5
+  Reloading (gun mode 11/12) still does.
+- **Box (finder evidence M5), `partner_native_aim_truth_box`:** `TruthBoxStrip` (Fixed list below).
+
+With the main key, telemetry only: aim parity's `remote_aiming` follows the verdict (aim/keep), not the pad.
 
 Sender half (telemetry only, `TickAimLocal`): `partner_aim_local=no_aim` once per HOLD run held 250 ms with no local
 aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with the local gun record's 0x3C0 word.
@@ -69,9 +90,10 @@ aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with
 - `partner_aim_truth=<verdict>; remote_act=..; slot=..; gate=..; pad_hold=..; fire=..; flags=0x..; strip=0x..;
   refusals=..; confirms=..` per verdict change (at most every 100 ms; own cap 1000 per mission).
 - `partner_aim_truth=hold_run; result=refused|admitted|late; refused_ms; admitted_ms; len_ms; first_act; last_act;
-  flags; runs; trig_zeroed` when a remote HOLD run ends.
+  flags; runs; trig_zeroed` when a remote HOLD run ends; `trig_zeroed` counts the frames (Compose) and windows (the
+  hook's strips) whose non-zero LT/RT were zeroed since the run opened (0 unless `_triggers` is on).
 - `partner_aim_local=no_aim|aimed; act; held_ms|after_ms; gun3c0; mode; slot; runs; aimed; no_aim` (the sender).
-- `partner_aim_truth=box; on=0|1; remote_act; body_act; strip` when the box EVADE strip changes.
+- `partner_aim_truth=box; on=0|1; remote_act; body_act; strip` when the box EVADE strip changes (`_box` only).
 
 ## Known limits
 
@@ -84,18 +106,29 @@ aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with
 
 ## Finder report (r1101): every mismatch and its state
 
-Fixed behind the key (code and unit tests; not run in a game yet):
+Fixed behind the main key and run-proven (hidden run `a8a69ae9`):
 - Mother Base RMB aim (code-intent M1, state-gates M1, evidence M0) and RMB+LMB visual fire (M2): verdict `loco`.
+- RMB on the ladder (code-intent M4, state-gates M8): verdict `act`.
+
+Fixed behind the main key (code and unit tests; not run in a game; the same strip as above):
 - Weapon switch with RMB held (state-gates M7, log 857483 `remote_act=3; flags=0x11`): `loco` strips it. A remote that
   really aims a gun body 1 lacks (code-intent M3 mismatch): the puppet aims its own gun (act-true, the gun differs).
-- RMB/LMB in body-owned acts (code-intent M4, state-gates M8): trash box, toilet, knockdown, carried, sleep, rides,
-  hit, damage, and now ladder, pipe, wall climb, step_on and the ledge hang (`act`). CQC hold 91..96 passes: the real
-  body can aim its one-handed gun there.
-- Gamepad triggers past a strip (code-intent M8): `truth_triggers`.
+- RMB/LMB in the other body-owned acts (code-intent M4, state-gates M8): trash box, toilet, knockdown, carried, sleep,
+  rides, hit, damage, pipe, wall climb, step_on and the ledge hang (`act`). CQC hold 91..96 passes: the real body can
+  aim its one-handed gun there.
+- A short pose gap inside a refused HOLD (review animtruth-5): the refusal holds up to `stale_ms`.
+- Aim parity's `remote_aiming` from the verdict (code-intent M6, telemetry only).
+
+Fixed behind their own keys (code and unit tests; not run in a game; off unless named):
+- Gamepad triggers past a strip (code-intent M8): `partner_native_aim_truth_triggers`.
 - Dives in the open while the remote is boxed and body 1 is not (evidence M5, fb1031 friend 35992 / 36073):
-  `TruthBoxStrip` takes EVADE out of the remote's sample then (`partner_aim_truth=box; on=1`). Not run in a game.
-- The Lua Aiming/Reloading input bits in the stance hold and aim parity (code-intent M6). The dm=map fallback's
-  gun_busy still reads them (fallback only).
+  `TruthBoxStrip` takes EVADE out of the remote's sample then (`partner_aim_truth=box; on=1`):
+  `partner_native_aim_truth_box`. Its proof needs a scenario step with the remote boxed and the box refused, a box
+  evade, then the normal exit and an immediate dive (the verdict reads the interpolated act, so a dive pressed right
+  after the exit can be stripped).
+- The Lua Aiming/Reloading input bits in the stance hold (code-intent M6): `partner_native_aim_truth_stance`. Its
+  proof needs a stance change while R / RMB is held at Mother Base. The dm=map fallback's gun_busy still reads them
+  (fallback only).
 
 Deferred (why):
 - Binoculars drawn as a gun aim (code-intent M7): needs BINOCLE on the wire (see Known limits). Evidence M2's log

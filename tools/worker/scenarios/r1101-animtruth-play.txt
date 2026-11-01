@@ -18,6 +18,9 @@
 #   4. Reversed (the host holds RMB+LMB with its lethal rifle, the guest films): the same refusal on the guest's copy.
 #        host:  partner_aim_local=no_aim; guest: partner_aim_truth=loco ... and hold_run; result=refused
 # Hidden run a8a69ae9 (steps 1-3, before step 4 was added): all expectations met on both copies (docs/anim-truth.md).
+# The waitlogs of steps 1, 3 and 4 assert the claim (result=refused; act on a climb act), so a regression fails the
+# run; step 2 stays permissive (the slot decides). The sub-keys partner_native_aim_truth_box / _triggers / _stance
+# stay off here: this scenario has no box, gamepad or stance step and proves only the loco/act strip.
 # Frames: mb-rmb-*, mb-fire-*, ctl-rmb-*, lad-rmb-*, rev-fire-* on both screens (host = the puppet, guest = the real body).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, no build running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-animtruth-play.txt
@@ -58,7 +61,7 @@ wait 600
 both capture mb-rmb-b
 guest release
 waitlog guest 'partner_aim_local=(no_aim|aimed);' 10
-waitlog host 'partner_aim_truth=hold_run; result=' 10
+waitlog host 'partner_aim_truth=hold_run; result=refused;' 10
 wait 1500
 logmark both
 guest hold rmb+lmb 1500 nowait
@@ -67,7 +70,7 @@ both capture mb-fire-a
 wait 600
 both capture mb-fire-b
 guest release
-waitlog host 'partner_aim_truth=hold_run; result=' 10
+waitlog host 'partner_aim_truth=hold_run; result=refused;' 10
 wait 2000
 # --- 2. the positive control: the other gun key ---------------------------------------------------------------------
 logmark both
@@ -102,7 +105,7 @@ both capture lad-rmb-a
 wait 600
 both capture lad-rmb-b
 guest release
-waitlog host 'partner_aim_truth=(act|other|loco|aim|keep|draw|lane); remote_act=' 5
+waitlog host 'partner_aim_truth=act; remote_act=2[1-4];' 5
 wait 1000
 guest hold w 1500
 guest hold w 1500
@@ -125,7 +128,7 @@ wait 600
 both capture rev-fire-b
 host release
 waitlog host 'partner_aim_local=(no_aim|aimed);' 10
-waitlog guest 'partner_aim_truth=hold_run; result=' 10
+waitlog guest 'partner_aim_truth=hold_run; result=refused;' 10
 wait 1000
 host debug position
 guest debug position
