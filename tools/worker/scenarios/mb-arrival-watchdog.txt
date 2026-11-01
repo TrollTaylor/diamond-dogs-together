@@ -35,7 +35,9 @@ guest run position
 waitlog guest 'step=unstick; why=static_heli; m=30050' 60
 both capture w-unstick
 waitlog guest 'step=mb_foot; at=restart' 60
-wait 20000
+# The restart reload can take over 20 s (run 15eda621): wait for the watchdog's own on-foot end at the new start.
+waitlog guest 'step=watch_end; why=on_foot; m=30050' 120
+wait 3000
 both capture w-foot
 guest run position
 host run position
