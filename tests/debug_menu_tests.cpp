@@ -701,6 +701,11 @@ int main() {
                   (act::FindAction(id)->flags & act::kHostOnly) && (act::FindAction(id)->flags & act::kSyncs) &&
                   !(act::FindAction(id)->flags & (act::kNeedsPartner | act::kParam)),
               "Mother Base weapons rows: host only, syncs to the guest, no partner needed, fixed text");
+    // Not run-proven yet: the four rows are marked unverified and say so (play refuses them: not_available_yet).
+    for (const char* id : {"rules_wormhole_off", "rules_wormhole_on", "rules_mb_weapons_on", "rules_mb_weapons_off"})
+        Check(act::FindAction(id) && (act::FindAction(id)->flags & act::kUnverified) &&
+                  std::strstr(act::FindAction(id)->tooltip, "Not available yet in play"),
+              "Game rules rows: unverified until a play run proves them");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
     // F9 character switch (docs/debug-menu.md "Character"): both players, this PC only, fixed text,
