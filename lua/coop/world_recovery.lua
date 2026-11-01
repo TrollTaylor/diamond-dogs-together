@@ -219,7 +219,7 @@ do
         local B = W.probe and W.probe.handlers
         if B then
             local names = W.probe.NAMES
-            if names then names[16], names[17], names[18], names[20] = "shared_death", "host_continue", "shared_checkpoint", "host_target_dead" end
+            if names then names[16], names[17], names[18], names[21] = "shared_death", "host_continue", "shared_checkpoint", "host_target_dead" end
             local function probe(pr, permitted, fn, receipt)
                 local result = "refused"
                 if W.mode == 1 and on() and permitted and type(fn) == "function" then

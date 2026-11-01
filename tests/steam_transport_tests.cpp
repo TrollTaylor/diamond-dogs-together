@@ -2675,7 +2675,7 @@ void TestHud() {
         hud::PostWorldNote(3, 30020, 4, 30050, 40050);
         hud::PostWorldNote(3, 30020, 3, 40050, 40050);
         hud::PostWorldNote(1, 40010, 0, 0, 40010);
-        hud::PostWorldNote(15, 1, 2, 0, 0);  // no sentence (7 since join-fix phase 2, 13 since M1, 14 since Travel, 15 b=1 since arrival-prevent)
+        hud::PostWorldNote(15, 1, 2, 0, 0);  // no sentence (7 since join-fix phase 2, 13 since M1, 14 since Travel; 15 MISSION_END a=1 needs b=0)
         hud::Event notes[8]{};
         const unsigned taken = hud::Take(notes, 8, model.cursor());
         Check(taken == 7 && notes[0].kind == hud::EventKind::world_note && notes[0].arg == 2 &&
@@ -3134,9 +3134,9 @@ void TestSaveHandoffHud() {
     Check(!text::FormatWorldNote(9, 101, 0, 0, 0, sentence, sizeof(sentence)) && sentence[0] == 0 &&
               text::FormatWorldNote(9, 100, 0, 0, 0, sentence, sizeof(sentence)) && std::strstr(sentence, "(100%)"),
           "CONTINUE_DURING_HANDOFF needs a percent 0..100");
-    for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{15}})
-        Check(!text::FormatWorldNote(code, 30010, code == 15 ? 2u : 1u, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
-              "FormatWorldNote: code 13 a=30010 and 15 b=2 return false (14 is Travel; 15 b=1 the stuck-helicopter hint)");
+    for (const std::uint8_t code : {std::uint8_t{13}, std::uint8_t{19}})
+        Check(!text::FormatWorldNote(code, 30010, code == 19 ? 2u : 1u, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
+              "FormatWorldNote: code 13 a=30010 and 19 b=2 return false (14 is Travel; 19 b=1 the stuck-helicopter hint)");
     Check(text::FormatWorldNote(11, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(12, 40010, 40020, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars &&
               text::FormatWorldNote(5, 4294967295u, 4294967295u, 0, 0, sentence, sizeof(sentence)) && std::strlen(sentence) < hud::kToastChars,

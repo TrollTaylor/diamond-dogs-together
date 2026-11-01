@@ -919,14 +919,14 @@ do
     local refused = 0
     for _, p in ipairs(rh.tx) do if p.op == OP.GAME_OVER then refused = refused + 1 end end
     check(refused == 0 and not rh.R.ended, 'a refused host reserve sends nothing')
-    -- Lab probe host_target_dead (id 20, lab mode only): the host's stock TARGET_DEAD reserve, as f30050 does when a
+    -- Lab probe host_target_dead (id 21, lab mode only): the host's stock TARGET_DEAD reserve, as f30050 does when a
     -- staff member dies, through the co-op wrapper.
     local ph, pg = fixture(true, 3, true), fixture(false, 3, true)
     for _, c in ipairs({ph, pg}) do
         c.env.TppDefine.GAME_OVER_TYPE.TARGET_DEAD, c.env.TppDefine.GAME_OVER_RADIO.PLAYER_KILL_DD = 5, 9
     end
-    check(ph.W.probe.NAMES[20] == 'host_target_dead' and type(ph.W.probe.handlers.host_target_dead) == 'function',
-        'probe 20 is host_target_dead')
+    check(ph.W.probe.NAMES[21] == 'host_target_dead' and type(ph.W.probe.handlers.host_target_dead) == 'function',
+        'probe 21 is host_target_dead')
     ph.W.probe.handlers.host_target_dead({name = 'host_target_dead'})
     check(ph.reserved == 1 and ph.gameType == 5 and ph.gameRadio == 9 and ph.R.ended and
         logCount(ph, 'event=probe;id=host_target_dead;step=done;result=ok') == 1, 'the probe reserves TARGET_DEAD on the host')
