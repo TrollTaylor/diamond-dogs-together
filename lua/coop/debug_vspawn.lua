@@ -49,6 +49,17 @@ do
   local function onFoot()
    local f, o = get(TppMission, "CheckMissionState"), get(PlayerInfo, "OrCheckStatus")
    if type(f) ~= "function" or type(o) ~= "function" or f() ~= true then return false end
+   -- The stance still reads STAND in a vehicle (hidden run 5cdbfada D): ON_VEHICLE / ON_HORSE first, then a back seat
+   -- of the seats module (BOARD_SEAT lpv: a guest passenger has no ON_VEHICLE).
+   for _, k in ipairs({"ON_VEHICLE", "ON_HORSE"}) do
+    local s = get(PlayerStatus, k)
+    if s ~= nil and o({s}) == true then return false end
+   end
+   local S = get(get(W, "ridePose"), "seat")
+   if type(S) == "table" and type(S.board) == "function" and type(S.sat) == "function" then
+    local ok, v = pcall(function() return S.sat(S.board("poll")) end)
+    if ok and v ~= nil then return false end
+   end
    return o({get(PlayerStatus, "STAND"), get(PlayerStatus, "SQUAT"), get(PlayerStatus, "CRAWL")}) == true
   end
   local function vid(loc)
