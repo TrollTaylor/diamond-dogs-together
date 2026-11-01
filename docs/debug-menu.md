@@ -333,7 +333,7 @@ At the end of the Partner page: **Friendly fire: ON / OFF** (`friendly_fire 0|1`
   Soldiers are not affected. It stays as set across Travel and mission changes for the session.
 - Both screens show "Friendly fire is OFF: you and your partner cannot hurt each other." or "... is ON ...".
 - Wire: ARMS `0x3F` (docs/world-sync-protocol.md section 24); world note 18. Logs: `world_lua=event=arms; step=ff;
-  on=0|1; by=self|partner|host` and `world_lua=event=friendly_fire;step=dropped;side=shooter|target;seq=..`.
+  on=0|1; by=self|partner|host` and `world_lua=event=friendly_fire; step=dropped; side=shooter|target; seq=..`.
 
 ### Tools
 

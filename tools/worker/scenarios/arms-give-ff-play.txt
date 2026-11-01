@@ -18,7 +18,7 @@
 #   3) host: Partner > Friendly fire pressed -> friendly_fire 0: host world_lua=event=arms; step=ff; on=0; by=self,
 #      guest event=arms; step=ff; on=0; by=host; the toast "Friendly fire is OFF ..." on both screens. The guest
 #      (6 m behind, facing the host) fires two magazines at the host: the guest's copy logs
-#      event=friendly_fire;step=dropped;side=shooter;seq=..; the host stays healthy (downed_status down=0).
+#      event=friendly_fire; step=dropped; side=shooter; seq=..; the host stays healthy (downed_status down=0).
 #   4) guest presses Friendly fire (asks the host) -> friendly_fire_asked;want=1; host event=arms; step=ff; on=1;
 #      by=partner, guest by=host; toast "Friendly fire is ON ..." on both. The guest fires again: host
 #      friendly_hit=owner;...;down=1 and downed_status down=1 (the stock friendly fire again).
@@ -132,7 +132,7 @@ wait 1500
 both capture ff-off-shot
 host run downed_status
 host require down=0
-waitlog guest 'event=friendly_fire;step=dropped;side=shooter' 5
+waitlog guest 'event=friendly_fire; step=dropped; side=shooter' 5
 wait 2000
 both capture ff-off-after
 # --- 4) the guest asks for friendly fire ON (the host applies it); the guest shoots the host: down -----------------

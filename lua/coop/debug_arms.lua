@@ -70,7 +70,7 @@ do
     local changed = R.ff ~= on
     R.ff = on
     if (changed or by ~= "host") and type(W) == "table" and type(W.note) == "function" then pcall(W.note, NOTE, 1, on and 1 or 0) end
-    if changed or by ~= "host" then wlog(fmt("event=arms; step=ff; on=%d; by=%s", on and 1 or 0, by)) end
+    if changed or by ~= "host" then wlog(fmt("event=arms;step=ff;on=%d;by=%s", on and 1 or 0, by)) end
     pcall(publish, true)
   end
   if type(W) == "table" and type(W.handlers) == "table" then
@@ -132,11 +132,11 @@ do
       else for i = 0, 7 do if get(get(vars, "supportWeapons"), i) == equip then done = true end end end
       if done then
         D.pending = nil
-        wlog(fmt("event=arms; step=give; equip=%d; slot=%s; ok=1", equip, slot))
+        wlog(fmt("event=arms;step=give;equip=%d;slot=%s;ok=1", equip, slot))
         A.note(id, true, fmt("give_readback;equip=%d;slot=%s", equip, slot))
       elseif q.frames >= 300 then
         D.pending = nil
-        wlog(fmt("event=arms; step=give; equip=%d; slot=%s; ok=0", equip, slot))
+        wlog(fmt("event=arms;step=give;equip=%d;slot=%s;ok=0", equip, slot))
         A.note(id, false, fmt("give_readback_timeout;equip=%d", equip))
       end
     end
@@ -155,7 +155,7 @@ do
       end
       if W.paired ~= true then return false, "friendly_fire_refused;reason=not_paired" end
       if not send(1, on) then return false, "friendly_fire_refused;reason=tx" end
-      wlog(fmt("event=arms; step=ff_ask; want=%d", on and 1 or 0))
+      wlog(fmt("event=arms;step=ff_ask;want=%d", on and 1 or 0))
       return true, fmt("friendly_fire_asked;want=%d", on and 1 or 0)
     elseif cmd == "give_list" and #a == 1 then
       local ids = {}
