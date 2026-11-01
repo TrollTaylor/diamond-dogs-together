@@ -17,6 +17,7 @@
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/debug_arms.hpp"
 #include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/save_handoff_state.hpp"
 #include "mgscoop/save_handoff_wire.hpp"
@@ -43,7 +44,7 @@ struct State {
     float teleport[3]{}, yaw{}, step[3]{0, 0, 2};
     bool teleport_set{};
     int bookmark{}, payload{1};
-    bool spawn_come{};
+    bool spawn_come{false};  // opt-in: a "come" soldier's two copies each chase their own player (never corrected)
     int nearby_radius{80}, clear_radius{25};
     std::uint32_t selected{};
     char camp[65]{};
@@ -120,6 +121,19 @@ template<std::size_t N> void Copy(char (&dst)[N], const char* src) noexcept {
     std::snprintf(dst, N, "%s", src ? src : "");
 }
 bool Is(const ActionDef& a, const char* id) noexcept { return std::strcmp(a.id, id) == 0; }
+// Arms (docs/debug-menu.md "Give weapon"): the picker's choice, 0.. the listed guns of this mission, then the
+// support items; and the command for it (empty list or a stale state: nothing to send).
+int arms_pick = 0;
+bool ArmsGive(const Snapshot& s, char* out, std::size_t cap) noexcept {
+    const auto st = mgscoop::debug_arms::Get();
+    const std::uint32_t guns = st.known && st.mission == s.mission ? st.count : 0;
+    std::size_t support = 0;
+    const auto* items = mgscoop::debug_arms::SupportItems(support);
+    if (arms_pick < 0) return false;
+    const auto pick = static_cast<std::size_t>(arms_pick);
+    if (pick < guns) return mgscoop::debug_arms::FormatGiveGun(out, cap, st.guns[pick].equip);
+    return pick - guns < support && mgscoop::debug_arms::FormatGiveSupport(out, cap, items[pick - guns].token);
+}
 const ActionDef& Def(const char* id) noexcept {
     static const ActionDef missing{"missing", Category::tools, "Missing", nullptr, "", "", 0};
     const auto* a = act::FindAction(id);
@@ -164,6 +178,8 @@ bool Build(const ActionDef& a, const Snapshot& s, char* out, std::size_t cap) no
     if (Is(a, "partner_slowmo")) return act::FormatSlowmo(out, cap, ui.slow_rate, ui.slow_seconds);
     if (Is(a, "world_time_set")) return act::FormatTimeSet(out, cap, ui.hour, ui.minute);
     if (Is(a, "tools_console")) return debug_menu::ValidText(ui.console) && print(std::snprintf(out, cap, "%s", ui.console));
+    if (Is(a, "arms_give")) return ArmsGive(s, out, cap);
+    if (Is(a, "arms_friendly_fire")) return mgscoop::debug_arms::FormatFriendlyFire(out, cap, !mgscoop::debug_arms::Get().friendly_fire);
     return false;
 }
 // nullptr when available, else a short reason code.
@@ -266,13 +282,15 @@ void Chip(const ActionDef& a, const Snapshot& s) noexcept {
     const Ticket* ticket = nullptr;
     for (const auto& t : ui.tickets) if (t.action == &a) { ticket = &t; break; }
     if (!ticket || Now() - ticket->time > 20.0) return;
-    char text[64]{};
+    char text[96]{};
     ImVec4 color = kAmber;
     const char* full = "";
     if (!ticket->id) { std::snprintf(text, sizeof(text), "Refused by the queue"); color = kRed; }
     else if (const auto* r = FindReceipt(s, ticket->id)) {
         full = r->result;
-        std::snprintf(text, sizeof(text), "%s%.48s", r->status == 2 ? "... " : "", r->result);
+        // Plain words where the players need them (spawn results); the raw result stays in the tooltip.
+        if (const char* plain = act::ResultText(r->result)) std::snprintf(text, sizeof(text), "%s", plain);
+        else std::snprintf(text, sizeof(text), "%s%.48s", r->status == 2 ? "... " : "", r->result);
         color = r->status == 0 ? kGreen : r->status == 2 ? kAmber : kRed;
     } else std::snprintf(text, sizeof(text), "... queued");
     ImGui::SameLine();
@@ -512,6 +530,41 @@ void Player(const Snapshot& s) noexcept {
     ImGui::SetNextItemWidth(220); ImGui::SliderInt("Drop payload", &ui.payload, 1, 10);
     Rows({"player_drop_hip", "player_drop_back", "player_drop_secondary"}, s);
     Wrapped("Refill and drop use the gun already equipped in that slot. Payload changes the dropped item's contents; it does not create more pickups.");
+    Heading("Character (you)");
+    Rows({"character_snake", "character_dd_male", "character_dd_female", "character_avatar"}, s);
+    Rows({"character_default"}, s);
+    // Ocelot/Quiet in place are not run-proven (docs/debug-menu.md "Character"): off the page, launcher pick only.
+    Wrapped("Switches you right away and for the rest of this session; your partner sees the new look. "
+        "Ocelot and Quiet: pick them in the launcher.");
+    // Arms (docs/debug-menu.md "Give weapon"): the guns the game loaded in this mission, then the support items.
+    Heading("Give weapon");
+    const auto arms = mgscoop::debug_arms::Get();
+    const std::uint32_t guns = arms.known && arms.mission == s.mission ? arms.count : 0;
+    std::size_t support = 0;
+    const auto* items = mgscoop::debug_arms::SupportItems(support);
+    const int total = static_cast<int>(guns + support);
+    if (arms_pick >= total) arms_pick = 0;
+    char preview[64]{};
+    const auto label = [&](int i, char* out, std::size_t cap) noexcept {
+        if (i < static_cast<int>(guns)) mgscoop::debug_arms::FormatGunLabel(arms.guns[i], out, cap);
+        else std::snprintf(out, cap, "%s", items[i - static_cast<int>(guns)].label);
+    };
+    label(arms_pick, preview, sizeof(preview));
+    ImGui::SetNextItemWidth(330);
+    if (ImGui::BeginCombo("Weapon or item", preview)) {
+        for (int i = 0; i < total; ++i) {
+            if (i == static_cast<int>(guns)) ImGui::SeparatorText("Support items");
+            char text[64]{};
+            label(i, text, sizeof(text));
+            ImGui::PushID(i);
+            if (ImGui::Selectable(text, arms_pick == i)) arms_pick = i;
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    Row("arms_give", s);
+    if (!guns) ImGui::TextColored(kGrey, "No guns listed yet: they appear once your partner's body has loaded in this area.");
+    Wrapped("Full ammo. Guns: only the ones the game loaded here (the soldiers', yours, your partner's). Your old gun in that slot drops at your feet. Your partner may see another gun of yours in your hands until the next area.");
 }
 const char* StateName(std::uint32_t code) noexcept { return act::LifeCodeName(code); }
 void NearbyTable(const Snapshot& s) noexcept {
@@ -579,11 +632,10 @@ void Enemies(const Snapshot& s) noexcept {
         Row("spawn_enemy_here", s, {"Spawn enemy here", 260.0f, ImGui::GetFrameHeight() * 1.8f, true});
         ImGui::SameLine();
         ImGui::Checkbox("He comes at me (hostile)", &ui.spawn_come);
-        Wrapped("Moves the nearest living guard 5 m in front of you, facing you (lab.ini debug_soldier_warp=1, engine "
-                "set-transform message). Unchecked he ignores you; checked he attacks. If the native placement is off or "
-                "refused he is snapped to the nearest patrol route instead (5-60 m). Host only; when the world link is paired "
-                "the guest's copy of him is moved the same way (spawn sync; the receipt log shows remote spawn_enemy). At most 8 "
-                "per mission. He is armed: enable Auto-heal or keep Kill/Sleep ready.");
+        Wrapped("Brings the nearest living guard (15-250 m) 5 m in front of you, facing you. Unchecked he ignores you and "
+                "stays in sync; checked he attacks (your partner's copy chases them instead). Afghanistan and Africa free roam only (no enemies at Mother Base). If the in-front placement "
+                "is refused he goes to the nearest patrol route instead. Host only; your partner sees the same soldier. At most "
+                "8 spawned soldiers alive near you: dead, asleep, Fultoned or far ones free their place. He is armed.");
         Rows({"spawn_enemy_closest", "enemy_goto_spawn"}, s);
         if (s.enemy_spawn_valid) ImGui::Text("Last guard %u at X %.1f Y %.1f Z %.1f m", s.enemy_spawn_hash,
             s.enemy_spawn_pos_mm[0] * 0.001, s.enemy_spawn_pos_mm[1] * 0.001, s.enemy_spawn_pos_mm[2] * 0.001);
@@ -885,6 +937,11 @@ void Partner(const Snapshot& s) noexcept {
     }
     ImGui::EndChild();
     ImGui::PopStyleColor();
+    // Arms (docs/debug-menu.md "Friendly fire"): the host's switch for both players.
+    Heading("Friendly fire");
+    const bool ff = mgscoop::debug_arms::Get().friendly_fire;
+    Row("arms_friendly_fire", s, {ff ? "Friendly fire: ON (click to turn off)" : "Friendly fire: OFF (click to turn on)"});
+    Wrapped(s.host ? "You are the host: this sets it for both of you." : "The host decides: your click asks the host.");
 }
 void World(const Snapshot& s) noexcept {
     char clock[16]{};
@@ -925,6 +982,11 @@ void World(const Snapshot& s) noexcept {
         Row(id, s, {nullptr, 150.0f});
     }
     Wrapped("Time and weather follow to the guest at world level 3. Only the host can change them.");
+    Heading("Game rules");
+    Row("rules_wormhole_off", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("rules_wormhole_on", s, {nullptr, 190.0f});
+    Row("rules_mb_weapons_on", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("rules_mb_weapons_off", s, {nullptr, 190.0f});
+    Wrapped("Wormhole Fulton: only your own Fulton. Weapons at Mother Base: the host decides for both players; killing staff "
+        "still fails the mission. Nothing changes in your save.");
 }
 int ConsoleHistory(ImGuiInputTextCallbackData* data) noexcept {
     if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || !ui.history_count) return 0;

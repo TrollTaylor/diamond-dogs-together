@@ -1,10 +1,10 @@
 -- Lua 5.1 debug executor regression: the owner update is the only dispatcher.
 -- Args: debug_menu.lua, debug_equipment.lua, debug_enemy.lua, debug_player.lua,
--- debug_spawn.lua (splice order). No game or saves are used.
+-- debug_spawn.lua, debug_spawn_play.lua (splice order). No game or saves are used.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local chunks = {}
-for i = 1, 5 do
+for i = 1, 6 do
     chunks[i] = assert(io.open(assert(arg[i]), 'rb')):read('*a')
     check(#chunks[i]:gsub('\r\n', '\n') <= 16000, 'fragment native LF byte limit ' .. arg[i])
 end
@@ -177,7 +177,7 @@ local function fixture(options)
             'strict result/state receipt: ' .. tostring(text))
         c.state = fields; c.stateCount = (c.stateCount or 0) + 1; return function() end
     end
-    for i = 1, 5 do local chunk = assert(loadstring(chunks[i])); setfenv(chunk, env); chunk() end
+    for i = 1, 6 do local chunk = assert(loadstring(chunks[i])); setfenv(chunk, env); chunk() end
     c.env, c.D = env, env.e.MgsCoopDebug
     function c:tick()
         local a, b, d = env.e.OnUpdate('arg')
@@ -569,7 +569,8 @@ sp = spawnFixture(); sp:send('spawn_enemy closest'); sp.positionUnknown = true
 for i = 1, 120 do sp:tick() end
 check(sp.logs[#sp.logs][3] == 'spawn_position_timeout' and sp.D.enemy.last == nil, 'unreadable placement cannot invent a location')
 sp = spawnFixture(); for i = 1, 8 do sp.D.enemy.used['old_' .. i] = true end
-check(sp:send('spawn_enemy closest')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0, 'bounded pool avoids unbounded force-realized guard lifetime')
+check(sp:send('spawn_enemy closest')[3] == 'submitted_patrol_guard;ent=4294967295;scope=local' and sp.D.enemy.used.old_1 == nil,
+    'placed names that no longer resolve free their places (recycled pool)')
 sp = spawnFixture(); sp:send('spawn_enemy closest'); sp.env.vars.missionCode = 30020; sp:tick()
 check(sp.D.pending == nil and sp.D.enemy.last == nil and next(sp.D.enemy.used) == nil, 'travel clears pool reservations and old spawn coordinates')
 sp = spawnFixture(); sp.menuRefuse = true
@@ -781,8 +782,50 @@ sp = guardsFixture(); sp.env.mvars.ene_routeSetsDefine.afgh_test_cp = {sneak_day
 sp:send('spawn_enemy afgh_test_cp 1'); sp:tick(); sp:tick()
 final = sp.logs[#sp.logs][3]
 check(#final <= 160 and final:find('guard_position_readback;', 1, true) == 1 and final:find(';route=rrrr', 1, true), '64-character route stays within 160')
-sp = guardsFixture(); for i = 1, 8 do sp.D.enemy.used['old_' .. i] = true end
-check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0, 'pool cap applies to spawn here')
+-- Recycled pool (debug_spawn_play.lua): eight placed soldiers alive (NORMAL, enabled) within 150 m hold it.
+local function fill8(s)
+    for i = 1, 8 do
+        local name = 'old_' .. i
+        s.ids[name], s.life[100 + i], s.positions[100 + i] = 100 + i, 0, {10 + i, 20, 30}
+        s.D.enemy.used[name] = true
+    end
+    return s
+end
+sp = fill8(guardsFixture())
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0 and sp.warps == nil, 'pool cap applies to spawn here')
+for _, case in ipairs({
+    {'asleep', function(s) s.life[101] = 1 end}, {'dead', function(s) s.life[101] = 3 end},
+    {'fainted', function(s) s.life[101] = 4 end}, {'Fultoned', function(s) s.fultoned = 101 end},
+    {'recovered', function(s) s.recovered = 'old_1' end},
+    {'disabled', function(s) s.env.TppGameObject.NPC_STATE_DISABLE = 9; s.status = {[101] = 9} end},
+    {'more than 150 m away', function(s) s.positions[101] = {10, 20, 190} end}, {'gone', function(s) s.ids.old_1 = nil end}}) do
+    sp = fill8(guardsFixture()); case[2](sp)
+    local r = sp:send('spawn_enemy here')[3]
+    check(r:find('submitted_guard_here;ent=4294967295;', 1, true) == 1 and sp.D.enemy.used.old_1 == nil and sp.D.enemy.used.old_2,
+        'a placed guard who is ' .. case[1] .. ' frees his place: ' .. r)
+end
+sp = fill8(guardsFixture()); sp.positions[102] = {10, 20, 179}
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp.D.enemy.used.old_2, 'a placed guard 149 m away still holds his place')
+-- A freed guard's placement is released: his force-realize goes off and his area pin is dropped, so the
+-- force-realized and pinned guards stay bounded by the pool after many recycled presses.
+sp = fill8(guardsFixture()); sp.life[101], sp.life[102] = 3, 3
+sp.env.e.MgsCoopWorld = {pinned = {[71] = true, [72] = true, [73] = true}, ent = {[71] = {name = 'old_1'}, [72] = {name = 'old_2'}, [73] = {name = 'old_3'}}}
+sp:send('spawn_enemy here')
+local released = {}
+for _, v in ipairs(sp.calls) do if v[1] == 'SetForceRealize' and v[3].forceRealize == false then released[v[2]] = (released[v[2]] or 0) + 1 end end
+check(released[101] == 1 and released[102] == 1 and released[103] == nil, 'freed placed guards have their force-realize released, held ones keep it')
+local pins = sp.env.e.MgsCoopWorld.pinned
+check(pins[71] == nil and pins[72] == nil and pins[73] == true, 'freed placed guards are unpinned, held ones stay pinned')
+sp = guardsFixture(); sp.D.enemy.used.sol_a = true; sp.positions[5] = {10, 20, 230}; sp.life[6], sp.life[9] = 3, 3
+check(sp:send('spawn_enemy here')[3]:find('submitted_guard_here;ent=4294967295;', 1, true) == 1, 'an awake placed guard who walked away is placed again')
+sp = fill8(guardsFixture({host = false})); sp.life[101] = 3
+check(sp:send('spawn_enemy here')[3] == 'host_only' and sp.D.enemy.used.old_1, 'a guest press never touches the pool')
+-- Mother Base has no enemies: a plain refusal and no guard command.
+sp = guardsFixture({mission = 30050})
+check(sp:send('spawn_enemy here')[3] == 'spawn_mother_base' and sp:count('disable') == 0 and sp.warps == nil, 'Mother Base refuses spawn here')
+check(sp:send('spawn_enemy closest')[3] == 'spawn_mother_base' and sp:send('spawn_enemy afgh_test_cp 1')[3] == 'spawn_mother_base',
+    'Mother Base refuses every spawn row')
+check(sp:send('enemy_list')[3]:find('nearby=', 1, true) == 1, 'other enemy rows still answer at Mother Base')
 sp = fixture(); check(sp:send('spawn_enemy here')[3] == 'spawn_no_guard', 'no camp guard pool refuses spawn here')
 sp = guardsFixture(); sp.positions[5], sp.positions[6] = {11, 20, 30}, {12, 20, 30}
 check(sp:send('spawn_enemy closest')[3] == 'submitted_patrol_guard;ent=99;scope=local', 'closest falls through to the next camp')
@@ -826,6 +869,14 @@ final = sp.logs[#sp.logs][3]
 check(final:find('guard_here;ent=4294967295;d=5.0;', 1, true) == 1 and final:find(';mode=warp;come=1;sync=none;why=world_off;frames=2;leaf=engine', 1, true),
     'come warp final: ' .. final)
 check(forced(sp, false) == 1 and sp:count('SetDiscoveryPlayer') == 1, 'force realize released, then discovery')
+-- A guard more than 250 m away is never sent the native warp (an unrealized far guard can answer r=0 h=0, which
+-- latches the warp off for the process): he goes to the nearest patrol route instead (why=far).
+sp = warpFixture({{r = 0, h = 0, leaf = 'engine'}}); sp.positions[5], sp.positions[6], sp.positions[9] = {300, 20, 30}, {320, 20, 30}, {400, 20, 30}
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=far' and sp.warps == nil and forced(sp, true) == 0,
+    'far guard: route snap, no native warp request')
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;why=far;', 1, true), 'far route final keeps why=far: ' .. sp.logs[#sp.logs][3])
+sp = warpFixture({{r = 0, h = 1, leaf = 'engine'}}); sp.positions[5], sp.positions[6], sp.positions[9] = {240, 20, 30}, {320, 20, 30}, {400, 20, 30}
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=warp' and #sp.warps == 1, 'a guard within 250 m is still warped')
 sp = warpFixture({{r = -1, h = 0}, {refused = 'dispatch'}})
 sp:send('spawn_enemy here'); sp:tick()
 check(sp.logs[#sp.logs][3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=dispatch' and sp.logs[#sp.logs][2] == 2,
@@ -871,9 +922,11 @@ sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.loading = t
 check(sp.logs[#sp.logs][3] == 'action_context_changed' and forced(sp, false) == 0, 'mission not in gameplay: no guard command')
 sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.env.vars.missionCode = 30020; sp:tick()
 check(sp.D.pending == nil and forced(sp, false) == 0, 'mission change: no guard command to the old mission')
-sp = warpFixture({{r = 0, h = 1}}); for i = 1, 7 do sp.D.enemy.used['old_' .. i] = true end
+sp = fill8(warpFixture({{r = 0, h = 1}})); sp.D.enemy.used.old_8 = nil
 sp:send('spawn_enemy here'); sp:tick(); sp:tick()
-check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight per mission includes warped guards')
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight alive near you include warped guards')
+sp.life[5] = 3
+check(sp:send('spawn_enemy here')[3]:find('submitted_guard_here;ent=2147483648;', 1, true) == 1, 'the warped guard killed: the next press brings another')
 -- enemy_list and enemy <op>
 f = fixture(); f.life[6] = 1
 check(f:send('enemy_list 50')[3] == 'nearby=2;radius=50', 'nearby list result')

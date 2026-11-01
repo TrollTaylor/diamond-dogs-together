@@ -685,6 +685,12 @@ struct LabConfig {
     // partner's TRAVEL refused (world::Config::travel).
     bool debug_travel = true;
     bool debug_travel_given = false;
+    // Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here"): in play mode the engine set-transform
+    // placement of debug_soldier_warp (lab only) is admitted by this key, host warp and the guest copy's warp alike,
+    // with the same pinned contract, gates and latch. Lab keeps debug_soldier_warp. Off until a play run proves it
+    // (spawn-enemy-play): play keeps the route snap unless named 1.
+    bool spawn_warp = false;
+    bool spawn_warp_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -692,8 +698,8 @@ struct LabConfig {
     bool partner_seat_shot = false;
     bool partner_seat_shot_given = false;
     // Melee on the partner (docs/native-puppet.md "Melee"; partner_melee.hpp): the local CQC strike (act 113 / 114) that
-    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Off unless
-    // named, in lab and play, until a hidden run on both copies shows it; a named 1 runs it in both (no refusal bit).
+    // reaches body 1 hands one friendly hit, cause sleep, to the partner's copy (the stock player sleep there). Follows the
+    // gun profile in lab and play (hidden run 4bc7b732); a named 0 opts out, a named 1 runs in both (no refusal bit).
     bool partner_melee = false;
     bool partner_melee_given = false;
     // Round-1 actions track: the DM overlay lever (off) and the act census

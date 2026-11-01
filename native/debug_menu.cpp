@@ -262,7 +262,8 @@ bool ParseLuaStateText(const char* text, std::size_t size, LuaFlags& out) noexce
     if (fields == 2) return reader.End();
     if (!reader.Next().Unsigned(0xffffffffu, out.pending_id)) return false;
     const auto kind = reader.Next();
-    if (!(kind.Is("none") || kind.Is("warp") || kind.Is("equip") || kind.Is("spawn") || kind.Is("enemy"))) return false;
+    if (!(kind.Is("none") || kind.Is("warp") || kind.Is("equip") || kind.Is("spawn") || kind.Is("enemy") || kind.Is("character") ||
+          kind.Is("give"))) return false;
     kind.CopyTo(out.pending_kind);
     if (!reader.Next().Unsigned(100000, out.pending_frames)) return false;
     if (!reader.Next().Unsigned(1, flag)) return false;

@@ -624,6 +624,36 @@ if arg[2] then
     a,b=pair(); b.W.paired=false
     b.W.handlers[OP.FRIENDLY_HIT]({1,0,1,100000,2},b.now)
     check(not b.appliedHits, 'unpaired friendly packet cannot change native state')
+    -- Friendly fire off (debug menu, the host's switch; debug_arms.lua sets W.arms.ff on both copies): the
+    -- partner's bullets, explosives and melee all arrive through this queue and are dropped at both ends.
+    local function sent(c, op) local n = 0; for _, p in ipairs(c.tx) do if p.op == op then n = n + 1 end end; return n end
+    local function logged(c, text) for _, l in ipairs(c.logs) do if l:find(text, 1, true) then return true end end end
+    for _, cause in ipairs({0, 2}) do
+        a, b = pair(); a.W.arms, b.W.arms = {ff = false}, {ff = false}
+        a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 5, cause == 2 and 0 or 1000000, cause
+        a.now, b.now = a.now + 100, b.now + 100; a.D.tick(a.now); b.D.tick(b.now)
+        check(sent(a, OP.FRIENDLY_HIT) == 0 and a.hitAcks == 1 and a.native.hitSequence == nil,
+            'friendly fire off: the shooter consumes its queued hit and sends no FRIENDLY_HIT')
+        pump(a, b); pump(b, a); step(a, b, 100); step(a, b, 100)
+        check(not b.appliedHits and not b.native.down and logged(a, 'event=friendly_fire;step=dropped;side=shooter;seq=5'),
+            'friendly fire off: a lethal bullet or a sleep strike never downs or hurts the partner')
+    end
+    -- A FRIENDLY_HIT from a copy that still has it on (an older switch in flight) is dropped by the target.
+    a, b = pair(); b.W.arms = {ff = false}
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 6, 100000, 0
+    step(a, b, 100); step(a, b, 100)
+    check(not b.appliedHits and b.native.life == nil and
+        logged(b, 'event=friendly_fire;step=dropped;side=target;seq=6'), 'friendly fire off on the target: never queued, never applied')
+    -- Hits queued before the switch are flushed, never applied after it.
+    a, b = pair(); b.failFriendly = true
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 7, 100000, 0
+    step(a, b, 100); b.W.arms = {ff = false}; b.failFriendly = false; step(a, b, 100); step(a, b, 100)
+    check(not b.appliedHits, 'a hit queued before friendly fire went off is flushed')
+    -- On again (the default): the same hit lands.
+    a, b = pair(); a.W.arms, b.W.arms = {ff = true}, {ff = true}
+    a.native.hitSequence, a.native.hitDamageMilli, a.native.hitCause = 8, 100000, 0
+    step(a, b, 100); step(a, b, 100)
+    check(b.appliedHits == 1 and b.native.life == 900, 'friendly fire on again: the partner is hurt as before')
 end
 -- Actual composed sleep authority: host accumulates certified fresh gameplay
 -- per accepted generation; interruptions pause it, and Action can wake early.

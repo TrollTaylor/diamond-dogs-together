@@ -124,6 +124,7 @@
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_arms.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -2688,10 +2689,11 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!sw::ParseReceipt(text, size, id, request)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (off unless named 1).
+    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
-    if (labc.role == mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("host");
+    if (labc.role == mgscoop::LabRole::guest) return refuse("host");
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     if (!debug::DispatchedCommand(id, "spawn_enemy here")) return refuse("command");
@@ -2750,14 +2752,18 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     sw::Request request{};
     if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
-    if (labc.role != mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("role");
-    if (!labc.debug_soldier_warp) return refuse("disabled");
+    if (labc.role != mgscoop::LabRole::guest) return refuse("role");
+    // Lab: lab.ini debug_soldier_warp=1 (play refuses that key); play: spawn_warp (off unless named 1).
+    if (!(labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp)) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     const auto grant = mgscoop::world_link::FindGrant(seq);
     if (!grant.found) return refuse("grant");
+    // Play (spawn_warp) admits only the spawn placement (kind 1); patrol/combat corrections stay lab only (the old
+    // play refusal, so the guest's Lua still logs native_off;native=role for them).
+    if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
@@ -5332,6 +5338,38 @@ void CoopRescueTick() noexcept {
         if(now-logged>2000){logged=now;Log(state.peerWake?"coop_rescue=put_down; reason=teammate_wake_granted\r\n":"coop_rescue=put_down; reason=teammate_recovered\r\n");}
     }
 }
+// Debug menu arms (lua/coop/debug_arms.lua, docs/debug-menu.md "Give weapon"): MGS_COOP_ARMS_RESIDENT_V1 answers the
+// protected stock guns of the equip writer's last census of this mission (a copy of its status: no new game read,
+// no call); MGS_COOP_ARMS_STATE_V1 stores Lua's friendly fire switch and gun list for the menu. Both only while the
+// debug menu is enabled, on the runtime thread.
+bool SelectArmsReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_ARMS_RESIDENT_V1'";
+    constexpr char state[]="return 'MGS_COOP_ARMS_STATE_V1' -- ";
+    if(!buffer) return false;
+    const bool is_query=size==sizeof(query)-1 && std::memcmp(buffer,query,size)==0;
+    const bool is_state=size>sizeof(state)-1 && size<=768 && std::memcmp(buffer,state,sizeof(state)-1)==0;
+    if(!is_query && !is_state) return false;
+    static constexpr char none[]="return nil";
+    replacement={none,sizeof(none)-1};
+    if(!mgscoop::debug_menu::Enabled() || !OnRuntimeThread()) return true;
+    if(is_state) {
+        mgscoop::debug_arms::State s{};
+        if(mgscoop::debug_arms::ParseState(buffer+sizeof(state)-1,size-(sizeof(state)-1),s)) mgscoop::debug_arms::Store(s);
+        return true;
+    }
+    unsigned short mission=0;
+    mgscoop::equipment_stock_writer::Status status{};
+    mgscoop::equipment_stock_writer::ReadStatus(status);
+    mgscoop::debug_arms::Entry census[48]{};
+    const std::size_t count=status.resident_count<48 ? status.resident_count : 48;
+    for(std::size_t i=0;i<count;++i)
+        census[i]={status.resident[i].equip,status.resident[i].type,status.resident[i].flags};
+    const bool ok=status.census_ok && ReadMission(mission) && status.mission==mission;
+    static char reply[256]{};
+    const auto n=mgscoop::debug_arms::FormatResidentReply(ok,status.mission,census,count,reply,sizeof(reply));
+    if(n) replacement={reply,n};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5524,6 +5562,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectTeamReceipt(buffer, size, replacement)) return true;
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
+    if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -6151,13 +6190,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
-                    if (labc.debug_soldier_warp) {
+                    if (labc.mode == mgscoop::LabMode::lab ? labc.debug_soldier_warp : labc.spawn_warp) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
-                        // or a guest spawn-sync grant (GuestWarpReceipt).
+                        // or a guest spawn-sync grant (GuestWarpReceipt). Lab: debug_soldier_warp; play: spawn_warp.
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
-                        if (soldier_warp_ready) Log("soldier_warp=ready; key=debug_soldier_warp; call=manager_vt38_send; hop=runtime_census\r\n");
+                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; call=manager_vt38_send; hop=runtime_census\r\n",
+                                                          labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

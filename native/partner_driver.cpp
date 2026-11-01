@@ -5103,10 +5103,10 @@ void TickActLog(Driver& d, const Hooks& h, const pp::State& st, const Clock& clo
     if (po.capped_now) EmitFormat(h, "partner_pad_dropped=capped; limit=%u\r\n", pal::kPadLineCap);
 }
 
-// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): the local player's second CQC press within 2 s
-// (one press is a 113 and the 114 out of it, run 1526e58a) that reaches body 1 (shown on this copy, on foot: not range- or ride-hidden, not seated or
+// Melee on the partner (partner_melee.hpp; docs/native-puppet.md "Melee"): one local CQC press (its 113 or the 114 out
+// of it, run 1526e58a) that reaches body 1 (shown on this copy, on foot: not range- or ride-hidden, not seated or
 // riding) hands one friendly hit, cause sleep, to the downed owner's queue; the partner's own copy applies it
-// (FRIENDLY_HIT, the stock player sleep). One line per strike edge (a jab logs verdict=jab and queues nothing).
+// (FRIENDLY_HIT, the stock player sleep). One line per strike edge (the same press's other edge logs verdict=repeat).
 // fb1031 review: body 1's position is its drawn body (read_body): the slot stays at the boarding spot while seated.
 void TickMelee(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock, bool terminating, bool anim_ok, const pp::Anim& anim,
                const sync::AnimState& remote_anim) noexcept {

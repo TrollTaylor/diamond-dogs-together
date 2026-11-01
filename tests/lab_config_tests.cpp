@@ -581,6 +581,30 @@ int main() {
                   "an invalid debug_travel value refuses");
         }
     }
+    // Spawn enemy here for players (spawn_warp, docs/debug-menu.md "Spawn enemy here"): the engine set-transform
+    // placement in play mode, off until a play run proves it: on only when named 1 (lab keeps debug_soldier_warp, which
+    // play still refuses).
+    {
+        Check(!LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp off by default (not run-proven in play)");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
+            const auto plain = Lab(base);
+            Check(!plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp off when not named (lab and play)");
+            const auto named = Lab(base + "spawn_warp=1\n");
+            Check(named.spawn_warp && named.spawn_warp_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named spawn_warp 1 runs in lab and play");
+            const auto off = Lab(base + "spawn_warp=0\n");
+            Check(!off.spawn_warp && off.spawn_warp_given && off.play_refused == 0, "a named spawn_warp 0 stays off");
+        }
+        const auto play = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\ndebug_soldier_warp=1\n");
+        Check(!play.debug_soldier_warp && !play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
+              "play still refuses the lab key; spawn_warp stays off");
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=host\nspawn_warp=") + value + "\n");
+            Check(!invalid.spawn_warp && !invalid.spawn_warp_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid spawn_warp value refuses");
+        }
+    }
     // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND
     // play since the seat-fixes merge (design 8.37 lab A/B 60faf9fc; play rehearsal design 8.43); off without the gun
     // profile (the RequestBullet hook comes with the native weapons); a named 0 opts out in lab and play, a named 1 runs
@@ -610,17 +634,17 @@ int main() {
         }
     }
     // Melee on the partner (partner_melee, docs/native-puppet.md "Melee"): the local CQC strike that reaches body 1 hands
-    // one friendly hit (the stock sleep) to the partner's copy. Off unless named in lab AND play until a hidden run proves
-    // it; a named 1 runs it in both.
+    // one friendly hit (the stock sleep) to the partner's copy. Follows the gun profile in lab AND play since melee-one
+    // (hidden play run 4bc7b732: one press each way put the other player to sleep on their own screen, a press from
+    // 4.4 m and one with the partner at the striker's back did nothing); a named 0 opts out, a named 1 runs in both.
     {
         Check(!LabConfig{}.partner_melee && !LabConfig{}.partner_melee_given && !Lab("").partner_melee, "melee off without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            // Off unless named until a hidden run on both copies proves it (fb1031: every run was blocked before admission).
-            Check(!profile.partner_melee && !profile.partner_melee_given && profile.invalid_values == 0 && profile.play_refused == 0,
-                  "melee stays off with the gun profile until proven (not named)");
+            Check(profile.partner_melee && !profile.partner_melee_given && profile.invalid_values == 0 && profile.play_refused == 0,
+                  "the gun profile turns melee on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_melee=1\n");
             Check(named.partner_melee && named.partner_melee_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0, "a named melee 1 runs in lab and play");

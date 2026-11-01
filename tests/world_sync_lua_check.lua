@@ -1824,7 +1824,8 @@ if arg[8] then
         at = at + #spliced
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
-    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua'}) do
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua', 'debug_character.lua',
+        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')

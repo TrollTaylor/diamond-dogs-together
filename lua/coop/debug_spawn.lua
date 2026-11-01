@@ -133,6 +133,7 @@ do
       local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route;why=" .. why})
       return ok, msg .. ";mode=route;why=" .. why
     end
+    if s.distance > 62500 then return route("far") end
     local r, why = warp(s, id)
     if not r then return route(why) end
     local function landed() if get(r, "h") == 1 then q.done = q.frames end end
@@ -279,30 +280,12 @@ do
     return true, fmt("enemy_info;ent=%.0f;name=%s;cp=%s;state=%d;distance_m=%s", s.hash, s.name, tostring(s.cp), wire(s),
       v and fmt("%.1f", dist(v, pose())) or "unknown")
   end
-  local PHASES = {sneak = "SNEAK", caution = "CAUTION", evasion = "EVASION", alert = "ALERT"}
-  local function phase(a)
-    if not A.hostOnly() then return false, "host_only" end
-    if #a ~= 3 or not PHASES[a[3]] then return false, "phase_args" end
-    local k = "PHASE_" .. PHASES[a[3]]
-    local v = get(TppGameObject, k)
-    if v == nil then return false, "missing_" .. k end
-    local cp = a[2]
-    if cp == "nearest" then
-      local list = R.camps()
-      cp = list and list[1] and list[1].name
-    end
-    if not R.name(cp) or type(get(get(mvars, "ene_soldierDefine"), cp)) ~= "table" then return false, "cp_unknown" end
-    local cid = call(GameObject, "GetGameObjectId", cp)
-    if not integer(cid, 0, 65534) then return false, "cp_unknown" end
-    send(cid, {id = "SetPhase", phase = v})
-    return true, fmt("submitted_phase;cp=%s;phase=%s;%s", cp, a[3], A.sync("enemy"))
-  end
+  -- cp_phase is answered by debug_spawn_play.lua (spliced later; this file's 16000-byte limit).
   function S.run(a, id)
     local cmd = a[1]
     if cmd == "spawn_enemy" then return spawn(a, id)
     elseif cmd == "enemy_list" then return nearbyList(a, id)
     elseif cmd == "enemy" then return op(a, id)
-    elseif cmd == "cp_phase" then return phase(a)
     elseif cmd == "enemy_unmark" and #a == 1 then
       if not A.hostOnly() then return false, "host_only" end
       local n = 0

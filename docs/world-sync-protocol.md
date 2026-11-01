@@ -1894,3 +1894,25 @@ refusal shows world note 14 b=5, reason 8 b=7). After a landing or a Bring warp 
 (`Player.RequestToSetCameraRotation`). `world_link::HandleNote` shows and logs codes 1..14 (`world::NoteShown`). World
 note 14 TRAVEL{a=mission, b=1 travelling, 2 brought there, 3 brought here, 4 bringing, 5 refused, 6 stopped, 7 another
 area (Bring across missions refused)}.
+
+## 23. Game rules (debug menu; docs/debug-menu.md "Game rules")
+
+**RULES 0x3E** (62; host to guest, control queue, reliable, level 3, lab and play, never a request; 2 fields, 3 bytes):
+seq, Mother Base weapons (0 stock, 1 allowed). The host sends it on each press of Weapons at Mother Base / Stock Mother
+Base rules and again on each new pairing once it chose (`lua/coop/debug_rules.lua`); it needs the pairing (a refused
+send waits 2 s). The guest applies the host's value at 30050, keeps it through a mission load and drops it after 60 s
+without the pairing. A partner without the op skips it by its length (unknown_op). The wormhole toggle is each
+player's own and sends nothing.
+
+## 24. Arms (debug menu Friendly fire; docs/debug-menu.md "Friendly fire")
+
+Op `0x3F` ARMS (63), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
+3 fields, 4 bytes: `seq` (u16 1..), `kind` (u8 1 ask / 2 state), `ff` (u8 0 off / 1 on). The host decides: a guest's
+press sends kind 1 (its wanted value), the host applies it and answers with kind 2; the host's own press sends kind 2;
+the host repeats kind 2 whenever a guest pairs. A guest never applies kind 1, the host never applies kind 2. Lua
+(`lua/coop/debug_arms.lua`) keeps the switch in `W.arms.ff` (default on, kept across missions); off,
+`world_friendly.lua` drops the partner's hits at both ends of FRIENDLY_HIT (the shooter consumes its queued hit
+without sending, the target never queues or applies one). World note 18 ARMS{a=1, b=0 off | 1 on} toasts the switch
+(the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Notes 15 and 17 are
+free; 16 is MISMATCH (posted by native world_link).
+A partner without the op skips it by its length (unknown_op): its own switch stays on.

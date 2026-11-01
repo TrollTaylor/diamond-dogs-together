@@ -1,24 +1,24 @@
 # fb1031 melee: a player's CQC strike on the other player (docs/native-puppet.md "Melee") at the play defaults, -WanSim
 # bad, seed afgh-ledge for both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt, enemies cleared).
-# partner_melee is off unless named until a run shows it (f0b7e720), so this names it on both copies (labsetting).
-# Not run yet: 52fdd178 and its retry 79487b41 were refused (the guest's D3D11 device, E_OUTOFMEMORY).
-# fb1031 prove round (the vanilla CQC feel): one jab (local act 113) logs verdict=jab and queues nothing; the combo's
-# finisher (114 straight out of a 113) lands.
-#   j) the guest stands 1 m behind the host, facing it, and presses LMB once (no RMB: CQC): partner_melee=strike;
-#      act=113; verdict=jab; queued=0, no friendly_hit; the host still standing on both screens. Run 1526e58a: the one
-#      press gave 113 then 114 (219 + 549 ms) and the 114 landed; since 9dd5dcaa that 114 logs verdict=jab too.
-#   a) the guest presses LMB four times (the punch combo): its copy logs the jabs, then act=114 (the finisher) ->
-#      partner_melee=strike; act=114; verdict=land; queued=1. The host's copy applies one friendly hit, cause
-#      sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep on the
-#      ground on both screens.
-#   b) after the host's sleep auto wake (30 s, host-granted), the host stands 1 m behind the guest and strikes: the same
-#      lines with the roles swapped; the guest asleep on both screens.
-#   c) a combo 3 m away (the guest behind the host): partner_melee=strike; act=113; verdict=range; queued=0, no hit.
-# fb1031-on (run 9018ae47): placebehind teleports 3 m up and the drop carries the placed player about 1.4 m forward (the
-# guest placed 1.19 m behind the host landed 21 cm in front of it: the host copy's partner_body agreed with the guest's
-# own dist_cm=21; the host placed 1 m behind landed 40 cm past the guest). So 2.5 m placements give about 1 m, 4.5 m about
-# 3 m, and a is placed again after j's jab (a jab steps about 0.6 m forward).
-# Expected NEVER (sliced): friendly_hit=ignored; step=error; viewer_changed; faults.
+# This names partner_melee=1 on both copies (labsetting), so it runs whatever the default is (run 4bc7b732 proved a-d;
+# since then the key follows the gun profile).
+# melee-one (the user's decision): ONE connecting CQC press knocks the other player down, as it does a soldier. A press
+# is its 113 edge and the 114 out of it (run 1526e58a: 113 for 219 ms, then 114 for 549 ms); either strike in reach
+# lands, the other logs verdict=repeat (no second hit).
+#   a) the guest stands about 1 m behind the host, facing it, and presses LMB once (no RMB: CQC): the guest's copy logs
+#      partner_melee=strike; act=113 (or 114); verdict=land; queued=1 once; the host's copy applies one friendly hit,
+#      cause sleep: friendly_hit=owner;...;cause=2;applied=1;down=1 (the stock player sleep). Frames: the host asleep
+#      (ASLEEP screen) on the host's screen; the host down and the HOLD E WAKE UP prompt on the guest's.
+#   b) after the host's own sleep ends (about 30 s; run 4bc7b732: the host's own wake logs no step=sleep_auto_wake, the
+#      guest's census shows the host's body in remote=133 sleep_wake), the host stands about
+#      1 m behind the guest and presses once: the same lines with the roles swapped; the guest asleep on its own screen.
+#   c) after the guest's auto wake (host-granted: step=sleep_auto_wake; role=2 on the host's log), the guest placed 6 m behind the host (about 4.5 m after the drop) presses once:
+#      verdict=range; queued=0 for its 113 and 114, no friendly_hit on the host.
+#   d) the guest placed about 1 m behind the host (the host facing away from it), the HOST presses once: the guest is at
+#      the host's back, verdict=angle; queued=0, no friendly_hit on the guest.
+# Placement (run 9018ae47): placebehind teleports 3 m up and the drop carries the placed player about 1.4 m forward, so
+# 2.5 m gives about 1 m (run 1526e58a: 110 cm, angle 0) and 6 m about 4.5 m.
+# Expected NEVER (sliced): friendly_hit=ignored; step=error; viewer_changed; faults; a second verdict=land per press.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/melee-partner-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
@@ -36,33 +36,16 @@ stance host stand
 stance guest stand
 placebehind guest host 2.5
 wait 4000
-both capture j-before
-logmark both
-guest press lmb 120
-waitlog guest 'partner_melee=strike; act=113; verdict=' 5
-wait 2500
-both capture j-after
-stance host stand
-stance guest stand
-placebehind guest host 2.5
-wait 4000
 both capture a-before
 logmark both
-guest press lmb 100
-wait 250
-guest press lmb 100
-wait 250
-guest press lmb 100
-wait 250
-guest press lmb 100
-guest burst a-strike 4 250
-waitlog guest 'partner_melee=strike; act=11[34]; verdict=land' 6
+guest press lmb 120
+waitlog guest 'partner_melee=strike; act=11[34]; verdict=land; queued=1' 5
 waitlog host 'friendly_hit=owner;' 6
-wait 1200
+wait 1500
 both capture a-down
 wait 3000
 both capture a-down-2
-waitlog host 'step=sleep_auto_wake' 45
+waitlog guest 'edge=remote; remote=133' 45
 wait 8000
 both capture a-woke
 stance host stand
@@ -71,35 +54,33 @@ placebehind host guest 2.5
 wait 4000
 both capture b-before
 logmark both
-host press lmb 100
-wait 250
-host press lmb 100
-wait 250
-host press lmb 100
-wait 250
-host press lmb 100
-host burst b-strike 4 250
-waitlog host 'partner_melee=strike; act=11[34]; verdict=land' 6
+host press lmb 120
+waitlog host 'partner_melee=strike; act=11[34]; verdict=land; queued=1' 5
 waitlog guest 'friendly_hit=owner;' 6
-wait 1200
+wait 1500
 both capture b-down
 wait 3000
 both capture b-down-2
-waitlog guest 'step=sleep_auto_wake' 45
+waitlog host 'step=sleep_auto_wake; role=2' 45
 wait 8000
+both capture b-woke
 stance host stand
 stance guest stand
-placebehind guest host 4.5
+placebehind guest host 6
 wait 4000
 both capture c-before
 logmark both
-guest press lmb 100
-wait 250
-guest press lmb 100
-wait 250
-guest press lmb 100
-wait 250
-guest press lmb 100
-waitlog guest 'partner_melee=strike; act=11[34]; verdict=range; queued=0' 6
-wait 3000
+guest press lmb 120
+waitlog guest 'partner_melee=strike; act=113; verdict=' 5
+wait 2500
 both capture c-after
+stance host stand
+stance guest stand
+placebehind guest host 2.5
+wait 4000
+both capture d-before
+logmark both
+host press lmb 120
+waitlog host 'partner_melee=strike; act=113; verdict=' 5
+wait 2500
+both capture d-after

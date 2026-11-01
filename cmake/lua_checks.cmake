@@ -108,7 +108,7 @@ mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua"
 mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
 mgs_add_lua_check(partner_actions_lua_check "${_mgs_coop}/partner_actions.lua")
 mgs_add_lua_check(debug_menu_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua" "${_mgs_coop}/debug_enemy.lua"
-  "${_mgs_coop}/debug_player.lua" "${_mgs_coop}/debug_spawn.lua")
+  "${_mgs_coop}/debug_player.lua" "${_mgs_coop}/debug_spawn.lua" "${_mgs_coop}/debug_spawn_play.lua")
 # World sync W0-W2 (docs/world-sync-protocol.md): the seven chunks, in splice order.
 set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
@@ -146,8 +146,14 @@ mgs_add_lua_check(world_vehicle_damage_lua_check "${_mgs_coop}/world_vehicle_dam
   "${_mgs_coop}/world_vehicle_state.lua" "${_mgs_coop}/world_vehicle_rules.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
+mgs_add_lua_check(debug_character_lua_check "${_mgs_coop}/debug_character.lua" "${_mgs_coop}/character.lua")
 # The developer test boot (docs/test-boot.md): fast boot and boot-to-place on stubbed bindings.
 mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
+# Game rules (docs/debug-menu.md "Game rules"): Wormhole Fulton off/on and weapons at Mother Base.
+mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
+# Debug menu arms (docs/debug-menu.md "Give weapon" and "Friendly fire"): the picker and the host's switch.
+mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/arms-give-ff-play.txt")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
