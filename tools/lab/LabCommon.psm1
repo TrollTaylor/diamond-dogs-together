@@ -398,6 +398,13 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_overlay'; Json = 'native_overlay'; Kind = 'enum'; Values = @('off', 'debug', 'map') },
     @{ Key = 'partner_act_log'; Json = 'act_log'; Kind = 'bool' },
     @{ Key = 'partner_native_stance_fast'; Json = 'native_stance_fast'; Kind = 'bool' },
+    # r1101 animtruth (docs/anim-truth.md): the puppet draws what the remote's body does (native default: follows the gun
+    # profile, run 3c5609bb; written only when set).
+    @{ Key = 'partner_native_aim_truth'; Json = 'native_aim_truth'; Kind = 'bool' },
+    # Its parts no hidden run has exercised (review animtruth-1); native default: each follows the gun profile since 0.14.7.
+    @{ Key = 'partner_native_aim_truth_box'; Json = 'native_aim_truth_box'; Kind = 'bool' },
+    @{ Key = 'partner_native_aim_truth_triggers'; Json = 'native_aim_truth_triggers'; Kind = 'bool' },
+    @{ Key = 'partner_native_aim_truth_stance'; Json = 'native_aim_truth_stance'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # The developer test boot (docs/test-boot.md; lab only: play forces both off, and only a background-worker build's
     # owned private worker acts on them): skip the logos and the title, and land at a spot after the title.
@@ -468,6 +475,20 @@ $script:LabPartnerKeys = @(
     # report off unless named): D12 a crewed vehicle wrecked at once, the guest's vehicle damage reported to the host.
     @{ Key = 'world_vehicle_crew'; Json = 'world_vehicle_crew'; Kind = 'bool' },
     @{ Key = 'world_vehicle_damage'; Json = 'world_vehicle_damage'; Kind = 'bool' },
+    # r1101 fulton (lab and play, off unless named): the puppet's Fulton attach and the receiver's lift (CFG r[18]).
+    @{ Key = 'fulton_sync'; Json = 'fulton_sync'; Kind = 'bool' },
+    # r1101 fulton review fixes (lab and play, only with fulton_sync; native default: the gun profile since 0.14.7): the
+    # early vehicle lift and the borrowed wormhole look (CFG r[18] bits 2 and 4).
+    @{ Key = 'fulton_early'; Json = 'fulton_early'; Kind = 'bool' },
+    @{ Key = 'fulton_look'; Json = 'fulton_look'; Kind = 'bool' },
+    # r1101 Prove (lab and play, off unless named, only with fulton_sync): the receiver's soldier credit skipped (the
+    # Fultoner's save only; reverses D1). fulton_sync itself follows the gun profile since the r1101 Prove phase.
+    @{ Key = 'fulton_one_save'; Json = 'fulton_one_save'; Kind = 'bool' },
+    # r1101 land (lab and play, only with fulton_sync; native default: the gun profile since 0.14.7): the guest's balloon
+    # lift of a vehicle the host Fultoned (never run in a game; CFG r[18] bit 16).
+    @{ Key = 'fulton_guest_vehicle'; Json = 'fulton_guest_vehicle'; Kind = 'bool' },
+    # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lab and play, off in both unless named).
+    @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

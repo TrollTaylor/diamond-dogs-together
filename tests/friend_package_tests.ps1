@@ -614,6 +614,54 @@ try {
             $file = Join-Path $fixture 'play-seat-fpv-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_fpv=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_fpv'])|$($m['partner_seat_fpv_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat first person 0 turns it off in play'
+            # Supply drops synced (docs/world-sync-protocol.md section 26; hidden play run 69efd63b): Play-Coop never names
+            # world_supply; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('world_supply') -and !$guestIni.Contains('world_supply') -and
+                !$clipsIni.Contains('world_supply')) 'Play-Coop lab.ini never names world_supply'
+            Assert-Equal "$($n['world_supply'])" '1' 'native: play defaults supply drops synced on'
+            $file = Join-Path $fixture 'play-supply-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "world_supply=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['world_supply'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named world_supply 0 turns supply drops synced off in play'
+            # F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"; hidden play runs 65b4005c and e09fcf72): Play-Coop never
+            # names debug_vspawn; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('debug_vspawn') -and !$guestIni.Contains('debug_vspawn') -and
+                !$clipsIni.Contains('debug_vspawn')) 'Play-Coop lab.ini never names debug_vspawn'
+            Assert-Equal "$($n['debug_vspawn'])" '1' 'native: play defaults Spawn vehicle on'
+            $file = Join-Path $fixture 'play-vspawn-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "debug_vspawn=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['debug_vspawn'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named debug_vspawn 0 turns Spawn vehicle off in play'
+            # The Fulton synced (docs/world-sync-protocol.md section 25; hidden play run 7d924fac): Play-Coop never names
+            # fulton_sync; play defaults it on with the gun profile, and since 0.14.7 fulton_early, fulton_look and
+            # fulton_guest_vehicle too (no game run of them); fulton_one_save stays off (D1: a partner's
+            # soldier Fulton still recruits into both saves); a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('fulton_') -and !$guestIni.Contains('fulton_') -and !$clipsIni.Contains('fulton_')) 'Play-Coop lab.ini never names a fulton key'
+            Assert-Equal "$($n['fulton_sync'])$($n['fulton_early'])$($n['fulton_look'])$($n['fulton_one_save'])$($n['fulton_guest_vehicle'])" '11101' 'native: play defaults the Fulton synced on with the early lift, the borrowed look and the guest''s lift of a host''s vehicle Fulton; fulton_one_save off'
+            $file = Join-Path $fixture 'play-fulton-sub-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_early=0`nfulton_look=0`nfulton_guest_vehicle=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['fulton_sync'])$($m['fulton_early'])$($m['fulton_look'])$($m['fulton_one_save'])$($m['fulton_guest_vehicle'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '10000|0x0|0/0' 'native: a named 0 turns each Fulton sub-key off in play'
+            $file = Join-Path $fixture 'play-fulton-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_sync=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['fulton_sync'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named fulton_sync 0 turns the Fulton synced off in play'
+            # Anim truth (docs/anim-truth.md; hidden play run 3c5609bb): Play-Coop never names partner_native_aim_truth; play
+            # defaults it on with the gun profile, and since 0.14.7 its box / triggers / stance parts too (no game run of
+            # them); a named 0 turns each off in play.
+            Assert-True (!$hostIni.Contains('partner_native_aim_truth') -and !$guestIni.Contains('partner_native_aim_truth') -and
+                !$clipsIni.Contains('partner_native_aim_truth')) 'Play-Coop lab.ini never names an anim truth key'
+            Assert-Equal "$($n['partner_native_aim_truth'])$($n['partner_native_aim_truth_box'])$($n['partner_native_aim_truth_triggers'])$($n['partner_native_aim_truth_stance'])" '1111' 'native: play defaults anim truth on with its box / triggers / stance parts'
+            $file = Join-Path $fixture 'play-aim-truth-parts-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth_box=0`npartner_native_aim_truth_triggers=0`npartner_native_aim_truth_stance=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_aim_truth'])$($m['partner_native_aim_truth_box'])$($m['partner_native_aim_truth_triggers'])$($m['partner_native_aim_truth_stance'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '1000|0x0|0/0' 'native: a named 0 turns each anim truth part off in play'
+            $file = Join-Path $fixture 'play-aim-truth-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_aim_truth'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_native_aim_truth 0 turns anim truth off in play'
+            # The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"; hidden play runs ba1a041a and bfd46ce5):
+            # Play-Coop never names partner_ride_steer; play defaults it on with the gun profile; a named 0 turns it off in play.
+            Assert-True (!$hostIni.Contains('partner_ride_steer') -and !$guestIni.Contains('partner_ride_steer') -and
+                !$clipsIni.Contains('partner_ride_steer')) 'Play-Coop lab.ini never names partner_ride_steer'
+            Assert-Equal "$($n['partner_ride_steer'])" '1' 'native: play defaults the driver steer pose on'
+            $file = Join-Path $fixture 'play-ride-steer-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_steer=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_steer'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_ride_steer 0 turns the steer pose off in play'
             # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and

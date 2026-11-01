@@ -101,6 +101,13 @@ local function fixture(options)
             if phase == '1' then c.cfgStarts = (c.cfgStarts or 0) + 1 else c.cfgQueries = (c.cfgQueries or 0) + 1 end
             return function()
                 local p = c.peer
+                if options.fulton ~= nil then
+                    -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
+                    -- fulton_look 4, fulton_one_save 8; a number is passed as is).
+                    local fb = type(options.fulton) == 'number' and options.fulton or (options.fulton and 1 or 0)
+                    return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
+                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, fb
+                end
                 if p and p.census ~= nil then
                     -- A WS4 step 0 loader: r[14] the attacker census flag (lab key partner_placed_census).
                     return options.level or 3, options.role or 1, 1, p.link or 1, 5, phase == '1' and (options.probe or 0) or 0,
@@ -667,6 +674,184 @@ do
     F.tick(env, c, 500, 33)
     check(c.fultonAsked == 2 and has(c.logs, 'event=apply;ent=' .. hs('sol_a1') .. ';state=6;ver=1;src=outcome;result=fail'),
         'failed after 20 s, no further retry')
+end
+
+-- 6d. r1101 fulton (lab key fulton_sync, CFG r[18], W.fultonOn; docs/world-sync-protocol.md section 25): FULTON 0x46
+-- (70) {seq, kind 1 soldier / 2 vehicle, the Fultoner's id, entity hash, wormhole}. The Fultoner's copy announces its
+-- own Fulton at FultonInfo; the other copy's lift of that soldier (W1's RequestForceFulton) takes the Fultoner's
+-- wormhole look (this copy's item level EQP_IT_Fulton_WormHole for a few seconds, restored, never saved) and is visual
+-- only: this copy's TppTerminal.OnFulton is skipped once for it (the Fultoner keeps the recruit). Mother Base
+-- (spareStaff) is unchanged: a partner's Fulton of a staff member is SetDisable there.
+do
+    local OPF, WORM = 70, 77
+    local function rig(role, on, level, mission)
+        local lv = {cur = level or 0, sets = {}}
+        local term = {calls = {}}
+        local env, c
+        env, c = fixture({role = role, mission = mission, fulton = on, env = {
+            Player = {GetItemLevel = function(q) return q == WORM and lv.cur or 0 end,
+                SetItemLevel = function(q, n)
+                    if q ~= WORM then return end
+                    lv.cur = n
+                    lv.sets[#lv.sets + 1] = {n = n, asked = c.fultonAsked or 0}
+                end},
+            TppEquip = {EQP_IT_Fulton_WormHole = WORM},
+            TppSave = {SaveVarsToSlot = function() lv.atSave = lv.cur; return 'saved' end},
+            TppTerminal = {OnFulton = function(id) term.calls[#term.calls + 1] = id; return 'stock' end,
+                AddTempStaffFulton = function() term.adds = (term.adds or 0) + 1; return 'added' end}}})
+        F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+        F.pair(env, c, 3)
+        F.clear(c)
+        return env, c, lv, term
+    end
+    local a1 = u32('sol_a1')
+    -- The Fultoner (host, wormhole developed): its own FultonInfo announces FULTON once, wormhole 1.
+    local env, c, lv = rig(1, true, 1)
+    c.recovered.sol_a1 = true
+    F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a1, 0, 0)
+    F.tick(env, c, 1)
+    local f = F.tx(c, OPF)
+    check(#f == 1 and f[1].v[1] == 1 and f[1].v[2] == 1 and f[1].v[3] == c.ids.sol_a1 and f[1].v[4] == a1 and f[1].v[5] == 1 and
+        has(c.logs, 'event=fulton;step=tx;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;sent=1'),
+        'fulton_sync: the Fultoner announces its soldier Fulton (FULTON kind 1, wormhole 1)')
+    -- A quest auto-fulton (no local Fultoner) is never announced; nor is a vehicle id this copy does not type.
+    F.clear(c)
+    F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a2, NULL_ID, 0)
+    F.tick(env, c, 1)
+    check(#F.tx(c, OPF) == 0, 'a Fulton by nobody here is never announced')
+    -- A vehicle Fulton (an unmapped id world_vehicle.lua types): kind 2, entity 0, the balloon (level 0), and the
+    -- vehicle's type and pose on the Fultoner's copy (review fix: the receiver matches by them, not by the pool index).
+    c.W.vehicleGone = {typed = function(id) return id == 900 or id == 902 end, vtype = function(id) return id == 900 and 1 or 255 end,
+        pose = function(id) if id == 900 then return 120500, 2300, -45000 end end}
+    lv.cur = 0
+    F.msg(env, 'GameObject', 'FultonInfo', 900, 0, 0)
+    F.msg(env, 'GameObject', 'FultonInfo', 901, 0, 0)
+    F.tick(env, c, 1)
+    f = F.tx(c, OPF)
+    check(#f == 1 and f[1].v[1] == 2 and f[1].v[2] == 2 and f[1].v[3] == 900 and f[1].v[4] == 0 and f[1].v[5] == 0 and
+        f[1].v[6] == 1 and f[1].v[7] == 120500 and f[1].v[8] == 2300 and f[1].v[9] == -45000,
+        'fulton_sync: a vehicle Fulton is announced (kind 2, balloon, its type and pose); an untyped id never')
+    F.clear(c)
+    F.msg(env, 'GameObject', 'FultonInfo', 902, 0, 0)
+    F.tick(env, c, 1)
+    f = F.tx(c, OPF)
+    check(#f == 1 and f[1].v[3] == 902 and f[1].v[6] == 255 and f[1].v[7] == 0 and f[1].v[8] == 0 and f[1].v[9] == 0,
+        'an unreadable pose goes out as type 255 at 0, 0, 0 (the receiver lifts nothing early)')
+    -- Key off: nothing on the wire.
+    env, c = rig(1, false, 1)
+    c.recovered.sol_a1 = true
+    F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a1, 0, 0)
+    F.tick(env, c, 1)
+    check(#F.tx(c, OPF) == 0 and c.W.fultonOn == false, 'key off: no FULTON')
+    -- CFG r[18] bits (review fixes of 2026-11-01): 1 fulton_sync, 2 fulton_early (the early vehicle lift), 4 fulton_look
+    -- (the borrowed wormhole look); the sub-keys only with fulton_sync.
+    -- r1101 Prove: 8 fulton_one_save (the receiver's soldier credit skipped: the Fultoner's save only), also only with
+    -- fulton_sync.
+    -- r1101 land: 16 fulton_guest_vehicle (the guest's balloon lift of a vehicle the host Fultoned; never run in a game),
+    -- also only with fulton_sync; a value past 31 reads as 0.
+    for _, b in ipairs({{0, false, false, false, false, false}, {1, true, false, false, false, false}, {3, true, true, false, false, false},
+        {5, true, false, true, false, false}, {7, true, true, true, false, false}, {6, false, false, false, false, false},
+        {9, true, false, false, true, false}, {13, true, false, true, true, false}, {15, true, true, true, true, false},
+        {8, false, false, false, false, false}, {14, false, false, false, false, false}, {17, true, false, false, false, true},
+        {25, true, false, false, true, true}, {31, true, true, true, true, true}, {16, false, false, false, false, false},
+        {30, false, false, false, false, false}, {32, false, false, false, false, false}}) do
+        env, c = rig(1, b[1], 1)
+        check(c.W.fultonOn == b[2] and c.W.fultonEarlyOn == b[3] and c.W.fultonLookOn == b[4] and c.W.fultonOneSaveOn == b[5] and
+            c.W.fultonGuestVehicleOn == b[6], 'CFG r[18] = ' .. b[1] .. ': the fulton bits')
+    end
+    -- The receiver (guest, no wormhole): FULTON first, then the host's FULTONED outcome. With fulton_look (bit 4) the
+    -- level is raised to the Fultoner's look before RequestForceFulton; with fulton_one_save (bit 8) the stock credit is
+    -- skipped once (the partner announced its Fulton); the level comes back after 5 s.
+    local term
+    env, c, lv, term = rig(2, 13, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    check(has(c.logs, 'event=fulton;step=rx;seq=1;kind=1;id=1063;ent=' .. hs('sol_a1') .. ';worm=1'), 'FULTON received')
+    check(c.fultonAsked == 1 and #lv.sets == 1 and lv.sets[1].n == 1 and lv.sets[1].asked == 0 and lv.cur == 1 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=1;credit=0'),
+        'the lift takes the Fultoner\'s wormhole look before RequestForceFulton')
+    env.TppSave.SaveVarsToSlot()
+    check(lv.atSave == 0 and lv.cur == 1, 'a save meanwhile writes this copy\'s real level')
+    check(env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0) == nil and #term.calls == 0 and
+        has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'visual only: this copy\'s stock Fulton credit is skipped (no recruit here)')
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#term.calls == 1, 'the skip is one-time')
+    check(env.TppTerminal.AddTempStaffFulton({}) == 'added' and term.adds == 1 and has(c.logs, 'event=fulton;step=staff_add;n=1'),
+        'the stock staff add is counted in the log (the roster check), never changed')
+    -- The lift's own FultonInfo here (whatever it names) is never announced back.
+    F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a1, 0, 0)
+    F.tick(env, c, 1)
+    check(#F.tx(c, OPF) == 0, 'the lift is never echoed')
+    F.tick(env, c, 160, 33)
+    check(lv.cur == 0 and has(c.logs, 'event=fulton;step=restore;level=0'), 'the level comes back after 5 s')
+    -- A partner's vehicle FULTON (kind 2) hands its type and pose to this copy's lift (world_vehicle_rules.lua G.early,
+    -- which runs only with fulton_early), after the note.
+    local early = {}
+    c.W.vehicleGone = {early = function(id, t, x, y, z)
+        early[#early + 1] = {id = id, t = t, x = x, y = y, z = z, note = c.W.fulton.note[id] ~= nil} end}
+    F.push(c, 1, OPF, 2, 2, 25610, 0, 0, 1, 120500, 2300, -45000)
+    F.tick(env, c, 1)
+    check(#early == 1 and early[1].id == 25610 and early[1].note and early[1].t == 1 and early[1].x == 120500 and early[1].y == 2300 and
+        early[1].z == -45000, 'FULTON kind 2: the early vehicle lift at the Fultoner\'s type and pose, after the note')
+    -- fulton_sync alone (the shipped default from the r1101 Prove phase to 0.14.6; since 0.14.7 the default also carries
+    -- fulton_early, fulton_look and fulton_guest_vehicle, and a named 0 gives this): FULTON noted, the lift in this copy's own look
+    -- (no level change), and the stock credit runs at OnFulton (D1: a partner's soldier Fulton recruits into both saves).
+    env, c, lv, term = rig(2, true, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    check(c.fultonAsked == 1 and #lv.sets == 0 and lv.cur == 0 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=1'),
+        'fulton_look off (the default): the partner\'s look is never borrowed')
+    check(env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0) == 'stock' and #term.calls == 1 and not has(c.logs, 'step=credit_skipped') and
+        not has(c.logs, 'step=credit_kept'),
+        'fulton_one_save off (the default): the stock credit runs here too (D1, both saves)')
+    -- fulton_one_save without fulton_look: visual only (the partner announced, so its copy keeps the recruit).
+    env, c, lv, term = rig(2, 9, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#lv.sets == 0 and #term.calls == 0 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=1;own=0;set=0;credit=0') and
+        has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'fulton_one_save: visual only (the partner announced)')
+    -- No FULTON (an older partner, or theirs is off): this copy's own look, and the stock credit (D1) runs at OnFulton.
+    env, c, lv, term = rig(2, 13, 0)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    check(c.fultonAsked == 1 and #lv.sets == 0 and
+        has(c.logs, 'event=fulton;step=lift;kind=1;id=' .. c.ids.sol_a1 .. ';ent=' .. hs('sol_a1') .. ';worm=own;own=0;set=0;credit=0'),
+        'without FULTON: the lift in this copy\'s own look')
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#term.calls == 1 and has(c.logs, 'event=fulton;step=credit_kept;id=' .. c.ids.sol_a1 .. ';why=no_partner_note'),
+        'without FULTON (the mixed-key case): the stock credit runs here too (D1, both saves)')
+    -- The partner's FULTON that arrives after the lift but before OnFulton (about 3.7 s later) still skips it.
+    env, c, lv, term = rig(2, 13, 0)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 0)
+    F.tick(env, c, 1)
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(#term.calls == 0 and has(c.logs, 'event=fulton;step=credit_skipped;id=' .. c.ids.sol_a1 .. ';why=partner_lift'),
+        'a FULTON that arrives after the lift, before OnFulton: skipped')
+    -- Key off on the receiver: today's W1 (RequestForceFulton, the stock credit: D1 both saves), no level change.
+    env, c, lv, term = rig(2, false, 0)
+    F.push(c, 1, OPF, 1, 1, 1063, a1, 1)
+    F.push(c, 1, OP.OUTCOME, a1, 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
+    check(c.fultonAsked == 1 and #lv.sets == 0 and #term.calls == 1 and not has(c.logs, 'event=fulton;'),
+        'key off: today\'s W1 Fulton, credited as before')
+    -- Mother Base (spareStaff): still SetDisable, no lift, no level change.
+    env, c, lv, term = rig(2, true, 0, 30050)
+    F.push(c, 1, OPF, 1, 1, 1063, u32('sol_b3'), 1)
+    F.push(c, 1, OP.OUTCOME, u32('sol_b3'), 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 15)
+    check(F.callCount(c, 'SetEnabled:sol_b3:') == 1 and not c.fultonAsked and #lv.sets == 0 and
+        has(c.logs, 'event=spare;ent=' .. hs('sol_b3') .. ';state=6;as=7'), '30050 spareStaff: unchanged (SetDisable, no lift)')
 end
 
 -- 6c. A request whose answer cannot come (UNPAIRED, REJECT 5/6/9, timeout) is
@@ -1826,7 +2011,7 @@ if arg[8] then
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
     for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua', 'debug_character.lua',
-        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua'}) do
+        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua', 'debug_vspawn.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')

@@ -192,4 +192,150 @@ bool DryStep(DryState& s, const DryIn& in, std::uint32_t grace_ms) noexcept {
     return s.dry;
 }
 
+const char* TruthVerdictName(TruthVerdict value) noexcept {
+    switch (value) {
+    case TruthVerdict::nostate: return "nostate";
+    case TruthVerdict::aim: return "aim";
+    case TruthVerdict::keep: return "keep";
+    case TruthVerdict::lane: return "lane";
+    case TruthVerdict::other: return "other";
+    case TruthVerdict::loco: return "loco";
+    case TruthVerdict::act: return "act";
+    case TruthVerdict::draw: return "draw";
+    default: return "off";
+    }
+}
+
+// Each interval is credited to the state that held during it (the previous
+// tick's refused), the last one up to the tick that saw the release.
+TruthRunOut TruthRunStep(TruthRun& r, bool hold, bool refused, std::uint16_t act, std::uint8_t flags, std::uint64_t now_ms) noexcept {
+    TruthRunOut o{};
+    if (r.open) {
+        const std::uint32_t dt = now_ms >= r.last_ms ? static_cast<std::uint32_t>(now_ms - r.last_ms) : 0u;
+        if (r.last_refused) r.refused_ms += dt;
+        else r.admitted_ms += dt;
+        r.last_ms = now_ms;
+        if (!hold) {
+            r.open = false;
+            o.ended = true;
+            o.refused_ms = r.refused_ms;
+            o.admitted_ms = r.admitted_ms;
+            o.len_ms = now_ms >= r.since_ms ? static_cast<std::uint32_t>(now_ms - r.since_ms) : 0u;
+            o.first_act = r.first_act;
+            o.last_act = r.last_act;
+            o.flags = r.flags;
+            return o;
+        }
+        r.last_act = act;
+        r.flags = static_cast<std::uint8_t>(r.flags | flags);
+        r.last_refused = refused;
+        return o;
+    }
+    if (!hold) return o;
+    r.open = true;
+    r.since_ms = r.last_ms = now_ms;
+    r.refused_ms = r.admitted_ms = 0;
+    r.first_act = r.last_act = act;
+    r.flags = flags;
+    r.last_refused = refused;
+    ++r.runs;
+    return o;
+}
+
+const char* TruthRunResult(const TruthRunOut& out) noexcept {
+    if (!out.admitted_ms) return "refused";
+    if (!out.refused_ms) return "admitted";
+    return "late";
+}
+
+// AimBlockedAct, hit 29, damage 45, and the climb/hang acts (ladder 21, pipe 22,
+// wall climb 23, step_on 24, ledge hang 54..56): no hand is free for a gun.
+bool TruthBodyOwnedAct(std::uint16_t act) noexcept {
+    return AimBlockedAct(act) || act == 29 || act == 45 || (act >= 21 && act <= 24) || (act >= 54 && act <= 56);
+}
+
+TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
+    TruthOut o{};
+    const std::uint32_t refuse = partner_pad::kHold | partner_native::kPadFire;
+    if (!in.enabled) {
+        s.aim_ms = 0;
+        s.valid_ms = 0;
+        o.verdict = TruthVerdict::off;
+    } else if (!in.act_valid) {
+        // Review animtruth-5: a pose gap up to gap_ms after the last live act keeps a
+        // refusal and its strip (a lifted strip would turn a refused HOLD into a fresh
+        // press for the gap); a longer loss fails open.
+        const bool refused = s.last == TruthVerdict::loco || s.last == TruthVerdict::act;
+        if (refused && in.gap_ms && s.valid_ms && in.now_ms >= s.valid_ms && in.now_ms - s.valid_ms <= in.gap_ms) {
+            o.verdict = s.last;
+            o.strip = refuse;
+        } else {
+            o.verdict = TruthVerdict::nostate;
+        }
+    } else if (AimAct(in.act)) {
+        s.aim_ms = in.now_ms ? in.now_ms : 1;
+        o.verdict = TruthVerdict::aim;
+    } else if (TruthBodyOwnedAct(in.act)) {
+        o.verdict = TruthVerdict::act;
+        o.strip = refuse;
+    } else if (!in.slot_valid || in.slot > 2 || in.support_lane) {
+        o.verdict = TruthVerdict::lane;
+    } else if (in.act >= 1 && in.act <= 6) {
+        const bool keep = s.aim_ms && in.now_ms >= s.aim_ms && in.now_ms - s.aim_ms < kTruthKeepMs;
+        o.verdict = keep ? TruthVerdict::keep : in.in_hand ? TruthVerdict::draw : TruthVerdict::loco;
+        if (o.verdict == TruthVerdict::loco) o.strip = refuse;
+    } else {
+        o.verdict = TruthVerdict::other;
+    }
+    if (in.enabled && in.act_valid) s.valid_ms = in.now_ms ? in.now_ms : 1;
+    o.changed = o.verdict != s.last;
+    if (o.changed && o.strip) ++s.refusals;
+    if (o.changed && o.verdict == TruthVerdict::aim) ++s.confirms;
+    s.last = o.verdict;
+    return o;
+}
+
+std::uint32_t TruthBoxStrip(bool remote_valid, std::uint16_t remote_act, bool body_valid, std::uint16_t body_act) noexcept {
+    const auto box = [](std::uint16_t act) noexcept { return act == 77 || act == 78; };
+    return remote_valid && body_valid && box(remote_act) && !box(body_act) ? partner_pad::kEvade : 0u;
+}
+
+const char* LocalAimEventName(LocalAimEvent value) noexcept {
+    switch (value) {
+    case LocalAimEvent::aimed: return "aimed";
+    case LocalAimEvent::no_aim: return "no_aim";
+    default: return "none";
+    }
+}
+
+LocalAimOut LocalAimStep(LocalAimState& s, const LocalAimIn& in, std::uint32_t no_aim_ms) noexcept {
+    LocalAimOut o{};
+    if (!in.enabled || !in.hold) {
+        s.run = false;
+        return o;
+    }
+    if (!s.run) {
+        s.run = true;
+        s.aimed = s.reported = false;
+        s.since_ms = in.now_ms;
+        ++s.runs;
+    }
+    const std::uint32_t ms = in.now_ms >= s.since_ms ? static_cast<std::uint32_t>(in.now_ms - s.since_ms) : 0u;
+    if (in.act_valid && AimAct(in.act)) {
+        // The first aim act of the run (also after a no_aim: a late aim is reported with its delay).
+        if (!s.aimed) {
+            s.aimed = s.reported = true;
+            ++s.aimed_runs;
+            o.event = LocalAimEvent::aimed;
+            o.ms = ms;
+        }
+    } else if (!s.aimed && !s.reported && ms >= no_aim_ms) {
+        s.reported = true;
+        ++s.no_aim_runs;
+        o.event = LocalAimEvent::no_aim;
+        o.ms = ms;
+    }
+    return o;
+}
+
 } // namespace mgscoop::partner_slots

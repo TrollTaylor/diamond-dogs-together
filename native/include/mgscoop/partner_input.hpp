@@ -302,6 +302,9 @@ struct Config {
     // partner_native_reload=event, whose reloads arrive as overlay taps. Not
     // compared by SameArm (a change never resets instance 1's private masks).
     std::uint32_t sample_strip;
+    // r1101 animtruth (partner_native_aim_truth_triggers; not compared by
+    // SameArm): a sample_strip of HOLD / FIRE also zeroes the pad's LT / RT.
+    bool strip_triggers;
 };
 // The newest received input (partner_net::LatestInput / ConsumeInput). The
 // edge fields are the edge sets accumulated since the last ConsumeInput (by
@@ -407,6 +410,9 @@ struct Injection {
     // level, no edges); a consumer admits it with freshness waived only, every
     // other support gate rechecked. Copied by LevelOnly/Strip, cleared by Neutral.
     bool support_frozen;
+    // r1101 animtruth (Config.strip_triggers): Compose zeroed a non-zero LT / RT
+    // of this frame for a HOLD / FIRE sample strip (the hook counts it: trig_zeroed).
+    bool trig_stripped;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -443,6 +449,15 @@ Injection Neutral(const Injection& frame) noexcept;
 // The injection without `bits` anywhere (held, the three words, the edges,
 // long12, tap12 and the synthesized taps): the weapon gate's FIRE | RELOAD.
 Injection Strip(const Injection& injection, std::uint32_t bits) noexcept;
+// r1101 animtruth (partner_native_aim_truth; finder M8): the analog half of a
+// strip. HOLD in `bits` zeroes LT, FIRE zeroes RT (a gamepad remote's held
+// trigger never aims or fires past a strip); words and edges untouched.
+Injection StripTriggers(const Injection& injection, std::uint32_t bits) noexcept;
+// The hook's strip of a native window (a weapon strip, the refused support
+// request's 0x8078): Strip, and with Arm.truth_triggers the analog half
+// (StripTriggers). zeroed: a non-zero LT / RT was zeroed (trig_zeroed).
+struct Arm;
+Injection StripWindow(const Arm& arm, const Injection& injection, std::uint32_t bits, bool& zeroed) noexcept;
 // Native support stall freeze (critic #4): `bits` held exactly at `level`
 // (within the mask) with no edge of them anywhere (the three words by their
 // setting, the edges, tap12 and the synthesized taps; long12 is a level and a
@@ -633,6 +648,10 @@ struct Arm {
     bool aim_intent;
     std::uint64_t aim_act_until_ms;
     float reload_rate_k;
+    // r1101 animtruth (not compared by SameArm): partner_native_aim_truth on the
+    // gun stage; NativeView then zeroes the trigger level of a stripped HOLD/FIRE
+    // (StripTriggers).
+    bool truth_triggers;
     bool native_support; // key selected; every consumer rechecks the fresh slot/equip and safety owners
     // WS4 v1 (not compared by SameArm; both need native_support): the placed C4
     // lane (type 13, 391..395, slot 3) and the arm lane (type 14, only 516,

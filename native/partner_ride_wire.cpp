@@ -120,6 +120,72 @@ std::uint8_t SeatFlagsFor(const SeatExtStore& s, const Packet& ride, std::uint32
     if(ride.kind!=Kind::vehicle || s.ext.revision!=ride.revision || s.ext.vehicle!=ride.vehicle) return 0;
     return s.ext.flags;
 }
+// r1101 vanim: the v5 steer addendum (docs/vehicle-ws3.md "Driver pose").
+bool EncodeSteer(const Steer& e, std::uint8_t (&b)[kSteerSize]) noexcept {
+    for(auto& x : b) x=0;
+    if(!e.revision || e.seat>kSeatMax || e.vehicle==kVehicleUnknown || (e.vehicle>>9)!=kVehicleType) return false;
+    if(e.steer>kSteerUnits || e.accel>kSteerUnits || e.aux>kSteerUnits) return false;
+    b[0]=kMagic; b[1]=kVersionSteer; b[2]=e.seat; b[3]=0;
+    b[4]=static_cast<std::uint8_t>(e.revision); b[5]=static_cast<std::uint8_t>(e.revision>>8);
+    b[6]=static_cast<std::uint8_t>(e.vehicle); b[7]=static_cast<std::uint8_t>(e.vehicle>>8);
+    b[8]=e.steer; b[9]=e.accel; b[10]=e.aux; b[11]=0;
+    for(unsigned i=0;i<4;++i) b[12+i]=static_cast<std::uint8_t>(e.sender_ms>>(i*8));
+    return true;
+}
+bool DecodeSteer(const std::uint8_t* b, std::size_t n, Steer& out) noexcept {
+    if(!IsSteer(b,n) || b[3] || b[11]) return false;
+    Steer e{};
+    e.seat=b[2];
+    e.revision=static_cast<std::uint16_t>(b[4]|(b[5]<<8));
+    e.vehicle=static_cast<std::uint16_t>(b[6]|(b[7]<<8));
+    e.steer=b[8]; e.accel=b[9]; e.aux=b[10];
+    for(unsigned i=0;i<4;++i) e.sender_ms|=static_cast<std::uint32_t>(b[12+i])<<(i*8);
+    std::uint8_t check[kSteerSize]{};
+    if(!EncodeSteer(e,check)) return false;  // the same field rules both ways
+    out=e; return true;
+}
+bool AcceptSteer(SteerStore& s, const std::uint8_t* b, std::size_t n, std::uint32_t epoch, std::uint64_t now) noexcept {
+    Steer e{}; if(!epoch || !DecodeSteer(b,n,e)) { ++s.invalid; return false; }
+    if(s.have && s.epoch==epoch && static_cast<std::uint32_t>(e.sender_ms-s.steer.sender_ms)>=0x80000000u) { ++s.stale; return false; }
+    s.have=true; s.steer=e; s.epoch=epoch; s.received_ms=now; ++s.received; return true;
+}
+bool SteerFor(const SteerStore& s, const Packet& ride, std::uint32_t epoch, std::uint64_t now, Steer& out) noexcept {
+    if(!s.have || !epoch || s.epoch!=epoch || now<s.received_ms || now-s.received_ms>kSteerLeaseMs) return false;
+    if(ride.kind!=Kind::vehicle || s.steer.revision!=ride.revision || s.steer.vehicle!=ride.vehicle || s.steer.seat!=ride.seat) return false;
+    out=s.steer; return true;
+}
+bool SteerUnitsOf(float value, std::uint8_t& out) noexcept {
+    out=0;
+    if(!std::isfinite(value)) return false;
+    const float v=value<0.0f ? 0.0f : value>1.0f ? 1.0f : value;
+    out=static_cast<std::uint8_t>(std::lround(v*static_cast<float>(kSteerUnits)));
+    return true;
+}
+float SteerValue(std::uint8_t units) noexcept {
+    return static_cast<float>(units>kSteerUnits ? kSteerUnits : units)/static_cast<float>(kSteerUnits);
+}
+bool SteerSendDue(bool have_last, const Steer& last, std::uint64_t last_ms, const Steer& want, std::uint64_t now) noexcept {
+    if(!have_last || now<last_ms) return true;
+    const std::uint64_t since=now-last_ms;
+    if(since>=kSteerHeartbeatMs) return true;
+    if(since<kSteerMinMs) return false;
+    if(last.revision!=want.revision || last.vehicle!=want.vehicle || last.seat!=want.seat) return true;
+    const auto moved=[](std::uint8_t a, std::uint8_t b) noexcept { return (a>b ? a-b : b-a)>=kSteerStep; };
+    return moved(last.steer,want.steer) || moved(last.accel,want.accel) || moved(last.aux,want.aux);
+}
+SteerPlan PlanSteer(const SteerPlanIn& in) noexcept {
+    SteerPlan p{};
+    if(!in.on || !in.seated || in.seat!=0 || in.vehicle==kVehicleUnknown) return p;
+    p.write=true;
+    if(in.have_remote && in.remote.vehicle==in.vehicle && in.remote.seat==in.seat) {
+        p.steer=SteerValue(in.remote.steer); p.accel=SteerValue(in.remote.accel); p.aux=SteerValue(in.remote.aux);
+        p.source="remote";
+    } else {
+        p.steer=SteerValue(kSteerNeutral); p.accel=0.0f; p.aux=0.0f;
+        p.source="neutral";
+    }
+    return p;
+}
 void Observe(Visibility& s, const In& in) noexcept {
     // Ring identity is stronger evidence than clocks/positions: a real reset
     // may preserve both. Legacy/synthetic generation0 keeps prior behavior.

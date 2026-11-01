@@ -1,0 +1,78 @@
+# r1101 animtruth key-off A/B (docs/anim-truth.md): partner_native_aim_truth=0 NAMED, the same seed, spots and presses
+# as steps 1 and 4 of r1101-animtruth-play.txt, every step captured on BOTH screens. Without the key the receiver's
+# native drive passes the remote's raw HOLD/FIRE to body 1 (the fb1031 report: partner_aim_intent=on; source=pad;
+# pad_hold=1 while the remote stays in locomotion), so the puppet is expected to raise its gun here while the
+# presser's own body does not (the stock f30050 no-lethal rule). No partner_aim_truth / partner_aim_local line prints
+# without the key; the waitlogs read the receiver's aim intent instead.
+#   1. The guest holds RMB, then RMB+LMB, with its lethal rifle at Mother Base; the host films the guest's puppet.
+#   4. Reversed: the host holds RMB+LMB with its rifle; the guest films the host's puppet.
+# Compare the frames with r1101-animtruth-default-play.txt (the shipped default) at the same labels.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, no build running):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-animtruth-off-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# NEVER: a partner_aim_truth line (the key is off); faults, GameOver / reason=game_over.
+labsetting partner_native_aim_truth=0
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 15000
+# Run 1bc18e9c: a stock Mother Base cutscene can start within 15 s of gameplay; wait it out (waitgameplay skips it).
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug position
+guest debug position
+stance host stand
+stance guest stand
+waitlog host 'partner_weapon=settings;' 60
+placebehind host guest 5 2
+stance host stand
+wait 2500
+both capture at-start
+# --- 1. the lethal gun at Mother Base: RMB, then RMB+LMB ------------------------------------------------------------
+logmark both
+guest press 1 120
+wait 2500
+both capture mb-ready
+guest hold rmb 1500 nowait
+wait 700
+both capture mb-rmb-a
+wait 600
+both capture mb-rmb-b
+guest release
+waitlog host 'partner_aim_intent=on; source=pad;' 10
+wait 1500
+logmark both
+guest hold rmb+lmb 1500 nowait
+wait 700
+both capture mb-fire-a
+wait 600
+both capture mb-fire-b
+guest release
+waitlog host 'partner_aim_intent=on; source=pad;' 10
+wait 2000
+# --- 4. reversed: the host presses with its lethal rifle, the guest films the host's puppet --------------------------
+guest debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance guest stand
+placebehind guest host 5 2
+stance guest stand
+wait 2500
+logmark both
+host press 1 120
+wait 2500
+both capture rev-ready
+host hold rmb+lmb 1500 nowait
+wait 700
+both capture rev-fire-a
+wait 600
+both capture rev-fire-b
+host release
+waitlog guest 'partner_aim_intent=on; source=pad;' 10
+wait 1000
+host debug position
+guest debug position
+state

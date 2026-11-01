@@ -1,0 +1,126 @@
+# r1101 fulton at the shipped default (docs/world-sync-protocol.md section 25): NO fulton key named. fulton_sync follows
+# the gun profile since the r1101 Prove phase (run 7d924fac); fulton_one_save stays off. Written for the 0.14.6 default,
+# where fulton_early, fulton_look and fulton_guest_vehicle were off too: since 0.14.7 they follow the gun profile (no
+# game run of them), so part C and the NEVER line below (step=early, a lift with set=1) describe the 0.14.6 default.
+# Play rehearsal (-Mode play: VEHICLE_GONE and D14 on), Africa (30020, africa-jeep seed: the Masa Village jeep
+# veh_lv_0000 = 25608 and the spot's four guards, used by hash). The four guards are put to sleep FIRST: in 7d924fac
+# guard 4158955462 was still awake during the jeep part and shot the guest down (downed_damage attacker=1080).
+#   C. The guest Fultons the jeep 25608 by hand: no early lift (fulton_early off), so VEHICLE_GONE's loss request
+#      (about 6 s after the guest's FultonInfo) lifts the host's copy with the engine's own vehicle Fulton
+#      (Seize {"Fulton"}: step=fulton_lift, then step=applied; via=fulton); D14 credits each copy once. The host faces
+#      the jeep: frames c-hlift-NN start at its step=fulton_lift (the balloon on the receiver's screen).
+#   A. The host Fultons sleeping guard 2552560298 (one hold); the guest watches from 5 m behind: the host puppet's attach
+#      (stateFultonStart, source=map) and the guard lifted by the balloon on the guest's copy (W1 RequestForceFulton).
+#      D1 at the default: the guest's lift line reads credit=1 and its stock OnFulton credit runs (no credit_skipped).
+#   B. The same with the roles swapped (guard 4158955462); the host watches from 5 m behind and 3 m to the side, so its
+#      own body does not hide the guest puppet.
+#   The receivers' cameras turn up toward the lift (enemy_cam_turn 0 -15, then -35) for the a-glift / b-hlift bursts.
+# Coordinator only, hidden worker (never visible), copied save seed, MGS_GAME_LUA_DIR unset, no build running, under the
+# shared verify lock, one worker session.
+# Run:
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-fulton-default-play.txt
+#        -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed africa-jeep
+# NEVER: step=error, event=fulton; step=credit_skipped (fulton_one_save off), event=vehicle_rules; step=early (fulton_early
+#   off), a lift with set=1 (fulton_look off), a Fultoner's own lift echoed back (step=tx on the receiver), a game over.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug time 43200
+host debug weather sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'partner_fulton=configured; overlay=' 30
+waitlog guest 'partner_fulton=configured; overlay=' 30
+waitlog host 'event=fulton; step=install; terminal=' 30
+waitlog guest 'event=fulton; step=install; terminal=' 30
+host run wormhole 0
+guest run wormhole 0
+host run rules
+guest run rules
+# The spot's four guards asleep by hash before anything else (both copies: the host's lever, sync=world).
+host run enemy sleep 2552560298
+host run enemy sleep 4158955462
+host run enemy sleep 138337336
+host run enemy sleep 1480013509
+wait 2000
+# --- C: the guest Fultons the jeep 25608 (the vehicle-gone-play.txt spot); the host faces the jeep ---------------------
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 4000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
+both capture c-before
+logmark both
+guest hold e 1500 nowait
+wait 700
+guest capture c-hold
+guest hold e 1500
+guest hold e 1500
+guest release
+both burst c-lift 6 500
+waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
+waitlog host 'event=vehicle_rules; step=fulton_lift; id=25608; ' 30
+host burst c-hlift 8 400
+waitlog host 'event=vehicle_gone; step=applied; id=25608; via=fulton; ' 25
+wait 2000
+both capture c-after
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# --- A: the host Fultons sleeping guard 2552560298 (one hold); the guest watches from behind ---------------------------
+host run enemy goto 2552560298 1
+host expect ^(enemy_goto;ent=2552560298;submitted_warp|warp_position_readback)
+wait 1500
+host run enemy_aim_nearest 0.3
+placebehind guest host 5 1.5
+wait 2500
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture a-before
+logmark both
+host hold e 1500 nowait
+both burst a-hold 4 350
+host release
+wait 1000
+host run enemy_aim_nearest 2
+both burst a-lift 6 500
+waitlog host 'event=fulton; step=tx; kind=1; ' 20
+waitlog guest 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog guest 'partner_overlay=(request|playing|finished); state=stateFultonStart' 10
+waitlog guest 'event=fulton; step=lift; kind=1; .*credit=1' 30
+guest run enemy_cam_turn 0 -15
+guest burst a-glift 4 400
+guest run enemy_cam_turn 0 -35
+guest burst a-glift2 4 400
+wait 2000
+both capture a-after
+host run enemy info nearest
+guest run enemy info nearest
+# --- B: the guest Fultons sleeping guard 4158955462; the host watches from behind and to the side ----------------------
+stance host stand
+guest run enemy goto 4158955462 1
+guest expect ^(enemy_goto;ent=4158955462;submitted_warp|warp_position_readback)
+wait 1500
+guest run enemy_aim_nearest 0.3
+placebehind host guest 5 3
+wait 2500
+host run enemy_aim_nearest 0.3
+wait 800
+both capture b-before
+logmark both
+guest hold e 1500 nowait
+both burst b-hold 4 350
+guest release
+wait 1000
+guest run enemy_aim_nearest 2
+both burst b-lift 6 500
+waitlog guest 'event=fulton; step=tx; kind=1; ' 20
+waitlog host 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog host 'partner_overlay=(request|playing|finished); state=stateFultonStart' 10
+waitlog host 'event=fulton; step=lift; kind=1; .*credit=1' 30
+host run enemy_cam_turn 0 -15
+host burst b-hlift 4 400
+host run enemy_cam_turn 0 -35
+host burst b-hlift2 4 400
+wait 2000
+both capture b-after
+state

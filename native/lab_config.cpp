@@ -203,6 +203,29 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    // r1101 animtruth: follows the gun profile unless named (ResolveWeaponDefaults); an invalid value counts as named, off.
+    else if (Equals(key, "partner_native_aim_truth")) {
+        ok = ParseBool(value, result.partner_native_aim_truth);
+        result.partner_native_aim_truth_given = true;
+        if (!ok) result.partner_native_aim_truth = false;
+    }
+    // Review animtruth-1: its parts no hidden run has exercised; each follows the gun profile unless named since 0.14.7
+    // (ResolveWeaponDefaults); an invalid value counts as named, off.
+    else if (Equals(key, "partner_native_aim_truth_box")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_box);
+        result.partner_native_aim_truth_box_given = true;
+        if (!ok) result.partner_native_aim_truth_box = false;
+    }
+    else if (Equals(key, "partner_native_aim_truth_triggers")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_triggers);
+        result.partner_native_aim_truth_triggers_given = true;
+        if (!ok) result.partner_native_aim_truth_triggers = false;
+    }
+    else if (Equals(key, "partner_native_aim_truth_stance")) {
+        ok = ParseBool(value, result.partner_native_aim_truth_stance);
+        result.partner_native_aim_truth_stance_given = true;
+        if (!ok) result.partner_native_aim_truth_stance = false;
+    }
     else if (Equals(key, "partner_native_traverse")) {
         // Traversal replay (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_traverse);
@@ -279,6 +302,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_vehicle_damage_given = true;
         if (!ok) result.world_vehicle_damage = false;
     }
+    // Supply drops synced (r1101; lab and play, follows the gun profile unless named): an invalid value counts as named, off.
+    else if (Equals(key, "world_supply")) {
+        ok = ParseBool(value, result.world_supply);
+        result.world_supply_given = true;
+        if (!ok) result.world_supply = false;
+    }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
@@ -291,8 +320,51 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.world_relief_given = true;
         if (!ok) result.world_relief = false;
     }
+    // r1101 fulton (docs/world-sync-protocol.md section 25): lab and play, follows the gun profile unless named; an
+    // invalid value counts as named, off.
+    else if (Equals(key, "fulton_sync")) {
+        ok = ParseBool(value, result.fulton_sync);
+        result.fulton_sync_given = true;
+        if (!ok) result.fulton_sync = false;
+    }
+    // r1101 fulton review fixes: the early vehicle lift and the borrowed look, lab and play, off unless named.
+    else if (Equals(key, "fulton_early")) {
+        ok = ParseBool(value, result.fulton_early);
+        result.fulton_early_given = true;
+        if (!ok) result.fulton_early = false;
+    }
+    else if (Equals(key, "fulton_look")) {
+        ok = ParseBool(value, result.fulton_look);
+        result.fulton_look_given = true;
+        if (!ok) result.fulton_look = false;
+    }
+    // r1101 Prove: the receiver's soldier credit skipped (the Fultoner's save only; reverses D1), off unless named.
+    else if (Equals(key, "fulton_one_save")) {
+        ok = ParseBool(value, result.fulton_one_save);
+        result.fulton_one_save_given = true;
+        if (!ok) result.fulton_one_save = false;
+    }
+    // r1101 land: the guest's lift of a host's vehicle Fulton (never run in a game), off unless named.
+    else if (Equals(key, "fulton_guest_vehicle")) {
+        ok = ParseBool(value, result.fulton_guest_vehicle);
+        result.fulton_guest_vehicle_given = true;
+        if (!ok) result.fulton_guest_vehicle = false;
+    }
+    // Debug menu Spawn vehicle (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
+    else if (Equals(key, "debug_vspawn")) {
+        ok = ParseBool(value, result.debug_vspawn);
+        result.debug_vspawn_given = true;
+        if (!ok) result.debug_vspawn = false;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
+    // r1101 vanim: the driver's steer pose (follows the gun profile unless named, lab and play; ResolveWeaponDefaults); an
+    // invalid value counts as named, off.
+    else if (Equals(key, "partner_ride_steer")) {
+        ok = ParseBool(value, result.partner_ride_steer);
+        result.partner_ride_steer_given = true;
+        if (!ok) result.partner_ride_steer = false;
+    }
     else if (Equals(key, "partner_ride_board")) {
         // F1 vehicles: the board block / passenger hook (defaults in ResolveWeaponDefaults); a named value records _given.
         ok = ParsePartnerRideBoard(value.data, value.size, result.partner_ride_board);
@@ -1225,6 +1297,11 @@ bool EffectiveTravelLock(const LabConfig& config) noexcept {
     if (config.travel_lock != kTravelLockAbsent) return config.travel_lock != 0;
     return config.mode == LabMode::play;
 }
+std::uint8_t FultonCfgBits(const LabConfig& config) noexcept {
+    if (!config.fulton_sync) return 0;
+    return static_cast<std::uint8_t>(1u | (config.fulton_early ? 2u : 0u) | (config.fulton_look ? 4u : 0u) |
+                                     (config.fulton_one_save ? 8u : 0u) | (config.fulton_guest_vehicle ? 16u : 0u));
+}
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
 const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }
@@ -1808,6 +1885,43 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // credited twice with VEHICLE_GONE off (fixed since), and the guest's LOADOUT block (D11) is the
     // user's open decision. It flips again only after a FRAME proof and a play rehearsal of those lines.
     if (!c.world_relief_given) c.world_relief = false;
+    // r1101 fulton: follows the gun profile in lab and play since the r1101 Prove phase (hidden play run 7d924fac, both
+    // copies: the partner puppet's Fulton attach, the receiver's balloon lift of a soldier both ways and of the guest's
+    // jeep); a named 0 opts out. The early vehicle lift (no FultonFailed-after-FultonInfo probe yet) and the borrowed
+    // wormhole look (no receiver frame yet) follow the gun profile too since 0.14.7, without a game run (the user's
+    // "enable it all", 2026-11-01); a named 0 opts out. fulton_one_save (reverses D1, the user's open decision) stays
+    // off unless named.
+    if (!c.fulton_sync_given) c.fulton_sync = gun;
+    if (!c.fulton_early_given) c.fulton_early = gun;
+    if (!c.fulton_look_given) c.fulton_look = gun;
+    if (!c.fulton_one_save_given) c.fulton_one_save = false;
+    // The guest's lift of a vehicle the host Fultoned (another path: the host's VEHICLE_GONE) never ran in a game; only
+    // the guest-to-host vehicle lift did (runs 7d924fac, 19882881). Follows the gun profile since 0.14.7 all the same
+    // (the user's "enable it all"); a named 0 opts out.
+    if (!c.fulton_guest_vehicle_given) c.fulton_guest_vehicle = gun;
+    // Supply drops synced (docs/world-sync-protocol.md section 26): follows the gun profile in lab and play since the r1101
+    // Prove phase (hidden play run 69efd63b, both copies: the host's script and iDroid AMMO / FULTON drops and the guest's
+    // iDroid drop mirrored and delivered on both, crossing drops kept each own box, WEAPONS / ITEMS stayed local); a named
+    // 0 opts out.
+    if (!c.world_supply_given) c.world_supply = gun;
+    // Anim truth (docs/anim-truth.md): the loco / act HOLD-FIRE strip follows the gun profile in lab and play since the r1101
+    // Prove phase (hidden play run 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and
+    // RMB on the ladder left the puppet's gun down on the viewer's screen; the allowed pistol still aimed); a named 0 opts
+    // out. Its box / triggers / stance parts (no game run yet) follow the gun profile too since 0.14.7 (the user's
+    // "enable it all", 2026-11-01); each acts only with partner_native_aim_truth; a named 0 opts out.
+    if (!c.partner_native_aim_truth_given) c.partner_native_aim_truth = gun;
+    if (!c.partner_native_aim_truth_box_given) c.partner_native_aim_truth_box = gun;
+    if (!c.partner_native_aim_truth_triggers_given) c.partner_native_aim_truth_triggers = gun;
+    if (!c.partner_native_aim_truth_stance_given) c.partner_native_aim_truth_stance = gun;
+    // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
+    // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
+    // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both
+    // copies need it (the driver's copy sends, the viewer's copy writes); the wheels of the viewer's copy still do not turn.
+    if (!c.partner_ride_steer_given) c.partner_ride_steer = gun;
+    // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play since the r1101 Prove
+    // phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep and the guest's truck on both screens,
+    // the ride, and both riders' presses refused as busy); a named 0 opts out.
+    if (!c.debug_vspawn_given) c.debug_vspawn = gun;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

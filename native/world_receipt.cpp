@@ -143,16 +143,16 @@ bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::ui
     if (!Token(p, end, x) || p >= end || *p != ' ') return false;
     ++p;
     if (!Token(p, end, y) || p != end) return false;
-    // 1..15, 18 ARMS (debug menu Friendly fire) and 19 HINT (arrival-prevent). 16 is MISMATCH and 17 PARTNER_GEAR, both
-    // posted by native only.
-    if (c < 1 || (c > 15 && c != 18 && c != 19) || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
+    // 1..15, 18 ARMS (debug menu Friendly fire), 19 HINT (arrival-prevent), 20 VSPAWN (debug menu Spawn vehicle) and 21
+    // SUPPLY (r1101 supply drops). 16 is MISMATCH and 17 PARTNER_GEAR, both posted by native only.
+    if (c < 1 || (c > 15 && c != 18 && c != 19 && c != 20 && c != 21) || x < 0 || x > 4294967295LL || y < 0 || y > 4294967295LL) return false;
     code = static_cast<std::uint8_t>(c);
     a = static_cast<std::uint32_t>(x);
     b = static_cast<std::uint32_t>(y);
     return true;
 }
 
-bool NoteShown(std::uint8_t code) noexcept { return (code >= 1 && code <= 15) || code == 18 || code == 19; }
+bool NoteShown(std::uint8_t code) noexcept { return (code >= 1 && code <= 15) || code == 18 || code == 19 || code == 20 || code == 21; }
 
 bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint32_t& a, std::uint32_t& b, std::uint32_t& c,
                std::uint32_t& d, std::uint32_t& e) noexcept {
@@ -193,11 +193,11 @@ bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint
 
 std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
-    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
+    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
                                 unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
                                 unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait),
                                 unsigned(r.handoff), unsigned(r.lock), unsigned(r.census), unsigned(r.vehicle_gone), unsigned(r.companion),
-                                unsigned(r.relief));
+                                unsigned(r.relief), unsigned(r.fulton));
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

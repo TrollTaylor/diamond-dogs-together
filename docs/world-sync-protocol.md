@@ -1923,3 +1923,283 @@ without sending, the target never queues or applies one). World note 18 ARMS{a=1
 (the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Note 15 is MISSION_END,
 16 MISMATCH (posted by native world_link), 17 PARTNER_GEAR (posted by native), 19 HINT (arrival-prevent).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.
+
+## 25. Fulton (r1101 fulton; lab key `fulton_sync`, follows the gun profile in lab and play since the r1101 Prove phase)
+
+Lab key `fulton_sync=0|1` (CFG `r[18]` bit 1, Lua `W.fultonOn`; no refusal bit). It follows the native gun profile in
+lab and play since the r1101 Prove phase (hidden play runs `7d924fac` with the keys named and `19882881` at the
+shipped default; a named 0 opts out). Since the review of 2026-11-01 two sub-keys, used only with `fulton_sync=1`
+(off unless named until 0.14.7; since 0.14.7 each follows the gun profile in lab and play without a further game run,
+the user's "enable it all" of 2026-11-01, a named 0 opts out): `fulton_early=0|1` (`r[18]` bit 2, `W.fultonEarlyOn`: the early vehicle lift below)
+and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed wormhole look below); since the Prove phase a third,
+`fulton_one_save=0|1` (`r[18]` bit 8, `W.fultonOneSaveOn`: the receiver's soldier credit skipped, below; it reverses D1,
+the user's open decision, so it is off unless named; as built since `42c8cc3d` it has not run in a game: run `7d924fac`
+ran the earlier skip that was part of `fulton_sync`); since the land round a fourth, `fulton_guest_vehicle=0|1`
+(`r[18]` bit 16, `W.fultonGuestVehicleOn`: the guest's lift of a vehicle the host Fultoned, below; only the
+guest-to-host vehicle lift ran in a game; off unless named until 0.14.7, since then it follows the gun profile like
+`fulton_early` and `fulton_look`, still without a game run). `FultonCfgBits` (lab_config) builds `r[18]`: 23 at the
+0.14.7 default (31 with `fulton_one_save`).
+Three parts, all off with the key off:
+
+- **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
+  held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`).
+  With the key on, the DM overlay (`partner_dm_overlay`, `docs/anim-round1-actions.md` 4.4) runs a Fulton-only map
+  also while `partner_native_overlay=off`: a remote act 59 held `fulton_hold_ms` (1000 ms since the review: the 1.6 s
+  entry then ends with the 2.5 s attach) plays `stateFultonStart` (overlay index 16, a one-shot; probe `fc6037ab`:
+  1582 ms on body 1). Acts 49/50 no longer map (the census labels them `interact?`, no Fulton frame). Short act-59
+  presses (160-190 ms: boarding, doors) and any held interact under 1 s never start it; act 59 is not Fulton-specific,
+  so a longer held interact would [U: the false-positive rate is the next run's question]. Log
+  `partner_fulton=configured; overlay=...; hold_ms=1000; acts=59` once per mission and the usual
+  `partner_overlay=...; state=stateFultonStart; ...; source=map` lines.
+- **Op `0x46` FULTON** (70), both directions, reliable, **world** queue, level 2 (W1), lab and play, never a request;
+  9 fields, 23 bytes: `seq` (u16 1..), `kind` (u8 1 soldier / 2 vehicle), `id` (u16, the Fultoner's game object id),
+  `ent` (u32, the soldier's entity hash, 0 for a vehicle), `worm` (u8 0 balloon / 1 wormhole: the Fultoner's
+  `EQP_IT_Fulton_WormHole` level >= 1, the stock test, so Game rules Wormhole off sends 0), `vtype` (u8, the vehicle's
+  type on the Fultoner's copy; 255 unknown or a soldier), `x`, `y`, `z` (i32 mm, the vehicle's position there at
+  `FultonInfo`; 0, 0, 0 unknown or a soldier). The Fultoner's copy sends it at its own `FultonInfo` (att local;
+  `lua/coop/world_enemy.lua` `W.fulton`); a vehicle only for an id `world_vehicle.lua` types (25600..26111). The lift's
+  own `FultonInfo` on the other copy is never sent back. A partner without the op skips it by its length
+  (unknown_op). Lines: `event=fulton;step=tx;kind=;id=;ent=;worm=;sent=` and
+  `event=fulton;step=rx;seq=;kind=;id=;ent=;worm=`.
+- **The other copy's lift (Lua).** A soldier: W1's `RequestForceFulton` (free roam, as before). With `fulton_look`
+  it first takes the Fultoner's look: when a FULTON note (60 s) says another wormhole level than this copy's own, this
+  copy's `EQP_IT_Fulton_WormHole` level is set to it for 5 s and restored (`step=restore`, also at stop); a save in
+  between writes the real level (`TppSave.SaveVarsToSlot` wrap), Game rules Wormhole off leaves the borrowed level
+  alone, and an F9 Wormhole on/off press ends the look first (`debug_rules.lua`). The level is global: this copy's own
+  Fultons in that window use it too, which is why the look has its own key (review of 2026-11-01). Without
+  `fulton_look` the line reads `set=0` and nothing changes. **The credit (D1 by default):** without `fulton_one_save`
+  the receiver's stock `TppTerminal.OnFulton` runs as before (D1: the soldier recruits into both saves; the lift line
+  reads `credit=1`). With `fulton_one_save` the lift is **visual only when the partner announced it**: this copy's
+  `TppTerminal.OnFulton` decides at its call (about 3.7 s after the lift) and is skipped once for that soldier only if
+  the partner's FULTON note has arrived by then (`step=credit_skipped;id=;why=partner_lift`: the Fultoner keeps the
+  recruit, this save gains nobody); with no note (a partner on 0.14.6 or with the key off) the stock credit runs, D1
+  (`step=credit_kept;id=;why=no_partner_note`).
+  Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0|1` (0 only with `fulton_one_save`).
+  `TppTerminal.AddTempStaffFulton` is counted in the log only (`step=staff_add;n=`, the roster check). **Only
+  `fulton_one_save` differs from D1 (both saves), and only while both copies run it.** A vehicle: VEHICLE_GONE cause 1
+  on the receiver is the engine's own vehicle Fulton (on the guest, a vehicle the host Fultoned, only with
+  `fulton_guest_vehicle`: that path, the host's VEHICLE_GONE broadcast, never ran in a game; without it the guest removes
+  it as before, D14's `Seize {"Instant"}` or the Despawn, and runs no early lift)
+  (`Seize {"Fulton"}`, the balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`;
+  `step=fulton_lift;id=;credit=`); with D14 on it is credited once as before, without D14 this copy's
+  `TppTerminal.OnFulton` is skipped once for it; the readback gives it 15 s before the Despawn fallback (`via=fulton`).
+  Index 0 is never lifted (refused as before).
+  **The early vehicle lift (green 3; key `fulton_early`):** a FULTON kind 2 is sent at the Fultoner's `FultonInfo`,
+  about 6 s before VEHICLE_GONE's loss readback (probe `614ec20a`), so the receiver lifts at the note:
+  `world_vehicle_rules.lua` `G.early(id, vtype, x, y, z)` runs VEHICLE_GONE's own consider (`src=fulton`; rider and
+  seat holds, index 0 refused) at the **Fultoner's** pose and type, so pool indices that differ between copies are
+  matched as for VEHICLE_GONE (far, other type or not nearest: the one vehicle of that type within 5 m, else refused and
+  nothing lifted); only for an id with a locator name here (`step=early_skip;id=;reason=no_locator`) and a pose
+  (`reason=no_pose`: an unreadable pose, 0, 0, 0). Line `event=vehicle_rules;step=early;id=;role=`. The later
+  VEHICLE_GONE finds it gone; the host answers the guest's later request gone (also in the guest's index when the
+  early item was matched to another index here), and a request that joins a held early item is answered as that
+  request (gone, or REJECT 9 at the hold timeout). [I] A balloon that fails after the Fultoner's `FultonInfo`
+  (`FultonFailed`, the case VEHICLE_GONE's settle window guards against) is not mirrored: the receiver's copy is already
+  lifted, nothing cancels it and no VEHICLE_GONE follows, a one-sided removal. That is why the early lift has its own key
+  until a probe shows whether `FultonFailed` can follow `FultonInfo` for a vehicle.
+  Mother Base (spareStaff) is unchanged: a partner's Fulton of a staff member is `SetDisable` there (no roster change).
+
+[I] whether the engine reads the wormhole level when `RequestForceFulton` / `Seize {"Fulton"}` start (the 5 s hold
+covers a later read). Hidden run `7e9856cb` (docs/STATUS.md 2026-11-01) showed the puppet's attach, FULTON tx/rx, the
+receiver's lift with its credit skipped and the staff add on the Fultoner's copy only [O log], but no balloon in a
+frame [U], and a late lift: the Fultoner's `Fulton` / `FultonInfo` (hence FULTONED and FULTON) come about 10.7 s after
+its attach act, when the soldier is recovered [O log]. World note 22 is reserved for this track and unused.
+
+**Prove (r1101, `wp/integ-1101`).** Hidden play run `7d924fac` (`r1101-fulton-play.txt`, `-WanSim bad`, africa-jeep,
+`fulton_sync`, `fulton_early`, `fulton_look` named; the credit skip was still part of `fulton_sync` then): C the guest's
+hand Fulton of jeep 25608, FULTON kind 2 on the host 101 ms after the guest's `FultonInfo`, the early lift
+(`step=early`, `step=fulton_lift;...;credit=1`), the guest's later request answered gone, `step=applied;...;via=fulton;
+...;ok=1;ms=10293`, D14 credited once on each copy [O logs both]; host frames show a balloon inflating on the jeep and
+the jeep pulled up into the air [O frame]. A / B the soldier Fultons both ways: the receiver's overlay played
+`stateFultonStart` (1574 / 1586 ms) on the remote act 59, FULTON rx, `step=lift`, `credit_skipped`, `event=apply;
+...;state=6;...;readback=6` [O logs both]; frames show the host puppet kneeling at the guard on the guest's screen and
+the guard under a balloon on the receiver's screen both ways [O frame]. D the host's wormhole Fulton: the guest's lift
+`worm=1;own=0;set=1`, `step=restore;level=0;ok=1` 5 s later [O log]; the wormhole on the guest's screen was not framed
+[U]. `staff_add` only on the Fultoner's copy (the credit skip that was then part of `fulton_sync`; `fulton_one_save`,
+which carries it since `42c8cc3d`, has not run in a game); no `step=error`, echo, `bad_op` / `wrong_dir` / `unknown_op`
+or GameOver on either copy. Neither run Fultoned a vehicle from the host's side: the guest's lift of a host's vehicle
+Fulton has its own key since the land round (`fulton_guest_vehicle`; off unless named until 0.14.7, on with the gun
+profile since, not run in a game).
+Hidden play run `19882881` (`r1101-fulton-default-play.txt`, no key named: the shipped default after the flip, with
+`fulton_early`, `fulton_look` and `fulton_one_save` off): C the guest's jeep Fulton, no early lift; VEHICLE_GONE's loss
+request 6.3 s after the guest's `FultonInfo` lifted the host's copy (`step=fulton_lift;...;credit=1`, `step=applied;
+...;via=fulton;src=req;ok=1;ms=10143`), D14 once on each copy [O logs both]; host frames show a balloon on the jeep and
+the jeep pulled up into the air while it was already gone on the guest's screen [O frame]. A / B: the receiver's
+overlay played `stateFultonStart` once per partner Fulton (no other start), the lift line `credit=1`, and the stock
+credit ran on both copies (`step=staff_add` on the Fultoner's copy and the receiver's: D1) [O logs both]; frames show
+each partner's puppet kneeling at its guard and the guard under a balloon on the receiver's screen, both ways
+[O frame]. Run `19882881` logged no `credit_skipped`, `step=early`, `set=1`, `step=error`, echo or non-zero `bad_op`.
+
+## 26. Supply drops (r1101; lua/coop/world_supply.lua, native/supply_cbox.cpp)
+
+Lab key `world_supply=0|1` (lab and play; no refusal bit). **On with the native gun profile** (Play-Coop, the worker gun
+stage) in lab and play since the r1101 Prove phase (hidden play runs `69efd63b` and `93f27123`, below); a named 0 turns
+it off, an invalid value is named and off.
+With the key on, `native/supply_cbox.cpp` installs two observe-only MinHook detours after every site of
+`native/supply_cbox_contract.hpp` matches (`tools/generate_supply_cbox_contract.py --check`, sites in
+`tools/supply_cbox_sites.json`): the supply-box request core `0x15C3F00` (rcx = the box core Z, rdx = the 0x130-byte
+request) and the box reset `0x15C4080` (rcx = Z). Each records an event in a 16-entry ring and calls the original with
+its own arguments. Static RE of 1.0.15.4 (own capstone scans of the exe, nothing executed):
+
+- `Player.RequestToSupplyCbox{dropType, equipId, partsType, aimPosition, forceAngle, advancedRate, useForceAngle,
+  aimObjectId, waitLevel, level, pauseAtStart, callHeliSound}` (binding `0x9DB510`) fills the request: +0 drop type,
+  +4 equip, +8 parts, +0x100 aim position, +0x110 aim object (0xFFFF none), +0x112 wait level (default 7), +0x120
+  level, +0x12D flags (bit 2 callHeliSound), and calls `([0x98]+0x248)->vt[0x48]` = the funnel `0x15C3E80` (locks
+  Z+0x750) -> `0x15C3F00`. `Player.RequestToDropCbox` (f30050) uses the same system; `TppSupportRequest.RequestDropBullet
+  {pos, waitLevel}` (`0xB64D70`) goes through the support manager `[0x98]+0x180` (the iDroid's ammo drop [I]).
+- ONE box per copy: the core copies the request to Z+0x4E0 and sets flags (Z+0x124) bit 2; the update (`0x15C1020`,
+  this = Z+0x38) resets the old box on bit 2 (`0x15CB870` -> `0x15C4080`: model hidden, state Z+0xF0 = 0). The save
+  vars `supCbox*` are scalars. `TppSupplyCboxSystem`'s SendCommand (`0x79DA5D0`) knows only StoreRequest and
+  RestoreRequest: no script command removes a box.
+
+Receipt `return 'MGS_COOP_SUPPLY_V1' -- poll <after> | mirror <0|1> | remove <token>` (`mgscoop/supply_sync.hpp`):
+poll answers `{on=1,inst=,box=,st=<Z+0xF0>,fl=<Z+0x124>,last=,lost=,ev={{seq,kind,mirror,drop,equip,parts,x,y,z,level,
+wait,flags,aim,caller,state,accepted},...}}` (x y z mm; kind 1 request, 2 reset; mirror 1 while Lua's mirror window is
+open; accepted 0 when the box core refused the request) or `{on=0}`; mirror opens/closes the window (the detour runs inside Lua's own call); remove is the lab remove lever:
+`Z+0x124 |= 2` (the game's own reset bit; the next update resets the box) -> `{ok=1,st=}` or `{ok=0,why=}` (`no_core`,
+`no_box`, `unreadable`, `not_writable`, `fault`, `off`). Native log lines: `supply=installed;detours=2;observe_only=1;
+remove_lever=reset_bit`, `supply=request;seq=;mirror=;drop=;equip=;parts=;x_mm=;y_mm=;z_mm=;level=;wait=;flags=;aim=;
+caller=;state=;accepted=`, `supply=reset;seq=;mirror=;caller=;state=`, `supply=remove;token=;ok=;state=;why=` (at most 400 per
+process), `supply=off;reason=key_off`, `supply=refused;reason=site|slot`.
+
+Op `0x45` SUPPLY (69), both directions, reliable, **world** queue, level 3, paired, never a request; 14 Lua fields,
+31 bytes: `seq` (u16 1..), `kind` (u8 1 drop / 2 gone), `origin` (u8 1 host / 2 guest: whose request made the box),
+`oseq` (u16 1..: the origin's box number), `drop` (u8), `equip` (u32), `parts` (u32), `x`, `y`, `z` (i32 mm, the aim
+point), `level` (u8), `wait` (u8), `flags` (u8), `reason` (u8 0..3; kind 2: 1 collected near the box, 2 vanished).
+A partner without the op skips it by its length (unknown_op).
+
+Lua (`W.supply`, polled every 200 ms): a request outside the mirror window is this copy's box: kind 1 with the
+request's fields (the aim point, or this player's position when the request aims at an object or at no point:
+`aim=player`); `event=supply;step=drop_local;origin=;oseq=;...;sent=;aim=;caller=`. The receiver (key on, in game)
+requests the same box with `Player.RequestToSupplyCbox{dropType, equipId, partsType, aimPosition, level, waitLevel,
+callHeliSound}` inside the mirror window (`step=mirror;origin=;oseq=;ok=`; its own request event is `step=mirror_seen`,
+never sent back) and shows world note 21 a=1. Echo guard: a request seen outside the mirror window within 3 s of a
+mirror and within 1 m of its aim point is the mirror's own (`step=echo`; should the game ever run the request outside
+Lua's call), so the two copies never ping-pong. The receiver's request goes straight to the box system, not to the
+support request that charges GMP. A synced box that was live (state not 0) and then resets or reads state 0, outside
+the 2 s after a request (the game's own reset of the previous box: `step=reset_request`) and not followed by a request
+in the same poll (`step=reset_replaced`), is gone here: kind 2 (`step=gone_local;reason=1|2;why=reset_0x<caller>|state_0`).
+The other copy removes its copy with the remove lever (`step=remove;origin=;oseq=;ok=;why=;st=;reason=`, then
+`step=removed` on the lever's reset) and shows note 21 a=2. A gone for another box removes nothing
+(`step=gone_unknown`). The stock Player message `OnPickUpSupplyCbox` (this player took a supply box; the game's
+`s10030_sequence.lua` handles it, with `OnComeOutSupplyCbox`) ends the synced box at once, lab and play:
+`step=pickup;a0=;a1=;cur=<origin.oseq|none>` then kind 2 with reason 1 (`why=pickup`), whatever the box state or the
+distance; `OnComeOutSupplyCbox` is logged (`step=come_out`). Lab census (W.mode 1 only): every game message while a
+synced box exists and 15 s after a box event, at most 300 per mission (`step=msg;class=;msg=;a0..a3`). F9 rows
+on the player module's dispatch (the key on): `supply state | drop [x y z] | bullet | remove`.
+
+World note 21 SUPPLY{a=1 the partner's drop (b its drop type), 2 the partner took the synced box (b the reason)}
+(`coop_text::FormatWorldNote`). 20 and 22 are the other r1101 tracks' (vehicle spawn, Fulton visual).
+
+Open [U] until a hidden run: H1 every falling box passes `0x15C3F00` (the iDroid AMMO drop too); H2 the reset bit
+removes the box without a new one; H3 the stock pickup sends `OnPickUpSupplyCbox` on the taker's copy (the reset or
+state 0 path stays as the fallback); whether the iDroid request aims at the player object; a guard hit by the falling box on
+both copies (each copy's own box hits its own copy of the guard; the outcome sync judges the knockout).
+
+Hidden run `c66d418b` (2026-11-01, play, afgh-ledge; worker timeout in phase 4): [O] both copies installed the observer.
+The host's script drop passed `0x15C3F00` from the funnel (caller `0x15c3ed9`; drop 4 = `DROP_TYPE_AMMO`, level 0,
+wait 7, flags 0x6) and was sent (`drop_local; ...; sent=1; aim=point`). The host's box core went state 1 -> 3 (+3 s)
+-> 5 (+7 s) -> 8 (+24 s) -> 14 (+25 s) and reset itself 2 s later (caller `0x15c0793`: a fade timer, Z+0x100 =
+1 - Z+0xF4 * k, reset at 0), which the host sent as gone. The guest skipped the mirror (`step=mirror_skip;
+reason=missing_api`): the module required `type(Vector3) == "function"`, but the game's Vector3 is a callable object;
+fixed (the request and its Vector3 are built inside one pcall). The iDroid's SUPPLY DROP list is AMMO / FULTON,
+WEAPONS / ITEMS, LOADOUT, VEHICLES; AMMO / FULTON opens a map where Space (OK) confirms the delivery point (the run
+pressed Tab there, so H1 is still [U]). Whether state 14 means "landed and opened" or "faded unopened" is [U].
+
+Hidden run `ddf44cee` (2026-11-01, play, afgh-ledge; every scenario expectation met): [O] the guest mirrored the host's
+script drop (`step=mirror; ...; ok=1`, `supply=request;...;mirror=1` with the host's x/y/z, the toast). [O] H1: the
+iDroid AMMO / FULTON drop (Tab, 3, Enter, Enter, Space OK) passes `0x15C3F00` from the funnel on both roles (drop 0,
+equip 431, wait 5, level 0, flags 0x4, the aim point = the caller's own position, GMP -55780), and the partner mirrored
+it both ways. [O] Every box on both copies went 1 -> 3 -> 5 -> 8 (landed, about 23 s after the request) -> 14 (1 s
+later) and was reset by its fade timer 2 s after that, both copies about 0.1 s apart, with nobody pressing anything;
+the caller's screen showed "Surplus Supplies Retrieved" and a GMP bonus (the drop landed on the caller, who went prone).
+So state 14 is "delivered": AMMO / FULTON contents are taken automatically on landing, and a reset at state 14 is the
+game's own end on both copies (`step=delivered`, nothing sent). [I] the mirror box gave the other player nothing (no
+notice, magazine unchanged) with that player about 3 m from the landing point; whether two players both standing on
+the spot would both get the contents is [U]. A remove that finds no box (`ok=0`) shows no toast. The WEAPONS / ITEMS
+drops (a box that stays until `OnPickUpSupplyCbox`?) are not run yet [U].
+
+Hidden run `5acbcb83` (2026-11-01, play, afgh-ledge; the delivered rule): [O] three boxes (the host's script drop aimed
+at the guest, the host's and the guest's own iDroid AMMO / FULTON drops) each mirrored once (`step=mirror; ...; ok=1`
+and the toast note 21 a=1 on the receiver) and ended with `step=delivered` on both copies; no kind 2, no remove, no
+"partner took" toast, no `step=error|rx_bad|echo|mirror_skip`. [O] Frames: at the script box's landing the guest's
+screen shows a large olive dithered panel close to the camera (the parachute [I]) and the host's none; after the
+host's own iDroid drop the host lies prone beside an open yellow supply case 2 m away (a dark case from the script drop
+3 m away), while the guest's screen at that moment shows no notice and the same magazine. The script AMMO box
+(drop 4, equip 0) gave no visible "Surplus Supplies Retrieved" in any run [U]. The WEAPONS / ITEMS list opens with the
+equipped pistol first; Enter and Space on it ordered nothing (the scenario now selects the next pistol first) [U].
+
+Review fixes (r1101, after run `5acbcb83`; Lua and native tests only, not yet in a run):
+- One box per copy, so a mirror request resets the receiver's own box. A partner's drop is never mirrored over this
+  copy's own live or just requested box (state not 0, or within 2 s of the request): `step=mirror_held;origin=;oseq=;
+  own=;st=`, no request, no toast; each player keeps the box they paid for, crossing drops included (each copy then
+  shows only its own box). Once the own box has ended, the next partner drop is mirrored again; a newer partner drop
+  still replaces an older partner box.
+- The request detour calls the original first and records `accepted` (`supply_sync::RequestAccepted`): the core's
+  refused branch (`[Z+0x20]->vt[0]()` true: `jnz` to the epilogue at +0x140) touches nothing in Z, an accepted request
+  copies itself to Z+0x4E0 and writes the state and the flags. A refused own request is `step=refused` (not sent, not
+  this copy's box); a mirror is adopted (S.cur, note 21 a=1) only when its own request event was seen and accepted
+  (`step=mirror;...;ok=0;...;why=err=..|refused|unseen` otherwise, the previous box kept, no toast).
+- Only the proven drop / equip pairs sync: the iDroid AMMO / FULTON drop 0:431 and the script AMMO box 4:0 (both
+  delivered by the game on landing, so the state-14 rule is their end). Any other request (WEAPONS / ITEMS, SUIT,
+  LOADOUT, ...) stays this copy's own box (`step=drop_local;...;sync=0`, never sent; it still holds partner mirrors off
+  and ends as `gone_local` with nothing sent, never `delivered`); a partner's other type is `step=mirror_skip;
+  reason=drop_type`. Each further type needs a hidden run that shows what the receiver gets and how the box ends.
+- The partner's op is applied after this copy's ring is read (a poll at the start of every SUPPLY), so a kind 2 for
+  the partner's old box can never remove this copy's newer box; a later accepted request in the same poll supersedes an
+  earlier one (`step=superseded`, one kind 1).
+- The stop hook resets only on a real stop (W.w1off's `false` keeps the box); a new pairing epoch forgets the dedupe
+  keys and turns the old pairing's partner box into this copy's alone (`step=epoch`).
+- The remove path (kind 2, the lever, note 21 a=2) can no longer be reached by the synced types in normal play (they
+  end at state 14 on both copies); it stays [U] (H2, H3) and is not a reason to turn the key on. The proof scenario
+  now shows crossing drops (`mirror_held`) and that a WEAPONS / ITEMS drop is not synced, and asks for its pickup
+  (`step=pickup`, `gone_local;...;why=pickup;sent=0`) as the H3 evidence for a later type.
+
+Prove phase (r1101 integration `wp/integ-1101`; hidden worker, play, `-WanSim bad`, afgh-ledge, native gun profile; both
+copies' sliced script-observer logs and frames looked at; sheets under the run archive `r1101/frames/supply/`):
+- `69efd63b` (`r1101-supply-play.txt`, key named, with the review fixes): [O] the host's F9 script AMMO drop (4:0) aimed
+  at the guest was mirrored on the guest (`mirror;origin=1;oseq=1;ok=1`, `supply=request;...;mirror=1` at the host's
+  x/y/z, note 21 a=1) and ended `delivered` on both copies; the host's own iDroid AMMO / FULTON drop (0:431, "Supply Drop
+  Expenses: [GMP -55780]") and the guest's own iDroid drop were mirrored and delivered on both; crossing script drops
+  kept each player's own box (host `mirror_held;origin=2;oseq=2;own=1.3`; on the guest the mirror came first and the
+  guest's own request 3 ms later replaced it, after its toast); a WEAPONS / ITEMS drop (3:0) stayed on the host's copy
+  (`drop_local;...;sent=0;...;sync=0`, nothing on the guest) and waited at state 10. The host's E presses while lying
+  on its back after the landing took nothing, so `step=pickup` (H3) is still [U].
+- `93f27123` (`r1101-supply-default-play.txt`, key NOT named; session lab settings `nametag=1` only): `supply=installed`
+  and `step=on` on both copies at the shipped default; the host's script drop, the host's iDroid drop and the guest's
+  iDroid drop each mirrored (`ok=1`, note 21 a=1 on the receiver) and delivered on both. [O] frames: the landing marker
+  with the box's falling height counting down on both screens at once (host / guest 203 / 204, 199 / 205 then 38 / 40,
+  209 / 199 then 41 / 38 [I: metres]); the toast on the receiver; the expense line on each caller; "Surplus Supplies
+  Retrieved" x3 and GMP +3850 on the guest after its own drop. Each screen showed the partner close to the camera
+  (the players faced away from each other [I: the teleport yaw points the other way round]), so no frame shows the box
+  itself on the ground at the partner's spot.
+- Neither run logged `step=error`, `rx_bad`, `echo`, `mirror_skip`, `remove`, `gone_unknown`, `refused`, `accepted=0`,
+  `supply=failed|refused`, note 21 a=2, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a GameOver; no game exited
+  early. Still [U]: two players both on the landing spot (each copy delivered to its own player only, the partner about
+  3 m away [I]); WEAPONS / ITEMS and other types (not synced); the remove path (H2, H3); a box landing on a guard.
+## 27. Vehicle spawn (debug menu Spawn vehicle; docs/debug-menu.md "Spawn vehicle")
+
+Op `0x44` VSPAWN (68), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;
+9 fields, 22 bytes: `seq` (u16 1..), `kind` (u8 1 the guest's ask / 2 the host's press / 3 the host's spawn for an ask /
+4 a refusal: the host's of an ask, or the guest's copy not taking a 2 / 3, answered to the host), `class` (u8 1 light vehicle / 2 truck), `num` (u8, the authored locator
+`veh_<class>_NNNN`; 255 none), `x`, `y`, `z` (i32 mm), `yaw` (i32 mdeg, -360000..360000), `reason` (u8 0 ok, else the
+refusal 1..15). Sent only while the lab key `debug_vspawn` is on (it follows the gun profile in lab and play since the r1101 Prove
+phase, runs `65b4005c` / `e09fcf72` / `6ffe824d`; a named 0 turns it off; `MGS_COOP_VSPAWN_CFG_V1` answers it
+to Lua). The host decides: its own press (refused while unpaired) picks the vehicle and sends kind 2 with the locator
+and the spot, and moves it only once that went out; a guest's press sends kind 1 with the guest's own pose, the host
+picks for the spot 6 m in front of the guest, sends kind 3 and moves it (or answers kind 4 with the reason). A wreck is
+re-created on the host first and its kind 2 / 3 goes out only once the host's copy reads it back in place (never: the
+press toasts b=7, an ask gets kind 4 reason 7). A guest applies kinds 2 and 3 (the same locator to the same pose) unless
+its own key is off, its player stands within 3.5 m of the spot, or its copy has the vehicle occupied (its own LRRP crew)
+or being lost (VEHICLE_GONE watch / held); then it answers kind 4 (reason 1 off, 10 in the way, else 9) and the host
+toasts b=10 or b=9. The host refuses (b=10) a spot within 3.5 m of the other player: the partner's last pose (the debug
+command's `pp`) for its own press, its own player for an ask. The guest never applies kind 1; the host never applies
+2..4. Lua (`lua/coop/debug_vspawn.lua`): the vehicle is one of the area's own
+(an authored `VEHICLE_SPAWN_LIST` locator), moved by the instance command `SetPosition{position, rotY}` (degrees), a
+wreck first re-created by `Respawn{name}`; both copies read the pose back (`event=vspawn; step=placed; ok=`). Because
+the same locator stands at the same pose on both copies, VEHICLE_GONE / VEHICLE_STATE and the ride sync treat it as that
+map vehicle. World note 20 VSPAWN{a=1 spawned in front of you (b 1 jeep / 2 truck) | 2 your partner spawned one (b class) |
+3 refused (b 1 key off, 2 not free roam, 3 none free, 4 not in this area, 5 not on foot, 6 not paired, 7 failed, 8 no
+answer, 9 only on your screen: the partner's copy did not take it, 10 a player on the spot)} toasts on the presser's and the partner's screen. 0x45 / 0x46 and notes 21 / 22 belong to the 11-01 supply and
+Fulton tracks. A partner without the op skips it by its length (unknown_op): nothing moves there and no kind 4 comes back (the
+host's toast still says both screens; pairing across builds shows the MISMATCH note).

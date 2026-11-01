@@ -125,6 +125,7 @@
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_arms.hpp"
+#include "mgscoop/supply_cbox.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -832,6 +833,15 @@ std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_h
 bool PartnerReadRates(void*, const pp::State& state, std::uint32_t index, pp::RateRead& out) noexcept {
     return pp::ReadRates(partner_addresses, state, index, out);
 }
+// r1101 vanim (lab.ini partner_ride_steer): the ride blends of instance `index` and body 1's write.
+bool PartnerRideSteerRead(void*, const pp::State& state, std::uint32_t index, pp::RideRates& out) noexcept {
+    if (!game_base || !partner_gate_ok) { out = pp::RideRates{}; out.refusal = "gate"; return false; }
+    return pp::ReadRideRates(partner_addresses, state, index, out);
+}
+const char* PartnerRideSteerWrite(void*, const pp::State& state, const pp::RideRates& in) noexcept {
+    if (!game_base || !partner_gate_ok) return "gate";
+    return pp::WriteRideRates(partner_addresses, state, in);
+}
 // The ending mission's epoch (MissionStart/End): the rates mirror and the
 // aim-target mirror drop their state without writing; that epoch never
 // writes again.
@@ -887,6 +897,10 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
 }
 bool PartnerSendReliableAppend(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
     return PartnerSendReliable(context, channel, bytes, size);
+}
+// r1101 vanim review vanim-4: the steer addendum waits while channel 2's window is busy.
+unsigned PartnerReliableQueued(void*, std::uint8_t channel) noexcept {
+    return mgscoop::partner_net::ReliableQueued(channel);
 }
 // Teammate carry events (coop_carry) on reliable channel 2, appended like the
 // manifest and capability messages.
@@ -1313,7 +1327,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerPassCameraMvt, PartnerPassCameraRotation, PartnerSeatShotPublish, PartnerSeatShotWithdraw, PartnerSeatShotStats,
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
     PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
-    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut};
+    PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut,
+    PartnerRideSteerRead, PartnerRideSteerWrite, PartnerReliableQueued};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1670,6 +1685,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.vehicle_gone = labc.world_vehicle_gone;
     world.companion = labc.companion_host_owned;
     world.relief = labc.world_relief;
+    world.fulton = mgscoop::FultonCfgBits(labc);
     world.vehicle_state = labc.world_vehicle_state;
     world.vehicle_wreck = labc.world_vehicle_wreck;
     world.vehicle_break = labc.world_vehicle_break;
@@ -5513,6 +5529,32 @@ bool SelectArmsReceipt(const char* buffer,std::size_t size,mgscoop::script_bridg
     if(n) replacement={reply,n};
     return true;
 }
+// Supply drops synced (r1101, docs/world-sync-protocol.md section 26, lua/coop/world_supply.lua): MGS_COOP_SUPPLY_V1
+// poll / mirror / remove (mgscoop/supply_sync.hpp grammar). Answers {on=0} with the key off or off the runtime thread.
+bool SelectSupplyReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_SUPPLY_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>96 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    static constexpr char off[]="return {on=0}";
+    replacement={off,sizeof(off)-1};
+    if(!mgscoop::supply_cbox::Enabled() || !OnRuntimeThread()) return true;
+    static char reply[2048]{};
+    const auto n=mgscoop::supply_cbox::HandleReceipt(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),GetTickCount64(),reply,sizeof(reply));
+    if(n) replacement={reply,n};
+    return true;
+}
+// Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua, docs/debug-menu.md "Spawn vehicle"): MGS_COOP_VSPAWN_CFG_V1
+// answers the lab key debug_vspawn (1 on, 0 off; on with the gun profile) while the debug menu is enabled, on the runtime
+// thread; otherwise nil (Lua reads it as off). No game read or call.
+bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_VSPAWN_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    replacement={none,sizeof(none)-1};
+    if(!mgscoop::debug_menu::Enabled() || !OnRuntimeThread()) return true;
+    if(mgscoop::GetLabConfig().debug_vspawn) replacement={on,sizeof(on)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5706,6 +5748,8 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
+    if (SelectSupplyReceipt(buffer, size, replacement)) return true;
+    if (SelectVspawnReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -6332,6 +6376,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    // Supply drops synced (r1101, lab.ini world_supply, on with the gun profile): the supply-box observer's
+                    // two observe-only detours, after its exact contract matches (native/supply_cbox_contract.hpp).
+                    mgscoop::supply_cbox::SetEnabled(labc.world_supply);
+                    if (labc.world_supply) {
+                        if (!mgscoop::supply_cbox::Install(const_cast<void*>(base), span, Log)) mgscoop::supply_cbox::SetEnabled(false);
+                    } else {
+                        Log("supply=off;reason=key_off\r\n");
+                    }
                     mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
                     // Lab: debug_soldier_warp; play: spawn_warp (a host "spawn_enemy here" or a guest spawn-sync grant);
                     // a play or lab guest also for the Mother Base staff rule (GuestWarpReceipt, world-sync-design.md 7.7).
