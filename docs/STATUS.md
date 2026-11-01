@@ -31,6 +31,11 @@
   AI later (until M8; all six Afghanistan trucks are LRRP trucks); the drive in C is short (about 7 m, to a concrete
   block); a partner on an older build drops `0x44` as unknown_op and cannot answer; with the key named 0 the refusal
   still reads "not available yet in this build". Mother Base and story missions refuse as before.
+- **Checks at `d89b62a9`** (worktree on C:, Debug, `-Jobs 4`): full `tools/build.ps1` CTest **347/347**; every generator
+  with `--check` passes (partner, soldier_warp, carry_info, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, sleep_plugin, steam_shim, supply_cbox, vehicle_controller); native_ui and
+  teammate_targeting stop at their gitignored `docs/evidence` JSON, as in every fresh tree. `debug_vspawn.lua` 15576 /
+  16000 LF bytes. Nothing pushed, tagged or released.
 
 ## November 1, 2026: r1101 integration - five tracks in one build, every new key off unless named (`wp/integ-1101`, local only; no hidden runs this round)
 
