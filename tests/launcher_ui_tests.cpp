@@ -524,7 +524,13 @@ void TestCommandLine() {
     Check(ui::PreparingNote(u) == "This takes about a minute after an update.", "right after a self-update");
     u.status = UpdateStatus::downloading;
     Check(ui::PreparingNote(u) == "It continues once the update has finished.", "an update is in progress: the setup waits for it");
+    // fb1031: while the setup waits for the player (MGSV still running, Steam not logged in), the line says what to do.
+    const std::string wait = "Close Metal Gear Solid V first. Co-op gets ready by itself once the game has closed.";
+    Check(ui::PreparingNote(u, wait) == "It continues once the update has finished.", "an update in progress still comes first");
     u.status = UpdateStatus::up_to_date;
+    Check(ui::PreparingNote(u, wait) == wait, "the setup waits for the player: the plain sentence replaces the note");
+    Check(ui::PreparingNote(fresh, wait) == wait, "the first start waiting for the player: the plain sentence");
+    Check(ui::PreparingNote(fresh, "") == ui::PreparingNote(fresh), "nothing to wait for: the usual note");
 
     // About > Source code: the release page of this version (both zips are there).
     Check(ui::ReleasePageUrl("0.14.4+48ce7da") == "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.14.4",

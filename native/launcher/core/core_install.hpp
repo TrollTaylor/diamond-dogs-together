@@ -116,6 +116,14 @@ bool RunSetup(Env& env, const InstancePaths& paths, const std::string& character
 // folder's setup lock (SetupMutexName) while it runs. True while another thread
 // or process holds it: a window then waits instead of starting its own setup.
 bool SetupRunningElsewhere(const std::wstring& game_root);
+// What keeps a setup from running in this folder right now, as a log token (fb1031: on a friend's PC the first setup
+// after an update failed at step 0 four times in 22 s, until Steam had logged in): "other_setup" (another setup holds
+// the folder's lock), "game_running" (MGSV runs from this folder), "session_live" (co-op is on for a game another
+// window or its helper started), "steam_login" (Steam is installed but nobody is logged in, and the saves alone do not
+// name the account), or empty. The window waits for these, then sets co-op up by itself.
+std::string SetupBusyReason(Env& env, const InstancePaths& paths);
+// The player's sentence while the window waits for a SetupBusyReason token (empty for none or another token).
+std::string SetupBusyText(const std::string& reason);
 
 // ---- Uninstall and Collect logs -------------------------------------------------------
 bool Uninstall(Env& env, const InstancePaths& paths, std::string& report, std::string& error);

@@ -314,6 +314,10 @@ public:
     std::string version() const override { return CoreBuildId(); }
     std::string game_dir() const override { return Utf8(paths_.game); }
 
+    std::string setup_wait_text() const override {
+        return phase_ == Phase::needs_setup && !setup_busy_.empty() ? SetupBusyText(setup_busy_) : std::string();
+    }
+
     std::vector<SetupStep> setup_steps() const override {
         std::lock_guard<std::mutex> lock(shared_->m);
         if (phase_ == Phase::ready) return FreshSteps(SetupStep::State::done);
@@ -327,6 +331,7 @@ public:
         std::string busy;
         if (UpdateBusy(busy)) return;
         auto_paused_ = false;
+        setup_busy_.clear();
         if (setup_thread_.joinable()) setup_thread_.join();
         {
             std::lock_guard<std::mutex> lock(shared_->m);
@@ -529,17 +534,35 @@ public:
         // While another setup runs in this folder (a window that is closing ends its own first; the developer
         // --write-session), this window waits for it instead of starting a second one next to it, then looks at the
         // folder again: that setup may have made co-op ready already (0.14.4 review).
-        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce() && !UpdateBusy()) {
-            if (SetupRunningElsewhere(paths_.game)) {
-                if (!setup_waiting_) Log("setup=waiting; reason=other_setup");
-                setup_waiting_ = true;
+        // It waits the same way, with one plain sentence (setup_wait_text), while MGSV runs from the folder, co-op is
+        // on for another window's game, or Steam is not logged in yet (fb1031: a friend's setup failed four times in
+        // 22 s until Steam had logged in), and sets co-op up by itself once that has gone.
+        // The opening check's own refusal of a running game (phase error) also clears by itself once the game closed.
+        if (phase_ == Phase::error && !recheck_busy_.empty() && stage_ == Stage::none && now >= busy_next_check_) {
+            busy_next_check_ = now + kBusyCheckMs;
+            const bool gone = recheck_busy_ == "game_running" ? !AnyGameRunningIn(*env_, paths_.game) : !PlaySessionLive(*env_, paths_);
+            if (gone) {
+                Log("recheck=auto; after=" + recheck_busy_);
+                Recheck();
+            }
+        }
+        if (phase_ == Phase::needs_setup && auto_setup_ && !auto_paused_ && !SetupFailedOnce() && !UpdateBusy() &&
+            (setup_busy_.empty() || setup_busy_ == "other_setup" || now >= busy_next_check_)) {
+            // Listing processes and reading Steam's registry: at most once a second while waiting (the other
+            // setup's lock alone is looked at on every tick, as before).
+            const std::string busy = SetupBusyReason(*env_, paths_);
+            busy_next_check_ = now + kBusyCheckMs;
+            if (!busy.empty()) {
+                if (busy != setup_busy_) Log("setup=waiting; reason=" + busy);
+                setup_busy_ = busy;
             } else {
-                if (setup_waiting_) {
-                    setup_waiting_ = false;
+                const std::string after = setup_busy_;
+                if (!after.empty()) {
+                    setup_busy_.clear();
                     Recheck();
                 }
                 if (phase_ == Phase::needs_setup) {
-                    Log("setup=auto");
+                    Log(after.empty() ? std::string("setup=auto") : "setup=auto; after=" + after);
                     start_setup();
                 }
             }
@@ -579,6 +602,21 @@ public:
                 } else {
                     phase_ = Phase::needs_setup;
                     last_error_ = error;
+                    // A failure the player clears by closing or starting something (Try again while Steam still
+                    // logs in, fb1031) goes back to waiting: the plain sentence, no failure banner, and the setup
+                    // runs again by itself once that has gone. Anything else waits for Try again, as before.
+                    const std::string busy = auto_setup_ ? SetupBusyReason(*env_, paths_) : std::string();
+                    if (!busy.empty()) {
+                        {
+                            std::lock_guard<std::mutex> lock(shared_->m);
+                            shared_->setup_failed_once = false;
+                            shared_->steps = FreshSteps(SetupStep::State::pending);
+                        }
+                        last_error_.clear();
+                        setup_busy_ = busy;
+                        busy_next_check_ = now + kBusyCheckMs;
+                        Log("setup=waiting; reason=" + busy);
+                    }
                 }
             }
             return;
@@ -1131,6 +1169,7 @@ private:
     }
 
     void Recheck() {
+        recheck_busy_.clear();
         last_error_.clear();
         discovered_.clear();
         paths_ = GetInstancePaths(game_dir_);
@@ -1158,16 +1197,20 @@ private:
                 Attach(session, game);
                 return;
             }
-            if (PlaySessionLive(*env_, paths_))
+            if (PlaySessionLive(*env_, paths_)) {
+                recheck_busy_ = "session_live";   // tick() looks again by itself
                 return Fail("Co-op is still switching off in the background (or another Diamond Dogs Together window is open for this "
-                            "folder). Press Check again in a moment.");
+                            "folder). This window carries on by itself once it has finished.");
+            }
             const CleanupResult r = CleanupSession(*env_, paths_, false);
             if (r.ran) Log("leftover=cleaned; removed=" + std::to_string(r.removed.size()));
         } else if (game) {
             if (IsFile(LocalPointer()))
                 return Fail("A local two-window test is running from this game folder (Play > Local test). Quit both games normally; both "
                             "folders are restored afterwards. Then press Check again.");
-            return Fail("MGSV is running from this folder. Quit it normally, then press Check again.");
+            recheck_busy_ = "game_running";   // tick() looks again by itself
+            return Fail("Metal Gear Solid V is running from this folder. Close it first; this window carries on by itself once it has "
+                        "closed.");
         }
         if (IsFile(LocalPointer())) {
             // A local two-window test whose launcher and helper are gone: restore its files from the journal.
@@ -1309,11 +1352,19 @@ private:
             notice_ = notice_.empty() ? warning : notice_ + " " + warning;
             Log("warning=steam_folder_differs");
         }
-        Log("play=launch; role=" + req.lab.role + "; wait=" + (wait_invite_ ? "1" : "0") + "; steam=" + GetSteamAppRunning(*env_).text);
-        if (!env_->OpenUrl(Wide(kSteamUrl))) {
+        const SteamRunning steam = GetSteamAppRunning(*env_);
+        Log("play=launch; role=" + req.lab.role + "; wait=" + (wait_invite_ ? "1" : "0") + "; steam=" + steam.text);
+        // fb1031: Play 2 s after MGSV had exited, while Steam still listed it as running: Steam ignored the request and
+        // nothing started for 32 s until the player cancelled. Steam is asked once it has let go of the last game
+        // (PollLaunching; at most kSteamLetGoMs later).
+        if (steam.known && steam.running) {
+            steam_url_pending_ = true;
+            steam_wait_start_ = env_->NowMs();
+            Log("play=steam_wait; " + steam.text);
+        } else if (!env_->OpenUrl(Wide(kSteamUrl))) {
             CleanupSession(*env_, paths_, true);
             ResetSession();
-            error = last_error_ = "Steam could not be asked to start MGSV. Start Steam, then try again. Co-op was switched off again.";
+            error = last_error_ = kSteamUrlFailed;
             return false;
         }
         stage_ = Stage::launching;
@@ -1335,6 +1386,7 @@ private:
         game_pid_ = 0;
         game_start_ = 0;
         run_ = 0;
+        steam_url_pending_ = false;
         status_ = json::Value();
         evidence_ = Evidence{};
         link_ = LinkView{};
@@ -1425,8 +1477,25 @@ private:
     void PollLaunching(std::int64_t now) {
         for (const ProcessRow& g : GameProcessesIn(*env_, paths_.game)) {
             if (g.unknown) continue;
+            steam_url_pending_ = false;
             OnGameSeen(g.pid, now);
             return;
+        }
+        if (steam_url_pending_) {
+            const SteamRunning steam = GetSteamAppRunning(*env_);
+            const std::int64_t waited = now - steam_wait_start_;
+            if (!(steam.known && steam.running) || waited >= kSteamLetGoMs) {
+                steam_url_pending_ = false;
+                Log("play=steam_url; waited_ms=" + std::to_string(waited) + "; steam=" + steam.text);
+                if (!env_->OpenUrl(Wide(kSteamUrl))) {
+                    CleanupSession(*env_, paths_, true);
+                    ResetSession();
+                    Recheck();
+                    last_error_ = kSteamUrlFailed;
+                    return;
+                }
+                UpdateLink(now);
+            }
         }
         // Co-op switched off from elsewhere (the helper, another tool): back to ready.
         json::Value s;
@@ -1614,7 +1683,8 @@ private:
         case Stage::none: break;
         case Stage::launching:
             v.headline = "Starting MGSV...";
-            v.detail = "Steam is starting the game. Answer any Steam dialog; this can take a minute.";
+            v.detail = steam_url_pending_ ? "Waiting for Steam to finish closing the last game. MGSV starts by itself in a moment."
+                                          : "Steam is starting the game. Answer any Steam dialog; this can take a minute.";
             break;
         case Stage::local_test: {
             if (local_start_) {
@@ -1689,7 +1759,17 @@ private:
     bool auto_setup_ = true;   // --write-session runs the setup itself (its setup=start line)
     // After an Uninstall in this window co-op is set up again only when the player asks (Check again, Try again).
     bool auto_paused_ = false;
-    bool setup_waiting_ = false;   // the automatic setup waits for another setup in this folder
+    // What the automatic setup waits for (a SetupBusyReason token: another setup in this folder, MGSV running, a live
+    // co-op session, Steam's login), and what the opening check's refusal waits for ("game_running", "session_live").
+    std::string setup_busy_, recheck_busy_;
+    std::int64_t busy_next_check_ = 0;
+    static constexpr std::int64_t kBusyCheckMs = 1000;
+    // Play while Steam still lists MGSV as running (fb1031): Steam is asked once it has let go, at most this much later.
+    bool steam_url_pending_ = false;
+    std::int64_t steam_wait_start_ = 0;
+    static constexpr std::int64_t kSteamLetGoMs = 30000;
+    static constexpr const char* kSteamUrlFailed =
+        "Steam could not be asked to start MGSV. Start Steam, then try again. Co-op was switched off again.";
     InstancePaths paths_;
     std::shared_ptr<Shared> shared_ = std::make_shared<Shared>();
     std::thread setup_thread_;
