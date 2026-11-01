@@ -646,6 +646,14 @@ try {
             $file = Join-Path $fixture 'play-aim-truth-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_native_aim_truth'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_native_aim_truth 0 turns anim truth off in play'
+            # The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"; hidden play runs ba1a041a and bfd46ce5):
+            # Play-Coop never names partner_ride_steer; play defaults it on with the gun profile; a named 0 turns it off in play.
+            Assert-True (!$hostIni.Contains('partner_ride_steer') -and !$guestIni.Contains('partner_ride_steer') -and
+                !$clipsIni.Contains('partner_ride_steer')) 'Play-Coop lab.ini never names partner_ride_steer'
+            Assert-Equal "$($n['partner_ride_steer'])" '1' 'native: play defaults the driver steer pose on'
+            $file = Join-Path $fixture 'play-ride-steer-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_ride_steer=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_ride_steer'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_ride_steer 0 turns the steer pose off in play'
             # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and

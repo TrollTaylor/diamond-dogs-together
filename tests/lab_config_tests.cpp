@@ -781,20 +781,35 @@ int main() {
             Check(!late.partner_ride_getin_cut && late.invalid_values == 1, "an invalid get-in cut value after a valid 1 turns it off");
         }
     }
-    // r1101 vanim (partner_ride_steer, docs/vehicle-ws3.md "Driver pose"): off unless named in lab and play (not run-proven
-    // yet), even with the gun profile; a named 1 runs in lab and play; an invalid value is named and off, also after a valid 1.
+    // r1101 vanim (partner_ride_steer, docs/vehicle-ws3.md "Driver pose"): follows the native gun profile in lab and play
+    // since the r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's
+    // hands level when straight and a turning pose for a and the other for d); off without the profile; a named 0 opts out
+    // (named); a named 1 runs without the profile; an invalid value is named and off, also after a valid 1.
     {
-        Check(!LabConfig{}.partner_ride_steer && !Lab("").partner_ride_steer, "the driver steer pose defaults off");
+        Check(!LabConfig{}.partner_ride_steer && !LabConfig{}.partner_ride_steer_given && !Lab("").partner_ride_steer,
+              "the driver steer pose is off without the gun profile");
+        Check(Lab("enabled=1\nrole=host\npartner_ride_steer=1\n").partner_ride_steer, "a named steer pose runs without the gun profile");
         const std::string gun = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
                                 "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n";
+        const std::string plainPlay = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                      "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+        const auto plain = Lab(plainPlay);
+        Check(!plain.partner_ride_steer && plain.play_refused == 0, "the steer pose stays off in play without the gun profile");
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const auto profile = Lab(gun + mode);
-            Check(!profile.partner_ride_steer && profile.invalid_values == 0, "the gun profile leaves the steer pose off (not named)");
+            Check(profile.partner_ride_steer && !profile.partner_ride_steer_given && profile.invalid_values == 0 &&
+                      profile.unknown_keys == 0 && profile.play_refused == 0,
+                  "the gun profile turns the steer pose on in lab and play (not named)");
             const auto named = Lab(gun + mode + "partner_ride_steer=1\n");
-            Check(named.partner_ride_steer && named.invalid_values == 0 && named.unknown_keys == 0 && named.play_refused == 0,
+            Check(named.partner_ride_steer && named.partner_ride_steer_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
                   "a named steer pose runs in lab and play");
             const auto off = Lab(gun + mode + "partner_ride_steer=0\n");
-            Check(!off.partner_ride_steer && off.invalid_values == 0, "a named steer pose 0 stays off");
+            Check(!off.partner_ride_steer && off.partner_ride_steer_given && off.invalid_values == 0 && off.play_refused == 0,
+                  "a named steer pose 0 opts out with the gun profile");
+            const auto bad = Lab(gun + mode + "partner_ride_steer=maybe\n");
+            Check(!bad.partner_ride_steer && bad.partner_ride_steer_given && bad.invalid_values == 1,
+                  "an invalid steer pose value is named and off with the gun profile");
         }
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_steer=") + value + "\n");
