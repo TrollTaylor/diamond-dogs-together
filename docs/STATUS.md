@@ -1,3 +1,28 @@
+## 2026-10-31: Give weapon and Friendly fire review fixes; play keeps them off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** nothing new in play yet. F9 > Player > **Give weapon** and F9 > Partner > **Friendly fire** are marked
+unverified, and in play each press says "Not available yet in this build." (`not_available_yet`); friendly fire stays
+ON as before. Lab mode keeps both rows for the next `arms-give-ff-play` run.
+
+- **Run:** not admitted. The wrapper checked the floors every 5 min from 19:44 to 19:59: commit free 11.95, 8.93, 3.55
+  and 12.96 GB (floor 15), D: 7.54 down to 4.55 GB; at 19:54 nvidia-smi showed 7921 MiB / 69 % in use by other
+  programs (d3dprobe hr=0 on all adapters). It never took the lock; the track stopped waiting at 19:59 to stay in its
+  time box. Nothing was deleted or closed. Nothing here is run-proven.
+- **Review fix arms-1** (red `ba75dd8f`, green `26dbbfe5`): the arms log lines are written without spaces like every world
+  Lua line, so the log shows `world_lua=event=arms; step=give; equip=..; slot=..; ok=1` (W.log turned each space into
+  `_` before). The scenario's friendly fire wait uses the native spacing (`event=friendly_fire; step=dropped; ...`).
+  `debug_arms_lua_check` now runs the real W.log sanitiser and the native `;` spacing, and checks the scenario's waits.
+- **arms-4** (red `5192a7f6`, green `b37c7ab1`): a failed ARMS send at pairing is retried on the next update; a guest that
+  loses its host goes back to friendly fire ON (the host resends its switch at the next pairing).
+- **arms-3:** world note 16 is MISMATCH (native `world_link` posts it); only 15 and 17 are free. Comments and the protocol
+  doc corrected.
+- **Lab only** (red `0d984019`, green `36d3f2f1`): `give_weapon`, `give_pick` and `friendly_fire` refuse unless `W.mode == 1`
+  (lab); `give_list` stays. `arms-give-ff-play.txt` runs in `-Mode play`, so the gate comes off in the change that a
+  passing run proves (or the run uses `-Mode lab`).
+- Not done: arms-5 (Give weapon at Mother Base: no decision or proof; lab only now), arms-6 (the 30-update census re-read
+  is not exercised by the check).
+- Full `tools/build.ps1` at `df525fa4`: CTest 343/343; partner contract `--check` passes.
+
 ## 2026-10-31: Game rules review fix; play keeps them off (run not admitted) (`wp/integ-dbg1031`, local only)
 
 **Players get:** nothing new in play yet. F9 > World > **Game rules** (Wormhole Fulton off/on, Weapons at Mother
