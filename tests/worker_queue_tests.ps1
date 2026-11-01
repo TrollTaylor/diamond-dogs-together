@@ -211,6 +211,199 @@ Remove-Item -LiteralPath (Join-Path $stage 'fake-starts.txt')
 $r=Invoke-Staged $stage @{ScenarioPath="$a,$c"} @{FAKE_LEASES='1'}
 $doc=$r.Json|ConvertFrom-Json -AsHashtable
 Check ($r.Starts -eq 1 -and @($doc.Parts).Count -eq 2) 'pwsh -File form: -ScenarioPath a.txt,b.txt'
+
+# ---- 3. The hidden-run queue ---------------------------------------------------------------------------------------
+$submit=Join-Path $RepoRoot 'tools\worker\Submit-WorkerJob.ps1'
+$runner=Join-Path $RepoRoot 'tools\worker\Invoke-WorkerQueue.ps1'
+Check ((Test-Path -LiteralPath $submit) -and (Test-Path -LiteralPath $runner)) 'the queue scripts exist'
+$tokens=$null;$errors=$null
+$queueAst=[Management.Automation.Language.Parser]::ParseFile($runner,[ref]$tokens,[ref]$errors)
+Check ($errors.Count -eq 0) 'the queue runner parses'
+$floorFn=@($queueAst.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-QueueFloorShortfall'},$true))
+Check ($floorFn.Count -eq 1) 'one floor check'
+. ([scriptblock]::Create($floorFn[0].Extent.Text))
+$floors=@{min_free_c_gb=6;min_free_d_gb=3;min_commit_free_gb=15}
+Check (@(Get-QueueFloorShortfall @{c_gb=29;d_gb=9.7;commit_gb=20} $floors).Count -eq 0) 'floors met: nothing short'
+$short=@(Get-QueueFloorShortfall @{c_gb=5.9;d_gb=2;commit_gb=14.9} $floors)
+Check ($short.Count -eq 3 -and ($short -join ';').Contains('C:') -and ($short -join ';').Contains('D:') -and ($short -join ';').Contains('commit')) "every short floor is named ($($short -join '; '))"
+Check (@(Get-QueueFloorShortfall @{c_gb=29;d_gb=$null;commit_gb=20} $floors).Count -eq 0) 'a machine without D: has no D: floor'
+
+# The sandbox: its own %TEMP% (verify lock, CTest readers, queue) and a fake job repo.
+$temp=Join-Path $sandbox 'temp';$null=New-Item -ItemType Directory -Path $temp
+$queue=Join-Path $temp 'mgs-coop-queue'
+$lockDir=Join-Path $temp 'mgs-coop-verify.lock'
+$jobRepo=Join-Path $sandbox 'jobrepo';$null=New-Item -ItemType Directory -Force -Path (Join-Path $jobRepo 'tools\worker\scenarios')
+$fakeScenario=@'
+# Fake Invoke-WorkerScenario of a job repo: records what the queue gave it and writes a run like the real one.
+[CmdletBinding()]
+param([string[]]$ScenarioPath=@(),[string]$ScenarioList,[string[]]$Step=@(),[string]$Mode='lab',[string]$WanSim='off',[string]$PartnerProfile='animated',
+    [string]$NativeStage='',[string]$BuildProfile='normal',[string]$SaveSeed='lab',[string]$HostSaveSeed='',[string]$GuestSaveSeed='',
+    [string]$GraphicsQuality='',[string[]]$LabSetting=@(),[switch]$FreshChecks,[int]$TimeoutSec=600)
+$repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$files=if($ScenarioList){@([IO.File]::ReadAllLines($ScenarioList)|Where-Object{$_ -and !$_.StartsWith('#')})}else{@($ScenarioPath)}
+$owner=$(try{[IO.File]::ReadAllText((Join-Path $env:TEMP 'mgs-coop-verify.lock\owner.txt'))}catch{''})
+$stdin=$(if([Console]::IsInputRedirected){[Console]::In.ReadToEnd()}else{'console'})
+$seen=[ordered]@{files=$files;list=[bool]$ScenarioList;mode=$Mode;wan=$WanSim;profile=$PartnerProfile;stage=$NativeStage;build=$BuildProfile;
+    seed=$SaveSeed;labsetting=$LabSetting;fresh=[bool]$FreshChecks;lock_owner=$owner;stdin=$stdin;lua=[string]$env:MGS_GAME_LUA_DIR;cwd=(Get-Location).Path}
+Add-Content -LiteralPath (Join-Path $repo 'fake-runs.jsonl') -Value ($seen|ConvertTo-Json -Compress -Depth 5)
+if(@($files|Where-Object{(Get-Content -LiteralPath $_ -Raw).Contains('THROW')}).Count){throw 'Worker checks did not pass: fake'}
+if(@($files|Where-Object{(Get-Content -LiteralPath $_ -Raw).Contains('SLOW')}).Count){Start-Sleep -Seconds 4}
+$runId=[Guid]::NewGuid().ToString('N')
+$run=Join-Path $repo "build\worker-runtime\$runId";$null=New-Item -ItemType Directory -Force -Path $run
+([ordered]@{run_id=$runId;status='closed'}|ConvertTo-Json)|Set-Content -LiteralPath (Join-Path $run 'session.json')
+$i=0
+$parts=@(foreach($f in $files){$i++;$bad=(Get-Content -LiteralPath $f -Raw).Contains('FAIL')
+    [ordered]@{index=$i;name=[IO.Path]::GetFileName($f);path=$f;status=$(if($bad){'failed'}else{'passed'});failure=$null;fatal=$false;
+        expectations=@('host expect x <- y');expect_failures=@($(if($bad){'host expect ^ok <- bad'}))}})
+$xf=@($parts|ForEach-Object{$_.expect_failures})
+$result=[ordered]@{RunDirectory=$run;Frames=@();Failure=$null;Expectations=@();ExpectFailures=$xf;Closed=$true;BaselineRestored=$true;RealSavesUnchanged=$true;Forced=$false}
+if($ScenarioList -or $files.Count -gt 1){$result['Parts']=$parts}
+($result|ConvertTo-Json -Depth 8)|Set-Content -LiteralPath (Join-Path $run 'scenario.json')
+Write-Host "fake run $runId"
+[pscustomobject]$result
+'@
+[IO.File]::WriteAllText((Join-Path $jobRepo 'tools\worker\Invoke-WorkerScenario.ps1'),$fakeScenario)
+function Write-JobScenario([string]$Name,[string]$Text='wait 0'){$p=Join-Path $jobRepo "tools\worker\scenarios\$Name";[IO.File]::WriteAllText($p,$Text+"`r`n");return $p}
+$pass1=Write-JobScenario 'one.txt';$pass2=Write-JobScenario 'two.txt';$failing=Write-JobScenario 'bad.txt' "# FAIL`r`nwait 0"
+$throwing=Write-JobScenario 'throw.txt' "# THROW`r`nwait 0";$slow=Write-JobScenario 'slow.txt' "# SLOW`r`nwait 0"
+$resources=Join-Path $sandbox 'resources.json'
+function Set-Resources([double]$Commit){[IO.File]::WriteAllText($resources,(@{c_gb=50;d_gb=50;commit_gb=$Commit}|ConvertTo-Json))}
+Set-Resources 40
+# A fast queue for the tests (the real one checks every 3 min and polls the verify lock every 30 s).
+function Write-QueueConfig{
+    $null=New-Item -ItemType Directory -Force -Path $queue
+    [IO.File]::WriteAllText((Join-Path $queue 'queue.json'),(@{floor_retry_sec=1;lock_retry_sec=1;resource_file=$resources}|ConvertTo-Json))
+}
+Write-QueueConfig
+# Runs a queue script in its own pwsh with the sandbox's %TEMP% (and an MGS_GAME_LUA_DIR the jobs must not see).
+function Invoke-Queue([string]$Script,[string[]]$Arguments,[switch]$Background){
+    $saved=@{TEMP=$env:TEMP;TMP=$env:TMP;MGS_GAME_LUA_DIR=$env:MGS_GAME_LUA_DIR}
+    $env:TEMP=$temp;$env:TMP=$temp;$env:MGS_GAME_LUA_DIR='C:\lua-dir-the-job-must-not-see'
+    try{
+        if($Background){
+            return Start-Process -FilePath $pwsh -ArgumentList (@('-NoProfile','-NonInteractive','-File',$Script)+$Arguments) -PassThru -WindowStyle Hidden
+        }
+        $out=@(& $pwsh -NoProfile -NonInteractive -File $Script @Arguments 2>&1|ForEach-Object{[string]$_})
+        return [pscustomobject]@{Code=$LASTEXITCODE;Output=($out -join "`n")}
+    }finally{foreach($k in $saved.Keys){[Environment]::SetEnvironmentVariable($k,$saved[$k])}}
+}
+function Get-Jobs([string]$Folder,[string]$Filter='*.json'){
+    $dir=Join-Path $queue $Folder
+    if(!(Test-Path -LiteralPath $dir)){return @()}
+    return @(Get-ChildItem -LiteralPath $dir -Filter $Filter -File|Sort-Object Name)
+}
+function Read-Result([string]$Id){return Get-Content -LiteralPath (Join-Path $queue "done\$Id.result.json") -Raw|ConvertFrom-Json -AsHashtable}
+function Wait-Until([scriptblock]$Condition,[int]$Seconds,[string]$Label){
+    $limit=(Get-Date).AddSeconds($Seconds)
+    while(!(& $Condition)){if((Get-Date) -gt $limit){throw "FAIL timed out: $Label"};Start-Sleep -Milliseconds 200}
+    Check $true $Label
+}
+function Get-JobId([string]$Output){$m=[regex]::Match($Output,'Job ([0-9]{8}-[0-9]{6}-[0-9]{3}-[0-9a-f]{6}) ');Check $m.Success "the job id is printed: $Output";return $m.Groups[1].Value}
+
+# Submit writes a job and nothing else (-NoStart); the queue folders sit under %TEMP%.
+$r=Invoke-Queue $submit @('-Owner','tester-1','-Repo',$jobRepo,'-ScenarioPath','tools\worker\scenarios\one.txt,tools\worker\scenarios\two.txt',
+    '-Mode','play','-WanSim','bad','-PartnerProfile','native','-NativeStage','gun','-BuildProfile','research','-SaveSeed','afgh-ledge','-NoStart')
+Check ($r.Code -eq 0) "submit -NoStart ($($r.Output))"
+$id1=Get-JobId $r.Output
+$jobs=Get-Jobs 'jobs'
+Check ($jobs.Count -eq 1 -and $jobs[0].Name -ceq "$id1.json") 'the job waits in %TEMP%\mgs-coop-queue\jobs'
+$job=Get-Content -LiteralPath $jobs[0].FullName -Raw|ConvertFrom-Json -AsHashtable
+Check ($job.owner -ceq 'tester-1' -and $job.repo -ceq $jobRepo -and (@($job.scenarios) -join '|') -ceq "$pass1|$pass2") 'the job names its repo and its scenarios (relative to the repo)'
+Check ($job.args.Mode -ceq 'play' -and $job.args.WanSim -ceq 'bad' -and $job.args.PartnerProfile -ceq 'native' -and $job.args.NativeStage -ceq 'gun' -and
+    $job.args.BuildProfile -ceq 'research' -and $job.args.SaveSeed -ceq 'afgh-ledge') 'the job keeps the run flags'
+$r=Invoke-Queue $submit @('-Owner','tester-2','-Repo',$jobRepo,'-ScenarioPath',$failing,'-LabSetting','nametag=1','-NoStart')
+$id2=Get-JobId $r.Output
+Check ((@(Get-Jobs 'jobs'|ForEach-Object{$_.BaseName}) -join ',') -ceq "$id1,$id2") 'jobs queue oldest first'
+foreach($bad in @(@('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath','tools\worker\scenarios\missing.txt','-NoStart'),
+                  @('-Owner','bad owner','-Repo',$jobRepo,'-ScenarioPath',$pass1,'-NoStart'),
+                  @('-Owner','tester','-Repo',$sandbox,'-ScenarioPath',$pass1,'-NoStart'))){
+    $r=Invoke-Queue $submit $bad
+    Check ($r.Code -ne 0) ('submit refuses: '+($bad -join ' '))
+}
+Check ((Get-Jobs 'jobs').Count -eq 2) 'a refused submit writes no job'
+
+# The runner takes the jobs in order under the verify lock, then releases it.
+$r=Invoke-Queue $runner @()
+Check ($r.Code -eq 0) "the runner ran ($($r.Output))"
+Check ((Get-Jobs 'jobs').Count -eq 0 -and (Get-Jobs 'running').Count -eq 0) 'the runner empties the queue'
+Check (!(Test-Path -LiteralPath $lockDir) -and !(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))) 'the runner releases the verify lock and its own lock'
+$runs=@(Get-Content -LiteralPath (Join-Path $jobRepo 'fake-runs.jsonl')|ConvertFrom-Json -AsHashtable)
+Check ($runs.Count -eq 2 -and (@($runs[0].files) -join '|') -ceq "$pass1|$pass2" -and (@($runs[1].files) -join '|') -ceq $failing) 'jobs run oldest first, each in one call'
+Check ($runs[0].list -and $runs[0].mode -ceq 'play' -and $runs[0].wan -ceq 'bad' -and $runs[0].profile -ceq 'native' -and $runs[0].stage -ceq 'gun' -and
+    $runs[0].build -ceq 'research' -and $runs[0].seed -ceq 'afgh-ledge') 'the run gets the job''s scenario list and flags'
+Check ((@($runs[1].labsetting) -join ',') -ceq 'nametag=1') 'the run gets the job''s labsettings'
+Check ($runs[0].lock_owner.StartsWith('queue pid=') -and $runs[0].lock_owner.Contains("job=$id1") -and $runs[0].lock_owner.Contains('owner=tester-1')) "the run holds the verify lock as the queue ($($runs[0].lock_owner))"
+Check ($runs[0].stdin -ceq '' -and $runs[0].lua -ceq '' -and $runs[0].cwd -ieq $jobRepo) 'the run reads stdin from NUL, without MGS_GAME_LUA_DIR, in the job''s repo'
+$res1=Read-Result $id1;$res2=Read-Result $id2
+Check ($res1.status -ceq 'passed' -and $res1.run_id -cmatch '^[0-9a-f]{32}$' -and $res1.run_dir -and (Test-Path -LiteralPath $res1.run_dir)) 'the result names the passed run'
+Check ((@($res1.parts|ForEach-Object{$_.name+'='+$_.status}) -join ',') -ceq 'one.txt=passed,two.txt=passed') 'the result lists each part'
+Check ($res2.status -ceq 'failed' -and (@($res2.parts|ForEach-Object{$_.status}) -join ',') -ceq 'failed' -and (@($res2.parts[0].expect_failures) -join '|') -ceq 'host expect ^ok <- bad') 'a failed expectation fails its part and the job'
+Check ($res1.owner -ceq 'tester-1' -and $res1.log -and (Test-Path -LiteralPath $res1.log) -and $res1.started_utc -and $res1.finished_utc) 'the result keeps owner, log and times'
+Check ((Get-Content -LiteralPath $res1.log -Raw).Contains('fake run')) 'the job log holds the run''s output'
+
+# A job whose run fails before a session: an error result; the verify lock is still released.
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$throwing,'-NoStart');$id=Get-JobId $r.Output
+$null=Invoke-Queue $runner @()
+$res=Read-Result $id
+Check ($res.status -ceq 'error' -and ([string]$res.failure).Contains('Worker checks did not pass') -and !(Test-Path -LiteralPath $lockDir)) "a run that throws is an error result ($($res.failure))"
+
+# The verify lock held by someone else: the job waits, then runs once it is free (never removes a foreign lock).
+$null=New-Item -ItemType Directory -Path $lockDir;[IO.File]::WriteAllText((Join-Path $lockDir 'owner.txt'),'other-agent pid=1 start=1 time=2026-11-01T00:00:00Z')
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$pass1,'-NoStart');$id=Get-JobId $r.Output
+$p=Invoke-Queue $runner @() -Background
+Wait-Until {$f=Join-Path $queue "running\$id.json";(Test-Path -LiteralPath $f) -and (Get-Content -LiteralPath $f -Raw).Contains('waiting_lock')} 20 'the job waits for a foreign verify lock'
+Start-Sleep -Seconds 2
+Check ((Get-Content -LiteralPath (Join-Path $lockDir 'owner.txt') -Raw).StartsWith('other-agent')) 'the queue leaves a foreign verify lock alone'
+Remove-Item -LiteralPath $lockDir -Recurse -Force
+Wait-Until {Test-Path -LiteralPath (Join-Path $queue "done\$id.result.json")} 30 'the job runs once the verify lock is free'
+$p.WaitForExit(30000)|Out-Null
+$res=Read-Result $id
+Check ($res.status -ceq 'passed' -and [double]$res.lock_wait_s -ge 1) "the result records the lock wait ($($res.lock_wait_s) s)"
+
+# The floors: the job waits (and says why) until C:, D: and the commit charge allow a run.
+Set-Resources 4
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$pass1,'-NoStart');$id=Get-JobId $r.Output
+$p=Invoke-Queue $runner @() -Background
+Wait-Until {$f=Join-Path $queue "running\$id.json";(Test-Path -LiteralPath $f) -and (Get-Content -LiteralPath $f -Raw).Contains('waiting_floors')} 20 'the job waits for the floors'
+Check ((Get-Content -LiteralPath (Join-Path $queue "running\$id.json") -Raw).Contains('commit')) 'the waiting job names the short floor'
+Check (!(Test-Path -LiteralPath $lockDir)) 'a job waiting for the floors does not hold the verify lock'
+Set-Resources 40
+Wait-Until {Test-Path -LiteralPath (Join-Path $queue "done\$id.result.json")} 30 'the job runs once the floors are met'
+$p.WaitForExit(30000)|Out-Null
+Check ([double](Read-Result $id).floor_wait_s -ge 1) 'the result records the floor wait'
+
+# One runner at a time: a live runner's lock keeps a second runner out; a dead runner's lock is taken over.
+$me=Get-Process -Id $PID
+[IO.File]::WriteAllText((Join-Path $queue 'runner.lock'),"pid=$PID start=$($me.StartTime.ToUniversalTime().ToFileTimeUtc()) time=x")
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$pass1,'-NoStart');$id=Get-JobId $r.Output
+$r=Invoke-Queue $runner @()
+Check ($r.Code -eq 0 -and (Get-Jobs 'jobs').Count -eq 1 -and $r.Output.Contains('already')) 'a second runner leaves the queue to the live one'
+[IO.File]::WriteAllText((Join-Path $queue 'runner.lock'),"pid=$PID start=1 time=x")
+$r=Invoke-Queue $runner @()
+Check ((Get-Jobs 'jobs').Count -eq 0 -and (Read-Result $id).status -ceq 'passed' -and !(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))) 'a stale runner lock (pid gone or reused) is taken over'
+
+# A job left in running by a runner that died is closed as interrupted (never rerun on its own).
+$null=New-Item -ItemType Directory -Force -Path (Join-Path $queue 'running')
+$ghost='20261101-000000-000-abcdef'
+[IO.File]::WriteAllText((Join-Path $queue "running\$ghost.json"),(@{format='mgs-coop-worker-job';v=1;id=$ghost;owner='ghost';repo=$jobRepo;scenarios=@($pass1);args=@{};
+    submitted_utc='2026-11-01T00:00:00Z';phase='running';runner_pid=$PID;runner_start='1'}|ConvertTo-Json))
+$null=Invoke-Queue $runner @()
+Check ((Read-Result $ghost).status -ceq 'interrupted' -and (Get-Jobs 'running').Count -eq 0) 'an orphaned running job is closed as interrupted'
+
+# A job repo whose runner predates several parts: one scenario still runs (-ScenarioPath), several are refused.
+$oldRepo=Join-Path $sandbox 'oldrepo';$null=New-Item -ItemType Directory -Force -Path (Join-Path $oldRepo 'tools\worker')
+[IO.File]::WriteAllText((Join-Path $oldRepo 'tools\worker\Invoke-WorkerScenario.ps1'),$fakeScenario.Replace('[string[]]$ScenarioPath=@(),[string]$ScenarioList,','[string]$ScenarioPath,'))
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$oldRepo,'-ScenarioPath',"$pass1,$pass2",'-NoStart');$idOld2=Get-JobId $r.Output
+$r=Invoke-Queue $submit @('-Owner','tester','-Repo',$oldRepo,'-ScenarioPath',$pass1,'-NoStart');$idOld1=Get-JobId $r.Output
+$null=Invoke-Queue $runner @()
+Check ((Read-Result $idOld2).status -ceq 'refused' -and ([string](Read-Result $idOld2).failure).Contains('one scenario')) 'several parts need a runner that takes them'
+$old1=Read-Result $idOld1
+Check ($old1.status -ceq 'passed' -and @($old1.parts).Count -eq 1 -and $old1.parts[0].name -ceq 'one.txt') 'one scenario runs through -ScenarioPath on an older runner'
+
+# Submit -Wait starts a runner when none is alive and prints the result.
+$r=Invoke-Queue $submit @('-Owner','tester-wait','-Repo',$jobRepo,'-ScenarioPath',"$pass1,$failing",'-Wait','-WaitTimeoutMin','2')
+Check ($r.Code -eq 0 -and $r.Output.Contains('status: failed') -and $r.Output.Contains('one.txt: passed') -and $r.Output.Contains('bad.txt: failed')) "submit -Wait starts the runner and prints the parts ($($r.Output))"
+Wait-Until {!(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))} 20 'the started runner exits once the queue is empty'
 "worker_queue_tests: $script:checks checks passed"
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
