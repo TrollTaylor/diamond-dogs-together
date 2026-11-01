@@ -84,7 +84,7 @@ Keep the launcher open while you play; its **In game** page shows the connection
 
 - **Won't connect:** both of you need the same version and Steam online, and the game must be started from the launcher. The launcher's **In game** page and the in-game **CO-OP** line say what is wrong.
 - **Different missions:** you only pair in the same Mother Base, free roam or helicopter. If one save always continues into a story mission, use **Tools → Share save** first.
-- **Joiner stuck in the helicopter at Mother Base:** open the pause menu and choose **Restart** (or **Continue**): you start again on foot on the Command Platform.
+- **Joiner stuck in the helicopter at Mother Base:** if the joiner's helicopter has not moved 20 s after arriving, the game now restarts the joiner's arrival by itself and they start again on foot on the Command Platform. You can also open the pause menu and choose **Restart** (or **Continue**).
 - **Red "Co-op did NOT start" banner:** you are playing normally on your real save. Quit and start the game from the launcher.
 - **Reporting a bug:** quit the game, use **Tools → Collect logs** on both PCs, and send the zips it puts on the Desktop. Codes and personal IDs are removed. The zip keeps up to your last 8 game starts (very long ones are shortened, and short failed starts count too), so collect logs soon after the session.
 
