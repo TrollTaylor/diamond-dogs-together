@@ -1,3 +1,51 @@
+## 2026-10-31: melee on the other player, one-press round (`wp/melee-one`, local only) -- one CQC press knocks the other player down; `partner_melee` ON by default
+
+**Players get:** melee on your partner now works like it does on a soldier: one CQC press (left mouse, no aim) that
+connects puts your partner to sleep on their own screen, and you get the HOLD E WAKE UP prompt next to them. They wake
+after about 30 s, or when you wake them. A press from about 4.5 m away, or with your partner behind you, does nothing,
+and one press never counts twice. It is on by default with the native gun profile, in lab and play (`lab.ini`
+`partner_melee=0` turns it off). Not yet: the striker's punch is not drawn on the victim's screen.
+
+- **Code (red `b3aa1644`, green `248b91da`):** `partner_melee::Step` lands the first strike edge of a press that reaches
+  body 1 (its 113, or the 114 out of it when the 113 missed: run `9018ae47` had the 113 at 142 cm and its 114 at
+  84 cm); the press's other edge logs `verdict=repeat` (`State::landed_press`), and the 1.5 s repeat window stays.
+  The two-press pair of `9dd5dcaa` (`kPairMs`, `verdict=jab`) is gone. Guards unchanged: a 114 from any other act is a
+  soldier takedown, a busy (CQC hold, box, ladder, ledge) or prone/asleep partner, a seated or riding partner
+  (`no_body`), out of reach (1.6 m, 1 m height, 60 degree cone) and the key off hand nothing. Fixtures
+  `partner_melee_tests` 223, `partner_driver_tests` 9393 (`TestMeleeDriver`).
+- **Default (red `7176ca58`, green `c83dd4a8`):** `partner_melee` follows the gun profile in lab and play (as
+  `partner_seat_shot`); a named 0 opts out (`lab_config_tests` 1669). README: a What works line and the known limit.
+- **Run `4bc7b732`** (hidden worker, play, `-WanSim bad`, native gun research, afgh-ledge, `melee-partner-play.txt`
+  `d3669a3e` naming `partner_melee=1`; 18:54, C: 112.86 GB, D: 8.72 GB, commit 16.05 GB, nvidia-smi 4264 MiB 7 %,
+  d3dprobe HARDWARE hr=0; both copies admitted at 30010, not refused; Closed / BaselineRestored / RealSavesUnchanged
+  True). Every case is one 120 ms LMB press; logs sliced from both copies, frames looked at on both:
+  - [O] **a) guest on host, ~1.1 m:** guest `act=113; verdict=land; queued=1; dist_cm=113; angle_deg=2`, its 114
+    `verdict=repeat`; host `friendly_hit=owner;seq=1;damage_milli=0;cause=2;applied=1;down=1`, `event=downed;
+    step=entered; role=1; cause=2`. Host frame: ASLEEP greyscale, "Your teammate can wake you or carry you",
+    "Teammate 1 m". Guest frame: "Teammate asleep." and HOLD E WAKE UP. The host stood again about 30 s later (the
+    guest's census: the host's body in 133 `sleep_wake` at +30.1 s; frame `a-woke` shows both standing).
+  - [O] **b) host on guest, ~0.9 m:** host `verdict=land; queued=1; dist_cm=93; angle_deg=1`, then `repeat`; guest one
+    `friendly_hit=owner`, applied, down, `entered; role=2`. Guest frame ASLEEP; host frame HOLD E WAKE UP with the
+    guest lying in front of the host. The guest's auto wake was granted at 31 s (`step=sleep_auto_wake; role=2`).
+  - [O] **c) 4.4 m:** guest `verdict=range; dist_cm=443`; no `friendly_hit` on the host; both standing in the frames.
+  - [O] **d) partner behind:** the guest ~1.1 m at the host's back, the host presses: `verdict=angle; dist_cm=109;
+    angle_deg=180`; no `friendly_hit` on the guest; both standing.
+  - One `friendly_hit=owner` per copy; no `friendly_hit=ignored`, `step=error`, `viewer_changed` or fault. The two
+    ExpectFailures were the scenario's wake waits (the host's own sleep logs no `step=sleep_auto_wake`; the guest's
+    line has a space after the semicolon); fixed in `f4e4ca2d`. Sheet `melee-one/frames/best-sheet-4bc7b732.jpg` in the
+    run archive.
+- **Run 2 (the shipped default, the scenario without the key): not started (resource blocker).** The helper waited
+  for its floors from 19:14 to 19:42 (commit free 5.3-16.9 GB, mostly below the 15 GB floor; D: 2.92-2.96 GB from
+  19:32, below 3 GB, while other workflows ran); one attempt at 19:20 took the lock, read 14.47 GB commit and released
+  it without starting. Nothing was deleted or closed.
+- **Open:** [U] the default path in a game (run 2 did not start; `lab_config_tests` shows the gun profile turns it on,
+  and `4bc7b732` named the key); [I] waking by hand (HOLD E) after a melee sleep is the existing team wake, not pressed
+  in this run; [U] a press aimed at a soldier with the other player in reach in front also knocks them down (the
+  stock strike's target is not read); the striker's punch is not drawn on the victim's screen; a real two-PC Steam
+  session.
+- **Checks:** full `tools/build.ps1` 339/339 at `d3669a3e` (green + scenario) and at `b98ecb71` (default flip, README,
+  docs); `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
+
 ## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
 
 **Players get:** **Go to Afghanistan** in the F9 debug menu takes both players to the Afghanistan free roam in about
