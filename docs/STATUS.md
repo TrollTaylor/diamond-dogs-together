@@ -51,7 +51,11 @@
   README (What works, Known limits), protocol section 25 and `docs/anim-round1-actions.md`.
 - **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `42c8cc3d`;
   worker_session_tests 2/2 at `83ad9f2e` (every shipped scenario validates). `world_enemy.lua` 28270, `world_sync.lua`
-  22832 LF bytes.
+  22832 LF bytes. Full `tools/build.ps1 -Jobs 4` at `11445c2d` and at this entry's commit: CTest 347/347; every
+  generator `--check` passes (partner 858 / 213, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller
+  with `--executable`); native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh
+  tree. Nothing pushed, tagged or released.
 
 ## November 1, 2026: r1101 Prove - supply drops synced on by default (`world_supply` follows the gun profile in lab and play; hidden runs `69efd63b`, `93f27123`; `wp/integ-1101`, local only)
 
