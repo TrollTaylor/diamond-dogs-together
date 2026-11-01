@@ -14,6 +14,19 @@ on or sent to the user's desktop.
 Scenario: one step per line (a file via -ScenarioPath or lines via -Step);
 blank lines and lines starting with # are ignored. Roles: host, guest, both.
 
+Several scenarios in one session (tools/worker/README.md "Several scenarios in one session"): -ScenarioPath with two
+or more files (a.txt,b.txt also as one pwsh -File argument) or -ScenarioList <file> (one scenario path per line, # and
+blank lines ignored, relative paths from the repo root) run as parts, back to back in the same two game copies. Every
+part is validated first; their labsetting lines are united with -LabSetting (one role given two values for a key is
+refused); seeds, mode and the other flags come from the call. Each part starts with fresh last results, pose anchors
+and log marks (its waitlog reads from the session start like a run of its own; put logmark first to see only its own
+lines). A part that fails (an expectation, a require, a step error) is recorded and the next part runs; only a
+session-fatal error (the supervisor no longer running, a game process gone) skips the remaining parts. scenario.json
+then adds Parts (per part: status passed|failed|skipped, failure, fatal, expectations, expect_failures, frames, start
+and end times, each role's script-observer.log offsets) and Timings rows carry their part; Failure names the failed
+parts. All parts share the session's hard time limit (-TimeoutSec, at most 600 s). One file, or -Step lines, keep the
+single-scenario result unchanged.
+
   title [timeoutSec]               press Enter on each role until it reports gameplay ready
   title <host|guest> [timeoutSec]  the same for one role only (the other stays where it is)
   titlecontinue <host|guest> <timeoutSec>
@@ -220,7 +233,10 @@ pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Step 'title','both capture st
 #>
 [CmdletBinding()]
 param(
-    [string]$ScenarioPath,
+    # One scenario file, or several (each a part of one session); a.txt,b.txt as one argument also splits.
+    [string[]]$ScenarioPath=@(),
+    # A batch file: one scenario path per line (# and blank lines ignored; relative paths from the repo root).
+    [string]$ScenarioList,
     [string[]]$Step=@(),
     [string]$CheckReceipt,
     [switch]$FreshChecks,
@@ -296,29 +312,91 @@ if($BuildProfile -cin @('research','mgo-sleep-rest','mgo-unique-rest','mgo-stand
     $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
 } elseif($BuddyCapacityArchive){throw '-BuddyCapacityArchive needs -BuildProfile buddy-capacity.'}
 
-$lines=@()
-if($ScenarioPath){$lines+=[IO.File]::ReadAllLines([IO.Path]::GetFullPath($ScenarioPath))}
-$lines+=$Step
-$steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
-# The developer test boot (docs/test-boot.md): "boot fast" or "boot <lab_boot spec>" configures both copies
-# (labsetting lab_fast_boot=1 and lab_boot=<spec>) and, at its place in the steps, waits without any input until
-# both copies log their boot's gameplay line. At most one boot line, before any step that drives a game.
-$bootLines=@($steps|Where-Object{$_ -cmatch '^boot(\s|$)'})
-if($bootLines.Count -gt 1){throw 'A scenario has at most one boot line.'}
-$bootSpec=$null
-if($bootLines.Count){
-    if($bootLines[0] -cnotmatch '^boot\s+(fast|\S.*)$'){throw "Invalid scenario step: '$($bootLines[0])'"}
-    $bootSpec=$Matches[1]
-    $steps=@(@('labsetting lab_fast_boot=1')+@($(if($bootSpec -cne 'fast'){'labsetting lab_boot='+$bootSpec}))+@($steps))
-}
-# labsetting lines configure the session; they are not steps.
-foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|partner_pass_camera=(?:off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|debug_travel=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_melee=[01]|partner_seat_fpv=[01]|partner_ride_follow=[01]|partner_ride_getin_cut=[01]|partner_ride_steer=[01]|partner_equip_midload=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|partner_native_aim_truth=[01]|partner_native_aim_truth_(?:box|triggers|stance)=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|world_supply=[01]|companion_host_owned=[01]|world_relief=[01]|fulton_sync=[01]|fulton_early=[01]|fulton_look=[01]|fulton_one_save=[01]|fulton_guest_vehicle=[01]|debug_vspawn=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
-        throw "Invalid scenario step: '$line'"
+# A scenario's lines -> its steps and labsetting values (one part; the whole scenario when there is one).
+function ConvertTo-ScenarioPart([string[]]$Lines){
+    $steps=@($Lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
+    # The developer test boot (docs/test-boot.md): "boot fast" or "boot <lab_boot spec>" configures both copies
+    # (labsetting lab_fast_boot=1 and lab_boot=<spec>) and, at its place in the steps, waits without any input until
+    # both copies log their boot's gameplay line. At most one boot line, before any step that drives a game.
+    $bootLines=@($steps|Where-Object{$_ -cmatch '^boot(\s|$)'})
+    if($bootLines.Count -gt 1){throw 'A scenario has at most one boot line.'}
+    $bootSpec=$null
+    if($bootLines.Count){
+        if($bootLines[0] -cnotmatch '^boot\s+(fast|\S.*)$'){throw "Invalid scenario step: '$($bootLines[0])'"}
+        $bootSpec=$Matches[1]
+        $steps=@(@('labsetting lab_fast_boot=1')+@($(if($bootSpec -cne 'fast'){'labsetting lab_boot='+$bootSpec}))+@($steps))
     }
-    $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
+    # labsetting lines configure the session; they are not steps.
+    $settings=@(foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
+        if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide|seat)|partner_ride_seat_enter=(?:direct|getin)|partner_ride_seat_exit=(?:stop|getoff)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8]|partner_native_unsupported=[01]|partner_native_dry_stop=[01]|partner_native_aim_intent=(?:pad|state)|partner_native_reload_rate=(?:off|adapt)|partner_fire_census=[01]|partner_native_support=[01]|partner_ride_census=[01]|partner_ride_seat_id=[01]|partner_ride_tilt=[01]|partner_ride_board=(?:off|block|passenger)|partner_pass_camera=(?:off|connect|drop|aim|view)|partner_pass_camera_trace=[01]|debug_vehicle_door=[01]|debug_travel=[01]|partner_ride_front=[01]|partner_ride_cab=[01]|partner_ride_race=[01]|partner_ride_seat1_anchor=[01]|partner_placed_census=[01]|partner_native_placed=[01]|partner_native_arm=[01]|partner_native_place_mirror=[01]|partner_native_traverse=[01]|partner_native_cbox=[01]|partner_native_gesture=[01]|partner_native_ui_filter=[01]|partner_gesture_lever=[01]|partner_native_mount=(?:off|hide)|partner_native_unrealize_all=[01]|partner_seat_aim=[01]|partner_seat_gun=[01]|partner_seat_shot=[01]|partner_melee=[01]|partner_seat_fpv=[01]|partner_ride_follow=[01]|partner_ride_getin_cut=[01]|partner_ride_steer=[01]|partner_equip_midload=[01]|partner_native_overlay=(?:off|debug|map)|partner_act_log=[01]|partner_native_stance_fast=[01]|partner_native_aim_truth=[01]|partner_native_aim_truth_(?:box|triggers|stance)=[01]|save_handoff=(?:off|stage|scene|always)|travel_lock=[01]|link_session_skew=[0-9]{1,3}|world_vehicle_gone=[01]|world_vehicle_state=[01]|world_vehicle_wreck=[01]|world_vehicle_break=[01]|world_vehicle_credit=[01]|world_loadout_block=[01]|world_vehicle_crew=[01]|world_vehicle_damage=[01]|world_supply=[01]|companion_host_owned=[01]|world_relief=[01]|fulton_sync=[01]|fulton_early=[01]|fulton_look=[01]|fulton_one_save=[01]|fulton_guest_vehicle=[01]|debug_vspawn=[01]|lab_fast_boot=[01]|lab_boot=(?:off|(?:30010|30020|30050)(?: -?[0-9]{1,6}(?:\.[0-9]{1,3})?){3} -?[0-9]{1,3}(?:\.[0-9]{1,3})?(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?|(?:30010|30020|30050|40010|40020|40050)(?: time=(?:[01][0-9]|2[0-3]):[0-5][0-9])?(?: weather=(?:sunny|cloudy|rainy|sandstorm|foggy))?))$'){
+            throw "Invalid scenario step: '$line'"
+        }
+        $(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]})
+    })
+    return [pscustomobject]@{Steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'});LabSettings=$settings}
 }
-$steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
+# Several parts: the call's -LabSetting and each part's labsetting values, in order ({Source;Settings}). Returns the
+# entries in first-seen order without exact repeats; one role given two values for one key is refused.
+function Merge-ScenarioLabSettings([object[]]$Sources){
+    $seen=@{};$owner=@{};$out=[Collections.Generic.List[string]]::new()
+    foreach($source in @($Sources)){
+        foreach($item in @($source.Settings)){
+            if(!$item){continue}
+            if([string]$item -cnotmatch '^(?:(host|guest):)?([a-z_0-9]+)=(.*)$'){throw "Invalid labsetting '$item' in $($source.Source)."}
+            $roles=if($Matches[1]){@($Matches[1])}else{@('host','guest')}
+            $key=$Matches[2];$value=$Matches[3]
+            foreach($role in $roles){
+                $id=$role+'|'+$key
+                if($seen.ContainsKey($id) -and $seen[$id] -cne $value){
+                    throw "Conflicting labsetting for $role ${key}: $key=$($seen[$id]) ($($owner[$id])) and $key=$value ($($source.Source))."
+                }
+                if(!$seen.ContainsKey($id)){$seen[$id]=$value;$owner[$id]=[string]$source.Source}
+            }
+            if(!$out.Contains([string]$item)){$out.Add([string]$item)}
+        }
+    }
+    return $out.ToArray()
+}
+$scenarioFiles=[Collections.Generic.List[string]]::new()
+foreach($entry in @($ScenarioPath)){
+    if(!$entry){continue}
+    # pwsh -File passes a.txt,b.txt as one string: split it unless a file has that very name.
+    if($entry.Contains(',') -and !(Test-Path -LiteralPath $entry -PathType Leaf)){foreach($piece in $entry.Split(',')){if($piece.Trim()){$scenarioFiles.Add($piece.Trim())}}}
+    else{$scenarioFiles.Add($entry)}
+}
+if($ScenarioList){
+    $listPath=[IO.Path]::GetFullPath($ScenarioList)
+    foreach($entry in [IO.File]::ReadAllLines($listPath)){
+        $text=$entry.Trim()
+        if(!$text -or $text.StartsWith('#')){continue}
+        $scenarioFiles.Add([IO.Path]::GetFullPath($text,$repo))
+    }
+    if(!$scenarioFiles.Count){throw "The scenario list names no scenario: $listPath"}
+}
+$multiPart=$scenarioFiles.Count -gt 1 -or [bool]$ScenarioList
+if(!$multiPart){
+    $lines=@()
+    if($scenarioFiles.Count){$lines+=[IO.File]::ReadAllLines([IO.Path]::GetFullPath($scenarioFiles[0]))}
+    $lines+=$Step
+    $part=ConvertTo-ScenarioPart $lines
+    $steps=@($part.Steps)
+    $LabSetting=@($LabSetting)+@($part.LabSettings)
+    $scenarioParts=@([pscustomobject]@{Index=1;Name='';Path='';Steps=$steps})
+} else {
+    if(@($Step).Count){throw '-Step cannot be combined with several scenario parts; put those lines in a scenario file.'}
+    $labSources=[Collections.Generic.List[object]]::new();$labSources.Add(@{Source='-LabSetting';Settings=@($LabSetting)})
+    $scenarioParts=@(for($i=0;$i -lt $scenarioFiles.Count;$i++){
+        $file=[IO.Path]::GetFullPath($scenarioFiles[$i]);$name=[IO.Path]::GetFileName($file)
+        if(!(Test-Path -LiteralPath $file -PathType Leaf)){throw "Scenario part $($i+1) does not exist: $file"}
+        try{$part=ConvertTo-ScenarioPart ([IO.File]::ReadAllLines($file))}catch{throw "Scenario part $($i+1) ($name): $($_.Exception.Message)"}
+        if(!@($part.Steps).Count){throw "Scenario part $($i+1) ($name) has no steps."}
+        $labSources.Add(@{Source=$name;Settings=@($part.LabSettings)})
+        [pscustomobject]@{Index=$i+1;Name=$name;Path=$file;Steps=@($part.Steps)}
+    })
+    $LabSetting=@(Merge-ScenarioLabSettings $labSources.ToArray())
+    # Every part's steps are validated below, before the session starts.
+    $steps=@($scenarioParts|ForEach-Object{$_.Steps})
+}
 if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '^((host|guest):)?lab_(fast_)?boot='}).Count){throw 'lab_fast_boot / lab_boot (and boot) are lab only.'}
 if(!$GraphicsQuality){$GraphicsQuality=if($Mode -ceq 'lab'){'low'}else{'preserve'}}
 if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
@@ -1411,12 +1489,54 @@ function Invoke-ScenarioBoot([int]$TimeoutSec=300){
         Write-Host "  $r boot: $($bootResult[$r]['line']) -> $position"
     }
 }
+# ---- Several parts (one session): the per-part record, the session-fatal check and the part markers.
+$partResults=[Collections.Generic.List[object]]::new()
+# The end of the role's script-observer.log now (the part's log marker), or $null when unreadable.
+function Get-ScenarioLogEnd([string]$Role){
+    try{$cursor=New-ScenarioLogCursor $Role;return [long](Get-Item -LiteralPath $cursor.path).Length}catch{return $null}
+}
+# After a part failed: may the session take the next part? Only while the supervisor still runs and every role that did
+# not leave through waitexit still has its admitted, live game. Returns the fatal reason, or $null.
+function Get-ScenarioSessionFatal{
+    try{
+        $status=Read-WorkerSessionJson (Join-Path $run 'supervisor.json')
+        if([string]$status['run_id'] -cne $runId){return 'the supervisor receipt names another run'}
+        if([string]$status['stage'] -cne 'running'){return "supervisor stage $($status['stage'])"}
+        foreach($r in 'host','guest'){
+            if($exitedRoles.ContainsKey($r)){continue}
+            $process=Get-WorkerLeasedProcess (Get-ScenarioRoleLease $r)
+            if(!$process){return "[$r] game process ended"}
+            try{if($process.HasExited){return "[$r] game process ended"}}finally{$process.Dispose()}
+        }
+        return $null
+    }catch{return $_.Exception.Message}
+}
+function New-ScenarioPartRecord($Part,[string]$Status){
+    return [ordered]@{index=$Part.Index;name=$Part.Name;path=$Part.Path;status=$Status;failure=$null;fatal=$false;fatal_reason=$null;
+        steps=@($Part.Steps).Count;steps_run=0;expectations=@();expect_failures=@();frames=@();start_utc=$null;end_utc=$null;
+        start_s=$null;end_s=$null;log_offsets=[ordered]@{host=[ordered]@{start=$null;end=$null};guest=[ordered]@{start=$null;end=$null}}}
+}
 try {
+    $sessionFatal=$false
+    foreach($part in $scenarioParts){
+    if($multiPart){
+        if($sessionFatal){$partResults.Add((New-ScenarioPartRecord $part 'skipped'));Write-Host "=== part $($part.Index)/$($scenarioParts.Count) skipped: $($part.Name) ===";continue}
+        # Each part starts like a run of its own: no last results, pose anchors or log marks of an earlier part.
+        $lastResult['host']='';$lastResult['guest']='';$poseAnchors.Clear();$scenarioLogMarks.Clear()
+        $partRecord=New-ScenarioPartRecord $part 'running'
+        $partRecord.start_utc=[DateTime]::UtcNow.ToString('o');$partRecord.start_s=Get-ScenarioSinceLaunch 'host'
+        foreach($r in 'host','guest'){$partRecord.log_offsets[$r].start=Get-ScenarioLogEnd $r}
+        $partMarks=@{expectations=$expectations.Count;failures=$expectFailures.Count;frames=$frames.Count}
+        Write-Host "=== part $($part.Index)/$($scenarioParts.Count) start: $($part.Name) ($($part.Path)) ==="
+    }
+    $steps=@($part.Steps)
+    try {
     foreach($line in $steps){
         $t=$line -split '\s+'
         Write-Host "step: $line"
         if($timings.Count -and $null -eq $timings[-1]['end_s']){$timings[-1]['end_s']=Get-ScenarioSinceLaunch 'host'}
         $timings.Add([ordered]@{step=$line;start_s=(Get-ScenarioSinceLaunch 'host');end_s=$null})
+        if($multiPart){$timings[-1]['part']=$part.Index}
         # A role that left through waitexit has no game to drive: fail fast.
         $gone=@(Get-ScenarioStepRoles $t|Where-Object{$exitedRoles.ContainsKey($_)})
         if($gone.Count){throw "[$($gone -join ',')] exited after waitexit; '$line' cannot drive it."}
@@ -1540,6 +1660,32 @@ try {
         }
         if($t[1] -in 'hold','press' -and $t[-1] -cne 'nowait'){Start-Sleep -Milliseconds ($(if($t[1] -eq 'hold'){[int]$t[3]}else{150})+100)}
     }
+    } catch {
+        # One scenario: the run stops (the outer catch). Several parts: this part stops; the next runs unless fatal.
+        if(!$multiPart){throw}
+        $partRecord.failure=$_.Exception.Message
+        Write-Warning "Scenario part $($part.Index) ($($part.Name)) stopped: $($partRecord.failure)"
+        $fatalReason=Get-ScenarioSessionFatal
+        if($fatalReason){
+            $partRecord.fatal=$true;$partRecord.fatal_reason=$fatalReason;$sessionFatal=$true
+            Write-Warning "Session-fatal ($fatalReason): the remaining parts are skipped."
+        }
+    }
+    if($multiPart){
+        if($timings.Count -and $null -eq $timings[-1]['end_s']){$timings[-1]['end_s']=Get-ScenarioSinceLaunch 'host'}
+        # Held input of this part never leaks into the next one.
+        if(!$sessionFatal){foreach($role in 'host','guest'){if(!$exitedRoles.ContainsKey($role)){Release-RoleFinally $role}}}
+        $partRecord.expectations=$expectations.GetRange($partMarks.expectations,$expectations.Count-$partMarks.expectations).ToArray()
+        $partRecord.expect_failures=$expectFailures.GetRange($partMarks.failures,$expectFailures.Count-$partMarks.failures).ToArray()
+        $partRecord.frames=@($frames.GetRange($partMarks.frames,$frames.Count-$partMarks.frames)|ForEach-Object{[IO.Path]::GetFileName([string]$_.Path)})
+        $partRecord.steps_run=@($timings|Where-Object{$_.Contains('part') -and $_['part'] -eq $part.Index}).Count
+        $partRecord.status=if($partRecord.failure -or $partRecord.expect_failures.Count){'failed'}else{'passed'}
+        $partRecord.end_utc=[DateTime]::UtcNow.ToString('o');$partRecord.end_s=Get-ScenarioSinceLaunch 'host'
+        foreach($r in 'host','guest'){$partRecord.log_offsets[$r].end=Get-ScenarioLogEnd $r}
+        $partResults.Add($partRecord)
+        Write-Host "=== part $($part.Index)/$($scenarioParts.Count) end: $($part.Name) $($partRecord.status) ==="
+    }
+    }
 } catch {
     $failure=$_.Exception.Message
     Write-Warning "Scenario stopped: $failure"
@@ -1569,6 +1715,13 @@ $result=[ordered]@{
     ExitedRoles=$exitedRoles;HandoffApply=$pendingHandoff
     # docs/test-boot.md: seconds after each role's own launch; step times after the host's launch.
     Gameplay=$gameplayAt;Boot=$bootResult;Timings=$timings.ToArray();GraphicsQuality=$GraphicsQuality
+}
+if($multiPart){
+    # Several parts: the parts' own results; Failure names every failed part (a fatal one first stopped the batch).
+    $failedParts=@($partResults|Where-Object{$_.failure})
+    if(!$result.Failure -and $failedParts.Count){$result.Failure=(@($failedParts|ForEach-Object{"part $($_.index) $($_.name): $($_.failure)"}) -join '; ')}
+    $result['LabSettings']=@($LabSetting)
+    $result['Parts']=$partResults.ToArray()
 }
 Write-WorkerSessionJson (Join-Path $run 'scenario.json') $result
 [pscustomobject]$result
