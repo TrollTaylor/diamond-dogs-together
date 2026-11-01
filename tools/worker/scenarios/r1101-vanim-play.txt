@@ -10,6 +10,9 @@
 # Framing (run 6cea2ec9 showed the jeep only at a distance or behind the viewer's own body): the viewer stands 6 m
 # out from the driver's door and 3 m toward the jeep's nose, facing the door, and the driver first steers with the
 # jeep standing (a, then d, no throttle), so the turning pose is filmed close; then it rolls straight, left and right.
+# Run 002a187a (that framing) met every waitlog, but the viewer's own body hid the driver (placebehind faces the
+# target, which the over-the-shoulder camera keeps behind the viewer's back): the viewer's camera is now swung by a
+# mouse move after the placement, so the driver's seat shows beside the viewer's body.
 #   A the host drives the Masa Village jeep, the guest watches from beside it.
 #   B the roles swap: the guest drives the same jeep, the host watches.
 # Run (play, Africa free roam, the africa-jeep seed):
@@ -52,6 +55,8 @@ wait 3000
 host debug clear_enemies 100
 placebehind guest host 6 3
 wait 2500
+guest mouse 250 0
+wait 800
 host press e 150
 wait 3000
 host run vehicle_seats
@@ -103,6 +108,8 @@ wait 3000
 host debug clear_enemies 100
 placebehind host guest 6 3
 wait 2500
+host mouse 250 0
+wait 800
 guest press e 150
 wait 3000
 guest run vehicle_seats
