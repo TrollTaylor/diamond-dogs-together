@@ -582,13 +582,14 @@ int main() {
         }
     }
     // Spawn enemy here for players (spawn_warp, docs/debug-menu.md "Spawn enemy here"): the engine set-transform
-    // placement in play mode, on unless named 0 (lab keeps debug_soldier_warp, which play still refuses).
+    // placement in play mode, off until a play run proves it: on only when named 1 (lab keeps debug_soldier_warp, which
+    // play still refuses).
     {
-        Check(LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp on by default");
+        Check(!LabConfig{}.spawn_warp && !LabConfig{}.spawn_warp_given, "spawn_warp off by default (not run-proven in play)");
         for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
             const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
             const auto plain = Lab(base);
-            Check(plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp on when not named (lab and play)");
+            Check(!plain.spawn_warp && !plain.spawn_warp_given && plain.play_refused == 0, "spawn_warp off when not named (lab and play)");
             const auto named = Lab(base + "spawn_warp=1\n");
             Check(named.spawn_warp && named.spawn_warp_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0, "a named spawn_warp 1 runs in lab and play");
@@ -596,8 +597,8 @@ int main() {
             Check(!off.spawn_warp && off.spawn_warp_given && off.play_refused == 0, "a named spawn_warp 0 stays off");
         }
         const auto play = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\ndebug_soldier_warp=1\n");
-        Check(!play.debug_soldier_warp && play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
-              "play still refuses the lab key; spawn_warp stays on");
+        Check(!play.debug_soldier_warp && !play.spawn_warp && (play.play_refused & kPlayRefusedDebugSoldierWarp) != 0,
+              "play still refuses the lab key; spawn_warp stays off");
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\nspawn_warp=") + value + "\n");
             Check(!invalid.spawn_warp && !invalid.spawn_warp_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
