@@ -15,7 +15,10 @@
 #   3. The ladder (act 21): the guest grabs the ladder at 22.61,-14.86, climbs a little and holds RMB on it. No hand
 #      is free: the puppet (on the ladder through the traversal replay, or at its foot) must not aim.
 #        host:  partner_aim_truth=act; remote_act=21; ...; strip=0x18
-# Frames: mb-rmb-*, mb-fire-*, ctl-rmb-*, lad-rmb-* on both screens (host = the puppet, guest = the real body).
+#   4. Reversed (the host holds RMB+LMB with its lethal rifle, the guest films): the same refusal on the guest's copy.
+#        host:  partner_aim_local=no_aim; guest: partner_aim_truth=loco ... and hold_run; result=refused
+# Hidden run a8a69ae9 (steps 1-3, before step 4 was added): all expectations met on both copies (docs/anim-truth.md).
+# Frames: mb-rmb-*, mb-fire-*, ctl-rmb-*, lad-rmb-*, rev-fire-* on both screens (host = the puppet, guest = the real body).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, no build running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-animtruth-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
@@ -104,6 +107,26 @@ wait 1000
 guest hold w 1500
 guest hold w 1500
 both capture lad-end
+# --- 4. reversed: the host presses with its lethal rifle, the guest films the host's puppet --------------------------
+guest debug teleport 22.61 1.80 -15.55 0
+wait 2000
+stance guest stand
+placebehind guest host 5 2
+stance guest stand
+wait 2500
+logmark both
+host press 1 120
+wait 2500
+both capture rev-ready
+host hold rmb+lmb 1500 nowait
+wait 700
+both capture rev-fire-a
+wait 600
+both capture rev-fire-b
+host release
+waitlog host 'partner_aim_local=(no_aim|aimed);' 10
+waitlog guest 'partner_aim_truth=hold_run; result=' 10
+wait 1000
 host debug position
 guest debug position
 state
