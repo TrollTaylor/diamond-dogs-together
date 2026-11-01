@@ -111,8 +111,11 @@ is local to the PC that sends it.
 
 Who presses what (play and lab): **Spawn enemy here**, Spawn at closest camp and Spawn on
 selected route are host only (the guest's row reads "Host only: use the host's menu").
-In Afghanistan and Africa free roam the host gets a soldier 5 m in front, facing them, and
-the guest sees the same soldier there (spawn sync). At Mother Base every spawn row refuses:
+In Afghanistan and Africa free roam a play press sends the nearest guard to the nearest
+patrol route (the in-front placement needs lab.ini `spawn_warp=1` until a play run proves it;
+with it the host gets a soldier 5 m in front, facing them); the guest sees the same soldier
+(spawn sync). Placed guards that are dead, asleep, Fultoned, gone or over 150 m away free
+their place, so presses keep working past 8. At Mother Base every spawn row refuses:
 "No enemies at Mother Base: spawn works in Afghanistan and Africa free roam." The row's
 chip reads the result in plain words; the raw result is in its tooltip.
 
@@ -351,7 +354,7 @@ existing one:
 2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
    you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
    landed (he attacks).
-3. **Native placement** (play: lab.ini `spawn_warp`, on unless named 0; lab:
+3. **Native placement** (play: lab.ini `spawn_warp=1`, off until a play run proves it; lab:
    `debug_soldier_warp=1`, which play still refuses): the menu sends the engine's own set-transform message `0x287158b07327` to
    his GameObjectId through the GameObject manager's SendCommand, the same call the
    player carry code makes. The target is 5 m along your heading at your height, and
@@ -479,7 +482,7 @@ grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
 asserts that `Warp()` has exactly these two callers and their gates. In play mode
-`spawn_warp` (on unless named 0) admits both callers, the guest one only for the spawn
+`spawn_warp=1` (off by default until run-proven) admits both callers, the guest one only for the spawn
 placement (kind 1): patrol and combat corrections (kind 3) stay lab only (`native_off;
 native=role` in play); with it named 0 only route placements (kind 2) move the guest's copy.
 

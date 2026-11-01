@@ -52,7 +52,7 @@ constexpr ActionDef kActions[] = {
      "(the soldiers', yours and your partner's). Your old gun in that slot drops at your feet.", P},
     // Enemies
     {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me warp",
-     "Brings the nearest living guard (15-250 m; a farther one goes to the nearest patrol route) 5 m in front of you, facing you, armed. Afghanistan and Africa free roam only. Play: lab.ini spawn_warp (on); lab: debug_soldier_warp=1. When refused he goes to the nearest patrol route. The guest's copy of him is moved the same way (spawn sync).", H | P | S},
+     "Brings the nearest living guard (15-250 m; a farther one goes to the nearest patrol route) 5 m in front of you, facing you, armed. Afghanistan and Africa free roam only. Play: lab.ini spawn_warp=1 (off until run-proven); lab: debug_soldier_warp=1. When refused he goes to the nearest patrol route. The guest's copy of him is moved the same way (spawn sync).", H | P | S},
     {"spawn_enemy_closest", C::enemies, "Spawn at closest camp", "spawn_enemy closest", "enemy soldier guard camp", "Moves a guard of the closest camp onto its patrol route.", H | S},
     {"spawn_enemy_route", C::enemies, "Spawn on selected route", "spawn_enemy camp route", "enemy soldier guard patrol", "Moves a guard onto the selected camp route (point 0).", H | P | kNeedsRoutes | S},
     {"enemy_goto_spawn", C::enemies, "Go to spawned guard", "goto_spawn", "teleport travel guard", "Teleports next to the last confirmed spawned guard.", kNeedsSpawn},

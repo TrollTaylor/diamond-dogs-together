@@ -1,5 +1,6 @@
 # Spawn enemy here for players (docs/debug-menu.md "Spawn enemy here") in mode=play at the SHIPPED defaults (no labsetting
 # line: lab.ini spawn_warp is on unless named 0, so play now admits the engine set-transform placement).
+# NOTE 10-31: spawn_warp ships OFF until this scenario passes; flip lab_config.hpp spawn_warp to true for the proof run.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/spawn-enemy-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play
