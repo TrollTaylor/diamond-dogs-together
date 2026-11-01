@@ -4,8 +4,9 @@
 # at ~8.4 m/s (own copy: z 30.66 carrier -> 35.41 body 1 s later, deck level), left the deck and fell to the sea; the
 # downed shield lets the sea kill through on purpose (protected=1) -> shared Game Over.
 # The fix (lua/coop/world_downed.lua putDown): the carried player's own copy keeps the carrier's reported spot while
-# carried; during its own put-down (act 44, at most 3 s) a body more than 2 m from that spot or 1 m below it is warped
-# back to the carrier's feet (the side the carrier came from). The carrier's copy follows the streamed pose (its
+# carried; from the put-down (its own act 44, or the carrier replica's put-down act 39 while it still reads carried 43:
+# the session's case), for at most 3 s, a body more than 2 m from that spot or 1 m below it is warped back to the
+# carrier's feet (the side the carrier came from). The carrier's copy follows the streamed pose (its
 # put-down guard places a body that drops 2 m below the target). The sea death for real falls is unchanged
 # (body-safety-sea-death*.txt).
 # Run (hidden worker, coordinator only, one session at a time, no builds running):
@@ -16,7 +17,7 @@
 #
 # Expect (guest, the carried player):
 #   if the stock put-down slides the body more than 2 m: world_lua=event=downed; step=putdown_place; try=1; ok=1;
-#   slide_mm=>2000 (or drop_mm=>1000); act=44 (at most 6 tries) and its own pose back next to the host
+#   slide_mm=>2000 (or drop_mm=>1000); act=43|44; peer=39|.. (at most 6 tries); its own pose back next to the host
 #   no downed_damage=stock_death; no world_lua=event=recovery; step=game_over_applied
 #   downed_status after the put-down: down=1 cause=2 (still asleep on the deck, no reload)
 # Expect (host, the carrier): partner_act ... body=44(carried_putdown); no world_lua=event=recovery; step=shared_game_over;
