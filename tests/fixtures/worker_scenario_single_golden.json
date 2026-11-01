@@ -1,0 +1,66 @@
+{
+  "RunDirectory": "<RUN>",
+  "Frames": [],
+  "Failure": "Required scenario check failed: host require ^y <- ",
+  "InputReleaseFailures": [],
+  "Expectations": [
+    "host waitlog ^alpha <- alpha one",
+    "guest waitlog ^absent <- no matching line within 1 s",
+    "host expect ^nomatch <- ",
+    "host require ^y <- "
+  ],
+  "ExpectFailures": [
+    "guest waitlog ^absent <- no matching line within 1 s",
+    "host expect ^nomatch <- ",
+    "host require ^y <- "
+  ],
+  "Closed": true,
+  "BaselineRestored": true,
+  "RealSavesUnchanged": true,
+  "Forced": false,
+  "IsolationFailed": false,
+  "SupervisorReason": "shutdown",
+  "SupervisorError": "",
+  "ExitedRoles": {},
+  "HandoffApply": null,
+  "Gameplay": {},
+  "Boot": {},
+  "Timings": [
+    {
+      "step": "state",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "waitlog host ^alpha 2",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "waitlog guest ^absent 1",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "host press enter",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "host expect ^nomatch",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "logmark both",
+      "start_s": null,
+      "end_s": null
+    },
+    {
+      "step": "host require ^y",
+      "start_s": null,
+      "end_s": null
+    }
+  ],
+  "GraphicsQuality": "low"
+}
