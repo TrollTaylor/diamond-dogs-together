@@ -1,0 +1,76 @@
+# ride-cut-2 (design 8.60), Mother Base: the get-in camera cut at the SHIPPED default (partner_ride_getin_cut not named) on
+# the Mother Base sortie jeep (the user's own case was 25603, cat=1 / type=0x10), seed mb-ladder on both copies (real-save
+# lineage; whether its sortie jeep is live is checked first: goto_vehicle sortie must name one, else the run stops).
+#   M) the host drives the sortie jeep; the guest is placed beside the seated driver on the passenger side; the host
+#      starts to drive off and the guest presses E about 0.45 s later; the host keeps driving a short way and brakes;
+#   N) the guest gets out and boards again the same way, the host driving off at once (within about 0.2 s of the press).
+# Short drives only (the platform edge). Expected per seat-1 board (guest script-observer.log):
+# partner_ride=local_passenger; vehicle=2560x; seat=1; state=on, then partner_ride=pass_camera; state=getin_cut;
+# event=cut; ...; result=ok (once per ride; cuts=2 after N), no event=returned / event=gave_up, the census cmode 5 from
+# the cut on. Frames m-in*/n-in* show the jeep and both riders.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/fb1031-ride-cut-mb.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed mb-ladder
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+host run goto_vehicle sortie
+host require 'vehicle=sortie_[0-7];id=2560[0-7];'
+guest run goto_vehicle sortie
+wait 3000
+both capture m-jeep
+host press e 150
+waitlog host 'partner_ride=ext_tx; rev=[0-9]+; vehicle=2560[0-7]; seat=0;' 10
+waitlog guest 'partner_ride=board_policy; vehicle=2560[0-7]; seat=0; mode=passenger' 15
+wait 1500
+# --- M) board 1: the host is already driving off when the guest presses E -------------------------------------------
+placebehind guest host 0 -1.75
+wait 2000
+logmark both
+guest capture m-pre
+host hold w 600 nowait
+wait 450
+guest press e 150
+host hold w 1200 nowait
+waitlog guest 'partner_ride=local_passenger; vehicle=2560[0-7]; seat=[13]; state=on' 10
+guest burst m-in 7 200
+host hold s 1500
+guest burst m-in2 4 250
+wait 2000
+both capture m-stop
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=2560[0-7]; seat=[13];' 8
+guest press e 150
+wait 3500
+waitlog guest 'partner_ride=local_passenger; vehicle=2560[0-7]; seat=[13]; state=off' 8
+wait 1000
+# --- N) board 2, same session and jeep: the host drives off at once --------------------------------------------------
+placebehind guest host 0 -1.75
+wait 2000
+logmark both
+guest capture n-pre
+guest press e 150
+host hold w 1200 nowait
+waitlog guest 'partner_ride=local_passenger; vehicle=2560[0-7]; seat=[13]; state=on' 10
+guest burst n-in 7 200
+host hold s 1500
+host burst n-in 3 250
+guest burst n-in2 4 250
+wait 2000
+both capture n-stop
+host run vehicle_seats
+guest run vehicle_seats
+waitlog guest 'partner_ride_cam=episode; ep=[0-9]+; vehicle=2560[0-7]; seat=[13];' 8
+guest press e 150
+wait 3500
+host press e 150
+wait 3500
+state

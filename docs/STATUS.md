@@ -1,3 +1,23 @@
+## October 31, 2026: ride-cut-2 - the get-in camera cut is one episode per seated ride (`wp/ride-cut-2`, local only)
+
+- **What players get:** nothing new is shown in a run yet. The front-seat get-in camera cut (8.60, on with the gun
+  profile) can no longer cut the camera again and again within one ride: if the game brings the get-in camera back after
+  the cut while the passenger still sits, it is left alone (one `event=returned` line) instead of flickering between the
+  get-in camera and the normal one. Getting out and in again is a new ride with its own cut. README now claims only the
+  shown case (the driver sets off while you get into the front seat, Afghanistan jeep), not a jeep that is already moving
+  or Mother Base.
+- **Code [O, unit test]:** `GetInCutStep` keys the episode on the seated ride (local passenger valid in one vehicle):
+  writes (at most 8), the cut and the stand-down last until the passenger gets out or changes vehicle; the key off keeps
+  the ride; before any cut a returning module 0 anchors anew. Failing first: `24397847` red (`partner_pass_camera_tests`
+  FAIL 249, module 0 back within the same ride was cut again) -> `72f26610` green. No new read or patch site (contract
+  855 code sites / 213 vtable slots). Full `tools/build.ps1` 339/339.
+- **Not run [U]:** the shipped-default runs (scenario `fb1031-ride-cut-moving.txt`: seat-1 boards into a jeep the host is
+  already driving, twice in one session; `fb1031-ride-cut-mb.txt`: the same on the Mother Base sortie jeep, seed
+  mb-ladder, stops at once if its sortie jeep is not live) never started: the machine stayed under the run floors
+  (commit free 1.5-14 GB against 15 GB, D: 2.9 GB against 3 GB for a while) for the whole round; no game was launched.
+  So the user's own case (boarding a moving jeep, twice, Mother Base 25603) and the default-on build without the key
+  named stay unshown.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
