@@ -13,17 +13,17 @@
   already falling pose. Not a placement sync (there is none) and not a stale pose: the friend's own copy moved the body.
 - **Fix:** `lua/coop/world_downed.lua` putDown, on the carried player's own copy. While carried it keeps the carrier's
   own reported spot (downed status, fresh). An episode opens at the own stock put-down (act 44), at the carrier's
-  put-down (replica act 39) after the first second of a carry, or when the carried body stays 5 m away or 2 m below the
-  carrier for 300 ms. For 3 s a body more than 2 m from that spot or 1 m below it is warped back (stock `Warp` on
+  put-down (replica act 39 once it left the pickup's 39: the session's pickup held 39 for 3.3 s), or when the carried
+  body stays 5 m away or 2 m below the carrier for 300 ms. For 3 s a body more than 2 m from that spot or 1 m below it is warped back (stock `Warp` on
   `TppPlayer2` 0) 0.7 m behind the carrier, on the ground it walked: at most 6 tries 250 ms apart, logged
   `event=downed; step=putdown_place`. Never for horse cargo, a body in a vehicle or on a horse, a stale carrier spot,
-  a settled body, or a carrier teleport. The downed receipt gains `act` / `peer` (both bodies' actions, coop_carry's
+  a settled body, or a carrier teleport; a carry stuck in 39 warps one episode only. The downed receipt gains `act` / `peer` (both bodies' actions, coop_carry's
   existing reads; contract unchanged, 855 code sites / 213 vtable slots). The sea-death policy is unchanged.
 - **Not shown:** whether the stock `Warp` takes on a body still in the carried act (the session's case) or in the
   put-down; what the stuck carried state does afterwards (the friend's copy stayed "carried" until the Game Over). The
   carrier's copy still runs its own put-down; its guard places a body 2 m below the target at the (now safe) target.
   Scenario `tools/worker/scenarios/coop-carry-putdown-run.txt` (not run). Commits `43d118b4` red -> `8fb50bdd` green,
-  `52f51ac5` red -> `77684ba1` green, `98674b40` scenario.
+  `52f51ac5` red -> `77684ba1` green, `57773298` red -> `12804c3f` green, `98674b40` scenario.
 
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
