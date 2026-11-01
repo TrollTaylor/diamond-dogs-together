@@ -362,6 +362,8 @@ do
     local class2 = W.attClass and W.attClass(att) or "none"
     -- M1 (docs/vehicles-companions-design.md 6.12): a mirror companion's message is logged, never forwarded.
     if class2 == "mirror" and W.mirrorEngaged then pcall(W.mirrorEngaged, kind, h, att) end
+    -- r1101 fulton (lab key fulton_sync): this copy's own Fulton is announced (FULTON 0x46, world_enemy.lua W.fulton).
+    if kind == "FultonInfo" and class2 == "local" and W.fultonOn and W.fulton then pcall(W.fulton.observe, h, a0) end
     if W.census then W.censusLine(kind, h, a0, a1, a2, a3) end
     if not h then W.stats.unmapped = W.stats.unmapped + 1 end
     if kind ~= "Damage" then

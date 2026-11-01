@@ -63,6 +63,9 @@ do
   -- Off: a level >= 1 read here is the game's own (this module only ever writes 0), so it is remembered.
   function R.worm()
    if not R.wormOff or not gameplay() then return end
+   -- r1101 fulton: a partner's lift look shown here (world_enemy.lua W.fulton.real) is not this save's level.
+   local fu = type(W) == "table" and get(W, "fulton")
+   if type(fu) == "table" and fu.real ~= nil then return end
    local l = level()
    if not l or l < 1 then return end
    local i = slot()

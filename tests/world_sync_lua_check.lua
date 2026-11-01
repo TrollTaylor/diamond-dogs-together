@@ -695,7 +695,8 @@ do
                 end},
             TppEquip = {EQP_IT_Fulton_WormHole = WORM},
             TppSave = {SaveVarsToSlot = function() lv.atSave = lv.cur; return 'saved' end},
-            TppTerminal = {OnFulton = function(id) term.calls[#term.calls + 1] = id; return 'stock' end}}})
+            TppTerminal = {OnFulton = function(id) term.calls[#term.calls + 1] = id; return 'stock' end,
+                AddTempStaffFulton = function() term.adds = (term.adds or 0) + 1; return 'added' end}}})
         F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
         F.pair(env, c, 3)
         F.clear(c)
@@ -749,6 +750,8 @@ do
         'visual only: this copy\'s stock Fulton credit is skipped (no recruit here)')
     env.TppTerminal.OnFulton(c.ids.sol_a1, 0, 0, 0)
     check(#term.calls == 1, 'the skip is one-time')
+    check(env.TppTerminal.AddTempStaffFulton({}) == 'added' and term.adds == 1 and has(c.logs, 'event=fulton;step=staff_add;n=1'),
+        'the stock staff add is counted in the log (the roster check), never changed')
     -- The lift's own FultonInfo here (whatever it names) is never announced back.
     F.msg(env, 'GameObject', 'FultonInfo', c.ids.sol_a1, 0, 0)
     F.tick(env, c, 1)
