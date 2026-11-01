@@ -858,6 +858,20 @@ if arg[7] and arg[8] then
     runE(ug, 6)
     check(sent(ug, 3, 'SetForceRealize') == 0 and sent(ug, 3, 'ChangeLifeState') == 1 and logged(ug, 'why=realize_timeout'),
         'Mother Base: an unrealized copy is never force-realized; the outcome applies')
+    -- Mother Base staff: corrected tighter than free roam (more than 2 m on two samples, or 5 m once), so both
+    -- screens show them on the same spot.
+    local function sample(c, seq, h, x, z) c.W.handlers[34]({seq, h, 3, x, 1000, z, 0, 0, 0, 2}, c.now) end
+    local dg = staffFixture(false)
+    dg.positions[2] = {12.5, 1.8, 0}
+    sample(dg, 1, 3000000002, 10000, 0)
+    check(#dg.P.q == 0, 'one 2.5 m sample: no correction yet')
+    dg.now = dg.now + 3000
+    sample(dg, 2, 3000000002, 10000, 0)
+    check(#dg.P.q == 1, 'Mother Base staff: 2.5 m on two samples queues a correction')
+    local eg = staffFixture(false)
+    eg.positions[2] = {15.5, 1.8, 0}
+    sample(eg, 1, 3000000002, 10000, 0)
+    check(#eg.P.q == 1, 'Mother Base staff: 5.5 m once queues a correction')
     -- A staff member read at exactly (0, 0, 0) (no position) is never shared.
     local zh = staffFixture(true)
     zh.positions[1] = {0, 0, 0}
