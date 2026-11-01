@@ -153,6 +153,64 @@ bool AcceptSeatExt(SeatExtStore&, const std::uint8_t*, std::size_t, std::uint32_
 // describes that exact revision and vehicle of a vehicle ride.
 std::uint8_t SeatFlagsFor(const SeatExtStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now) noexcept;
 
+// Version 5 steer addendum (r1101 vanim, docs/vehicle-ws3.md "Driver pose"; lab.ini partner_ride_steer, off unless
+// named): 16 bytes, the same magic, sent NEXT TO the v1/v2 packet only while the sender's own player drives (seat 0)
+// with the key on. It carries the three ride blends the stock driver phase (0x124E140 sub-phase 2, 0x124FC37) writes
+// into the driver's rate record every frame: +0x34 steer (0.5 straight, 0 full left, 1 full right), +0x30 accel and
+// +0x08 aux (the speed blend), each 0..1 in 1/250 steps. The viewer writes them into body 1's rate record while it
+// seats the peer as the driver: body 1 never runs RideVehicleAction, so its record keeps the constructor's 0.0 steer
+// (full left) without them. An older receiver drops it as an invalid ride packet (version 5; one
+// partner_ride=refused; reason=packet_or_session line) and keeps its stored state.
+//   [0] 0x52 [1] 5 [2] seat (0..3) [3] 0 [4..5] the v1/v2 ride revision it describes (LE16, never 0)
+//   [6..7] vehicle id (LE16, type 50) [8] steer [9] accel [10] aux (0..250) [11] 0 [12..15] sender_ms (LE32)
+inline constexpr std::uint8_t kVersionSteer = 5;
+inline constexpr std::size_t kSteerSize = 16;
+inline constexpr std::uint8_t kSteerUnits = 250, kSteerNeutral = 125;
+// At most one steer packet per kSteerMinMs; a change of kSteerStep units in any blend (or a new ride) is sent at
+// once, else a heartbeat every kSteerHeartbeatMs; the viewer uses a packet for kSteerLeaseMs.
+inline constexpr std::uint64_t kSteerMinMs = 50, kSteerHeartbeatMs = 500, kSteerLeaseMs = 1500;
+inline constexpr std::uint8_t kSteerStep = 2;
+struct Steer {
+    std::uint8_t seat=kSeatUnknown, steer=kSteerNeutral, accel{}, aux{};
+    std::uint16_t revision{}, vehicle=kVehicleUnknown;
+    std::uint32_t sender_ms{};
+};
+inline bool IsSteer(const std::uint8_t* b, std::size_t n) noexcept { return b && n==kSteerSize && b[0]==kMagic && b[1]==kVersionSteer; }
+bool EncodeSteer(const Steer&, std::uint8_t (&)[kSteerSize]) noexcept;
+bool DecodeSteer(const std::uint8_t*, std::size_t, Steer&) noexcept;
+inline bool SameSteer(const Steer& a, const Steer& b) noexcept {
+    return a.seat==b.seat && a.steer==b.steer && a.accel==b.accel && a.aux==b.aux && a.revision==b.revision && a.vehicle==b.vehicle;
+}
+struct SteerStore { bool have{}; Steer steer{}; std::uint32_t epoch{}; std::uint64_t received_ms{}; unsigned received{}, invalid{}, stale{}; };
+// Newer sender_ms of the same epoch (or a new epoch) replaces the stored steer.
+bool AcceptSteer(SteerStore&, const std::uint8_t*, std::size_t, std::uint32_t epoch, std::uint64_t now) noexcept;
+// The stored steer for this ride: true only for a packet of the same epoch inside kSteerLeaseMs that describes the
+// ride's exact revision, vehicle and seat of a vehicle ride.
+bool SteerFor(const SteerStore&, const Packet& ride, std::uint32_t epoch, std::uint64_t now, Steer& out) noexcept;
+// A blend (0..1, clamped) in 1/250 units; false for a non-finite value. SteerValue is the inverse.
+bool SteerUnitsOf(float value, std::uint8_t& out) noexcept;
+float SteerValue(std::uint8_t units) noexcept;
+// The sender's rule: a first packet, a new ride (revision, vehicle, seat), or a blend moved by kSteerStep units is due
+// once kSteerMinMs passed since the last send; anything else after kSteerHeartbeatMs.
+bool SteerSendDue(bool have_last, const Steer& last, std::uint64_t last_ms, const Steer& want, std::uint64_t now) noexcept;
+// The viewer's plan for body 1's rate record: write only while the key is on and body 1 is seated (the seat episode's
+// loop confirmed) as the driver (seat 0) of `vehicle`; the remote's blends when a live packet describes that vehicle and
+// seat, else neutral (steer 0.5, accel 0, aux 0: never the constructor's full left). Otherwise no write (the caller puts
+// back what it saved before its first write).
+struct SteerPlanIn {
+    bool on{}, seated{};
+    std::uint8_t seat=kSeatUnknown;
+    std::uint16_t vehicle=kVehicleUnknown;
+    bool have_remote{};
+    Steer remote{};
+};
+struct SteerPlan {
+    bool write{};
+    float steer{}, accel{}, aux{};
+    const char* source = "none";  // "remote" | "neutral" | "none"
+};
+SteerPlan PlanSteer(const SteerPlanIn&) noexcept;
+
 // What the existing partner transform stream can drive for a mount.
 // That stream is the other player's position, heading and optional animation.
 // It has no horse-body transform, no vehicle-body transform and no walker arm.

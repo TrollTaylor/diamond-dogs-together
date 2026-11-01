@@ -8,6 +8,7 @@
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include "mgscoop/partner_ride_wire.hpp"
 
 namespace {
@@ -211,6 +212,127 @@ void TestSeatExt() {
     Check(!rw::AcceptSeatExt(s, b, sizeof(b), 0, 2700) && s.invalid == 1, "no link epoch: refused");
 }
 
+// r1101 vanim: the v5 steer addendum (the driver's ride blends for the viewer's seated body 1).
+bool Near(float a, float b) { return a - b < 1e-6f && b - a < 1e-6f; }
+void TestSteer() {
+    Check(rw::kSteerSize == 16 && rw::kVersionSteer == 5 && rw::kSteerUnits == 250 && rw::kSteerNeutral == 125, "16 bytes, version 5, 1/250 units");
+    rw::Steer e{};
+    e.seat = 0; e.steer = 40; e.accel = 250; e.aux = 7; e.revision = 9; e.vehicle = 25608; e.sender_ms = 0x01020304;
+    std::uint8_t b[rw::kSteerSize]{};
+    Check(rw::EncodeSteer(e, b) && rw::IsSteer(b, sizeof(b)) && b[0] == rw::kMagic && b[1] == 5 && b[2] == 0 && b[3] == 0 && b[4] == 9 &&
+              b[5] == 0 && b[6] == (25608 & 0xFF) && b[7] == (25608 >> 8) && b[8] == 40 && b[9] == 250 && b[10] == 7 && b[11] == 0 &&
+              b[12] == 4 && b[15] == 1,
+          "steer layout: magic, 5, seat, 0, revision, vehicle, steer, accel, aux, 0, sender_ms");
+    rw::Steer out{};
+    Check(rw::DecodeSteer(b, sizeof(b), out) && rw::SameSteer(out, e) && out.sender_ms == 0x01020304u, "steer round trip");
+    rw::Packet probe{};
+    Check(!rw::Decode(b, sizeof(b), probe), "an older receiver's v1/v2 decoder refuses it (16 bytes, version 5)");
+    rw::Ext ext{};
+    Check(!rw::IsExt(b, sizeof(b)) && !rw::DecodeExt(b, sizeof(b), ext) && !rw::IsSeatExt(b, sizeof(b)), "and it is neither addendum");
+    std::uint8_t c[rw::kSteerSize]{};
+    std::memcpy(c, b, sizeof(c)); c[3] = 1;
+    Check(!rw::DecodeSteer(c, sizeof(c), out), "a non-zero reserved byte 3 refused");
+    std::memcpy(c, b, sizeof(c)); c[11] = 1;
+    Check(!rw::DecodeSteer(c, sizeof(c), out), "a non-zero reserved byte 11 refused");
+    std::memcpy(c, b, sizeof(c)); c[8] = 251;
+    Check(!rw::DecodeSteer(c, sizeof(c), out), "a blend over 250 refused");
+    std::memcpy(c, b, sizeof(c)); c[2] = 4;
+    Check(!rw::DecodeSteer(c, sizeof(c), out), "a seat over 3 refused");
+    Check(!rw::DecodeSteer(b, sizeof(b) - 1, out) && !rw::IsSteer(b, 12), "the size is exact");
+    rw::Steer bad = e; bad.revision = 0;
+    Check(!rw::EncodeSteer(bad, b), "revision 0 refused");
+    bad = e; bad.vehicle = 6656;
+    Check(!rw::EncodeSteer(bad, b), "a non-vehicle id refused");
+    bad = e; bad.vehicle = rw::kVehicleUnknown;
+    Check(!rw::EncodeSteer(bad, b), "an unknown vehicle refused (a steer belongs to a driven vehicle)");
+    bad = e; bad.aux = 251;
+    Check(!rw::EncodeSteer(bad, b), "an aux over 250 refused");
+    // Units: clamped, rounded, non-finite refused; the inverse.
+    std::uint8_t u = 0;
+    Check(rw::SteerUnitsOf(0.5f, u) && u == 125 && rw::SteerUnitsOf(0.0f, u) && u == 0 && rw::SteerUnitsOf(1.0f, u) && u == 250,
+          "0.5 / 0 / 1 -> 125 / 0 / 250");
+    Check(rw::SteerUnitsOf(-0.3f, u) && u == 0 && rw::SteerUnitsOf(1.7f, u) && u == 250 && rw::SteerUnitsOf(0.161f, u) && u == 40,
+          "clamped and rounded");
+    const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+    Check(!rw::SteerUnitsOf(nan, u) && !rw::SteerUnitsOf(inf, u), "non-finite refused");
+    Check(Near(rw::SteerValue(125), 0.5f) && Near(rw::SteerValue(0), 0.0f) && Near(rw::SteerValue(250), 1.0f) && Near(rw::SteerValue(40), 0.16f) &&
+              Near(rw::SteerValue(255), 1.0f), "SteerValue is the inverse (clamped)");
+    // The store and the steer for the peer's stored ride.
+    rw::SteerStore s{};
+    Check(rw::EncodeSteer(e, b) && rw::AcceptSteer(s, b, sizeof(b), 7, 2400) && s.have && s.received == 1, "stored");
+    rw::Packet ride{};
+    ride.kind = rw::Kind::vehicle; ride.revision = 9; ride.seat = 0; ride.vehicle = 25608;
+    Check(rw::SteerFor(s, ride, 7, 2500, out) && out.steer == 40 && out.accel == 250, "the steer for the described ride");
+    ride.revision = 10;
+    Check(!rw::SteerFor(s, ride, 7, 2500, out), "another revision: none");
+    ride.revision = 9; ride.vehicle = 25609;
+    Check(!rw::SteerFor(s, ride, 7, 2500, out), "another vehicle: none");
+    ride.vehicle = 25608; ride.seat = 1;
+    Check(!rw::SteerFor(s, ride, 7, 2500, out), "another seat: none");
+    ride.seat = 0;
+    Check(!rw::SteerFor(s, ride, 8, 2500, out), "another link epoch: none");
+    Check(rw::SteerFor(s, ride, 7, 2400 + rw::kSteerLeaseMs, out) && !rw::SteerFor(s, ride, 7, 2401 + rw::kSteerLeaseMs, out),
+          "live for kSteerLeaseMs, then none");
+    Check(!rw::SteerFor(s, ride, 7, 2399, out), "a clock before the receipt: none");
+    ride.kind = rw::Kind::foot;
+    Check(!rw::SteerFor(s, ride, 7, 2500, out), "a ride that is no vehicle: none");
+    ride.kind = rw::Kind::vehicle;
+    rw::Steer older = e; older.sender_ms = 0x01020300; older.steer = 200;
+    Check(rw::EncodeSteer(older, b) && !rw::AcceptSteer(s, b, sizeof(b), 7, 2600) && s.stale == 1, "an older sender_ms is stale");
+    rw::Steer newer = e; newer.sender_ms = 0x01020400; newer.steer = 200;
+    Check(rw::EncodeSteer(newer, b) && rw::AcceptSteer(s, b, sizeof(b), 7, 2700) && rw::SteerFor(s, ride, 7, 2800, out) && out.steer == 200,
+          "a newer one replaces it (now steering right)");
+    Check(!rw::AcceptSteer(s, b, sizeof(b), 0, 2700) && s.invalid == 1, "no link epoch: refused");
+    Check(!rw::AcceptSteer(s, b, sizeof(b) - 1, 7, 2700) && s.invalid == 2, "a short packet: refused");
+    rw::Steer later = newer; later.sender_ms = 0x00000010;  // a new epoch accepts any clock
+    Check(rw::EncodeSteer(later, b) && rw::AcceptSteer(s, b, sizeof(b), 8, 2900) && s.epoch == 8, "a new epoch replaces it");
+    // The sender's rule.
+    rw::Steer last = e, want = e;
+    Check(rw::SteerSendDue(false, last, 0, want, 1000), "the first packet is due");
+    Check(!rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerHeartbeatMs - 1), "unchanged: not before the heartbeat");
+    Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerHeartbeatMs), "unchanged: the heartbeat");
+    want.steer = static_cast<std::uint8_t>(e.steer + rw::kSteerStep - 1);
+    Check(!rw::SteerSendDue(true, last, 1000, want, 1100), "a change under kSteerStep waits for the heartbeat");
+    want.steer = static_cast<std::uint8_t>(e.steer + rw::kSteerStep);
+    Check(rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs) && !rw::SteerSendDue(true, last, 1000, want, 1000 + rw::kSteerMinMs - 1),
+          "a kSteerStep change is due after kSteerMinMs, not before");
+    want = e; want.accel = static_cast<std::uint8_t>(e.accel - rw::kSteerStep);
+    Check(rw::SteerSendDue(true, last, 1000, want, 1060), "an accel drop of kSteerStep is due");
+    want = e; want.revision = 10;
+    Check(rw::SteerSendDue(true, last, 1000, want, 1060) && !rw::SteerSendDue(true, last, 1000, want, 1010), "a new ride is due after kSteerMinMs");
+    want = e; want.vehicle = 25609;
+    Check(rw::SteerSendDue(true, last, 1000, want, 1060), "a new vehicle is due");
+    Check(rw::SteerSendDue(true, last, 5000, e, 1000), "a clock before the last send: due (never stuck)");
+    // The viewer's plan.
+    rw::SteerPlanIn in{};
+    in.on = true; in.seated = true; in.seat = 0; in.vehicle = 25608; in.have_remote = true; in.remote = e;
+    rw::SteerPlan p = rw::PlanSteer(in);
+    Check(p.write && Named(p.source, "remote") && Near(p.steer, 0.16f) && Near(p.accel, 1.0f) && Near(p.aux, 0.028f),
+          "seated driver with a live steer: the remote's blends");
+    in.have_remote = false;
+    p = rw::PlanSteer(in);
+    Check(p.write && Named(p.source, "neutral") && Near(p.steer, 0.5f) && Near(p.accel, 0.0f) && Near(p.aux, 0.0f),
+          "seated driver without a steer packet: neutral (straight), never the constructor's full left");
+    in.have_remote = true; in.remote.vehicle = 25609;
+    p = rw::PlanSteer(in);
+    Check(p.write && Named(p.source, "neutral"), "a steer for another vehicle: neutral");
+    in.remote = e; in.remote.seat = 2;
+    p = rw::PlanSteer(in);
+    Check(p.write && Named(p.source, "neutral"), "a steer for another seat: neutral");
+    in.remote = e; in.seat = 2;
+    p = rw::PlanSteer(in);
+    Check(!p.write && Named(p.source, "none"), "a passenger seat: no write (the passenger loops have no steer)");
+    in.seat = 0; in.seated = false;
+    p = rw::PlanSteer(in);
+    Check(!p.write, "not seated (yet / any more): no write");
+    in.seated = true; in.on = false;
+    p = rw::PlanSteer(in);
+    Check(!p.write, "key off: no write");
+    in.on = true; in.vehicle = rw::kVehicleUnknown;
+    p = rw::PlanSteer(in);
+    Check(!p.write, "no vehicle: no write");
+}
+
 void TestVisibility() {
     rw::In in{};
     in.fresh = in.time_valid = in.anim_valid = in.body_anim_valid = in.lease_live = true;
@@ -271,6 +393,7 @@ int main() {
     TestStore();
     TestExt();
     TestSeatExt();
+    TestSteer();
     TestVisibility();
     std::printf("%u partner ride wire checks passed: versions 1/2 (seat 0..3, no role bit), store, WS3 addendum, seated and hidden "
                 "visibility (horse and walker hide)\n",

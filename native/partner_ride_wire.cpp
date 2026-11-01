@@ -120,6 +120,15 @@ std::uint8_t SeatFlagsFor(const SeatExtStore& s, const Packet& ride, std::uint32
     if(ride.kind!=Kind::vehicle || s.ext.revision!=ride.revision || s.ext.vehicle!=ride.vehicle) return 0;
     return s.ext.flags;
 }
+// r1101 vanim: the v5 steer addendum (red: not implemented yet).
+bool EncodeSteer(const Steer&, std::uint8_t (&b)[kSteerSize]) noexcept { for(auto& x : b) x=0; return false; }
+bool DecodeSteer(const std::uint8_t*, std::size_t, Steer&) noexcept { return false; }
+bool AcceptSteer(SteerStore& s, const std::uint8_t*, std::size_t, std::uint32_t, std::uint64_t) noexcept { ++s.invalid; return false; }
+bool SteerFor(const SteerStore&, const Packet&, std::uint32_t, std::uint64_t, Steer&) noexcept { return false; }
+bool SteerUnitsOf(float, std::uint8_t& out) noexcept { out=0; return false; }
+float SteerValue(std::uint8_t) noexcept { return 0.0f; }
+bool SteerSendDue(bool, const Steer&, std::uint64_t, const Steer&, std::uint64_t) noexcept { return false; }
+SteerPlan PlanSteer(const SteerPlanIn&) noexcept { return SteerPlan{}; }
 void Observe(Visibility& s, const In& in) noexcept {
     // Ring identity is stronger evidence than clocks/positions: a real reset
     // may preserve both. Legacy/synthetic generation0 keeps prior behavior.
