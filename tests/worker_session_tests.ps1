@@ -295,6 +295,14 @@ foreach($bad in @('world_relief=2','world_relief=','world_relief=on','both:world
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 Assert-True ('labsetting world_relief=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting world_relief=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting world_relief=0|1 only'
+# r1101 fulton: fulton_sync=0|1 (lab and play) in both -LabSetting allow-lists and the scenario line (r1101-fulton-play.txt).
+foreach($ok in @('fulton_sync=1','fulton_sync=0','host:fulton_sync=1','guest:fulton_sync=0')){
+    Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
+}
+foreach($bad in @('fulton_sync=2','fulton_sync=','fulton_sync=on','both:fulton_sync=1')){
+    Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
+}
+Assert-True ('labsetting fulton_sync=1' -cmatch $lineMatch.Groups[1].Value -and 'labsetting fulton_sync=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting fulton_sync=0|1 only'
 # fb1031 gear: partner_equip_midload=0|1 (the mid-mission load of a late partner's gear, lab and play) in both
 # -LabSetting allow-lists and the scenario line (fb1031-gear-late-join.txt).
 foreach($ok in @('partner_equip_midload=1','partner_equip_midload=0','host:partner_equip_midload=1','guest:partner_equip_midload=0')){

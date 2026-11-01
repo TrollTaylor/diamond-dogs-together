@@ -42,12 +42,15 @@ local function Fixture(role, opts)
         IsMbDvcTerminalOpened = function() return c.idroid == true end}
     -- The engine's credit path: OnFultonVehicle(id, _, _, resource, _, player) -> AddTempResource.
     env.TppTerminal = {OnFultonVehicle = function(...) c.credits[#c.credits + 1] = {...}; return 'stock' end}
+    -- The stock chain (E17): TppTerminal.OnFulton -> OnFultonVehicle (looked up at call time, so the module's wraps run).
+    env.TppTerminal.OnFulton = function(id, a, b, res) c.onFulton = (c.onFulton or 0) + 1; return env.TppTerminal.OnFultonVehicle(id, a, b, res, nil, nil) end
     local function vector(v) return {GetX = function() return v.x end, GetY = function() return v.y end, GetZ = function() return v.z end} end
     local W = {OP = {RECEIVED = 3, REJECT = 4, RIDE_BODY = 42, RIDE_FAST = 44}, handlers = {}, startHooks = {}, pairedHooks = {},
         unpairedHooks = {}, stopHooks = {}, active = true, paired = opts.paired ~= false, eff = 3, mission = c.mission, epoch = 7,
         host = role == 'host', role = role == 'host' and 1 or 2, mode = opts.mode or 1, vehicleGoneOn = opts.gone ~= false,
         vehicleStateOn = opts.state == true, vehicleWreckOn = opts.wreck == true, vehicleBreakOn = opts.brk == true,
-        vehicleCreditOn = opts.credit == true, vehicleLoadoutOn = opts.loadout == true, vehicleCrewOn = opts.crew == true}
+        vehicleCreditOn = opts.credit == true, vehicleLoadoutOn = opts.loadout == true, vehicleCrewOn = opts.crew == true,
+        fultonOn = opts.fulton == true}
     -- World sync's soldier roster (world_sync.lua W.byId: GameObject id -> entity hash) and the type index fallback.
     W.byId = {[4321] = 1856151639, [4322] = 1856151640}
     env.TppGameObject = {GAME_OBJECT_TYPE_SOLDIER2 = 2}
@@ -102,7 +105,7 @@ local function Fixture(role, opts)
                 c.seized[#c.seized + 1] = {id = target, options = cmd.options, markedGone = W.vehicleGone.gone[target] ~= nil}
                 if not c.seizeFails then
                     v.alive, v.released = false, true
-                    env.TppTerminal.OnFultonVehicle(target, 0, 0, v.res or 14, nil, nil)
+                    env.TppTerminal.OnFulton(target, 0, 0, v.res or 14)
                 end
                 return nil
             end
@@ -676,6 +679,50 @@ g:poll(1000); g:poll(1100)
 check(g:has('step=fallback;id=25610;from=seize;via=locator;ok=1') and g.pool[25610].released, 'a Seize still alive after 2 s: the Despawn')
 g:polls(40, 300)
 check(g:has('event=vehicle_rules;step=credit_missing;id=25610;role=guest') and #g.credits == 0, 'no credit seen: credit_missing')
+-- r1101 fulton (lab key fulton_sync, CFG r[18], W.fultonOn): a partner's Fulton lifts this copy's vehicle with the
+-- engine's own vehicle Fulton (Seize {"Fulton"}: the balloon) instead of Seize {"Instant"} or a Despawn. The credit stays
+-- what it was: with D14 the stock credit once; without it this copy's TppTerminal.OnFulton is skipped for that vehicle
+-- (visual only: no resource, no Mother Base credit on the copy that did not Fulton).
+g = Fixture('guest', {credit = true, fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and #g.seized[1].options == 1 and g.seized[1].markedGone and
+    #g.despawns == 0, 'fulton + credit: the stock Seize {"Fulton"} (the balloon), marked gone first')
+check(#g.credits == 1 and g:has('event=vehicle_rules;step=fulton_lift;id=25610;credit=1;role=guest;mission=30020') and
+    g:has('event=vehicle_gone;step=applied;id=25610;via=fulton;src=rx;ok=1'), 'credited once as D14, the lift logged and read back')
+g.V.observe('FultonInfo', 25610, 'local')
+check(g.V.watch[25610] == nil and #g:sent(47) == 0, 'the lift's own Fulton messages are never a loss here')
+g = Fixture('guest', {fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002', {res = 14})
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 1 and g.seized[1].options[1] == 'Fulton' and #g.despawns == 0 and #g.credits == 0 and g.onFulton == nil and
+    g:has('event=vehicle_rules;step=credit_skipped;fn=OnFulton;id=25610;why=fulton_lift') and
+    g:has('event=vehicle_rules;step=fulton_lift;id=25610;credit=0;role=guest'), 'fulton without credit: the balloon, OnFulton skipped (no credit)')
+g.env.TppTerminal.OnFulton(25610, 0, 0, 14)
+check(#g.credits == 1, 'the skip is one-time: a later own Fulton of that id credits as stock')
+h = Fixture('host', {fulton = true})
+h:add(25608, -653, 877.7, 1, 'veh_lv_0000', {res = 14})
+hostReq(h, 25608, 9, 1)
+check(#h.seized == 1 and h.seized[1].options[1] == 'Fulton' and #h.despawns == 0 and #h.credits == 0 and
+    h:has('step=applied;id=25608;via=fulton;src=req;ok=1'), 'host receiver of a guest Fulton: the balloon, no credit without D14')
+-- A destruction (cause 2) and index 0 never lift; the key off keeps Seize Instant / the Despawn.
+g = Fixture('guest', {fulton = true})
+g:add(25610, 100, 100, 1, 'veh_lv_0002')
+g.H[46]({1, 25610, 2, 0, 0, 1, 100000, 1000, 100000})
+check(#g.seized == 0 and #g.despawns == 1, 'a destruction: the Despawn, no lift')
+g = Fixture('guest', {fulton = true, credit = true})
+g:add(RID, 5, 5, 1)
+g.H[46]({1, RID, 1, 0, 0, 1, 5000, 1000, 5000})
+check(#g.seized == 0 and g:has('step=refused;id=25600;src=rx;reason=index0'), 'index 0: never lifted')
+-- A lift that does not take is given 15 s (the balloon rises for seconds), then the Despawn.
+g = Fixture('guest', {fulton = true})
+g.seizeFails = true
+g:add(25610, 100, 100, 1, 'veh_lv_0002')
+g.H[46]({1, 25610, 1, 0, 0, 1, 100000, 1000, 100000})
+g:polls(10, 300)
+check(#g.despawns == 0 and not g:has('step=fallback;id=25610'), 'still alive after 3 s: the lift keeps going')
+g:polls(45, 300)
+check(#g.despawns == 1 and g:has('step=fallback;id=25610;from=fulton;via=locator;ok=1'), 'still alive after 15 s: the Despawn')
 -- VEHICLE_GONE off: the credit key does nothing (it rides on VEHICLE_GONE).
 g = Fixture('guest', {credit = true, gone = false})
 g:add(25610, 100, 100, 1, 'veh_lv_0002')

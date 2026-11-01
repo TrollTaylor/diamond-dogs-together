@@ -108,6 +108,8 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept {
     }
 }
 
+std::uint8_t MapFulton(std::uint16_t) noexcept { return kNone; }
+
 const char* PhaseName(Phase phase) noexcept {
     switch (phase) {
     case Phase::suspend: return "suspend";

@@ -877,6 +877,12 @@ struct LabConfig {
     // until the review of 2026-10-29; ResolveWeaponDefaults); a named value wins.
     bool world_relief = false;
     bool world_relief_given = false;
+    // r1101 fulton (docs/world-sync-protocol.md section 25, docs/anim-round1-actions.md 4.4): fulton_sync=0|1, off unless
+    // named in lab and play until a hidden run proves it. On: the partner puppet plays the Fulton attach (the DM overlay's
+    // Fulton act map, also while partner_native_overlay=off), and a partner's Fulton lifts this copy's vehicle with the
+    // engine's own Fulton (CFG r[18]) and carries the Fultoner's wormhole choice (FULTON 0x46). No refusal bit.
+    bool fulton_sync = false;
+    bool fulton_sync_given = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is

@@ -106,6 +106,8 @@ inline constexpr std::uint8_t rules = 0x3E;
 // guest's Friendly fire ask (kind 1) and the host's friendly fire state (kind 2). 0x3C..0x3E belong to the other
 // debug-menu tracks (character, spawn, rules).
 inline constexpr std::uint8_t arms = 0x3F;
+// r1101 fulton (docs/world-sync-protocol.md section 25): FULTON (70).
+inline constexpr std::uint8_t fulton = 0x46;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -269,6 +271,10 @@ struct CfgReply {
     // lua/coop/world_relief_sync.lua (lab key world_relief), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t relief;
+    // r1101 fulton (docs/world-sync-protocol.md section 25): r[18] 1 turns on the Fulton lift and FULTON 0x46
+    // (lua/coop/world_enemy.lua W.fulton, world_vehicle_rules.lua; lab key fulton_sync), else 0; filled only by
+    // world_link::HandleCfg.
+    std::uint8_t fulton;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

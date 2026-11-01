@@ -449,6 +449,79 @@ void TestMapFlow() {
     Check(s.Saw("released:map_exit"), "remote stale: map exit");
 }
 
+// r1101 fulton (lab key fulton_sync): the Fultoner's own act while attaching the balloon is 59, held ~2.5 s in every
+// manual Fulton seen (rel0144 60cf2a2c 2539 ms, rel0145 3293bbf1 2553 ms; the census also names 49/50 Fulton acts);
+// short 59 presses (160-190 ms: boarding, doors; m6m7 runs) are other actions. In::fulton plays the Fulton entry once
+// for a remote Fulton act held fulton_hold_ms, also while the overlay setting is off or debug; the full map is unchanged.
+void TestFultonMap() {
+    const std::uint8_t fulton = pdo::Find("stateFultonStart", 16);
+    Check(fulton == 16 && !pdo::At(fulton)->loop && !pdo::At(fulton)->path, "the Fulton entry: index 16, a one-shot graph-0 state");
+    Check(pdo::MapFulton(59) == fulton && pdo::MapFulton(49) == fulton && pdo::MapFulton(50) == fulton, "Fulton acts 59 / 49 / 50");
+    for (const int act : {0, 1, 2, 3, 5, 11, 21, 29, 39, 51, 52, 53, 58, 60, 77, 109, 139})
+        Check(pdo::MapFulton(static_cast<std::uint16_t>(act)) == pdo::kNone, "other acts: no Fulton entry");
+    Check(pdo::MapAct(59, 0) == pdo::kNone && pdo::MapAct(49, 0) == pdo::kNone, "the full map never plays the Fulton entry by itself");
+    Check(pdo::Params{}.fulton_hold_ms >= 400 && pdo::Params{}.fulton_hold_ms <= 800, "the Fulton hold sits between a press and the attach");
+    // Setting off, fulton on: a short 59 press (180 ms) never plays.
+    Game g;
+    g.in.mode = PartnerNativeOverlay::off;
+    g.in.fulton = true;
+    g.in.remote_valid = true;
+    g.in.remote_act = 1;
+    g.Run(300);
+    g.in.remote_act = 59;
+    g.Run(180);
+    g.in.remote_act = 1;
+    g.Run(600);
+    Check(!pdo::Active(g.s) && g.plays == 0, "a 180 ms act-59 press: nothing");
+    // The attach (59 held 2.5 s): one play of the Fulton entry after the hold, a one-shot, never stopped as setting_off.
+    g.in.remote_act = 59;
+    g.Run(400);
+    Check(!pdo::Active(g.s), "held 400 ms: not yet");
+    g.Run(200);
+    Check(pdo::Active(g.s) && g.s.source == pdo::Source::map && g.s.index == fulton && !g.s.loop, "held past the hold: the Fulton entry");
+    g.Run(600);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:setting_off"), "playing with the overlay setting off");
+    g.Run(1300);
+    g.in.remote_act = 1;
+    g.Run(400);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1, "a one-shot runs out after the remote's attach ended");
+    g.in.q18[1] = 1;
+    g.Step();
+    Check(Is(g.out.event, "finished") && !pdo::Active(g.s), "finished");
+    g.Run(1500);
+    Check(g.plays == 1 && g.native_active, "back to native, no replay");
+    // A second Fulton later: a new episode plays again.
+    g.in.remote_act = 59;
+    g.Run(700);
+    Check(pdo::Active(g.s) && g.plays == 2, "the next Fulton plays again");
+    // fulton off (the default): nothing at all, whatever the setting.
+    for (const PartnerNativeOverlay mode : {PartnerNativeOverlay::off, PartnerNativeOverlay::debug, PartnerNativeOverlay::map}) {
+        Game o;
+        o.in.mode = mode;
+        o.in.remote_valid = true;
+        o.in.remote_act = 59;
+        o.Run(3000);
+        Check(!pdo::Active(o.s) && o.plays == 0, "fulton_sync off: act 59 never plays, in every overlay setting");
+    }
+    // fulton on with the full map: both maps (a ledge hang still plays).
+    Game m;
+    m.in.mode = PartnerNativeOverlay::map;
+    m.in.fulton = true;
+    m.in.remote_valid = true;
+    m.in.remote_act = 55;
+    m.Run(400);
+    Check(pdo::Active(m.s) && m.s.index == pdo::Find("stateEludeIdle", 14), "the full map still maps");
+    // A blocked overlay (a seat, a carry) never starts the Fulton entry.
+    Game b;
+    b.in.mode = PartnerNativeOverlay::off;
+    b.in.fulton = true;
+    b.in.blocked = "vehicle";
+    b.in.remote_valid = true;
+    b.in.remote_act = 59;
+    b.Run(2000);
+    Check(!pdo::Active(b.s) && b.plays == 0, "blocked: no Fulton entry");
+}
+
 void TestSuspendTimeout() {
     Game g;
     g.stuck = true;
@@ -477,6 +550,7 @@ int main(int argc, char** argv) {
     TestPlayGate();
     TestUnconsumedAndLost();
     TestMapFlow();
+    TestFultonMap();
     TestSuspendTimeout();
     std::printf("%u partner DM overlay checks passed: catalogue (verified graph-0 codes, clip paths, reply codes, Lua OVERLAY order%s), "
                 "remote-act map, debug flow (suspend, patch, play, confirm, timeout stop, release), stop/refusals, play gate (camera "

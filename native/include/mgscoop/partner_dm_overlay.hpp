@@ -68,6 +68,8 @@ std::uint64_t ExpectedRec18(std::uint8_t index) noexcept;
 // remote's vertical speed (+-kClimbMmps). kNone for every other act.
 inline constexpr std::int32_t kClimbMmps = 250;
 std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept;
+// r1101 fulton (lab key fulton_sync): the Fulton entry for a remote Fulton act, kNone otherwise.
+std::uint8_t MapFulton(std::uint16_t act) noexcept;
 
 enum class Phase : std::uint8_t { idle, suspend, patch, play_sent, playing, stop_sent };
 const char* PhaseName(Phase phase) noexcept;
@@ -87,6 +89,7 @@ struct Params {
     std::uint32_t debug_ms = 3000;     // a debug request without ms
     std::uint32_t max_ms = 60000;      // a debug request's ms bound
     std::uint32_t replays = 1;         // a loop the game ended is replayed this often
+    std::uint32_t fulton_hold_ms = 0;  // r1101 fulton: a remote Fulton act held this long starts
 };
 
 // A debug command (applied on the next tick).
@@ -127,6 +130,8 @@ struct In {
     std::int32_t remote_y_mm;
     bool body_valid;
     std::uint16_t body_act;
+    // r1101 fulton (lab key fulton_sync).
+    bool fulton;
 };
 
 struct Out {
