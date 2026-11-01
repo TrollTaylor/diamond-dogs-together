@@ -135,12 +135,12 @@ int main(int argc, char** argv) {
         // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play (r1101 Prove phase).
         std::printf("debug_vspawn=%d\n", c.debug_vspawn ? 1 : 0);
         // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the gun profile (r1101 Prove phase);
-        // fulton_early, fulton_look, fulton_one_save and fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton,
-        // never run in a game) stay off unless named.
+        // fulton_early, fulton_look and fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton) follow it too since
+        // 0.14.7 (no game run of them); fulton_one_save stays off unless named.
         std::printf("fulton_sync=%d\nfulton_early=%d\nfulton_look=%d\nfulton_one_save=%d\nfulton_guest_vehicle=%d\n", c.fulton_sync ? 1 : 0,
                     c.fulton_early ? 1 : 0, c.fulton_look ? 1 : 0, c.fulton_one_save ? 1 : 0, c.fulton_guest_vehicle ? 1 : 0);
         // r1101 animtruth (docs/anim-truth.md): the main key follows the gun profile (r1101 Prove phase); its box, triggers
-        // and stance parts stay off unless named.
+        // and stance parts follow it too since 0.14.7 (no game run of them).
         std::printf("partner_native_aim_truth=%d\npartner_native_aim_truth_box=%d\npartner_native_aim_truth_triggers=%d\n"
                     "partner_native_aim_truth_stance=%d\n",
                     c.partner_native_aim_truth ? 1 : 0, c.partner_native_aim_truth_box ? 1 : 0, c.partner_native_aim_truth_triggers ? 1 : 0,

@@ -1,3 +1,68 @@
+## November 1, 2026: 0.14.7 package (round r1101 and the turn-on; the six run-less keys on, none of them run in a game at this build)
+
+**Package (2026-11-01):** `dist/DiamondDogsTogether-0.14.7-20261101T213348Z-c3251346/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `521b82b` with Release receipt `20261101-213054-6ea22ea0e45e4562a2f9cf085f95541b` (passed, 334 audited tests, 0 failures, no rerun; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.7+521b82b` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.6.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.14.7.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,221,854 | `235B4A18B11DCC9EAA659B0A555C333EE6EBD4676D246BF98928F46DD61CD8AF` |
+| `DDT-source-0.14.7.zip` (1,572 source files plus `source-files.json`) | 9,352,627 | `82A3300AFFA1D5A84BC107DDAAD5CE949EA096DEBFB7BC701FF577D5B9722869` |
+| `DiamondDogsTogether.exe` | 2,380,288 | `80AE3591EF371B28B2B578D28F05A08078174177D516A13F8684A1D1E94F8535` |
+| `dinput8.dll` | 7,432,192 | `E046ECFBC41D57E2B23DABAE15824A3E657F43F7FF1CD80566B672DB34177CD9` |
+
+- **Package audit:** 34/34 (both zips present; the player zip holds exactly its 9 files, the same paths as 0.14.6, and no source or script; exe and dll are the receipt's; `package.json` version 0.14.7, `source_commit` `521b82b`, `source_dirty` false, every `files[]` hash and `source_archive` match; every source file is in the source zip with its hash and matches the tree; `tools/check-release.ps1` accepts a simulated draft release carrying both zips). Against the git tree: the files the package rules leave out are the same 16 as for 0.14.6, the 25 files added since 0.14.6 are all in, none removed, and the untracked extras are the same 22 (MinHook and `source-files.json`). The four licences are byte-identical to 0.14.6's. No profile path, checkout path, e-mail or persona name in either zip; the source zip's e-mails, SteamID-like numbers and join codes are the same test fixtures, placeholders and test vectors as in 0.14.6.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.73.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** `git grep` at `8531f00d` for a Windows profile path (both slash styles), the persona name, the user's e-mail, the checkout path and the scratchpad path: no hits; the SteamID-like numbers are the 14 placeholders of 0.14.6. Nothing to reword. History was not rewritten.
+- **Version.** 0.14.7 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.14.7 and still 0.14.6; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.14.8", "0.14.7")`.
+- **Checks at the bump commit `521b82b`:** `pwsh -File tools/build.ps1 -Fast -Jobs 4` 315/315; `pwsh -File tools/build.ps1 -Jobs 4` (Debug) 347/347; the Release receipt above (334 audited tests). No hidden-game run, smoke run or review panel for this release (the user asked to enable it all without tests); what never ran in a game is listed in the turn-on section below.
+- **To release:** upload **both** zips to the GitHub release `v0.14.7`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.14.7 -PackageDir dist/DiamondDogsTogether-0.14.7-20261101T213348Z-c3251346` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+## November 1, 2026: 0.14.7 turn-on - the r1101 keys that waited only for a game run (`wp/rel0147`, local only)
+
+- **What players get (changed):** the user asked to enable it all without tests and release. Turned on WITHOUT a game
+  run (each follows the native gun profile in lab and play like its parent; a named 0 opts out, an invalid value is
+  named and off):
+  - `fulton_guest_vehicle` (CFG `r[18]` bit 16): a vehicle the HOST Fultons goes up under the engine's own balloon on
+    the guest's screen too (the host's VEHICLE_GONE path), instead of D14's `Seize {"Instant"}` / the Despawn.
+  - `fulton_early` (bit 2): a partner's vehicle Fulton lifts this copy at the Fultoner's `FultonInfo` (about 6 s
+    earlier), at the Fultoner's pose and type. Open: a balloon that fails after `FultonInfo` is not mirrored, so the
+    vehicle can be lifted on the receiver only (README Known limits).
+  - `fulton_look` (bit 4): the receiver's lift takes the Fultoner's wormhole level for 5 s. Open: the level is global,
+    so this copy's own Fultons in that window use it too (README Known limits).
+  - `partner_native_aim_truth_box` (the box EVADE strip), `partner_native_aim_truth_triggers` (LT/RT zeroed with the
+    HOLD/FIRE strip for a gamepad remote), `partner_native_aim_truth_stance` (a refused aim's Aiming bits and the Lua
+    Reloading bit no longer hold off the stance fix). Each acts only with `partner_native_aim_truth` (on since the
+    r1101 Prove phase). They gained `_given` flags so the gun profile can turn them on.
+  - The gun profile's CFG `r[18]` is now 23 (1 + 2 + 4 + 16; 31 with a named `fulton_one_save=1`).
+- **Already on before this round (proven in hidden runs, unchanged):** `debug_vspawn`, `world_supply`, `fulton_sync`,
+  `partner_native_aim_truth`, `partner_ride_steer`.
+- **Kept off (unchanged):** `fulton_one_save` (reverses D1: a partner's soldier Fulton still recruits into both saves;
+  the user's open design choice, not a player feature); `partner_equip_midload` (a run showed it cannot work); the
+  Ocelot / Quiet F9 rows; lab-only research / diagnostic keys and probes; `world_relief` and Mother Base
+  VEHICLE_STATE (off after reviews, not only for lack of runs).
+- **Supply WEAPONS / ITEMS: left local (ALLOW unchanged, `0:431` and `4:0` only).** The existing path does not cover
+  them: (1) the only WEAPONS / ITEMS request seen (`69efd63b`) was `3:0`, so the box request names no weapon or item
+  and a mirror's contents are unknown; (2) its end was never seen (`step=pickup`, H3, is [U]: the host's E presses took
+  nothing, the box waited at state 10), and the state-14 `delivered` rule ends any synced box with nothing sent, so a
+  pickup that passes through 14 before `OnPickUpSupplyCbox` is observed could leave the partner's copy in place to be
+  collected again. Syncing them needs a new end rule and a contents check, which this round does not build. LOADOUT /
+  VEHICLES stay local too.
+- **Not built (out of scope):** the viewer's wheels turning / spinning, APC / tank spawn, binoculars on the wire.
+- **Tests:** lab_config_tests (the gun profile turns the six keys on in lab and play, not named; a named 0 opts each
+  out; an invalid value is named and off, also after a valid 1; without the gun profile they stay off unless named;
+  `FultonCfgBits` 23 / 31 / 7 / 1), friend_package_tests (play defaults `fulton_*` 11101 and anim truth 1111; a named
+  0 turns each sub-key off in play). Comments and help text updated (lab_config, lab_ini_check, LabCommon,
+  Invoke-WorkerScenario, partner_driver.hpp, world_vehicle_rules.lua, world_sync_lua_check, worker_session_tests),
+  the 0.14.6-default scenarios (`r1101-fulton-default-play.txt`, `r1101-animtruth-default-play.txt`,
+  `r1101-animtruth-play.txt`) say they describe the 0.14.6 default; protocol section 25 and docs/anim-truth.md give
+  the new defaults. README: the newly-on behaviour moved from Known limits to What works, with a line that it is new
+  in 0.14.7 and not tried in a game.
+- **No game run, smoke run or review panel** this round (the user's "without tests").
+- **Checks:** full `tools/build.ps1 -Jobs 4` at `da2fe2b1` (fresh worktree on C:): CTest **347/347**; every generator
+  `--check`: 13 pass (partner 858 / 213, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller);
+  native_ui / teammate_targeting stop at the absent gitignored `docs/evidence` JSON as in earlier rounds. Lua LF bytes:
+  world_vehicle_rules.lua 30496 (32000).
+
 ## November 1, 2026: r1101 land - the skeptic's corrections before the merge into dev (`wp/integ-1101`, local only)
 
 - **What players get (changed):** a vehicle the HOST Fultons now just vanishes on the guest's screen again, as before

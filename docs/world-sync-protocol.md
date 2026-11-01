@@ -1928,14 +1928,17 @@ A partner without the op skips it by its length (unknown_op): its own switch sta
 
 Lab key `fulton_sync=0|1` (CFG `r[18]` bit 1, Lua `W.fultonOn`; no refusal bit). It follows the native gun profile in
 lab and play since the r1101 Prove phase (hidden play runs `7d924fac` with the keys named and `19882881` at the
-shipped default; a named 0 opts out). Since the review of 2026-11-01 two sub-keys, each off unless named in lab and play
-and used only with `fulton_sync=1`: `fulton_early=0|1` (`r[18]` bit 2, `W.fultonEarlyOn`: the early vehicle lift below)
+shipped default; a named 0 opts out). Since the review of 2026-11-01 two sub-keys, used only with `fulton_sync=1`
+(off unless named until 0.14.7; since 0.14.7 each follows the gun profile in lab and play without a further game run,
+the user's "enable it all" of 2026-11-01, a named 0 opts out): `fulton_early=0|1` (`r[18]` bit 2, `W.fultonEarlyOn`: the early vehicle lift below)
 and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed wormhole look below); since the Prove phase a third,
 `fulton_one_save=0|1` (`r[18]` bit 8, `W.fultonOneSaveOn`: the receiver's soldier credit skipped, below; it reverses D1,
 the user's open decision, so it is off unless named; as built since `42c8cc3d` it has not run in a game: run `7d924fac`
 ran the earlier skip that was part of `fulton_sync`); since the land round a fourth, `fulton_guest_vehicle=0|1`
 (`r[18]` bit 16, `W.fultonGuestVehicleOn`: the guest's lift of a vehicle the host Fultoned, below; only the
-guest-to-host vehicle lift ran in a game, so it is off unless named). `FultonCfgBits` (lab_config) builds `r[18]`.
+guest-to-host vehicle lift ran in a game; off unless named until 0.14.7, since then it follows the gun profile like
+`fulton_early` and `fulton_look`, still without a game run). `FultonCfgBits` (lab_config) builds `r[18]`: 23 at the
+0.14.7 default (31 with `fulton_one_save`).
 Three parts, all off with the key off:
 
 - **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
@@ -2015,7 +2018,8 @@ the guard under a balloon on the receiver's screen both ways [O frame]. D the ho
 [U]. `staff_add` only on the Fultoner's copy (the credit skip that was then part of `fulton_sync`; `fulton_one_save`,
 which carries it since `42c8cc3d`, has not run in a game); no `step=error`, echo, `bad_op` / `wrong_dir` / `unknown_op`
 or GameOver on either copy. Neither run Fultoned a vehicle from the host's side: the guest's lift of a host's vehicle
-Fulton has its own key since the land round (`fulton_guest_vehicle`, off unless named).
+Fulton has its own key since the land round (`fulton_guest_vehicle`; off unless named until 0.14.7, on with the gun
+profile since, not run in a game).
 Hidden play run `19882881` (`r1101-fulton-default-play.txt`, no key named: the shipped default after the flip, with
 `fulton_early`, `fulton_look` and `fulton_one_save` off): C the guest's jeep Fulton, no early lift; VEHICLE_GONE's loss
 request 6.3 s after the guest's `FultonInfo` lifted the host's copy (`step=fulton_lift;...;credit=1`, `step=applied;

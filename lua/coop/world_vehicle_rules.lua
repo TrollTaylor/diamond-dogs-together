@@ -68,7 +68,7 @@ function VR.creditOn() return W.vehicleCreditOn == true and G.on() end
 -- (a host's Fulton, by the host's VEHICLE_GONE: never run in a game) only with fulton_guest_vehicle (r[18] bit 16).
 function VR.liftOn() return W.fultonOn == true and G.on() and (W.host == true or W.fultonGuestVehicleOn == true) end
 -- The early lift (its own lab key fulton_early, CFG r[18] bit 2: a balloon that fails after the Fultoner's FultonInfo is
--- not mirrored yet, so this stays off unless named until a probe settles that): world_enemy.lua calls
+-- not mirrored yet; on with the gun profile since 0.14.7 without that probe, a named 0 opts out): world_enemy.lua calls
 -- G.early(id, vtype, x, y, z) on a partner's FULTON kind 2 (sent at its FultonInfo, with the vehicle's type and pose on
 -- the Fultoner's copy), about 6 s before VEHICLE_GONE's loss readback reaches this copy (probe 614ec20a). Pool indices
 -- can differ between copies, so VEHICLE_GONE's own decide judges it at the Fultoner's pose and type (far, other type or

@@ -22,7 +22,8 @@
 # The shipped default (no key named): r1101-animtruth-default-play.txt.
 # The waitlogs of steps 1, 3 and 4 assert the claim (result=refused; act on a climb act), so a regression fails the
 # run; step 2 stays permissive (the slot decides). The sub-keys partner_native_aim_truth_box / _triggers / _stance
-# stay off here: this scenario has no box, gamepad or stance step and proves only the loco/act strip.
+# were off in the recorded runs; since 0.14.7 they follow the gun profile (no game run of them). This scenario has no
+# box, gamepad or stance step and proves only the loco/act strip.
 # Frames: mb-rmb-*, mb-fire-*, ctl-rmb-*, lad-rmb-*, rev-fire-* on both screens (host = the puppet, guest = the real body).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset, no build running):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-animtruth-play.txt

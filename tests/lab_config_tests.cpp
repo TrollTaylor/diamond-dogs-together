@@ -1913,8 +1913,10 @@ int main() {
         // r1101 fulton (docs/world-sync-protocol.md section 25): fulton_sync follows the native gun profile in lab and play
         // since the r1101 Prove phase (hidden play run 7d924fac, both copies: the partner puppet's Fulton attach and the
         // receiver's balloon lift, soldiers both ways and a vehicle); off without the profile; a named 1 parses in lab and
-        // play with no refusal bit, a named 0 opts out, an invalid value is named and off. fulton_one_save (the receiver's
-        // soldier credit skipped: the Fultoner's save only, which reverses D1) is its own key, off unless named.
+        // play with no refusal bit, a named 0 opts out, an invalid value is named and off. fulton_early, fulton_look and
+        // fulton_guest_vehicle follow the gun profile too since 0.14.7 (no game run of them; the user's "enable it all").
+        // fulton_one_save (the receiver's soldier credit skipped: the Fultoner's save only, which reverses D1) is its own
+        // key, off unless named.
         {
             const auto fsPlay = Lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                     "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\nfulton_sync=1\n");
@@ -1930,9 +1932,21 @@ int main() {
                                           "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
             for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
                 const auto fsGun = Lab(fsGunBase + mode);
-                Check(fsGun.fulton_sync && !fsGun.fulton_sync_given && !fsGun.fulton_early && !fsGun.fulton_look && !fsGun.fulton_one_save &&
-                          fsGun.invalid_values == 0 && fsGun.unknown_keys == 0 && fsGun.play_refused == 0 && mgscoop::FultonCfgBits(fsGun) == 1,
-                      "the gun profile turns fulton_sync on in lab and play (not named); fulton_early, fulton_look, fulton_one_save stay off");
+                Check(fsGun.fulton_sync && !fsGun.fulton_sync_given && fsGun.fulton_early && !fsGun.fulton_early_given && fsGun.fulton_look &&
+                          !fsGun.fulton_look_given && fsGun.fulton_guest_vehicle && !fsGun.fulton_guest_vehicle_given &&
+                          !fsGun.fulton_one_save && fsGun.invalid_values == 0 && fsGun.unknown_keys == 0 && fsGun.play_refused == 0 &&
+                          mgscoop::FultonCfgBits(fsGun) == 23,
+                      "the gun profile turns fulton_sync, fulton_early, fulton_look and fulton_guest_vehicle on in lab and play (not "
+                      "named; CFG r[18] 23); fulton_one_save stays off");
+                const auto fsGunSubOff = Lab(fsGunBase + mode + "fulton_early=0\nfulton_look=0\nfulton_guest_vehicle=0\n");
+                Check(fsGunSubOff.fulton_sync && !fsGunSubOff.fulton_early && fsGunSubOff.fulton_early_given && !fsGunSubOff.fulton_look &&
+                          fsGunSubOff.fulton_look_given && !fsGunSubOff.fulton_guest_vehicle && fsGunSubOff.fulton_guest_vehicle_given &&
+                          fsGunSubOff.invalid_values == 0 && fsGunSubOff.play_refused == 0 && mgscoop::FultonCfgBits(fsGunSubOff) == 1,
+                      "a named 0 opts each Fulton sub-key out with the gun profile (CFG r[18] 1)");
+                const auto fsGunSubBad = Lab(fsGunBase + mode + "fulton_early=maybe\nfulton_look=2\nfulton_guest_vehicle=x\n");
+                Check(!fsGunSubBad.fulton_early && !fsGunSubBad.fulton_look && !fsGunSubBad.fulton_guest_vehicle &&
+                          fsGunSubBad.invalid_values == 3 && mgscoop::FultonCfgBits(fsGunSubBad) == 1,
+                      "an invalid Fulton sub-key is named and off with the gun profile");
                 const auto fsGunOff = Lab(fsGunBase + mode + "fulton_sync=0\n");
                 Check(!fsGunOff.fulton_sync && fsGunOff.fulton_sync_given && fsGunOff.invalid_values == 0 && fsGunOff.play_refused == 0 &&
                           mgscoop::FultonCfgBits(fsGunOff) == 0,
@@ -1941,7 +1955,7 @@ int main() {
                 Check(!fsGunBad.fulton_sync && fsGunBad.invalid_values == 1, "an invalid fulton_sync is named and off with the gun profile");
                 const auto fsGunOne = Lab(fsGunBase + mode + "fulton_one_save=1\n");
                 Check(fsGunOne.fulton_sync && fsGunOne.fulton_one_save && fsGunOne.fulton_one_save_given && fsGunOne.invalid_values == 0 &&
-                          fsGunOne.unknown_keys == 0 && fsGunOne.play_refused == 0 && mgscoop::FultonCfgBits(fsGunOne) == 9,
+                          fsGunOne.unknown_keys == 0 && fsGunOne.play_refused == 0 && mgscoop::FultonCfgBits(fsGunOne) == 31,
                       "a named fulton_one_save=1 parses in lab and play with the gun profile (CFG r[18] bit 8)");
             }
             Check(fsLab.fulton_sync && fsLab.fulton_sync_given && fsLab.invalid_values == 0 && fsLab.unknown_keys == 0, "fulton_sync=1 parses in lab");
@@ -1950,7 +1964,8 @@ int main() {
             Check(!fsOff.fulton_sync && fsOff.fulton_sync_given && fsOff.invalid_values == 0, "a named 0 keeps it off");
             Check(!fsBad.fulton_sync && fsBad.invalid_values == 1 && fsBad.unknown_keys == 0, "an invalid fulton_sync keeps it off");
             // Review fixes of 2026-11-01: the early vehicle lift (fulton_early) and the borrowed wormhole look (fulton_look)
-            // each have their own key, off unless named in lab and play, used only with fulton_sync (CFG r[18] bits 2, 4).
+            // each have their own key, used only with fulton_sync (CFG r[18] bits 2, 4): off without the gun profile unless
+            // named (on with it since 0.14.7, above).
             const auto feAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\n");
             const auto feEarly = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\n");
             const auto feLook = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_look=1\n");
@@ -1961,7 +1976,7 @@ int main() {
                                     "fulton_early=1\nfulton_look=1\n");
             Check(!fsDef.fulton_early && !fsDef.fulton_early_given && !fsDef.fulton_look && !fsDef.fulton_look_given &&
                       !fsPlayDefault.fulton_early && !fsPlayDefault.fulton_look && !fsLab.fulton_early && !fsLab.fulton_look,
-                  "fulton_early and fulton_look default off (lab and play, also with fulton_sync=1)");
+                  "fulton_early and fulton_look default off without the gun profile (lab and play, also with fulton_sync=1)");
             Check(feAll.fulton_early && feAll.fulton_early_given && feAll.fulton_look && feAll.fulton_look_given && feAll.invalid_values == 0 &&
                       feAll.unknown_keys == 0 && fePlay.fulton_early && fePlay.fulton_look && fePlay.play_refused == 0 && fePlay.invalid_values == 0,
                   "fulton_early=1 and fulton_look=1 parse in lab and play");
@@ -1984,8 +1999,9 @@ int main() {
                   "an invalid fulton_one_save is named and off");
             // r1101 land: fulton_guest_vehicle (CFG r[18] bit 16): the guest's balloon lift of a vehicle the HOST Fultoned. Only
             // the guest-to-host vehicle lift ran in a game (runs 7d924fac, 19882881); the host-to-guest one (it reaches the
-            // guest by the host's VEHICLE_GONE, another path) never ran, so it is off unless named (lab, gun profile and play)
-            // and the guest's copy removes such a vehicle as before (D14's Seize Instant / the Despawn).
+            // guest by the host's VEHICLE_GONE, another path) never ran; it follows the gun profile since 0.14.7 (the user's
+            // "enable it all"), off without it unless named; a named 0 keeps the guest's removal as before (D14's Seize
+            // Instant / the Despawn).
             const auto fgAll = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_early=1\nfulton_look=1\nfulton_one_save=1\n"
                                    "fulton_guest_vehicle=1\n");
             const auto fgOne = Lab("enabled=1\nrole=guest\nworld=3\nfulton_sync=1\nfulton_guest_vehicle=1\n");
@@ -1995,18 +2011,23 @@ int main() {
             const auto fgPlay = Lab(fsGunBase + "mode=play\nfulton_guest_vehicle=1\n");
             Check(!fsDef.fulton_guest_vehicle && !fsDef.fulton_guest_vehicle_given && !fsPlayDefault.fulton_guest_vehicle &&
                       !fsLab.fulton_guest_vehicle && !fsPlay.fulton_guest_vehicle && !foAll.fulton_guest_vehicle,
-                  "fulton_guest_vehicle defaults off (lab and play, also with fulton_sync=1 and every other fulton key)");
+                  "fulton_guest_vehicle defaults off without the gun profile (lab and play, also with fulton_sync=1 and every other "
+                  "fulton key)");
             for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
                 const auto fgGun = Lab(fsGunBase + mode);
-                Check(fgGun.fulton_sync && !fgGun.fulton_guest_vehicle && !fgGun.fulton_guest_vehicle_given && mgscoop::FultonCfgBits(fgGun) == 1,
-                      "the gun profile leaves fulton_guest_vehicle off (lab and play)");
+                Check(fgGun.fulton_sync && fgGun.fulton_guest_vehicle && !fgGun.fulton_guest_vehicle_given && mgscoop::FultonCfgBits(fgGun) == 23,
+                      "the gun profile turns fulton_guest_vehicle on (lab and play)");
+                const auto fgGunOff = Lab(fsGunBase + mode + "fulton_guest_vehicle=0\n");
+                Check(fgGunOff.fulton_sync && !fgGunOff.fulton_guest_vehicle && fgGunOff.fulton_guest_vehicle_given &&
+                          mgscoop::FultonCfgBits(fgGunOff) == 7,
+                      "a named fulton_guest_vehicle 0 opts out with the gun profile (lab and play)");
             }
             Check(fgOne.fulton_guest_vehicle && fgOne.fulton_guest_vehicle_given && fgOne.invalid_values == 0 && fgOne.unknown_keys == 0 &&
                       mgscoop::FultonCfgBits(fgOne) == 17 && fgAll.fulton_guest_vehicle && mgscoop::FultonCfgBits(fgAll) == 31 &&
                       mgscoop::FultonCfgBits(fgNoSync) == 0,
                   "CFG r[18]: 16 fulton_guest_vehicle (31 with every key); nothing without fulton_sync");
             Check(fgPlay.mode == mgscoop::LabMode::play && fgPlay.fulton_sync && fgPlay.fulton_guest_vehicle && fgPlay.play_refused == 0 &&
-                      fgPlay.invalid_values == 0 && fgPlay.unknown_keys == 0 && mgscoop::FultonCfgBits(fgPlay) == 17,
+                      fgPlay.invalid_values == 0 && fgPlay.unknown_keys == 0 && mgscoop::FultonCfgBits(fgPlay) == 23,
                   "a named fulton_guest_vehicle=1 parses in play with the gun profile, no refusal bit");
             Check(!fgBad.fulton_guest_vehicle && fgBad.fulton_guest_vehicle_given && fgBad.invalid_values == 1 &&
                       mgscoop::FultonCfgBits(fgBad) == 1,
@@ -2191,14 +2212,33 @@ int main() {
                 const std::string plainPlay = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                                               "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
                 const auto truthPlain = Lab(plainPlay);
-                Check(!truthPlain.partner_native_aim_truth && truthPlain.play_refused == 0, "partner_native_aim_truth stays off in play without the gun profile");
+                Check(!truthPlain.partner_native_aim_truth && !truthPlain.partner_native_aim_truth_box &&
+                          !truthPlain.partner_native_aim_truth_triggers && !truthPlain.partner_native_aim_truth_stance &&
+                          truthPlain.play_refused == 0,
+                      "partner_native_aim_truth and its parts stay off in play without the gun profile");
                 for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
                     const auto truthProfile = Lab(truthBase + mode);
                     Check(truthProfile.partner_native_aim_truth && !truthProfile.partner_native_aim_truth_given &&
-                              !truthProfile.partner_native_aim_truth_box && !truthProfile.partner_native_aim_truth_triggers &&
-                              !truthProfile.partner_native_aim_truth_stance && truthProfile.invalid_values == 0 &&
-                              truthProfile.unknown_keys == 0 && truthProfile.play_refused == 0,
-                          "the gun profile turns anim truth on in lab and play (not named), its box/triggers/stance parts stay off");
+                              truthProfile.partner_native_aim_truth_box && !truthProfile.partner_native_aim_truth_box_given &&
+                              truthProfile.partner_native_aim_truth_triggers && !truthProfile.partner_native_aim_truth_triggers_given &&
+                              truthProfile.partner_native_aim_truth_stance && !truthProfile.partner_native_aim_truth_stance_given &&
+                              truthProfile.invalid_values == 0 && truthProfile.unknown_keys == 0 && truthProfile.play_refused == 0,
+                          "the gun profile turns anim truth and its box/triggers/stance parts on in lab and play (not named)");
+                    const auto truthPartsOff = Lab(truthBase + mode +
+                                                   "partner_native_aim_truth_box=0\npartner_native_aim_truth_triggers=0\n"
+                                                   "partner_native_aim_truth_stance=0\n");
+                    Check(truthPartsOff.partner_native_aim_truth && !truthPartsOff.partner_native_aim_truth_box &&
+                              truthPartsOff.partner_native_aim_truth_box_given && !truthPartsOff.partner_native_aim_truth_triggers &&
+                              truthPartsOff.partner_native_aim_truth_triggers_given && !truthPartsOff.partner_native_aim_truth_stance &&
+                              truthPartsOff.partner_native_aim_truth_stance_given && truthPartsOff.invalid_values == 0 &&
+                              truthPartsOff.play_refused == 0,
+                          "a named 0 opts each anim truth part out with the gun profile (the main key stays on)");
+                    const auto truthPartsBad = Lab(truthBase + mode +
+                                                   "partner_native_aim_truth_box=2\npartner_native_aim_truth_triggers=maybe\n"
+                                                   "partner_native_aim_truth_stance=1\npartner_native_aim_truth_stance=nope\n");
+                    Check(!truthPartsBad.partner_native_aim_truth_box && !truthPartsBad.partner_native_aim_truth_triggers &&
+                              !truthPartsBad.partner_native_aim_truth_stance && truthPartsBad.invalid_values == 3,
+                          "an invalid anim truth part is named and off with the gun profile, also after a valid 1");
                     const auto truthNamedOff = Lab(truthBase + mode + "partner_native_aim_truth=0\n");
                     Check(!truthNamedOff.partner_native_aim_truth && truthNamedOff.partner_native_aim_truth_given &&
                               truthNamedOff.invalid_values == 0 && truthNamedOff.play_refused == 0,
@@ -2211,18 +2251,21 @@ int main() {
                           "an invalid partner_native_aim_truth after a valid 1 turns it off");
                 }
             }
-            // Review animtruth-1: the unproven parts are their own keys, off unless named (also with the main key).
+            // Review animtruth-1: the unproven parts are their own keys; without the gun profile off unless named (also with
+            // the main key named), =1 on; with it on since 0.14.7 (above).
             {
-                const auto main = Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n");
-                const auto all = Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n"
+                const auto main = Lab("enabled=1\nmode=lab\nrole=host\npartner_native_aim_truth=1\n");
+                const auto all = Lab("enabled=1\nmode=lab\nrole=host\npartner_native_aim_truth=1\n"
                                      "partner_native_aim_truth_box=1\npartner_native_aim_truth_triggers=1\npartner_native_aim_truth_stance=1\n");
                 Check(!def.partner_native_aim_truth_box && !def.partner_native_aim_truth_triggers && !def.partner_native_aim_truth_stance &&
                           !main.partner_native_aim_truth_box && !main.partner_native_aim_truth_triggers &&
                           !main.partner_native_aim_truth_stance && all.partner_native_aim_truth_box &&
-                          all.partner_native_aim_truth_triggers && all.partner_native_aim_truth_stance &&
+                          all.partner_native_aim_truth_box_given && all.partner_native_aim_truth_triggers &&
+                          all.partner_native_aim_truth_stance && all.invalid_values == 0 &&
                           Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=1\npartner_native_aim_truth_stance=1\n").unknown_keys == 0 &&
                           Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=2\n").invalid_values == 1,
-                      "partner_native_aim_truth_box/_triggers/_stance: off unless named (also with the main key), =1 on");
+                      "partner_native_aim_truth_box/_triggers/_stance: off without the gun profile unless named (also with the main "
+                      "key), =1 on");
             }
             Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&
                   mapOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::map && debugOverlay.invalid_values == 0,

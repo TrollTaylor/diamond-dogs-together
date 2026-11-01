@@ -795,7 +795,8 @@ do
     F.tick(env, c, 1)
     check(#early == 1 and early[1].id == 25610 and early[1].note and early[1].t == 1 and early[1].x == 120500 and early[1].y == 2300 and
         early[1].z == -45000, 'FULTON kind 2: the early vehicle lift at the Fultoner\'s type and pose, after the note')
-    -- fulton_sync alone (the shipped default since the r1101 Prove phase): FULTON noted, the lift in this copy's own look
+    -- fulton_sync alone (the shipped default from the r1101 Prove phase to 0.14.6; since 0.14.7 the default also carries
+    -- fulton_early, fulton_look and fulton_guest_vehicle, and a named 0 gives this): FULTON noted, the lift in this copy's own look
     -- (no level change), and the stock credit runs at OnFulton (D1: a partner's soldier Fulton recruits into both saves).
     env, c, lv, term = rig(2, true, 0)
     F.push(c, 1, OPF, 1, 1, 1063, a1, 1)

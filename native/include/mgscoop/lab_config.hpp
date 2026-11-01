@@ -734,12 +734,18 @@ struct LabConfig {
     // an invalid value is named and off.
     bool partner_native_aim_truth = false;
     bool partner_native_aim_truth_given = false;
-    // Review animtruth-1: its parts no hidden run has exercised, each off unless
-    // named and each needing partner_native_aim_truth: the box EVADE strip, the
-    // LT/RT zeroing and the stance change (docs/anim-truth.md).
+    // Review animtruth-1: its parts, each needing partner_native_aim_truth: the
+    // box EVADE strip, the LT/RT zeroing and the stance change
+    // (docs/anim-truth.md). No hidden run has exercised them; each follows the
+    // gun profile in lab and play since 0.14.7 (the user's "enable it all",
+    // 2026-11-01; ResolveWeaponDefaults); a named 0 opts out, an invalid value
+    // is named and off.
     bool partner_native_aim_truth_box = false;
+    bool partner_native_aim_truth_box_given = false;
     bool partner_native_aim_truth_triggers = false;
+    bool partner_native_aim_truth_triggers_given = false;
     bool partner_native_aim_truth_stance = false;
+    bool partner_native_aim_truth_stance_given = false;
     // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
     // "Traversal icon"): ladders, drain pipes, wall climbs and step-ons the
     // remote starts through its action icon are replayed on body 1 as a
@@ -917,7 +923,9 @@ struct LabConfig {
     // r1101 fulton review fixes (2026-11-01): fulton_early=0|1 (a partner's vehicle FULTON lifts this copy at once, at
     // the Fultoner's pose and type; a balloon that fails after FultonInfo is not mirrored yet) and fulton_look=0|1 (the
     // receiver borrows the Fultoner's wormhole level for its lift; the level is global, so its own Fultons in that window
-    // use it too). Each off unless named in lab and play, used only with fulton_sync (CFG r[18] bits 2 and 4).
+    // use it too). Used only with fulton_sync (CFG r[18] bits 2 and 4). No game run of either yet; each follows the gun
+    // profile in lab and play since 0.14.7 (the user's "enable it all", 2026-11-01; ResolveWeaponDefaults); a named 0
+    // opts out, an invalid value is named and off.
     bool fulton_early = false;
     bool fulton_early_given = false;
     bool fulton_look = false;
@@ -930,8 +938,9 @@ struct LabConfig {
     bool fulton_one_save_given = false;
     // r1101 land: fulton_guest_vehicle=0|1 (CFG r[18] bit 16, used only with fulton_sync): the guest's copy lifts a vehicle
     // the HOST Fultoned with the engine's own balloon (it arrives by the host's VEHICLE_GONE). Only the guest-to-host
-    // vehicle lift ran in a game (runs 7d924fac, 19882881), so this direction is off unless named in lab and play; without
-    // it the guest removes such a vehicle as before r1101 (D14's Seize Instant, else the Despawn).
+    // vehicle lift ran in a game (runs 7d924fac, 19882881); this direction follows the gun profile in lab and play since
+    // 0.14.7 without a game run (the user's "enable it all", 2026-11-01; ResolveWeaponDefaults). A named 0 opts out: the
+    // guest then removes such a vehicle as before r1101 (D14's Seize Instant, else the Despawn).
     bool fulton_guest_vehicle = false;
     bool fulton_guest_vehicle_given = false;
     // debug_vspawn=0|1 (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua): F9 World > Vehicles brings an

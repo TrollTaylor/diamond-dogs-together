@@ -1,5 +1,7 @@
 # r1101 fulton at the shipped default (docs/world-sync-protocol.md section 25): NO fulton key named. fulton_sync follows
-# the gun profile since the r1101 Prove phase (run 7d924fac); fulton_early, fulton_look and fulton_one_save stay off.
+# the gun profile since the r1101 Prove phase (run 7d924fac); fulton_one_save stays off. Written for the 0.14.6 default,
+# where fulton_early, fulton_look and fulton_guest_vehicle were off too: since 0.14.7 they follow the gun profile (no
+# game run of them), so part C and the NEVER line below (step=early, a lift with set=1) describe the 0.14.6 default.
 # Play rehearsal (-Mode play: VEHICLE_GONE and D14 on), Africa (30020, africa-jeep seed: the Masa Village jeep
 # veh_lv_0000 = 25608 and the spot's four guards, used by hash). The four guards are put to sleep FIRST: in 7d924fac
 # guard 4158955462 was still awake during the jeep part and shot the guest down (downed_damage attacker=1080).

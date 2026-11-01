@@ -1,6 +1,7 @@
 # r1101 animtruth at the shipped default (docs/anim-truth.md): NO anim truth key named. partner_native_aim_truth
 # follows the gun profile since the r1101 Prove phase (run 3c5609bb, the key named); its box / triggers / stance parts
-# stay off. Mother Base, mb-ladder seed, mode=play over -WanSim bad (the stock f30050 no-lethal rule live on both copies).
+# were off at the recorded default and follow the gun profile since 0.14.7 (no game run of them). Mother Base, mb-ladder
+# seed, mode=play over -WanSim bad (the stock f30050 no-lethal rule live on both copies).
 # The same four steps as r1101-animtruth-play.txt, every step captured on BOTH screens:
 #   1. The guest holds RMB, then RMB+LMB, with its lethal rifle: the host's puppet shows no aim and no shot
 #      (guest partner_aim_local=no_aim; host partner_aim_truth=loco ... strip=0x18 and hold_run; result=refused).
