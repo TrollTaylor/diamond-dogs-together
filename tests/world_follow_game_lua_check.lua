@@ -304,6 +304,7 @@ for _ = 1, 4 do deploymentHost.F.tick(deploymentHost.time) end
 transfer(deploymentHost, deploymentGuest)
 deploymentGuest.F.current = deploymentGuest.F.queue[1]
 deploymentGuest.F.current.session = 55
+deploymentGuest.F.arrival.routeStart = true
 deploymentGuest.env.mvars.mis_helicopterMissionStartPosition = {900, 901, 902}
 deploymentGuest.env.TppMain.ReservePlayerLoadingPosition(1, true)
 -- arrival-prevent (docs/world-sync-design.md 9.2): the host's stored helicopter start position never reaches the guest
@@ -346,6 +347,7 @@ do
     plain.F.current = plain.F.queue[1]
     plain.F.current.session = 55
     plain.mbDemo = 'X'
+    plain.F.arrival.routeStart = true
     plain.env.vars.missionCode = 30050
     plain.env.TppMain.ReservePlayerLoadingPosition(1, true)
     plain.env.TppMission.Load(30050, 40050)

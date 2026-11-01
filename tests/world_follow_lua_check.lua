@@ -985,9 +985,10 @@ do
     -- sortie (ride-on start status, a route) never takes the host's start position seeds (initialPlayerFlag/Pos/RotY,
     -- ply_useMissionStartPos/ply_missionStartPos/Rot): vanilla's ride-on reset instead, so its helicopter starts at the
     -- route start. Every other seed, the route and the start status still come from the host.
-    local function replay(state, used, kind, legacy)
+    local function replay(state, used, kind, legacy, on)
         local g = mbApis(fixture(2))
         g.W.mission, g.env.vars.missionCode = 40050, 40050
+        g.F.arrival.routeStart = on ~= false
         if legacy then g.F.arrival.legacyPose = true end
         send(g, OP.TRANSITION, {1, kind or 6, 40050, 30050, 0, 4294967295, 0, 2, 0, 0, 8})
         mbSeeds(g, 1, state, used)
@@ -1011,6 +1012,10 @@ do
             v.initialPlayerRotY == 0 and gv.ply_useMissionStartPos == false and gv.ply_missionStartPos[0] == 0 and
             gv.ply_missionStartPos[1] == 0 and gv.ply_missionStartPos[2] == 0 and gv.ply_missionStartRot == 0
     end
+    -- Off by default until a hidden run shows the guest's helicopter landing from the route start (A.routeStart).
+    local plain = replay(1, false, 6, false, false)
+    check(mbApis(fixture(2)).F.arrival.routeStart ~= true and host(plain) and count(plain, ';start=route') == 0,
+        'default: the route-start seeds are off (0.14.5 seeds; the watchdog is the way out)')
     local ride = replay(1, false)
     check(ride.loaded == 30050 and reset(ride) and ride.env.gvars.ply_initialPlayerState == 1 and
         ride.env.gvars.heli_missionStartRoute == 4294967295 and ride.env.gvars.solface_groupNumber == 111,
@@ -1029,6 +1034,7 @@ do
     -- Into a helicopter space (the ACC, kind 1 from Mother Base) the host's seeds are applied as before.
     local acc = mbApis(fixture(2))
     acc.W.mission, acc.env.vars.missionCode = 30050, 30050
+    acc.F.arrival.routeStart = true
     send(acc, OP.TRANSITION, {1, 1, 30050, 40050, 6, 4294967295, 0, 2, 0, 0, 8})
     local donorHost = fixture(1)
     donorHost.env.vars.missionCode, donorHost.env.gvars.ply_initialPlayerState = 40050, 1

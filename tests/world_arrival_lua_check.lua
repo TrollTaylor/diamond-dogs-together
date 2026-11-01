@@ -172,10 +172,15 @@ check(called(field, 'restart') == 1 and #field.tx == 0 and called(field, 'mb_foo
     'free roam: the restart Reserve clears the stored start position and keeps the helicopter route')
 
 -- The host in the same state (a 0.14.5 save): a hint toast (note 15), never an action.
+local hostDefault = fixture(1)
+at(hostDefault, 1000); at(hostDefault, 21000)
+check(hostDefault.G.hint ~= true and #hostDefault.notes == 0 and count(hostDefault, 'step=host_hint;why=static_heli;m=30050;shown=0') == 1,
+    'default: the host hint toast is off (logged only)')
 local host = fixture(1)
+host.G.hint = true
 at(host, 1000); at(host, 21000); at(host, 60000)
 check(called(host, 'restart_menu') == 0 and #host.notes == 1 and host.notes[1][1] == 15 and host.notes[1][2] == 30050 and
-    host.notes[1][3] == 1 and count(host, 'step=host_hint;why=static_heli;m=30050') == 1, 'host: one hint toast, no restart')
+    host.notes[1][3] == 1 and count(host, 'step=host_hint;why=static_heli;m=30050;shown=1') == 1, 'host: one hint toast, no restart')
 local hostSolo = fixture(1)
 hostSolo.link = 0
 at(hostSolo, 1000); at(hostSolo, 21000)
