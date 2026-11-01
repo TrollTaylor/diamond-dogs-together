@@ -36,8 +36,8 @@
   pose`) with the host lying on the ground after a second hold of E (cause [U]); earlier the jeep 25608 broke on the
   guest's copy (unattributed `VehicleBroken`) and the host despawned it (D12), so the vehicle lift did not run. The
   scenario now runs the jeep first and uses one hold per soldier Fulton. Archive
-  `%USERPROFILE%\mgs-coop-run-archive1101ultone9856cb8bc14348aded28cad627088d`, frames and sheet
-  `...1101ramesultone9856cb-*`.
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\fulton\7e9856cb8bc14348aded28cad627088d`, frames and sheet
+  `%USERPROFILE%\mgs-coop-run-archive\r1101\frames\fulton\7e9856cb-*`.
 
 ## October 31, 2026: 0.14.6 package (all of the 10-31 work in one release; the run-less features on, none of them run in a game)
 
