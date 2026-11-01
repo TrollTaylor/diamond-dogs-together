@@ -1,3 +1,22 @@
+## 2026-10-31: Spawn enemy here review fixes; play native placement stays off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** in play, **Spawn enemy here** still sends the nearest guard to the nearest patrol route (as in 0.14.5),
+but it no longer stops after 8 presses (dead, asleep, Fultoned, gone or 150+ m away placed guards free their place and
+their force-realize/area pin), Mother Base says "No enemies at Mother Base" instead of "no guard", and the chip says
+what happened in plain words. "He comes at me" is opt-in again. The in-front placement stays behind lab.ini
+`spawn_warp=1` (now off by default) until `spawn-enemy-play` passes.
+
+- **Run:** not admitted. Commit free was under the 15 GB floor at both checks (14.77 GB at 19:14, 12.02 GB at 19:19;
+  other programs and builds); GPU 4.3 GB / 8 %, d3dprobe hr=0 on all adapters. The waiting wrapper was stopped before it
+  took the lock. Nothing in this entry is run-proven.
+- **Review fixes** (red/green, fixtures): a guard more than 250 m away never gets the native warp (`why=far`; all four
+  logged `r=0 h=0` anomaly latches were 300-500 m guards); the guest's play admission covers only the spawn placement
+  (kind 1), so patrol/combat corrections keep `native_off;native=role` in play (contract check pins it); the default
+  press is `spawn_enemy here` (a come guard's two copies each chase their own player and are never corrected);
+  recycled guards release force-realize and the host pin; chips for `why=far` and `why=latched`.
+- **Not done:** guest presses (op 0x3D, a host-side aimed admission) - the guest row still reads "Host only"; the guest
+  copy's kind-2 force-realize/pins are not released on recycle; `spawn_no_guard` text; the stale contract-script comment.
+
 ## 2026-10-31: F9 Character switch run-proven and on; host Snake after a fresh start (`wp/integ-dbg1031`, local only)
 
 **Players get:** F9 > Player > Character (you): Snake, DD soldier (male/female), My avatar and Back to my default switch
