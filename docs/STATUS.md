@@ -1,3 +1,222 @@
+## 2026-10-31: Give weapon and Friendly fire review fixes; play keeps them off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** nothing new in play yet. F9 > Player > **Give weapon** and F9 > Partner > **Friendly fire** are marked
+unverified, and in play each press says "Not available yet in this build." (`not_available_yet`); friendly fire stays
+ON as before. Lab mode keeps both rows for the next `arms-give-ff-play` run.
+
+- **Run:** not admitted. The wrapper checked the floors every 5 min from 19:44 to 19:59: commit free 11.95, 8.93, 3.55
+  and 12.96 GB (floor 15), D: 7.54 down to 4.55 GB; at 19:54 nvidia-smi showed 7921 MiB / 69 % in use by other
+  programs (d3dprobe hr=0 on all adapters). It never took the lock; the track stopped waiting at 19:59 to stay in its
+  time box. Nothing was deleted or closed. Nothing here is run-proven.
+- **Review fix arms-1** (red `ba75dd8f`, green `26dbbfe5`): the arms log lines are written without spaces like every world
+  Lua line, so the log shows `world_lua=event=arms; step=give; equip=..; slot=..; ok=1` (W.log turned each space into
+  `_` before). The scenario's friendly fire wait uses the native spacing (`event=friendly_fire; step=dropped; ...`).
+  `debug_arms_lua_check` now runs the real W.log sanitiser and the native `;` spacing, and checks the scenario's waits.
+- **arms-4** (red `5192a7f6`, green `b37c7ab1`): a failed ARMS send at pairing is retried on the next update; a guest that
+  loses its host goes back to friendly fire ON (the host resends its switch at the next pairing).
+- **arms-3:** world note 16 is MISMATCH (native `world_link` posts it); only 15 and 17 are free. Comments and the protocol
+  doc corrected.
+- **Lab only** (red `0d984019`, green `36d3f2f1`): `give_weapon`, `give_pick` and `friendly_fire` refuse unless `W.mode == 1`
+  (lab); `give_list` stays. `arms-give-ff-play.txt` runs in `-Mode play`, so the gate comes off in the change that a
+  passing run proves (or the run uses `-Mode lab`).
+- Not done: arms-5 (Give weapon at Mother Base: no decision or proof; lab only now), arms-6 (the 30-update census re-read
+  is not exercised by the check).
+- Full `tools/build.ps1` at `df525fa4`: CTest 343/343; partner contract `--check` passes.
+
+## 2026-10-31: Game rules review fix; play keeps them off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** nothing new in play yet. F9 > World > **Game rules** (Wormhole Fulton off/on, Weapons at Mother
+Base, Stock Mother Base rules) is marked unverified, and in play each press says "Not available yet in this build."
+(`not_available_yet`). Lab mode keeps the rows for the next `rules-play` run.
+
+- **Run:** not admitted. 19:31:50: nvidia-smi 4403 MiB / 8 %, d3dprobe hr=0 on all adapters, commit free 16.43 GB,
+  C: 101.8 GB; then D: free 2.96 GB, under the 3 GB floor, so the wrapper refused before starting the games and
+  released the lock. D: stayed under 3 GB afterwards (2.91-2.93 GB). Nothing was deleted. Nothing here is run-proven.
+- **Review fix rules-1** (red `ed56e74e`, green `ddb6fa73`): the host now resends RULES after every PAIRED, including a
+  re-pair into the same host epoch (a guest crash or a link gap longer than 60 s). Before, only an epoch change resent it,
+  and that guest stayed on stock rules. `debug_rules` registers a `W.pairedHooks` entry that clears `R.sentEpoch`.
+- **rules-4:** the host sentence and the row now say "Any kill at Mother Base still fails the mission." (stock f30050
+  reserves a game over on any non-player Dead or Dying, not only staff).
+- **Lab only** (red `13d15637`, green `c1aa415b`): `wormhole` and `mb_weapons` refuse unless `W.mode == 1` (lab). The
+  `rules` status line stays. `rules-play.txt` runs in `-Mode play`, so the gate comes off in the same change that a passing
+  run proves (or the run uses `-Mode lab`).
+- Not done: rules-3 (turning the rule off restores the stock flag only when the live flag is exactly NONE).
+- Full `tools/build.ps1` at `c1aa415b`: CTest 343/343; partner contract `--check` passes.
+
+## 2026-10-31: Spawn enemy here review fixes; play native placement stays off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** in play, **Spawn enemy here** still sends the nearest guard to the nearest patrol route (as in 0.14.5),
+but it no longer stops after 8 presses (dead, asleep, Fultoned, gone or 150+ m away placed guards free their place and
+their force-realize/area pin), Mother Base says "No enemies at Mother Base" instead of "no guard", and the chip says
+what happened in plain words. "He comes at me" is opt-in again. The in-front placement stays behind lab.ini
+`spawn_warp=1` (now off by default) until `spawn-enemy-play` passes.
+
+- **Run:** not admitted. Commit free was under the 15 GB floor at both checks (14.77 GB at 19:14, 12.02 GB at 19:19;
+  other programs and builds); GPU 4.3 GB / 8 %, d3dprobe hr=0 on all adapters. The waiting wrapper was stopped before it
+  took the lock. Nothing in this entry is run-proven.
+- **Review fixes** (red/green, fixtures): a guard more than 250 m away never gets the native warp (`why=far`; all four
+  logged `r=0 h=0` anomaly latches were 300-500 m guards); the guest's play admission covers only the spawn placement
+  (kind 1), so patrol/combat corrections keep `native_off;native=role` in play (contract check pins it); the default
+  press is `spawn_enemy here` (a come guard's two copies each chase their own player and are never corrected);
+  recycled guards release force-realize and the host pin; chips for `why=far` and `why=latched`.
+- **Not done:** guest presses (op 0x3D, a host-side aimed admission) - the guest row still reads "Host only"; the guest
+  copy's kind-2 force-realize/pins are not released on recycle; `spawn_no_guard` text; the stale contract-script comment.
+
+## 2026-10-31: F9 Character switch run-proven and on; host Snake after a fresh start (`wp/integ-dbg1031`, local only)
+
+**Players get:** F9 > Player > Character (you): Snake, DD soldier (male/female), My avatar and Back to my default switch
+your own character in place (no reload; the partner stays put) and the partner sees the new look. After a fresh start
+(Travel to Africa) the host stayed Snake on both screens. Ocelot/Quiet rows are off the page ("Not available yet").
+
+- **Runs** (hidden worker, play, WanSim bad, native gun, research, mb-ladder; both screens, frames looked at, sheets
+  `best-sheet-315fa18e.jpg`, `best-sheet-308c7879.jpg`): host DD male (face 192) -> Snake, guest DD female (face 350),
+  host avatar (guest: `avatar_as_snake=1`), host DD female -> Back to my default (save's Snake). Each: `character_ready;
+  type=N;parts=active`, the partner's `partner_look=apply; ... type=N` and its readback `raw1=N`. Host Ocelot ->
+  `character_needs_launcher_pick`. Fresh start 30020: host `requested=snake; applied=snake; ... start=new`,
+  `allocated; vars=0`, readback `applied; expect=0`, guest `partner_look type=0`.
+- **Not proven:** Ocelot/Quiet in place or at the next load (the worker guest's Quiet fell back to DD male,
+  `bypass_unavailable`; the Quiet press gave `character_next_load;quiet`); the 10-31 stale-Ocelot slot (`C.Post` late
+  re-plan) live: fixture only. Run 315fa18e: a guard shot the idle host in Africa without auto-heal (scenario issue).
+- **Low review notes fixed** (red/green): Quiet in place obeys the buddy/conflict rule; Back to my default keeps a saved
+  Ocelot/Quiet for the next load while the bypass is off; the pick is stored only after a successful switch; STATE_V1
+  accepts the pending kinds `character` and `give` (the F9 state stayed frozen while a switch or give polled).
+
+## 2026-10-31: debug-menu round integrated (`wp/integ-dbg1031`, local only) -- not run-proven yet
+
+**Players would get (once proven):** the four entries below together in one build: the host is Snake again and F9
+Character switch, Spawn enemy here in play, Game rules (Wormhole Fulton off/on, Weapons at Mother Base), Give weapon
+and Friendly fire. Each entry's scenario is still unrun.
+
+- **Merged** (`--no-ff`, on `dev/oct7-continue` `9eacd319`, which already holds `wp/integ-fb1031` and `wp/mb-arrival`):
+  `wp/char-switch` `7b561525`, `wp/enemy-spawn` `0b3d1239`, `wp/game-rules` `82b78ac2`, `wp/give-weapons` `9a3b4f72`.
+  Debug fragments spliced after `debug_boot.lua` in this order: `debug_character`, `debug_spawn_play`, `debug_rules`,
+  `debug_arms`. Wire ops: RULES `0x3E` (protocol section 23), ARMS `0x3F` (section 24); `0x3C`/`0x3D` stay unused
+  (the character and spawn tracks needed none). World note 18 is ARMS; 15..17 unused. Player page: the Character rows,
+  then Give weapon.
+- **Fallout** (`abf34792`): the wire table has 64 ops; the character rows follow the stock Player rows (Give weapon closes
+  the list).
+- **Checks:** `pwsh -File tools/build.ps1` 343/343 at `abf34792`; `tools/generate_partner_contract.py --check` and
+  `tools/generate_soldier_warp_contract.py --check` pass. Lua (LF bytes): `debug_arms` 10670, `debug_rules` 9649,
+  `debug_character` 5308, `debug_spawn_play` 2064 (limit 16000); `character` 15436, `world_friendly` 4035 (32000).
+- **Worker preflight (checks only, no game started):** the research hidden run's call
+  (`Invoke-WorkerChecks.ps1 -Profile Research -EnableBackgroundWorker -Reuse`, stock46 experiments) passed at `9bf49907`
+  under the verify lock: 328/328 audited tests (full checks, no older receipt to reuse).
+
+## 2026-10-31: debug menu Give weapon and Friendly fire (`wp/give-weapons`, local only) -- not run-proven yet
+
+**Players would get:** F9 > Player > **Give weapon**: a list of the guns the game loaded in the area (the soldiers',
+yours, your partner's) and the stock support items; each comes with full ammo, in hand at once (host and guest, each
+for itself). F9 > Partner > **Friendly fire: ON / OFF**: the host decides for both (a guest's press asks the host);
+OFF, the partner's bullets, explosives and melee never hurt or down you. A toast on both screens. Default ON. **No
+hidden run yet**: built and unit-tested only.
+
+- **Report** (the 10-31 friend session): "weapon spawning ... should be an option as well as disabling friendly fire".
+- **Cause** (code, static): the Player rows only refilled or dropped the gun already in a slot (`weapon_not_resident`
+  for anything else: TppEquip has no readiness query, and a mid-mission `RequestLoadToEquipMissionBlock` is an
+  unverified lifecycle). Every partner hit (bullets on the replica, `partner_melee`) goes through one queue ->
+  FRIENDLY_HIT with no switch.
+- **Give weapon** (`lua/coop/debug_arms.lua`, new 10 KB fragment): guns only from the equip writer's last census of
+  the mission (protected stock entries, `MGS_COOP_ARMS_RESIDENT_V1` copies its status: no new read site), named from
+  TppEquip; the retail `Player.ChangeEquip` (s10260.GetRocketLuncher) with GetAmmoInfo's full ammo, active, the old
+  gun dropped like a stock pickup swap; support items into a free sub. Development is not checked (decision: like a
+  gun taken from a soldier). vars readback, a timeout is a refusal. The partner's puppet keeps the gun its copy bound
+  for that slot (same gun or the weapons4 stand-in) until the next area load; no mid-mission writer change.
+- **Friendly fire**: new wire op ARMS `0x3F` (control, both, paired; 1 ask, 2 state; the host repeats on pairing);
+  `world_friendly.lua` drops hits at the shooter (consumed, never sent) and the target (never queued or applied)
+  while `W.arms.ff` is false. World note 18. Rows `arms_give` (end of Player), `arms_friendly_fire` (end of Partner).
+- **Tests (failing first):** red `ef670f07`, `cda94ef5`; green `41fa70e7`: `debug_arms_lua_check` (new),
+  `world_downed_lua_check` (off at both ends, queued hits flushed, on again), `debug_arms_tests` (new: rows, reply,
+  state, text, ARMS spec, note 18), `world_wire_tests` (63 ops). Red `731f2c6e`, green `bbb19c61`: the NOTE_V1
+  grammar admitted 1..15 only, so note 18 never reached the screen; the host repeats an OFF switch every 600 updates.
+- **Checks:** `pwsh -File tools/build.ps1` 341/341 at `bbb19c61`; `tools/generate_partner_contract.py --check` passes.
+- **Scenario (not run):** `tools/worker/scenarios/arms-give-ff-play.txt` (play, afgh-ledge, native gun profile).
+- **Open [U]:** whether ChangeEquip of a census gun shows and fires in hand on both screens; the support items'
+  count (no table count: 8); whether the census is there in every area (it needs the partner's body); the guest's
+  menu state before its first pairing.
+
+## 2026-10-31: Game rules in the debug menu (`wp/game-rules`, local only) -- not run-proven yet
+
+**Players would get:** F9 > World > **Game rules**: **Wormhole Fulton off / on** (either player, for their own Fulton:
+off gives the balloon Fulton back; the development stays) and **Weapons at Mother Base / Stock Mother Base rules** (the
+host decides for both players; the partner gets a sentence). Both start stock. **No hidden run yet**, so this is
+unproven on screen.
+
+- **How (static, stock Lua) [O]:** the wormhole is the item level `EQP_IT_Fulton_WormHole` (stock TppMission reads
+  `Player.GetItemLevel(...) >= 1`; stock Lua writes levels with `Player.SetItemLevel` and `vars.itemLevels[equip -
+  EQP_IT_InstantStealth]`). Mother Base: `f30050_sequence` sets `vars.playerDisableActionFlag` = CQC_KNIFE_KILL +
+  KILLING_WEAPON and the HUD `EquipHudAll` `ALL_KILL_NOUSE`; its own `Seq_DEBUG_GimmickCheck` lifts both.
+- **Change:** new debug fragment `lua/coop/debug_rules.lua` (9.9 KB, after debug_boot). Off forces the wormhole level to
+  0 in gameplay (again after reloads); `TppSave.SaveVarsToSlot` writes the real level (and the stock MB flag), so the
+  save never changes [I: the D8 b save hook]. Mother Base: only the exact stock flag becomes NONE (Paz room and side-op
+  flags left alone), live, no reload. New wire op **RULES 0x3E** (host to guest, control queue, paired; sent on each
+  press and each new pairing). Messages through the stock announce log.
+- **Side effects:** killing a staff member still fails the mission (stock f30050 game over on any staff death; the
+  toast says so). In play W1 is off at 30050, so a partner's shot never reaches the other save; with W1 (lab) a
+  partner's kill lands as a knockout (spareStaff). Staff reactions, morale and alert with lethal weapons: [U].
+- **Checks:** red `dd19df1f` / green `c764c31d` (debug_rules_lua_check, world_wire_tests RulesOp, debug_menu_tests);
+  scenario red `1c13acbd` / green `630c4a0b` (worker_session_tests); the composed TppMain check knows the new chunk
+  (`aec3dd7b`). `pwsh -File tools/build.ps1` 340/340 at `aec3dd7b`; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** whether the wormhole level is the only switch (the Fulton draws the balloon); what the partner's copy
+  draws for a mirrored Fulton (its own level, RequestForceFulton); whether the lethal weapons and HUD come back live at
+  Mother Base; which seed has the wormhole developed (the scenario's `seen=1`). Run `tools/worker/scenarios/rules-play.txt`
+  (`-SaveSeed afgh-ledge -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research`).
+
+## 2026-10-31: Spawn enemy here for players (`wp/enemy-spawn`, local only) -- not run-proven yet
+
+**Players get (once proven):** in Afghanistan and Africa free roam the host's **Spawn enemy here** brings a hostile
+soldier 5 m in front of them (He comes at me is now checked by default), and the guest sees the same soldier there. It
+keeps working after many presses. At Mother Base the row says why in plain words. Guest presses still say "Host only".
+
+- **Why it was broken [O]** (the game-folder log, split per process; every spawn press was in a `lab=active` process,
+  the `worker=1` ones are hidden workers): in play every press was a route snap 120-450 m away
+  (`guard_here;...;d=119.7..454.6;far=1;mode=route;why=disabled`), because play forced `debug_soldier_warp` off
+  (bit `0x10000`). The chip said OK, but nobody appeared. After eight placements in a mission, every press said
+  `spawn_pool_limit_8` (five presses in a row in one session), even when those eight were dead or gone. Mother Base
+  and no guard within 500 m gave code words (`spawn_no_guard`; an older build gave `spawn_no_loaded_living_guard`).
+  With the lab key, the native placement worked many times (`mode=warp;d=5.0;leaf=engine`; the guest copy
+  `kind=warp;result=applied;err_m=0.01`).
+- **Changes (red `c2a39ec9`, green `1b5f428d`):** lab.ini `spawn_warp` (on unless named 0) admits the native
+  placement in play for the host and the guest copy, with the same pinned contract, gates and latch
+  (`generate_soldier_warp_contract.py` pins the gate). Lab keeps `debug_soldier_warp`. The new
+  `lua/coop/debug_spawn_play.lua` recycles the pool: a placed guard who is dead, asleep, fainted, Fultoned, disabled,
+  gone or more than 150 m away frees his place, so the cap counts only eight alive near you. It also refuses every spawn
+  row at Mother Base (`spawn_mother_base`). The row's chip shows plain words (`debug_actions::ResultText`).
+- **Scenario (not run):** `tools/worker/scenarios/spawn-enemy-play.txt` (`-Mode play`, afgh-ledge, no labsetting) runs
+  10 host presses with frames on both screens, three guest presses and the Mother Base refusal.
+- **Not done:** guest presses. They need a SPAWN ask (op 0x3D) and a native admission for a placement aimed at the
+  guest (the host and guest-copy range checks use the host's pose today). New soldiers (unused slots, IH-style packs)
+  were not attempted: they need new packs and the same soldier identity on both copies.
+
+## 2026-10-31: the host shows as Snake again; F9 Character switch (`wp/char-switch`, local only) -- not run-proven yet
+
+**Players get (once proven):** the host is Snake on both screens after a new sortie as well (the 10-31 friend host
+became a Diamond Dogs soldier). F9 > Player > **Character (you)**: Snake, DD soldier (male), DD soldier (female), My
+avatar, Ocelot, Quiet, Back to my default; either player switches their own character in place, the partner sees the
+new look, and the choice holds for later missions of that game session.
+
+- **Bug [O], friend-host log 10-31:** `character=apply; mission=30050; requested=snake; type=nil;
+  reason=override_sortie_kept; real=0; start=new`, then `character=allocated; vars=5; parts=26; camo=115` (an Ocelot)
+  and `character_readback=start; verdict=not_applied; vars=1`; the guest got `partner_look ... type=1 face=192`. The
+  chunk read Snake before `TppVarInit.InitializeForNewMission` restored the mission-start slot, which held an Ocelot
+  from an earlier session in which this friend joined as Ocelot [I]; nothing was registered, and the vanilla
+  `ForceChangePlayerFromOcelot` turned the Ocelot into the sortie DD soldier. `friend_install_role=Join;
+  character=ocelot` is the friend's launcher pick for joining; a host session always writes `character=snake`
+  (`core_model.cpp` `StartSession`). Fix (red `b3c08e4e`, green `27fc0427`): `C.Post` plans a kept choice again on
+  what the restore left and applies it the vanilla way (`late=1; before=5`).
+- **F9 Character** (red `cea5efd0`/`56e86820`/`98c2b8b3`, green `1f59e735`/`3d8af39f`/`b6af3527`): new fragment
+  `lua/coop/debug_character.lua` (`character <name>`), spliced after `debug_boot`; dispatch rides on `D.player`, so
+  `debug_menu.lua` is unchanged. In place: the game's `SaveCurrentPlayerType`, then the type vars (as Infinite Heaven
+  and s10151 do), then a wait for `PlayerStatus.PARTS_ACTIVE`. `Tpp.MgsCoop.characterPick` replaces coop.ini at every
+  later load (story-forced missions and the Quiet rules still win). Ocelot/Quiet only where the existing bypass allows
+  (launcher pick Ocelot, Quiet or Story); otherwise refused, or `character_next_load` while the bypass is off. No wire
+  op, no lab key, no new patch or read site: the look frames already resend on change.
+- **Scenario (not run):** `tools/worker/scenarios/character-switch-play.txt` (`-Mode play -WanSim bad -PartnerProfile
+  native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder`).
+- **Checks:** `pwsh -File tools/build.ps1` 340/340 at `fa5848fe`; `tools/generate_partner_contract.py --check` passes.
+- **Open [U]:** that writing the type vars mid-mission reloads the parts with the partner body present; that the
+  partner's copy draws each look (DD faces, Quiet); that a switch saved at a checkpoint restores the own character at
+  the next mission without an override.
+
 ## 2026-10-31: melee on the other player, one-press round (`wp/melee-one`, local only) -- one CQC press knocks the other player down; `partner_melee` ON by default
 
 **Players get:** melee on your partner now works like it does on a soldier: one CQC press (left mouse, no aim) that

@@ -279,7 +279,7 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
 # and the guest spawn-sync grant receipt (WORLD_WARP_V1, target from the
 # world::Core grant, never from Lua).
 EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt')}
-CALLER_GATES = ('debug_soldier_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+CALLER_GATES = ('debug_soldier_warp', 'spawn_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
 callers = []
 for path in sorted((ROOT / 'native').glob('*.cpp')):
     if path.name == 'soldier_warp.cpp':
@@ -303,6 +303,9 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
                    'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial'):
         if needle not in body.replace('\r\n', '\n'):
             failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
+    # Play (spawn_warp) admits only the spawn placement (kind 1): patrol/combat corrections (kind 3) stay lab only.
+    if 'labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp' not in body:
+        failures.append('GuestWarpReceipt: play must refuse every grant but the spawn placement (kind 1)')
 
 if failures:
     print('\n'.join(failures))

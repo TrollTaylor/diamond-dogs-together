@@ -96,6 +96,8 @@ is local to the PC that sends it.
 | Save / Go to bookmark, slot grid | `bookmark n`, `return n` (0..7, this mission only) |
 | Read inventory, Refill hip/back/secondary | `inventory`, `weapon hip current`, ... |
 | Drop hip/back/secondary gun | `drop_item current_hip n` (payload 1..10) |
+| **Character (you)**: Snake, DD soldier (male), DD soldier (female), My avatar, Back to my default | `character snake\|dd_male\|dd_female\|avatar\|default`. Host and guest, each for their own character: right away and at every later mission load of this game session. The partner sees the new look (an avatar as Snake). Default: your coop.ini character (the host: Snake), else your save's own. Run-proven (hidden runs 315fa18e, 308c7879, both screens). `character ocelot\|quiet` (U, not on the page, tooltip "Not available yet"): only with a launcher pick of Ocelot, Quiet or Story (else `character_needs_launcher_pick`); `character_next_load` while the bypass is off; Ocelot/Quiet in place unproven. See [characters.md](characters.md#switch-in-game-f9). |
+| Give weapon (both) | `give_weapon <id>` / `give_weapon EQP_SWP_<item>` (the picker's choice; see **Give weapon**) |
 
 ### Enemies
 
@@ -103,9 +105,19 @@ is local to the PC that sends it.
 
 | Button | Command |
 |---|---|
-| **Spawn enemy here** (H, S) | `spawn_enemy here` (`spawn_enemy here come` with "He comes at me") |
+| **Spawn enemy here** (H, S) | `spawn_enemy here` ("He comes at me" unchecked, the default: he ignores you and stays in sync on both screens), `spawn_enemy here come` checked (each copy chases its own player) |
 | Spawn at closest camp (H, S) | `spawn_enemy closest` |
 | Go to spawned guard | `goto_spawn` |
+
+Who presses what (play and lab): **Spawn enemy here**, Spawn at closest camp and Spawn on
+selected route are host only (the guest's row reads "Host only: use the host's menu").
+In Afghanistan and Africa free roam a play press sends the nearest guard to the nearest
+patrol route (the in-front placement needs lab.ini `spawn_warp=1` until a play run proves it;
+with it the host gets a soldier 5 m in front, facing them); the guest sees the same soldier
+(spawn sync). Placed guards that are dead, asleep, Fultoned, gone or over 150 m away free
+their place, so presses keep working past 8. At Mother Base every spawn row refuses:
+"No enemies at Mother Base: spawn works in Afghanistan and Africa free roam." The row's
+chip reads the result in plain words; the raw result is in its tooltip.
 
 Nearby table: radius 10..300 m, **List nearby** = `enemy_list r`. Click a row to
 select a soldier (Name, distance, state, flags M marked / I ignoring / P placed). The
@@ -148,6 +160,7 @@ is kept, but no partner body shows until you pair), otherwise `partner_applied`.
 | Play clip / Stop clip | `partner dm=on dmplay=n`, `partner dmstop=1` |
 | Slow motion (U) / off | `slowmo rate seconds` (0.05..1, 0.1..30 s), `slowmo off` |
 | Name tag on / off, Name tag status | `nametag on`, `nametag off`, `nametag status` |
+| Friendly fire (both; the host decides) | `friendly_fire 0` / `friendly_fire 1` (see **Friendly fire**) |
 
 **Shared save** (automatic save handoff, [save-handoff.md](save-handoff.md)): shown
 right after **Online** while save sharing is configured in this session (lab.ini
@@ -265,6 +278,70 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
   carries the landing error and `ms=` (world clock from the press to control).
 - Wire: TRAVEL `0x3B` (docs/world-sync-protocol.md section 22).
 
+### Game rules (end of the World page; not run-proven yet)
+
+| Button | Command | Who | What the partner sees |
+|---|---|---|---|
+| Wormhole Fulton off | `wormhole 0` | either player, for themselves | nothing changes on their own Fulton |
+| Wormhole Fulton on | `wormhole 1` | either player, for themselves | nothing |
+| Weapons at Mother Base (H, S) | `mb_weapons 1` | host, for both | "Your partner allowed weapons at Mother Base." |
+| Stock Mother Base rules (H, S) | `mb_weapons 0` | host, for both | "Your partner turned weapons at Mother Base off." |
+
+- **Wormhole Fulton off**: your Fulton uses the balloon again instead of the instant
+  wormhole. The wormhole is the item level `EQP_IT_Fulton_WormHole` (the stock scripts read
+  `Player.GetItemLevel(...) >= 1`); while off it is set to 0 in gameplay, again after a
+  reload or a mission change. The development stays, and every save
+  (`TppSave.SaveVarsToSlot`) writes your real level (only once `vars.itemLevels` is seen to
+  follow the stock slot). **On** puts the level back. A save without the wormhole: both
+  buttons say so and change nothing. Until a game restart; off again after one.
+- **Weapons at Mother Base**: stock Mother Base forbids lethal weapons
+  (`f30050_sequence`: `vars.playerDisableActionFlag` = CQC_KNIFE_KILL + KILLING_WEAPON and
+  the HUD's `EquipHudAll` `ALL_KILL_NOUSE`). On, both copies lift exactly that flag and the
+  HUD mark (as f30050's own debug sequence does), again after a cutscene or the Paz room;
+  any other flag (Paz room, side ops) is left alone. Live, no reload. Saves write the stock
+  flag. **Any kill at Mother Base still fails the mission** (stock f30050 reserves a game over
+  on any non-player Dead or Dying, staff or not). The host's choice reaches the guest (RULES `0x3E`,
+  docs/world-sync-protocol.md section 23) on each press and after every pairing (a same-epoch
+  re-pair too); the guest keeps it through a mission load
+  and drops it after 60 s without the pairing. The guest's buttons are greyed (`host_only`).
+- `rules` reads the state: `rules;wormhole=on|off;level=N;seen=N;mb_weapons=0|1;from=self|host;applied=0|1`.
+- Logs: `world_lua=event=rules; step=worm_off|worm_on|worm_failed|mb_on|mb_off|rx|save|host_rule_dropped`.
+- **Play: not available yet.** Until `rules-play.txt` passes, `wormhole` and `mb_weapons` refuse in play
+  (`not_available_yet`, "Not available yet in this build."); the rows show "unverified". Lab mode keeps them.
+- Worker run: `tools/worker/scenarios/rules-play.txt` (not run yet; 2026-10-31 not admitted: D: under 3 GB).
+
+### Give weapon (both players)
+
+At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on
+`wp/give-weapons`, **not run-proven yet**: lab only; play refuses it ("Not available yet in this build.",
+`not_available_yet`; 2026-10-31 run not admitted). For the host and the guest, each for its own player only.
+
+- The list shows the guns the game has loaded in this area ("Assault rifle (East_ar_010)": the soldiers', yours and
+  your partner's; read from the equip writer's census, so it fills once the partner's body has loaded here), then the
+  stock support items (Grenade, Stun grenade, Smoke grenade, Sleeping gas grenade, Decoy, C4, Empty magazine).
+- A gun comes with a full magazine and full reserve, in hand at once (the stock `Player.ChangeEquip`); the gun it
+  replaces in that slot drops at your feet, as when you swap with a gun on the ground. A support item goes into a free
+  support slot (or refills the same item; a full list is refused). Development is not checked, like a gun taken from
+  a soldier. It stays in your loadout and is saved like any picked-up gun.
+- Your partner sees the gun of that slot their copy already carries for you (the same gun when it was loaded for
+  them, else the stand-in); the new gun shows on their screen from the next area load.
+- Results: `submitted_give;equip=..;kind=gun;type=..;slot=hip|back|secondary;name=..`, then `give_readback;equip=..;
+  slot=..`; refusals `give_refused;reason=not_loaded|no_census|metadata|support_full|item_unknown`. Log
+  `world_lua=event=arms; step=give; equip=..; slot=..; ok=1`. `give_list` lists the ids; `give_pick <n>` gives the
+  n-th entry (worker scenarios).
+
+### Friendly fire (both players; the host decides)
+
+At the end of the Partner page: **Friendly fire: ON / OFF** (`friendly_fire 0|1`). Default ON (as before).
+**Not run-proven yet**: lab only; play refuses it (`not_available_yet`) and keeps it ON. The host's press sets it for both copies; a guest's press asks the host
+(`friendly_fire_asked;want=..`), and an unpaired guest is refused (`friendly_fire_refused;reason=not_paired`).
+
+- OFF: your partner's bullets, explosives and melee never hurt or down you, and no hit is sent between the copies.
+  Soldiers are not affected. It stays as set across Travel and mission changes for the session.
+- Both screens show "Friendly fire is OFF: you and your partner cannot hurt each other." or "... is ON ...".
+- Wire: ARMS `0x3F` (docs/world-sync-protocol.md section 24); world note 18. Logs: `world_lua=event=arms; step=ff;
+  on=0|1; by=self|partner|host` and `world_lua=event=friendly_fire; step=dropped; side=shooter|target; seq=..`.
+
 ### Tools
 
 Session status (`status`), a console that sends any text command (Up/Down recalls the
@@ -279,12 +356,16 @@ existing one:
 
 1. It takes the nearest unused guard that is alive (NORMAL), enabled, on foot (no
    vehicle) and 15 to 500 m away, among the guards of the command posts with patrol
-   routes.
+   routes. A guard more than 250 m away never gets the native placement (a far guard
+   once answered `r=0 h=0`, which latches the warp off until the game restarts): he goes
+   to the nearest patrol route (`why=far`; the chip says he was over 250 m away).
+   A placed guard freed from the pool (dead, asleep, Fultoned, gone or over 150 m away)
+   has his force-realize released and his area pin dropped on the host.
 2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
    you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
    landed (he attacks).
-3. **Native placement** (lab.ini `debug_soldier_warp=1`, lab only; play forces it
-   off): the menu sends the engine's own set-transform message `0x287158b07327` to
+3. **Native placement** (play: lab.ini `spawn_warp=1`, off until a play run proves it; lab:
+   `debug_soldier_warp=1`, which play still refuses): the menu sends the engine's own set-transform message `0x287158b07327` to
    his GameObjectId through the GameObject manager's SendCommand, the same call the
    player carry code makes. The target is 5 m along your heading at your height, and
    he faces you. A guard that is not realized yet answers `r=-1`: he is
@@ -320,9 +401,13 @@ Results:
 (see **Spawn sync**) or `sync=none;why=<reason>` (`not_paired`, `roster`,
 `world_off` without a world link, `tx_<n>` a refused send).
 
-At most 8 guards per mission (native and route together). The guard is armed: turn
-on Auto-heal or keep Kill / Sleep ready. His patrol AI may walk him back to his route
-afterwards.
+At most 8 placed guards alive near you at once (native and route together):
+before each host spawn (`lua/coop/debug_spawn_play.lua`) a placed guard who is dead,
+asleep, fainted, Fultoned, disabled, gone or more than 150 m away frees his place, and
+an awake one may be placed again. Eight alive within 150 m refuse with
+`spawn_pool_limit_8` ("8 spawned soldiers are already near you"). Mother Base refuses
+every spawn row with `spawn_mother_base`. The guard is armed: turn on Auto-heal or keep
+Kill / Sleep ready. His patrol AI may walk him back to his route afterwards.
 
 ### Native placement: what is verified
 
@@ -395,8 +480,8 @@ local.
 every update until the guard lands (force-realize once on `r=-1`, at most 150 updates
 or 10 s, force-realize always released). The native handler
 (`game_script_observer.cpp` `GuestWarpReceipt`) uses the already verified `Warp()` and
-adds no game address. It refuses unless all of these hold: guest role in lab mode,
-lab.ini `debug_soldier_warp=1`, `soldier_warp=ready` at startup, the mission gates,
+adds no game address. It refuses unless all of these hold: guest role (lab or play),
+lab.ini `debug_soldier_warp=1` (play: `spawn_warp`), `soldier_warp=ready` at startup, the mission gates,
 the grant `world::Core` recorded when the guest's Lua popped that `ENEMY_DEBUG`
 (kind warp or correct, same epoch, at most 15 s old, 16 slots; cleared at unpair, link
 session, host epoch and local mission changes), and a live remote pose of the host at
@@ -406,8 +491,10 @@ grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
 `anomaly` latch of the host path. The per-grant gate id is the grant's process-unique
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
-asserts that `Warp()` has exactly these two callers and their gates. Play mode
-forces the key off, so there only route placements (kind 2) move the guest's copy.
+asserts that `Warp()` has exactly these two callers and their gates. In play mode
+`spawn_warp=1` (off by default until run-proven) admits both callers, the guest one only for the spawn
+placement (kind 1): patrol and combat corrections (kind 3) stay lab only (`native_off;
+native=role` in play); with it named 0 only route placements (kind 2) move the guest's copy.
 
 **Settle window.** For 60 s after a native landing the host samples its guard once a
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The

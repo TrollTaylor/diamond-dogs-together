@@ -687,6 +687,43 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failed=$true }
         Assert-True $failed 'partner-support-checkpoint is refused in play mode (its world triggers)'
     }
+    # Spawn enemy here for players (docs/debug-menu.md): spawn-enemy-play.txt validates in PLAY mode at the shipped defaults
+    # (no labsetting line: spawn_warp is on), 10+ host presses, 3 guest presses and the Mother Base refusal.
+    & {
+        $Mode='play'
+        $spawnPath=Join-Path $RepoRoot 'tools\worker\scenarios\spawn-enemy-play.txt'
+        $spawnLines=[IO.File]::ReadAllLines($spawnPath)
+        $steps=@($spawnLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('spawn-enemy-play steps valid in play mode '+$failure)
+        Assert-True (@($spawnLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'spawn-enemy-play names no labsetting line'
+        $hostPresses=@($steps|Where-Object{$_ -cmatch '^host run (spawn_enemy here|menu press spawn_enemy_here$)'})
+        $guestPresses=@($steps|Where-Object{$_ -cmatch '^guest run (spawn_enemy here|menu press spawn_enemy_here$)'})
+        Assert-True ($hostPresses.Count -ge 11 -and $guestPresses.Count -ge 3) 'spawn-enemy-play: 10+ host presses in free roam and 3 guest presses'
+        Assert-True ($steps -ccontains 'host expect ^spawn_mother_base$' -and $steps -ccontains 'host run travel 30050') 'spawn-enemy-play: the Mother Base refusal'
+        Assert-True ([IO.File]::ReadAllText($spawnPath).Contains('-Mode play')) 'spawn-enemy-play runs in play mode'
+    }
+    # Game rules (docs/debug-menu.md "Game rules"): rules-play.txt is a play run at the shipped defaults (no labsetting
+    # line); it turns the wormhole off and on on both copies around a soldier's Fulton, then allows and stops weapons at
+    # Mother Base (host press, the guest's refused press) with frames on both screens.
+    & {
+        $Mode='play'
+        $rulesPath=Join-Path $RepoRoot 'tools\worker\scenarios\rules-play.txt'
+        Assert-True (Test-Path -LiteralPath $rulesPath -PathType Leaf) 'shipped Game rules scenario rules-play.txt'
+        $rulesLines=[IO.File]::ReadAllLines($rulesPath)
+        $steps=@($rulesLines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('rules-play steps valid in play mode '+$failure)
+        Assert-True (@($rulesLines|Where-Object{$_.Trim() -cmatch '^labsetting(\s|$)'}).Count -eq 0) 'rules-play names no labsetting line'
+        foreach($step in @('host run wormhole 0','guest run wormhole 0','host run wormhole 1','guest run wormhole 1','host hold e 1500 nowait',
+            'host run enemy fulton nearest','host run travel 30050','host run mb_weapons 1','guest run mb_weapons 0','host run mb_weapons 0',
+            'host press lmb 120','guest press lmb 120')){
+            Assert-True ($steps -ccontains $step) ('rules-play step: '+$step)
+        }
+        Assert-True ([IO.File]::ReadAllText($rulesPath).Contains('-SaveSeed afgh-ledge -Mode play')) 'rules-play runs on the afgh-ledge seed in play'
+    }
     # F5 (docs/mounts.md section 8): partner-mount.txt is play-rehearsal friendly. The D-Walker part runs before every
     # horse part; a horse dismount E follows "host require localMounted=1" (the play rehearsal fbde3dcc stopped after a
     # second E mounted the host's horse); the lab-only overlay probes sit in the marked Part 5; and the play copy the

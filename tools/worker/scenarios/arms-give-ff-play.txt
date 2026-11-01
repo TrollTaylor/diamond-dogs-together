@@ -1,0 +1,162 @@
+# fb1031 arms (docs/debug-menu.md "Give weapon" and "Friendly fire"): the F9 weapon picker and the host's friendly
+# fire switch at the PLAY defaults (no labsetting line: both rows are on in play), -WanSim bad, seed afgh-ledge for
+# both (30010; the friendly-fire spot of downed-boxed-friendly-fire.txt and melee-partner-play.txt, enemies cleared).
+# Not run yet (built and unit-tested on wp/give-weapons).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset; the native gun profile, so each copy's equip
+# writer takes the census the picker lists):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/arms-give-ff-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad
+# Expected:
+#   0) both copies list loaded guns: give_list;guns=N (N >= 2) after the equip_resident census line of 30010.
+#   1) host: Player > Give weapon pressed on the F9 menu (the picker's first entry) -> pressed;action=arms_give;
+#      command=give_weapon <id>, then world_lua=event=arms; step=give; equip=<id>; slot=<s>; ok=1; give_pick 2 the same
+#      for the second listed gun. Each gun fired (aimed, both players side by side facing the same way, no hit).
+#      Frames: the new gun in the host's hands on the host's screen; on the guest's screen the host's puppet holds
+#      the gun of that slot body 1 carries (the same gun when the partner's census bound it, else the stand-in:
+#      partner_weapon=mismatch|standin lines on the guest's copy say which).
+#   2) guest: the same (menu press, give_pick 2, fire), roles swapped.
+#   3) host: Partner > Friendly fire pressed -> friendly_fire 0: host world_lua=event=arms; step=ff; on=0; by=self,
+#      guest event=arms; step=ff; on=0; by=host; the toast "Friendly fire is OFF ..." on both screens. The guest
+#      (6 m behind, facing the host) fires two magazines at the host: the guest's copy logs
+#      event=friendly_fire; step=dropped; side=shooter; seq=..; the host stays healthy (downed_status down=0).
+#   4) guest presses Friendly fire (asks the host) -> friendly_fire_asked;want=1; host event=arms; step=ff; on=1;
+#      by=partner, guest by=host; toast "Friendly fire is ON ..." on both. The guest fires again: host
+#      friendly_hit=owner;...;down=1 and downed_status down=1 (the stock friendly fire again).
+# Expected NEVER (sliced): in step 3 any host friendly_hit=owner line or downed_control lock; give_readback_timeout;
+#   step=error; faults; partner_weapon=fire_reload_off.
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+host debug clear_enemies 100
+# Side by side, 3 m apart, both facing yaw -60: shots go forward, past each other.
+guest debug teleport 806.5 342.1 1639.1 -60
+stance host stand
+stance guest stand
+wait 4000
+waitlog host 'equip_resident; mission=30010' 90
+waitlog guest 'equip_resident; mission=30010' 90
+wait 2000
+host run give_list
+host expect ^give_list;guns=([2-9]|1[0-6]);
+guest run give_list
+guest expect ^give_list;guns=([2-9]|1[0-6]);
+host run inventory
+guest run inventory
+both capture start
+# --- 1) the host gives itself two guns and fires each ------------------------------------------------------------
+logmark both
+host run menu open player
+host expect ^menu_open;category=player
+host capture h-menu-picker
+host run menu press arms_give
+host expect ^pressed;action=arms_give;command=give_weapon [0-9]+
+host run menu close
+waitlog host 'event=arms; step=give; equip=[0-9]+; slot=[a-z]+; ok=1' 15
+wait 1500
+both capture h-gun1
+host hold rmb+lmb 1500 nowait
+wait 500
+both burst h-gun1-fire 3 300
+host release
+wait 1500
+logmark both
+host run give_pick 2
+host expect give_readback;equip=[0-9]+;slot=
+wait 1500
+both capture h-gun2
+host hold rmb+lmb 1500 nowait
+wait 500
+both burst h-gun2-fire 3 300
+host release
+wait 1500
+host run inventory
+# --- 2) the guest gives itself two guns and fires each -----------------------------------------------------------
+logmark both
+guest run menu open player
+guest expect ^menu_open;category=player
+guest capture g-menu-picker
+guest run menu press arms_give
+guest expect ^pressed;action=arms_give;command=give_weapon [0-9]+
+guest run menu close
+waitlog guest 'event=arms; step=give; equip=[0-9]+; slot=[a-z]+; ok=1' 15
+wait 1500
+both capture g-gun1
+guest hold rmb+lmb 1500 nowait
+wait 500
+both burst g-gun1-fire 3 300
+guest release
+wait 1500
+logmark both
+guest run give_pick 2
+guest expect give_readback;equip=[0-9]+;slot=
+wait 1500
+both capture g-gun2
+guest hold rmb+lmb 1500 nowait
+wait 500
+both burst g-gun2-fire 3 300
+guest release
+wait 1500
+guest run inventory
+# --- 3) the host turns friendly fire OFF; the guest shoots the host: no down -------------------------------------
+logmark both
+host run menu open partner
+host expect ^menu_open;category=partner
+host run menu press arms_friendly_fire
+host expect ^pressed;action=arms_friendly_fire;command=friendly_fire 0
+host run menu close
+waitlog host 'event=arms; step=ff; on=0; by=self' 10
+waitlog guest 'event=arms; step=ff; on=0; by=host' 10
+wait 800
+both capture ff-off-toast
+host debug teleport 805.0 342.1 1636.5 -60
+wait 1500
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 4000
+both capture ff-off-before
+logmark both
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 1500
+both capture ff-off-shot
+host run downed_status
+host require down=0
+waitlog guest 'event=friendly_fire; step=dropped; side=shooter' 5
+wait 2000
+both capture ff-off-after
+# --- 4) the guest asks for friendly fire ON (the host applies it); the guest shoots the host: down -----------------
+logmark both
+guest run friendly_fire 1
+guest expect ^friendly_fire_asked;want=1
+waitlog host 'event=arms; step=ff; on=1; by=partner' 10
+waitlog guest 'event=arms; step=ff; on=1; by=host' 10
+wait 800
+both capture ff-on-toast
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 4000
+logmark both
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+waitlog host 'friendly_hit=owner;.*down=1;' 20
+wait 1200
+both capture ff-on-down
+host run downed_status
+host require down=1
+wait 3000
+both capture ff-on-down-2

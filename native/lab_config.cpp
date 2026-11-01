@@ -359,6 +359,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (ok) result.debug_travel_given = true;
         else result.debug_travel = false;
     }
+    else if (Equals(key, "spawn_warp")) {
+        // Spawn enemy here in play mode (off unless named 1; lab keeps debug_soldier_warp); a named value records _given.
+        ok = ParseBool(value, result.spawn_warp);
+        if (ok) result.spawn_warp_given = true;
+        else result.spawn_warp = false;
+    }
     else if (Equals(key, "partner_seat_gun")) {
         // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_gun);
