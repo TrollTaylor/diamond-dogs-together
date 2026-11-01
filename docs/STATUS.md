@@ -2,27 +2,43 @@
 
 - **What players would get (key `fulton_sync=1` named on both copies; nothing changes with it unnamed):** when the
   partner Fultons anything, their puppet plays the Fulton attach (`stateFultonStart`, the DM overlay's Fulton-only map:
-  remote act 49/50/59 held 500 ms, also with `partner_native_overlay=off`); a partner's soldier Fulton lifts this copy's
-  soldier (W1's `RequestForceFulton`, as before) in the Fultoner's look (balloon or wormhole: FULTON 0x46 carries the
-  Fultoner's `EQP_IT_Fulton_WormHole` level; this copy borrows it for 5 s, restored, never saved) and only visually
-  (this copy's `TppTerminal.OnFulton` skipped once: the Fultoner keeps the recruit); a partner's vehicle Fulton lifts
+  remote act 59 held 1 s, also with `partner_native_overlay=off`); a partner's soldier Fulton lifts this copy's
+  soldier (W1's `RequestForceFulton`, as before), with sub-key `fulton_look=1` in the Fultoner's look (balloon or
+  wormhole: FULTON 0x46 carries the Fultoner's `EQP_IT_Fulton_WormHole` level; this copy borrows it for 5 s, restored,
+  never saved), and only visually when the partner announced it (this copy's `TppTerminal.OnFulton` skipped once: the
+  Fultoner keeps the recruit; a partner without the key gets D1 as before); a partner's vehicle Fulton lifts
   this copy's vehicle with the engine's own vehicle Fulton (`Seize {"Fulton"}`, the balloon) instead of removing it
   at once (D14 credit as before; without D14 no credit here). Mother Base spareStaff is unchanged (SetDisable).
-- **Open decision:** with the key on, a partner's soldier Fulton no longer recruits on this copy, which differs from
-  D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until the user
-  decides and a hidden run shows both screens.
-- **The early vehicle lift (green 3, after probe `614ec20a`):** a partner's FULTON kind 2 (sent at its
-  `FultonInfo`) now starts this copy's vehicle lift at once for an authored vehicle, instead of after VEHICLE_GONE's
-  loss readback about 6 s later. Not run in a game yet.
-- **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 10 bytes; `docs/world-sync-protocol.md` section 25);
-  CFG `r[18]`; world note 22 reserved, unused.
+- **Open decision:** with the key on both copies, a partner's soldier Fulton no longer recruits on this copy, which
+  differs from D1 (a Fulton recruits into both saves, the default since 10-05). The key stays off unless named until
+  the user decides and a hidden run shows both screens.
+- **The early vehicle lift (green 3, after probe `614ec20a`; sub-key `fulton_early=1` since the review):** a partner's
+  FULTON kind 2 (sent at its `FultonInfo`, with the vehicle's type and pose there) starts this copy's vehicle lift at
+  once, matched at the Fultoner's pose as VEHICLE_GONE matches, instead of after VEHICLE_GONE's loss readback about 6 s
+  later. [I] a balloon that fails after `FultonInfo` is not mirrored (a one-sided removal), hence its own key. Not run
+  in a game yet.
+- **Review fixes (2026-11-01, red `6c8df73b`, green `7a77eb8d`):** all seven findings held. (1) the early lift trusted the
+  Fultoner's raw pool index: FULTON now carries `vtype` and xyz (9 fields, 23 bytes) and the early item is judged at
+  that pose (mismatched indices matched within 5 m, else nothing; the host answers the guest's index gone). (2) no
+  failure parity for the early lift: behind its own key `fulton_early` (off unless named) until a FultonFailed-after-
+  FultonInfo probe. (3) the borrowed level changed this copy's own Fultons: behind its own key `fulton_look` (off unless
+  named). (4) the soldier credit skip without a partner announcement: decided at `OnFulton`, skipped only with the
+  partner's FULTON note (else D1, `step=credit_kept`). (5) a request joined to a held early lift was never answered:
+  it now takes the request's `src` (gone, or REJECT 9). (6) F9 Wormhole on/off during a borrowed look wrote the wrong
+  level back: the look ends first. (7) the puppet's Fulton map fired on acts 49/50 and any 59 over 500 ms: act 59 only,
+  held 1 s (a longer held interact still would [U]).
+- **Wire/notes:** op 0x46 FULTON (world queue, level 2, both ways, 23 bytes; `docs/world-sync-protocol.md` section 25);
+  CFG `r[18]` bits (1 `fulton_sync`, 2 `fulton_early`, 4 `fulton_look`); world note 22 reserved, unused.
 - **Tests (failing first):** red `a33099f5`, `573891b0`, `65832b7f`, `e85689f7`; green `000cf3c7`, `7e7ab625`, `9c026fcb`. partner_dm_overlay
   TestFultonMap, lab_config, world_wire FultonOp, world_receipt r[18], world_vehicle_rules_lua_check (the lift),
   world_sync_lua_check 6d (FULTON tx/rx, the borrowed look, the save guard, the credit skip, spareStaff unchanged),
   debug_rules_lua_check (Wormhole off leaves a borrowed look alone), worker_session_tests (the key's allow-lists).
 - **Checks:** full `tools/build.ps1 -Jobs 4` CTest 344/344 at `d258beca` and again at `f7af51d9` (with the early lift); generators `--check` as at the rel0146
   baseline (carry_info / sleep_plugin differ by line endings only there too).
-- **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep).
+  After the review fixes: full `tools/build.ps1 -Jobs 4` CTest 344/344 at `7a77eb8d`; generators `--check` as at that
+  baseline (no pinned site changed).
+- **Proof scenario:** `tools/worker/scenarios/r1101-fulton-play.txt` (play, `-WanSim bad`, africa-jeep; names
+  `fulton_sync`, `fulton_early` and `fulton_look`).
 - **Probe `614ec20a` (lab, africa-jeep, key named; this track's second probe):** [O log] the guest's hand Fulton of the
   jeep 25608: on the host the overlay played `stateFultonStart` 1598 ms over the guest's 2548 ms act 59; the guest's
   `Fulton` / `FultonInfo` came 6.1 s after its attach began (FULTON kind 2 tx, the host's rx), its VEHICLE_GONE

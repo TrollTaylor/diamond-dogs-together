@@ -1926,42 +1926,62 @@ A partner without the op skips it by its length (unknown_op): its own switch sta
 
 ## 25. Fulton (r1101 fulton; lab key `fulton_sync`, off unless named, lab and play)
 
-Lab key `fulton_sync=0|1` (CFG `r[18]` = 1, Lua `W.fultonOn`; no refusal bit). Three parts, all off with the key off:
+Lab key `fulton_sync=0|1` (CFG `r[18]` bit 1, Lua `W.fultonOn`; no refusal bit). Since the review of 2026-11-01 two
+sub-keys, each off unless named in lab and play and used only with `fulton_sync=1`: `fulton_early=0|1` (`r[18]` bit 2,
+`W.fultonEarlyOn`: the early vehicle lift below) and `fulton_look=0|1` (`r[18]` bit 4, `W.fultonLookOn`: the borrowed
+wormhole look below); `FultonCfgBits` (lab_config) builds `r[18]`. Three parts, all off with the key off:
 
 - **The Fultoner's attach on the partner puppet (native).** The Fultoner's own act while attaching the balloon is 59,
-  held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`; the act census also names 49/50).
+  held about 2.5 s in every manual Fulton on record (runs `60cf2a2c`, `3293bbf1`).
   With the key on, the DM overlay (`partner_dm_overlay`, `docs/anim-round1-actions.md` 4.4) runs a Fulton-only map
-  also while `partner_native_overlay=off`: a remote act 49/50/59 held `fulton_hold_ms` (500 ms) plays
-  `stateFultonStart` (overlay index 16, a one-shot; probe `fc6037ab`: 1582 ms on body 1). Short act-59 presses
-  (160-190 ms: boarding, doors) never start it. Log `partner_fulton=configured; overlay=...; hold_ms=500;
-  acts=49,50,59` once per mission and the usual `partner_overlay=...; state=stateFultonStart; ...; source=map` lines.
+  also while `partner_native_overlay=off`: a remote act 59 held `fulton_hold_ms` (1000 ms since the review: the 1.6 s
+  entry then ends with the 2.5 s attach) plays `stateFultonStart` (overlay index 16, a one-shot; probe `fc6037ab`:
+  1582 ms on body 1). Acts 49/50 no longer map (the census labels them `interact?`, no Fulton frame). Short act-59
+  presses (160-190 ms: boarding, doors) and any held interact under 1 s never start it; act 59 is not Fulton-specific,
+  so a longer held interact would [U: the false-positive rate is the next run's question]. Log
+  `partner_fulton=configured; overlay=...; hold_ms=1000; acts=59` once per mission and the usual
+  `partner_overlay=...; state=stateFultonStart; ...; source=map` lines.
 - **Op `0x46` FULTON** (70), both directions, reliable, **world** queue, level 2 (W1), lab and play, never a request;
-  5 fields, 10 bytes: `seq` (u16 1..), `kind` (u8 1 soldier / 2 vehicle), `id` (u16, the Fultoner's game object id),
+  9 fields, 23 bytes: `seq` (u16 1..), `kind` (u8 1 soldier / 2 vehicle), `id` (u16, the Fultoner's game object id),
   `ent` (u32, the soldier's entity hash, 0 for a vehicle), `worm` (u8 0 balloon / 1 wormhole: the Fultoner's
-  `EQP_IT_Fulton_WormHole` level >= 1, the stock test, so Game rules Wormhole off sends 0). The Fultoner's copy sends
-  it at its own `FultonInfo` (att local; `lua/coop/world_enemy.lua` `W.fulton`); a vehicle only for an id
-  `world_vehicle.lua` types (25600..26111). The lift's own `FultonInfo` on the other copy is never sent back. A partner
-  without the op skips it by its length (unknown_op). Lines: `event=fulton;step=tx;kind=;id=;ent=;worm=;sent=` and
+  `EQP_IT_Fulton_WormHole` level >= 1, the stock test, so Game rules Wormhole off sends 0), `vtype` (u8, the vehicle's
+  type on the Fultoner's copy; 255 unknown or a soldier), `x`, `y`, `z` (i32 mm, the vehicle's position there at
+  `FultonInfo`; 0, 0, 0 unknown or a soldier). The Fultoner's copy sends it at its own `FultonInfo` (att local;
+  `lua/coop/world_enemy.lua` `W.fulton`); a vehicle only for an id `world_vehicle.lua` types (25600..26111). The lift's
+  own `FultonInfo` on the other copy is never sent back. A partner without the op skips it by its length
+  (unknown_op). Lines: `event=fulton;step=tx;kind=;id=;ent=;worm=;sent=` and
   `event=fulton;step=rx;seq=;kind=;id=;ent=;worm=`.
-- **The other copy's lift (Lua).** A soldier: W1's `RequestForceFulton` (free roam, as before) now first takes the
-  Fultoner's look: when a FULTON note (60 s) says another wormhole level than this copy's own, this copy's
-  `EQP_IT_Fulton_WormHole` level is set to it for 5 s and restored (`step=restore`, also at stop); a save in between
-  writes the real level (`TppSave.SaveVarsToSlot` wrap), and Game rules Wormhole off leaves the borrowed level alone
-  (`debug_rules.lua`). The lift is **visual only**: this copy's `TppTerminal.OnFulton` is skipped once for that
-  soldier (`step=credit_skipped;id=;why=partner_lift`), so the Fultoner keeps the recruit and this save gains nobody.
+- **The other copy's lift (Lua).** A soldier: W1's `RequestForceFulton` (free roam, as before). With `fulton_look`
+  it first takes the Fultoner's look: when a FULTON note (60 s) says another wormhole level than this copy's own, this
+  copy's `EQP_IT_Fulton_WormHole` level is set to it for 5 s and restored (`step=restore`, also at stop); a save in
+  between writes the real level (`TppSave.SaveVarsToSlot` wrap), Game rules Wormhole off leaves the borrowed level
+  alone, and an F9 Wormhole on/off press ends the look first (`debug_rules.lua`). The level is global: this copy's own
+  Fultons in that window use it too, which is why the look has its own key (review of 2026-11-01). Without
+  `fulton_look` the line reads `set=0` and nothing changes. The lift is **visual only when the partner announced it**:
+  this copy's `TppTerminal.OnFulton` decides at its call (about 3.7 s after the lift) and is skipped once for that
+  soldier only if the partner's FULTON note has arrived by then (`step=credit_skipped;id=;why=partner_lift`: the
+  Fultoner keeps the recruit, this save gains nobody); with no note (a partner on 0.14.6 or with the key off) the stock
+  credit runs, D1 (`step=credit_kept;id=;why=no_partner_note`).
   Line `event=fulton;step=lift;kind=1;id=;ent=;worm=0|1|own;own=;set=;credit=0`. `TppTerminal.AddTempStaffFulton` is
-  counted in the log only (`step=staff_add;n=`, the roster check). **This differs from D1 (both saves) while the key
-  is on.** A vehicle: VEHICLE_GONE cause 1 on the receiver is the engine's own vehicle Fulton (`Seize {"Fulton"}`, the
-  balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`; `step=fulton_lift;id=;credit=`);
-  with D14 on it is credited once as before, without D14 this copy's `TppTerminal.OnFulton` is skipped once for it;
-  the readback gives it 15 s before the Despawn fallback (`via=fulton`). Index 0 is never lifted (refused as before).
-  **The early vehicle lift (green 3):** a FULTON kind 2 is sent at the Fultoner's `FultonInfo` (the Fulton
-  succeeded there), about 6 s before VEHICLE_GONE's loss readback (probe `614ec20a`), so the receiver lifts at the
-  note: `world_vehicle_rules.lua` `G.early(id)` runs VEHICLE_GONE's own consider at this copy's position
-  (`src=fulton`; rider and seat holds, index 0 refused) for an authored vehicle only (a locator name, the same pool
-  index on both copies; otherwise `step=early_skip;id=;reason=no_locator` and VEHICLE_GONE as before). Line
-  `event=vehicle_rules;step=early;id=;role=`. The later VEHICLE_GONE finds it gone; the host answers the guest's later
-  request gone.
+  counted in the log only (`step=staff_add;n=`, the roster check). **This differs from D1 (both saves) while both
+  copies run the key.** A vehicle: VEHICLE_GONE cause 1 on the receiver is the engine's own vehicle Fulton
+  (`Seize {"Fulton"}`, the balloon) instead of D14's `Seize {"Instant"}` or a Despawn (`world_vehicle_rules.lua`;
+  `step=fulton_lift;id=;credit=`); with D14 on it is credited once as before, without D14 this copy's
+  `TppTerminal.OnFulton` is skipped once for it; the readback gives it 15 s before the Despawn fallback (`via=fulton`).
+  Index 0 is never lifted (refused as before).
+  **The early vehicle lift (green 3; key `fulton_early`):** a FULTON kind 2 is sent at the Fultoner's `FultonInfo`,
+  about 6 s before VEHICLE_GONE's loss readback (probe `614ec20a`), so the receiver lifts at the note:
+  `world_vehicle_rules.lua` `G.early(id, vtype, x, y, z)` runs VEHICLE_GONE's own consider (`src=fulton`; rider and
+  seat holds, index 0 refused) at the **Fultoner's** pose and type, so pool indices that differ between copies are
+  matched as for VEHICLE_GONE (far, other type or not nearest: the one vehicle of that type within 5 m, else refused and
+  nothing lifted); only for an id with a locator name here (`step=early_skip;id=;reason=no_locator`) and a pose
+  (`reason=no_pose`: an unreadable pose, 0, 0, 0). Line `event=vehicle_rules;step=early;id=;role=`. The later
+  VEHICLE_GONE finds it gone; the host answers the guest's later request gone (also in the guest's index when the
+  early item was matched to another index here), and a request that joins a held early item is answered as that
+  request (gone, or REJECT 9 at the hold timeout). [I] A balloon that fails after the Fultoner's `FultonInfo`
+  (`FultonFailed`, the case VEHICLE_GONE's settle window guards against) is not mirrored: the receiver's copy is already
+  lifted, nothing cancels it and no VEHICLE_GONE follows, a one-sided removal. That is why the early lift has its own key
+  until a probe shows whether `FultonFailed` can follow `FultonInfo` for a vehicle.
   Mother Base (spareStaff) is unchanged: a partner's Fulton of a staff member is `SetDisable` there (no roster change).
 
 [I] whether the engine reads the wormhole level when `RequestForceFulton` / `Seize {"Fulton"}` start (the 5 s hold
