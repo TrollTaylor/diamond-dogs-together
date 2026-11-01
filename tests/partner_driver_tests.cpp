@@ -9661,6 +9661,23 @@ void TestAnimTruthDriver() {
     s.fake.pad.src_w[0] = 0;
     s.fake.anim.act[0] = 1;
     s.N();
+    // Finder evidence M5: the remote boxed (77), body 1 not (the box refused): its EVADE leaves the sample.
+    s.fake.latest.packet.held = 0;
+    s.fake.sample.act = 77;
+    s.fake.anim.act[1] = 1;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) != 0 && s.fake.Containing("partner_aim_truth=box; on=1; remote_act=77; body_act=1;") == 1,
+          "animtruth: the remote's box evade never reaches an unboxed body 1 (no dive in the open), logged");
+    s.fake.anim.act[1] = 77;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) == 0 && s.fake.Containing("partner_aim_truth=box; on=0; remote_act=77; body_act=77;") == 1,
+          "body 1 boxed too: its box evade passes");
+    s.fake.anim.act[1] = 1;
+    s.driver.settings.naim_truth = false;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) == 0, "key off: EVADE passes as before");
+    s.fake.sample.act = 1;
+    s.N();
 }
 
 void TestAnimRound1Weapons() {

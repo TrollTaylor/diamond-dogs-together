@@ -2046,6 +2046,18 @@ void TestAnimAimTruth() {
     ++s.seq;
     j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
     Check(j.lt > 0.99f && j.rt > 0.99f && (j.held & 0x8u), "a RELOAD-only sample strip keeps LT/RT (no change for the existing strips)");
+    // Finder evidence M5 (fb1031 friend 35992 / 36073): the remote sits in its box (77/78) while body 1 is not
+    // boxed (the box refused, e.g. viewer_changed_latched); the remote's box evade then reaches body 1 as a dive in
+    // the open (57). EVADE leaves the sample while the remote is boxed and body 1 is not; a boxed body 1 keeps it.
+    {
+        const std::uint32_t ev = mgscoop::partner_pad::kEvade;
+        Check(ps::TruthBoxStrip(true, 77, true, 1) == ev && ps::TruthBoxStrip(true, 78, true, 4) == ev,
+              "remote boxed, body 1 on foot: EVADE stripped");
+        Check(ps::TruthBoxStrip(true, 77, true, 77) == 0 && ps::TruthBoxStrip(true, 78, true, 78) == 0 && ps::TruthBoxStrip(true, 77, true, 78) == 0,
+              "body 1 boxed too: its box evade passes");
+        Check(ps::TruthBoxStrip(true, 1, true, 77) == 0 && ps::TruthBoxStrip(true, 2, true, 1) == 0, "remote not boxed: nothing");
+        Check(ps::TruthBoxStrip(false, 77, true, 1) == 0 && ps::TruthBoxStrip(true, 77, false, 0) == 0, "an unread act on either side: nothing");
+    }
     // The weapon strips (finder M8: mismatch / switching FIRE|RELOAD, unsupported 0x58, dry stop FIRE, the
     // refused support request 0x8078) clear only the digital words; with the key the hook's NativeView also
     // zeroes the matching trigger level (StripTriggers), so a gamepad remote's held LT/RT never aims or fires

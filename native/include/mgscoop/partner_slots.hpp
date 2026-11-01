@@ -278,6 +278,10 @@ struct TruthOut {
     bool changed;                  // verdict differs from the previous step
 };
 TruthOut TruthStep(TruthState& state, const TruthIn& in) noexcept;
+// Finder evidence M5: EVADE (partner_pad::kEvade) while the remote's act is its
+// box (77/78) and body 1's read act is not (the box refused or not yet worn):
+// the remote's box evade would be a dive in the open on body 1. 0 otherwise.
+std::uint32_t TruthBoxStrip(bool remote_valid, std::uint16_t remote_act, bool body_valid, std::uint16_t body_act) noexcept;
 
 // The sender's half (the copy whose player presses RMB): one event per HOLD
 // run. aimed: the local act reached an aim act during the run (after_ms from
