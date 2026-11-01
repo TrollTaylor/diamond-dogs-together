@@ -347,6 +347,46 @@ int main() {
         schedule={};Check(!p::RenewCacheReadiness(slot,schedule,42,42) && !p::RenewCacheReadiness(slot,schedule,0,99));
         slot.handle=42;Check(!p::RenewCacheReadiness(slot,schedule,0,0) && slot.handle==42);
     }
+    // fb1031 gear-1 (review): a missing type-1/type-2 base never ends no_cache_entry. After a1_refused
+    // no_cache_entry, tier C refuses the always-resident stand-ins for good (stock_optional_dict for type 2,
+    // stock_optional_header for type 1). The plan records the A1 cache refusal: the slot counts as missing
+    // (the late path) and a residency or manifest renewal plans it again (A1 binds the now-resident base).
+    {
+        const auto set=[](p::SlotStatus& s,const char* r) {std::memcpy(s.reason,r,std::strlen(r)+1);};
+        p::SlotStatus slot{};slot.want=9;
+        p::RecordA1Cache(slot,"no_cache_entry");Check(slot.a1_cache);
+        slot.state=p::SlotState::refused;slot.tier=p::Tier::d;set(slot,"stock_optional_dict");
+        Check(p::PermanentReason(slot.reason) && !p::CacheReadinessReason(slot.reason) && p::MissingCacheSlot(slot));
+        p::SlotSchedule schedule{};schedule.visited=true;
+        Check(p::RenewCacheReadiness(slot,schedule,0,0xFFFFFFE0u) && slot.state==p::SlotState::idle && slot.tier==p::Tier::none &&
+              !slot.a1_cache && !p::MissingCacheSlot(slot) && !schedule.visited && schedule.retries==0);
+        p::SlotStatus header{};p::RecordA1Cache(header,"no_resident");
+        header.state=p::SlotState::refused;header.tier=p::Tier::d;set(header,"stock_optional_header");
+        Check(p::MissingCacheSlot(header));
+        // Not recorded: A1 planned, or refused for another reason; such a stand-in refusal stays.
+        for(const char* other:{static_cast<const char*>(nullptr),"type_mismatch","viewer_weapon","cache_shared"}) {
+            p::SlotStatus s{};s.a1_cache=true;p::RecordA1Cache(s,other);
+            s.state=p::SlotState::refused;s.tier=p::Tier::d;set(s,"stock_optional_dict");
+            p::SlotSchedule sc{};
+            Check(!s.a1_cache && !p::MissingCacheSlot(s) && !p::RenewCacheReadiness(s,sc,0,0) && s.state==p::SlotState::refused);
+        }
+        // A recorded slot whose refusal is not the plan's own (a foreign handle, a spent dispatch) stays.
+        p::SlotStatus foreign{};p::RecordA1Cache(foreign,"no_cache_entry");
+        foreign.state=p::SlotState::refused;foreign.tier=p::Tier::d;set(foreign,"foreign_handle");
+        p::SlotSchedule fs{};
+        Check(!p::MissingCacheSlot(foreign) && !p::RenewCacheReadiness(foreign,fs,0,0));
+        p::SlotStatus spent{};p::RecordA1Cache(spent,"no_cache_entry");
+        spent.state=p::SlotState::refused;spent.tier=p::Tier::c;set(spent,"call_unverified");
+        Check(!p::MissingCacheSlot(spent));
+        p::SlotStatus held{};p::RecordA1Cache(held,"no_cache_entry");held.state=p::SlotState::refused;held.tier=p::Tier::d;
+        set(held,"stock_optional_dict");
+        p::SlotSchedule hs{};hs.dispatches=1;
+        Check(p::MissingCacheSlot(held) && !p::RenewCacheReadiness(held,hs,0,0) && held.state==p::SlotState::refused);
+        hs={};Check(!p::RenewCacheReadiness(held,hs,0,99) && held.state==p::SlotState::refused);
+        // Waiting slots are not missing yet.
+        p::SlotStatus waiting{};p::RecordA1Cache(waiting,"no_cache_entry");waiting.state=p::SlotState::readiness;waiting.tier=p::Tier::d;
+        Check(!p::MissingCacheSlot(waiting));
+    }
     // 0.13.6 online-net-epoch (Fix 3; failed on 0.13.5, where no_manifest was permanent): the plan wait for a
     // manifest is not a permanent refusal. A slot refused no_manifest (nothing spent) plans again as soon as a
     // manifest is known, in the same body gen; a dispatched, uncertain or handle-holding slot never does.

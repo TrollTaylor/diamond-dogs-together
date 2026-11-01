@@ -144,6 +144,9 @@ struct SlotStatus {
     std::uint8_t type=0,cache_index=0xFF;
     std::uint32_t handle=0;     // the expected handle once dispatched
     char reason[32]{};
+    // fb1031 gear-1: the last plan's A1 was refused for cache readiness (no_cache_entry, no_resident), even
+    // when tier C then refused for good (RecordA1Cache; MissingCacheSlot).
+    bool a1_cache=false;
     // Weapons4: transient refusals this gen, the entry's refs bracketing the
     // dispatch (the census refs at plan time until then), the bank entry of
     // the bound resource and the binder record words last read.
@@ -363,6 +366,10 @@ inline bool CacheReadinessReason(const char* reason) noexcept {
         if(!*a && !*b) return true;
     }
     return false;
+}
+inline void RecordA1Cache(SlotStatus& slot,const char* a1_why) noexcept {(void)slot;(void)a1_why;}
+inline bool MissingCacheSlot(const SlotStatus& slot) noexcept {
+    return (slot.state==SlotState::backoff || slot.state==SlotState::refused) && CacheReadinessReason(slot.reason);
 }
 // Only a genuine new manifest renews an exhausted missing-cache check on the
 // same body. Never renew a dispatched, uncertain, owned or foreign slot, and
