@@ -115,8 +115,9 @@ ignore / notice (H, S), disable / enable (H, S), mark / unmark (H, U), info.
 
 Nearest (within 150 m): `enemy kill nearest`, `enemy sleep nearest`,
 `enemy come nearest`, `enemy disable nearest` (H, S), `enemy mark nearest` (H).
-`enemy goto nearest|hash` (either player, typed): this copy's player warps 2.5 m from that soldier, on the player's
-side, facing him (each PC moves its own enemies, so each player reaches its own copy of him).
+`enemy goto nearest|hash [metres]` (either player, typed): this copy's player warps 2.5 m (or 0.5-10 m) from that
+soldier, on the player's side, facing him (each PC moves its own enemies, so each player reaches its own copy of him;
+at Mother Base the staff placement puts both copies on the same spot).
 
 Area: **Clear nearby** `clear_enemies r` (H, S, asks to confirm, 1..100 m, at most 16),
 **Unmark all** `enemy_unmark` (H), **Phase** `cp_phase nearest sneak|caution|alert`
@@ -407,7 +408,11 @@ grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
 asserts that `Warp()` has exactly these two callers and their gates. Play mode
-forces the key off, so there only route placements (kind 2) move the guest's copy.
+forces the key off, so there only route placements (kind 2) move the guest's copy, except
+the Mother Base staff rule (`soldier_warp::GuestAdmit`, mb-staff-sync): play or lab,
+mission 30050, corrections (kind 3) only, range from the nearer of the host and the guest's
+own player; `Verify` then runs for a play or lab guest (`soldier_warp=ready; key=mb_staff`)
+([world-sync-design.md](world-sync-design.md) 7.7).
 
 **Settle window.** For 60 s after a native landing the host samples its guard once a
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The
