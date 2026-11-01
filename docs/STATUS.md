@@ -1,3 +1,28 @@
+## October 31, 2026: fb1031 gear proof - a late partner's gun cannot load mid-mission; the default tells you once (`wp/integ-log1031`; hidden run 0238a446)
+
+- **What players get:** unchanged default. If your partner joins, or reconnects, after your mission loaded, you see
+  them without a gun and their shots draw no muzzle flash until your next loading screen; you are told once ("Your
+  partner's gun will show after the next loading screen."). `partner_equip_midload` stays off: the run shows it cannot
+  load anything mid-mission, so turning it on would change nothing for players.
+- **Run 0238a446 [O]** (play, gun stage, mb-ladder saves, `-WanSim bad`, key named; host frames only, guest log):
+  the host's 30050 allocation `equip_preload=refused; reason=no_manifest; source=none`. After the guest paired, slot 2
+  (want 9) `a1_refused no_cache_entry`, then tier C equip 1 `refused stock_optional_dict` (the review's gear-1 case),
+  slot 1 (want 46) `refused no_resident`; `equip_late_gear=request`, then `equip_midload=refused;
+  reason=midload_preflight; dropped=46:player_not_null,9:player_not_null`, `next_load`, `hud=toast; code=17` once and
+  `equip_late_gear=noted`. No `RequestLoadToEquipMissionBlock` ran: the reused allocation preflight
+  (`equipment_preload_contract.hpp` `Owners`) refuses whenever the player exists. Frames: the guest empty-handed when
+  paired, while aiming and while firing (no gun, no flash; overlay "gun unavailable"); the game was up 30 s later. The
+  toast is in the log only, not in a frame [I]. The guest's own allocation preloaded the host's bases (`source=remote`).
+  Sheet: `mgs-coop-run-archive/log1031/frames/gear/0238a446-sheet.jpg`.
+- **Review fixes:** gear-1 [code, tests]: `RecordA1Cache` / `MissingCacheSlot` (equipment_stock_writer.hpp). An A1
+  cache refusal that tier C then closes for good (the always-resident stand-ins) still counts as missing for the late
+  path, and a manifest or residency renewal re-plans it; never a foreign handle, a dispatched slot or a live handle.
+  Red `1772e479`, green `e23efff0`. gear-3: confirmed by the run; a flip cannot fix it. The real fix needs a
+  player-present preflight and proof that a mid-mission `RequestLoadToEquipMissionBlock` is safe with the player live
+  (RE; Ghidra was down). Not addressed: gear-5 (the quiet query's return lines), gear-6, gear-7.
+- **Not run:** `fb1031-gear-late-join-note.txt` (the toast frame): resource blocker twice (system commit free under
+  15 GB for 20 min, then D: under 1 GB) while other workflows ran.
+
 ## October 31, 2026: fb1031 log fixes integrated (`wp/integ-log1031`, local only; no hidden runs)
 
 - **What players get:** nothing beyond the five entries below, now in one build: the late partner's gear note (mid-load
