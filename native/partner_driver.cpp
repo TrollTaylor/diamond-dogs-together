@@ -696,8 +696,10 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     // aiming (TickAimIntent: partner_slots TruthStep). Not a weapon strip: DASH
     // and hold_stripped are untouched (the real body may sprint).
     if (gun_stage && set.naim_truth) a.config.sample_strip |= m.truth_strip;
-    // ... and the hook zeroes a weapon strip's trigger level too (finder M8).
-    a.truth_triggers = gun_stage && set.naim_truth;
+    // ... and, with partner_native_aim_truth_triggers (review animtruth-1: not run
+    // in a game yet), Compose and the hook zero a stripped trigger level too (finder M8).
+    a.truth_triggers = gun_stage && set.naim_truth && set.naim_truth_triggers;
+    a.config.strip_triggers = a.truth_triggers;
     // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
     // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
     // stale Arm drops it.
@@ -1271,10 +1273,12 @@ const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remo
     if (!set.ngun) return nullptr;
     if (m.reload_out.hold || m.reload_out.reconcile) return "reload";
     if (m.body_switching) return "switch";
-    // r1101 animtruth: a refused aim (the body is not aiming: loco/act) is input
+    // r1101 animtruth (partner_native_aim_truth_stance; review animtruth-1: not run
+    // in a game yet): a refused aim (the body is not aiming: loco/act) is input
     // only, so its Aiming bits never hold off the stance fix.
-    const bool aim_refused = set.naim_truth && (m.truth_verdict == partner_slots::TruthVerdict::loco ||
-                                                m.truth_verdict == partner_slots::TruthVerdict::act);
+    const bool truth_stance = set.naim_truth && set.naim_truth_stance;
+    const bool aim_refused = truth_stance && (m.truth_verdict == partner_slots::TruthVerdict::loco ||
+                                              m.truth_verdict == partner_slots::TruthVerdict::act);
     const std::uint8_t v5_gun = aim_refused ? std::uint8_t(pin::GunFlag::Reloading | pin::GunFlag::Changing)
                                             : std::uint8_t(pin::GunFlag::Aiming | pin::GunFlag::Reloading | pin::GunFlag::Changing);
     std::uint8_t lua_gun = aim_refused ? std::uint8_t(sync::ActionFlag::Firing | sync::ActionFlag::Reloading)
@@ -1282,7 +1286,7 @@ const char* StanceBlock(const Mission& m, const Settings& set, std::uint8_t remo
     // The Lua Reloading bit is the R INPUT (R is also CARRY; finder M6): with the
     // key and a live v5 group, whose Reloading is the gun record's real mode
     // 11/12, the input alone never holds the stance fix.
-    if (set.naim_truth && m.remote_v5) lua_gun = static_cast<std::uint8_t>(lua_gun & ~sync::ActionFlag::Reloading);
+    if (truth_stance && m.remote_v5) lua_gun = static_cast<std::uint8_t>(lua_gun & ~sync::ActionFlag::Reloading);
     if (m.remote_v5 && (m.remote_gun_flags & v5_gun)) return "gun";
     if (remote_flags & lua_gun) return "gun";
     return nullptr;
@@ -4590,6 +4594,7 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
     ti.support_lane = m.weapon_gate == partner_slots::Gate::support;
     ti.in_hand = m.remote_v5 && (m.remote_gun_flags & pin::GunFlag::InHand) != 0;
     ti.now_ms = now;
+    ti.gap_ms = set.stale_ms;  // review animtruth-5: a short pose gap keeps a refusal
     const partner_slots::TruthOut to = partner_slots::TruthStep(m.truth, ti);
     m.truth_verdict = to.verdict;
     m.truth_strip = to.strip;
@@ -4597,10 +4602,13 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
         m.truth_logged = partner_slots::TruthVerdict::off;
         m.truth_run = partner_slots::TruthRun{};
         m.truth_box = false;
+        m.truth_trig0 = 0;
         return;
     }
-    // Finder evidence M5: the remote's box evade never reaches an unboxed body 1.
-    const std::uint32_t box = partner_slots::TruthBoxStrip(act_valid, remote_anim.act, body_ok, body_act);
+    // Finder evidence M5: the remote's box evade never reaches an unboxed body 1
+    // (partner_native_aim_truth_box; review animtruth-1: not run in a game yet).
+    const std::uint32_t box =
+        set.naim_truth_box ? partner_slots::TruthBoxStrip(act_valid, remote_anim.act, body_ok, body_act) : 0u;
     m.truth_strip |= box;
     if ((box != 0) != m.truth_box && m.truth_lines < kAimTruthLineCap) {
         ++m.truth_lines;
@@ -4610,17 +4618,20 @@ void TickAimTruth(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample& 
     m.truth_box = box != 0;
     const bool live = latest_ok && latest.age_ms <= set.stale_ms;
     const std::uint32_t held = live ? latest.packet.held : 0u;
-    // One line per remote HOLD run: how long its raw HOLD was refused / admitted.
+    // One line per remote HOLD run: how long its raw HOLD was refused / admitted;
+    // trig_zeroed: the hook's zeroed-trigger frames and windows since it opened.
+    const bool run_was_open = m.truth_run.open;
     const partner_slots::TruthRunOut ro =
         partner_slots::TruthRunStep(m.truth_run, (held & partner_pad::kHold) != 0, (to.strip & partner_pad::kHold) != 0,
                                     act_valid ? remote_anim.act : static_cast<std::uint16_t>(0),
                                     live ? latest.packet.gun_flags : static_cast<std::uint8_t>(0), now);
+    if (!run_was_open && m.truth_run.open) m.truth_trig0 = ns.trig_zero_windows;
     if (ro.ended && m.truth_lines < kAimTruthLineCap) {
         ++m.truth_lines;
         EmitFormat(h, "partner_aim_truth=hold_run; result=%s; refused_ms=%u; admitted_ms=%u; len_ms=%u; first_act=%u; last_act=%u; "
                       "flags=0x%x; runs=%u; trig_zeroed=%u\r\n",
                    partner_slots::TruthRunResult(ro), ro.refused_ms, ro.admitted_ms, ro.len_ms, unsigned(ro.first_act),
-                   unsigned(ro.last_act), unsigned(ro.flags), m.truth_run.runs, ns.trig_zero_windows);
+                   unsigned(ro.last_act), unsigned(ro.flags), m.truth_run.runs, ns.trig_zero_windows - m.truth_trig0);
     }
     if (to.verdict == m.truth_logged || (m.truth_line_ms && now - m.truth_line_ms < kAimIntentLineMs) || m.truth_lines >= kAimTruthLineCap)
         return;
@@ -6953,6 +6964,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.ndry = lab.partner_native_dry_stop;
     d.settings.naim_intent = lab.partner_native_aim_intent;
     d.settings.naim_truth = lab.partner_native_aim_truth;
+    d.settings.naim_truth_box = lab.partner_native_aim_truth_box;
+    d.settings.naim_truth_triggers = lab.partner_native_aim_truth_triggers;
+    d.settings.naim_truth_stance = lab.partner_native_aim_truth_stance;
     d.settings.nreload_rate = lab.partner_native_reload_rate;
     d.settings.fire_census = lab.partner_fire_census;
 

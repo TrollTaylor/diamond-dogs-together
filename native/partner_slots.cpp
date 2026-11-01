@@ -259,9 +259,19 @@ TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
     const std::uint32_t refuse = partner_pad::kHold | partner_native::kPadFire;
     if (!in.enabled) {
         s.aim_ms = 0;
+        s.valid_ms = 0;
         o.verdict = TruthVerdict::off;
     } else if (!in.act_valid) {
-        o.verdict = TruthVerdict::nostate;
+        // Review animtruth-5: a pose gap up to gap_ms after the last live act keeps a
+        // refusal and its strip (a lifted strip would turn a refused HOLD into a fresh
+        // press for the gap); a longer loss fails open.
+        const bool refused = s.last == TruthVerdict::loco || s.last == TruthVerdict::act;
+        if (refused && in.gap_ms && s.valid_ms && in.now_ms >= s.valid_ms && in.now_ms - s.valid_ms <= in.gap_ms) {
+            o.verdict = s.last;
+            o.strip = refuse;
+        } else {
+            o.verdict = TruthVerdict::nostate;
+        }
     } else if (AimAct(in.act)) {
         s.aim_ms = in.now_ms ? in.now_ms : 1;
         o.verdict = TruthVerdict::aim;
@@ -277,6 +287,7 @@ TruthOut TruthStep(TruthState& s, const TruthIn& in) noexcept {
     } else {
         o.verdict = TruthVerdict::other;
     }
+    if (in.enabled && in.act_valid) s.valid_ms = in.now_ms ? in.now_ms : 1;
     o.changed = o.verdict != s.last;
     if (o.changed && o.strip) ++s.refusals;
     if (o.changed && o.verdict == TruthVerdict::aim) ++s.confirms;

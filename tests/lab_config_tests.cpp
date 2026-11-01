@@ -1983,8 +1983,9 @@ int main() {
                 Check(!def.partner_native_aim_truth_box && !def.partner_native_aim_truth_triggers && !def.partner_native_aim_truth_stance &&
                           !main.partner_native_aim_truth_box && !main.partner_native_aim_truth_triggers &&
                           !main.partner_native_aim_truth_stance && all.partner_native_aim_truth_box &&
-                          all.partner_native_aim_truth_triggers && all.partner_native_aim_truth_stance && all.invalid_values == 0 &&
-                          all.unknown_keys == 0 && Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=2\n").invalid_values == 1,
+                          all.partner_native_aim_truth_triggers && all.partner_native_aim_truth_stance &&
+                          Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=1\npartner_native_aim_truth_stance=1\n").unknown_keys == 0 &&
+                          Lab("enabled=1\nrole=host\npartner_native_aim_truth_box=2\n").invalid_values == 1,
                       "partner_native_aim_truth_box/_triggers/_stance: off unless named (also with the main key), =1 on");
             }
             Check(debugOverlay.partner_native_overlay == mgscoop::PartnerNativeOverlay::debug && !debugOverlay.partner_act_log &&

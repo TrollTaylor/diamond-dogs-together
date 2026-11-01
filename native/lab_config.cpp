@@ -205,6 +205,10 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
     // r1101 animtruth: off unless named.
     else if (Equals(key, "partner_native_aim_truth")) ok = ParseBool(value, result.partner_native_aim_truth);
+    // Review animtruth-1: its parts no hidden run has exercised, off unless named.
+    else if (Equals(key, "partner_native_aim_truth_box")) ok = ParseBool(value, result.partner_native_aim_truth_box);
+    else if (Equals(key, "partner_native_aim_truth_triggers")) ok = ParseBool(value, result.partner_native_aim_truth_triggers);
+    else if (Equals(key, "partner_native_aim_truth_stance")) ok = ParseBool(value, result.partner_native_aim_truth_stance);
     else if (Equals(key, "partner_native_traverse")) {
         // Traversal replay (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_traverse);

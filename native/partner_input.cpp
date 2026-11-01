@@ -442,11 +442,16 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.rdir = static_cast<float>((rx != 0.0 || ry != 0.0) ? std::atan2(rx, ry) : 0.0);
         }
         // Analog triggers (aim/fire on a pad) only from a live sample, never held through a stall.
-        // r1101 animtruth: a sample strip of HOLD (aim) / FIRE also zeroes the pad's
-        // LT / RT level, so a refused aim stays refused on a gamepad.
+        // r1101 animtruth (strip_triggers: partner_native_aim_truth_triggers): a sample
+        // strip of HOLD (aim) / FIRE also zeroes the pad's LT / RT level, so a refused
+        // aim stays refused on a gamepad; a zeroed non-zero level flags the frame.
         if (c.triggers && live) {
-            j.lt = (c.sample_strip & partner_pad::kHold) ? 0.0f : static_cast<float>(p.lt / 255.0);
-            j.rt = (c.sample_strip & partner_pad::kFire) ? 0.0f : static_cast<float>(p.rt / 255.0);
+            const float lt = static_cast<float>(p.lt / 255.0), rt = static_cast<float>(p.rt / 255.0);
+            const bool zero_lt = c.strip_triggers && (c.sample_strip & partner_pad::kHold) != 0;
+            const bool zero_rt = c.strip_triggers && (c.sample_strip & partner_pad::kFire) != 0;
+            j.lt = zero_lt ? 0.0f : lt;
+            j.rt = zero_rt ? 0.0f : rt;
+            j.trig_stripped = (zero_lt && lt != 0.0f) || (zero_rt && rt != 0.0f);
         }
         if (p.version >= 3) {
             j.look_valid = (p.xflags & XFlag::Look) != 0;
@@ -578,11 +583,13 @@ Injection StripTriggers(const Injection& injection, std::uint32_t bits) noexcept
     return j;
 }
 
-// RED stub (review animtruth-3): the digital strip only.
 Injection StripWindow(const Arm& arm, const Injection& injection, std::uint32_t bits, bool& zeroed) noexcept {
-    (void)arm;
+    const Injection s = Strip(injection, bits);
     zeroed = false;
-    return Strip(injection, bits);
+    if (!arm.truth_triggers) return s;
+    const Injection t = StripTriggers(s, bits);
+    zeroed = t.lt != s.lt || t.rt != s.rt;
+    return t;
 }
 
 Injection Freeze(const Injection& injection, std::uint32_t bits, std::uint32_t level, const Config& config) noexcept {

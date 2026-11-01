@@ -539,11 +539,12 @@ struct WindowOpts {
     bool icon;       // F3: the padop vtable copy (drain windows with a pending icon request)
 };
 // r1101 animtruth (Arm.truth_triggers, finder M8): a strip's HOLD / FIRE also
-// zero LT / RT; windows that zeroed a non-zero level are counted (trig_zeroed).
+// zero LT / RT (the tested pure StripWindow); windows that zeroed a non-zero
+// level are counted (trig_zeroed, with Compose's zeroed frames).
 pi::Injection TruthTriggers(const pi::Arm& a, const pi::Injection& j, std::uint32_t strip) noexcept {
-    if (!a.truth_triggers) return j;
-    const pi::Injection t = pi::StripTriggers(j, strip);
-    if (t.lt != j.lt || t.rt != j.rt) InterlockedIncrement(&g_n_trig_zero);
+    bool zeroed = false;
+    const pi::Injection t = pi::StripWindow(a, j, strip, zeroed);
+    if (zeroed) InterlockedIncrement(&g_n_trig_zero);
     return t;
 }
 // What a native window injects: the composed view, or Neutral() while the
@@ -564,7 +565,7 @@ pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (strip) {
         InterlockedIncrement(&g_n_strip);
         InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(strip));
-        return TruthTriggers(a, pi::Strip(j, strip), strip);
+        return TruthTriggers(a, j, strip);
     }
     return j;
 }
@@ -1148,6 +1149,8 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     }
     pi::Injection j = pi::Compose(a.config, sc, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
                                   a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
+    // r1101 animtruth (review animtruth-4): a frame whose LT/RT Compose zeroed (strip_triggers).
+    if (j.trig_stripped) InterlockedIncrement(&g_n_trig_zero);
     // Native support (WS2): the stall freeze and the FIRE-edge buffer on the frame itself.
     if (a.native && a.config.mode == PartnerInput::net) j = SupportFrame(a, j, now_ms, s.valid ? s.age_ms : pi::kNoSample);
     if (j.hist_reset) g_hist = pi::HoldHistory{};
@@ -3387,7 +3390,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
                                                           NowMs() - g_frame_ms, a.config, &view));
     if(!support_window && partner_support_policy::Request(a.native_support,j.slot_valid,j.inv_slot,a.strip))
-        j=TruthTriggers(a,pi::Strip(j,0x8078u),0x8078u);
+        j=TruthTriggers(a,j,0x8078u);
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
     Save save{};native_work_timing::Token timing=native_work_timing::Begin(native_work_timing::Kind::pose_begin);
