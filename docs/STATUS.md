@@ -1,3 +1,30 @@
+## October 31, 2026: fb1031 carry - a partner put down at a run no longer slides into the sea (`wp/carry-sea`; not run-proven yet)
+
+- **What players get (expected, not run-proven yet):** put your sleeping or wounded partner down while running toward a
+  Mother Base deck edge or a cliff and they stay at your feet on their own screen: no slide over the edge, no shared
+  Game Over. A real fall outside the put-down (walking or crawling off, a vehicle into the sea) still ends the run.
+- **The session [O]:** friend log 63053-63410, user log 7294-7450 (Steam, rtt about 145 ms). The user darted the friend,
+  picked them up and ran about 17 m at 6.6 m/s along +z on the command deck (x 16.7), then put them down while still
+  moving. The friend's own body (the copy everyone sees) never left the carried act 43 (no `remote=44` edge on the
+  user's log) while the carrier's replica on the friend's PC played its put-down (act 39, 28689031); 1 s later it lay
+  4.7 m past the carrier at deck height (probe pos0 z 35.41 vs pos1 30.66), then fell (streamed y 0.97 -> -0.84 -> -6.4
+  -> -11.4). The sea kill on that copy (`stock_death;reason=environment;protected=1`) drove the shared Game Over. The
+  user's copy slid the same way in its own put-down (act 44, 8.4 m/s) and its guard then placed it at the friend's
+  already falling pose. Not a placement sync (there is none) and not a stale pose: the friend's own copy moved the body.
+- **Fix:** `lua/coop/world_downed.lua` putDown, on the carried player's own copy. While carried it keeps the carrier's
+  own reported spot (downed status, fresh). An episode opens at the own stock put-down (act 44), at the carrier's
+  put-down (replica act 39) after the first second of a carry, or when the carried body stays 5 m away or 2 m below the
+  carrier for 300 ms. For 3 s a body more than 2 m from that spot or 1 m below it is warped back (stock `Warp` on
+  `TppPlayer2` 0) 0.7 m behind the carrier, on the ground it walked: at most 6 tries 250 ms apart, logged
+  `event=downed; step=putdown_place`. Never for horse cargo, a body in a vehicle or on a horse, a stale carrier spot,
+  a settled body, or a carrier teleport. The downed receipt gains `act` / `peer` (both bodies' actions, coop_carry's
+  existing reads; contract unchanged, 855 code sites / 213 vtable slots). The sea-death policy is unchanged.
+- **Not shown:** whether the stock `Warp` takes on a body still in the carried act (the session's case) or in the
+  put-down; what the stuck carried state does afterwards (the friend's copy stayed "carried" until the Game Over). The
+  carrier's copy still runs its own put-down; its guard places a body 2 m below the target at the (now safe) target.
+  Scenario `tools/worker/scenarios/coop-carry-putdown-run.txt` (not run). Commits `43d118b4` red -> `8fb50bdd` green,
+  `52f51ac5` red -> `77684ba1` green, `98674b40` scenario.
+
 ## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
 
 - **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
