@@ -1868,6 +1868,327 @@ void TestAnimAimIntent() {
     Check(!(j.held & 0x8u) && !(pn::Latch27c(0, j.w[0], 0) & 1u), "the unsupported strip removes the synthesized HOLD");
 }
 
+// r1101 animtruth: the puppet draws what the remote's body does (partner_native_aim_truth).
+void TestAnimAimTruth() {
+    namespace ps = mgscoop::partner_slots;
+    using V = ps::TruthVerdict;
+    constexpr std::uint32_t kHF = 0x8u | 0x10u;  // HOLD | FIRE
+    ps::TruthState t{};
+    ps::TruthIn in{};
+    in.enabled = true;
+    in.act_valid = true;
+    in.act = 2;           // stand_move
+    in.slot_valid = true;
+    in.slot = 1;          // primary (fb1031 Mother Base: slot 1, equip 873)
+    in.now_ms = 1000;
+    // fb1031 Mother Base (KILLING_WEAPON): RMB held, the remote's body stays in stand_move.
+    ps::TruthOut o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF && o.changed && t.refusals == 1,
+          "Mother Base: the gun lane in locomotion with no aim act strips HOLD and FIRE (no phantom aim or shot)");
+    in.act = 1; in.now_ms = 1016;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF && !o.changed && t.refusals == 1, "stand_idle: still refused, one refusal");
+    // A real aim: the act confirms (15..50 ms after the press in fb1031), the strip lifts.
+    in.act = 11; in.now_ms = 1050;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::aim && o.strip == 0 && o.changed && t.confirms == 1 && t.aim_ms == 1050, "an aim act: HOLD passes");
+    in.act = 13; in.now_ms = 1400;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::aim && o.strip == 0 && t.aim_ms == 1400, "aim_stand_move: still passes");
+    // A stance change while aiming passes through a locomotion act for a few frames: keep.
+    in.act = 3; in.now_ms = 1400 + ps::kTruthKeepMs - 1;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::keep && o.strip == 0, "locomotion within kTruthKeepMs of the last aim act: kept (no gun drop)");
+    in.now_ms = 1400 + ps::kTruthKeepMs;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF && t.refusals == 2, "past kTruthKeepMs: refused again");
+    // Body-owned acts strip in every lane (knockdown with RMB still held; fb1031 30010: hit 29 in the C4 lane).
+    for (std::uint16_t act : {std::uint16_t(29), std::uint16_t(45), std::uint16_t(76), std::uint16_t(82), std::uint16_t(43),
+                              std::uint16_t(132)}) {
+        in.act = act;
+        in.support_lane = true; in.slot = 3;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF, "hit, damage, cure, trash box, carried, sleep: HOLD and FIRE stripped (support lane too)");
+        in.support_lane = false; in.slot = 1;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF, "the same acts in the gun lane");
+    }
+    Check(ps::TruthBodyOwnedAct(29) && ps::TruthBodyOwnedAct(45) && ps::TruthBodyOwnedAct(75) && !ps::TruthBodyOwnedAct(1) &&
+              !ps::TruthBodyOwnedAct(11) && !ps::TruthBodyOwnedAct(57) && !ps::TruthBodyOwnedAct(77),
+          "body-owned: AimBlockedAct plus hit 29 and damage 45; locomotion, aim, dive and the box are not");
+    // Lanes this rule leaves alone: support/arm locomotion (grenade, C4, arm), an unknown slot, a slot above 2.
+    in.act = 2;
+    in.support_lane = true; in.slot = 3;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::lane && o.strip == 0, "the support lane in locomotion: its own gates decide");
+    in.support_lane = false; in.slot_valid = false;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::lane && o.strip == 0, "no v5 slot (an old peer): the raw path is unchanged");
+    in.slot_valid = true; in.slot = 4;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::lane && o.strip == 0, "an item slot: not the gun lane");
+    in.slot = 0;
+    // Acts this rule does not judge (cover, dive, CQC hold with its one-handed gun, the box): pass.
+    for (std::uint16_t act : {std::uint16_t(57), std::uint16_t(70), std::uint16_t(93), std::uint16_t(77)}) {
+        in.act = act;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::other && o.strip == 0, "cover, dive, CQC hold, box: pass (unjudged)");
+    }
+    // Climbing and hanging (finder M4): ladder 21, pipe 22, wall climb 23, step_on 24 and the ledge hang 54..56
+    // leave no hand for a gun, so a held RMB there is refused in every lane (the puppet never stands and aims
+    // at the foot of a ladder the traversal replay could not enter).
+    for (std::uint16_t act : {std::uint16_t(21), std::uint16_t(22), std::uint16_t(23), std::uint16_t(24), std::uint16_t(54),
+                              std::uint16_t(55), std::uint16_t(56)}) {
+        in.act = act;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF && ps::TruthBodyOwnedAct(act), "ladder, pipe, climb, step_on, ledge hang: HOLD and FIRE stripped");
+        in.support_lane = true; in.slot = 3;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF, "climbing: the support lane too");
+        in.support_lane = false; in.slot = 0;
+    }
+    Check(!ps::TruthBodyOwnedAct(20) && !ps::TruthBodyOwnedAct(25) && !ps::TruthBodyOwnedAct(53) && !ps::TruthBodyOwnedAct(57),
+          "the climb set ends at its edges (aim_prone 20, fall 25, fulton 53, dive 57)");
+    // No live act: nothing judged.
+    in.act_valid = false;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::nostate && o.strip == 0, "no live remote act: the raw path is unchanged");
+    // Review animtruth-5: a short pose-stream gap inside a refused HOLD (input packets still arriving) keeps the
+    // refusal and its strip up to gap_ms after the last live act, so Compose never sees the HOLD level rise (no
+    // gun-raise flicker); a longer loss fails open (nostate), and a gap after an aim never strips.
+    {
+        ps::TruthState g{};
+        ps::TruthIn gi{};
+        gi.enabled = true; gi.act_valid = true; gi.act = 2; gi.slot_valid = true; gi.slot = 1; gi.now_ms = 20000; gi.gap_ms = 250;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF && g.valid_ms == 20000, "gap: refused before the gap");
+        gi.act_valid = false; gi.now_ms = 20100;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF && !o.changed && g.refusals == 1,
+              "a pose gap inside gap_ms after a refusal: still refused (no fresh press, no new refusal)");
+        gi.now_ms = 20250;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::loco && o.strip == kHF, "the bridge lasts gap_ms after the last live act");
+        gi.now_ms = 20251;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0 && o.changed, "a longer loss fails open (nostate)");
+        gi.act_valid = true; gi.act = 11; gi.now_ms = 21000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 21010;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0, "a gap after a real aim: nothing stripped");
+        gi.act_valid = true; gi.act = 21; gi.now_ms = 23000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 23100;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::act && o.strip == kHF, "a body-owned act (the ladder) is bridged too");
+        gi.gap_ms = 0; gi.act_valid = true; gi.act = 2; gi.now_ms = 24000;
+        ps::TruthStep(g, gi);
+        gi.act_valid = false; gi.now_ms = 24010;
+        o = ps::TruthStep(g, gi);
+        Check(o.verdict == V::nostate && o.strip == 0, "gap_ms 0: fails open at once");
+        gi.enabled = false;
+        ps::TruthStep(g, gi);
+        Check(g.valid_ms == 0, "key off: the bridge forgets the last live act");
+    }
+    // Key off: never strips and forgets the aim.
+    in.act_valid = true; in.act = 11; in.now_ms = 5000;
+    ps::TruthStep(t, in);
+    in.enabled = false; in.act = 2; in.now_ms = 5010;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::off && o.strip == 0 && t.aim_ms == 0, "key off: never strips, the aim memory resets");
+    in.enabled = true;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF, "key back on in locomotion: refused (no stale keep)");
+    Check(ps::TruthVerdictName(V::loco)[0] == 'l' && ps::TruthVerdictName(V::keep)[0] == 'k' &&
+              ps::TruthVerdictName(V::act)[0] == 'a' && ps::TruthVerdictName(V::off)[0] == 'o',
+          "verdict names");
+    // A holstered gun coming out: in locomotion with the v5 InHand bit (fb1031: all 55 such HOLD lines were
+    // followed by an aim act) the draw passes, so the puppet draws with the real body; without it (Mother Base
+    // 0x25) refused.
+    in.in_hand = true;
+    in.act = 2; in.now_ms = 9000;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::draw && o.strip == 0 && Is(ps::TruthVerdictName(V::draw), "draw"), "InHand in locomotion: a real draw passes");
+    in.in_hand = false;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::loco && o.strip == kHF, "no InHand (Mother Base 0x25): refused");
+    in.in_hand = true; in.act = 76;
+    o = ps::TruthStep(t, in);
+    Check(o.verdict == V::act && o.strip == kHF, "a body-owned act refuses even with a gun in hand");
+    in.in_hand = false;
+    // The receiver's HOLD run line: refused, admitted and late runs.
+    {
+        ps::TruthRun r{};
+        ps::TruthRunOut ro = ps::TruthRunStep(r, true, true, 2, 0x25, 100);
+        Check(!ro.ended && r.open && r.runs == 1, "HOLD opens a run");
+        ro = ps::TruthRunStep(r, true, true, 1, 0x21, 1100);
+        Check(!ro.ended, "still held");
+        ro = ps::TruthRunStep(r, false, true, 1, 0x1, 1450);
+        Check(ro.ended && ro.refused_ms == 1350 && ro.admitted_ms == 0 && ro.len_ms == 1350 && ro.first_act == 2 && ro.last_act == 1 &&
+                  ro.flags == 0x25 && Is(ps::TruthRunResult(ro), "refused") && !r.open,
+              "Mother Base: a run refused for its whole length (flags OR 0x25)");
+        ro = ps::TruthRunStep(r, false, false, 1, 0x1, 1500);
+        Check(!ro.ended, "no run, nothing ends");
+        ps::TruthRunStep(r, true, true, 2, 0x5, 2000);
+        ps::TruthRunStep(r, true, false, 11, 0x25, 2033);
+        ps::TruthRunStep(r, true, false, 11, 0x25, 2500);
+        ro = ps::TruthRunStep(r, false, false, 11, 0x25, 2516);
+        Check(ro.ended && ro.refused_ms == 33 && ro.admitted_ms == 483 && ro.len_ms == 516 && Is(ps::TruthRunResult(ro), "late") && r.runs == 2,
+              "a real aim: refused until the act confirmed (33 ms), then admitted");
+        ps::TruthRunStep(r, true, false, 11, 0x27, 3000);
+        ro = ps::TruthRunStep(r, false, false, 11, 0x27, 3200);
+        Check(ro.ended && Is(ps::TruthRunResult(ro), "admitted") && ro.admitted_ms == 200, "an admitted run");
+    }
+
+    // The receiver window (Compose): HOLD|FIRE in sample_strip remove the raw press, its edges and the LT/RT
+    // levels; when the act confirms (strip lifted) the level rise is a clean press.
+    pi::Config c{};
+    c.mode = PartnerInput::net;
+    c.mask = 0x224005Eu | 0x10u;
+    c.words[0] = pi::Word::held; c.words[1] = pi::Word::press; c.words[2] = pi::Word::release;
+    c.stale_ms = 250;
+    c.triggers = true;
+    pi::EdgeState edge{};
+    pi::Sample s{};
+    s.valid = true;
+    s.packet.version = 5;
+    s.packet.flags = pi::Flag::Valid;
+    s.packet.gun_flags = 0x25;  // fb1031: Valid|Aiming|AimDir while the body stayed in locomotion
+    s.packet.held = 0;
+    ++s.seq;
+    pi::Injection j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    c.sample_strip = kHF;
+    s.packet.held = 0x8u | 0x10u;
+    s.packet.w50 = 0x8u | 0x10u;
+    s.packet.long12 = 0x8u;
+    s.packet.lt = 255; s.packet.rt = 255;
+    s.edge_press = 0x8u | 0x10u;
+    // Review animtruth-1: the trigger zeroing is its own key (strip_triggers); without it a HOLD/FIRE sample strip
+    // leaves the pad's LT/RT as before (no frame flagged).
+    {
+        pi::EdgeState e2{};
+        const pi::Injection k = pi::Compose(c, s, 0, pi::Overlay{}, e2);
+        Check(!(k.held & kHF) && k.lt > 0.99f && k.rt > 0.99f && !k.trig_stripped,
+              "strip_triggers off: the digital strip only, LT/RT kept (unchanged)");
+    }
+    c.strip_triggers = true;
+    ++s.seq;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(!(j.held & kHF) && !(j.edge_press & kHF) && !(j.w[1] & kHF) && !(j.long12 & kHF),
+          "refused: no HOLD/FIRE level, press, word or long12 from the remote's sample");
+    Check(j.lt == 0.0f && j.rt == 0.0f, "refused: the pad's LT/RT levels are zeroed too (M4: a stripped aim stays stripped on a pad)");
+    Check(j.trig_stripped, "review animtruth-4: Compose flags the frame whose LT/RT it zeroed (the hook counts it)");
+    s.edge_press = 0;
+    s.packet.w50 = 0;
+    ++s.seq;
+    c.sample_strip = 0;  // the act confirmed: the strip lifts while RMB is still held
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check((j.held & 0x8u) && (j.edge_press & 0x8u) && j.lt > 0.99f,
+          "confirmed: the held level rises -> one clean HOLD press (the aim starts with the real body's)");
+    ++s.seq;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check((j.held & 0x8u) && !(j.edge_press & 0x8u), "held: no repeated press");
+    // A strip without HOLD/FIRE (RELOAD with reload=event) leaves the triggers alone.
+    c.sample_strip = 0x40u;
+    ++s.seq;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.lt > 0.99f && j.rt > 0.99f && (j.held & 0x8u) && !j.trig_stripped,
+          "a RELOAD-only sample strip keeps LT/RT (no change for the existing strips)");
+    c.strip_triggers = false;
+    // Finder evidence M5 (fb1031 friend 35992 / 36073): the remote sits in its box (77/78) while body 1 is not
+    // boxed (the box refused, e.g. viewer_changed_latched); the remote's box evade then reaches body 1 as a dive in
+    // the open (57). EVADE leaves the sample while the remote is boxed and body 1 is not; a boxed body 1 keeps it.
+    {
+        const std::uint32_t ev = mgscoop::partner_pad::kEvade;
+        Check(ps::TruthBoxStrip(true, 77, true, 1) == ev && ps::TruthBoxStrip(true, 78, true, 4) == ev,
+              "remote boxed, body 1 on foot: EVADE stripped");
+        Check(ps::TruthBoxStrip(true, 77, true, 77) == 0 && ps::TruthBoxStrip(true, 78, true, 78) == 0 && ps::TruthBoxStrip(true, 77, true, 78) == 0,
+              "body 1 boxed too: its box evade passes");
+        Check(ps::TruthBoxStrip(true, 1, true, 77) == 0 && ps::TruthBoxStrip(true, 2, true, 1) == 0, "remote not boxed: nothing");
+        Check(ps::TruthBoxStrip(false, 77, true, 1) == 0 && ps::TruthBoxStrip(true, 77, false, 0) == 0, "an unread act on either side: nothing");
+    }
+    // The weapon strips (finder M8: mismatch / switching FIRE|RELOAD, unsupported 0x58, dry stop FIRE, the
+    // refused support request 0x8078) clear only the digital words; with the key the hook's NativeView also
+    // zeroes the matching trigger level (StripTriggers), so a gamepad remote's held LT/RT never aims or fires
+    // past a strip.
+    {
+        pi::Injection w{};
+        w.held = 0x18u; w.lt = 1.0f; w.rt = 0.75f;
+        pi::Injection tr = pi::StripTriggers(w, 0x8u);
+        Check(tr.lt == 0.0f && tr.rt == 0.75f && tr.held == 0x18u, "HOLD stripped: LT zeroed, RT and the words untouched");
+        tr = pi::StripTriggers(w, 0x50u);
+        Check(tr.lt == 1.0f && tr.rt == 0.0f, "FIRE|RELOAD (mismatch): RT zeroed, LT kept");
+        tr = pi::StripTriggers(w, 0x8078u);
+        Check(tr.lt == 0.0f && tr.rt == 0.0f, "the refused support request: both zeroed");
+        tr = pi::StripTriggers(w, 0x40u);
+        Check(tr.lt == 1.0f && tr.rt == 0.75f, "RELOAD only: both kept");
+        tr = pi::StripTriggers(w, 0);
+        Check(tr.lt == 1.0f && tr.rt == 0.75f, "no strip: both kept");
+    }
+    // Review animtruth-3: the hook's window strip (NativeView after a weapon strip, and the refused support
+    // request's 0x8078) is StripWindow: the digital strip always, the trigger levels only with Arm.truth_triggers;
+    // zeroed reports a non-zero level it zeroed (the hook's trig_zeroed count).
+    {
+        pi::Arm a{};
+        pi::Injection w{};
+        w.held = 0x18u; w.lt = 1.0f; w.rt = 0.75f;
+        bool z = true;
+        pi::Injection v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!(v.held & 0x18u) && v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers off: a weapon strip keeps LT/RT (unchanged)");
+        z = true;
+        v = pi::StripWindow(a, w, 0x8078u, z);
+        Check(!(v.held & 0x18u) && v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers off: the support strip 0x8078 keeps LT/RT");
+        a.truth_triggers = true;
+        v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!(v.held & 0x18u) && v.lt == 0.0f && v.rt == 0.0f && z, "truth_triggers: a weapon strip of HOLD|FIRE zeroes LT/RT, counted");
+        z = false;
+        v = pi::StripWindow(a, w, 0x8078u, z);
+        Check(!(v.held & 0x18u) && v.lt == 0.0f && v.rt == 0.0f && z, "truth_triggers: the refused support request 0x8078 zeroes both");
+        z = true;
+        v = pi::StripWindow(a, w, 0x40u, z);
+        Check(v.lt == 1.0f && v.rt == 0.75f && !z, "truth_triggers: a RELOAD-only strip keeps both, not counted");
+        w.lt = 0.0f; w.rt = 0.0f;
+        z = true;
+        v = pi::StripWindow(a, w, 0x18u, z);
+        Check(!z, "truth_triggers: levels already zero are not counted");
+    }
+
+    // The sender's half: one event per HOLD run.
+    using E = ps::LocalAimEvent;
+    ps::LocalAimState l{};
+    ps::LocalAimIn li{};
+    li.enabled = true;
+    li.act_valid = true;
+    li.act = 2;
+    li.hold = true;
+    li.now_ms = 10000;
+    ps::LocalAimOut lo = ps::LocalAimStep(l, li);
+    Check(lo.event == E::none && l.run && l.runs == 1, "a press opens a run");
+    li.now_ms = 10000 + ps::kLocalNoAimMs - 1;
+    Check(ps::LocalAimStep(l, li).event == E::none, "before no_aim_ms: nothing yet");
+    li.now_ms = 10000 + ps::kLocalNoAimMs;
+    lo = ps::LocalAimStep(l, li);
+    Check(lo.event == E::no_aim && lo.ms == ps::kLocalNoAimMs && l.no_aim_runs == 1,
+          "Mother Base: HOLD held kLocalNoAimMs with no aim act -> no_aim once");
+    li.now_ms += 500;
+    Check(ps::LocalAimStep(l, li).event == E::none, "the run reports once");
+    li.hold = false; li.now_ms += 16;
+    Check(ps::LocalAimStep(l, li).event == E::none && !l.run, "release closes the run");
+    li.hold = true; li.now_ms = 20000;
+    ps::LocalAimStep(l, li);
+    li.act = 11; li.now_ms = 20033;
+    lo = ps::LocalAimStep(l, li);
+    Check(lo.event == E::aimed && lo.ms == 33 && l.aimed_runs == 1 && l.runs == 2, "a real aim: aimed with after_ms");
+    li.act = 2; li.now_ms = 21000;
+    Check(ps::LocalAimStep(l, li).event == E::none, "an aimed run never reports no_aim");
+    li.enabled = false;
+    li.hold = false;
+    ps::LocalAimStep(l, li);
+    Check(!l.run, "key off: no run");
+    Check(ps::LocalAimEventName(E::no_aim)[0] == 'n' && ps::LocalAimEventName(E::aimed)[0] == 'a', "event names");
+}
+
 void TestAnimDry() {
     namespace ps = mgscoop::partner_slots;
     ps::DryState d{};
@@ -2128,6 +2449,7 @@ int main() {
     TestSlots();
     TestAnimUnsupported();
     TestAnimAimIntent();
+    TestAnimAimTruth();
     TestAnimDry();
     TestAnimReload();
     TestAnimShadow();

@@ -9824,6 +9824,134 @@ void TestNativePlacedArmLanes() {
     Check(!s.driver.settings.support_live && s.driver.mission.weapon_gate==slots::Gate::match,"the arm returns to ordinary gun policy");
 }
 
+// r1101 animtruth (partner_native_aim_truth): the Mother Base phantom aim. The remote holds RMB with a lethal
+// gun at Mother Base (stock KILLING_WEAPON): its body stays in stand_move (act 2) while its v5 group still says
+// Aiming (flags 0x25, fb1031). With the key the Arm's sample_strip carries HOLD|FIRE until the remote's act is an
+// aim act; the receiver logs partner_aim_truth, the sender (this copy's own HOLD run) partner_aim_local.
+void TestAnimTruthDriver() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    SetVisualFire(s);
+    s.driver.settings.naim_intent = mgscoop::PartnerNativeAimIntent::state;
+    s.driver.settings.naim_truth = true;
+    s.fake.gun.fields.equip = 46;
+    s.fake.gun.fields.cap = 9;
+    s.fake.gun.fields.mag = 3;
+    s.fake.gun.mode_cur = 7;
+    s.fake.equip_types[46] = 4;
+    s.fake.latest.packet.version = 5;
+    s.fake.latest.packet.xflags = pi::XFlag::Equip | pi::XFlag::Mag;
+    s.fake.latest.packet.gun_equip = 46;
+    s.fake.latest.packet.mag = 20;
+    s.fake.latest.packet.mag_cap = 30;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Aiming | pi::GunFlag::AimDir;  // 0x25
+    s.fake.latest.packet.gun_mode = 0;
+    s.fake.latest.packet.inv_slot = 1;
+    s.fake.latest.packet.held = 0x8u;  // RMB
+    s.fake.sample.anim_valid = true;
+    s.fake.sample.act = 2;              // stand_move: the gun never came out
+    s.fake.stats.native.trig_zero_windows = 40;  // a process total from earlier strips (review animtruth-4)
+    Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "animtruth: active with visual fire");
+    s.N();
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0x18u &&
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::loco,
+          "Mother Base: the remote's raw HOLD and FIRE are stripped from its sample (no phantom aim, no visual shot)");
+    Check(!s.fake.arms.back().truth_triggers && !s.fake.arms.back().config.strip_triggers,
+          "review animtruth-1: the main key alone never zeroes a trigger (partner_native_aim_truth_triggers is off unless named)");
+    s.driver.settings.naim_truth_triggers = true;
+    s.N();
+    Check(s.fake.arms.back().truth_triggers && s.fake.arms.back().config.strip_triggers &&
+              (s.fake.arms.back().config.sample_strip & 0x18u) == 0x18u,
+          "with _triggers the Arm asks Compose and the hook to zero a stripped trigger (finder M8)");
+    s.driver.settings.naim_truth_triggers = false;
+    Check(s.fake.Containing("partner_aim_truth=loco; remote_act=2; slot=1; gate=match; pad_hold=1; fire=0; flags=0x25; strip=0x18;") == 1,
+          "the receiver logs the gate: partner_aim_truth=loco with the act, slot, gate, pad and flags");
+    Check(!s.driver.mission.hold_stripped && !(s.fake.arms.back().strip & 0x4u),
+          "the truth strip is no weapon strip: DASH still passes (the real body may sprint)");
+    for (int i = 0; i < 5; ++i) s.N();
+    Check(s.fake.Containing("partner_aim_truth=loco;") == 1, "one line per verdict change");
+    s.fake.stats.native.trig_zero_windows = 47;  // 7 windows zeroed a trigger during this run
+    // The remote releases RMB: one hold_run line, refused for its whole length.
+    s.fake.latest.packet.held = 0;
+    s.N();
+    Check(s.fake.Containing("partner_aim_truth=hold_run; result=refused; refused_ms=") == 1 &&
+              s.fake.Containing("; admitted_ms=0; ") == 1 && s.fake.Containing("first_act=2; last_act=2; flags=0x25; runs=1") == 1,
+          "the receiver logs the refused HOLD run (Mother Base)");
+    Check(s.fake.Containing("; runs=1; trig_zeroed=7\r\n") == 1,
+          "review animtruth-4: trig_zeroed counts this run's zeroed windows, not the process total");
+    // A holstered gun coming out for real: InHand in locomotion passes (the puppet draws with the real body).
+    s.fake.latest.packet.held = 0x8u;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::AimDir;  // 0x27
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::draw,
+          "InHand in locomotion: the draw passes");
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Aiming | pi::GunFlag::AimDir;
+    // The remote's body really aims: the act arrives, the strip lifts at once.
+    s.fake.sample.act = 11;
+    s.N();
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::aim,
+          "a real aim: the act confirms, HOLD passes");
+    // The draw line was one tick ago: the aim line coalesces into the next line (kAimIntentLineMs spacing).
+    s.N(120);
+    Check(s.fake.Containing("partner_aim_truth=aim; remote_act=11;") == 1, "a real aim: logged (after the line spacing)");
+    // Knocked down with RMB still held (cure 76): stripped.
+    s.N(400);
+    s.fake.sample.act = 76;
+    s.N();
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0x18u && s.fake.Containing("partner_aim_truth=act; remote_act=76;") == 1,
+          "a body-owned act strips HOLD and FIRE");
+    // The key off: nothing stripped, the old raw path.
+    s.N(400);
+    s.fake.sample.act = 2;
+    s.driver.settings.naim_truth = false;
+    s.N();
+    Check((s.fake.arms.back().config.sample_strip & 0x18u) == 0 &&
+              s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::off && !s.fake.arms.back().truth_triggers,
+          "partner_native_aim_truth=0: the raw pad HOLD passes as before (and no trigger strip)");
+    // The sender's half: this copy's own HOLD run with its body in stand_idle (Mother Base).
+    s.driver.settings.naim_truth = true;
+    s.fake.anim_ok = true;
+    s.fake.anim.act[0] = 1;
+    s.fake.pad.src_w[0] = 0x8u;
+    for (int i = 0; i < 12; ++i) s.N(33);
+    Check(s.fake.Containing("partner_aim_local=no_aim; act=1; held_ms=") == 1,
+          "the sender logs no_aim once for a HOLD run its body never aimed in");
+    s.fake.pad.src_w[0] = 0;
+    s.N();
+    s.fake.pad.src_w[0] = 0x8u;
+    s.N();
+    s.fake.anim.act[0] = 11;
+    s.N();
+    Check(s.fake.Containing("partner_aim_local=aimed; act=11; after_ms=") == 1, "a real local aim: aimed with after_ms");
+    s.fake.pad.src_w[0] = 0;
+    s.fake.anim.act[0] = 1;
+    s.N();
+    // Finder evidence M5: the remote boxed (77), body 1 not (the box refused): its EVADE leaves the sample.
+    s.fake.latest.packet.held = 0;
+    s.fake.sample.act = 77;
+    s.fake.anim.act[1] = 1;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) == 0 && s.fake.Containing("partner_aim_truth=box;") == 0,
+          "review animtruth-1: the main key alone never strips the box evade (partner_native_aim_truth_box is off unless named)");
+    s.driver.settings.naim_truth_box = true;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) != 0 && s.fake.Containing("partner_aim_truth=box; on=1; remote_act=77; body_act=1;") == 1,
+          "animtruth: the remote's box evade never reaches an unboxed body 1 (no dive in the open), logged");
+    s.fake.anim.act[1] = 77;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) == 0 && s.fake.Containing("partner_aim_truth=box; on=0; remote_act=77; body_act=77;") == 1,
+          "body 1 boxed too: its box evade passes");
+    s.fake.anim.act[1] = 1;
+    s.driver.settings.naim_truth = false;
+    s.N(200);
+    Check((s.fake.arms.back().config.sample_strip & 0x40000u) == 0, "key off: EVADE passes as before");
+    s.fake.sample.act = 1;
+    s.N();
+}
+
 void TestAnimRound1Weapons() {
     namespace pn = mgscoop::partner_native;
     namespace pi = mgscoop::partner_input;
@@ -10000,6 +10128,69 @@ void TestRound1Actions() {
         s.fake.sample.flags = 0;
         for (int i = 0; i < 5; ++i) s.N();
         Check(s.fake.Count("partner_recon=stance_fix; remote=1; body=2; via=tap;") == 1, "native stance: fixed once the aim ended");
+    }
+    {   // r1101 animtruth (finder M6): the Lua Reloading bit is the R INPUT (R is also CARRY: a pickup, or a
+        // press the game refused); with a live v5 group (whose Reloading is the gun record's real mode 11/12) and
+        // partner_native_aim_truth, it no longer holds the stance fix. Key off: the old hold (stance_wait gun).
+        // Review animtruth-1: the change is partner_native_aim_truth_stance (off unless named); the main key alone
+        // keeps the old hold. key: 0 off, 1 the main key, 2 the main key and _stance.
+        for (int key = 0; key < 3; ++key) {
+            NativeSession s;
+            idle(s);
+            s.driver.settings.ngun = true;
+            s.driver.settings.naim_truth = key != 0;
+            s.driver.settings.naim_truth_stance = key == 2;
+            s.fake.latest.packet.version = 5;
+            s.fake.latest.packet.gun_flags = mgscoop::partner_input::GunFlag::Valid;
+            s.fake.latest.packet.inv_slot = 0;
+            Check(s.Until(pn::Mode::active, 9000), "lua reload stance: active");
+            for (int i = 0; i < 40; ++i) s.N();
+            s.fake.lines.clear();
+            s.fake.sample.flags = mgscoop::sync::ActionFlag::Reloading;  // R held, no reload (v5 mode 0)
+            s.fake.sample.anim_stance = 2;
+            for (int i = 0; i < 40; ++i) s.N();
+            if (key == 2) {
+                Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1;") == 1 && s.fake.Count("reason=gun") == 0,
+                      "animtruth _stance: an R press with no real reload (v5 live) never holds the stance fix");
+            } else {
+                Check(s.fake.Count("partner_recon=stance_fix;") == 0 && s.fake.Count("partner_recon=stance_wait; reason=gun;") == 1,
+                      "key off or the main key alone: the Lua Reloading bit still holds the fix (unchanged)");
+            }
+        }
+    }
+    {   // Review animtruth-3: a refused aim (Mother Base: the remote holds RMB with a lethal gun, v5 flags 0x25 and
+        // the Lua Aiming bit, its body stays in stand_move, verdict loco) never holds the stance fix with
+        // partner_native_aim_truth_stance; key off or the main key alone: the old hold (stance_wait reason=gun).
+        // Aim parity follows the verdict with the main key (loco: the remote is not aiming, like body 1).
+        for (int key = 0; key < 3; ++key) {
+            NativeSession s;
+            idle(s);
+            s.driver.settings.ngun = true;
+            s.driver.settings.naim_truth = key != 0;
+            s.driver.settings.naim_truth_stance = key == 2;
+            s.fake.latest.packet.version = 5;
+            s.fake.latest.packet.gun_flags = mgscoop::partner_input::GunFlag::Valid | mgscoop::partner_input::GunFlag::Aiming |
+                                             mgscoop::partner_input::GunFlag::AimDir;  // 0x25
+            s.fake.latest.packet.inv_slot = 1;
+            s.fake.sample.act = 2;
+            Check(s.Until(pn::Mode::active, 9000), "refused-aim stance: active");
+            for (int i = 0; i < 40; ++i) s.N();
+            s.fake.lines.clear();
+            s.fake.sample.flags = mgscoop::sync::ActionFlag::Aiming;  // RMB held: the Lua Aiming input bit
+            s.fake.sample.anim_stance = 2;
+            for (int i = 0; i < 40; ++i) s.N();
+            Check(key == 0 || s.driver.mission.truth_verdict == mgscoop::partner_slots::TruthVerdict::loco,
+                  "refused-aim stance: the verdict is loco with the key");
+            if (key == 2) {
+                Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1;") == 1 && s.fake.Count("reason=gun") == 0,
+                      "animtruth _stance: a refused aim's v5 and Lua Aiming bits never hold the stance fix");
+            } else {
+                Check(s.fake.Count("partner_recon=stance_fix;") == 0 && s.fake.Count("partner_recon=stance_wait; reason=gun;") == 1,
+                      "key off or the main key alone: a refused aim still holds the fix (unchanged)");
+            }
+            Check(s.driver.mission.aim_match == (key != 0),
+                  "aim parity: with the key the remote's aim follows the verdict (loco: not aiming), key off the pad");
+        }
     }
     {   // partner_native_stance_fast=0: the previous 2 s rule.
         NativeSession s;
@@ -10698,6 +10889,7 @@ int main() {
     TestMovementRecovery();
     TestNativeReloadSwitch();
     TestAnimRound1Weapons();
+    TestAnimTruthDriver();
     TestNativeThrownSupport();
     TestNativePlacedArmLanes();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
