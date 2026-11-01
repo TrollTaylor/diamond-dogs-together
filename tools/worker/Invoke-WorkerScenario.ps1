@@ -156,7 +156,7 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    partner_seat_aim=0|1, the read-only back-seat aim census (the local player in a vehicle
                                    ride act, the partner body in the seat flow; docs/native-puppet.md "Seat aim"; lab only, default off);
                                    partner_seat_shot=0|1, M7 S1: the seated passenger's bullets start past the ridden vehicle (default on with the gun profile);
-                                   partner_melee=0|1, a local CQC strike that reaches the partner knocks them down on their copy (lab and play; default off until a run shows it);
+                                   partner_melee=0|1, a local CQC strike that reaches the partner knocks them down on their copy (lab and play; default follows the gun profile, run 4bc7b732);
                                    partner_seat_gun=0|1, M7: the remote back-seat passenger's raised gun on the seated partner
                                    body and this copy's seated aim direction (docs/native-puppet.md "Seat gun"; lab and play,
                                    default off);
