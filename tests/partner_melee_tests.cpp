@@ -253,10 +253,182 @@ void TestFormat() {
     const auto o = f.Press();
     char line[256]{};
     Check(pm::FormatStrike(f.s, 113, o, true, line, sizeof(line)) > 0, "the strike line formats");
-    Check(std::string(line) == "partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1\r\n",
-          "the strike line");
+    Check(std::string(line) == "partner_melee=strike; act=113; verdict=land; queued=1; dist_cm=100; dy_cm=0; angle_deg=0; strikes=1; lands=1; "
+                               "hold_ms=-1; cqc_ms=-1; end_ms=-1; targets=0\r\n",
+          "the strike line (melee-target: hold_ms, cqc_ms, end_ms, targets)");
     char tiny[8]{};
     Check(pm::FormatStrike(f.s, 113, o, true, tiny, sizeof(tiny)) == 0 && tiny[0] == 0, "a short buffer formats nothing");
+}
+
+// melee-target: what the stock strike is aimed at. With the st= census known, a strike in reach is held: CQC_CONTINUOUS
+// (the stock CQC acting on a soldier or staff member) during the press means no hit; without it the press lands once,
+// kTargetGraceMs after its 113 ends (its 114 edge).
+struct Held : Fixture {
+    unsigned resolved_queue = 0;
+    Held() { in.status_valid = true; }
+    // One tick: Resolve, then Step (the driver's order). Returns the Resolve decision; `edge` gets Step's verdict.
+    pm::Out Tick(std::uint16_t act, std::uint64_t dt, pm::Out* edge = nullptr) {
+        in.now_ms += dt;
+        in.act = act;
+        const pm::Out r = pm::Resolve(s, in);
+        if (r.queue) { ++queued; ++resolved_queue; }
+        const pm::Out o = pm::Step(s, in);
+        if (o.queue) ++queued;
+        if (edge) *edge = o;
+        return r;
+    }
+};
+
+void TestTarget() {
+    {
+        // A press at the partner alone (no stock target): held at its 113, lands once kTargetGraceMs after its 114 edge.
+        Held f;
+        pm::Out e{};
+        Check(f.Tick(1, 16, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::none, "standing: nothing");
+        Check(f.Tick(113, 16, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::hold && !e.queue,
+              "a press at the partner in reach with the census known is held (no hit yet)");
+        Check(e.act == 113 && e.dist_cm == 100 && e.angle_deg == 0, "the held edge's act and geometry");
+        for (int i = 0; i < 13; ++i) Check(f.Tick(113, 18, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::none, "held through the 113");
+        Check(f.Tick(114, 18, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::hold && !e.queue,
+              "its 114 edge: still the same held press, no second hold");
+        pm::Out r{};
+        unsigned ticks = 0;
+        do { r = f.Tick(114, 16, &e); ++ticks; } while (r.verdict == pm::Verdict::none && ticks < 40);
+        Check(r.verdict == pm::Verdict::land && r.queue && r.act == 113 && r.dist_cm == 100, "no stock target: the held press lands once");
+        Check(r.end_ms >= static_cast<std::int32_t>(pm::kTargetGraceMs) && r.end_ms < static_cast<std::int32_t>(pm::kTargetGraceMs) + 20,
+              "it lands kTargetGraceMs after the press's 113 ends (the 114 edge)");
+        Check(r.hold_ms > r.end_ms && r.cqc_ms == -1, "hold_ms counts from the held edge; no CQC_CONTINUOUS");
+        for (int i = 0; i < 30; ++i) Check(f.Tick(114, 18, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::none, "held 114: nothing more");
+        Check(f.queued == 1 && f.resolved_queue == 1 && f.s.lands == 1 && f.s.targets == 0, "exactly one hit for the press at the partner");
+        f.Tick(1, 100);
+        Check(f.Tick(113, 100, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::repeat && !e.queue,
+              "a second press inside 1.5 s of that land: repeat, not held");
+    }
+    {
+        // A press aimed at a soldier (fb1031 Mother Base: CQC_CONTINUOUS right after the press's 114): no hit at all.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(e.verdict == pm::Verdict::hold, "a press with the partner in reach is held");
+        for (int i = 0; i < 13; ++i) f.Tick(113, 18);
+        Check(f.Tick(114, 18, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::hold, "its 114 edge, no bit yet");
+        f.in.cqc = true;
+        const pm::Out r = f.Tick(114, 16, &e);
+        Check(r.verdict == pm::Verdict::target && !r.queue && r.act == 113, "CQC_CONTINUOUS after the 114: the press was aimed at a soldier, no hit");
+        Check(r.cqc_ms == 268 && r.end_ms == 16 && r.hold_ms == 268, "the target line's timings");
+        for (int i = 0; i < 40; ++i) Check(f.Tick(114, 18, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::none, "nothing more for that press");
+        Check(f.queued == 0 && f.s.lands == 0 && f.s.targets == 1, "a press at a soldier never knocks the partner down");
+    }
+    {
+        // The bit during the 113: decided at once; the press's 114 (in reach) is no hit either.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(e.verdict == pm::Verdict::hold, "held");
+        f.in.cqc = true;
+        Check(f.Tick(113, 18).verdict == pm::Verdict::target, "CQC_CONTINUOUS during the 113: target at once");
+        Check(f.Tick(114, 200, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::target && !e.queue,
+              "the blocked press's 114 in reach: verdict=target, no hit");
+        Check(f.queued == 0 && f.s.targets == 1, "no hit");
+    }
+    {
+        // The 113 out of reach, its 114 in reach and held, then the bit: no hit.
+        Held f; f.Partner(0.f, 0.f, 1.7f);
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(e.verdict == pm::Verdict::range, "the 113 out of reach");
+        f.Partner(0.f, 0.f, 0.9f);
+        f.Tick(114, 219, &e);
+        Check(e.verdict == pm::Verdict::hold && e.act == 114 && e.dist_cm == 90, "its 114 in reach is held");
+        f.in.cqc = true;
+        const pm::Out r = f.Tick(114, 16);
+        Check(r.verdict == pm::Verdict::target && r.act == 114 && f.queued == 0, "then CQC_CONTINUOUS: no hit");
+    }
+    {
+        // The bit already set at the press's 113 edge (still on from a strike on a soldier): no hold, no hit.
+        Held f;
+        pm::Out e{};
+        f.in.cqc = true;
+        f.Tick(1, 16);
+        Check(f.Tick(113, 16, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::target && !e.queue,
+              "CQC_CONTINUOUS at the edge: target at once");
+        f.in.cqc = false;
+        Check(f.Tick(114, 219, &e).verdict == pm::Verdict::none && e.verdict == pm::Verdict::target && f.queued == 0, "its 114: target too");
+    }
+    {
+        // No 114 after the 113 (back to stand): lands kTargetGraceMs after the 113 ends.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(f.Tick(1, 200).verdict == pm::Verdict::none, "the 113 ends without a 114");
+        Check(f.Tick(1, pm::kTargetGraceMs - 20).verdict == pm::Verdict::none, "before the grace: waiting");
+        const pm::Out r = f.Tick(1, 20);
+        Check(r.verdict == pm::Verdict::land && r.queue && f.queued == 1, "after the grace: one hit");
+    }
+    {
+        // A 113 that never ends: lands at the cap.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(f.Tick(113, pm::kHoldCapMs - 10).verdict == pm::Verdict::none, "before the cap: waiting");
+        const pm::Out r = f.Tick(113, 10);
+        Check(r.verdict == pm::Verdict::land && r.queue && r.end_ms == -1 && f.queued == 1, "at the cap: one hit");
+    }
+    {
+        // No st= census (an old Lua): no signal, the press lands at its edge as before.
+        Held f; f.in.status_valid = false;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        Check(e.verdict == pm::Verdict::land && e.queue && f.queued == 1, "no census: immediate land");
+    }
+    {
+        // The key turned off, or the local read lost, while held: no hit.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        f.in.enabled = false;
+        Check(f.Tick(113, 16).verdict == pm::Verdict::off && f.queued == 0, "key off while held: off, no hit");
+        Held g;
+        g.Tick(1, 16);
+        g.Tick(113, 16, &e);
+        g.in.local_valid = false;
+        Check(g.Tick(113, 16).verdict == pm::Verdict::no_local && g.queued == 0, "no local read while held: no hit");
+    }
+    {
+        // A new press's 113 edge while the last one is held: the held press is decided first (lands), the new one is a repeat.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        f.Tick(114, 100, &e);
+        const pm::Out r = f.Tick(113, 100, &e);
+        Check(r.verdict == pm::Verdict::land && r.queue && e.verdict == pm::Verdict::repeat && !e.queue && f.queued == 1,
+              "a quick second press: the first lands, the second is no second hit");
+    }
+    {
+        // The press line carries the decision timings.
+        Held f;
+        pm::Out e{};
+        f.Tick(1, 16);
+        f.Tick(113, 16, &e);
+        f.Tick(114, 234, &e);
+        f.in.cqc = true;
+        const pm::Out r = f.Tick(114, 16);
+        char line[256]{};
+        Check(pm::FormatStrike(f.s, r.act, r, false, line, sizeof(line)) > 0, "the target line formats");
+        Check(std::string(line) == "partner_melee=strike; act=113; verdict=target; queued=0; dist_cm=100; dy_cm=0; angle_deg=0; strikes=2; lands=0; "
+                                   "hold_ms=250; cqc_ms=250; end_ms=16; targets=1\r\n",
+              "the target line");
+        Check(std::strcmp(pm::VerdictName(pm::Verdict::hold), "hold") == 0 && std::strcmp(pm::VerdictName(pm::Verdict::target), "target") == 0,
+              "hold and target verdict names");
+    }
 }
 
 } // namespace
@@ -269,6 +441,7 @@ int main() {
     TestPartnerState();
     TestMisses();
     TestFormat();
+    TestTarget();
     std::printf("%u partner melee checks passed: one press (its 113 or the 114 out of it) in reach lands exactly one hit, "
                 "a press inside 1.5 s of a land is no second hit, a 114 from any other act is a soldier takedown, a partner in a CQC "
                 "hold / box / ladder / ledge or prone is not struck, reach 1.6 m, height 1 m, the 60 degree cone on the body facing, "
