@@ -209,7 +209,9 @@ inline unsigned PreloadCover(const std::uint16_t (&remote)[3], const std::uint16
 // at the next load alike, so no load and no note), or its preloaded ids cover
 // every non-zero remote base. Only an allocation WITHOUT their manifest
 // (refused link_not_connected, no_manifest, predicted) leaves the late path.
-inline bool LateGearCovered(bool, const std::uint16_t (&remote)[3], const std::uint16_t* ids, unsigned count) noexcept {
+inline bool LateGearCovered(bool allocation_had_manifest, const std::uint16_t (&remote)[3], const std::uint16_t* ids,
+                            unsigned count) noexcept {
+    if(allocation_had_manifest) return true;
     unsigned wanted=0;
     const unsigned covered=PreloadCover(remote,ids,count,wanted);
     return wanted && covered==wanted;

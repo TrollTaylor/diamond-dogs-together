@@ -196,10 +196,13 @@ mgscoop::equipment_preload_contract::Snapshot equip_midload_after;
 mgscoop::equipment_stock_probe::LateGear equip_late_gear=mgscoop::equipment_stock_probe::LateGear::none;
 mgscoop::equipment_stock_probe::LateGear equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none;
 std::uint32_t equip_residency_gen=0;
+// This allocation's preload query had the partner's manifest (source remote): no late path (LateGearCovered).
+bool equip_alloc_manifest=false;
 // Every allocation (and the mission's end) starts the late-gear state over.
 void ResetLateGear() noexcept {
     equip_midload.End(); equip_midload_before={}; equip_midload_after={};
     equip_late_gear=equip_late_gear_logged=mgscoop::equipment_stock_probe::LateGear::none; equip_residency_gen=0;
+    equip_alloc_manifest=false;
 }
 std::uint64_t equipment_observation_requested_ms = 0;
 unsigned short equipment_observation_mission = 0;
@@ -2096,8 +2099,8 @@ void ObserveLateGear(const mgscoop::equipment_stock_writer::GeneralContext& cont
     unsigned wanted=0;
     const unsigned count=partner_driver.preload_count<=3 ? partner_driver.preload_count : 3u;
     const unsigned covered=sp::PreloadCover(remote,partner_driver.preload_ids,count,wanted);
-    late.covered=equip_preload_authorization.QueuedFor(partner_mission) && partner_driver.preload_mission==partner_mission &&
-        wanted && covered==wanted;
+    late.covered=sp::LateGearCovered(equip_alloc_manifest,remote,partner_driver.preload_mission==partner_mission ?
+        partner_driver.preload_ids : nullptr,count);
     for(const auto& slot:partner_driver.equip_status.slots)
         late.missing=late.missing || ((slot.state==w::SlotState::backoff || slot.state==w::SlotState::refused) &&
             w::CacheReadinessReason(slot.reason));
@@ -3946,6 +3949,7 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
         StringCchCopyA(partner_driver.preload_verdict,sizeof(partner_driver.preload_verdict),reason ? "refused" : "authorized");
         StringCchCopyA(partner_driver.preload_reason,sizeof(partner_driver.preload_reason),reason ? reason : "ok");
         partner_driver.preload_source=static_cast<std::uint8_t>(source);
+        equip_alloc_manifest=source==sp::PreloadSource::remote;
         partner_driver.preload_late_watch=enabled && source!=sp::PreloadSource::remote;
         char actions[96]{};
         for(unsigned i=0;i<candidate.item_count && !reason;++i) {
