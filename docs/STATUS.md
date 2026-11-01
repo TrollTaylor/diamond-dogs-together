@@ -39,6 +39,13 @@
   friend_package_tests_2 play defaults it off), `cd9639e9` green (the parse, `ResolveWeaponDefaults`, bit 16,
   world_link mask 31, `world_sync.lua`, `VR.liftOn()`, LabCommon, the worker allow-lists and help, the stale supply
   comment), then README, protocol section 25 and this entry.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `cd9639e9`. Full
+  `tools/build.ps1 -Jobs 4` at `86e79304` and again at this entry's commit: CTest 347/347; every generator `--check`
+  passes (partner 858 / 213, soldier_warp 19 / 10, carry_info / sleep_plugin with `--output`, carry_plugin,
+  carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller
+  with `--executable`); native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh
+  tree. `world_vehicle_rules.lua` 30478, `world_sync.lua` 23003 LF bytes. No game run this round. Nothing pushed,
+  tagged or released.
 
 ## November 1, 2026: r1101 Prove - the partner's steering pose on by default (`partner_ride_steer` follows the gun profile in lab and play; hidden runs `ba1a041a`, `bfd46ce5`, `4c098120`; `wp/integ-1101`, local only)
 
