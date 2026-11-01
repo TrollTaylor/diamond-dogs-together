@@ -4,6 +4,17 @@ local path = assert(arg[1], "debug_arms.lua path")
 local f = assert(io.open(path, "rb")); local src = f:read("*a"); f:close()
 local checks = 0
 local function check(v, why) checks = checks + 1; if not v then error(checks .. ": " .. why, 2) end end
+if arg[2] then
+  local sf = assert(io.open(arg[2], "rb")); local scen = sf:read("*a"); sf:close()
+  local waits = 0
+  for line in scen:gmatch("[^\r\n]+") do
+    if line:match("^waitlog ") and (line:find("event=arms", 1, true) or line:find("event=friendly_fire", 1, true)) then
+      waits = waits + 1
+      check(not line:find(";[^ ]"), "scenario waitlog uses the native log spacing ('; '): " .. line)
+    end
+  end
+  check(waits >= 7, "the scenario waits on the arms and friendly fire lines")
+end
 check(#src:gsub("\r\n", "\n") <= 16000 and #src:gsub("\r?\n", "\r\n") <= 16000, "embedded fragment fits both checkout modes")
 local SLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2}
 -- The 30010 census of the 0.14.5 session: protected stock guns (id, type) the game loaded.
@@ -62,7 +73,8 @@ local function F(host, opts)
   local W = {active = true, paired = c.paired, host = host, OP = {FRIENDLY_HIT = 41}, handlers = {}}
   W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, ...}; return c.txFail ~= true end
   W.note = function(code, a, b) c.notes[#c.notes + 1] = {code, a, b}; return true end
-  W.log = function(s) c.logs[#c.logs + 1] = s end
+  -- The real log path: world_sync.lua W.log sanitiser, then native FormatLogLine turns each ";" into "; ".
+  W.log = function(s) c.logs[#c.logs + 1] = (tostring(s):gsub("[^%w_=:,.;%-]", "_"):gsub(";", "; ")) end
   env.e = {MgsCoopDebug = D, MgsCoopWorld = W}
   setfenv(assert(loadstring(src)), env)()
   c.env, c.D, c.W, c.R = env, D, W, D.arms

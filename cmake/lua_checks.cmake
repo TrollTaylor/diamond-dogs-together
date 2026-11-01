@@ -152,7 +152,8 @@ mgs_add_lua_check(debug_boot_lua_check "${_mgs_coop}/debug_boot.lua")
 # Game rules (docs/debug-menu.md "Game rules"): Wormhole Fulton off/on and weapons at Mother Base.
 mgs_add_lua_check(debug_rules_lua_check "${_mgs_coop}/debug_rules.lua")
 # Debug menu arms (docs/debug-menu.md "Give weapon" and "Friendly fire"): the picker and the host's switch.
-mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua")
+mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/arms-give-ff-play.txt")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # Join-fix phase 2 track C: the save report, travel lock, warnings and replay hold
 # (spliced right after world_follow.lua; loaded after the seed and follow chunks).
