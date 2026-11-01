@@ -108,7 +108,7 @@ inline constexpr std::uint8_t rules = 0x3E;
 inline constexpr std::uint8_t arms = 0x3F;
 // Debug menu Spawn vehicle (docs/world-sync-protocol.md section 27, lua/coop/debug_vspawn.lua): VSPAWN (68), both
 // directions, control queue, paired: the guest's ask and the host's spawn (class, authored locator number, pose) that
-// both copies apply. Sent only with the lab key debug_vspawn (off unless named). 0x40..0x43 and 0x45..0x46 belong to
+// both copies apply. Sent only with the lab key debug_vspawn (on with the gun profile). 0x40..0x43 and 0x45..0x46 belong to
 // the other 10-31 / 11-01 tracks.
 inline constexpr std::uint8_t vspawn = 0x44;
 // Supply drops synced (r1101, docs/world-sync-protocol.md section 26): SUPPLY (69), both directions, world queue, paired:

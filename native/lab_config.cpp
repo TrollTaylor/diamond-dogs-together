@@ -320,9 +320,10 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.fulton_look_given = true;
         if (!ok) result.fulton_look = false;
     }
-    // Debug menu Spawn vehicle (lab and play, off unless named): an invalid value counts as named, off.
+    // Debug menu Spawn vehicle (lab and play, follows the gun profile unless named): an invalid value counts as named, off.
     else if (Equals(key, "debug_vspawn")) {
         ok = ParseBool(value, result.debug_vspawn);
+        result.debug_vspawn_given = true;
         if (!ok) result.debug_vspawn = false;
     }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
@@ -1856,6 +1857,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.fulton_sync_given) c.fulton_sync = false;
     if (!c.fulton_early_given) c.fulton_early = false;
     if (!c.fulton_look_given) c.fulton_look = false;
+    // F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): follows the gun profile in lab and play since the r1101 Prove
+    // phase (hidden play runs 65b4005c and e09fcf72, both copies: the host's jeep and the guest's truck on both screens,
+    // the ride, and both riders' presses refused as busy); a named 0 opts out.
+    if (!c.debug_vspawn_given) c.debug_vspawn = gun;
     // G1 partner HUD hints: off unless named (no hidden-worker FRAME of the
     // viewer's HUD without body 1's ladder hint yet); play forces it off below.
     if (!c.partner_native_ui_filter_given) c.partner_native_ui_filter = false;

@@ -1,5 +1,5 @@
 -- Spawn vehicle, synced (docs/debug-menu.md "Spawn vehicle", docs/world-sync-protocol.md section 27 VSPAWN 0x44, note
--- 20; lab key debug_vspawn, off unless named): vspawn lv|trc brings one of the area's authored vehicles of that class
+-- 20; lab key debug_vspawn, on with the gun profile): vspawn lv|trc brings one of the area's authored vehicles of that class
 -- 6 m in front of whoever presses, on both screens (the host picks; a wreck is re-created by Respawn{name} first).
 do
  local D, W = e.MgsCoopDebug, e.MgsCoopWorld

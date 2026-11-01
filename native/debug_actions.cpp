@@ -171,13 +171,14 @@ constexpr ActionDef kActions[] = {
     {"rules_mb_weapons_off", C::world, "Stock Mother Base rules", "mb_weapons 0", "rules mother base mb weapons stock",
      "Mother Base back to stock for both players: no lethal weapons.", H | S},
     // Spawn vehicle (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua): either player; the host picks the
-    // vehicle and both copies get it (VSPAWN 0x44). Lab key debug_vspawn (off unless named): off, refused in plain words.
+    // vehicle and both copies get it (VSPAWN 0x44). Run-proven on both copies (hidden play runs 65b4005c, e09fcf72); lab
+    // key debug_vspawn follows the gun profile in lab and play; a named 0 turns it off: refused in plain words.
     {"vspawn_lv", C::world, "Spawn jeep", "vspawn lv", "vehicle spawn jeep car light vehicle drive bring",
      "Brings one of this area's jeeps 6 m in front of you, facing your way, on both screens. Afghanistan and Africa free "
-     "roam only. The guest's press asks the host.", S | U},
+     "roam only. The guest's press asks the host.", S},
     {"vspawn_trc", C::world, "Spawn truck", "vspawn trc", "vehicle spawn truck lorry drive bring",
      "Brings one of this area's trucks 6 m in front of you, facing your way, on both screens. Afghanistan and Africa free "
-     "roam only. The guest's press asks the host.", S | U},
+     "roam only. The guest's press asks the host.", S},
     // Tools
     {"mission_status", C::tools, "Status", "status", "session guard readiness mission", "Reports mission, guard state and active toggles.", 0},
     {"tools_console", C::tools, "Send", "console text", "console command type", "Sends the console line as a text command.", P},

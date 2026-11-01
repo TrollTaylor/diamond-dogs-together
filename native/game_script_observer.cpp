@@ -5543,7 +5543,7 @@ bool SelectSupplyReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     return true;
 }
 // Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua, docs/debug-menu.md "Spawn vehicle"): MGS_COOP_VSPAWN_CFG_V1
-// answers the lab key debug_vspawn (1 on, 0 off; off unless named) while the debug menu is enabled, on the runtime
+// answers the lab key debug_vspawn (1 on, 0 off; on with the gun profile) while the debug menu is enabled, on the runtime
 // thread; otherwise nil (Lua reads it as off). No game read or call.
 bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char query[]="return 'MGS_COOP_VSPAWN_CFG_V1'";

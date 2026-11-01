@@ -69,7 +69,7 @@ local ok,msg=c:run("heal");check(ok and msg=="base:heal" and c.baseRuns==1,"the 
 check(c.env.e.OnUpdate()=="u","the update wrapper keeps the original's results")
 check(F({noPlayer=true}).D.vspawn==nil,"no player module: inert")
 ok,msg=c:run("vspawn","tank");check(not ok and msg:find("vspawn_args",1,true),"only lv and trc")
--- Key off (lab key debug_vspawn, off unless named): refused, a plain toast, nothing moved or sent.
+-- Key off (lab key debug_vspawn named 0; on by default with the gun profile): refused, a plain toast, nothing moved or sent.
 c=F({key=false});ok,msg=c:run("vspawn","lv")
 check(not ok and msg=="vspawn_refused;reason=off" and c:note(3,1) and #c.sets==0 and #c.tx==0,"key off: refused, note 20 a=3 b=1, nothing moved")
 -- Host press (30010, at 0,10,0 facing yaw 0): the farthest free light vehicle that is not an LRRP vehicle (veh_lv_0002
