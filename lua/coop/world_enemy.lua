@@ -20,7 +20,8 @@ do
 
         function E.reset()
             E.s = {pending = {}, queue = {}, qHead = 1, rb = {}, ledger = {}, lkeys = {}, lidx = 1, req = {}, out = {}, held = {},
-                attrib = {}, last = {}, lastByCp = {}, holdup = {}, fpend = {}, fmsg = {}, sweep = 0, seq = 0, sum = 0, count = 0, seen = 0, hostReq = {}}
+                attrib = {}, attribCls = {}, last = {}, lastByCp = {}, holdup = {}, fpend = {}, fmsg = {}, sweep = 0, seq = 0, sum = 0,
+                count = 0, seen = 0, hostReq = {}}
         end
         E.reset()
         W.startHooks[#W.startHooks + 1] = E.reset
@@ -64,7 +65,7 @@ do
             local e = W.ent[h]
             if kind == "Holdup" and e then
                 s.holdup[e.id] = true
-                s.attrib[h] = now
+                s.attrib[h], s.attribCls[h] = now, "local"
             elseif kind == "Conscious" and e then
                 s.holdup[e.id] = nil
             end
@@ -72,7 +73,7 @@ do
             if kind == "FultonInfo" or kind == "FultonFailed" then s.fpend[h] = nil end
             if mine and kind ~= "FultonFailed" then
                 if kind ~= "FultonInfo" then s.last[h] = now end
-                if kind ~= "Damage" then s.attrib[h] = now end
+                if kind ~= "Damage" then s.attrib[h], s.attribCls[h] = now, cls end
                 if e and e.cp then s.lastByCp[e.cp] = h end
             elseif cls == "none" and kind ~= "FultonInfo" and kind ~= "FultonFailed" and s.last[h] and now - s.last[h] <= 10000 then
                 s.attrib[h] = now
@@ -82,15 +83,16 @@ do
             -- The Neutralize that follows FultonInfo must not cut a fulton read short.
             if c and not (q and q.cause == 5 and c ~= 5 and now - q.at <= 20000) then
                 local attack = kind == "Dead" and type(attackId) == "number" and attackId >= 0 and attackId < 4294967296 and attackId or 0
-                s.pending[h] = {cause = c, at = now, attack = floor(attack)}
+                s.pending[h] = {cause = c, at = now, attack = floor(attack), cls = cls}
             end
         end
 
         function E.commit(h, st, actor, rid, cause, flags)
             local s, e = E.s, W.ent[h]
-            -- Mother Base staff (staffPlace): the host's own act on a standing staff member says where first.
-            if actor == 0 and e.committed == 0 and st ~= 0 and W.staffAnnounce and W.paired and W.eff >= 2 then
-                pcall(W.staffAnnounce, h)
+            -- Place first (Mother Base staff; every guard with enemy follow: world_place.lua W.placeAnnounce): the host's own
+            -- act on a standing guard says where he is first (a held-up or lying guard is never moved on the guest).
+            if actor == 0 and e.committed == 0 and st ~= 0 and W.placeAnnounce and W.paired and W.eff >= 2 then
+                pcall(W.placeAnnounce, h)
             end
             if e.ver == 0 then s.count = s.count + 1 end
             if e.ver < 65535 then e.ver, s.sum = e.ver + 1, (s.sum + 1) % 4294967296 end
@@ -119,8 +121,9 @@ do
             return true
         end
 
-        -- Apply rule (both PCs). `known` is the state of the highest ver seen.
-        function E.apply(h, st, ver, src)
+        -- Apply rule (both PCs). `known` is the state of the highest ver seen. x, z (mm, optional): where the sender's copy
+        -- stood (OUTCOME / REQ_OUTCOME), logged as d_m, the distance between the two copies when this one applies it.
+        function E.apply(h, st, ver, src, x, z)
             local e = W.ent[h]
             if e and (ver > e.kver or src == "resync" or src == "reject") then
                 if not W.host then
@@ -131,7 +134,14 @@ do
                 e.known, e.kver = st, ver
             end
             local q = E.s.queue
-            q[#q + 1] = {h, st, ver, src}
+            q[#q + 1] = {h, st, ver, src, x, z}
+        end
+        -- mm between this copy and (x, z), or nil (no wire position, or this copy unreadable).
+        function E.gap(e, x, z)
+            if type(x) ~= "number" or type(z) ~= "number" or (x == 0 and z == 0) then return nil end
+            local ok, ex, _, ez = pcall(E.pos, e.id)
+            if not ok or (ex == 0 and ez == 0) then return nil end
+            return math.sqrt((ex - x) ^ 2 + (ez - z) ^ 2)
         end
         function E.hold(h, st, ver, src, reason)
             local s = E.s
@@ -147,11 +157,12 @@ do
             L("event=ledger;ent=%.0f;op=hold;reason=%s;waited_ms=%d", h, reason, floor(W.now() - s.ledger[h].since))
             return "held"
         end
-        function E.done(h, st, ver, src, result, readback)
+        function E.done(h, st, ver, src, result, readback, d)
             local s, e = E.s, W.ent[h]
             W.stats.applies = W.stats.applies + 1
             if result == "noop" then W.stats.noops = W.stats.noops + 1 end
-            L("event=apply;ent=%.0f;state=%d;ver=%d;src=%s;result=%s;readback=%s", h, st, ver, src, result, tostring(readback))
+            L("event=apply;ent=%.0f;state=%d;ver=%d;src=%s;result=%s;readback=%s%s", h, st, ver, src, result, tostring(readback),
+                d and fmt(";d_m=%.1f", d / 1000) or "")
             if readback and e and RANK[readback] >= RANK[e.committed] and W.host then e.reached = true end
             local l = s.ledger[h]
             if l and result ~= "fail" then
@@ -159,16 +170,18 @@ do
                 L("event=ledger;ent=%.0f;op=applied;reason=%s;waited_ms=%d", h, l.reason, floor(W.now() - l.since))
             end
         end
-        function E.applyOne(h, st, ver, src, now)
+        function E.applyOne(h, st, ver, src, now, x, z)
             local s, e = E.s, W.ent[h]
             if not e then return E.hold(h, st, ver, src, "unknown") end
             if not W.w1 then return end
             if s.rb[h] then return "defer" end
             if not E.active(e.cp, h) then return E.hold(h, st, ver, src, "out_of_area") end
-            -- Mother Base staff (staffPlace): this copy is placed where the host's is first (world_place_guest.lua).
-            if st ~= 0 and src == "outcome" and W.staffHold and W.staffHold(h, now or W.now()) then return "defer" end
+            -- Place first (Mother Base staff; every guard with enemy follow): this copy is placed where the host's is first
+            -- (world_place_guest.lua W.placeHold).
+            if st ~= 0 and src == "outcome" and W.placeHold and W.placeHold(h, now or W.now()) then return "defer" end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
+            local d = E.gap(e, x, z)
             -- Mother Base (spareStaff): a partner never kills or removes a staff member in this copy's save (stock
             -- f30050 reserves TARGET_DEAD on any staff Dead or Dying): dying and dead land as a knockout; a Fulton
             -- disables the staff member for this mission load (TppEnemy.SetDisable: gone, no Fulton message).
@@ -183,7 +196,7 @@ do
                 s.holdup[e.id] = nil
                 if cur == 2 or cur == 3 then
                     W.api.send(e.id, {id = "RecoveryLife"})
-                    s.rb[h] = {st = 0, ver = ver, src = src, at = now}
+                    s.rb[h] = {st = 0, ver = ver, src = src, at = now, d = d}
                     return "sent"
                 else
                     result = "skip_backward"
@@ -202,15 +215,15 @@ do
                 -- r1101 fulton (W.fulton below): the lift in the Fultoner's look, visual only on this copy.
                 if W.fultonOn and W.fulton then pcall(W.fulton.before, 1, e.id, h) end
                 W.api.send(e.id, {id = "RequestForceFulton"})
-                s.rb[h] = {st = 6, ver = ver, src = src, at = now, next = now + 250}
+                s.rb[h] = {st = 6, ver = ver, src = src, at = now, next = now + 250, d = d}
                 return "sent"
             elseif RANK[cur] < RANK[st] and W.lifeConst[st] then
                 s.holdup[e.id] = nil
                 W.api.send(e.id, {id = "ChangeLifeState", state = W.lifeConst[st]})
-                s.rb[h] = {st = st, ver = ver, src = src, at = now}
+                s.rb[h] = {st = st, ver = ver, src = src, at = now, d = d}
                 return "sent"
             end
-            E.done(h, st, ver, src, result, cur)
+            E.done(h, st, ver, src, result, cur, d)
         end
         -- Life states: read from +200 ms, one retry at +1 s, failed at +2 s.
         -- FULTONED: IsRecovered or FULTON_RECOVERD (E.localState) until +20 s; one retry at
@@ -247,7 +260,7 @@ do
                 local ok = cur ~= nil and (r.st == 0 and cur == 0 or (r.st ~= 0 and RANK[cur] >= RANK[r.st]))
                 if ok or final then
                     s.rb[h] = nil
-                    E.done(h, r.st, r.ver, r.src, ok and "ok" or "fail", cur or E.localState(e))
+                    E.done(h, r.st, r.ver, r.src, ok and "ok" or "fail", cur or E.localState(e), r.d)
                     if not ok then E.hold(h, r.st, r.ver, r.src, "apply_failed") end
                 end
             end
@@ -264,8 +277,15 @@ do
                 local h = s.lkeys[s.lidx]
                 s.lidx, n = s.lidx + 1, n - 1
                 local l = s.ledger[h]
-                if l and (all or l.reason ~= "apply_failed") then E.applyOne(h, l.st, l.ver, l.src, now) end
+                if l and (all or l.reason ~= "apply_failed" or E.wake(l, now)) then E.applyOne(h, l.st, l.ver, l.src, now) end
             end
+        end
+        -- A wake-up (RecoveryLife) that failed is tried again every 5 s, at most 3 times, also outside allCp (fb1101 G6: a
+        -- Mother Base staff member stayed asleep on the guest after the host woke him).
+        function E.wake(l, now)
+            if l.st ~= 0 or (l.wakes or 0) >= 3 or now - (l.wakeAt or l.since) < 5000 then return false end
+            l.wakes, l.wakeAt = (l.wakes or 0) + 1, now
+            return true
         end
         function E.areaChanged()
             if W.w1 then E.recheck(W.now(), true) end
@@ -314,7 +334,12 @@ do
                         if st ~= nil and not (fw and st ~= 6) then
                             s.pending[h] = nil
                             if E.forward(h, st) then
-                                if E.attributed(h, p.at) then E.request(h, st, p.cause, p.attack, now)
+                                -- Attribution on the wire (REQ_OUTCOME v[8]): 0 this player, 1 its buddy; with enemy
+                                -- follow an unattributed change goes too (2 another attacker, 3 none) and the host judges it
+                                -- (world_outcome.lua E.hostReqs).
+                                local mine = E.attributed(h, p.at)
+                                local cls = mine and (s.attribCls[h] == "buddy" and 1 or 0) or (p.cls == "other" and 2 or 3)
+                                if mine or W.followOn == true then E.request(h, st, p.cause, p.attack, now, cls)
                                 else
                                     W.stats.div = W.stats.div + 1
                                     L("event=divergence;ent=%.0f;state=%d;why=not_attributed", h, st)
@@ -350,7 +375,7 @@ do
                 while n < 8 and s.qHead <= #q do
                     local a = q[s.qHead]
                     s.qHead, n = s.qHead + 1, n + 1
-                    if E.applyOne(a[1], a[2], a[3], a[4], now) == "defer" then later[#later + 1] = a end
+                    if E.applyOne(a[1], a[2], a[3], a[4], now, a[5], a[6]) == "defer" then later[#later + 1] = a end
                 end
                 if s.qHead > #q then s.queue, s.qHead = later, 1
                 else for _, a in ipairs(later) do q[#q + 1] = a end end

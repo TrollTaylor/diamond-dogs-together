@@ -186,6 +186,14 @@ do
                 end
             end
         end
+        function P.nearHost(e)
+            if W.followOn ~= true then return true end
+            local ok, x, _, z = pcall(W.enemy.pos, e.id)
+            local hx, hz = (W.get(vars, "playerPosX") or 0) * 1000, (W.get(vars, "playerPosZ") or 0) * 1000
+            local near = ok and (x ~= 0 or z ~= 0) and (x - hx) ^ 2 + (z - hz) ^ 2 <= 1600000000
+            if not near then W.log(fmt("event=phase_discovery;ent=%.0f;near=0", W.byId and W.byId[e.id] or 0)) end
+            return near
+        end
         function P.refresh(h)
             local c = W.cp[h]
             local raw = W.api.getPhase(c.name)
@@ -273,7 +281,9 @@ do
                             W.tx(OP.PHASE, h, cur, c.ver, 0, rid, 0)
                             W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=req;rid=%d", h, cur, c.ver, rid))
                         end
-                        if req == 3 and sh and sh > 0 and W.ent[sh] then
+                        -- Enemy follow (docs/world-sync-design.md 7.8): the guard that raised the guest's ALERT discovers the
+                        -- host only within 40 m of the host's own player (a host copy far away is not drawn to the host).
+                        if req == 3 and sh and sh > 0 and W.ent[sh] and P.nearHost(W.ent[sh]) then
                             pcall(W.api.send, W.ent[sh].id, {id = "SetDiscoveryPlayer"})
                         end
                         c.guestOwn, c.guestAt = max(c.guestOwn, req), now

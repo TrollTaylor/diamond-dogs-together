@@ -301,12 +301,15 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
     body = guest[start:guest.find('\n}\n', start)] if start >= 0 else ''
     for needle in ('world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', 'request.player[i] = snapshot.remote_pos[i]',
                    'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial',
-                   # Mother Base staff rule (docs/world-sync-design.md 7.7): play only through GuestAdmit
-                   # (mission 30050, corrections only), never the lab key alone.
-                   'sw::GuestAdmit(rule, staff)', 'grant.kind == mgscoop::world::place::correct'):
+                   # The Mother Base staff rule (docs/world-sync-design.md 7.7) and the enemy follow rule (7.8): play only
+                   # through GuestAdmit (corrections only; follow behind lab.ini soldier_follow, 30010/30020/30050), never
+                   # the lab key alone; their range from the nearer player, a follow target beyond 250 m from both refused.
+                   'sw::GuestAdmit(rule, rule_hit)', 'grant.kind == mgscoop::world::place::correct', 'labc.soldier_follow',
+                   'sw::NearerSquared(', 'refuse("far")'):
         if needle not in body.replace('\r\n', '\n'):
             failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
-    # Play (spawn_warp) admits only the spawn placement (kind 1): patrol/combat corrections (kind 3) stay lab only.
+    # Without the follow or staff rule, play (spawn_warp) admits only the spawn placement (kind 1): its patrol/combat
+    # corrections (kind 3) are refused (role).
     if 'labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp' not in body:
         failures.append('GuestWarpReceipt: play must refuse every grant but the spawn placement (kind 1)')
 

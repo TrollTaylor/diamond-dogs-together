@@ -63,8 +63,10 @@ constexpr OpSpec kOps[] = {
      {U32(), U16(1), I32(-10000000, 10000000), I32(-10000000, 10000000), I32(-10000000, 10000000), I32(-360000, 360000)}},
     {op::enemy_outcome, "ENEMY_OUTCOME", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 11, 0, 0, 25,
      {U32(), U8(1, 1), U8(0, 7), U16(1, kU16), U8(0, 15), U8(0, 2), U16(), U8(0, 3), I32(), I32(), I32()}},
+    // rid, ent, kind, state, seen ver, cause, attacker, attribution (enemy follow, docs/world-sync-design.md 7.8: 0 local,
+    // 1 buddy, 2 other, 3 none; the host judges 2 and 3 by the follow authority rules), xyz mm of the guest's copy.
     {op::req_outcome, "REQ_OUTCOME", 1, Dir::guest_to_host, Wire::reliable, 2, true, false, 11, 0, 0, 28,
-     {Rid(), U32(), U8(1, 1), U8(1, 7), U16(), U8(0, 15), U32(), U8(0, 1), I32(), I32(), I32()}},
+     {Rid(), U32(), U8(1, 1), U8(1, 7), U16(), U8(0, 15), U32(), U8(0, 3), I32(), I32(), I32()}},
     {op::phase, "PHASE", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 6, 0, 0, 11,
      {U32(), U8(0, 3), U16(1, kU16), U8(0, 0), U16(), U8(0, 1)}},
     {op::req_phase, "REQ_PHASE", 1, Dir::guest_to_host, Wire::reliable, 2, true, false, 8, 0, 0, 24,
@@ -80,10 +82,11 @@ constexpr OpSpec kOps[] = {
      {U32(0, 86399), U16(), U8(1, 4), U32(), U16()}},
     {op::weather, "WEATHER", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 0, 0, 7,
      {Weather(), U16(0, 600), U16(kU16, kU16), U8(255, 255), U8(1, 3)}},
-    // Spawn sync (docs/debug-menu.md): seq, ent, kind, x/y/z mm, yaw mrad, flags, route hash, host GameObjectId.
+    // Spawn sync (docs/debug-menu.md): seq, ent, kind, x/y/z mm, yaw mrad, flags (1 come, 2 restrict notice, 4 first: enemy
+    // follow's place-first, docs/world-sync-design.md 7.8), route hash, host GameObjectId.
     {op::enemy_debug, "ENEMY_DEBUG", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 10, 0, 0, 30,
      {U16(1, kU16), U32(), U8(1, 8), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
-      I32(-8000, 8000), U8(0, 3), U32(), U16()}},
+      I32(-8000, 8000), U8(0, 7), U32(), U16()}},
     // seq, ent, result (0 applied, 1 refused), reason (world_place.lua WHY), error cm, frames.
     {op::enemy_debug_ack, "ENEMY_DEBUG_ACK", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},

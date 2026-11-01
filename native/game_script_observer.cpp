@@ -1694,6 +1694,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.vehicle_crew = labc.world_vehicle_crew;
     world.vehicle_damage = labc.world_vehicle_damage;
     world.travel = labc.debug_travel;
+    world.follow = labc.soldier_follow;
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -2746,6 +2747,18 @@ void PublishDebugSnapshot() noexcept {
     debug::Publish(snapshot);
 }
 
+// soldier_warp::Gate::Record's answer: a process latch (fault, or the fifth anomaly) or one guard's latch (its
+// second anomaly), each logged once.
+void LogSoldierWarpLatch(const char* latched, std::uint32_t id, std::uint32_t go, const mgscoop::soldier_warp::Result& result) noexcept {
+    if (!latched) return;
+    if (std::strcmp(latched, "soldier") == 0)
+        LogFormat("soldier_warp=soldier_latched; id=%u; go=%u; r=%d; h=%u; anomalies=%u; until=process_exit\r\n", id, go, result.out,
+                  unsigned(result.handled), soldier_warp_gate.anomalies);
+    else
+        LogFormat("soldier_warp=disabled; reason=%s; id=%u; go=%u; r=%d; h=%u; anomalies=%u; until=process_exit\r\n", latched, id, go,
+                  result.out, unsigned(result.handled), soldier_warp_gate.anomalies);
+}
+
 // WARP_V1 "<cmd> <goId> <x_mm> <y_mm> <z_mm> <yaw_mrad>" from lua/coop/debug_spawn.lua.
 // Reply: {r=<out>,h=<0|1>,leaf="pinned|engine"} or {refused="<reason>"}.
 const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
@@ -2771,14 +2784,13 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!snapshot.host || !snapshot.pose_valid) return refuse("pose");
     for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
-    // One command, one guard, bounded attempts; a fault or anomaly latches the feature off.
+    // One command, one guard, bounded attempts; a fault (or the fifth anomaly) latches the feature off, a guard's
+    // second anomaly latches that guard off.
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
-        if (const char* latched = soldier_warp_gate.Record(result))
-            LogFormat("soldier_warp=disabled; reason=%s; id=%u; go=%u; r=%d; h=%u; until=process_exit\r\n", latched, id,
-                      request.go_id, result.out, unsigned(result.handled));
+        LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
     }
     // The Lua side retries every update while the guard realizes: log changes only.
     static std::uint32_t last_id = 0, last_go = 0;
@@ -2806,10 +2818,12 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
 }
 
 // WORLD_WARP_V1 "<seq> <goId>" from lua/coop/world_place.lua on the guest (spawn sync,
-// docs/debug-menu.md). The target and kind come from the grant world::Core recorded
-// when it popped the host's ENEMY_DEBUG; Lua names only the seq and its own copy's
-// GameObjectId. The range is checked against the guest's view of the host (the
-// remote pose, at most 1 s old). Same Warp(), contract, budget and latch as the host.
+// docs/debug-menu.md; enemy follow, docs/world-sync-design.md 7.8). The target and kind
+// come from the grant world::Core recorded when it popped the host's ENEMY_DEBUG; Lua
+// names only the seq and its own copy's GameObjectId. The range is checked against the
+// guest's view of the host (the remote pose, at most 1 s old), or for the follow and
+// staff rules against the nearer of the host and this guest's own player. Same Warp(),
+// contract, budget and latches as the host.
 // Reply: {r=<out>,h=<0|1>,leaf="pinned|engine"} or {refused="<reason>"}.
 const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -2829,37 +2843,44 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
         return refuse("mission");
     const auto grant = mgscoop::world_link::FindGrant(seq);
     if (!grant.found) return refuse("grant");
-    // Three rules: the lab key (mode lab + debug_soldier_warp, any kind), the Mother Base staff rule (play or lab,
-    // mission 30050, a correction only: docs/world-sync-design.md 7.7), and play spawn_warp (on unless named 0) for the
-    // spawn placement (kind 1) only: play refuses its patrol/combat corrections with "role" (the old play refusal, so the
-    // guest's Lua still logs native_off;native=role for them).
-    bool staff = false;
+    // Four rules: the lab key (mode lab + debug_soldier_warp, any kind), enemy follow (play or lab with soldier_follow,
+    // 30010 / 30020 / 30050, a correction only: docs/world-sync-design.md 7.8), the Mother Base staff rule (play or lab,
+    // mission 30050, a correction only: 7.7), and play spawn_warp (on unless named 0) for the spawn placement (kind 1)
+    // only: without soldier_follow play refuses its patrol/combat corrections with "role" (the guest's Lua logs
+    // native_off;native=role for them).
+    sw::GuestGrant rule_hit = sw::GuestGrant::none;
     const sw::GuestRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.debug_soldier_warp,
-                             mission, grant.kind == mgscoop::world::place::correct};
-    if (const char* why = sw::GuestAdmit(rule, staff)) {
+                             mission, grant.kind == mgscoop::world::place::correct, labc.soldier_follow};
+    if (const char* why = sw::GuestAdmit(rule, rule_hit)) {
         if (labc.mode != mgscoop::LabMode::play || !labc.spawn_warp) return refuse(why);
         if (labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp) return refuse("role");
     }
     PublishDebugSnapshot();
     const auto snapshot = debug::GetSnapshot();
     const auto now = mgscoop::partner_net::NowMs();
-    if (snapshot.host || !snapshot.remote_valid || !snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 ||
-        snapshot.remote_age_ms > 1000 || now < snapshot.tick_ms || now - snapshot.tick_ms > 1000)
+    // The host's remote pose, at most 1 s old. The staff and follow rules may take this guest's own player instead
+    // (probe runs 79804732 / bd58d327: the remote pose was stale for every correction while the players were 130 m or
+    // more apart, or right after a long teleport).
+    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    const bool nearer_rule = rule_hit == sw::GuestGrant::staff || rule_hit == sw::GuestGrant::follow;
+    if (snapshot.host || !snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || now < snapshot.tick_ms ||
+        now - snapshot.tick_ms > 1000 || !(remote_fresh || (nearer_rule && snapshot.pose_valid)))
         return refuse("pose");
     for (unsigned i = 0; i < 3; ++i) {
         request.pos[i] = grant.pos[i];
         request.player[i] = snapshot.remote_pos[i];
     }
-    // Mother Base staff near either player: the range is from the nearer of the host
-    // (remote pose) and this guest's own player.
-    if (staff && snapshot.pose_valid) {
-        float to_host = 0.0f, to_self = 0.0f;
-        for (unsigned i = 0; i < 3; ++i) {
-            to_host += (grant.pos[i] - snapshot.remote_pos[i]) * (grant.pos[i] - snapshot.remote_pos[i]);
-            to_self += (grant.pos[i] - snapshot.player_pos[i]) * (grant.pos[i] - snapshot.player_pos[i]);
-        }
-        if (to_self < to_host)
+    // Mother Base staff and enemy follow, the guards near either player: the range is from the nearer of the host
+    // (remote pose, when fresh) and this guest's own player; a follow target more than kFollowFarM from both refuses `far`.
+    if (nearer_rule) {
+        bool self_nearer = false;
+        const float target[3] = {grant.pos[0], grant.pos[1], grant.pos[2]};
+        const float host[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
+        const float self[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
+        const float nearer = sw::NearerSquared(target, host, self, remote_fresh, snapshot.pose_valid, self_nearer);
+        if (self_nearer)
             for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
+        if (rule_hit == sw::GuestGrant::follow && !(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
     }
     request.yaw = grant.yaw;
     request.max_range = grant.kind == mgscoop::world::place::correct ? sw::kMaxRangeLimitM : sw::kMaxRangeM;
@@ -2873,9 +2894,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
-        if (const char* latched = soldier_warp_gate.Record(result))
-            LogFormat("soldier_warp=disabled; reason=%s; id=%u; go=%u; r=%d; h=%u; until=process_exit\r\n", latched, id,
-                      request.go_id, result.out, unsigned(result.handled));
+        LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
     }
     static std::uint32_t last_id = 0, last_go = 0;
     static std::int32_t last_out = 0;
@@ -6397,9 +6416,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
-                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; call=manager_vt38_send; hop=runtime_census\r\n",
+                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; follow=%u; call=manager_vt38_send; hop=runtime_census\r\n",
                                                           !warp_key ? "mb_staff"
-                                                          : labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp");
+                                                          : labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp",
+                                                          labc.soldier_follow ? 1u : 0u);
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

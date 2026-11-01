@@ -130,16 +130,20 @@ namespace reject {
 inline constexpr std::uint8_t unknown_entity = 1, terminal = 2, not_forward = 3, epoch = 5, not_paired = 6, roster_mismatch = 7,
                               bad_state = 8, busy = 9, level = 10, inactive = 11;
 }
-// ENEMY_DEBUG kinds and flags (lua/coop/world_place.lua).
+// ENEMY_DEBUG kinds and flags (lua/coop/world_place.lua). flag_first (enemy follow,
+// docs/world-sync-design.md 7.8): a correction sent right before the host's own
+// outcome of that guard (place first); the guest places its copy at once.
 namespace place {
 inline constexpr std::uint8_t warp = 1, route = 2, correct = 3, come = 4, ignore = 5, notice = 6, disable = 7, enable = 8;
-inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2;
+inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2, flag_first = 4;
 }
 // Guest warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is
 // the only source of a guest native placement target (never a Lua value).
-// 16 slots: up to 8 tracked guards send 1 Hz corrections while one placement
-// may wait up to 15 s.
-inline constexpr unsigned kGrants = 16;
+// 64 slots: enemy follow (docs/world-sync-design.md 7.8) samples the guards near
+// both players, a guard every 0.5-2 s, so the 16 of 0.14.7 could evict a grant
+// whose correction still waits in the guest's FIFO (16 entries) while one
+// placement may wait up to 15 s.
+inline constexpr unsigned kGrants = 64;
 inline constexpr std::uint64_t kGrantLifeMs = 15000;
 struct Grant {
     bool valid;
@@ -288,6 +292,10 @@ struct CfgReply {
     // (fulton_one_save) and bit 16 the guest's lift of a host's vehicle Fulton (fulton_guest_vehicle), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t fulton;
+    // Enemy follow (docs/world-sync-design.md 7.8): r[19] bit 1 turns on the follow scan of the guards near either player
+    // and place-first before every host outcome (lua/coop/world_place.lua; lab key soldier_follow), else 0; filled only
+    // by world_link::HandleCfg.
+    std::uint8_t follow;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

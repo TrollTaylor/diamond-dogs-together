@@ -211,9 +211,16 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
     return result;
 }
 
+unsigned Gate::SoldierAnomalies(std::uint32_t go) const noexcept {
+    for (unsigned i = 0; i < soldier_count && i < kTrackedSoldiers; ++i)
+        if (soldiers[i].go == go) return soldiers[i].anomalies;
+    return 0;
+}
+
 const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
     if (latched) return "latched";
     if (!command_id) return "target";
+    if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
     if (command_id != command) { command = command_id; go_id = go; attempts = 0; landed = false; }
     else if (go != go_id) return "target";
     if (landed) return "landed";
@@ -222,22 +229,54 @@ const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
     return nullptr;
 }
 
-const char* GuestAdmit(const GuestRule& rule, bool& staff) noexcept {
-    staff = false;
+const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept {
+    grant = GuestGrant::none;
     if (!rule.lab && !rule.play) return "role";
-    if (rule.lab && rule.key) return nullptr;  // lab key: spawn sync, any kind
-    if (rule.mission == kStaffMission && rule.correct) { staff = true; return nullptr; }
+    if (rule.lab && rule.key) { grant = GuestGrant::lab; return nullptr; }  // lab key: spawn sync, any kind
+    if (rule.follow && rule.correct && FollowMission(rule.mission)) { grant = GuestGrant::follow; return nullptr; }
+    if (rule.mission == kStaffMission && rule.correct) { grant = GuestGrant::staff; return nullptr; }
     return "disabled";
+}
+
+float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                    bool& self_nearer) noexcept {
+    float to_host = 0.0f, to_self = 0.0f;
+    for (unsigned i = 0; i < 3; ++i) {
+        to_host += (pos[i] - host[i]) * (pos[i] - host[i]);
+        to_self += (pos[i] - self[i]) * (pos[i] - self[i]);
+    }
+    host_valid = host_valid && std::isfinite(to_host);
+    self_valid = self_valid && std::isfinite(to_self);
+    self_nearer = self_valid && (!host_valid || to_self < to_host);
+    if (self_nearer) return to_self;
+    return host_valid ? to_host : INFINITY;
 }
 
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
 
 const char* Gate::Record(const Result& result) noexcept {
     if (!result.refusal && result.out == 0 && result.handled == 1) landed = true;
-    if (latched || !result.refusal || (std::strcmp(result.refusal, "fault") != 0 && std::strcmp(result.refusal, "anomaly") != 0))
-        return nullptr;
-    latched = result.refusal;
-    return latched;
+    if (latched || !result.refusal) return nullptr;
+    if (std::strcmp(result.refusal, "fault") == 0) {
+        latched = result.refusal;
+        return latched;
+    }
+    if (std::strcmp(result.refusal, "anomaly") != 0) return nullptr;
+    // An anomaly counts against the gate's current guard and against the process.
+    ++anomalies;
+    unsigned count = 0;
+    const auto go = static_cast<std::uint16_t>(go_id);
+    for (unsigned i = 0; i < soldier_count && i < kTrackedSoldiers; ++i)
+        if (soldiers[i].go == go) { count = ++soldiers[i].anomalies; break; }
+    if (!count) {
+        if (soldier_count < kTrackedSoldiers) soldiers[soldier_count++] = Soldier{go, 1};
+        count = 1;
+    }
+    if (anomalies >= kProcessAnomalies || soldier_count >= kTrackedSoldiers) {
+        latched = result.refusal;
+        return latched;
+    }
+    return count == kSoldierAnomalies ? "soldier" : nullptr;
 }
 
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,

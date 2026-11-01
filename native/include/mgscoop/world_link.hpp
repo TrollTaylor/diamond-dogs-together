@@ -45,6 +45,9 @@ struct Config {
     // and FULTON 0x46 (world_enemy.lua W.fulton); with it bit 2 fulton_early, bit 4 fulton_look, bit 8 fulton_one_save,
     // bit 16 fulton_guest_vehicle (FultonCfgBits).
     std::uint8_t fulton = 0;
+    // Enemy follow (docs/world-sync-design.md 7.8): lab.ini soldier_follow (lab and play): CFG r[19] bit 1 turns on the
+    // follow scan around both players and place-first (lua/coop/world_place.lua).
+    bool follow = false;
     // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
     // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
     bool vehicle_state = false;

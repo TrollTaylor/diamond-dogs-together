@@ -8,8 +8,9 @@
 // NUL-free, at most max_receipt bytes):
 //   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
 //        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>,<session>,
-//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>,<companion>,<relief>
-//        (17 values; r[9..11] are the partner's mission and world level, 0
+//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>,<companion>,<relief>,
+//                  <fulton>,<follow>
+//        (19 values; r[9..11] are the partner's mission and world level, 0
 //        unknown, and the raw pair-wait code world::pair_wait 0..10; r[12] is
 //        the save handoff code save_handoff_state::LuaCode 0..6 and r[13] the
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
@@ -25,7 +26,10 @@
 //        world_vehicle_crew, world_vehicle_damage); r[16] the M1 host-owned companion module 0|1 (lab key
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
-//        HandleCfg; Lua treats a missing or out-of-range value as 0)
+//        HandleCfg; r[18] the r1101 Fulton bits 0..31 (FultonCfgBits, lab and play);
+//        r[19] enemy follow 0|1 (lab key soldier_follow, lab and play: the follow
+//        scan and place-first, docs/world-sync-design.md 7.8); Lua treats a missing
+//        or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U

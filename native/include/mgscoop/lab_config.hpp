@@ -706,6 +706,13 @@ struct LabConfig {
     // hidden play run); a named 0 opts out and play then keeps the route snap.
     bool spawn_warp = true;
     bool spawn_warp_given = false;
+    // Enemy follow (docs/world-sync-design.md 7.8): the guest's copies of the guards near either player stand where the
+    // host's do. The guest's native placement admits play / lab corrections (world_place kind 3) in 30010 / 30020 /
+    // 30050 (soldier_warp::GuestAdmit follow rule: range from the nearer player, `far` beyond 250 m), and CFG r[19] bit 1
+    // turns on the host's follow scan around both players and place-first before every host outcome (world_place.lua).
+    // Lab and play; off unless named until its hidden run passes; a named 0 opts out.
+    bool soldier_follow = false;
+    bool soldier_follow_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
