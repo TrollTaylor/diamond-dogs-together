@@ -1,3 +1,37 @@
+## November 1, 2026: r1101 Prove - F9 Spawn vehicle on by default (`debug_vspawn` follows the gun profile in lab and play; hidden runs `65b4005c`, `e09fcf72`, `6ffe824d`; `wp/integ-1101`, local only)
+
+- **What players get:** F9 > World > Vehicles **Spawn jeep** / **Spawn truck** now work by default in play (Play-Coop's
+  native gun profile) and in the lab: one of the area's own jeeps or trucks comes 6 m in front of whoever presses,
+  facing their way, on both screens (Afghanistan and Africa free roam); a guest's press asks the host. A press while
+  riding (driving, or in a back seat) is refused with "Get on foot first: no vehicle spawn while riding or in a
+  cutscene." A named `debug_vspawn=0` turns it off. The two rows lose their "unverified" mark.
+- **Proof** (hidden worker, play, `-WanSim bad`, afgh-ledge seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/vspawn/`):
+  - `65b4005c` (key named, `r1101-vspawn-play.txt`): A the host's jeep `veh_lv_0011` placed within 0.01 m on both
+    copies (frames: the jeep ahead of the host, the guest beyond it; the guest turned round sees the same jeep, the host
+    beyond). B the guest's ask: the host picks `veh_trc_0005` (an LRRP truck) for the guest, both copies place it
+    (frames: the truck and its toast on both screens). C the host drives the spawned jeep (localSeat 1, D-Dog in the
+    front seat), the guest sits in the back seat (`board_seated` seat 3); frames on both screens, also while moving.
+    D the host's press `vspawn_refused;reason=busy` with `by=on_vehicle`, the guest's `by=seat`, note 20 a=3 b=5 and the
+    toast on both copies; the host's frame shows the toast and no second jeep (the guest's was not captured: fixed in
+    the scenario, `394e3130`).
+  - `e09fcf72` (key named): A-D again with the same picks; the D frames on both screens show the toast and no second
+    vehicle; the guest's copy applied about 210 RIDE_FAST updates while the host drove.
+  - `6ffe824d` (key NOT named, `r1101-vspawn-default-play.txt`, the green build): the session's lab settings were
+    `nametag=1` only; `vspawn;on=1` on both copies; A and B again, with before / after frames on both screens.
+  - No run logged `event=vspawn; step=error`, a `placed ... ok=0`, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a
+    GameOver; no game exited early.
+- **Commits:** `394e3130` (scenario: D captured on both screens), `75be305c` red (lab_config_tests, debug_menu_tests,
+  friend_package_tests; `lab_ini_check` prints `debug_vspawn`), `3af5b29d` green (`debug_vspawn_given`;
+  `ResolveWeaponDefaults` sets `debug_vspawn` from the gun profile unless named; the rows lose `kUnverified`; comments and
+  worker help), `24a53f08` (the shipped-default scenario), then README (What works, Known limits), debug-menu.md and
+  protocol section 27.
+- **Still not covered:** armoured vehicle and tank rows (they need a load-time pack injection on both copies); the
+  sortie vehicle you bring (index 0, the M3 `world_relief` key, off); an LRRP truck can be taken back by each copy's own
+  AI later (until M8; all six Afghanistan trucks are LRRP trucks); the drive in C is short (about 7 m, to a concrete
+  block); a partner on an older build drops `0x44` as unknown_op and cannot answer; with the key named 0 the refusal
+  still reads "not available yet in this build". Mother Base and story missions refuse as before.
+
 ## November 1, 2026: r1101 integration - five tracks in one build, every new key off unless named (`wp/integ-1101`, local only; no hidden runs this round)
 
 - **What players get in play:** nothing changes by default. All five r1101 features stay behind lab.ini keys that are

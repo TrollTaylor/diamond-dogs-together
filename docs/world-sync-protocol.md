@@ -2117,7 +2117,8 @@ Op `0x44` VSPAWN (68), both directions, reliable, **control** queue, level 3, la
 9 fields, 22 bytes: `seq` (u16 1..), `kind` (u8 1 the guest's ask / 2 the host's press / 3 the host's spawn for an ask /
 4 a refusal: the host's of an ask, or the guest's copy not taking a 2 / 3, answered to the host), `class` (u8 1 light vehicle / 2 truck), `num` (u8, the authored locator
 `veh_<class>_NNNN`; 255 none), `x`, `y`, `z` (i32 mm), `yaw` (i32 mdeg, -360000..360000), `reason` (u8 0 ok, else the
-refusal 1..15). Sent only while the lab key `debug_vspawn` is on (off unless named; `MGS_COOP_VSPAWN_CFG_V1` answers it
+refusal 1..15). Sent only while the lab key `debug_vspawn` is on (it follows the gun profile in lab and play since the r1101 Prove
+phase, runs `65b4005c` / `e09fcf72` / `6ffe824d`; a named 0 turns it off; `MGS_COOP_VSPAWN_CFG_V1` answers it
 to Lua). The host decides: its own press (refused while unpaired) picks the vehicle and sends kind 2 with the locator
 and the spot, and moves it only once that went out; a guest's press sends kind 1 with the guest's own pose, the host
 picks for the spot 6 m in front of the guest, sends kind 3 and moves it (or answers kind 4 with the reason). A wreck is
