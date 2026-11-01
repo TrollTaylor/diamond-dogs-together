@@ -1169,13 +1169,21 @@ do
     for _ = 1, 15 do step(a, b, 100) end
     check(#b.warps == 0, 'a carried body 3 m from the carrier\'s reported spot is never warped')
     b.native.pos = {0, 1700, 5600}
-    step(a, b, 100)
-    check(lastWarp(b) ~= nil, 'a carried body more than 5 m from the carrier is warped back')
+    step(a, b, 100); step(a, b, 100)
+    check(#b.warps == 0, 'off the shoulder for 100 ms only (a carrier teleport, a late status): no warp yet')
+    step(a, b, 100); step(a, b, 100)
+    check(lastWarp(b) ~= nil, 'a carried body more than 5 m from the carrier for 300 ms is warped back')
     a, b = pair()
     carry(a, b, {0, 800, 0}, {0, 1700, 500})
     for _ = 1, 15 do step(a, b, 100) end
     b.native.pos = {0, -1500, 900}
-    step(a, b, 100)
+    for _ = 1, 4 do step(a, b, 100) end
     check(lastWarp(b) ~= nil, 'a carried body 2 m below the carrier\'s feet is warped back')
+    -- The carrier teleports while carrying: one stale status is never a rescue.
+    a, b = pair()
+    carry(a, b, {0, 800, 0}, {0, 1700, 0})
+    a.native.pos, b.native.pos = {50000, 800, 0}, {50000, 1700, 0}
+    for _ = 1, 6 do step(a, b, 100) end
+    check(#b.warps == 0, 'a carrier teleport while carrying never warps the carried body')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')

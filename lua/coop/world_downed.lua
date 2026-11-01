@@ -215,36 +215,63 @@ H[OP.REVIVE_GRANT] = function(v)
 end
 -- Put-down on the carried player's own copy (10-31 Steam session): the stock
 -- put-down released a player carried at a run and the body slid 4.7 m past the
--- carrier off the Mother Base deck into the sea. While carried, keep the
--- carrier's own reported spot; from the stock put-down (own act 44, at most
--- PUT_MS) a body more than 2 m from it or 1 m below it is warped back to the
--- carrier's feet, on the side the carrier came from. Never for cargo, never
--- after the body has settled, never outside the window (a real fall stays lethal).
+-- carrier off the Mother Base deck into the sea; that copy even kept the
+-- carried act 43 while the carrier's replica played its put-down (act 39).
+-- While carried (own act 42/43), keep the carrier's own reported spot. An
+-- episode opens at the stock put-down (own act 44), at the carrier's put-down
+-- after the first second of a carry (peer act 39), or when the carried body is
+-- not on the shoulder (more than 5 m away or 2 m below the carrier). For PUT_MS
+-- a body more than 2 m from that spot or 1 m below it is warped back to the
+-- carrier's feet, on the side the carrier came from. Never for cargo or a body
+-- in a vehicle, never after it settled, never outside the window (a real fall
+-- stays lethal), one episode per carry.
 local PUT_MS,PUT_XZ,PUT_DY,PUT_BACK,PUT_GAP,PUT_TRIES,PUT_AGE=3000,2000,1000,700,250,6,1000
-local function putDown(r,now)
-  local act,P=valid(r.act,0,65535) and r.act or 0,D.put
-  if r.carry == 3 or r.carry == 4 then D.put=nil; return end
-  if act ~= 44 and (r.carry == 2 or act == 42 or act == 43) then
-    local c=D.records[3 - W.role]
-    P=P and not P.start and P or {}
-    if fresh(c,now) then P.anchor,P.anchorAt={c.pos[1],c.pos[2],c.pos[3]},now end
-    P.carriedAt,D.put=now,P
-    return
+local LOST_XZ,LOST_DY,LOST_MS=5000,2000,300
+local function riding()
+  local query=W.get(PlayerInfo,"OrCheckStatus")
+  if type(query) ~= "function" then return false end
+  for _,name in ipairs({"ON_VEHICLE","ON_HORSE"}) do
+    local s=W.get(PlayerStatus,name)
+    if valid(s,0,2147483647) then local ok,yes=pcall(query,{s}); if ok and yes == true then return true end end
   end
-  if not P then return end
+  return false
+end
+local function apart(r,a)
+  local dx,dz=r.pos[1] - a[1],r.pos[3] - a[3]
+  return math.sqrt(dx * dx + dz * dz),a[2] - r.pos[2],dx,dz
+end
+local function putDown(r,now)
+  local act,peer,P=valid(r.act,0,65535) and r.act or 0,valid(r.peer,0,65535) and r.peer or 0,D.put
+  local carried=act == 42 or act == 43
+  if r.carry == 3 or r.carry == 4 or not P and not carried then D.put=nil; return end
+  if P and P.spent then if not carried then D.put=nil end; return end
+  P=P or {since=now}; D.put=P
   if not P.start then
-    if act ~= 44 or now - P.carriedAt > PUT_AGE or not P.anchor or now - P.anchorAt > PUT_AGE then D.put=nil; return end
+    if carried then
+      local c=D.records[3 - W.role]
+      if fresh(c,now) then P.anchor,P.anchorAt={c.pos[1],c.pos[2],c.pos[3]},now end
+      P.carriedAt=now
+    end
+    local a=P.anchor
+    if not a or now - P.anchorAt > PUT_AGE then if not carried then D.put=nil end; return end
+    local d,dy=apart(r,a)
+    if carried then
+      -- Off the shoulder only when it lasts LOST_MS (a carrier teleport or a late status is not).
+      local lost=d > LOST_XZ or dy > LOST_DY
+      P.lostAt=lost and (P.lostAt or now) or nil
+      if not (peer == 39 and now - P.since >= PUT_AGE) and not (lost and now - P.lostAt >= LOST_MS) then return end
+    elseif act ~= 44 or now - P.carriedAt > PUT_AGE then D.put=nil; return end
     P.start,P.tries,P.next=now,0,now
   end
-  if now - P.start > PUT_MS then D.put=nil; return end
+  if now - P.start > PUT_MS then D.put=carried and {spent=true} or nil; return end
   local a=P.anchor
-  local dx,dz,dy=r.pos[1] - a[1],r.pos[3] - a[3],a[2] - r.pos[2]
-  local d=math.sqrt(dx * dx + dz * dz)
+  local d,dy,dx,dz=apart(r,a)
   if d <= PUT_XZ and dy <= PUT_DY then
-    if act ~= 44 then D.put=nil end
+    if not carried and act ~= 44 then D.put=nil end
     return
   end
   if P.tries >= PUT_TRIES or now < P.next then return end
+  if riding() then D.put=nil; return end
   local send=W.get(GameObject,"SendCommand")
   if type(send) ~= "function" then D.put=nil; return end
   local ux,uz=0,0
@@ -252,7 +279,7 @@ local function putDown(r,now)
   P.tries,P.next=P.tries + 1,now + PUT_GAP
   local ok=pcall(send,{type="TppPlayer2",index=0},{id="Warp",
     pos={(a[1] - ux * PUT_BACK) / 1000,(a[2] + 200) / 1000,(a[3] - uz * PUT_BACK) / 1000},rotY=math.atan2(ux,uz)})
-  log(fmt("step=putdown_place;try=%d;ok=%d;slide_mm=%.0f;drop_mm=%.0f;act=%d",P.tries,ok and 1 or 0,d,dy,act))
+  log(fmt("step=putdown_place;try=%d;ok=%d;slide_mm=%.0f;drop_mm=%.0f;act=%d;peer=%d",P.tries,ok and 1 or 0,d,dy,act,peer))
 end
 local function poll(now)
   local r=native(0,0)
