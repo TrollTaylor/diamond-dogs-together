@@ -28,6 +28,10 @@ waitlog guest 'event=follow; step=arrived; id=[0-9]+; mission=30050' 90
 wait 3000
 both capture w-heli
 guest run position
+# The frozen window (the 0.14.5 arrival): still at its start 13 s in.
+wait 10000
+both capture w-frozen
+guest run position
 waitlog guest 'step=unstick; why=static_heli; m=30050' 60
 both capture w-unstick
 waitlog guest 'step=mb_foot; at=restart' 60
