@@ -702,15 +702,17 @@ int main() {
                   !(act::FindAction(id)->flags & (act::kNeedsPartner | act::kParam)),
               "Mother Base weapons rows: host only, syncs to the guest, no partner needed, fixed text");
     // Spawn vehicle (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua): both players (a guest's press asks the
-    // host), synced to both screens, fixed text, unverified until a hidden run shows it on both copies.
+    // host), synced to both screens, fixed text. Run-proven on both copies (hidden play runs 65b4005c and e09fcf72): not
+    // marked unverified and never "Not available yet" in the tooltip.
     Check(act::FindAction("vspawn_lv") && !std::strcmp(act::FindAction("vspawn_lv")->command, "vspawn lv") &&
               act::FindAction("vspawn_trc") && !std::strcmp(act::FindAction("vspawn_trc")->command, "vspawn trc"),
           "Spawn vehicle commands");
     for (const char* id : {"vspawn_lv", "vspawn_trc"})
         Check(act::FindAction(id) && act::FindAction(id)->category == act::Category::world &&
-                  (act::FindAction(id)->flags & act::kSyncs) && (act::FindAction(id)->flags & act::kUnverified) &&
+                  (act::FindAction(id)->flags & act::kSyncs) && !(act::FindAction(id)->flags & act::kUnverified) &&
+                  !std::strstr(act::FindAction(id)->tooltip, "Not available yet") &&
                   !(act::FindAction(id)->flags & (act::kHostOnly | act::kNeedsPartner | act::kParam)),
-              "Spawn vehicle rows: either player, syncs, unverified, fixed text");
+              "Spawn vehicle rows: either player, syncs, run-proven, fixed text");
     // On in lab and play (0.14.6, the user's release of every built feature; no play run yet): the four rows are not
     // marked unverified and never say "Not available yet".
     for (const char* id : {"rules_wormhole_off", "rules_wormhole_on", "rules_mb_weapons_on", "rules_mb_weapons_off"})

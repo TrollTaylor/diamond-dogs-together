@@ -614,6 +614,14 @@ try {
             $file = Join-Path $fixture 'play-seat-fpv-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_seat_fpv=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['partner_seat_fpv'])|$($m['partner_seat_fpv_given'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|1|0x0|0/0' 'native: a named seat first person 0 turns it off in play'
+            # F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"; hidden play runs 65b4005c and e09fcf72): Play-Coop never
+            # names debug_vspawn; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
+            Assert-True (!$hostIni.Contains('debug_vspawn') -and !$guestIni.Contains('debug_vspawn') -and
+                !$clipsIni.Contains('debug_vspawn')) 'Play-Coop lab.ini never names debug_vspawn'
+            Assert-Equal "$($n['debug_vspawn'])" '1' 'native: play defaults Spawn vehicle on'
+            $file = Join-Path $fixture 'play-vspawn-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "debug_vspawn=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['debug_vspawn'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named debug_vspawn 0 turns Spawn vehicle off in play'
             # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and
