@@ -56,6 +56,11 @@ ok,msg=c:run("wormhole","1")
 check(ok and msg=="wormhole=on;level=1" and c.levels[WORM]==1 and c.env.vars.itemLevels[SLOT]==1,"on: the real level is back")
 c:tick(60);check(c.levels[WORM]==1,"on: never forced again")
 c.env.TppSave.SaveVarsToSlot("slot");check(c.saved[#c.saved].level==1 and c.env.vars.itemLevels[SLOT]==1,"on: the save is untouched")
+-- r1101 fulton (world_enemy.lua W.fulton): while a partner's wormhole look is shown here (W.fulton.real set), the off
+-- rule leaves the level alone and never takes it for this save's own development.
+c=F({level=0});c:run("wormhole","0");c.W.fulton={real=0};c.levels[WORM]=1;c:tick()
+check(c.levels[WORM]==1 and not c:has(c.logs,"step=worm_off"),"off: a partner's wormhole look is left alone")
+c.W.fulton.real=nil;c:tick();check(c.levels[WORM]==0,"off: forced again once the look is restored")
 -- The save fix only when vars.itemLevels follows SetItemLevel (the stock slot): else no var is written.
 c=F({follow=false});c:run("wormhole","0");c.env.vars.itemLevels[SLOT]=0
 c.env.TppSave.SaveVarsToSlot("slot");check(c.saved[1].level==0 and c.env.vars.itemLevels[SLOT]==0,"an unverified slot is never written")
