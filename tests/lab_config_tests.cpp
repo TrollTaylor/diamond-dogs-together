@@ -796,7 +796,7 @@ int main() {
             const auto off = Lab(gun + mode + "partner_ride_steer=0\n");
             Check(!off.partner_ride_steer && off.invalid_values == 0, "a named steer pose 0 stays off");
         }
-        for (const char* value : {"2", "", "on"}) {
+        for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\npartner_ride_steer=") + value + "\n");
             Check(!invalid.partner_ride_steer && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
                   "an invalid steer pose value refuses (off)");

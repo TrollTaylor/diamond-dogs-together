@@ -1229,6 +1229,56 @@ bool ReadRates(const Addresses& a, const State& s, std::uint32_t index, RateRead
     return true;
 }
 
+namespace {
+// r1101 vanim: one aligned 32-bit store of a float's bits; SEH turns a stale pointer into false.
+bool ExchangeFloat(std::uintptr_t address, float value) noexcept {
+    long bits = 0;
+    static_assert(sizeof(bits) == sizeof(value), "32-bit float");
+    std::memcpy(&bits, &value, sizeof(bits));
+    __try { _InterlockedExchange(reinterpret_cast<volatile long*>(address), bits); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool RideRateOk(float v) noexcept { return std::isfinite(v) && v >= 0.0f && v <= 1.0f; }
+}  // namespace
+
+bool ReadRideRates(const Addresses& a, const State& s, std::uint32_t index, RideRates& out) noexcept {
+    const Preserve preserve;
+    out = RideRates{};
+    RateRead r{};
+    if (!ReadRates(a, s, index, r)) { out.refusal = r.refusal ? r.refusal : "rates"; return false; }
+    float aux = 0.0f, accel = 0.0f, steer = 0.0f;
+    if (!ReadValue(r.rec + kRideRateAux, aux) || !ReadValue(r.rec + kRideRateAccel, accel) || !ReadValue(r.rec + kRideRateSteer, steer)) {
+        out.refusal = "rec";
+        return false;
+    }
+    if (!std::isfinite(aux) || !std::isfinite(accel) || !std::isfinite(steer)) { out.refusal = "nonfinite"; return false; }
+    out.rec = r.rec;
+    out.id = r.id;
+    out.aux = aux;
+    out.accel = accel;
+    out.steer = steer;
+    return true;
+}
+
+const char* WriteRideRates(const Addresses& a, const State& s, const RideRates& in) noexcept {
+    const Preserve preserve;
+    if (!RideRateOk(in.aux) || !RideRateOk(in.accel) || !RideRateOk(in.steer)) return "value";
+    if (const char* why = CheckWrite(Refusal::none, s, 1, false, WriteKind::set)) return why;
+    RateRead r{};
+    if (!ReadRates(a, s, 1, r)) return r.refusal ? r.refusal : "rates";
+    if (r.id != 1 || (r.rec & 3u)) return "identity";
+    if (!ExchangeFloat(r.rec + kRideRateAux, in.aux) || !ExchangeFloat(r.rec + kRideRateAccel, in.accel) ||
+        !ExchangeFloat(r.rec + kRideRateSteer, in.steer))
+        return "fault";
+    float aux = 0.0f, accel = 0.0f, steer = 0.0f;
+    if (!ReadValue(r.rec + kRideRateAux, aux) || !ReadValue(r.rec + kRideRateAccel, accel) || !ReadValue(r.rec + kRideRateSteer, steer))
+        return "fault";
+    // The engine may write the record between our store and the read only through RideVehicleAction, which body 1 never
+    // runs: a different value means another writer.
+    if (aux != in.aux || accel != in.accel || steer != in.steer) return "readback";
+    return nullptr;
+}
+
 const char* ResolveDm(const Addresses& a, const State& s, DmTargets& out) noexcept {
     const Preserve preserve;
 

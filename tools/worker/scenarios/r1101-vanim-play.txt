@@ -1,0 +1,115 @@
+# r1101 vanim (docs/vehicle-ws3.md "Driver pose"; lab key partner_ride_steer, off unless named): the remote driver
+# seated in the viewer's jeep showed the full-left turning pose whatever the driver did, because body 1 never runs
+# RideVehicleAction and its rate record keeps the constructor's 0.0 steer blend (+0x34; the stock driver phase
+# 0x124FC37 writes 0.5 for straight, toward 0 for left and 1 for right every frame for the real driver). With the key
+# the driver's copy sends its own blends (+0x34 steer, +0x30 accel, +0x08 aux) on the ride wire's v5 steer addendum
+# and the viewer writes them into body 1's record while it seats the peer as the driver (neutral 0.5 without a live
+# packet), then puts the originals back. The driver's own screen is unchanged (read only on that side).
+# The wheels of the viewer's copy still do not turn (the copy is placed by SetPosition every frame: no wheel write was
+# found; docs/vehicle-ws3.md "Driver pose", "Not fixed").
+#   A the host drives the Masa Village jeep, the guest watches from outside: straight, then left (w+a), then right
+#     (w+d), then brakes and gets off.
+#   B the roles swap: the guest drives the same jeep, the host watches.
+# Run (play, Africa free roam, the africa-jeep seed):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-vanim-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -Mode play -WanSim bad -SaveSeed africa-jeep
+# Expected (A; B the same with host and guest swapped):
+#   host   partner_ride_steer=tx; vehicle=J; seat=0; rev=..; steer=S; accel=..; aux=..; raw=..; epoch=..; n=..
+#          S about 125 driving straight, one side of 125 while w+a is held and the other side while w+d is held
+#          (the driver phase's own value, read only)
+#   guest  partner_ride_steer=rx; vehicle=J; seat=0; ... (the same values)
+#          partner_ride_seat=confirmed; vehicle=J; seat=0; ...
+#          partner_ride_steer=save; vehicle=J; seat=0; steer=0.000; ... (the constructor's full left before the write)
+#          partner_ride_steer=write; vehicle=J; seat=0; source=neutral|remote; steer=0.500 while straight; steer
+#          lines on each side of 0.5 for the two turns, matching the host's tx values
+#          after the get-off: partner_ride_steer=restore; vehicle=J; seat=0; ...; ok=1
+#   frames (guest in A, host in B): a-seated / a-straight-NN: the driver's hands level on the wheel (no left lean);
+#          a-left-NN / a-right-NN: the driver's turning pose follows each turn; the wheels: no spin, no steer (known)
+#   must NOT appear: partner_ride_steer=refused; a fault; step=error; viewer_changed
+labsetting partner_ride_steer=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host debug clear_enemies 100
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+guest debug teleport -652.93 1.20 879.33 -117
+host debug teleport -656.01 1.20 877.73 62
+wait 5000
+host debug clear_enemies 100
+stance host stand
+stance guest stand
+wait 2000
+both capture start
+# --- A: the host drives, the guest watches from ahead and off the jeep's line --------------------------------------
+host debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind guest host 5 14
+wait 2500
+host press e 150
+wait 3000
+host run vehicle_seats
+host expect vehicle;id=256[0-9][0-9]
+waitlog guest 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=(neutral|remote); steer=0\.500;' 10
+both capture a-seated
+logmark both
+host hold w 1500 nowait
+guest burst a-straight 4 250
+host release
+waitlog host 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0;' 5
+host hold w+a 1500 nowait
+guest burst a-left 5 250
+host release
+host hold w+d 1500 nowait
+guest burst a-right 5 250
+host release
+waitlog guest 'partner_ride_steer=rx; vehicle=256[0-9][0-9]; seat=0;' 5
+waitlog guest 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote;' 5
+host hold s 1200
+host release
+wait 1500
+both capture a-stopped
+host press e 150
+guest burst a-exiting 3 300
+wait 2500
+waitlog guest 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; .*ok=1' 10
+both capture a-exited
+# --- B: the roles swap: the guest drives the same jeep, the host watches -------------------------------------------
+both debug godmode 1
+guest debug goto_vehicle jeep
+wait 3000
+host debug clear_enemies 100
+placebehind host guest 5 14
+wait 2500
+guest press e 150
+wait 3000
+guest run vehicle_seats
+guest expect vehicle;id=256[0-9][0-9]
+waitlog host 'partner_ride_seat=confirmed; vehicle=256[0-9][0-9]; seat=0;' 10
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=(neutral|remote); steer=0\.500;' 10
+both capture b-seated
+guest hold w 1500 nowait
+host burst b-straight 4 250
+guest release
+waitlog guest 'partner_ride_steer=tx; vehicle=256[0-9][0-9]; seat=0;' 5
+guest hold w+a 1500 nowait
+host burst b-left 5 250
+guest release
+guest hold w+d 1500 nowait
+host burst b-right 5 250
+guest release
+waitlog host 'partner_ride_steer=write; vehicle=256[0-9][0-9]; seat=0; source=remote;' 5
+guest hold s 1200
+guest release
+wait 1500
+guest press e 150
+host burst b-exiting 3 300
+wait 2500
+waitlog host 'partner_ride_steer=restore; vehicle=256[0-9][0-9]; seat=0; .*ok=1' 10
+both capture b-exited
+host run position
+guest run position
+state

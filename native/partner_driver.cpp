@@ -2563,6 +2563,8 @@ void LogRefusedCaps(Driver& d, const Hooks& h, const std::uint8_t* message, std:
                 partner_caps_wire::ResultName(st.last), unsigned(revision), sender_epoch, link_epoch, unsigned(size));
 }
 
+// r1101 vanim: the steer addendum's tx / rx lines (the first kRideSteerLogLines, then every kRideSteerLogEvery-th).
+constexpr unsigned kRideSteerLogLines = 150, kRideSteerLogEvery = 50;
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
 void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
@@ -2597,6 +2599,18 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                                "partner_ride=ext_rx; rev=%u; vehicle=%u; seat=%u; cat=%u; type=0x%02x; features=0x%02x; epoch=%u\r\n",
                                unsigned(e.revision), unsigned(e.vehicle), unsigned(e.seat), unsigned(e.category), unsigned(e.type),
                                unsigned(e.features), epoch);
+            }
+            continue;
+        }
+        // r1101 vanim: the steer addendum (v5, 16 bytes) shares the ride magic (before IsRide, which takes any 0x52).
+        if (partner_ride_wire::IsSteer(message, size)) {
+            if (partner_ride_wire::AcceptSteer(d.ride_steer_rx, message, size, epoch, now)) {
+                const auto& e = d.ride_steer_rx.steer;
+                const unsigned n = ++d.ride_steer_rx_logged;
+                if (n <= kRideSteerLogLines || n % kRideSteerLogEvery == 0)
+                    EmitFormat(h, "partner_ride_steer=rx; vehicle=%u; seat=%u; rev=%u; steer=%u; accel=%u; aux=%u; epoch=%u; n=%u\r\n",
+                               unsigned(e.vehicle), unsigned(e.seat), unsigned(e.revision), unsigned(e.steer), unsigned(e.accel),
+                               unsigned(e.aux), epoch, n);
             }
             continue;
         }
@@ -2758,6 +2772,135 @@ void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_
     std::uint8_t bytes[rw::kSize]{};
     if (rw::Encode(packet, bytes) && h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) {
         d.ride_tx_epoch = epoch; d.ride_tx_ms = now; d.ride_tx_dirty = false;
+    }
+}
+
+// r1101 vanim (lab.ini partner_ride_steer; docs/vehicle-ws3.md "Driver pose"): while this copy's player drives (seat 0
+// of the vehicle its ride packet names), the three ride blends the stock driver phase writes into its rate record every
+// frame (+0x34 steer, +0x30 accel, +0x08 aux) go to the peer on the v5 steer addendum (partner_ride_wire::SteerSendDue:
+// a change of kSteerStep units after kSteerMinMs, else a heartbeat). Read only: the driver's own screen is unchanged.
+void SendRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    if (!d.settings.ride_steer || !h.ride_steer_read || !h.send_reliable_append || !d.ride_tx_have) return;
+    const bool driving = d.ride_tx.kind == rw::Kind::vehicle && d.ride_tx.seat == 0 && d.ride_tx.vehicle != rw::kVehicleUnknown &&
+                         d.ride_tx.vehicle == d.local_vehicle;
+    if (!driving) return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch || !(h.link_live && h.link_live(h.context))) return;
+    pp::RideRates r{};
+    if (!h.ride_steer_read(h.context, st, 0, r)) {
+        const char* why = r.refusal ? r.refusal : "read";
+        if (why != d.ride_steer_read_refusal) {
+            d.ride_steer_read_refusal = why;
+            EmitFormat(h, "partner_ride_steer=refused; side=driver; vehicle=%u; reason=%s\r\n", unsigned(d.ride_tx.vehicle), why);
+        }
+        return;
+    }
+    d.ride_steer_read_refusal = nullptr;
+    rw::Steer want{};
+    want.seat = 0;
+    want.revision = d.ride_tx.revision;
+    want.vehicle = d.ride_tx.vehicle;
+    if (!rw::SteerUnitsOf(r.steer, want.steer) || !rw::SteerUnitsOf(r.accel, want.accel) || !rw::SteerUnitsOf(r.aux, want.aux)) return;
+    const bool have = d.ride_steer_tx_have && d.ride_steer_tx_epoch == epoch;
+    if (!rw::SteerSendDue(have, d.ride_steer_tx, d.ride_steer_tx_ms, want, now)) return;
+    want.sender_ms = static_cast<std::uint32_t>(now);
+    std::uint8_t bytes[rw::kSteerSize]{};
+    if (!rw::EncodeSteer(want, bytes) || !h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) return;
+    const unsigned n = ++d.ride_steer_tx_count;
+    if (n <= kRideSteerLogLines || n % kRideSteerLogEvery == 0)
+        EmitFormat(h,
+                   "partner_ride_steer=tx; vehicle=%u; seat=0; rev=%u; steer=%u; accel=%u; aux=%u; raw=%.3f,%.3f,%.3f; epoch=%u; n=%u\r\n",
+                   unsigned(want.vehicle), unsigned(want.revision), unsigned(want.steer), unsigned(want.accel), unsigned(want.aux),
+                   static_cast<double>(r.steer), static_cast<double>(r.accel), static_cast<double>(r.aux), epoch, n);
+    d.ride_steer_tx = want;
+    d.ride_steer_tx_have = true;
+    d.ride_steer_tx_epoch = epoch;
+    d.ride_steer_tx_ms = now;
+}
+
+// r1101 vanim: the viewer's half. While the seat episode has body 1 seated as the driver (seat 0, the loop confirmed),
+// body 1's rate record gets the peer's live blends (else neutral: steer 0.5, accel 0, aux 0); body 1 never runs
+// RideVehicleAction, so without this its record keeps the constructor's 0.0 steer, the full-left turning pose. The
+// originals are saved before the first write and put back when the episode leaves the seated driver; a mission change
+// drops them unwritten. One line per source or refusal change, a steer that moved 10 units (at most every 250 ms) and
+// the restore.
+void TickRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    auto& w = d.ride_steer_write;
+    const Mission& m = d.mission;
+    if (w.saved && w.mission != m.mission_code) w = Driver::RideSteerWrite{};  // the old mission's body: never written back
+    if (!d.settings.ride_steer || !h.ride_steer_read || !h.ride_steer_write) return;
+    const auto& s = m.seat;
+    rw::SteerPlanIn in{};
+    in.on = true;
+    in.seated = s.phase == SeatPhase::seated && s.confirmed;
+    in.seat = s.seat;
+    in.vehicle = s.vehicle;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    rw::Steer remote{};
+    in.have_remote = rw::SteerFor(d.ride_steer_rx, d.ride_rx.packet, epoch, now, remote);
+    in.remote = remote;
+    const rw::SteerPlan p = rw::PlanSteer(in);
+    if (!p.write) {
+        if (!w.saved) return;
+        pp::RideRates o{};
+        o.aux = w.aux; o.accel = w.accel; o.steer = w.steer;
+        const char* why = h.ride_steer_write(h.context, st, o);
+        ++w.restores;
+        EmitFormat(h, "partner_ride_steer=restore; vehicle=%u; seat=%u; phase=%s; ok=%u; reason=%s; steer=%.3f; accel=%.3f; aux=%.3f; writes=%u\r\n",
+                   unsigned(w.vehicle), unsigned(w.seat), SeatPhaseName(s.phase), why ? 0u : 1u, why ? why : "none",
+                   static_cast<double>(w.steer), static_cast<double>(w.accel), static_cast<double>(w.aux), w.writes);
+        const unsigned writes = w.writes, restores = w.restores, refusals = w.refusals;
+        w = Driver::RideSteerWrite{};
+        w.writes = writes; w.restores = restores; w.refusals = refusals;
+        return;
+    }
+    if (!w.saved) {
+        pp::RideRates before{};
+        if (!h.ride_steer_read(h.context, st, 1, before)) {
+            const char* why = before.refusal ? before.refusal : "read";
+            ++w.refusals;
+            if (why != w.refusal) {
+                w.refusal = why;
+                EmitFormat(h, "partner_ride_steer=refused; side=viewer; vehicle=%u; seat=%u; reason=%s; step=save\r\n", unsigned(s.vehicle),
+                           unsigned(s.seat), why);
+            }
+            return;
+        }
+        w.saved = true;
+        w.mission = m.mission_code;
+        w.vehicle = s.vehicle;
+        w.seat = s.seat;
+        w.aux = before.aux; w.accel = before.accel; w.steer = before.steer;
+        EmitFormat(h, "partner_ride_steer=save; vehicle=%u; seat=%u; steer=%.3f; accel=%.3f; aux=%.3f; rec=0x%llx\r\n", unsigned(s.vehicle),
+                   unsigned(s.seat), static_cast<double>(before.steer), static_cast<double>(before.accel), static_cast<double>(before.aux),
+                   static_cast<unsigned long long>(before.rec));
+    }
+    pp::RideRates v{};
+    v.steer = p.steer; v.accel = p.accel; v.aux = p.aux;
+    if (const char* why = h.ride_steer_write(h.context, st, v)) {
+        ++w.refusals;
+        if (why != w.refusal) {
+            w.refusal = why;
+            EmitFormat(h, "partner_ride_steer=refused; side=viewer; vehicle=%u; seat=%u; reason=%s; step=write\r\n", unsigned(s.vehicle),
+                       unsigned(s.seat), why);
+        }
+        return;
+    }
+    w.refusal = nullptr;
+    ++w.writes;
+    std::uint8_t units = 0;
+    rw::SteerUnitsOf(p.steer, units);
+    const bool source_changed = !w.source || std::strcmp(w.source, p.source) != 0;
+    const bool moved = w.steer_units == 0xFF || (units > w.steer_units ? units - w.steer_units : w.steer_units - units) >= 10;
+    if (source_changed || (moved && (now < w.log_ms || now - w.log_ms >= 250))) {
+        w.source = p.source;
+        w.steer_units = units;
+        w.log_ms = now;
+        EmitFormat(h, "partner_ride_steer=write; vehicle=%u; seat=%u; source=%s; steer=%.3f; accel=%.3f; aux=%.3f; writes=%u\r\n",
+                   unsigned(s.vehicle), unsigned(s.seat), p.source, static_cast<double>(p.steer), static_cast<double>(p.accel),
+                   static_cast<double>(p.aux), w.writes);
     }
 }
 
@@ -6825,6 +6968,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.seat_fpv = lab.partner_seat_fpv;
     d.settings.ride_follow = lab.partner_ride_follow;
     d.settings.ride_getin_cut = lab.partner_ride_getin_cut;
+    d.settings.ride_steer = lab.partner_ride_steer;
     d.settings.ride_front = lab.partner_ride_front;
     d.settings.ride_cab = lab.partner_ride_cab;
     d.settings.ride_seat1_anchor = lab.partner_ride_seat1_anchor;
@@ -7405,6 +7549,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     SendRide(d, h, ride_tick, now);
     SendRideExt(d, h, now);
     SendSeatExt(d, h, now);
+    SendRideSteer(d, h, st, now);
     TickRideCensus(d, h, now);
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};
@@ -7648,6 +7793,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             sin.now = now;
             sin.terminating = terminating;
             const SeatTickOut seat_out = TickSeat(d, h, st, sin);
+            TickRideSteer(d, h, st, now);
             if (seat_out.own) {
                 // The seat exit re-shows body 1 itself (as a range or ride hide does): a
                 // body-safety re-show pending from before the seat must not run after it.
@@ -7678,6 +7824,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 return true;
             }
         }
+        // r1101 vanim: a seat episode that ended without a seated tick puts body 1's ride blends back.
+        if (d.ride_steer_write.saved) TickRideSteer(d, h, st, now);
         m.ride_seated = false;
         if (free_roam_net && !m.range_hidden && pose_valid && distance >= 200000) {
             partner_upper_probe::Clear("range_hidden");
