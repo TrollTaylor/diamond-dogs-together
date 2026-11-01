@@ -145,6 +145,16 @@ int main() {
         Check(!ResidencyRenewal(seen,0) && seen==0);
         Check(ResidencyRenewal(seen,1) && seen==1 && !ResidencyRenewal(seen,1));
         Check(ResidencyRenewal(seen,2) && seen==2);
+
+        // Covered: the allocation had this partner's manifest, or its ids cover every non-zero base.
+        const std::uint16_t remote[3]={0,46,9}, both[2]={46,9}, one[1]={46};
+        Check(LateGearCovered(false,remote,both,2));                // preloaded (the friend's 60839 reload)
+        Check(!LateGearCovered(false,remote,one,1));                // partial, no manifest at the allocation
+        Check(!LateGearCovered(false,remote,nullptr,0));            // refused link_not_connected (55903)
+        Check(LateGearCovered(true,remote,one,1));                  // had the manifest: 9 was dropped there (no note)
+        Check(LateGearCovered(true,remote,nullptr,0));              // had it, preflight refused: the next load fails alike
+        const std::uint16_t none[3]={0,0,0};
+        Check(!LateGearCovered(false,none,nullptr,0));              // nothing wanted: the writer decides (missing stays false)
     }
     std::printf("equipment_stock_probe_tests: %u checks passed; native_calls=0\n",checks);
 }
