@@ -2576,6 +2576,18 @@ void TestHud() {
         // Note 20 is VSPAWN (debug menu Spawn vehicle, lua/coop/debug_vspawn.lua): a=1 b=1 the jeep sentence.
         Check(text::FormatWorldNote(20, 1, 1, 30010, 30010, sentence, sizeof(sentence)) && std::strstr(sentence, "jeep"),
               "FormatWorldNote: note 20 the vehicle spawn toast");
+        // Review r1101: b=6 is either role's (the host refuses unpaired too), b=9 the partner's copy did not take the
+        // host's vehicle (its key off, occupied there), b=10 a player stands on the spot; 11 has no sentence.
+        Check(text::FormatWorldNote(20, 3, 6, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Not paired yet: vehicle spawn waits for the pairing.") == 0,
+              "FormatWorldNote: note 20 b=6 for both roles");
+        Check(text::FormatWorldNote(20, 3, 9, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Your partner's game did not take the vehicle: it is only on your screen.") == 0,
+              "FormatWorldNote: note 20 b=9 the partner's copy did not take it");
+        Check(text::FormatWorldNote(20, 3, 10, 30010, 30010, sentence, sizeof(sentence)) &&
+                  std::strcmp(sentence, "Someone stands where the vehicle would go. Step aside and try again.") == 0,
+              "FormatWorldNote: note 20 b=10 a player on the spot");
+        Check(!text::FormatWorldNote(20, 3, 11, 30010, 30010, sentence, sizeof(sentence)), "FormatWorldNote: note 20 b=11 has no sentence");
         for (const std::uint8_t code : {std::uint8_t{0}, std::uint8_t{23}, std::uint8_t{255}})
             Check(!text::FormatWorldNote(code, 1, 1, 30010, 30050, sentence, sizeof(sentence)) && sentence[0] == 0,
                   "FormatWorldNote: reserved and unknown codes have no toast");

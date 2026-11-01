@@ -24,7 +24,7 @@ local function F(o)
  env.GameObject={NULL_ID=NULL,GetGameObjectId=function(t,n)local v=t=="TppVehicle2" and c.v[n];return v and v.id or NULL end,
   SendCommand=function(id,cmd)
    if type(id)=="table" then
-    if id.type=="TppVehicle2" and cmd.id=="Respawn" then c.respawns[#c.respawns+1]=cmd.name;local v=c.v[cmd.name];if v then v.alive=true;v.gone=nil end end
+    if id.type=="TppVehicle2" and cmd.id=="Respawn" then c.respawns[#c.respawns+1]=cmd.name;local v=c.v[cmd.name];if v and not c.noRespawn then v.alive=true;v.gone=nil end end
     return true
    end
    local name,v=byId(id);if not v then return nil end
@@ -106,6 +106,22 @@ h=F();h.v.veh_trc_0000.alive=false;h.v.veh_trc_0001.alive=false;h.v.veh_trc_0001
 ok,msg=h:run("vspawn","trc")
 check(ok and msg:find("loc=veh_trc_0000",1,true) and h.respawns[1]=="veh_trc_0000","no live truck free: the wreck is re-created by Respawn{name}")
 h:tick(3);check(#h.sets==1 and h.sets[1].name=="veh_trc_0000","then moved once it answers IsAlive")
+-- Review r1101: the guest gets the wreck's move only once the host's own re-creation is read back in place.
+check(msg:find("sent=later",1,true) and #h.tx==0 and not h:note(1,2),"a wreck: nothing sent and no toast before the host's copy has it")
+h:tick(20);t=h.tx[1];check(t and t[3]==2 and t[4]==2 and t[5]==0 and h:note(1,2),"read back in place: kind 2 sent, the host's toast")
+-- A re-creation that never takes: nothing sent, the press toasts failed (b=7); an ask is answered kind 4 reason 7.
+h=F();h.noRespawn=true;h.v.veh_trc_0000.alive=false;h.v.veh_trc_0001.alive=false;h.v.veh_trc_0001.rider=5
+ok,msg=h:run("vspawn","trc");h:tick(100)
+check(h:has("ok=0;reason=respawn") and #h.tx==0 and #h.sets==0 and h:note(3,7) and not h:note(1,2),"a respawn that never takes: nothing sent, toast b=7")
+h,g=F(),F({host=false});h.noRespawn=true;h.v.veh_trc_0000.alive=false;h.v.veh_trc_0001.alive=false;h.v.veh_trc_0001.rider=5
+g:run("vspawn","trc");deliver(g,h);check(#h.tx==0,"an ask for a wreck: nothing sent before the host's copy has it")
+h:tick(100);t=h.tx[1];check(t and t[3]==4 and t[10]==7 and #h.tx==1,"the ask's wreck never took: kind 4 reason 7")
+deliver(h,g);check(g:note(3,7) and #g.sets==0 and g.D.vspawn.ask==nil,"the guest toasts b=7, nothing moved there")
+-- Re-creating a lost vehicle clears VEHICLE_GONE's record of it on the host (gone and the PAIRED re-send list).
+h=F();h.v.veh_trc_0000.alive=false;h.v.veh_trc_0001.alive=false;h.v.veh_trc_0001.rider=5
+h.W.vehicleGone={busy=function(id)return id==25605 and "occupied" or nil end,gone={[25604]=true},sent={{id=25604,seq=1},{id=25601,seq=2}}}
+h:run("vspawn","trc");check(h.W.vehicleGone.gone[25604]==nil and #h.W.vehicleGone.sent==1 and h.W.vehicleGone.sent[1].id==25601,
+ "the re-created truck leaves V.gone and V.sent (no VEHICLE_GONE re-send at PAIRED)")
 -- Guest press: it asks with its own pose; the host brings the vehicle in front of the GUEST, answers kind 3; both toast.
 h,g=F(),F({host=false});g.env.vars.playerPosX,g.env.vars.playerPosZ,g.env.vars.playerRotY=20,40,90
 ok,msg=g:run("vspawn","trc")
@@ -134,12 +150,57 @@ h=F();h.onFoot=false;ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_r
 -- Hidden run 5cdbfada D: the host's press while driving the spawned jeep was taken (the stance still reads STAND in a
 -- vehicle) and brought another jeep. ON_VEHICLE / ON_HORSE come first; a guest in a back seat (the seats module's
 -- passenger seat, BOARD_SEAT lpv, without ON_VEHICLE) is riding too.
+-- The refusal line names the check that fired (by=on_vehicle / on_horse / seat / state / stance).
 h=F();h.riding=true;ok,msg=h:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and h:note(3,5) and #h.sets==0 and #h.tx==0,"driving with the stance STAND: refused, nothing moved")
-h=F();h.horse=true;ok,msg=h:run("vspawn","trc");check(not ok and msg=="vspawn_refused;reason=busy" and #h.sets==0,"on the horse: refused")
-local g=F({host=false});g.W.ridePose={seat={board=function(cmd)return cmd=="poll" and {ok=true,on=1,lpv=25602} or nil end,sat=function(r)return r and r.lpv end}}
-ok,msg=g:run("vspawn","lv");check(not ok and msg=="vspawn_refused;reason=busy" and #g.tx==0,"a guest in a back seat: refused, no ask sent")
-g.W.ridePose.seat.board=function()return {ok=true,on=1,lpv=65535}end;g.W.ridePose.seat.sat=function()return nil end
-ok,msg=g:run("vspawn","lv");check(ok and msg:find("vspawn_asked;class=lv",1,true),"on foot again: the ask goes out")
+check(h:has("step=refused;reason=busy;by=on_vehicle"),"the driving refusal logs by=on_vehicle")
+h=F();h.horse=true;ok,msg=h:run("vspawn","trc");check(not ok and msg=="vspawn_refused;reason=busy" and #h.sets==0 and h:has("by=on_horse"),"on the horse: refused (by=on_horse)")
+-- Review r1101: ridePose.seat as world_ride_pose.lua has it. S.sat is `R.localVehicle() or r and seatVehicle(r.lpv)`,
+-- a boolean: false (not nil) whenever the BOARD_SEAT receipt answers and this player sits nowhere, and native always
+-- answers it ({ok=true,on=0} outside a live race, else lpv 65535 on foot). Only a true sat is a back seat.
+local function seat(c,r)c.W.ridePose={seat={board=function(cmd)return cmd=="poll" and r or nil end,
+ sat=function(q)local v=q and q.lpv;return nil or q and (type(v)=="number" and v==math.floor(v) and v>=25600 and v<=26111)end}}end
+for _,r in ipairs({{ok=true,on=0},{ok=true,on=1,lpv=65535}})do
+ local g=F({host=false});seat(g,r);ok,msg=g:run("vspawn","lv")
+ check(ok and msg:find("vspawn_asked;class=lv",1,true) and #g.tx==1,"guest on foot, the receipt answering on="..r.on..": the ask goes out")
+ h=F();seat(h,r);ok,msg=h:run("vspawn","lv")
+ check(ok and msg:find("vspawn;class=lv;loc=veh_lv_0001",1,true) and #h.sets==1,"host on foot, the receipt answering on="..r.on..": spawned")
+end
+local g=F({host=false});seat(g,{ok=true,on=1,lpv=25602});ok,msg=g:run("vspawn","lv")
+check(not ok and msg=="vspawn_refused;reason=busy" and #g.tx==0 and g:has("step=refused;reason=busy;by=seat"),"a guest in a back seat: refused (by=seat), no ask sent")
+-- Review r1101: the host's press goes out first and is applied only when sent; unpaired it is refused (b=6).
+h=F({paired=false});ok,msg=h:run("vspawn","lv")
+check(not ok and msg=="vspawn_refused;reason=unpaired" and #h.sets==0 and #h.tx==0 and h:note(3,6) and not h:note(1,1),"host unpaired: refused, nothing moved")
+h=F();h.txOk=false;ok,msg=h:run("vspawn","lv")
+check(not ok and msg=="vspawn_refused;reason=failed" and #h.sets==0 and h:note(3,7) and not h:note(1,1),"host press not sent: refused (b=7), nothing moved")
+-- Never onto a player (world_vehicle_state.lua holds 3.5 m): the host's press checks the partner's last pose (D.partnerPose
+-- mm), an ask the host itself; the guest checks itself before applying and answers the host kind 4.
+h=F();h.D.partnerPose={1000,10000,5000,80};ok,msg=h:run("vspawn","lv")
+check(not ok and msg=="vspawn_refused;reason=in_way" and #h.sets==0 and #h.tx==0 and h:note(3,10),"the partner stands on the spot: refused (b=10)")
+h=F();h.D.partnerPose={4000,10000,6000,80};ok,msg=h:run("vspawn","lv");check(ok and #h.sets==1,"the partner 4 m off the spot: spawned")
+h,g=F(),F({host=false});g.env.vars.playerPosX,g.env.vars.playerPosZ,g.env.vars.playerRotY=20,40,90
+h.env.vars.playerPosX,h.env.vars.playerPosZ=27,41;g:run("vspawn","trc");deliver(g,h)
+t=h.tx[1];check(#h.sets==0 and t and t[3]==4 and t[10]==10,"an ask whose spot the host stands on: kind 4 reason 10, nothing moved")
+deliver(h,g);check(g:note(3,10) and g.D.vspawn.ask==nil,"the guest toasts b=10")
+h,g=F(),F({host=false});g.env.vars.playerPosZ=6.5;h:run("vspawn","lv");deliver(h,g)
+t=g.tx[1];check(#g.sets==0 and g:has("step=skip;reason=in_way") and t and t[3]==4 and t[10]==10,"the guest stands on the host's spot: not moved, kind 4 reason 10")
+deliver(g,h);check(h:note(3,10) and h:has("step=partner_refused"),"the host toasts b=10")
+-- The guest's own key off: the host's move is not applied there; the host hears it (b=9: only on its screen).
+h,g=F(),F({host=false,key=false});h:run("vspawn","lv");deliver(h,g)
+t=g.tx[1];check(#g.sets==0 and g:has("step=skip;reason=off") and t and t[3]==4 and t[10]==1,"guest key off: not applied, kind 4 reason 1")
+deliver(g,h);check(h:note(3,9),"the host toasts b=9 (the vehicle is only on its screen)")
+-- The guest's copy has it occupied (its own LRRP crew, a soldier): never moved there, the host hears it. The partner's
+-- ride (the host just left it: RIDE_MS latch) is the same vehicle on both copies and is moved.
+h,g=F(),F({host=false});g.v.veh_lv_0001.rider=4321;h:run("vspawn","lv");deliver(h,g)
+t=g.tx[1];check(#g.sets==0 and g:has("step=apply;loc=veh_lv_0001;id=25602;ok=0;reason=occupied") and t and t[3]==4 and t[10]==9,
+ "guest copy occupied: not moved, kind 4 reason 9")
+deliver(g,h);check(h:note(3,9),"the host toasts b=9")
+h,g=F(),F({host=false});g.W.vehicleGone={busy=function()return "partner_ride" end};h:run("vspawn","lv");deliver(h,g)
+check(#g.sets==1 and #g.tx==0,"guest: the partner's latched ride is moved")
+-- The pick skips a vehicle VEHICLE_GONE watches (being lost: a Fulton balloon in flight) or holds (a request).
+for _,k in ipairs({"watch","held"})do
+ h=F();h.W.vehicleGone={busy=function()end,[k]={[25602]={}}};ok,msg=h:run("vspawn","lv")
+ check(ok and msg:find("loc=veh_lv_0000",1,true),"the pick skips a vehicle in VEHICLE_GONE's "..k)
+end
 -- The host's copy did not take the pose: the readback says so (ok=0) after 90 updates.
 h=F();h.stuck=true;h:run("vspawn","lv");h:tick(100);check(h:has("step=placed;loc=veh_lv_0001") and h:has("ok=0"),"a move that does not take logs ok=0")
 -- A handler error is logged and stays inside the fragment (never world sync's).
@@ -152,5 +213,9 @@ check(ok and msg:find("vspawn;on=1;role=host;mission=30010;recent=veh_lv_0001",1
 if arg[2] then
  local sf=assert(io.open(arg[2],"rb"));local sc=sf:read("*a");sf:close()
  check(sc:find("labsetting debug_vspawn=1",1,true) and sc:find("vspawn lv",1,true) and sc:find("vspawn trc",1,true),"scenario names the key and both classes")
+ -- Review r1101: D presses on both copies while riding (the host driving, the guest in the back seat) and names the check.
+ local d=sc:match("# %-%-%- D:.-\nstate")
+ check(d and d:find("host run vspawn lv",1,true) and d:find("guest run vspawn trc",1,true) and d:find("by=on_vehicle",1,true)
+  and d:find("guest expect ^vspawn_refused;reason=busy$",1,true) and d:find("by=(seat|on_vehicle)",1,true),"scenario D: both riders refused, by= named")
 end
 print("debug_vspawn_lua_check: "..checks.." checks passed")

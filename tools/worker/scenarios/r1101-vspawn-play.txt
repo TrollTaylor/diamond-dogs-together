@@ -101,12 +101,16 @@ host hold w 1500
 host release
 wait 1500
 both capture c-after
-# --- D: a refusal (a press while riding) ----------------------------------------------------------------------------
+# --- D: a refusal on both copies (the host driving, the guest in the back seat: BOARD_SEAT lpv, no ON_VEHICLE) ---------
 logmark both
 host run vspawn lv
 host expect ^vspawn_refused;reason=busy$
-waitlog host 'world_lua=event=vspawn; step=refused; reason=busy' 5
+waitlog host 'world_lua=event=vspawn; step=refused; reason=busy; by=on_vehicle' 5
 waitlog host 'world=note; code=20; a=3; b=5;' 5
+guest run vspawn trc
+guest expect ^vspawn_refused;reason=busy$
+waitlog guest 'world_lua=event=vspawn; step=refused; reason=busy; by=(seat|on_vehicle)' 5
+waitlog guest 'world=note; code=20; a=3; b=5;' 5
 wait 1000
 host capture d-refused
 guest press e 150
