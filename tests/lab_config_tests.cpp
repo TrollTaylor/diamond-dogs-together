@@ -2132,12 +2132,41 @@ int main() {
             Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
                   "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
-            // r1101 animtruth: off unless named (also in the gun profile and in play); =1 turns it on.
-            Check(!def.partner_native_aim_truth && !gunDefault.partner_native_aim_truth &&
-                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
-                  Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
-                  Lab("enabled=1\nrole=host\npartner_native_aim_truth=maybe\n").invalid_values == 1,
-                  "partner_native_aim_truth: off by default, =1 on (lab and play), a bad value is invalid");
+            // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
+            // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
+            // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
+            // named 0 opts out, an invalid value is named and off (also after a valid 1); a named 1 runs without the profile.
+            Check(!mgscoop::LabConfig{}.partner_native_aim_truth && !def.partner_native_aim_truth && !def.partner_native_aim_truth_given &&
+                      gunDefault.partner_native_aim_truth && !gunDefault.partner_native_aim_truth_given &&
+                      Lab("enabled=1\nrole=host\npartner_native_aim_truth=1\n").partner_native_aim_truth &&
+                      Lab("enabled=1\nrole=host\npartner_native_aim_truth=maybe\n").invalid_values == 1,
+                  "partner_native_aim_truth: off without the gun profile, on with it, =1 on, a bad value is invalid");
+            {
+                const std::string truthBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\n"
+                                              "partner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n";
+                const std::string plainPlay = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n";
+                const auto truthPlain = Lab(plainPlay);
+                Check(!truthPlain.partner_native_aim_truth && truthPlain.play_refused == 0, "partner_native_aim_truth stays off in play without the gun profile");
+                for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+                    const auto truthProfile = Lab(truthBase + mode);
+                    Check(truthProfile.partner_native_aim_truth && !truthProfile.partner_native_aim_truth_given &&
+                              !truthProfile.partner_native_aim_truth_box && !truthProfile.partner_native_aim_truth_triggers &&
+                              !truthProfile.partner_native_aim_truth_stance && truthProfile.invalid_values == 0 &&
+                              truthProfile.unknown_keys == 0 && truthProfile.play_refused == 0,
+                          "the gun profile turns anim truth on in lab and play (not named), its box/triggers/stance parts stay off");
+                    const auto truthNamedOff = Lab(truthBase + mode + "partner_native_aim_truth=0\n");
+                    Check(!truthNamedOff.partner_native_aim_truth && truthNamedOff.partner_native_aim_truth_given &&
+                              truthNamedOff.invalid_values == 0 && truthNamedOff.play_refused == 0,
+                          "a named partner_native_aim_truth 0 opts out with the gun profile");
+                    const auto truthInvalid = Lab(truthBase + mode + "partner_native_aim_truth=maybe\n");
+                    Check(!truthInvalid.partner_native_aim_truth && truthInvalid.invalid_values == 1,
+                          "an invalid partner_native_aim_truth is named and off with the gun profile");
+                    const auto truthLate = Lab(truthBase + mode + "partner_native_aim_truth=1\npartner_native_aim_truth=2\n");
+                    Check(!truthLate.partner_native_aim_truth && truthLate.invalid_values == 1,
+                          "an invalid partner_native_aim_truth after a valid 1 turns it off");
+                }
+            }
             // Review animtruth-1: the unproven parts are their own keys, off unless named (also with the main key).
             {
                 const auto main = Lab("enabled=1\nmode=play\nrole=host\npartner_native_profile=gun\npartner_native_aim_truth=1\n");

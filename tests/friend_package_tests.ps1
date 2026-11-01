@@ -638,6 +638,14 @@ try {
             $file = Join-Path $fixture 'play-fulton-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "fulton_sync=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['fulton_sync'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named fulton_sync 0 turns the Fulton synced off in play'
+            # Anim truth (docs/anim-truth.md; hidden play run 3c5609bb): Play-Coop never names partner_native_aim_truth; play
+            # defaults it on with the gun profile, its box / triggers / stance parts off; a named 0 turns it off in play.
+            Assert-True (!$hostIni.Contains('partner_native_aim_truth') -and !$guestIni.Contains('partner_native_aim_truth') -and
+                !$clipsIni.Contains('partner_native_aim_truth')) 'Play-Coop lab.ini never names an anim truth key'
+            Assert-Equal "$($n['partner_native_aim_truth'])$($n['partner_native_aim_truth_box'])$($n['partner_native_aim_truth_triggers'])$($n['partner_native_aim_truth_stance'])" '1000' 'native: play defaults anim truth on, its parts off'
+            $file = Join-Path $fixture 'play-aim-truth-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "partner_native_aim_truth=0`n", $utf8)
+            $m = Invoke-IniCheck lab $file
+            Assert-Equal "$($m['partner_native_aim_truth'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '0|0x0|0/0' 'native: a named partner_native_aim_truth 0 turns anim truth off in play'
             # Design 8.27 passenger camera: Play-Coop never names the key and play defaults it to view (the handle, the
             # shot guard); the lab trace is forced off in play; a named connect (0.14.4) runs in play.
             Assert-True (!$hostIni.Contains('partner_pass_camera') -and !$guestIni.Contains('partner_pass_camera') -and

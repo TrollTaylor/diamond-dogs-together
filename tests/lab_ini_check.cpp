@@ -138,6 +138,12 @@ int main(int argc, char** argv) {
         // fulton_early, fulton_look and fulton_one_save stay off unless named.
         std::printf("fulton_sync=%d\nfulton_early=%d\nfulton_look=%d\nfulton_one_save=%d\n", c.fulton_sync ? 1 : 0, c.fulton_early ? 1 : 0,
                     c.fulton_look ? 1 : 0, c.fulton_one_save ? 1 : 0);
+        // r1101 animtruth (docs/anim-truth.md): the main key follows the gun profile (r1101 Prove phase); its box, triggers
+        // and stance parts stay off unless named.
+        std::printf("partner_native_aim_truth=%d\npartner_native_aim_truth_box=%d\npartner_native_aim_truth_triggers=%d\n"
+                    "partner_native_aim_truth_stance=%d\n",
+                    c.partner_native_aim_truth ? 1 : 0, c.partner_native_aim_truth_box ? 1 : 0, c.partner_native_aim_truth_triggers ? 1 : 0,
+                    c.partner_native_aim_truth_stance ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
