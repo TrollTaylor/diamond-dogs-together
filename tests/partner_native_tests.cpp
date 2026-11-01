@@ -1928,12 +1928,27 @@ void TestAnimAimTruth() {
     o = ps::TruthStep(t, in);
     Check(o.verdict == V::lane && o.strip == 0, "an item slot: not the gun lane");
     in.slot = 0;
-    // Acts this rule does not judge (cover, dive, CQC hold, the box, a ladder): pass.
-    for (std::uint16_t act : {std::uint16_t(57), std::uint16_t(70), std::uint16_t(93), std::uint16_t(77), std::uint16_t(21)}) {
+    // Acts this rule does not judge (cover, dive, CQC hold with its one-handed gun, the box): pass.
+    for (std::uint16_t act : {std::uint16_t(57), std::uint16_t(70), std::uint16_t(93), std::uint16_t(77)}) {
         in.act = act;
         o = ps::TruthStep(t, in);
-        Check(o.verdict == V::other && o.strip == 0, "cover, dive, CQC hold, box, ladder: pass (unjudged)");
+        Check(o.verdict == V::other && o.strip == 0, "cover, dive, CQC hold, box: pass (unjudged)");
     }
+    // Climbing and hanging (finder M4): ladder 21, pipe 22, wall climb 23, step_on 24 and the ledge hang 54..56
+    // leave no hand for a gun, so a held RMB there is refused in every lane (the puppet never stands and aims
+    // at the foot of a ladder the traversal replay could not enter).
+    for (std::uint16_t act : {std::uint16_t(21), std::uint16_t(22), std::uint16_t(23), std::uint16_t(24), std::uint16_t(54),
+                              std::uint16_t(55), std::uint16_t(56)}) {
+        in.act = act;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF && ps::TruthBodyOwnedAct(act), "ladder, pipe, climb, step_on, ledge hang: HOLD and FIRE stripped");
+        in.support_lane = true; in.slot = 3;
+        o = ps::TruthStep(t, in);
+        Check(o.verdict == V::act && o.strip == kHF, "climbing: the support lane too");
+        in.support_lane = false; in.slot = 0;
+    }
+    Check(!ps::TruthBodyOwnedAct(20) && !ps::TruthBodyOwnedAct(25) && !ps::TruthBodyOwnedAct(53) && !ps::TruthBodyOwnedAct(57),
+          "the climb set ends at its edges (aim_prone 20, fall 25, fulton 53, dive 57)");
     // No live act: nothing judged.
     in.act_valid = false;
     o = ps::TruthStep(t, in);
