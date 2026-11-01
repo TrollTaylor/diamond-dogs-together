@@ -5542,6 +5542,19 @@ bool SelectSupplyReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     if(n) replacement={reply,n};
     return true;
 }
+// Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua, docs/debug-menu.md "Spawn vehicle"): MGS_COOP_VSPAWN_CFG_V1
+// answers the lab key debug_vspawn (1 on, 0 off; off unless named) while the debug menu is enabled, on the runtime
+// thread; otherwise nil (Lua reads it as off). No game read or call.
+bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_VSPAWN_CFG_V1'";
+    if(!buffer || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0) return false;
+    static constexpr char none[]="return nil", on[]="return 1", off[]="return 0";
+    replacement={none,sizeof(none)-1};
+    if(!mgscoop::debug_menu::Enabled() || !OnRuntimeThread()) return true;
+    if(mgscoop::GetLabConfig().debug_vspawn) replacement={on,sizeof(on)-1};
+    else replacement={off,sizeof(off)-1};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5736,6 +5749,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
+    if (SelectVspawnReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);

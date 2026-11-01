@@ -915,6 +915,10 @@ struct LabConfig {
     bool fulton_early_given = false;
     bool fulton_look = false;
     bool fulton_look_given = false;
+    // debug_vspawn=0|1 (docs/debug-menu.md "Spawn vehicle", lua/coop/debug_vspawn.lua): F9 World > Vehicles brings an
+    // area vehicle in front of whoever presses, on both copies (VSPAWN 0x44). MGS_COOP_VSPAWN_CFG_V1 answers it to Lua.
+    // Off in lab and play unless named, until a hidden run shows the vehicle on both copies; a named value wins.
+    bool debug_vspawn = false;
     // The developer test boot (docs/test-boot.md): lab_fast_boot=0|1 skips the
     // startup logos and copyright screen and takes the title itself (no press
     // start, no menu, the offline notice closed); lab_boot (LabBoot above) is

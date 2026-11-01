@@ -2,6 +2,7 @@
 // (docs/world-sync-protocol.md "Receipts", "world.trigger"): exact
 // classification, strict integers, reply widths, the LOG sanitizer.
 #include "mgscoop/world_receipt.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -178,10 +179,29 @@ void Note() {
     // fb1031 travel-1: note 14 (TRAVEL) is shown and logged with its values like 1..13; fb1031 mbgo: 15 (MISSION_END)
     // too; 18 ARMS (Friendly fire) and 19 HINT (arrival-prevent) as well. 16 and 17 are posted by native only.
     Check(world::NoteShown(1) && world::NoteShown(13) && world::NoteShown(14) && world::NoteShown(15) && !world::NoteShown(0) &&
-              !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && !world::NoteShown(20),
-          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18 and 19, never 0, 16, 17 or 20");
+              !world::NoteShown(16) && !world::NoteShown(17) && world::NoteShown(18) && world::NoteShown(19) && world::NoteShown(20) &&
+              !world::NoteShown(23),
+          "HandleNote shows notes 1..15 (14 TRAVEL, 15 MISSION_END), 18, 19 and 20 (VSPAWN), never 0, 16, 17 or 23");
     Check(parse("15 3 0") && code == 15 && a == 3 && b == 0, "NOTE 15 parses");
-    Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("20 1 1"), "NOTE 19 parses, 17 and 20 do not");
+    Check(parse("19 30050 1") && code == 19 && a == 30050 && b == 1 && !parse("17 1 0") && !parse("23 1 1"), "NOTE 19 parses, 17 and 23 do not");
+    // Debug menu Spawn vehicle (lua/coop/debug_vspawn.lua): note 20 a=1 spawned for you | 2 your partner spawned | 3 refused.
+    Check(parse("20 3 8") && code == 20 && a == 3 && b == 8, "NOTE 20 (VSPAWN) parses");
+    {
+        namespace text = mgscoop::coop_text;
+        char s[256]{};
+        Check(text::FormatWorldNote(20, 1, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "jeep") && std::strstr(s, "in front of you"),
+              "note 20 a=1 b=1: a jeep in front of you");
+        Check(text::FormatWorldNote(20, 2, 2, 0, 0, s, sizeof(s)) && std::strstr(s, "Your partner") && std::strstr(s, "truck"),
+              "note 20 a=2 b=2: your partner spawned a truck");
+        Check(text::FormatWorldNote(20, 3, 1, 0, 0, s, sizeof(s)) && std::strstr(s, "not available yet"), "note 20 refusal 1: key off");
+        Check(text::FormatWorldNote(20, 3, 2, 0, 0, s, sizeof(s)) && std::strstr(s, "free roam"), "note 20 refusal 2: free roam only");
+        // Review r1101: 9 the partner's copy did not take it, 10 a player on the spot; 11 is the first without a sentence.
+        for (std::uint32_t why = 3; why <= 10; ++why)
+            Check(text::FormatWorldNote(20, 3, why, 0, 0, s, sizeof(s)) && std::strlen(s) > 10, "note 20 refusals 3..10 have a sentence");
+        Check(!text::FormatWorldNote(20, 1, 3, 0, 0, s, sizeof(s)) && !text::FormatWorldNote(20, 3, 11, 0, 0, s, sizeof(s)) &&
+                  !text::FormatWorldNote(20, 4, 1, 0, 0, s, sizeof(s)),
+              "note 20 other values: no toast");
+    }
     const std::string other = "return 'MGS_COOP_WORLD_WARP_V1' -- 1 2 3";
     Check(!world::ParseNote(other.data(), other.size(), code, a, b) && !world::ParseNote(nullptr, 3, code, a, b), "other receipts");
 }

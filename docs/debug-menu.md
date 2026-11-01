@@ -310,6 +310,49 @@ off: native then answers `travel=refused;reason=off` and nothing moves.
 - **Play: on since 0.14.6** (the user's release of every built feature), the same as the lab. Not run in a game yet:
   `tools/worker/scenarios/rules-play.txt` (2026-10-31 not admitted: D: under 3 GB) is the proof run.
 
+### Spawn vehicle (end of the World page; both players; lab key; hidden runs e626471f / 5cdbfada; the riding refusal and the r1101 review fixes not run yet)
+
+| Button | Command |
+|---|---|
+| Spawn jeep (S, U) | `vspawn lv` |
+| Spawn truck (S, U) | `vspawn trc` |
+| (typed only) | `vspawn_status` |
+
+- A jeep (light vehicle) or a truck comes **6 m in front of whoever presses, facing their way, on both screens**.
+  Afghanistan and Africa free roam only. The host picks the vehicle; a guest's press asks the host (VSPAWN `0x44`,
+  docs/world-sync-protocol.md section 27), which brings it in front of the guest.
+- It is one of the area's own vehicles (free roam loads only that faction's jeeps and trucks; the stock `Spawn`
+  refuses a vehicle that already exists): an authored map vehicle that nobody rides, not the partner's ride, not one
+  VEHICLE_GONE is losing (a Fulton balloon in flight) or holds a request for, a soldier-driven (LRRP) one only as the
+  last resort (all six Afghanistan trucks are LRRP trucks), live before
+  wrecked, not one brought before (else the oldest), then the farthest away. It leaves its old place. A wreck is
+  re-created first, and goes to the partner only once the host's copy has it in place. The host's press goes out first
+  and the vehicle moves only when it did. An LRRP truck can still be taken back by each copy's own AI later (until M8). Afterwards it is that map vehicle on both copies: ride together, drive, damage, Fulton.
+- Refusals (chip and toast, world note 20): not available yet (the key is off), not free roam (Mother Base, story
+  missions), no free vehicle of that kind right now, that kind is not in this area (tanks and armoured vehicles are
+  not loaded in free roam), not on foot (driving, on the horse or in a back seat: the stance reads STAND in a vehicle,
+  so ON_VEHICLE / ON_HORSE and the seats module's passenger seat are checked first; the log names which:
+  `by=on_vehicle|on_horse|seat|state|stance|pose`), not paired (either player), could not be brought or sent, no answer
+  from the host, someone stands where it would go (within 3.5 m of the spot: the partner's last pose for the host's
+  press, the host for a guest's ask, and each guest copy checks its own player), and "only on your screen" when the
+  guest's copy did not take the host's vehicle (its key off, the vehicle occupied there, e.g. its own LRRP crew, or
+  its player on the spot: the guest answers kind 4).
+- Seen in hidden run `5cdbfada` (play, key named) on both copies: the host's jeep and the guest's truck 6 m in front of
+  the presser, the host driving the spawned jeep with the guest in its back seat. Its press while driving was taken
+  (fixed after the run, `082db232`); the scenario now expects `vspawn_refused;reason=busy`.
+- Results: `vspawn;class=lv|trc;loc=veh_<class>_NNNN;sent=1|later` (host; later: a wreck, sent once in place), `vspawn_asked;class=;seq=` (guest),
+  `vspawn_refused;reason=off|mission|none_free|not_loaded|busy|unpaired|failed|in_way|pending`. `vspawn_status`:
+  `vspawn;on=0|1;role=host|guest;mission=;recent=<locators>;moving=N;ask=0|1`.
+- Logs: `world_lua=event=vspawn; step=press|pick|apply|tx|rx|placed|refused|ask_refused|ask_timeout|skip|partner_refused|error`;
+  `step=placed; ...; ok=1` is each copy's readback (within 3 m), `ok=0` a move that did not take.
+- **Lab key `debug_vspawn=1`** (lab.ini, lab and play; off unless named): off, both rows refuse "Vehicle spawn is not
+  available yet in this build." The proof run is `tools/worker/scenarios/r1101-vspawn-play.txt`.
+- Not covered: the sortie (relief) vehicle you bring is TppVehicle2 index 0, which Lua can never spawn or move by
+  index; showing it on the partner's screen is the separate M3 `world_relief` key (off). Armoured vehicles and tanks:
+  free roam loads no such body; a row for them needs the mission pack (`MISSION_COMMON_PACK.WEST_WAV` / `WEST_TANK`, as
+  story missions add) on both copies at mission load, then a `Respawn{name, type}` of an authored slot (docs/STATUS.md
+  2026-11-01).
+
 ### Give weapon (both players)
 
 At the end of the Player page: a list, then **Give weapon** (`give_weapon <id>`). Built and unit-tested on

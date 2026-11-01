@@ -987,6 +987,11 @@ void World(const Snapshot& s) noexcept {
     Row("rules_mb_weapons_on", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("rules_mb_weapons_off", s, {nullptr, 190.0f});
     Wrapped("Wormhole Fulton: only your own Fulton. Weapons at Mother Base: the host decides for both players; killing staff "
         "still fails the mission. Nothing changes in your save.");
+    // Spawn vehicle (docs/debug-menu.md "Spawn vehicle"): either player, both screens.
+    Heading("Vehicles");
+    Row("vspawn_lv", s, {nullptr, 190.0f}); ImGui::SameLine(); Row("vspawn_trc", s, {nullptr, 190.0f});
+    Wrapped("Brings one of this area's own vehicles in front of you on both screens (Afghanistan and Africa free roam: "
+        "jeeps and trucks; tanks and armoured vehicles are not loaded there). The host picks it; a guest's press asks the host.");
 }
 int ConsoleHistory(ImGuiInputTextCallbackData* data) noexcept {
     if (data->EventFlag != ImGuiInputTextFlags_CallbackHistory || !ui.history_count) return 0;

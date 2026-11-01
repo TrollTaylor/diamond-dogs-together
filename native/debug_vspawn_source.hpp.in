@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_vspawn_source[] = R"MGS_VSPAWN(
+@MGS_DEBUG_VSPAWN_SOURCE@
+)MGS_VSPAWN";

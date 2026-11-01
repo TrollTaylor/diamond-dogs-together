@@ -320,6 +320,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.fulton_look_given = true;
         if (!ok) result.fulton_look = false;
     }
+    // Debug menu Spawn vehicle (lab and play, off unless named): an invalid value counts as named, off.
+    else if (Equals(key, "debug_vspawn")) {
+        ok = ParseBool(value, result.debug_vspawn);
+        if (!ok) result.debug_vspawn = false;
+    }
     else if (Equals(key, "partner_ride_seat_id")) ok = ParseBool(value, result.partner_ride_seat_id);
     else if (Equals(key, "partner_ride_tilt")) ok = ParseBool(value, result.partner_ride_tilt);
     // r1101 vanim: the driver's steer pose (off unless named, lab and play); an invalid value refuses (off).
