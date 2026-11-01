@@ -32,9 +32,14 @@
   `W.arrivalWatch.hint` default true (false still turns each off); `world_vehicle.lua` `V.mission()` takes 30050 in
   play. Tests follow: `debug_menu_tests`, `debug_arms_lua_check`, `debug_rules_lua_check`, `world_follow_lua_check`,
   `world_arrival_lua_check`, `world_align_lua_check`, `world_vehicle_lua_check`.
-- **Checks:** `tools/build.ps1 -Fast` after each merge and fix (312/312); the affected `ctest -R` sets;
-  `generate_soldier_warp_contract.py --check` after the mb-staff merge. Full build and every `--check` at the head:
-  see the next commit's record.
+- **Checks:** `tools/build.ps1 -Fast` after each merge and fix (312/312) and the affected `ctest -R` sets. At
+  `62efa162` (worktree on C:, Debug): full `tools/build.ps1` CTest **344/344** (61 s); the plain lab suite 1696 checks
+  (dry parts, fixtures only); every generator with `--check` passes against exe `085c2f82...bb45`: partner 855 code
+  sites / 213 vtable slots, soldier_warp 19 sites / 10 slots (callers GuestWarpReceipt, SoldierWarpReceipt),
+  carry_info, carry_plugin, carry_provider, downed_damage, equip_writer_pins, nametag, sleep_graph, sleep_plugin,
+  steam_shim, vehicle_controller; native_ui and teammate_targeting match their headers (then stop at their gitignored
+  `docs/evidence` JSON, absent in a fresh tree, as before). Lua LF bytes: world_follow 31423, world_ride_pose 31364,
+  world_relief_sync 30732 (<= 32000); debug_menu 15993, debug_player 15951, debug_spawn 15247 (<= 16000).
 
 ## October 31, 2026: fb1031 gear proof - a late partner's gun cannot load mid-mission; the default tells you once (`wp/integ-log1031`; hidden run 0238a446)
 
