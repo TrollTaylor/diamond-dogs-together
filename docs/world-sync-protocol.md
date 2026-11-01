@@ -1909,5 +1909,6 @@ the host repeats kind 2 whenever a guest pairs. A guest never applies kind 1, th
 (`lua/coop/debug_arms.lua`) keeps the switch in `W.arms.ff` (default on, kept across missions); off,
 `world_friendly.lua` drops the partner's hits at both ends of FRIENDLY_HIT (the shooter consumes its queued hit
 without sending, the target never queues or applies one). World note 18 ARMS{a=1, b=0 off | 1 on} toasts the switch
-(the host's press and every change on the guest). 0x3C..0x3E and notes 15..17 are the other debug-menu tracks'.
+(the host's press and every change on the guest). 0x3C..0x3E are the other debug-menu tracks'. Notes 15 and 17 are
+free; 16 is MISMATCH (posted by native world_link).
 A partner without the op skips it by its length (unknown_op): its own switch stays on.

@@ -353,7 +353,7 @@ bool FormatWorldNote(std::uint8_t code, std::uint32_t a, std::uint32_t b, std::u
         if (b == 0) return Put(out, capacity, "Friendly fire is OFF: you and your partner cannot hurt each other.");
         if (b == 1) return Put(out, capacity, "Friendly fire is ON: you and your partner can hurt each other.");
         return false;
-    default:  // 15..17 reserved or unknown: no toast
+    default:  // 15, 17 free (16 MISMATCH is above) or unknown: no toast
         return false;
     }
 }

@@ -85,8 +85,8 @@ bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::ui
 // Outputs only on success.
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;
 // The note codes world_link::HandleNote logs with their values and toasts (coop_hud world_note):
-// 1..13, 14 TRAVEL (debug menu Travel, docs/debug-menu.md) and 18 ARMS (debug menu Friendly fire); 15..17 are
-// reserved for the other debug-menu tracks (logged as unknown).
+// 1..13, 14 TRAVEL (debug menu Travel, docs/debug-menu.md) and 18 ARMS (debug menu Friendly fire). 15 and 17 are
+// free (logged as unknown); 16 is MISMATCH, which native world_link posts itself (not a Lua note).
 bool NoteShown(std::uint8_t code) noexcept;
 // SAVE_V1: exactly 6 strict integers (no sign) with the P2-2 ranges per op
 // (see the grammar above). Outputs only on success.
