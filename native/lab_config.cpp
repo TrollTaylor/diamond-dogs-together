@@ -331,6 +331,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.partner_ride_follow_given = true;
         if (!ok) result.partner_ride_follow = false;
     }
+    else if (Equals(key, "partner_ride_getin_cut")) {
+        // The get-in camera cut (design 8.60): an invalid value is named and off (also after a valid 1).
+        ok = ParseBool(value, result.partner_ride_getin_cut);
+        result.partner_ride_getin_cut_given = true;
+        if (!ok) result.partner_ride_getin_cut = false;
+    }
     else if (Equals(key, "partner_seat_fpv")) {
         // Seat first person (design 8.46): an invalid value is named and off (also after a valid 1).
         ok = ParseBool(value, result.partner_seat_fpv);
@@ -1780,6 +1786,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // The follow carry (design 8.59): off unless named, in lab and play, until a hidden run proves it (fb1031: both runs
     // were refused before admission); a named 1 turns it on.
     if (!c.partner_ride_follow_given) c.partner_ride_follow = false;
+    // The get-in camera cut (design 8.60): follows the gun profile in lab and play (hidden runs c54aae04 before / f71126c0
+    // after, play, -WanSim bad: the front-seat rider's camera stays with the jeep the partner drives off); a named 0 opts out.
+    if (!c.partner_ride_getin_cut_given) c.partner_ride_getin_cut = gun;
     // M3 sortie vehicle (docs/vehicles-companions-design.md 6.3, section 9 M3): off unless named, in
     // lab and play. On from 5a6bac8 until the review of 2026-10-29: its play rehearsals (40c09484,
     // 98e4af59) covered no drive, mission end or removal at the shipped defaults, a guest Fulton was

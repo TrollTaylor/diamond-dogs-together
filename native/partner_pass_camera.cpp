@@ -23,6 +23,8 @@ static_assert(c::p_local_id == kPLocalId && c::q_act == kQAct && c::board_p_unit
               "player offsets");
 static_assert(c::cam_connect == kCamConnect && c::cam_connect_on == kCamConnectOn && c::pass_cam_target == kCamTarget, "connect fields");
 static_assert(c::pass_cam_mode == kCamMode && c::pass_cam_prev_mode == kCamPrevMode && c::pass_cam_modules == kCamModules, "mode fields");
+static_assert(c::getin_module_vtable_rva == kGetInModuleVtableRva && c::getin_flags == kGetInFlags && c::getin_request == kGetInRequest,
+              "get-in cut fields");
 static_assert(c::pass_cam_pitch == kCamPitch && c::pass_cam_yaw == kCamYaw && c::pass_cam_pitch_prev == kCamPitchPrev &&
                   c::pass_cam_yaw_prev == kCamYawPrev && c::pass_cam_eye == kCamPos && kCamAngles == kCamPitchPrev &&
                   c::pass_cam_rotation == kCamRotation && kCamRot == kCamRotation,
@@ -48,6 +50,9 @@ volatile LONG g_fpv_override = kFpvKey;
 // fb1031 (design 8.59): the follow carry blocks' one-time check (0 untried, 1 verifying, 2 done).
 volatile LONG g_follow_tried = 0;
 const char* g_follow_refusal = nullptr;
+// fb1031 ride lag (design 8.60): the get-in cut blocks' one-time check (0 untried, 1 verifying, 2 done).
+volatile LONG g_getin_tried = 0;
+const char* g_getin_refusal = nullptr;
 
 void LogFormat(const char* format, ...) noexcept {
     if (!g_log) return;
@@ -161,9 +166,32 @@ const char* VerifyFollowImage(const void* base, std::size_t span, std::uintptr_t
     return nullptr;
 }
 
+const char* VerifyGetInCutImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept {
+    mismatch_rva = 0;
+    const auto* image = static_cast<const unsigned char*>(base);
+    if (!image) return "base";
+    for (const std::uintptr_t rva : c::getin_cut_blocks) {
+        mismatch_rva = rva;
+        const c::Site* site = SiteAt(rva);
+        if (!site) return "contract";
+        if (site->rva > span || site->size > span - site->rva) return "span";
+        bool same = true;
+        __try {
+            same = std::memcmp(image + site->rva, site->bytes, site->size) == 0;
+        } __except (ReadFilter(GetExceptionCode())) {
+            return "read";
+        }
+        if (!same) return "bytes";
+    }
+    mismatch_rva = 0;
+    return nullptr;
+}
+
 void ResetForTest() noexcept {
     g_follow_tried = 0;
     g_follow_refusal = nullptr;
+    g_getin_tried = 0;
+    g_getin_refusal = nullptr;
     g_install_tried = g_installed = 0;
     g_refusal = nullptr;
     g_log = nullptr;
@@ -506,6 +534,58 @@ bool WriteFollowStart(const void* base, std::uintptr_t P, std::uintptr_t blend, 
     if (ok) g_follow.fetch_add(1, std::memory_order_relaxed);
     SetLastError(error);
     return ok;
+}
+const char* GetInCutInstall(const void* base, std::size_t span) noexcept {
+    const LONG was = InterlockedCompareExchange(&g_getin_tried, 1, 0);
+    if (was == 2) return g_getin_refusal;
+    if (was == 1) return "verifying";
+    std::uintptr_t mismatch = 0;
+    g_getin_refusal = detail::VerifyGetInCutImage(base, span, mismatch);
+    InterlockedExchange(&g_getin_tried, 2);
+    if (g_getin_refusal)
+        LogFormat("partner_pass_camera=getin_cut; result=refused; reason=%s; rva=0x%llx\r\n", g_getin_refusal,
+                  static_cast<unsigned long long>(mismatch));
+    else
+        LogFormat("partner_pass_camera=getin_cut; result=installed; blocks=%u\r\n",
+                  static_cast<unsigned>(sizeof(c::getin_cut_blocks) / sizeof(c::getin_cut_blocks[0])));
+    return g_getin_refusal;
+}
+namespace {
+// The active module of the local camera when it is module 0 with the get-in vtable (0: not).
+std::uintptr_t GetInModule(std::uintptr_t b, std::uintptr_t P) noexcept {
+    const std::uintptr_t cam = LocalCamera(b, P);
+    std::int32_t mode = -1;
+    std::uintptr_t module = 0, vt = 0;
+    if (!cam || !ReadValue(cam + kCamMode, mode) || mode != 0 || !ReadValue(cam + kCamModules, module) || !module ||
+        !ReadValue(module, vt) || vt != b + kGetInModuleVtableRva)
+        return 0;
+    return module;
+}
+} // namespace
+bool GetInActive(const void* base, std::uintptr_t P) noexcept { return GetInModule(reinterpret_cast<std::uintptr_t>(base), P) != 0; }
+const char* CutGetIn(const void* base, std::uintptr_t P) noexcept {
+    const auto b = reinterpret_cast<std::uintptr_t>(base);
+    if (!LocalCamera(b, P)) return "camera";
+    const std::uintptr_t module = GetInModule(b, P);
+    if (!module) return "module";
+    const DWORD error = GetLastError();
+    const char* why = nullptr;
+    __try {
+        auto* flags = reinterpret_cast<volatile std::uint32_t*>(module + kGetInFlags);
+        auto* request = reinterpret_cast<volatile std::uint32_t*>(module + kGetInRequest);
+        const std::uint32_t f = *flags;
+        if ((f & kGetInActiveBit) == 0) {
+            why = "inactive";
+        } else {
+            if (*request == 1u) *request = 0u;
+            *flags = f & ~kGetInActiveBit;
+        }
+    } __except (ReadFilter(GetExceptionCode())) {
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        why = "fault";
+    }
+    SetLastError(error);
+    return why;
 }
 int FpvOverride() noexcept { return static_cast<int>(InterlockedCompareExchange(&g_fpv_override, 0, 0)); }
 

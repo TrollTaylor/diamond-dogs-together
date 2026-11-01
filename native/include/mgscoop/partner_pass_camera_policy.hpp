@@ -1119,6 +1119,90 @@ inline void CarryWritten(Carry& c, const CarryOut& o, bool ok) noexcept {
     c.carried += o.step;
 }
 
+// --- fb1031 ride lag: the get-in camera cut (lab.ini partner_ride_getin_cut; design 8.60) ---------------------------
+// [O run c54aae04, play, -WanSim bad] Right after a front-seat (seat 1) get-in the local camera runs module 0 (live vtable
+// 0x23BE5E0) for about 3.5 s. It holds the camera where the get-in began: with the partner driving off at once the
+// rider's view stayed behind (eye 3.2 m -> 18.5 m from the jeep in 2.8 s at up to 8.7 m/s, the jeep out of the frame),
+// then the fallback module snapped to the body. [O static, the pinned getin_cut_blocks] Its CanActivate (vt+0x18
+// 0x1184D80) returns its flags (+0x147C) bit 5 and sets that bit again while its request word (+0xAE0) is 1; only its
+// Deactivate (vt+0x08 0x1182B40) clears both. The cut clears that bit and the request word once the ridden vehicle has
+// moved kGetInCutMove from where module 0 was first seen active: the stock selection then deactivates module 0 and the
+// fallback (rigid on the seated body) takes over. Nothing while the vehicle stands (the stock get-in view is kept).
+inline constexpr std::uintptr_t kGetInModuleVtableRva = 0x23BE5E0;
+inline constexpr std::size_t kGetInFlags = 0x147C, kGetInRequest = 0xAE0;
+inline constexpr std::uint32_t kGetInActiveBit = 0x20;
+inline constexpr float kGetInCutMove = 0.3f;        // the ridden vehicle moved this far (m) since module 0 was first seen
+inline constexpr unsigned kGetInCutMaxWrites = 8;   // writes per get-in; then gave_up (module 0 kept coming back)
+struct GetInCutIn {
+    bool on = false;      // the key, the passenger camera installed and not off, not uncertain
+    bool seated = false;  // the local passenger report
+    std::uint16_t vehicle = 0xFFFF;
+    bool getin = false;   // the active module of the local camera is module 0 (kGetInModuleVtableRva)
+    bool veh_ok = false;
+    float veh[3]{};
+    std::uint64_t now_ms = 0;
+};
+struct GetInCut {
+    bool have = false;  // module 0 seen active while seated in this vehicle: anchor holds the vehicle there
+    std::uint16_t vehicle = 0xFFFF;
+    float anchor[3]{};
+    std::uint64_t since_ms = 0;
+    unsigned writes = 0;
+    bool done = false;  // gave up for this get-in
+    std::uint32_t cuts = 0, gave_up = 0;  // per mission
+};
+enum class GetInCutEvent : std::uint8_t { none, cut, gave_up };
+struct GetInCutOut {
+    GetInCutEvent event = GetInCutEvent::none;
+    bool write = false;  // clear module 0's active bit and request word this tick
+    float moved = 0.0f;  // m since the anchor
+    std::uint64_t ms = 0;  // since module 0 was first seen active
+};
+// One driver tick. Module 0 not active, not seated or the key off: the get-in episode is over (the mission counts stay).
+// The first tick with module 0 active while seated anchors the vehicle's position; from then on a vehicle that moved
+// kGetInCutMove asks for the cut every tick module 0 is still active, at most kGetInCutMaxWrites times (then gave_up). An
+// unread vehicle keeps the episode as it is.
+inline GetInCutOut GetInCutStep(GetInCut& c, const GetInCutIn& in) noexcept {
+    GetInCutOut o{};
+    if (!in.on || !in.seated || !in.getin) {
+        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
+        c = GetInCut{};
+        c.cuts = cuts;
+        c.gave_up = gave_up;
+        return o;
+    }
+    if (!in.veh_ok || !std::isfinite(in.veh[0]) || !std::isfinite(in.veh[1]) || !std::isfinite(in.veh[2])) return o;
+    if (!c.have || c.vehicle != in.vehicle) {
+        const std::uint32_t cuts = c.cuts, gave_up = c.gave_up;
+        c = GetInCut{};
+        c.cuts = cuts;
+        c.gave_up = gave_up;
+        c.have = true;
+        c.vehicle = in.vehicle;
+        for (unsigned i = 0; i < 3; ++i) c.anchor[i] = in.veh[i];
+        c.since_ms = in.now_ms;
+        return o;
+    }
+    if (c.done) return o;
+    const float dx = in.veh[0] - c.anchor[0], dy = in.veh[1] - c.anchor[1], dz = in.veh[2] - c.anchor[2];
+    o.moved = std::sqrt(dx * dx + dy * dy + dz * dz);
+    o.ms = in.now_ms >= c.since_ms ? in.now_ms - c.since_ms : 0;
+    if (!(o.moved >= kGetInCutMove)) return o;
+    if (c.writes >= kGetInCutMaxWrites) {
+        c.done = true;
+        ++c.gave_up;
+        o.event = GetInCutEvent::gave_up;
+        return o;
+    }
+    o.write = true;
+    if (c.writes == 0) {
+        o.event = GetInCutEvent::cut;
+        ++c.cuts;
+    }
+    ++c.writes;
+    return o;
+}
+
 // --- fb1031: the ride camera census (lab and play; design 8.59) ----------------------------------------------------
 // Per driver tick while the local player rides a vehicle (driver or passenger): the local body B (aim read body[0]), the
 // camera eye C and its rotation q (CAM+0xE0, CAM+0x90) and the vehicle V (unit pos, yaw). The body's camera-space

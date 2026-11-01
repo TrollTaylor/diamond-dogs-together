@@ -835,6 +835,120 @@ void TestFollowCarry() {
     Check(!pc::CarryStep(c4, nf).write, "another module active: no write");
 }
 
+// fb1031 ride lag (design 8.60): the get-in camera cut.
+pc::GetInCutIn GetInIn(std::uint64_t t, float z, bool getin = true) {
+    pc::GetInCutIn in{};
+    in.on = true;
+    in.seated = true;
+    in.vehicle = 25608;
+    in.getin = getin;
+    in.veh_ok = true;
+    in.veh[0] = 575.7f;
+    in.veh[1] = 319.5f;
+    in.veh[2] = z;
+    in.now_ms = t;
+    return in;
+}
+void TestGetInCut() {
+    // Seated, module 0 active, the jeep standing: the anchor is taken, nothing is cut (the stock get-in view stays).
+    pc::GetInCut c{};
+    pc::GetInCutOut o = pc::GetInCutStep(c, GetInIn(1000, 1157.0f));
+    Check(!o.write && o.event == pc::GetInCutEvent::none && c.have && c.since_ms == 1000 && c.anchor[2] == 1157.0f,
+          "module 0 seen: anchored, nothing cut");
+    o = pc::GetInCutStep(c, GetInIn(1500, 1157.1f));
+    Check(!o.write && std::fabs(o.moved - 0.1f) < 1e-3f, "the jeep moved 0.1 m: kept");
+    // The partner drives off: once the jeep moved kGetInCutMove the cut is written, logged once.
+    o = pc::GetInCutStep(c, GetInIn(1600, 1157.0f + pc::kGetInCutMove + 0.05f));
+    Check(o.write && o.event == pc::GetInCutEvent::cut && o.ms == 600 && o.moved >= pc::kGetInCutMove && c.cuts == 1 && c.writes == 1,
+          "moved past kGetInCutMove: cut, one event");
+    // Module 0 still active the next tick (the selection runs on the camera update): written again, no second event.
+    o = pc::GetInCutStep(c, GetInIn(1616, 1157.6f));
+    Check(o.write && o.event == pc::GetInCutEvent::none && c.cuts == 1 && c.writes == 2, "still active: written again, no new event");
+    // Module 0 gone (the fallback took over): the episode ends; a later get-in anchors again.
+    o = pc::GetInCutStep(c, GetInIn(1632, 1157.8f, false));
+    Check(!o.write && !c.have && c.cuts == 1, "module 0 gone: episode over, the mission count kept");
+    o = pc::GetInCutStep(c, GetInIn(5000, 1200.0f));
+    Check(!o.write && c.have && c.anchor[2] == 1200.0f && c.writes == 0, "the next get-in anchors anew");
+    // A get-in into a jeep that is already moving (the user's front-seat rides): cut on the next ticks.
+    pc::GetInCut m{};
+    pc::GetInCutStep(m, GetInIn(2000, 100.0f));
+    o = pc::GetInCutStep(m, GetInIn(2016, 100.15f));
+    Check(!o.write, "0.15 m after the first tick: kept");
+    o = pc::GetInCutStep(m, GetInIn(2033, 100.31f));
+    Check(o.write && o.event == pc::GetInCutEvent::cut && o.ms == 33, "a moving jeep: cut 33 ms after module 0 was seen");
+    // Module 0 keeps coming back: at most kGetInCutMaxWrites writes, then one gave_up and nothing more for this get-in.
+    unsigned writes = 1;
+    pc::GetInCutOut last{};
+    for (unsigned i = 0; i < 20; ++i) {
+        last = pc::GetInCutStep(m, GetInIn(2050 + 16 * i, 101.0f + 0.2f * static_cast<float>(i)));
+        if (last.write) ++writes;
+        if (last.event == pc::GetInCutEvent::gave_up) break;
+    }
+    Check(writes == pc::kGetInCutMaxWrites && last.event == pc::GetInCutEvent::gave_up && m.done && m.gave_up == 1,
+          "module 0 kept coming back: gave up after the cap");
+    Check(!pc::GetInCutStep(m, GetInIn(3000, 110.0f)).write, "given up: no more writes this get-in");
+    // Not seated, the key off, another vehicle, an unread vehicle.
+    pc::GetInCut n{};
+    pc::GetInCutIn off = GetInIn(1000, 0.0f);
+    off.on = false;
+    pc::GetInCutStep(n, off);
+    off.veh[2] = 5.0f;
+    Check(!pc::GetInCutStep(n, off).write && !n.have, "the key off: nothing");
+    pc::GetInCutIn foot = GetInIn(1000, 0.0f);
+    foot.seated = false;
+    pc::GetInCutStep(n, foot);
+    foot.veh[2] = 5.0f;
+    Check(!pc::GetInCutStep(n, foot).write && !n.have, "not a passenger (on foot, or the driver): nothing");
+    pc::GetInCut v{};
+    pc::GetInCutStep(v, GetInIn(1000, 0.0f));
+    pc::GetInCutIn other = GetInIn(1016, 5.0f);
+    other.vehicle = 25609;
+    o = pc::GetInCutStep(v, other);
+    Check(!o.write && v.vehicle == 25609 && v.anchor[2] == 5.0f, "another vehicle: anchored anew");
+    pc::GetInCutIn unread = GetInIn(1032, 9.0f);
+    unread.vehicle = 25609;
+    unread.veh_ok = false;
+    Check(!pc::GetInCutStep(v, unread).write && v.have && v.anchor[2] == 5.0f, "an unread vehicle: no write, the anchor kept");
+}
+void TestGetInCutWrite() {
+    pc::detail::ResetForTest();
+    Chain k;
+    unsigned char module[0x1500]{};
+    Chain::Put<std::uintptr_t>(module, 0, Chain::kBase + pc::kGetInModuleVtableRva);
+    Chain::Put<std::uint32_t>(module, pc::kGetInFlags, 0x25u);
+    Chain::Put<std::uint32_t>(module, pc::kGetInRequest, 1u);
+    Chain::Put<std::uintptr_t>(k.cam, pc::kCamModules + 0, Chain::A(module));
+    k.Mode(0);
+    Check(pc::GetInActive(k.Base(), k.P()), "module 0 active with its vtable: read as the get-in camera");
+    SetLastError(777);
+    Check(pc::CutGetIn(k.Base(), k.P()) == nullptr && GetLastError() == 777, "cut: written, last error kept");
+    std::uint32_t flags = 0, request = 0;
+    std::memcpy(&flags, module + pc::kGetInFlags, 4);
+    std::memcpy(&request, module + pc::kGetInRequest, 4);
+    Check(flags == 0x05u && request == 0u, "bit 5 and the request word cleared, the other flags kept");
+    Check(Same(pc::CutGetIn(k.Base(), k.P()), "inactive"), "bit 5 already clear: nothing written");
+    Chain::Put<std::uint32_t>(module, pc::kGetInFlags, 0x24u);
+    Chain::Put<std::uint32_t>(module, pc::kGetInRequest, 2u);
+    Check(pc::CutGetIn(k.Base(), k.P()) == nullptr, "cut again");
+    std::memcpy(&request, module + pc::kGetInRequest, 4);
+    Check(request == 2u, "a request word other than 1 is left alone");
+    k.Mode(5);
+    Check(!pc::GetInActive(k.Base(), k.P()) && Same(pc::CutGetIn(k.Base(), k.P()), "module"),
+          "the fallback active: not the get-in camera, nothing written");
+    k.Mode(0);
+    Chain::Put<std::uintptr_t>(module, 0, Chain::kBase + 0x23B2AB0);
+    Chain::Put<std::uint32_t>(module, pc::kGetInFlags, 0x20u);
+    Check(!pc::GetInActive(k.Base(), k.P()) && Same(pc::CutGetIn(k.Base(), k.P()), "module"), "another vtable at index 0: nothing");
+    std::memcpy(&flags, module + pc::kGetInFlags, 4);
+    Check(flags == 0x20u, "untouched");
+    // The pinned blocks: refused on a blank image; the contract has them.
+    std::vector<unsigned char> image(0x2000000, 0);
+    std::uintptr_t rva = 0;
+    Check(Same(pc::detail::VerifyGetInCutImage(image.data(), image.size(), rva), "bytes") && rva == c::getin_cut_blocks[0],
+          "a blank image fails the first get-in cut block");
+    Check(sizeof(c::getin_cut_blocks) / sizeof(c::getin_cut_blocks[0]) == 5, "five get-in cut blocks pinned");
+}
+
 void TestFollowReadWrite() {
     pc::detail::ResetForTest();
     Chain k;
@@ -1682,6 +1796,8 @@ int main() {
     TestTraceDue();
     TestRideCamCensus();
     TestFollowCarry();
+    TestGetInCut();
+    TestGetInCutWrite();
     TestFollowReadWrite();
     TestReadViewAndLever();
     TestWritePitchAndModeVtable();

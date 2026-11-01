@@ -46,6 +46,34 @@ and one press never counts twice. It is on by default with the native gun profil
 - **Checks:** full `tools/build.ps1` 339/339 at `d3669a3e` (green + scenario) and at `b98ecb71` (default flip, README,
   docs); `tools/generate_partner_contract.py --check` passes (850 sites, 213 vtable slots).
 
+## October 31, 2026: fb1031 ride lag - riding in the front seat, the camera now stays with the jeep the partner drives off (`wp/ride-lag`; hidden runs `c54aae04` before, `f71126c0` after)
+
+- **What players get:** a passenger who gets into a jeep's front seat while the driver sets off (or gets into a moving
+  jeep) keeps the jeep in view. Before, the stock get-in camera (camera module 0, about 3.5 s after a front-seat get-in)
+  stayed where the passenger got in while the jeep drove away, then jumped to it: the user's "camera lags behind when
+  getting in and moving". On by default in lab and play with the gun profile (`partner_ride_getin_cut`, a named 0 opts
+  out); README line added.
+- **The user's log [O]:** 48 of the about 55 s they rode a jeep the host drove were in the front seat, both front-seat
+  boards of a moving jeep, each logged `pass_camera; state=connect; ...; mode=0; prev=5`; Steam rtt 134-174 ms (avg 145),
+  jitter at most 17 ms, no loss. The 0.14.5 log has no camera poses; the 8.59 census runs covered seat 3 only.
+- **Reproduced [O, `c54aae04`, play, `-WanSim bad` (the preset closest to that rtt), gun research, seeds afgh-quiet /
+  afgh-horse, scenario `fb1031-ride-lag-play.txt`, both copies admitted]:** the guest in seat 1, the host drives off at
+  once: module 0 kept the eye where the get-in began for 2.77 s of the drive (eye to jeep 3.2 m -> 18.5 m, census
+  `lag_cm` up to 1699), then the fallback jumped to the jeep; frames `guest-f-in-06` / `-f-in2-03` show only the wall and
+  ground. Not the cause: the rider copy's jeep is a clean 200-210 ms delayed copy of the driver's (residual 1-3 cm,
+  per-tick steps as even as the driver's own); the fallback camera holds the body within 0-2 cm at up to 12 m/s.
+- **Fix [O, `f71126c0`, the same route with `partner_ride_getin_cut=1`, scenario `fb1031-ride-lag-play-cut.txt`]:** once
+  the ridden vehicle moved 0.3 m while module 0 is active, its active bit and request word are cleared and the stock
+  selection hands over to the fallback (five pinned blocks; no code patched, no game function called). One cut
+  (`moved_cm=31; ms=783; result=ok`); module 0 lasted 121 ms of the drive; the eye held 5.2-5.3 m from the jeep at up to
+  11.9 m/s (frames `guest-f-in-06` / `-f-in2-03`: jeep and both riders in view). Unchanged: the back seat 2 (no module 0,
+  no cut, 1-2 cm), the seat-1 scope aim and its end, the get-off and the on-foot camera, the host's driver camera (0.5-1.2 m
+  stock trail) on both copies. Sheets `ride-lag/frames/sheet-c54aae04-before.jpg`, `sheet-f71126c0-after.jpg` (run
+  archive). Census rows now carry `veh_cm` / `eye_cm`. Design 8.60; native-puppet "Get-in camera cut".
+- **Not shown:** boarding an already moving jeep (the user's case; same trigger), a two-PC session, Mother Base's jeep,
+  the truck cab. Commits `e7e60bcb` (census fields, scenario), `18505451` red -> `1ebdf964` green (off unless named),
+  `4ee88c91` red -> `9526d21c` green (default on), `f94047a4` docs. Contract 855 code sites / 213 vtable slots.
+
 ## 2026-10-31: Debug menu Travel leftovers, run round (`wp/fb1031-on`, local only) -- Go to Afghanistan proven; Bring across missions refuses; camera behind on landing
 
 **Players get:** **Go to Afghanistan** in the F9 debug menu takes both players to the Afghanistan free roam in about

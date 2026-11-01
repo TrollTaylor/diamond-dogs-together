@@ -115,6 +115,14 @@ int FpvOverride() noexcept;
 const char* FollowInstall(const void* base, std::size_t span) noexcept;
 bool ReadFollow(const void* base, std::uintptr_t P, Follow& out) noexcept;
 bool WriteFollowStart(const void* base, std::uintptr_t P, std::uintptr_t blend, const float (&expect)[3], const float (&start)[3]) noexcept;
+// fb1031 ride lag (design 8.60): the get-in camera cut. GetInCutInstall verifies the pinned getin_cut_blocks once per
+// process (nullptr, or why not). GetInActive: the local camera's ACTIVE module is module 0 with the get-in vtable
+// (0x23BE5E0). CutGetIn clears that module's active bit (+0x147C bit 5) and its request word (+0xAE0, only when 1):
+// nullptr when written, else camera / module (not the get-in camera) / inactive (bit 5 already clear) / fault. SEH
+// guarded, the last error kept.
+const char* GetInCutInstall(const void* base, std::size_t span) noexcept;
+bool GetInActive(const void* base, std::uintptr_t P) noexcept;
+const char* CutGetIn(const void* base, std::uintptr_t P) noexcept;
 
 // The lab lever "passcam off|connect|aim|lab|status" (docs/native-puppet.md "Passenger camera"): this copy's mode
 // override (-1: none, else a Mode). HandleCommand is false for any other text; for a passcam command it fills
@@ -128,6 +136,7 @@ namespace detail {
 const char* VerifyImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 const char* VerifyFpvImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 const char* VerifyFollowImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
+const char* VerifyGetInCutImage(const void* base, std::size_t span, std::uintptr_t& mismatch_rva) noexcept;
 void ResetForTest() noexcept;
 } // namespace detail
 
