@@ -1991,7 +1991,9 @@ frame [U], and a late lift: the Fultoner's `Fulton` / `FultonInfo` (hence FULTON
 its attach act, when the soldier is recovered [O log]. World note 22 is reserved for this track and unused.
 ## 26. Supply drops (r1101; lua/coop/world_supply.lua, native/supply_cbox.cpp)
 
-Lab key `world_supply=0|1` (lab and play, **OFF in both unless named** until a hidden run proves it; no refusal bit).
+Lab key `world_supply=0|1` (lab and play; no refusal bit). **On with the native gun profile** (Play-Coop, the worker gun
+stage) in lab and play since the r1101 Prove phase (hidden play runs `69efd63b` and `93f27123`, below); a named 0 turns
+it off, an invalid value is named and off.
 With the key on, `native/supply_cbox.cpp` installs two observe-only MinHook detours after every site of
 `native/supply_cbox_contract.hpp` matches (`tools/generate_supply_cbox_contract.py --check`, sites in
 `tools/supply_cbox_sites.json`): the supply-box request core `0x15C3F00` (rcx = the box core Z, rdx = the 0x130-byte
@@ -2111,6 +2113,29 @@ Review fixes (r1101, after run `5acbcb83`; Lua and native tests only, not yet in
   end at state 14 on both copies); it stays [U] (H2, H3) and is not a reason to turn the key on. The proof scenario
   now shows crossing drops (`mirror_held`) and that a WEAPONS / ITEMS drop is not synced, and asks for its pickup
   (`step=pickup`, `gone_local;...;why=pickup;sent=0`) as the H3 evidence for a later type.
+
+Prove phase (r1101 integration `wp/integ-1101`; hidden worker, play, `-WanSim bad`, afgh-ledge, native gun profile; both
+copies' sliced script-observer logs and frames looked at; sheets under the run archive `r1101/frames/supply/`):
+- `69efd63b` (`r1101-supply-play.txt`, key named, with the review fixes): [O] the host's F9 script AMMO drop (4:0) aimed
+  at the guest was mirrored on the guest (`mirror;origin=1;oseq=1;ok=1`, `supply=request;...;mirror=1` at the host's
+  x/y/z, note 21 a=1) and ended `delivered` on both copies; the host's own iDroid AMMO / FULTON drop (0:431, "Supply Drop
+  Expenses: [GMP -55780]") and the guest's own iDroid drop were mirrored and delivered on both; crossing script drops
+  kept each player's own box (host `mirror_held;origin=2;oseq=2;own=1.3`; on the guest the mirror came first and the
+  guest's own request 3 ms later replaced it, after its toast); a WEAPONS / ITEMS drop (3:0) stayed on the host's copy
+  (`drop_local;...;sent=0;...;sync=0`, nothing on the guest) and waited at state 10. The host's E presses while lying
+  on its back after the landing took nothing, so `step=pickup` (H3) is still [U].
+- `93f27123` (`r1101-supply-default-play.txt`, key NOT named; session lab settings `nametag=1` only): `supply=installed`
+  and `step=on` on both copies at the shipped default; the host's script drop, the host's iDroid drop and the guest's
+  iDroid drop each mirrored (`ok=1`, note 21 a=1 on the receiver) and delivered on both. [O] frames: the landing marker
+  with the box's falling height counting down on both screens at once (host / guest 203 / 204, 199 / 205 then 38 / 40,
+  209 / 199 then 41 / 38 [I: metres]); the toast on the receiver; the expense line on each caller; "Surplus Supplies
+  Retrieved" x3 and GMP +3850 on the guest after its own drop. Each screen showed the partner close to the camera
+  (the players faced away from each other [I: the teleport yaw points the other way round]), so no frame shows the box
+  itself on the ground at the partner's spot.
+- Neither run logged `step=error`, `rx_bad`, `echo`, `mirror_skip`, `remove`, `gone_unknown`, `refused`, `accepted=0`,
+  `supply=failed|refused`, note 21 a=2, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a GameOver; no game exited
+  early. Still [U]: two players both on the landing spot (each copy delivered to its own player only, the partner about
+  3 m away [I]); WEAPONS / ITEMS and other types (not synced); the remove path (H2, H3); a box landing on a guard.
 ## 27. Vehicle spawn (debug menu Spawn vehicle; docs/debug-menu.md "Spawn vehicle")
 
 Op `0x44` VSPAWN (68), both directions, reliable, **control** queue, level 3, lab and play, paired, never a request;

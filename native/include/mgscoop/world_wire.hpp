@@ -114,7 +114,8 @@ inline constexpr std::uint8_t vspawn = 0x44;
 // Supply drops synced (r1101, docs/world-sync-protocol.md section 26): SUPPLY (69), both directions, world queue, paired:
 // a copy's own supply-box request (kind 1 drop: the partner requests the same box at the same aim point) and a synced
 // box that is gone on one copy (kind 2: the other copy removes its own). Sent and applied by Lua only with the lab.ini
-// key world_supply=1 (lua/coop/world_supply.lua). A partner without the op skips it by its length (unknown_op).
+// key world_supply (on with the gun profile; lua/coop/world_supply.lua). A partner without the op skips it by its length
+// (unknown_op).
 inline constexpr std::uint8_t supply = 0x45;
 // r1101 fulton (docs/world-sync-protocol.md section 25): FULTON (70).
 inline constexpr std::uint8_t fulton = 0x46;

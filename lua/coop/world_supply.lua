@@ -1,5 +1,5 @@
 -- Supply drops synced (r1101; docs/world-sync-protocol.md section 26). Spliced last, after world_relief_sync.lua.
--- With lab.ini world_supply=1 (lab and play; OFF in both unless named until a hidden run proves it) on both copies.
+-- With lab.ini world_supply on both copies (lab and play; on with the gun profile since the r1101 Prove phase).
 -- The game keeps ONE supply box per copy (the TppSupplyCboxSystem core). The native observer (native/supply_cbox.cpp,
 -- MGS_COOP_SUPPLY_V1) records every box request (iDroid, script) and every box reset; this module:
 --   drop:   a request this copy made itself (not inside our mirror window) is this copy's box: SUPPLY 0x45 kind 1 with

@@ -1,7 +1,8 @@
 # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lua/coop/world_supply.lua; native/supply_cbox.cpp):
 # a supply box one player calls falls at the same spot on both screens; the player it lands on gets its contents (the
-# stock delivery on that copy) and the box is gone on both screens. The key world_supply is OFF unless named, so it is
-# named below (lab and play). Seed afgh-ledge (30010) for both, PLAY mode with -WanSim bad.
+# stock delivery on that copy) and the box is gone on both screens. The key world_supply is named below (lab and play;
+# since the r1101 Prove phase, run 69efd63b, it is on with the gun profile anyway: r1101-supply-default-play.txt runs the
+# shipped default). Seed afgh-ledge (30010) for both, PLAY mode with -WanSim bad.
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/r1101-supply-play.txt
 #        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad

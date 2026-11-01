@@ -1,3 +1,42 @@
+## November 1, 2026: r1101 Prove - supply drops synced on by default (`world_supply` follows the gun profile in lab and play; hidden runs `69efd63b`, `93f27123`; `wp/integ-1101`, local only)
+
+- **What players get:** an AMMO / FULTON supply drop either player orders from the iDroid now falls at the same spot on
+  both screens by default in play (Play-Coop's native gun profile) and in the lab: both screens show its landing marker
+  and its height counting down together, the partner gets "Your partner called a supply drop: the box lands at the same
+  spot for both of you.", and the player who ordered it gets the supplies as usual ("Surplus Supplies Retrieved"). The
+  F9 script AMMO box (lab row "supply drop") is shared the same way. Other drop types (WEAPONS / ITEMS, LOADOUT,
+  VEHICLES, ...) stay on the caller's screen only. A named `world_supply=0` turns it off.
+- **Proof** (hidden worker, play, `-WanSim bad`, afgh-ledge seed, native gun profile; both copies' sliced
+  script-observer logs and frames looked at; sheets under the run archive `r1101/frames/supply/`):
+  - `69efd63b` (key named, `r1101-supply-play.txt`, the review-fixed module): the host's script drop aimed at the guest,
+    the host's own iDroid drop ("Supply Drop Expenses: [GMP -55780]") and the guest's own iDroid drop were each mirrored
+    on the other copy (`step=mirror; ...; ok=1`, note 21 a=1) and ended `step=delivered` on both copies; frames: the
+    expense line and an open supply case 2 m from each caller after its own drop, the box arriving on the guest [I:
+    a parachute panel at the camera], the toast on the receiver. Crossing script drops kept each player's own box (host
+    `mirror_held; origin=2; oseq=2; own=1.3`). The host's WEAPONS / ITEMS drop stayed local (`sent=0`, `sync=0`, nothing
+    on the guest). Its pickup by E (H3) did not happen [U] (the host lay on its back after the landing [I]).
+  - `93f27123` (key NOT named, `r1101-supply-default-play.txt`, the green build; session lab settings `nametag=1` only):
+    `supply=installed` and `step=on` on both copies; the three drops again, each mirrored and delivered on both; frames:
+    the landing marker on both screens with the falling height in step (host / guest 203 / 204 and 41 / 38 [I:
+    metres]), the toast on the receiver, the expense line on each caller, "Surplus Supplies Retrieved" x3 and GMP +3850
+    on the guest after its own drop.
+  - Neither run logged `step=error`, `rx_bad`, `echo`, `mirror_skip`, `remove`, `gone_unknown`, `refused`,
+    `accepted=0`, `supply=failed|refused`, note 21 a=2, a non-zero `bad_op` / `wrong_dir` / `unknown_op` or a
+    GameOver; no game exited early.
+- **Commits:** `eeba05cf` red (lab_config_tests check 1723: the gun profile turns `world_supply` on in lab and play, a
+  named 0 opts out, invalid is named and off; friend_package_tests_2: play defaults it on, a named 0 turns it off),
+  `f18fdf44` green (`ResolveWeaponDefaults` sets `world_supply` from the gun profile unless named; comments and worker
+  help; lab_scripts_tests: the offline fixture without the profile still reads 0), `0dd73a2d` (the shipped-default
+  scenario), then comments (`world_supply.lua` 20491 LF bytes), README (What works, Known limits) and protocol section 26.
+- **Still not covered:** no frame shows the box itself lying at the partner's spot on the partner's screen (in
+  `93f27123` each camera had the partner close in front [I: the teleport yaw faced the players away from each other]);
+  two players both on the landing spot (each copy delivered to its own player only, the partner about 3 m away [I]);
+  WEAPONS / ITEMS and the other types (not synced; each needs its own run); the remove path (kind 2, note 21 a=2; H2,
+  H3) and the WEAPONS / ITEMS pickup; a box landing on a guard; crossing drops still show the partner's toast on the
+  copy whose own request replaced the mirror a moment later. A partner on an older build drops `0x45` as unknown_op.
+- **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green; the full build at the
+  final head follows.
+
 ## November 1, 2026: r1101 Prove - F9 Spawn vehicle on by default (`debug_vspawn` follows the gun profile in lab and play; hidden runs `65b4005c`, `e09fcf72`, `6ffe824d`; `wp/integ-1101`, local only)
 
 - **What players get:** F9 > World > Vehicles **Spawn jeep** / **Spawn truck** now work by default in play (Play-Coop's

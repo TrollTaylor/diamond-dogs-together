@@ -5,7 +5,7 @@
 // (0x15C3F00: drop type, equip, parts, aim position, level, flags) and each box reset (0x15C4080) in a small ring that
 // Lua reads with MGS_COOP_SUPPLY_V1. Pure: no Win32, no game memory; every time is passed in.
 //
-// Receipts (Lua -> native, lab key world_supply; OFF unless named, lab and play):
+// Receipts (Lua -> native, lab key world_supply; on with the gun profile, lab and play):
 //   return 'MGS_COOP_SUPPLY_V1' -- poll <after>     the box state and the events with seq > after
 //        -> return {on=1,inst=1,box=1,st=<state>,fl=<flags>,last=<seq>,lost=<n>,ev={{seq,kind,mirror,drop,equip,parts,
 //                   x,y,z,level,wait,flags,aim,caller,state,accepted},...}}  (x y z mm; kind 1 request, 2 reset; mirror 1
