@@ -115,6 +115,10 @@ do
    if ok then R.sentEpoch = W.epoch else R.failAt = R.tick end
    return ok
   end
+  -- Every PAIRED (a same-epoch re-pair too: a guest crash or a long link gap) gets the host's choice again.
+  if type(W) == "table" and type(W.pairedHooks) == "table" then
+   W.pairedHooks[#W.pairedHooks + 1] = function() R.sentEpoch = nil end
+  end
   if OP and type(W.handlers) == "table" then
    W.handlers[OP.RULES] = function(v)
     if W.host ~= false or type(v) ~= "table" then return end
@@ -176,7 +180,7 @@ do
    R.mb, R.chosen = v == "1", true
    local sent = send()
    pcall(R.mbTick)
-   say(R.mb and "Weapons allowed at Mother Base for both players. Killing staff still fails the mission."
+   say(R.mb and "Weapons allowed at Mother Base for both players. Any kill at Mother Base still fails the mission."
     or "Mother Base rules are back: no lethal weapons, for both players.")
    return true, fmt("mb_weapons=%s;sent=%d;applied=%d;mission=%s", R.mb and "on" or "off", sent and 1 or 0, R.mbForced and 1 or 0,
     tostring(get(vars, "missionCode")))
@@ -192,7 +196,7 @@ do
    R.tick = R.tick + 1
    if R.tick % 15 ~= 0 then return end
    if type(W) == "table" then
-    -- The host's choice again on each new pairing (once it chose); a refused send waits 2 s.
+    -- The host's choice again after each PAIRED or epoch (once it chose); a refused send waits 2 s.
     if W.host == true and R.chosen and W.paired == true and R.sentEpoch ~= W.epoch and R.tick - (R.failAt or -1e9) >= 60 then send() end
     -- The guest keeps the host's choice through a mission load; 60 s without the pairing drops it.
     if W.host == false and R.hostMb ~= nil then

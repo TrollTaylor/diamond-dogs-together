@@ -166,7 +166,7 @@ constexpr ActionDef kActions[] = {
      "Turns your wormhole Fulton back on (when your save has it).", 0},
     {"rules_mb_weapons_on", C::world, "Weapons at Mother Base", "mb_weapons 1", "rules mother base mb weapons lethal guns",
      "Both players can use their loadout weapons at Mother Base (stock: no lethal weapons there). The host decides for both. "
-     "Killing staff still fails the mission.", H | S},
+     "Any kill at Mother Base still fails the mission.", H | S},
     {"rules_mb_weapons_off", C::world, "Stock Mother Base rules", "mb_weapons 0", "rules mother base mb weapons stock",
      "Mother Base back to stock for both players: no lethal weapons.", H | S},
     // Tools
