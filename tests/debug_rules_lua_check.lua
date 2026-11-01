@@ -19,7 +19,7 @@ local function F(o)
  env.TppUiCommand={AnnounceLogView=function(t)c.says[#c.says+1]=t end}
  env.TppMission={CheckMissionState=function()return c.gameplay~=false end}
  env.TppSave={SaveVarsToSlot=function(...)c.saved[#c.saved+1]={level=env.vars.itemLevels[SLOT],flag=env.vars.playerDisableActionFlag,args=select("#",...)};return "saved",7 end}
- local W={host=c.host,paired=true,epoch=5,OP={TRAVEL=59},handlers={},log=function(s)c.logs[#c.logs+1]=s end,now=function()return c.now end}
+ local W={host=c.host,paired=true,epoch=5,OP={TRAVEL=59},handlers={},pairedHooks={},unpairedHooks={},log=function(s)c.logs[#c.logs+1]=s end,now=function()return c.now end}
  function W.tx(op,...)c.tx[#c.tx+1]={op,...};return c.txOk~=false end
  local P={handles={heal=true},run=function(a)c.baseRuns=c.baseRuns+1;return true,"base:"..a[1]end}
  local D={player=P}
@@ -74,6 +74,7 @@ check(ok and msg:find("mb_weapons=on;sent=1;applied=1;mission=30050",1,true),"ho
 check(c.env.vars.playerDisableActionFlag==0 and c:has(c.status,"unset:EquipHudAll:ALL_KILL_NOUSE"),"the stock no-lethal flag and HUD lifted")
 check(#c.tx==1 and c.tx[1][1]==62 and c.tx[1][2]==1 and c.tx[1][3]==1 and c.W.OP.RULES==62,"RULES 62: seq 1, weapons 1")
 check(c.says[1]:find("both players",1,true),"the host's sentence names both players")
+check(c.says[1]:find("Any kill at Mother Base still fails the mission",1,true),"f30050 fails the mission on any Dead/Dying, not only staff")
 c.env.vars.playerDisableActionFlag=MB;c:tick();check(c.env.vars.playerDisableActionFlag==0,"the stock re-set (a cutscene or the Paz room) is lifted again")
 c.env.vars.playerDisableActionFlag=MB+2+32;c:tick();check(c.env.vars.playerDisableActionFlag==MB+2+32,"any other flag (Paz room, side ops) is left alone")
 c.env.vars.playerDisableActionFlag=0;c.env.TppSave.SaveVarsToSlot("s");check(c.saved[1].flag==MB and c.env.vars.playerDisableActionFlag==0,"a save writes the stock flag")
@@ -88,6 +89,12 @@ c=F({mission=30050});c:tick(30);check(#c.tx==0,"never chosen: nothing sent on pa
 c:run("mb_weapons","1");c.W.epoch=6;c:tick();check(#c.tx==2 and c.tx[2][3]==1,"a new pairing gets the host's choice again")
 c:tick(60);check(#c.tx==2,"once per pairing")
 c.W.paired=false;c.W.epoch=7;c:tick();check(#c.tx==2,"unpaired: nothing sent")
+-- A re-pair into the same host epoch (a guest crash or a long link gap, world-sync-protocol section 5) resends too.
+c=F({mission=30050});c:run("mb_weapons","1");c:tick(60);check(#c.tx==1,"chosen at epoch 5: sent once")
+c.W.paired=false;for _,f in ipairs(c.W.unpairedHooks)do f("session")end;c:tick(30);check(#c.tx==1,"unpaired: nothing sent")
+c.W.paired=true;for _,f in ipairs(c.W.pairedHooks)do f(false)end;c:tick()
+check(#c.tx==2 and c.tx[2][3]==1,"a same-epoch re-pair gets the host's choice again")
+c:tick(60);check(#c.tx==2,"once per re-pair")
 -- The guest: a press is refused; the host's RULES applies on its copy.
 c=F({host=false,mission=30050});ok,msg=c:run("mb_weapons","1");check(not ok and msg=="host_only" and #c.tx==0,"the guest's press is refused (host only)")
 local h=c.W.handlers[62];check(type(h)=="function","the guest handles RULES")
