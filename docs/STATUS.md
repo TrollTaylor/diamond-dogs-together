@@ -40,7 +40,12 @@
   `d1c5aaa8` (the shipped-default scenario; `r1101-animtruth-play.txt` records `3c5609bb`), `6bbb8b51` (the key-off
   A/B scenario), then README (What works, Known limits) and docs/anim-truth.md.
 - **Checks:** -Fast 315/315 and friend_package / lab_scripts / worker_session 11/11 at the green `2ff5baab`;
-  worker_session_tests 2/2 at `d1c5aaa8` and `6bbb8b51` (every shipped scenario validates).
+  worker_session_tests 2/2 at `d1c5aaa8` and `6bbb8b51` (every shipped scenario validates). No Lua file changed. Full
+  `tools/build.ps1 -Jobs 4` at `25ba2a13` and at this entry's commit: CTest 347/347; every generator `--check` passes
+  (partner, soldier_warp, carry_info / sleep_plugin with `--output`, carry_plugin, carry_provider, downed_damage,
+  equip_writer_pins, nametag, sleep_graph, steam_shim, supply_cbox, vehicle_controller with `--executable`);
+  native_ui / teammate_targeting stop at the gitignored docs/evidence JSON, as in every fresh tree. Nothing pushed,
+  tagged or released.
 
 ## November 1, 2026: r1101 Prove - the Fulton synced on by default (`fulton_sync` follows the gun profile in lab and play; hidden runs `7d924fac`, `19882881`; `wp/integ-1101`, local only)
 
