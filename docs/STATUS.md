@@ -1,3 +1,41 @@
+## October 31, 2026: 0.14.6 integration - every feature built today in one build, the run-less ones on (`wp/rel0146`, local only; no hidden runs)
+
+- **What players get (on in play; none of it ran in a game this round):** F9 **Game rules** (Wormhole Fulton off/on,
+  Weapons at Mother Base, Stock Mother Base rules; RULES 0x3E) and **Give weapon** with its pick list and **Friendly
+  fire** (ARMS 0x3F) work in play like the lab: no "Not available yet", no "unverified". **Spawn enemy here** puts the
+  guard 5 m in front of the host (`spawn_warp` on). Mother Base staff stand in the same spot on both screens and their
+  outcomes are shared (`staffPlace` + W1 at 30050). A CQC press aimed at a soldier no longer also downs the partner
+  (`wp/melee-target`). The arrival prevention parts are on: route-start seeds (`F.arrival.routeStart`), the riding
+  checkpoint hold (`F.arrival.holdCheckpoint`) and the host's "Stuck in the helicopter?" toast (`W.arrivalWatch.hint`),
+  beside the run-proven watchdog (run `15eda621`). The fb1031 friend-log fixes: the late partner's gear note, Mother
+  Base staff kills refused and Game Overs explained, the put-down that no longer slides into the sea, a partner hidden
+  with a toast while their vehicle is missing here, VEHICLE_GONE at Mother Base in play (a parked vehicle's Fulton or
+  destruction removes it on both copies), and the launcher that waits for Steam or MGSV by itself.
+- **Never ran in a game:** Game rules, Give weapon / pick / Friendly fire, `spawn_warp` in play, the Mother Base staff
+  placement and W1 at 30050 in play, the melee target hold, the three arrival prevention parts, VEHICLE_GONE at 30050,
+  and every fb1031 fix except the gear path (run `0238a446`: the late partner's gun cannot load mid-mission, so
+  `partner_equip_midload` stays off; the note shows instead). The user asked for this release without test runs.
+- **Kept off:** `partner_equip_midload` (run `0238a446` shows it cannot work mid-mission), the lab-only research and
+  diagnostic keys and probes (`guest_frozen_heli`, `host_target_dead`, `debug_soldier_warp`, ...), the F9 Ocelot and
+  Quiet rows (they need the launcher's character bypass; pick them in the launcher), `world_relief` (off since the
+  review of 2026-10-29), and the older lab-only Mother Base VEHICLE_STATE (M4 review; not a friend-log fix).
+- **Merged (`--no-ff`, onto dev `f20c5e84`):** `wp/arrival-prevent` `7563806f` (`697daacc`), `wp/integ-log1031`
+  `d8ad1d92` (`a062d154`), `wp/melee-target` `4f539c5f` (`93b3076d`), `wp/dbg-prove` `2e0a7c8c` (`71d51bb4`),
+  `wp/mb-staff-sync` `2f1c4325` (`f190e01f`). Collisions renumbered on one side with both sides' tests: world note 15
+  is fb1031 mbgo's MISSION_END, so the arrival hint is **note 19** (the NOTE grammar and `NoteShown` take 1..15, 18,
+  19); lab world probe 20 stays `guest_frozen_heli` and `host_target_dead` is **probe 21** (`kWorldProbeMax` 21)
+  (`100107c7`). `GuestWarpReceipt` admits the lab key, the Mother Base staff rule (`soldier_warp::GuestAdmit`) and play
+  `spawn_warp` for the spawn placement (kind 1; other kinds still `role`); the startup `Verify` runs for either key or a
+  play/lab guest. `enemy goto <t> <m>` takes 0.5..10 m (both branches added a distance). No wire op added.
+- **Turned on (`9606ed41`):** the `W.mode` play gates in `debug_rules.lua` / `debug_arms.lua`, the `kUnverified` flags
+  and "Not available yet" tooltips of the six rows; `F.arrival.routeStart` / `holdCheckpoint` and
+  `W.arrivalWatch.hint` default true (false still turns each off); `world_vehicle.lua` `V.mission()` takes 30050 in
+  play. Tests follow: `debug_menu_tests`, `debug_arms_lua_check`, `debug_rules_lua_check`, `world_follow_lua_check`,
+  `world_arrival_lua_check`, `world_align_lua_check`, `world_vehicle_lua_check`.
+- **Checks:** `tools/build.ps1 -Fast` after each merge and fix (312/312); the affected `ctest -R` sets;
+  `generate_soldier_warp_contract.py --check` after the mb-staff merge. Full build and every `--check` at the head:
+  see the next commit's record.
+
 ## October 31, 2026: fb1031 gear proof - a late partner's gun cannot load mid-mission; the default tells you once (`wp/integ-log1031`; hidden run 0238a446)
 
 - **What players get:** unchanged default. If your partner joins, or reconnects, after your mission loaded, you see
