@@ -8,7 +8,7 @@
 #      the guard lifted by the balloon (W1 RequestForceFulton on the guest's copy) instead of vanishing.
 #   B. The guest Fultons a sleeping guard (placed and put to sleep by the host's levers, which are host-only): the host
 #      sees the same (the guest puppet's attach, the balloon).
-#   C. The guest Fultons the jeep 25608 by hand from the vehicle-gone-play.txt spot: REQ_VEHICLE_GONE -> the host's
+#   C. (run first) The guest Fultons the jeep 25608 by hand from the vehicle-gone-play.txt spot: REQ_VEHICLE_GONE -> the host's
 #      copy is lifted by the engine's own vehicle Fulton (Seize {"Fulton"}: the balloon), D14 credited once as before.
 #   D. Wormhole on for the host only (Game rules): the host Fultons a sleeping guard; FULTON 0x46 carries worm=1, the
 #      guest's copy takes the wormhole look for 5 s (step=lift; worm=1; set=1 when its own level differs), restored.
@@ -37,6 +37,13 @@
 #          frames d-lift-NN: the wormhole on both screens
 # NEVER: step=error, viewer_changed, faults; a guest event=fulton; step=tx for a lift it ran (an echo); a staff_add
 #   on the copy that did not Fulton; event=spare lines (not Mother Base); a game over.
+# History: 7e9856cb (this file before the fixes below; 2026-11-01): part A passed every waitlog on both copies (the
+#   guest's puppet played stateFultonStart for 1583 ms during the host's 2569 ms act 59; FULTON tx/rx; the guest's lift
+#   with its credit skipped and no staff_add there, staff_add n=1 on the host), then the run stopped in part B at
+#   placebehind ("viewer landing starts without a valid partner pose"): after a second hold e the host lay on the
+#   ground next to the guest for 30 s (cause unknown). Earlier on the guest's copy the jeep 25608 broke (VehicleBroken,
+#   unattributed) and the host despawned its copy (D12). Since: one hold e per soldier Fulton (the first hold used the
+#   Fulton, x24 -> x23), the jeep part first, the seed spot by teleport, and the cameras raised onto the lifted soldier.
 labsetting fulton_sync=1
 labsetting partner_act_log=1
 title 200
@@ -54,81 +61,12 @@ host run wormhole 0
 guest run wormhole 0
 host run rules
 guest run rules
-# --- A: the host Fultons a sleeping guard; the guest watches from behind ----------------------------------------------
-host debug goto_vehicle jeep
-wait 2500
-host debug forward -12
-wait 3000
-host run spawn_enemy here
-host expect ^guard_here;ent=\d+;
-wait 2500
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;
-guest run spawn_sync
-wait 2000
-host run enemy goto nearest 1
-host expect ^enemy_goto;ent=\d+;
-wait 1500
-host run enemy_aim_nearest 0.3
-placebehind guest host 5 1.5
-wait 2500
-guest run enemy_aim_nearest 0.3
-wait 800
-both capture a-before
-logmark both
-host hold e 1500 nowait
-both burst a-hold 4 350
-host hold e 1500
-host release
-both burst a-lift 8 400
-waitlog host 'event=fulton; step=tx; kind=1; ' 15
-waitlog guest 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
-waitlog guest 'partner_overlay=(request|playing); state=stateFultonStart' 10
-waitlog guest 'event=fulton; step=lift; kind=1; ' 30
-wait 3000
-both capture a-after
-host run enemy info nearest
-guest run enemy info nearest
-# --- B: the guest Fultons a sleeping guard; the host watches from behind ----------------------------------------------
-# (spawn_enemy and enemy sleep are host-only levers: the host places and puts the guard to sleep, the guest goes to him)
-host debug goto_vehicle jeep
-wait 2500
-host debug forward -12
-wait 3000
-host run spawn_enemy here
-host expect ^guard_here;ent=\d+;
-wait 2500
-host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;
-guest run spawn_sync
-wait 2000
-placebehind guest host 3
-wait 2500
-guest run enemy goto nearest 1
-guest expect ^enemy_goto;ent=\d+;
-wait 1500
-guest run enemy_aim_nearest 0.3
-placebehind host guest 5 1.5
-wait 2500
-host run enemy_aim_nearest 0.3
-wait 800
-both capture b-before
-logmark both
-guest hold e 1500 nowait
-both burst b-hold 4 350
-guest hold e 1500
-guest release
-both burst b-lift 8 400
-waitlog guest 'event=fulton; step=tx; kind=1; ' 15
-waitlog host 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
-waitlog host 'partner_overlay=(request|playing); state=stateFultonStart' 10
-waitlog host 'event=fulton; step=lift; kind=1; ' 30
-wait 3000
-both capture b-after
-# --- C: the guest Fultons the jeep 25608 (the vehicle-gone-play.txt spot), the host at the seed spot -----------------
+# --- C first: the guest Fultons the jeep 25608 (the vehicle-gone-play.txt spot), the host at the seed spot ----------
 guest debug teleport -652.93 1.20 879.33 -117
 host debug teleport -656.01 1.20 877.73 62
 wait 4000
+host run vehicle_state_status 25608
+guest run vehicle_state_status 25608
 both capture c-before
 logmark both
 guest hold e 1500 nowait
@@ -140,16 +78,14 @@ guest release
 both burst c-lift 8 400
 waitlog guest 'event=vehicle_gone; step=watch; id=25608; m=(FultonInfo|Fulton); cause=1; att=local' 15
 waitlog host 'event=vehicle_rules; step=fulton_lift; id=25608; ' 40
+both burst c-hlift 6 500
 waitlog host 'event=vehicle_gone; step=applied; id=25608; via=fulton; ' 25
 wait 2000
 both capture c-after
-# --- D: wormhole on for the host only; the host Fultons a sleeping guard ---------------------------------------------
-host run wormhole 1
-host run rules
-guest run rules
-host debug goto_vehicle jeep
-wait 2500
-host debug forward -12
+host run vehicle_gone_status
+guest run vehicle_gone_status
+# --- A: the host Fultons a sleeping guard (one hold); the guest watches from behind ------------------------------------
+host debug teleport -656.01 1.20 877.73 62
 wait 3000
 host run spawn_enemy here
 host expect ^guard_here;ent=\d+;
@@ -159,7 +95,85 @@ host expect ^enemy_sleep;ent=\d+;
 guest run spawn_sync
 wait 2000
 host run enemy goto nearest 1
-host expect ^enemy_goto;ent=\d+;
+wait 1500
+host run enemy_aim_nearest 0.3
+placebehind guest host 5 1.5
+wait 2500
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture a-before
+logmark both
+host hold e 1500 nowait
+both burst a-hold 4 350
+host release
+wait 1000
+host run enemy_aim_nearest 2
+both burst a-lift 6 500
+waitlog host 'event=fulton; step=tx; kind=1; ' 20
+waitlog guest 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog guest 'partner_overlay=(request|playing|finished); state=stateFultonStart' 10
+waitlog guest 'event=fulton; step=lift; kind=1; ' 30
+guest run enemy_aim_nearest 2
+guest burst a-glift 4 400
+guest run enemy_aim_nearest 2
+guest burst a-glift2 4 400
+wait 2000
+both capture a-after
+host run enemy info nearest
+guest run enemy info nearest
+# --- B: the guest Fultons a sleeping guard (host-only levers place him); the host watches from behind -----------------
+stance host stand
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+guest debug teleport -656.01 1.20 877.73 62
+wait 3000
+guest run enemy goto nearest 1
+wait 1500
+guest run enemy_aim_nearest 0.3
+placebehind host guest 5 1.5
+wait 2500
+host run enemy_aim_nearest 0.3
+wait 800
+both capture b-before
+logmark both
+guest hold e 1500 nowait
+both burst b-hold 4 350
+guest release
+wait 1000
+guest run enemy_aim_nearest 2
+both burst b-lift 6 500
+waitlog guest 'event=fulton; step=tx; kind=1; ' 20
+waitlog host 'event=fulton; step=rx; seq=[0-9]+; kind=1; ' 15
+waitlog host 'partner_overlay=(request|playing|finished); state=stateFultonStart' 10
+waitlog host 'event=fulton; step=lift; kind=1; ' 30
+host run enemy_aim_nearest 2
+host burst b-hlift 4 400
+host run enemy_aim_nearest 2
+host burst b-hlift2 4 400
+wait 2000
+both capture b-after
+# --- D: wormhole on for the host only; the host Fultons a sleeping guard ---------------------------------------------
+host run wormhole 1
+host run rules
+guest run rules
+stance guest stand
+host debug teleport -656.01 1.20 877.73 62
+wait 3000
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;
+wait 2500
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;
+guest run spawn_sync
+wait 2000
+host run enemy goto nearest 1
 wait 1500
 host run enemy_aim_nearest 0.3
 placebehind guest host 5 1.5
@@ -170,11 +184,14 @@ both capture d-before
 logmark both
 host hold e 1500 nowait
 both burst d-hold 4 350
-host hold e 1500
 host release
-both burst d-lift 8 400
-waitlog host 'event=fulton; step=tx; kind=1; ' 15
+wait 1000
+host run enemy_aim_nearest 2
+both burst d-lift 6 500
+waitlog host 'event=fulton; step=tx; kind=1; ' 20
 waitlog guest 'event=fulton; step=lift; kind=1; ' 30
+guest run enemy_aim_nearest 2
+guest burst d-glift 6 400
 wait 6000
 both capture d-after
 host run rules
