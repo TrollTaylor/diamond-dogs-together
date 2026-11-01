@@ -1,3 +1,23 @@
+## 2026-10-31: Game rules review fix; play keeps them off (run not admitted) (`wp/integ-dbg1031`, local only)
+
+**Players get:** nothing new in play yet. F9 > World > **Game rules** (Wormhole Fulton off/on, Weapons at Mother
+Base, Stock Mother Base rules) is marked unverified, and in play each press says "Not available yet in this build."
+(`not_available_yet`). Lab mode keeps the rows for the next `rules-play` run.
+
+- **Run:** not admitted. 19:31:50: nvidia-smi 4403 MiB / 8 %, d3dprobe hr=0 on all adapters, commit free 16.43 GB,
+  C: 101.8 GB; then D: free 2.96 GB, under the 3 GB floor, so the wrapper refused before starting the games and
+  released the lock. D: stayed under 3 GB afterwards (2.91-2.93 GB). Nothing was deleted. Nothing here is run-proven.
+- **Review fix rules-1** (red `ed56e74e`, green `ddb6fa73`): the host now resends RULES after every PAIRED, including a
+  re-pair into the same host epoch (a guest crash or a link gap longer than 60 s). Before, only an epoch change resent it,
+  and that guest stayed on stock rules. `debug_rules` registers a `W.pairedHooks` entry that clears `R.sentEpoch`.
+- **rules-4:** the host sentence and the row now say "Any kill at Mother Base still fails the mission." (stock f30050
+  reserves a game over on any non-player Dead or Dying, not only staff).
+- **Lab only** (red `13d15637`, green `c1aa415b`): `wormhole` and `mb_weapons` refuse unless `W.mode == 1` (lab). The
+  `rules` status line stays. `rules-play.txt` runs in `-Mode play`, so the gate comes off in the same change that a passing
+  run proves (or the run uses `-Mode lab`).
+- Not done: rules-3 (turning the rule off restores the stock flag only when the live flag is exactly NONE).
+- Full `tools/build.ps1` at `c1aa415b`: CTest 343/343; partner contract `--check` passes.
+
 ## 2026-10-31: Spawn enemy here review fixes; play native placement stays off (run not admitted) (`wp/integ-dbg1031`, local only)
 
 **Players get:** in play, **Spawn enemy here** still sends the nearest guard to the nearest patrol route (as in 0.14.5),
