@@ -2804,9 +2804,23 @@ void SendRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t
     if (!rw::SteerUnitsOf(r.steer, want.steer) || !rw::SteerUnitsOf(r.accel, want.accel) || !rw::SteerUnitsOf(r.aux, want.aux)) return;
     const bool have = d.ride_steer_tx_have && d.ride_steer_tx_epoch == epoch;
     if (!rw::SteerSendDue(have, d.ride_steer_tx, d.ride_steer_tx_ms, want, now)) return;
+    // Review vanim-4: channel 2's window is shared (carry events are never retried): a due packet waits while
+    // kSteerQueueMax or more messages are unacknowledged there; the next due tick sends the newest blends.
+    if (h.reliable_queued) {
+        const unsigned queued = h.reliable_queued(h.context, rw::kChannel);
+        if (queued >= rw::kSteerQueueMax) {
+            ++d.ride_steer_tx_held;
+            if (!d.ride_steer_tx_holding)
+                EmitFormat(h, "partner_ride_steer=held; vehicle=%u; queued=%u; max=%u; held=%u\r\n", unsigned(want.vehicle), queued,
+                           rw::kSteerQueueMax, d.ride_steer_tx_held);
+            d.ride_steer_tx_holding = true;
+            return;
+        }
+    }
     want.sender_ms = static_cast<std::uint32_t>(now);
     std::uint8_t bytes[rw::kSteerSize]{};
     if (!rw::EncodeSteer(want, bytes) || !h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) return;
+    d.ride_steer_tx_holding = false;
     const unsigned n = ++d.ride_steer_tx_count;
     if (n <= kRideSteerLogLines || n % kRideSteerLogEvery == 0)
         EmitFormat(h,
@@ -2819,17 +2833,37 @@ void SendRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t
     d.ride_steer_tx_ms = now;
 }
 
+// r1101 vanim: forget the viewer's saved originals (unwritten), keeping only the counters.
+void ForgetRideSteer(Driver::RideSteerWrite& w) noexcept {
+    const unsigned writes = w.writes, restores = w.restores, refusals = w.refusals, drifts = w.drifts;
+    w = Driver::RideSteerWrite{};
+    w.writes = writes; w.restores = restores; w.refusals = refusals; w.drifts = drifts;
+}
+// Review vanim-1: MissionEnd / MissionStart: body 1's record of the ending mission is never written again, also when
+// the next mission has the same code (a checkpoint reload or a restart builds a new body 1).
+void DropRideSteer(Driver& d, const Hooks& h, const char* reason) noexcept {
+    auto& w = d.ride_steer_write;
+    if (w.saved)
+        EmitFormat(h, "partner_ride_steer=drop; vehicle=%u; seat=%u; reason=%s; writes=%u; drifts=%u\r\n", unsigned(w.vehicle),
+                   unsigned(w.seat), reason, w.writes, w.drifts);
+    ForgetRideSteer(w);
+}
 // r1101 vanim: the viewer's half. While the seat episode has body 1 seated as the driver (seat 0, the loop confirmed),
 // body 1's rate record gets the peer's live blends (else neutral: steer 0.5, accel 0, aux 0); body 1 never runs
 // RideVehicleAction, so without this its record keeps the constructor's 0.0 steer, the full-left turning pose. The
-// originals are saved before the first write and put back when the episode leaves the seated driver; a mission change
-// drops them unwritten. One line per source or refusal change, a steer that moved 10 units (at most every 250 ms) and
-// the restore.
+// originals are saved before the first write. Review vanim-2: while the episode then plays its exit on body 1 (the
+// get-off or the stop; still in the seat) the record stays neutral, and the originals go back only once the episode
+// left it (settle, idle: body 1 on foot). A mission change, MissionEnd and MissionStart drop them unwritten. Review
+// vanim-3: each write first reads the record; a value we did not write (another writer since the last tick; the
+// write's own readback cannot see one) is a drift line. One line per source or refusal change, a steer that moved
+// 10 units (at most every 250 ms), the drifts (the first kRideSteerDriftLines, then every kRideSteerDriftEvery-th)
+// and the restore.
+constexpr unsigned kRideSteerDriftLines = 20, kRideSteerDriftEvery = 100;
 void TickRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
     namespace rw = partner_ride_wire;
     auto& w = d.ride_steer_write;
     const Mission& m = d.mission;
-    if (w.saved && w.mission != m.mission_code) w = Driver::RideSteerWrite{};  // the old mission's body: never written back
+    if (w.saved && w.mission != m.mission_code) ForgetRideSteer(w);  // the old mission's body: never written back
     if (!d.settings.ride_steer || !h.ride_steer_read || !h.ride_steer_write) return;
     const auto& s = m.seat;
     rw::SteerPlanIn in{};
@@ -2841,20 +2875,44 @@ void TickRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t
     rw::Steer remote{};
     in.have_remote = rw::SteerFor(d.ride_steer_rx, d.ride_rx.packet, epoch, now, remote);
     in.remote = remote;
-    const rw::SteerPlan p = rw::PlanSteer(in);
+    rw::SteerPlan p = rw::PlanSteer(in);
+    if (!p.write && w.saved && s.phase == SeatPhase::exit && s.vehicle == w.vehicle && s.seat == w.seat) {
+        // Review vanim-2: the exit plays on body 1 in the seat: straight (the stock enter's 0.5), never the saved 0.0.
+        p.write = true;
+        p.steer = rw::SteerValue(rw::kSteerNeutral);
+        p.accel = 0.0f;
+        p.aux = 0.0f;
+        p.source = "exit";
+    }
     if (!p.write) {
         if (!w.saved) return;
         pp::RideRates o{};
         o.aux = w.aux; o.accel = w.accel; o.steer = w.steer;
         const char* why = h.ride_steer_write(h.context, st, o);
         ++w.restores;
-        EmitFormat(h, "partner_ride_steer=restore; vehicle=%u; seat=%u; phase=%s; ok=%u; reason=%s; steer=%.3f; accel=%.3f; aux=%.3f; writes=%u\r\n",
+        EmitFormat(h,
+                   "partner_ride_steer=restore; vehicle=%u; seat=%u; phase=%s; ok=%u; reason=%s; steer=%.3f; accel=%.3f; aux=%.3f; writes=%u; "
+                   "drifts=%u\r\n",
                    unsigned(w.vehicle), unsigned(w.seat), SeatPhaseName(s.phase), why ? 0u : 1u, why ? why : "none",
-                   static_cast<double>(w.steer), static_cast<double>(w.accel), static_cast<double>(w.aux), w.writes);
-        const unsigned writes = w.writes, restores = w.restores, refusals = w.refusals;
-        w = Driver::RideSteerWrite{};
-        w.writes = writes; w.restores = restores; w.refusals = refusals;
+                   static_cast<double>(w.steer), static_cast<double>(w.accel), static_cast<double>(w.aux), w.writes, w.drifts);
+        ForgetRideSteer(w);
         return;
+    }
+    if (w.saved && w.wrote) {
+        // Review vanim-3: what the record holds now, before this tick's write.
+        pp::RideRates found{};
+        const auto off = [](float a, float b) noexcept { return a - b > 0.002f || b - a > 0.002f; };  // half a wire unit
+        if (h.ride_steer_read(h.context, st, 1, found) &&
+            (off(found.steer, w.last_steer) || off(found.accel, w.last_accel) || off(found.aux, w.last_aux))) {
+            const unsigned n = ++w.drifts;
+            if (n <= kRideSteerDriftLines || n % kRideSteerDriftEvery == 0)
+                EmitFormat(h,
+                           "partner_ride_steer=drift; vehicle=%u; seat=%u; steer=%.3f/%.3f; accel=%.3f/%.3f; aux=%.3f/%.3f; phase=%s; "
+                           "drifts=%u; writes=%u\r\n",
+                           unsigned(s.vehicle), unsigned(s.seat), static_cast<double>(found.steer), static_cast<double>(w.last_steer),
+                           static_cast<double>(found.accel), static_cast<double>(w.last_accel), static_cast<double>(found.aux),
+                           static_cast<double>(w.last_aux), SeatPhaseName(s.phase), n, w.writes);
+        }
     }
     if (!w.saved) {
         pp::RideRates before{};
@@ -2890,6 +2948,8 @@ void TickRideSteer(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t
     }
     w.refusal = nullptr;
     ++w.writes;
+    w.wrote = true;
+    w.last_steer = v.steer; w.last_accel = v.accel; w.last_aux = v.aux;
     std::uint8_t units = 0;
     rw::SteerUnitsOf(p.steer, units);
     const bool source_changed = !w.source || std::strcmp(w.source, p.source) != 0;
@@ -7053,6 +7113,8 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     const std::uint32_t fpv_pending_tries = d.mission.pass_camera.fpv.pending_tries;
     // Gestures: a new hook epoch (a running gesture is dropped without a write).
     WithdrawGesture(d, h);
+    // r1101 vanim review vanim-1: the steer originals of the old body 1 are never written (a missed MissionEnd included).
+    DropRideSteer(d, h, "mission_start");
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     // Two-PC test 2026-10-23 item 3: the play leak strip is mission-scoped (the
@@ -7145,6 +7207,8 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     SeatFpvRelease(d, h, "mission_end");
     BoardWithdraw(d, h);
     WithdrawGesture(d, h);
+    // r1101 vanim review vanim-1: dropped without writing (the next mission builds a new body 1, also for the same code).
+    DropRideSteer(d, h, "mission_end");
     d.mission.seat.armed = false;
     d.mission.seat.phase = SeatPhase::idle;
     d.mission.ride_seated = false;

@@ -1586,9 +1586,10 @@ struct Driver {
     std::uint32_t ride_seat_ext_tx_epoch;
     std::uint64_t ride_seat_ext_tx_ms;
     // r1101 vanim (lab.ini partner_ride_steer; docs/vehicle-ws3.md "Driver pose"): the v5 steer addendum, received
-    // (link-session scoped) and sent (while this copy's player drives), and the viewer's writes into body 1's rate
-    // record while it seats the peer as the driver (the originals saved before the first write, put back once that
-    // ends; dropped with the mission, never written into another body).
+    // (link-session scoped) and sent (while this copy's player drives; held back while channel 2's window is busy),
+    // and the viewer's writes into body 1's rate record while it seats the peer as the driver (the originals saved
+    // before the first write, kept straight through the exit and put back once the episode is idle; MissionEnd and
+    // MissionStart drop them unwritten, also for the same mission code, so they never reach another body).
     partner_ride_wire::SteerStore ride_steer_rx;
     partner_ride_wire::Steer ride_steer_tx;
     bool ride_steer_tx_have;
@@ -1596,12 +1597,18 @@ struct Driver {
     std::uint64_t ride_steer_tx_ms;
     unsigned ride_steer_tx_count, ride_steer_rx_logged;
     const char* ride_steer_read_refusal;
+    unsigned ride_steer_tx_held;  // review vanim-4: due packets held back (one held line per streak)
+    bool ride_steer_tx_holding;
     struct RideSteerWrite {
         bool saved = false;
         float aux = 0.0f, accel = 0.0f, steer = 0.0f;  // the originals
         std::uint32_t mission = 0;                     // the mission code of the saved record
         std::uint16_t vehicle = 0xFFFF;                // the seated ride the originals were saved for
         std::uint8_t seat = 0xFF;
+        // Review vanim-3: our last successful write; the next tick's read before its write compares with it (a
+        // value nobody of ours wrote = another writer between two ticks: a drift line, found/ours).
+        bool wrote = false;
+        float last_aux = 0.0f, last_accel = 0.0f, last_steer = 0.0f;
         unsigned writes = 0, restores = 0, refusals = 0, drifts = 0;
         const char* refusal = nullptr;                 // the last logged refusal
         const char* source = nullptr;                  // the last logged source

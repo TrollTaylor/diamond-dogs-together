@@ -897,6 +897,10 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
 bool PartnerSendReliableAppend(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
     return PartnerSendReliable(context, channel, bytes, size);
 }
+// r1101 vanim review vanim-4: the steer addendum waits while channel 2's window is busy.
+unsigned PartnerReliableQueued(void*, std::uint8_t channel) noexcept {
+    return mgscoop::partner_net::ReliableQueued(channel);
+}
 // Teammate carry events (coop_carry) on reliable channel 2, appended like the
 // manifest and capability messages.
 bool CoopCarrySend(const std::uint8_t* bytes, std::size_t size) noexcept {
@@ -1323,7 +1327,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSeatShotOverride, PartnerRideSeatGetOff,
     PartnerPassCameraTurn, PartnerSeatFpvRead, PartnerSeatFpvWrite, PartnerSeatFpvPollers, PartnerSeatFpvOverride, PartnerMeleeHit,
     PartnerRideFollowRead, PartnerRideFollowWrite, PartnerRideGetInActive, PartnerRideGetInCut,
-    PartnerRideSteerRead, PartnerRideSteerWrite};
+    PartnerRideSteerRead, PartnerRideSteerWrite, PartnerReliableQueued};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

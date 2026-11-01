@@ -168,11 +168,14 @@ inline constexpr std::size_t kSteerSize = 16;
 inline constexpr std::uint8_t kSteerUnits = 250, kSteerNeutral = 125;
 // At most one steer packet per kSteerMinMs; a change of kSteerStep units in any blend (or a new ride) is sent at
 // once, else a heartbeat every kSteerHeartbeatMs; the viewer uses a packet for kSteerLeaseMs.
-inline constexpr std::uint64_t kSteerMinMs = 50, kSteerHeartbeatMs = 500, kSteerLeaseMs = 1500;
+// Review vanim-4: 100 ms (at most 10 Hz): the addendum is appended to reliable channel 2, whose 32-message window it
+// shares with the carry events (no retry), the 'V' receipts, ride revisions, gestures, caps and the manifest.
+inline constexpr std::uint64_t kSteerMinMs = 100, kSteerHeartbeatMs = 500, kSteerLeaseMs = 1500;
 inline constexpr std::uint8_t kSteerStep = 2;
 // Review vanim-4: a due packet is held back (latest wins: the next due tick sends the newest) while this many messages
-// or more wait unacknowledged on the shared reliable channel 2 (its window is 32).
-inline constexpr unsigned kSteerQueueMax = 0;
+// or more wait unacknowledged on the shared reliable channel 2 (its window is 32): an ack stall never fills the window
+// with steer packets.
+inline constexpr unsigned kSteerQueueMax = 8;
 struct Steer {
     std::uint8_t seat=kSeatUnknown, steer=kSteerNeutral, accel{}, aux{};
     std::uint16_t revision{}, vehicle=kVehicleUnknown;
