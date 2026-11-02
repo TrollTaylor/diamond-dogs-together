@@ -2237,3 +2237,40 @@ the off switch) gives CFG r[19] = 1
   anomalies; until=process_exit`, `soldier_warp=disabled; ...; anomalies=`, `soldier_warp=ready; key; follow`.
 - Wire compatibility: a 0.14.7 peer drops a flag-4 ENEMY_DEBUG and a v[8] above 1 as bad values; play pairs only the same
   build (MISMATCH note), so both copies change together.
+
+## 29. Enemy sync M3, M5, M6 (lab keys `soldier_owner`, `soldier_route`, `soldier_body`; design 7.9, 7.11, 7.12)
+
+CFG r[19] is a bit set: 1 follow (section 28), 2 owner (M3), 4 snap (M4, section 30), 8 route (M5), 16 body (M6), 32 puppet
+(the M7 probe). Lua turns each bit on only together with bit 1.
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x47 | ENEMY_PLACE | G->H | R, world, level 2 | 30 | seq 1.., ent, kind 3 only, x/y/z mm, yaw mrad, flags 0..15 (1 the guest copy's CP in ALERT, 4 first, 8 body), route 0, guest GameObjectId |
+| 0x48 | ENEMY_PLACE_ACK | H->G | R, world, level 2 | 12 | seq, ent, result 0/1, reason (world_place.lua WHY), error cm, frames |
+| 0x49 | OWNER | H->G | R, world, level 2 | 6 | ent, owner 0 host / 1 guest, why (1 near, 3 host_near, 0 none) |
+| 0x4A | ENGAGE | G->H | R, world, level 2 | 5 | ent, why (logged only; not sent since run 4ad309a3) |
+
+- The host's Lua popping an ENEMY_PLACE records the host's warp grant (`Core::RecordGrant`). The host warps its own copy
+  only through `WORLD_WARP_HOST_V1 "<seq> <goId>"` (game_script_observer `HostWarpReceipt`) with that grant.
+- PHASE (0x12) flags 0..3: 2 is the host's calm-down (a decrease). The guest lowers its CP unless its own fight raised it
+  in the last 5 s.
+- ENEMY_DEBUG (0x22) flags 0..31: 8 a body placement (kind 3: a lying body moved and at rest), 16 route only (kind 2: the
+  host copy's route hash, no placement).
+- Log lines: host `event=owner`, `event=hplace` (its own placements), `world_place=host_warp`, `event=route_tx`,
+  `event=body_tx`; guest `event=owner_rx`, `event=place_ack; side=host`, `event=place_first; ...; side=guest`,
+  `event=route_apply`, `event=place_body`, `event=holdup_show`; both `event=phase; ...; src=down`.
+
+## 30. Enemy sync M4 and the M7 probe (lab keys `soldier_snap`, `soldier_puppet`; design 7.10, 7.13)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x4B | SOLDIER_SNAP | both | U (a datagram), level 2 | 25 | sender tick, roster slot 1..512, x/y/z mm, yaw mrad, flags (1 alert, 2 moving), speed mm/s |
+
+- `world::Core` keeps the newest two per slot by sender tick (`SnapPair`); never in Lua's queues; cleared with the
+  grants (unpair, mission start and end, link session, epoch).
+- `DRIVE_V1 "<slot> <goId> <x_mm> <y_mm> <z_mm> [mode]"` (game_script_observer `DriveReceipt`): one step of this copy
+  toward the slot's snaps; mode 0 the soft follow, 1 the puppet drive (only with soldier_puppet, on a guest). Reply
+  `{e=<error_cm>,s=<0 rest|1 step|2 hard>,r,h}` or `{refused="..."}` (`stale`, `far`, `puppet`, `latched`, `soldier`, ...).
+- Log lines: native `world_drive=stats; calls; steps; hard; rest; stale; refused; anomalies` (every 10 s); Lua
+  `event=snap_stats; tx; calls; steps; hard; rest; stale; refused`, `event=puppet; ent; on; ok`, `event=place_sink`
+  (any applied correction 1.5 m lower 2 s after landing), `event=body_fall`.

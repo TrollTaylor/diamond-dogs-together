@@ -29,8 +29,9 @@ constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCa
 // The enemy sync plan's M3..M7 keys (own frame: the main test's stack is large).
 void EnemySyncKeys() {
     using mgscoop::LabConfig;
-    // The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9+): off unless named, also with the gun profile; a
-    // named 1 runs in lab and play (no refusal bit), an invalid value is off.
+    // The enemy sync plan's M3..M6 (docs/world-sync-design.md 7.9..7.12) follow the gun profile in lab and play; the M7
+    // probe (soldier_puppet) stays off unless named; a named 1 runs in lab and play (no refusal bit), a named 0 opts out,
+    // an invalid value is off.
     for (const char* key : {"soldier_owner", "soldier_snap", "soldier_route", "soldier_body", "soldier_puppet"}) {
         const auto pick = [key](const LabConfig& c) -> std::pair<bool, bool> {
             const std::string k = key;
@@ -45,13 +46,19 @@ void EnemySyncKeys() {
             const std::string gunBase = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\n") +
                                         "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n" +
                                         "partner_native_profile=gun\nworld=3\n" + mode;
-            Check(!pick(Lab(gunBase)).first && !pick(Lab(gunBase)).second, "an enemy sync key stays off with the gun profile");
+            const bool probe = std::string(key) == "soldier_puppet";
+            Check(pick(Lab(gunBase)).first == !probe && !pick(Lab(gunBase)).second,
+                  "M3..M6 follow the gun profile; the M7 probe stays off");
+            const auto plain = Lab(std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode);
+            Check(!pick(plain).first, "an enemy sync key is off without the gun profile");
+            const auto off = Lab(gunBase + key + "=0\n");
+            Check(!pick(off).first && pick(off).second && off.play_refused == 0, "a named enemy sync key 0 opts out");
             const auto named = Lab(gunBase + key + "=1\n");
             Check(pick(named).first && pick(named).second && named.invalid_values == 0 && named.unknown_keys == 0 &&
                       named.play_refused == 0,
                   "a named enemy sync key 1 runs in lab and play");
             const auto bad = Lab(gunBase + key + "=maybe\n");
-            Check(!pick(bad).first && !pick(bad).second && bad.invalid_values == 1, "an invalid enemy sync key value is off");
+            Check(!pick(bad).first && pick(bad).second && bad.invalid_values == 1, "an invalid enemy sync key value is named and off");
         }
     }
 }

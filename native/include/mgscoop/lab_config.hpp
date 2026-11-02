@@ -715,23 +715,23 @@ struct LabConfig {
     bool soldier_follow = false;
     bool soldier_follow_given = false;
     // Enemy sync plan (docs/world-sync-design.md 7.9+): M3 two-way: the guest owns the guards it fights far from the host and streams them (ENEMY_PLACE); the host warps its own copies (HostWarpReceipt). CFG r[19] bit 2, only with
-    // soldier_follow. Lab and play; off unless named until its hidden runs pass.
+    // soldier_follow. Lab and play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
     bool soldier_owner = false;
     bool soldier_owner_given = false;
     // Enemy sync plan (docs/world-sync-design.md 7.9+): M4 glides: the owner's position stream (SOLDIER_SNAP) and the soft follow. CFG r[19] bit 4, only with
-    // soldier_follow. Lab and play; off unless named until its hidden runs pass.
+    // soldier_follow. Lab and play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
     bool soldier_snap = false;
     bool soldier_snap_given = false;
     // Enemy sync plan (docs/world-sync-design.md 7.9+): M5 routes: the follower's copy walks the owner's route. CFG r[19] bit 8, only with
-    // soldier_follow. Lab and play; off unless named until its hidden runs pass.
+    // soldier_follow. Lab and play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
     bool soldier_route = false;
     bool soldier_route_given = false;
     // Enemy sync plan (docs/world-sync-design.md 7.9+): M6 bodies and hold-ups: lying bodies placed, carried bodies moved, hold-ups shown. CFG r[19] bit 16, only with
-    // soldier_follow. Lab and play; off unless named until its hidden runs pass.
+    // soldier_follow. Lab and play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
     bool soldier_body = false;
     bool soldier_body_given = false;
     // Enemy sync plan (docs/world-sync-design.md 7.9+): M7 the puppet bubble: the host's AI drives the guards near either player. CFG r[19] bit 32, only with
-    // soldier_follow. Lab and play; off unless named until its hidden runs pass.
+    // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's

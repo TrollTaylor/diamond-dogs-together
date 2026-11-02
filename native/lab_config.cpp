@@ -457,34 +457,34 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         else result.soldier_follow = false;
     }
     else if (Equals(key, "soldier_owner")) {
-        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_owner);
-        if (ok) result.soldier_owner_given = true;
-        else result.soldier_owner = false;
+        result.soldier_owner_given = true;
+        if (!ok) result.soldier_owner = false;
     }
     else if (Equals(key, "soldier_snap")) {
-        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_snap);
-        if (ok) result.soldier_snap_given = true;
-        else result.soldier_snap = false;
+        result.soldier_snap_given = true;
+        if (!ok) result.soldier_snap = false;
     }
     else if (Equals(key, "soldier_route")) {
-        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_route);
-        if (ok) result.soldier_route_given = true;
-        else result.soldier_route = false;
+        result.soldier_route_given = true;
+        if (!ok) result.soldier_route = false;
     }
     else if (Equals(key, "soldier_body")) {
-        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_body);
-        if (ok) result.soldier_body_given = true;
-        else result.soldier_body = false;
+        result.soldier_body_given = true;
+        if (!ok) result.soldier_body = false;
     }
     else if (Equals(key, "soldier_puppet")) {
-        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_puppet);
-        if (ok) result.soldier_puppet_given = true;
-        else result.soldier_puppet = false;
+        result.soldier_puppet_given = true;
+        if (!ok) result.soldier_puppet = false;
     }
     else if (Equals(key, "partner_seat_gun")) {
         // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
@@ -1966,6 +1966,14 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // place error p50 1.1 m / p90 3.9 m; Afghanistan in ALERT p50 2.5 m / p90 7.5-8.8 m, the frozen-guard limit); a named 0
     // is the off switch.
     if (!c.soldier_follow_given) c.soldier_follow = gun;
+    // The enemy sync plan's M3..M6 (docs/world-sync-design.md 7.9..7.12): follow the gun profile in lab and play since their
+    // hidden play runs (30010 2d967b8a: place error p50 0.92 m / p90 2.5 m with M3..M6 on, 0 anomalies; M3 d4460ea5 /
+    // 8ee31261; Mother Base: docs/STATUS.md); a named 0 is the off switch. The M7 probe (soldier_puppet) stays off unless
+    // named: its puppets never notice the guest (no perception of the guest's body on the host).
+    if (!c.soldier_owner_given) c.soldier_owner = gun;
+    if (!c.soldier_snap_given) c.soldier_snap = gun;
+    if (!c.soldier_route_given) c.soldier_route = gun;
+    if (!c.soldier_body_given) c.soldier_body = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

@@ -495,7 +495,9 @@ $script:LabPartnerKeys = @(
     # Enemy follow (docs/world-sync-design.md 7.8; lab and play, native default: the gun profile): the guest's copies of the
     # guards near either player stand where the host's do (CFG r[19], soldier_warp::GuestAdmit follow rule).
     @{ Key = 'soldier_follow'; Json = 'soldier_follow'; Kind = 'bool' },
-    # The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9+; lab and play, off unless named; CFG r[19] bits 2..32).
+    # The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9..7.13; lab and play; CFG r[19] bits 2..32): native
+    # default the gun profile for M3..M6 (soldier_owner, soldier_snap, soldier_route, soldier_body), the M7 probe
+    # (soldier_puppet) off unless named.
     @{ Key = 'soldier_owner'; Json = 'soldier_owner'; Kind = 'bool' },
     @{ Key = 'soldier_snap'; Json = 'soldier_snap'; Kind = 'bool' },
     @{ Key = 'soldier_route'; Json = 'soldier_route'; Kind = 'bool' },

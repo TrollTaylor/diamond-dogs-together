@@ -147,7 +147,8 @@ int main(int argc, char** argv) {
                     c.partner_native_aim_truth_stance ? 1 : 0);
         // Enemy follow (docs/world-sync-design.md 7.8): lab and play, follows the gun profile.
         std::printf("soldier_follow=%d\n", c.soldier_follow ? 1 : 0);
-        // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9+): lab and play, off unless named.
+        // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9..7.13): M3..M6 follow the gun profile, the M7 probe is off
+        // unless named.
         std::printf("soldier_owner=%d\nsoldier_snap=%d\nsoldier_route=%d\nsoldier_body=%d\nsoldier_puppet=%d\n", c.soldier_owner ? 1 : 0,
                     c.soldier_snap ? 1 : 0, c.soldier_route ? 1 : 0, c.soldier_body ? 1 : 0, c.soldier_puppet ? 1 : 0);
         // M2 binoculars (docs/anim-truth.md "Binoculars"): lab and play, follows the gun profile.

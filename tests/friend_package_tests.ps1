@@ -630,6 +630,9 @@ try {
             $file = Join-Path $fixture 'play-follow-lab.ini'; [IO.File]::WriteAllText($file, $hostIni + "soldier_follow=0`npartner_native_binocle=0`n", $utf8)
             $m = Invoke-IniCheck lab $file
             Assert-Equal "$($m['soldier_follow'])$($m['partner_native_binocle'])|$($m['play_refused'])|$($m['unknown_keys'])/$($m['invalid_values'])" '00|0x0|0/0' 'native: a named 0 turns enemy follow and the binoculars off in play'
+            # The enemy sync plan's M3..M6 follow the gun profile in play too; the M7 probe stays off; Play-Coop names none.
+            Assert-True (!$hostIni.Contains('soldier_owner') -and !$hostIni.Contains('soldier_snap') -and !$hostIni.Contains('soldier_puppet')) 'Play-Coop lab.ini never names the enemy sync keys'
+            Assert-Equal "$($n['soldier_owner'])$($n['soldier_snap'])$($n['soldier_route'])$($n['soldier_body'])$($n['soldier_puppet'])" '11110' 'native: play defaults M3..M6 on, the M7 probe off'
             # F9 Spawn vehicle (docs/debug-menu.md "Spawn vehicle"; hidden play runs 65b4005c and e09fcf72): Play-Coop never
             # names debug_vspawn; play defaults it on with the gun profile; a named 0 turns it off in play (no refusal bit).
             Assert-True (!$hostIni.Contains('debug_vspawn') -and !$guestIni.Contains('debug_vspawn') -and
