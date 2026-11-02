@@ -1,3 +1,67 @@
+## November 2, 2026: enemy sync M3..M7 - two-way follow, glides, routes, bodies on with the gun profile; the M7 puppet bubble a probe; the plan's other defects (`wp/enemy-follow`, local only; hidden play runs below)
+
+The user asked to continue until the whole enemy sync plan (scratchpad fb1101) is done, then to release. Rounds 1 and 2 of
+M1/M2 are in the entry below. This entry covers M3..M7 and the plan's section 8. The plan's own decision 3 (M7 needs per-frame
+soldier moves and a host perception patch; "approve now so its probes can run, behind a switch") is taken as approved for
+probes only.
+
+- **What players get** (README "Guards in the same place", "Enemies"): the guards the guest fights far from the host line
+  up on the host's screen too (M3); a guard that drifts glides back in small steps instead of hopping (M4); the guest's
+  copies walk the host copies' routes (M5); bodies that crawl or are dragged lie in the same spot once they stop, and a
+  held-up guard raises his hands on both screens (M6); bases calm down together (M3). The join timeout now says one of
+  you must press Host (section 8 L1).
+- **Keys**: `soldier_owner` (M3), `soldier_snap` (M4), `soldier_route` (M5), `soldier_body` (M6) follow the native gun
+  profile in lab and play; a named 0 is the off switch. `soldier_puppet` (the M7 probe) stays off unless named. CFG r[19]
+  is now a bit set (1 follow .. 32 puppet).
+- **Code** (design 7.9..7.13, protocol sections 29..30):
+  - M3: ENEMY_PLACE / ENEMY_PLACE_ACK / OWNER / ENGAGE (0x47..0x4A), the host's warp grant from the guest's ENEMY_PLACE,
+    `HostWarpReceipt` (the third `soldier_warp::Warp` caller, `HostAdmit`), ownership by distance with a hysteresis band
+    and a 10 s hold, the guest's stream of its own guards, the guest's place-first and the host's hold, PHASE flag 2
+    (calm-down).
+  - M4: SOLDIER_SNAP (0x4B, a datagram; `world::Core` keeps the newest two per roster slot), `DriveReceipt` (DRIVE_V1,
+    the fourth Warp caller: the target from the snaps only, `DriveTarget` / `DriveStep` / `DriveAdmit`,
+    `Gate::AdmitDrive`), the producer and the receiver in the new world chunk `lua/coop/world_snap.lua` (the world
+    chunks are limited to 32000 bytes; world_enemy.lua is full).
+  - M5: GetGameObjectIdUsingRoute sweeps on the host, ENEMY_DEBUG kind 2 flag 16 (route only), the guest's SetSneakRoute
+    without a point (the dispatcher's 0xFFFF default: static reading) unless already on it, again after each landed
+    correction.
+  - M6: the body sampler on both sides (flag 8 placements of a moved, resting body), `SetForceHoldup` on an applied
+    hold-up.
+  - M7 probe: SetPuppet + restrict notice on the guest's driven copies and DRIVE_V1 mode 1 (every update).
+  - The contract script pins four Warp callers (HOST_GATES, DRIVE_GATES): `--check` passes (19 sites, 10 slots).
+  - Section 8: L1 join timeout wording (game, launcher, CoopPlay.psm1, fixture); V1 one VEHICLE_GONE per vehicle per
+    mission load; act 113 / 114 named; S1 partner_recon `PlaceReason::stuck` (one placement when the body stays in a
+    non-locomotion act 3 m behind for 1 s while the remote walks on).
+- **Runs** (hidden worker through the queue, play, `-WanSim bad`, research build, native gun profile; afgh-ledge /
+  mb-ladder seeds; run archive `enemy-follow/<run>/`; `tools/enemy_div_report.py`):
+  - M3: `4ad309a3` (owner flips, `range` refusals: fixed), `d4460ea5`, `8ee31261`: 8-9 owner changes, no fast flips,
+    host placements 42-55 all applied, the calm-down applied on the guest, host-side error for the guest's guards p50
+    1.5-1.6 m / p90 6.1-6.4 m (before M4).
+  - M4..M6 together: `441b490c` (cut by a frame capture error), `2d967b8a` (passed): place error p50 0.92 m / p90 2.5 m
+    over 659 samples (M1 alone: 1.74 / 6.89), the host side p50 0.95 / p90 2.84, 1307 drive steps, 2 hard snaps, 0
+    anomalies; 3 routes sent and taken; the guest's crawling dying guards placed on the host (a lying body can be moved:
+    probe P9).
+  - Mother Base with M3..M6: `d22581c3`: p50 0.70 m / p90 1.67 m / max 2.4 m over 438 samples (M1 alone 1.0 / 3.74 /
+    5.8), 570 steps, 0 hard, 0 anomalies, every outcome placed first within 2 m.
+  - The M7 probe: `ef7e9088` (passed): puppet error p50 0.63 m / p90 1.93 m, 8524 steps, 3 hard, 0 anomalies; the
+    puppets stand in their own idle poses (no T-pose) and never fight, while on the host's screen the same guards shoot
+    the host.
+  - The shipped defaults (only soldier_follow named: M3..M6 on from the gun profile, `soldier_warp=ready; ...; owner=1;
+    snap=1`): `9a44af58` (`enemy-follow-30010-play.txt`), every report gate passed: place error p50 0.71 m / p90 1.88 m
+    over 560 samples (the M1 target was 2 m / 5 m), the host side for the guest's guards p50 0.94 / p90 2.66, 12 owner
+    changes without a fast flip, 20 of 21 host placements applied, 669 + 875 drive steps, 1 hard snap, 0 anomalies, no copy
+    under the ground, every place-first within 2 m, 69 commits applied. Its D section's guest shot and the host's Fulton
+    apply waitlogs failed (the stimulus, as above).
+- **Not done / not covered**: the M7 perception patch (the target filter at 0x1325629 is not patched), damage rerouting
+  and the act mirror (so the M7 probe can never be a default as it stands); A1 (weapon stand-ins for equips 873 / 875);
+  the punch decision (plan decision 4) and the session end (decision 5) need the user; a live session with the friend.
+  Not seen in a game: the guest's own kill placed first on the host (the outpost alerts on arrival and its guards down
+  both players, so the guest's shot never lands), a hold-up's raised hands, a carried body (only crawling ones), M5's
+  walk in step (only the route applies are counted), a rejoin. Two runs logged a copy 3-4.5 m lower 2 s after a
+  placement (`place_sink`: a ledge or platform drop).
+- **Checks**: full `tools/build.ps1` 349/349 at `925402ec`; `-Fast` 315/315 after each change; the plain lab suite 1701
+  checks; `generate_soldier_warp_contract.py --check` (four Warp callers). Nothing pushed before the release below.
+
 ## November 1, 2026: enemy sync round 1 - guards in the same place on both screens (M1) and binoculars (M2), on with the gun profile (`wp/enemy-follow`, local only; hidden play runs below)
 
 The plan written after the 0.14.7 friend session (fb1101: the guest refused all 37 free-roam position fixes, the two
