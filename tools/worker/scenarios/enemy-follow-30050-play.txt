@@ -1,0 +1,150 @@
+# Enemy follow at Mother Base (docs/world-sync-design.md 7.7, 7.8): mb-staff-sync-play.txt with soldier_follow named, the
+# staff regression of the enemy follow round and its quiet patrol case (Mother Base staff never fight). With the key the
+# host's scan runs at the follow rate (4 reads / 16 scans, 1 m or 2 s, the partner from the PEER receipt), the guest's
+# staff corrections go through the follow rule (soldier_warp=ready; key=...; follow=1) with the staff thresholds (2 m on
+# two samples or 5 m once, 2.5 s apart), and place-first carries flag 4.
+#   0..4 as mb-staff-sync-play.txt (A asleep, A Fultoned, B the guest's Fulton, 30 s of the nearest staff member).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/enemy-follow-30050-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# Then: python tools/enemy_div_report.py --host <host slice> --guest <guest slice>.
+# NEVER: step=error, event=error, roster_mismatch, reason=game_over, GameOver, RequestForceFulton on the guest copy,
+# soldier_warp=disabled, native=role.
+labsetting soldier_follow=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+wait 15000
+# A stock Mother Base cutscene (Ocelot, D-Dog) may start on both copies within 15 s of gameplay; wait it out.
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'world_lua=event=align; step=ready; id=[0-9]+; w1=1' 90
+waitlog guest 'world_lua=event=align; step=accepted; id=[0-9]+;' 30
+waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
+stance host stand
+stance guest stand
+# --- 0. A: both near ONE staff member, the guest about 5 m off -----------------------------------------------------
+logmark both
+host run enemy goto 1325835864
+host expect ^(enemy_goto;ent=1325835864;submitted_warp|warp_position_readback)
+wait 1500
+placebehind guest host 2.5 1
+stance guest stand
+wait 5000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+guest expect ^aim_nearest;ent=1325835864;
+wait 800
+both capture s0-standing
+host run enemy info nearest
+guest run enemy info nearest
+host run position
+guest run position
+# --- 1. host puts A to sleep ---------------------------------------------------------------------------------------
+logmark both
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=1325835864;
+waitlog host 'world_lua=event=commit; ent=1325835864; state=2; ver=[0-9]+; actor=host;' 10
+waitlog guest 'world_lua=event=apply; ent=1325835864; state=2; ver=[0-9]+; src=outcome; result=ok' 10
+wait 1200
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture s1-asleep
+host run enemy info nearest
+guest run enemy info nearest
+# --- 2. host Fultons A ---------------------------------------------------------------------------------------------
+logmark both
+host run enemy fulton nearest
+host expect ^enemy_fulton;ent=1325835864;
+host burst s2-host 6 500
+guest burst s2-guest 8 500
+waitlog host 'world_lua=event=commit; ent=1325835864; state=6; ver=[0-9]+; actor=host;' 25
+waitlog guest 'world_lua=event=spare; ent=1325835864; state=6; as=7' 25
+wait 1500
+both capture s2-gone
+# --- 3. B: the host puts B to sleep, the guest Fultons B -------------------------------------------------------------
+host run enemy goto 981153145
+host expect ^(enemy_goto;ent=981153145;submitted_warp|warp_position_readback)
+wait 1500
+placebehind guest host 2.5 1
+stance guest stand
+wait 5000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-standing
+host run enemy info nearest
+guest run enemy info nearest
+logmark both
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=981153145;
+waitlog guest 'world_lua=event=apply; ent=981153145; state=2; ver=[0-9]+; src=outcome; result=ok' 10
+guest run enemy goto 981153145 1
+guest expect ^(enemy_goto;ent=981153145;submitted_warp|warp_position_readback)
+wait 1500
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 600
+both capture s3-asleep
+guest hold e 1500
+guest hold e 1500
+guest release
+guest burst s3-guest 6 500
+host burst s3-host 6 500
+waitlog host 'world_lua=event=commit; ent=981153145; state=6; ver=[0-9]+; actor=guest;' 20
+waitlog host 'world_lua=event=spare; ent=981153145; state=6; as=7' 10
+wait 1500
+both capture s3-gone
+# --- 4. the nearest staff member for 30 s ----------------------------------------------------------------------------
+host run enemy goto nearest 4
+wait 1500
+placebehind guest host 2 1
+stance guest stand
+wait 4000
+host run enemy info nearest
+guest run enemy info nearest
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-00
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-05
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-10
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-15
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-20
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-25
+wait 4400
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture s4-30
+host run enemy info nearest
+guest run enemy info nearest
+host run position
+guest run position
+state
