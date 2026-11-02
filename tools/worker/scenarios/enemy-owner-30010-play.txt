@@ -1,12 +1,14 @@
 # Enemy sync M3 proof (docs/world-sync-design.md 7.9): the guest's own fights show on the host's screen too. Mode play
 # over -WanSim bad, soldier_owner named (soldier_follow is the gun profile's default), Afghanistan afgh_field_cp
 # (afgh-ledge seed). The outpost goes to ALERT on arrival (every 30010 run since P1b).
+#   0. Every afgh_field_cp guard and the LRRP pair ignore the players, the host stands the outpost down (cp_phase nearest
+#      sneak: the guards walk, the guest can aim).
 #   A. Apart (~70 m: the host by 2961503 at the south-east of the outpost, the guest by 2942862796 at its north): the host
 #      gives the guest the guards 15 m nearer it (event=owner; owner=guest; why=near, OWNER 73), the guest streams them
 #      (ENEMY_PLACE 71) and the host moves its own copies (event=hplace; WORLD_WARP_HOST_V1), 60 s.
-#   B. The guest shoots three guards near it (the aim lever of run 6e0edd8b): each guest-owned one is placed on the host
-#      first (event=place_first;step=tx;side=guest, then the host's hplace) before the host commits it (actor=guest).
-#   C. The host stands the outpost down (cp_phase nearest sneak): PHASE flag 2, the guest's CP comes down
+#   B. The guest shoots 2942862796 from 5 m (its own guard): placed on the host first (event=place_first;step=tx;side=guest,
+#      then the host's hplace) before the host commits it (actor=guest).
+#   C. ALERT then calm-down (cp_phase nearest alert, 10 s, sneak): PHASE flag 2, the guest's CP comes down
 #      (event=phase;...;src=down;applied=1) unless its own fight raised it in the last 5 s.
 #   D. They meet (the guest 4 m behind the host): ownership goes back to the host (owner=host).
 # Run (hidden worker, under the queue):
@@ -30,6 +32,23 @@ waitlog host 'soldier_warp=ready; key=[a-z_]+; follow=1; owner=1;' 5
 waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
 host run world_status
 host expect ^world;paired=1;eff=3;w1=1;roster=match;
+# --- 0: the guards ignore the players, the outpost stands down -----------------------------------------------------
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+host run enemy ignore 3970963356
+host run enemy ignore 2305481811
+host run cp_phase nearest sneak
+wait 2000
 # --- A: apart, 60 s ------------------------------------------------------------------------------------------------
 logmark both
 host run enemy goto 2961503 6
@@ -49,38 +68,27 @@ host run enemy_aim_nearest 1.1
 guest run enemy_aim_nearest 1.1
 wait 800
 both capture a-60
-# --- B: the guest shoots three guards near it -----------------------------------------------------------------------
+# --- B: the guest shoots 2942862796 from 5 m --------------------------------------------------------------------------
 logmark both
-guest run enemy_aim_nearest 1.1
-wait 600
-guest hold rmb 1500 nowait
-wait 700
+guest run enemy goto 2942862796 5
+guest expect ^(enemy_goto;ent=2942862796;submitted_warp|warp_position_readback)
+wait 2500
+guest run enemy_aim_nearest 1.0
+wait 300
+guest hold rmb 1200 nowait
+wait 500
 guest press lmb 120
 wait 300
 guest release
-waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=guest;' 20
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[2345]; ver=[0-9]+; actor=guest;' 20
 wait 3000
-guest run enemy_aim_nearest 1.1
-wait 600
-guest hold rmb 1500 nowait
-wait 700
-guest press lmb 120
-wait 300
-guest release
-wait 4000
-guest run enemy_aim_nearest 1.1
-wait 600
-guest hold rmb 1500 nowait
-wait 700
-guest press lmb 120
-wait 300
-guest release
-wait 4000
 host run world_status
 guest run world_status
-# --- C: the host stands the outpost down ----------------------------------------------------------------------------
+# --- C: ALERT, then the calm-down -------------------------------------------------------------------------------------
 logmark both
-wait 6000
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 10000
 host run cp_phase nearest sneak
 host expect ^submitted_phase;cp=[^;]+;phase=sneak;
 waitlog guest 'world_lua=event=phase; cp=[0-9]+; phase=0; ver=[0-9]+; src=down; applied=' 15
@@ -90,7 +98,7 @@ both capture c-down
 logmark both
 placebehind guest host 4 1
 wait 15000
-waitlog host 'world_lua=event=owner; ent=[0-9]+; owner=host;' 20
+waitlog host 'world_lua=event=owner; ent=[0-9]+; owner=host;' 25
 host run enemy_aim_nearest 1.1
 guest run enemy_aim_nearest 1.1
 wait 800

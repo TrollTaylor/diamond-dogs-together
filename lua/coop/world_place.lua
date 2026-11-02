@@ -277,27 +277,34 @@ do
         -- receipt (the remote pose; run f2d2db9b: GetPosition on the partner body, TppPlayer2 index 1, answered nothing,
         -- so the follow scan never saw the partner), else the partner body (an older loader).
         -- M3 ownership (W.ownerOn, docs/world-sync-design.md 7.9): the guest owns a guard at least 15 m nearer its player
-        -- than the host's, or one its player fought in the last 10 s (ENGAGE) while the host's did not; the host's player
-        -- fighting him (its own hit in the last 10 s) or within 20 m of him keeps him the host's. A decision holds 5 s.
-        -- OWNER 73 tells the guest each change (owner 0 host, 1 guest; why 1 near, 2 engage, 3 host_engaged, 0 none).
-        local OWHY = {[0] = "none", "near", "engage", "host_engaged"}
+        -- than the host's; he comes back to the host once he is less than 5 m nearer the guest's player, or within 20 m of
+        -- the host's (a hysteresis band); a decision holds 10 s. Engagement is not used: run 4ad309a3's Damage messages
+        -- named the local player as the attacker for guards neither player shot (81 ENGAGE from the guest, the host's own
+        -- "hits" at 70 m: 102 owner flips within 10 s). OWNER 73 tells the guest each change (owner 0 host, 1 guest; why
+        -- 1 near, 3 host_near, 0 none).
+        local OWHY = {[0] = "none", "near", "engage", "host_near"}
         function P.ownerOf(h, dh, dq, now)
-            local g = P.engG[h] and now - P.engG[h] <= 10000
-            local hh = (P.engH[h] and now - P.engH[h] <= 10000) or dh <= 400000000
-            local want, why = 0, hh and 3 or 0
-            if g and not hh then want, why = 1, 2
-            elseif not hh and dq ~= nil and sqrt(dh) - sqrt(dq) >= 15000 then want, why = 1, 1 end
             local o = P.own[h]
             if not o then o = {o = 0, at = -1e9}; P.own[h] = o end
-            if want ~= o.o and now - o.at >= 5000 and W.tx(OP.OWNER, h, want, why) then
+            local gap = dq ~= nil and sqrt(dh) - sqrt(dq) or nil
+            local hostNear = dh <= 400000000
+            local want, why = o.o, 0
+            if hostNear then want, why = 0, 3
+            elseif gap and gap >= 15000 then want, why = 1, 1
+            elseif not gap or gap < 5000 then want, why = 0, 0 end
+            if want ~= o.o and now - o.at >= 10000 and W.tx(OP.OWNER, h, want, why) then
                 o.o, o.at = want, now
                 L("event=owner;ent=%.0f;owner=%s;why=%s;dh_m=%.0f;dq_m=%s", h, want == 1 and "guest" or "host", OWHY[why],
                     sqrt(dh) / 1000, dq and fmt("%.0f", sqrt(dq) / 1000) or "na")
             end
             return o.o
         end
+        -- ENGAGE stays on the wire and in the log (event=engage_rx); ownership no longer reads it (see P.ownerOf).
         H[OP.ENGAGE] = function(v, now)
-            if W.host and W.ownerOn and P.engG then P.engG[v[1]] = now or W.now() end
+            if W.host and W.ownerOn and P.engG then
+                P.engG[v[1]] = now or W.now()
+                L("event=engage_rx;ent=%.0f", v[1])
+            end
         end
         -- The guest's samples of the guards it owns move this host's copies (world_place_guest.lua P.sample, c.host).
         H[OP.ENEMY_PLACE] = function(v, now)

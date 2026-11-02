@@ -1163,27 +1163,42 @@ if arg[7] and arg[8] then
     oh.tx = {}
     oh.positions[900] = {-100.0, 0, 0}         -- the guest walks away and the guard comes to 40 m of the host: the host's
     oh.positions[2] = {40.0, 1.8, 0}           -- again after the 5 s hold
-    ticks(oh, 60)
-    check(#placeTx(oh, 73) == 0, 'M3: an owner decision holds 5 s')
-    ticks(oh, 120)
+    ticks(oh, 150)
+    check(#placeTx(oh, 73) == 0, 'M3: an owner decision holds 10 s')
+    ticks(oh, 250)
     own = placeTx(oh, 73)
-    check(#own == 1 and own[1].v[2] == 0 and logged(oh, 'event=owner;ent=3000000002;owner=host'), 'M3: back to the host after 5 s')
-    -- The guest's engagement (ENGAGE 74) gives the guest a halfway guard unless the host's player fought him too.
+    check(#own == 1 and own[1].v[2] == 0 and logged(oh, 'event=owner;ent=3000000002;owner=host'), 'M3: back to the host after 10 s')
+    -- ENGAGE (74) is logged, never an owner decision (run 4ad309a3: Damage named the local player for guards nobody shot);
+    -- a guard within 20 m of the host's player stays the host's even 15 m nearer the guest; between 5 and 15 m nearer the
+    -- guest a guard keeps his owner (the hysteresis band).
     local oe = followFixture(true)
     oe.W.ownerOn = true
     oe.positions[900] = {100.0, 0, 0}
     oe.positions[3] = {50.0, 1.8, 0}
     oe.W.handlers[74]({3000000003, 1}, oe.now)
     ticks(oe, 40)
-    check(logged(oe, 'event=owner;ent=3000000003;owner=guest;why=engage'), 'M3: a guard the guest fights belongs to the guest')
+    check(logged(oe, 'event=engage_rx;ent=3000000003') and #placeTx(oe, 73) == 0, 'M3: ENGAGE is logged only')
     local ob = followFixture(true)
     ob.W.ownerOn = true
-    ob.positions[900] = {100.0, 0, 0}
-    ob.positions[3] = {50.0, 1.8, 0}
-    ob.W.handlers[74]({3000000003, 1}, ob.now)
-    for _, f in ipairs(ob.W.observers) do f('Damage', 3000000003, 'local') end
+    ob.positions[900] = {40.0, 0, 0}
+    ob.positions[3] = {18.0, 1.8, 0}           -- 18 m from the host, 22 m from the guest... and 22 > 18: the host's
+    ob.positions[2] = {19.0, 1.8, 0}
+    ob.positions[900] = {50.0, 0, 0}           -- 19 m from the host, 31 m from the guest
     ticks(ob, 40)
-    check(#placeTx(ob, 73) == 0 and #sentFor(ob, 3000000003) >= 1, 'M3: both engaged: the host')
+    check(#placeTx(ob, 73) == 0, 'M3: within 20 m of the host: the host')
+    local oy = followFixture(true)
+    oy.W.ownerOn = true
+    oy.positions[900] = {100.0, 0, 0}
+    oy.positions[2] = {90.0, 1.8, 0}           -- 80 m nearer the guest: the guest's
+    ticks(oy, 4)
+    check(#placeTx(oy, 73) == 1, 'M3: the guest owns him')
+    oy.tx = {}
+    oy.positions[2] = {54.0, 1.8, 0}           -- 54 m from the host, 46 m from the guest (8 m nearer): kept
+    ticks(oy, 400)
+    check(#placeTx(oy, 73) == 0, 'M3: 8 m nearer the guest: the owner is kept (the hysteresis band)')
+    oy.positions[2] = {51.0, 1.8, 0}           -- 2 m nearer the guest: back to the host
+    ticks(oy, 60)
+    check(#placeTx(oy, 73) == 1 and placeTx(oy, 73)[1].v[2] == 0, 'M3: under 5 m nearer the guest: the host')
     -- Host: the guest's ENEMY_PLACE (71) moves the host's copy (off its screen: one sample over 2.5 m), WARP_HOST_V1, ACK 72.
     local hp = followFixture(true)
     hp.W.ownerOn = true

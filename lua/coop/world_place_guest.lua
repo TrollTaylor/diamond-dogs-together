@@ -413,6 +413,9 @@ do
                     reads, s.sampleAt = reads + 1, now
                     if en and type(en.id) == "number" and P.state(en) == 0 then
                         local x, y, z = pos(en.id)
+                        -- Only within 60 m of this player (run 4ad309a3: 109 of 179 host placements refused `range` for
+                        -- guards that had walked off).
+                        if x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) > 60000 then x = nil end
                         if x and (x ~= 0 or z ~= 0) then
                             s.every = flat(x, z, px, pz) <= 40000 and 500 or 1000
                             local moved = s.x and flat(x, z, s.x, s.z) or 1e9
