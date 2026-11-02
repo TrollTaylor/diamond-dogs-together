@@ -742,8 +742,11 @@ if arg[7] and arg[8] then
     ph.now = ph.now + 600; ph.P.tick(ph.now)
     ph.now = ph.now + 600; ph.P.tick(ph.now)
     local ptx = placeTx(ph, 34)
-    check(#ptx == 1 and ptx[1].v[2] == ENT1 and ptx[1].v[3] == 3 and ptx[1].v[4] == 10000 and ptx[1].v[5] == 1000 and
-        ptx[1].v[6] == 12000 and ptx[1].v[8] == 0, 'patrol scan announces nearby active-CP soldier with y - 800 mm')
+    -- y: the feet (GetPosition y - 800 mm: run cb8ae74f's grounded copies landed 0.80 m over the request) plus the 400 mm
+    -- lift (P.LIFT: a copy placed with its feet at the host's sank under the ground in runs 51f8e90f / 6e22bed0 /
+    -- cb8ae74f, landing at 0.0 m and falling ~20 m in 2 s).
+    check(#ptx == 1 and ptx[1].v[2] == ENT1 and ptx[1].v[3] == 3 and ptx[1].v[4] == 10000 and ptx[1].v[5] == 1400 and
+        ptx[1].v[6] == 12000 and ptx[1].v[8] == 0, 'patrol scan announces nearby active-CP soldier with y - 800 + 400 mm')
     pg.positions[1] = {10.0, 1.8, 12.0}
     deliver(ph, pg, 34)
     check(#pg.P.q == 0, 'aligned guest soldier queues no correction')
@@ -809,8 +812,8 @@ if arg[7] and arg[8] then
     sh.tx = {}
     sh.E.check(ENT1, 1)
     check(#sh.tx == 2 and sh.tx[1].op == 34 and sh.tx[1].v[2] == ENT1 and sh.tx[1].v[3] == 3 and sh.tx[1].v[4] == 10600 and
-        sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
-        'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
+        sh.tx[1].v[5] == 1400 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
+        'host commit of a standing staff member: kind 3 with the standing ground y (+ the lift) first, then the OUTCOME')
     -- A staff member never sampled standing (far from both players) gets no place-first; the OUTCOME still goes.
     local keep = sh.tx
     sh.tx = {}
@@ -975,8 +978,8 @@ if arg[7] and arg[8] then
     check(#sentFor(ph3, 3000000002) == 0, 'a guard rising fast is not sampled')
     ph3.life[2] = 3
     ph3.E.check(3000000002, 5)
-    check(ph3.tx[1] and ph3.tx[1].op == 34 and ph3.tx[1].v[5] == 1000 and ph3.tx[1].v[4] == 12000,
-        'his place-first: the standing x, z and ground y')
+    check(ph3.tx[1] and ph3.tx[1].op == 34 and ph3.tx[1].v[5] == 1400 and ph3.tx[1].v[4] == 12000,
+        'his place-first: the standing x, z and ground y (+ the lift)')
     local ph4 = followFixture(true)
     ph4.positions[2] = {12.0, 1.8, 0}
     ticks(ph4, 4)
