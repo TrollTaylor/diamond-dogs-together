@@ -2217,6 +2217,8 @@ the off switch) gives CFG r[19] = 1
   at most 1.5 s in free roam, 4 s at Mother Base). Bit 1 on a correction is the host copy's combat flag (never come);
   bits 1 / 2 keep their come / restrict-notice meaning on warps and routes.
 - The guest's warp grants (world_wire.hpp `Grant`): 64 slots (16 before).
+- ENEMY_DEBUG kind 3 y of a scan or place-first correction: the host copy's feet (GetPosition y - 800 mm) plus 400 mm
+  (`P.LIFT`, design 7.8 "Copies under the ground"); before, the feet alone (some copies landed under the ground).
 - REQ_OUTCOME (0x11) v[8] attribution 0..3 (0 the guest's player, 1 its buddy, 2 another attacker, 3 none). With follow
   the guest sends every forward change; the host commits 0 / 1 as before, commits an unattributed DYING / DEAD /
   FULTONED only while its copy stands within 150 m of the partner (`event=terminal_win; rid; ent; state; att;
@@ -2226,7 +2228,10 @@ the off switch) gives CFG r[19] = 1
 - Log lines (`world_lua=`): host `event=place_scan; ups; reads; sent; side; avg_us; max_us; partner` (every 10 s),
   `event=place_partner; known; src=peer|body|none`, `event=place_first; step=tx; ent; seq; x; y; z`; guest
   `event=place_err; n; h=<7 bins>; p50; p95; max; fix; q` (each second with samples), `event=place_div; ...; view=on|off;
-  why=pair|first|near_player|far` (corrections, place-first, first samples, guards 2 m off), `event=place_first;
+  why=pair|first|near_player|far|fall; dy_m` (corrections, place-first, first samples, guards 2 m off; dy_m from 5 m
+  under or over), `event=place; ...; dy_m` (an applied placement: the copy's landed y over the request),
+  `event=place_sink; seq; ent; land_dy_m; dy_m` (1.5 m lower 2 s after landing), `event=body_fall; ent; state; y0_m; y_m`
+  (a body this copy downed, 10 m lower 3 s after), `event=place_first;
   step=hold|done; ...; err_m; ms`, `event=place_combat; seq; ent; nudge=0`; both `event=apply; ...; d_m` (with a wire
   position), `event=req; ...; att`, `event=req_rx; ...; reason; att`; native `soldier_warp=soldier_latched; id; go; r; h;
   anomalies; until=process_exit`, `soldier_warp=disabled; ...; anomalies=`, `soldier_warp=ready; key; follow`.
