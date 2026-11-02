@@ -2,8 +2,8 @@
 # 0x14132562B je -> jmp) make a copy's soldiers react to body 1, the partner? Mode play over -WanSim bad, Afghanistan
 # afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_perceive named on both copies, soldier_brain off (stock damage,
 # every soldier hit on a player logged: soldier_hit=replica|own; ... action=stock).
-#   B. Every guard ignores the players (restrict notice, shared): the host 40 m from 1740692850, the guest 8 m from it,
-#      30 s. Does restrict notice also keep the host's soldiers off the guest's body (no soldier_hit=replica on the host)?
+#   B. Every guard ignores the players (restrict notice, shared): the host 10 m from 1740692850, the guest 6 m from it
+#      (enemy goto takes at most 10 m; run 5fb44105's host stayed 660 m away, its copies unrealized), 30 s. Does restrict notice also keep the host's soldiers off the guest's body (no soldier_hit=replica on the host)?
 #   A. Every guard notices again, 60 s: the host's soldiers shoot the guest's body (soldier_hit=replica on the host; none
 #      in 26 runs before the patch). damage_status counters after each part.
 # Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive-30010-play.txt
@@ -39,9 +39,9 @@ host run enemy ignore 3970963356
 host run enemy ignore 2305481811
 wait 2000
 logmark both
-host run enemy goto 1740692850 40
+host run enemy goto 1740692850 10
 host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
-guest run enemy goto 1740692850 8
+guest run enemy goto 1740692850 6
 guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
 wait 15000
 host run enemy_aim_nearest 1.1
