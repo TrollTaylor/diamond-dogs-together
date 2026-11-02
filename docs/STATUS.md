@@ -1,3 +1,21 @@
+## November 1, 2026: 0.15.0 package (Enemy sync: guards in the same place on both screens (positions, glides, routes, bodies), binoculars)
+
+**Package (2026-11-01):** `dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `29b11f7` with Release receipt `20261102-035555-ce323bba84674c6a8c7b1ff36b39251a` (passed, 336 audited tests, 0 failures; `-BuildJobs 8 -TestJobs 8`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.0+29b11f7` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.0.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,246,886 | `2D6B0DDFA71CF43AD96DAA059A9AA48BBC93C5F1DAA207766F82AE91E89CC261` |
+| `DDT-source-0.15.0.zip` (1,591 source files plus `source-files.json`) | 9,498,519 | `D67327D90ECDDFC73867570F6A69A5D1D1F2AF5557FB89EA519B09347D05B2D3` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `4C186E87E3B3F28A52D77C61BCB60260993BA4A17F33591723A436E88175AAEA` |
+| `dinput8.dll` | 7,546,880 | `297C7F9F35F2A9BB4944A63774FF437485FA7C084135AD5FF0D63AEFCE609627` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.0, `source_commit` `29b11f7`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.79.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `520bf07` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.0 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.0 and still 0.14.7; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.1", "0.15.0")`.
+- **Checks at the bump commit `29b11f7`:** the Release receipt above is the only test run (336 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.0`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.0 -PackageDir dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## November 2, 2026: enemy sync M3..M7 - two-way follow, glides, routes, bodies on with the gun profile; the M7 puppet bubble a probe; the plan's other defects (`wp/enemy-follow`, local only; hidden play runs below)
 
 The user asked to continue until the whole enemy sync plan (scratchpad fb1101) is done, then to release. Rounds 1 and 2 of
