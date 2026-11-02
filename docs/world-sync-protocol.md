@@ -2208,7 +2208,8 @@ host's toast still says both screens; pairing across builds shows the MISMATCH n
 
 ## 28. Enemy follow (the enemy sync plan's round 1; lab key `soldier_follow`, design 7.8)
 
-No new op. `soldier_follow=0|1` (lab.ini, lab and play, off unless named until its hidden runs pass) gives CFG r[19] = 1
+No new op. `soldier_follow=0|1` (lab.ini, lab and play; follows the gun profile since the round's hidden runs, a named 0 is
+the off switch) gives CFG r[19] = 1
 (`W.followOn`) and the guest's follow admission rule (`soldier_warp::GuestAdmit`). Changed fields and receipts:
 
 - ENEMY_DEBUG (0x22) flags 0..7: bit 4 `first`, the host's place-first correction right before its own outcome of a

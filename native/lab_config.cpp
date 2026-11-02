@@ -451,7 +451,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         else result.spawn_warp = false;
     }
     else if (Equals(key, "soldier_follow")) {
-        // Enemy follow (lab and play; off unless named); a named value records _given, an invalid one is off.
+        // Enemy follow (lab and play; follows the gun profile); a named value records _given, an invalid one is off.
         ok = ParseBool(value, result.soldier_follow);
         if (ok) result.soldier_follow_given = true;
         else result.soldier_follow = false;
@@ -1925,9 +1925,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_aim_truth_box_given) c.partner_native_aim_truth_box = gun;
     if (!c.partner_native_aim_truth_triggers_given) c.partner_native_aim_truth_triggers = gun;
     if (!c.partner_native_aim_truth_stance_given) c.partner_native_aim_truth_stance = gun;
-    // M2 binoculars (docs/anim-truth.md "Binoculars"): off unless named, also with the gun profile, until its hidden run
-    // shows body 1's gun down while the remote holds binoculars; a named 1 runs in lab and play.
-    if (!c.partner_native_binocle_given) c.partner_native_binocle = false;
+    // M2 binoculars (docs/anim-truth.md "Binoculars"): follows the gun profile in lab and play since hidden play runs
+    // 5a9fc123 / 3358bf4a (both copies, both directions: the partner's puppet through binoculars standing and crouched with
+    // its rifle slung, the pistol control still aimed, no aim intent at the binocle end with the 600 ms grace); a named 0
+    // opts out.
+    if (!c.partner_native_binocle_given) c.partner_native_binocle = gun;
+    // Enemy follow (docs/world-sync-design.md 7.8): follows the gun profile in lab and play since the hidden play runs of
+    // the enemy follow round (30010 3e01f334 / c8121ed2 / ..., 30050 ee4cc176: corrections applied with no native=role
+    // refusal, no anomaly or latch in about 600 warps, outcomes placed first 0.1-0.9 m from the guest's copy, Mother Base
+    // place error p50 1.1 m / p90 3.9 m; Afghanistan in ALERT p50 2.5 m / p90 7.5-8.8 m, the frozen-guard limit); a named 0
+    // is the off switch.
+    if (!c.soldier_follow_given) c.soldier_follow = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

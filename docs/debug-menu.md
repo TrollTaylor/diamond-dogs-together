@@ -551,8 +551,8 @@ mb-staff-sync): play or lab, mission 30050, corrections (kind 3) only, range fro
 the host and the guest's own player; `Verify` then runs for a play or lab guest
 (`soldier_warp=ready; key=mb_staff`, or `key=spawn_warp` while that key is on)
 ([world-sync-design.md](world-sync-design.md) 7.7). With `spawn_warp=0` only route placements
-(kind 2) and those staff corrections move the guest's copy. With lab.ini `soldier_follow=1`
-(enemy follow, [world-sync-design.md](world-sync-design.md) 7.8) the follow rule admits
+(kind 2) and those staff corrections move the guest's copy. With `soldier_follow` (lab.ini; follows the gun profile, a named 0 turns it off;
+enemy follow, [world-sync-design.md](world-sync-design.md) 7.8) the follow rule admits
 corrections (kind 3) in 30010, 30020 and 30050 in play or lab, range from the nearer player,
 `far` beyond 250 m from both (`soldier_warp=ready; ...; follow=1`).
 

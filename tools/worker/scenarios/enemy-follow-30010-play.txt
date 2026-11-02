@@ -1,5 +1,5 @@
 # Enemy follow M1 proof (docs/world-sync-design.md 7.8, docs/STATUS.md "Enemy follow") in mode=play over -WanSim bad, with
-# soldier_follow named (off unless named until a run like this one passes). Afghanistan (30010), afgh_field_cp, the
+# soldier_follow named (the gun profile's default since this round's runs; named so an older default cannot hide it). Afghanistan (30010), afgh_field_cp, the
 # outpost where the 0.14.7 friend session's guard copies drifted 8.7 m median / 95.3 m max (afgh-ledge seed).
 #   0. Every afgh_field_cp guard and the LRRP pair ignore the players first (enemy ignore, shared as ENEMY_DEBUG kind 5),
 #      20:00 (runs P1b, f2d2db9b, 3e01f334, 7dd004a4 and c8121ed2 alerted the outpost on arrival all the same, and its
@@ -10,10 +10,11 @@
 #      rule (never native=role); both cameras on the nearest guard every 30 s.
 #   B. Together (the guest 4 m from 2961503, as the host), 45 s: frame pairs of the same guard every 15 s.
 #   C. The host's own acts, each preceded by its place-first (flag 4) on the guest: 2961503 asleep, 753908875 and
-#      667680985 killed (by hash), the nearest guard Fultoned; the guest's camera on each (event=place_first; step=done
-#      err_m, then event=apply ... src=outcome ... d_m).
-#   D. The guest Fultons the sleeping 2961503 by hand (E held at 1 m): its request reaches the host, applied there with
-#      d_m (run f2d2db9b's guest shot from the ground hit nothing).
+#      667680985 killed (by hash); the guest's camera on each (event=place_first; step=done err_m, then event=apply ...
+#      src=outcome ... d_m).
+#   D. The guest shoots the sleeping 2961503 from 4 m (aimed 0.3 m up, RMB then LMB): its request reaches the host,
+#      committed actor=guest and applied there with d_m.
+#   C'. The host Fultons the nearest guard, with its place-first (after D: run 2b0b77ea's nearest was the sleeping 2961503).
 #   E. Every guard notices again, the host raises ALERT, 60 s of combat corrections (the stance question of P2 on the
 #      play path: soldier_warp=soldier_latched / disabled are counted, never expected).
 # Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
@@ -143,6 +144,31 @@ both capture c-kill-after
 host run enemy kill 667680985
 host expect ^enemy_kill;ent=667680985;
 waitlog guest 'world_lua=event=apply; ent=667680985; state=5; ver=[0-9]+; src=outcome;' 10
+# --- D: the guest shoots the sleeping 2961503 (the aim lever of run 6e0edd8b; the hold-E Fulton of runs 2b0b77ea /
+# ee4cc176 never showed the guest a Fulton prompt) -----------------------------------------------------------------
+logmark both
+guest run enemy goto 2961503 4
+guest expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+wait 1500
+guest run enemy_aim_nearest 0.3
+guest expect ^aim_nearest;ent=2961503;
+wait 600
+both capture d-before
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest release
+guest burst d-guest 6 500
+host burst d-host 6 500
+waitlog host 'world_lua=event=commit; ent=2961503; state=[45]; ver=[0-9]+; actor=guest;' 30
+waitlog host 'world_lua=event=apply; ent=2961503; state=[45]; ver=[0-9]+; src=commit;' 30
+wait 1500
+both capture d-after
+# --- C': the host Fultons the nearest guard (2961503 is dead after D: run 2b0b77ea's host Fultoned the sleeping 2961503
+# itself, nearest, before D could) -------------------------------------------------------------------------------------
+logmark both
+wait 6000
 host run enemy_aim_nearest 1.1
 guest run enemy_aim_nearest 1.1
 wait 600
@@ -151,26 +177,9 @@ host run enemy fulton nearest
 host expect ^enemy_fulton;ent=[0-9]+;
 host burst c-fulton-host 4 500
 guest burst c-fulton-guest 6 500
-waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=6; ver=[0-9]+; src=outcome;' 30
+waitlog guest 'world_lua=event=apply; ent=(?!2961503;)[0-9]+; state=6; ver=[0-9]+; src=outcome;' 30
 host run world_status
 guest run world_status
-# --- D: the guest Fultons the sleeping 2961503 --------------------------------------------------------------------
-logmark both
-guest run enemy goto 2961503 1
-guest expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
-wait 1500
-guest run enemy_aim_nearest 0.3
-wait 600
-both capture d-before
-guest hold e 1500
-guest hold e 1500
-guest release
-guest burst d-guest 6 500
-host burst d-host 6 500
-waitlog host 'world_lua=event=commit; ent=2961503; state=6; ver=[0-9]+; actor=guest;' 30
-waitlog host 'world_lua=event=apply; ent=2961503; state=6; ver=[0-9]+; src=commit;' 30
-wait 1500
-both capture d-after
 # --- E: every guard notices again, ALERT, 60 s ----------------------------------------------------------------------
 logmark both
 host run enemy notice 2961503

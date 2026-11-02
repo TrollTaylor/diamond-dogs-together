@@ -1,4 +1,5 @@
-# Enemy follow at Mother Base (docs/world-sync-design.md 7.7, 7.8): mb-staff-sync-play.txt with soldier_follow named, the
+# Enemy follow at Mother Base (docs/world-sync-design.md 7.7, 7.8): mb-staff-sync-play.txt with soldier_follow on (the gun
+# profile's default since this round: not named, so the run shows play's default; run ee4cc176 named it), the
 # staff regression of the enemy follow round and its quiet patrol case (Mother Base staff never fight). With the key the
 # host's scan runs at the follow rate (4 reads / 16 scans, 1 m or 2 s, the partner from the PEER receipt), the guest's
 # staff corrections go through the follow rule (soldier_warp=ready; key=...; follow=1) with the staff thresholds (2 m on
@@ -10,7 +11,6 @@
 # Then: python tools/enemy_div_report.py --host <host slice> --guest <guest slice>.
 # NEVER: step=error, event=error, roster_mismatch, reason=game_over, GameOver, RequestForceFulton on the guest copy,
 # soldier_warp=disabled, native=role.
-labsetting soldier_follow=1
 labsetting nametag=1
 title 200
 waitgameplay host 120
@@ -85,7 +85,9 @@ logmark both
 host run enemy sleep nearest
 host expect ^enemy_sleep;ent=981153145;
 waitlog guest 'world_lua=event=apply; ent=981153145; state=2; ver=[0-9]+; src=outcome; result=ok' 10
-guest run enemy goto 981153145 1
+# 2 m: from 1 m (run ee4cc176) the guest stood over the body and its HUD showed no Fulton prompt; the host's showed one
+# from 2.5 m.
+guest run enemy goto 981153145 2
 guest expect ^(enemy_goto;ent=981153145;submitted_warp|warp_position_readback)
 wait 1500
 host run enemy_aim_nearest 0.3

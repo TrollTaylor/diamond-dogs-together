@@ -1,6 +1,7 @@
 # Enemy sync plan M2, binoculars (docs/anim-truth.md "Binoculars"; fb1101 B1: the partner holding binoculars looked like
 # it aimed a gun on the other screen). Mode play over -WanSim bad, Mother Base (mb-ladder seed: no guard shoots), with
-# partner_native_binocle named (off unless named until a run like this one passes). The sender's PlayerStatus BINOCLE
+# partner_native_binocle named (the gun profile's default since runs 5a9fc123 / 3358bf4a; named so an older default
+# cannot hide it). The sender's PlayerStatus BINOCLE
 # rides the equipment manifest (byte 63 bit 1); the receiver strips the remote's HOLD/FIRE and drops its aim act while
 # it is on, so body 1 holds its idle.
 #   A. The guest holds F (binoculars, SUBJECT) 4.5 s standing, the host watching from 5 m behind and 2 m to the side:

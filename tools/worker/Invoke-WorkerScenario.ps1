@@ -202,8 +202,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    r1101: debug_vspawn=0|1, F9 Spawn jeep / Spawn truck on both copies (lab and play;
                                    default follows the gun profile, runs 65b4005c / e09fcf72; docs/debug-menu.md)
                                    enemy follow: soldier_follow=0|1, the guest's copies of the guards near either
-                                   player stand where the host's do (lab and play; off unless named until its hidden
-                                   run passes; docs/world-sync-design.md 7.8)
+                                   player stand where the host's do (lab and play; default follows the gun profile;
+                                   docs/world-sync-design.md 7.8); partner_native_binocle=0|1, body 1's gun stays
+                                   down while the remote holds binoculars (default follows the gun profile)
 
 Preflight: without -CheckReceipt the run first runs tools/worker/Invoke-WorkerChecks.ps1 for its profile with -Reuse:
 when the profile's newest receipt passed for the identical source snapshot, test inputs (fixtures and scenarios

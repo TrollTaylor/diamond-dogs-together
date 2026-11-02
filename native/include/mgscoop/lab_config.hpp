@@ -710,7 +710,8 @@ struct LabConfig {
     // host's do. The guest's native placement admits play / lab corrections (world_place kind 3) in 30010 / 30020 /
     // 30050 (soldier_warp::GuestAdmit follow rule: range from the nearer player, `far` beyond 250 m), and CFG r[19] bit 1
     // turns on the host's follow scan around both players and place-first before every host outcome (world_place.lua).
-    // Lab and play; off unless named until its hidden run passes; a named 0 opts out.
+    // Lab and play; follows the gun profile (ResolveWeaponDefaults; the enemy follow round's hidden runs); a named 0 is the
+    // off switch.
     bool soldier_follow = false;
     bool soldier_follow_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
@@ -755,8 +756,8 @@ struct LabConfig {
     bool partner_native_aim_truth_stance_given = false;
     // Enemy sync plan M2 (docs/anim-truth.md "Binoculars"; fb1101 B1): the sender puts its PlayerStatus BINOCLE in the
     // equipment manifest (byte 63 bit 1, always); with this key the receiver keeps body 1's gun down while the remote
-    // holds binoculars (its HOLD/FIRE stripped, its aim act dropped). Gun stage, lab and play; off unless named until its
-    // hidden run passes.
+    // holds binoculars (its HOLD/FIRE stripped, its aim act dropped, 600 ms beyond the bit). Gun stage, lab and play;
+    // follows the gun profile (hidden runs 5a9fc123 / 3358bf4a); a named 0 opts out.
     bool partner_native_binocle = false;
     bool partner_native_binocle_given = false;
     // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
