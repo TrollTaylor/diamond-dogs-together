@@ -2,12 +2,13 @@
 # soldier_follow named (off unless named until a run like this one passes). Afghanistan (30010), afgh_field_cp, the
 # outpost where the 0.14.7 friend session's guard copies drifted 8.7 m median / 95.3 m max (afgh-ledge seed).
 #   0. Every afgh_field_cp guard and the LRRP pair ignore the players first (enemy ignore, shared as ENEMY_DEBUG kind 5),
-#      20:00, both prone after landing (runs P1b, f2d2db9b, 3e01f334 and 7dd004a4 alerted the outpost on arrival even
-#      so, and its guards downed both players; both stand for the placebehind: 7dd004a4 stopped on a prone landing). The host 6 m from 2961503 (sol_field_0000), the guest 8 m from 1740692850 (sol_field_0002).
+#      20:00 (runs P1b, f2d2db9b, 3e01f334, 7dd004a4 and c8121ed2 alerted the outpost on arrival all the same, and its
+#      guards down the players now and then: no stance or placebehind step after the arrival, whose readback a downed
+#      player fails; 7dd004a4 and c8121ed2 stopped there). The host 6 m from 2961503 (sol_field_0000), the guest 8 m from 1740692850 (sol_field_0002).
 #   A. Apart, quiet, 90 s: the host's follow scan around both players (event=place_scan), the guest's samples
 #      (event=place_err every second), corrections (event=place; kind=correct) with soldier_follow on the native follow
 #      rule (never native=role); both cameras on the nearest guard every 30 s.
-#   B. Together (the guest 3 m behind the host), 45 s: frame pairs of the same guard every 15 s.
+#   B. Together (the guest 4 m from 2961503, as the host), 45 s: frame pairs of the same guard every 15 s.
 #   C. The host's own acts, each preceded by its place-first (flag 4) on the guest: 2961503 asleep, 753908875 and
 #      667680985 killed (by hash), the nearest guard Fultoned; the guest's camera on each (event=place_first; step=done
 #      err_m, then event=apply ... src=outcome ... d_m).
@@ -71,8 +72,6 @@ host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
 guest run enemy goto 1740692850 8
 guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
 wait 8000
-stance host prone
-stance guest prone
 host run position
 guest run position
 # --- A: apart, quiet, 90 s -----------------------------------------------------------------------------------------
@@ -101,11 +100,8 @@ waitlog guest 'world_lua=event=place_err; n=[0-9]+;' 30
 host run world_status
 guest run world_status
 # --- B: together, 45 s ----------------------------------------------------------------------------------------------
-stance guest stand
-stance host stand
-placebehind guest host 3 1
-stance guest prone
-stance host prone
+guest run enemy goto 2961503 4
+guest expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
 wait 3000
 host run enemy_aim_nearest 1.1
 guest run enemy_aim_nearest 1.1
