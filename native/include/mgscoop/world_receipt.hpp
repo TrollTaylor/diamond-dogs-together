@@ -27,9 +27,9 @@
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
 //        HandleCfg; r[18] the r1101 Fulton bits 0..31 (FultonCfgBits, lab and play);
-//        r[19] enemy sync bits 0..63: 1 follow (lab key soldier_follow, lab and play: the
+//        r[19] enemy sync bits 0..127: 1 follow (lab key soldier_follow, lab and play: the
 //        follow scan and place-first, docs/world-sync-design.md 7.8), 2 owner, 4 snap,
-//        8 route, 16 body, 32 puppet (soldier_owner .. soldier_puppet, the plan's
+//        8 route, 16 body, 32 puppet, 64 brain (soldier_owner .. soldier_brain, the plan's
 //        M3..M7, 7.9+); Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)

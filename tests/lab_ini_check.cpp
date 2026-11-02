@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
         // unless named.
         std::printf("soldier_owner=%d\nsoldier_snap=%d\nsoldier_route=%d\nsoldier_body=%d\nsoldier_puppet=%d\n", c.soldier_owner ? 1 : 0,
                     c.soldier_snap ? 1 : 0, c.soldier_route ? 1 : 0, c.soldier_body ? 1 : 0, c.soldier_puppet ? 1 : 0);
+        std::printf("soldier_perceive=%d\nsoldier_brain=%d\n", c.soldier_perceive ? 1 : 0, c.soldier_brain ? 1 : 0);
         // M2 binoculars (docs/anim-truth.md "Binoculars"): lab and play, follows the gun profile.
         std::printf("partner_native_binocle=%d\n", c.partner_native_binocle ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.

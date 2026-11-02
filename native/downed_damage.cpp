@@ -12,6 +12,7 @@
 #include "MinHook.h"
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/downed_player.hpp"
+#include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "downed_damage_contract.hpp"
@@ -38,6 +39,8 @@ using Can=bool (*)(void*,void*,void*,void*,void*);
 Defense originalDefense{};Can originalCan{};
 std::atomic<unsigned> defenseCalls{},canCalls{},canDeclines{},defenseSamples{},canSamples{};
 std::atomic<unsigned> calls{}, exactCalls{}, scopedCalls{}, samples{};
+// Enemy sync M7: soldiers' hits on a player (replica = body 1, own = the local player) and the authority's actions.
+std::atomic<unsigned> soldierReplica{}, soldierOwn{}, soldierForward{}, soldierNeutral{}, soldierSamples{};
 void (*logger)(const char*) noexcept{};
 // Inspection and diagnostics must not change the thread's Win32 error state.
 // Restore the incoming value before retail code, then retain its resulting value.
@@ -221,6 +224,28 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
     }
     if(!offline || !stun_read) return amount;
     const bool sleep=mode_read && SleepDamage(output_mode,stun_amount);
+    // Enemy sync M7 (soldier_authority.hpp): a soldier's hit on a player; only its owner's copy decides the damage.
+    if(soldier_authority::IsSoldier(hit.attacker)) {
+        const bool replica=id!=hit.local;
+        (replica?soldierReplica:soldierOwn).fetch_add(1,std::memory_order_relaxed);
+        const bool remote=soldier_authority::Remote(hit.attacker);
+        const auto act=soldier_authority::Decide(soldier_authority::Enabled(),id,hit.local,hit.attacker,remote);
+        bool queued=false;
+        if(act==soldier_authority::Action::forward)
+            queued=downed_player::QueueSoldierHit(hit.player,amount,static_cast<std::uint8_t>(sleep?2:0),hit.attacker);
+        if(logger && (replica || act!=soldier_authority::Action::stock) && soldierSamples.fetch_add(1,std::memory_order_relaxed)<64) {
+            char line[256]{};
+            std::snprintf(line,sizeof(line),"soldier_hit=%s;id=%u;local=%u;attacker=%u;remote=%u;action=%s;queued=%u;damage=%.1f;stun=%.1f;mode=%u;part=%u;life=%.1f"
+                "\r\n",replica?"replica":"own",id,hit.local,unsigned(hit.attacker),remote?1u:0u,soldier_authority::ActionName(act),queued?1u:0u,
+                double(amount),double(stun_amount),unsigned(output_mode),unsigned(hit.bodyPart),double(hit.life));
+            logger(line);
+        }
+        if(act!=soldier_authority::Action::stock) {
+            (act==soldier_authority::Action::forward?soldierForward:soldierNeutral).fetch_add(1,std::memory_order_relaxed);
+            if(Neutralize(packet,mode,stun,rawLife,rawStun,special)) return 0;
+            return amount;
+        }
+    }
     const bool unsafe_notification=UnsafeOfflineSleep(offline,id,hit.attacker,hit.flags,hit.bodyPart,stun_amount);
     // Only the actual local shooter's natural direct hit on its replica is
     // forwarded. Part zero is a head-style hit; torso and limb parts are 1..11.
@@ -348,10 +373,14 @@ bool Install(void* image,std::size_t span,void (*log)(const char*) noexcept) noe
 }
 bool StatusLine(char* out,std::size_t capacity) noexcept {
     if(!out || !capacity) return false;
-    const int n=std::snprintf(out,capacity,"damage;installed=%u;calls=%u;exact=%u;scoped=%u;defense=%u;can=%u;declines=%u",
+    const int n=std::snprintf(out,capacity,"damage;installed=%u;calls=%u;exact=%u;scoped=%u;defense=%u;can=%u;declines=%u;"
+        "soldier_replica=%u;soldier_own=%u;forward=%u;neutral=%u;brain=%u;remote=%u",
         installed[0]&&installed[1]?1u:0u,calls.load(std::memory_order_relaxed),exactCalls.load(std::memory_order_relaxed),
         scopedCalls.load(std::memory_order_relaxed),defenseCalls.load(std::memory_order_relaxed),
-        canCalls.load(std::memory_order_relaxed),canDeclines.load(std::memory_order_relaxed));
+        canCalls.load(std::memory_order_relaxed),canDeclines.load(std::memory_order_relaxed),
+        soldierReplica.load(std::memory_order_relaxed),soldierOwn.load(std::memory_order_relaxed),
+        soldierForward.load(std::memory_order_relaxed),soldierNeutral.load(std::memory_order_relaxed),
+        soldier_authority::Enabled()?1u:0u,soldier_authority::RemoteCount());
     return n>=0 && static_cast<std::size_t>(n)<capacity;
 }
 bool PadStatusLine(char* out,std::size_t capacity) noexcept {

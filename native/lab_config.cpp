@@ -480,6 +480,17 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_body_given = true;
         if (!ok) result.soldier_body = false;
     }
+    else if (Equals(key, "soldier_perceive")) {
+        // Enemy sync M7 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.soldier_perceive);
+        result.soldier_perceive_given = true;
+        if (!ok) result.soldier_perceive = false;
+    }
+    else if (Equals(key, "soldier_brain")) {
+        ok = ParseBool(value, result.soldier_brain);
+        result.soldier_brain_given = true;
+        if (!ok) result.soldier_brain = false;
+    }
     else if (Equals(key, "soldier_puppet")) {
         // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_puppet);

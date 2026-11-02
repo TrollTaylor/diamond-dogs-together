@@ -734,6 +734,16 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
+    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive patches the soldier perception filter
+    // (soldier_perceive.hpp) so this copy's soldiers react to body 1, the partner; soldier_brain makes each guard's owner
+    // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
+    // nothing, the owner's hits on the replica reach the partner as FRIENDLY_HIT soldier causes) and holds the other
+    // copy back (restrict notice) until the owner's copy shoots that player (CFG r[19] bit 64). Lab and play; off unless
+    // named until their hidden runs pass.
+    bool soldier_perceive = false;
+    bool soldier_perceive_given = false;
+    bool soldier_brain = false;
+    bool soldier_brain_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

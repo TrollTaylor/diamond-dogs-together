@@ -127,6 +127,8 @@
 #include "mgscoop/debug_arms.hpp"
 #include "mgscoop/supply_cbox.hpp"
 #include "mgscoop/soldier_warp.hpp"
+#include "mgscoop/soldier_perceive.hpp"
+#include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
 #include "mgscoop/nametag.hpp"
@@ -1697,7 +1699,7 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.follow = labc.soldier_follow;
     world.enemy_sync = static_cast<std::uint8_t>((labc.soldier_owner ? 2u : 0u) | (labc.soldier_snap ? 4u : 0u) |
                                                  (labc.soldier_route ? 8u : 0u) | (labc.soldier_body ? 16u : 0u) |
-                                                 (labc.soldier_puppet ? 32u : 0u));
+                                                 (labc.soldier_puppet ? 32u : 0u) | (labc.soldier_brain ? 64u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -5339,11 +5341,11 @@ bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge:
     const unsigned act=carry.body[0].read?unsigned(carry.body[0].action):0u;
     const unsigned peer=carry.body[1].read?unsigned(carry.body[1].action):0u;
     if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s,act=%u,peer=%u}",
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,hitAttacker=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s,act=%u,peer=%u}",
         r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
         static_cast<unsigned long>(r.generation),unsigned(r.cause),
         static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
-        static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
+        static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),unsigned(r.hitAttacker),
         r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false",
         mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false",act,peer))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
@@ -5769,6 +5771,34 @@ bool SelectVspawnReceipt(const char* buffer,std::size_t size,mgscoop::script_bri
     else replacement={off,sizeof(off)-1};
     return true;
 }
+// Enemy sync M7 (soldier_authority.hpp): MGS_COOP_SOLDIER_AUTH_V1 -- clear | status | <index 0..511> <remote 0|1>, on the
+// runtime thread: the ownership bits the damage callback reads. Reply return <enabled>,<remote count> (status, clear) or
+// return 1|0 (set). No game read or call.
+bool SelectSoldierAuthReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_SOLDIER_AUTH_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>96 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    static char reply[48];
+    static constexpr char no[]="return 0";
+    replacement={no,sizeof(no)-1};
+    if(!OnRuntimeThread()) return true;
+    const std::string_view rest(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1));
+    namespace sa=mgscoop::soldier_authority;
+    if(rest=="clear" || rest=="status") {
+        if(rest=="clear") sa::Clear();
+        if(SUCCEEDED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return %u,%u",sa::Enabled()?1u:0u,sa::RemoteCount())))
+            replacement={reply,std::strlen(reply)};
+        return true;
+    }
+    unsigned index=0,remote=0;
+    const char* cursor=rest.data();const char* end=rest.data()+rest.size();
+    auto a=std::from_chars(cursor,end,index);
+    if(a.ec!=std::errc() || a.ptr==cursor || a.ptr==end || *a.ptr!=' ') return true;
+    auto b=std::from_chars(a.ptr+1,end,remote);
+    if(b.ec!=std::errc() || b.ptr!=end || remote>1 || index>=sa::kSoldiers) return true;
+    static constexpr char yes[]="return 1";
+    if(sa::Set(static_cast<std::uint16_t>(index),remote!=0)) replacement={yes,sizeof(yes)-1};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -5961,6 +5991,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectTeamReceipt(buffer, size, replacement)) return true;
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
+    if (SelectSoldierAuthReceipt(buffer, size, replacement)) return true;
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
@@ -6114,6 +6145,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
+            mgscoop::soldier_authority::Clear();
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),
@@ -6621,6 +6653,13 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                                                           labc.soldier_follow && labc.soldier_snap ? 1u : 0u);
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
+                    // Enemy sync M7 (docs/world-sync-design.md 7.13): the perception filter patch for the process when named
+                    // (soldier_perceive.hpp: this copy's soldiers react to body 1 too), and the owner-only damage authority.
+                    if (labc.soldier_perceive) mgscoop::soldier_perceive::Patch(base, Log);
+                    else Log("soldier_perceive=off; reason=key_off\r\n");
+                    mgscoop::soldier_authority::Configure(labc.soldier_brain, labc.role == mgscoop::LabRole::guest);
+                    LogFormat("soldier_authority=%s; role=%s\r\n", labc.soldier_brain ? "on" : "off",
+                              labc.role == mgscoop::LabRole::guest ? "guest" : "host");
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.
                     const bool play_steam = labc.mode == mgscoop::LabMode::play && labc.net &&
                                             labc.net_transport == mgscoop::NetTransport::steam && lab::SavesRedirected();

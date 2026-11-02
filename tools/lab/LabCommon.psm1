@@ -503,6 +503,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'soldier_route'; Json = 'soldier_route'; Kind = 'bool' },
     @{ Key = 'soldier_body'; Json = 'soldier_body'; Kind = 'bool' },
     @{ Key = 'soldier_puppet'; Json = 'soldier_puppet'; Kind = 'bool' },
+    # M7 (docs/world-sync-design.md 7.13; lab and play, off unless named): the perception patch and the owner-only brain.
+    @{ Key = 'soldier_perceive'; Json = 'soldier_perceive'; Kind = 'bool' },
+    @{ Key = 'soldier_brain'; Json = 'soldier_brain'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )
