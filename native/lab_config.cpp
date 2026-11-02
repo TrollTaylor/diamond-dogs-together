@@ -226,6 +226,12 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
         result.partner_native_aim_truth_stance_given = true;
         if (!ok) result.partner_native_aim_truth_stance = false;
     }
+    else if (Equals(key, "partner_native_binocle")) {
+        // M2 binoculars (lab and play, off unless named); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.partner_native_binocle);
+        result.partner_native_binocle_given = true;
+        if (!ok) result.partner_native_binocle = false;
+    }
     else if (Equals(key, "partner_native_traverse")) {
         // Traversal replay (default on with the gun profile); a named value records _given.
         ok = ParseBool(value, result.partner_native_traverse);
@@ -1919,6 +1925,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.partner_native_aim_truth_box_given) c.partner_native_aim_truth_box = gun;
     if (!c.partner_native_aim_truth_triggers_given) c.partner_native_aim_truth_triggers = gun;
     if (!c.partner_native_aim_truth_stance_given) c.partner_native_aim_truth_stance = gun;
+    // M2 binoculars (docs/anim-truth.md "Binoculars"): off unless named, also with the gun profile, until its hidden run
+    // shows body 1's gun down while the remote holds binoculars; a named 1 runs in lab and play.
+    if (!c.partner_native_binocle_given) c.partner_native_binocle = false;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

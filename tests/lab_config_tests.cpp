@@ -623,6 +623,23 @@ int main() {
             const auto off = Lab(base + "soldier_follow=0\n");
             Check(!off.soldier_follow && off.soldier_follow_given && off.play_refused == 0, "a named soldier_follow 0 stays off");
         }
+        // Enemy sync plan M2 (partner_native_binocle, docs/anim-truth.md "Binoculars"): off unless named, also with the gun
+        // profile; a named 1 runs in lab and play, no refusal bit.
+        Check(!LabConfig{}.partner_native_binocle && !LabConfig{}.partner_native_binocle_given, "partner_native_binocle off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string gunBase = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\n") +
+                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n" +
+                                        "world=3\n" + mode;
+            const auto gun = Lab(gunBase);
+            Check(!gun.partner_native_binocle && !gun.partner_native_binocle_given && gun.partner_native_aim_truth,
+                  "partner_native_binocle stays off with the gun profile");
+            const auto named = Lab(gunBase + "partner_native_binocle=1\n");
+            Check(named.partner_native_binocle && named.partner_native_binocle_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0, "a named partner_native_binocle 1 runs in lab and play");
+            const auto bad = Lab(gunBase + "partner_native_binocle=maybe\n");
+            Check(!bad.partner_native_binocle && bad.partner_native_binocle_given && bad.invalid_values == 1,
+                  "an invalid partner_native_binocle is named and off");
+        }
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=guest\nsoldier_follow=") + value + "\n");
             Check(!invalid.soldier_follow && !invalid.soldier_follow_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,

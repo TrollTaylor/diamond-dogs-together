@@ -147,6 +147,8 @@ int main(int argc, char** argv) {
                     c.partner_native_aim_truth_stance ? 1 : 0);
         // Enemy follow (docs/world-sync-design.md 7.8): lab and play, off unless named until its hidden run passes.
         std::printf("soldier_follow=%d\n", c.soldier_follow ? 1 : 0);
+        // M2 binoculars (docs/anim-truth.md "Binoculars"): lab and play, off unless named.
+        std::printf("partner_native_binocle=%d\n", c.partner_native_binocle ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),

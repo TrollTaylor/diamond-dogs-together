@@ -136,5 +136,14 @@ std::string LimitTextTail(const std::string& text, std::size_t max_chars);
 // marker counts as one more). A launch over `per_launch` keeps its first quarter and its end around an omission
 // line; the oldest launches are dropped until the whole is at most `total` (the newest always stays, cut).
 std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total);
+// The same with its own budget for the newest launch (fb1101 X1: the session a report is about; at least per_launch).
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total,
+                         std::size_t newest_budget);
+// " (t_ms A..B)": the first and the last game-clock value (t_ms= or tick_ms=) inside text[begin, end), or "" for none.
+std::string CutSpan(const std::string& text, std::size_t begin, std::size_t end);
+// The newest launch of a log (from the line holding the last `marker`; the whole text without one).
+std::string NewestLaunch(const std::string& text, const std::string& marker);
+// The lines holding any of `needles`, at most max_chars (the newest kept, the cut marked as in LimitTextTail).
+std::string FilterLines(const std::string& text, const std::vector<std::string>& needles, std::size_t max_chars);
 
 }  // namespace ddt::core

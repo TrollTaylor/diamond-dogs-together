@@ -753,6 +753,12 @@ struct LabConfig {
     bool partner_native_aim_truth_triggers_given = false;
     bool partner_native_aim_truth_stance = false;
     bool partner_native_aim_truth_stance_given = false;
+    // Enemy sync plan M2 (docs/anim-truth.md "Binoculars"; fb1101 B1): the sender puts its PlayerStatus BINOCLE in the
+    // equipment manifest (byte 63 bit 1, always); with this key the receiver keeps body 1's gun down while the remote
+    // holds binoculars (its HOLD/FIRE stripped, its aim act dropped). Gun stage, lab and play; off unless named until its
+    // hidden run passes.
+    bool partner_native_binocle = false;
+    bool partner_native_binocle_given = false;
     // Traversal replay (partner_traverse, docs/native-puppet.md "Traversal" and
     // "Traversal icon"): ladders, drain pipes, wall climbs and step-ons the
     // remote starts through its action icon are replayed on body 1 as a

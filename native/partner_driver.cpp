@@ -700,6 +700,12 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     // in a game yet), Compose and the hook zero a stripped trigger level too (finder M8).
     a.truth_triggers = gun_stage && set.naim_truth && set.naim_truth_triggers;
     a.config.strip_triggers = a.truth_triggers;
+    // M2 (partner_native_binocle): while the remote holds binoculars its HOLD/FIRE (and a pad's triggers) never reach
+    // body 1, so it holds its idle instead of aiming a gun (fb1101 B1).
+    if (gun_stage && set.nbinocle && m.binocle_remote) {
+        a.config.sample_strip |= partner_pad::kHold | partner_pad::kFire;
+        a.config.strip_triggers = true;
+    }
     // F3 traversal icon (docs/native-puppet.md "Traversal icon"; not compared
     // by SameArm): body 1's pending icon request, valid for kHoldMs, so a
     // stale Arm drops it.
@@ -3862,6 +3868,7 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
             if (!cbox && !ew::CboxEquip(item)) item = 0;
             mf.cbox_active = cbox;
             mf.active_item_id = item;
+            mf.binocle = (m.status_bits & partner::status_bit::binocle) != 0;
             d.equip_tables_ok = lo.tables_ok;
             if (!d.equip_tx_have || !ew::SameSlots(mf, d.equip_tx)) {
                 mf.revision = static_cast<std::uint16_t>(d.equip_tx_have && d.equip_tx.revision != 0xFFFFu ? d.equip_tx.revision + 1 : 1);
@@ -3892,6 +3899,12 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
         if (d.equip_tx.cbox_active != cbox || d.equip_tx.active_item_id != item) {
             d.equip_tx.cbox_active = cbox;
             d.equip_tx.active_item_id = item;
+            d.equip_tx_dirty = true;
+        }
+        // M2: the binoculars ride the same way (byte 63 bit 1, the same revision).
+        const bool binocle = (m.status_bits & partner::status_bit::binocle) != 0;
+        if (d.equip_tx.binocle != binocle) {
+            d.equip_tx.binocle = binocle;
             d.equip_tx_dirty = true;
         }
     }
@@ -4897,7 +4910,8 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
     gi.act = remote_anim.act;
     m.aim_refusal = partner_slots::AimGate(gi);
     m.aim_gate_ok = m.aim_refusal == partner_slots::AimRefusal::none;
-    m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act);
+    // M2: binoculars put the remote in an aim act (fb1101: host acts 11 / 13); never a gun aim on body 1.
+    m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act) && !(set.ngun && set.nbinocle && m.binocle_remote);
     if (set.ngun && !m.anim_settings_logged) {
         m.anim_settings_logged = true;
         EmitFormat(h, "partner_weapon=settings; unsupported=%u; dry_stop=%u; aim_intent=%s; reload_rate=%s; fire_census=%u\r\n",
@@ -7050,6 +7064,18 @@ void NoteCbox(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
     EmitFormat(h, "partner_cbox=remote; id=%u; active=%u; apply=%s; seq=%u\r\n", unsigned(m.cbox_id), want ? 1u : 0u,
                d.settings.cbox ? "native" : "off", m.cbox_seq);
 }
+// The remote manifest's binoculars (M2, fb1101 B1): the edge detector. With partner_native_binocle (gun stage) a remote
+// holding binoculars never raises body 1's gun (BuildArm strips its HOLD/FIRE, TickAimIntent drops its aim act).
+void NoteBinocle(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
+    Mission& m = d.mission;
+    const bool on = m.equip.have && m.equip.manifest.binocle;
+    if (on == m.binocle_remote) return;
+    m.binocle_remote = on;
+    if (on) m.binocle_on_ms = now_ms ? now_ms : 1;
+    ++m.binocle_seq;
+    EmitFormat(h, "partner_binocle=remote; on=%u; apply=%s; seq=%u\r\n", on ? 1u : 0u,
+               d.settings.nbinocle && d.settings.ngun ? "strip" : "off", m.binocle_seq);
+}
 // Inert: no reply carries op::cbox until the native apply exists.
 void StampCbox(Mission& m, partner::Reply& reply) noexcept {
     (void)m;
@@ -7172,6 +7198,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.naim_truth_box = lab.partner_native_aim_truth_box;
     d.settings.naim_truth_triggers = lab.partner_native_aim_truth_triggers;
     d.settings.naim_truth_stance = lab.partner_native_aim_truth_stance;
+    d.settings.nbinocle = lab.partner_native_binocle;
     d.settings.nreload_rate = lab.partner_native_reload_rate;
     d.settings.fire_census = lab.partner_fire_census;
 
@@ -7645,6 +7672,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     if (terminating) { partner_upper_probe::Clear("tick_terminating"); return false; }
     TickEquipLink(d, h, clock.now_ms);  // reliable channel 2 and the loadout sender, every tick in every drive mode
     NoteCbox(d, h, clock.now_ms);
+    NoteBinocle(d, h, clock.now_ms);
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {

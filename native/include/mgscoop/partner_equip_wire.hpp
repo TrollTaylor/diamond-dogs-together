@@ -23,7 +23,8 @@
 //   [4..15] recipe[12] (chimeraParts[i*12..+12]; byte 0 = receiver)
 //   version 2 only: [60..62] type[3] (the slot's own gun type 1..8 from the
 //   game's tables, 0 unknown; also known when no base id matched),
-//   [63] bit 0 = cbox_active (the remote is in a cardboard box). Other bits 0.
+//   [63] bit 0 = cbox_active (the remote is in a cardboard box), bit 1 = binocle
+//   (the remote holds binoculars: PlayerStatus BINOCLE, enemy sync plan M2). Other bits 0.
 //   EQP_IT_CBox is 0x1C8. IsVarsCurrentItemCBox (0x9D68E0) treats
 //   id - 0x1C8 < 0x1B as a box (0x1C8..0x1E2), from RegisterConstantEquipId.
 // Version 1 is 60 bytes (types unknown), version 2 64 bytes; little-endian.
@@ -69,15 +70,16 @@ struct Manifest {
     std::uint8_t inv_slot;
     std::uint8_t version;  // the decoded version (Encode always writes kVersion)
     bool cbox_active;             // version 2 byte 63 bit 0 (version 1: false)
+    bool binocle;                 // version 2 byte 63 bit 1 (version 1: false)
     std::uint16_t active_item_id; // version 2 bytes 10..11 (version 1: 0)
     Slot slots[kSlots];
 };
 // The three gun slots, field-wise (no padding compared). The box fields are
 // not compared: a box toggle must not re-drive the receiver's gun writer.
 bool SameSlots(const Manifest& a, const Manifest& b) noexcept;
-// The cardboard-box fields (cbox_active, active_item_id).
+// The status fields that ride under one revision: the cardboard box (cbox_active, active_item_id) and the binoculars.
 inline bool SameBox(const Manifest& a, const Manifest& b) noexcept {
-    return a.cbox_active == b.cbox_active && a.active_item_id == b.active_item_id;
+    return a.cbox_active == b.cbox_active && a.active_item_id == b.active_item_id && a.binocle == b.binocle;
 }
 
 // kSize (version 2), or 0 (out zeroed) for revision 0, epoch 0, an inv_slot

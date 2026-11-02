@@ -405,6 +405,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_aim_truth_box'; Json = 'native_aim_truth_box'; Kind = 'bool' },
     @{ Key = 'partner_native_aim_truth_triggers'; Json = 'native_aim_truth_triggers'; Kind = 'bool' },
     @{ Key = 'partner_native_aim_truth_stance'; Json = 'native_aim_truth_stance'; Kind = 'bool' },
+    # Enemy sync plan M2 (docs/anim-truth.md "Binoculars"; lab and play, off unless named): body 1's gun stays down while
+    # the remote holds binoculars.
+    @{ Key = 'partner_native_binocle'; Json = 'native_binocle'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # The developer test boot (docs/test-boot.md; lab only: play forces both off, and only a background-worker build's
     # owned private worker acts on them): skip the logos and the title, and land at a spot after the title.

@@ -290,7 +290,7 @@ int main() {
     Check(ew::Encode(bad, buf) == 0, "a type above 8 refused by encode");
     struct Tweak { std::size_t at; std::uint8_t value; ew::Result expect; };
     const Tweak tweaks[] = {{0, 0x46, ew::Result::magic}, {1, 3, ew::Result::version}, {8, 16, ew::Result::inv_slot},
-                            {9, 2, ew::Result::slot_count}, {63, 2, ew::Result::reserved}, {60, 9, ew::Result::type},
+                            {9, 2, ew::Result::slot_count}, {63, 4, ew::Result::reserved}, {60, 9, ew::Result::type},
                             {62, 0x20, ew::Result::type}};
     for (const Tweak& t : tweaks) {
         ew::Encode(m, buf);
@@ -326,6 +326,27 @@ int main() {
         std::memcpy(v1, buf, sizeof(v1));
         v1[1] = 1;
         Check(ew::Decode(v1, sizeof(v1), box.epoch, out) == ew::Result::reserved, "version 1 still refuses a nonzero item id");
+    }
+    // Enemy sync plan M2 (fb1101 B1): byte 63 bit 1 carries the remote's binoculars, under the same revision as the box.
+    {
+        ew::Manifest bin = m;
+        bin.binocle = true;
+        Check(ew::Encode(bin, buf) == ew::kSize && buf[63] == 2, "binoculars pack into byte 63 bit 1");
+        ew::Manifest out{};
+        Check(ew::Decode(buf, sizeof(buf), bin.epoch, out) == ew::Result::ok && out.binocle && !out.cbox_active && !ew::SameBox(out, m) &&
+                  ew::SameSlots(out, m), "binoculars round-trip, change the status fields and leave the slots");
+        bin.cbox_active = true;
+        bin.active_item_id = 0x1C8;
+        Check(ew::Encode(bin, buf) == ew::kSize && buf[63] == 3 && ew::Decode(buf, sizeof(buf), bin.epoch, out) == ew::Result::ok &&
+                  out.binocle && out.cbox_active, "box and binoculars together");
+        buf[63] = 4;
+        Check(ew::Decode(buf, sizeof(buf), bin.epoch, out) == ew::Result::reserved, "byte 63 bits 2..7 stay reserved");
+        ew::Store store{};
+        Check(ew::Encode(m, buf) == ew::kSize && ew::Accept(store, buf, sizeof(buf), m.epoch), "store the plain manifest");
+        ew::Manifest raised = m;
+        raised.binocle = true;
+        Check(ew::Encode(raised, buf) == ew::kSize && ew::Accept(store, buf, sizeof(buf), m.epoch) && store.manifest.binocle &&
+                  store.duplicates == 0, "binoculars raised under the stored revision are new content, not a duplicate");
     }
     // Store: new revisions stored, duplicates/invalid/stale counted only.
     ew::Store st{};

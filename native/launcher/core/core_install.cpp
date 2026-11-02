@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
 
 #include "core_log.hpp"
 #include "core_saves.hpp"
@@ -743,15 +744,65 @@ std::string TextFromLastMarkers(const std::string& text, const std::string& mark
     return text;
 }
 
+// The game-clock span a cut removed (fb1101 X1: a cut said how much, never when): the first t_ms= / tick_ms= value
+// inside [begin, end) and the last one, as " (t_ms A..B)", or "" when the omitted text carries none.
+std::string CutSpan(const std::string& text, std::size_t begin, std::size_t end) {
+    if (end > text.size()) end = text.size();
+    if (begin >= end) return {};
+    // A clock value: "t_ms=" as a whole word (world_lua lines) or "tick_ms=" (adapter lines), then 1..20 digits.
+    auto value_at = [&](std::size_t at, std::size_t len) -> std::string {
+        if (at > 0) {
+            const char c = text[at - 1];
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') return {};
+        }
+        std::size_t p = at + len, q = p;
+        while (q < text.size() && text[q] >= '0' && text[q] <= '9') ++q;
+        return q > p && q - p <= 20 ? text.substr(p, q - p) : std::string{};
+    };
+    // The last clock value whose name starts before `limit` (and at or after `begin`).
+    auto last_before = [&](std::size_t limit) -> std::string {
+        for (std::size_t from = limit; from > begin;) {
+            const std::size_t t = text.rfind("t_ms=", from - 1), k = text.rfind("tick_ms=", from - 1);
+            const std::size_t at = t == std::string::npos ? k : k == std::string::npos ? t : (t > k ? t : k);
+            if (at == std::string::npos || at < begin) return {};
+            const std::string v = value_at(at, at == k ? 8 : 5);
+            if (!v.empty()) return v;
+            from = at;
+        }
+        return {};
+    };
+    // The first clock value whose name starts at or after `limit` (and before `end`).
+    auto first_after = [&](std::size_t limit) -> std::string {
+        for (std::size_t from = limit; from < end;) {
+            const std::size_t t = text.find("t_ms=", from), k = text.find("tick_ms=", from);
+            const std::size_t at = t == std::string::npos ? k : k == std::string::npos ? t : (t < k ? t : k);
+            if (at == std::string::npos || at >= end) return {};
+            const std::string v = value_at(at, at == k ? 8 : 5);
+            if (!v.empty()) return v;
+            from = at + 1;
+        }
+        return {};
+    };
+    const std::string a = first_after(begin), b = last_before(end);
+    if (a.empty() && b.empty()) return {};
+    return " (t_ms " + (a.empty() ? std::string("?") : a) + ".." + (b.empty() ? std::string("?") : b) + ")";
+}
+
 std::string LimitTextTail(const std::string& text, std::size_t max_chars) {
     if (text.size() <= max_chars) return text;
     std::size_t start = text.size() - max_chars;
     const std::size_t nl = text.find('\n', start);
     if (nl != std::string::npos && nl + 1 < text.size()) start = nl + 1;
-    return "[... " + std::to_string(start) + " earlier characters omitted ...]\n" + text.substr(start);
+    return "[... " + std::to_string(start) + " earlier characters omitted" + CutSpan(text, 0, start) + " ...]\n" + text.substr(start);
 }
 
 std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total) {
+    return LastLaunches(text, marker, count, per_launch, total, per_launch);
+}
+
+// fb1101 X1: the newest launch (the session a report is about) gets its own, larger budget.
+std::string LastLaunches(const std::string& text, const std::string& marker, int count, std::size_t per_launch, std::size_t total,
+                         std::size_t newest_budget) {
     if (text.empty() || count < 1 || marker.empty()) return {};
     // The line starts of the last `count` marker lines, newest first; the text before them is one more launch.
     std::vector<std::size_t> starts;
@@ -770,12 +821,16 @@ std::string LastLaunches(const std::string& text, const std::string& marker, int
     for (std::size_t i = starts.size(); i-- > 0;) {
         const std::size_t end = i == 0 ? text.size() : starts[i - 1];
         std::string launch = text.substr(starts[i], end - starts[i]);
-        if (launch.size() > per_launch && per_launch >= 1024) {
+        const std::size_t budget = i == 0 ? (newest_budget > per_launch ? newest_budget : per_launch) : per_launch;
+        if (launch.size() > budget && budget >= 1024) {
             // Its first quarter (configuration, the first scenes) and its end (the scene it closed in).
-            std::size_t head = launch.rfind('\n', per_launch / 4);
-            head = head == std::string::npos ? per_launch / 4 : head + 1;
-            // The omission line (under 64 characters) counts inside the budget, so 8 cut launches fit 8 budgets.
-            launch = launch.substr(0, head) + LimitTextTail(launch.substr(head), per_launch - head - 64);
+            std::size_t head = launch.rfind('\n', budget / 4);
+            head = head == std::string::npos ? budget / 4 : head + 1;
+            // The omission line (under 96 characters with its t_ms span) counts inside the budget, so 8 cut launches fit
+            // 8 budgets.
+            const std::string tail = launch.substr(head);
+            std::string cut = LimitTextTail(tail, budget - head - 96);
+            launch = launch.substr(0, head) + cut;
         }
         launches.push_back(std::move(launch));
     }
@@ -786,6 +841,32 @@ std::string LastLaunches(const std::string& text, const std::string& marker, int
     std::string out;
     for (std::size_t i = first; i < launches.size(); ++i) out += launches[i];
     return out.size() > total ? LimitTextTail(out, total) : out;
+}
+
+std::string NewestLaunch(const std::string& text, const std::string& marker) {
+    if (text.empty() || marker.empty()) return text;
+    const std::size_t at = text.rfind(marker);
+    if (at == std::string::npos) return text;
+    const std::size_t nl = at == 0 ? std::string::npos : text.rfind('\n', at - 1);
+    return text.substr(nl == std::string::npos ? 0 : nl + 1);
+}
+
+std::string FilterLines(const std::string& text, const std::vector<std::string>& needles, std::size_t max_chars) {
+    std::string out;
+    std::size_t from = 0;
+    while (from < text.size()) {
+        std::size_t nl = text.find('\n', from);
+        if (nl == std::string::npos) nl = text.size();
+        const std::string_view line(text.data() + from, nl - from);
+        for (const std::string& n : needles)
+            if (line.find(n) != std::string_view::npos) {
+                out.append(line);
+                out.push_back('\n');
+                break;
+            }
+        from = nl + 1;
+    }
+    return LimitTextTail(out, max_chars);
 }
 
 bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_dir, std::wstring& zip_out, std::string& error) {
@@ -836,8 +917,16 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
     // fb1031: the last 8 game launches (a stuck guest relaunches; a report comes a session later), 2 MB each, 16 MB in all.
     const std::string observer = ReadTail(JoinPath2(paths.mod, L"script-observer.log"), max_log * 24);
     if (!observer.empty()) {
-        save("script-observer.log", LastLaunches(observer, "MGS Co-op script adapter", 8, 2 * max_log, 16 * max_log));
+        // fb1101 X1: the newest launch (the session a report is about) keeps up to 8 MB (the friend's 0.14.7 host log lost 6
+        // minutes in the middle at 2 MB), and its world / enemy lines whole in their own file (at most 4 MB, the newest kept).
+        save("script-observer.log", LastLaunches(observer, "MGS Co-op script adapter", 8, 2 * max_log, 16 * max_log, 8 * max_log));
         included.push_back("script-observer.log");
+        const std::string world = FilterLines(NewestLaunch(observer, "MGS Co-op script adapter"),
+                                              {"world_lua=", "world=", "world_place=", "soldier_warp", "link=stats"}, 4 * max_log);
+        if (!world.empty()) {
+            save("script-observer-world.log", world);
+            included.push_back("script-observer-world.log");
+        }
     } else {
         missing.push_back("script-observer.log");
     }
@@ -956,7 +1045,9 @@ bool CollectLogs(Env& env, const InstancePaths& paths, const std::wstring& out_d
     for (std::size_t i = 0; i < missing.size(); ++i) mis += (i ? "," : "") + missing[i];
     lines.push_back("included=" + inc);
     lines.push_back("missing=" + mis);
-    lines.push_back("limits=per log 1048576 bytes; SteamIDs masked except the last 4 digits; join codes and public peer addresses masked");
+    lines.push_back("limits=script-observer.log the last 8 launches, 2 MB each, the newest 8 MB, 16 MB in all (a cut names its t_ms span); "
+                    "script-observer-world.log the newest launch's world lines, 4 MB; other logs 64-256 KB; SteamIDs masked except the last "
+                    "4 digits; join codes and public peer addresses masked");
     std::string summary;
     for (const std::string& l : lines) summary += l + "\r\n";
     save("summary.txt", summary);
