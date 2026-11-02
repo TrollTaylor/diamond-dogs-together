@@ -147,7 +147,7 @@ inline constexpr std::uint8_t unknown_entity = 1, terminal = 2, not_forward = 3,
 // outcome of that guard (place first); the guest places its copy at once.
 namespace place {
 inline constexpr std::uint8_t warp = 1, route = 2, correct = 3, come = 4, ignore = 5, notice = 6, disable = 7, enable = 8;
-inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2, flag_first = 4, flag_body = 8;
+inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2, flag_first = 4, flag_body = 8, flag_route_only = 16;
 }
 // Warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is the only
 // source of a guest native placement target (never a Lua value); a correction

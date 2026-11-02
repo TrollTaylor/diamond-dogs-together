@@ -8,6 +8,11 @@
 -- M6 (docs/world-sync-design.md 7.12; soldier_body, CFG r[19] bit 16, W.bodyOn): a lying body that was carried and dropped
 -- is placed on the other copy too (a kind-3 placement with flag 8, either side reporting the bodies near its own player),
 -- and a held-up guard raises his hands on the other copy (SetForceHoldup).
+-- M5 (docs/world-sync-design.md 7.11; soldier_route, CFG r[19] bit 8, W.routeOn): the host reads the route each of its
+-- guards walks (GetGameObjectIdUsingRoute on every route of the mission's route sets, 6 per update) and tells the guest
+-- when a guard near it walks another one (ENEMY_DEBUG kind 2 flag 16: route only, no placement); the guest's copy takes
+-- it (SetSneakRoute without a point: the engine's default 0xFFFF, the dispatcher's own, joins where he stands) unless it
+-- is already on it (IsOnRoute), and again right after each correction lands.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -20,11 +25,12 @@ do
         local function L(...) W.log(fmt(...)) end
         function S.reset()
             S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
+            S.rt = {names = nil, i = 0, cur = {}, want = {}}
             S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0}
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
-        W.unpairedHooks[#W.unpairedHooks + 1] = function() S.tx, S.dv, S.slot = {}, {}, nil end
+        W.unpairedHooks[#W.unpairedHooks + 1] = function() S.tx, S.dv, S.slot, S.rt.cur, S.rt.want = {}, {}, nil, {}, {} end
         -- A guard's roster slot (his W.entOrder index: the same on both copies once the rosters match).
         function S.slotOf(h)
             if not S.slot then
@@ -183,9 +189,71 @@ do
             elseif st ~= 1 and S.hu then S.hu[h] = nil end
             return r
         end
+        -- M5 routes, the host: 6 routes per update; a guard's route changing while he is near the guest goes out.
+        function S.routes(now)
+            local rt = S.rt
+            if not rt.names then
+                rt.names = {}
+                if P.route then P.route(0) end
+                for _, name in pairs(P.routes or {}) do rt.names[#rt.names + 1] = name end
+                table.sort(rt.names)
+            end
+            local n = #rt.names
+            if n == 0 then return end
+            local qx, qz = P.partnerXZ(now)
+            for _ = 1, min(6, n) do
+                rt.i = rt.i % n + 1
+                local name = rt.names[rt.i]
+                local ok, ids = pcall(W.api.send, {type = "TppSoldier2"}, {id = "GetGameObjectIdUsingRoute", route = name})
+                if ok and type(ids) == "number" then ids = {ids} end
+                if ok and type(ids) == "table" then
+                    rt.reads = (rt.reads or 0) + 1
+                    for _, id in ipairs(ids) do
+                        local h = W.byId and W.byId[id]
+                        local en = h and W.ent[h]
+                        if en and rt.cur[h] ~= name then
+                            rt.cur[h] = name
+                            local x, _, z = pos(en.id)
+                            if qx and x and flat(x, z, qx, qz) <= 60000 and S.mine(h) and P.state(en) == 0 and
+                                P.announce(2, h, 0, 0, 0, 0, 16, W.h(name)) then
+                                rt.sent = (rt.sent or 0) + 1
+                                L("event=route_tx;ent=%.0f;route=%s", h, name)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        -- M5 routes, the guest: the host copy's route (kind 2 flag 16, world_place_guest.lua) for this copy.
+        function P.routeSync(c)
+            if W.host or not W.routeOn then return end
+            local en, name = W.ent[c.h], P.route and P.route(c.route)
+            if not (en and type(en.id) == "number" and name) then return end
+            S.rt.want[c.h] = name
+            S.routeApply(c.h, en, name, "rx")
+        end
+        function S.routeApply(h, en, name, why)
+            if P.state(en) ~= 0 then return end
+            local okOn, on = pcall(W.api.send, en.id, {id = "IsOnRoute", route = name})
+            if okOn and on == true and why == "rx" then return end
+            local ok = pcall(W.api.send, en.id, {id = "SetSneakRoute", route = name})
+            S.rt.applied = (S.rt.applied or 0) + 1
+            L("event=route_apply;ent=%.0f;route=%s;why=%s;on=%s;ok=%d", h, name, why, tostring(okOn and on), ok and 1 or 0)
+        end
+        -- A correction or drive landing re-joins the host copy's route where the copy now stands.
+        local done = P.done
+        P.done = function(c, why)
+            done(c, why)
+            local name = not why and c.kind == 3 and not c.host and W.routeOn and S.rt.want[c.h]
+            local en = name and W.ent[c.h]
+            if en and type(en.id) == "number" then S.routeApply(c.h, en, name, "landed") end
+        end
         local tick = P.tick
         P.tick = function(now)
             tick(now)
+            if W.routeOn and W.host and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then
+                S.routes(now)
+            end
             if W.bodyOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then S.bodies(now) end
             if not S.ready() then return end
             S.produce(now)

@@ -44,6 +44,8 @@ local function fixture(host, level, mb)
                 return {GetX = function() return p[1] end, GetY = function() return p[2] end, GetZ = function() return p[3] end}
             end
             if command.id == 'GetStatus' and c.status then return c.status[id] end
+            if command.id == 'GetGameObjectIdUsingRoute' then return c.routeIds and c.routeIds[command.route] end
+            if command.id == 'IsOnRoute' then return c.onRoute ~= nil and c.onRoute[id] == command.route end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then if not c.inert then c.life[id] = command.state end
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
@@ -1376,6 +1378,52 @@ if arg[7] and arg[8] then
     local forced = 0
     for _, cmd in ipairs(hu.commands) do if cmd[2] == 'SetForceHoldup' then forced = forced + 1 end end
     check(forced == 1 and logged(hu, 'event=holdup_show;ent=3000000001;ok=1'), 'M6: the hold-up shows here')
+    -- Enemy sync M5 (W.routeOn, docs/world-sync-design.md 7.11) ---------------------------------------------------------
+    local function routeFix(host)
+        local c = host and followFixture(true) or guestFix(180)
+        c.W.routeOn = true
+        c.env.mvars.ene_routeSetsDefine = {cp_a = {sneak_day = {{'rts_a', 'rts_b'}}}}
+        c.W.byId = {}
+        for i = 1, 5 do c.W.byId[i] = 3000000000 + i end
+        return c
+    end
+    local rh = routeFix(true)
+    rh.positions[900] = {10.0, 0, 0}
+    rh.positions[1] = {5.0, 1.8, 0}
+    rh.routeIds = {rts_a = {1}}
+    ticks(rh, 2)
+    local function routeTx(c)
+        local out = {}
+        for _, p in ipairs(placeTx(c, 34)) do if p.v[3] == 2 and p.v[8] == 16 then out[#out + 1] = p end end
+        return out
+    end
+    local rtx = routeTx(rh)
+    check(#rtx == 1 and rtx[1].v[2] == ENT1 and rtx[1].v[9] == rh.W.h('rts_a') and logged(rh, 'event=route_tx;ent=3000000001;route=rts_a'),
+        'M5: the host sends the route of a guard near the guest (kind 2 flag 16)')
+    ticks(rh, 4)
+    check(#routeTx(rh) == 1, 'M5: once while it stays')
+    rh.routeIds = {rts_b = {1}}
+    ticks(rh, 4)
+    rtx = routeTx(rh)
+    check(#rtx == 2 and rtx[2].v[9] == rh.W.h('rts_b'), 'M5: a route change goes out')
+    local rg = routeFix(false)
+    rg.W.handlers[34]({50, ENT1, 2, 0, 0, 0, 0, 16, rg.W.h('rts_a'), 2}, rg.now)
+    local applied = 0
+    for _, cmd in ipairs(rg.commands) do if cmd[2] == 'SetSneakRoute' and cmd[5] == 'rts_a' then applied = applied + 1 end end
+    check(applied == 1 and #rg.P.q == 0 and logged(rg, 'event=route_apply;ent=3000000001;route=rts_a;why=rx'),
+        'M5: the guest copy takes the route (no placement)')
+    rg.onRoute = {[1] = 'rts_a'}
+    rg.W.handlers[34]({51, ENT1, 2, 0, 0, 0, 0, 16, rg.W.h('rts_a'), 2}, rg.now)
+    applied = 0
+    for _, cmd in ipairs(rg.commands) do if cmd[2] == 'SetSneakRoute' then applied = applied + 1 end end
+    check(applied == 1, 'M5: already on it: nothing')
+    rg.positions[1] = {0, 1.8, 20.0}
+    rg.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    sample(rg, 52, ENT1, 1000, 20000)
+    rg.now = rg.now + 2000
+    sample(rg, 53, ENT1, 6000, 20000)
+    ticks(rg, 6)
+    check(logged(rg, 'event=route_apply;ent=3000000001;route=rts_a;why=landed'), 'M5: a landed correction re-joins the route')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

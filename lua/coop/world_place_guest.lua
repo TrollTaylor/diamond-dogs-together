@@ -36,6 +36,7 @@ do
             local c = {seq = v[1], h = v[2], kind = v[3], x = v[4], y = v[5], z = v[6], yaw = v[7], flags = v[8], route = v[9],
                 go = v[10], at = now or W.now()}
             if c.kind == 3 then return P.sample(c) end
+            if c.kind == 2 and c.flags >= 16 then return P.routeSync and P.routeSync(c) end  -- M5: route only (world_snap.lua)
             if #P.q >= (W.followOn == true and 24 or 8) then return P.done(c, "busy") end
             P.q[#P.q + 1] = c
         end

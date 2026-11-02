@@ -122,7 +122,7 @@ do
             local ok, why = W.tx(OP.ENEMY_DEBUG, seq, h, kind, x, y, z, yaw, flags, route, go)
             if not ok then return nil, "tx_" .. tostring(why) end
             -- Corrections are not kept: the guest answers only the ones it applies (an unknown seq counts as kind 3).
-            P.seq, P.out[seq] = seq, kind ~= 3 and {h = h, kind = kind} or nil
+            P.seq, P.out[seq] = seq, kind ~= 3 and flags < 16 and {h = h, kind = kind} or nil
             P.n.sent = P.n.sent + 1
             if kind ~= 3 then L("event=place_tx;seq=%d;ent=%.0f;kind=%s;flags=%d", seq, h, KIND[kind], flags) end
             return seq

@@ -1,5 +1,5 @@
-# Enemy sync M4 proof (docs/world-sync-design.md 7.10): glides, not hops. Mode play over -WanSim bad, soldier_snap and
-# soldier_owner named (soldier_follow is the gun profile's default), Afghanistan afgh_field_cp (afgh-ledge seed).
+# Enemy sync M4 proof (docs/world-sync-design.md 7.10): glides, not hops (with M5 routes and M6 bodies on: soldier_route,
+# soldier_body). Mode play over -WanSim bad, soldier_snap and soldier_owner named (soldier_follow is the gun profile's default), Afghanistan afgh_field_cp (afgh-ledge seed).
 #   0. Every afgh_field_cp guard and the LRRP pair ignore the players, the host stands the outpost down.
 #   A. Quiet, together (both by 2961503: the host 8 m, the guest 4 m; a placebehind right after the host's 600 m goto
 #      found no partner pose, run 91f0112c), 90 s: the owner streams SOLDIER_SNAP (event=snap_stats
@@ -14,6 +14,8 @@
 # NEVER: native=role, soldier_warp=disabled, step=error, event=error, GameOver, roster_mismatch, overflow.
 labsetting soldier_owner=1
 labsetting soldier_snap=1
+labsetting soldier_body=1
+labsetting soldier_route=1
 labsetting nametag=1
 title 200
 waitgameplay host 120
