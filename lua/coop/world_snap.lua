@@ -16,8 +16,13 @@
 -- M7 probe (docs/world-sync-design.md 7.13; soldier_puppet, CFG r[19] bit 32, W.puppetOn; the plan's own scope for now:
 -- probes behind a switch): on the guest, the copies of the host's guards it drives become puppets (SetPuppet true and
 -- restrict notice: they neither move by themselves nor notice this player) driven every update (DRIVE_V1 mode 1);
--- outside 60 m or off NORMAL they are set back. The host's AI does not perceive the guest's body (the target filter at
--- 0x1325629 compares the target with the local player only; not patched), so inside the bubble no guard fights the guest.
+-- outside 60 m or off NORMAL they are set back. Without soldier_perceive the host's AI does not perceive the guest's body
+-- (the target filter at 0x1325629 compares the target with the local player only), so the probe's puppets never fight.
+-- M7 brain (soldier_brain with soldier_perceive, CFG r[19] bit 64, W.brainOn): each guard's owner (the host, or the guest
+-- for the guards it owns: M3) is its only brain. Native soldier_authority (MGS_COOP_SOLDIER_AUTH_V1 bits, sent here)
+-- drops the other copy's hits on a player and forwards the owner's hits on the replica as SOLDIER_HIT
+-- (world_friendly.lua); the other copy of a guard keeps restrict notice (it never notices this player by itself) until its
+-- owner's copy hits this player (W.soldierEngaged), then it notices and engages this player for 8 s after the last hit.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -36,6 +41,7 @@ do
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
         W.unpairedHooks[#W.unpairedHooks + 1] = function()
+            if S.brainRelease then pcall(S.brainRelease, "unpaired") end
             S.tx, S.dv, S.slot, S.rt.cur, S.rt.want = {}, {}, nil, {}, {}
             for h in pairs(S.pp or {}) do
                 local en = W.ent[h]
@@ -291,9 +297,94 @@ do
             local en = name and W.ent[c.h]
             if en and type(en.id) == "number" then S.routeApply(c.h, en, name, "landed") end
         end
+        -- M7 brain ------------------------------------------------------------------------------------------------------
+        S.bn = {auth = {}, gate = {}, i = 0, n = {set = 0, lift = 0, engage = 0}}
+        W.startHooks[#W.startHooks + 1] = function() S.bn = {auth = {}, gate = {}, i = 0, n = {set = 0, lift = 0, engage = 0}} end
+        local function auth(text)
+            local ok, r = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_AUTH_V1' -- " .. text)
+            return ok and r or nil
+        end
+        -- The other copy is this guard's brain: on the host a guard the guest owns (M3), on the guest every guard but those.
+        function S.remote(h)
+            if W.host then return W.ownerOn == true and P.own ~= nil and P.own[h] ~= nil and P.own[h].o == 1 end
+            return not (W.ownerOn == true and P.owned ~= nil and P.owned[h] == true)
+        end
+        local function debugIgnored(en)
+            local m = W.get(W.get(e, "MgsCoopDebug"), "enemy")
+            return type(m) == "table" and type(m.ignored) == "table" and m.ignored[en.name] == true
+        end
+        local function setRestrict(h, en, g, want, why)
+            pcall(W.api.send, en.id, {id = "SetRestrictNotice", enabled = want})
+            g.restricted = want
+            S.bn.n[want and "set" or "lift"] = S.bn.n[want and "set" or "lift"] + 1
+            L("event=brain_gate;ent=%.0f;restrict=%d;why=%s", h, want and 1 or 0, why)
+        end
+        -- SOLDIER_HIT from the owner's copy of guard `hash` (world_friendly.lua): this copy engages this player.
+        function W.soldierEngaged(hash, now)
+            if not W.brainOn then return end
+            local en = W.ent[hash]
+            local g = S.bn.gate[hash]
+            if not g then g = {}; S.bn.gate[hash] = g end
+            local first = not (g.until_ and now < g.until_)
+            g.until_ = now + 8000
+            if first then S.bn.n.engage = S.bn.n.engage + 1 end
+            if en and type(en.id) == "number" and P.state(en) == 0 and not debugIgnored(en) then
+                if g.restricted then setRestrict(hash, en, g, false, "engaged") end
+                if first then pcall(W.api.send, en.id, {id = "SetDiscoveryPlayer"}) end
+            end
+        end
+        -- Every restrict notice this module set is lifted (brain off, unpaired, mission end).
+        function S.brainRelease(why)
+            for h, g in pairs(S.bn.gate) do
+                local en = W.ent[h]
+                if g.restricted and en and type(en.id) == "number" and not debugIgnored(en) then setRestrict(h, en, g, false, why) end
+            end
+            S.bn.gate = {}
+        end
+        function S.brainTick(now)
+            if not S.bn.cleared then
+                if auth("clear") ~= nil then S.bn.cleared = true end
+            end
+            local list = W.entOrder
+            local n = type(list) == "table" and #list or 0
+            for _ = 1, min(8, n) do
+                S.bn.i = S.bn.i % n + 1
+                local h = list[S.bn.i]
+                local en = W.ent[h]
+                if en and type(en.id) == "number" then
+                    local remote = S.remote(h)
+                    if S.bn.auth[h] ~= remote and auth(fmt("%d %d", en.id % 512, remote and 1 or 0)) == 1 then S.bn.auth[h] = remote end
+                    local g = S.bn.gate[h]
+                    if not g then g = {}; S.bn.gate[h] = g end
+                    local engaged = g.until_ ~= nil and now < g.until_
+                    if P.state(en) == 0 and not debugIgnored(en) then
+                        local want = remote and not engaged
+                        if want ~= (g.restricted == true) then
+                            setRestrict(h, en, g, want, want and (engaged and "expired" or "remote") or (remote and "engaged" or "owned"))
+                        end
+                    end
+                end
+            end
+            if not S.bn.statAt or now - S.bn.statAt >= 10000 then
+                S.bn.statAt = now
+                local ok, en, rc = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_AUTH_V1' -- status")
+                local restricted, engaged = 0, 0
+                for _, g in pairs(S.bn.gate) do
+                    if g.restricted then restricted = restricted + 1 end
+                    if g.until_ and now < g.until_ then engaged = engaged + 1 end
+                end
+                L("event=brain_stats;native=%s;remote=%s;restricted=%d;engaged=%d;set=%d;lift=%d;engages=%d", ok and tostring(en) or "?",
+                    ok and tostring(rc) or "?", restricted, engaged, S.bn.n.set, S.bn.n.lift, S.bn.n.engage)
+            end
+        end
         local tick = P.tick
         P.tick = function(now)
             tick(now)
+            if W.brainOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then
+                S.brainTick(now)
+            elseif not W.brainOn and next(S.bn.gate) ~= nil then
+                S.brainRelease("brain_off")
+            end
             if W.routeOn and W.host and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then
                 S.routes(now)
             end

@@ -1699,7 +1699,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.follow = labc.soldier_follow;
     world.enemy_sync = static_cast<std::uint8_t>((labc.soldier_owner ? 2u : 0u) | (labc.soldier_snap ? 4u : 0u) |
                                                  (labc.soldier_route ? 8u : 0u) | (labc.soldier_body ? 16u : 0u) |
-                                                 (labc.soldier_puppet ? 32u : 0u) | (labc.soldier_brain ? 64u : 0u));
+                                                 (labc.soldier_puppet ? 32u : 0u) |
+                                                 (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -6657,9 +6658,13 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     // (soldier_perceive.hpp: this copy's soldiers react to body 1 too), and the owner-only damage authority.
                     if (labc.soldier_perceive) mgscoop::soldier_perceive::Patch(base, Log);
                     else Log("soldier_perceive=off; reason=key_off\r\n");
-                    mgscoop::soldier_authority::Configure(labc.soldier_brain, labc.role == mgscoop::LabRole::guest);
-                    LogFormat("soldier_authority=%s; role=%s\r\n", labc.soldier_brain ? "on" : "off",
-                              labc.role == mgscoop::LabRole::guest ? "guest" : "host");
+                    // The brain only with the patch: the other copy of a guard is held back and relies on its owner seeing
+                    // this player.
+                    const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::Patched();
+                    mgscoop::soldier_authority::Configure(brain, labc.role == mgscoop::LabRole::guest);
+                    LogFormat("soldier_authority=%s; role=%s; key=%u; perceive=%u\r\n", brain ? "on" : "off",
+                              labc.role == mgscoop::LabRole::guest ? "guest" : "host", labc.soldier_brain ? 1u : 0u,
+                              mgscoop::soldier_perceive::Patched() ? 1u : 0u);
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.
                     const bool play_steam = labc.mode == mgscoop::LabMode::play && labc.net &&
                                             labc.net_transport == mgscoop::NetTransport::steam && lab::SavesRedirected();

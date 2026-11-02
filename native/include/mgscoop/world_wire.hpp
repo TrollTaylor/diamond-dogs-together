@@ -131,6 +131,11 @@ inline constexpr std::uint8_t enemy_place = 0x47, enemy_place_ack = 0x48, owner 
 // yaw mrad, flags 1 alert 2 moving, speed mm/s). Native keeps the newest two per slot (Core::SnapPair, newest sender tick
 // wins); never in Lua's queues. Sent only with soldier_snap (CFG r[19] bit 4); the receiver's DRIVE_V1 moves its copy.
 inline constexpr std::uint8_t soldier_snap = 0x4B;
+// Enemy sync M7 (docs/world-sync-design.md 7.13, protocol section 31): SOLDIER_HIT (76), both directions, control queue:
+// a guard this copy owns hit the replica (the partner's body here); FRIENDLY_HIT's fields plus the attacker's entity
+// hash. The partner's copy applies it as its own damage (downed_player FriendlyControl) and lets its copy of that guard
+// engage it (world_snap.lua S.brain). Sent only with soldier_brain.
+inline constexpr std::uint8_t soldier_hit = 0x4C;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
