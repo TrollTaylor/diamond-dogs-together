@@ -120,8 +120,9 @@ Control (queue 0):
 | 0x08 | PROBE_SYNC | both (lab) | probeId 1..20, step 1..4, entHash, arg | atMs (step 1) | 14 |
 
 REJECT reasons: 1 unknown_entity, 2 terminal, 3 not_forward, 5 epoch, 6
-not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive (4
-reserved).
+not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive, 12
+unattributed (enemy follow, section 28: a guest change no player or buddy caused
+that the host does not take; the guest applies the host's state) (4 reserved).
 
 RESYNC_END has a control code but travels like a world op (queue 1,
 epoch-checked, sent only while paired), so the guest handles it after every
@@ -133,7 +134,7 @@ World (queue 1):
 | Code | Name | Dir | Wire | Lua fields | Rx | Body |
 |---|---|---|---|---|---|---|
 | 0x10 | ENEMY_OUTCOME | H->G | R | entHash, entType 1, state 0..7, ver 1.., cause 0..15, actor 0..2, rid, flags 0..3 (1 resync, 2 backward), x, y, z | - | 25 |
-| 0x11 | REQ_OUTCOME | G->H | R | rid 1.., entHash, entType 1, state 1..7, seenVer, cause, attackId, isHeadShot, x, y, z | - | 28 |
+| 0x11 | REQ_OUTCOME | G->H | R | rid 1.., entHash, entType 1, state 1..7, seenVer, cause, attackId, attribution 0..3 (0 the guest's player, 1 its buddy, 2 another attacker, 3 none; 0..1 before enemy follow, section 28), x, y, z | - | 28 |
 | 0x12 | PHASE | H->G | R | cpHash, phase 0..3, ver 1.., keep 0, rid, flags 0..1 | - | 11 |
 | 0x13 | REQ_PHASE | G->H | R | rid 1.., cpHash, phase 1..3, cause, soldierHash, x, y, z | - | 24 |
 | 0x14 | PLAYER_AREA | both | R | area 0..15, missionCode | - | 5 |
@@ -142,7 +143,7 @@ World (queue 1):
 | 0x17 | PHASE_VEC | both | U | cpCount 0..192, first 0, nwords 1..12, w1..w12 (host: local phases; guest: own phases) | - | 53 |
 | 0x20 | CLOCK | H->G | R | clock 0..86399, rateX100, cause 1..4 (jump, fast, resync, fast_end), tick | latencyMs | 11 |
 | 0x21 | WEATHER | H->G | R | weatherType 0..5/255 (release), interpTime 0..600, fogDensityMilli 65535, fogType 255, cause 1..3 (change, resync, digest) | - | 7 |
-| 0x22 | ENEMY_DEBUG | H->G | R | seq 1.., entHash, kind 1..8 (warp, route, correct, come, ignore, notice, disable, enable), x, y, z mm (+-1e8), yaw mrad (+-8000), flags 0..3 (1 come, 2 restrict notice), routeHash, hostGameObjectId | - | 30 |
+| 0x22 | ENEMY_DEBUG | H->G | R | seq 1.., entHash, kind 1..8 (warp, route, correct, come, ignore, notice, disable, enable), x, y, z mm (+-1e8), yaw mrad (+-8000), flags 0..7 (1 come on a warp / route, the host copy's combat on a correction; 2 restrict notice on a warp / route; 4 first: place first, section 28), routeHash, hostGameObjectId | - | 30 |
 | 0x23 | ENEMY_DEBUG_ACK | G->H | R | seq 1.., entHash, result 0..1 (applied, refused), reason 0..31, errCm, frames | - | 12 |
 
 `latencyMs = min(65535, rtt/2 + time queued on the receiver)`. Life-state
@@ -241,13 +242,14 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; 0.13.6: a token bucket of 600 lines refilled at 20 lines/s, the old 200 per 10 s on average with room for a mission arrival's burst; the dropped count is logged as `world=log_cap; dropped=` before the next admitted line) | runtime or termination |
 | WARP | `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>` (guest spawn sync) | `return {r=,h=,leaf=}` or `return {refused="<reason>"}`: one native placement of the grant the core recorded when the guest's RX popped ENEMY_DEBUG `seq` (kind warp/correct, same epoch, at most 15 s old); the target never comes from Lua ([debug-menu.md](debug-menu.md) "Spawn sync") | runtime |
 | NOTE | `return 'MGS_COOP_WORLD_NOTE_V1' -- <code> <a> <b>` (code 1..15; a, b 0..4294967295, no sign) | `return true` (handled, or skipped by the rate gate) or `return false` (a code with no meaning yet: 13..15). Codes: 1 PROGRESS{a title-mode ACC mission, b 1 story start, 0 not}, 2 HELI_WAIT{a target, 0}, 3 HELI_ALONE{a target, b reason 1 no_partner, 2 partner_elsewhere, 3 repeat, 4 timeout, 5 join_partner: the target is the partner's own mission (online 2026-10-22 P7)}, 4 HELI_REFUSED{a unsupported target or nextMissionId, 0}; join-fix phase 2: 5 TRAVEL_LOCKED{a host mission, b target}, 6 HOST_PARTNER_CANNOT_JOIN{a target, b partner mission}, 7 TITLE_CONTINUE_LOCKED{a host mission, b 1 location_differs, 2 story_start, 3 waiting_for_host_save, 4 host_save_checked (waiting, the host in game in 30010/30020/30050; online 2026-10-22 P3)}, 8 TRAVEL_ALONE{a target, b 1 repeat, 2 f9_unlock, 3 timeout}, 9 CONTINUE_DURING_HANDOFF{a pct 0..100, 0}, 10 HANDOFF_KEPT_OWN{0, 0}, 11 GUEST_LANDING_ELSEWHERE{a target, b host mission}, 12 SORTIE_HELD{a target, b host mission}; native alone posts 16 MISMATCH{a local, b partner mission} (section 3). Rate gate per code: the same (a, b) posts at most once per 1 s and logs `world=note; code=; a=; b=; partner=; t_ms=` at most once per 10 s (`world=note; code=; result=unknown; t_ms=` for 13..15). Code 1 records the title progress (b 1 story_start, else ok) and posts only for b 1, and not while a save handoff runs for this guest (`save_handoff::GuestHandoffActive`: guest, `save_handoff=scene` or `always`, a host STATE seen; the handoff toasts replace it, the log line stays); 2..12 post a toast with the partner's and the local mission (sentences in `coop_text::FormatWorldNote`). Lua ignores the result | runtime or termination |
+| PEER | `return 'MGS_COOP_WORLD_PEER_V1'` (exact, no arguments; enemy follow, section 28) | `return 1,<x_mm>,<z_mm>,<age_ms>` (the partner's remote pose as this copy sees it, while paired and connected, at most 2 s old) or `return 0` | runtime |
 | SAVE | `return 'MGS_COOP_WORLD_SAVE_V1' -- <op> <a> <b> <c> <d> <e>` (exactly 6 integers, no sign; join-fix phase 2, [save-handoff.md](save-handoff.md)): op 1 REPORT{a mission 0..99999, b title 0/1, c story 0 unknown, 1 opening, 2 open, d saving 0/1, e ingame 0/1}, sent on any change, otherwise every 1000 ms while active; op 2 CONTINUE{a target 1..99999 (vars.missionCode at ReservePlayerLoadingPosition k==4), b title, c story, 0, 0}; op 3 DECLINE{a 1 second_continue or 2 f9, 0, 0, 0, 0} | `return true` (accepted), `return false` (the module is off, or rate-gated: more than 4 per second; a DECLINE is never rate-gated), the literal when malformed. `save_handoff::HandleLua` only parses and stores (the report in a seqlock, CONTINUE and DECLINE in a small mailbox) for the link thread. Lua ignores the result | runtime |
 
 Exact classification (name == source, NUL-free, at most 240 bytes). Integers
 only: an optional `-` (i32 fields), no `+`, no leading zeros, no `-0`, no `.`,
-single spaces; u32 up to 4294967295. Replies fit 224 bytes (17 values). TX,
-RX, LOG, WARP, NOTE and SAVE are quiet (no entry/return lines); CFG logs like any receipt. A
-refused receipt stays literal and Lua treats it as inactive or not sent.
+single spaces; u32 up to 4294967295. Replies fit 224 bytes (19 CFG values: r[18] the r1101 Fulton bits 0..31, section
+25; r[19] enemy follow 0/1, lab key `soldier_follow`, section 28). TX, RX, LOG, WARP, NOTE, SAVE and PEER are quiet (no
+entry/return lines); CFG logs like any receipt. A refused receipt stays literal and Lua treats it as inactive or not sent.
 
 ## 6. Configuration and the trigger
 
@@ -2203,3 +2205,29 @@ map vehicle. World note 20 VSPAWN{a=1 spawned in front of you (b 1 jeep / 2 truc
 answer, 9 only on your screen: the partner's copy did not take it, 10 a player on the spot)} toasts on the presser's and the partner's screen. 0x45 / 0x46 and notes 21 / 22 belong to the 11-01 supply and
 Fulton tracks. A partner without the op skips it by its length (unknown_op): nothing moves there and no kind 4 comes back (the
 host's toast still says both screens; pairing across builds shows the MISMATCH note).
+
+## 28. Enemy follow (the enemy sync plan's round 1; lab key `soldier_follow`, design 7.8)
+
+No new op. `soldier_follow=0|1` (lab.ini, lab and play, off unless named until its hidden runs pass) gives CFG r[19] = 1
+(`W.followOn`) and the guest's follow admission rule (`soldier_warp::GuestAdmit`). Changed fields and receipts:
+
+- ENEMY_DEBUG (0x22) flags 0..7: bit 4 `first`, the host's place-first correction right before its own outcome of a
+  standing guard (kind 3; the guest corrects from 1 m at once, ahead of its FIFO, and holds the outcome until placed,
+  at most 1.5 s in free roam, 4 s at Mother Base). Bit 1 on a correction is the host copy's combat flag (never come);
+  bits 1 / 2 keep their come / restrict-notice meaning on warps and routes.
+- The guest's warp grants (world_wire.hpp `Grant`): 64 slots (16 before).
+- REQ_OUTCOME (0x11) v[8] attribution 0..3 (0 the guest's player, 1 its buddy, 2 another attacker, 3 none). With follow
+  the guest sends every forward change; the host commits 0 / 1 as before, commits an unattributed DYING / DEAD /
+  FULTONED only while its copy stands within 150 m of the partner (`event=terminal_win; rid; ent; state; att;
+  partner_m`), and refuses anything else unattributed with REJECT 12, which the guest applies as the host's state (as 2
+  and 3). Without follow on the host every unattributed request gets REJECT 12.
+- PEER receipt (section 5): the partner's remote pose for the host's scan radius and the guest's far check.
+- Log lines (`world_lua=`): host `event=place_scan; ups; reads; sent; side; avg_us; max_us; partner` (every 10 s),
+  `event=place_partner; known; src=peer|body|none`, `event=place_first; step=tx; ent; seq; x; y; z`; guest
+  `event=place_err; n; h=<7 bins>; p50; p95; max; fix; q` (each second with samples), `event=place_div; ...; view=on|off;
+  why=pair|first|near_player|far` (corrections, place-first, first samples, guards 2 m off), `event=place_first;
+  step=hold|done; ...; err_m; ms`, `event=place_combat; seq; ent; nudge=0`; both `event=apply; ...; d_m` (with a wire
+  position), `event=req; ...; att`, `event=req_rx; ...; reason; att`; native `soldier_warp=soldier_latched; id; go; r; h;
+  anomalies; until=process_exit`, `soldier_warp=disabled; ...; anomalies=`, `soldier_warp=ready; key; follow`.
+- Wire compatibility: a 0.14.7 peer drops a flag-4 ENEMY_DEBUG and a v[8] above 1 as bad values; play pairs only the same
+  build (MISMATCH note), so both copies change together.

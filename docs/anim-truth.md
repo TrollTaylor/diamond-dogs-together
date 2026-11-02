@@ -124,9 +124,22 @@ aim act (Mother Base), `partner_aim_local=aimed; after_ms=` for a real aim, with
 - A real aim starts on the puppet when the remote's act arrives through the pose stream (the interpolation delay
   plus ~30 ms after the press), not at the raw press. A LMB tap inside that window is not drawn (the strip lifts only
   with the act); a held LMB fires once the act confirms.
-- Binoculars (SUBJECT) in an aim-family act still draw a gun aim: the v5 flags cannot tell it apart from a real aim
-  (fb1031 friend 28540: act 11 with flags 0x1 was a real pistol aim, a reload tap followed). It needs the sender's
-  BINOCLE status on the wire.
+- Binoculars (SUBJECT) in an aim-family act still draw a gun aim unless `partner_native_binocle` is on (below): the v5
+  flags cannot tell it apart from a real aim (fb1031 friend 28540: act 11 with flags 0x1 was a real pistol aim, a reload
+  tap followed).
+
+## Binoculars (the enemy sync plan's M2; lab key `partner_native_binocle`)
+
+The friend session of 2026-11-01 (fb1101 B1): right after the guest's binocle census the host's puppet went to gun-aim
+acts 11 / 13, so the partner looking through binoculars looked like it aimed a gun. The sender now puts its PlayerStatus
+BINOCLE (the local status census of the partner tick, `partner_status=local; ...; names=binocle`) in the equipment
+manifest, byte 63 bit 1 (bit 0 is the cardboard box; a toggle resends under the same revision, `SameBox`). The receiver
+logs `partner_binocle=remote; on=0|1; apply=strip|off; seq=` and, with lab.ini `partner_native_binocle=1` (gun stage,
+lab and play; off unless named until its hidden run passes), keeps body 1's gun down while the remote holds binoculars:
+the remote's HOLD/FIRE (and a pad's triggers) leave body 1's sample (`BuildArm`) and its aim act leaves the state-driven
+aim intent (`TickAimIntent`), so body 1 holds its idle. Not built: drawing the binoculars on body 1 (B1b, the
+`stateBinocleLoop` clip through the direct-motion lever needs probe P5). The manifest bit is always sent; a 0.14.7 peer
+refuses it as a reserved bit, and play pairs only the same build.
 
 ## Finder report (r1101): every mismatch and its state
 
