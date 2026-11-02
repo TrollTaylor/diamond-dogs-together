@@ -211,9 +211,16 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
     return result;
 }
 
+unsigned Gate::SoldierAnomalies(std::uint32_t go) const noexcept {
+    for (unsigned i = 0; i < soldier_count && i < kTrackedSoldiers; ++i)
+        if (soldiers[i].go == go) return soldiers[i].anomalies;
+    return 0;
+}
+
 const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
     if (latched) return "latched";
     if (!command_id) return "target";
+    if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
     if (command_id != command) { command = command_id; go_id = go; attempts = 0; landed = false; }
     else if (go != go_id) return "target";
     if (landed) return "landed";
@@ -222,22 +229,120 @@ const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
     return nullptr;
 }
 
-const char* GuestAdmit(const GuestRule& rule, bool& staff) noexcept {
-    staff = false;
+const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept {
+    grant = GuestGrant::none;
     if (!rule.lab && !rule.play) return "role";
-    if (rule.lab && rule.key) return nullptr;  // lab key: spawn sync, any kind
-    if (rule.mission == kStaffMission && rule.correct) { staff = true; return nullptr; }
+    if (rule.lab && rule.key) { grant = GuestGrant::lab; return nullptr; }  // lab key: spawn sync, any kind
+    if (rule.follow && rule.correct && FollowMission(rule.mission)) { grant = GuestGrant::follow; return nullptr; }
+    if (rule.mission == kStaffMission && rule.correct) { grant = GuestGrant::staff; return nullptr; }
     return "disabled";
+}
+
+const char* Gate::AdmitDrive(std::uint32_t go) noexcept {
+    if (latched) return "latched";
+    if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
+    command = 0;
+    go_id = go;
+    attempts = 0;
+    landed = false;
+    return nullptr;
+}
+
+bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t t, float (&out)[3], float& yaw) noexcept {
+    if (!cur.valid || t > cur.rx_ms + kDriveStaleMs + kDriveDelayMs) return false;
+    yaw = cur.yaw;
+    if (prev.valid && prev.rx_ms < cur.rx_ms) {
+        const float span = static_cast<float>(cur.rx_ms - prev.rx_ms);
+        float u = 0.0f;
+        if (t <= prev.rx_ms) u = 0.0f;
+        else if (t <= cur.rx_ms) u = static_cast<float>(t - prev.rx_ms) / span;
+        else u = 1.0f + static_cast<float>((t - cur.rx_ms) > kDriveExtrapolateMs ? kDriveExtrapolateMs : (t - cur.rx_ms)) / span;
+        for (unsigned i = 0; i < 3; ++i) out[i] = prev.pos[i] + (cur.pos[i] - prev.pos[i]) * u;
+        return true;
+    }
+    for (unsigned i = 0; i < 3; ++i) out[i] = cur.pos[i];
+    return true;
+}
+
+DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
+                          float snap_m, float lift_m) noexcept {
+    DriveStepResult r{};
+    const float dx = to[0] - from[0], dz = to[2] - from[2];
+    r.error = std::sqrt(dx * dx + dz * dz);
+    for (unsigned i = 0; i < 3; ++i) r.pos[i] = from[i];
+    if (!std::isfinite(r.error)) return r;
+    r.active = active ? r.error >= stop_m : r.error > start_m;
+    if (!r.active) return r;
+    r.move = true;
+    if (r.error > snap_m) {
+        r.hard = true;
+        for (unsigned i = 0; i < 3; ++i) r.pos[i] = to[i];
+        return r;
+    }
+    const float k = r.error > max_step ? max_step / r.error : 1.0f;
+    r.pos[0] = from[0] + dx * k;
+    r.pos[2] = from[2] + dz * k;
+    const float feet = from[1] - 0.8f;
+    r.pos[1] = std::fabs(to[1] - feet) > 1.0f ? to[1] : feet + lift_m;
+    if (k >= 1.0f) r.active = false;  // arrived: at rest until it drifts past start_m again
+    return r;
+}
+
+const char* DriveAdmit(const DriveRule& rule) noexcept {
+    if (!(rule.lab || rule.play)) return "role";
+    if (!rule.snap || (rule.host && !rule.owner)) return "disabled";
+    if (rule.puppet && (!rule.puppet_key || rule.host)) return "puppet";
+    if (!FollowMission(rule.mission)) return "mission";
+    return nullptr;
+}
+
+const char* HostAdmit(const HostRule& rule) noexcept {
+    if (!rule.host || !(rule.lab || rule.play)) return "role";
+    if (!rule.owner) return "disabled";
+    if (!FollowMission(rule.mission)) return "mission";
+    if (!rule.correct) return "kind";
+    return nullptr;
+}
+
+float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                    bool& self_nearer) noexcept {
+    float to_host = 0.0f, to_self = 0.0f;
+    for (unsigned i = 0; i < 3; ++i) {
+        to_host += (pos[i] - host[i]) * (pos[i] - host[i]);
+        to_self += (pos[i] - self[i]) * (pos[i] - self[i]);
+    }
+    host_valid = host_valid && std::isfinite(to_host);
+    self_valid = self_valid && std::isfinite(to_self);
+    self_nearer = self_valid && (!host_valid || to_self < to_host);
+    if (self_nearer) return to_self;
+    return host_valid ? to_host : INFINITY;
 }
 
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
 
 const char* Gate::Record(const Result& result) noexcept {
     if (!result.refusal && result.out == 0 && result.handled == 1) landed = true;
-    if (latched || !result.refusal || (std::strcmp(result.refusal, "fault") != 0 && std::strcmp(result.refusal, "anomaly") != 0))
-        return nullptr;
-    latched = result.refusal;
-    return latched;
+    if (latched || !result.refusal) return nullptr;
+    if (std::strcmp(result.refusal, "fault") == 0) {
+        latched = result.refusal;
+        return latched;
+    }
+    if (std::strcmp(result.refusal, "anomaly") != 0) return nullptr;
+    // An anomaly counts against the gate's current guard and against the process.
+    ++anomalies;
+    unsigned count = 0;
+    const auto go = static_cast<std::uint16_t>(go_id);
+    for (unsigned i = 0; i < soldier_count && i < kTrackedSoldiers; ++i)
+        if (soldiers[i].go == go) { count = ++soldiers[i].anomalies; break; }
+    if (!count) {
+        if (soldier_count < kTrackedSoldiers) soldiers[soldier_count++] = Soldier{go, 1};
+        count = 1;
+    }
+    if (anomalies >= kProcessAnomalies || soldier_count >= kTrackedSoldiers) {
+        latched = result.refusal;
+        return latched;
+    }
+    return count == kSoldierAnomalies ? "soldier" : nullptr;
 }
 
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,

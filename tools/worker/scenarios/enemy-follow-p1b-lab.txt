@@ -1,0 +1,146 @@
+# Enemy follow, probe P1b (docs/STATUS.md "Enemy follow"): the quiet half of P1. Run 79804732 (enemy-follow-p1-lab.txt)
+# alerted afgh_field_cp the moment the host landed 6 m from a guard, so P1 measured only ALERT: every applied correction
+# left the guest's copy standing still for 2-7 s while the host's copy walked on (hop, stand, hop), and one warp of LRRP
+# guard 2305481811 answered r=0 h=0 (an anomaly: the soldier handler said not realized and the soldier type's dispatch
+# 0x9e9ab0 forwarded the message to its fallback object), which latched the feature for the rest of the process.
+# Here the host first makes every guard of afgh_field_cp and the LRRP pair ignore the players (enemy ignore: restrict
+# notice, shared to the guest's copies as ENEMY_DEBUG kind 5), so the outpost stays quiet. Then: the host 6 m from
+# 2961503 (sol_field_0000), the guest near 3268415846 (sol_field_0007), 90 s; the guest 3 m behind the host, 120 s
+# (both cameras on the nearest guard every 15 s: frame pairs, and hop / stand / walk-on after each correction).
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/enemy-follow-p1b-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode lab -WanSim bad
+# Evidence (guest): event=place_div (div_m, n, fix, host_xz / here_xz) before and after each event=place; kind=correct;
+# world_place=warp (r, h, leaf, refused); (host) event=place_ack. NEVER: event=phase ... phase=3, soldier_warp=disabled.
+labsetting debug_soldier_warp=1
+labsetting nametag=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 5000
+host run world_status
+host expect ^world;paired=1;eff=3;w1=1;roster=match;
+guest run world_status
+guest expect ^world;paired=1;eff=3;w1=1;roster=match;
+host run enemy ignore 2961503
+host expect ^enemy_ignore;ent=2961503;
+host run enemy ignore 2942862796
+host expect ^enemy_ignore;ent=2942862796;
+host run enemy ignore 1740692850
+host expect ^enemy_ignore;ent=1740692850;
+host run enemy ignore 1799112697
+host expect ^enemy_ignore;ent=1799112697;
+host run enemy ignore 2929558510
+host expect ^enemy_ignore;ent=2929558510;
+host run enemy ignore 667680985
+host expect ^enemy_ignore;ent=667680985;
+host run enemy ignore 1179373153
+host expect ^enemy_ignore;ent=1179373153;
+host run enemy ignore 3268415846
+host expect ^enemy_ignore;ent=3268415846;
+host run enemy ignore 753908875
+host expect ^enemy_ignore;ent=753908875;
+host run enemy ignore 1904171355
+host expect ^enemy_ignore;ent=1904171355;
+host run enemy ignore 1845278687
+host expect ^enemy_ignore;ent=1845278687;
+host run enemy ignore 1926520947
+host expect ^enemy_ignore;ent=1926520947;
+host run enemy ignore 3970963356
+host expect ^enemy_ignore;ent=3970963356;
+host run enemy ignore 2305481811
+host expect ^enemy_ignore;ent=2305481811;
+wait 3000
+host run enemy info 2961503
+guest run enemy info 3268415846
+host run enemy goto 2961503 6
+host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 3268415846 8
+guest expect ^(enemy_goto;ent=3268415846;submitted_warp|warp_position_readback)
+wait 8000
+stance host stand
+stance guest stand
+host run position
+guest run position
+host run enemy info nearest
+guest run enemy info nearest
+# --- A: apart, quiet, 90 s ------------------------------------------------------------------------------------------
+logmark both
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-00
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-60
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-90
+host run world_status
+guest run world_status
+# --- B: together (the guest 3 m behind the host), quiet, 120 s; both cameras on the nearest guard -------------------
+placebehind guest host 3 1
+stance guest stand
+wait 3000
+host run enemy info nearest
+guest run enemy info nearest
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-000
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-015
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-030
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-045
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-060
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-075
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-090
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-105
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-120
+host run world_status
+guest run world_status
+host run position
+guest run position
+state

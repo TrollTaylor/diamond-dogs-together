@@ -145,6 +145,14 @@ int main(int argc, char** argv) {
                     "partner_native_aim_truth_stance=%d\n",
                     c.partner_native_aim_truth ? 1 : 0, c.partner_native_aim_truth_box ? 1 : 0, c.partner_native_aim_truth_triggers ? 1 : 0,
                     c.partner_native_aim_truth_stance ? 1 : 0);
+        // Enemy follow (docs/world-sync-design.md 7.8): lab and play, follows the gun profile.
+        std::printf("soldier_follow=%d\n", c.soldier_follow ? 1 : 0);
+        // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9..7.13): M3..M6 follow the gun profile, the M7 probe is off
+        // unless named.
+        std::printf("soldier_owner=%d\nsoldier_snap=%d\nsoldier_route=%d\nsoldier_body=%d\nsoldier_puppet=%d\n", c.soldier_owner ? 1 : 0,
+                    c.soldier_snap ? 1 : 0, c.soldier_route ? 1 : 0, c.soldier_body ? 1 : 0, c.soldier_puppet ? 1 : 0);
+        // M2 binoculars (docs/anim-truth.md "Binoculars"): lab and play, follows the gun profile.
+        std::printf("partner_native_binocle=%d\n", c.partner_native_binocle ? 1 : 0);
         // Steam online keys (docs/steam-online.md 9.1), after the world keys.
         std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),

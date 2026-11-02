@@ -247,7 +247,7 @@ do
       s.held = {}
       for _, r in ipairs(held) do
         local st = W.w1 and W.enemy.localState(W.ent[r.h])
-        if st and W.enemy.forward(r.h, st) then W.enemy.request(r.h, st, r.cause, r.attack, W.now()) end
+        if st and W.enemy.forward(r.h, st) then W.enemy.request(r.h, st, r.cause, r.attack, W.now(), r.cls) end
       end
       W.log(fmt("event=resync;what=%d;count=%d;src=end;held=%d", v[2], v[3], #held))
     end

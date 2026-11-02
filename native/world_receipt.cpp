@@ -2,6 +2,7 @@
 // (docs/world-sync-protocol.md "Receipts").
 #include "mgscoop/world_receipt.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include "mgscoop/partner_receipt.hpp"
@@ -63,8 +64,11 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, rx_prefix)) return Receipt::rx;
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
+    if (Prefixed(source, size, hostwarp_prefix)) return Receipt::hostwarp;
+    if (Prefixed(source, size, drive_prefix)) return Receipt::drive;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
     if (Prefixed(source, size, save_prefix)) return Receipt::save;
+    if (SameText(source, size, peer_source)) return Receipt::peer;
     return Receipt::none;
 }
 
@@ -117,6 +121,58 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept 
     if (Exact(source, size, "return 'MGS_COOP_WORLD_RX_V1' -- 1")) { mask = 1; return true; }
     if (Exact(source, size, "return 'MGS_COOP_WORLD_RX_V1' -- 3")) { mask = 3; return true; }
     return false;
+}
+
+namespace {
+template <std::size_t N>
+bool ParseSeqGo(const char* source, std::size_t size, const char (&prefix)[N], std::uint16_t& seq, std::uint32_t& go_id) noexcept {
+    if (!source || !Prefixed(source, size, prefix) || size > max_receipt) return false;
+    const char* p = source + N - 1;
+    const char* end = source + size;
+    std::int64_t s = 0, g = 0;
+    if (!Token(p, end, s) || p >= end || *p != ' ') return false;
+    ++p;
+    if (!Token(p, end, g) || p != end) return false;
+    if (s < 1 || s > 65535 || g < 0 || g > 65535) return false;
+    seq = static_cast<std::uint16_t>(s);
+    go_id = static_cast<std::uint32_t>(g);
+    return true;
+}
+} // namespace
+
+bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {
+    return ParseSeqGo(source, size, hostwarp_prefix, seq, go_id);
+}
+
+bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept {
+    std::uint8_t mode = 0;
+    return ParseDriveMode(source, size, slot, go_id, pos_mm, mode) && mode == 0;
+}
+
+bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3],
+                    std::uint8_t& mode) noexcept {
+    if (!source || !Prefixed(source, size, drive_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(drive_prefix) - 1;
+    const char* end = source + size;
+    std::int64_t v[6]{};
+    unsigned n = 0;
+    for (unsigned i = 0; i < 6 && (i < 5 || p != end); ++i) {
+        if (i) {
+            if (p >= end || *p != ' ') return false;
+            ++p;
+        }
+        if (!Token(p, end, v[i])) return false;
+        n = i + 1;
+    }
+    if (n == 6 && (v[5] < 0 || v[5] > 1)) return false;
+    if (p != end || n < 5 || v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots) || v[1] < 0 || v[1] > 65535) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (v[2 + i] < -100000000 || v[2 + i] > 100000000) return false;
+    slot = static_cast<std::uint16_t>(v[0]);
+    go_id = static_cast<std::uint32_t>(v[1]);
+    for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[2 + i]);
+    mode = static_cast<std::uint8_t>(n == 6 ? v[5] : 0);
+    return true;
 }
 
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {
@@ -193,11 +249,22 @@ bool ParseSave(const char* source, std::size_t size, std::uint8_t& op, std::uint
 
 std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
-    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level), unsigned(r.role),
-                                unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
+    const int n = std::snprintf(out, capacity, "return %u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u", unsigned(r.level),
+                                unsigned(r.role), unsigned(r.proto), unsigned(r.link), unsigned(r.epoch), unsigned(r.probe), unsigned(r.mode),
                                 unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait),
                                 unsigned(r.handoff), unsigned(r.lock), unsigned(r.census), unsigned(r.vehicle_gone), unsigned(r.companion),
-                                unsigned(r.relief), unsigned(r.fulton));
+                                unsigned(r.relief), unsigned(r.fulton), unsigned(r.follow));
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
+    return static_cast<std::size_t>(n);
+}
+
+std::size_t FormatPeerReply(bool valid, float x_m, float z_m, std::uint32_t age_ms, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const bool ok = valid && std::isfinite(x_m) && std::isfinite(z_m) && std::fabs(x_m) <= 100000.0f && std::fabs(z_m) <= 100000.0f &&
+                    age_ms <= 2000;
+    const int n = ok ? std::snprintf(out, capacity, "return 1,%ld,%ld,%u", std::lround(x_m * 1000.0), std::lround(z_m * 1000.0),
+                                     unsigned(age_ms))
+                     : std::snprintf(out, capacity, "return 0");
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

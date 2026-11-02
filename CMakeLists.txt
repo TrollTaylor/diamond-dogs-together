@@ -143,6 +143,8 @@ add_executable(lab_config_tests tests/lab_config_tests.cpp)
 target_link_libraries(lab_config_tests PRIVATE mgs_coop_core)
 if(MSVC)
   target_compile_options(lab_config_tests PRIVATE /W4 /WX)
+  # main() keeps hundreds of LabConfig temporaries in one Debug frame: past 1 MB once the enemy sync keys grew the struct.
+  target_link_options(lab_config_tests PRIVATE /STACK:8388608)
 endif()
 add_test(NAME lab_config_tests COMMAND lab_config_tests)
 # The developer test boot (docs/test-boot.md): lab_boot parser and Lua receipts.
@@ -445,7 +447,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at the last line break in its first 16000 bytes, so each stays at most
   # 16000 bytes, under the MSVC literal limit (16380).
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")
@@ -1217,10 +1219,14 @@ if(WIN32)
     mgs_add_test_shards(worker_session_tests 2 FLAG -Shard COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_session_tests.ps1")
     # The shard helper itself (tests/TestShards.psm1).
     add_test(NAME test_shards_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shards_tests.ps1")
+    # The fast release path (tools/release/Invoke-FastRelease.ps1) on throw-away git repositories: no build, game or network.
+    add_test(NAME fast_release_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/fast_release_tests.ps1")
     add_test(NAME mgo_unique_rest_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_unique_rest_session_tests.ps1")
     add_test(NAME mgo_standing_cycle_session_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_standing_cycle_session_tests.ps1")
     add_test(NAME mgo_standing_frame_policy_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mgo_standing_frame_policy_tests.ps1")
     add_test(NAME worker_loading_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_loading_tests.ps1")
+    # Several scenarios in one hidden session and the hidden-run queue, with fakes and a sandboxed %TEMP% (no game).
+    add_test(NAME worker_queue_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_queue_tests.ps1")
     # The Release receipt's coverage against this build's real test list (ctest-test-names.txt, cmake/test_labels.cmake).
     add_test(NAME worker_coverage_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/worker_coverage_tests.ps1")
     add_test(NAME local_coop_windows_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_coop_windows_tests.ps1")
@@ -1246,10 +1252,14 @@ if(WIN32)
     mgs_add_test_shards(worker_session_tests 2 SKIPPED)
     add_test(NAME test_shards_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(test_shards_tests PROPERTIES SKIP_RETURN_CODE 1)
+    add_test(NAME fast_release_tests COMMAND "${CMAKE_COMMAND}" -E false)
+    set_tests_properties(fast_release_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME mgo_unique_rest_session_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(mgo_unique_rest_session_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME worker_loading_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(worker_loading_tests PROPERTIES SKIP_RETURN_CODE 1)
+    add_test(NAME worker_queue_tests COMMAND "${CMAKE_COMMAND}" -E false)
+    set_tests_properties(worker_queue_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME worker_coverage_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(worker_coverage_tests PROPERTIES SKIP_RETURN_CODE 1)
     add_test(NAME local_coop_windows_tests COMMAND "${CMAKE_COMMAND}" -E false)

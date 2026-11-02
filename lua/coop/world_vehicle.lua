@@ -252,6 +252,11 @@ local function answer(q)
 end
 -- Host: announces a vehicle its copy lost (kept for a re-send at the next PAIRED).
 function V.broadcast(id, w, actor, rid)
+  -- The host's own loss is announced once per vehicle per mission load (the enemy sync plan's V1: a vehicle reported
+  -- destroyed twice); an answer to a guest's request (rid) always goes.
+  for _, s in ipairs((rid or 0) == 0 and V.sent or {}) do
+    if s.id == id and s.rid == 0 then L("event=vehicle_gone;step=dup;id=%d;seq=%d", id, s.seq); return end
+  end
   V.seq = V.seq % 65535 + 1
   local a = {seq = V.seq, id = id, cause = w.cause or LAB, actor = actor or 0, rid = rid or 0, vtype = w.vtype or 255,
     x = w.x or 0, y = w.y or 0, z = w.z or 0}
