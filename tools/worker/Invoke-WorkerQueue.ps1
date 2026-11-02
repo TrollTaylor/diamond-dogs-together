@@ -209,8 +209,9 @@ try{
     $log=Join-Path $root "logs\$Id.log"
     Add-Content -LiteralPath $log -Value "=== queue job $Id ($($Job['owner'])) $([DateTime]::UtcNow.ToString('o')): $script $(@($scenarios) -join ' ')"
     $info=[Diagnostics.ProcessStartInfo]::new((Join-Path $env:SystemRoot 'System32\cmd.exe'))
-    # cmd /s strips the outer quotes; <NUL gives the run an empty stdin, >> keeps every line in the job log.
-    $info.Arguments="/d /s /c `"`"$pwsh`" -NoProfile -NonInteractive -EncodedCommand $encoded <NUL >>`"$log`" 2>&1`""
+    # cmd /s strips the outer quotes; <NUL gives the run an empty stdin, >> keeps every line in the job log;
+    # -OutputFormat Text: an -EncodedCommand pwsh would otherwise write its streams as CLIXML into the log.
+    $info.Arguments="/d /s /c `"`"$pwsh`" -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded <NUL >>`"$log`" 2>&1`""
     $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.WorkingDirectory=[string]$Job['repo']
     $null=$info.Environment.Remove('MGS_GAME_LUA_DIR')
     $process=[Diagnostics.Process]::Start($info)
