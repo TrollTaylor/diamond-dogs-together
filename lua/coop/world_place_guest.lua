@@ -111,6 +111,7 @@ do
         function P.sample(c)
             local en = W.ent[c.h]
             if not en or P.come[c.h] or type(en.id) ~= "number" then return end
+            if c.flags >= 8 then return P.body and P.body(c, en) end  -- M6: a body placement (world_snap.lua)
             local prev = P.lastS[c.h]
             P.lastS[c.h] = c
             if not W.w1 and c.flags % 2 == 1 then return end
@@ -220,7 +221,7 @@ do
             if type(en.id) ~= "number" or en.id == W.api.null then return "unmapped" end
             local st = P.state(en)
             if st == nil then return "unreadable_local" end
-            if E.TERMINAL[st] then return "terminal_local" end
+            if E.TERMINAL[st] and not c.body then return "terminal_local" end
             -- Native placements only, as the host's pick; a route placement re-enables
             -- the guard on both PCs (the retail sequence) and never checks a vehicle.
             if c.kind == 1 or c.kind == 3 then

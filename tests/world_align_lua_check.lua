@@ -1337,6 +1337,45 @@ if arg[7] and arg[8] then
     check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
     ticks(ss, 10)
     check(#ss.drives > n1, 'M4: and tries again after 500 ms')
+    -- Enemy sync M6 (W.bodyOn, docs/world-sync-design.md 7.12) ---------------------------------------------------------
+    -- A body carried more than 1.5 m and at rest 1.5 s is reported (host: ENEMY_DEBUG kind 3 flag 8, 0.2 m over it).
+    local bh = followFixture(true)
+    bh.W.bodyOn = true
+    bh.life[1] = 3
+    bh.positions[1] = {10.0, 0.3, 0}
+    ticks(bh, 60)
+    local function bodyTx(c, op)
+        local out = {}
+        for _, p in ipairs(placeTx(c, op)) do if p.v[8] == 8 then out[#out + 1] = p end end
+        return out
+    end
+    check(#bodyTx(bh, 34) == 0, 'M6: a body where it fell is not reported')
+    bh.positions[1] = {15.0, 0.3, 0}
+    ticks(bh, 70)
+    local bt = bodyTx(bh, 34)
+    check(#bt == 1 and bt[1].v[2] == ENT1 and bt[1].v[4] == 15000 and bt[1].v[5] == 500 and logged(bh, 'event=body_tx;ent=3000000001'),
+        'M6: a body dropped 5 m away and at rest is reported once')
+    ticks(bh, 70)
+    check(#bodyTx(bh, 34) == 1, 'M6: once')
+    -- The receiver places its own body there (flag 8: through the FIFO, a dead one too).
+    local bg = guestFix(180)
+    bg.W.bodyOn = true
+    bg.life[1] = 1
+    bg.positions[1] = {0, 0.3, 20.0}
+    bg.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    bg.W.handlers[34]({41, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, bg.now)
+    check(#bg.P.q == 1 and bg.P.q[1].body and logged(bg, 'event=place_body;seq=41;ent=3000000001;div_m=5.0;state=5;fix=1'),
+        'M6: the dead body 5 m off is queued')
+    ticks(bg, 6)
+    check(logged(bg, 'event=place;seq=41;ent=3000000001;kind=correct;result=applied'), 'M6: placed (never terminal_local)')
+    -- A hold-up applied here raises the hands too (SetForceHoldup), once.
+    local hu = guestFix(180)
+    hu.W.bodyOn = true
+    hu.W.handlers[16]({ENT1, 1, 1, 1, 2, 0, 0, 0, 0, 0, 0}, hu.now)
+    for _ = 1, 4 do hu.now = hu.now + 33; hu.E.tick(hu.now) end
+    local forced = 0
+    for _, cmd in ipairs(hu.commands) do if cmd[2] == 'SetForceHoldup' then forced = forced + 1 end end
+    check(forced == 1 and logged(hu, 'event=holdup_show;ent=3000000001;ok=1'), 'M6: the hold-up shows here')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

@@ -85,9 +85,10 @@ constexpr OpSpec kOps[] = {
      {Weather(), U16(0, 600), U16(kU16, kU16), U8(255, 255), U8(1, 3)}},
     // Spawn sync (docs/debug-menu.md): seq, ent, kind, x/y/z mm, yaw mrad, flags (1 come, 2 restrict notice, 4 first: enemy
     // follow's place-first, docs/world-sync-design.md 7.8), route hash, host GameObjectId.
+    // flags 8: a body placement (enemy sync M6: a lying body that was carried and dropped, kind 3).
     {op::enemy_debug, "ENEMY_DEBUG", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 10, 0, 0, 30,
      {U16(1, kU16), U32(), U8(1, 8), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
-      I32(-8000, 8000), U8(0, 7), U32(), U16()}},
+      I32(-8000, 8000), U8(0, 15), U32(), U16()}},
     // seq, ent, result (0 applied, 1 refused), reason (world_place.lua WHY), error cm, frames.
     {op::enemy_debug_ack, "ENEMY_DEBUG_ACK", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
@@ -95,7 +96,7 @@ constexpr OpSpec kOps[] = {
     // host's owner decision and the guest's engagement.
     {op::enemy_place, "ENEMY_PLACE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 10, 0, 0, 30,
      {U16(1, kU16), U32(), U8(3, 3), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
-      I32(-8000, 8000), U8(0, 7), U32(0, 0), U16()}},
+      I32(-8000, 8000), U8(0, 15), U32(0, 0), U16()}},
     {op::enemy_place_ack, "ENEMY_PLACE_ACK", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
     {op::owner, "OWNER", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 3, 0, 0, 6, {U32(), U8(0, 1), U8(0, 7)}},

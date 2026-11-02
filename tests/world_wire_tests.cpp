@@ -1457,7 +1457,7 @@ void SpawnSync() {
     Check(Tx(g_host, op::enemy_debug, {0, 9, 1, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "seq 0 refused");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 100000001, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "position bound");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 8001, 0, 0, 0}, 103) == world::TxStatus::bad_args, "yaw bound");
-    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 8, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 16, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound (0..15)");
     // Enemy follow (docs/world-sync-design.md 7.8): flag 4 first, the host's place-first correction.
     Check(world::place::flag_first == 4, "flag 4 is place first");
     Exchange(104);

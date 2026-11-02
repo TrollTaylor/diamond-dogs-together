@@ -5,6 +5,9 @@
 -- speed every 100 ms, the whole way beyond 8 m). The owner is the host, or the guest for the guards it owns (M3,
 -- W.ownerOn). Only with soldier_snap (CFG r[19] bit 4, W.snapOn) and follow. While a guard is driven the M1 / M3
 -- corrections leave him alone (world_place_guest.lua, W.snapDriving).
+-- M6 (docs/world-sync-design.md 7.12; soldier_body, CFG r[19] bit 16, W.bodyOn): a lying body that was carried and dropped
+-- is placed on the other copy too (a kind-3 placement with flag 8, either side reporting the bodies near its own player),
+-- and a held-up guard raises his hands on the other copy (SetForceHoldup).
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -16,7 +19,7 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         function S.reset()
-            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt = nil, {}, {}, 0, 0, nil
+            S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
             S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0}
         end
         S.reset()
@@ -115,9 +118,75 @@ do
             local dv = S.dv and S.dv[h]
             return dv ~= nil and dv.ok ~= nil and (now or W.now()) - dv.ok < 1000
         end
+        -- M6 bodies: at most 2 reads per update of the lying bodies (sleep .. dead) within 60 m of this player; one at rest
+        -- (under 0.2 m in 1.5 s) more than 1.5 m from where it last lay was carried here: the other copy places its body
+        -- there (host: ENEMY_DEBUG kind 3 flag 8; guest: ENEMY_PLACE flag 8), 0.2 m over where this one lies.
+        function S.bodies(now)
+            local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+            local list = W.entOrder
+            if type(px) ~= "number" or type(pz) ~= "number" or type(list) ~= "table" then return end
+            px, pz = px * 1000, pz * 1000
+            local n, reads, scans = #list, 0, 0
+            while reads < 2 and scans < 32 and scans < n do
+                S.br, scans = S.br % n + 1, scans + 1
+                local h = list[S.br]
+                local en, b = W.ent[h], S.bd[h]
+                local st = en and type(en.id) == "number" and P.state(en)
+                if st and st >= 2 and st <= 5 and (not b or now - b.at >= 500) then
+                    reads = reads + 1
+                    local x, y, z = pos(en.id)
+                    if x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= 60000 then
+                        if not b then b = {x = x, z = z, restX = x, restZ = z, still = now}; S.bd[h] = b end
+                        b.at = now
+                        if flat(x, z, b.x, b.z) >= 200 then b.x, b.z, b.still = x, z, now
+                        elseif now - b.still >= 1500 and flat(x, z, b.restX, b.restZ) > 1500 then
+                            b.restX, b.restZ = x, z
+                            local ok
+                            if W.host then ok = P.announce(3, h, x, y + 200, z, 0, 8, 0)
+                            else
+                                P.ownSeq = (P.ownSeq or 0) % 65535 + 1
+                                ok = W.tx(OP.ENEMY_PLACE, P.ownSeq, h, 3, x, y + 200, z, 0, 8, 0, en.id % 65536)
+                            end
+                            L("event=body_tx;ent=%.0f;x=%d;z=%d;sent=%d", h, x, z, ok and 1 or 0)
+                        end
+                    end
+                elseif not st or st < 2 or st > 5 then S.bd[h] = nil end
+            end
+        end
+        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too)
+        -- more than 1 m off goes there through the same FIFO and native placement (kind 3; P.check lets a dead one go).
+        function P.body(c, en)
+            if not W.bodyOn then return end
+            local st = P.state(en)
+            local x, _, z = pos(en.id)
+            if not (st and st >= 2 and st <= 5 and x) then return end
+            local d = flat(x, z, c.x, c.z)
+            local fix = d > 1000 and #P.q < 16 and not (P.cur and P.cur.h == c.h)
+            L("event=place_body;seq=%d;ent=%.0f;div_m=%.1f;state=%d;fix=%d", c.seq, c.h, d / 1000, st, fix and 1 or 0)
+            if fix then
+                c.body = true
+                P.q[#P.q + 1] = c
+            end
+            if S.bd[c.h] then S.bd[c.h].restX, S.bd[c.h].restZ = c.x, c.z end
+        end
+        -- M6 hold-ups: a hold-up applied here (W1 state 1) also raises this copy's hands (SetForceHoldup, handler 0x135D0B2).
+        local applyOne = W.enemy.applyOne
+        W.enemy.applyOne = function(h, st, ver, src, now, x, z)
+            local r = applyOne(h, st, ver, src, now, x, z)
+            local en = W.ent[h]
+            if W.bodyOn and st == 1 and r ~= "defer" and r ~= "held" and en and type(en.id) == "number" and P.state(en) == 1 and
+                not (S.hu and S.hu[h]) then
+                S.hu = S.hu or {}
+                S.hu[h] = true
+                local ok = pcall(W.api.send, en.id, {id = "SetForceHoldup"})
+                L("event=holdup_show;ent=%.0f;ok=%d", h, ok and 1 or 0)
+            elseif st ~= 1 and S.hu then S.hu[h] = nil end
+            return r
+        end
         local tick = P.tick
         P.tick = function(now)
             tick(now)
+            if W.bodyOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then S.bodies(now) end
             if not S.ready() then return end
             S.produce(now)
             S.drive(now)
