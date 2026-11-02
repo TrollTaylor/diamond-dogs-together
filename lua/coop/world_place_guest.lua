@@ -73,6 +73,22 @@ do
             if #w.v < 256 then w.v[#w.v + 1] = d end
             if fix then w.fix = w.fix + 1 end
         end
+        -- A corrected copy is read again 2 s after it landed: event=place_sink when it is more than 1.5 m lower (run
+        -- 6e22bed0: copies fell up to 113 m, the fall's speed kept through later corrections).
+        function P.sinkTick(now)
+            for h, s in pairs(P.sink) do
+                if now - s.at >= 2000 then
+                    P.sink[h] = nil
+                    local en = W.ent[h]
+                    local x, y = nil, nil
+                    if en and type(en.id) == "number" then x, y = pos(en.id) end
+                    if x and type(y) == "number" and s.y - y > 1500 then
+                        P.n.sink = (P.n.sink or 0) + 1
+                        L("event=place_sink;seq=%d;ent=%.0f;land_dy_m=%.2f;dy_m=%.2f", s.seq, h, s.dy / 1000, (y - s.wy) / 1000)
+                    end
+                end
+            end
+        end
         function P.errTick(now)
             if now - (P.errAt or -1e9) < 1000 then return end
             P.errAt = now
@@ -275,6 +291,8 @@ do
                     return
                 end
                 c.err, c.pos = (c.kind ~= 2 or c.x ~= 0 or c.z ~= 0) and flat(x, z, c.x, c.z) or 0, {x, y, z}
+                -- This copy's height over the request (the wire y: the host's GetPosition y minus 0.8 m for a scan sample).
+                if type(y) == "number" and type(c.y) == "number" and (c.kind ~= 2 or c.y ~= 0) then c.dy = y - c.y end
                 return P.done(c)
             end
             local r = W.receipt(fmt("return 'MGS_COOP_WORLD_WARP_V1' -- %d %d", c.seq, id))
@@ -305,8 +323,12 @@ do
                     if m and c.pos then m.last = {position = {c.pos[1] / 1000, c.pos[2] / 1000, c.pos[3] / 1000}, mission = W.mission} end
                 end
             end
-            L("event=place;seq=%d;ent=%.0f;kind=%s;result=%s;why=%s;native=%s;err_m=%.2f;frames=%d", c.seq, c.h, KIND[c.kind],
-                why and "refused" or "applied", why or "none", c.native or "none", c.errCm / 100, c.frames or 0)
+            L("event=place;seq=%d;ent=%.0f;kind=%s;result=%s;why=%s;native=%s;err_m=%.2f;frames=%d%s", c.seq, c.h, KIND[c.kind],
+                why and "refused" or "applied", why or "none", c.native or "none", c.errCm / 100, c.frames or 0,
+                not why and c.dy and fmt(";dy_m=%.2f", c.dy / 1000) or "")
+            if not why and c.dy and c.pos and W.followOn == true then
+                P.sink[c.h] = {at = W.now(), y = c.pos[2], wy = c.y, dy = c.dy, seq = c.seq}
+            end
             if c.first then
                 L("event=place_first;step=done;seq=%d;ent=%.0f;result=%s;why=%s;err_m=%.2f;ms=%d", c.seq, c.h,
                     why and "refused" or "applied", why or "none", c.errCm / 100, floor(W.now() - c.at))
@@ -326,7 +348,7 @@ do
             return text .. fmt(";err_m=%.2f", c.errCm / 100)
         end
         function P.guestTick(now)
-            if W.followOn == true then P.errTick(now) end
+            if W.followOn == true then P.errTick(now); P.sinkTick(now) end
             local c = P.cur
             if not c then
                 c = table.remove(P.q, 1)

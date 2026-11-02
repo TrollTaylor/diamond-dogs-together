@@ -47,7 +47,7 @@ do
         function P.reset()
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
-            P.patrol, P.lastS = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}
+            P.patrol, P.lastS, P.sink = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}, {}
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
