@@ -83,6 +83,11 @@ bool SitesLine(char* out, std::size_t capacity) noexcept;
 #ifdef _WIN32
 // Verifies kOffenseHead and hooks the getter (MinHook; refuses when another hook already owns it, e.g. player_team).
 bool InstallSites(const void* base, LogFn log) noexcept;
+// Probe P11b: while forced (0 or 1; -1 = off, the stock value), the hooked getter returns that index to every caller
+// (Dynamite's single offense player, here fixed by the debug command perceive_force 0|1|off).
+void SetForcedIndex(int index) noexcept;
+int ForcedIndex() noexcept;
+bool SitesInstalled() noexcept;
 #endif
 
 } // namespace mgscoop::soldier_perceive

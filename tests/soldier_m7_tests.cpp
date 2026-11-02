@@ -101,6 +101,16 @@ int main() {
     Check(!sp::SitesLine(line, 8), "a short buffer refuses");
     sp::SitesReset();
     Check(sp::SitesRead().sites == 0, "sites reset");
+    // Probe P11b: the forced index is 0, 1 or off (-1).
+    Check(sp::ForcedIndex() == -1, "not forced by default");
+    sp::SetForcedIndex(1);
+    Check(sp::ForcedIndex() == 1, "forced 1");
+    sp::SetForcedIndex(2);
+    Check(sp::ForcedIndex() == -1, "another index turns it off");
+    sp::SetForcedIndex(0);
+    Check(sp::ForcedIndex() == 0, "forced 0");
+    sp::SetForcedIndex(-1);
+    Check(sp::ForcedIndex() == -1 && !sp::SitesInstalled(), "off; the hook is not installed in the test");
     std::printf("soldier_m7_tests: %u checks passed\n", checks);
     return 0;
 }

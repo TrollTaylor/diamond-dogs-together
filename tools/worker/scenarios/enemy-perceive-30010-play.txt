@@ -11,6 +11,11 @@
 #   means body 1 never reaches the scorer (the patch cannot help: the sensor list lacks it); two mean it is scored.
 #   Run af17b899: calls=0 on both copies (the scorer never ran in free roam). perceive_sites: the return addresses of the
 #   offense index getter 0x141E02770 that do run (its live callers; soldier_perceive_site lines in the log).
+#   C. Run 32a93d27: 10-11 live callers (0xD5AF51, 0xD65320, 0xD7BECC, 0x1350035, 0xD782E3, 0xD6638E, 0xD6D9CE, 0xD6D82F,
+#      0xD6B87F (the notice gauge 0x140D6B7E0), 0xD59430, 0x14DCA77), none in the patched scorer: the single-player soldier AI
+#      reads "the" player from that getter everywhere. P11b: the host forces the getter to 1 (body 1, the guest's body) for
+#      30 s (Dynamite's single offense player): do the host's soldiers notice and shoot body 1 (soldier_hit=replica on the
+#      host)? Then 0 for 15 s and off.
 # Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive-30010-play.txt
 #      -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
 labsetting soldier_perceive=1
@@ -98,5 +103,20 @@ host run perceive_status
 guest run perceive_status
 host run perceive_sites
 guest run perceive_sites
+# --- C: the host's soldiers see only body 1 ---------------------------------------------------------------------------
+logmark both
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+wait 15000
+host run enemy_aim_nearest 1.1
+wait 800
+both capture c-15
+wait 14200
+host run damage_status
+host run perceive_force 0
+wait 15000
+host run damage_status
+host run perceive_force off
+host run perceive_sites
 host run world_status
 guest run world_status

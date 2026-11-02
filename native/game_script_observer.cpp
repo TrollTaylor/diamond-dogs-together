@@ -3290,6 +3290,18 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char line[161]{};
             if(!mgscoop::soldier_perceive::CensusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"perceive;census=overflow");
             debug::Result(pending.id,1,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_force ", 15) == 0) {
+            // Probe P11b (soldier_perceive.hpp): the offense index getter returns 0 or 1 to every caller, or stock (off).
+            const char* arg=pending.text+15;
+            const bool on=mgscoop::soldier_perceive::Patched() && mgscoop::soldier_perceive::SitesInstalled();
+            const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:-1;
+            const bool ok=on && (want>=0 || std::strcmp(arg,"off")==0);
+            if(ok) mgscoop::soldier_perceive::SetForcedIndex(want);
+            char line[96]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_force;ok=%u;forced=%d;key=%u",ok?1u:0u,
+                             mgscoop::soldier_perceive::ForcedIndex(),on?1u:0u);
+            LogFormat("soldier_perceive_force; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_sites") == 0) {
             // The full list goes to the log (the result holds what fits).
             const auto sites=mgscoop::soldier_perceive::SitesRead();

@@ -236,12 +236,19 @@ using OffenseIndex = unsigned int(__fastcall*)(void* self);
 OffenseIndex g_offenseOriginal = nullptr;
 std::uintptr_t g_imageBase = 0;
 std::atomic<bool> g_sitesOn{false};
+std::atomic<int> g_forced{-1};
 unsigned int __fastcall SitesOffense(void* self) {
     const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     if (ret > g_imageBase && ret - g_imageBase < 0x7fffffffu) SitesAdd(static_cast<std::uint32_t>(ret - g_imageBase));
-    return g_offenseOriginal(self);
+    const unsigned int stock = g_offenseOriginal(self);
+    const int forced = g_forced.load(std::memory_order_relaxed);
+    return forced == 0 || forced == 1 ? static_cast<unsigned int>(forced) : stock;
 }
 } // namespace
+
+void SetForcedIndex(int index) noexcept { g_forced.store(index == 0 || index == 1 ? index : -1, std::memory_order_relaxed); }
+int ForcedIndex() noexcept { return g_forced.load(std::memory_order_relaxed); }
+bool SitesInstalled() noexcept { return g_sitesOn.load(); }
 
 bool InstallSites(const void* base, LogFn log) noexcept {
     if (!base) return false;
