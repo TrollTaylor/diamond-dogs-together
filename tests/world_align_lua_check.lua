@@ -1049,6 +1049,15 @@ if arg[7] and arg[8] then
     fgD.now = fgD.now + 2000
     sample(fgD, 2, ENT1, 9000, 2000)
     check(#fgD.P.q == 0 and logged(fgD, ';why=near_player'), 'never within 3 m of this player')
+    -- A copy more than 10 m under the host's is corrected at once, on screen, right by x, z (run 51f8e90f: y -80 m).
+    local fgM = guestFix(0)
+    fgM.positions[1] = {0, -60.0, 20.0}
+    sample(fgM, 1, ENT1, 0, 20000)
+    check(#fgM.P.q == 1 and logged(fgM, ';view=on;why=fall;dy_m=-61.0'), 'a copy 61 m under the host copy is corrected at once')
+    local fgN = guestFix(0)
+    fgN.positions[1] = {0, -6.0, 20.0}
+    sample(fgN, 1, ENT1, 0, 20000)
+    check(#fgN.P.q == 0 and not logged(fgN, 'why=fall'), '7 m under: left to the thresholds')
     local fgE = guestFix(180)
     fgE.positions[1] = {300.0, 1.8, 0}
     sample(fgE, 1, ENT1, 300000, 1000)

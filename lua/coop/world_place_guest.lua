@@ -126,8 +126,10 @@ do
                     return
                 end
             end
-            local x, _, z = pos(en.id)
+            local x, y, z = pos(en.id)
             if not x then return end
+            -- This copy's height over the host sample's (the wire y is the standing ground y, about 0.8 m under GetPosition).
+            local dy = type(y) == "number" and type(c.y) == "number" and y - c.y or 0
             local follow, staff = W.w1 and W.followOn == true, W.w1 and W.feature and W.feature.staffPlace
             local tx, tz = c.x, c.z
             if follow and c.vx then
@@ -160,6 +162,9 @@ do
                     fix = (div.n >= 2 or d > (staff and 5000 or 8000)) and c.at - div.at >= 2500
                 end
                 if first and why ~= "near_player" and why ~= "far" then fix, why = d >= 1000, "first" end
+                -- A copy more than 10 m under the host's is corrected at once, on screen or not (run 51f8e90f: a guard's copy
+                -- stood at y -80 m under the outpost, right by x, z, until the guest's goto followed it there).
+                if follow and dy < -10000 and why ~= "near_player" and why ~= "far" then fix, why = true, "fall" end
                 fix = fix and P.state(en) == 0 and #P.q < qmax
             else
                 div.n = d > 6000 and div.n + 1 or 0
@@ -173,9 +178,9 @@ do
             if follow and mine then P.err(d, fix) end
             -- Follow logs only a correction, a guard 2 m off, a place-first or a first sample (place_err counts the rest).
             if not follow or fix or first or why or d >= 2000 then
-                L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d;host_xz=%.1f,%.1f;here_xz=%.1f,%.1f%s%s", c.seq, c.h,
+                L("event=place_div;seq=%d;ent=%.0f;div_m=%.1f;n=%d;fix=%d;host_xz=%.1f,%.1f;here_xz=%.1f,%.1f%s%s%s", c.seq, c.h,
                     d / 1000, div.n, fix and 1 or 0, c.x / 1000, c.z / 1000, x / 1000, z / 1000, view and ";view=" .. view or "",
-                    why and ";why=" .. why or "")
+                    why and ";why=" .. why or "", abs(dy) >= 5000 and fmt(";dy_m=%.1f", dy / 1000) or "")
             end
             if fix then
                 div.n, div.fixes, div.at = 0, div.fixes + 1, c.at

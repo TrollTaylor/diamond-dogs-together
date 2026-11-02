@@ -1812,6 +1812,20 @@ do
     F.tick(env, c, 15)
     check(has(c.logs, 'event=apply;ent=' .. hs('sol_b2') .. ';state=2;ver=1;src=outcome;result=ok;readback=2;d_m=4.0'),
         'the apply line carries d_m (copies 4 m apart)')
+    -- A body this copy downed and that sinks more than 10 m within 3 s is logged (run 51f8e90f), never moved; a body that
+    -- stays is not.
+    F.tick(env, c, 3 * 30, 33)
+    check(not has(c.logs, 'event=body_fall;'), 'a body that stays where it fell: no body_fall line')
+    F.clear(c)
+    c.pos[c.ids.sol_b3] = vec(1, 2, 1)
+    F.push(c, 1, OP.OUTCOME, u32('sol_b3'), 1, 2, 1, 3, 0, 0, 0, 1000, 0, 1000)
+    F.tick(env, c, 15)
+    check(has(c.logs, 'event=apply;ent=' .. hs('sol_b3') .. ';state=2;ver=1;src=outcome;result=ok;readback=2'), 'sol_b3 asleep here')
+    c.pos[c.ids.sol_b3] = vec(1, -80, 1)
+    F.tick(env, c, 3 * 30, 33)
+    check(has(c.logs, 'event=body_fall;ent=' .. hs('sol_b3') .. ';state=2;y0_m=2.0;y_m=-80.0') and
+        F.callCount(c, 'SetPosition:sol_b3:') == 0, 'a body 80 m under where it fell: one body_fall line, nothing moved')
+    c.pos[c.ids.sol_b3] = vec(1, 0, 1)
     -- A wake-up that fails is retried every 5 s, at most 3 times (each attempt sends RecoveryLife twice: +0 and +1 s).
     F.clear(c)
     c.noWake = true

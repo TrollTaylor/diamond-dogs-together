@@ -21,7 +21,7 @@ do
         function E.reset()
             E.s = {pending = {}, queue = {}, qHead = 1, rb = {}, ledger = {}, lkeys = {}, lidx = 1, req = {}, out = {}, held = {},
                 attrib = {}, attribCls = {}, last = {}, lastByCp = {}, holdup = {}, fpend = {}, fmsg = {}, sweep = 0, seq = 0, sum = 0,
-                count = 0, seen = 0, hostReq = {}}
+                count = 0, seen = 0, hostReq = {}, body = {}}
         end
         E.reset()
         W.startHooks[#W.startHooks + 1] = E.reset
@@ -163,6 +163,12 @@ do
             if result == "noop" then W.stats.noops = W.stats.noops + 1 end
             L("event=apply;ent=%.0f;state=%d;ver=%d;src=%s;result=%s;readback=%s%s", h, st, ver, src, result, tostring(readback),
                 d and fmt(";d_m=%.1f", d / 1000) or "")
+            -- A body this copy downed is looked at again 3 s later (E.bodyCheck): run 51f8e90f's guest copy of a guard it put
+            -- to sleep stood 80 m under the ground seconds later.
+            if result == "ok" and st >= 1 and st <= 5 and e and type(e.id) == "number" then
+                local ok, _, y = pcall(E.pos, e.id)
+                if ok and type(y) == "number" and y ~= 0 then s.body[h] = {at = W.now(), y = y, st = st} end
+            end
             if readback and e and RANK[readback] >= RANK[e.committed] and W.host then e.reached = true end
             local l = s.ledger[h]
             if l and result ~= "fail" then
@@ -313,6 +319,22 @@ do
             if reason == 2 then E.dropLedger("remote_mission") end
         end
 
+        -- event=body_fall when a body this copy downed is more than 10 m lower 3 s after (log only: a body is never moved).
+        function E.bodyCheck(now)
+            local s = E.s
+            for h, b in pairs(s.body) do
+                if now - b.at >= 3000 then
+                    s.body[h] = nil
+                    local e = W.ent[h]
+                    local ok, _, y = false, 0, 0
+                    if e and type(e.id) == "number" then ok, _, y = pcall(E.pos, e.id) end
+                    if ok and type(y) == "number" and y ~= 0 and b.y - y > 10000 then
+                        W.stats.bodyFalls = (W.stats.bodyFalls or 0) + 1
+                        L("event=body_fall;ent=%.0f;state=%d;y0_m=%.1f;y_m=%.1f", h, b.st, b.y / 1000, y / 1000)
+                    end
+                end
+            end
+        end
         function E.tick(now)
             local s = E.s
             if W.w1 and (W.get(svars, "mis_isDefiniteGameOver") == true or W.get(mvars, "mis_isReserveGameOver") == true) then
@@ -320,6 +342,7 @@ do
             end
             if W.w1 then
                 E.readbacks(now)
+                E.bodyCheck(now)
                 for h, p in pairs(s.pending) do
                     local e = W.ent[h]
                     -- A fulton (FultonInfo, cause 5) reads FULTONED only once IsRecovered

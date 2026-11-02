@@ -111,7 +111,12 @@ def analyse(host, guest):
                               (f.get('step') == 'hold' and float(f.get('div_m', 99)) <= 2.0))
     applies = [fields(l) for l in guest if 'event=apply' in l and 'src=outcome' in l]
     # Only standing outcomes (hold-up .. dead): a Fulton's OUTCOME carries the host copy's position under the balloon.
-    dms = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('state') in ('1', '2', '3', '4', '5')]
+    # result=terminal_local is the guest's own kill coming back (its copy was already dead): its d_m is where the host's
+    # copy died, the two-way follow of M3, reported apart and not gated (run 51f8e90f: 2.9 m, a crossfire death 13.3 m).
+    dms = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('state') in ('1', '2', '3', '4', '5') and
+           a.get('result') != 'terminal_local']
+    echoes = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('result') == 'terminal_local']
+    r['guest_echo_d_m'] = echoes
     r['guest_applies'] = len(applies)
     r['guest_applies_with_d'] = len(dms)
     r['guest_applies_d_le_2m'] = sum(1 for d in dms if d <= 2.0)
@@ -195,9 +200,10 @@ def main(argv=None):
     print('  place error: %d samples, bins %s, p50 %s m, p90 %s m, max %s m' % (r['place_err_samples'], r['place_err_bins'],
           None if r['place_err_p50_m'] is None else round(r['place_err_p50_m'], 2),
           None if r['place_err_p90_m'] is None else round(r['place_err_p90_m'], 2), r['place_err_max_m']))
-    print('  place-first %d (within 2 m %d); guest applies %d (with d_m %d, <= 2 m %d, max %s m)' % (
+    print('  place-first %d (within 2 m %d); guest applies %d (with d_m %d, <= 2 m %d, max %s m); the guest side kills committed back, '
+          'd_m %s' % (
         r['place_first'], r['place_first_ok'], r['guest_applies'], r['guest_applies_with_d'], r['guest_applies_d_le_2m'],
-        r['guest_apply_d_m_max']))
+        r['guest_apply_d_m_max'], r['guest_echo_d_m'] or 'none'))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))
