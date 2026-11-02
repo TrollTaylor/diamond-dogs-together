@@ -403,6 +403,7 @@ Check ($old1.status -ceq 'passed' -and @($old1.parts).Count -eq 1 -and $old1.par
 # Submit -Wait starts a runner when none is alive and prints the result.
 $r=Invoke-Queue $submit @('-Owner','tester-wait','-Repo',$jobRepo,'-ScenarioPath',"$pass1,$failing",'-Wait','-WaitTimeoutMin','2')
 Check ($r.Code -eq 0 -and $r.Output.Contains('status: failed') -and $r.Output.Contains('one.txt: passed') -and $r.Output.Contains('bad.txt: failed')) "submit -Wait starts the runner and prints the parts ($($r.Output))"
+Check ([regex]::Matches($r.Output,'Started the queue runner').Count -eq 1) 'submit -Wait starts one runner (a runner still starting is not started again)'
 Wait-Until {!(Test-Path -LiteralPath (Join-Path $queue 'runner.lock'))} 20 'the started runner exits once the queue is empty'
 "worker_queue_tests: $script:checks checks passed"
 } finally {

@@ -71,8 +71,12 @@ Write-WorkerQueueJson $jobPath $job
 Write-Host "Job $id queued: $($scenarios.Count) scenario(s) for $Owner -> $jobPath"
 
 $runnerScript=Join-Path $PSScriptRoot 'Invoke-WorkerQueue.ps1'
+$script:runnerStartedAt=$null
 function Start-QueueRunnerIfIdle{
     if($NoStart -or (Get-WorkerQueueRunner $root)){return}
+    # A runner started here may still be starting (pwsh, then runner.lock): give it a minute before another.
+    if($script:runnerStartedAt -and ((Get-Date)-$script:runnerStartedAt).TotalSeconds -lt 60){return}
+    $script:runnerStartedAt=Get-Date
     $pwsh=(Get-Process -Id $PID).Path
     # Hidden and detached (no inherited handles): the runner outlives this call and logs to runner.log.
     $null=Start-Process -FilePath $pwsh -WindowStyle Hidden -ArgumentList "-NoProfile -NonInteractive -File `"$runnerScript`" -QueueRoot `"$root`""
