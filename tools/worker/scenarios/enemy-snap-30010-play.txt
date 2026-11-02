@@ -1,7 +1,8 @@
 # Enemy sync M4 proof (docs/world-sync-design.md 7.10): glides, not hops. Mode play over -WanSim bad, soldier_snap and
 # soldier_owner named (soldier_follow is the gun profile's default), Afghanistan afgh_field_cp (afgh-ledge seed).
 #   0. Every afgh_field_cp guard and the LRRP pair ignore the players, the host stands the outpost down.
-#   A. Quiet, together (the guest 6 m behind the host by 2961503), 90 s: the owner streams SOLDIER_SNAP (event=snap_stats
+#   A. Quiet, together (both by 2961503: the host 8 m, the guest 4 m; a placebehind right after the host's 600 m goto
+#      found no partner pose, run 91f0112c), 90 s: the owner streams SOLDIER_SNAP (event=snap_stats
 #      tx) and the receiver drives (world_drive=stats steps / hard / rest): place error p90 <= 2 m within 30 m, hard
 #      snaps <= 1 per guard per minute; frames every 30 s.
 #   B. ALERT, 60 s (running guards).
@@ -66,8 +67,9 @@ wait 2000
 logmark both
 host run enemy goto 2961503 8
 host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 2961503 4
+guest expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
 wait 2000
-placebehind guest host 6 1
 waitlog guest 'world_lua=event=snap_stats; tx=[0-9]+; calls=[1-9]' 30
 waitlog guest 'world_drive=stats; calls=[1-9]' 30
 wait 20000
