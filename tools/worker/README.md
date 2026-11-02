@@ -57,6 +57,63 @@ flags, configuration, build directory, audited and excluded tests, the cache's o
 checks. `-Profile Release -Reuse` is refused: the release gate always runs in full (`tools/package.ps1 -Friend` runs
 it without `-Reuse`; `-CheckReceipt` accepts an existing passing Release receipt whose source and programs match).
 
+## Several scenarios in one session
+
+Each hidden session costs its preflight, both game boots and the cleanup, so put the scenarios of one round into
+one session: `Invoke-WorkerScenario.ps1 -ScenarioPath a.txt,b.txt` (also as one `pwsh -File` argument) or
+`-ScenarioList <file>` (one path per line, `#` and blank lines ignored, relative paths from the repo root). The
+parts run back to back in the same two game copies; seeds, mode and the other flags come from the call.
+
+- Every part is validated before the session starts. Their `labsetting` lines are united with `-LabSetting`; one
+  role given two values for one key (also a part against the call) is refused, naming both sources.
+- Each part starts with fresh `run` results, `resetpose` anchors and `logmark`s. Its `waitlog` reads from the session
+  start like a run of its own, so put `logmark both` first where only the part's own lines may count.
+- A failed part (an expectation, a `require`, a step error) is recorded and the next part runs. Only a session-fatal
+  error (supervisor not running, a game process gone) skips the rest (status `skipped`). Held input is released
+  between parts.
+- `scenario.json` adds `Parts` (per part: `status` passed|failed|skipped, `failure`, `fatal`, `expectations`,
+  `expect_failures`, `frames`, start/end times and each role's `script-observer.log` offsets) and `LabSettings`.
+  `Timings` rows carry their `part`, and `Failure` names the failed parts. The console prints
+  `=== part i/n start|end ===`.
+- All parts share the session's hard limit (`-TimeoutSec`, at most 600 s), and the play boot alone takes about
+  1.5 min of it, so plan the parts to fit. A part that boots or presses `title` again finds the games already in, so
+  those steps return at once.
+- One file or `-Step` lines give the old single-scenario `scenario.json` unchanged
+  (`tests/worker_queue_tests.ps1` compares it with `tests/fixtures/worker_scenario_single_golden.json`).
+
+## Test queue
+
+Rounds submit hidden runs to one FIFO queue instead of each polling the verify lock and the resource floors. The queue
+is plain files under `%TEMP%\mgs-coop-queue`: `jobs\`, `running\`, `done\` (`<id>.json` and `<id>.result.json`),
+`logs\<id>.log`, `runner.lock` and `runner.log`.
+
+```text
+pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner <round> -ScenarioPath a.txt,b.txt [-ScenarioList f]
+     [-Repo <worktree>] [-Mode] [-WanSim] [-PartnerProfile] [-NativeStage] [-BuildProfile] [-SaveSeed]
+     [-HostSaveSeed] [-GuestSaveSeed] [-GuestSaveSeedRun] [-GraphicsQuality] [-LabSetting a=1,b=2]
+     [-FreshChecks] [-AmmoExperiment] [-TimeoutSec] [-Wait [-WaitTimeoutMin 360]] [-NoStart] [-QueueRoot]
+```
+
+- `Submit-WorkerJob.ps1` writes the job: the repo (default: its own worktree) and absolute scenario paths (relative
+  ones from the repo), the named flags and the owner label. It starts the runner (hidden, detached) when none is
+  alive, unless `-NoStart`. `-Wait` shows the job's phase (queued, `waiting_floors`, `waiting_lock`, `running`) and
+  prints the result and each part.
+- `Invoke-WorkerQueue.ps1 [-QueueRoot]` is the single runner. It exits when another live runner holds `runner.lock`
+  and takes over a lock whose pid or start time is gone. It takes the jobs oldest first:
+  1. checks the floors once (C: >= 6 GB free, D: >= 3 GB, commit free >= 15 GB) and, while one is short, waits and
+     checks again every 3 min, without the verify lock;
+  2. takes `%TEMP%\mgs-coop-verify.lock` as by hand (mkdir, `owner.txt` `queue pid=.. start=.. job=.. owner=..`),
+     then `Wait-CtestReaders`. A lock held by anyone else is polled every 30 s and never removed;
+  3. runs the job repo's `Invoke-WorkerScenario.ps1` in that repo with all the job's scenarios in one session
+     (`-ScenarioList`; one scenario through `-ScenarioPath` on a runner that predates parts), stdin from NUL,
+     without `MGS_GAME_LUA_DIR`;
+  4. releases its own lock and writes `done\<id>.result.json`: `status` passed|failed|error|refused|interrupted,
+     `run_id`, `run_dir`, `parts` (status, failure, fatal, expect failures), `floor_wait_s`, `lock_wait_s`, `log`.
+- A job found in `running\` whose runner is gone is closed as `interrupted` and never rerun. If that runner died
+  holding the verify lock, the lock stays: the waiting jobs say so; remove it by hand once nothing runs.
+- `queue.json` in the queue folder can change `min_free_c_gb`, `min_free_d_gb`, `min_commit_free_gb`,
+  `floor_retry_sec` and `lock_retry_sec`. `resource_file` replaces the measurements with a fixture, for the tests.
+
 ## Coordinator protocol
 
 Supervisor CLI is exactly `worker_supervisor.exe --launch <manifest>`.

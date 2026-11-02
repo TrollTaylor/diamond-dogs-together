@@ -17,7 +17,7 @@
 set(MGS_SLOW_TESTS
   # PowerShell suites
   local_coop_windows_tests test_shards_tests fast_release_tests
-  build_profile_tests worker_loading_tests probe_install_recovery mgo_unique_rest_session_tests
+  build_profile_tests worker_loading_tests worker_queue_tests probe_install_recovery mgo_unique_rest_session_tests
   mgo_standing_cycle_session_tests mgo_standing_frame_policy_tests worker_coverage_tests
   # over ~10 s (real sockets with timers; the launcher core end to end; real helper processes)
   ddt_local_watch_process
