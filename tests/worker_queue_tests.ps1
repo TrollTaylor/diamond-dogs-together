@@ -260,6 +260,7 @@ $result=[ordered]@{RunDirectory=$run;Frames=@();Failure=$null;Expectations=@();E
 if($ScenarioList -or $files.Count -gt 1){$result['Parts']=$parts}
 ($result|ConvertTo-Json -Depth 8)|Set-Content -LiteralPath (Join-Path $run 'scenario.json')
 Write-Host "fake run $runId"
+Write-Warning 'fake warning'
 [pscustomobject]$result
 '@
 [IO.File]::WriteAllText((Join-Path $jobRepo 'tools\worker\Invoke-WorkerScenario.ps1'),$fakeScenario)
@@ -339,7 +340,9 @@ Check ($res1.status -ceq 'passed' -and $res1.run_id -cmatch '^[0-9a-f]{32}$' -an
 Check ((@($res1.parts|ForEach-Object{$_.name+'='+$_.status}) -join ',') -ceq 'one.txt=passed,two.txt=passed') 'the result lists each part'
 Check ($res2.status -ceq 'failed' -and (@($res2.parts|ForEach-Object{$_.status}) -join ',') -ceq 'failed' -and (@($res2.parts[0].expect_failures) -join '|') -ceq 'host expect ^ok <- bad') 'a failed expectation fails its part and the job'
 Check ($res1.owner -ceq 'tester-1' -and $res1.log -and (Test-Path -LiteralPath $res1.log) -and $res1.started_utc -and $res1.finished_utc) 'the result keeps owner, log and times'
-Check ((Get-Content -LiteralPath $res1.log -Raw).Contains('fake run')) 'the job log holds the run''s output'
+$logText=Get-Content -LiteralPath $res1.log -Raw
+Check ($logText.Contains('fake run') -and $logText.Contains('fake warning')) 'the job log holds the run''s output'
+Check (!$logText.Contains('CLIXML') -and !$logText.Contains('<Obj')) 'the job log is plain text (no CLIXML)'
 
 # A job whose run fails before a session: an error result; the verify lock is still released.
 $r=Invoke-Queue $submit @('-Owner','tester','-Repo',$jobRepo,'-ScenarioPath',$throwing,'-NoStart');$id=Get-JobId $r.Output
