@@ -164,6 +164,7 @@ struct DriveRule {
     bool lab{}, play{}, host{};
     unsigned short mission{};
     bool snap{}, owner{};
+    bool puppet{}, puppet_key{};  // M7 probe: the puppet drive asked for, and lab.ini soldier_puppet (a guest only)
 };
 const char* DriveAdmit(const DriveRule& rule) noexcept;
 // The nearer-player range and the `far` refusal (enemy follow): the squared distance

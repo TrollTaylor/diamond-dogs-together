@@ -145,23 +145,33 @@ bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std
 }
 
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept {
+    std::uint8_t mode = 0;
+    return ParseDriveMode(source, size, slot, go_id, pos_mm, mode) && mode == 0;
+}
+
+bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3],
+                    std::uint8_t& mode) noexcept {
     if (!source || !Prefixed(source, size, drive_prefix) || size > max_receipt) return false;
     const char* p = source + sizeof(drive_prefix) - 1;
     const char* end = source + size;
-    std::int64_t v[5]{};
-    for (unsigned i = 0; i < 5; ++i) {
+    std::int64_t v[6]{};
+    unsigned n = 0;
+    for (unsigned i = 0; i < 6 && (i < 5 || p != end); ++i) {
         if (i) {
             if (p >= end || *p != ' ') return false;
             ++p;
         }
         if (!Token(p, end, v[i])) return false;
+        n = i + 1;
     }
-    if (p != end || v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots) || v[1] < 0 || v[1] > 65535) return false;
+    if (n == 6 && (v[5] < 0 || v[5] > 1)) return false;
+    if (p != end || n < 5 || v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots) || v[1] < 0 || v[1] > 65535) return false;
     for (unsigned i = 0; i < 3; ++i)
         if (v[2 + i] < -100000000 || v[2 + i] > 100000000) return false;
     slot = static_cast<std::uint16_t>(v[0]);
     go_id = static_cast<std::uint32_t>(v[1]);
     for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[2 + i]);
+    mode = static_cast<std::uint8_t>(n == 6 ? v[5] : 0);
     return true;
 }
 

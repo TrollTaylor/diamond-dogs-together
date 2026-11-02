@@ -98,6 +98,9 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
+// Enemy sync M7 probe: an optional sixth field, the mode (0 the M4 soft follow, 1 the puppet drive).
+bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3],
+                    std::uint8_t& mode) noexcept;
 // NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
 // Outputs only on success.
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;

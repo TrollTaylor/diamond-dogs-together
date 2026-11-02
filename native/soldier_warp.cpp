@@ -291,6 +291,7 @@ DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool act
 const char* DriveAdmit(const DriveRule& rule) noexcept {
     if (!(rule.lab || rule.play)) return "role";
     if (!rule.snap || (rule.host && !rule.owner)) return "disabled";
+    if (rule.puppet && (!rule.puppet_key || rule.host)) return "puppet";
     if (!FollowMission(rule.mission)) return "mission";
     return nullptr;
 }

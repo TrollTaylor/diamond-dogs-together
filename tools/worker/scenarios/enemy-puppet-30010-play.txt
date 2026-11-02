@@ -1,0 +1,112 @@
+# Enemy sync M7 probe (docs/world-sync-design.md 7.13; the plan's P10 and the puppet drive): enemy-snap-30010-play.txt with
+# soldier_puppet named. On the guest the driven copies of the host's guards become puppets (SetPuppet, restrict notice:
+# event=puppet; on=1) driven every update (DRIVE_V1 mode 1). Measures: place error (puppet error), drive steps and hard
+# snaps, anomalies, frames of the puppets (sliding, pose). Expected limits: the puppets never notice the guest (the host's AI
+# cannot perceive it: no perception patch), their animation is their own.
+# Run (hidden worker, under the queue):
+#   pwsh -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sync -ScenarioPath tools/worker/scenarios/enemy-puppet-30010-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
+# Then: python tools/enemy_div_report.py --host <host slice> --guest <guest slice> (the M3 / M4 lines).
+# NEVER: native=role, soldier_warp=disabled, step=error, event=error, GameOver, roster_mismatch, overflow.
+labsetting soldier_owner=1
+labsetting soldier_puppet=1
+labsetting soldier_snap=1
+labsetting soldier_body=1
+labsetting soldier_route=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+waitlog host 'soldier_warp=ready; key=[a-z_]+; follow=1; owner=1; snap=1;' 5
+waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
+host run world_status
+host expect ^world;paired=1;eff=3;w1=1;roster=match;
+# --- 0: the guards ignore the players, the outpost stands down -----------------------------------------------------
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+host run enemy ignore 3970963356
+host run enemy ignore 2305481811
+host run cp_phase nearest sneak
+wait 2000
+# --- 0: the guards ignore the players, the outpost stands down -----------------------------------------------------
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+host run enemy ignore 3970963356
+host run enemy ignore 2305481811
+host run cp_phase nearest sneak
+wait 2000
+# --- A: quiet, together, 90 s ----------------------------------------------------------------------------------------
+logmark both
+host run enemy goto 2961503 8
+host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 2961503 4
+guest expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+wait 2000
+waitlog guest 'world_lua=event=snap_stats; tx=[0-9]+; calls=[1-9]' 30
+waitlog guest 'world_drive=stats; calls=[1-9]' 30
+waitlog guest 'world_lua=event=puppet; ent=[0-9]+; on=1;' 30
+wait 20000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-60
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-90
+host run world_status
+guest run world_status
+# --- B: ALERT, 60 s -------------------------------------------------------------------------------------------------
+logmark both
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-30
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-60
+# --- C: apart, 45 s -------------------------------------------------------------------------------------------------
+logmark both
+host run cp_phase nearest sneak
+guest run enemy goto 2942862796 8
+wait 44000
+host run world_status
+guest run world_status

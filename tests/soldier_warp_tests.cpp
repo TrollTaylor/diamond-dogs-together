@@ -371,6 +371,10 @@ int main() {
         Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
                   sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
               "drive: a play guest; a lab host with soldier_owner");
+        Check(sw::DriveAdmit({false, true, false, 30010, true, false, true, true}) == nullptr &&
+                  std::strcmp(sw::DriveAdmit({false, true, false, 30010, true, false, true, false}), "puppet") == 0 &&
+                  std::strcmp(sw::DriveAdmit({false, true, true, 30010, true, true, true, true}), "puppet") == 0,
+              "drive: the M7 puppet drive only on a guest with soldier_puppet");
         Check(std::strcmp(sw::DriveAdmit({false, true, true, 30010, true, false}), "disabled") == 0 &&
                   std::strcmp(sw::DriveAdmit({false, true, false, 30010, false, false}), "disabled") == 0 &&
                   std::strcmp(sw::DriveAdmit({false, true, false, 10033, true, false}), "mission") == 0 &&

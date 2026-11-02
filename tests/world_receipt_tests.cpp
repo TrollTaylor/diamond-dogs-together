@@ -439,8 +439,16 @@ void Warp() {
     Check(drive("7 1037 410000 -268400 2170000") && slot == 7 && go == 1037 && pos[0] == 410000 && pos[1] == -268400 && pos[2] == 2170000,
           "drive: slot, GameObjectId and position");
     Check(!drive("0 1037 0 0 0") && !drive("513 1037 0 0 0") && !drive("7 65536 0 0 0") && !drive("7 1037 100000001 0 0") &&
-              !drive("7 1037 0 0") && !drive("7 1037 0 0 0 0") && !drive("7  1037 0 0 0"),
-          "drive: bounds and strict grammar");
+              !drive("7 1037 0 0") && !drive("7 1037 0 0 0 1") && !drive("7  1037 0 0 0"),
+          "drive: bounds and strict grammar (the soft follow has five fields)");
+    std::uint8_t mode = 9;
+    const std::string puppet = std::string(world::drive_prefix) + "7 1037 1 2 3 1";
+    const std::string soft = std::string(world::drive_prefix) + "7 1037 1 2 3";
+    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    Check(world::ParseDriveMode(puppet.data(), puppet.size(), slot, go, pos, mode) && mode == 1 && pos[2] == 3 &&
+              world::ParseDriveMode(soft.data(), soft.size(), slot, go, pos, mode) && mode == 0 &&
+              !world::ParseDriveMode(bad.data(), bad.size(), slot, go, pos, mode),
+          "drive: the M7 probe's mode field (0 soft, 1 puppet)");
 }
 } // namespace
 

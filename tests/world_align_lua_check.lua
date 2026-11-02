@@ -1424,6 +1424,24 @@ if arg[7] and arg[8] then
     sample(rg, 53, ENT1, 6000, 20000)
     ticks(rg, 6)
     check(logged(rg, 'event=route_apply;ent=3000000001;route=rts_a;why=landed'), 'M5: a landed correction re-joins the route')
+    -- Enemy sync M7 probe (W.puppetOn): the guest's driven copies become puppets (SetPuppet, restrict notice) and take the
+    -- puppet drive (DRIVE_V1 mode 1); outside 60 m they are set back.
+    local pg = guestFix(180)
+    pg.W.snapOn, pg.W.puppetOn = true, true
+    pg.positions[1] = {0, 1.8, 20.0}
+    ticks(pg, 2)
+    local function cmdCount(c, name, on)
+        local n = 0
+        for _, cmd in ipairs(c.commands) do if cmd[2] == name then n = n + 1 end end
+        return n
+    end
+    check(pg.drives and pg.drives[1] == "return 'MGS_COOP_WORLD_DRIVE_V1' -- 1 1 0 1800 20000 1" and cmdCount(pg, 'SetPuppet') == 1 and
+        cmdCount(pg, 'SetRestrictNotice') == 1 and logged(pg, 'event=puppet;ent=3000000001;on=1;ok=1'), 'M7: a puppet, mode 1')
+    ticks(pg, 4)
+    check(cmdCount(pg, 'SetPuppet') == 1, 'M7: set once')
+    pg.positions[1] = {0, 1.8, 90.0}
+    ticks(pg, 2)
+    check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

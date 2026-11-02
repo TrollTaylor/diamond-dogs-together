@@ -3022,15 +3022,16 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     };
     std::uint16_t slot = 0;
     std::int32_t here_mm[3]{};
+    std::uint8_t mode = 0;
     sw::Request request{};
-    if (!mgscoop::world::ParseDrive(text, size, slot, request.go_id, here_mm)) return refuse("args");
+    if (!mgscoop::world::ParseDriveMode(text, size, slot, request.go_id, here_mm, mode)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (!soldier_warp_ready || !game_base) return refuse("contract");
     unsigned short mission = 0;
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     const sw::DriveRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.role == mgscoop::LabRole::host,
-                             mission, labc.soldier_follow && labc.soldier_snap, labc.soldier_owner};
+                             mission, labc.soldier_follow && labc.soldier_snap, labc.soldier_owner, mode == 1, labc.soldier_puppet};
     if (const char* why = sw::DriveAdmit(rule)) return refuse(why);
     ++drive::calls;
     std::uint64_t now = 0;
@@ -3050,8 +3051,11 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     auto& st = drive::slots[slot - 1];
     const float here[3] = {here_mm[0] * 0.001f, here_mm[1] * 0.001f, here_mm[2] * 0.001f};
     const float speed = cur.speed * 0.001f;
-    const auto step = sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, 0.1f);
-    const bool due = !st.last_ms || now - st.last_ms >= 100;
+    // M7 probe (mode 1, the puppet drive): every update from 5 cm, at most 0.2 m plus the owner's speed for 50 ms per step.
+    const bool puppet = mode == 1;
+    const auto step = puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, 0.1f)
+                             : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, 0.1f);
+    const bool due = !st.last_ms || now - st.last_ms >= (puppet ? 30u : 100u);
     if (!step.move || !due) {
         if (!step.move) { st.active = false; ++drive::rest; }
         StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=0}", static_cast<int>(step.error * 100.0f));

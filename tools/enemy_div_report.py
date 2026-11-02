@@ -114,7 +114,7 @@ def analyse(host, guest):
     # result=terminal_local is the guest's own kill coming back (its copy was already dead): its d_m is where the host's
     # copy died, the two-way follow of M3, reported apart and not gated (run 51f8e90f: 2.9 m, a crossfire death 13.3 m).
     dms = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('state') in ('1', '2', '3', '4', '5') and
-           a.get('result') != 'terminal_local']
+           a.get('result') == 'ok']
     echoes = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('result') == 'terminal_local']
     r['guest_echo_d_m'] = echoes
     r['guest_applies'] = len(applies)

@@ -13,6 +13,11 @@
 -- when a guard near it walks another one (ENEMY_DEBUG kind 2 flag 16: route only, no placement); the guest's copy takes
 -- it (SetSneakRoute without a point: the engine's default 0xFFFF, the dispatcher's own, joins where he stands) unless it
 -- is already on it (IsOnRoute), and again right after each correction lands.
+-- M7 probe (docs/world-sync-design.md 7.13; soldier_puppet, CFG r[19] bit 32, W.puppetOn; the plan's own scope for now:
+-- probes behind a switch): on the guest, the copies of the host's guards it drives become puppets (SetPuppet true and
+-- restrict notice: they neither move by themselves nor notice this player) driven every update (DRIVE_V1 mode 1);
+-- outside 60 m or off NORMAL they are set back. The host's AI does not perceive the guest's body (the target filter at
+-- 0x1325629 compares the target with the local player only; not patched), so inside the bubble no guard fights the guest.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -30,7 +35,14 @@ do
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
-        W.unpairedHooks[#W.unpairedHooks + 1] = function() S.tx, S.dv, S.slot, S.rt.cur, S.rt.want = {}, {}, nil, {}, {} end
+        W.unpairedHooks[#W.unpairedHooks + 1] = function()
+            S.tx, S.dv, S.slot, S.rt.cur, S.rt.want = {}, {}, nil, {}, {}
+            for h in pairs(S.pp or {}) do
+                local en = W.ent[h]
+                if en and type(en.id) == "number" then S.puppet(h, en, false) end
+            end
+            S.pp = nil
+        end
         -- A guard's roster slot (his W.entOrder index: the same on both copies once the rosters match).
         function S.slotOf(h)
             if not S.slot then
@@ -105,7 +117,9 @@ do
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
-                        local r = W.receipt(fmt("return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d", slot, en.id, x, y, z))
+                        local mode = W.puppetOn and not W.host and S.puppet(h, en, true) and 1 or 0
+                        local r = W.receipt(fmt(mode == 1 and "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d 1" or
+                            "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d", slot, en.id, x, y, z))
                         if type(r) == "table" and r.refused then
                             if r.refused == "stale" then S.n.stale, dv.back = S.n.stale + 1, now + 500
                             else S.n.refused, dv.back = S.n.refused + 1, now + 2000 end
@@ -116,6 +130,33 @@ do
                             else S.n.rest = S.n.rest + 1 end
                         end
                     end
+                end
+            end
+        end
+        -- M7 probe: one guard on (true) or off as a puppet; logged once per change.
+        function S.puppet(h, en, on)
+            S.pp = S.pp or {}
+            if (S.pp[h] == true) == on then return on end
+            local ok1 = pcall(W.api.send, en.id, {id = "SetPuppet", enabled = on})
+            local ok2 = pcall(W.api.send, en.id, {id = "SetRestrictNotice", enabled = on})
+            S.pp[h] = on or nil
+            L("event=puppet;ent=%.0f;on=%d;ok=%d", h, on and 1 or 0, ok1 and ok2 and 1 or 0)
+            return on
+        end
+        -- Puppets leaving the bubble (60 m, a state change, the stream gone stale) are set back, 2 per update.
+        function S.puppetsOff(now)
+            local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+            if type(px) ~= "number" or not S.pp then return end
+            local n = 0
+            for h in pairs(S.pp) do
+                local en, dv = W.ent[h], S.dv[h]
+                local x, _, z = nil, nil, nil
+                if en and type(en.id) == "number" then x, _, z = pos(en.id) end
+                if not x or P.state(en) ~= 0 or flat(x, z, px * 1000, pz * 1000) > 60000 or not W.puppetOn or
+                    (dv and dv.back and now < dv.back) then
+                    if en and type(en.id) == "number" then S.puppet(h, en, false) else S.pp[h] = nil end
+                    n = n + 1
+                    if n >= 2 then return end
                 end
             end
         end
@@ -258,6 +299,7 @@ do
             if not S.ready() then return end
             S.produce(now)
             S.drive(now)
+            if S.pp then S.puppetsOff(now) end
             if not S.statAt or now - S.statAt >= 10000 then
                 S.statAt = now
                 local c = S.n
