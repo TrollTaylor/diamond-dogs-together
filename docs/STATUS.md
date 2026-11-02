@@ -16,6 +16,47 @@
 - **Checks at the bump commit `29b11f7`:** the Release receipt above is the only test run (336 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
 - **To release:** upload **both** zips to the GitHub release `v0.15.0`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.0 -PackageDir dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82` before publishing. Nothing was pushed, tagged or released by the packaging.
 
+## November 2, 2026: enemy sync M7 probes P11 / P11b - soldier perception of body 1 (`wp/enemy-m7`, local only; not merged)
+
+Continues the enemy sync plan's M7 (plan decision 3: probes only, behind switches). All keys stay off unless named.
+
+- **Code** (`wp/enemy-m7`, on top of the 0.15.0 merge):
+  - `b37c4b4f` / `fdcffa91` (the earlier agent): `soldier_perceive` (the scorer filter patch at 0x14132562B, je -> jmp) and
+    `soldier_brain` (owner-only soldier damage, SOLDIER_HIT 0x4C, gated copies), both off unless named.
+  - `85ec22d7`: with `soldier_brain`, the other copy of a calm guard is held back with SetPuppet instead of restrict notice
+    (run ef3304dc: guards under restrict notice / debug ignore still shot their own player, 44 hits in part B); it is set
+    free while its CP is in ALERT, for 8 s after its owner's copy hit this player, and for 8 s after this player damaged it.
+    Not run with the brain on yet.
+  - `8d581d0e`: census of the patched scorer 0x141325530 (MinHook on its verified first 0x40 bytes; reads only the fields
+    the stock body reads next): `perceive_status`.
+  - `ed64a5b7`: return-address census of the offense index getter 0x141E02770 (`GetFobOffensePlayerInstanceIndex`, head
+    pinned as targeting_contract.hpp; refuses when player_team already hooks it): `perceive_sites` (full list in the log as
+    `soldier_perceive_site`).
+  - `d5abdaf4`: `perceive_force 0|1|off` (P11b): the getter returns that index to every caller (Dynamite's single offense
+    player, fixed by hand).
+  - `soldier_m7_tests` 45 checks; `-Fast` 316/316 after each change. Scenario `enemy-perceive-30010-play.txt` parts B, A, C.
+- **Runs** (queue, play, `-WanSim bad`, research build, native gun profile, afgh-ledge seed; afgh_field_cp, players 6 m
+  apart at guard 1740692850, godmode):
+  - `ef3304dc` (patch only): soldier hits host 131 / guest 269, all `soldier_own`; `soldier_replica=0` on both copies. The
+    patch did not make any soldier hit body 1.
+  - `af17b899` (census): **the patched scorer was never called** (`calls=0` on both copies) while soldiers shot both players
+    (133 / 239 hits). The earlier static reading ("the only perception filter") is wrong for free roam: 0x1413262F0 runs
+    only from 0x141326240, skipped when flag 0x100 or 0x200 is set [I: an FOB/online-only component]. The patch is a no-op.
+  - `32a93d27` (sites): 10-11 live callers of the getter on each copy: 0xD5AF51, 0xD65320, 0xD7BECC (each ~8.4 k per 3 min),
+    0x1350035 (~7.4 k), 0xD782E3, 0xD6638E, 0xD6D9CE, 0xD6D82F (~5.8 k), 0xD6B87F (the notice gauge 0x140D6B7E0: it reads
+    "the" player's position and its bit in the soldier's mask), 0xD59430, 0x14DCA77 (guest only), 0xD56834 (rare). The
+    single-player soldier AI reads the one offense player from this getter everywhere; there is no per-target filter to flip.
+  - `65e2440a` (P11b, host forces 1 for 30 s, then 0 for 15 s): host soldier hits on the host stopped (73 -> 79, then 79),
+    `soldier_replica` stayed 0. Frame `host-c-15`: a shield guard faced body 1 ("Taylor" tag) and not the host, who lay on
+    the ground; no shot on body 1 seen. [I] Forcing the index retargets the AI's attention but not (yet) its fire, or the
+    30 s window and shield guard were too short/unlucky; [U] whether body 1 can be damaged by a soldier at all.
+- **What this means for M7**: per-guard perception of both players needs a per-call answer from the getter (which soldier
+  is asking, and which of the two players it should treat as "the" player), i.e. Dynamite's approach made per soldier.
+  The scorer patch should be dropped (kept only because it is off unless named).
+- **Next**: (1) P11c: a longer forced-1 window with an unshielded rifle guard, the host out of sight, `soldier_hit` lines and
+  the guest's health; (2) find which callers run per soldier with the soldier in a register/frame (the gauge 0x140D6B7E0
+  has the soldier index in edx) to choose the index per soldier; (3) only then run `soldier_brain`.
+
 ## November 2, 2026: enemy sync M3..M7 - two-way follow, glides, routes, bodies on with the gun profile; the M7 puppet bubble a probe; the plan's other defects (`wp/enemy-follow`, local only; hidden play runs below)
 
 The user asked to continue until the whole enemy sync plan (scratchpad fb1101) is done, then to release. Rounds 1 and 2 of
