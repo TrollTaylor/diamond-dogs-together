@@ -140,6 +140,10 @@ def analyse(host, guest):
         'game_over': sum(1 for l in host + guest if 'GameOver' in l or 'reason=game_over' in l),
         'roster_mismatch': sum(1 for l in host + guest if 'roster_mismatch' in l),
         'overflow': 0,
+        # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
+        'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
+        'guard_sank': sum(1 for l in guest if 'event=place_sink' in l),
+        'body_fell': sum(1 for l in host + guest if 'event=body_fall' in l),
     }
     for l in host + guest:
         m = re.search(r'\boverflow=(\d+)', l)
@@ -174,7 +178,7 @@ def gates(r):
     gate('every host commit applied on the guest', None if not r['host_commits'] else r['commits_not_applied'] == 0,
          '%d missing of %d' % (r['commits_not_applied'], r['host_commits']))
     n = r['never']
-    gate('0 latches, faults, game overs, roster mismatches, overflow', all(v == 0 for v in n.values()), n)
+    gate('0 latches, faults, game overs, roster mismatches, overflow, guard copies under the ground', all(v == 0 for v in n.values()), n)
     return g
 
 

@@ -17,6 +17,11 @@ do
         OP.ENEMY_DEBUG, OP.ENEMY_DEBUG_ACK = 34, 35
         local fmt, floor, sqrt, max = string.format, math.floor, math.sqrt, math.max
         P.KIND = {"warp", "route", "correct", "come", "ignore", "notice", "disable", "enable"}
+        -- A scan or place-first correction puts the copy's feet this much (mm) over the host copy's (GetPosition y - 800 mm):
+        -- placed feet on feet, a copy now and then landed under the ground and fell through the world, its fall speed kept
+        -- through later corrections (runs 51f8e90f, 6e22bed0, cb8ae74f: landed 0.0 m over the request instead of 0.8 m,
+        -- then ~20 m lower 2 s later, up to 164 m). It drops the 0.4 m and stands where the host's copy does.
+        P.LIFT = 400
         P.WHY = {"not_ready", "roster", "unknown_entity", "unmapped", "terminal_local", "vehicle_local", "disabled_local",
             "native_off", "grant", "pose", "range", "stance", "realize_timeout", "position_timeout", "route_unknown", "context",
             "native_other", "unreadable_local", "busy", "far", "latched", "near_player"}
@@ -214,14 +219,14 @@ do
                                 if not ps then
                                     ps = {x = x, y = y - 800, z = z, yaw = 0, sent = now, sampleAt = now, alert = alert, every = every}
                                     pat.s[h] = ps
-                                    if P.announce(3, h, x, y - 800, z, 0, flags, 0) then sent = sent + 1 end
+                                    if P.announce(3, h, x, y - 800 + P.LIFT, z, 0, flags, 0) then sent = sent + 1 end
                                 else
                                     ps.sampleAt, ps.y, ps.every = now, y - 800, every
                                     local moved = flat(x, z, ps.x, ps.z)
                                     local combatNew = alert and not ps.alert
                                     if moved >= K.moved or now - ps.sent >= K.every or combatNew then
                                         local yaw = moved >= 300 and floor(math.atan2(x - ps.x, z - ps.z) * 1000 + 0.5) or ps.yaw
-                                        if P.announce(3, h, x, y - 800, z, yaw, flags, 0) then
+                                        if P.announce(3, h, x, y - 800 + P.LIFT, z, yaw, flags, 0) then
                                             ps.x, ps.z, ps.yaw, ps.sent, ps.alert = x, z, yaw, now, alert
                                             sent = sent + 1
                                         end
@@ -289,7 +294,7 @@ do
             local x, y, z = pos(en.id)
             if not x then return end
             if math.abs(y - 800 - ps.y) > 2000 then x, z = ps.x, ps.z end
-            y = ps.y
+            y = ps.y + P.LIFT
             local seq = P.announce(3, h, x, y, z, ps and ps.yaw or 0, 4, 0)
             L("event=place_first;step=tx;ent=%.0f;seq=%d;x=%d;y=%d;z=%d", h, seq or 0, x, y, z)
         end
