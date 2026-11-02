@@ -1,0 +1,107 @@
+# Enemy sync plan M2, binoculars (docs/anim-truth.md "Binoculars"; fb1101 B1: the partner holding binoculars looked like
+# it aimed a gun on the other screen). Mode play over -WanSim bad, Mother Base (mb-ladder seed: no guard shoots), with
+# partner_native_binocle named (off unless named until a run like this one passes). The sender's PlayerStatus BINOCLE
+# rides the equipment manifest (byte 63 bit 1); the receiver strips the remote's HOLD/FIRE and drops its aim act while
+# it is on, so body 1 holds its idle.
+#   A. The guest holds F (binoculars, SUBJECT) 4.5 s standing, the host watching from 5 m behind and 2 m to the side:
+#      guest partner_status=local ... binocle; host partner_binocle=remote; on=1; apply=strip within the hold, then on=0;
+#      host frames during the hold: the guest puppet with no raised gun.
+#   B. The same crouched.
+#   C. Control: the guest's real pistol aim (slot 2, RMB) still draws an aim on the host (frames).
+#   D. Reverse: the host holds F, the guest watches.
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/enemy-binocle-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed mb-ladder -Mode play -WanSim bad
+# NEVER: step=error, event=error, GameOver, a partner_aim_intent=on line inside a binocle hold (A, B, D).
+labsetting partner_native_binocle=1
+labsetting nametag=1
+title 200
+waitgameplay host 150
+waitgameplay guest 240
+wait 15000
+waitgameplay host 150
+waitgameplay guest 150
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+stance host stand
+stance guest stand
+waitlog host 'partner_weapon=settings;' 60
+placebehind host guest 5 2
+stance host stand
+wait 2500
+both capture at-start
+# --- A: the guest's binoculars, standing --------------------------------------------------------------------------
+logmark both
+guest press 1 120
+wait 2000
+guest hold f 1500 nowait
+wait 700
+both capture a-hold-1
+wait 700
+guest hold f 1500 nowait
+wait 700
+both capture a-hold-2
+wait 700
+guest hold f 1500 nowait
+wait 700
+both capture a-hold-3
+wait 700
+guest release
+waitlog guest 'partner_status=local; st=0x[0-9a-f]+; names=[^;]*binocle' 10
+waitlog host 'partner_binocle=remote; on=1; apply=strip;' 10
+waitlog host 'partner_binocle=remote; on=0;' 10
+wait 2000
+both capture a-after
+# --- B: crouched ----------------------------------------------------------------------------------------------------
+stance guest crouch
+wait 1500
+logmark both
+guest hold f 1500 nowait
+wait 700
+both capture b-hold-1
+wait 700
+guest hold f 1500 nowait
+wait 700
+both capture b-hold-2
+wait 700
+guest release
+waitlog host 'partner_binocle=remote; on=1;' 10
+waitlog host 'partner_binocle=remote; on=0;' 10
+stance guest stand
+wait 2000
+# --- C: control, a real pistol aim ----------------------------------------------------------------------------------
+logmark both
+guest press 2 120
+wait 2500
+both capture c-ready
+guest hold rmb 1500 nowait
+wait 700
+both capture c-rmb-a
+wait 600
+both capture c-rmb-b
+guest release
+waitlog guest 'partner_aim_local=(no_aim|aimed);' 10
+wait 2000
+# --- D: reverse, the host's binoculars ------------------------------------------------------------------------------
+placebehind guest host 5 2
+stance guest stand
+wait 2500
+logmark both
+host press 1 120
+wait 2000
+host hold f 1500 nowait
+wait 700
+both capture d-hold-1
+wait 700
+host hold f 1500 nowait
+wait 700
+both capture d-hold-2
+wait 700
+host release
+waitlog guest 'partner_binocle=remote; on=1; apply=strip;' 10
+waitlog guest 'partner_binocle=remote; on=0;' 10
+wait 1500
+both capture d-after
+state
