@@ -62,4 +62,27 @@ bool CensusLine(char* out, std::size_t capacity) noexcept;
 bool InstallCensus(const void* base, LogFn log) noexcept;
 #endif
 
+// Probe P11 sites (run af17b899: the scorer above was never called in free roam while soldiers shot both players): which
+// callers of the offense player index getter 0x141E02770 (GetFobOffensePlayerInstanceIndex; 18 static call sites) run.
+// The getter is hooked only to count its return addresses (rva) and returns the stock value.
+inline constexpr std::uintptr_t kOffenseRva = 0x1E02770;
+inline constexpr std::size_t kOffenseHeadSize = 0x20;
+extern const unsigned char kOffenseHead[kOffenseHeadSize];
+inline constexpr unsigned kSites = 24;
+struct SitesSnapshot {
+    std::uint32_t rva[kSites]{};
+    std::uint32_t count[kSites]{};
+    unsigned sites = 0;
+    std::uint32_t overflow = 0;
+};
+void SitesAdd(std::uint32_t rva) noexcept;  // pure, lock-free
+SitesSnapshot SitesRead() noexcept;
+void SitesReset() noexcept;
+// "sites;n=<sites>;overflow=;<rva hex>:<n>,..." (as many as fit); false when even the head does not fit.
+bool SitesLine(char* out, std::size_t capacity) noexcept;
+#ifdef _WIN32
+// Verifies kOffenseHead and hooks the getter (MinHook; refuses when another hook already owns it, e.g. player_team).
+bool InstallSites(const void* base, LogFn log) noexcept;
+#endif
+
 } // namespace mgscoop::soldier_perceive

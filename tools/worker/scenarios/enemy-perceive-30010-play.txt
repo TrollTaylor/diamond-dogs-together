@@ -9,6 +9,8 @@
 #   perceive_status after each part: the scorer census (soldier_perceive.hpp; run ef3304dc had soldier_replica=0 on both
 #   copies with the players 6 m apart at the guard): the distinct category-5 words the player scorer is given. One word
 #   means body 1 never reaches the scorer (the patch cannot help: the sensor list lacks it); two mean it is scored.
+#   Run af17b899: calls=0 on both copies (the scorer never ran in free roam). perceive_sites: the return addresses of the
+#   offense index getter 0x141E02770 that do run (its live callers; soldier_perceive_site lines in the log).
 # Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive-30010-play.txt
 #      -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
 labsetting soldier_perceive=1
@@ -56,6 +58,8 @@ host run damage_status
 guest run damage_status
 host run perceive_status
 guest run perceive_status
+host run perceive_sites
+guest run perceive_sites
 # --- A: every guard notices again -------------------------------------------------------------------------------------
 logmark both
 host run enemy notice 2961503
@@ -92,5 +96,7 @@ host run damage_status
 guest run damage_status
 host run perceive_status
 guest run perceive_status
+host run perceive_sites
+guest run perceive_sites
 host run world_status
 guest run world_status

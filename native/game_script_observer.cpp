@@ -3290,6 +3290,14 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char line[161]{};
             if(!mgscoop::soldier_perceive::CensusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"perceive;census=overflow");
             debug::Result(pending.id,1,line);
+        } else if (pending.id && std::strcmp(pending.text, "perceive_sites") == 0) {
+            // The full list goes to the log (the result holds what fits).
+            const auto sites=mgscoop::soldier_perceive::SitesRead();
+            for(unsigned i=0;i<sites.sites;++i)
+                LogFormat("soldier_perceive_site; rva=0x%x; n=%u\r\n",sites.rva[i],sites.count[i]);
+            char line[161]{};
+            if(!mgscoop::soldier_perceive::SitesLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"sites;overflow");
+            debug::Result(pending.id,1,line);
         } else if (pending.id && std::strcmp(pending.text, "damage_status") == 0) {
             char line[161]{};
             mgscoop::downed_damage::StatusLine(line,sizeof(line));
@@ -6661,7 +6669,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     // Enemy sync M7 (docs/world-sync-design.md 7.13): the perception filter patch for the process when named
                     // (soldier_perceive.hpp: this copy's soldiers react to body 1 too), and the owner-only damage authority.
                     // Probe P11: with the patch, the scorer census (soldier_perceive.hpp; perceive_status).
-                    if (labc.soldier_perceive && mgscoop::soldier_perceive::Patch(base, Log)) mgscoop::soldier_perceive::InstallCensus(base, Log);
+                    if (labc.soldier_perceive && mgscoop::soldier_perceive::Patch(base, Log)) {
+                        mgscoop::soldier_perceive::InstallCensus(base, Log);
+                        mgscoop::soldier_perceive::InstallSites(base, Log);
+                    }
                     else Log("soldier_perceive=off; reason=key_off\r\n");
                     // The brain only with the patch: the other copy of a guard is held back and relies on its owner seeing
                     // this player.

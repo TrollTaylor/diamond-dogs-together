@@ -85,6 +85,22 @@ int main() {
     Check(!sp::CensusLine(line, 16), "a short buffer refuses");
     sp::CensusReset();
     Check(sp::CensusRead().calls == 0 && sp::CensusRead().words == 0, "census reset");
+    // Probe P11 sites: the getter head pin and the return address counts.
+    Check(sp::kOffenseHead[0] == 0x48 && sp::kOffenseHead[4] == 0xe8 && sp::kOffenseHead[0x1f] == 0x50, "the getter head pin");
+    sp::SitesReset();
+    sp::SitesAdd(0x132561f);
+    sp::SitesAdd(0x132561f);
+    sp::SitesAdd(0x1d00000);
+    auto st = sp::SitesRead();
+    Check(st.sites == 2 && st.rva[0] == 0x132561f && st.count[0] == 2 && st.rva[1] == 0x1d00000 && st.count[1] == 1, "sites");
+    Check(sp::SitesLine(line, sizeof(line)) && std::strcmp(line, "sites;n=2;overflow=0;132561f:2,1d00000:1") == 0, "sites line");
+    for (unsigned i = 0; i < sp::kSites + 1; ++i) sp::SitesAdd(0x100 + i);
+    st = sp::SitesRead();
+    Check(st.sites == sp::kSites && st.overflow == 3, "sites keep 24 and count the rest");
+    Check(sp::SitesLine(line, sizeof(line)) && std::strlen(line) < sizeof(line), "a long list is cut to fit");
+    Check(!sp::SitesLine(line, 8), "a short buffer refuses");
+    sp::SitesReset();
+    Check(sp::SitesRead().sites == 0, "sites reset");
     std::printf("soldier_m7_tests: %u checks passed\n", checks);
     return 0;
 }

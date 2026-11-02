@@ -8,6 +8,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <strsafe.h>
+#include <intrin.h>
 #include "MinHook.h"
 #include "mgscoop/near_code.hpp"
 #endif
@@ -124,6 +125,63 @@ bool CensusLine(char* out, std::size_t capacity) noexcept {
     return true;
 }
 
+
+// The getter's first 0x20 bytes (sub rsp,0x28; call; mov rcx,[rax+0x78]; ...), as targeting_contract.hpp pins them.
+const unsigned char kOffenseHead[kOffenseHeadSize] = {
+    0x48, 0x83, 0xec, 0x28, 0xe8, 0xd7, 0xc8, 0xdf, 0xfe, 0x48, 0x8b, 0x48, 0x78, 0x48, 0x8b, 0x01,
+    0xff, 0x50, 0x40, 0x48, 0x8b, 0xc8, 0x48, 0x85, 0xc0, 0x74, 0x1b, 0x48, 0x8b, 0x00, 0xff, 0x50,
+};
+
+namespace {
+std::atomic<std::uint32_t> g_siteRva[kSites]{};  // rva + 1 (0 = empty)
+std::atomic<std::uint32_t> g_siteCount[kSites]{};
+std::atomic<std::uint32_t> g_siteOverflow{0};
+}
+
+void SitesAdd(std::uint32_t rva) noexcept {
+    const std::uint32_t key = rva + 1u;
+    for (unsigned i = 0; i < kSites; ++i) {
+        std::uint32_t seen = g_siteRva[i].load(std::memory_order_relaxed);
+        if (seen == 0 && g_siteRva[i].compare_exchange_strong(seen, key, std::memory_order_relaxed)) seen = key;
+        if (seen == key) { g_siteCount[i].fetch_add(1, std::memory_order_relaxed); return; }
+    }
+    g_siteOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
+SitesSnapshot SitesRead() noexcept {
+    SitesSnapshot s{};
+    for (unsigned i = 0; i < kSites; ++i) {
+        const std::uint32_t key = g_siteRva[i].load(std::memory_order_relaxed);
+        if (!key) continue;
+        s.rva[s.sites] = key - 1u;
+        s.count[s.sites] = g_siteCount[i].load(std::memory_order_relaxed);
+        ++s.sites;
+    }
+    s.overflow = g_siteOverflow.load(std::memory_order_relaxed);
+    return s;
+}
+
+void SitesReset() noexcept {
+    for (unsigned i = 0; i < kSites; ++i) { g_siteCount[i].store(0, std::memory_order_relaxed); g_siteRva[i].store(0, std::memory_order_relaxed); }
+    g_siteOverflow.store(0, std::memory_order_relaxed);
+}
+
+bool SitesLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const SitesSnapshot s = SitesRead();
+    int n = std::snprintf(out, capacity, "sites;n=%u;overflow=%u;", s.sites, s.overflow);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) return false;
+    std::size_t used = static_cast<std::size_t>(n);
+    for (unsigned i = 0; i < s.sites; ++i) {
+        char item[32]{};
+        const int k = std::snprintf(item, sizeof(item), "%s%x:%u", i ? "," : "", s.rva[i], s.count[i]);
+        if (k < 0 || static_cast<std::size_t>(k) >= capacity - used) break;
+        std::memcpy(out + used, item, static_cast<std::size_t>(k) + 1u);
+        used += static_cast<std::size_t>(k);
+    }
+    return true;
+}
+
 #ifdef _WIN32
 namespace {
 volatile LONG g_patched = 0;
@@ -172,6 +230,48 @@ void Revert(const void* base, LogFn log, const char* reason) noexcept {
 }
 
 bool Patched() noexcept { return g_patched != 0; }
+
+namespace {
+using OffenseIndex = unsigned int(__fastcall*)(void* self);
+OffenseIndex g_offenseOriginal = nullptr;
+std::uintptr_t g_imageBase = 0;
+std::atomic<bool> g_sitesOn{false};
+unsigned int __fastcall SitesOffense(void* self) {
+    const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    if (ret > g_imageBase && ret - g_imageBase < 0x7fffffffu) SitesAdd(static_cast<std::uint32_t>(ret - g_imageBase));
+    return g_offenseOriginal(self);
+}
+} // namespace
+
+bool InstallSites(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_sitesOn.load()) return true;
+    unsigned char live[kOffenseHeadSize]{};
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + kOffenseRva, live, sizeof(live), &read) ||
+        read != sizeof(live) || std::memcmp(live, kOffenseHead, sizeof(live)) != 0) {
+        Emit(log, "soldier_perceive_sites=refused; reason=head_bytes\r\n");
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    g_imageBase = reinterpret_cast<std::uintptr_t>(base);
+    void* target = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kOffenseRva;
+    if (!g_offenseOriginal && MH_CreateHook(target, reinterpret_cast<void*>(&SitesOffense), reinterpret_cast<void**>(&g_offenseOriginal)) != MH_OK) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_create\r\n");
+        return false;
+    }
+    if (MH_EnableHook(target) != MH_OK) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_enable\r\n");
+        return false;
+    }
+    g_sitesOn.store(true);
+    Emit(log, "soldier_perceive_sites=installed; rva=0x1e02770\r\n");
+    return true;
+}
 
 namespace {
 using Scorer = void(__fastcall*)(void* chain, unsigned soldier, void* out, void* extra);
