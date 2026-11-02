@@ -183,6 +183,7 @@ inline constexpr unsigned kAnimWeaponCap = 256;             // partner_weapon=un
 inline constexpr unsigned kCensusLinesPerSecond = 20;       // partner_fire_census per-request lines
 inline constexpr unsigned kCensusLineCap = 4000;
 inline constexpr std::uint64_t kAimActHoldMs = 150;         // the Arm's aim act expiry (a stale Arm drops it)
+inline constexpr std::uint64_t kBinocleGraceMs = 600;      // M2: the binocle strip outlives the bit (the pose stream's act lags)
 inline constexpr std::uint64_t kAimReadMs = 250;
 // What the observer reports about the native installs (H0 input hook, wraps,
 // H2, H1, and the phase-1 local detour P1, installed with defer=on).
@@ -687,6 +688,9 @@ struct Settings {
     // the LT/RT zeroing (Compose and the hook's strips) and the stance change (a
     // refused aim's Aiming bits and the Lua Reloading input no longer hold the fix).
     bool naim_truth_box, naim_truth_triggers, naim_truth_stance;
+    // Enemy sync plan M2 (partner_native_binocle; docs/anim-truth.md "Binoculars"): while the remote's manifest says it
+    // holds binoculars, its raw HOLD/FIRE and its aim act never raise body 1's gun (fb1101 B1).
+    bool nbinocle;
     PartnerNativeReloadRate nreload_rate;
     bool fire_census;
     // Set only in the effective copy: the native settings apply this tick.
@@ -911,6 +915,10 @@ struct Mission {
     std::uint16_t cbox_id, cbox_id_applied;
     std::uint8_t cbox_left;
     std::uint32_t cbox_seq;      // +1 per logged change (the native apply's edge, one attempt each)
+    // Receiver binoculars (M2): the remote manifest's binocle bit last logged, its change count and when it came on.
+    bool binocle_remote;
+    std::uint32_t binocle_seq;
+    std::uint64_t binocle_on_ms, binocle_off_ms;  // when the bit last came on / went off (the off grace, kBinocleGraceMs)
     std::uint64_t cbox_off_ms;   // when the remote's box last went off (the recon hold's grace)
     bool cbox_hold;              // the recon hold for a boxed body 1 (partner_cbox_policy::ReconHold), last tick
     LogCap cbox_cap;             // partner_cbox=hold lines

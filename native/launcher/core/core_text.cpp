@@ -340,8 +340,8 @@ std::string SteamEndText(std::int64_t end, Wording wording) {
     if (end == 0) return {};
     if (wording == Wording::launcher) {
         if (end == 5003 || end == 4001)
-            return "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, "
-                   "and is your code current?";
+            return "The host's game did not answer. One of you must press Host and the other Join (both on Join: nobody hosts). Is the "
+                   "host's game running, with Accept joins on, and is your code current?";
         if (end == 5008 || end == 5009) return "Steam could not connect the two PCs. Both must be online in Steam; try again.";
     }
     char buf[256]{};

@@ -119,6 +119,18 @@ inline constexpr std::uint8_t vspawn = 0x44;
 inline constexpr std::uint8_t supply = 0x45;
 // r1101 fulton (docs/world-sync-protocol.md section 25): FULTON (70).
 inline constexpr std::uint8_t fulton = 0x46;
+// Enemy sync M3 (docs/world-sync-design.md 7.9, docs/world-sync-protocol.md section 29), world queue, reliable, level 2,
+// play too; Lua sends and applies them only with soldier_owner (CFG r[19] bit 2):
+// ENEMY_PLACE (71) guest -> host: a guard the guest owns, where its copy stands (ENEMY_DEBUG's 30-byte shape, kind 3
+// only; flag 4 first: right before the guest's own outcome of him); the host's Lua popping it records the host's warp
+// grant (Core::RecordGrant). ENEMY_PLACE_ACK (72) host -> guest: ENEMY_DEBUG_ACK's shape. OWNER (73) host -> guest:
+// ent, owner (0 host, 1 guest), why. ENGAGE (74) guest -> host: ent, why (the guest's player fights that guard).
+inline constexpr std::uint8_t enemy_place = 0x47, enemy_place_ack = 0x48, owner = 0x49, engage = 0x4A;
+// Enemy sync M4 (docs/world-sync-design.md 7.10, protocol section 30): SOLDIER_SNAP (75), both directions, a datagram:
+// the owner's sample of one guard (sender tick, roster slot = W.entOrder index, x/y/z mm with ENEMY_DEBUG kind 3's y,
+// yaw mrad, flags 1 alert 2 moving, speed mm/s). Native keeps the newest two per slot (Core::SnapPair, newest sender tick
+// wins); never in Lua's queues. Sent only with soldier_snap (CFG r[19] bit 4); the receiver's DRIVE_V1 moves its copy.
+inline constexpr std::uint8_t soldier_snap = 0x4B;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -130,16 +142,22 @@ namespace reject {
 inline constexpr std::uint8_t unknown_entity = 1, terminal = 2, not_forward = 3, epoch = 5, not_paired = 6, roster_mismatch = 7,
                               bad_state = 8, busy = 9, level = 10, inactive = 11;
 }
-// ENEMY_DEBUG kinds and flags (lua/coop/world_place.lua).
+// ENEMY_DEBUG kinds and flags (lua/coop/world_place.lua). flag_first (enemy follow,
+// docs/world-sync-design.md 7.8): a correction sent right before the host's own
+// outcome of that guard (place first); the guest places its copy at once.
 namespace place {
 inline constexpr std::uint8_t warp = 1, route = 2, correct = 3, come = 4, ignore = 5, notice = 6, disable = 7, enable = 8;
-inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2;
+inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2, flag_first = 4, flag_body = 8, flag_route_only = 16;
 }
-// Guest warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is
-// the only source of a guest native placement target (never a Lua value).
-// 16 slots: up to 8 tracked guards send 1 Hz corrections while one placement
-// may wait up to 15 s.
-inline constexpr unsigned kGrants = 16;
+// Warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is the only
+// source of a guest native placement target (never a Lua value); a correction
+// ENEMY_PLACE popped by the host's Lua (M3, a guard the guest owns) the only source
+// of a host one. Each process records only its own role's grants.
+// 64 slots: enemy follow (docs/world-sync-design.md 7.8) samples the guards near
+// both players, a guard every 0.5-2 s, so the 16 of 0.14.7 could evict a grant
+// whose correction still waits in the guest's FIFO (16 entries) while one
+// placement may wait up to 15 s.
+inline constexpr unsigned kGrants = 64;
 inline constexpr std::uint64_t kGrantLifeMs = 15000;
 struct Grant {
     bool valid;
@@ -153,6 +171,18 @@ struct Grant {
     // reset by Configure, a session or an epoch), so a restarted host that reuses an
     // epoch and seq can never alias a spent soldier_warp::Gate command.
     std::uint32_t serial;
+};
+// Enemy sync M4: SOLDIER_SNAP records per roster slot (1..kSnapSlots), the newest two.
+inline constexpr unsigned kSnapSlots = 512;
+struct Snap {
+    bool valid;
+    std::uint16_t epoch;
+    std::uint32_t tick;      // sender ms
+    std::int32_t pos_mm[3];
+    std::int32_t yaw_mrad;
+    std::uint8_t flags;
+    std::uint16_t speed;     // mm/s
+    std::uint64_t rx_ms;     // receiver clock
 };
 // UNPAIRED reasons.
 namespace unpair {
@@ -288,6 +318,10 @@ struct CfgReply {
     // (fulton_one_save) and bit 16 the guest's lift of a host's vehicle Fulton (fulton_guest_vehicle), else 0; filled only by
     // world_link::HandleCfg.
     std::uint8_t fulton;
+    // Enemy follow (docs/world-sync-design.md 7.8): r[19] bit 1 turns on the follow scan of the guards near either player
+    // and place-first before every host outcome (lua/coop/world_place.lua; lab key soldier_follow), else 0; filled only
+    // by world_link::HandleCfg.
+    std::uint8_t follow;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is
@@ -373,10 +407,14 @@ public:
     void Tick(std::uint64_t now_ms) noexcept;
     // Formatted log lines without the "; t_ms=..." suffix and line end.
     bool TakeLine(char* out, std::size_t capacity) noexcept;
-    // Guest: the warp/correct grant recorded when Rx popped ENEMY_DEBUG `seq`
-    // in the current paired epoch, at most kGrantLifeMs ago. Cleared at unpair,
+    // The warp/correct grant recorded when Rx popped ENEMY_DEBUG `seq` (guest) or
+    // ENEMY_PLACE `seq` (host, M3) in the current paired epoch, at most
+    // kGrantLifeMs ago. Cleared at unpair,
     // local mission start/end, link session and host epoch changes.
     bool FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept;
+    // Enemy sync M4: the newest (cur) and the one before (prev, may be invalid) SOLDIER_SNAP of `slot` in the current paired
+    // epoch; false when none. Cleared with the grants.
+    bool SnapPair(std::uint16_t slot, Snap& cur, Snap& prev) const noexcept;
     unsigned grant_count() const noexcept;
 
     // Observers (tests and status).
@@ -512,6 +550,8 @@ private:
     Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{}, companion_pose_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
+    Snap snaps_[kSnapSlots][2]{};     // [slot - 1][0 newest, 1 the one before]
+    void StoreSnap(const Entry& e, std::uint64_t now_ms) noexcept;
     OutEntry out_[kOutboundQueue]{};
     unsigned out_head_ = 0, out_size_ = 0, peeked_ = 0;
     std::uint32_t generation_ = 0;

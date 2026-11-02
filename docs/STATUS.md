@@ -1,3 +1,128 @@
+## November 2, 2026: enemy sync M3..M7 - two-way follow, glides, routes, bodies on with the gun profile; the M7 puppet bubble a probe; the plan's other defects (`wp/enemy-follow`, local only; hidden play runs below)
+
+The user asked to continue until the whole enemy sync plan (scratchpad fb1101) is done, then to release. Rounds 1 and 2 of
+M1/M2 are in the entry below. This entry covers M3..M7 and the plan's section 8. The plan's own decision 3 (M7 needs per-frame
+soldier moves and a host perception patch; "approve now so its probes can run, behind a switch") is taken as approved for
+probes only.
+
+- **What players get** (README "Guards in the same place", "Enemies"): the guards the guest fights far from the host line
+  up on the host's screen too (M3); a guard that drifts glides back in small steps instead of hopping (M4); the guest's
+  copies walk the host copies' routes (M5); bodies that crawl or are dragged lie in the same spot once they stop, and a
+  held-up guard raises his hands on both screens (M6); bases calm down together (M3). The join timeout now says one of
+  you must press Host (section 8 L1).
+- **Keys**: `soldier_owner` (M3), `soldier_snap` (M4), `soldier_route` (M5), `soldier_body` (M6) follow the native gun
+  profile in lab and play; a named 0 is the off switch. `soldier_puppet` (the M7 probe) stays off unless named. CFG r[19]
+  is now a bit set (1 follow .. 32 puppet).
+- **Code** (design 7.9..7.13, protocol sections 29..30):
+  - M3: ENEMY_PLACE / ENEMY_PLACE_ACK / OWNER / ENGAGE (0x47..0x4A), the host's warp grant from the guest's ENEMY_PLACE,
+    `HostWarpReceipt` (the third `soldier_warp::Warp` caller, `HostAdmit`), ownership by distance with a hysteresis band
+    and a 10 s hold, the guest's stream of its own guards, the guest's place-first and the host's hold, PHASE flag 2
+    (calm-down).
+  - M4: SOLDIER_SNAP (0x4B, a datagram; `world::Core` keeps the newest two per roster slot), `DriveReceipt` (DRIVE_V1,
+    the fourth Warp caller: the target from the snaps only, `DriveTarget` / `DriveStep` / `DriveAdmit`,
+    `Gate::AdmitDrive`), the producer and the receiver in the new world chunk `lua/coop/world_snap.lua` (the world
+    chunks are limited to 32000 bytes; world_enemy.lua is full).
+  - M5: GetGameObjectIdUsingRoute sweeps on the host, ENEMY_DEBUG kind 2 flag 16 (route only), the guest's SetSneakRoute
+    without a point (the dispatcher's 0xFFFF default: static reading) unless already on it, again after each landed
+    correction.
+  - M6: the body sampler on both sides (flag 8 placements of a moved, resting body), `SetForceHoldup` on an applied
+    hold-up.
+  - M7 probe: SetPuppet + restrict notice on the guest's driven copies and DRIVE_V1 mode 1 (every update).
+  - The contract script pins four Warp callers (HOST_GATES, DRIVE_GATES): `--check` passes (19 sites, 10 slots).
+  - Section 8: L1 join timeout wording (game, launcher, CoopPlay.psm1, fixture); V1 one VEHICLE_GONE per vehicle per
+    mission load; act 113 / 114 named; S1 partner_recon `PlaceReason::stuck` (one placement when the body stays in a
+    non-locomotion act 3 m behind for 1 s while the remote walks on).
+- **Runs** (hidden worker through the queue, play, `-WanSim bad`, research build, native gun profile; afgh-ledge /
+  mb-ladder seeds; run archive `enemy-follow/<run>/`; `tools/enemy_div_report.py`):
+  - M3: `4ad309a3` (owner flips, `range` refusals: fixed), `d4460ea5`, `8ee31261`: 8-9 owner changes, no fast flips,
+    host placements 42-55 all applied, the calm-down applied on the guest, host-side error for the guest's guards p50
+    1.5-1.6 m / p90 6.1-6.4 m (before M4).
+  - M4..M6 together: `441b490c` (cut by a frame capture error), `2d967b8a` (passed): place error p50 0.92 m / p90 2.5 m
+    over 659 samples (M1 alone: 1.74 / 6.89), the host side p50 0.95 / p90 2.84, 1307 drive steps, 2 hard snaps, 0
+    anomalies; 3 routes sent and taken; the guest's crawling dying guards placed on the host (a lying body can be moved:
+    probe P9).
+  - Mother Base with M3..M6: `d22581c3`: p50 0.70 m / p90 1.67 m / max 2.4 m over 438 samples (M1 alone 1.0 / 3.74 /
+    5.8), 570 steps, 0 hard, 0 anomalies, every outcome placed first within 2 m.
+  - The M7 probe: `ef7e9088` (passed): puppet error p50 0.63 m / p90 1.93 m, 8524 steps, 3 hard, 0 anomalies; the
+    puppets stand in their own idle poses (no T-pose) and never fight, while on the host's screen the same guards shoot
+    the host.
+  - The shipped defaults (only soldier_follow named: M3..M6 on from the gun profile, `soldier_warp=ready; ...; owner=1;
+    snap=1`): `9a44af58` (`enemy-follow-30010-play.txt`), every report gate passed: place error p50 0.71 m / p90 1.88 m
+    over 560 samples (the M1 target was 2 m / 5 m), the host side for the guest's guards p50 0.94 / p90 2.66, 12 owner
+    changes without a fast flip, 20 of 21 host placements applied, 669 + 875 drive steps, 1 hard snap, 0 anomalies, no copy
+    under the ground, every place-first within 2 m, 69 commits applied. Its D section's guest shot and the host's Fulton
+    apply waitlogs failed (the stimulus, as above).
+- **Not done / not covered**: the M7 perception patch (the target filter at 0x1325629 is not patched), damage rerouting
+  and the act mirror (so the M7 probe can never be a default as it stands); A1 (weapon stand-ins for equips 873 / 875);
+  the punch decision (plan decision 4) and the session end (decision 5) need the user; a live session with the friend.
+  Not seen in a game: the guest's own kill placed first on the host (the outpost alerts on arrival and its guards down
+  both players, so the guest's shot never lands), a hold-up's raised hands, a carried body (only crawling ones), M5's
+  walk in step (only the route applies are counted), a rejoin. Two runs logged a copy 3-4.5 m lower 2 s after a
+  placement (`place_sink`: a ledge or platform drop).
+- **Checks**: full `tools/build.ps1` 349/349 at `925402ec`; `-Fast` 315/315 after each change; the plain lab suite 1701
+  checks; `generate_soldier_warp_contract.py --check` (four Warp callers). Nothing pushed before the release below.
+
+## November 1, 2026: enemy sync round 1 - guards in the same place on both screens (M1) and binoculars (M2), on with the gun profile (`wp/enemy-follow`, local only; hidden play runs below)
+
+The plan written after the 0.14.7 friend session (fb1101: the guest refused all 37 free-roam position fixes, the two
+copies of a guard stood 8.7 m apart at the median and up to 95 m, shared kills played where the other copy stood, one
+crossfire death happened only on the guest's screen, binoculars were drawn as a gun aim). Its decision 1 (position fixes
+on by default in free roam, `soldier_follow=0` the off switch) is taken: both keys follow the native gun profile.
+
+- **What players get:** in Afghanistan, Africa (not run) and Mother Base the guest's copies of the guards near either
+  player are pulled to where the host's stand; a kill, knockout or Fulton by the host lands on the guest's copy where the
+  host's stood (place first); a guard killed by crossfire on one screen dies on the other; guards no longer hunt the
+  guest because of a fight on the host's side; the partner looking through binoculars no longer raises a gun on your
+  screen. README "What works" and "Known limits" updated.
+- **Code** (design 7.8, protocol section 28, anim-truth "Binoculars"):
+  - Native: `soldier_warp::GuestAdmit` follow rule (play or lab, 30010 / 30020 / 30050, corrections only, range from the
+    nearer player, `far` beyond 250 m), per-guard anomaly latch (2 latch a guard, 5 the feature), 64 grants, CFG r[19],
+    the PEER receipt (`return 1,x_mm,z_mm,age_ms | return 0`): `GetPosition` on TppPlayer2 index 1 answers nothing.
+    No new game address; `generate_soldier_warp_contract.py --check` passes (19 sites, 10 slots).
+  - Lua: the host's follow scan (55 m around the host, 60 m around the partner, 4 reads / 16 scans per update, 1 m or
+    2 s, a guard 15 m nearer the partner left to the guest's copy, balloon lifts never sampled); the guest's thresholds
+    (off screen one sample over 2.5 m, on screen two over 5 m or one over 8 m; never within 3 m of the player; the
+    first sample after pairing at once); place first (flag 4; hold 1.5 s free roam, 4 s Mother Base); the crossfire
+    authority (REQ_OUTCOME attribution, `terminal_win` within 150 m, REJECT 12); no combat nudge; the wake-up retry.
+  - Copies under the ground (found by this round's runs): placed with the feet on the host copy's, 31 of 253
+    corrections of `e6011c22` landed falling and 12 copies were about 20 m lower 2 s later (free fall; one sleeping
+    copy at y -80 m in `51f8e90f`). Corrections now place the feet 400 mm higher (`P.LIFT`); a sample 10 m under the
+    host copy corrects at once (`why=fall`); `dy_m`, `event=place_sink` and `event=body_fall` are logged and gated.
+  - M2: manifest byte 63 bit 1 = binocle; with `partner_native_binocle` body 1's HOLD/FIRE and aim act are dropped while
+    the bit is on and 600 ms after. The log collector keeps the newest launch (8 MB), labels cuts, and writes the newest
+    launch's world and enemy lines whole (`script-observer-world.log`).
+  - `tools/enemy_div_report.py` computes the gates from both logs.
+- **Runs** (hidden worker, `-Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research`,
+  seeds afgh-ledge / mb-ladder; slices and JPEG frames in the run archive `enemy-follow/<run>/`):
+  - Probes: P1 `79804732` (lab key, 30010 in ALERT): 22 of 44 corrections applied, landing 0.01-0.4 m, then one `r=0
+    h=0` anomaly latched 0.14.7's whole feature; P1b `bd58d327` (quiet): refused `pose`, copies converge on their own.
+  - 30010 (`enemy-follow-30010-play.txt`): `f2d2db9b` 34/34 applied, p50 4.6 m / p90 11.9 m, the scan never saw the
+    partner; `3e01f334` 276/277, p50 2.6 / p90 8.8 m; `7dd004a4` / `c8121ed2` stopped at a placebehind / stance step
+    (a downed player); `2b0b77ea` 320/320, p50 1.74 / p90 6.89 m, place-first 3/3 within 2 m, `d_m` 0.0-0.1 m, 69 commits all
+    applied; `51f8e90f` the first crossfire in a game (guest copy `att=other` -> host `terminal_win; partner_m=17.3` ->
+    commit `actor=guest`) and the guest's shot committed `actor=guest` (host copy 2.9 m off), then a copy under the
+    ground; `6e22bed0` 38 `why=fall` samples; `e6011c22` (landing diagnostics) 253/253, p50 1.99 / p90 7.65 m;
+    `c2084e88` (the lift) 151/151 applied, 0 copies under the ground, place-first 4/4, `d_m` 0.0 m, 0 `native=role`,
+    0 latches or faults, p50 2.91 / p90 9.91 m over 347 samples.
+  - 30050 (`enemy-follow-30050-play.txt`): `ee4cc176` (key named) every gate, p50 1.14 / p90 3.94 m; `942ff515` (key
+    not named: `soldier_warp=ready; ...; follow=1` from the gun profile) every gate, p50 1.0 / p90 3.74 m, 129 commits
+    applied; `25098847` (the lift) p50 1.03 / p90 4.0 m, 76/76 applied, one staff copy 3.1 m lower 2 s after landing.
+    A frame pair of `25098847` appears to show staff member A by the same stairs on both screens.
+  - Binoculars (`enemy-binocle-play.txt`, Mother Base): `5a9fc123` every waitlog both ways, the host's frames show the
+    guest's puppet standing and crouched with its rifle slung while the pistol control still aims, but an aim intent
+    at each binocle end; with the 600 ms grace `3358bf4a` no aim intent in any binocle window, the same frames.
+- **Gates not met / not covered:** the 30010 place error p90 (5 m) fails in every run: the outpost goes to ALERT when the
+  players arrive (enemy ignore notwithstanding), and a corrected copy stands still (or walks its own route) until its
+  next correction while the host's runs on (the frozen-guard limit, M4); while both players stood by one guard 91 % of
+  samples were under 5 m (`2b0b77ea`). The plan's rejoin check, the crossfire knockout wake-up and Africa (30020) were
+  not run; the 30010 guest frames show the camera behind cover (no guard frame pair there). The guest's hold-E Fulton
+  stimulus never showed a prompt on the worker (3 runs; 30010 now shoots). A frame-time measurement was not taken (the
+  host scan logs 17-28 us per update on average).
+- **Checks:** full `tools/build.ps1` 349/349 (slow suites included) at the merge of dev (`9981adcc`); `-Fast` 315/315
+  after each change; the plain lab suite 1701 checks at `9981adcc`. Nothing pushed, tagged or released.
+- **Next:** one live session with the friend (same roles) on a build of this branch; then M3 (the guest's guards moved
+  on the host) and M4 (glides instead of hops).
+
 ## November 1, 2026: 0.14.7 package (round r1101 and the turn-on; the six run-less keys on, none of them run in a game at this build)
 
 **Package (2026-11-01):** `dist/DiamondDogsTogether-0.14.7-20261101T213348Z-c3251346/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `521b82b` with Release receipt `20261101-213054-6ea22ea0e45e4562a2f9cf085f95541b` (passed, 334 audited tests, 0 failures, no rerun; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.14.7+521b82b` and are the receipt's own files. This record is committed after the packaged commit, as for 0.14.6.

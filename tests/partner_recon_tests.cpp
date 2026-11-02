@@ -1402,6 +1402,37 @@ void TestTraverseHold() {
         w.Tick();
         Check(w.out.action == pr::Action::place && w.out.place_reason == pr::PlaceReason::teleport, "traverse hold: a teleport still places");
     }
+    // The 0.14.7 friend session's S1: a body left in a non-locomotion act (an aborted climb) while the remote walks on is
+    // placed once the error stays over 3 m for 1 s (reason stuck), once per episode; never while the remote is in a
+    // traversal act too (the replay's own business).
+    {
+        World w;
+        w.params = pr::NativeParams(pr::Params{});
+        w.Place();
+        w.follow = false;
+        w.body_act = 57;
+        w.remote_v[0] = 3000.0;
+        unsigned stuck = 0;
+        for (int i = 0; i < 250; ++i) {
+            w.Tick();
+            if (w.out.action == pr::Action::place && w.out.place_reason == pr::PlaceReason::stuck) ++stuck;
+        }
+        Check(stuck == 1 && std::strcmp(pr::PlaceReasonName(pr::PlaceReason::stuck), "stuck") == 0,
+              "stuck in a non-locomotion act 3 m behind for 1 s: one placement (reason stuck)");
+        World r;
+        r.params = pr::NativeParams(pr::Params{});
+        r.Place();
+        r.follow = false;
+        r.body_act = 57;
+        r.remote_act = 24;
+        r.remote_v[0] = 3000.0;
+        unsigned none = 0;
+        for (int i = 0; i < 250; ++i) {
+            r.Tick();
+            if (r.out.action == pr::Action::place && r.out.place_reason == pr::PlaceReason::stuck) ++none;
+        }
+        Check(none == 0, "the remote traversing too: no stuck placement");
+    }
     {
         World w;
         w.params = pr::NativeParams(pr::Params{});

@@ -114,9 +114,10 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 67, "67 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 72, "72 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
-                       "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, and local ops)");
+                       "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
+                       "M3 place / ack / owner / engage, M4 soldier snap, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +141,8 @@ void Table() {
                           {op::mission_end, 6}, {op::probe_sync, 14}, {op::enemy_outcome, 25}, {op::req_outcome, 28}, {op::phase, 11},
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
                           {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22},
-                          {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
+                          {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}, {op::enemy_place, 30}, {op::enemy_place_ack, 12},
+                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
     Check(!world::FindOp(0) && !world::FindOp(0x32) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
@@ -1357,6 +1359,87 @@ void Alignment() {
 // Spawn sync (docs/debug-menu.md): ENEMY_DEBUG host -> guest on the world queue,
 // the guest's placement grant (recorded only when its Lua pops a warp/correct),
 // ENEMY_DEBUG_ACK guest -> host, and every grant reset.
+// Enemy sync M3 (docs/world-sync-protocol.md section 29): ENEMY_PLACE guest -> host (a guard the guest owns, kind 3
+// only, recorded as the host's grant when its Lua pops it), ENEMY_PLACE_ACK host -> guest, OWNER host -> guest,
+// ENGAGE guest -> host; world queue, reliable, level 2, play too.
+void EnemyOwnerOps() {
+    Setup();
+    Pair(30010, 100);
+    Drain(g_host, 3, 101);
+    Drain(g_guest, 3, 101);
+    const std::int64_t ent = 0x0049A0F3LL;
+    world::Grant grant{};
+    for (std::uint8_t code : {op::enemy_place, op::enemy_place_ack, op::owner, op::engage}) {
+        const world::OpSpec* s = world::FindOp(code);
+        Check(s && s->queue == 1 && s->wire == world::Wire::reliable && s->level == 2 && !s->lab_only && !s->request,
+              "M3 ops: world queue, reliable, level 2, play too, no RECEIVED");
+    }
+    Check(op::enemy_place == 0x47 && op::enemy_place_ack == 0x48 && op::owner == 0x49 && op::engage == 0x4A, "M3 codes 71..74");
+    Check(Tx(g_host, op::enemy_place, {1, ent, 3, 0, 0, 0, 0, 0, 0, 7}, 102) == world::TxStatus::wrong_role, "only the guest places");
+    Check(Tx(g_guest, op::owner, {ent, 1, 1}, 102) == world::TxStatus::wrong_role, "only the host decides the owner");
+    Check(Tx(g_host, op::engage, {ent, 1}, 102) == world::TxStatus::wrong_role, "only the guest engages");
+    Check(Tx(g_guest, op::enemy_place_ack, {1, ent, 0, 0, 0, 0}, 102) == world::TxStatus::wrong_role, "only the host answers");
+    Check(Tx(g_guest, op::enemy_place, {1, ent, 1, 0, 0, 0, 0, 0, 0, 7}, 102) == world::TxStatus::bad_args, "a warp (kind 1) refused");
+    Check(Tx(g_guest, op::enemy_place, {1, ent, 3, 0, 0, 0, 0, 0, 5, 7}, 102) == world::TxStatus::bad_args, "no route on a place");
+    Check(Tx(g_guest, op::enemy_place, {1, ent, 3, 410000, 268000, 2170000, -1500, 4, 0, 1037}, 103) == world::TxStatus::ok,
+          "the guest's place-first");
+    Check(Tx(g_guest, op::enemy_place, {2, ent, 3, 411000, 268000, 2171000, 0, 1, 0, 1037}, 103) == world::TxStatus::ok, "a sample");
+    Check(Tx(g_guest, op::engage, {ent, 1}, 103) == world::TxStatus::ok, "ENGAGE");
+    Check(Tx(g_host, op::owner, {ent, 2, 0}, 103) == world::TxStatus::bad_args, "owner 0..1");
+    Check(Tx(g_host, op::owner, {ent, 1, 1}, 103) == world::TxStatus::ok, "OWNER guest");
+    Exchange(104);
+    Check(!g_host.FindGrant(1, 104, grant), "no host grant before its Lua pops the place");
+    const auto hrx = Drain(g_host, 3, 105);
+    Check(hrx.size() == 3 && hrx[0].op == op::enemy_place && hrx[0].v[3] == 410000 && hrx[0].v[7] == 4 && hrx[0].v[9] == 1037 &&
+              hrx[2].op == op::engage && hrx[2].v[0] == ent,
+          "the host pops the places then ENGAGE");
+    Check(g_host.FindGrant(1, 105, grant) && grant.kind == 3 && grant.flags == 4 && grant.ent == static_cast<std::uint32_t>(ent) &&
+              grant.pos_mm[0] == 410000 && grant.pos_mm[1] == 268000 && grant.pos_mm[2] == 2170000 && grant.yaw_mrad == -1500 &&
+              g_host.FindGrant(2, 105, grant) && grant.flags == 1,
+          "each popped place is the host's grant");
+    Check(!g_guest.FindGrant(1, 105, grant), "the guest holds no grant from its own ENEMY_PLACE");
+    const auto grx = Drain(g_guest, 3, 105);
+    Check(grx.size() == 1 && grx[0].op == op::owner && grx[0].v[1] == 1, "the guest pops OWNER");
+    Check(Tx(g_host, op::enemy_place_ack, {1, ent, 0, 0, 3, 3}, 106) == world::TxStatus::ok, "the host's ACK");
+    Exchange(107);
+    const auto acks = Drain(g_guest, 3, 108);
+    Check(acks.size() == 1 && acks[0].op == op::enemy_place_ack && acks[0].v[4] == 3, "ACK reaches the guest");
+    g_host.OnLinkState(true, 2, 200);
+    Check(g_host.grant_count() == 0, "a link session change clears the host's grants");
+}
+
+// Enemy sync M4 (docs/world-sync-protocol.md section 30): SOLDIER_SNAP, a datagram both ways; the receiver keeps the newest
+// two per roster slot by sender tick (Core::SnapPair), never in Lua's queues; a link session change clears them.
+void SoldierSnapOp() {
+    Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    const world::OpSpec* s = world::FindOp(op::soldier_snap);
+    Check(op::soldier_snap == 0x4B && s && s->wire == world::Wire::datagram && s->dir == world::Dir::both && s->level == 2 &&
+              s->lua == 8 && s->body == 25 && !s->lab_only, "SOLDIER_SNAP: a 25-byte datagram both ways, level 2, play too");
+    world::Datagram a{}, b{}, old{}, c{};
+    Check(Tx(g_host, op::soldier_snap, {1000, 7, 410000, 268400, 2170000, 1571, 2, 3500}, 101, &a) == world::TxStatus::ok && a.size > 0,
+          "a snap becomes one datagram");
+    Check(Tx(g_host, op::soldier_snap, {1100, 7, 410350, 268400, 2170000, 1571, 2, 3500}, 101, &b) == world::TxStatus::ok, "the next");
+    Check(Tx(g_host, op::soldier_snap, {1050, 7, 1, 2, 3, 0, 0, 0}, 101, &old) == world::TxStatus::ok, "an older one");
+    Check(Tx(g_host, op::soldier_snap, {1000, 0, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::soldier_snap, {1000, world::kSnapSlots + 1, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args,
+          "slot 1..512");
+    world::Snap cur{}, prev{};
+    Check(!g_guest.SnapPair(7, cur, prev), "nothing before the datagram");
+    g_guest.OnDatagram(a.bytes, a.size, 102);
+    Check(g_guest.SnapPair(7, cur, prev) && cur.tick == 1000 && cur.pos_mm[0] == 410000 && cur.yaw_mrad == 1571 && cur.flags == 2 &&
+              cur.speed == 3500 && cur.rx_ms == 102 && !prev.valid, "one snap: cur only");
+    g_guest.OnDatagram(b.bytes, b.size, 202);
+    g_guest.OnDatagram(old.bytes, old.size, 203);
+    Check(g_guest.SnapPair(7, cur, prev) && cur.tick == 1100 && cur.pos_mm[0] == 410350 && prev.valid && prev.tick == 1000 &&
+              prev.rx_ms == 102, "the newest two by sender tick; a late older one is dropped");
+    Check(Drain(g_guest, 3, 204).empty(), "never in Lua's queues");
+    Check(Tx(g_guest, op::soldier_snap, {5, 9, 0, 0, 0, 0, 1, 0}, 205, &c) == world::TxStatus::ok, "the guest sends its own guards too");
+    g_host.OnDatagram(c.bytes, c.size, 206);
+    Check(g_host.SnapPair(9, cur, prev) && cur.tick == 5, "the host keeps the guest's snaps");
+    g_guest.OnLinkState(true, 2, 300);
+    Check(!g_guest.SnapPair(7, cur, prev), "a link session change clears them");
+}
+
 void SpawnSync() {
     Setup();
     Pair(30010, 100);
@@ -1374,7 +1457,9 @@ void SpawnSync() {
     Check(Tx(g_host, op::enemy_debug, {0, 9, 1, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "seq 0 refused");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 100000001, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "position bound");
     Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 8001, 0, 0, 0}, 103) == world::TxStatus::bad_args, "yaw bound");
-    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 4, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 32, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound (0..31)");
+    // Enemy follow (docs/world-sync-design.md 7.8): flag 4 first, the host's place-first correction.
+    Check(world::place::flag_first == 4, "flag 4 is place first");
     Exchange(104);
     Check(!g_guest.FindGrant(1, 104, grant) && g_guest.grant_count() == 0, "no grant before the guest's Lua pops the message");
     Check(Drain(g_guest, 1, 104).empty(), "ENEMY_DEBUG never rides the control queue");
@@ -1390,7 +1475,7 @@ void SpawnSync() {
     const std::uint16_t first_epoch = grant.epoch;
     Check(first_serial >= 1 && first_serial <= 0x7FFFFFFFu, "a grant serial is 1..2^31-1 (the gate id sets bit 31)");
     Check(!g_guest.FindGrant(2, 105, grant) && !grant.valid, "an ignore is not a placement grant");
-    Check(!g_host.FindGrant(1, 105, grant), "the host never holds grants");
+    Check(!g_host.FindGrant(1, 105, grant), "the host holds no grant from its own ENEMY_DEBUG");
     Check(g_guest.FindGrant(1, 105 + world::kGrantLifeMs, grant) && !g_guest.FindGrant(1, 106 + world::kGrantLifeMs, grant),
           "a grant lives 15 s from the pop");
     Check(!g_guest.FindGrant(1, 50, grant), "a clock before the pop refuses");
@@ -1401,22 +1486,26 @@ void SpawnSync() {
     const auto acks = Drain(g_host, 3, 108);
     Check(acks.size() == 1 && acks[0].op == op::enemy_debug_ack && acks[0].v[1] == ent && acks[0].v[4] == 12 && acks[0].v[5] == 34,
           "ACK reaches the host world queue");
-    // Twenty corrections: the pending warp grant survives, the oldest corrections go.
-    Check(world::kGrants == 16, "16 grant slots");
-    for (std::int64_t seq = 10; seq < 30; ++seq)
-        Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
+    // Eighty corrections: the pending warp grant survives, the oldest corrections go. 64 slots (enemy follow samples the
+    // guards near both players: the 16 of 0.14.7 could evict a grant whose correction still waited in the guest's FIFO).
+    Check(world::kGrants == 64, "64 grant slots");
+    for (std::int64_t seq = 10; seq < 90; ++seq) {
+        Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, seq == 89 ? 4 : 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
+        if (seq % 20 == 0) Exchange(111);
+    }
     Exchange(111);
     std::uint64_t at = 112;
-    for (int i = 0; i < 20; ++i) {
+    for (int i = 0; i < 80; ++i) {
         world::RxReply r{};
         g_guest.Rx(3, 40, at++, r);
         Check(!r.empty && r.op == op::enemy_debug && r.v[2] == 3, "correction popped");
     }
     Check(g_guest.grant_count() == world::kGrants && g_guest.FindGrant(1, at, grant) && grant.kind == 1 && grant.serial == first_serial,
           "the warp grant is kept with its serial");
-    Check(g_guest.FindGrant(29, at, grant) && grant.kind == 3 && grant.serial == first_serial + 20 && g_guest.FindGrant(15, at, grant) &&
-              grant.serial == first_serial + 6 && !g_guest.FindGrant(14, at, grant) && !g_guest.FindGrant(10, at, grant),
-          "the oldest corrections are replaced; every recorded grant gets the next serial");
+    Check(g_guest.FindGrant(89, at, grant) && grant.kind == 3 && grant.flags == 4 && grant.serial == first_serial + 80 &&
+              g_guest.FindGrant(27, at, grant) && grant.serial == first_serial + 18 && !g_guest.FindGrant(26, at, grant) &&
+              !g_guest.FindGrant(10, at, grant),
+          "the oldest corrections are replaced; every recorded grant gets the next serial; a place-first keeps flag 4");
     // Resets: unpair (link session), local mission start/end, a new host epoch.
     g_guest.OnLinkState(true, 2, 200);
     Check(g_guest.grant_count() == 0 && !g_guest.FindGrant(19, 200, grant), "a link session change clears the grants");
@@ -2198,6 +2287,8 @@ int main() {
     WorldDisable();
     Alignment();
     SpawnSync();
+    EnemyOwnerOps();
+    SoldierSnapOp();
     RescueAndBuddies();
     RideFast();
     RideTilt();

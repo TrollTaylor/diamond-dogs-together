@@ -62,7 +62,8 @@ void TestNames() {
           "mount writer-census names have no '?'");
     Check(Is(pal::ActName(55), "ledge_hang?") && Is(pal::ActName(77), "cbox?") &&
               Is(pal::ActName(70), "cover?") && Is(pal::ActName(93), "cqc_hold?") && Is(pal::ActName(104), "heli") &&
-              Is(pal::ActName(124), "walker?") && Is(pal::ActName(29), "hit?"),
+              Is(pal::ActName(124), "walker?") && Is(pal::ActName(29), "hit?") && Is(pal::ActName(113), "punch?") &&
+              Is(pal::ActName(114), "punch_combo?"),
           "uncertain families end in '?'");
     Check(Is(pal::ActName(10), "?") && Is(pal::ActName(145), "?") && Is(pal::ActName(0xFFFF), "?") && Is(pal::ActName(0), "none"), "unknown acts");
     for (unsigned a = 0; a < 0x10000; ++a) Check(pal::ActName(static_cast<std::uint16_t>(a)) != nullptr, "every act has a name");

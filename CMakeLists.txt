@@ -143,6 +143,8 @@ add_executable(lab_config_tests tests/lab_config_tests.cpp)
 target_link_libraries(lab_config_tests PRIVATE mgs_coop_core)
 if(MSVC)
   target_compile_options(lab_config_tests PRIVATE /W4 /WX)
+  # main() keeps hundreds of LabConfig temporaries in one Debug frame: past 1 MB once the enemy sync keys grew the struct.
+  target_link_options(lab_config_tests PRIVATE /STACK:8388608)
 endif()
 add_test(NAME lab_config_tests COMMAND lab_config_tests)
 # The developer test boot (docs/test-boot.md): lab_boot parser and Lua receipts.
@@ -445,7 +447,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at the last line break in its first 16000 bytes, so each stays at most
   # 16000 bytes, under the MSVC literal limit (16380).
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")

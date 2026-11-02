@@ -44,7 +44,7 @@ const char* ActionName(Action action) noexcept;
 enum class Mode : std::uint8_t { idle, place, verify, track, pin, frozen, fallback };
 const char* ModeName(Mode mode) noexcept;
 
-enum class PlaceReason : std::uint8_t { none, first, rearm, relink, teleport, far_error, vertical, diverging, manual, retry, traverse };
+enum class PlaceReason : std::uint8_t { none, first, rearm, relink, teleport, far_error, vertical, diverging, manual, retry, traverse, stuck };
 const char* PlaceReasonName(PlaceReason reason) noexcept;
 
 enum class Frozen : std::uint8_t { none, pose_stale, input_stale, act, remote_act, stance, settle, body };
@@ -105,6 +105,10 @@ struct Params {
     std::uint32_t snap_moving_mm = 3000, snap_moving_hold_ms = 300;
     std::uint32_t snap_idle_mm = 2000, snap_idle_hold_ms = 1000;
     std::uint32_t warp_mm = 10000;
+    // A body left in a non-locomotion act (an aborted climb or vault) while the remote moves on in locomotion: one
+    // placement (PlaceReason::stuck) per episode once the error stays over stuck_act_mm for stuck_act_ms (the 0.14.7
+    // friend session's S1: 9 m behind after an aborted climb, frozen as `act`, under warp_mm).
+    std::uint32_t stuck_act_mm = 3000, stuck_act_ms = 1000;
     std::uint32_t vertical_mm = 2000, vertical_hold_ms = 500;
     std::uint32_t teleport_jump_mm = 5000, body_jump_mm = 3000;
     // Per-tick motion faster than this is a discontinuity, never fed into the
@@ -383,7 +387,8 @@ struct State {
     bool have_ef;
     // Classifications and timers.
     std::uint64_t idle_since, still_since, runaway_since, runaway_exit_since, runaway_start;
-    std::uint64_t over_since, vertical_since, yaw_since;
+    std::uint64_t over_since, vertical_since, yaw_since, stuck_since;
+    bool stuck_caught;
     std::uint64_t last_hard_ms, last_nudge_ms, last_yaw_ms;
     std::uint64_t snap_times[8];
     std::uint32_t snap_count;

@@ -80,16 +80,20 @@ do
             local held = E.s.held
             if #held < 256 then held[#held + 1] = q end
         end
-        function E.request(h, st, cause, attack, now)
+        -- cls (REQ_OUTCOME v[8]): who changed this copy, 0 this player, 1 its buddy, 2 another attacker, 3 none (enemy follow).
+        function E.request(h, st, cause, attack, now, cls)
             local s, e = E.s, W.ent[h]
-            local q = {h = h, st = st, cause = cause, attack = attack, sent = now}
+            cls = cls or 0
+            local q = {h = h, st = st, cause = cause, attack = attack, sent = now, cls = cls}
             if not W.paired then return E.keep(q) end
             local rid = W.nextRid()
             local x, y, z = E.pos(e.id)
-            if W.tx(OP.REQ_OUTCOME, rid, h, 1, st, e.kver, cause, attack, 0, x, y, z) then
+            -- M3 (W.ownerOn): a guard this guest owns is placed on the host first (world_place_guest.lua W.guestPlaceAnnounce).
+            if st ~= 0 and W.guestPlaceAnnounce then pcall(W.guestPlaceAnnounce, h) end
+            if W.tx(OP.REQ_OUTCOME, rid, h, 1, st, e.kver, cause, attack, cls, x, y, z) then
                 s.req[rid], s.out[h] = q, st
                 W.stats.reqs = W.stats.reqs + 1
-                L("event=req;rid=%d;ent=%.0f;state=%d;seen=%d", rid, h, st, e.kver)
+                L("event=req;rid=%d;ent=%.0f;state=%d;seen=%d;att=%d", rid, h, st, e.kver, cls)
             else E.keep(q) end
         end
         -- A request whose answer will not come (timeout, REJECT 5/6/9): held,
@@ -118,30 +122,49 @@ do
             s.req, s.out = {}, {}
             if n > 0 then W.log((keep and "event=req_hold;n=" or "event=req_drop;n=") .. n) end
         end
-        -- Host: guest requests, validated after the host's own pending reads (C32).
+        -- Host: guest requests, validated after the host's own pending reads (C32). Enemy follow authority
+        -- (docs/world-sync-design.md 7.8): a change attributed to the guest's player or buddy (v[8] 0, 1) commits as
+        -- before; an unattributed one (2 another attacker, 3 none: crossfire) commits only with follow on, only to a
+        -- terminal state (DYING, DEAD, FULTONED: the guest's copy cannot be undone) and only while the host copy stands
+        -- within 150 m of the partner body (event=terminal_win); anything else is refused with reason 12 and the guest
+        -- applies the host's state (a crossfire knockout wakes up there).
         function E.hostReqs()
             local s = E.s
             for i = 1, #s.hostReq do
                 local v = s.hostReq[i]
-                local rid, h, st = v[1], v[2], v[4]
+                local rid, h, st, att = v[1], v[2], v[4], v[8] or 0
                 local e = W.ent[h]
-                local reason
+                local reason, d
                 if not W.w1 then reason = 11
                 elseif not e then reason = 1
                 elseif not W.rosterOk then reason = 7
                 elseif TERMINAL[e.committed] then reason = 2
-                elseif RANK[st] <= RANK[e.committed] then reason = 3 end
+                elseif RANK[st] <= RANK[e.committed] then reason = 3
+                elseif att >= 2 then
+                    if W.followOn == true and (st == 4 or st == 5 or st == 6) then d = E.partnerGap(e) end
+                    if not (d and d <= 150000) then reason = 12 end
+                end
                 if reason then
                     W.tx(OP.REJECT, rid, OP.REQ_OUTCOME, reason, h, e and e.committed or 0, e and e.ver or 0)
-                    W.log(fmt("event=req_rx;rid=%d;ent=%.0f;state=%d;result=reject;reason=%d", rid, h, st, reason))
+                    W.log(fmt("event=req_rx;rid=%d;ent=%.0f;state=%d;result=reject;reason=%d;att=%d", rid, h, st, reason, att))
                 else
                     local cur = E.localState(e)
                     if cur ~= nil and RANK[cur] > RANK[st] then st = cur end
+                    if d then W.log(fmt("event=terminal_win;rid=%d;ent=%.0f;state=%d;att=%d;partner_m=%.1f", rid, h, st, att, d / 1000)) end
                     E.commit(h, st, 1, rid, 6, 0)
-                    E.apply(h, st, e.ver, "commit")
+                    E.apply(h, st, e.ver, "commit", v[9], v[11])
                 end
             end
             s.hostReq = {}
+        end
+        -- mm between the host copy of a guard and the partner body (TppPlayer2 index 1), or nil when either is unreadable.
+        function E.partnerGap(e)
+            local Pl = W.place
+            if type(Pl) ~= "table" or type(Pl.partnerXZ) ~= "function" then return nil end
+            local okq, qx, qz = pcall(Pl.partnerXZ, W.now())
+            local ok, x, _, z = pcall(E.pos, e.id)
+            if not (okq and ok and qx and qz) or (x == 0 and z == 0) then return nil end
+            return math.sqrt((x - qx) ^ 2 + (z - qz) ^ 2)
         end
         -- Wire handlers.
         H[OP.RECEIVED] = function(v)
@@ -154,7 +177,8 @@ do
             if q and (r == 5 or r == 6 or r == 9) then E.lost(v[1], now)
             elseif q then s.req[v[1]], s.out[q.h] = nil, nil end
             W.log(fmt("event=req_done;rid=%d;result=reject;reason=%d;op=%d;state=%d;ver=%d", v[1], v[3], v[2], v[5], v[6]))
-            if v[2] == OP.REQ_OUTCOME and (v[3] == 2 or v[3] == 3) then E.apply(v[4], v[5], v[6], "reject") end
+            -- 2, 3: the host knows better; 12 (enemy follow): an unattributed change the host refused takes its state here.
+            if v[2] == OP.REQ_OUTCOME and (v[3] == 2 or v[3] == 3 or v[3] == 12) then E.apply(v[4], v[5], v[6], "reject") end
         end
         H[OP.OUTCOME] = function(v)
             local s = E.s
@@ -164,7 +188,7 @@ do
                 W.log(fmt("event=req_done;rid=%d;ms=%d;result=outcome", v[7], floor(W.now() - q.sent)))
             end
             if v[8] % 2 == 0 then s.seen = (s.seen + 1) % 65536 end
-            E.apply(v[1], v[3], v[4], v[8] % 2 == 1 and "resync" or "outcome")
+            E.apply(v[1], v[3], v[4], v[8] % 2 == 1 and "resync" or "outcome", v[9], v[11])
         end
         H[OP.REQ_OUTCOME] = function(v)
             local q = E.s.hostReq
