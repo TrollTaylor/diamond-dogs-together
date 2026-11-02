@@ -21,8 +21,12 @@
 -- M7 brain (soldier_brain with soldier_perceive, CFG r[19] bit 64, W.brainOn): each guard's owner (the host, or the guest
 -- for the guards it owns: M3) is its only brain. Native soldier_authority (MGS_COOP_SOLDIER_AUTH_V1 bits, sent here)
 -- drops the other copy's hits on a player and forwards the owner's hits on the replica as SOLDIER_HIT
--- (world_friendly.lua); the other copy of a guard keeps restrict notice (it never notices this player by itself) until its
--- owner's copy hits this player (W.soldierEngaged), then it notices and engages this player for 8 s after the last hit.
+-- (world_friendly.lua). The other copy of a calm guard is a puppet (SetPuppet: it never notices or fights; it stands in its
+-- idle pose (run ef7e9088) and only the M4 stream moves it; M1 corrections refuse it as disabled_local;
+-- restrict notice did not hold the copies back: run 5fb44105, 89 hits on a restrict-noticed guest in 30 s); it is set free
+-- (its own AI fights, its damage counted only by the owner) while its CP is in ALERT, for 8 s after its owner's copy hit
+-- this player (SOLDIER_HIT: W.soldierEngaged, which also makes it discover this player), and for 8 s after this player
+-- damaged it (so a shot guard still reacts and its CP raises the alarm).
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -314,10 +318,21 @@ do
             return type(m) == "table" and type(m.ignored) == "table" and m.ignored[en.name] == true
         end
         local function setRestrict(h, en, g, want, why)
-            pcall(W.api.send, en.id, {id = "SetRestrictNotice", enabled = want})
+            pcall(W.api.send, en.id, {id = "SetPuppet", enabled = want})
             g.restricted = want
             S.bn.n[want and "set" or "lift"] = S.bn.n[want and "set" or "lift"] + 1
-            L("event=brain_gate;ent=%.0f;restrict=%d;why=%s", h, want and 1 or 0, why)
+            L("event=brain_gate;ent=%.0f;puppet=%d;why=%s", h, want and 1 or 0, why)
+        end
+        -- This player damaged a guard: that copy is free for 8 s (it reacts; its CP raises the alarm).
+        if type(W.observers) == "table" then
+            W.observers[#W.observers + 1] = function(kind, h, cls)
+                if not (W.brainOn and kind == "Damage" and cls == "local" and h) then return end
+                local g = S.bn.gate[h]
+                if not g then g = {}; S.bn.gate[h] = g end
+                g.free = W.now() + 8000
+                local en = W.ent[h]
+                if g.restricted and en and type(en.id) == "number" then setRestrict(h, en, g, false, "damaged") end
+            end
         end
         -- SOLDIER_HIT from the owner's copy of guard `hash` (world_friendly.lua): this copy engages this player.
         function W.soldierEngaged(hash, now)
@@ -357,11 +372,17 @@ do
                     local g = S.bn.gate[h]
                     if not g then g = {}; S.bn.gate[h] = g end
                     local engaged = g.until_ ~= nil and now < g.until_
+                    local cp = W.cp and W.cp[en.cp]
+                    local alert = cp ~= nil and cp.localPhase == 3
+                    local free = engaged or alert or (g.free ~= nil and now < g.free)
                     if P.state(en) == 0 and not debugIgnored(en) then
-                        local want = remote and not engaged
+                        local want = remote and not free
                         if want ~= (g.restricted == true) then
-                            setRestrict(h, en, g, want, want and (engaged and "expired" or "remote") or (remote and "engaged" or "owned"))
+                            setRestrict(h, en, g, want, want and "remote" or
+                                (not remote and "owned" or engaged and "engaged" or alert and "alert" or "damaged"))
                         end
+                    elseif g.restricted and P.state(en) ~= 0 then
+                        g.restricted = nil  -- a downed guard: the puppet flag no longer matters; set again when NORMAL
                     end
                 end
             end
