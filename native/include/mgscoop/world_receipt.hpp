@@ -56,7 +56,7 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp, drive };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
@@ -66,6 +66,9 @@ inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
 // Enemy sync M3 (docs/world-sync-design.md 7.9): the host's own copy of a guard the guest owns, "<seq> <goId>" as
 // WARP_V1, the target from the host's grant of the guest's ENEMY_PLACE.
 inline constexpr char hostwarp_prefix[] = "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- ";
+// Enemy sync M4 (docs/world-sync-design.md 7.10): one soft-follow step of this copy of roster slot <slot>, "<slot> <goId>
+// <x_mm> <y_mm> <z_mm>" (this copy's GetPosition), toward the owner's SOLDIER_SNAP (wire data, Core::SnapPair).
+inline constexpr char drive_prefix[] = "return 'MGS_COOP_WORLD_DRIVE_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
 // Enemy follow (docs/world-sync-design.md 7.8): the partner's position as this copy sees it (the remote pose), no
@@ -94,6 +97,7 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 // WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
 // NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
 // Outputs only on success.
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;

@@ -126,6 +126,11 @@ inline constexpr std::uint8_t fulton = 0x46;
 // grant (Core::RecordGrant). ENEMY_PLACE_ACK (72) host -> guest: ENEMY_DEBUG_ACK's shape. OWNER (73) host -> guest:
 // ent, owner (0 host, 1 guest), why. ENGAGE (74) guest -> host: ent, why (the guest's player fights that guard).
 inline constexpr std::uint8_t enemy_place = 0x47, enemy_place_ack = 0x48, owner = 0x49, engage = 0x4A;
+// Enemy sync M4 (docs/world-sync-design.md 7.10, protocol section 30): SOLDIER_SNAP (75), both directions, a datagram:
+// the owner's sample of one guard (sender tick, roster slot = W.entOrder index, x/y/z mm with ENEMY_DEBUG kind 3's y,
+// yaw mrad, flags 1 alert 2 moving, speed mm/s). Native keeps the newest two per slot (Core::SnapPair, newest sender tick
+// wins); never in Lua's queues. Sent only with soldier_snap (CFG r[19] bit 4); the receiver's DRIVE_V1 moves its copy.
+inline constexpr std::uint8_t soldier_snap = 0x4B;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -166,6 +171,18 @@ struct Grant {
     // reset by Configure, a session or an epoch), so a restarted host that reuses an
     // epoch and seq can never alias a spent soldier_warp::Gate command.
     std::uint32_t serial;
+};
+// Enemy sync M4: SOLDIER_SNAP records per roster slot (1..kSnapSlots), the newest two.
+inline constexpr unsigned kSnapSlots = 512;
+struct Snap {
+    bool valid;
+    std::uint16_t epoch;
+    std::uint32_t tick;      // sender ms
+    std::int32_t pos_mm[3];
+    std::int32_t yaw_mrad;
+    std::uint8_t flags;
+    std::uint16_t speed;     // mm/s
+    std::uint64_t rx_ms;     // receiver clock
 };
 // UNPAIRED reasons.
 namespace unpair {
@@ -395,6 +412,9 @@ public:
     // kGrantLifeMs ago. Cleared at unpair,
     // local mission start/end, link session and host epoch changes.
     bool FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept;
+    // Enemy sync M4: the newest (cur) and the one before (prev, may be invalid) SOLDIER_SNAP of `slot` in the current paired
+    // epoch; false when none. Cleared with the grants.
+    bool SnapPair(std::uint16_t slot, Snap& cur, Snap& prev) const noexcept;
     unsigned grant_count() const noexcept;
 
     // Observers (tests and status).
@@ -530,6 +550,8 @@ private:
     Slot digest_{}, guest_digest_{}, phase_vec_{}, ride_fast_{}, ride_tilt_{}, companion_pose_{};
     Grant grants_[kGrants]{};
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
+    Snap snaps_[kSnapSlots][2]{};     // [slot - 1][0 newest, 1 the one before]
+    void StoreSnap(const Entry& e, std::uint64_t now_ms) noexcept;
     OutEntry out_[kOutboundQueue]{};
     unsigned out_head_ = 0, out_size_ = 0, peeked_ = 0;
     std::uint32_t generation_ = 0;

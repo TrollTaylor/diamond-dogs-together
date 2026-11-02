@@ -188,6 +188,7 @@ do
                 -- stood at y -80 m under the outpost, right by x, z, until the guest's goto followed it there).
                 if follow and dy < -10000 and why ~= "near_player" and why ~= "far" then fix, why = true, "fall" end
                 fix = fix and P.state(en) == 0 and #P.q < qmax
+                if fix and not first and W.snapDriving and W.snapDriving(c.h, c.at) then fix, why = false, "driven" end
             else
                 div.n = d > 6000 and div.n + 1 or 0
                 local cp = W.cp[en.cp]

@@ -423,6 +423,24 @@ void Warp() {
     Check(seq == 9 && go == 9, "outputs untouched on failure");
     const std::string other = "return 'MGS_COOP_WORLD_TX_V1' -- 1 2";
     Check(!world::ParseWarp(other.data(), other.size(), seq, go) && !world::ParseWarp(nullptr, 3, seq, go), "other receipts");
+    // Enemy sync M3: the host's warp "<seq> <goId>" under its own prefix.
+    const std::string host = std::string(world::hostwarp_prefix) + "5 1037";
+    Check(world::ParseHostWarp(host.data(), host.size(), seq, go) && seq == 5 && go == 1037 &&
+              !world::ParseWarp(host.data(), host.size(), seq, go) &&
+              world::Classify(host.data(), host.size(), host.c_str()) == world::Receipt::hostwarp,
+          "the host warp receipt");
+    // Enemy sync M4: DRIVE_V1 "<slot> <goId> <x_mm> <y_mm> <z_mm>".
+    std::uint16_t slot = 0;
+    std::int32_t pos[3]{};
+    const auto drive = [&](const char* tail) {
+        const std::string s = std::string(world::drive_prefix) + tail;
+        return world::ParseDrive(s.data(), s.size(), slot, go, pos);
+    };
+    Check(drive("7 1037 410000 -268400 2170000") && slot == 7 && go == 1037 && pos[0] == 410000 && pos[1] == -268400 && pos[2] == 2170000,
+          "drive: slot, GameObjectId and position");
+    Check(!drive("0 1037 0 0 0") && !drive("513 1037 0 0 0") && !drive("7 65536 0 0 0") && !drive("7 1037 100000001 0 0") &&
+              !drive("7 1037 0 0") && !drive("7 1037 0 0 0 0") && !drive("7  1037 0 0 0"),
+          "drive: bounds and strict grammar");
 }
 } // namespace
 

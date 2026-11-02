@@ -14,6 +14,7 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/world_wire.hpp"
 
 namespace mgscoop::world_link {
 
@@ -124,6 +125,9 @@ struct WarpGrant {
     std::uint32_t serial{};  // world::Grant::serial (1..0x7FFFFFFF, process-unique)
 };
 WarpGrant FindGrant(std::uint16_t seq) noexcept;
+// Enemy sync M4: the newest two SOLDIER_SNAP records of a roster slot (world::Core::SnapPair), metres / radians on the
+// receiver's clock; false when none in the current paired epoch.
+bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept;
 
 // Observer boundaries: the runtime entry (next to PartnerMissionStart) and the
 // returned termination (next to PartnerMissionEnd).

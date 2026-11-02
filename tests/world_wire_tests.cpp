@@ -114,10 +114,10 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 71, "71 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 72, "72 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
-                       "M3 place / ack / owner / engage, and local ops)");
+                       "M3 place / ack / owner / engage, M4 soldier snap, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -142,7 +142,7 @@ void Table() {
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
                           {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22},
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}, {op::enemy_place, 30}, {op::enemy_place_ack, 12},
-                          {op::owner, 6}, {op::engage, 5}};
+                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
     Check(!world::FindOp(0) && !world::FindOp(0x32) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
@@ -1408,6 +1408,38 @@ void EnemyOwnerOps() {
     Check(g_host.grant_count() == 0, "a link session change clears the host's grants");
 }
 
+// Enemy sync M4 (docs/world-sync-protocol.md section 30): SOLDIER_SNAP, a datagram both ways; the receiver keeps the newest
+// two per roster slot by sender tick (Core::SnapPair), never in Lua's queues; a link session change clears them.
+void SoldierSnapOp() {
+    Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    const world::OpSpec* s = world::FindOp(op::soldier_snap);
+    Check(op::soldier_snap == 0x4B && s && s->wire == world::Wire::datagram && s->dir == world::Dir::both && s->level == 2 &&
+              s->lua == 8 && s->body == 25 && !s->lab_only, "SOLDIER_SNAP: a 25-byte datagram both ways, level 2, play too");
+    world::Datagram a{}, b{}, old{}, c{};
+    Check(Tx(g_host, op::soldier_snap, {1000, 7, 410000, 268400, 2170000, 1571, 2, 3500}, 101, &a) == world::TxStatus::ok && a.size > 0,
+          "a snap becomes one datagram");
+    Check(Tx(g_host, op::soldier_snap, {1100, 7, 410350, 268400, 2170000, 1571, 2, 3500}, 101, &b) == world::TxStatus::ok, "the next");
+    Check(Tx(g_host, op::soldier_snap, {1050, 7, 1, 2, 3, 0, 0, 0}, 101, &old) == world::TxStatus::ok, "an older one");
+    Check(Tx(g_host, op::soldier_snap, {1000, 0, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::soldier_snap, {1000, world::kSnapSlots + 1, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args,
+          "slot 1..512");
+    world::Snap cur{}, prev{};
+    Check(!g_guest.SnapPair(7, cur, prev), "nothing before the datagram");
+    g_guest.OnDatagram(a.bytes, a.size, 102);
+    Check(g_guest.SnapPair(7, cur, prev) && cur.tick == 1000 && cur.pos_mm[0] == 410000 && cur.yaw_mrad == 1571 && cur.flags == 2 &&
+              cur.speed == 3500 && cur.rx_ms == 102 && !prev.valid, "one snap: cur only");
+    g_guest.OnDatagram(b.bytes, b.size, 202);
+    g_guest.OnDatagram(old.bytes, old.size, 203);
+    Check(g_guest.SnapPair(7, cur, prev) && cur.tick == 1100 && cur.pos_mm[0] == 410350 && prev.valid && prev.tick == 1000 &&
+              prev.rx_ms == 102, "the newest two by sender tick; a late older one is dropped");
+    Check(Drain(g_guest, 3, 204).empty(), "never in Lua's queues");
+    Check(Tx(g_guest, op::soldier_snap, {5, 9, 0, 0, 0, 0, 1, 0}, 205, &c) == world::TxStatus::ok, "the guest sends its own guards too");
+    g_host.OnDatagram(c.bytes, c.size, 206);
+    Check(g_host.SnapPair(9, cur, prev) && cur.tick == 5, "the host keeps the guest's snaps");
+    g_guest.OnLinkState(true, 2, 300);
+    Check(!g_guest.SnapPair(7, cur, prev), "a link session change clears them");
+}
+
 void SpawnSync() {
     Setup();
     Pair(30010, 100);
@@ -2256,6 +2288,7 @@ int main() {
     Alignment();
     SpawnSync();
     EnemyOwnerOps();
+    SoldierSnapOp();
     RescueAndBuddies();
     RideFast();
     RideTilt();

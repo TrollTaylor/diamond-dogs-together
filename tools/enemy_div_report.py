@@ -192,6 +192,14 @@ def analyse(host, guest):
     r['m3_engage'] = sum(1 for l in guest if 'event=engage_tx' in l)
     r['m3_phase_down'] = sum(1 for l in host if 'src=down' in l)
     r['m3_phase_down_applied'] = sum(1 for l in guest if 'src=down' in l and 'applied=1' in l)
+    # Enemy sync M4 (the stream and the soft follow): the last stats lines of each side.
+    def last(lines, needle):
+        found = [fields(l) for l in lines if needle in l]
+        return found[-1] if found else {}
+    for side, lines in (('host', host), ('guest', guest)):
+        s, d = last(lines, 'event=snap_stats'), last(lines, 'world_drive=stats')
+        r['m4_' + side] = {k: int(s.get(k, 0) or 0) for k in ('tx', 'calls', 'steps', 'hard', 'rest', 'stale', 'refused')}
+        r['m4_' + side + '_native'] = {k: int(d.get(k, 0) or 0) for k in ('calls', 'steps', 'hard', 'rest', 'stale', 'refused', 'anomalies')}
     return r
 
 
@@ -259,6 +267,9 @@ def main(argv=None):
                   r['m3_host_err_samples'], r['m3_host_err_p50_m'] and round(r['m3_host_err_p50_m'], 2),
                   r['m3_host_err_p90_m'] and round(r['m3_host_err_p90_m'], 2), r['m3_guest_place_first'], r['m3_engage'],
                   r['m3_phase_down'], r['m3_phase_down_applied']))
+    if r['m4_host']['tx'] or r['m4_guest']['calls']:
+        print('  M4: host snap %s / drive %s; guest snap %s / drive %s' % (r['m4_host'], r['m4_host_native'], r['m4_guest'],
+                                                                          r['m4_guest_native']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

@@ -424,6 +424,13 @@ const char* HandleNote(const char* source, std::size_t size) noexcept {
     return known ? yes : no;
 }
 
+bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept {
+    now_ms = partner_net::NowMs();
+    if (!Configured()) return false;
+    Locked lock;
+    return g_core.SnapPair(slot, cur, prev);
+}
+
 WarpGrant FindGrant(std::uint16_t seq) noexcept {
     WarpGrant out{};
     if (!Configured()) return out;

@@ -280,8 +280,13 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
 # never from Lua) and the host's owner receipt (enemy sync M3, WORLD_WARP_HOST_V1,
 # target from the host's grant of the guest's ENEMY_PLACE, never from Lua).
 EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt'),
-                    ('game_script_observer.cpp', 'HostWarpReceipt')}
+                    ('game_script_observer.cpp', 'HostWarpReceipt'), ('game_script_observer.cpp', 'DriveReceipt')}
 CALLER_GATES = ('debug_soldier_warp', 'spawn_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+# Enemy sync M4 (docs/world-sync-design.md 7.10): the soft-follow step, its target from the owner's SOLDIER_SNAP (wire
+# data, world_link::SnapPair), at most a bounded step from this copy, no command budget but the anomaly latches.
+DRIVE_GATES = ('soldier_snap', 'soldier_follow', 'soldier_warp_ready', 'mission_terminating', 'sw::DriveAdmit(rule)',
+               'world_link::SnapPair(', 'sw::DriveTarget(', 'sw::DriveStep(', 'soldier_warp_gate.AdmitDrive(', 'refuse("far")',
+               'request.pos[i] = step.pos[i]')
 HOST_GATES = ('soldier_owner', 'soldier_follow', 'soldier_warp_ready', 'LabRole::host', 'soldier_warp_gate.Admit(', 'mission_terminating',
               'sw::HostAdmit(rule)', 'world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', '0x80000000u | grant.serial',
               'sw::NearerSquared(', 'refuse("far")', 'snapshot.remote_age_ms > 1000')
@@ -295,7 +300,7 @@ for path in sorted((ROOT / 'native').glob('*.cpp')):
         name = heads[-1].group(1) if heads else '?'
         body = text[heads[-1].start():match.start()] if heads else ''
         callers.append((path.name, name))
-        for gate in (HOST_GATES if name == 'HostWarpReceipt' else CALLER_GATES):
+        for gate in (HOST_GATES if name == 'HostWarpReceipt' else DRIVE_GATES if name == 'DriveReceipt' else CALLER_GATES):
             if gate not in body:
                 failures.append(f'{path.name} {name}: calls soldier_warp::Warp without {gate!r} before the call')
 if len(callers) != len(EXPECTED_CALLERS) or set(callers) != EXPECTED_CALLERS:

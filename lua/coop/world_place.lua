@@ -67,14 +67,8 @@ do
             W.observers[#W.observers + 1] = function(kind, h, cls)
                 if kind == "Damage" and P.patrol then P.patrol.combat[h] = W.now() end
                 -- M3: this player's own hit on a guard is an engagement (the host's decides ownership; the guest's is sent).
-                if kind == "Damage" and cls == "local" and W.ownerOn and P.engH then
-                    local now = W.now()
-                    if W.host then P.engH[h] = now
-                    elseif W.paired and now - (P.engG[h] or -1e9) >= 2000 and W.tx(OP.ENGAGE, h, 1) then
-                        P.engG[h] = now
-                        L("event=engage_tx;ent=%.0f", h)
-                    end
-                end
+                -- (ENGAGE is not sent: run 4ad309a3's Damage messages named the local player for guards nobody shot.)
+                if kind == "Damage" and cls == "local" and W.ownerOn and P.engH and W.host then P.engH[h] = W.now() end
             end
         end
         -- Releases an entry's force-realize; the game call only while its mission is still in

@@ -95,6 +95,9 @@ struct Gate {
     const char* Record(const Result& result) noexcept;
     // Anomalies recorded against this GameObjectId (0 if none).
     unsigned SoldierAnomalies(std::uint32_t go) const noexcept;
+    // Enemy sync M4's drive (no command budget: one Warp per step): nullptr admits one Warp of `go` and makes it the
+    // guard Record() counts an anomaly against; else latched or soldier (this guard is latched).
+    const char* AdmitDrive(std::uint32_t go) noexcept;
 };
 
 // Guest grant admission (game_script_observer.cpp GuestWarpReceipt), after the
@@ -133,6 +136,36 @@ struct HostRule {
     bool owner{};               // lab.ini soldier_owner
 };
 const char* HostAdmit(const HostRule& rule) noexcept;
+// Enemy sync M4 (docs/world-sync-design.md 7.10): the soft follow of a copy toward the owner's SOLDIER_SNAP.
+// DriveTarget: the owner's position at render time `t` (receiver ms): between prev and cur by their receive times, else
+// cur moved on by their velocity for at most kDriveExtrapolateMs; false without cur or when cur is kDriveStaleMs old.
+inline constexpr std::uint64_t kDriveDelayMs = 100, kDriveExtrapolateMs = 250, kDriveStaleMs = 1000;
+struct DriveSample {
+    bool valid{};
+    std::uint64_t rx_ms{};
+    float pos[3]{};
+    float yaw{};
+};
+bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t t, float (&out)[3], float& yaw) noexcept;
+// DriveStep: from this copy (`from`, GetPosition metres) toward `to` (the target, the request's y convention): planar
+// error; a guard at rest starts moving beyond start_m and stops under stop_m (`active` carries it); a step is at most
+// max_step metres planar; beyond snap_m the whole way (hard). y: the target's when hard or more than 1 m off this copy's
+// feet (GetPosition y - 0.8), else this copy's own feet plus lift_m (it stays on its own ground).
+struct DriveStepResult {
+    float pos[3]{};
+    float error{};
+    bool move{}, hard{}, active{};
+};
+DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
+                          float snap_m, float lift_m) noexcept;
+// Who may drive (DriveReceipt): play or lab with soldier_follow + soldier_snap, 30010 / 30020 / 30050; a host only with
+// soldier_owner (its copies of guest-owned guards). nullptr admits; else "role", "disabled", "mission".
+struct DriveRule {
+    bool lab{}, play{}, host{};
+    unsigned short mission{};
+    bool snap{}, owner{};
+};
+const char* DriveAdmit(const DriveRule& rule) noexcept;
 // The nearer-player range and the `far` refusal (enemy follow): the squared distance
 // from `pos` to the nearer of `host` (only when host_valid: the remote pose is fresh)
 // and `self` (only when self_valid), and which one is nearer (true: self); +inf and

@@ -341,6 +341,50 @@ int main() {
     Check(sw::GuestAdmit({true, false, true, 30010, true, true}, staff) == nullptr && staff == G::lab, "the lab key comes first");
     Check(sw::FollowMission(30010) && sw::FollowMission(30020) && sw::FollowMission(30050) && !sw::FollowMission(40050) &&
           !sw::FollowMission(10010), "follow missions: free roam and Mother Base");
+    // Enemy sync M4 (docs/world-sync-design.md 7.10): the soft follow's target, step and admission, the drive gate.
+    {
+        sw::DriveSample a{true, 1000, {0.0f, 1.0f, 0.0f}, 0.5f}, b{true, 1100, {1.0f, 1.0f, 0.0f}, 0.6f}, none{};
+        float out[3]{}, yaw = 0.0f;
+        Check(sw::DriveTarget(a, b, 1050, out, yaw) && std::fabs(out[0] - 0.5f) < 1e-4f && yaw == 0.6f, "drive: halfway between");
+        Check(sw::DriveTarget(a, b, 1150, out, yaw) && std::fabs(out[0] - 1.5f) < 1e-4f, "drive: extrapolated 50 ms");
+        Check(sw::DriveTarget(a, b, 1600, out, yaw) && std::fabs(out[0] - 3.5f) < 1e-4f, "drive: extrapolation capped at 250 ms");
+        Check(sw::DriveTarget(none, b, 1050, out, yaw) && out[0] == 1.0f, "drive: one sample");
+        Check(!sw::DriveTarget(a, b, 1100 + sw::kDriveStaleMs + sw::kDriveDelayMs + 1, out, yaw) && !sw::DriveTarget(a, none, 1000, out, yaw),
+              "drive: stale or none");
+        const float here[3] = {0.0f, 1.8f, 0.0f};
+        const float near_to[3] = {1.0f, 1.4f, 0.0f}, far_to[3] = {3.0f, 1.4f, 4.0f}, snap_to[3] = {9.0f, 1.4f, 0.0f};
+        const float up_to[3] = {2.0f, 5.0f, 0.0f}, close_to[3] = {0.35f, 1.4f, 0.0f};
+        auto ds = sw::DriveStep(here, near_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(!ds.move && !ds.active && std::fabs(ds.error - 1.0f) < 1e-4f, "drive: 1 m at rest stays");
+        ds = sw::DriveStep(here, far_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && ds.active && !ds.hard && std::fabs(ds.error - 5.0f) < 1e-4f && std::fabs(ds.pos[0] - 0.24f) < 1e-4f &&
+                  std::fabs(ds.pos[2] - 0.32f) < 1e-4f && std::fabs(ds.pos[1] - 1.1f) < 1e-4f,
+              "drive: 5 m off: a 0.4 m step on its own ground (feet + 0.1 m)");
+        ds = sw::DriveStep(here, near_to, true, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && std::fabs(ds.pos[0] - 0.4f) < 1e-4f && ds.active, "drive: moving, 1 m off: still stepping");
+        ds = sw::DriveStep(here, close_to, true, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && std::fabs(ds.pos[0] - 0.35f) < 1e-4f && !ds.active, "drive: the last step arrives, then rests");
+        ds = sw::DriveStep(here, snap_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && ds.hard && ds.pos[0] == 9.0f && ds.pos[1] == 1.4f, "drive: beyond 8 m the whole way (the target y)");
+        ds = sw::DriveStep(here, up_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && ds.pos[1] == 5.0f, "drive: a target over 1 m off this copy's feet takes its own y");
+        Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
+                  sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
+              "drive: a play guest; a lab host with soldier_owner");
+        Check(std::strcmp(sw::DriveAdmit({false, true, true, 30010, true, false}), "disabled") == 0 &&
+                  std::strcmp(sw::DriveAdmit({false, true, false, 30010, false, false}), "disabled") == 0 &&
+                  std::strcmp(sw::DriveAdmit({false, true, false, 10033, true, false}), "mission") == 0 &&
+                  std::strcmp(sw::DriveAdmit({false, false, false, 30010, true, false}), "role") == 0,
+              "drive: a host without soldier_owner, the key off, a story mission, neither play nor lab");
+        sw::Gate g{};
+        Check(g.AdmitDrive(1100) == nullptr && g.go_id == 1100, "drive gate: admits and names the guard");
+        sw::Result drive_bad{};
+        drive_bad.refusal = "anomaly";
+        g.Record(drive_bad);
+        Check(g.AdmitDrive(1100) == nullptr, "drive gate: one anomaly");
+        g.Record(drive_bad);
+        Check(std::strcmp(g.AdmitDrive(1100), "soldier") == 0 && g.AdmitDrive(1101) == nullptr, "drive gate: the second latches the guard");
+    }
     // Enemy sync M3 (docs/world-sync-design.md 7.9): the host's warp of its own copy of a guest-owned guard.
     for (const unsigned short mission : follow_missions) {
         Check(sw::HostAdmit({false, true, true, mission, true, true}) == nullptr, "owner: a play correction on the host");

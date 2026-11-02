@@ -99,6 +99,10 @@ constexpr OpSpec kOps[] = {
     {op::enemy_place_ack, "ENEMY_PLACE_ACK", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
     {op::owner, "OWNER", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 3, 0, 0, 6, {U32(), U8(0, 1), U8(0, 7)}},
+    // Enemy sync M4 (protocol section 30): tick, slot, x/y/z mm, yaw mrad, flags, speed mm/s; a datagram, both directions.
+    {op::soldier_snap, "SOLDIER_SNAP", 1, Dir::both, Wire::datagram, 2, false, false, 8, 0, 0, 25,
+     {U32(), U16(1, kSnapSlots), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
+      I32(-8000, 8000), U8(0, 7), U16()}},
     {op::engage, "ENGAGE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 2, 0, 0, 5, {U32(), U8(0, 7)}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
     {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
@@ -774,6 +778,10 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         PushControl(entry, false);
         return;
     }
+    if (op.code == op::soldier_snap) {
+        StoreSnap(entry, now_ms);
+        return;
+    }
     if (spec->wire == Wire::datagram) {
         Slot& slot = op.code == op::digest ? digest_ : op.code == op::guest_digest ? guest_digest_ :
                      op.code == op::ride_fast ? ride_fast_ : op.code == op::ride_tilt ? ride_tilt_ :
@@ -1224,6 +1232,32 @@ void Core::RecordGrant(const Entry& e, std::uint64_t now_ms) noexcept {
 
 void Core::ClearGrants() noexcept {
     for (Grant& g : grants_) g = Grant{};
+    for (auto& pair : snaps_) pair[0] = pair[1] = Snap{};
+}
+
+// Enemy sync M4: the newest SOLDIER_SNAP per slot by sender tick (an older or repeated tick is stale_u).
+void Core::StoreSnap(const Entry& e, std::uint64_t now_ms) noexcept {
+    if (e.count < 8 || e.v[1] < 1 || e.v[1] > static_cast<std::int64_t>(kSnapSlots)) return;
+    Snap* pair = snaps_[e.v[1] - 1];
+    if (pair[0].valid && pair[0].epoch == e.epoch && !Newer32(U(e.v[0]), pair[0].tick)) {
+        ++stats_.stale_u;
+        return;
+    }
+    if (!pair[0].valid || pair[0].epoch != e.epoch) pair[1] = Snap{};
+    else pair[1] = pair[0];
+    pair[0] = Snap{true, e.epoch, U(e.v[0]), {static_cast<std::int32_t>(e.v[2]), static_cast<std::int32_t>(e.v[3]),
+                   static_cast<std::int32_t>(e.v[4])}, static_cast<std::int32_t>(e.v[5]), static_cast<std::uint8_t>(e.v[6]),
+                   static_cast<std::uint16_t>(e.v[7]), now_ms};
+}
+
+bool Core::SnapPair(std::uint16_t slot, Snap& cur, Snap& prev) const noexcept {
+    cur = prev = Snap{};
+    if (!paired_ || !level_ || slot < 1 || slot > kSnapSlots) return false;
+    const Snap* pair = snaps_[slot - 1];
+    if (!pair[0].valid || pair[0].epoch != epoch_) return false;
+    cur = pair[0];
+    if (pair[1].valid && pair[1].epoch == epoch_) prev = pair[1];
+    return true;
 }
 
 bool Core::FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept {

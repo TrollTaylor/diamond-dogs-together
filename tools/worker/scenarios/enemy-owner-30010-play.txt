@@ -73,10 +73,10 @@ logmark both
 guest run enemy goto 2942862796 5
 guest expect ^(enemy_goto;ent=2942862796;submitted_warp|warp_position_readback)
 wait 2500
-guest run enemy_aim_nearest 1.0
+guest run enemy_aim_nearest 0.5
 wait 300
-guest hold rmb 1200 nowait
-wait 500
+guest hold rmb 1500 nowait
+wait 700
 guest press lmb 120
 wait 300
 guest release

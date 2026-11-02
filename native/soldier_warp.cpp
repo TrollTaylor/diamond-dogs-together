@@ -238,6 +238,63 @@ const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept {
     return "disabled";
 }
 
+const char* Gate::AdmitDrive(std::uint32_t go) noexcept {
+    if (latched) return "latched";
+    if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
+    command = 0;
+    go_id = go;
+    attempts = 0;
+    landed = false;
+    return nullptr;
+}
+
+bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t t, float (&out)[3], float& yaw) noexcept {
+    if (!cur.valid || t > cur.rx_ms + kDriveStaleMs + kDriveDelayMs) return false;
+    yaw = cur.yaw;
+    if (prev.valid && prev.rx_ms < cur.rx_ms) {
+        const float span = static_cast<float>(cur.rx_ms - prev.rx_ms);
+        float u = 0.0f;
+        if (t <= prev.rx_ms) u = 0.0f;
+        else if (t <= cur.rx_ms) u = static_cast<float>(t - prev.rx_ms) / span;
+        else u = 1.0f + static_cast<float>((t - cur.rx_ms) > kDriveExtrapolateMs ? kDriveExtrapolateMs : (t - cur.rx_ms)) / span;
+        for (unsigned i = 0; i < 3; ++i) out[i] = prev.pos[i] + (cur.pos[i] - prev.pos[i]) * u;
+        return true;
+    }
+    for (unsigned i = 0; i < 3; ++i) out[i] = cur.pos[i];
+    return true;
+}
+
+DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
+                          float snap_m, float lift_m) noexcept {
+    DriveStepResult r{};
+    const float dx = to[0] - from[0], dz = to[2] - from[2];
+    r.error = std::sqrt(dx * dx + dz * dz);
+    for (unsigned i = 0; i < 3; ++i) r.pos[i] = from[i];
+    if (!std::isfinite(r.error)) return r;
+    r.active = active ? r.error >= stop_m : r.error > start_m;
+    if (!r.active) return r;
+    r.move = true;
+    if (r.error > snap_m) {
+        r.hard = true;
+        for (unsigned i = 0; i < 3; ++i) r.pos[i] = to[i];
+        return r;
+    }
+    const float k = r.error > max_step ? max_step / r.error : 1.0f;
+    r.pos[0] = from[0] + dx * k;
+    r.pos[2] = from[2] + dz * k;
+    const float feet = from[1] - 0.8f;
+    r.pos[1] = std::fabs(to[1] - feet) > 1.0f ? to[1] : feet + lift_m;
+    if (k >= 1.0f) r.active = false;  // arrived: at rest until it drifts past start_m again
+    return r;
+}
+
+const char* DriveAdmit(const DriveRule& rule) noexcept {
+    if (!(rule.lab || rule.play)) return "role";
+    if (!rule.snap || (rule.host && !rule.owner)) return "disabled";
+    if (!FollowMission(rule.mission)) return "mission";
+    return nullptr;
+}
+
 const char* HostAdmit(const HostRule& rule) noexcept {
     if (!rule.host || !(rule.lab || rule.play)) return "role";
     if (!rule.owner) return "disabled";

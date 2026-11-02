@@ -65,6 +65,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
     if (Prefixed(source, size, hostwarp_prefix)) return Receipt::hostwarp;
+    if (Prefixed(source, size, drive_prefix)) return Receipt::drive;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
     if (Prefixed(source, size, save_prefix)) return Receipt::save;
     if (SameText(source, size, peer_source)) return Receipt::peer;
@@ -141,6 +142,27 @@ bool ParseSeqGo(const char* source, std::size_t size, const char (&prefix)[N], s
 
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {
     return ParseSeqGo(source, size, hostwarp_prefix, seq, go_id);
+}
+
+bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept {
+    if (!source || !Prefixed(source, size, drive_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(drive_prefix) - 1;
+    const char* end = source + size;
+    std::int64_t v[5]{};
+    for (unsigned i = 0; i < 5; ++i) {
+        if (i) {
+            if (p >= end || *p != ' ') return false;
+            ++p;
+        }
+        if (!Token(p, end, v[i])) return false;
+    }
+    if (p != end || v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots) || v[1] < 0 || v[1] > 65535) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (v[2 + i] < -100000000 || v[2 + i] > 100000000) return false;
+    slot = static_cast<std::uint16_t>(v[0]);
+    go_id = static_cast<std::uint32_t>(v[1]);
+    for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[2 + i]);
+    return true;
 }
 
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {

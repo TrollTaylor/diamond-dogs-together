@@ -2998,6 +2998,97 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     return debug_reply;
 }
 
+// DRIVE_V1 "<slot> <goId> <x_mm> <y_mm> <z_mm>" from lua/coop/world_snap.lua (enemy sync M4, docs/world-sync-design.md
+// 7.10): one soft-follow step of this copy (Lua names its GameObjectId and where it stands) toward the owner's
+// SOLDIER_SNAP of that roster slot (world::Core::SnapPair: wire data only), rendered kDriveDelayMs behind: at rest under
+// 1.5 m, then at most 0.4 m (plus the owner's speed for 100 ms) every 100 ms until under 0.3 m, the whole way beyond 8 m;
+// the y of this copy's own feet (+ 0.1 m) unless the target is more than 1 m off it. Play or lab with soldier_follow +
+// soldier_snap (sw::DriveAdmit; a host only with soldier_owner), 30010 / 30020 / 30050; the step within 60 m of the
+// nearer player; no command budget but the per-guard and process anomaly latches (Gate::AdmitDrive / Record).
+// Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>} or {refused="<reason>"}.
+namespace drive {
+struct SlotState { bool active; std::uint64_t last_ms; };
+SlotState slots[mgscoop::world::kSnapSlots]{};
+std::uint64_t stats_at = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0;
+}
+const char* DriveReceipt(const char* text, std::size_t size) noexcept {
+    namespace debug = mgscoop::debug_menu;
+    namespace sw = mgscoop::soldier_warp;
+    const auto refuse = [](const char* why) noexcept {
+        ++drive::refused;
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"%s\"}", why);
+        return static_cast<const char*>(debug_reply);
+    };
+    std::uint16_t slot = 0;
+    std::int32_t here_mm[3]{};
+    sw::Request request{};
+    if (!mgscoop::world::ParseDrive(text, size, slot, request.go_id, here_mm)) return refuse("args");
+    const auto& labc = mgscoop::GetLabConfig();
+    if (!soldier_warp_ready || !game_base) return refuse("contract");
+    unsigned short mission = 0;
+    if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
+        return refuse("mission");
+    const sw::DriveRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.role == mgscoop::LabRole::host,
+                             mission, labc.soldier_follow && labc.soldier_snap, labc.soldier_owner};
+    if (const char* why = sw::DriveAdmit(rule)) return refuse(why);
+    ++drive::calls;
+    std::uint64_t now = 0;
+    mgscoop::world::Snap cur{}, prev{};
+    const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
+    if (!drive::stats_at || now - drive::stats_at >= 10000) {
+        drive::stats_at = now;
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u\r\n", drive::calls,
+                  drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies);
+    }
+    if (!have) { ++drive::stale; return refuse("stale"); }
+    sw::DriveSample a{}, b{};
+    b = {true, cur.rx_ms, {cur.pos_mm[0] * 0.001f, cur.pos_mm[1] * 0.001f, cur.pos_mm[2] * 0.001f}, cur.yaw_mrad * 0.001f};
+    if (prev.valid) a = {true, prev.rx_ms, {prev.pos_mm[0] * 0.001f, prev.pos_mm[1] * 0.001f, prev.pos_mm[2] * 0.001f}, prev.yaw_mrad * 0.001f};
+    float target[3]{}, yaw = 0.0f;
+    if (now < sw::kDriveDelayMs || !sw::DriveTarget(a, b, now - sw::kDriveDelayMs, target, yaw)) { ++drive::stale; return refuse("stale"); }
+    auto& st = drive::slots[slot - 1];
+    const float here[3] = {here_mm[0] * 0.001f, here_mm[1] * 0.001f, here_mm[2] * 0.001f};
+    const float speed = cur.speed * 0.001f;
+    const auto step = sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, 0.1f);
+    const bool due = !st.last_ms || now - st.last_ms >= 100;
+    if (!step.move || !due) {
+        if (!step.move) { st.active = false; ++drive::rest; }
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=0}", static_cast<int>(step.error * 100.0f));
+        return debug_reply;
+    }
+    PublishDebugSnapshot();
+    const auto snapshot = debug::GetSnapshot();
+    const bool remote_fresh = snapshot.remote_valid && !(snapshot.remote_age_ms > 1000);
+    if (!snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 || !snapshot.pose_valid) return refuse("pose");
+    bool remote_nearer = false;
+    const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
+    const float remote[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
+    const float nearer = sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
+    if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
+    for (unsigned i = 0; i < 3; ++i) {
+        request.pos[i] = step.pos[i];
+        request.player[i] = remote_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
+    }
+    request.yaw = yaw;
+    request.max_range = sw::kMaxRangeLimitM;
+    const auto base = reinterpret_cast<std::uintptr_t>(game_base);
+    sw::Result result{};
+    if (const char* gate = soldier_warp_gate.AdmitDrive(request.go_id)) result.refusal = gate;
+    else {
+        result = sw::Warp(base, game_span, request);
+        LogSoldierWarpLatch(soldier_warp_gate.Record(result), 0, request.go_id, result);
+    }
+    st.last_ms = now;
+    st.active = step.active;
+    if (result.refusal && std::strcmp(result.refusal, "unrealized") != 0) return refuse(result.refusal);
+    if (step.hard) ++drive::hard;
+    else ++drive::steps;
+    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u}", static_cast<int>(step.error * 100.0f),
+                     step.hard ? 2 : 1, result.out, unsigned(result.handled));
+    return debug_reply;
+}
+
 // PEER (enemy follow, docs/world-sync-design.md 7.8): the partner's remote pose for the host's follow scan and the
 // guest's far check (lua/coop/world_place.lua P.partnerXZ), while the world is paired and the link connected.
 const char* WorldPeerReceipt() noexcept {
@@ -4571,6 +4662,9 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleNote(buffer,size);
     } else if(kind==world::Receipt::save) {
         if(OnRuntimeThread()) reply=mgscoop::save_handoff::HandleLua(buffer,size);
+    } else if(kind==world::Receipt::drive) {
+        // Enemy sync M4: one soft-follow step (Lua owner thread only; every other gate in the handler).
+        if(OnRuntimeThread()) reply=DriveReceipt(buffer,size);
     } else if(kind==world::Receipt::hostwarp) {
         // Enemy sync M3: the host's own copy of a guest-owned guard (Lua owner thread only; every other gate in the handler).
         if(OnRuntimeThread()) reply=HostWarpReceipt(buffer,size);
@@ -6508,17 +6602,19 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::soldier_warp::GuestMayWarp(labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play,
                                                             labc.debug_soldier_warp);
                     // Enemy sync M3: a play or lab host warps its own copies of guest-owned guards (HostWarpReceipt).
-                    const bool warp_owner = labc.role == mgscoop::LabRole::host && labc.soldier_follow && labc.soldier_owner;
+                    const bool warp_owner = (labc.role == mgscoop::LabRole::host && labc.soldier_follow && labc.soldier_owner) ||
+                                            (labc.soldier_follow && labc.soldier_snap);
                     if (warp_key || warp_guest || warp_owner) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
                         // or a guest grant (GuestWarpReceipt: spawn sync, or a Mother Base staff correction).
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;
-                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; follow=%u; owner=%u; call=manager_vt38_send; hop=runtime_census\r\n",
-                                                          !warp_key ? (warp_guest ? "mb_staff" : "soldier_owner")
+                        if (soldier_warp_ready) LogFormat("soldier_warp=ready; key=%s; follow=%u; owner=%u; snap=%u; call=manager_vt38_send; hop=runtime_census\r\n",
+                                                          !warp_key ? (warp_guest ? "mb_staff" : "enemy_sync")
                                                           : labc.mode == mgscoop::LabMode::lab ? "debug_soldier_warp" : "spawn_warp",
-                                                          labc.soldier_follow ? 1u : 0u, warp_owner ? 1u : 0u);
+                                                          labc.soldier_follow ? 1u : 0u, labc.soldier_follow && labc.soldier_owner ? 1u : 0u,
+                                                          labc.soldier_follow && labc.soldier_snap ? 1u : 0u);
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.

@@ -69,6 +69,11 @@ local function fixture(host, level, mb)
             return r
         end
         if source:find("'MGS_COOP_DEBUG_REMOTE_V1'", 1, true) then return true end
+        if source:find("'MGS_COOP_WORLD_DRIVE_V1'", 1, true) then
+            c.drives = c.drives or {}
+            c.drives[#c.drives + 1] = source
+            return c.driveReply or {e = 120, s = 1, r = 0, h = 1}
+        end
         return nil
     end
     env.TppEnemy = {}
@@ -114,7 +119,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -1250,7 +1255,7 @@ if arg[7] and arg[8] then
     check(#placeTx(og, 71) == 0 and logged(og, 'event=place_ack;side=host;seq=9;ent=3000000001;result=refused;why=far'),
         'M3: a refused place (far) backs the guard off')
     for _, f in ipairs(og.W.observers) do f('Damage', ENT1, 'local') end
-    check(#placeTx(og, 74) == 1 and placeTx(og, 74)[1].v[1] == ENT1, 'M3: the guest own hit is an ENGAGE')
+    check(#placeTx(og, 74) == 0, 'M3: no ENGAGE (Damage named the local player for guards nobody shot)')
     og.tx = {}
     og.W.guestPlaceAnnounce(ENT1)
     pl = placeTx(og, 71)
@@ -1293,6 +1298,45 @@ if arg[7] and arg[8] then
     pdf.W.cp[100].ownAt = pdf.now - 1000
     pdf.W.handlers[18]({100, 1, 5, 0, 0, 2}, pdf.now)
     check(setPhases(pdf, 11) == 0 and logged(pdf, 'src=down;applied=0'), 'M3: its own fight in the last 5 s keeps it up')
+    -- Enemy sync M4 (W.snapOn, docs/world-sync-design.md 7.10) ---------------------------------------------------------
+    -- The owner streams SOLDIER_SNAP (75) of its NORMAL guards within 60 m of the other player: 10 Hz within 30 m.
+    local sh = followFixture(true)
+    sh.W.snapOn = true
+    sh.positions[900] = {10.0, 0, 0}
+    sh.positions[1] = {5.0, 1.8, 0}
+    ticks(sh, 31)
+    local snaps = {}
+    for _, p in ipairs(placeTx(sh, 75)) do if p.v[2] == 1 then snaps[#snaps + 1] = p end end
+    print('M4 snaps', #snaps, snaps[1] and snaps[1].v[3], snaps[1] and snaps[1].v[4], snaps[1] and snaps[1].v[5], #sh.tx)
+    check(#snaps >= 7 and #snaps <= 11 and snaps[1].v[3] == 5000 and snaps[1].v[4] == 1400 and snaps[1].v[5] == 0,
+        'M4: about 8-10 Hz within 30 m (100 ms on 33 ms updates), the feet y plus the lift')
+    sh.tx = {}
+    sh.W.ownerOn = true
+    sh.P.own[ENT1] = {o = 1, at = sh.now}
+    ticks(sh, 31)
+    local none = 0
+    for _, p in ipairs(placeTx(sh, 75)) do if p.v[2] == 1 then none = none + 1 end end
+    check(none == 0, 'M4: never a guard the guest owns')
+    -- The receiver: one DRIVE_V1 per guard and update with its own position; the stream's guard is left alone by the
+    -- corrections; a stale stream backs off 500 ms.
+    local sg = guestFix(180)
+    sg.W.snapOn = true
+    sg.positions[1] = {0, 1.8, 20.0}
+    ticks(sg, 2)
+    check(sg.drives and sg.drives[1] == "return 'MGS_COOP_WORLD_DRIVE_V1' -- 1 1 0 1800 20000" and sg.W.snapDriving(ENT1, sg.now),
+        'M4: the receiver drives with its own position')
+    sample(sg, 1, ENT1, 5000, 20000)
+    check(#sg.P.q == 0 and logged(sg, 'why=driven'), 'M4: a driven guard is never corrected')
+    local ss = guestFix(180)
+    ss.W.snapOn = true
+    ss.positions[1] = {0, 1.8, 20.0}
+    ss.driveReply = {refused = 'stale'}
+    ticks(ss, 2)
+    local n1 = #ss.drives
+    ticks(ss, 10)
+    check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
+    ticks(ss, 10)
+    check(#ss.drives > n1, 'M4: and tries again after 500 ms')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest
