@@ -34,4 +34,32 @@ void Revert(const void* base, LogFn log, const char* reason) noexcept;
 bool Patched() noexcept;
 #endif
 
+// Probe P11 census (with the patch): which category-5 entries a soldier's player scorer 0x141325530 is given. The scorer
+// (called directly from the reaction chain 0x1413262F0 at 0x14132638E: rcx the chain, edx the soldier index) reads
+// count = ((u32*)L[1])[edx] and entries = ((u8**)L[2])[edx] with L = *(*(rcx+0x58)+0x88) (L[1] at +8, L[2] at +0x10); an
+// entry is 4 bytes: the u16 perception word (its low 9 bits are converted to the GameObjectId) and the category at +3.
+// The census reads exactly those fields before the stock body runs (it never calls a game function) and counts the
+// distinct category-5 words: one word while both players stand near the guards means body 1 is not in the soldier's list.
+inline constexpr std::uintptr_t kScorerRva = 0x1325530;
+inline constexpr std::size_t kScorerHeadSize = 0x40;
+extern const unsigned char kScorerHead[kScorerHeadSize];
+inline constexpr unsigned kCensusWords = 8;
+struct CensusSnapshot {
+    std::uint32_t calls = 0, entries = 0, players = 0, multi = 0, maxPerCall = 0, overflow = 0;
+    std::uint16_t word[kCensusWords]{};
+    std::uint32_t count[kCensusWords]{};
+    unsigned words = 0;
+};
+// Pure: one scorer call's entries (4 bytes each). Lock-free; any thread.
+void CensusAdd(const unsigned char* entries, std::uint32_t count) noexcept;
+CensusSnapshot CensusRead() noexcept;
+void CensusReset() noexcept;
+// "perceive;census=<0|1>;calls=;entries=;players=;multi=;max=;overflow=;words=<hex>:<n>,..."
+bool CensusLine(char* out, std::size_t capacity) noexcept;
+#ifdef _WIN32
+// Verifies kScorerHead at kScorerRva and hooks the scorer (MinHook) to feed the census. Logs
+// soldier_perceive_census=installed | refused; reason=.... Idempotent.
+bool InstallCensus(const void* base, LogFn log) noexcept;
+#endif
+
 } // namespace mgscoop::soldier_perceive

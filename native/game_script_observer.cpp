@@ -3286,6 +3286,10 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 StringCchCopyA(line,ARRAYSIZE(line),"teammate_aim=refused;reason=owned_worker_required");
             else mgscoop::teammate_targeting::StatusLine(line,sizeof(line));
             debug::Result(pending.id,worker && (observe || filter || status) ? 1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text, "perceive_status") == 0) {
+            char line[161]{};
+            if(!mgscoop::soldier_perceive::CensusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"perceive;census=overflow");
+            debug::Result(pending.id,1,line);
         } else if (pending.id && std::strcmp(pending.text, "damage_status") == 0) {
             char line[161]{};
             mgscoop::downed_damage::StatusLine(line,sizeof(line));
@@ -6656,7 +6660,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     }
                     // Enemy sync M7 (docs/world-sync-design.md 7.13): the perception filter patch for the process when named
                     // (soldier_perceive.hpp: this copy's soldiers react to body 1 too), and the owner-only damage authority.
-                    if (labc.soldier_perceive) mgscoop::soldier_perceive::Patch(base, Log);
+                    // Probe P11: with the patch, the scorer census (soldier_perceive.hpp; perceive_status).
+                    if (labc.soldier_perceive && mgscoop::soldier_perceive::Patch(base, Log)) mgscoop::soldier_perceive::InstallCensus(base, Log);
                     else Log("soldier_perceive=off; reason=key_off\r\n");
                     // The brain only with the patch: the other copy of a guard is held back and relies on its owner seeing
                     // this player.

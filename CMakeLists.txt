@@ -701,7 +701,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # Enemy sync M7 (docs/world-sync-design.md 7.13): the perception patch block and the soldier damage authority.
   add_executable(soldier_m7_tests tests/soldier_m7_tests.cpp native/soldier_perceive.cpp)
   target_include_directories(soldier_m7_tests PRIVATE native/include)
-  target_link_libraries(soldier_m7_tests PRIVATE mgs_coop_core mgs_partner_player)
+  target_link_libraries(soldier_m7_tests PRIVATE mgs_coop_core mgs_partner_player minhook)
   target_compile_options(soldier_m7_tests PRIVATE /W4 /WX)
   add_test(NAME soldier_m7_tests COMMAND soldier_m7_tests)
   # Supply drops synced (r1101): the supply-box observer (native/supply_cbox_contract.hpp). Installed only with

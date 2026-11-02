@@ -61,6 +61,30 @@ int main() {
     Check(sa::Remote(soldier), "clear: the role default again");
     sa::Configure(false, false);
     Check(!sa::Enabled(), "off");
+    // Probe P11 census: the scorer head pin and the category-5 word counts.
+    Check(sp::kScorerHead[0] == 0x40 && sp::kScorerHead[1] == 0x55 && sp::kScorerHead[0x3b] == 0xb8, "the scorer head pin");
+    sp::CensusReset();
+    const unsigned char one[] = {0x10, 0x00, 0x00, 0x05, 0x22, 0x04, 0x00, 0x03};  // a player word 0x10, a category-3 entry
+    sp::CensusAdd(one, 2);
+    sp::CensusAdd(nullptr, 0);
+    const unsigned char two[] = {0x10, 0x00, 0x00, 0x05, 0x11, 0x00, 0x00, 0x05};
+    sp::CensusAdd(two, 2);
+    auto cs = sp::CensusRead();
+    Check(cs.calls == 3 && cs.entries == 4 && cs.players == 3 && cs.multi == 1 && cs.maxPerCall == 2 && cs.overflow == 0,
+          "census counters");
+    Check(cs.words == 2 && cs.word[0] == 0x10 && cs.count[0] == 2 && cs.word[1] == 0x11 && cs.count[1] == 1, "census words");
+    char line[161]{};
+    Check(sp::CensusLine(line, sizeof(line)) && std::strstr(line, "players=3;multi=1;max=2;overflow=0;words=10:2,11:1") != nullptr,
+          "census line");
+    for (unsigned w = 0; w < sp::kCensusWords + 2; ++w) {
+        const unsigned char e[] = {static_cast<unsigned char>(0x40 + w), 0x00, 0x00, 0x05};
+        sp::CensusAdd(e, 1);
+    }
+    cs = sp::CensusRead();
+    Check(cs.words == sp::kCensusWords && cs.overflow == 4, "census keeps 8 words and counts the rest as overflow");
+    Check(!sp::CensusLine(line, 16), "a short buffer refuses");
+    sp::CensusReset();
+    Check(sp::CensusRead().calls == 0 && sp::CensusRead().words == 0, "census reset");
     std::printf("soldier_m7_tests: %u checks passed\n", checks);
     return 0;
 }
