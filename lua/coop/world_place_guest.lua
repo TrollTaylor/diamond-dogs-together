@@ -143,8 +143,11 @@ do
                     local px, pz, yaw = P.view()
                     local seen = px ~= nil and (P.seen(px, pz, yaw, x, z) or P.seen(px, pz, yaw, tx, tz))
                     view = seen and "on" or "off"
+                    -- Off screen a hop is not seen: one sample over 2.5 m, 1 s apart (run 3e01f334: a corrected guard
+                    -- stands still until his next correction while the host's copy runs on, up to 9 m in 1.7 s with two
+                    -- samples); on screen two samples over 5 m or one over 8 m, 1.5 s apart.
                     div.n = d > (seen and 5000 or 2500) and div.n + 1 or 0
-                    fix = (div.n >= 2 or d > (seen and 8000 or 5000)) and c.at - div.at >= 1500
+                    fix = (seen and (div.n >= 2 or d > 8000) or (not seen and d > 2500)) and c.at - div.at >= (seen and 1500 or 1000)
                     if not div.seen and d > 2500 then fix, why = true, "pair" end
                     if fix and px and (flat(x, z, px, pz) < 3000 or flat(tx, tz, px, pz) < 3000) then fix, why = false, "near_player" end
                     if fix and px and flat(x, z, px, pz) > 250000 then

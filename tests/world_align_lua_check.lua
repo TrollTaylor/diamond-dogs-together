@@ -964,6 +964,26 @@ if arg[7] and arg[8] then
     ph2.E.check(ENT1, 1)
     check(#ph2.tx == 2 and ph2.tx[1].op == 34 and ph2.tx[1].v[3] == 3 and ph2.tx[1].v[8] == 4 and ph2.tx[1].v[4] == 10000 and
         ph2.tx[2].op == 16 and logged(ph2, 'event=place_first;step=tx;'), 'follow: place first (flag 4), then the OUTCOME')
+    -- A guard going up under a balloon (rising over 3 m faster than 2 m/s) is not sampled; his place-first keeps the
+    -- standing sample (run 3e01f334 sent 446 m).
+    local ph3 = followFixture(true)
+    ph3.positions[2] = {12.0, 1.8, 0}
+    ticks(ph3, 4)
+    ph3.tx = {}
+    ph3.positions[2] = {12.0, 30.0, 0}
+    ticks(ph3, 40)
+    check(#sentFor(ph3, 3000000002) == 0, 'a guard rising fast is not sampled')
+    ph3.life[2] = 3
+    ph3.E.check(3000000002, 5)
+    check(ph3.tx[1] and ph3.tx[1].op == 34 and ph3.tx[1].v[5] == 1000 and ph3.tx[1].v[4] == 12000,
+        'his place-first: the standing x, z and ground y')
+    local ph4 = followFixture(true)
+    ph4.positions[2] = {12.0, 1.8, 0}
+    ticks(ph4, 4)
+    ph4.tx = {}
+    ph4.positions[2] = {12.0, 5.0, 0}
+    ticks(ph4, 130)
+    check(#sentFor(ph4, 3000000002) >= 1, 'a guard 3.2 m higher after 2 s (stairs, a ladder) is sampled')
     -- Guest thresholds. This player at the origin looking +z (camera yaw 0).
     local function guestFix(yaw)
         local c = followFixture(false)
@@ -989,10 +1009,11 @@ if arg[7] and arg[8] then
     fgB.positions[1] = {0, 1.8, 20.0}
     sample(fgB, 1, ENT1, 1000, 20000)
     fgB.now = fgB.now + 2000
-    sample(fgB, 2, ENT1, 3000, 20000)
+    sample(fgB, 2, ENT1, 2400, 20000)
+    check(#fgB.P.q == 0, 'off screen: 2.4 m (extrapolated 2.5 m) is left alone')
     fgB.now = fgB.now + 2000
     sample(fgB, 3, ENT1, 3000, 20000)
-    check(#fgB.P.q == 1 and logged(fgB, ';view=off'), 'off screen: 3 m twice is corrected')
+    check(#fgB.P.q == 1 and logged(fgB, ';view=off'), 'off screen: one sample over 2.5 m is corrected')
     local fgC = guestFix(180)
     fgC.positions[1] = {0, 1.8, 20.0}
     sample(fgC, 1, ENT1, 1000, 20000)
@@ -1001,12 +1022,26 @@ if arg[7] and arg[8] then
     check(#fgC.P.q == 1, 'off screen: 5.5 m once is corrected')
     -- 1.5 s apart per guard.
     fgC.P.q = {}
-    fgC.now = fgC.now + 1000
-    sample(fgC, 3, ENT1, 9000, 20000)
-    check(#fgC.P.q == 0, 'within 1.5 s of the last correction: none')
     fgC.now = fgC.now + 600
+    sample(fgC, 3, ENT1, 9000, 20000)
+    check(#fgC.P.q == 0, 'off screen: within 1 s of the last correction, none')
+    fgC.now = fgC.now + 500
     sample(fgC, 4, ENT1, 9000, 20000)
-    check(#fgC.P.q == 1, 'after 1.5 s: corrected')
+    check(#fgC.P.q == 1, 'off screen: after 1 s, corrected')
+    -- On screen: 1.5 s apart.
+    local fgS = guestFix(0)
+    fgS.positions[1] = {0, 1.8, 20.0}
+    sample(fgS, 1, ENT1, 1000, 20000)
+    fgS.now = fgS.now + 2000
+    sample(fgS, 2, ENT1, 9000, 20000)
+    check(#fgS.P.q == 1, 'on screen: 9 m once is corrected')
+    fgS.P.q = {}
+    fgS.now = fgS.now + 1100
+    sample(fgS, 3, ENT1, 17000, 20000)
+    check(#fgS.P.q == 0, 'on screen: within 1.5 s of the last correction, none')
+    fgS.now = fgS.now + 500
+    sample(fgS, 4, ENT1, 17000, 20000)
+    check(#fgS.P.q == 1, 'on screen: after 1.5 s, corrected')
     -- Never within 3 m of this player; never a copy 250 m from both players.
     local fgD = guestFix(180)
     fgD.positions[1] = {0, 1.8, 2.0}

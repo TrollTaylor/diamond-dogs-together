@@ -184,10 +184,20 @@ do
                 if en and not P.live[h] and E.active(en.cp, h) and not (pat.back[h] and now < pat.back[h]) and
                     not (pat.skip[h] and now < pat.skip[h]) and (not ps or now - ps.sampleAt >= (ps.every or 500)) then
                     reads = reads + 1
-                    if P.state(en) == 0 then
+                    -- A guard whose Fulton message came in the last 30 s, or one rising more than 3 m above his last
+                    -- standing sample faster than 2 m/s, is going up under a balloon (run 3e01f334: the debug Fulton's
+                    -- message came 4.7 s into the lift, the rising NORMAL guard was sampled at 446 m and his place-first
+                    -- sent that height): never sampled, his standing sample kept for place-first.
+                    local fm = E.s and E.s.fmsg and E.s.fmsg[h]
+                    local lifting = fm and now - fm < 30000
+                    if P.state(en) == 0 and not lifting then
                         if ps and ps.down then ps = nil; pat.s[h] = nil end
                         local x, y, z = pos(en.id)
                         if (staff or follow) and x == 0 and z == 0 then x = nil end  -- no position: never shared
+                        if x and ps and follow then
+                            local dy = y - 800 - ps.y
+                            if dy > 3000 and dy > 2 * (now - ps.sampleAt) then x = nil end
+                        end
                         if x then
                             local dh = (x - hx) ^ 2 + (z - hz) ^ 2
                             local dq = qx and (x - qx) ^ 2 + (z - qz) ^ 2 or nil
@@ -222,7 +232,7 @@ do
                             end
                         end
                     elseif (staff or follow) and ps then
-                        ps.down = true  -- kept for place-first: the standing ground y
+                        ps.down = true  -- kept for place-first: the standing ground y (a lifting guard too)
                     else
                         pat.s[h] = nil
                     end
