@@ -147,6 +147,7 @@ const char* PlaceReasonName(PlaceReason reason) noexcept {
     case PlaceReason::manual: return "manual";
     case PlaceReason::retry: return "retry";
     case PlaceReason::traverse: return "traverse";
+    case PlaceReason::stuck: return "stuck";
     default: return "none";
     }
 }
@@ -666,6 +667,18 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         } else if (have_err && err >= P.warp_mm && gap_ok && !input_stale && !in.traverse_hold) {
             if (prone) far_snap = true;
             else request_place(PlaceReason::far_error);
+        }
+        const bool stuck = have_err && err >= P.stuck_act_mm && in.body_anim_ok && !Loco(in.body_act) && in.remote_anim_valid &&
+                           Loco(in.remote_act) && !in.traverse_hold && !input_stale;
+        if (stuck) {
+            if (!st.stuck_since) st.stuck_since = now ? now : 1;
+            if (!st.stuck_caught && Held(st.stuck_since, now, P.stuck_act_ms) && gap_ok) {
+                st.stuck_caught = true;
+                request_place(PlaceReason::stuck);
+            }
+        } else {
+            st.stuck_since = 0;
+            if (in.body_anim_ok && Loco(in.body_act)) st.stuck_caught = false;  // the episode ended
         }
         if (have_err && std::fabs(dy) >= P.vertical_mm && !input_stale && !in.traverse_hold) {
             if (!st.vertical_since) st.vertical_since = now ? now : 1;

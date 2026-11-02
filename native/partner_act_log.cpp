@@ -88,6 +88,10 @@ const char* ActName(std::uint16_t act) noexcept {
     case 110: return "vehicle_dismount?";
     case 111: return "vehicle_seated";
     case 112: return "vehicle_out";
+    // The 0.14.7 friend session (fb1101): the striker's punch combo (113, 114) on the partner's body; named from the
+    // presses, not from the action table (a '?' as the other unconfirmed names).
+    case 113: return "punch?";
+    case 114: return "punch_combo?";
     // Mount acts from the writer census (docs/mounts.md, partner_mount_policy.hpp).
     case 121: return "horse_ride";
     case 122: return "horse_mount";

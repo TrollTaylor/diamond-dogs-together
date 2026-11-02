@@ -152,8 +152,10 @@ do
                 local en, dv = W.ent[h], S.dv[h]
                 local x, _, z = nil, nil, nil
                 if en and type(en.id) == "number" then x, _, z = pos(en.id) end
+                -- A stale stream sets a puppet back only after 3 s without a drive result (run ef7e9088: 619 on/off
+                -- toggles from 500 ms stale back-offs).
                 if not x or P.state(en) ~= 0 or flat(x, z, px * 1000, pz * 1000) > 60000 or not W.puppetOn or
-                    (dv and dv.back and now < dv.back) then
+                    (dv and dv.back and now < dv.back and now - (dv.ok or 0) >= 3000) then
                     if en and type(en.id) == "number" then S.puppet(h, en, false) else S.pp[h] = nil end
                     n = n + 1
                     if n >= 2 then return end

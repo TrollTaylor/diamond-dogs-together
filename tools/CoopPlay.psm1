@@ -1084,7 +1084,7 @@ function Get-CoopSteamEndText {
     # The same table as native/coop_reason_text.cpp (tests/fixtures/link-reasons.json).
     param([int]$End)
     if ($End -eq 0) { return '' }
-    if ($End -in @(5003, 4001)) { return "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, and is your code current?" }
+    if ($End -in @(5003, 4001)) { return "The host's game did not answer. One of you must press Host and the other Join (both on Join: nobody hosts). Is the host's game running, with Accept joins on, and is your code current?" }
     if ($End -in @(5008, 5009)) { return 'Steam could not connect the two PCs. Both must be online in Steam; try again.' }
     if ($End -in @(5005, 3001, 3002)) { return "This PC cannot reach Steam's network. Check the internet connection and that Steam is not in Offline Mode." }
     if ($End -in @(3004, 3005)) { return 'Steam networking is not available here right now; restart Steam.' }
