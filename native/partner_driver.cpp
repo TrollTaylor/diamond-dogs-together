@@ -702,7 +702,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.config.strip_triggers = a.truth_triggers;
     // M2 (partner_native_binocle): while the remote holds binoculars its HOLD/FIRE (and a pad's triggers) never reach
     // body 1, so it holds its idle instead of aiming a gun (fb1101 B1).
-    if (gun_stage && set.nbinocle && m.binocle_remote) {
+    if (gun_stage && set.nbinocle && (m.binocle_remote || (m.binocle_off_ms && now - m.binocle_off_ms < kBinocleGraceMs))) {
         a.config.sample_strip |= partner_pad::kHold | partner_pad::kFire;
         a.config.strip_triggers = true;
     }
@@ -4910,8 +4910,11 @@ void TickAimIntent(Driver& d, const Hooks& h, bool latest_ok, const pin::Sample&
     gi.act = remote_anim.act;
     m.aim_refusal = partner_slots::AimGate(gi);
     m.aim_gate_ok = m.aim_refusal == partner_slots::AimRefusal::none;
-    // M2: binoculars put the remote in an aim act (fb1101: host acts 11 / 13); never a gun aim on body 1.
-    m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act) && !(set.ngun && set.nbinocle && m.binocle_remote);
+    // M2: binoculars put the remote in an aim act (fb1101: host acts 11 / 13); never a gun aim on body 1, also for
+    // kBinocleGraceMs after the bit goes off (run 5a9fc123: the reliable manifest's off came before the interpolated pose
+    // left act 11, and the aim intent raised the gun for that moment).
+    m.aim_act = act_valid && partner_slots::AimAct(remote_anim.act) &&
+                !(set.ngun && set.nbinocle && (m.binocle_remote || (m.binocle_off_ms && now - m.binocle_off_ms < kBinocleGraceMs)));
     if (set.ngun && !m.anim_settings_logged) {
         m.anim_settings_logged = true;
         EmitFormat(h, "partner_weapon=settings; unsupported=%u; dry_stop=%u; aim_intent=%s; reload_rate=%s; fire_census=%u\r\n",
@@ -7072,6 +7075,7 @@ void NoteBinocle(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
     if (on == m.binocle_remote) return;
     m.binocle_remote = on;
     if (on) m.binocle_on_ms = now_ms ? now_ms : 1;
+    else m.binocle_off_ms = now_ms ? now_ms : 1;
     ++m.binocle_seq;
     EmitFormat(h, "partner_binocle=remote; on=%u; apply=%s; seq=%u\r\n", on ? 1u : 0u,
                d.settings.nbinocle && d.settings.ngun ? "strip" : "off", m.binocle_seq);

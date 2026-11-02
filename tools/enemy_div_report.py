@@ -103,11 +103,15 @@ def analyse(host, guest):
     r['place_err_p90_m'] = quantile(bins, 0.9)
     r['place_err_max_m'] = max(maxes) if maxes else None
     # Place first and the apply distances.
-    firsts = [fields(l) for l in guest if 'event=place_first' in l and 'step=done' in l]
+    # A place-first either moved the guest's copy (step=done) or found it already there (step=hold, div_m, fix=0).
+    firsts = [fields(l) for l in guest if 'event=place_first' in l and ('step=done' in l or ('step=hold' in l and 'fix=0' in l))]
     r['place_first'] = len(firsts)
-    r['place_first_ok'] = sum(1 for f in firsts if f.get('result') == 'applied' and float(f.get('err_m', 99)) <= 2.0)
+    r['place_first_ok'] = sum(1 for f in firsts if (f.get('step') == 'done' and f.get('result') == 'applied' and
+                                                   float(f.get('err_m', 99)) <= 2.0) or
+                              (f.get('step') == 'hold' and float(f.get('div_m', 99)) <= 2.0))
     applies = [fields(l) for l in guest if 'event=apply' in l and 'src=outcome' in l]
-    dms = [float(a['d_m']) for a in applies if 'd_m' in a]
+    # Only standing outcomes (hold-up .. dead): a Fulton's OUTCOME carries the host copy's position under the balloon.
+    dms = [float(a['d_m']) for a in applies if 'd_m' in a and a.get('state') in ('1', '2', '3', '4', '5')]
     r['guest_applies'] = len(applies)
     r['guest_applies_with_d'] = len(dms)
     r['guest_applies_d_le_2m'] = sum(1 for d in dms if d <= 2.0)
