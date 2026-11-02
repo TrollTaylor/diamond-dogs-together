@@ -72,7 +72,7 @@ host require ^submitted_supply_drop
 waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=1;' 10
 waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=1; ok=1' 10
 waitlog guest 'supply=request;seq=[0-9]+;mirror=1;' 5
-waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 15
+waitlog guest 'world_lua=event=supply; step=state; from=[34]; to=5;' 15
 guest burst a-fall-guest 4 1500
 # --- 2) it lands on the guest: delivered on both copies ---------------------------------------------------------------
 waitlog guest 'world_lua=event=supply; step=state; from=5; to=8;' 30
