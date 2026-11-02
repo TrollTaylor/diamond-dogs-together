@@ -232,13 +232,15 @@ do
                 else ok = call(TppEnemy, k == 7 and "SetDisable" or "SetEnable", id) end
                 return ok and true or "native_other"
             end
-            if c.flags % 4 >= 2 and call(TppEnemy, "SetEnableRestrictNotice", id) and m and type(m.ignored) == "table" then
+            if k <= 2 and c.flags % 4 >= 2 and call(TppEnemy, "SetEnableRestrictNotice", id) and m and type(m.ignored) == "table" then
                 m.ignored[en.name] = true
             elseif k == 1 and c.flags % 2 == 1 and m and type(m.ignored) == "table" and m.ignored[en.name] and
                 call(TppEnemy, "SetDisableRestrictNotice", id) then
                 m.ignored[en.name] = nil  -- as the host: a "come" warp of an ignoring guard notices again
             end
-            if c.flags % 2 == 1 then P.come[c.h] = true end
+            -- Flag 1 means come only for a warp or route placement; on a correction (kind 3) it is the host copy's combat
+            -- flag (run f2d2db9b: one combat correction per guard marked him come and his samples were ignored after it).
+            if c.kind <= 2 and c.flags % 2 == 1 then P.come[c.h] = true end
             -- Mother Base corrections never pin SetOutOfArea (allCp counts every CP active anyway).
             if not (k == 3 and W.feature and W.feature.staffPlace) then P.pinOn(c.h) end
             if k == 2 then

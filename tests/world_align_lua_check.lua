@@ -1060,6 +1060,35 @@ if arg[7] and arg[8] then
     fgJ.P.tick(fgJ.now)
     check(sent(fgJ, 1, 'SetDiscoveryPlayer') == 0 and logged(fgJ, 'event=place_combat;') and
         logged(fgJ, 'event=place_err;n=1;h=0,1,0,0,0,0,0;p50=1.5;p95=1.5;max=1.5;fix=0;q=0'), 'no nudge; the place error line')
+    -- A combat-flagged correction never marks the guard as come (run f2d2db9b: his later samples were all ignored).
+    local fgL = guestFix(180)
+    fgL.positions[1] = {0, 1.8, 20.0}
+    fgL.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    sample(fgL, 1, ENT1, 1000, 20000, 1)
+    fgL.now = fgL.now + 2000
+    sample(fgL, 2, ENT1, 9000, 20000, 1)
+    check(#fgL.P.q == 1, 'combat sample: corrected')
+    for _ = 1, 5 do fgL.now = fgL.now + 33; fgL.P.tick(fgL.now) end
+    check(fgL.P.cur == nil and not fgL.P.come[ENT1] and logged(fgL, 'kind=correct;result=applied'),
+        'the combat correction landed and the guard is not come')
+    fgL.logs = {}
+    fgL.now = fgL.now + 2000
+    sample(fgL, 3, ENT1, 18000, 20000, 1)
+    check(logged(fgL, 'event=place_div;seq=3;'), 'his next sample is still compared')
+    -- The partner position from the native PEER receipt (the remote pose), else the partner body.
+    local pr = followFixture(true)
+    local recv = pr.W.receipt
+    pr.W.receipt = function(source)
+        if source == "return 'MGS_COOP_WORLD_PEER_V1'" then return 1, 70000, 5000, 80 end
+        return recv(source)
+    end
+    local qx, qz = pr.P.partnerXZ(pr.now)
+    check(qx == 70000 and qz == 5000 and logged(pr, 'event=place_partner;known=1;src=peer'), 'the partner from PEER')
+    pr.now = pr.now + 600
+    pr.W.receipt = recv
+    pr.positions[900] = {-3.0, 0, 4.0}
+    qx, qz = pr.P.partnerXZ(pr.now)
+    check(qx == -3000 and qz == 4000, 'an older loader: the partner body')
     -- A host outcome waits for this copy's placement at most 1.5 s in free roam.
     local fgK = guestFix(180)
     fgK.positions[1] = {0, 1.8, 20.0}

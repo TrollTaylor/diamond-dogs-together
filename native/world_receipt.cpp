@@ -2,6 +2,7 @@
 // (docs/world-sync-protocol.md "Receipts").
 #include "mgscoop/world_receipt.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include "mgscoop/partner_receipt.hpp"
@@ -65,6 +66,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
     if (Prefixed(source, size, save_prefix)) return Receipt::save;
+    if (SameText(source, size, peer_source)) return Receipt::peer;
     return Receipt::none;
 }
 
@@ -198,6 +200,17 @@ std::size_t FormatCfgReply(const CfgReply& r, char* out, std::size_t capacity) n
                                 unsigned(r.session), unsigned(r.remote_mission), unsigned(r.remote_level), unsigned(r.wait),
                                 unsigned(r.handoff), unsigned(r.lock), unsigned(r.census), unsigned(r.vehicle_gone), unsigned(r.companion),
                                 unsigned(r.relief), unsigned(r.fulton), unsigned(r.follow));
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
+    return static_cast<std::size_t>(n);
+}
+
+std::size_t FormatPeerReply(bool valid, float x_m, float z_m, std::uint32_t age_ms, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const bool ok = valid && std::isfinite(x_m) && std::isfinite(z_m) && std::fabs(x_m) <= 100000.0f && std::fabs(z_m) <= 100000.0f &&
+                    age_ms <= 2000;
+    const int n = ok ? std::snprintf(out, capacity, "return 1,%ld,%ld,%u", std::lround(x_m * 1000.0), std::lround(z_m * 1000.0),
+                                     unsigned(age_ms))
+                     : std::snprintf(out, capacity, "return 0");
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return 0; }
     return static_cast<std::size_t>(n);
 }

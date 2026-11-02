@@ -55,7 +55,7 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
@@ -64,6 +64,10 @@ inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
 inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
+// Enemy follow (docs/world-sync-design.md 7.8): the partner's position as this copy sees it (the remote pose), no
+// arguments -> return 1,<x_mm>,<z_mm>,<age_ms> | return 0 (unknown, stale or unpaired). The partner body cannot be read
+// through GameObject (GetPosition on TppPlayer2 index 1 answered nothing in run f2d2db9b).
+inline constexpr char peer_source[] = "return 'MGS_COOP_WORLD_PEER_V1'";
 inline constexpr std::size_t max_receipt = 240;
 inline constexpr std::size_t max_log_payload = 160;
 // The longest reply: "return " and 17 values (queue, op, 15 fields) of at
@@ -110,6 +114,9 @@ constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool br
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;
 std::size_t FormatTxReply(TxStatus status, char* out, std::size_t capacity) noexcept;
+// The PEER reply: "return 1,<x_mm>,<z_mm>,<age_ms>" when valid (x and z rounded to mm, |v| <= 100000 m, age <= 2000 ms),
+// else "return 0". 0 on a capacity error.
+std::size_t FormatPeerReply(bool valid, float x_m, float z_m, std::uint32_t age_ms, char* out, std::size_t capacity) noexcept;
 std::size_t FormatRxReply(const RxReply& reply, char* out, std::size_t capacity) noexcept;
 // "world_lua=<payload>; t_ms=<now>\r\n" with the partner sanitizer
 // ([A-Za-z0-9_=:,.;-], others -> '_') and ';' expanded to "; ". 0 when the

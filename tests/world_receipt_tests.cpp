@@ -3,6 +3,7 @@
 // classification, strict integers, reply widths, the LOG sanitizer.
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/coop_reason_text.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -57,6 +58,19 @@ void Classification() {
     Check(Kind(big) == world::Receipt::none, "241 bytes refused");
     Check(world::Classify(nullptr, 3, "abc") == world::Receipt::none && world::Classify("abc", 3, nullptr) == world::Receipt::none,
           "null inputs");
+    // Enemy follow: PEER, the partner's remote pose (exact text, no arguments).
+    Check(Kind("return 'MGS_COOP_WORLD_PEER_V1'") == world::Receipt::peer, "peer");
+    Check(Kind("return 'MGS_COOP_WORLD_PEER_V1' -- 1") == world::Receipt::none && Kind("return 'MGS_COOP_WORLD_PEER_V1' ") ==
+          world::Receipt::none, "peer takes no arguments");
+    char peer[64];
+    Check(world::FormatPeerReply(true, 12.3456f, -2001.5f, 120, peer, sizeof(peer)) && std::strcmp(peer, "return 1,12346,-2001500,120") == 0,
+          "peer reply: x and z in mm and the age");
+    Check(world::FormatPeerReply(false, 1.0f, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "unknown: return 0");
+    Check(world::FormatPeerReply(true, 1.0f, 1.0f, 2001, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "older than 2 s: 0");
+    Check(world::FormatPeerReply(true, NAN, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0 &&
+          world::FormatPeerReply(true, 100001.0f, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "bounds");
+    char tiny_peer[6];
+    Check(!world::FormatPeerReply(true, 1.0f, 1.0f, 0, tiny_peer, sizeof(tiny_peer)), "capacity");
 }
 
 void Cfg() {

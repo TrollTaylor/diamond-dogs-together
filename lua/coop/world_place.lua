@@ -241,21 +241,28 @@ do
                 end
             end
         end
-        -- The partner body's position on the host (TppPlayer2 index 1), read at most every 500 ms; nil when unreadable.
+        -- The partner's position (mm) as this copy sees it, read at most every 500 ms; nil when unknown. The native PEER
+        -- receipt (the remote pose; run f2d2db9b: GetPosition on the partner body, TppPlayer2 index 1, answered nothing,
+        -- so the follow scan never saw the partner), else the partner body (an older loader).
         function P.partnerXZ(now)
             local pat = P.patrol
             if now - (pat.pAt or -1e9) >= 500 then
                 pat.pAt, pat.px, pat.pz = now, nil, nil
-                local by = W.get(GameObject, "GetGameObjectIdByIndex")
-                local ok, id = false, nil
-                if type(by) == "function" then ok, id = pcall(by, "TppPlayer2", 1) end
-                if ok and type(id) == "number" and id ~= W.api.null then
-                    local x, _, z = pos(id)
-                    pat.px, pat.pz = x, z
+                local r = {W.receipt("return 'MGS_COOP_WORLD_PEER_V1'")}
+                if r[1] == 1 and type(r[2]) == "number" and type(r[3]) == "number" then
+                    pat.px, pat.pz, pat.src = r[2], r[3], "peer"
+                else
+                    local by = W.get(GameObject, "GetGameObjectIdByIndex")
+                    local ok, id = false, nil
+                    if type(by) == "function" then ok, id = pcall(by, "TppPlayer2", 1) end
+                    if ok and type(id) == "number" and id ~= W.api.null then
+                        local x, _, z = pos(id)
+                        pat.px, pat.pz, pat.src = x, z, "body"
+                    end
                 end
-                if not pat.logged then
-                    pat.logged = true
-                    L("event=staff_scan;partner=%d", pat.px and 1 or 0)
+                if (pat.px ~= nil) ~= pat.logged then
+                    pat.logged = pat.px ~= nil
+                    L("event=place_partner;known=%d;src=%s", pat.px and 1 or 0, pat.px and pat.src or "none")
                 end
             end
             return pat.px, pat.pz

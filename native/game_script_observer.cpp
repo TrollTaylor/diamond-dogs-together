@@ -2919,6 +2919,18 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     return debug_reply;
 }
 
+// PEER (enemy follow, docs/world-sync-design.md 7.8): the partner's remote pose for the host's follow scan and the
+// guest's far check (lua/coop/world_place.lua P.partnerXZ), while the world is paired and the link connected.
+const char* WorldPeerReceipt() noexcept {
+    PublishDebugSnapshot();
+    const auto snapshot = mgscoop::debug_menu::GetSnapshot();
+    const bool valid = snapshot.remote_valid && snapshot.world_paired && std::strcmp(snapshot.link_state, "connected") == 0;
+    if (!mgscoop::world::FormatPeerReply(valid, snapshot.remote_pos[0], snapshot.remote_pos[2], snapshot.remote_age_ms, debug_reply,
+                                         ARRAYSIZE(debug_reply)))
+        return nullptr;
+    return debug_reply;
+}
+
 bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -4480,6 +4492,9 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleNote(buffer,size);
     } else if(kind==world::Receipt::save) {
         if(OnRuntimeThread()) reply=mgscoop::save_handoff::HandleLua(buffer,size);
+    } else if(kind==world::Receipt::peer) {
+        // Enemy follow: the partner's remote pose (Lua owner thread only).
+        if(OnRuntimeThread()) reply=WorldPeerReceipt();
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;
