@@ -8,8 +8,9 @@
 // NUL-free, at most max_receipt bytes):
 //   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
 //        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>,<session>,
-//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>,<companion>,<relief>
-//        (17 values; r[9..11] are the partner's mission and world level, 0
+//                  <remote_mission>,<remote_level>,<wait>,<handoff>,<lock>,<census>,<vehicle_gone>,<companion>,<relief>,
+//                  <fulton>,<follow>
+//        (19 values; r[9..11] are the partner's mission and world level, 0
 //        unknown, and the raw pair-wait code world::pair_wait 0..10; r[12] is
 //        the save handoff code save_handoff_state::LuaCode 0..6 and r[13] the
 //        travel lock 0|1, both filled by world_link::HandleCfg, join-fix
@@ -25,7 +26,11 @@
 //        world_vehicle_crew, world_vehicle_damage); r[16] the M1 host-owned companion module 0|1 (lab key
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
-//        HandleCfg; Lua treats a missing or out-of-range value as 0)
+//        HandleCfg; r[18] the r1101 Fulton bits 0..31 (FultonCfgBits, lab and play);
+//        r[19] enemy sync bits 0..63: 1 follow (lab key soldier_follow, lab and play: the
+//        follow scan and place-first, docs/world-sync-design.md 7.8), 2 owner, 4 snap,
+//        8 route, 16 body, 32 puppet (soldier_owner .. soldier_puppet, the plan's
+//        M3..M7, 7.9+); Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -51,15 +56,25 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp, drive };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
 inline constexpr char rx_prefix[] = "return 'MGS_COOP_WORLD_RX_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
 inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
+// Enemy sync M3 (docs/world-sync-design.md 7.9): the host's own copy of a guard the guest owns, "<seq> <goId>" as
+// WARP_V1, the target from the host's grant of the guest's ENEMY_PLACE.
+inline constexpr char hostwarp_prefix[] = "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- ";
+// Enemy sync M4 (docs/world-sync-design.md 7.10): one soft-follow step of this copy of roster slot <slot>, "<slot> <goId>
+// <x_mm> <y_mm> <z_mm>" (this copy's GetPosition), toward the owner's SOLDIER_SNAP (wire data, Core::SnapPair).
+inline constexpr char drive_prefix[] = "return 'MGS_COOP_WORLD_DRIVE_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
+// Enemy follow (docs/world-sync-design.md 7.8): the partner's position as this copy sees it (the remote pose), no
+// arguments -> return 1,<x_mm>,<z_mm>,<age_ms> | return 0 (unknown, stale or unpaired). The partner body cannot be read
+// through GameObject (GetPosition on TppPlayer2 index 1 answered nothing in run f2d2db9b).
+inline constexpr char peer_source[] = "return 'MGS_COOP_WORLD_PEER_V1'";
 inline constexpr std::size_t max_receipt = 240;
 inline constexpr std::size_t max_log_payload = 160;
 // The longest reply: "return " and 17 values (queue, op, 15 fields) of at
@@ -81,6 +96,11 @@ TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::
 bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 // WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
+// Enemy sync M7 probe: an optional sixth field, the mode (0 the M4 soft follow, 1 the puppet drive).
+bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3],
+                    std::uint8_t& mode) noexcept;
 // NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
 // Outputs only on success.
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;
@@ -106,6 +126,9 @@ constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool br
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;
 std::size_t FormatTxReply(TxStatus status, char* out, std::size_t capacity) noexcept;
+// The PEER reply: "return 1,<x_mm>,<z_mm>,<age_ms>" when valid (x and z rounded to mm, |v| <= 100000 m, age <= 2000 ms),
+// else "return 0". 0 on a capacity error.
+std::size_t FormatPeerReply(bool valid, float x_m, float z_m, std::uint32_t age_ms, char* out, std::size_t capacity) noexcept;
 std::size_t FormatRxReply(const RxReply& reply, char* out, std::size_t capacity) noexcept;
 // "world_lua=<payload>; t_ms=<now>\r\n" with the partner sanitizer
 // ([A-Za-z0-9_=:,.;-], others -> '_') and ';' expanded to "; ". 0 when the

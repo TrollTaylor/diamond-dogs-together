@@ -273,13 +273,23 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
     if UNWIND.get(begin) != end:
         failures.append(f'{begin:#x}: unwind entry {UNWIND.get(begin)} != {end:#x}')
 
-# Source contract: soldier_warp::Warp has exactly two callers, each on the Lua
-# owner thread behind the lab key, the startup Verify() result and the
-# per-command gate (docs/debug-menu.md): the host menu receipt (DEBUG_WARP_V1)
-# and the guest spawn-sync grant receipt (WORLD_WARP_V1, target from the
-# world::Core grant, never from Lua).
-EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt')}
+# Source contract: soldier_warp::Warp has exactly three callers, each on the Lua
+# owner thread behind its key, the startup Verify() result and the per-command
+# gate (docs/debug-menu.md): the host menu receipt (DEBUG_WARP_V1), the guest
+# spawn-sync grant receipt (WORLD_WARP_V1, target from the world::Core grant,
+# never from Lua) and the host's owner receipt (enemy sync M3, WORLD_WARP_HOST_V1,
+# target from the host's grant of the guest's ENEMY_PLACE, never from Lua).
+EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt'),
+                    ('game_script_observer.cpp', 'HostWarpReceipt'), ('game_script_observer.cpp', 'DriveReceipt')}
 CALLER_GATES = ('debug_soldier_warp', 'spawn_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+# Enemy sync M4 (docs/world-sync-design.md 7.10): the soft-follow step, its target from the owner's SOLDIER_SNAP (wire
+# data, world_link::SnapPair), at most a bounded step from this copy, no command budget but the anomaly latches.
+DRIVE_GATES = ('soldier_snap', 'soldier_follow', 'soldier_warp_ready', 'mission_terminating', 'sw::DriveAdmit(rule)',
+               'world_link::SnapPair(', 'sw::DriveTarget(', 'sw::DriveStep(', 'soldier_warp_gate.AdmitDrive(', 'refuse("far")',
+               'request.pos[i] = step.pos[i]')
+HOST_GATES = ('soldier_owner', 'soldier_follow', 'soldier_warp_ready', 'LabRole::host', 'soldier_warp_gate.Admit(', 'mission_terminating',
+              'sw::HostAdmit(rule)', 'world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', '0x80000000u | grant.serial',
+              'sw::NearerSquared(', 'refuse("far")', 'snapshot.remote_age_ms > 1000')
 callers = []
 for path in sorted((ROOT / 'native').glob('*.cpp')):
     if path.name == 'soldier_warp.cpp':
@@ -290,7 +300,7 @@ for path in sorted((ROOT / 'native').glob('*.cpp')):
         name = heads[-1].group(1) if heads else '?'
         body = text[heads[-1].start():match.start()] if heads else ''
         callers.append((path.name, name))
-        for gate in CALLER_GATES:
+        for gate in (HOST_GATES if name == 'HostWarpReceipt' else DRIVE_GATES if name == 'DriveReceipt' else CALLER_GATES):
             if gate not in body:
                 failures.append(f'{path.name} {name}: calls soldier_warp::Warp without {gate!r} before the call')
 if len(callers) != len(EXPECTED_CALLERS) or set(callers) != EXPECTED_CALLERS:
@@ -301,12 +311,15 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
     body = guest[start:guest.find('\n}\n', start)] if start >= 0 else ''
     for needle in ('world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', 'request.player[i] = snapshot.remote_pos[i]',
                    'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial',
-                   # Mother Base staff rule (docs/world-sync-design.md 7.7): play only through GuestAdmit
-                   # (mission 30050, corrections only), never the lab key alone.
-                   'sw::GuestAdmit(rule, staff)', 'grant.kind == mgscoop::world::place::correct'):
+                   # The Mother Base staff rule (docs/world-sync-design.md 7.7) and the enemy follow rule (7.8): play only
+                   # through GuestAdmit (corrections only; follow behind lab.ini soldier_follow, 30010/30020/30050), never
+                   # the lab key alone; their range from the nearer player, a follow target beyond 250 m from both refused.
+                   'sw::GuestAdmit(rule, rule_hit)', 'grant.kind == mgscoop::world::place::correct', 'labc.soldier_follow',
+                   'sw::NearerSquared(', 'refuse("far")'):
         if needle not in body.replace('\r\n', '\n'):
             failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
-    # Play (spawn_warp) admits only the spawn placement (kind 1): patrol/combat corrections (kind 3) stay lab only.
+    # Without the follow or staff rule, play (spawn_warp) admits only the spawn placement (kind 1): its patrol/combat
+    # corrections (kind 3) are refused (role).
     if 'labc.mode != mgscoop::LabMode::lab && grant.kind != mgscoop::world::place::warp' not in body:
         failures.append('GuestWarpReceipt: play must refuse every grant but the spawn placement (kind 1)')
 

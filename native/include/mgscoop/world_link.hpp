@@ -14,6 +14,7 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/world_wire.hpp"
 
 namespace mgscoop::world_link {
 
@@ -45,6 +46,12 @@ struct Config {
     // and FULTON 0x46 (world_enemy.lua W.fulton); with it bit 2 fulton_early, bit 4 fulton_look, bit 8 fulton_one_save,
     // bit 16 fulton_guest_vehicle (FultonCfgBits).
     std::uint8_t fulton = 0;
+    // Enemy follow (docs/world-sync-design.md 7.8): lab.ini soldier_follow (lab and play): CFG r[19] bit 1 turns on the
+    // follow scan around both players and place-first (lua/coop/world_place.lua).
+    bool follow = false;
+    // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9+): CFG r[19] bits 2 owner (soldier_owner), 4 snap
+    // (soldier_snap), 8 route (soldier_route), 16 body (soldier_body), 32 puppet (soldier_puppet), next to bit 1 follow.
+    std::uint8_t enemy_sync = 0;
     // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
     // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
     bool vehicle_state = false;
@@ -118,6 +125,9 @@ struct WarpGrant {
     std::uint32_t serial{};  // world::Grant::serial (1..0x7FFFFFFF, process-unique)
 };
 WarpGrant FindGrant(std::uint16_t seq) noexcept;
+// Enemy sync M4: the newest two SOLDIER_SNAP records of a roster slot (world::Core::SnapPair), metres / radians on the
+// receiver's clock; false when none in the current paired epoch.
+bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept;
 
 // Observer boundaries: the runtime entry (next to PartnerMissionStart) and the
 // returned termination (next to PartnerMissionEnd).

@@ -1,0 +1,133 @@
+# Enemy follow, probe P1/P2 (docs/STATUS.md "Enemy follow"): the guest's patrol corrections on the LAB key path, before
+# any follow code. Mode lab with debug_soldier_warp=1 admits every grant kind (soldier_warp.cpp GuestAdmit), so the
+# 0.14.7 host scanner (55 m around the host, 2 reads per update) and guest sampler (W1: 3.5 m on two samples or 8 m
+# once, 2.5 s apart) run as built, in Afghanistan (30010) under -WanSim bad. Questions:
+#   P1  the applied / refused mix and landing error of the kind-3 corrections, frames per fix, and whether a warped
+#       guard keeps the host copy's route, freezes or walks back (quiet, then ALERT);
+#   P2  what a warp does to a guard in combat (crouched / prone / in cover) on the leaf=engine path, where the native
+#       stance check never runs (every play warp of 0.14.7 logged leaf=engine).
+# The host stands 6 m from guard 2961503 (sol_field_0000) of afgh_field_cp, the outpost north-west of the travel spot
+# where the 0.14.7 friend session's guards drifted 8.7 m median / 95.3 m max, the guest 8 m from guard 3268415846
+# (sol_field_0007, about 20-40 m away), 60 s; then the guest 3 m behind the host, 60 s (both cameras on the nearest
+# guard: frame pairs); then the host raises ALERT on the nearest CP (cp_phase) and both stay 150 s. (Run 24d6e544 used
+# 2305481811 = sol_16_29_0001, an LRRP walker, and stopped at a placebehind right after the 500 m teleport.)
+# Run (hidden worker, under the verify lock, MGS_GAME_LUA_DIR unset):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/enemy-follow-p1-lab.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode lab -WanSim bad
+# Evidence (guest): event=place_div (div_m, n, fix, host_xz / here_xz), world_place=warp (r, h, leaf, refused),
+# event=place; kind=correct (result, err_m, frames), soldier_warp_census; (host) event=place_ack; world_status counts.
+# NEVER: soldier_warp=disabled, refused=fault, refused=anomaly, GameOver, roster_mismatch, step=error, event=error.
+labsetting debug_soldier_warp=1
+labsetting nametag=1
+boot 30010 828.18 338.20 1630.51 95 time=12:00 weather=sunny
+both debug godmode 1
+both debug infinite_ammo 1
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 5000
+host run world_status
+host expect ^world;paired=1;eff=3;w1=1;roster=match;
+guest run world_status
+guest expect ^world;paired=1;eff=3;w1=1;roster=match;
+host run enemy info 2961503
+guest run enemy info 3268415846
+host run enemy goto 2961503 6
+host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 3268415846 8
+guest expect ^(enemy_goto;ent=3268415846;submitted_warp|warp_position_readback)
+wait 8000
+stance host stand
+stance guest stand
+host run position
+guest run position
+host run enemy info nearest
+guest run enemy info nearest
+# --- A: apart (20-40 m), quiet, 60 s ----------------------------------------------------------------------------------
+logmark both
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-00
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-60
+host run world_status
+guest run world_status
+# --- B: together (the guest 3 m behind the host), quiet, 60 s; both cameras on the nearest guard -------------------
+placebehind guest host 3 1
+stance guest stand
+wait 3000
+host run enemy info nearest
+guest run enemy info nearest
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-00
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-15
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-30
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-45
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-60
+host run world_status
+guest run world_status
+# --- C: ALERT on the nearest CP, 150 s (combat stances; corrections still admitted on the lab key) ------------------
+logmark both
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 10000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-10
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-40
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-70
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-100
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-130
+wait 18000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-150
+host run world_status
+guest run world_status
+host run position
+guest run position
+state

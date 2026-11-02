@@ -100,8 +100,8 @@ bool FormatSteamEnd(std::int32_t end, char* out, std::size_t capacity) noexcept 
     case 5003:  // Misc_Timeout
     case 4001:  // Remote_Timeout
         return Put(out, capacity,
-                   "The host's game did not answer. Is the host's game running (Host in Diamond Dogs Together), with Accept joins on, and is "
-                   "your code current?");
+                   "The host's game did not answer. One of you must press Host and the other Join (both on Join: nobody hosts). Is the "
+                   "host's game running, with Accept joins on, and is your code current?");
     case 5008:  // Misc_P2P_Rendezvous
     case 5009:  // Misc_P2P_NAT_Firewall
         return Put(out, capacity, "Steam could not connect the two PCs. Both must be online in Steam; try again.");

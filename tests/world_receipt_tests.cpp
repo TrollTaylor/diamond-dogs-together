@@ -3,6 +3,7 @@
 // classification, strict integers, reply widths, the LOG sanitizer.
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/coop_reason_text.hpp"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -57,6 +58,19 @@ void Classification() {
     Check(Kind(big) == world::Receipt::none, "241 bytes refused");
     Check(world::Classify(nullptr, 3, "abc") == world::Receipt::none && world::Classify("abc", 3, nullptr) == world::Receipt::none,
           "null inputs");
+    // Enemy follow: PEER, the partner's remote pose (exact text, no arguments).
+    Check(Kind("return 'MGS_COOP_WORLD_PEER_V1'") == world::Receipt::peer, "peer");
+    Check(Kind("return 'MGS_COOP_WORLD_PEER_V1' -- 1") == world::Receipt::none && Kind("return 'MGS_COOP_WORLD_PEER_V1' ") ==
+          world::Receipt::none, "peer takes no arguments");
+    char peer[64];
+    Check(world::FormatPeerReply(true, 12.3456f, -2001.5f, 120, peer, sizeof(peer)) && std::strcmp(peer, "return 1,12346,-2001500,120") == 0,
+          "peer reply: x and z in mm and the age");
+    Check(world::FormatPeerReply(false, 1.0f, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "unknown: return 0");
+    Check(world::FormatPeerReply(true, 1.0f, 1.0f, 2001, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "older than 2 s: 0");
+    Check(world::FormatPeerReply(true, NAN, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0 &&
+          world::FormatPeerReply(true, 100001.0f, 1.0f, 0, peer, sizeof(peer)) && std::strcmp(peer, "return 0") == 0, "bounds");
+    char tiny_peer[6];
+    Check(!world::FormatPeerReply(true, 1.0f, 1.0f, 0, tiny_peer, sizeof(tiny_peer)), "capacity");
 }
 
 void Cfg() {
@@ -74,31 +88,31 @@ void Cfg() {
           "strict CFG");
     world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295,0,0,0,0,0,0,0,0,0,0,0") == 0,
           "CFG first seven fields preserved, unsigned session appended, then remote mission, remote level, wait, handoff, lock and census");
     r.link = 0; r.session = 0;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0,0,0,0,0,0,0,0,0,0,0,0") == 0, "disconnected CFG session zero");
     r.link = 1; r.session = 7; r.remote_mission = 30010; r.remote_level = 3; r.wait = 9;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,0,0,0,0,0,0,0,0") == 0,
           "the partner's mission, its world level and the raw pair-wait code are r[9..11]");
     // Save handoff (join-fix phase 2 P2-1): r[12] the handoff code, r[13] the travel lock.
     r.handoff = 3; r.lock = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,0,0,0,0,0,0") == 0,
           "the handoff code and the travel lock are r[12..13]");
     // WS4 step 0 (lab key partner_placed_census): r[14] the attacker census flag.
     r.census = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,0,0,0,0,0") == 0,
           "the WS4 attacker census flag is r[14]");
     // 0.13.6 online-vehicle-gone (lab key world_vehicle_gone, lab and play): r[15] the VEHICLE_GONE module.
     r.vehicle_gone = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,1,0,0,0,0") == 0,
           "the VEHICLE_GONE module flag is r[15]");
     // M4 (lab key world_vehicle_state): r[15] is the vehicle modules bitmask, bit 2 VEHICLE_STATE.
     r.vehicle_gone = 2;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,2,0,0,0,0") == 0,
           "VEHICLE_STATE alone is r[15] = 2");
     r.vehicle_gone = 3;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,3,0,0,0,0") == 0,
           "both vehicle modules are r[15] = 3");
     // M4 review: bit 4 the wreck parity key (world_vehicle_wreck); world_link::HandleCfg composes r[15] with
     // world::VehicleModules (gone, state, wreck).
@@ -107,7 +121,7 @@ void Cfg() {
               world::VehicleModules(false, false, true) == 4 && world::VehicleModules(true, true, true) == 7,
           "r[15] bits: 1 VEHICLE_GONE, 2 VEHICLE_STATE, 4 the wreck parity");
     r.vehicle_gone = world::VehicleModules(true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,0,0,0,0") == 0,
           "both vehicle modules and the wreck key are r[15] = 7");
     // The user's vehicle decisions of 2026-10-29: bit 8 D12 world_vehicle_break, bit 16 D14 world_vehicle_credit, bit 32
     // D11 world_loadout_block (lab and play); the three older bits keep their meaning.
@@ -117,7 +131,7 @@ void Cfg() {
               world::VehicleModules(true, true, false, true, true, true) == 59 && world::VehicleModules(true, true, true, true, true, true) == 63,
           "r[15] bits: 8 the guest's break request, 16 the receiver's Fulton credit, 32 the guest's LOADOUT block");
     r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,63,0,0,0,0") == 0,
           "every vehicle key is r[15] = 63");
     // The vehicle fixes of 2026-10-29: bit 64 D12 world_vehicle_crew, bit 128 world_vehicle_damage (lab and play).
     Check(world::VehicleModules(false, false, false, false, false, false, true, false) == 64 &&
@@ -125,36 +139,44 @@ void Cfg() {
               world::VehicleModules(true, true, false, true, false, false, true, true) == 203,
           "r[15] bits: 64 the crewed vehicle wrecked at once, 128 the guest's vehicle damage report");
     r.vehicle_gone = world::VehicleModules(true, true, true, true, true, true, true, true);
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,255,0,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,255,0,0,0,0") == 0,
           "every vehicle key, the fixes too, is r[15] = 255");
     r.vehicle_gone = world::VehicleModules(true, true, true);
     // M1 host-owned companion (lab key companion_host_owned, lab and play): r[16] the companion module.
     r.companion = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,0,0,0") == 0,
           "the host-owned companion module flag is r[16]");
     // M3 sortie vehicle (lab key world_relief, lab and play): r[17] the relief module.
     r.relief = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,0") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,0,0") == 0,
           "the sortie vehicle module flag is r[17]");
     // r1101 fulton (lab key fulton_sync, lab and play): r[18] the Fulton lift and FULTON 0x46 (world_enemy.lua W.fulton).
     r.fulton = 1;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,1") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,1,0") == 0,
           "the Fulton sync flag is r[18]");
     // Review fixes of 2026-11-01: r[18] carries the fulton bits as is (2 fulton_early, 4 fulton_look).
     r.fulton = 7;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,7") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,7,0") == 0,
           "the fulton bits are r[18]");
     // r1101 Prove: bit 8 fulton_one_save (the receiver's soldier credit skipped) rides r[18] as is too.
     r.fulton = 15;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,15") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,15,0") == 0,
           "the fulton bits with fulton_one_save are r[18]");
     // r1101 land: bit 16 fulton_guest_vehicle (the guest's lift of a host's vehicle Fulton) rides r[18] as is too.
     r.fulton = 31;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31") == 0,
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,0") == 0,
           "the fulton bits with fulton_guest_vehicle are r[18]");
+    // Enemy follow (lab key soldier_follow, lab and play; docs/world-sync-design.md 7.8): r[19] the follow scan and place-first.
+    r.follow = 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,1") == 0,
+          "the enemy follow flag is r[19]");
+    // The enemy sync plan's M3..M7 (soldier_owner .. soldier_puppet; docs/world-sync-design.md 7.9+): r[19] bits 2..32.
+    r.follow = 63;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,63") == 0,
+          "the enemy sync bits ride r[19] as is");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
-    r.relief = 255; r.fulton = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255") == 0 &&
+    r.relief = 255; r.fulton = 255; r.follow = 255;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,255") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
     r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0; r.fulton = 0;
@@ -401,6 +423,32 @@ void Warp() {
     Check(seq == 9 && go == 9, "outputs untouched on failure");
     const std::string other = "return 'MGS_COOP_WORLD_TX_V1' -- 1 2";
     Check(!world::ParseWarp(other.data(), other.size(), seq, go) && !world::ParseWarp(nullptr, 3, seq, go), "other receipts");
+    // Enemy sync M3: the host's warp "<seq> <goId>" under its own prefix.
+    const std::string host = std::string(world::hostwarp_prefix) + "5 1037";
+    Check(world::ParseHostWarp(host.data(), host.size(), seq, go) && seq == 5 && go == 1037 &&
+              !world::ParseWarp(host.data(), host.size(), seq, go) &&
+              world::Classify(host.data(), host.size(), host.c_str()) == world::Receipt::hostwarp,
+          "the host warp receipt");
+    // Enemy sync M4: DRIVE_V1 "<slot> <goId> <x_mm> <y_mm> <z_mm>".
+    std::uint16_t slot = 0;
+    std::int32_t pos[3]{};
+    const auto drive = [&](const char* tail) {
+        const std::string s = std::string(world::drive_prefix) + tail;
+        return world::ParseDrive(s.data(), s.size(), slot, go, pos);
+    };
+    Check(drive("7 1037 410000 -268400 2170000") && slot == 7 && go == 1037 && pos[0] == 410000 && pos[1] == -268400 && pos[2] == 2170000,
+          "drive: slot, GameObjectId and position");
+    Check(!drive("0 1037 0 0 0") && !drive("513 1037 0 0 0") && !drive("7 65536 0 0 0") && !drive("7 1037 100000001 0 0") &&
+              !drive("7 1037 0 0") && !drive("7 1037 0 0 0 1") && !drive("7  1037 0 0 0"),
+          "drive: bounds and strict grammar (the soft follow has five fields)");
+    std::uint8_t mode = 9;
+    const std::string puppet = std::string(world::drive_prefix) + "7 1037 1 2 3 1";
+    const std::string soft = std::string(world::drive_prefix) + "7 1037 1 2 3";
+    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    Check(world::ParseDriveMode(puppet.data(), puppet.size(), slot, go, pos, mode) && mode == 1 && pos[2] == 3 &&
+              world::ParseDriveMode(soft.data(), soft.size(), slot, go, pos, mode) && mode == 0 &&
+              !world::ParseDriveMode(bad.data(), bad.size(), slot, go, pos, mode),
+          "drive: the M7 probe's mode field (0 soft, 1 puppet)");
 }
 } // namespace
 

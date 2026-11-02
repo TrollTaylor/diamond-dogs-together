@@ -533,12 +533,14 @@ or 10 s, force-realize always released). The native handler
 adds no game address. It refuses unless all of these hold: guest role (lab or play),
 lab.ini `debug_soldier_warp=1` (play: `spawn_warp`), `soldier_warp=ready` at startup, the mission gates,
 the grant `world::Core` recorded when the guest's Lua popped that `ENEMY_DEBUG`
-(kind warp or correct, same epoch, at most 15 s old, 16 slots; cleared at unpair, link
-session, host epoch and local mission changes), and a live remote pose of the host at
-most 1 s old. The target always comes from the grant. The range is checked against the
+(kind warp or correct, same epoch, at most 15 s old, 64 slots since the enemy follow
+round, 16 before; cleared at unpair, link session, host epoch and local mission changes),
+and a live remote pose of the host at most 1 s old (for the staff and follow rules this
+guest's own pose may stand in). The target always comes from the grant. The range is checked against the
 guest's view of the host: 20 m for kind 1, 60 m for corrections. One GameObjectId per
-grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
-`anomaly` latch of the host path. The per-grant gate id is the grant's process-unique
+grant, at most 160 sends, nothing after landing, and the latches of the host path (a
+`fault` latches the process; an `anomaly` its guard, the fifth the process: enemy follow,
+[world-sync-design.md](world-sync-design.md) 7.8). The per-grant gate id is the grant's process-unique
 serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
 never a spent one. `tools/generate_soldier_warp_contract.py --check`
 asserts that `Warp()` has exactly these two callers and their gates. In play mode
@@ -549,7 +551,10 @@ mb-staff-sync): play or lab, mission 30050, corrections (kind 3) only, range fro
 the host and the guest's own player; `Verify` then runs for a play or lab guest
 (`soldier_warp=ready; key=mb_staff`, or `key=spawn_warp` while that key is on)
 ([world-sync-design.md](world-sync-design.md) 7.7). With `spawn_warp=0` only route placements
-(kind 2) and those staff corrections move the guest's copy.
+(kind 2) and those staff corrections move the guest's copy. With `soldier_follow` (lab.ini; follows the gun profile, a named 0 turns it off;
+enemy follow, [world-sync-design.md](world-sync-design.md) 7.8) the follow rule admits
+corrections (kind 3) in 30010, 30020 and 30050 in play or lab, range from the nearer player,
+`far` beyond 250 m from both (`soldier_warp=ready; ...; follow=1`).
 
 **Settle window.** For 60 s after a native landing the host samples its guard once a
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The

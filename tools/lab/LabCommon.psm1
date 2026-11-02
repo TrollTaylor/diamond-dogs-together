@@ -405,6 +405,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_aim_truth_box'; Json = 'native_aim_truth_box'; Kind = 'bool' },
     @{ Key = 'partner_native_aim_truth_triggers'; Json = 'native_aim_truth_triggers'; Kind = 'bool' },
     @{ Key = 'partner_native_aim_truth_stance'; Json = 'native_aim_truth_stance'; Kind = 'bool' },
+    # Enemy sync plan M2 (docs/anim-truth.md "Binoculars"; lab and play, native default: the gun profile): body 1's gun
+    # stays down while the remote holds binoculars.
+    @{ Key = 'partner_native_binocle'; Json = 'native_binocle'; Kind = 'bool' },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # The developer test boot (docs/test-boot.md; lab only: play forces both off, and only a background-worker build's
     # owned private worker acts on them): skip the logos and the title, and land at a spot after the title.
@@ -489,6 +492,17 @@ $script:LabPartnerKeys = @(
     @{ Key = 'fulton_guest_vehicle'; Json = 'fulton_guest_vehicle'; Kind = 'bool' },
     # r1101 supply drops synced (docs/world-sync-protocol.md section 26; lab and play, off in both unless named).
     @{ Key = 'world_supply'; Json = 'world_supply'; Kind = 'bool' },
+    # Enemy follow (docs/world-sync-design.md 7.8; lab and play, native default: the gun profile): the guest's copies of the
+    # guards near either player stand where the host's do (CFG r[19], soldier_warp::GuestAdmit follow rule).
+    @{ Key = 'soldier_follow'; Json = 'soldier_follow'; Kind = 'bool' },
+    # The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9..7.13; lab and play; CFG r[19] bits 2..32): native
+    # default the gun profile for M3..M6 (soldier_owner, soldier_snap, soldier_route, soldier_body), the M7 probe
+    # (soldier_puppet) off unless named.
+    @{ Key = 'soldier_owner'; Json = 'soldier_owner'; Kind = 'bool' },
+    @{ Key = 'soldier_snap'; Json = 'soldier_snap'; Kind = 'bool' },
+    @{ Key = 'soldier_route'; Json = 'soldier_route'; Kind = 'bool' },
+    @{ Key = 'soldier_body'; Json = 'soldier_body'; Kind = 'bool' },
+    @{ Key = 'soldier_puppet'; Json = 'soldier_puppet'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

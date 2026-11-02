@@ -1457,6 +1457,44 @@ void TestCollectLogsLaunches() {
         found = Has(text, "head-1\n") && Has(text, "tail-1\n") && Has(text, "tail-5\n");
     }
     CHECK(found);
+    // fb1101 X1 (the friend's 0.14.7 host log lost 6 minutes in the middle of its newest launch): the newest launch has its
+    // own budget, a cut names the game-clock span it removed, and the newest launch's world lines go whole in their own file.
+    auto clocked = [&](int i, std::size_t size, std::uint64_t t0) {
+        std::string s = marker + " launch " + std::to_string(i) + "\nhead-" + std::to_string(i) + "\n";
+        std::uint64_t t = t0;
+        while (s.size() < size) {
+            s += "world_lua=event=place_err; n=1; h=1,0,0,0,0,0,0; t_ms=" + std::to_string(t) + "\n";
+            s += "return_count=7 thread=1 tick_ms=" + std::to_string(t + 1) + " parser_result=0\n";
+            t += 10;
+        }
+        return s + "tail-" + std::to_string(i) + "\n";
+    };
+    const std::string newestBig = clocked(9, 5u << 20, 1000);
+    const std::string kept = LastLaunches(launch(8, 1000) + newestBig, marker, 8, 2u << 20, 16u << 20, 8u << 20);
+    CHECK(Has(kept, "head-9\n") && Has(kept, "tail-9\n") && !Has(kept, "omitted") && Has(kept, "tail-8\n"));
+    const std::string old = LastLaunches(newestBig, marker, 8, 2u << 20, 16u << 20);
+    CHECK(Has(old, "earlier characters omitted (t_ms ") && Has(old, "tail-9\n"));
+    CHECK(CutSpan("a t_ms=5\nb tick_ms=6\nc xt_ms=7\nd t_ms=9\n", 0, 28) == " (t_ms 5..6)" && CutSpan("no clock\n", 0, 9).empty() &&
+          CutSpan("x t_ms=1\n", 5, 2).empty());
+    CHECK(NewestLaunch(launch(1, 100) + launch(2, 100), marker) == launch(2, 100) && NewestLaunch("plain\n", marker) == "plain\n");
+    const std::string filtered = FilterLines("a world_lua=event=x\nb other\nc soldier_warp=ready\n", {"world_lua=", "soldier_warp"}, 1000);
+    CHECK(filtered == "a world_lua=event=x\nc soldier_warp=ready\n");
+    Fixture w(L"collect_world");
+    CreateDirectories(w.paths.mod);
+    WriteText(w.paths.mod + L"\\script-observer.log", launch(1, 1000) + marker + " launch 2\nworld_lua=event=place; seq=1; t_ms=5\nnoise\n");
+    std::wstring wzip;
+    CHECK(CollectLogs(*w.env, w.paths, w.desktop, wzip, error));
+    ZipReader wreader;
+    CHECK(wreader.OpenFile(wzip, limits, error));
+    bool world = false;
+    for (const ZipEntry& e : wreader.entries()) {
+        if (!EndsWith(e.name, "/script-observer-world.log")) continue;
+        Bytes data;
+        CHECK(wreader.Extract(e, data, error));
+        const std::string text(data.begin(), data.end());
+        world = text == "world_lua=event=place; seq=1; t_ms=5\n";
+    }
+    CHECK(world);
 }
 
 void TestUninstallAndLogs() {
@@ -2438,6 +2476,7 @@ void TestUpdater() {
     CHECK(IsVersionNewer("0.14.6", "0.14.5"));
     CHECK(IsVersionNewer("0.14.7", "0.14.6"));
     CHECK(IsVersionNewer("0.14.8", "0.14.7"));
+    CHECK(IsVersionNewer("0.15.1", "0.15.0"));
     CHECK(IsVersionNewer("v0.14.3", "0.14.1"));
     CHECK(IsVersionNewer("0.15.0", "0.14.1"));
     CHECK(IsVersionNewer("1.0.0", "0.14.1"));

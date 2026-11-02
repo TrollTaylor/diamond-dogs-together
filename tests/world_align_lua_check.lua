@@ -44,6 +44,8 @@ local function fixture(host, level, mb)
                 return {GetX = function() return p[1] end, GetY = function() return p[2] end, GetZ = function() return p[3] end}
             end
             if command.id == 'GetStatus' and c.status then return c.status[id] end
+            if command.id == 'GetGameObjectIdUsingRoute' then return c.routeIds and c.routeIds[command.route] end
+            if command.id == 'IsOnRoute' then return c.onRoute ~= nil and c.onRoute[id] == command.route end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then if not c.inert then c.life[id] = command.state end
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
@@ -63,12 +65,17 @@ local function fixture(host, level, mb)
     -- Spawn sync receipts: WORLD_WARP_V1 answers from c.warp (FIFO, the last one repeats), REMOTE_V1 rows.
     W.receipt = function(source)
         c.receipts[#c.receipts + 1] = source
-        if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) then
+        if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) or source:find("'MGS_COOP_WORLD_WARP_HOST_V1'", 1, true) then
             local r = #c.warp > 1 and table.remove(c.warp, 1) or c.warp[1]
             if r == 'literal' then return source:match("^return '([^']+)'") end
             return r
         end
         if source:find("'MGS_COOP_DEBUG_REMOTE_V1'", 1, true) then return true end
+        if source:find("'MGS_COOP_WORLD_DRIVE_V1'", 1, true) then
+            c.drives = c.drives or {}
+            c.drives[#c.drives + 1] = source
+            return c.driveReply or {e = 120, s = 1, r = 0, h = 1}
+        end
         return nil
     end
     env.TppEnemy = {}
@@ -114,7 +121,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -742,8 +749,11 @@ if arg[7] and arg[8] then
     ph.now = ph.now + 600; ph.P.tick(ph.now)
     ph.now = ph.now + 600; ph.P.tick(ph.now)
     local ptx = placeTx(ph, 34)
-    check(#ptx == 1 and ptx[1].v[2] == ENT1 and ptx[1].v[3] == 3 and ptx[1].v[4] == 10000 and ptx[1].v[5] == 1000 and
-        ptx[1].v[6] == 12000 and ptx[1].v[8] == 0, 'patrol scan announces nearby active-CP soldier with y - 800 mm')
+    -- y: the feet (GetPosition y - 800 mm: run cb8ae74f's grounded copies landed 0.80 m over the request) plus the 400 mm
+    -- lift (P.LIFT: a copy placed with its feet at the host's sank under the ground in runs 51f8e90f / 6e22bed0 /
+    -- cb8ae74f, landing at 0.0 m and falling ~20 m in 2 s).
+    check(#ptx == 1 and ptx[1].v[2] == ENT1 and ptx[1].v[3] == 3 and ptx[1].v[4] == 10000 and ptx[1].v[5] == 1400 and
+        ptx[1].v[6] == 12000 and ptx[1].v[8] == 0, 'patrol scan announces nearby active-CP soldier with y - 800 + 400 mm')
     pg.positions[1] = {10.0, 1.8, 12.0}
     deliver(ph, pg, 34)
     check(#pg.P.q == 0, 'aligned guest soldier queues no correction')
@@ -756,12 +766,13 @@ if arg[7] and arg[8] then
         'patrol movement >= 1.5 m in ALERT sends heading yaw and combat flag 1')
     pg.warp = {{r = 0, h = 1, leaf = 'patrol'}}
     deliver(ph, pg, 34)
-    check(#pg.P.q == 1 and pg.P.q[1].kind == 3 and sent(pg, 1, 'SetDiscoveryPlayer') == 1 and
-        logged(pg, 'event=place_combat;seq='), 'guest triggers SetDiscoveryPlayer and queues correction on > 8 m divergence')
+    -- The 0.14.7 combat nudge (SetDiscoveryPlayer on this copy while the host copy fights) pulled the copies apart
+    -- (fb1101): gone, the line stays.
+    check(#pg.P.q == 1 and pg.P.q[1].kind == 3 and sent(pg, 1, 'SetDiscoveryPlayer') == 0 and
+        logged(pg, 'event=place_combat;seq=') and logged(pg, ';nudge=0'), 'combat sample: a correction queued on > 8 m divergence, no nudge')
     pg.positions[1] = {20.0, 1.8, 12.0}
     run(pg, 4)
-    check(pg.P.cur == nil and sent(pg, 1, 'SetDiscoveryPlayer') == 2,
-        'completed combat correction re-asserts SetDiscoveryPlayer after warp')
+    check(pg.P.cur == nil and sent(pg, 1, 'SetDiscoveryPlayer') == 0, 'a completed combat correction sends no SetDiscoveryPlayer')
     -- Mother Base (feature patrol = false): no patrol position corrections until a run shows them working there.
     local mbp = placeFixture(true)
     mbp.W.w1, mbp.W.feature, mbp.W.activeCp = true, {enemies = true, allCp = true, patrol = false}, nil
@@ -808,8 +819,8 @@ if arg[7] and arg[8] then
     sh.tx = {}
     sh.E.check(ENT1, 1)
     check(#sh.tx == 2 and sh.tx[1].op == 34 and sh.tx[1].v[2] == ENT1 and sh.tx[1].v[3] == 3 and sh.tx[1].v[4] == 10600 and
-        sh.tx[1].v[5] == 1000 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
-        'host commit of a standing staff member: kind 3 with the standing ground y first, then the OUTCOME')
+        sh.tx[1].v[5] == 1400 and sh.tx[2].op == 16 and sh.tx[2].v[3] == 2 and logged(sh, 'event=place_first;'),
+        'host commit of a standing staff member: kind 3 with the standing ground y (+ the lift) first, then the OUTCOME')
     -- A staff member never sampled standing (far from both players) gets no place-first; the OUTCOME still goes.
     local keep = sh.tx
     sh.tx = {}
@@ -821,15 +832,17 @@ if arg[7] and arg[8] then
     sg.positions[1] = {13.6, 1.8, 12.0}
     sg.warp = {{r = 0, h = 1, leaf = 'pinned'}}
     deliver(sh, sg, 34)
-    check(#sg.P.q == 0, 'a 3 m divergence alone queues no correction')
+    -- The place-first sample carries flag 4 (enemy follow round): it queues the placement at once, ahead of the FIFO.
+    check(#sg.P.q == 1 and sg.P.q[1].first, 'a place-first queues the placement at once (3 m: below the continuous threshold)')
     deliver(sh, sg, 16)
     runE(sg, 1)
-    check(#sg.P.q + (sg.P.cur and 1 or 0) == 1 and sent(sg, 1, 'ChangeLifeState') == 0 and logged(sg, 'event=place_first;'),
+    check(#sg.P.q + (sg.P.cur and 1 or 0) == 1 and sent(sg, 1, 'ChangeLifeState') == 0,
         'guest: the staff outcome is held while this copy is placed first')
     sg.positions[1] = {10.6, 1.8, 12.0}
     runE(sg, 6)
     check(receiptCount(sg, 'WORLD_WARP_V1') >= 1 and sent(sg, 1, 'ChangeLifeState') == 1 and sg.P.cur == nil and
-        logged(sg, 'kind=correct;result=applied'), 'guest: placed where the host has them, then asleep')
+        logged(sg, 'kind=correct;result=applied') and logged(sg, 'event=place_first;step=done;'),
+        'guest: placed where the host has them, then asleep')
     check(#sg.setOut == 0, 'Mother Base corrections never pin SetOutOfArea')
     -- A placement that never lands holds the outcome for at most 4 s.
     local th, tg = staffFixture(true), staffFixture(false)
@@ -887,6 +900,548 @@ if arg[7] and arg[8] then
     deliver(fh, fg, 16)
     fg.now = fg.now + 33; fg.E.tick(fg.now)
     check(sent(fg, 1, 'ChangeLifeState') == 1, 'free roam: the outcome applies at once')
+    -- Enemy follow (W.followOn, CFG r[19]; docs/world-sync-design.md 7.8) ----------------------------------------------
+    local function followFixture(host)
+        local c = placeFixture(host)
+        c.W.w1, c.W.followOn, c.W.mode, c.W.activeCp = true, true, 2, {[100] = true, [200] = true}
+        c.env.vars.playerPosX, c.env.vars.playerPosZ = 0, 0
+        c.env.GameObject = {GetGameObjectIdByIndex = function(kind, index) return kind == 'TppPlayer2' and index == 1 and 900 or nil end}
+        return c
+    end
+    local function ticks(c, n, dt) for _ = 1, n do c.now = c.now + (dt or 33); c.P.tick(c.now) end end
+    local function sentFor(c, h)
+        local out = {}
+        for _, p in ipairs(placeTx(c, 34)) do if p.v[2] == h then out[#out + 1] = p end end
+        return out
+    end
+    -- Host scan: 55 m around the host or 60 m around the partner body; a guard 15 m nearer the partner is the guest's.
+    local fh = followFixture(true)
+    fh.positions[900] = {100.0, 0, 0}          -- the partner body
+    fh.positions[1] = {10.0, 1.8, 0}           -- near the host
+    fh.positions[2] = {95.0, 1.8, 0}           -- 5 m from the partner, 95 m from the host: the guest's
+    fh.positions[3] = {50.0, 1.8, 0}           -- halfway: the host's
+    fh.positions[4] = {300.0, 0, 300.0}        -- far from both
+    fh.positions[5] = {0, 1.8, 140.0}          -- 140 m from the host, 172 m from the partner
+    ticks(fh, 4)
+    check(#sentFor(fh, ENT1) == 1 and #sentFor(fh, 3000000003) == 1 and #sentFor(fh, 3000000002) == 0 and
+        #sentFor(fh, 3000000004) == 0 and #sentFor(fh, 3000000005) == 0 and sentFor(fh, ENT1)[1].v[3] == 3 and
+        sentFor(fh, ENT1)[1].v[8] == 0, 'follow scan: guards near either player, never the guest\'s side, never far ones')
+    check(fh.P.patrol.skip[3000000002] and fh.P.patrol.skip[3000000004], 'out of range and the guest\'s side: read again later')
+    -- Resampled every 500 ms within 40 m; sent when it moved 1 m or every 2 s.
+    fh.tx = {}
+    fh.positions[1] = {10.6, 1.8, 0}
+    ticks(fh, 16)
+    check(#sentFor(fh, ENT1) == 0, 'moved 0.6 m: not sent')
+    fh.positions[1] = {11.2, 1.8, 0}
+    ticks(fh, 16)
+    check(#sentFor(fh, ENT1) == 1 and sentFor(fh, ENT1)[1].v[4] == 11200, 'moved 1.2 m: sent')
+    fh.tx = {}
+    ticks(fh, 70)
+    check(#sentFor(fh, ENT1) == 1, 'standing still: sent again after 2 s')
+    -- A refused correction (the guest's native placement off) backs that guard off for 10 s.
+    fh.tx = {}
+    fh.W.handlers[35]({777, ENT1, 1, 8, 0, 1}, fh.now)
+    check(fh.P.patrol.back[ENT1] and logged(fh, 'event=place_ack;seq=777;ent=3000000001;kind=correct;result=refused;why=native_off'),
+        'native_off ACK: the guard waits')
+    fh.positions[1] = {20.0, 1.8, 0}
+    ticks(fh, 150)
+    check(#sentFor(fh, ENT1) == 0, 'no sample for that guard within 10 s')
+    ticks(fh, 200)
+    check(#sentFor(fh, ENT1) >= 1, 'sampled again after 10 s')
+    -- Any pairing re-reads every guard (a rejoining guest is placed at once).
+    fh.tx = {}
+    for _, f in ipairs(fh.W.pairedHooks) do f(true) end
+    ticks(fh, 4)
+    check(#sentFor(fh, ENT1) == 1 and #sentFor(fh, 3000000003) == 1, 'pairing: the tracked guards are announced again')
+    -- The scan line every 10 s.
+    ticks(fh, 320)
+    check(logged(fh, 'event=place_scan;ups='), 'the scan cost line')
+    -- Without follow, play shares no free roam guard (its guest refuses them); the lab still does (the lab key).
+    local nf = followFixture(true)
+    nf.W.followOn = false
+    nf.positions[1] = {10.0, 1.8, 0}
+    ticks(nf, 4)
+    check(#placeTx(nf, 34) == 0, 'play without follow: no free roam corrections')
+    nf.W.mode = 1
+    ticks(nf, 20)
+    check(#placeTx(nf, 34) >= 1, 'lab without follow: the 0.14.7 scan')
+    -- Place first: the host's own outcome of a standing guard announces where he is (kind 3, flag 4) before the OUTCOME.
+    local ph2 = followFixture(true)
+    ph2.positions[1] = {10.0, 1.8, 0}
+    ticks(ph2, 4)
+    ph2.tx = {}
+    ph2.life[1] = 3
+    ph2.E.check(ENT1, 1)
+    check(#ph2.tx == 2 and ph2.tx[1].op == 34 and ph2.tx[1].v[3] == 3 and ph2.tx[1].v[8] == 4 and ph2.tx[1].v[4] == 10000 and
+        ph2.tx[2].op == 16 and logged(ph2, 'event=place_first;step=tx;'), 'follow: place first (flag 4), then the OUTCOME')
+    -- A guard going up under a balloon (rising over 3 m faster than 2 m/s) is not sampled; his place-first keeps the
+    -- standing sample (run 3e01f334 sent 446 m).
+    local ph3 = followFixture(true)
+    ph3.positions[2] = {12.0, 1.8, 0}
+    ticks(ph3, 4)
+    ph3.tx = {}
+    ph3.positions[2] = {12.0, 30.0, 0}
+    ticks(ph3, 40)
+    check(#sentFor(ph3, 3000000002) == 0, 'a guard rising fast is not sampled')
+    ph3.life[2] = 3
+    ph3.E.check(3000000002, 5)
+    check(ph3.tx[1] and ph3.tx[1].op == 34 and ph3.tx[1].v[5] == 1400 and ph3.tx[1].v[4] == 12000,
+        'his place-first: the standing x, z and ground y (+ the lift)')
+    local ph4 = followFixture(true)
+    ph4.positions[2] = {12.0, 1.8, 0}
+    ticks(ph4, 4)
+    ph4.tx = {}
+    ph4.positions[2] = {12.0, 5.0, 0}
+    ticks(ph4, 130)
+    check(#sentFor(ph4, 3000000002) >= 1, 'a guard 3.2 m higher after 2 s (stairs, a ladder) is sampled')
+    -- Guest thresholds. This player at the origin looking +z (camera yaw 0).
+    local function guestFix(yaw)
+        local c = followFixture(false)
+        c.env.vars.playerCameraRotation = {[0] = 0, [1] = yaw or 0}
+        c.positions[900] = {0, 0, 5.0}
+        return c
+    end
+    local function sample(c, seq, h, x, z, flags) c.W.handlers[34]({seq, h, 3, x, 1000, z, 0, flags or 0, 0, 2}, c.now) end
+    local fgA = guestFix(0)
+    fgA.positions[1] = {0, 1.8, 20.0}             -- on screen, 20 m ahead
+    sample(fgA, 1, ENT1, 1000, 20000)              -- 1 m: seen, nothing
+    fgA.now = fgA.now + 2000
+    sample(fgA, 2, ENT1, 4000, 20000)              -- 4 m on screen: below 5 m
+    fgA.now = fgA.now + 2000
+    sample(fgA, 3, ENT1, 4000, 20000)
+    check(#fgA.P.q == 0, 'on screen: 4 m twice is left alone')
+    fgA.now = fgA.now + 2000
+    sample(fgA, 4, ENT1, 6000, 20000)
+    fgA.now = fgA.now + 2000
+    sample(fgA, 5, ENT1, 6000, 20000)
+    check(#fgA.P.q == 1 and logged(fgA, ';view=on'), 'on screen: 6 m twice is corrected')
+    local fgB = guestFix(180)                      -- looking away: the guard is behind
+    fgB.positions[1] = {0, 1.8, 20.0}
+    sample(fgB, 1, ENT1, 1000, 20000)
+    fgB.now = fgB.now + 2000
+    sample(fgB, 2, ENT1, 2400, 20000)
+    check(#fgB.P.q == 0, 'off screen: 2.4 m (extrapolated 2.5 m) is left alone')
+    fgB.now = fgB.now + 2000
+    sample(fgB, 3, ENT1, 3000, 20000)
+    check(#fgB.P.q == 1 and logged(fgB, ';view=off'), 'off screen: one sample over 2.5 m is corrected')
+    local fgC = guestFix(180)
+    fgC.positions[1] = {0, 1.8, 20.0}
+    sample(fgC, 1, ENT1, 1000, 20000)
+    fgC.now = fgC.now + 2000
+    sample(fgC, 2, ENT1, 5500, 20000)
+    check(#fgC.P.q == 1, 'off screen: 5.5 m once is corrected')
+    -- 1.5 s apart per guard.
+    fgC.P.q = {}
+    fgC.now = fgC.now + 600
+    sample(fgC, 3, ENT1, 9000, 20000)
+    check(#fgC.P.q == 0, 'off screen: within 1 s of the last correction, none')
+    fgC.now = fgC.now + 500
+    sample(fgC, 4, ENT1, 9000, 20000)
+    check(#fgC.P.q == 1, 'off screen: after 1 s, corrected')
+    -- On screen: 1.5 s apart.
+    local fgS = guestFix(0)
+    fgS.positions[1] = {0, 1.8, 20.0}
+    sample(fgS, 1, ENT1, 1000, 20000)
+    fgS.now = fgS.now + 2000
+    sample(fgS, 2, ENT1, 9000, 20000)
+    check(#fgS.P.q == 1, 'on screen: 9 m once is corrected')
+    fgS.P.q = {}
+    fgS.now = fgS.now + 1100
+    sample(fgS, 3, ENT1, 17000, 20000)
+    check(#fgS.P.q == 0, 'on screen: within 1.5 s of the last correction, none')
+    fgS.now = fgS.now + 500
+    sample(fgS, 4, ENT1, 17000, 20000)
+    check(#fgS.P.q == 1, 'on screen: after 1.5 s, corrected')
+    -- Never within 3 m of this player; never a copy 250 m from both players.
+    local fgD = guestFix(180)
+    fgD.positions[1] = {0, 1.8, 2.0}
+    sample(fgD, 1, ENT1, 1000, 2000)
+    fgD.now = fgD.now + 2000
+    sample(fgD, 2, ENT1, 9000, 2000)
+    check(#fgD.P.q == 0 and logged(fgD, ';why=near_player'), 'never within 3 m of this player')
+    -- A copy more than 10 m under the host's is corrected at once, on screen, right by x, z (run 51f8e90f: y -80 m).
+    local fgM = guestFix(0)
+    fgM.positions[1] = {0, -60.0, 20.0}
+    sample(fgM, 1, ENT1, 0, 20000)
+    check(#fgM.P.q == 1 and logged(fgM, ';view=on;why=fall;dy_m=-61.0'), 'a copy 61 m under the host copy is corrected at once')
+    local fgN = guestFix(0)
+    fgN.positions[1] = {0, -6.0, 20.0}
+    sample(fgN, 1, ENT1, 0, 20000)
+    check(#fgN.P.q == 0 and not logged(fgN, 'why=fall'), '7 m under: left to the thresholds')
+    local fgE = guestFix(180)
+    fgE.positions[1] = {300.0, 1.8, 0}
+    sample(fgE, 1, ENT1, 300000, 1000)
+    fgE.now = fgE.now + 2000
+    sample(fgE, 2, ENT1, 40000, 0)
+    check(#fgE.P.q == 0 and logged(fgE, ';why=far'), 'never a copy 250 m from both players')
+    -- The first sample after pairing corrects beyond 2.5 m at once; an unpairing forgets which guards were seen.
+    local fgF = guestFix(0)
+    fgF.positions[1] = {0, 1.8, 20.0}
+    sample(fgF, 1, ENT1, 3000, 20000)
+    check(#fgF.P.q == 1 and logged(fgF, ';why=pair'), 'first sample after pairing: 3 m on screen is corrected at once')
+    fgF.P.q = {}
+    for _, f in ipairs(fgF.W.unpairedHooks) do f(1) end
+    check(next(fgF.P.div) == nil, 'unpairing forgets the guards seen')
+    -- Place first (flag 4): from 1 m, at once, ahead of the FIFO; under 1 m nothing.
+    local fgG = guestFix(0)
+    fgG.positions[1] = {0, 1.8, 20.0}
+    fgG.positions[2] = {0, 1.8, -20.0}
+    sample(fgG, 1, ENT1, 0, 20000)
+    sample(fgG, 2, 3000000002, 0, -20000)
+    fgG.now = fgG.now + 2000
+    sample(fgG, 3, 3000000002, 6000, -20000)       -- queued (5 m once off screen... behind: 6 m)
+    sample(fgG, 4, ENT1, 1200, 20000, 4)            -- place first
+    check(#fgG.P.q == 2 and fgG.P.q[1].h == ENT1 and fgG.P.q[1].first, 'a place-first goes ahead of the FIFO')
+    local fgH = guestFix(0)
+    fgH.positions[1] = {0, 1.8, 20.0}
+    sample(fgH, 1, ENT1, 500, 20000, 4)
+    check(#fgH.P.q == 0 and logged(fgH, ';why=first'), 'a place-first under 1 m moves nothing')
+    -- The host copy's speed: the second sample is moved on by min(age + 100 ms, 400 ms).
+    local fgI = guestFix(180)
+    fgI.positions[1] = {2.2, 1.8, 10.0}
+    sample(fgI, 1, ENT1, 0, 10000)
+    fgI.now = fgI.now + 1000
+    fgI.logs = {}
+    sample(fgI, 2, ENT1, 2000, 10000)              -- 2 m/s: extrapolated to 2.2 m
+    fgI.now = fgI.now + 2000
+    sample(fgI, 3, ENT1, 2000, 10000)
+    check(#fgI.P.q == 0, 'extrapolated by the host copy\'s speed: this copy is where the host\'s will be')
+    -- No combat nudge; the place error line once a second.
+    local fgJ = guestFix(0)
+    fgJ.positions[1] = {0, 1.8, 20.0}
+    sample(fgJ, 1, ENT1, 1500, 20000, 1)
+    fgJ.now = fgJ.now + 1100
+    fgJ.P.tick(fgJ.now)
+    check(sent(fgJ, 1, 'SetDiscoveryPlayer') == 0 and logged(fgJ, 'event=place_combat;') and
+        logged(fgJ, 'event=place_err;n=1;h=0,1,0,0,0,0,0;p50=1.5;p95=1.5;max=1.5;fix=0;q=0'), 'no nudge; the place error line')
+    -- A combat-flagged correction never marks the guard as come (run f2d2db9b: his later samples were all ignored).
+    local fgL = guestFix(180)
+    fgL.positions[1] = {0, 1.8, 20.0}
+    fgL.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    sample(fgL, 1, ENT1, 1000, 20000, 1)
+    fgL.now = fgL.now + 2000
+    sample(fgL, 2, ENT1, 9000, 20000, 1)
+    check(#fgL.P.q == 1, 'combat sample: corrected')
+    for _ = 1, 5 do fgL.now = fgL.now + 33; fgL.P.tick(fgL.now) end
+    check(fgL.P.cur == nil and not fgL.P.come[ENT1] and logged(fgL, 'kind=correct;result=applied'),
+        'the combat correction landed and the guard is not come')
+    fgL.logs = {}
+    fgL.now = fgL.now + 2000
+    sample(fgL, 3, ENT1, 18000, 20000, 1)
+    check(logged(fgL, 'event=place_div;seq=3;'), 'his next sample is still compared')
+    -- The partner position from the native PEER receipt (the remote pose), else the partner body.
+    local pr = followFixture(true)
+    local recv = pr.W.receipt
+    pr.W.receipt = function(source)
+        if source == "return 'MGS_COOP_WORLD_PEER_V1'" then return 1, 70000, 5000, 80 end
+        return recv(source)
+    end
+    local qx, qz = pr.P.partnerXZ(pr.now)
+    check(qx == 70000 and qz == 5000 and logged(pr, 'event=place_partner;known=1;src=peer'), 'the partner from PEER')
+    pr.now = pr.now + 600
+    pr.W.receipt = recv
+    pr.positions[900] = {-3.0, 0, 4.0}
+    qx, qz = pr.P.partnerXZ(pr.now)
+    check(qx == -3000 and qz == 4000, 'an older loader: the partner body')
+    -- A host outcome waits for this copy's placement at most 1.5 s in free roam.
+    local fgK = guestFix(180)
+    fgK.positions[1] = {0, 1.8, 20.0}
+    fgK.warp = {{r = 0, h = 0, leaf = 'engine'}}
+    sample(fgK, 1, ENT1, 1000, 20000)
+    fgK.now = fgK.now + 100
+    sample(fgK, 2, ENT1, 6000, 20000, 4)
+    fgK.W.handlers[16]({ENT1, 1, 2, 1, 3, 0, 0, 0, 6000, 1000, 20000}, fgK.now)
+    for _ = 1, 30 do fgK.now = fgK.now + 33; fgK.E.tick(fgK.now); fgK.P.tick(fgK.now) end
+    check(sent(fgK, 1, 'ChangeLifeState') == 0, 'held while the placement runs (1 s)')
+    for _ = 1, 30 do fgK.now = fgK.now + 33; fgK.E.tick(fgK.now); fgK.P.tick(fgK.now) end
+    check(sent(fgK, 1, 'ChangeLifeState') == 1, 'applied after the 1.5 s hold even when the placement never lands')
+    -- Enemy sync M3 (W.ownerOn, docs/world-sync-design.md 7.9) ---------------------------------------------------------
+    -- Host: the guest owns a guard 15 m nearer its player (OWNER 73, why near); a decision holds 5 s.
+    local oh = followFixture(true)
+    oh.W.ownerOn = true
+    oh.positions[900] = {100.0, 0, 0}          -- the partner body
+    oh.positions[2] = {95.0, 1.8, 0}           -- 5 m from the partner, 95 m from the host
+    oh.positions[3] = {50.0, 1.8, 0}           -- halfway: the host's
+    ticks(oh, 4)
+    local own = placeTx(oh, 73)
+    check(#own == 1 and own[1].v[1] == 3000000002 and own[1].v[2] == 1 and own[1].v[3] == 1 and
+        logged(oh, 'event=owner;ent=3000000002;owner=guest;why=near') and #sentFor(oh, 3000000002) == 0 and
+        #sentFor(oh, 3000000003) == 1, 'M3: the guard near the guest belongs to the guest (OWNER), never corrected by the host')
+    oh.tx = {}
+    oh.positions[900] = {-100.0, 0, 0}         -- the guest walks away and the guard comes to 40 m of the host: the host's
+    oh.positions[2] = {40.0, 1.8, 0}           -- again after the 5 s hold
+    ticks(oh, 150)
+    check(#placeTx(oh, 73) == 0, 'M3: an owner decision holds 10 s')
+    ticks(oh, 250)
+    own = placeTx(oh, 73)
+    check(#own == 1 and own[1].v[2] == 0 and logged(oh, 'event=owner;ent=3000000002;owner=host'), 'M3: back to the host after 10 s')
+    -- ENGAGE (74) is logged, never an owner decision (run 4ad309a3: Damage named the local player for guards nobody shot);
+    -- a guard within 20 m of the host's player stays the host's even 15 m nearer the guest; between 5 and 15 m nearer the
+    -- guest a guard keeps his owner (the hysteresis band).
+    local oe = followFixture(true)
+    oe.W.ownerOn = true
+    oe.positions[900] = {100.0, 0, 0}
+    oe.positions[3] = {50.0, 1.8, 0}
+    oe.W.handlers[74]({3000000003, 1}, oe.now)
+    ticks(oe, 40)
+    check(logged(oe, 'event=engage_rx;ent=3000000003') and #placeTx(oe, 73) == 0, 'M3: ENGAGE is logged only')
+    local ob = followFixture(true)
+    ob.W.ownerOn = true
+    ob.positions[900] = {40.0, 0, 0}
+    ob.positions[3] = {18.0, 1.8, 0}           -- 18 m from the host, 22 m from the guest... and 22 > 18: the host's
+    ob.positions[2] = {19.0, 1.8, 0}
+    ob.positions[900] = {50.0, 0, 0}           -- 19 m from the host, 31 m from the guest
+    ticks(ob, 40)
+    check(#placeTx(ob, 73) == 0, 'M3: within 20 m of the host: the host')
+    local oy = followFixture(true)
+    oy.W.ownerOn = true
+    oy.positions[900] = {100.0, 0, 0}
+    oy.positions[2] = {90.0, 1.8, 0}           -- 80 m nearer the guest: the guest's
+    ticks(oy, 4)
+    check(#placeTx(oy, 73) == 1, 'M3: the guest owns him')
+    oy.tx = {}
+    oy.positions[2] = {54.0, 1.8, 0}           -- 54 m from the host, 46 m from the guest (8 m nearer): kept
+    ticks(oy, 400)
+    check(#placeTx(oy, 73) == 0, 'M3: 8 m nearer the guest: the owner is kept (the hysteresis band)')
+    oy.positions[2] = {51.0, 1.8, 0}           -- 2 m nearer the guest: back to the host
+    ticks(oy, 60)
+    check(#placeTx(oy, 73) == 1 and placeTx(oy, 73)[1].v[2] == 0, 'M3: under 5 m nearer the guest: the host')
+    -- Host: the guest's ENEMY_PLACE (71) moves the host's copy (off its screen: one sample over 2.5 m), WARP_HOST_V1, ACK 72.
+    local hp = followFixture(true)
+    hp.W.ownerOn = true
+    hp.env.vars.playerCameraRotation = {[0] = 0, [1] = 0}
+    hp.positions[900] = {100.0, 0, 0}
+    hp.positions[2] = {95.0, 1.8, 0}
+    hp.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    hp.W.handlers[71]({5, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, hp.now)
+    check(#hp.P.q == 1 and hp.P.q[1].host and logged(hp, 'event=place_div;seq=5;ent=3000000002;div_m=5.0'),
+        'M3: the host queues its own copy correction')
+    hp.positions[2] = {100.0, 1.8, 0}
+    ticks(hp, 6)
+    local ack = placeTx(hp, 72)
+    check(hp.receipts[#hp.receipts]:find("'MGS_COOP_WORLD_WARP_HOST_V1' -- 5 2", 1, true) and
+        logged(hp, 'event=hplace;seq=5;ent=3000000002;kind=correct;result=applied') and #ack == 1 and ack[1].v[3] == 0 and
+        #placeTx(hp, 35) == 0, 'M3: the host receipt, event=hplace, ENEMY_PLACE_ACK (never ENEMY_DEBUG_ACK)')
+    -- A guest place-first (flag 4) moves the host's copy only while the host's player is over 40 m away or the gap is
+    -- under 3 m; meanwhile the host's apply of that guest outcome waits (W.placeHoldHost, at most 1.5 s).
+    local hv = followFixture(true)
+    hv.W.ownerOn = true
+    hv.positions[900] = {100.0, 0, 0}
+    hv.positions[2] = {30.0, 1.8, 0}            -- 30 m from the host
+    hv.W.handlers[71]({6, 3000000002, 3, 36000, 1400, 0, 0, 4, 0, 2}, hv.now)
+    check(#hv.P.q == 0 and logged(hv, 'why=visible'), 'M3: the host never sees a guard teleport (30 m, 6 m off)')
+    hv.W.handlers[71]({7, 3000000002, 3, 32000, 1400, 0, 0, 4, 0, 2}, hv.now)
+    check(#hv.P.q == 1 and hv.P.q[1].first and hv.W.placeHoldHost(3000000002, hv.now) and
+        not hv.W.placeHoldHost(3000000002, hv.now + 1600), 'M3: 2 m off: placed first; the host apply waits at most 1.5 s')
+    -- Guest: OWNER gives it the guard; its copy's samples go out (ENEMY_PLACE: y - 800 + the lift), 1 m or 2 s; a refused
+    -- place backs off 10 s; ENGAGE on its own hit; its place-first (flag 4) before its own outcome.
+    local og = guestFix(0)
+    og.W.ownerOn = true
+    og.positions[1] = {0, 1.8, 20.0}
+    og.W.handlers[73]({ENT1, 1, 1}, og.now)
+    check(og.P.owned[ENT1] and logged(og, 'event=owner_rx;ent=3000000001;owner=guest'), 'M3: the guest owns the guard')
+    ticks(og, 4)
+    local pl = placeTx(og, 71)
+    check(#pl == 1 and pl[1].v[2] == ENT1 and pl[1].v[3] == 3 and pl[1].v[4] == 0 and pl[1].v[5] == 1400 and pl[1].v[6] == 20000,
+        'M3: ENEMY_PLACE with the feet y plus the lift')
+    og.tx = {}
+    og.positions[1] = {0, 1.8, 21.2}
+    ticks(og, 16)
+    check(#placeTx(og, 71) == 1, 'M3: moved 1.2 m: sent')
+    og.tx = {}
+    ticks(og, 70)
+    check(#placeTx(og, 71) == 1, 'M3: standing still: sent again after 2 s')
+    og.tx = {}
+    og.W.handlers[72]({9, ENT1, 1, 20, 0, 0}, og.now)
+    ticks(og, 150)
+    check(#placeTx(og, 71) == 0 and logged(og, 'event=place_ack;side=host;seq=9;ent=3000000001;result=refused;why=far'),
+        'M3: a refused place (far) backs the guard off')
+    for _, f in ipairs(og.W.observers) do f('Damage', ENT1, 'local') end
+    check(#placeTx(og, 74) == 0, 'M3: no ENGAGE (Damage named the local player for guards nobody shot)')
+    og.tx = {}
+    og.W.guestPlaceAnnounce(ENT1)
+    pl = placeTx(og, 71)
+    check(#pl == 1 and pl[1].v[8] == 4 and pl[1].v[5] == 1400 and logged(og, 'event=place_first;step=tx;side=guest'),
+        'M3: the guest place-first')
+    og.W.handlers[73]({ENT1, 0, 3}, og.now)
+    check(not og.P.owned[ENT1] and logged(og, 'event=owner_rx;ent=3000000001;owner=host'), 'M3: back to the host')
+    og.tx = {}
+    og.W.guestPlaceAnnounce(ENT1)
+    check(#placeTx(og, 71) == 0, 'M3: no place-first for a guard the host owns')
+    -- M3 calm-down: the host's phase decrease goes out (PHASE flag 2); the guest lowers its CP unless its own fight
+    -- raised it in the last 5 s.
+    local function setPhases(c, phase)
+        local n = 0
+        for _, cmd in ipairs(c.commands) do if cmd[2] == 'SetPhase' and cmd[3] == phase then n = n + 1 end end
+        return n
+    end
+    local pdh = followFixture(true)
+    pdh.W.ownerOn = true
+    pdh.W.phase.onLocal(100, 13)
+    pdh.tx = {}
+    pdh.W.phase.onLocal(100, 11)
+    local ph = placeTx(pdh, 18)
+    check(#ph == 1 and ph[1].v[1] == 100 and ph[1].v[2] == 1 and ph[1].v[6] == 2 and logged(pdh, 'src=down'),
+        'M3: the host calm-down goes out')
+    local pdo = followFixture(true)
+    pdo.W.phase.onLocal(100, 13)
+    pdo.tx = {}
+    pdo.W.phase.onLocal(100, 11)
+    check(#placeTx(pdo, 18) == 0, 'without M3 a host decrease stays local')
+    local pdg = followFixture(false)
+    pdg.W.ownerOn = true
+    pdg.W.cp[100].localPhase = 3
+    pdg.W.handlers[18]({100, 1, 5, 0, 0, 2}, pdg.now)
+    check(setPhases(pdg, 11) == 1 and pdg.W.cp[100].hostPhase == 1 and logged(pdg, 'src=down;applied=1'),
+        'M3: the guest comes down with the host')
+    local pdf = followFixture(false)
+    pdf.W.ownerOn = true
+    pdf.W.cp[100].localPhase = 3
+    pdf.W.cp[100].ownAt = pdf.now - 1000
+    pdf.W.handlers[18]({100, 1, 5, 0, 0, 2}, pdf.now)
+    check(setPhases(pdf, 11) == 0 and logged(pdf, 'src=down;applied=0'), 'M3: its own fight in the last 5 s keeps it up')
+    -- Enemy sync M4 (W.snapOn, docs/world-sync-design.md 7.10) ---------------------------------------------------------
+    -- The owner streams SOLDIER_SNAP (75) of its NORMAL guards within 60 m of the other player: 10 Hz within 30 m.
+    local sh = followFixture(true)
+    sh.W.snapOn = true
+    sh.positions[900] = {10.0, 0, 0}
+    sh.positions[1] = {5.0, 1.8, 0}
+    ticks(sh, 31)
+    local snaps = {}
+    for _, p in ipairs(placeTx(sh, 75)) do if p.v[2] == 1 then snaps[#snaps + 1] = p end end
+    print('M4 snaps', #snaps, snaps[1] and snaps[1].v[3], snaps[1] and snaps[1].v[4], snaps[1] and snaps[1].v[5], #sh.tx)
+    check(#snaps >= 7 and #snaps <= 11 and snaps[1].v[3] == 5000 and snaps[1].v[4] == 1400 and snaps[1].v[5] == 0,
+        'M4: about 8-10 Hz within 30 m (100 ms on 33 ms updates), the feet y plus the lift')
+    sh.tx = {}
+    sh.W.ownerOn = true
+    sh.P.own[ENT1] = {o = 1, at = sh.now}
+    ticks(sh, 31)
+    local none = 0
+    for _, p in ipairs(placeTx(sh, 75)) do if p.v[2] == 1 then none = none + 1 end end
+    check(none == 0, 'M4: never a guard the guest owns')
+    -- The receiver: one DRIVE_V1 per guard and update with its own position; the stream's guard is left alone by the
+    -- corrections; a stale stream backs off 500 ms.
+    local sg = guestFix(180)
+    sg.W.snapOn = true
+    sg.positions[1] = {0, 1.8, 20.0}
+    ticks(sg, 2)
+    check(sg.drives and sg.drives[1] == "return 'MGS_COOP_WORLD_DRIVE_V1' -- 1 1 0 1800 20000" and sg.W.snapDriving(ENT1, sg.now),
+        'M4: the receiver drives with its own position')
+    sample(sg, 1, ENT1, 5000, 20000)
+    check(#sg.P.q == 0 and logged(sg, 'why=driven'), 'M4: a driven guard is never corrected')
+    local ss = guestFix(180)
+    ss.W.snapOn = true
+    ss.positions[1] = {0, 1.8, 20.0}
+    ss.driveReply = {refused = 'stale'}
+    ticks(ss, 2)
+    local n1 = #ss.drives
+    ticks(ss, 10)
+    check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
+    ticks(ss, 10)
+    check(#ss.drives > n1, 'M4: and tries again after 500 ms')
+    -- Enemy sync M6 (W.bodyOn, docs/world-sync-design.md 7.12) ---------------------------------------------------------
+    -- A body carried more than 1.5 m and at rest 1.5 s is reported (host: ENEMY_DEBUG kind 3 flag 8, 0.2 m over it).
+    local bh = followFixture(true)
+    bh.W.bodyOn = true
+    bh.life[1] = 3
+    bh.positions[1] = {10.0, 0.3, 0}
+    ticks(bh, 60)
+    local function bodyTx(c, op)
+        local out = {}
+        for _, p in ipairs(placeTx(c, op)) do if p.v[8] == 8 then out[#out + 1] = p end end
+        return out
+    end
+    check(#bodyTx(bh, 34) == 0, 'M6: a body where it fell is not reported')
+    bh.positions[1] = {15.0, 0.3, 0}
+    ticks(bh, 70)
+    local bt = bodyTx(bh, 34)
+    check(#bt == 1 and bt[1].v[2] == ENT1 and bt[1].v[4] == 15000 and bt[1].v[5] == 500 and logged(bh, 'event=body_tx;ent=3000000001'),
+        'M6: a body dropped 5 m away and at rest is reported once')
+    ticks(bh, 70)
+    check(#bodyTx(bh, 34) == 1, 'M6: once')
+    -- The receiver places its own body there (flag 8: through the FIFO, a dead one too).
+    local bg = guestFix(180)
+    bg.W.bodyOn = true
+    bg.life[1] = 1
+    bg.positions[1] = {0, 0.3, 20.0}
+    bg.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    bg.W.handlers[34]({41, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, bg.now)
+    check(#bg.P.q == 1 and bg.P.q[1].body and logged(bg, 'event=place_body;seq=41;ent=3000000001;div_m=5.0;state=5;fix=1'),
+        'M6: the dead body 5 m off is queued')
+    ticks(bg, 6)
+    check(logged(bg, 'event=place;seq=41;ent=3000000001;kind=correct;result=applied'), 'M6: placed (never terminal_local)')
+    -- A hold-up applied here raises the hands too (SetForceHoldup), once.
+    local hu = guestFix(180)
+    hu.W.bodyOn = true
+    hu.W.handlers[16]({ENT1, 1, 1, 1, 2, 0, 0, 0, 0, 0, 0}, hu.now)
+    for _ = 1, 4 do hu.now = hu.now + 33; hu.E.tick(hu.now) end
+    local forced = 0
+    for _, cmd in ipairs(hu.commands) do if cmd[2] == 'SetForceHoldup' then forced = forced + 1 end end
+    check(forced == 1 and logged(hu, 'event=holdup_show;ent=3000000001;ok=1'), 'M6: the hold-up shows here')
+    -- Enemy sync M5 (W.routeOn, docs/world-sync-design.md 7.11) ---------------------------------------------------------
+    local function routeFix(host)
+        local c = host and followFixture(true) or guestFix(180)
+        c.W.routeOn = true
+        c.env.mvars.ene_routeSetsDefine = {cp_a = {sneak_day = {{'rts_a', 'rts_b'}}}}
+        c.W.byId = {}
+        for i = 1, 5 do c.W.byId[i] = 3000000000 + i end
+        return c
+    end
+    local rh = routeFix(true)
+    rh.positions[900] = {10.0, 0, 0}
+    rh.positions[1] = {5.0, 1.8, 0}
+    rh.routeIds = {rts_a = {1}}
+    ticks(rh, 2)
+    local function routeTx(c)
+        local out = {}
+        for _, p in ipairs(placeTx(c, 34)) do if p.v[3] == 2 and p.v[8] == 16 then out[#out + 1] = p end end
+        return out
+    end
+    local rtx = routeTx(rh)
+    check(#rtx == 1 and rtx[1].v[2] == ENT1 and rtx[1].v[9] == rh.W.h('rts_a') and logged(rh, 'event=route_tx;ent=3000000001;route=rts_a'),
+        'M5: the host sends the route of a guard near the guest (kind 2 flag 16)')
+    ticks(rh, 4)
+    check(#routeTx(rh) == 1, 'M5: once while it stays')
+    rh.routeIds = {rts_b = {1}}
+    ticks(rh, 4)
+    rtx = routeTx(rh)
+    check(#rtx == 2 and rtx[2].v[9] == rh.W.h('rts_b'), 'M5: a route change goes out')
+    local rg = routeFix(false)
+    rg.W.handlers[34]({50, ENT1, 2, 0, 0, 0, 0, 16, rg.W.h('rts_a'), 2}, rg.now)
+    local applied = 0
+    for _, cmd in ipairs(rg.commands) do if cmd[2] == 'SetSneakRoute' and cmd[5] == 'rts_a' then applied = applied + 1 end end
+    check(applied == 1 and #rg.P.q == 0 and logged(rg, 'event=route_apply;ent=3000000001;route=rts_a;why=rx'),
+        'M5: the guest copy takes the route (no placement)')
+    rg.onRoute = {[1] = 'rts_a'}
+    rg.W.handlers[34]({51, ENT1, 2, 0, 0, 0, 0, 16, rg.W.h('rts_a'), 2}, rg.now)
+    applied = 0
+    for _, cmd in ipairs(rg.commands) do if cmd[2] == 'SetSneakRoute' then applied = applied + 1 end end
+    check(applied == 1, 'M5: already on it: nothing')
+    rg.positions[1] = {0, 1.8, 20.0}
+    rg.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    sample(rg, 52, ENT1, 1000, 20000)
+    rg.now = rg.now + 2000
+    sample(rg, 53, ENT1, 6000, 20000)
+    ticks(rg, 6)
+    check(logged(rg, 'event=route_apply;ent=3000000001;route=rts_a;why=landed'), 'M5: a landed correction re-joins the route')
+    -- Enemy sync M7 probe (W.puppetOn): the guest's driven copies become puppets (SetPuppet, restrict notice) and take the
+    -- puppet drive (DRIVE_V1 mode 1); outside 60 m they are set back.
+    local pg = guestFix(180)
+    pg.W.snapOn, pg.W.puppetOn = true, true
+    pg.positions[1] = {0, 1.8, 20.0}
+    ticks(pg, 2)
+    local function cmdCount(c, name, on)
+        local n = 0
+        for _, cmd in ipairs(c.commands) do if cmd[2] == name then n = n + 1 end end
+        return n
+    end
+    check(pg.drives and pg.drives[1] == "return 'MGS_COOP_WORLD_DRIVE_V1' -- 1 1 0 1800 20000 1" and cmdCount(pg, 'SetPuppet') == 1 and
+        cmdCount(pg, 'SetRestrictNotice') == 1 and logged(pg, 'event=puppet;ent=3000000001;on=1;ok=1'), 'M7: a puppet, mode 1')
+    ticks(pg, 4)
+    check(cmdCount(pg, 'SetPuppet') == 1, 'M7: set once')
+    pg.positions[1] = {0, 1.8, 90.0}
+    ticks(pg, 2)
+    check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

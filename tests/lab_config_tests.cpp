@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace {
 unsigned checks = 0;
@@ -24,6 +25,43 @@ mgscoop::CoopConfig Coop(const std::string& text) {
 // guard plus the get-off turn).
 constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::view;
 } // namespace
+
+// The enemy sync plan's M3..M7 keys (own frame: the main test's stack is large).
+void EnemySyncKeys() {
+    using mgscoop::LabConfig;
+    // The enemy sync plan's M3..M6 (docs/world-sync-design.md 7.9..7.12) follow the gun profile in lab and play; the M7
+    // probe (soldier_puppet) stays off unless named; a named 1 runs in lab and play (no refusal bit), a named 0 opts out,
+    // an invalid value is off.
+    for (const char* key : {"soldier_owner", "soldier_snap", "soldier_route", "soldier_body", "soldier_puppet"}) {
+        const auto pick = [key](const LabConfig& c) -> std::pair<bool, bool> {
+            const std::string k = key;
+            if (k == "soldier_owner") return {c.soldier_owner, c.soldier_owner_given};
+            if (k == "soldier_snap") return {c.soldier_snap, c.soldier_snap_given};
+            if (k == "soldier_route") return {c.soldier_route, c.soldier_route_given};
+            if (k == "soldier_body") return {c.soldier_body, c.soldier_body_given};
+            return {c.soldier_puppet, c.soldier_puppet_given};
+        };
+        Check(!pick(LabConfig{}).first && !pick(LabConfig{}).second, "an enemy sync key is off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string gunBase = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\n") +
+                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n" +
+                                        "partner_native_profile=gun\nworld=3\n" + mode;
+            const bool probe = std::string(key) == "soldier_puppet";
+            Check(pick(Lab(gunBase)).first == !probe && !pick(Lab(gunBase)).second,
+                  "M3..M6 follow the gun profile; the M7 probe stays off");
+            const auto plain = Lab(std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode);
+            Check(!pick(plain).first, "an enemy sync key is off without the gun profile");
+            const auto off = Lab(gunBase + key + "=0\n");
+            Check(!pick(off).first && pick(off).second && off.play_refused == 0, "a named enemy sync key 0 opts out");
+            const auto named = Lab(gunBase + key + "=1\n");
+            Check(pick(named).first && pick(named).second && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
+                  "a named enemy sync key 1 runs in lab and play");
+            const auto bad = Lab(gunBase + key + "=maybe\n");
+            Check(!pick(bad).first && pick(bad).second && bad.invalid_values == 1, "an invalid enemy sync key value is named and off");
+        }
+    }
+}
 
 int main() {
     using namespace mgscoop;
@@ -603,6 +641,55 @@ int main() {
             const auto invalid = Lab(std::string("enabled=1\nrole=host\nspawn_warp=") + value + "\n");
             Check(!invalid.spawn_warp && !invalid.spawn_warp_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
                   "an invalid spawn_warp value refuses");
+        }
+    }
+    // Enemy follow (soldier_follow, docs/world-sync-design.md 7.8): the guest's copies of the guards near either player
+    // stand where the host's do (the follow rule of soldier_warp::GuestAdmit, CFG r[19]). Lab and play; follows the gun
+    // profile since the enemy follow round's hidden runs; off without it; a named 0 opts out, a named 1 runs in both.
+    {
+        Check(!LabConfig{}.soldier_follow && !LabConfig{}.soldier_follow_given, "soldier_follow off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string base = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode;
+            const auto plain = Lab(base);
+            Check(!plain.soldier_follow && !plain.soldier_follow_given && plain.play_refused == 0, "soldier_follow off when not named");
+            const auto gun = Lab(base + "net=1\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\n"
+                                        "partner_dm=map\npartner_native_profile=gun\nworld=3\n");
+            Check(gun.soldier_follow && !gun.soldier_follow_given && gun.fulton_sync, "the gun profile turns soldier_follow on");
+            const auto gunOff = Lab(base + "net=1\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\n"
+                                           "partner_dm=map\npartner_native_profile=gun\nworld=3\nsoldier_follow=0\n");
+            Check(!gunOff.soldier_follow && gunOff.soldier_follow_given && gunOff.play_refused == 0,
+                  "a named 0 opts out of the gun profile's follow");
+            const auto named = Lab(base + "soldier_follow=1\n");
+            Check(named.soldier_follow && named.soldier_follow_given && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0, "a named soldier_follow 1 runs in lab and play");
+            const auto off = Lab(base + "soldier_follow=0\n");
+            Check(!off.soldier_follow && off.soldier_follow_given && off.play_refused == 0, "a named soldier_follow 0 stays off");
+        }
+        // Enemy sync plan M2 (partner_native_binocle, docs/anim-truth.md "Binoculars"): follows the gun profile in lab and
+        // play (hidden runs 5a9fc123 / 3358bf4a); off without it; a named 0 opts out, no refusal bit.
+        Check(!LabConfig{}.partner_native_binocle && !LabConfig{}.partner_native_binocle_given, "partner_native_binocle off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string gunBase = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\n") +
+                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\n" +
+                                        "world=3\n" + mode;
+            const auto gun = Lab(gunBase);
+            Check(gun.partner_native_binocle && !gun.partner_native_binocle_given && gun.partner_native_aim_truth,
+                  "the gun profile turns partner_native_binocle on");
+            const auto named = Lab(gunBase + "partner_native_binocle=0\n");
+            Check(!named.partner_native_binocle && named.partner_native_binocle_given && named.invalid_values == 0 &&
+                      named.unknown_keys == 0 && named.play_refused == 0, "a named partner_native_binocle 0 opts out in lab and play");
+            const auto plainBin = Lab(std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\n") + mode);
+            Check(!plainBin.partner_native_binocle && !plainBin.partner_native_binocle_given,
+                  "partner_native_binocle off without the gun profile");
+            const auto bad = Lab(gunBase + "partner_native_binocle=maybe\n");
+            Check(!bad.partner_native_binocle && bad.partner_native_binocle_given && bad.invalid_values == 1,
+                  "an invalid partner_native_binocle is named and off");
+        }
+        EnemySyncKeys();
+        for (const char* value : {"2", "", "hold"}) {
+            const auto invalid = Lab(std::string("enabled=1\nrole=guest\nsoldier_follow=") + value + "\n");
+            Check(!invalid.soldier_follow && !invalid.soldier_follow_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,
+                  "an invalid soldier_follow value refuses");
         }
     }
     // M7 seated shots, S1 (partner_seat_shot, docs/native-puppet.md "Seat shot (S1)"): on with the gun profile in lab AND

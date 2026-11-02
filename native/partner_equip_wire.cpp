@@ -47,7 +47,7 @@ std::size_t Encode(const Manifest& m, std::uint8_t (&out)[kSize]) noexcept {
         std::memcpy(s + 4, m.slots[i].recipe, kRecipe);
         out[kTypes + i] = m.slots[i].type;
     }
-    out[kTypes + kSlots] = m.cbox_active ? 0x01u : 0x00u;
+    out[kTypes + kSlots] = static_cast<std::uint8_t>((m.cbox_active ? 0x01u : 0x00u) | (m.binocle ? 0x02u : 0x00u));
     return kSize;
 }
 
@@ -104,8 +104,9 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
         std::memcpy(m.slots[i].recipe, s + 4, kRecipe);
     }
     if (m.version == kVersion) {
-        if (data[kTypes + kSlots] & 0xFEu) return Result::reserved;
+        if (data[kTypes + kSlots] & 0xFCu) return Result::reserved;
         m.cbox_active = (data[kTypes + kSlots] & 0x01u) != 0;
+        m.binocle = (data[kTypes + kSlots] & 0x02u) != 0;
         for (std::size_t i = 0; i < kSlots; ++i) {
             if (data[kTypes + i] > kMaxGunType) return Result::type;
             m.slots[i].type = data[kTypes + i];
