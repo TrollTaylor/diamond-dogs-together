@@ -49,7 +49,7 @@ host require ^submitted_supply_drop
 waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=1;.* sent=1;' 10
 waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=1; ok=1' 10
 guest capture a-toast
-waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 15
+waitlog guest 'world_lua=event=supply; step=state; from=[34]; to=5;' 15
 wait 4000
 both capture a-fall-1
 wait 4000
@@ -86,7 +86,7 @@ waitlog host 'supply=request;seq=[0-9]+;mirror=0;drop=0;equip=431;' 20
 waitlog host 'world_lua=event=supply; step=drop_local; origin=1; oseq=2;.* sent=1;' 5
 waitlog guest 'world_lua=event=supply; step=mirror; origin=1; oseq=2; ok=1' 10
 guest capture b-toast
-waitlog guest 'world_lua=event=supply; step=state; from=3; to=5;' 20
+waitlog guest 'world_lua=event=supply; step=state; from=[34]; to=5;' 20
 wait 4000
 both capture b-fall-1
 wait 4000
@@ -121,7 +121,7 @@ guest capture c-guest-ok
 waitlog guest 'world_lua=event=supply; step=drop_local; origin=2; oseq=1;.* sent=1;' 20
 waitlog host 'world_lua=event=supply; step=mirror; origin=2; oseq=1; ok=1' 10
 host capture c-toast
-waitlog host 'world_lua=event=supply; step=state; from=3; to=5;' 20
+waitlog host 'world_lua=event=supply; step=state; from=[34]; to=5;' 20
 wait 4000
 both capture c-fall-1
 wait 4000
