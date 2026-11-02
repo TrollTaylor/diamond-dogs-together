@@ -273,13 +273,18 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
     if UNWIND.get(begin) != end:
         failures.append(f'{begin:#x}: unwind entry {UNWIND.get(begin)} != {end:#x}')
 
-# Source contract: soldier_warp::Warp has exactly two callers, each on the Lua
-# owner thread behind the lab key, the startup Verify() result and the
-# per-command gate (docs/debug-menu.md): the host menu receipt (DEBUG_WARP_V1)
-# and the guest spawn-sync grant receipt (WORLD_WARP_V1, target from the
-# world::Core grant, never from Lua).
-EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt')}
+# Source contract: soldier_warp::Warp has exactly three callers, each on the Lua
+# owner thread behind its key, the startup Verify() result and the per-command
+# gate (docs/debug-menu.md): the host menu receipt (DEBUG_WARP_V1), the guest
+# spawn-sync grant receipt (WORLD_WARP_V1, target from the world::Core grant,
+# never from Lua) and the host's owner receipt (enemy sync M3, WORLD_WARP_HOST_V1,
+# target from the host's grant of the guest's ENEMY_PLACE, never from Lua).
+EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt'),
+                    ('game_script_observer.cpp', 'HostWarpReceipt')}
 CALLER_GATES = ('debug_soldier_warp', 'spawn_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+HOST_GATES = ('soldier_owner', 'soldier_follow', 'soldier_warp_ready', 'LabRole::host', 'soldier_warp_gate.Admit(', 'mission_terminating',
+              'sw::HostAdmit(rule)', 'world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', '0x80000000u | grant.serial',
+              'sw::NearerSquared(', 'refuse("far")', 'snapshot.remote_age_ms > 1000')
 callers = []
 for path in sorted((ROOT / 'native').glob('*.cpp')):
     if path.name == 'soldier_warp.cpp':
@@ -290,7 +295,7 @@ for path in sorted((ROOT / 'native').glob('*.cpp')):
         name = heads[-1].group(1) if heads else '?'
         body = text[heads[-1].start():match.start()] if heads else ''
         callers.append((path.name, name))
-        for gate in CALLER_GATES:
+        for gate in (HOST_GATES if name == 'HostWarpReceipt' else CALLER_GATES):
             if gate not in body:
                 failures.append(f'{path.name} {name}: calls soldier_warp::Warp without {gate!r} before the call')
 if len(callers) != len(EXPECTED_CALLERS) or set(callers) != EXPECTED_CALLERS:

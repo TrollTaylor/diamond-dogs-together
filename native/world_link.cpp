@@ -40,6 +40,7 @@ bool g_relief = false;         // M3 sortie vehicle: CFG r[17] (lab key world_re
 std::uint8_t g_fulton = 0;     // r1101 fulton: CFG r[18] bits (fulton_sync 1, fulton_early 2, fulton_look 4, fulton_one_save 8,
                                // fulton_guest_vehicle 16)
 bool g_follow = false;         // enemy follow: CFG r[19] bit 1 (lab key soldier_follow, lab and play)
+std::uint8_t g_enemy_sync = 0;  // enemy sync M3..M7: CFG r[19] bits 2..32 (soldier_owner .. soldier_puppet)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
@@ -229,6 +230,7 @@ void Configure(const Config& config) noexcept {
     g_relief = config.relief;
     g_fulton = static_cast<std::uint8_t>(config.fulton & 31u);
     g_follow = config.follow;
+    g_enemy_sync = static_cast<std::uint8_t>(config.enemy_sync & 0x3Eu);
     g_vehicle_state = config.vehicle_state;
     g_vehicle_wreck = config.vehicle_wreck;
     g_vehicle_break = config.vehicle_break;
@@ -312,8 +314,8 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.relief = g_relief ? 1 : 0;
     // r1101 fulton: r[18] the Fulton lift and FULTON 0x46 (lab and play).
     reply.fulton = g_fulton;
-    // Enemy follow: r[19] the follow scan and place-first (lab and play).
-    reply.follow = g_follow ? 1 : 0;
+    // Enemy follow: r[19] bit 1 the follow scan and place-first, bits 2..32 the enemy sync plan's M3..M7 (lab and play).
+    reply.follow = static_cast<std::uint8_t>((g_follow ? 1u : 0u) | g_enemy_sync);
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }

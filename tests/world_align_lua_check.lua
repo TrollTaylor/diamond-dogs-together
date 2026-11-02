@@ -63,7 +63,7 @@ local function fixture(host, level, mb)
     -- Spawn sync receipts: WORLD_WARP_V1 answers from c.warp (FIFO, the last one repeats), REMOTE_V1 rows.
     W.receipt = function(source)
         c.receipts[#c.receipts + 1] = source
-        if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) then
+        if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) or source:find("'MGS_COOP_WORLD_WARP_HOST_V1'", 1, true) then
             local r = #c.warp > 1 and table.remove(c.warp, 1) or c.warp[1]
             if r == 'literal' then return source:match("^return '([^']+)'") end
             return r
@@ -1148,6 +1148,136 @@ if arg[7] and arg[8] then
     check(sent(fgK, 1, 'ChangeLifeState') == 0, 'held while the placement runs (1 s)')
     for _ = 1, 30 do fgK.now = fgK.now + 33; fgK.E.tick(fgK.now); fgK.P.tick(fgK.now) end
     check(sent(fgK, 1, 'ChangeLifeState') == 1, 'applied after the 1.5 s hold even when the placement never lands')
+    -- Enemy sync M3 (W.ownerOn, docs/world-sync-design.md 7.9) ---------------------------------------------------------
+    -- Host: the guest owns a guard 15 m nearer its player (OWNER 73, why near); a decision holds 5 s.
+    local oh = followFixture(true)
+    oh.W.ownerOn = true
+    oh.positions[900] = {100.0, 0, 0}          -- the partner body
+    oh.positions[2] = {95.0, 1.8, 0}           -- 5 m from the partner, 95 m from the host
+    oh.positions[3] = {50.0, 1.8, 0}           -- halfway: the host's
+    ticks(oh, 4)
+    local own = placeTx(oh, 73)
+    check(#own == 1 and own[1].v[1] == 3000000002 and own[1].v[2] == 1 and own[1].v[3] == 1 and
+        logged(oh, 'event=owner;ent=3000000002;owner=guest;why=near') and #sentFor(oh, 3000000002) == 0 and
+        #sentFor(oh, 3000000003) == 1, 'M3: the guard near the guest belongs to the guest (OWNER), never corrected by the host')
+    oh.tx = {}
+    oh.positions[900] = {-100.0, 0, 0}         -- the guest walks away and the guard comes to 40 m of the host: the host's
+    oh.positions[2] = {40.0, 1.8, 0}           -- again after the 5 s hold
+    ticks(oh, 60)
+    check(#placeTx(oh, 73) == 0, 'M3: an owner decision holds 5 s')
+    ticks(oh, 120)
+    own = placeTx(oh, 73)
+    check(#own == 1 and own[1].v[2] == 0 and logged(oh, 'event=owner;ent=3000000002;owner=host'), 'M3: back to the host after 5 s')
+    -- The guest's engagement (ENGAGE 74) gives the guest a halfway guard unless the host's player fought him too.
+    local oe = followFixture(true)
+    oe.W.ownerOn = true
+    oe.positions[900] = {100.0, 0, 0}
+    oe.positions[3] = {50.0, 1.8, 0}
+    oe.W.handlers[74]({3000000003, 1}, oe.now)
+    ticks(oe, 40)
+    check(logged(oe, 'event=owner;ent=3000000003;owner=guest;why=engage'), 'M3: a guard the guest fights belongs to the guest')
+    local ob = followFixture(true)
+    ob.W.ownerOn = true
+    ob.positions[900] = {100.0, 0, 0}
+    ob.positions[3] = {50.0, 1.8, 0}
+    ob.W.handlers[74]({3000000003, 1}, ob.now)
+    for _, f in ipairs(ob.W.observers) do f('Damage', 3000000003, 'local') end
+    ticks(ob, 40)
+    check(#placeTx(ob, 73) == 0 and #sentFor(ob, 3000000003) >= 1, 'M3: both engaged: the host')
+    -- Host: the guest's ENEMY_PLACE (71) moves the host's copy (off its screen: one sample over 2.5 m), WARP_HOST_V1, ACK 72.
+    local hp = followFixture(true)
+    hp.W.ownerOn = true
+    hp.env.vars.playerCameraRotation = {[0] = 0, [1] = 0}
+    hp.positions[900] = {100.0, 0, 0}
+    hp.positions[2] = {95.0, 1.8, 0}
+    hp.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    hp.W.handlers[71]({5, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, hp.now)
+    check(#hp.P.q == 1 and hp.P.q[1].host and logged(hp, 'event=place_div;seq=5;ent=3000000002;div_m=5.0'),
+        'M3: the host queues its own copy correction')
+    hp.positions[2] = {100.0, 1.8, 0}
+    ticks(hp, 6)
+    local ack = placeTx(hp, 72)
+    check(hp.receipts[#hp.receipts]:find("'MGS_COOP_WORLD_WARP_HOST_V1' -- 5 2", 1, true) and
+        logged(hp, 'event=hplace;seq=5;ent=3000000002;kind=correct;result=applied') and #ack == 1 and ack[1].v[3] == 0 and
+        #placeTx(hp, 35) == 0, 'M3: the host receipt, event=hplace, ENEMY_PLACE_ACK (never ENEMY_DEBUG_ACK)')
+    -- A guest place-first (flag 4) moves the host's copy only while the host's player is over 40 m away or the gap is
+    -- under 3 m; meanwhile the host's apply of that guest outcome waits (W.placeHoldHost, at most 1.5 s).
+    local hv = followFixture(true)
+    hv.W.ownerOn = true
+    hv.positions[900] = {100.0, 0, 0}
+    hv.positions[2] = {30.0, 1.8, 0}            -- 30 m from the host
+    hv.W.handlers[71]({6, 3000000002, 3, 36000, 1400, 0, 0, 4, 0, 2}, hv.now)
+    check(#hv.P.q == 0 and logged(hv, 'why=visible'), 'M3: the host never sees a guard teleport (30 m, 6 m off)')
+    hv.W.handlers[71]({7, 3000000002, 3, 32000, 1400, 0, 0, 4, 0, 2}, hv.now)
+    check(#hv.P.q == 1 and hv.P.q[1].first and hv.W.placeHoldHost(3000000002, hv.now) and
+        not hv.W.placeHoldHost(3000000002, hv.now + 1600), 'M3: 2 m off: placed first; the host apply waits at most 1.5 s')
+    -- Guest: OWNER gives it the guard; its copy's samples go out (ENEMY_PLACE: y - 800 + the lift), 1 m or 2 s; a refused
+    -- place backs off 10 s; ENGAGE on its own hit; its place-first (flag 4) before its own outcome.
+    local og = guestFix(0)
+    og.W.ownerOn = true
+    og.positions[1] = {0, 1.8, 20.0}
+    og.W.handlers[73]({ENT1, 1, 1}, og.now)
+    check(og.P.owned[ENT1] and logged(og, 'event=owner_rx;ent=3000000001;owner=guest'), 'M3: the guest owns the guard')
+    ticks(og, 4)
+    local pl = placeTx(og, 71)
+    check(#pl == 1 and pl[1].v[2] == ENT1 and pl[1].v[3] == 3 and pl[1].v[4] == 0 and pl[1].v[5] == 1400 and pl[1].v[6] == 20000,
+        'M3: ENEMY_PLACE with the feet y plus the lift')
+    og.tx = {}
+    og.positions[1] = {0, 1.8, 21.2}
+    ticks(og, 16)
+    check(#placeTx(og, 71) == 1, 'M3: moved 1.2 m: sent')
+    og.tx = {}
+    ticks(og, 70)
+    check(#placeTx(og, 71) == 1, 'M3: standing still: sent again after 2 s')
+    og.tx = {}
+    og.W.handlers[72]({9, ENT1, 1, 20, 0, 0}, og.now)
+    ticks(og, 150)
+    check(#placeTx(og, 71) == 0 and logged(og, 'event=place_ack;side=host;seq=9;ent=3000000001;result=refused;why=far'),
+        'M3: a refused place (far) backs the guard off')
+    for _, f in ipairs(og.W.observers) do f('Damage', ENT1, 'local') end
+    check(#placeTx(og, 74) == 1 and placeTx(og, 74)[1].v[1] == ENT1, 'M3: the guest own hit is an ENGAGE')
+    og.tx = {}
+    og.W.guestPlaceAnnounce(ENT1)
+    pl = placeTx(og, 71)
+    check(#pl == 1 and pl[1].v[8] == 4 and pl[1].v[5] == 1400 and logged(og, 'event=place_first;step=tx;side=guest'),
+        'M3: the guest place-first')
+    og.W.handlers[73]({ENT1, 0, 3}, og.now)
+    check(not og.P.owned[ENT1] and logged(og, 'event=owner_rx;ent=3000000001;owner=host'), 'M3: back to the host')
+    og.tx = {}
+    og.W.guestPlaceAnnounce(ENT1)
+    check(#placeTx(og, 71) == 0, 'M3: no place-first for a guard the host owns')
+    -- M3 calm-down: the host's phase decrease goes out (PHASE flag 2); the guest lowers its CP unless its own fight
+    -- raised it in the last 5 s.
+    local function setPhases(c, phase)
+        local n = 0
+        for _, cmd in ipairs(c.commands) do if cmd[2] == 'SetPhase' and cmd[3] == phase then n = n + 1 end end
+        return n
+    end
+    local pdh = followFixture(true)
+    pdh.W.ownerOn = true
+    pdh.W.phase.onLocal(100, 13)
+    pdh.tx = {}
+    pdh.W.phase.onLocal(100, 11)
+    local ph = placeTx(pdh, 18)
+    check(#ph == 1 and ph[1].v[1] == 100 and ph[1].v[2] == 1 and ph[1].v[6] == 2 and logged(pdh, 'src=down'),
+        'M3: the host calm-down goes out')
+    local pdo = followFixture(true)
+    pdo.W.phase.onLocal(100, 13)
+    pdo.tx = {}
+    pdo.W.phase.onLocal(100, 11)
+    check(#placeTx(pdo, 18) == 0, 'without M3 a host decrease stays local')
+    local pdg = followFixture(false)
+    pdg.W.ownerOn = true
+    pdg.W.cp[100].localPhase = 3
+    pdg.W.handlers[18]({100, 1, 5, 0, 0, 2}, pdg.now)
+    check(setPhases(pdg, 11) == 1 and pdg.W.cp[100].hostPhase == 1 and logged(pdg, 'src=down;applied=1'),
+        'M3: the guest comes down with the host')
+    local pdf = followFixture(false)
+    pdf.W.ownerOn = true
+    pdf.W.cp[100].localPhase = 3
+    pdf.W.cp[100].ownAt = pdf.now - 1000
+    pdf.W.handlers[18]({100, 1, 5, 0, 0, 2}, pdf.now)
+    check(setPhases(pdf, 11) == 0 and logged(pdf, 'src=down;applied=0'), 'M3: its own fight in the last 5 s keeps it up')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

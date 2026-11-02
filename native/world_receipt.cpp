@@ -64,6 +64,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, rx_prefix)) return Receipt::rx;
     if (Prefixed(source, size, log_prefix)) return Receipt::log;
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
+    if (Prefixed(source, size, hostwarp_prefix)) return Receipt::hostwarp;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
     if (Prefixed(source, size, save_prefix)) return Receipt::save;
     if (SameText(source, size, peer_source)) return Receipt::peer;
@@ -119,6 +120,27 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept 
     if (Exact(source, size, "return 'MGS_COOP_WORLD_RX_V1' -- 1")) { mask = 1; return true; }
     if (Exact(source, size, "return 'MGS_COOP_WORLD_RX_V1' -- 3")) { mask = 3; return true; }
     return false;
+}
+
+namespace {
+template <std::size_t N>
+bool ParseSeqGo(const char* source, std::size_t size, const char (&prefix)[N], std::uint16_t& seq, std::uint32_t& go_id) noexcept {
+    if (!source || !Prefixed(source, size, prefix) || size > max_receipt) return false;
+    const char* p = source + N - 1;
+    const char* end = source + size;
+    std::int64_t s = 0, g = 0;
+    if (!Token(p, end, s) || p >= end || *p != ' ') return false;
+    ++p;
+    if (!Token(p, end, g) || p != end) return false;
+    if (s < 1 || s > 65535 || g < 0 || g > 65535) return false;
+    seq = static_cast<std::uint16_t>(s);
+    go_id = static_cast<std::uint32_t>(g);
+    return true;
+}
+} // namespace
+
+bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {
+    return ParseSeqGo(source, size, hostwarp_prefix, seq, go_id);
 }
 
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {

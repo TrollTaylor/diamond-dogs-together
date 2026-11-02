@@ -185,6 +185,8 @@ do
             -- Place first (Mother Base staff; every guard with enemy follow): this copy is placed where the host's is first
             -- (world_place_guest.lua W.placeHold).
             if st ~= 0 and src == "outcome" and W.placeHold and W.placeHold(h, now or W.now()) then return "defer" end
+            -- M3 (W.ownerOn): a guest's outcome of a guard it owns waits for the guest's place-first on the host's copy.
+            if st ~= 0 and src == "commit" and W.placeHoldHost and W.placeHoldHost(h, now or W.now()) then return "defer" end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
             local d = E.gap(e, x, z)

@@ -15,6 +15,9 @@ do
         local P, OP, H, E, A = {}, W.OP, W.handlers, W.enemy, W.area
         W.place = P
         OP.ENEMY_DEBUG, OP.ENEMY_DEBUG_ACK = 34, 35
+        -- Enemy sync M3 (W.ownerOn, docs/world-sync-design.md 7.9): ENEMY_PLACE 71 (guest -> host: a guard the guest owns,
+        -- where its copy stands), ENEMY_PLACE_ACK 72, OWNER 73 (host -> guest), ENGAGE 74 (guest -> host).
+        OP.ENEMY_PLACE, OP.ENEMY_PLACE_ACK, OP.OWNER, OP.ENGAGE = 71, 72, 73, 74
         local fmt, floor, sqrt, max = string.format, math.floor, math.sqrt, math.max
         P.KIND = {"warp", "route", "correct", "come", "ignore", "notice", "disable", "enable"}
         -- A scan or place-first correction puts the copy's feet this much (mm) over the host copy's (GetPosition y - 800 mm):
@@ -53,14 +56,25 @@ do
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
             P.patrol, P.lastS, P.sink = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}, {}
+            -- M3: the host's owner decisions and both players' engagements (ms), the guest's owned guards and samples.
+            P.own, P.engG, P.engH, P.owned, P.ownS = {}, {}, {}, {}, {}
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
         P.reset()
         W.startHooks[#W.startHooks + 1] = P.reset
         if type(W.observers) == "table" then
-            W.observers[#W.observers + 1] = function(kind, h)
+            W.observers[#W.observers + 1] = function(kind, h, cls)
                 if kind == "Damage" and P.patrol then P.patrol.combat[h] = W.now() end
+                -- M3: this player's own hit on a guard is an engagement (the host's decides ownership; the guest's is sent).
+                if kind == "Damage" and cls == "local" and W.ownerOn and P.engH then
+                    local now = W.now()
+                    if W.host then P.engH[h] = now
+                    elseif W.paired and now - (P.engG[h] or -1e9) >= 2000 and W.tx(OP.ENGAGE, h, 1) then
+                        P.engG[h] = now
+                        L("event=engage_tx;ent=%.0f", h)
+                    end
+                end
             end
         end
         -- Releases an entry's force-realize; the game call only while its mission is still in
@@ -207,8 +221,11 @@ do
                             local dh = (x - hx) ^ 2 + (z - hz) ^ 2
                             local dq = qx and (x - qx) ^ 2 + (z - qz) ^ 2 or nil
                             local near = dh <= K.host or (dq ~= nil and dq <= K.partner)
-                            -- Follow: at least 15 m nearer the partner than the host is the guest's copy's to move.
-                            local side = near and follow and not staff and dq ~= nil and sqrt(dh) - sqrt(dq) >= 15000
+                            -- Follow: at least 15 m nearer the partner than the host is the guest's copy's to move; M3
+                            -- (W.ownerOn): the owner decision (P.ownerOf), the guest's ENEMY_PLACE then moves this copy.
+                            local side
+                            if near and follow and not staff and W.ownerOn then side = P.ownerOf(h, dh, dq, now) == 1
+                            else side = near and follow and not staff and dq ~= nil and sqrt(dh) - sqrt(dq) >= 15000 end
                             if side then pat.scan.side = (pat.scan.side or 0) + 1 end
                             if near and not side then
                                 local cp = W.cp and W.cp[en.cp]
@@ -259,6 +276,35 @@ do
         -- The partner's position (mm) as this copy sees it, read at most every 500 ms; nil when unknown. The native PEER
         -- receipt (the remote pose; run f2d2db9b: GetPosition on the partner body, TppPlayer2 index 1, answered nothing,
         -- so the follow scan never saw the partner), else the partner body (an older loader).
+        -- M3 ownership (W.ownerOn, docs/world-sync-design.md 7.9): the guest owns a guard at least 15 m nearer its player
+        -- than the host's, or one its player fought in the last 10 s (ENGAGE) while the host's did not; the host's player
+        -- fighting him (its own hit in the last 10 s) or within 20 m of him keeps him the host's. A decision holds 5 s.
+        -- OWNER 73 tells the guest each change (owner 0 host, 1 guest; why 1 near, 2 engage, 3 host_engaged, 0 none).
+        local OWHY = {[0] = "none", "near", "engage", "host_engaged"}
+        function P.ownerOf(h, dh, dq, now)
+            local g = P.engG[h] and now - P.engG[h] <= 10000
+            local hh = (P.engH[h] and now - P.engH[h] <= 10000) or dh <= 400000000
+            local want, why = 0, hh and 3 or 0
+            if g and not hh then want, why = 1, 2
+            elseif not hh and dq ~= nil and sqrt(dh) - sqrt(dq) >= 15000 then want, why = 1, 1 end
+            local o = P.own[h]
+            if not o then o = {o = 0, at = -1e9}; P.own[h] = o end
+            if want ~= o.o and now - o.at >= 5000 and W.tx(OP.OWNER, h, want, why) then
+                o.o, o.at = want, now
+                L("event=owner;ent=%.0f;owner=%s;why=%s;dh_m=%.0f;dq_m=%s", h, want == 1 and "guest" or "host", OWHY[why],
+                    sqrt(dh) / 1000, dq and fmt("%.0f", sqrt(dq) / 1000) or "na")
+            end
+            return o.o
+        end
+        H[OP.ENGAGE] = function(v, now)
+            if W.host and W.ownerOn and P.engG then P.engG[v[1]] = now or W.now() end
+        end
+        -- The guest's samples of the guards it owns move this host's copies (world_place_guest.lua P.sample, c.host).
+        H[OP.ENEMY_PLACE] = function(v, now)
+            if not (W.host and W.ownerOn and W.w1 and P.sample) then return end
+            P.sample({seq = v[1], h = v[2], kind = 3, x = v[4], y = v[5], z = v[6], yaw = v[7], flags = v[8], route = 0, go = v[10],
+                at = now or W.now(), host = true})
+        end
         function P.partnerXZ(now)
             local pat = P.patrol
             if now - (pat.pAt or -1e9) >= 500 then
@@ -324,7 +370,11 @@ do
             if W.host and P.patrol then P.patrol.s, P.patrol.back, P.patrol.skip = {}, {}, {} end
         end
         function P.tick(now)
-            if W.host then P.hostTick(now) elseif (W.paired or P.cur) and P.guestTick then P.guestTick(now) end
+            if W.host then
+                P.hostTick(now)
+                -- M3: the host's own placements of guest-owned guards (the same FIFO and steps as the guest's).
+                if W.ownerOn and (P.cur or #P.q > 0) and P.guestTick then P.guestTick(now) end
+            elseif (W.paired or P.cur) and P.guestTick then P.guestTick(now) end
         end
 
         -- Debug menu read-only reports (both roles): world_status, spawn_sync.

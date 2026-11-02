@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace {
 unsigned checks = 0;
@@ -24,6 +25,36 @@ mgscoop::CoopConfig Coop(const std::string& text) {
 // guard plus the get-off turn).
 constexpr mgscoop::PartnerPassCamera kPassCameraDefault = mgscoop::PartnerPassCamera::view;
 } // namespace
+
+// The enemy sync plan's M3..M7 keys (own frame: the main test's stack is large).
+void EnemySyncKeys() {
+    using mgscoop::LabConfig;
+    // The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9+): off unless named, also with the gun profile; a
+    // named 1 runs in lab and play (no refusal bit), an invalid value is off.
+    for (const char* key : {"soldier_owner", "soldier_snap", "soldier_route", "soldier_body", "soldier_puppet"}) {
+        const auto pick = [key](const LabConfig& c) -> std::pair<bool, bool> {
+            const std::string k = key;
+            if (k == "soldier_owner") return {c.soldier_owner, c.soldier_owner_given};
+            if (k == "soldier_snap") return {c.soldier_snap, c.soldier_snap_given};
+            if (k == "soldier_route") return {c.soldier_route, c.soldier_route_given};
+            if (k == "soldier_body") return {c.soldier_body, c.soldier_body_given};
+            return {c.soldier_puppet, c.soldier_puppet_given};
+        };
+        Check(!pick(LabConfig{}).first && !pick(LabConfig{}).second, "an enemy sync key is off by default");
+        for (const char* mode : {"mode=lab\n", "mode=play\n"}) {
+            const std::string gunBase = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnet_bind=any\npartner=1\n") +
+                                        "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n" +
+                                        "partner_native_profile=gun\nworld=3\n" + mode;
+            Check(!pick(Lab(gunBase)).first && !pick(Lab(gunBase)).second, "an enemy sync key stays off with the gun profile");
+            const auto named = Lab(gunBase + key + "=1\n");
+            Check(pick(named).first && pick(named).second && named.invalid_values == 0 && named.unknown_keys == 0 &&
+                      named.play_refused == 0,
+                  "a named enemy sync key 1 runs in lab and play");
+            const auto bad = Lab(gunBase + key + "=maybe\n");
+            Check(!pick(bad).first && !pick(bad).second && bad.invalid_values == 1, "an invalid enemy sync key value is off");
+        }
+    }
+}
 
 int main() {
     using namespace mgscoop;
@@ -647,6 +678,7 @@ int main() {
             Check(!bad.partner_native_binocle && bad.partner_native_binocle_given && bad.invalid_values == 1,
                   "an invalid partner_native_binocle is named and off");
         }
+        EnemySyncKeys();
         for (const char* value : {"2", "", "hold"}) {
             const auto invalid = Lab(std::string("enabled=1\nrole=guest\nsoldier_follow=") + value + "\n");
             Check(!invalid.soldier_follow && !invalid.soldier_follow_given && invalid.invalid_values == 1 && invalid.unknown_keys == 0,

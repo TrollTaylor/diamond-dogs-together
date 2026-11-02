@@ -88,6 +88,8 @@ do
             if not W.paired then return E.keep(q) end
             local rid = W.nextRid()
             local x, y, z = E.pos(e.id)
+            -- M3 (W.ownerOn): a guard this guest owns is placed on the host first (world_place_guest.lua W.guestPlaceAnnounce).
+            if st ~= 0 and W.guestPlaceAnnounce then pcall(W.guestPlaceAnnounce, h) end
             if W.tx(OP.REQ_OUTCOME, rid, h, 1, st, e.kver, cause, attack, cls, x, y, z) then
                 s.req[rid], s.out[h] = q, st
                 W.stats.reqs = W.stats.reqs + 1

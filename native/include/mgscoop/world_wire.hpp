@@ -119,6 +119,13 @@ inline constexpr std::uint8_t vspawn = 0x44;
 inline constexpr std::uint8_t supply = 0x45;
 // r1101 fulton (docs/world-sync-protocol.md section 25): FULTON (70).
 inline constexpr std::uint8_t fulton = 0x46;
+// Enemy sync M3 (docs/world-sync-design.md 7.9, docs/world-sync-protocol.md section 29), world queue, reliable, level 2,
+// play too; Lua sends and applies them only with soldier_owner (CFG r[19] bit 2):
+// ENEMY_PLACE (71) guest -> host: a guard the guest owns, where its copy stands (ENEMY_DEBUG's 30-byte shape, kind 3
+// only; flag 4 first: right before the guest's own outcome of him); the host's Lua popping it records the host's warp
+// grant (Core::RecordGrant). ENEMY_PLACE_ACK (72) host -> guest: ENEMY_DEBUG_ACK's shape. OWNER (73) host -> guest:
+// ent, owner (0 host, 1 guest), why. ENGAGE (74) guest -> host: ent, why (the guest's player fights that guard).
+inline constexpr std::uint8_t enemy_place = 0x47, enemy_place_ack = 0x48, owner = 0x49, engage = 0x4A;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -137,8 +144,10 @@ namespace place {
 inline constexpr std::uint8_t warp = 1, route = 2, correct = 3, come = 4, ignore = 5, notice = 6, disable = 7, enable = 8;
 inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2, flag_first = 4;
 }
-// Guest warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is
-// the only source of a guest native placement target (never a Lua value).
+// Warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is the only
+// source of a guest native placement target (never a Lua value); a correction
+// ENEMY_PLACE popped by the host's Lua (M3, a guard the guest owns) the only source
+// of a host one. Each process records only its own role's grants.
 // 64 slots: enemy follow (docs/world-sync-design.md 7.8) samples the guards near
 // both players, a guard every 0.5-2 s, so the 16 of 0.14.7 could evict a grant
 // whose correction still waits in the guest's FIFO (16 entries) while one
@@ -381,8 +390,9 @@ public:
     void Tick(std::uint64_t now_ms) noexcept;
     // Formatted log lines without the "; t_ms=..." suffix and line end.
     bool TakeLine(char* out, std::size_t capacity) noexcept;
-    // Guest: the warp/correct grant recorded when Rx popped ENEMY_DEBUG `seq`
-    // in the current paired epoch, at most kGrantLifeMs ago. Cleared at unpair,
+    // The warp/correct grant recorded when Rx popped ENEMY_DEBUG `seq` (guest) or
+    // ENEMY_PLACE `seq` (host, M3) in the current paired epoch, at most
+    // kGrantLifeMs ago. Cleared at unpair,
     // local mission start/end, link session and host epoch changes.
     bool FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept;
     unsigned grant_count() const noexcept;

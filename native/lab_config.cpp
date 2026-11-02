@@ -456,6 +456,36 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (ok) result.soldier_follow_given = true;
         else result.soldier_follow = false;
     }
+    else if (Equals(key, "soldier_owner")) {
+        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        ok = ParseBool(value, result.soldier_owner);
+        if (ok) result.soldier_owner_given = true;
+        else result.soldier_owner = false;
+    }
+    else if (Equals(key, "soldier_snap")) {
+        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        ok = ParseBool(value, result.soldier_snap);
+        if (ok) result.soldier_snap_given = true;
+        else result.soldier_snap = false;
+    }
+    else if (Equals(key, "soldier_route")) {
+        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        ok = ParseBool(value, result.soldier_route);
+        if (ok) result.soldier_route_given = true;
+        else result.soldier_route = false;
+    }
+    else if (Equals(key, "soldier_body")) {
+        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        ok = ParseBool(value, result.soldier_body);
+        if (ok) result.soldier_body_given = true;
+        else result.soldier_body = false;
+    }
+    else if (Equals(key, "soldier_puppet")) {
+        // Enemy sync plan (lab and play; off unless named); a named value records _given, an invalid one is off.
+        ok = ParseBool(value, result.soldier_puppet);
+        if (ok) result.soldier_puppet_given = true;
+        else result.soldier_puppet = false;
+    }
     else if (Equals(key, "partner_seat_gun")) {
         // M7: the partner's raised gun on the seated body 1 (lab and play, default off); a named value records _given.
         ok = ParseBool(value, result.partner_seat_gun);

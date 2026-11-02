@@ -122,6 +122,17 @@ struct GuestRule {
     bool follow{};              // lab.ini soldier_follow
 };
 const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept;
+// Enemy sync M3 (docs/world-sync-design.md 7.9): the host warps its own copy of a guard the guest owns, only from the
+// grant of the guest's ENEMY_PLACE (a correction), in play or lab with soldier_owner, in 30010 / 30020 / 30050. nullptr
+// admits; otherwise the refusal ("role", "disabled", "mission", "kind").
+struct HostRule {
+    bool lab{}, play{};         // lab mode, play mode
+    bool host{};                // this process is the host
+    unsigned short mission{};   // current mission
+    bool correct{};             // the grant is a correction (kind 3)
+    bool owner{};               // lab.ini soldier_owner
+};
+const char* HostAdmit(const HostRule& rule) noexcept;
 // The nearer-player range and the `far` refusal (enemy follow): the squared distance
 // from `pos` to the nearer of `host` (only when host_valid: the remote pose is fresh)
 // and `self` (only when self_valid), and which one is nearer (true: self); +inf and

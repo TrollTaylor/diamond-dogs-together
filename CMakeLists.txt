@@ -143,6 +143,8 @@ add_executable(lab_config_tests tests/lab_config_tests.cpp)
 target_link_libraries(lab_config_tests PRIVATE mgs_coop_core)
 if(MSVC)
   target_compile_options(lab_config_tests PRIVATE /W4 /WX)
+  # main() keeps hundreds of LabConfig temporaries in one Debug frame: past 1 MB once the enemy sync keys grew the struct.
+  target_link_options(lab_config_tests PRIVATE /STACK:8388608)
 endif()
 add_test(NAME lab_config_tests COMMAND lab_config_tests)
 # The developer test boot (docs/test-boot.md): lab_boot parser and Lua receipts.

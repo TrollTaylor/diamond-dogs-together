@@ -27,9 +27,10 @@
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
 //        HandleCfg; r[18] the r1101 Fulton bits 0..31 (FultonCfgBits, lab and play);
-//        r[19] enemy follow 0|1 (lab key soldier_follow, lab and play: the follow
-//        scan and place-first, docs/world-sync-design.md 7.8); Lua treats a missing
-//        or out-of-range value as 0)
+//        r[19] enemy sync bits 0..63: 1 follow (lab key soldier_follow, lab and play: the
+//        follow scan and place-first, docs/world-sync-design.md 7.8), 2 owner, 4 snap,
+//        8 route, 16 body, 32 puppet (soldier_owner .. soldier_puppet, the plan's
+//        M3..M7, 7.9+); Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -55,13 +56,16 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
 inline constexpr char rx_prefix[] = "return 'MGS_COOP_WORLD_RX_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
 inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
+// Enemy sync M3 (docs/world-sync-design.md 7.9): the host's own copy of a guard the guest owns, "<seq> <goId>" as
+// WARP_V1, the target from the host's grant of the guest's ENEMY_PLACE.
+inline constexpr char hostwarp_prefix[] = "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
 // Enemy follow (docs/world-sync-design.md 7.8): the partner's position as this copy sees it (the remote pose), no
@@ -89,6 +93,7 @@ TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::
 bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 // WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
+bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 // NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
 // Outputs only on success.
 bool ParseNote(const char* source, std::size_t size, std::uint8_t& code, std::uint32_t& a, std::uint32_t& b) noexcept;

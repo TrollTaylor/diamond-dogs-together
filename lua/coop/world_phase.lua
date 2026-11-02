@@ -163,7 +163,13 @@ do
             if not W.w1 or wire == old then return end
             local now = W.now()
             if wire < old then
-                if not W.host then c.own = min(c.own, wire) end
+                if not W.host then c.own = min(c.own, wire)
+                elseif W.ownerOn and W.paired and W.eff >= 2 then
+                    -- Enemy sync M3 (docs/world-sync-design.md 7.9): the host's calm-down goes out too (PHASE flag 2).
+                    c.ver = c.ver % 65535 + 1
+                    W.tx(OP.PHASE, h, wire, c.ver, 0, 0, 2)
+                    W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=down;rid=0", h, wire, c.ver))
+                end
             elseif W.host then
                 c.ver = c.ver % 65535 + 1
                 local pe, rid = P.echo[h], 0
@@ -173,7 +179,7 @@ do
                 if W.paired and W.eff >= 2 then W.tx(OP.PHASE, h, wire, c.ver, 0, rid, 0) end
                 W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=%s;rid=%d", h, wire, c.ver, src, rid))
             elseif wire > c.hostPhase then
-                c.own = wire
+                c.own, c.ownAt = wire, now
                 local lr = P.lastReq[h]
                 if (not lr or now - lr.at > 30000 or wire > lr.phase) and W.paired and W.eff >= 2 then
                     local rid = W.nextRid()
@@ -238,9 +244,19 @@ do
                 end
             end
         end
-        H[OP.PHASE] = function(v)
+        H[OP.PHASE] = function(v, now)
             local c = W.w1 and W.cp[v[1]]
             if not c then return end
+            -- M3 calm-down (flag 2, W.ownerOn): this CP comes down with the host's unless this copy's own fight raised it in
+            -- the last 5 s (then the next PHASE_VEC or calm-down brings it).
+            if (v[6] or 0) >= 2 and W.ownerOn then
+                now = now or W.now()
+                c.hostPhase = v[2]
+                local applied = c.localPhase > v[2] and not (c.ownAt and now - c.ownAt < 5000)
+                if applied then P.setPhase(c, v[2]) end
+                W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=down;applied=%d", v[1], v[2], v[3], applied and 1 or 0))
+                return
+            end
             c.hostPhase = max(c.hostPhase, v[2])
             local applied = c.localPhase < v[2]
             if applied then P.setPhase(c, v[2]) end

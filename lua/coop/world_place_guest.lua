@@ -178,6 +178,12 @@ do
                     fix = (div.n >= 2 or d > (staff and 5000 or 8000)) and c.at - div.at >= 2500
                 end
                 if first and why ~= "near_player" and why ~= "far" then fix, why = d >= 1000, "first" end
+                -- M3, the host's copy of a guest-owned guard: a place-first only while the host's player is more than 40 m
+                -- from him or the copies are under 3 m apart (the host never sees a guard teleport).
+                if c.host and first and fix then
+                    local hx, hz = P.view()
+                    if hx and flat(x, z, hx, hz) <= 40000 and d >= 3000 then fix, why = false, "visible" end
+                end
                 -- A copy more than 10 m under the host's is corrected at once, on screen or not (run 51f8e90f: a guard's copy
                 -- stood at y -80 m under the outpost, right by x, z, until the guest's goto followed it there).
                 if follow and dy < -10000 and why ~= "near_player" and why ~= "far" then fix, why = true, "fall" end
@@ -190,7 +196,8 @@ do
             end
             div.seen = true
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
-            local mine = type(px) == "number" and type(pz) == "number" and flat(x, z, px * 1000, pz * 1000) <= 60000
+            -- The place error window: guards within 60 m of this player; on the host (M3) every guest-owned sample.
+            local mine = c.host or (type(px) == "number" and type(pz) == "number" and flat(x, z, px * 1000, pz * 1000) <= 60000)
             if follow and mine then P.err(d, fix) end
             -- Follow logs only a correction, a guard 2 m off, a place-first or a first sample (place_err counts the rest).
             if not follow or fix or first or why or d >= 2000 then
@@ -295,7 +302,8 @@ do
                 if type(y) == "number" and type(c.y) == "number" and (c.kind ~= 2 or c.y ~= 0) then c.dy = y - c.y end
                 return P.done(c)
             end
-            local r = W.receipt(fmt("return 'MGS_COOP_WORLD_WARP_V1' -- %d %d", c.seq, id))
+            local r = W.receipt(fmt(c.host and "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- %d %d" or "return 'MGS_COOP_WORLD_WARP_V1' -- %d %d",
+                c.seq, id))
             if type(r) ~= "table" then return P.done(c, "native_off") end
             if r.refused ~= nil then
                 c.native = tostring(r.refused)
@@ -323,7 +331,8 @@ do
                     if m and c.pos then m.last = {position = {c.pos[1] / 1000, c.pos[2] / 1000, c.pos[3] / 1000}, mission = W.mission} end
                 end
             end
-            L("event=place;seq=%d;ent=%.0f;kind=%s;result=%s;why=%s;native=%s;err_m=%.2f;frames=%d%s", c.seq, c.h, KIND[c.kind],
+            L("event=%s;seq=%d;ent=%.0f;kind=%s;result=%s;why=%s;native=%s;err_m=%.2f;frames=%d%s", c.host and "hplace" or "place",
+                c.seq, c.h, KIND[c.kind],
                 why and "refused" or "applied", why or "none", c.native or "none", c.errCm / 100, c.frames or 0,
                 not why and c.dy and fmt(";dy_m=%.2f", c.dy / 1000) or "")
             if not why and c.dy and c.pos and W.followOn == true then
@@ -334,7 +343,8 @@ do
                     why and "refused" or "applied", why or "none", c.errCm / 100, floor(W.now() - c.at))
             end
             if W.paired then
-                W.tx(OP.ENEMY_DEBUG_ACK, c.seq, c.h, why and 1 or 0, why and CODE[why] or 0, c.errCm, min(c.frames or 0, 65535))
+                W.tx(c.host and OP.ENEMY_PLACE_ACK or OP.ENEMY_DEBUG_ACK, c.seq, c.h, why and 1 or 0, why and CODE[why] or 0, c.errCm,
+                    min(c.frames or 0, 65535))
             end
             if c.kind ~= 3 then
                 P.last = c
@@ -349,6 +359,7 @@ do
         end
         function P.guestTick(now)
             if W.followOn == true then P.errTick(now); P.sinkTick(now) end
+            if W.ownerOn and not W.host then P.ownScan(now) end
             local c = P.cur
             if not c then
                 c = table.remove(P.q, 1)
@@ -364,6 +375,94 @@ do
         -- this copy stands where the host's does: a placement of h queued or running, or the newest sample (at most 2 s
         -- old: the host's place first) more than 1.5 m away while NORMAL is queued now (no 2-sample rule, no cooldown). At
         -- most 4 s at Mother Base, 1.5 s in free roam: then the placement is dropped and the outcome applies anyway.
+        -- Enemy sync M3 (W.ownerOn, docs/world-sync-design.md 7.9), the guest: the guards the host gives it (OWNER 73) and
+        -- where its copies stand (ENEMY_PLACE 71), as the host's scan does for its own (4 reads per update, every 500 ms
+        -- within 40 m of this player, 1 s beyond; sent when moved 1 m or every 2 s; flag 1 while its CP is in ALERT here).
+        -- A place the host refused (ENEMY_PLACE_ACK: far, native_off, latched) backs that guard off 10 s.
+        H[OP.OWNER] = function(v)
+            if W.host or not W.ownerOn then return end
+            local mine = v[2] == 1
+            if (P.owned[v[1]] == true) ~= mine then
+                P.owned[v[1]] = mine or nil
+                if not mine then P.ownS[v[1]] = nil end
+                L("event=owner_rx;ent=%.0f;owner=%s;why=%d", v[1], mine and "guest" or "host", v[3])
+            end
+        end
+        local BACKOFF = {far = true, native_off = true, latched = true}
+        H[OP.ENEMY_PLACE_ACK] = function(v, now)
+            if W.host then return end
+            P.ownAck = P.ownAck or {applied = 0, refused = 0}
+            if v[3] == 0 then P.ownAck.applied = P.ownAck.applied + 1; return end
+            P.ownAck.refused = P.ownAck.refused + 1
+            local why = P.WHY[v[4]] or "?"
+            if BACKOFF[why] and P.ownS[v[2]] then P.ownS[v[2]].back = (now or W.now()) + 10000 end
+            L("event=place_ack;side=host;seq=%d;ent=%.0f;result=refused;why=%s", v[1], v[2], why)
+        end
+        function P.ownScan(now)
+            if not (W.ownerOn and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true) then return end
+            local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+            if type(px) ~= "number" or type(pz) ~= "number" then return end
+            px, pz = px * 1000, pz * 1000
+            local reads = 0
+            for h in pairs(P.owned) do
+                if reads >= 4 then break end
+                local s = P.ownS[h]
+                if not s then s = {}; P.ownS[h] = s end
+                if now - (s.sampleAt or -1e9) >= (s.every or 500) and not (s.back and now < s.back) then
+                    local en = W.ent[h]
+                    reads, s.sampleAt = reads + 1, now
+                    if en and type(en.id) == "number" and P.state(en) == 0 then
+                        local x, y, z = pos(en.id)
+                        if x and (x ~= 0 or z ~= 0) then
+                            s.every = flat(x, z, px, pz) <= 40000 and 500 or 1000
+                            local moved = s.x and flat(x, z, s.x, s.z) or 1e9
+                            if moved >= 1000 or now - (s.sent or -1e9) >= 2000 then
+                                local yaw = s.x and moved >= 300 and floor(math.atan2(x - s.x, z - s.z) * 1000 + 0.5) or (s.yaw or 0)
+                                local cp = W.cp and W.cp[en.cp]
+                                P.ownSeq = (P.ownSeq or 0) % 65535 + 1
+                                if W.tx(OP.ENEMY_PLACE, P.ownSeq, h, 3, x, y - 800 + P.LIFT, z, yaw, cp and cp.localPhase == 3 and 1 or 0,
+                                    0, en.id % 65536) then
+                                    s.x, s.z, s.yaw, s.sent = x, z, yaw, now
+                                    P.ownN = (P.ownN or 0) + 1
+                                end
+                            end
+                            s.y = y - 800
+                        end
+                    end
+                end
+            end
+        end
+        -- The guest's place-first (M3): right before its own outcome of a guard it owns (world_outcome.lua E.request), where
+        -- he stood (flag 4: x, z now; the ground y of his last standing sample; the sampled x, z when the body rose).
+        function W.guestPlaceAnnounce(h)
+            if W.host or not (W.ownerOn and P.owned[h] and W.paired) then return end
+            local s, en = P.ownS[h], W.ent[h]
+            if not (s and s.y and s.x and en and type(en.id) == "number") then return end
+            local x, y, z = pos(en.id)
+            if not x or math.abs(y - 800 - s.y) > 2000 then x, z = s.x, s.z end
+            P.ownSeq = (P.ownSeq or 0) % 65535 + 1
+            local ok = W.tx(OP.ENEMY_PLACE, P.ownSeq, h, 3, x, s.y + P.LIFT, z, s.yaw or 0, 4, 0, en.id % 65536)
+            L("event=place_first;step=tx;side=guest;ent=%.0f;seq=%d;x=%d;y=%d;z=%d;sent=%d", h, P.ownSeq, x, s.y + P.LIFT, z, ok and 1 or 0)
+        end
+        -- The host (M3): a guest's outcome of a guard it owns waits until the host's copy is placed by the guest's
+        -- place-first (queued or running), at most 1.5 s (world_enemy.lua E.applyOne, src commit).
+        function W.placeHoldHost(h, now)
+            if not (W.host and W.ownerOn) then return false end
+            local c = P.cur
+            if c and c.h == h and c.host and c.first then
+                if now - c.at < 1500 then return true end
+                P.done(c, "context")
+                return false
+            end
+            for i, q in ipairs(P.q) do
+                if q.h == h and q.host and q.first then
+                    if now - q.at < 1500 then return true end
+                    table.remove(P.q, i)
+                    return false
+                end
+            end
+            return false
+        end
         function W.placeHold(h, now)
             if W.host or not ((W.feature and W.feature.staffPlace) or W.followOn == true) then return false end
             local limit = W.feature and W.feature.staffPlace and 4000 or 1500
@@ -397,6 +496,8 @@ do
             W.rosterMatch = false
             -- P.div too: the first sample of each guard after the next pairing corrects at once (enemy follow).
             P.out, P.q, P.lastS, P.div = {}, {}, {}, {}
+            -- M3: ownership and engagements end with the pairing (the host decides again after the next).
+            P.own, P.engG, P.engH, P.owned, P.ownS = {}, {}, {}, {}, {}
             local c = P.cur
             P.release(c)
             P.cur = nil

@@ -155,6 +155,43 @@ def analyse(host, guest):
     us = [float(s.get('avg_us', 0)) for s in scans]
     r['scan_avg_us'] = sum(us) / len(us) if us else None
     r['scan_max_us'] = max((float(s.get('max_us', 0)) for s in scans), default=None)
+    # Enemy sync M3 (two-way): the host's own placements of guest-owned guards, its place error window for them, the
+    # owner changes (at most one per guard per 10 s), the guest's place-firsts, the calm-down.
+    hpl = [fields(l) for l in host if 'event=hplace' in l]
+    r['m3_hplace'] = len(hpl)
+    r['m3_hplace_applied'] = sum(1 for p in hpl if p.get('result') == 'applied')
+    hwhy = {}
+    for p in hpl:
+        if p.get('result') != 'applied':
+            hwhy[p.get('why')] = hwhy.get(p.get('why'), 0) + 1
+    r['m3_hplace_refused'] = hwhy
+    hb, hs = [0] * 7, 0
+    for l in host:
+        if 'event=place_err' not in l:
+            continue
+        f = fields(l)
+        try:
+            h = [int(x) for x in f.get('h', '').split(',')]
+        except ValueError:
+            continue
+        if len(h) == 7:
+            hb, hs = [a + b for a, b in zip(hb, h)], hs + int(f.get('n', 0))
+    r['m3_host_err_samples'] = hs
+    r['m3_host_err_p50_m'] = quantile(hb, 0.5)
+    r['m3_host_err_p90_m'] = quantile(hb, 0.9)
+    owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
+    r['m3_owner_changes'] = len(owners)
+    last, fast = {}, 0
+    for o in owners:
+        e, t = o.get('ent'), int(o.get('t_ms', 0) or 0)
+        if e in last and t - last[e] < 10000:
+            fast += 1
+        last[e] = t
+    r['m3_owner_fast_flips'] = fast
+    r['m3_guest_place_first'] = sum(1 for l in guest if 'event=place_first' in l and 'side=guest' in l)
+    r['m3_engage'] = sum(1 for l in guest if 'event=engage_tx' in l)
+    r['m3_phase_down'] = sum(1 for l in host if 'src=down' in l)
+    r['m3_phase_down_applied'] = sum(1 for l in guest if 'src=down' in l and 'applied=1' in l)
     return r
 
 
@@ -177,6 +214,13 @@ def gates(r):
     gate('0 unresolved why=not_attributed', r['not_attributed'] == 0, r['not_attributed'])
     gate('every host commit applied on the guest', None if not r['host_commits'] else r['commits_not_applied'] == 0,
          '%d missing of %d' % (r['commits_not_applied'], r['host_commits']))
+    if r['m3_hplace'] or r['m3_owner_changes']:
+        gate('M3: >= 90 % of the host placements applied', None if not r['m3_hplace'] else r['m3_hplace_applied'] >= 0.9 * r['m3_hplace'],
+             '%d/%d' % (r['m3_hplace_applied'], r['m3_hplace']))
+        hp50, hp90 = r['m3_host_err_p50_m'], r['m3_host_err_p90_m']
+        gate('M3: host place error for guest-owned guards median <= 2 m, p90 <= 5 m',
+             None if hp50 is None else (hp50 <= 2.0 and hp90 <= 5.0), None if hp50 is None else (round(hp50, 2), round(hp90, 2)))
+        gate('M3: <= 1 owner change per guard per 10 s', r['m3_owner_fast_flips'] == 0, r['m3_owner_fast_flips'])
     n = r['never']
     gate('0 latches, faults, game overs, roster mismatches, overflow, guard copies under the ground', all(v == 0 for v in n.values()), n)
     return g
@@ -208,6 +252,13 @@ def main(argv=None):
           'd_m %s' % (
         r['place_first'], r['place_first_ok'], r['guest_applies'], r['guest_applies_with_d'], r['guest_applies_d_le_2m'],
         r['guest_apply_d_m_max'], r['guest_echo_d_m'] or 'none'))
+    if r['m3_hplace'] or r['m3_owner_changes']:
+        print('  M3: owner changes %d (fast flips %d), host placements %d applied %d refused %s, host place error %d samples '
+              'p50 %s m p90 %s m, guest place-firsts %d, engages %d, calm-downs %d (applied on the guest %d)' % (
+                  r['m3_owner_changes'], r['m3_owner_fast_flips'], r['m3_hplace'], r['m3_hplace_applied'], r['m3_hplace_refused'],
+                  r['m3_host_err_samples'], r['m3_host_err_p50_m'] and round(r['m3_host_err_p50_m'], 2),
+                  r['m3_host_err_p90_m'] and round(r['m3_host_err_p90_m'], 2), r['m3_guest_place_first'], r['m3_engage'],
+                  r['m3_phase_down'], r['m3_phase_down_applied']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

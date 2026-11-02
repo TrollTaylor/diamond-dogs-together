@@ -341,6 +341,18 @@ int main() {
     Check(sw::GuestAdmit({true, false, true, 30010, true, true}, staff) == nullptr && staff == G::lab, "the lab key comes first");
     Check(sw::FollowMission(30010) && sw::FollowMission(30020) && sw::FollowMission(30050) && !sw::FollowMission(40050) &&
           !sw::FollowMission(10010), "follow missions: free roam and Mother Base");
+    // Enemy sync M3 (docs/world-sync-design.md 7.9): the host's warp of its own copy of a guest-owned guard.
+    for (const unsigned short mission : follow_missions) {
+        Check(sw::HostAdmit({false, true, true, mission, true, true}) == nullptr, "owner: a play correction on the host");
+        Check(sw::HostAdmit({true, false, true, mission, true, true}) == nullptr, "owner: a lab correction on the host");
+    }
+    Check(std::strcmp(sw::HostAdmit({false, true, false, 30010, true, true}), "role") == 0, "owner: never on the guest");
+    Check(std::strcmp(sw::HostAdmit({false, false, true, 30010, true, true}), "role") == 0, "owner: neither play nor lab");
+    Check(std::strcmp(sw::HostAdmit({false, true, true, 30010, true, false}), "disabled") == 0, "owner: the key off");
+    Check(std::strcmp(sw::HostAdmit({false, true, true, 10033, true, true}), "mission") == 0 &&
+              std::strcmp(sw::HostAdmit({false, true, true, 40050, true, true}), "mission") == 0,
+          "owner: never in a story mission or an ACC");
+    Check(std::strcmp(sw::HostAdmit({false, true, true, 30010, false, true}), "kind") == 0, "owner: corrections only");
     // The nearer player (the follow and staff range) and the 250 m far bound.
     const float target[3] = {100.0f, 0.0f, 0.0f}, host_at[3] = {0.0f, 0.0f, 0.0f}, self_at[3] = {90.0f, 0.0f, 0.0f};
     bool self_nearer = false;

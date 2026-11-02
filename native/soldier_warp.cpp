@@ -238,6 +238,14 @@ const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept {
     return "disabled";
 }
 
+const char* HostAdmit(const HostRule& rule) noexcept {
+    if (!rule.host || !(rule.lab || rule.play)) return "role";
+    if (!rule.owner) return "disabled";
+    if (!FollowMission(rule.mission)) return "mission";
+    if (!rule.correct) return "kind";
+    return nullptr;
+}
+
 float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
                     bool& self_nearer) noexcept {
     float to_host = 0.0f, to_self = 0.0f;

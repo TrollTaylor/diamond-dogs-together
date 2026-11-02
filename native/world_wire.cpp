@@ -67,8 +67,9 @@ constexpr OpSpec kOps[] = {
     // 1 buddy, 2 other, 3 none; the host judges 2 and 3 by the follow authority rules), xyz mm of the guest's copy.
     {op::req_outcome, "REQ_OUTCOME", 1, Dir::guest_to_host, Wire::reliable, 2, true, false, 11, 0, 0, 28,
      {Rid(), U32(), U8(1, 1), U8(1, 7), U16(), U8(0, 15), U32(), U8(0, 3), I32(), I32(), I32()}},
+    // flags: 1 the resync stream, 2 a calm-down (enemy sync M3, protocol section 29).
     {op::phase, "PHASE", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 6, 0, 0, 11,
-     {U32(), U8(0, 3), U16(1, kU16), U8(0, 0), U16(), U8(0, 1)}},
+     {U32(), U8(0, 3), U16(1, kU16), U8(0, 0), U16(), U8(0, 3)}},
     {op::req_phase, "REQ_PHASE", 1, Dir::guest_to_host, Wire::reliable, 2, true, false, 8, 0, 0, 24,
      {Rid(), U32(), U8(1, 3), U8(0, 15), U32(), I32(), I32(), I32()}},
     {op::player_area, "PLAYER_AREA", 1, Dir::both, Wire::reliable, 2, false, false, 2, 0, 0, 5, {U8(0, 15), Mission()}},
@@ -90,6 +91,15 @@ constexpr OpSpec kOps[] = {
     // seq, ent, result (0 applied, 1 refused), reason (world_place.lua WHY), error cm, frames.
     {op::enemy_debug_ack, "ENEMY_DEBUG_ACK", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
+    // Enemy sync M3 (protocol section 29): the guest's sample of a guard it owns (kind 3 only), the host's answer, the
+    // host's owner decision and the guest's engagement.
+    {op::enemy_place, "ENEMY_PLACE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 10, 0, 0, 30,
+     {U16(1, kU16), U32(), U8(3, 3), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
+      I32(-8000, 8000), U8(0, 7), U32(0, 0), U16()}},
+    {op::enemy_place_ack, "ENEMY_PLACE_ACK", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 6, 0, 0, 12,
+     {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
+    {op::owner, "OWNER", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 3, 0, 0, 6, {U32(), U8(0, 1), U8(0, 7)}},
+    {op::engage, "ENGAGE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 2, 0, 0, 5, {U32(), U8(0, 7)}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
     {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
      {U16(1), U32(), U8(0, 1), U8(0, 2), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
@@ -1171,7 +1181,7 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
             --world_size_;
             if (e.epoch != epoch_) { ++stats_.purged; continue; }
             fill(e, 1);
-            if (e.op == op::enemy_debug) RecordGrant(e, now_ms);
+            if (e.op == op::enemy_debug || e.op == op::enemy_place) RecordGrant(e, now_ms);
             return;
         }
         for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_, &ride_fast_, &ride_tilt_, &companion_pose_}) {
@@ -1188,12 +1198,14 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
     out.epoch = TxEpoch();
 }
 
-// Guest only: a warp or correct ENEMY_DEBUG handed to Lua becomes the one
-// native placement target for that seq. Slot: the same seq, a free or expired
-// one, the oldest correction (a pending warp outlives 1 Hz corrections), else
-// the oldest grant.
+// A warp or correct ENEMY_DEBUG handed to the guest's Lua, or a correct ENEMY_PLACE
+// handed to the host's (M3), becomes the one native placement target for that seq.
+// Slot: the same seq, a free or expired one, the oldest correction (a pending warp
+// outlives 1 Hz corrections), else the oldest grant.
 void Core::RecordGrant(const Entry& e, std::uint64_t now_ms) noexcept {
-    if (config_.role != kRoleGuest || e.count < 10 || (e.v[2] != place::warp && e.v[2] != place::correct)) return;
+    const bool guest = config_.role == kRoleGuest && e.op == op::enemy_debug && (e.v[2] == place::warp || e.v[2] == place::correct);
+    const bool host = config_.role == kRoleHost && e.op == op::enemy_place && e.v[2] == place::correct;
+    if (e.count < 10 || !(guest || host)) return;
     Grant* slot = nullptr;
     Grant* oldest = nullptr;
     Grant* oldest_correct = nullptr;
@@ -1216,7 +1228,7 @@ void Core::ClearGrants() noexcept {
 
 bool Core::FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept {
     out = Grant{};
-    if (config_.role != kRoleGuest || !paired_ || !level_ || !seq) return false;
+    if (!paired_ || !level_ || !seq) return false;
     for (const Grant& g : grants_) {
         if (!g.valid || g.seq != seq || g.epoch != epoch_ || now_ms < g.rx_ms || now_ms - g.rx_ms > kGrantLifeMs) continue;
         out = g;

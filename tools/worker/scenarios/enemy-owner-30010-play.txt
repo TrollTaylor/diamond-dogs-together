@@ -1,0 +1,100 @@
+# Enemy sync M3 proof (docs/world-sync-design.md 7.9): the guest's own fights show on the host's screen too. Mode play
+# over -WanSim bad, soldier_owner named (soldier_follow is the gun profile's default), Afghanistan afgh_field_cp
+# (afgh-ledge seed). The outpost goes to ALERT on arrival (every 30010 run since P1b).
+#   A. Apart (~70 m: the host by 2961503 at the south-east of the outpost, the guest by 2942862796 at its north): the host
+#      gives the guest the guards 15 m nearer it (event=owner; owner=guest; why=near, OWNER 73), the guest streams them
+#      (ENEMY_PLACE 71) and the host moves its own copies (event=hplace; WORLD_WARP_HOST_V1), 60 s.
+#   B. The guest shoots three guards near it (the aim lever of run 6e0edd8b): each guest-owned one is placed on the host
+#      first (event=place_first;step=tx;side=guest, then the host's hplace) before the host commits it (actor=guest).
+#   C. The host stands the outpost down (cp_phase nearest sneak): PHASE flag 2, the guest's CP comes down
+#      (event=phase;...;src=down;applied=1) unless its own fight raised it in the last 5 s.
+#   D. They meet (the guest 4 m behind the host): ownership goes back to the host (owner=host).
+# Run (hidden worker, under the queue):
+#   pwsh -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sync -ScenarioPath tools/worker/scenarios/enemy-owner-30010-play.txt
+#        -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
+# Then: python tools/enemy_div_report.py --host <host slice> --guest <guest slice> (the M3 lines).
+# NEVER: native=role, soldier_warp=disabled, step=error, event=error, GameOver, roster_mismatch, overflow.
+labsetting soldier_owner=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+waitlog host 'soldier_warp=ready; key=[a-z_]+; follow=1; owner=1;' 5
+waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
+host run world_status
+host expect ^world;paired=1;eff=3;w1=1;roster=match;
+# --- A: apart, 60 s ------------------------------------------------------------------------------------------------
+logmark both
+host run enemy goto 2961503 6
+host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
+guest run enemy goto 2942862796 8
+guest expect ^(enemy_goto;ent=2942862796;submitted_warp|warp_position_readback)
+waitlog host 'world_lua=event=owner; ent=[0-9]+; owner=guest; why=' 40
+waitlog guest 'world_lua=event=owner_rx; ent=[0-9]+; owner=guest;' 10
+waitlog host 'world_lua=event=hplace; seq=[0-9]+; ent=[0-9]+; kind=correct; result=applied;' 40
+wait 20000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+wait 29000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-60
+# --- B: the guest shoots three guards near it -----------------------------------------------------------------------
+logmark both
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest release
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=guest;' 20
+wait 3000
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest release
+wait 4000
+guest run enemy_aim_nearest 1.1
+wait 600
+guest hold rmb 1500 nowait
+wait 700
+guest press lmb 120
+wait 300
+guest release
+wait 4000
+host run world_status
+guest run world_status
+# --- C: the host stands the outpost down ----------------------------------------------------------------------------
+logmark both
+wait 6000
+host run cp_phase nearest sneak
+host expect ^submitted_phase;cp=[^;]+;phase=sneak;
+waitlog guest 'world_lua=event=phase; cp=[0-9]+; phase=0; ver=[0-9]+; src=down; applied=' 15
+wait 5000
+both capture c-down
+# --- D: they meet ---------------------------------------------------------------------------------------------------
+logmark both
+placebehind guest host 4 1
+wait 15000
+waitlog host 'world_lua=event=owner; ent=[0-9]+; owner=host;' 20
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture d-together
+wait 10000
+host run world_status
+guest run world_status

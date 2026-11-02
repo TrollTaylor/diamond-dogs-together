@@ -495,6 +495,12 @@ $script:LabPartnerKeys = @(
     # Enemy follow (docs/world-sync-design.md 7.8; lab and play, native default: the gun profile): the guest's copies of the
     # guards near either player stand where the host's do (CFG r[19], soldier_warp::GuestAdmit follow rule).
     @{ Key = 'soldier_follow'; Json = 'soldier_follow'; Kind = 'bool' },
+    # The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9+; lab and play, off unless named; CFG r[19] bits 2..32).
+    @{ Key = 'soldier_owner'; Json = 'soldier_owner'; Kind = 'bool' },
+    @{ Key = 'soldier_snap'; Json = 'soldier_snap'; Kind = 'bool' },
+    @{ Key = 'soldier_route'; Json = 'soldier_route'; Kind = 'bool' },
+    @{ Key = 'soldier_body'; Json = 'soldier_body'; Kind = 'bool' },
+    @{ Key = 'soldier_puppet'; Json = 'soldier_puppet'; Kind = 'bool' },
     # mode=play belongs to the two-PC launcher (DiamondDogsTogether.exe; until 0.13.6 tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

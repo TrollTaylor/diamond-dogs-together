@@ -170,6 +170,10 @@ void Cfg() {
     r.follow = 1;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,1") == 0,
           "the enemy follow flag is r[19]");
+    // The enemy sync plan's M3..M7 (soldier_owner .. soldier_puppet; docs/world-sync-design.md 7.9+): r[19] bits 2..32.
+    r.follow = 63;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,63") == 0,
+          "the enemy sync bits ride r[19] as is");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
     r.relief = 255; r.fulton = 255; r.follow = 255;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,255") == 0 &&
