@@ -183,15 +183,18 @@ inline constexpr std::size_t kBankStride = 0xE0;
 std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) noexcept;
 
 // P12d research (debug command perceive_mask; never on unless commanded): before the leaf snapshot's getter call (ret
-// kLeafRet, once a frame on the AI thread) clear `mask` in byte +offset (0xC0..0xCB) of body 1's record, up to two
-// pairs. A pair with mask 0 is off.
+// kLeafRet, once a frame on the AI thread) clear (or, with `set`, set) `mask` in byte +offset (0xC0..0xCB) of body 1's
+// record in both banks, up to two pairs. A pair with mask 0 is off. Run 37c9604c: body 0 / body 1 differ only in +0xC0
+// (0x9e / 0x16 in one bank: bits 0x80 and 0x08).
 inline constexpr unsigned kBodyMasks = 2;
-bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask) noexcept;  // false: slot or offset out of range
+bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask, bool set = false) noexcept;  // false: out of range
 void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept;
+bool BodyMaskSets(unsigned slot) noexcept;
 std::uint32_t BodyMaskWrites() noexcept;
 
 #ifdef _WIN32
-// "bodies;sel=<n>;b0=<x>,<y>,<z>;s0=<12 hex bytes>;b1=...;s1=..." read with ReadProcessMemory (no game call).
+// "bodies;sel=<n>;b0=<x>,<y>,<z>;s0=<12 hex bytes>;b1=...;s1=...;o0=<+0xC0..+0xC3 of body 0 in the other bank>;o1=..."
+// read with ReadProcessMemory (no game call).
 bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept;
 // Verifies every pinned window (soldier_perceive_contract.hpp) and installs the getter stub hook and the per-soldier
 // update hook. Logs soldier_perceive=installed; mode=per_soldier | refused; reason=.... Idempotent. Takes the place of

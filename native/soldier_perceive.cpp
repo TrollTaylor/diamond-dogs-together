@@ -341,20 +341,24 @@ std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) 
 }
 
 namespace {
-std::atomic<std::uint32_t> g_bodyMask[kBodyMasks]{};  // offset << 8 | mask (0 = off)
+std::atomic<std::uint32_t> g_bodyMask[kBodyMasks]{};  // set << 16 | offset << 8 | mask (0 = off)
 std::atomic<std::uint32_t> g_maskWrites{0};
 } // namespace
 
-bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask) noexcept {
+bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask, bool set) noexcept {
     if (slot >= kBodyMasks || offset < 0xC0 || offset > 0xCB || mask > 0xFF) return false;
-    g_bodyMask[slot].store(mask ? (offset << 8) | mask : 0u, std::memory_order_release);
+    g_bodyMask[slot].store(mask ? (set ? 0x10000u : 0u) | (offset << 8) | mask : 0u, std::memory_order_release);
     return true;
 }
 
 void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept {
     const std::uint32_t v = slot < kBodyMasks ? g_bodyMask[slot].load(std::memory_order_acquire) : 0u;
-    offset = v >> 8;
+    offset = (v >> 8) & 0xFFu;
     mask = v & 0xFFu;
+}
+
+bool BodyMaskSets(unsigned slot) noexcept {
+    return slot < kBodyMasks && (g_bodyMask[slot].load(std::memory_order_acquire) & 0x10000u) != 0;
 }
 
 std::uint32_t BodyMaskWrites() noexcept { return g_maskWrites.load(std::memory_order_relaxed); }
@@ -570,12 +574,15 @@ void ApplyBodyMasks() noexcept {
         unsigned offset = 0, mask = 0;
         BodyMask(i, offset, mask);
         if (!mask) continue;
-        const std::int32_t sel = *reinterpret_cast<const volatile std::int32_t*>(g_imageBase + kBankSelRva);
-        const std::uintptr_t rec = BodyRecord(g_imageBase, sel, 1);
-        if (!rec) continue;
-        auto* byte = reinterpret_cast<volatile unsigned char*>(rec + offset);
-        const unsigned char was = *byte;
-        if (was & mask) { *byte = static_cast<unsigned char>(was & ~mask); g_maskWrites.fetch_add(1, std::memory_order_relaxed); }
+        const bool set = BodyMaskSets(i);
+        for (std::int32_t bank = 0; bank < 2; ++bank) {
+            const std::uintptr_t rec = BodyRecord(g_imageBase, bank, 1);
+            if (!rec) continue;
+            auto* byte = reinterpret_cast<volatile unsigned char*>(rec + offset);
+            const unsigned char was = *byte;
+            const unsigned char want = static_cast<unsigned char>(set ? was | mask : was & ~mask);
+            if (want != was) { *byte = want; g_maskWrites.fetch_add(1, std::memory_order_relaxed); }
+        }
     }
 }
 
@@ -649,6 +656,17 @@ bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept {
                                pos[2], idx, bits[0], bits[1], bits[2], bits[3], bits[4], bits[5], bits[6], bits[7], bits[8], bits[9],
                                bits[10], bits[11])
                : std::snprintf(out + used, capacity - used, ";b%u=unread", idx);
+        if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+        used += static_cast<std::size_t>(n);
+    }
+    for (unsigned idx = 0; idx < 2; ++idx) {
+        const std::uintptr_t rec = BodyRecord(image, sel == 0 ? 1 : 0, idx);
+        unsigned char bits[4]{};
+        SIZE_T b = 0;
+        const bool ok = rec && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0xC0), bits, sizeof(bits), &b) &&
+                        b == sizeof(bits);
+        n = ok ? std::snprintf(out + used, capacity - used, ";o%u=%02x%02x%02x%02x", idx, bits[0], bits[1], bits[2], bits[3])
+               : std::snprintf(out + used, capacity - used, ";o%u=unread", idx);
         if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
         used += static_cast<std::size_t>(n);
     }

@@ -3311,7 +3311,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 used+=static_cast<std::size_t>(k);
             }
             LogFormat("soldier_perceive_targets; %s\r\n",used?targets:"none");
-            char bodies[200]{};
+            char bodies[240]{};
             if(sp::BodiesLine(GetModuleHandleW(nullptr),bodies,sizeof(bodies)))
                 LogFormat("soldier_perceive_bodies; %s; mask_writes=%u\r\n",bodies,sp::BodyMaskWrites());
             debug::Result(pending.id,1,line);
@@ -3366,15 +3366,19 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if(std::strcmp(arg,"off")==0) {for(unsigned i=0;i<sp::kBodyMasks;++i) sp::SetBodyMask(i,0xC0,0);ok=true;}
             else {
                 const char* end=arg+std::strlen(arg);
+                const std::size_t len=std::strlen(arg);
+                const bool set=len>4 && std::strcmp(arg+len-4," set")==0;
+                if(set) end-=4;
                 unsigned slot=0,offset=0,mask=0;
                 auto a=std::from_chars(arg,end,slot);
                 auto b=a.ec==std::errc() && a.ptr<end && *a.ptr==' ' ? std::from_chars(a.ptr+1,end,offset,16) : std::from_chars_result{end,std::errc::invalid_argument};
                 auto c=b.ec==std::errc() && b.ptr<end && *b.ptr==' ' ? std::from_chars(b.ptr+1,end,mask,16) : std::from_chars_result{end,std::errc::invalid_argument};
-                ok=c.ec==std::errc() && c.ptr==end && sp::SetBodyMask(slot,offset,mask);
+                ok=c.ec==std::errc() && c.ptr==end && sp::SetBodyMask(slot,offset,mask,set);
             }
             unsigned o0=0,m0=0,o1=0,m1=0;sp::BodyMask(0,o0,m0);sp::BodyMask(1,o1,m1);
             char line[96]{};
-            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_mask;ok=%u;m0=%x:%x;m1=%x:%x;writes=%u",ok?1u:0u,o0,m0,o1,m1,sp::BodyMaskWrites());
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_mask;ok=%u;m0=%x:%x%s;m1=%x:%x%s;writes=%u",ok?1u:0u,o0,m0,sp::BodyMaskSets(0)?":set":"",
+                             o1,m1,sp::BodyMaskSets(1)?":set":"",sp::BodyMaskWrites());
             LogFormat("soldier_perceive_mask; %s\r\n",line);
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_reset") == 0) {

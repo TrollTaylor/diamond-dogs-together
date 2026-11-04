@@ -284,7 +284,10 @@ int main() {
     Check(mo == 0xC4 && mm == 0x20, "slot 1: +0xC4 bit 5");
     Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xCC, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
           "slot and offset bounds");
-    Check(sp::SetBodyMask(0, 0xC0, 0) && sp::SetBodyMask(1, 0xC0, 0), "off");
+    Check(!sp::BodyMaskSets(0) && sp::SetBodyMask(0, 0xC0, 0x88, true) && sp::BodyMaskSets(0), "a set mask");
+    sp::BodyMask(0, mo, mm);
+    Check(mo == 0xC0 && mm == 0x88, "slot 0: set +0xC0 bits 0x88");
+    Check(sp::SetBodyMask(0, 0xC0, 0) && sp::SetBodyMask(1, 0xC0, 0) && !sp::BodyMaskSets(0), "off");
     sp::BodyMask(0, mo, mm);
     Check(mm == 0 && sp::BodyMaskWrites() == 0, "off, nothing written in the test");
     // The soldiers' hits on each player as the defense callback sees them.
