@@ -159,6 +159,8 @@ mgs_add_lua_check(debug_arms_lua_check "${_mgs_coop}/debug_arms.lua"
 # presses, on both copies (VSPAWN 0x44, world note 20), and its play scenario.
 mgs_add_lua_check(debug_vspawn_lua_check "${_mgs_coop}/debug_vspawn.lua"
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/worker/scenarios/r1101-vspawn-play.txt")
+# Horse probes (lua/coop/debug_horse.lua, lab only): the horse plan's P1 P2 P4 P5 levers.
+mgs_add_lua_check(debug_horse_lua_check "${_mgs_coop}/debug_horse.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 # arrival-prevent (docs/world-sync-design.md 9.2): the arrival helicopter watchdog, start-state log and probe 20.
 mgs_add_lua_check(world_arrival_lua_check "${_mgs_coop}/world_arrival.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua")
