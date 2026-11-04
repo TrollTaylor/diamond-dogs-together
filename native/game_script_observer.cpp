@@ -3298,6 +3298,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if(!sp::PickLine(line,sizeof(line),sp::PickInstalled())) StringCchCopyA(line,ARRAYSIZE(line),"pick;overflow");
             LogFormat("soldier_perceive_status; %s; auto=%u\r\n",line,perceive_auto.load()?1u:0u);
             sp::LogCensus(Log);
+            sp::LogSlots(Log);
             const auto def=sa::DefenseRead();
             char d0[400]{},d1[400]{};
             sa::DefenseList(def,0,d0,sizeof(d0));sa::DefenseList(def,1,d1,sizeof(d1));

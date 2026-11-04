@@ -119,6 +119,16 @@ window('update_head', 0xD65850, [('mov', 'r11, rsp'), ('push', 'rbp'), ('push', 
 window('update_args', 0xD65876, [('mov', 'r10d, edx'), ('mov', 'r13d, edx'), ('mov', 'byte ptr [rsp + 0x40], r9b'),
                                  ('shl', 'r10, 4'), ('movaps', 'xmm9, xmm2'), ('mov', 'r14, rcx')])
 window('update_cache_read', 0xD65908, [('movzx', 'eax, word ptr [rcx + 0x1ac]')])
+# P12e (LogSlots, read only): the slot records, the active dwords and the per-slot index lists the update reads.
+window('update_records', 0xD6588C, [('add', 'r10, qword ptr [rcx + 0x208]'), ('mov', 'dword ptr [rsp + 0x60], r13d'),
+                                    ('mov', 'qword ptr [rbp - 0x80], rcx'), ('test', 'byte ptr [r10 + 0xd], 1'),
+                                    ('mov', 'r9d, edx'), ('mov', 'qword ptr [rsp + 0x58], r10'), ('je', '0x140d661cc'),
+                                    ('mov', 'rax, qword ptr [rcx + 0x220]'), ('cmp', 'dword ptr [rax + r13*4], 0'),
+                                    ('je', '0x140d661cc'), ('mov', 'r8, qword ptr [rcx + 0x150]')])
+window('update_lists', 0xD65913, [('mov', 'rax, qword ptr [rcx + 0x158]'), ('mov', 'qword ptr [rbp - 0x70], rbx'),
+                                  ('movzx', 'edx, word ptr [rax + r13*2]'), ('mov', 'rax, qword ptr [rcx + 0x160]'),
+                                  ('movzx', 'ecx, word ptr [rax + r13*2]')])
+window('loop_count', 0xD5B00B, [('mov', 'r14d, dword ptr [rsi + 0x170]')])
 window('loop_call', 0xD5B040, [('lea', 'rcx, [rsi - 0x28]'), ('movaps', 'xmm2, xmm6'), ('movzx', 'r9d, bpl'),
                                ('mov', 'edx, ebx'), ('call', '0x140d65850')])
 window('cache_write', 0xD5AF41, [('mov', 'rcx, qword ptr [rsi + 0x368]'), ('mov', 'rax, qword ptr [rcx]'),

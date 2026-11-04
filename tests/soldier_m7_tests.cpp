@@ -44,6 +44,13 @@ unsigned int __fastcall TestChoose(void* self, const std::uint64_t* regs, std::u
     }
     return 0x1234;
 }
+char g_logged[256]{};
+void CaptureLog(const char* line) noexcept {
+    std::size_t n = std::strlen(line);
+    if (n >= sizeof(g_logged)) n = sizeof(g_logged) - 1;
+    std::memcpy(g_logged, line, n);
+    g_logged[n] = 0;
+}
 #endif
 }  // namespace
 
@@ -265,6 +272,9 @@ int main() {
         unsigned sum = 0;
         for (unsigned i = 0; i < 64; ++i) sum += getter(&self) == 0x1234 ? i : 1000;
         Check(sum == 64 * 63 / 2, "repeated calls keep this frame intact");
+        // P12e: without a per-slot update seen there is no notice system to read.
+        sp::LogSlots(&CaptureLog);
+        Check(std::strstr(g_logged, "soldier_perceive_slot; none=1") == g_logged, "no slots before the update hook ran");
         RtlDeleteFunctionTable(reinterpret_cast<PRUNTIME_FUNCTION>(block + kFunctionAt));
         VirtualFree(block, 0, MEM_RELEASE);
     }

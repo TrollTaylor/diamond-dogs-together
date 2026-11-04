@@ -203,6 +203,13 @@ bool InstallPick(const void* base, LogFn log) noexcept;
 bool PickInstalled() noexcept;
 // One soldier_perceive_census line per pick site to `log`.
 void LogCensus(LogFn log) noexcept;
+// P12e (read only, ReadProcessMemory): the notice system's slots as the per-slot update 0x140D65850 reads them, from the
+// sys pointer the update hook last saw: count u32 sys+0x198 (the loop bound, [rsi+0x170] at 0x140D5B00B); per slot the
+// 16-byte record [sys+0x208]+slot*16 (+0xd bit 0 = active, 0x140D6589C), the dword [sys+0x220][slot] (0x140D658AF),
+// and its index list [sys+0x150] from word [sys+0x158][slot], count word [sys+0x160][slot] (0x140D6591E..0x140D6592A;
+// the entries index the 24-byte records [sys+0x78], the same records 0x140D59320 indexes by a guard's GameObjectId
+// index). One soldier_perceive_slot line per active slot (at most 96 slots, 12 list entries each).
+void LogSlots(LogFn log) noexcept;
 // Test seam: the stub calls this C++ function (a pointer the test may read).
 std::uintptr_t ChooseAddress() noexcept;
 #endif

@@ -561,6 +561,7 @@ namespace pc = mgscoop::soldier_perceive_contract;
 thread_local int t_soldier = -1;
 std::atomic<bool> g_pickOn{false};
 std::atomic<DWORD> g_updateTid{0};
+std::atomic<void*> g_sys{nullptr};  // the notice system the per-slot update last ran for (P12e, read only)
 void* g_stubBlock = nullptr;  // stub + unwind + RUNTIME_FUNCTION; never freed once registered
 using Update = void(__fastcall*)(void* sys, unsigned soldier, float dt, unsigned flag);
 Update g_updateOriginal = nullptr;
@@ -612,6 +613,7 @@ void __fastcall UpdateDetour(void* sys, unsigned soldier, float dt, unsigned fla
     DWORD first = 0;
     const bool other = !g_updateTid.compare_exchange_strong(first, tid, std::memory_order_relaxed) && first != tid;
     CountUpdate(soldier, false, other);
+    g_sys.store(sys, std::memory_order_relaxed);
     g_updateOriginal(sys, soldier, dt, flag);
     t_soldier = prev;
 }
@@ -745,6 +747,53 @@ bool InstallPick(const void* base, LogFn log) noexcept {
                                    kPickSiteCount, static_cast<unsigned>(sizeof(pc::windows) / sizeof(pc::windows[0])))))
         Emit(log, line);
     return true;
+}
+
+namespace {
+template <class T> bool ReadAt(std::uintptr_t address, T& out) noexcept {
+    SIZE_T n = 0;
+    return address >= 0x10000 && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), &out, sizeof(out), &n) &&
+           n == sizeof(out);
+}
+} // namespace
+
+void LogSlots(LogFn log) noexcept {
+    const auto sys = reinterpret_cast<std::uintptr_t>(g_sys.load(std::memory_order_relaxed));
+    std::uint32_t count = 0;
+    std::uintptr_t recs = 0, acts = 0, list = 0, starts = 0, counts = 0;
+    char line[320]{};
+    if (!sys || !ReadAt(sys + 0x198, count) || !ReadAt(sys + 0x208, recs) || !ReadAt(sys + 0x220, acts) || !ReadAt(sys + 0x150, list) ||
+        !ReadAt(sys + 0x158, starts) || !ReadAt(sys + 0x160, counts)) {
+        Emit(log, "soldier_perceive_slot; none=1\r\n");
+        return;
+    }
+    unsigned shown = 0;
+    for (std::uint32_t slot = 0; slot < count && slot < 96; ++slot) {
+        unsigned char rec[16]{};
+        std::uint32_t act = 0;
+        std::uint16_t start = 0, n = 0;
+        if (!ReadAt(recs + slot * 16u, rec) || !ReadAt(acts + slot * 4u, act)) continue;
+        ReadAt(starts + slot * 2u, start);
+        ReadAt(counts + slot * 2u, n);
+        if (!(rec[0xd] & 1) && !act && !n) continue;
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_slot; slot=%u; act=%u; rec=", slot, act);
+        for (unsigned i = 0; i < 16 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i)
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%02x", rec[i]);
+        if (k > 0 && static_cast<std::size_t>(k) < sizeof(line))
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "; n=%u; list=", n);
+        for (unsigned i = 0; i < n && i < 12 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i) {
+            std::uint32_t e = 0;
+            ReadAt(list + (static_cast<std::uintptr_t>(start) + i) * 4u, e);
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%s%u", i ? "," : "", e);
+        }
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+            ++shown;
+        }
+    }
+    std::snprintf(line, sizeof(line), "soldier_perceive_slots; count=%u; shown=%u\r\n", count, shown);
+    Emit(log, line);
 }
 
 void LogCensus(LogFn log) noexcept {
