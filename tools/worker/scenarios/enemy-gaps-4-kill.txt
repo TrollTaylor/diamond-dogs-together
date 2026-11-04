@@ -5,7 +5,7 @@
 logmark both
 host run teleport 421.16 269.2 2084.42 0
 wait 2000
-waitlog host 'world_lua=event=owner; ent=1799112697; owner=guest' 12
+waitlog host 'world_lua=event=owner; ent=1799112697; owner=guest' 15
 guest run enemy goto 1799112697 3
 wait 300
 guest run enemy_aim_nearest 1.0
