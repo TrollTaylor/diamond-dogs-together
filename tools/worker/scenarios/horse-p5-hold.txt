@@ -20,7 +20,7 @@ wait 2000
 host run horse_status
 host require localMounted=0
 guest run horse_status
-guest require localMounted=0
+guest expect localMounted=0
 waitlog host 'world_lua=horse_probe=raw_e; held=1;' 5
 waitlog guest 'world_lua=horse_probe=raw_e; held=1;' 5
 host hold e 1200
@@ -31,7 +31,7 @@ wait 800
 host run horse_status
 host require localMounted=0
 guest run horse_status
-guest require localMounted=0
+guest expect localMounted=0
 host run horse_probe hold 0
 host expect horse_probe=hold;on=0;ok=1
 guest run horse_probe hold 0
@@ -49,12 +49,12 @@ host require localMounted=0
 guest press e 150
 wait 2500
 guest run horse_status
-guest require localMounted=1
+guest expect localMounted=1
 guest capture p5-released-mounted-guest
 guest press e 150
 wait 3000
 guest run horse_status
-guest require localMounted=0
+guest expect localMounted=0
 # The ride icon range: step 1 m along world x from the goto_horse spot, then along -x; a watch line at each frame.
 host run goto_horse
 wait 1200
