@@ -1,0 +1,86 @@
+# Horse probe P2 (the horse plan, section 4; lab only; lua/coop/debug_horse.lua): a sleeping stock guard loaded on
+# the host's D-Horse by the stock carry and load (no mod carry, no writer), as horse-cargo-npc-baseline.txt. Reads
+# IsCarriedHostage / GetCarriedHostage (names by hash: 0xD1233CDA / 0x442D1EEC) before, while loaded, after a dismount and
+# after the unload; horse_probe watch logs every 250 ms the horse root, the rider (the host) and the guard in the horse's
+# frame (cm forward,right,up) at idle, trot and gallop: the saddle and cargo offsets. horse_cargo_native: the cargo slot.
+# Session B (one hidden session, two parts), through the queue:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-probes
+#     -ScenarioPath tools/worker/scenarios/horse-p2-guard.txt,tools/worker/scenarios/horse-p3-cargo.txt -Mode lab
+#     -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -HostSaveSeed afgh-ledge
+#     -GuestSaveSeed afgh-horse -TimeoutSec 600 -Wait
+labsetting debug_soldier_warp=1
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run goto_horse
+wait 1000
+host run horse_probe hostage
+host expect horse_probe=hostage;is=false;get=0;
+host run spawn_enemy here
+host expect ^guard_here;ent=
+wait 3000
+host run enemy sleep nearest
+host require ^enemy_sleep;ent=.*life_readback=[02];sync=world
+wait 2000
+host run goto_spawn 1.2
+wait 1000
+host hold r 1400
+host release
+wait 3500
+host run coop_carry_load
+host capture p2-carrying-guard
+host run goto_horse
+wait 1000
+host capture p2-guard-prompt
+host hold e 1200
+host release
+wait 3000
+host run horse_probe hostage
+host expect horse_probe=hostage;is=true;get=1;
+host run horse_cargo_native
+both capture p2-guard-loaded
+host run horse_probe watch 30000
+host expect horse_probe=watch;step=start
+wait 1500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host capture p2-ride-idle
+wait 2000
+host hold w 1500
+host hold w 1500 nowait
+host capture p2-ride-trot
+host hold w+shift 1500
+host hold w+shift 1500 nowait
+host capture p2-ride-gallop
+host hold w+shift 1500
+host release
+wait 2000
+host capture p2-ride-stopped
+host run horse_probe hostage
+host expect horse_probe=hostage;is=true;
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+host run horse_probe hostage
+host expect horse_probe=hostage;is=true;
+host run horse_cargo_native
+host capture p2-after-dismount
+host run goto_horse
+wait 1000
+host hold r 1400
+host release
+wait 3500
+host run horse_probe hostage
+host expect horse_probe=hostage;is=false;
+host run horse_cargo_native
+host capture p2-unloaded
+host run horse_probe stop

@@ -168,7 +168,7 @@ check(ok and msg:find("horse_probe=hostage;is=true;get=1;",1,true),"hostage read
 c=F()
 ok,msg=c:run("horse_probe","watch","600")
 for _=1,45 do c:tick(1,16) end
-local w=c:has("horse_probe=watch;")
+local w=c:has("horse_probe=watch;t=")
 check(w and w:find("p=0,200,0",1,true),"player 2 m to the horse's right: "..tostring(w))
 check(w:find("g=-60,0,140",1,true),"guard 0.6 m behind, 1.4 m up: "..tostring(w))
 check(c:has("horse_probe=watch;step=done"),"watch ends on its timer")
