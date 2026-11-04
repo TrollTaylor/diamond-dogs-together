@@ -335,6 +335,30 @@ bool PickLine(char* out, std::size_t capacity, bool installed) noexcept {
     return n >= 0 && static_cast<std::size_t>(n) < capacity;
 }
 
+std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) noexcept {
+    if (!image || idx >= 16 || sel < 0 || sel > 15) return 0;
+    return image + kBankRva + (static_cast<std::uintptr_t>(sel) * 16u + idx) * kBankStride;
+}
+
+namespace {
+std::atomic<std::uint32_t> g_bodyMask[kBodyMasks]{};  // offset << 8 | mask (0 = off)
+std::atomic<std::uint32_t> g_maskWrites{0};
+} // namespace
+
+bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask) noexcept {
+    if (slot >= kBodyMasks || offset < 0xC0 || offset > 0xCB || mask > 0xFF) return false;
+    g_bodyMask[slot].store(mask ? (offset << 8) | mask : 0u, std::memory_order_release);
+    return true;
+}
+
+void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept {
+    const std::uint32_t v = slot < kBodyMasks ? g_bodyMask[slot].load(std::memory_order_acquire) : 0u;
+    offset = v >> 8;
+    mask = v & 0xFFu;
+}
+
+std::uint32_t BodyMaskWrites() noexcept { return g_maskWrites.load(std::memory_order_relaxed); }
+
 void BuildStub(unsigned char (&s)[kStubSize], std::uintptr_t choose) noexcept {
     static constexpr unsigned char kCode[kStubSize] = {
         0x53,                                      // 00 push rbx
@@ -540,15 +564,31 @@ inline constexpr std::size_t kStubUnwindAt = 0x38, kStubFunctionAt = 0x50, kStub
 static_assert(kStubSize <= kStubUnwindAt && kStubUnwindAt + kUnwindSize <= kStubFunctionAt &&
                   kStubFunctionAt + sizeof(RUNTIME_FUNCTION) <= kStubBlockSize, "stub block layout");
 
+// P12d research: clear the commanded bits of body 1's record (read-modify-write of single bytes, AI thread).
+void ApplyBodyMasks() noexcept {
+    for (unsigned i = 0; i < kBodyMasks; ++i) {
+        unsigned offset = 0, mask = 0;
+        BodyMask(i, offset, mask);
+        if (!mask) continue;
+        const std::int32_t sel = *reinterpret_cast<const volatile std::int32_t*>(g_imageBase + kBankSelRva);
+        const std::uintptr_t rec = BodyRecord(g_imageBase, sel, 1);
+        if (!rec) continue;
+        auto* byte = reinterpret_cast<volatile unsigned char*>(rec + offset);
+        const unsigned char was = *byte;
+        if (was & mask) { *byte = static_cast<unsigned char>(was & ~mask); g_maskWrites.fetch_add(1, std::memory_order_relaxed); }
+    }
+}
+
 // Called by the stub on the caller's thread: regs = the caller's callee-saved registers (Reg order).
 unsigned int __fastcall Choose(void* self, const std::uint64_t* regs, std::uintptr_t ret) {
     const std::uint32_t rva = ret > g_imageBase && ret - g_imageBase < 0x7fffffffu ? static_cast<std::uint32_t>(ret - g_imageBase) : 0;
     if (rva) SitesAdd(rva);
+    if (rva == kLeafRet) ApplyBodyMasks();
     const unsigned stock = g_offenseOriginal(self);
     const int tls = t_soldier;
     const int site = PickSiteIndex(rva);
     if (site >= 0) CensusSite(static_cast<unsigned>(site), regs[static_cast<unsigned>(kPickSites[site].reg)], tls);
-    const int soldier = SoldierFor(rva, regs, tls);
+    const int soldier = SoldierFor(rva, regs, -1);  // the thread slot is the notice system's, not a guard (census only)
     const int target = soldier >= 0 ? Target(static_cast<unsigned>(soldier)) : -1;
     const Leaf leaf = LeafMode();
     const bool anyOne = leaf == Leaf::any && TargetCount(1) > 0;
@@ -564,17 +604,8 @@ void __fastcall UpdateDetour(void* sys, unsigned soldier, float dt, unsigned fla
     const DWORD tid = GetCurrentThreadId();
     DWORD first = 0;
     const bool other = !g_updateTid.compare_exchange_strong(first, tid, std::memory_order_relaxed) && first != tid;
-    const int target = g_forced.load(std::memory_order_relaxed) < 0 && t_soldier >= 0 ? Target(soldier) : -1;
-    auto* word = reinterpret_cast<volatile std::uint16_t*>(static_cast<unsigned char*>(sys) + kCacheWord);
-    std::uint16_t saved = 0;
-    bool swapped = false;
-    if (target >= 0 && sys) {
-        saved = *word;
-        if (saved <= 1 && saved != static_cast<std::uint16_t>(target)) { *word = static_cast<std::uint16_t>(target); swapped = true; }
-    }
-    CountUpdate(soldier, swapped, other);
+    CountUpdate(soldier, false, other);
     g_updateOriginal(sys, soldier, dt, flag);
-    if (swapped && *word == static_cast<std::uint16_t>(target)) *word = saved;
     t_soldier = prev;
 }
 
@@ -594,6 +625,35 @@ bool WindowsMatch(const void* base, const char** which) noexcept {
 } // namespace
 
 std::uintptr_t ChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&Choose); }
+
+bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept {
+    if (!base || !out || !capacity) return false;
+    const auto image = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t sel = -1;
+    SIZE_T read = 0;
+    ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(image + kBankSelRva), &sel, sizeof(sel), &read);
+    int n = std::snprintf(out, capacity, "bodies;sel=%d", sel);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) return false;
+    std::size_t used = static_cast<std::size_t>(n);
+    for (unsigned idx = 0; idx < 2; ++idx) {
+        const std::uintptr_t rec = BodyRecord(image, sel, idx);
+        float pos[3]{};
+        unsigned char bits[12]{};
+        SIZE_T a = 0, b = 0;
+        const bool ok = rec && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0x10), pos, sizeof(pos), &a) &&
+                        a == sizeof(pos) &&
+                        ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0xC0), bits, sizeof(bits), &b) &&
+                        b == sizeof(bits);
+        n = ok ? std::snprintf(out + used, capacity - used,
+                               ";b%u=%.1f,%.1f,%.1f;s%u=%02x%02x%02x%02x.%02x%02x%02x%02x.%02x%02x%02x%02x", idx, pos[0], pos[1],
+                               pos[2], idx, bits[0], bits[1], bits[2], bits[3], bits[4], bits[5], bits[6], bits[7], bits[8], bits[9],
+                               bits[10], bits[11])
+               : std::snprintf(out + used, capacity - used, ";b%u=unread", idx);
+        if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+        used += static_cast<std::size_t>(n);
+    }
+    return true;
+}
 bool PickInstalled() noexcept { return g_pickOn.load(); }
 
 bool InstallPick(const void* base, LogFn log) noexcept {

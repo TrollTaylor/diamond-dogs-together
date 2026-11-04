@@ -98,9 +98,9 @@ bool SitesInstalled() noexcept;
 //   - the caller's soldier register at the live per-soldier call sites (each function keeps its edx soldier index in a
 //     callee-saved register up to the getter call; pinned in soldier_perceive_contract.hpp), read by a stub that saves
 //     rbx, rbp, rsi, rdi, r12..r15 before it calls Choose, or
-//   - the notice system's per-soldier update 0x140D65850(sys, edx soldier, xmm2 dt, r9b flag) (MinHook): a thread-local
-//     current soldier for the calls inside it, and its cached copy of the index (word sys+0x1ac, written once a frame by
-//     0x140D5AE50 at 0x140D5AF51, read at 0x140D65908) swapped to the soldier's target for the duration.
+//   - the notice system's per-slot update 0x140D65850(sys, edx slot, xmm2 dt, r9b flag) (MinHook): a thread-local
+//     current slot for the P12a census only (run 96216259: the slots are not guards, so the cached index word sys+0x1ac,
+//     written once a frame at 0x140D5AF51 and read at 0x140D65908, is no longer swapped).
 // A soldier's target (0 = the local player, 1 = body 1, the partner) is set by Lua (the host's nearer-player rule,
 // MGS_COOP_SOLDIER_PERCEIVE_V1) or by the debug command perceive_pick; a soldier without one gets the stock answer. The
 // once-a-frame leaf snapshot (0x14134F9D0 at ret 0x1350035: [leaf+0x28c] index, +0x1d0 position, +0x294 state bits; one
@@ -111,17 +111,21 @@ enum class Reg : std::uint8_t { r15 = 0, r14, r13, r12, rdi, rsi, rbp, rbx, coun
 struct PickSite {
     std::uint32_t ret;  // return address rva of the getter call
     Reg reg;            // the caller's soldier register
-    bool answers;       // false: census only (0x14DCA77: a guest-only filter, [U] whether edi is a soldier index)
+    bool answers;       // false: census only
 };
+// Run 96216259 (P12a census, both copies): at the notice-system sites the register is the same slot, 45, on every call
+// (the per-soldier update 0x140D65850 runs slots 0..76, and only slot 45 reaches these calls; the thread soldier agrees),
+// so their index is not a guard's ([I]: the local player's own slot in the notice system); they are census only. Only
+// 0xD59430's r12 (176..272, the range of the guards' GameObjectId indices) answers.
 inline constexpr PickSite kPickSites[] = {
-    {0xD6B87F, Reg::rsi, true},   // 0x140D6B7E0 the notice gauge (mov esi,edx at 0x140D6B81C)
-    {0xD6D82F, Reg::rsi, true},   // 0x140D6D7B0 distance (0x140D6D7ED)
-    {0xD6D9CE, Reg::r14, true},   // 0x140D6D930 state bit skip (0x140D6D950)
-    {0xD6638E, Reg::r15, true},   // 0x140D661F0 soldier masks (0x140D6622E), called from the per-soldier update
-    {0xD782E3, Reg::rbx, true},   // 0x140D78250 the 6-player table per soldier (0x140D78260)
+    {0xD6B87F, Reg::rsi, false},  // 0x140D6B7E0 the notice gauge (mov esi,edx at 0x140D6B81C)
+    {0xD6D82F, Reg::rsi, false},  // 0x140D6D7B0 distance (0x140D6D7ED)
+    {0xD6D9CE, Reg::r14, false},  // 0x140D6D930 state bit skip (0x140D6D950)
+    {0xD6638E, Reg::r15, false},  // 0x140D661F0 masks (0x140D6622E), called from the per-soldier update
+    {0xD782E3, Reg::rbx, false},  // 0x140D78250 the 6-player table per slot (0x140D78260)
     {0xD59430, Reg::r12, true},   // 0x140D59320 soldier records (0x140D59340)
-    {0xD56834, Reg::rbp, true},   // 0x140D567F0 slot 0x88 position (movzx ebp,dx at 0x140D5681F)
-    {0x14DCA77, Reg::rdi, false}, // 0x1414DC9D0 (0x1414DC9FC)
+    {0xD56834, Reg::rbp, false},  // 0x140D567F0 slot 0x88 position (movzx ebp,dx at 0x140D5681F)
+    {0x14DCA77, Reg::rdi, false}, // 0x1414DC9D0 (0x1414DC9FC), guest only
 };
 inline constexpr unsigned kPickSiteCount = sizeof(kPickSites) / sizeof(kPickSites[0]);
 inline constexpr std::uint32_t kLeafRet = 0x1350035;
@@ -170,7 +174,25 @@ inline constexpr std::size_t kUnwindSize = 24;
 void BuildStub(unsigned char (&out)[kStubSize], std::uintptr_t choose) noexcept;
 void BuildUnwind(unsigned char (&out)[kUnwindSize]) noexcept;
 
+// P12d: the player info records the AI reads through the service's slot 0 (0x141E02D70 -> 0x14053CA40): for an index
+// below 16, rec = image + kBankRva + (sel * 16 + idx) * kBankStride with sel = the int32 at image + kBankSelRva;
+// position at +0x10, state bytes at +0xC0..+0xCB (the AI skips a player with bit 5 of +0xC4 at 0x140D6D9E6 and one with
+// bit 0 of +0xCB at 0x141390CA6). Pure; 0 when idx >= 16 or sel is outside 0..15.
+inline constexpr std::uintptr_t kBankSelRva = 0x2BD3FD0, kBankRva = 0x2BD3FF0;
+inline constexpr std::size_t kBankStride = 0xE0;
+std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) noexcept;
+
+// P12d research (debug command perceive_mask; never on unless commanded): before the leaf snapshot's getter call (ret
+// kLeafRet, once a frame on the AI thread) clear `mask` in byte +offset (0xC0..0xCB) of body 1's record, up to two
+// pairs. A pair with mask 0 is off.
+inline constexpr unsigned kBodyMasks = 2;
+bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask) noexcept;  // false: slot or offset out of range
+void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept;
+std::uint32_t BodyMaskWrites() noexcept;
+
 #ifdef _WIN32
+// "bodies;sel=<n>;b0=<x>,<y>,<z>;s0=<12 hex bytes>;b1=...;s1=..." read with ReadProcessMemory (no game call).
+bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept;
 // Verifies every pinned window (soldier_perceive_contract.hpp) and installs the getter stub hook and the per-soldier
 // update hook. Logs soldier_perceive=installed; mode=per_soldier | refused; reason=.... Idempotent. Takes the place of
 // InstallSites (the same getter; the site census and perceive_force run through Choose).

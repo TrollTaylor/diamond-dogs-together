@@ -127,6 +127,14 @@ window('leaf_call', 0x1350025, [('mov', 'rcx, qword ptr [rdi + 0x188]'), ('mov',
                                 ('call', 'qword ptr [rax + 0x220]'), ('mov', 'rcx, qword ptr [rdi + 0x188]'),
                                 ('mov', 'dword ptr [rdi + 0x28c], eax')])
 
+window('player_bank', 0x53CA40, [('movsxd', 'rax, dword ptr [rip + 0x2697589]'), ('cmp', 'ecx, 0x10'), ('jb', '0x14053ca5e'),
+                                  ('imul', 'rax, rax, 0xe00'), ('lea', 'rcx, [rip + 0x2697596]'), ('add', 'rax, rcx'), ('ret', ''),
+                                  ('shl', 'rax, 4'), ('mov', 'ecx, ecx'), ('add', 'rax, rcx'), ('lea', 'rcx, [rip + 0x2697582]'),
+                                  ('imul', 'rax, rax, 0xe0'), ('add', 'rax, rcx'), ('ret', '')])
+if 0x53CA47 + 0x2697589 != 0x2BD3FD0 or 0x53CA6E + 0x2697582 != 0x2BD3FF0:
+    failures.append('player_bank: the selector or the bank moved')
+window('service_slot0', 0x1E02D70, [('mov', 'ecx, edx'), ('jmp', '0x14053ca40')])
+
 ALIASES = {'rsi': ('rsi', 'esi', 'si', 'sil'), 'rdi': ('rdi', 'edi', 'di', 'dil'), 'rbx': ('rbx', 'ebx', 'bx', 'bl', 'bh'),
            'rbp': ('rbp', 'ebp', 'bp', 'bpl'), 'r12': ('r12', 'r12d', 'r12w', 'r12b'),
            'r14': ('r14', 'r14d', 'r14w', 'r14b'), 'r15': ('r15', 'r15d', 'r15w', 'r15b')}

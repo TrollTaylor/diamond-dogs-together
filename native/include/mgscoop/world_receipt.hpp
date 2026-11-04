@@ -123,6 +123,10 @@ constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool br
                                      (loadout ? 32 : 0) | (crew ? 64 : 0) | (damage ? 128 : 0));
 }
 
+// Enemy sync M3..M7: the CFG r[19] bits next to bit 1 follow (2 owner, 4 snap, 8 route, 16 body, 32 puppet, 64 brain,
+// 128 perceive: docs/world-sync-design.md 7.9+).
+constexpr std::uint8_t EnemySyncBits(std::uint8_t configured) noexcept { return static_cast<std::uint8_t>(configured & 0xFEu); }
+
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;
 std::size_t FormatTxReply(TxStatus status, char* out, std::size_t capacity) noexcept;

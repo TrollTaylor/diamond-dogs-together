@@ -151,16 +151,15 @@ int main() {
           "the pick sites");
     // Saved registers in the stub's order: r15, r14, r13, r12, rdi, rsi, rbp, rbx.
     std::uint64_t regs[9] = {15, 14, 13, 12, 7, 6, 5, 3, 0};
-    Check(sp::SoldierFor(0xD6B87F, regs, -1) == 6 && sp::SoldierFor(0xD6D9CE, regs, -1) == 14 &&
-              sp::SoldierFor(0xD6638E, regs, -1) == 15 && sp::SoldierFor(0xD782E3, regs, -1) == 3 &&
-              sp::SoldierFor(0xD59430, regs, -1) == 12 && sp::SoldierFor(0xD56834, regs, -1) == 5,
-          "each site reads its own register");
-    Check(sp::SoldierFor(0x14DCA77, regs, -1) == -1 && sp::SoldierFor(0x14DCA77, regs, 9) == 9,
-          "a census-only site never answers by its register");
-    regs[5] = 0xFFFFFFFF00000020ull;
-    Check(sp::SoldierFor(0xD6B87F, regs, -1) == 0x20, "only the low 32 bits (mov esi, edx)");
-    regs[5] = 600;
-    Check(sp::SoldierFor(0xD6B87F, regs, 11) == 11 && sp::SoldierFor(0xD6B87F, regs, -1) == -1,
+    Check(sp::SoldierFor(0xD59430, regs, -1) == 12, "the answering site reads its own register (r12)");
+    Check(sp::SoldierFor(0xD6B87F, regs, -1) == -1 && sp::SoldierFor(0xD6D9CE, regs, -1) == -1 && sp::SoldierFor(0xD6638E, regs, -1) == -1 &&
+              sp::SoldierFor(0xD782E3, regs, -1) == -1 && sp::SoldierFor(0xD56834, regs, -1) == -1 && sp::SoldierFor(0x14DCA77, regs, -1) == -1,
+          "run 96216259: the notice-system sites are census only (their register is one slot, 45, never a guard)");
+    Check(sp::SoldierFor(0x14DCA77, regs, 9) == 9, "a census-only site falls back to the thread soldier");
+    regs[3] = 0xFFFFFFFF00000020ull;
+    Check(sp::SoldierFor(0xD59430, regs, -1) == 0x20, "only the low 32 bits (mov r12d, edx)");
+    regs[3] = 600;
+    Check(sp::SoldierFor(0xD59430, regs, 11) == 11 && sp::SoldierFor(0xD59430, regs, -1) == -1,
           "an out-of-range register falls back to the thread soldier");
     Check(sp::SoldierFor(0xD5AF51, regs, 4) == 4 && sp::SoldierFor(0xD5AF51, regs, -1) == -1 &&
               sp::SoldierFor(0xD5AF51, regs, 512) == -1, "other callers: the thread soldier only");
@@ -270,6 +269,24 @@ int main() {
         VirtualFree(block, 0, MEM_RELEASE);
     }
 #endif
+    // P12d: the player info record of an index (0x14053CA40).
+    Check(sp::BodyRecord(0x140000000, 0, 0) == 0x140000000 + 0x2BD3FF0 && sp::BodyRecord(0x140000000, 0, 1) == 0x140000000 + 0x2BD3FF0 + 0xE0 &&
+              sp::BodyRecord(0x140000000, 1, 1) == 0x140000000 + 0x2BD3FF0 + 17 * 0xE0,
+          "the record of an index: (sel * 16 + idx) * 0xE0 past the bank");
+    Check(sp::BodyRecord(0x140000000, 0, 16) == 0 && sp::BodyRecord(0x140000000, -1, 0) == 0 && sp::BodyRecord(0x140000000, 16, 0) == 0 &&
+              sp::BodyRecord(0, 0, 0) == 0, "out of range: none");
+    // P12d research masks: offsets 0xC0..0xCB, two slots, mask 0 = off.
+    unsigned mo = 0, mm = 0;
+    Check(sp::SetBodyMask(0, 0xCB, 0x01) && sp::SetBodyMask(1, 0xC4, 0x20), "two masks");
+    sp::BodyMask(0, mo, mm);
+    Check(mo == 0xCB && mm == 0x01, "slot 0: +0xCB bit 0");
+    sp::BodyMask(1, mo, mm);
+    Check(mo == 0xC4 && mm == 0x20, "slot 1: +0xC4 bit 5");
+    Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xCC, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
+          "slot and offset bounds");
+    Check(sp::SetBodyMask(0, 0xC0, 0) && sp::SetBodyMask(1, 0xC0, 0), "off");
+    sp::BodyMask(0, mo, mm);
+    Check(mm == 0 && sp::BodyMaskWrites() == 0, "off, nothing written in the test");
     // The soldiers' hits on each player as the defense callback sees them.
     sa::DefenseReset();
     sa::NoteDefense(1, soldier);

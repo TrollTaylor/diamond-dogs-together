@@ -3311,6 +3311,9 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 used+=static_cast<std::size_t>(k);
             }
             LogFormat("soldier_perceive_targets; %s\r\n",used?targets:"none");
+            char bodies[200]{};
+            if(sp::BodiesLine(GetModuleHandleW(nullptr),bodies,sizeof(bodies)))
+                LogFormat("soldier_perceive_bodies; %s; mask_writes=%u\r\n",bodies,sp::BodyMaskWrites());
             debug::Result(pending.id,1,line);
         } else if (pending.id && std::strncmp(pending.text, "perceive_pick ", 14) == 0) {
             // M7 step 1 probe P12c: perceive_pick <index> <0|1|off> (the debug pick holds the targets: Lua sets are
@@ -3354,6 +3357,26 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                              sp::LeafMode()==sp::Leaf::any?"any":"stock");
             LogFormat("soldier_perceive_leaf; %s\r\n",line);
             debug::Result(pending.id,any||stock?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_mask ", 14) == 0) {
+            // P12d research: perceive_mask <slot 0|1> <offset hex c0..cb> <mask hex> (mask 0 = off), applied before the
+            // leaf snapshot's getter call to body 1's player record; perceive_mask off clears both.
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+14;
+            bool ok=false;
+            if(std::strcmp(arg,"off")==0) {for(unsigned i=0;i<sp::kBodyMasks;++i) sp::SetBodyMask(i,0xC0,0);ok=true;}
+            else {
+                const char* end=arg+std::strlen(arg);
+                unsigned slot=0,offset=0,mask=0;
+                auto a=std::from_chars(arg,end,slot);
+                auto b=a.ec==std::errc() && a.ptr<end && *a.ptr==' ' ? std::from_chars(a.ptr+1,end,offset,16) : std::from_chars_result{end,std::errc::invalid_argument};
+                auto c=b.ec==std::errc() && b.ptr<end && *b.ptr==' ' ? std::from_chars(b.ptr+1,end,mask,16) : std::from_chars_result{end,std::errc::invalid_argument};
+                ok=c.ec==std::errc() && c.ptr==end && sp::SetBodyMask(slot,offset,mask);
+            }
+            unsigned o0=0,m0=0,o1=0,m1=0;sp::BodyMask(0,o0,m0);sp::BodyMask(1,o1,m1);
+            char line[96]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_mask;ok=%u;m0=%x:%x;m1=%x:%x;writes=%u",ok?1u:0u,o0,m0,o1,m1,sp::BodyMaskWrites());
+            LogFormat("soldier_perceive_mask; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_reset") == 0) {
             mgscoop::soldier_perceive::PickReset();mgscoop::soldier_authority::DefenseReset();
             Log("soldier_perceive_reset; counters=0\r\n");
