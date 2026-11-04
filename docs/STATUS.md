@@ -1,3 +1,66 @@
+## November 4, 2026: enemy sync M7 step 1 - per-soldier perception built and probed; the gate is not reached (`wp/enemy-m7`, local only; not merged)
+
+The enemy sync plan's M7 step 1: each guard on the host's copy should perceive both players and fight the one it
+should. The machinery is built and pinned, but four hidden runs show that the guards cannot be made to see the
+guest's body (body 1) through the offense player index alone. The key stays off unless named.
+
+- **What players get**: nothing yet. `soldier_perceive` is off unless named; named, the host's guards behave as
+  before (only the host is perceived). The guest is still hurt only by the guest's own copies of the guards (stock):
+  on the host's copy a soldier's hit on body 1 does no damage (step 2, the damage path, is not built).
+- **Code** (design 7.13; keys and wire unchanged apart from CFG r[19] bit 128):
+  - `5b6c4842`: `soldier_perceive` now installs `InstallPick` instead of the scorer patch (a no-op in free roam, run
+    `af17b899`): the offense index getter 0x141E02770 goes through a stub that saves the caller's callee-saved
+    registers and calls `Choose` (per-site soldier register, a forced index, per-soldier targets, the leaf snapshot
+    mode), and the notice system's per-slot update 0x140D65850 is hooked for a thread slot (census). The host's Lua
+    (`world_snap.lua` `P.perceiveScan`, fed by the M1 scan) sends each sampled guard's nearer player (3 m band, 4 s
+    hold; `MGS_COOP_SOLDIER_PERCEIVE_V1`). Debug: `perceive_status`, `perceive_pick`, `perceive_auto`, `perceive_leaf`,
+    `perceive_reset`, `perceive_force` (P11b/P11c). `soldier_authority::NoteDefense`: the soldiers that hit body 0 /
+    body 1 in the defense callback. Contract `tools/generate_soldier_perceive_contract.py --check` (28 windows at the
+    head, with each site's register flow). Scenario `enemy-perceive2-30010-play.txt`.
+  - `c46dafb6`: `world_link` masked the enemy sync bits with 0x7E, so bit 128 never reached Lua
+    (`world::EnemySyncBits` keeps 2..128); the notice-system sites are census only (see below); P12d
+    `soldier_perceive_bodies` (the two player records of the 0x14053CA40 bank) and the research command
+    `perceive_mask`. `8735b116`: `perceive_mask ... set` on both banks. `ff212297`: P12e `soldier_perceive_slot`
+    (the notice system's active slots, read only).
+  - Tests, red first: `soldier_m7_tests` 92 checks (the pure answer, targets, census, the stub bytes, the stub run for
+    real with its unwind data checked by `RtlVirtualUnwind`, the defense hit lists, the body records and masks);
+    `world_align_lua_check` M7 perceive checks (red with the old Lua: `S.pick` missing); `world_receipt_tests`
+    `EnemySyncBits`. Full `tools/build.ps1 -Jobs 4` 350/350 at `5b6c4842`; `-Fast` 316/316 after each later change.
+- **Runs** (queue, play, `-WanSim bad`, research build, native gun profile, afgh-ledge seed, afgh_field_cp at guard
+  1740692850; `soldier_owner=0` so the host is every guard's brain, `soldier_puppet=1`, godmode; archive
+  `enemy-follow/<run>/`, frames looked at on both copies):
+  - `96216259` (`enemy-perceive2`): no Lua target was ever sent (the CFG mask above), so parts 1, 2 and 4 were stock.
+    P12a census, both copies: every call at the six notice-system "per-soldier" sites carries the same slot, 45 (the
+    thread slot agrees); 0xD59430's r12 is 176..272. P11c (forced 1 for 60 s, after the host had been downed): 0
+    soldier hits on body 1, 22 on the host (guard index 246).
+  - `37c9604c` (`enemy-perceive3`): forced 1 from before the warp for 60 s: no hit on either body and no ALERT from
+    the host's own guards; frame `host-a-30`: the guards stand calmly next to body 1 and ignore the host 20 m away in
+    the open; the guest's puppets idle (`guest-a-30`). P12d: the two records differ only in +0xC0 (0x9e / 0x16 in one
+    bank, briefly), +0xC4 and +0xCB are 0 for both (the clear masks wrote nothing). Part C (Lua targets: 221 guards 0,
+    50 guards 1; ALERT from the phase sync): guards 13, 219, 231 hit the host 16 times, guard 246 hit body 1 5 times;
+    frame `guest-c-30`: the guest's player downed by its own copy of a guard.
+  - `183e2cf7` (`enemy-perceive4`): forced 1, then forced 1 with body 1's +0xC0 bits set like the host's (the bytes
+    were already equal, 9e001000: no write): 50 s, no hit, no notice (frame `host-b-30`). Stock ALERT part: 43 hits
+    on the host by 13, 15, 16, 219, 231, 246 and 8 on body 1 by 246; 0xD59430 answered only for guards 176..179 of
+    another CP, so 246's hits had no per-guard answer behind them ([I] shots at the host that hit body 1).
+  - `7e658437` (`enemy-perceive5`, P12e): the notice system has 77 slots, one per CP; slot 45 is afgh_field_cp
+    (index list 13..20, 219, 231, 240, 246: exactly the guards that fought), the others list the other CPs' guards.
+    Its per-slot getter calls stop while the index is forced to 1 (0 calls at those sites in the forced parts of
+    `37c9604c` and `183e2cf7`). Stock: 46 hits on the host, 0 on body 1 (frame `host-d-20`: shield guards face the host).
+- **What blocks the gate** (exactly): (1) [O] the offense index getter has no per-soldier caller in free roam: its
+  "per-soldier" callers are the CP-level notice update (one slot per CP) and the soldier leaf's once-a-frame snapshot
+  (0x14134F9D0, ret 0x1350035), which the leaf's per-soldier code then reads directly ([leaf+0x28c] index, +0x1d0
+  position, +0x294 state: readers 0x14134F34C, 0x141366792, 0x141388B88, 0x141390C96, 0x141392433, 0x14138E03C,
+  0x14138F8C4, 0x14139051C, 0x141392830, 0x14139433E); a per-guard answer needs those readers patched per soldier.
+  (2) [O] even with every caller and the leaf saying 1 and body 1's state bytes equal to the host's, the guards do
+  not notice body 1 standing among them, while they stop seeing the host: something outside the index keeps body 1
+  out of the soldiers' sight ([I] body 1 is not registered as a noticeable target of the soldier sensors; soldier
+  bullets do reach its defense callback).
+- **Not done**: the gate (a guard that only sees body 1 turns, aims and fires at it; each guard picks one player);
+  soldier_brain (still never run); the act mirror. The P11 nametag wording in the entry below is replaced.
+- **Next**: P12f, find where the local player is registered as a soldier-sensor target (and whether a second player
+  instance can be), then a per-soldier swap of the leaf snapshot around the leaf's per-soldier readers.
+
 ## November 1, 2026: 0.15.0 package (Enemy sync: guards in the same place on both screens (positions, glides, routes, bodies), binoculars)
 
 **Package (2026-11-01):** `dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `29b11f7` with Release receipt `20261102-035555-ce323bba84674c6a8c7b1ff36b39251a` (passed, 336 audited tests, 0 failures; `-BuildJobs 8 -TestJobs 8`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.0+29b11f7` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
@@ -47,7 +110,7 @@ Continues the enemy sync plan's M7 (plan decision 3: probes only, behind switche
     "the" player's position and its bit in the soldier's mask), 0xD59430, 0x14DCA77 (guest only), 0xD56834 (rare). The
     single-player soldier AI reads the one offense player from this getter everywhere; there is no per-target filter to flip.
   - `65e2440a` (P11b, host forces 1 for 30 s, then 0 for 15 s): host soldier hits on the host stopped (73 -> 79, then 79),
-    `soldier_replica` stayed 0. Frame `host-c-15`: a shield guard faced body 1 ("Taylor" tag) and not the host, who lay on
+    `soldier_replica` stayed 0. Frame `host-c-15`: a shield guard faced body 1 (the partner's nametag) and not the host, who lay on
     the ground; no shot on body 1 seen. [I] Forcing the index retargets the AI's attention but not (yet) its fire, or the
     30 s window and shield guard were too short/unlucky; [U] whether body 1 can be damaged by a soldier at all.
 - **What this means for M7**: per-guard perception of both players needs a per-call answer from the getter (which soldier
