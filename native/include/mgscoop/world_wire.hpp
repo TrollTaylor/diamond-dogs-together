@@ -325,8 +325,8 @@ struct CfgReply {
     std::uint8_t fulton;
     // Enemy follow (docs/world-sync-design.md 7.8): r[19] bit 1 turns on the follow scan of the guards near either player
     // and place-first before every host outcome (lua/coop/world_place.lua; lab key soldier_follow), else 0; filled only
-    // by world_link::HandleCfg.
-    std::uint8_t follow;
+    // by world_link::HandleCfg. Bits 2..256 the enemy sync keys (world::EnemySyncBits): 9 bits, 0..511.
+    std::uint16_t follow;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

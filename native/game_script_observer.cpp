@@ -1700,11 +1700,11 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.vehicle_damage = labc.world_vehicle_damage;
     world.travel = labc.debug_travel;
     world.follow = labc.soldier_follow;
-    world.enemy_sync = static_cast<std::uint8_t>((labc.soldier_owner ? 2u : 0u) | (labc.soldier_snap ? 4u : 0u) |
+    world.enemy_sync = static_cast<std::uint16_t>((labc.soldier_owner ? 2u : 0u) | (labc.soldier_snap ? 4u : 0u) |
                                                  (labc.soldier_route ? 8u : 0u) | (labc.soldier_body ? 16u : 0u) |
                                                  (labc.soldier_puppet ? 32u : 0u) |
                                                  (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u) |
-                                                 (labc.soldier_perceive ? 128u : 0u));
+                                                 (labc.place_lift ? 128u : 0u) | (labc.soldier_perceive ? 256u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -3012,7 +3012,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // the y of this copy's own feet (+ 0.1 m) unless the target is more than 1 m off it. Play or lab with soldier_follow +
 // soldier_snap (sw::DriveAdmit; a host only with soldier_owner), 30010 / 30020 / 30050; the step within 60 m of the
 // nearer player; no command budget but the per-guard and process anomaly latches (Gate::AdmitDrive / Record).
-// Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>} or {refused="<reason>"}.
+// Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
+// Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
 struct SlotState { bool active; std::uint64_t last_ms; };
 SlotState slots[mgscoop::world::kSnapSlots]{};
@@ -3060,12 +3061,15 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const float speed = cur.speed * 0.001f;
     // M7 probe (mode 1, the puppet drive): every update from 5 cm, at most 0.2 m plus the owner's speed for 50 ms per step.
     const bool puppet = mode == 1;
-    const auto step = puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, 0.1f)
-                             : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, 0.1f);
+    // Enemy gaps (place_lift): the copy's own height + 0.02 m (sw::kLiftFeetM 0) instead of its feet + 0.1 m (place_sink).
+    const float feet = labc.place_lift ? sw::kLiftFeetM : sw::kDriveFeetM, lift = labc.place_lift ? sw::kLiftLevelM : 0.1f;
+    const auto step = puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, lift, feet)
+                             : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet);
     const bool due = !st.last_ms || now - st.last_ms >= (puppet ? 30u : 100u);
     if (!step.move || !due) {
         if (!step.move) { st.active = false; ++drive::rest; }
-        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=0}", static_cast<int>(step.error * 100.0f));
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=0,v=%d}", static_cast<int>(step.error * 100.0f),
+                         static_cast<int>((here[1] - target[1]) * 100.0f));
         return debug_reply;
     }
     PublishDebugSnapshot();
@@ -3095,8 +3099,8 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     if (result.refusal && std::strcmp(result.refusal, "unrealized") != 0) return refuse(result.refusal);
     if (step.hard) ++drive::hard;
     else ++drive::steps;
-    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u}", static_cast<int>(step.error * 100.0f),
-                     step.hard ? 2 : 1, result.out, unsigned(result.handled));
+    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
+                     step.hard ? 2 : 1, result.out, unsigned(result.handled), static_cast<int>((here[1] - target[1]) * 100.0f));
     return debug_reply;
 }
 

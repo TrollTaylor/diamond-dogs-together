@@ -114,6 +114,46 @@ Gate Judge(const GateIn& in) noexcept;
 // RELOAD (0x58) for unsupported, 0 for match and standin.
 std::uint32_t StripBits(Gate gate) noexcept;
 
+// Why a mismatch (the partner_weapon=mismatch line's why=): plan when the plan
+// has no body slot for the remote's slot (no same/sub weapon and no stand-in:
+// the line names that remote slot), slot when body 1 is in another slot than
+// the planned one (the follower's switch lag or a drift), equip when the
+// planned slot holds another weapon.
+enum class Mismatch : std::uint8_t { plan, slot, equip };
+const char* MismatchWhyName(Mismatch why) noexcept;
+Mismatch MismatchWhy(bool plan_ok, const Plan& plan, unsigned remote_slot, unsigned body_slot) noexcept;
+
+// The slot follower's episode (partner_input_hook SlotFollow, W4): one episode
+// per (remote slot, switch counter), at most kEpisodeWrites writes in it (the
+// engine reverts a first slot-2 write once). The drift re-arm (A1, enemy gaps;
+// partner_native_slot_rearm): once body 1 reached the wanted slot (a same) and
+// later left it inside the same episode (a prone/dive drops it to slot 0; the
+// fb1101 friend session held the wrong gun 19.8 s), one more write after
+// kRearmAfterMs, at most kEpisodeRearms per episode and one per kRearmGapMs.
+inline constexpr std::uint32_t kEpisodeWrites = 2, kEpisodeRearms = 3;
+inline constexpr std::uint64_t kRearmAfterMs = 750, kRearmGapMs = 2000;
+struct Episode {
+    std::uint32_t target = 0xFFFFFFFFu, seq = 0xFFFFFFFFu;  // the remote's slot and switch counter
+    std::uint32_t writes = 0, rearms = 0;
+    bool reached = false;          // body 1 was in the wanted slot once in this episode
+    std::uint64_t left_ms = 0;     // when it left it after that (0: not left)
+    std::uint64_t rearm_ms = 0;    // the last re-arm
+};
+struct EpisodeIn {
+    std::uint32_t target, seq;     // the remote's slot and switch counter (the episode key)
+    std::uint32_t want;            // the body slot for it (itself or the plan's stand-in)
+    std::uint32_t body;            // body 1's current slot (the row nibble)
+    bool switching;                // rec+0x3C0 switch bit or mode 8
+    std::uint64_t now_ms;
+    bool rearm;                    // partner_native_slot_rearm
+};
+// write: the follower may write (call EpisodeWrote after a write); drift: a
+// re-armed write; same: body 1 is in the wanted slot; wait: switching, or the
+// episode's writes are spent.
+enum class EpisodeVerdict : std::uint8_t { write, same, wait, drift };
+EpisodeVerdict EpisodeStep(Episode& e, const EpisodeIn& in) noexcept;
+inline void EpisodeWrote(Episode& e) noexcept { ++e.writes; }
+
 // --- Anim round 1 (docs/anim-round1-weapons.md) ----------------------------------
 // A1, the unsupported-equipment gate: the remote's live v5 slot (the sender's
 // equip-row nibble) above the gun slots (ChangeEquip 0x11AC4AA..0x11AC5AF:

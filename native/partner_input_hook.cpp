@@ -316,9 +316,10 @@ float g_rt_native = 0.0f, g_rt_target = 0.0f;
 volatile LONG g_p1_b20 = 0, g_p1_b24 = 0, g_p1_shots = 0, g_p1_modes = 0, g_p1_mode = 0;
 // The slot follower (W4): statistics (atomics) and the episode it acts in
 // (hook thread only: the remote's slot and switch counter, the last counted
-// reason and the writes spent in it).
-volatile LONG g_sl_writes = 0, g_sl_refused = 0, g_sl_last = 0, g_sl_target = 0xFF, g_sl_faulted = 0;
-std::uint32_t g_sl_ep_target = 0xFFFFFFFFu, g_sl_ep_seq = 0xFFFFFFFFu, g_sl_ep_writes = 0;
+// reason and the writes spent in it; partner_slots::EpisodeStep, A1 drift
+// re-arms counted in g_sl_rearms).
+volatile LONG g_sl_writes = 0, g_sl_refused = 0, g_sl_last = 0, g_sl_target = 0xFF, g_sl_faulted = 0, g_sl_rearms = 0;
+mgscoop::partner_slots::Episode g_sl_ep{};
 LONG g_sl_ep_reason = -1;
 // The partner's trigger after each windowed drain (shots requested, drains with one, drains in a fire mode).
 volatile LONG g_f_requested = 0, g_f_shot_drains = 0, g_f_modes = 0;
@@ -1213,8 +1214,7 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
         g_hist = pi::HoldHistory{};
         g_inj_valid = false;
         g_mag_history = partner_native::MagazineHistory{};
-        g_sl_ep_target = g_sl_ep_seq = 0xFFFFFFFFu;
-        g_sl_ep_writes = 0;
+        g_sl_ep = mgscoop::partner_slots::Episode{};
         g_sl_ep_reason = -1;
         // F1: no drain consumer's previous held word carries into a new
         // mission (a stale FIRE would hide the first press edge).
@@ -1702,8 +1702,8 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
 // an immediate activation (0x103E049 -> 0x105FDB0) or, while aiming, mode 8
 // (the weapon-change sequence 0x1074070). slot_follow=call runs 0x11AFA80
 // itself (lab only). One episode per (remote slot, switch counter): refusals
-// count once per reason, at most kSlotEpisodeWrites writes.
-constexpr std::uint32_t kSlotEpisodeWrites = 2;
+// count once per reason, at most partner_slots::kEpisodeWrites writes (plus
+// the A1 drift re-arms with partner_native_slot_rearm: EpisodeStep).
 int SlotFilter(DWORD code) noexcept {
     if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
     if (InterlockedExchange(&g_sl_faulted, 1) == 0 && g_log) {
@@ -1728,10 +1728,8 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (g_sl_faulted) { InterlockedExchange(&g_sl_last, static_cast<LONG>(SlotRefusal::fault)); return; }
     if (!j.slot_valid || !j.gun_valid) { SlotVerdict(SlotRefusal::no_v5); return; }
     const std::uint32_t target = j.inv_slot;
-    if (target != g_sl_ep_target || j.switch_seq != g_sl_ep_seq) {
-        g_sl_ep_target = target;
-        g_sl_ep_seq = j.switch_seq;
-        g_sl_ep_writes = 0;
+    if (target != g_sl_ep.target || j.switch_seq != g_sl_ep.seq) {
+        g_sl_ep = mgscoop::partner_slots::Episode{target, j.switch_seq};
         g_sl_ep_reason = -1;
     }
     InterlockedExchange(&g_sl_target, static_cast<LONG>(target));
@@ -1791,10 +1789,16 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                 const std::uint8_t nibble = Load<std::uint8_t>(row + c::equip_row_nibble);
                 const std::uint32_t f = Load<std::uint32_t>(rec + c::gun_flags);
                 const std::uint8_t mode = Load<std::uint8_t>(rec + c::gun_mode_cur);
-                if ((nibble & 0xFu) == body_target) why = SlotRefusal::same;
+                namespace psl = mgscoop::partner_slots;
+                const psl::EpisodeIn ep{target, j.switch_seq, body_target, static_cast<std::uint32_t>(nibble & 0xFu),
+                                        (f & c::gun3c0_switch) != 0 || mode == c::gun_mode_change, NowMs(), a.slot_rearm};
+                psl::EpisodeVerdict verdict = psl::EpisodeVerdict::same;
+                if ((nibble & 0xFu) == body_target) { (void)psl::EpisodeStep(g_sl_ep, ep); why = SlotRefusal::same; }
                 else if (Load<std::uint8_t>(rec + c::gun_slot_src) != c::gun_slot_follow) why = SlotRefusal::mode;
-                else if ((f & c::gun3c0_switch) || mode == c::gun_mode_change || g_sl_ep_writes >= kSlotEpisodeWrites) why = SlotRefusal::wait;
+                else if ((verdict = psl::EpisodeStep(g_sl_ep, ep)) == psl::EpisodeVerdict::wait ||
+                         verdict == psl::EpisodeVerdict::same) why = SlotRefusal::wait;
                 else {
+                    if (verdict == psl::EpisodeVerdict::drift) InterlockedIncrement(&g_sl_rearms);
                     // The live handle first (read-only): an empty slot (handle >> 16 == 0xFFFF, or equip 0:
                     // a slot body 1 never had holds 0) reports empty, then the plan, then the identity.
                     const std::uint32_t handle = Load<std::uint32_t>(Load<std::uintptr_t>(inv + c::inv_handles) + idx * 4);
@@ -1813,13 +1817,13 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                             if (Load<std::uintptr_t>(Load<std::uintptr_t>(ctl) + 0x10) != g_base + c::set_current_slot_rva) {
                                 why = SlotRefusal::chain;
                             } else {
-                                ++g_sl_ep_writes;
+                                psl::EpisodeWrote(g_sl_ep);
                                 reinterpret_cast<SetSlotFn>(g_base + c::set_current_slot_rva)(reinterpret_cast<void*>(ctl), 1u,
                                                                                              static_cast<std::int32_t>(body_target), 0, 0, 0, 0);
                                 wrote = true;
                             }
                         } else {
-                            ++g_sl_ep_writes;
+                            psl::EpisodeWrote(g_sl_ep);
                             Store<std::uint32_t>(Q + c::q_equip_dirty, Load<std::uint32_t>(Q + c::q_equip_dirty) | 2u);
                             Store<std::uint8_t>(row + c::equip_row_nibble, static_cast<std::uint8_t>((nibble & 0xF0u) | body_target));
                             Store<std::uint16_t>(row + c::equip_row_current, row_equip);
@@ -3803,6 +3807,7 @@ void DrainStats(Stats& out) noexcept {
     n.slot_target = static_cast<std::uint32_t>(g_sl_target);
     n.slot_last = static_cast<SlotRefusal>(g_sl_last);
     n.slot_faulted = g_sl_faulted != 0;
+    n.slot_rearms = static_cast<std::uint32_t>(g_sl_rearms);
     n.look_ok = g_l_ok != 0;
     for (unsigned i = 0; i < 2; ++i) {
         n.look_remote_cdeg[i] = static_cast<std::int32_t>(g_l_remote[i]);

@@ -632,6 +632,7 @@ struct Arm {
     // (off|write|call), the slots the driver's plan admits (bit s) and the
     // body's equip in each (the follower re-checks the handle against it).
     PartnerNativeSlot slot_follow;
+    bool slot_rearm;  // A1: partner_native_slot_rearm (partner_slots::EpisodeStep drift re-arm)
     std::uint8_t slot_ok;
     std::uint16_t slot_equip[3];
     // Weapons4: bit r set: the remote's slot r is followed with the plan's

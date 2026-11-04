@@ -53,6 +53,10 @@ do
         end
 
         function P.reset()
+            -- Enemy gaps (place_sink; lab key place_lift, CFG r[19] bit 128): the owner's own GetPosition y (LIFT 800, no
+            -- 0.4 m under the owner's surface: the 1-2.5 % of copies the engine left there fell a storey, runs 2d967b8a,
+            -- d4460ea5, 25098847).
+            P.LIFT = W.liftOn == true and 800 or 400
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
             P.patrol, P.lastS, P.sink = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}, {}
@@ -375,7 +379,8 @@ do
             if W.host then
                 P.hostTick(now)
                 -- M3: the host's own placements of guest-owned guards (the same FIFO and steps as the guest's).
-                if W.ownerOn and (P.cur or #P.q > 0) and P.guestTick then P.guestTick(now) end
+                if W.ownerOn and (P.cur or #P.q > 0) and P.guestTick then P.guestTick(now)
+                elseif W.followOn == true and P.sinkTick then P.sinkTick(now) end  -- place_sink: every tick, not only queued
             elseif (W.paired or P.cur) and P.guestTick then P.guestTick(now) end
         end
 

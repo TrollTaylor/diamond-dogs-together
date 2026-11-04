@@ -1,0 +1,21 @@
+# Enemy gaps batch, part 6 of 6 (A1, partner_native_slot_rearm named): the guest takes its secondary, goes prone and
+# crawls (the fb1101 case: body 1 dropped back to slot 0 after a prone/dive and held the wrong gun 19.8 s), stands and
+# aims. Expected on the host: no partner_weapon=mismatch longer than 1 s after the guest stands; partner_slot=drift when
+# the body left the slot; frames s-aim (host) with the partner holding the handgun.
+logmark both
+placebehind host guest 5 2
+guest press 2
+wait 2500
+stance guest prone
+wait 1500
+guest hold w 1500
+guest release
+wait 1000
+stance guest stand
+wait 2500
+guest hold rmb 1500 nowait
+wait 600
+host capture s-aim
+guest release
+wait 1000
+host capture s-idle

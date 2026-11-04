@@ -51,8 +51,8 @@ struct Config {
     bool follow = false;
     // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9+): CFG r[19] bits 2 owner (soldier_owner), 4 snap
     // (soldier_snap), 8 route (soldier_route), 16 body (soldier_body), 32 puppet (soldier_puppet), 64 brain (soldier_brain),
-    // next to bit 1 follow.
-    std::uint8_t enemy_sync = 0;
+    // 128 place_lift (enemy gaps), 256 perceive (soldier_perceive), next to bit 1 follow.
+    std::uint16_t enemy_sync = 0;
     // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
     // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
     bool vehicle_state = false;

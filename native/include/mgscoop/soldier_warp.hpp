@@ -150,14 +150,18 @@ bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t 
 // DriveStep: from this copy (`from`, GetPosition metres) toward `to` (the target, the request's y convention): planar
 // error; a guard at rest starts moving beyond start_m and stops under stop_m (`active` carries it); a step is at most
 // max_step metres planar; beyond snap_m the whole way (hard). y: the target's when hard or more than 1 m off this copy's
-// feet (GetPosition y - 0.8), else this copy's own feet plus lift_m (it stays on its own ground).
+// feet (GetPosition y - feet_m), else this copy's own feet plus lift_m (it stays on its own ground). Enemy gaps
+// (place_lift, place_sink): Warp takes GetPosition-space y (corrections read back +0.40 over a request 0.4 m under the
+// owner, or -0.01 when the engine left them there and they fell a storey), so with the key the level y is this copy's
+// own GetPosition y + kLiftLevelM (feet_m kLiftFeetM) instead of 0.7 m under it.
+inline constexpr float kDriveFeetM = 0.8f, kLiftFeetM = 0.0f, kLiftLevelM = 0.02f;
 struct DriveStepResult {
     float pos[3]{};
     float error{};
     bool move{}, hard{}, active{};
 };
 DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
-                          float snap_m, float lift_m) noexcept;
+                          float snap_m, float lift_m, float feet_m = kDriveFeetM) noexcept;
 // Who may drive (DriveReceipt): play or lab with soldier_follow + soldier_snap, 30010 / 30020 / 30050; a host only with
 // soldier_owner (its copies of guest-owned guards). nullptr admits; else "role", "disabled", "mission".
 struct DriveRule {
