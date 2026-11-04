@@ -137,6 +137,15 @@ for i=1,40 do c.horse.y=100+(i>10 and i<20 and 0.8 or 0);c:tick(1,16) end
 stats=c:has("horse_probe=play_stats;mode=sg20;")
 check(stats and stats:find("leap=1;",1,true),"one leap episode counted: "..tostring(stats))
 
+-- leap and yaw are measured against the last placement sent (not the moving recording): a recorded gallop bob that the
+-- placed horse does not follow is no leap (run 0059d2b6: identical dy patterns in every mode).
+c=F()
+local bob={};for i=0,40 do bob[#bob+1]={t=i*50,x=0,y=100+(i%2)*2,z=i*0.1,yaw=0} end
+c.D.horse.track=bob
+c:run("horse_probe","play","yaw20","1500")
+for _=1,100 do c:tick(1,16) end
+stats=c:has("horse_probe=play_stats;mode=yaw20;")
+check(stats and stats:find("leap=0;",1,true) and stats:find("yaw_p50_deg=0;",1,true),"a bobbing recording placed exactly is no leap: "..tostring(stats))
 -- chase2: 2 Hz, start at the horse's own census point.
 c=F()
 c.D.horse.track={{t=0,x=0,y=100,z=0,yaw=0},{t=4000,x=0,y=100,z=20,yaw=0}}
