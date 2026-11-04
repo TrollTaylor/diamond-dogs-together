@@ -1,12 +1,13 @@
 # Enemy sync integration proof (m7fin prove), part 2 of 8: enemy-follow-30010-play.txt sections 0 (the gotos) / A / B at
 # the shipped defaults (soldier_follow not named), after part 1's late join and ignores. A is 60 s here (90 s there).
 # NEVER: native=role, soldier_warp=disabled, step=error, event=error, GameOver, roster_mismatch, overflow.
+# The warp's ready line comes once at boot: wait for it before this part's logmark (run e583ee62 put it after).
+waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
 logmark both
 host run world_status
 host expect ^world;paired=1;eff=3;w1=1;roster=match;
 guest run world_status
 guest expect ^world;paired=1;eff=3;w1=1;roster=match;
-waitlog guest 'soldier_warp=ready; key=[a-z_]+; follow=1;' 5
 host run enemy goto 2961503 6
 host expect ^(enemy_goto;ent=2961503;submitted_warp|warp_position_readback)
 guest run enemy goto 1740692850 8
