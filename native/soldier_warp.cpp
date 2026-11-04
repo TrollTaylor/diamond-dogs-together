@@ -265,7 +265,7 @@ bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t 
 }
 
 DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
-                          float snap_m, float lift_m) noexcept {
+                          float snap_m, float lift_m, float feet_m) noexcept {
     DriveStepResult r{};
     const float dx = to[0] - from[0], dz = to[2] - from[2];
     r.error = std::sqrt(dx * dx + dz * dz);
@@ -282,7 +282,7 @@ DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool act
     const float k = r.error > max_step ? max_step / r.error : 1.0f;
     r.pos[0] = from[0] + dx * k;
     r.pos[2] = from[2] + dz * k;
-    const float feet = from[1] - 0.8f;
+    const float feet = from[1] - feet_m;
     r.pos[1] = std::fabs(to[1] - feet) > 1.0f ? to[1] : feet + lift_m;
     if (k >= 1.0f) r.active = false;  // arrived: at rest until it drifts past start_m again
     return r;

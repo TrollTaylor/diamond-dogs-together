@@ -230,7 +230,7 @@ void Configure(const Config& config) noexcept {
     g_relief = config.relief;
     g_fulton = static_cast<std::uint8_t>(config.fulton & 31u);
     g_follow = config.follow;
-    g_enemy_sync = static_cast<std::uint8_t>(config.enemy_sync & 0x3Eu);
+    g_enemy_sync = static_cast<std::uint8_t>(config.enemy_sync & 0xBEu);  // + bit 128 place_lift (enemy gaps)
     g_vehicle_state = config.vehicle_state;
     g_vehicle_wreck = config.vehicle_wreck;
     g_vehicle_break = config.vehicle_break;

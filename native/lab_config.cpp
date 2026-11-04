@@ -203,6 +203,7 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    else if (Equals(key, "partner_native_slot_rearm")) ok = ParseBool(value, result.partner_native_slot_rearm);
     // r1101 animtruth: follows the gun profile unless named (ResolveWeaponDefaults); an invalid value counts as named, off.
     else if (Equals(key, "partner_native_aim_truth")) {
         ok = ParseBool(value, result.partner_native_aim_truth);
@@ -468,6 +469,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_snap_given = true;
         if (!ok) result.soldier_snap = false;
     }
+    else if (Equals(key, "place_lift")) ok = ParseBool(value, result.place_lift);
     else if (Equals(key, "soldier_route")) {
         // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_route);

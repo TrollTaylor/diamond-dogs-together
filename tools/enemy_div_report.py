@@ -142,7 +142,9 @@ def analyse(host, guest):
         'overflow': 0,
         # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
         'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
-        'guard_sank': sum(1 for l in guest if 'event=place_sink' in l),
+        # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
+        'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
+        'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
         'body_fell': sum(1 for l in host + guest if 'event=body_fall' in l),
     }
     for l in host + guest:
@@ -150,6 +152,13 @@ def analyse(host, guest):
         if m and 'world=stats' in l:
             never['overflow'] = max(never['overflow'], int(m.group(1)))
     r['never'] = never
+    r['place_drop'] = sum(1 for l in host + guest if 'event=place_drop' in l)
+    # Landing readbacks (dy_m of applied corrections: +0.40 with LIFT 400, about 0.00 with place_lift; -0.01 = left falling).
+    land = [float(m.group(1)) for l in host + guest if ('event=place;' in l or 'event=hplace;' in l) and 'result=applied' in l
+            for m in [re.search(r';dy_m=(-?[0-9.]+)', l)] if m]
+    r['land_dy_n'] = len(land)
+    r['land_dy_hist'] = {k: sum(1 for v in land if lo <= v < hi) for k, lo, hi in (('<-0.1', -99, -0.1), ('-0.1..0.1', -0.1, 0.1),
+                         ('0.1..0.3', 0.1, 0.3), ('0.3..0.5', 0.3, 0.5), ('0.5..1', 0.5, 1.0), ('>=1', 1.0, 99))}
     # The host's scan cost (event=place_scan, follow only).
     scans = [fields(l) for l in host if 'event=place_scan' in l]
     us = [float(s.get('avg_us', 0)) for s in scans]

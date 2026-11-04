@@ -31,7 +31,7 @@ do
         function S.reset()
             S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
             S.rt = {names = nil, i = 0, cur = {}, want = {}}
-            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0}
+            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0}
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
@@ -125,6 +125,16 @@ do
                             else S.n.refused, dv.back = S.n.refused + 1, now + 2000 end
                         elseif type(r) == "table" then
                             dv.ok, dv.err = now, r.e
+                            -- Enemy gaps (place_sink): a driven copy 1.5 m under its owner for 2 s (r.v: its y minus the
+                            -- target's, cm; the stream's y is the owner's GetPosition y - 800 + LIFT) is event=drive_sink.
+                            local off = type(r.v) == "number" and r.v * 10 - (800 - P.LIFT) or nil
+                            if off and off < -1500 then
+                                dv.lowAt = dv.lowAt or now
+                                if now - dv.lowAt >= 2000 and not dv.sunk then
+                                    dv.sunk, S.n.sink = true, S.n.sink + 1
+                                    L("event=drive_sink;ent=%.0f;off_m=%.2f;e_cm=%d", h, off / 1000, r.e or -1)
+                                end
+                            else dv.lowAt, dv.sunk = nil, nil end
                             if r.s == 2 then S.n.hard = S.n.hard + 1
                             elseif r.s == 1 then S.n.steps = S.n.steps + 1
                             else S.n.rest = S.n.rest + 1 end
@@ -305,8 +315,8 @@ do
             if not S.statAt or now - S.statAt >= 10000 then
                 S.statAt = now
                 local c = S.n
-                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d", c.tx, c.calls, c.steps, c.hard, c.rest,
-                    c.stale, c.refused)
+                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d", c.tx, c.calls, c.steps,
+                    c.hard, c.rest, c.stale, c.refused, c.sink)
             end
         end
     end
