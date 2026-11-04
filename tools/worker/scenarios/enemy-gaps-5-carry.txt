@@ -1,0 +1,41 @@
+# Enemy gaps batch, part 5 of 6 (a carried body on both screens): the host puts guard 667680985 to sleep (host-only
+# debug), the guest picks him up (hold r), turns round, walks about 10 m and puts him down (hold r). Expected: guest
+# event=body_tx sent=1 once the body rested 1.5 s, host event=place_body fix=1 and its hplace applied; frames c-a (spot A,
+# both) and c-b (spot B, both, none left at A). Known limit kept: the body is not hidden while carried (design 7.12).
+logmark both
+host run cp_phase nearest sneak
+host run enemy sleep 667680985
+wait 3000
+guest run enemy goto 667680985 1.2
+wait 1500
+placebehind host guest 6 2
+wait 1500
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture c-a
+guest hold r 1400
+guest release
+wait 3000
+guest run coop_carry_bodies
+guest capture c-held
+guest run enemy_cam_turn 180
+wait 400
+guest hold w 1500
+guest hold w 1500
+guest hold w 1500
+guest release
+guest hold r 900
+guest release
+wait 4000
+guest run coop_carry_bodies
+waitlog guest 'world_lua=event=body_tx; ent=667680985; .*sent=1' 12
+waitlog host 'world_lua=event=place_body; .*ent=667680985; .*fix=1' 8
+placebehind host guest 6 2
+wait 1500
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture c-b
+host run enemy info 667680985
+guest run enemy info 667680985

@@ -1,0 +1,49 @@
+# Enemy gaps batch (m7fin gaps track), part 1 of 6: a late join (the play stand-in for a rejoin: the worker cannot
+# relaunch one copy) next to afgh_field_cp with no `enemy goto` (every archived 30010 stimulus died in the outpost's
+# arrival alert right after the goto warps; quiet spots 50-140 m south of the CP from the friend host's own positions).
+# Run all parts in ONE hidden session (shipped defaults, no soldier_* key named; the two new fixes named on):
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-gaps -ScenarioPath
+#     tools/worker/scenarios/enemy-gaps-1-join.txt,tools/worker/scenarios/enemy-gaps-2-route.txt,
+#     tools/worker/scenarios/enemy-gaps-3-holdup.txt,tools/worker/scenarios/enemy-gaps-4-kill.txt,
+#     tools/worker/scenarios/enemy-gaps-5-carry.txt,tools/worker/scenarios/enemy-gaps-6-slot.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -TimeoutSec 600 -Wait
+# Q1: the host alone at a quiet spot (no event=phase; cp=3394524044; phase=3 after the teleport).
+# Gate: the guest's first place_div lines name why=pair; every guard within 60 m has a sample with div <= 2.5 m within
+# 3 s (post); frames r-3s / r-8s on both copies. Q2: no phase=3 after the guest's arrival.
+labsetting nametag=1
+labsetting place_lift=1
+labsetting partner_native_slot_rearm=1
+titlemenu both 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 72000
+host debug weather sunny
+wait 6000
+logmark host
+host run teleport 421.16 269.2 2084.42 0
+wait 10000
+host run world_status
+host capture q1
+host run teleport 415.80 269.0 2106.92 0
+wait 2000
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+logmark both
+placebehind guest host 4 1
+waitlog guest 'world_lua=event=place_div; .*why=pair' 15
+wait 2000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture r-3s
+wait 4000
+both capture r-8s
+host run world_status
+guest run world_status
