@@ -90,4 +90,96 @@ int ForcedIndex() noexcept;
 bool SitesInstalled() noexcept;
 #endif
 
+// ---------------------------------------------------------------------------------------------------------------------
+// M7 step 1: per-soldier perception (lab key soldier_perceive, off unless named; docs/world-sync-design.md 7.13). The
+// scorer patch above is no longer installed (run af17b899: the scorer never runs in free roam). The single-player soldier
+// AI reads ONE "offense" player from the getter everywhere (run 32a93d27). Here the getter answers per soldier; which
+// soldier asks comes from
+//   - the caller's soldier register at the live per-soldier call sites (each function keeps its edx soldier index in a
+//     callee-saved register up to the getter call; pinned in soldier_perceive_contract.hpp), read by a stub that saves
+//     rbx, rbp, rsi, rdi, r12..r15 before it calls Choose, or
+//   - the notice system's per-soldier update 0x140D65850(sys, edx soldier, xmm2 dt, r9b flag) (MinHook): a thread-local
+//     current soldier for the calls inside it, and its cached copy of the index (word sys+0x1ac, written once a frame by
+//     0x140D5AE50 at 0x140D5AF51, read at 0x140D65908) swapped to the soldier's target for the duration.
+// A soldier's target (0 = the local player, 1 = body 1, the partner) is set by Lua (the host's nearer-player rule,
+// MGS_COOP_SOLDIER_PERCEIVE_V1) or by the debug command perceive_pick; a soldier without one gets the stock answer. The
+// once-a-frame leaf snapshot (0x14134F9D0 at ret 0x1350035: [leaf+0x28c] index, +0x1d0 position, +0x294 state bits; one
+// for all soldiers of the leaf) keeps the stock answer unless the leaf mode is `any` (1 while any soldier targets 1).
+inline constexpr unsigned kPickSoldiers = 512;
+// Index into the stub's saved registers (ascending addresses: the last push first).
+enum class Reg : std::uint8_t { r15 = 0, r14, r13, r12, rdi, rsi, rbp, rbx, count };
+struct PickSite {
+    std::uint32_t ret;  // return address rva of the getter call
+    Reg reg;            // the caller's soldier register
+    bool answers;       // false: census only (0x14DCA77: a guest-only filter, [U] whether edi is a soldier index)
+};
+inline constexpr PickSite kPickSites[] = {
+    {0xD6B87F, Reg::rsi, true},   // 0x140D6B7E0 the notice gauge (mov esi,edx at 0x140D6B81C)
+    {0xD6D82F, Reg::rsi, true},   // 0x140D6D7B0 distance (0x140D6D7ED)
+    {0xD6D9CE, Reg::r14, true},   // 0x140D6D930 state bit skip (0x140D6D950)
+    {0xD6638E, Reg::r15, true},   // 0x140D661F0 soldier masks (0x140D6622E), called from the per-soldier update
+    {0xD782E3, Reg::rbx, true},   // 0x140D78250 the 6-player table per soldier (0x140D78260)
+    {0xD59430, Reg::r12, true},   // 0x140D59320 soldier records (0x140D59340)
+    {0xD56834, Reg::rbp, true},   // 0x140D567F0 slot 0x88 position (movzx ebp,dx at 0x140D5681F)
+    {0x14DCA77, Reg::rdi, false}, // 0x1414DC9D0 (0x1414DC9FC)
+};
+inline constexpr unsigned kPickSiteCount = sizeof(kPickSites) / sizeof(kPickSites[0]);
+inline constexpr std::uint32_t kLeafRet = 0x1350035;
+inline constexpr std::uintptr_t kUpdateRva = 0xD65850;
+inline constexpr std::size_t kCacheWord = 0x1ac;
+enum class Leaf : std::uint8_t { stock = 0, any = 1 };
+
+// Pure. The table index of a return rva, or -1.
+int PickSiteIndex(std::uint32_t ret) noexcept;
+// Pure. The soldier a getter call asks for: the site's register (when the site answers and the register holds an index
+// below kPickSoldiers), else the thread's current soldier (tls >= 0), else -1.
+int SoldierFor(std::uint32_t ret, const std::uint64_t* regs, int tls) noexcept;
+// Pure. The answer: a forced index (0 or 1) to every caller; else the soldier's target; else, at the leaf snapshot in
+// mode any, 1 while any soldier targets 1; else stock. Only a stock answer of 0 or 1 is ever replaced.
+unsigned Answer(std::uint32_t ret, int target, unsigned stock, int forced, Leaf leaf, bool anyOne) noexcept;
+
+// Targets (lock-free; the Lua owner thread writes, the AI threads read). -1 = none (stock).
+void SetTarget(unsigned soldier, int target) noexcept;  // target 0 or 1; any other value clears
+int Target(unsigned soldier) noexcept;
+void ClearTargets() noexcept;
+unsigned TargetCount(int target) noexcept;  // soldiers with that target (0 or 1)
+void SetLeaf(Leaf leaf) noexcept;
+Leaf LeafMode() noexcept;
+
+// P12a census: per pick site, the captured register values, and how often a call with a thread soldier agrees with it.
+struct SiteCensus {
+    std::uint32_t calls = 0, inTls = 0, eqTls = 0, big = 0, min = 0xFFFFFFFFu, max = 0;
+};
+void CensusSite(unsigned site, std::uint64_t value, int tls) noexcept;
+SiteCensus CensusSiteRead(unsigned site) noexcept;
+struct PickCounters {
+    std::uint32_t calls = 0, perSoldier = 0, answered0 = 0, answered1 = 0, leaf1 = 0, tlsCalls = 0;
+    std::uint32_t updates = 0, swaps = 0, maxSoldier = 0, otherThread = 0;
+};
+void CountCall(bool perSoldier, int target, bool leaf1, bool tls) noexcept;
+void CountUpdate(unsigned soldier, bool swapped, bool otherThread) noexcept;
+PickCounters PickRead() noexcept;
+void PickReset() noexcept;  // counters and census (not the targets)
+// "pick;on=;forced=;leaf=;t0=;t1=;calls=;soldier=;a0=;a1=;leaf1=;tls=;upd=;swaps=;max=;thr="
+bool PickLine(char* out, std::size_t capacity, bool installed) noexcept;
+
+// The stub (any address; MinHook jumps to it): pushes the eight callee-saved registers, then calls
+// Choose(self, regs, ret) with regs = the saved block (Reg order) and ret = the caller's return address.
+inline constexpr std::size_t kStubSize = 0x37;
+inline constexpr std::size_t kUnwindSize = 24;
+void BuildStub(unsigned char (&out)[kStubSize], std::uintptr_t choose) noexcept;
+void BuildUnwind(unsigned char (&out)[kUnwindSize]) noexcept;
+
+#ifdef _WIN32
+// Verifies every pinned window (soldier_perceive_contract.hpp) and installs the getter stub hook and the per-soldier
+// update hook. Logs soldier_perceive=installed; mode=per_soldier | refused; reason=.... Idempotent. Takes the place of
+// InstallSites (the same getter; the site census and perceive_force run through Choose).
+bool InstallPick(const void* base, LogFn log) noexcept;
+bool PickInstalled() noexcept;
+// One soldier_perceive_census line per pick site to `log`.
+void LogCensus(LogFn log) noexcept;
+// Test seam: the stub calls this C++ function (a pointer the test may read).
+std::uintptr_t ChooseAddress() noexcept;
+#endif
+
 } // namespace mgscoop::soldier_perceive

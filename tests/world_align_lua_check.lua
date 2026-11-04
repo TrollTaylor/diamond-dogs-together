@@ -1442,6 +1442,52 @@ if arg[7] and arg[8] then
     pg.positions[1] = {0, 1.8, 90.0}
     ticks(pg, 2)
     check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
+    -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
+    -- choice held 4 s); the guest never does.
+    local pick = sh.W.snap.pick
+    check(pick(nil, 400e6, 100e6, 0) == 1 and pick(nil, 100e6, 400e6, 0) == 0 and pick(nil, 400e6, nil, 0) == 0,
+        'M7 perceive: the nearer player, the host when the guest is unknown')
+    check(pick(1, (21000) ^ 2, (19000) ^ 2, 9000) == 1 and pick(0, (21000) ^ 2, (19000) ^ 2, 9000) == 0,
+        'M7 perceive: within the 3 m band the choice stays')
+    check(pick(1, (10000) ^ 2, (30000) ^ 2, 3000) == 1 and pick(1, (10000) ^ 2, (30000) ^ 2, 4000) == 0,
+        'M7 perceive: a change waits until the choice is 4 s old')
+    local function perceiveFix(host, on)
+        local c = followFixture(host)
+        c.W.perceiveOn = on
+        local recv = c.W.receipt
+        c.perceive = {}
+        c.W.receipt = function(source)
+            local text = source:match("^return 'MGS_COOP_SOLDIER_PERCEIVE_V1' %-%- (.*)$")
+            if text then
+                c.perceive[#c.perceive + 1] = text
+                if text == 'status' then return 1, 1, 1, 1 end
+                return 1
+            end
+            return recv(source)
+        end
+        c.positions[900] = {100.0, 0, 0}     -- the partner body
+        c.positions[1] = {10.0, 1.8, 0}      -- 10 m from the host, 90 m from the partner
+        c.positions[3] = {70.0, 1.8, 0}      -- 70 m from the host, 30 m from the partner
+        return c
+    end
+    local function has(c, text) for _, t in ipairs(c.perceive) do if t == text then return true end end return false end
+    local pv = perceiveFix(true, true)
+    ticks(pv, 4)
+    check(pv.perceive[1] == 'clear' and has(pv, '1 0') and has(pv, '3 1') and
+        logged(pv, 'event=perceive;ent=3000000003;idx=3;target=1;dh_m=70;dq_m=30'), 'M7 perceive: the host sends each guard\'s player')
+    local before = #pv.perceive
+    ticks(pv, 40)
+    check(not has(pv, '3 0') and #pv.perceive - before <= 1, 'M7 perceive: sent on a change only')
+    pv.positions[3] = {20.0, 1.8, 0}
+    ticks(pv, 400)
+    check(has(pv, '3 0') and logged(pv, 'event=perceive;ent=3000000003;idx=3;target=0'), 'M7 perceive: back to the host when it is nearer')
+    check(logged(pv, 'event=perceive_stats;native=1;t0=1;t1=1;auto=1;sent='), 'M7 perceive: the stats line')
+    local pq = perceiveFix(false, true)
+    ticks(pq, 40)
+    check(#pq.perceive == 0, 'M7 perceive: never on the guest')
+    local po = perceiveFix(true, false)
+    ticks(po, 40)
+    check(#po.perceive == 0, 'M7 perceive: off without the key')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

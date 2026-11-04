@@ -214,6 +214,7 @@ do
                         if x then
                             local dh = (x - hx) ^ 2 + (z - hz) ^ 2
                             local dq = qx and (x - qx) ^ 2 + (z - qz) ^ 2 or nil
+                            if P.perceiveScan then P.perceiveScan(h, en, dh, dq, now) end  -- M7 step 1 (world_snap.lua)
                             local near = dh <= K.host or (dq ~= nil and dq <= K.partner)
                             -- Follow: at least 15 m nearer the partner than the host is the guest's copy's to move; M3
                             -- (W.ownerOn): the owner decision (P.ownerOf), the guest's ENEMY_PLACE then moves this copy.

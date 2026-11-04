@@ -10,6 +10,7 @@
 //     (downed_player soldier hit queue) and the replica takes nothing.
 // Ownership: one bit per soldier index (GameObjectId & 0x1ff), set by Lua (MGS_COOP_SOLDIER_AUTH_V1); a soldier without a
 // bit takes the role default (host: its own, guest: the host's).
+#include <cstddef>
 #include <cstdint>
 
 namespace mgscoop::soldier_authority {
@@ -31,5 +32,18 @@ void Clear() noexcept;                              // every soldier back to the
 bool Set(std::uint16_t index, bool remote) noexcept;  // false: index out of range
 bool Remote(std::uint16_t attacker) noexcept;       // the attacker's soldier owned by the other copy
 unsigned RemoteCount() noexcept;
+
+// M7 step 1 evidence (soldier_perceive): soldiers' hits on each player as the defense callback sees them
+// (downed_damage.cpp Defend, before any damage rule), whoever is the brain: a count per target (0 the local player,
+// 1 body 1) and the attacking soldier indices. Lock-free; any thread. Non-soldier attackers and other targets are ignored.
+void NoteDefense(std::uint32_t target, std::uint16_t attacker) noexcept;
+struct DefenseSnapshot {
+    std::uint32_t hits[2]{};
+    std::uint64_t by[2][kSoldiers / 64]{};
+};
+DefenseSnapshot DefenseRead() noexcept;
+void DefenseReset() noexcept;
+// "<n>:<i>,<i>,..." for one target (soldier indices ascending, as many as fit); false when the head does not fit.
+bool DefenseList(const DefenseSnapshot& s, unsigned target, char* out, std::size_t capacity) noexcept;
 
 } // namespace mgscoop::soldier_authority

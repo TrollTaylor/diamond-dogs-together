@@ -189,6 +189,9 @@ mgscoop::equipment_allocation_probe::Authorization equipment_allocation_authoriz
 mgscoop::equipment_stock_probe::Authorization stock46_authorization;
 mgscoop::equipment_stock_contract::Snapshot stock46_before;
 bool stock46_groups_authorized=false,stock46_groups_returned=false;
+// M7 step 1 (soldier_perceive.hpp): Lua's per-soldier targets apply (MGS_COOP_SOLDIER_PERCEIVE_V1) unless a debug
+// perceive_pick holds them.
+std::atomic<bool> perceive_auto{true};
 // The generalized preload (W2; docs/native-puppet.md "Generalized preload").
 mgscoop::equipment_stock_probe::GeneralAuthorization equip_preload_authorization;
 mgscoop::equipment_preload_contract::Snapshot equip_preload_before;
@@ -1700,7 +1703,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
     world.enemy_sync = static_cast<std::uint8_t>((labc.soldier_owner ? 2u : 0u) | (labc.soldier_snap ? 4u : 0u) |
                                                  (labc.soldier_route ? 8u : 0u) | (labc.soldier_body ? 16u : 0u) |
                                                  (labc.soldier_puppet ? 32u : 0u) |
-                                                 (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u));
+                                                 (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u) |
+                                                 (labc.soldier_perceive ? 128u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -3287,13 +3291,77 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             else mgscoop::teammate_targeting::StatusLine(line,sizeof(line));
             debug::Result(pending.id,worker && (observe || filter || status) ? 1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_status") == 0) {
+            // M7 step 1: the per-soldier pick counters (result), plus the P12a census lines, the soldiers' hits on each
+            // player as the defense callback saw them and the current targets (log).
+            namespace sp=mgscoop::soldier_perceive;namespace sa=mgscoop::soldier_authority;
             char line[161]{};
-            if(!mgscoop::soldier_perceive::CensusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"perceive;census=overflow");
+            if(!sp::PickLine(line,sizeof(line),sp::PickInstalled())) StringCchCopyA(line,ARRAYSIZE(line),"pick;overflow");
+            LogFormat("soldier_perceive_status; %s; auto=%u\r\n",line,perceive_auto.load()?1u:0u);
+            sp::LogCensus(Log);
+            const auto def=sa::DefenseRead();
+            char d0[400]{},d1[400]{};
+            sa::DefenseList(def,0,d0,sizeof(d0));sa::DefenseList(def,1,d1,sizeof(d1));
+            LogFormat("soldier_perceive_hits; body0=%s; body1=%s\r\n",d0,d1);
+            char targets[600]{};std::size_t used=0;
+            for(unsigned i=0;i<sp::kPickSoldiers && used+12<sizeof(targets);++i) {
+                const int t=sp::Target(i);
+                if(t<0) continue;
+                const int k=std::snprintf(targets+used,sizeof(targets)-used,"%s%u:%d",used?",":"",i,t);
+                if(k<0) break;
+                used+=static_cast<std::size_t>(k);
+            }
+            LogFormat("soldier_perceive_targets; %s\r\n",used?targets:"none");
             debug::Result(pending.id,1,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_pick ", 14) == 0) {
+            // M7 step 1 probe P12c: perceive_pick <index> <0|1|off> (the debug pick holds the targets: Lua sets are
+            // ignored until perceive_auto 1), perceive_pick clear.
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+14;
+            unsigned index=0;
+            bool ok=false;
+            const char* end=arg+std::strlen(arg);
+            const auto parsed=std::from_chars(arg,end,index);
+            const char* what=parsed.ptr<end && *parsed.ptr==' ' ? parsed.ptr+1 : end;
+            if(std::strcmp(arg,"clear")==0) {sp::ClearTargets();perceive_auto.store(false);ok=true;}
+            else if(parsed.ec==std::errc() && parsed.ptr!=arg && what!=end && index<sp::kPickSoldiers &&
+                    (std::strcmp(what,"0")==0 || std::strcmp(what,"1")==0 || std::strcmp(what,"off")==0)) {
+                perceive_auto.store(false);
+                sp::SetTarget(index,std::strcmp(what,"off")==0?-1:what[0]-'0');
+                ok=true;
+            }
+            char line[96]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_pick;ok=%u;index=%u;target=%d;t0=%u;t1=%u;key=%u",ok?1u:0u,index,
+                             sp::Target(index),sp::TargetCount(0),sp::TargetCount(1),sp::PickInstalled()?1u:0u);
+            LogFormat("soldier_perceive_pick; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_auto ", 14) == 0) {
+            // Lua's targets back on (1: from the next Lua set; the debug picks stay until Lua changes them) or off (0).
+            const char* arg=pending.text+14;
+            const bool ok=std::strcmp(arg,"0")==0 || std::strcmp(arg,"1")==0;
+            if(ok) perceive_auto.store(arg[0]=='1');
+            char line[64]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_auto;ok=%u;auto=%u",ok?1u:0u,perceive_auto.load()?1u:0u);
+            LogFormat("soldier_perceive_auto; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_leaf ", 14) == 0) {
+            // The leaf snapshot (ret 0x1350035): stock, or 1 while any soldier targets 1.
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+14;
+            const bool any=std::strcmp(arg,"any")==0, stock=std::strcmp(arg,"stock")==0;
+            if(any || stock) sp::SetLeaf(any?sp::Leaf::any:sp::Leaf::stock);
+            char line[64]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_leaf;ok=%u;leaf=%s",any||stock?1u:0u,
+                             sp::LeafMode()==sp::Leaf::any?"any":"stock");
+            LogFormat("soldier_perceive_leaf; %s\r\n",line);
+            debug::Result(pending.id,any||stock?1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text, "perceive_reset") == 0) {
+            mgscoop::soldier_perceive::PickReset();mgscoop::soldier_authority::DefenseReset();
+            Log("soldier_perceive_reset; counters=0\r\n");
+            debug::Result(pending.id,1,"perceive_reset;ok=1");
         } else if (pending.id && std::strncmp(pending.text, "perceive_force ", 15) == 0) {
             // Probe P11b (soldier_perceive.hpp): the offense index getter returns 0 or 1 to every caller, or stock (off).
             const char* arg=pending.text+15;
-            const bool on=mgscoop::soldier_perceive::Patched() && mgscoop::soldier_perceive::SitesInstalled();
+            const bool on=mgscoop::soldier_perceive::PickInstalled() || mgscoop::soldier_perceive::SitesInstalled();
             const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:-1;
             const bool ok=on && (want>=0 || std::strcmp(arg,"off")==0);
             if(ok) mgscoop::soldier_perceive::SetForcedIndex(want);
@@ -5824,6 +5892,38 @@ bool SelectSoldierAuthReceipt(const char* buffer,std::size_t size,mgscoop::scrip
     if(sa::Set(static_cast<std::uint16_t>(index),remote!=0)) replacement={yes,sizeof(yes)-1};
     return true;
 }
+// Enemy sync M7 step 1 (soldier_perceive.hpp): MGS_COOP_SOLDIER_PERCEIVE_V1 -- clear | status | <index 0..511> <target
+// -1|0|1>, on the runtime thread: the per-soldier target of the offense index getter (Lua: the host's nearer-player rule).
+// While a debug perceive_pick holds the targets (perceive_auto 0), a set is acknowledged but not applied. Reply
+// return <installed>,<t0>,<t1>,<auto> (status, clear) or return 1|0 (set). No game read or call.
+bool SelectSoldierPerceiveReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>96 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    static char reply[48];
+    static constexpr char no[]="return 0";
+    replacement={no,sizeof(no)-1};
+    if(!OnRuntimeThread()) return true;
+    const std::string_view rest(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1));
+    namespace sp=mgscoop::soldier_perceive;
+    const bool automatic=perceive_auto.load();
+    if(rest=="clear" || rest=="status") {
+        if(rest=="clear" && automatic) sp::ClearTargets();
+        if(SUCCEEDED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return %u,%u,%u,%u",sp::PickInstalled()?1u:0u,sp::TargetCount(0),
+                                      sp::TargetCount(1),automatic?1u:0u)))
+            replacement={reply,std::strlen(reply)};
+        return true;
+    }
+    unsigned index=0;int target=0;
+    const char* cursor=rest.data();const char* end=rest.data()+rest.size();
+    auto a=std::from_chars(cursor,end,index);
+    if(a.ec!=std::errc() || a.ptr==cursor || a.ptr==end || *a.ptr!=' ') return true;
+    auto b=std::from_chars(a.ptr+1,end,target);
+    if(b.ec!=std::errc() || b.ptr!=end || target<-1 || target>1 || index>=sp::kPickSoldiers) return true;
+    static constexpr char yes[]="return 1";
+    if(automatic) sp::SetTarget(index,target);
+    replacement={yes,sizeof(yes)-1};
+    return true;
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -6017,6 +6117,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if (SelectSoldierAuthReceipt(buffer, size, replacement)) return true;
+    if (SelectSoldierPerceiveReceipt(buffer, size, replacement)) return true;
     if (SelectArmsReceipt(buffer, size, replacement)) return true;
     if (SelectSupplyReceipt(buffer, size, replacement)) return true;
     if (SelectVspawnReceipt(buffer, size, replacement)) return true;
@@ -6171,6 +6272,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
             mgscoop::soldier_authority::Clear();
+            mgscoop::soldier_perceive::ClearTargets();
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),
@@ -6678,21 +6780,19 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                                                           labc.soldier_follow && labc.soldier_snap ? 1u : 0u);
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
-                    // Enemy sync M7 (docs/world-sync-design.md 7.13): the perception filter patch for the process when named
-                    // (soldier_perceive.hpp: this copy's soldiers react to body 1 too), and the owner-only damage authority.
-                    // Probe P11: with the patch, the scorer census (soldier_perceive.hpp; perceive_status).
-                    if (labc.soldier_perceive && mgscoop::soldier_perceive::Patch(base, Log)) {
-                        mgscoop::soldier_perceive::InstallCensus(base, Log);
-                        mgscoop::soldier_perceive::InstallSites(base, Log);
-                    }
+                    // Enemy sync M7 step 1 (docs/world-sync-design.md 7.13): per-soldier perception when named
+                    // (soldier_perceive.hpp InstallPick: the offense index getter answers per soldier; the targets come
+                    // from Lua, MGS_COOP_SOLDIER_PERCEIVE_V1, or perceive_pick). The scorer patch of probe P11 is no
+                    // longer installed (run af17b899: a no-op in free roam).
+                    if (labc.soldier_perceive) mgscoop::soldier_perceive::InstallPick(base, Log);
                     else Log("soldier_perceive=off; reason=key_off\r\n");
-                    // The brain only with the patch: the other copy of a guard is held back and relies on its owner seeing
-                    // this player.
-                    const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::Patched();
+                    // The brain only with perception: the other copy of a guard is held back and relies on its owner
+                    // seeing this player.
+                    const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();
                     mgscoop::soldier_authority::Configure(brain, labc.role == mgscoop::LabRole::guest);
                     LogFormat("soldier_authority=%s; role=%s; key=%u; perceive=%u\r\n", brain ? "on" : "off",
                               labc.role == mgscoop::LabRole::guest ? "guest" : "host", labc.soldier_brain ? 1u : 0u,
-                              mgscoop::soldier_perceive::Patched() ? 1u : 0u);
+                              mgscoop::soldier_perceive::PickInstalled() ? 1u : 0u);
                     // Steam online (docs/steam-online.md): play + steam, or the lab self-test.
                     const bool play_steam = labc.mode == mgscoop::LabMode::play && labc.net &&
                                             labc.net_transport == mgscoop::NetTransport::steam && lab::SavesRedirected();

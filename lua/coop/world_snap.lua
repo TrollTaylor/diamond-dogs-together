@@ -27,6 +27,10 @@
 -- (its own AI fights, its damage counted only by the owner) while its CP is in ALERT, for 8 s after its owner's copy hit
 -- this player (SOLDIER_HIT: W.soldierEngaged, which also makes it discover this player), and for 8 s after this player
 -- damaged it (so a shot guard still reacts and its CP raises the alarm).
+-- M7 step 1 (soldier_perceive, CFG r[19] bit 128, W.perceiveOn; docs/world-sync-design.md 7.13): on the host each guard
+-- the M1 scan samples perceives one player, the nearer: the guest's body (target 1) once the guest is at least 3 m nearer
+-- than the host, the host (0) once the host is at least 3 m nearer; a choice holds 4 s (native soldier_perceive answers
+-- the offense index getter per soldier: MGS_COOP_SOLDIER_PERCEIVE_V1).
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -34,7 +38,7 @@ do
         local S, OP = {}, W.OP
         W.snap = S
         OP.SOLDIER_SNAP = 75
-        local fmt, floor, min = string.format, math.floor, math.min
+        local fmt, floor, min, sqrt = string.format, math.floor, math.min, math.sqrt
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         function S.reset()
@@ -396,6 +400,45 @@ do
                 end
                 L("event=brain_stats;native=%s;remote=%s;restricted=%d;engaged=%d;set=%d;lift=%d;engages=%d", ok and tostring(en) or "?",
                     ok and tostring(rc) or "?", restricted, engaged, S.bn.n.set, S.bn.n.lift, S.bn.n.engage)
+            end
+        end
+        -- M7 step 1: per-soldier perception targets (host) ---------------------------------------------------------
+        S.pc = {t = {}, at = {}, sent = 0}
+        W.startHooks[#W.startHooks + 1] = function() S.pc = {t = {}, at = {}, sent = 0} end
+        local function perceive(text)
+            local ok, r = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- " .. text)
+            return ok and r or nil
+        end
+        -- From P.scan (world_place.lua): dh / dq = squared mm to the host's player / the guest's (nil when unknown).
+        function S.pick(cur, dh, dq, heldMs)
+            local want = cur or 0
+            if not dq then want = 0
+            else
+                local gap = sqrt(dh) - sqrt(dq)
+                if gap >= 3000 then want = 1 elseif gap <= -3000 then want = 0 end
+            end
+            if want == cur or (cur ~= nil and heldMs < 4000) then return cur end
+            return want
+        end
+        function P.perceiveScan(h, en, dh, dq, now)
+            if not (W.perceiveOn and W.host and W.paired and type(en.id) == "number") then return end
+            local c = S.pc
+            if not c.cleared then
+                if perceive("clear") == nil then return end
+                c.cleared = true
+            end
+            local cur = c.t[h]
+            local want = S.pick(cur, dh, dq, now - (c.at[h] or -1e9))
+            if want ~= cur and perceive(fmt("%d %d", en.id % 512, want)) == 1 then
+                c.t[h], c.at[h], c.sent = want, now, c.sent + 1
+                L("event=perceive;ent=%.0f;idx=%d;target=%d;dh_m=%.0f;dq_m=%s", h, en.id % 512, want, sqrt(dh) / 1000,
+                    dq and fmt("%.0f", sqrt(dq) / 1000) or "na")
+            end
+            if not c.statAt or now - c.statAt >= 10000 then
+                c.statAt = now
+                local ok, on, t0, t1, auto = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- status")
+                L("event=perceive_stats;native=%s;t0=%s;t1=%s;auto=%s;sent=%d", ok and tostring(on) or "?", ok and tostring(t0) or "?",
+                    ok and tostring(t1) or "?", ok and tostring(auto) or "?", c.sent)
             end
         end
         local tick = P.tick

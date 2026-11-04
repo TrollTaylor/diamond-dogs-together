@@ -142,6 +142,7 @@ __declspec(noinline) std::uint32_t Defend(void* self,void* hit,void* target,void
     const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
     const auto h=InspectDefense(hit,target,manager);
     defenseCalls.fetch_add(1,std::memory_order_relaxed);
+    soldier_authority::NoteDefense(h.target,h.attacker);  // M7 step 1 evidence (soldier_authority.hpp)
     error.Restore();
     const auto result=originalDefense(self,hit,target,collision,manager);
     error.Capture();

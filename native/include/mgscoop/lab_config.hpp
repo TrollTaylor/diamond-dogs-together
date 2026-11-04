@@ -734,8 +734,9 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
-    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive patches the soldier perception filter
-    // (soldier_perceive.hpp) so this copy's soldiers react to body 1, the partner; soldier_brain makes each guard's owner
+    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive makes the offense index getter answer per soldier
+    // (soldier_perceive.hpp InstallPick; CFG r[19] bit 128: the host's Lua sends each guard's nearer player), so this
+    // copy's soldiers perceive body 1, the partner, too; soldier_brain makes each guard's owner
     // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
     // nothing, the owner's hits on the replica reach the partner as FRIENDLY_HIT soldier causes) and holds the other
     // copy back (restrict notice) until the owner's copy shoots that player (CFG r[19] bit 64). Lab and play; off unless
