@@ -1,3 +1,66 @@
+## November 4, 2026: horse probes P0..P5 ("Saddle Up" round 1, `wp/horse`, lab only; players get nothing new yet)
+
+The user approved the two-on-one-horse plan (scratchpad `horse/horse-plan.md`) with its defaults: D-H1 yes (the host's
+D-Horse is the shared one), D-H2 yes, D-H3 the bleed-out keeps running while loaded, D-H4 no (no M6), D-H5 no downloads,
+D-H6 yes after M4, D-H7 hidden frames plus a WanSim rehearsal. This round ran the plan's probes. Nothing is on by default:
+the levers are lab-only F9 commands (`lua/coop/debug_horse.lua`, refused unless CFG mode 1, as `world_probe.lua`):
+`horse_probe rec|play|hold|hostage|watch|pin|stop|status` (`tests/debug_horse_lua_check.lua`, 50 checks). Scenarios
+`tools/worker/scenarios/horse-p1-place.txt`, `horse-p1b-follow.txt`, `horse-p5-hold.txt`, `horse-p4-pin.txt`,
+`horse-p2-guard.txt`, `horse-p3-cargo.txt`; all hidden lab sessions with `-WanSim bad -PartnerProfile native -NativeStage gun
+-BuildProfile research -SaveSeed afgh-ledge`, through the queue. Frames and slices: `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`.
+
+- **P0 (static, Ghidra comments added) [O].** D-Horse's AI is a 5-state machine (handlers at `0x142C47DD0`: 0 idle
+  `0x140E6A2E0`, 1 run-to-goal `0x140E6A400`, 2 call `0x140E6AA90`, 3 `0x140E69860`, 4 `0x140E69820` -> idle).
+  `SetCallHorse` (`0x140E4D805`) always sets `rec+0x2E3`; a missing `startPosition` keeps the old `rec+0x20`. The idle
+  state hands a pending call to state 2, whose enter warps the horse: census pose `[idx]` = start and
+  yaw = atan2(goal - start) (start==goal gives yaw 0, the horse faces +Z), then the physical write
+  `(receiver->vt+0x78(idx))+0x10 ->vt+0xA8(slot, 4x4)` at `0x140E6AF3F`. Its first update still arms a call run (a path
+  from start to goal, substate 4), then state 1 issues a locomotion request; state 1's exit clears `rec+0x2E3`, so a call
+  sent while it runs is lost. `TppPlayer.AppearHorseOnMissionStart` only writes `vars.initialBuddyPos` (Lua; read once at
+  the buddy realize): no runtime placement.
+- **P1, per-frame placement [O both copies; runs `0059d2b6`, `582ddf33`]:** 16 s rides recorded (878-960 census samples,
+  117-126 m), replayed onto the unridden horse. yaw20 (start = target, goal 2 cm ahead, 20 Hz): err p50 29-58 cm, p95
+  59-167 cm, heading p50 10-18 deg; the frames show running legs (the call run's locomotion) but also rear-ups, and the
+  placed census sits about 0.45 m above the ridden recording. sg20 (start==goal): similar err, the horse always faces +Z
+  (yaw error p50 151-162 deg on a southward path) and once ran 50 m back for 2.5 s instead of warping (a call lost in
+  state 1). sg4/sg10: p95 1.5-1.9 m. chase1/chase2: p50 4.9-16 m. **No Lua route meets the plan's "no leap and err < 0.5
+  m" gate, so M1 takes plan B:** a native `MGS_COOP_HORSE_DRIVE_V1` that performs only the call state's enter write
+  (census pose plus the vt+0xA8 transform, through the census reader's verified receiver chain), never sets `rec+0x2E3`,
+  refuses while the local player rides or a call runs, and pins the enter block `0x140E6AB6B..0x140E6AF7D`, the table and
+  the two vtable targets. yaw20 at 20 Hz stays the interim fallback.
+- **P5, ride hold [O both copies, `0059d2b6`]:** an ACTION-only pad mask blocks the stock mount (an E press and a 1.2 s E
+  hold leave `localMounted=0`), the ride icon still shows, and after the release the first E mounts. The mask also hides
+  E from the downed poll (`horse_probe=raw_e` edges appear only once the mask is gone): M3's "hold E beside the ridden
+  horse" needs a raw pad read before the masks. The icon shows at 1.6 m facing the horse; the stepped frames (0.8-4.6 m,
+  not facing it) show none.
+- **P2, a stock guard on D-Horse [O host copy, `fa31b4f7`; loads also seen in `df011236`, `fe39b57d`]:**
+  `IsCarriedHostage` / `GetCarriedHostage` are real: false/0 empty, true while loaded and ridden, true/1 after the
+  dismount (the guard stays on), false/0 after the R unload (the carrier picks the body back up). The native slot reads
+  cargo=1086,1086,1 with a finite matrix while loaded. One E beside the horse while carrying loads the body and mounts in
+  the same action. In the horse census frame the rider sits 10 cm ahead and 49 cm up (44-58 cm at trot/gallop) and the
+  guard lies 44 cm behind, centred; the guard's `GetPosition` height is not usable while loaded. Not done: a jump, the
+  guest order.
+- **P3, the `world_horse_cargo.lua` prototype once [O both copies, `355972d2`]:** the host's rifle downs the guest, the
+  host carries them, holds E at the horse: put-down, `step=carrier` and `cargo`, the body lies across the horse's back on
+  the host's screen (a little high), stays on through the ride and the dismount; the first E mounts; an R hold takes it
+  down (`why=taken_down` / `remote_end`). E-victim: 48.5 s of per-tick warps of the downed body 0, still down, no blackout,
+  downed HUD and camera fine, but no horse on that copy, so the body lies on the ground and slides with the stream.
+  Carrying a player beside the horse shows two crossed-out action boxes and no load prompt. **M2 reuses the prototype's
+  trigger, put-down, CARGO_V2 and take-down flow** and rewrites the victim side (place body 0 on its own placed shared
+  horse), the wire (HORSE_SEAT events instead of op 43 at 10 Hz) and the cargo point (P2: 0.44 m back, lower than 1.55 m).
+- **P4, a seated pose under per-tick placement [O both orders, `0059d2b6`]:** DM `stateRideOnIdle` on body 1 plus a
+  per-frame Warp 1.2 m up shows a seated rider at saddle height (host frames `pin-raised-01`, `-04`); the CARGO_V2 hold
+  releases the overlay after about 2 s (`partner_overlay=stop; reason=carry`), and the body then stands. M1's rider
+  episode keeps the DM loop running without the carry hold (the plan's native partner_driver episode), with per-tick
+  placement as the fallback.
+- **Also found:** debug commands are refused while mounted (debug_menu's `on_foot` guard); with seed `afgh-horse` the
+  guest's own horse sits at the world origin after the lab boot and a recall leaves it there (`89e51a43`, `b3e42c23`:
+  `goto_horse` dropped the guest into the void); Spawn enemy here warps natively only from within 250 m.
+- **Checks:** full build 349/349 at the start; `tools/build.ps1 -Fast -Jobs 4` at the end: 316/316. Contract generators
+  with `--check`: unchanged; `generate_carry_info_contract.py` and `generate_sleep_plugin_contract.py` report "Generated
+  header differs" and the native-ui / teammate-targeting generators need local evidence reports, identically on the 0.15.0
+  release worktree (not touched here).
+
 ## November 1, 2026: 0.15.0 package (Enemy sync: guards in the same place on both screens (positions, glides, routes, bodies), binoculars)
 
 **Package (2026-11-01):** `dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `29b11f7` with Release receipt `20261102-035555-ce323bba84674c6a8c7b1ff36b39251a` (passed, 336 audited tests, 0 failures; `-BuildJobs 8 -TestJobs 8`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.0+29b11f7` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.

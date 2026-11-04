@@ -33,31 +33,29 @@ host expect ^guard_here;ent=
 wait 3000
 host run enemy sleep nearest
 host require ^enemy_sleep;ent=.*life_readback=[02];sync=world
-wait 2000
+# The pickup missed once (b827c100) right after the sleep: let the guard settle first.
+wait 4500
 host run goto_spawn 1.2
-wait 1000
-host hold r 1400
+wait 1200
+host hold r 1500
 host release
-wait 3500
+waitlog host 'partner_status=local; st=0x80; names=carry;' 8
+wait 2500
 host run coop_carry_load
 host capture p2-carrying-guard
 host run goto_horse
 wait 1000
 host capture p2-guard-prompt
-host hold e 1200
-host release
-wait 3000
-host run horse_probe hostage
-host expect horse_probe=hostage;is=true;get=1;
-host run horse_cargo_native
-both capture p2-guard-loaded
-host run horse_probe watch 30000
+# The stock E beside the horse while carrying loads the body AND mounts in one action (runs df011236 and fe39b57d:
+# carry -> none -> on_horse on a 150 ms press). Debug commands are refused while mounted, so the watch starts first.
+host run horse_probe watch 40000
 host expect horse_probe=watch;step=start
-wait 1500
+wait 1000
 host press e 150
-wait 2500
+wait 3500
 host run horse_status
 host require localMounted=1
+both capture p2-guard-loaded
 host capture p2-ride-idle
 wait 2000
 host hold w 1500
