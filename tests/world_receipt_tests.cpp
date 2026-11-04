@@ -175,7 +175,7 @@ void Cfg() {
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,63") == 0,
           "the enemy sync bits ride r[19] as is");
     // M7 step 1 (soldier_perceive): its bit survives the configured bits (run 96216259: the old 0x7E mask dropped it).
-    // The wp/enemy-gaps merge: place_lift keeps bit 128 (the shipped default), soldier_perceive moves to bit 256, so r[19]
+    // The wp/enemy-gaps merge: place_lift keeps bit 128 (its first key), soldier_perceive moves to bit 256, so r[19]
     // carries 9 bits (0..511).
     Check(world::EnemySyncBits(0x1FF) == 0x1FE && world::EnemySyncBits(256) == 256 && world::EnemySyncBits(128) == 128 &&
               world::EnemySyncBits(64 | 1) == 64 && world::EnemySyncBits(0x200 | 256) == 256,

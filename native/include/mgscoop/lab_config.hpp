@@ -738,17 +738,17 @@ struct LabConfig {
     // (soldier_perceive.hpp InstallPick; CFG r[19] bit 256: the host's Lua sends each guard's nearer player), so this
     // copy's soldiers perceive body 1, the partner, too; soldier_brain makes each guard's owner
     // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
-    // nothing, the owner's hits on the replica reach the partner as FRIENDLY_HIT soldier causes) and holds the other
-    // copy back (restrict notice) until the owner's copy shoots that player (CFG r[19] bit 64). Lab and play; off unless
-    // named until their hidden runs pass.
+    // nothing, the owner's hits on the replica reach the partner as SOLDIER_HIT 0x4C, world_friendly.lua) and holds the
+    // other copy of a calm guard back (SetPuppet, world_snap.lua) until the owner's copy shoots that player (CFG r[19]
+    // bit 64). Lab and play; off unless named until their hidden runs pass.
     bool soldier_perceive = false;
     bool soldier_perceive_given = false;
     bool soldier_brain = false;
     bool soldier_brain_given = false;
-    // Enemy gaps (place_sink, docs/world-sync-design.md 7.10): placements and the position stream carry the owner's own
+    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
-    // play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
+    // play; off unless named, the gun profile included (its first default run, e583ee62, latched the warp off).
     bool place_lift = false;
     bool place_lift_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's

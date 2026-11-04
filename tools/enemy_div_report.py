@@ -153,12 +153,8 @@ def analyse(host, guest):
             never['overflow'] = max(never['overflow'], int(m.group(1)))
     r['never'] = never
     r['place_drop'] = sum(1 for l in host + guest if 'event=place_drop' in l)
-    # Landing readbacks (dy_m of applied corrections: +0.40 with LIFT 400, about 0.00 with place_lift; -0.01 = left falling).
-    land = [float(m.group(1)) for l in host + guest if ('event=place;' in l or 'event=hplace;' in l) and 'result=applied' in l
-            for m in [re.search(r';dy_m=(-?[0-9.]+)', l)] if m]
-    r['land_dy_n'] = len(land)
-    r['land_dy_hist'] = {k: sum(1 for v in land if lo <= v < hi) for k, lo, hi in (('<-0.1', -99, -0.1), ('-0.1..0.1', -0.1, 0.1),
-                         ('0.1..0.3', 0.1, 0.3), ('0.3..0.5', 0.3, 0.5), ('0.5..1', 0.5, 1.0), ('>=1', 1.0, 99))}
+    # No landing (dy_m) histogram: its pattern never matched the logged lines (it printed 0 for e583ee62 and the gaps runs),
+    # and this tool has no test to pin a fixed one; count dy_m by hand until it has (docs/STATUS.md 2026-11-04 landing).
     # The host's scan cost (event=place_scan, follow only).
     scans = [fields(l) for l in host if 'event=place_scan' in l]
     us = [float(s.get('avg_us', 0)) for s in scans]
