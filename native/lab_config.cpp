@@ -469,7 +469,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_snap_given = true;
         if (!ok) result.soldier_snap = false;
     }
-    else if (Equals(key, "place_lift")) ok = ParseBool(value, result.place_lift);
+    else if (Equals(key, "place_lift")) {
+        // Enemy gaps (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.place_lift);
+        result.place_lift_given = true;
+        if (!ok) result.place_lift = false;
+    }
     else if (Equals(key, "soldier_route")) {
         // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_route);
@@ -1976,6 +1981,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.soldier_snap_given) c.soldier_snap = gun;
     if (!c.soldier_route_given) c.soldier_route = gun;
     if (!c.soldier_body_given) c.soldier_body = gun;
+    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): follows the gun profile in lab and play since hidden play
+    // runs 7c174346 / 0b4a1509 / 3e2611fc (124 of 127 corrections landed at the owner's own height, 0 place_sink,
+    // 0 drive_sink, place error p50 0.7-1.0 m / p90 1.9-2.8 m); a named 0 is the off switch.
+    if (!c.place_lift_given) c.place_lift = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

@@ -737,8 +737,9 @@ struct LabConfig {
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.10): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
-    // play; off unless named.
+    // play; follows the gun profile (ResolveWeaponDefaults); a named 0 opts out.
     bool place_lift = false;
+    bool place_lift_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
