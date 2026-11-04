@@ -17,6 +17,8 @@ logmark both
 both debug godmode 1
 host debug clear_enemies 100
 host run horse_spawn
+# The guest's seed horse is not placed after the lab boot (run 89e51a43: census at the origin): call it too.
+guest run horse_spawn
 wait 10000
 host run horse_status
 host require horse;selected=horse;available=1;actor0=6656;localMounted=0
@@ -27,12 +29,13 @@ host run goto_horse
 wait 1500
 host run bookmark 1
 host capture p1-host-before
+# Debug commands are refused while mounted (debug_menu guard on_foot): the recording starts on foot.
+host run horse_probe rec 16000
+host expect horse_probe=rec;step=start
 host press e 150
 wait 2500
 host run horse_status
 host require localMounted=1
-host run horse_probe rec 11000
-host expect horse_probe=rec;step=start
 host hold w 1500
 host hold w 1500
 host hold w+shift 1500
@@ -40,7 +43,7 @@ host hold w+shift 1500
 host hold w+shift+a 1500
 host hold w 1500
 host release
-waitlog host 'world_lua=horse_probe=rec; step=done;' 15
+waitlog host 'world_lua=horse_probe=rec; step=done;' 20
 host press e 150
 wait 3000
 host run horse_status
@@ -50,12 +53,13 @@ guest run goto_horse
 wait 1500
 guest run bookmark 1
 guest capture p1-guest-before
+# Debug commands are refused while mounted (debug_menu guard on_foot): the recording starts on foot.
+guest run horse_probe rec 16000
+guest expect horse_probe=rec;step=start
 guest press e 150
 wait 2500
 guest run horse_status
 guest require localMounted=1
-guest run horse_probe rec 11000
-guest expect horse_probe=rec;step=start
 guest hold w 1500
 guest hold w 1500
 guest hold w+shift 1500
@@ -63,7 +67,7 @@ guest hold w+shift 1500
 guest hold w+shift+a 1500
 guest hold w 1500
 guest release
-waitlog guest 'world_lua=horse_probe=rec; step=done;' 15
+waitlog guest 'world_lua=horse_probe=rec; step=done;' 20
 guest press e 150
 wait 3000
 guest run horse_status

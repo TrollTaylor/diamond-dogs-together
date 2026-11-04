@@ -129,7 +129,7 @@ do
   local ok, r
   if on then ok, r = pcall(f, {settingName = MASK, except = false, buttons = type(bit) == "number" and bit or 0x20, sticks = 0, triggers = 0})
   else ok, r = pcall(f, {settingName = MASK}) end
-  if ok and r ~= false then H.hold, H.raw = on, false; return true end
+  if ok and r ~= false then H.hold, H.raw, H.rawOn = on, false, true; return true end
   return false
  end
  local function cargo(hold)
@@ -192,7 +192,7 @@ do
  end
  local function tick()
   local t = now()
-  if H.hold then
+  if H.rawOn then
    local d = type(W) == "table" and W.downed
    local at = type(d) == "table" and d.rawHeldAt
    local raw = type(d) == "table" and d.rawHeld == true and finite(at) and t >= at and t - at < 300 or false
@@ -258,6 +258,7 @@ do
   elseif sub == "stop" and #a == 2 then
    finish("stop")
    if H.hold then setHold(false) end
+   H.rawOn = nil
    return true, "horse_probe=stopped"
   elseif sub == "hold" and #a == 3 and (a[3] == "0" or a[3] == "1") then
    local ok = setHold(a[3] == "1")

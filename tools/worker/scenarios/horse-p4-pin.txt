@@ -5,8 +5,6 @@
 labsetting partner_native_overlay=debug
 logmark both
 # --- guest watches host's body 1
-stance host stand
-stance guest stand
 placebehind guest host 7 2
 wait 3000
 guest mouse 300 0
@@ -24,8 +22,6 @@ waitlog guest 'world_lua=horse_probe=pin; step=end;' 8
 wait 2500
 guest capture p4-guest-after
 # --- host watches guest's body 1
-stance host stand
-stance guest stand
 placebehind host guest 7 2
 wait 3000
 host mouse 300 0
