@@ -169,9 +169,9 @@ do
   local x, y, z, yaw = H.interp(H.track, rt + H.track[1].t)
   local h = census()
   if h then
-   local err, dy = sqrt((h.x - x) ^ 2 + (h.z - z) ^ 2) * 100, (h.y - y) * 100
+   local err, dy = sqrt((h.x - x) ^ 2 + (h.z - z) ^ 2) * 100, (h.y - (p.sy or y)) * 100
    p.errs[#p.errs + 1] = err
-   local yd = math.abs(wrap(h.yaw - yaw)) * 180 / pi
+   local yd = math.abs(wrap(h.yaw - (p.syaw or yaw))) * 180 / pi
    p.yaws[#p.yaws + 1] = yd
    if dy > p.dyMax then p.dyMax = dy end
    if dy > 30 and not p.up then p.up, p.leap = true, p.leap + 1 elseif dy <= 30 then p.up = false end
@@ -184,6 +184,7 @@ do
    p.next = p.next + p.period
    if p.next <= t then p.next = t + p.period end
    local s, g = H.goal(p.mode, x, y, z, yaw, h)
+   p.sy, p.syaw = s[2], (p.mode:sub(1, 2) == "sg") and 0 or yaw
    local sv, gv = vec(s), vec(g)
    if sv and gv and send({type = "TppHorse2", index = 0}, {id = "SetCallHorse", startPosition = sv, goalPosition = gv}) then
     p.sends = p.sends + 1
