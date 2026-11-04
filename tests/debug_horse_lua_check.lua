@@ -158,6 +158,13 @@ c.rawHeld=false;c:tick(1,16)
 check(c:has("horse_probe=raw_e;held=0;"),"raw E release edge")
 ok,msg=c:run("horse_probe","hold","0")
 check(ok and #c.resets==1 and c.resets[1].settingName=="MgsCoopHorseHold","hold 0 resets the mask")
+-- The raw E watch outlives hold 0 (an unmasked E is logged too: the poll is live); stop ends it.
+c.rawHeld=true;c:tick(2,16)
+local n1=0;for _,l in ipairs(c.logs)do if l:find("horse_probe=raw_e;held=1;",1,true)then n1=n1+1 end end
+check(n1==2,"raw E still watched after hold 0 (edges "..n1..")")
+c:run("horse_probe","stop");c.rawHeld=false;c:tick(2,16)
+local n0=0;for _,l in ipairs(c.logs)do if l:find("horse_probe=raw_e;held=0;",1,true)then n0=n0+1 end end
+check(n0==1,"stop ends the raw E watch")
 
 -- hostage: the two getters on TppHorse2 index 0 (hash names IsCarriedHostage / GetCarriedHostage).
 c=F();c.hostage=true
