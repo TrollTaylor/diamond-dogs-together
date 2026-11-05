@@ -263,15 +263,15 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    // BODY0 round: its final sessions (144d99bb / 7117d3ac / 47101768 and the play rehearsal) did not pass the gate (the downed
-    // player crouches on the horse on their own screen after the dismount): off unless named again, the gun profile too.
-    Check(!gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share,
-          "after the BODY0 gate failed: off with the gun profile (the M1 key stays on)");
+    // M2f round: the gun profile turns it on in lab and play before the proof sessions, so they are also the runs with the key
+    // not named (the crouch after the dismount is asked back to CRAWL, lua/coop/world_horse_cargo.lua); a named 0 is the off
+    // switch. If the gate fails it goes back off.
+    Check(gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share, "on with the gun profile (and the M1 key)");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
     Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
-    Check(playGun.mode == mgscoop::LabMode::play && !playGun.world_horse_cargo && playGun.play_refused == 0, "off in play unless named");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_cargo && playGun.play_refused == 0, "on in play with the gun profile");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_cargo=1\n");
