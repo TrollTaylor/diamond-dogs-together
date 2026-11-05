@@ -69,6 +69,11 @@ struct Snapshot {
     std::int32_t player_life{-1}, player_life_max{-1};
     std::uint64_t tick_ms{}, published_tick64{};
     float player_pos[3]{}, remote_pos[3]{}, body_pos[3]{};
+    // Enemy round 9 track A (bug 2): the partner pose of the nearer-player rules (soldier_warp::RemoteRangeSource: the
+    // driver's command, or the network sample while the partner's body is hidden for range); src 0 none, 1 cmd, 2 net.
+    bool remote_range_valid{};
+    unsigned char remote_range_src{};
+    float remote_range_pos[3]{};
     float player_yaw{}, remote_yaw{}, body_yaw{}, heading_error_deg{}, position_error_m{};
     // Receiver facing (partner_facing.hpp): remote_yaw above is the applied
     // yaw; target is the interpolated remote yaw. Degrees; ring oldest first.
