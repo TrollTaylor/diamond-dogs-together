@@ -177,6 +177,7 @@ local function stop(why, remote)
   log(fmt("step=unseated;seat=1;why=%s;side=passenger;placed=%d;x=%d;z=%d;at=%s%s", why, x and 1 or 0, x and round(x / 10) or 0,
    z and round(z / 10) or 0, at, remote and ";from=partner" or ""))
  elseif s == "driver" then
+  if P.aimOn then P.aimEnd() end
   if not remote then send(UNSEATED, CODE[why] or 0) end
   log(fmt("step=unseated;seat=1;why=%s;side=driver;leases=%d%s", why, P.seatN or 0, remote and ";from=partner" or ""))
  elseif s == "claim" then
@@ -184,6 +185,8 @@ local function stop(why, remote)
  end
  if P.masked then setMask(false) end
  reset()
+ -- M4b: the driver's own E is watched DRIVER_E_MS after its seat ends (driverE).
+ if s == "driver" then P.offAt, P.offE = W.now and W.now() or 0, nil end
 end
 P.stop = stop
 local function bind() P.mission, P.epoch, P.role = W.mission, W.epoch, W.role end
@@ -201,8 +204,28 @@ local function driver(now, how)
  P.state, P.keepAt, P.rxAt, P.seatN = "driver", now + KEEP_MS, now, 0
  log(fmt("step=driver;seat=1;how=%s;token=%d", how, P.token))
 end
+-- M4b (play run 1a7c5d0e: the driver's E 2.3 s after the passenger's hop-off left the host riding, a=79, cause [U]): for
+-- DRIVER_E_MS after this copy's driver seat ended, while its player still rides, the raw E (pre-mask) and the ride's end.
+local DRIVER_E_MS = 8000
+local function driverE(now)
+ local at = P.offAt
+ if not at then return end
+ local dt = now - at
+ if dt > DRIVER_E_MS then P.offAt = nil; return end
+ if not S.localRides() then
+  capped("driver_e_off", fmt("step=driver_e_off;after_ms=%d", round(dt)), 20)
+  P.offAt = nil
+  return
+ end
+ local e = padE()
+ if e ~= nil and e ~= P.offE then
+  P.offE = e
+  if e then capped("driver_e", fmt("step=driver_e;e=1;after_ms=%d;rides=1", round(dt)), 20) end
+ end
+end
 -- On foot beside the horse the partner rides here, E (pre-mask) claims the rear seat.
 local function offTick(now)
+ driverE(now)
  if not S.track or S.localRides() or selfDown() then P.prevE = nil; return end
  local L, x, y, z = S.last, mine()
  if not (L and x) then return end
@@ -325,6 +348,34 @@ local function driveTail()
  return fmt("rider=%d;occ=%d;held=0x%x;bm=0x%x;mag=%d", n(r and r.rider), r and r.occupied == true and 1 or 0, p and math.max(n(p.held), 0) or 0,
   p and math.max(n(p.bm), 0) or 0, p and n(p.mag) or -1)
 end
+-- M4b (world_horse_shot; runs 28015a91 / 48d31500: the driver's screen showed body 1 seated, the rifle on its back): while
+-- the remote aims the partner driver leaves body 1 to its native squat-aim at the rear seat (no overlay seat) and the seat1
+-- receipt carries that seat (aim=1, sx/sy/sz mm, syaw mrad): hold1 pins body 1 there every tick (C0 + the write watch + pin,
+-- as the cargo's body 1); the aim's end (or the seat's) frees the watch and pin (free0) for the overlay seat.
+local AIM_RESET = 14
+function P.aimEnd()
+ receipt(fmt("free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1))
+ capped("aim_hold", fmt("step=aim_hold;on=0;n=%d;ticks=%d", P.aimN or 0, P.aimTicks or 0), 60)
+ P.aimOn = nil
+end
+local function aimHold(r)
+ if not (r.aim == 1 and int(r.sx, -1000000000, 1000000000) and int(r.sy, -1000000000, 1000000000) and int(r.sz, -1000000000, 1000000000)
+  and int(r.syaw, -31416, 31416)) then
+  if P.aimOn then P.aimEnd() end
+  return
+ end
+ local h = receipt(fmt("hold1 %d %d %d %d %d %d %d", W.mission, W.epoch, r.sx, r.sy, r.sz, r.syaw, AIM_RESET))
+ local ok = h and h.ready == true
+ if not P.aimOn then
+  P.aimOn, P.aimN, P.aimTicks = true, (P.aimN or 0) + 1, 0
+  capped("aim_hold", fmt("step=aim_hold;on=1;n=%d;ok=%d;reason=%s", P.aimN, ok and 1 or 0, ok and "none" or tostring(h and h.reason)), 60)
+ end
+ P.aimTicks = P.aimTicks + 1
+ if not ok then
+  local why = h and tostring(h.reason) or "receipt"
+  if P.aimWhy ~= why then P.aimWhy = why; capped("aim_hold_refused", "step=aim_hold_refused;reason=" .. why) end
+ end
+end
 local function driverTick(now)
  if not S.localRides() then return stop("driver_off") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
@@ -355,11 +406,13 @@ local function driverTick(now)
   P.seatN = (P.seatN or 0) + 1
   local ok = "ok" .. pose
   if P.leaseWhy ~= ok then P.leaseWhy = ok; log(fmt("step=seat1;ok=1;back_mm=%d;up_mm=%d;pose=%d", V.dback, V.dup, pose)) end
+  if P.shot then return aimHold(r) end
  else
   local why = r and tostring(r.reason) or "receipt"
   if P.leaseWhy ~= why then P.leaseWhy = why; capped("seat1_refused", "step=seat1;ok=0;reason=" .. why) end
   if why == "not_riding" then return stop("driver_off") end
  end
+ if P.aimOn then P.aimEnd() end
 end
 local function onClaim(now, token)
  if not W.host then return end
