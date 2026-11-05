@@ -1,3 +1,175 @@
+## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
+
+The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
+the carry act). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Four hidden play sessions over
+`-WanSim bad`, the gun profile, research build, afgh-ledge: `9023e5c6`, `8281b868`, `3c9d1250` (`body_dead=1,
+place_reach=1`) and `b77e2104` (no key named; `place_reach` was on by default for that run). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Both keys are off unless named: `place_reach` works in both
+  copies' logs in all four runs, but no frame shows the watched guard on the host's screen (below); `body_dead` was
+  never exercised (no corpse was carried in its runs). With `place_reach=1` in lab.ini on both PCs:
+  - [O] on the host's screen the guards the guest fights 60-160 m from the host stand where the guest's screen has
+    them: the host's place error for the guest-owned guards p50 1.05 / 0.96 / 0.86 / 1.08 m, p90 2.78 / 2.63 / 1.95 /
+    2.63 m (931-1132 samples a run; `798b51dd` without it 1.93 / 6.97 m, `41f2b07f` p90 11.46 m, `31a799e3` 18.5 m);
+  - [O] the realize hold asks the game to load a guard it turned down as not loaded, but the next move of that guard
+    landed in only 8 of the 26 holds (host 3 / 0 / 14 / 1, guest 1 / 0 / 7 / 0): all 4 in `9023e5c6` (3 after 3.3-3.4 s,
+    2942862796 after 6.5 s), 3 of 21 in `3c9d1250` (3 guest holds after 3.7-4.1 s; all 14 host holds and 4 guest holds
+    timed out after 8 s, the next tries refused by the game's own per-guard backoff after a relayed drive step; the drive
+    steps after it are not logged per guard [U]) and 1 of 1 in `b77e2104` (3.3 s). A backoff refusal never gets a hold,
+    and a hold ends at the first landing: the dismounted rider 2305481811 was placed 3.4 s after his first refusal in
+    `9023e5c6` (48 s in `798b51dd`), but only that first move; after it both riders were refused by the backoff with no
+    hold again (2305481811 from t=318495281; 3970963356 at 318487794-318524596 and 318575077-318617240 and later), so
+    they went unplaced for ~40 s;
+  - [O] the guest's place error (guards within 60 m of it) stays p50 0.6-0.71 / p90 1.44-1.83 m (`798b51dd` 0.60 / 1.56);
+    0 latches, faults, game overs, roster mismatches or overflow in all four runs. The divergence report's composite
+    gate still FAILS in `9023e5c6` and `b77e2104` on `drive_sank=1` (host 1799112697 3.45 m and 2929558510 2.15 m under
+    the ground) and on corrections, as at the defaults in `46c0da9e`; the host's M3 applied ratio got worse in
+    `9023e5c6` (33/56) and `3c9d1250` (6/17); only `8281b868` passed every gate.
+- **Causes found** (archived `798b51dd`, `41f2b07f`; design 7.17):
+  - (c) every M3 host place sample of the ALERT part lay 60-160 m from the host's player, beyond the M4 stream (owner:
+    its guards within 60 m of the other player; receiver: within 60 m of its own), so those copies moved only by 1 s
+    corrections: 157 of the 214 samples over 5 m; 57 of the 58 refused host placements were `unrealized` (relays 120-160 m
+    from the host). Fixed by `place_reach` (the stream to 160 m when the guard stands within 60 m of the owner's player,
+    the realize hold on a relayed placement or drive step).
+  - (a) the "reinforcements" are the two LRRP truck riders (3970963356, 2305481811: in the roster from the start, 435.9 m
+    apart at the join): in `798b51dd` 11 s `far` (the guest's copy in its truck more than 250 m from both players), 17 s
+    `vehicle_local` (riding on the guest's screen, on foot on the host's), then 48 s `unrealized`. `place_reach` fixes the
+    last part (3.4 s in `9023e5c6`; 3970963356 placed at once on dismount there and in `b77e2104`). The in-vehicle part
+    needs the vehicle owner path: the LRRP truck is each copy's own (VEHICLE_STATE skips LRRP trucks and occupied
+    vehicles), so `far` / `vehicle_local` lasted 30-68 s and 7-14 s in these runs [O].
+  - (b) `41f2b07f`: the guest's corpse lay 7 m from where it died 63 s later, the host refused its placement
+    (`disabled_local`: a dead guard is NPC_STATE_DISABLE). The same in `b77e2104` (defaults): 2961503 3.9 m and
+    2942862796 1.8 m, both refused `disabled_local` [O]. `body_dead` lets the dead body placement through and keeps the
+    resting spot where this copy's body lies after it (no ping-pong, unit-tested), but its stimulus failed three times:
+    753908875's dropped steel shield took the guest's pick-up key (`9023e5c6` guest d-a: the R prompt is the shield's; the
+    guest then carried the shield through the ALERT), a guard killed by the debug outcome showed no pick-up prompt
+    (`8281b868` guest d-a: the guest crouched over the corpse, no prompt), and two rifle shots at 2.5 m left the sleeping
+    2961503 asleep (`3c9d1250`, state 2; the guest then carried him asleep). Whether set-transform moves a corpse is [U].
+  - (d) the partner's carry act on the host: unchanged in `8281b868` / `b77e2104` (`partner_act remote=39(carry_body);
+    body=3(crouch_idle); match_ms=miss`); its drawing goes through the partner driver and coop_carry (never-edit), not
+    touched.
+- **Frames I looked at**: `b77e2104` host / guest v-1 and v-2 (calm, both cameras on guard 667680985 through
+  binoculars): the host's view shows only his 95 m marker over a rise of ground and the guest's nametag; the guest's
+  shows him walking 9 m away by sandbags (his host copy stood where the guest's sample had him, 0.3 m by the aim
+  readouts, logs only). `3c9d1250` w-2 / w-3 (after the ALERT, the host 40 m behind the guest): the host sees his 93 m
+  marker behind a bush, and guards by the outpost wall at 62 m / 70 m; the guest's views are rock and grass. `8281b868`
+  w-1: the host's view is grass and rock. No matched frame of a guard on both screens, so `place_reach` stays off.
+  `b77e2104` host / guest c-b: the carried sleeping guard (ZZZ) lies by the guest's character on both screens, as in
+  `798b51dd`.
+- **Run with no key named** (`b77e2104`; not a run of the shipped defaults: its build had `place_reach` on by default):
+  0 latches; place error p50 0.62 / p90 1.51 m (203); M3 placements 39/40, host error 1.08 / 2.63 m; body_tx 4 (max 2
+  per body); corrections 5/9 (4 `vehicle_local`) and one `drive_sank` (2929558510, 2.15 m under) are the report's FAIL
+  rows, as in `46c0da9e` / `9023e5c6`. At the final head both keys are off, and no hidden run exercised that shipped
+  configuration (the gaps-2 code with both keys off): that it behaves as 8b98c545 rests on reading the code and the unit
+  tests (every new path is gated by `W.reachOn` / `W.deadOn`, unit-tested off) [I].
+- [I] The second CP 3196907442's rise-and-fall loop (`src=down` 48 times in `8281b868`, 3 in `9023e5c6` / `b77e2104`) is
+  in runs without the keys too (`5526d92a` 25, `46c0da9e` 19): not attributed to the keys.
+- **Built** (red first each time): `place_reach` and `body_dead` (3c56138e red, c46d207e green), the drive-step hold
+  (b427e010 red, 9eb717bc green), world_snap.lua's second literal under 16000 bytes (582b72f1), the default flip and its
+  revert (debe034e / b5fd9bdb, f7d1bd60 / bc0146b6); scenarios enemy-gaps2-dead.txt, enemy-gaps2-watch.txt,
+  enemy-gaps2-view.txt. CFG r[19] bits 1024 / 2048 (protocol section 34). No wire change, so no version gate is needed for
+  a later default flip (the link handshake checks only kLinkVersion; an older partner streams and drives within 60 m).
+- **Next**: `place_reach`: one run with a host watch point that sees a guest-owned guard 60-160 m away (or the user's
+  decision to turn it on from the logs); a hold that waits out the native backoff (retry the placement when the backoff
+  ends instead of the next sample). `body_dead`: a corpse from a real kill the guest then carries (a firefight kill or
+  a CQC kill), with both cameras on the corpse. (a): the vehicle owner path for LRRP trucks with riders. (d): the carry
+  pose on the host needs the partner driver / coop_carry owners.
+- **Checks**: full `tools/build.ps1 -Jobs 4` 354/354 at each green and at the head; every `generate_*_contract.py
+  --check` as on dev (known failures only).
+
+## November 5, 2026: enemy sync M7 FM1 retry - the far mirror's first puppets; the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, not merged, not pushed)
+
+The enemy5 FM1 retry (plan: owner-brains, the far-mirror form first; design 7.16). Markers: [O] seen in a log line or a
+frame, [I] inferred, [U] unknown. Four hidden play sessions over `-WanSim bad`, the gun profile, research build,
+afgh-ledge: `94a7bf2a`, `adecad01` and `80cc0176` (enemy-act-1-quiet + enemy-act-2-alert, `soldier_act=1`) and
+`46c0da9e` (enemy-prove-1-join + enemy-latch-alert, `soldier_act=1`). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new. `soldier_act` (CFG r[19] bit 512) stays off unless named; at the defaults nothing
+  of this step runs. With the key on, the guest's copies of the host's guards 95-300 m away now do become mirror
+  puppets and stand and walk where the host's copies do (logs), but no frame shows one walking on both screens, and no
+  frame shows one in ALERT, so the gate is not met. With the final build (R(ALERT) 261 m) no puppet of the alerted CP
+  existed in ALERT (`adecad01` / `80cc0176`); in the first run (`94a7bf2a`, R(ALERT) 184 m then) three did, 184-212 m
+  from the guest, and none of them fired (below).
+- **The first puppets** [O]: 15 takes in `94a7bf2a` (12 guards, 95.4-215.7 m from the guest): 13 in calm and 2 in the
+  CP's ALERT (R 184 m then: 2942862796 at 204.9 m from t=313650717, a puppet for ~19 s; 1845278687 at 209.4 m from
+  t=313669202, ~3 s); and 3268415846, taken in calm, stayed a puppet until a `stale` release at t=313672205, ~29 s into
+  CP 3394524044's ALERT (phase 3 from t=313642959). 30 / 31 takes of 14 guards in `adecad01` / `80cc0176` (95.2-297.4 /
+  95.4-299.3 m), every one at R 80 m (calm). No puppet came nearer the guest than 94.9 m (3D) in any session (R(calm)
+  80 m).
+- **U2, does a puppet's body run the posted request**: yes for standing and walking, from the logs [O]; not shown in
+  frames. `94a7bf2a`: while the host copy moved (783 paired census steps), the puppet moved in 563, at a speed ratio p50
+  0.98 (p10 0.0, p90 1.15), with 11 jumps over 10 m/s in 2961 steps; gait agreed in 2716 and the action kind in 2894 of
+  2961. Puppet place error against the host copy p50 0.23 m, p90 7.0 m (`adecad01` / `80cc0176`: p50 0.0, p90 1.81 /
+  1.72 m). The 7.0 m: guard 19's host copy climbed a tower (y 270.4 -> 276.5); his puppet stood at the ladder's foot for
+  ~100 s with the "stand up there" request (gait 3, the catch-up gait): a climb is not replayed, and nothing warps a copy
+  under 15 m. While their host copies walked, the later puppets moved less (ratio p50 0.19 / 0.78; error p50 2.6 / 1.9 m,
+  p90 10.5 / 12.1 m; the skeptic's own pairing: the puppet moved in 67 of 177 / 90 of 158 host-moving steps, ratio p50
+  0.20 / 0.55): the final build replays walking worse, and the apart release (below) took the lagging walkers.
+- **Frames** [O, looked at]: `80cc0176` q-0 and q-30 (both copies at the same moment, both cameras on guard 13 through
+  binoculars, `aim_ent`): the host sees him standing at a low wall by an anti-tank hedgehog; the guest's screen shows a
+  dark figure at the same wall and hedgehog while he was a puppet there. Standing, not walking. The host's other frames
+  show the rock it crouches at (its spot 50 m south of the outpost blocks every bearing from -30 to -1 degrees; its walk
+  north is blocked too), the guest's often a building or a tree. No frame shows a puppet in ALERT (the final-build runs
+  had none; no frame of `94a7bf2a`'s three ALERT puppets was looked for). So gate part 1 (matched frames of a mirrored
+  guard walking, and in ALERT aiming with muzzle flashes) is not met.
+- **R, set from the engagement distances again** (census engage bins, plan rule R = 1.5 x the farthest) [O]: in ALERT the
+  guest's own copies (all brains then) hit it from up to 173.9 m (`94a7bf2a`, guard 16; guard 13 from 150.6 m, 22
+  hits a second), 152.0 m (`adecad01`) and 152.6 m (`80cc0176`); the host was hit from up to 121.5 m. So R(ALERT) =
+  1.5 x 173.9 = 261 m (was 184 m). R(calm / caution) stays the 80 m floor: no first notice of the guest happened in calm
+  in any run [U]. The far rule's range is 300 m (was 250 m), so an ALERT puppet exists only 276-300 m out.
+- **Releases** [O]: at the ALERT rise 7 puppets released 18 ms after the phase change (`94a7bf2a`, R 80 -> 184 m then;
+  guards beyond 184 m stayed or were taken in ALERT, the three above);
+  `mirror off` released 10 in one burst of 146 ms (`adecad01`) and 31 ms (`80cc0176`), `mirror on` took 11 / 12 back at
+  once; the guest's shot released 7 / 6 in one update (in `adecad01` it fell after a 1 Hz frame line 150 ms before the
+  release; the exact shot time is not logged). A guest-local phase rise never happened (the guest's phase changes were the host's), so that release is
+  unproven [U]. The new apart release fired 12 / 13 times: guard 19 every ~36 s (7.0 m below the tower top), guard 18
+  walking 5.5-12.7 m behind, 4 copies 10.6-14.7 m off 6 s after `mirror on` (their own brains had run for 20 s), and two
+  vehicle riders of another CP 283-285 m from their host copies (`adecad01`; the far rule does not skip riders yet).
+- **Counts** [O]: 0 unpack faults and 0 pack faults on both copies in all four sessions; requests applied 410 / 240 / 245
+  of 1622 / 1114 / 1098 taken (25 / 22 / 22 %; with the unchanged requests deliberately not re-applied within 5 s, 96 / 95
+  / 95 %); orders re-posted 61-88 thousand times; no puppet fired (0 puppet shot-counter steps, 0 bullets dropped; the
+  three ALERT puppets of `94a7bf2a` did not fire either); 4-8 noises of puppets dropped. Every shooter of the Defend hits
+  on the guest had puppet=0 when he hit (14 of 14 in `94a7bf2a`, guards 16, 13, 18, 246, 17; 220, 40 and 86 in the other
+  three runs) [O]; in `adecad01` / `80cc0176` every take was at R 80 m and no R 261 m line exists, so no puppet of the
+  alerted CP existed in ALERT there [I]. Frame p95 19.04 ms during
+  `mirror off` against 19.03 ms with puppets (`80cc0176`).
+- **Accuracy and stability** [O]: 0 latches, faults, game overs, roster mismatches or overflow in all four sessions.
+  Guards within 60 m of the guest (not mirrored): place error p50 1.37 / p90 2.37 m (`80cc0176`, 39 samples), 2.03 /
+  2.86 m (`adecad01`, 31): above the gate's 2.0 m p90 (798b51dd at the defaults 1.56 m) [I: these guards were brains,
+  in a firefight the guest walked into]. Regression `46c0da9e`: 8 puppets while the guest was 97-216 m out, all released
+  `near` as it went in, none inside; place error p50 0.64 / p90 2.25 m; M3 host error 1.28 / 6.8 m and one `drive_sank`
+  (the divergence report's FAIL rows, as in `3bc7280b`; its composite gate fails on `drive_sank=1`, host 2929558510
+  2.22 m under, and a guest apply 0/1); `adecad01`'s report fails corrections 25/39, the place-error median (2.03 m) and M3
+  (13.25 / 26.5 m); the host's frame `al-4` shows it wounded (godmode only autoheals; not compared with a run without the
+  key).
+- **U3 settled** [O static + census]: the request's payload B (wire +0x20, kind wire +0x64) kind 1 is the aim
+  (0x1413816e0); its target mode (wire +0x35) 2 / 4 names the target by a big-endian GameObjectId at wire +0x20. 1552 of
+  the 1669 host aims in `3bc7280b` / `963ab276` were mode 4, every one with id 0, the host's own player: unswapped, a puppet would have
+  aimed at the guest. The "u16 0x0400 at +0x34" is B+0x14 (0) and the mode byte 4, not an id. Fixed: `RemapAimTarget`
+  swaps players 0 / 1 there before the unpack (untested in a game: no aiming puppet existed) [U in a game]. Its swap
+  counter (`payload_ids`) is counted but printed in no log line or reply yet (the frame line's `remap=` is the order
+  parts' counter), so a game cannot show the swap until it is logged (Next (5)).
+- **Version gate**: the link handshake checks only `kLinkVersion` (2), so co-op does not refuse mismatched builds; but
+  CFG r[19] is each PC's own (the CFG reply is local), and a 0.15.0 partner skips SOLDIER_ACT by its length. A default
+  flip of bit 512 would still need a gate: not added, as nothing is flipped.
+- **What blocks the gate and what to try next** (design 7.16): (1) the ALERT half: by the plan's own rule R(ALERT) is
+  261 m, so an ALERT puppet exists only beyond 276 m, where no known watch point has a view of the fight (from 255 m
+  the guest's view was the ground) and a guard is a few pixels: this is the user's decision D-FM1 (mirror only in calm
+  and caution, as the plan allows for phases that cannot pass, and judge the gate on calm frames; or keep the ALERT
+  half and look for a watch point beyond 276 m). (2) Frames: a host spot with a clear view of a walking puppet's route
+  (not the rock 50 m south), or both cameras on a guard while he walks. (3) Walkers: re-apply a moving puppet's request
+  every 1 s instead of 5 s so the engine's catch-up keeps him within 2-5 m, and take `apart` only for a still owner copy
+  (the tower case). (4) Skip riders and emplacements in the far rule. (5) Log the aim-target swaps (`payload_ids`).
+- **Built** (red first each time): `RemapAimTarget` (6e0a6e07 red, 7d95354a green), R(ALERT) 261 m, the 300 m range and
+  320 m census range, the apart release and its 30 s hold with the m reply's owner position `ox/oy/oz` (7585794b red,
+  f1ff7dcd green), research commands `aim_partner` (peer-position fallback) and `aim_ent <hash>`; the scenarios
+  (e073e2fa, e7e0d517, e3982732: the walk-end watch point, `enemy goto` takes 0.5-10 m, the earlier "40" never ran).
+- **Checks** at f1ff7dcd: full `tools/build.ps1 -Jobs 4` 354/354; `generate_*_contract.py --check` as on dev (soldier_act
+  17 sites / 6 slots; the known failures carry_info, sleep_plugin, native_ui, teammate_targeting, master_server's
+  argument quirk and camera_mode_window; horse_drive and vehicle_controller pass with `--executable`).
+
 ## November 5, 2026: horse M3, ride behind your partner (`wp/horse`; lab key `world_horse_pillion`, off unless named)
 
 **Players get:** nothing new at the defaults. The M3 gate did not pass in this round's four proof attempts, so
@@ -78,6 +250,7 @@ and its regression checks passed: details below and `docs/mounts.md` sections 10
   horse_drive 4 sites 4 slots. No new code site (hold0 uses the partner contract's pinned T slots); no never-edit file.
   Ghidra: a comment at 0x140B6F027. Slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` (JPEG frames,
   sheets, slices).
+
 ## November 4, 2026: enemy sync M7 FM1, the far mirror - built, the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, merged into `dev/oct7-continue`, not pushed)
 
 The enemy4 FM1 step (plan: owner-brains with the act layer as its act mirror, the far form first). Markers: [O] seen in

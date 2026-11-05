@@ -93,10 +93,10 @@ do
                     if P.state(en) == 0 then
                         local x, y, z = pos(en.id)
                         local d = x and (x ~= 0 or z ~= 0) and flat(x, z, qx, qz)
-                        if d and d <= 60000 then
+                        if d and P.reach(d, x, z) then  -- enemy gaps 2 (place_reach): to 160 m, 4 Hz (world_place.lua)
                             local cp = W.cp and W.cp[en.cp]
                             local alert = cp ~= nil and cp.localPhase == 3
-                            t.every = (d <= 30000 or alert) and 100 or 200
+                            t.every = d > 60000 and 250 or (d <= 30000 or alert) and 100 or 200
                             local moved = t.x and flat(x, z, t.x, t.z) or 0
                             local dt = t.x and now - t.sampleAt or 0
                             local speed = dt > 0 and dt < 2000 and floor(min(65535, moved * 1000 / dt)) or 0
@@ -128,7 +128,7 @@ do
                     not (dv and dv.back and now < dv.back) and P.state(en) == 0 then
                     local x, y, z = pos(en.id)
                     local slot = S.slotOf(h)
-                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= 60000 then
+                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000) then
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
@@ -138,6 +138,7 @@ do
                         if type(r) == "table" and r.refused then
                             if r.refused == "stale" then S.n.stale, dv.back = S.n.stale + 1, now + 500
                             else S.n.refused, dv.back = S.n.refused + 1, now + 2000 end
+                            if r.refused == "relayed" then P.hold(h, en.id) end  -- enemy gaps 2 (place_reach)
                         elseif type(r) == "table" then
                             dv.ok, dv.err = now, r.e
                             -- Enemy gaps (place_sink): a driven copy 1.5 m under its owner for 2 s (r.v: its y minus the
@@ -213,7 +214,7 @@ do
                         if not b then b = {x = x, z = z, restX = x, restZ = z, still = now}; S.bd[h] = b end
                         b.at = now
                         if flat(x, z, b.x, b.z) >= 200 then b.x, b.z, b.still = x, z, now
-                        elseif now - b.still >= 1500 and flat(x, z, b.restX, b.restZ) > 1500 then
+                        elseif now - b.still >= 1500 and not (b.pend and now - b.pend < 15000) and flat(x, z, b.restX, b.restZ) > 1500 then
                             b.restX, b.restZ = x, z
                             local ok
                             if W.host then ok = P.announce(3, h, x, y + 200, z, 0, 8, 0)
@@ -227,10 +228,9 @@ do
                 elseif not st or st < 2 or st > 5 then S.bd[h] = nil end
             end
         end
-        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too)
-        -- more than 1 m off goes there through the same FIFO and native placement (kind 3; P.check lets a dead one go).
-        -- Enemy latch: P.check first. Refused here (a dead guard reads NPC_STATE_DISABLE on both copies: disabled_local),
-        -- this body stays where it lies and so is not "carried" either (run e583ee62: 384 / 383 body_tx echoed).
+        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too) more
+        -- than 1 m off goes there through the FIFO (kind 3). P.check first: refused (a dead guard is NPC_STATE_DISABLE:
+        -- disabled_local, unless body_dead), it stays put and is not "carried" (e583ee62: 384 / 383 body_tx echoed).
         function P.body(c, en)
             if not W.bodyOn then return end
             local st = P.state(en)
@@ -244,7 +244,7 @@ do
                 why or "none")
             if fix then P.q[#P.q + 1] = c end
             local b = S.bd[c.h]
-            if b then b.restX, b.restZ = why and x or c.x, why and z or c.z end
+            if b then b.restX, b.restZ, b.pend = why and x or c.x, why and z or c.z, fix and W.deadOn and W.now() or nil end
         end
         -- M6 hold-ups: a hold-up applied here (W1 state 1) also raises this copy's hands (SetForceHoldup, handler 0x135D0B2).
         local applyOne = W.enemy.applyOne

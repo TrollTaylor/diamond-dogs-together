@@ -166,4 +166,29 @@ ok=pcall(c.run,c,"dd_male");check(not ok and c.M.characterPick==nil,"a failed sw
 -- No planner yet (before the first mission load): refused.
 c=F();c.M.Character=nil;ok,msg=c:run("snake")
 check(not ok and msg=="character_unavailable","needs the character chunk")
+-- FM1 watch lever aim_partner: this copy's camera toward the partner's character at any distance (enemy_aim_nearest
+-- stops at 60 m; the far mirror's watch points are 100-260 m out).
+c=F();c.D.partnerPose={100000,-2000,0,40};c.D.api.pose=function()return {0,0,0,0}end
+c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end}
+ok,msg=c.D.player.run({"aim_partner"},12)
+check(ok and type(c.cam)=="table" and math.abs(c.cam.rotY-90)<0.01 and c.cam.rotX>0 and msg:find("aim_partner;d=100.0",1,true),
+ "aim_partner turns the camera toward the partner, 100 m east and lower")
+ok,msg=c.D.player.run({"heal"},13);check(ok and msg=="player:heal","other player commands still reach D.player")
+c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
+ok,msg=c.D.player.run({"aim_partner"},14);check(not ok and msg=="partner_pose_unavailable" and c.cam==nil,"no partner pose: refused")
+ok,msg=c.D.player.run({"aim_partner","9"},15);check(not ok and msg=="aim_args","height 0..2 m")
+-- Run 94a7bf2a: native attaches the command's pose (pp) only to goto_partner / spawn_sync, so every aim_partner was
+-- refused; without pp it takes world sync's peer position (P.partnerXZ) at this copy's own height.
+c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
+c.env.e.MgsCoopWorld={now=function()return 5000 end,place={partnerXZ=function()return 0,-80000 end}}
+ok,msg=c.D.player.run({"aim_partner"},18)
+check(ok and type(c.cam)=="table" and math.abs(math.abs(c.cam.rotY)-180)<0.01 and msg:find("d=80.0",1,true) and msg:find("via=peer",1,true),
+ "aim_partner without the command's pose: the peer position")
+-- aim_ent <hash>: the camera toward that guard (both copies look at the same mirrored guard for matched frames).
+c=F();c.env.Player={RequestToSetCameraRotation=function(t)c.cam=t end};c.D.api.pose=function()return {0,0,0,0}end
+c.env.e.MgsCoopWorld={ent={[3000000001]={id=1041}},place={pos=function(id)if id==1041 then return 0,-1000,-50000 end end}}
+ok,msg=c.D.player.run({"aim_ent","3000000001"},16)
+check(ok and type(c.cam)=="table" and math.abs(math.abs(c.cam.rotY)-180)<0.01 and msg:find("aim_ent;ent=3000000001;d=50.0",1,true),
+ "aim_ent turns the camera toward the guard, 50 m south")
+ok,msg=c.D.player.run({"aim_ent","42"},17);check(not ok and msg=="aim_ent_unknown","an unknown guard: refused")
 print("debug_character_lua_check: "..checks.." checks PASS")

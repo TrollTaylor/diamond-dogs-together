@@ -206,7 +206,7 @@ do
     W.companionOn, W.fultonOn, W.fultonEarlyOn, W.fultonLookOn, W.fultonOneSaveOn = false, false, false, false, false
     W.fultonGuestVehicleOn, W.followOn = false, false
     W.ownerOn, W.snapOn, W.routeOn, W.bodyOn, W.puppetOn, W.brainOn = false, false, false, false, false, false
-    W.perceiveOn, W.liftOn, W.actOn = false, false, false
+    W.perceiveOn, W.liftOn, W.actOn, W.deadOn, W.reachOn = false, false, false, false, false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -261,6 +261,9 @@ do
     W.actOn = W.followOn and eb % 1024 >= 512
     -- Enemy gaps: bit 128 place_lift (placements and the stream at the owner's own GetPosition y; world_place.lua P.reset).
     W.liftOn = W.followOn and eb % 256 >= 128
+    -- Enemy gaps 2 (7.17): bit 1024 body_dead (dead body placements, with soldier_body), 2048 place_reach (world_place.lua).
+    W.deadOn = W.bodyOn and eb % 2048 >= 1024
+    W.reachOn = W.followOn and eb >= 2048
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     -- enemiesLab (30050): W1 and staff placement in the lab only until a hidden run shows staff on both screens in play.

@@ -16,7 +16,7 @@
 namespace mgscoop::soldier_act {
 
 inline constexpr unsigned kMaxSoldiers = 512;
-inline constexpr float kCensusRangeM = 250.0f;
+inline constexpr float kCensusRangeM = 320.0f;  // past the far mirror's 300 m range (lua/coop/world_mirror.lua M.RANGE)
 inline constexpr std::uint64_t kCensusPeriodMs = 500, kBinsPeriodMs = 1000, kBandsPeriodMs = 10000, kPayloadPeriodMs = 2000;
 inline constexpr unsigned kBands = 11;  // 25 m bands 0..250 m, then beyond
 
@@ -49,6 +49,12 @@ inline constexpr std::uint64_t kActReapplyMs = 5000;
 inline constexpr unsigned kActPartsPer100Ms = 24;
 // Players 0 and 1 swap between the copies (GameObjectId type 0); any other id is unchanged.
 std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
+// U3 (0x1413816e0, the action B kind 1 serialiser = the aim): its target mode is the byte at wire +0x35 (R+0x4c & 7);
+// modes 2 (u16 id + u16 part) and 4 (u16 id) carry the target's GameObjectId big-endian at wire +0x20 (B+0x00), mode 1 a
+// packed position, mode 3 a u32. Census runs 3bc7280b / 963ab276: 1552 of 1669 host aims are mode 4, every one id 0 (the
+// host's own player), so the puppet would aim at the guest without the swap. Swaps a player id there (RemapPlayer); true when changed.
+// The u16 0x0400 the census scan found at wire +0x34 is B+0x14 = R+0x5c (0) and B+0x15 = this mode (4): not an id.
+bool RemapAimTarget(unsigned char (&wire)[0x70]) noexcept;
 // Whether two packed requests differ beyond jitter: the destination (+0x40) moved >= 5 cm, a facing position (face mode
 // 2, +0x50) >= 5 cm, a facing yaw (face mode 1, u16 at +0x50) by >= 1 degree (182 of 65536), or any other byte.
 bool RequestChanged(const unsigned char (&a)[0x70], const unsigned char (&b)[0x70]) noexcept;
@@ -103,7 +109,11 @@ struct Counters {
 Counters ReadCounters() noexcept;
 // The ACT_V1 reply, a Lua table constructor: {f,tx,rx,ap,od,sh,mi,fd,fn} (od: orders re-posted; never a Lua reserved
 // word as a key: run 963ab276's {..,or=..} did not compile in Lua, so the guest's Lua never saw f=1 and set no puppet).
-bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept;
+// With owner_mm (the m reply), ",ox=,oy=,oz=" the owner copy's position in mm from the newest order part (run 94a7bf2a:
+// guard 19's host copy climbed a tower; his puppet stood at its foot 7 m off, and nothing warps a copy under 15 m).
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
+// The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
+bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

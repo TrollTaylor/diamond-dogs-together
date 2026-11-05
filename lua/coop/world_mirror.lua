@@ -9,7 +9,7 @@
 -- fired: every puppet, for 15 s), state (no longer NORMAL), stale (no fresh SOLDIER_ACT for 1.5 s), owner (M3 gave him to
 -- the guest), phase (a guest-local phase rise in his CP), paused (research command mirror off), key_off, unpaired,
 -- gone (his object is gone). Every release sends ACT_V1 r (and native lets the fire drop lapse 1.5 s after the last m).
--- The host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
+-- The host registers its own NORMAL guards within 300 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
 -- (ACT_V1 s). The guest queries a candidate (ACT_V1 q: is his stream fresh? nothing armed) and sends m only for a
 -- puppet (the mailbox, the hook's apply and the fire drop). 12 guards are scanned per update (one GetPosition each),
 -- round robin; every puppet is checked every update (near, phase), and one m per update returns the guest's shots.
@@ -24,11 +24,18 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         -- R per phase, metres: calm / caution the 80 m floor (no first-notice distance measured yet); evasion / ALERT
-        -- 1.5 x the farthest ALERT hit, 122.4 m on the host (one hit, run 3bc7280b; 92 m in 963ab276; the guest's
-        -- 82-87 m, 3bc7280b) = 184 m. No realize cap: 12 copies stayed realized out to 212 m (host) and 400 m (guest).
-        M.R = {[0] = 80, [1] = 80, [2] = 184, [3] = 184}
-        M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
+        -- 1.5 x the farthest ALERT hit (122.4 m on the host in 3bc7280b gave 184 m). No realize cap: 12 copies stayed
+        -- realized out to 212 m (host) and 400 m (guest).
+        -- FM1 retry, run 94a7bf2a: the guest's own copies hit it from up to 173.9 m in ALERT (guard 16; guard 13 from
+        -- 150.6 m) -> 1.5 x 173.9 = 261 m.
+        M.R = {[0] = 80, [1] = 80, [2] = 261, [3] = 261}
+        -- RANGE 300 m: the ALERT watch point (beyond R(ALERT) + 15 m of the fight) is ~255 m from it (FM1 retry).
+        M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 300, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
+        -- Apart (run 94a7bf2a: guard 19's host copy climbed a tower, his puppet stood at its foot 7 m off; nothing warps a
+        -- copy under 15 m): > 5 m (3D) from the owner copy (the m reply's ox/oy/oz) for 2 s releases him for 30 s. Not in
+        -- his first 4 s as a puppet: the engine's catch-up runs a copy that starts apart toward the owner's position first.
+        M.APART_MM, M.APART_MS, M.HOLD_MS, M.APART_GRACE = 5000, 2000, 30000, 4000
         M.P_WAIT = 10000  -- ACT_V1 p refused "hook" (the defaults: no hook installed): offered again after 10 s
         local function act(op, slot, id)
             local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- %s %d %d", op, slot, id))
@@ -40,7 +47,7 @@ do
         -- native lets the fire drop lapse by itself 1.5 s after the last m as well (soldier_authority::ExpireMirrored).
         function M.reset()
             if M.pp then for _, p in pairs(M.pp) do if p.slot and p.id then act("r", p.slot, p.id) end end end
-            M.pp, M.i, M.shots, M.shotAt, M.statAt, M.pAt, M.why = {}, 0, nil, nil, nil, nil, {}
+            M.pp, M.i, M.shots, M.shotAt, M.statAt, M.pAt, M.why, M.hold = {}, 0, nil, nil, nil, nil, {}, {}
             M.n = {on = 0, off = 0, refused = 0, tx = 0}
             M.last = {}
         end
@@ -88,6 +95,20 @@ do
             end
             M.shots = r.sh
         end
+        function M.apart(h, p, en, r, now)
+            if type(r) ~= "table" or type(r.ox) ~= "number" or type(r.oy) ~= "number" or type(r.oz) ~= "number" or not M.pp[h] then
+                return
+            end
+            local x, y, z = pos(en.id)
+            if not x then return end
+            local a = math.sqrt((x - r.ox) ^ 2 + (y - r.oy) ^ 2 + (z - r.oz) ^ 2)
+            if a <= M.APART_MM or now - p.at < M.APART_GRACE then p.apartAt = nil; return end
+            p.apartAt = p.apartAt or now
+            if now - p.apartAt < M.APART_MS then return end
+            M.hold[h] = now + M.HOLD_MS
+            L("event=mirror_apart;ent=%.0f;apart_m=%.1f", h, a / 1000)
+            M.set(h, en, false, "apart")
+        end
         function M.guest(now)
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
             local list = W.entOrder
@@ -118,6 +139,7 @@ do
                 if M.pp[due] and type(r) == "table" then
                     if r.refused then M.set(due, W.ent[due], false, r.refused)
                     elseif r.f == 1 then dp.fresh = now end
+                    M.apart(due, dp, W.ent[due], r, now)
                 end
             end
             for _ = 1, math.min(M.SCAN, #list) do
@@ -144,9 +166,11 @@ do
                             if type(r) == "table" and r.refused then why = r.refused
                             elseif type(r) == "table" and r.f == 1 then p.fresh = now
                             elseif now - p.fresh >= M.STALE_MS then why = "stale" end
+                            if not why then M.apart(h, p, en, r, now) end
                         end
                         if why and M.pp[h] then M.set(h, en, false, why, d, R) end
-                    elseif not why and d > (R + M.ENTER) * 1000 and not (rise and now - rise < M.SHOT_MS) then
+                    elseif not why and d > (R + M.ENTER) * 1000 and not (rise and now - rise < M.SHOT_MS) and
+                        not (M.hold[h] and now < M.hold[h]) then
                         local r = act("q", slot, en.id)
                         M.shotCheck(r, now)
                         if type(r) == "table" and r.f == 1 and not (M.shotAt and now - M.shotAt < M.SHOT_MS) then

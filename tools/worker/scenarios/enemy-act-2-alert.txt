@@ -1,15 +1,17 @@
-# Enemy sync M7 FM1, the far mirror, gate part 2 of 3: the ALERT fight watched from beyond R (after enemy-act-1-quiet.txt,
-# the guest ~150 m south of afgh_field_cp). The host raises ALERT and fights ~110 s (godmode, enemy_aim_nearest, aim and
-# fire held); the guest watches with binoculars (frames on both copies every ~12 s: mirrored guards run, aim at the host's
-# character and fire with muzzle flashes on the guest's screen as on the host's); mirror off 20 s (research command), then
-# on; the guest fires one shot (every mirror puppet released for 15 s); then the guest walks in to ~40 m.
-# Expected (guest): event=mirror;on=0;why=paused at mirror off, on=1 again after mirror on, on=0;why=shot right after the
-# guest's shot; soldier_act_frame puppet_fire counts; 0 Defend hits on the guest by a mirror puppet.
+# Enemy sync M7 FM1, the far mirror, gate part 2 of 2: ALERT (after enemy-act-1-quiet.txt: the guest at the quiet watch
+# point, the host 50 m south of the outpost). R(ALERT) is 261 m (1.5 x 173.9 m: the guest's own copies hit it from
+# 173.9 m in run 94a7bf2a), so the guest's ALERT copies stay their own brains within 261 m: this part shows every
+# puppet released at the rise (why=near) and logs the engagement distances on both copies again (census engage bins).
+# No ALERT watch point beyond R(ALERT) + 15 = 276 m with a view of the fight is known yet (run 94a7bf2a: from 255 m the
+# binocular view of the host was blocked by the ground).
+#   A. the host raises ALERT and fights ~50 s where it is (godmode, enemy_aim_nearest, aim and fire held); frames on
+#      both copies, the guest's camera on the host's character (aim_partner);
+#   B. the guest goes in to ~10 m of a guard (enemy goto: 0.5..10 m; the "40" of earlier rounds was refused enemy_args) and both fight ~20 s.
 host run cp_phase nearest alert
 host expect ^submitted_phase;cp=[^;]+;phase=alert;
 wait 2000
 host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
+guest run aim_partner 1.1
 wait 500
 host hold rmb 900 nowait
 wait 400
@@ -22,9 +24,9 @@ host hold rmb 900 nowait
 wait 400
 host hold rmb+lmb 1200
 host release
-wait 7500
+wait 6500
 host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
+guest run aim_partner 1.1
 wait 500
 host hold rmb 900 nowait
 wait 400
@@ -37,9 +39,9 @@ host hold rmb 900 nowait
 wait 400
 host hold rmb+lmb 1200
 host release
-wait 7500
+wait 6500
 host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
+guest run aim_partner 1.1
 wait 500
 host hold rmb 900 nowait
 wait 400
@@ -52,9 +54,9 @@ host hold rmb 900 nowait
 wait 400
 host hold rmb+lmb 1200
 host release
-wait 7500
+wait 6500
 host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
+guest run aim_partner 1.1
 wait 500
 host hold rmb 900 nowait
 wait 400
@@ -67,98 +69,37 @@ host hold rmb 900 nowait
 wait 400
 host hold rmb+lmb 1200
 host release
-wait 7500
-guest run mirror off
-wait 2000
-host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
-wait 500
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200 nowait
-guest hold f 1500 nowait
-wait 900
-both capture off-0
-host release
-wait 8000
-host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
-wait 500
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200 nowait
-guest hold f 1500 nowait
-wait 900
-both capture off-10
-host release
-wait 6000
-guest run mirror on
-wait 3000
-host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
-wait 500
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200 nowait
-guest hold f 1500 nowait
-wait 900
-both capture on-0
-host release
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200
-host release
-wait 6000
-host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
-wait 500
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200 nowait
-guest hold f 1500 nowait
-wait 900
-both capture on-1
-host release
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200
-host release
-wait 6000
-host run enemy_aim_nearest 1.1
-guest run enemy_aim_nearest 1.1
-wait 500
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200 nowait
-guest hold f 1500 nowait
-wait 900
-both capture on-2
-host release
-host hold rmb 900 nowait
-wait 400
-host hold rmb+lmb 1200
-host release
-wait 6000
+wait 6500
 guest run act_status
+guest run enemy goto 1740692850 10
+wait 3000
+guest run position
+guest run enemy_aim_nearest 1.1
+host run enemy_aim_nearest 1.1
+wait 500
+host hold rmb 900 nowait
 guest hold rmb 900 nowait
-wait 600
-guest hold rmb+lmb 300
-guest release
-wait 1500
-both capture shot-0
-guest run act_status
-wait 3000
-guest run enemy goto 1740692850 40
-wait 3000
-guest run enemy_aim_nearest 1.1
-host run enemy_aim_nearest 1.1
-wait 800
+wait 400
+host hold rmb+lmb 1200 nowait
+guest hold rmb+lmb 1200 nowait
+wait 900
 both capture in-0
-wait 10000
+host release
+guest release
+wait 6500
 guest run enemy_aim_nearest 1.1
 host run enemy_aim_nearest 1.1
-wait 800
-both capture in-12
+wait 500
+host hold rmb 900 nowait
+guest hold rmb 900 nowait
+wait 400
+host hold rmb+lmb 1200 nowait
+guest hold rmb+lmb 1200 nowait
+wait 900
+both capture in-10
+host release
+guest release
+wait 6500
 host run act_status
 guest run act_status
 host run world_status

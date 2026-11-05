@@ -513,6 +513,18 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_act_given = true;
         if (!ok) result.soldier_act = false;
     }
+    else if (Equals(key, "body_dead")) {
+        // Enemy gaps 2 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.body_dead);
+        result.body_dead_given = true;
+        if (!ok) result.body_dead = false;
+    }
+    else if (Equals(key, "place_reach")) {
+        // Enemy gaps 2 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.place_reach);
+        result.place_reach_given = true;
+        if (!ok) result.place_reach = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);
@@ -2034,6 +2046,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach and body_dead stay off unless named. place_reach's runs
+    // 9023e5c6, 8281b868, 3c9d1250 (named) and b77e2104 (on by default for that run) show it in both copies' logs (the
+    // host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 / 2.63 m, 798b51dd without it 6.97 m; 0 latches),
+    // but no frame shows the watched guard on the host's screen (terrain hid him at 95 m); body_dead's runs carried no corpse.
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both
