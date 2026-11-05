@@ -2823,7 +2823,7 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
         LogFormat("debug_menu=soldier_warp; id=%u; go=%u; r=%d; h=%u; leaf=%s; refused=%s\r\n", id, request.go_id, result.out,
-                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);
@@ -2925,7 +2925,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
                   unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
-                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+                  unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);
@@ -3006,7 +3006,7 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
         }
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
-                  result.chain.pinned ? "pinned" : "engine", guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
+                  sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
     if (result.refusal && !unrealized) return refuse(result.refusal);

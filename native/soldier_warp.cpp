@@ -219,8 +219,11 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
     result.handled = message[c::message_handled];
     // The handler (0x13619e5/0x13619ea, 0x1364e5b) and SendCommand (0xbf3aa6) give only these two answers.
     const bool moved = result.out == 0 && result.handled == 1, waiting = result.out == -1 && result.handled == 0;
-    // Enemy latch: on the typed dispatch, out=0 handled=0 is the relay to the guard's unrealized form (0x9e9bc9 ->
-    // 0xbf6490 writes *out = 0, the handler never runs) and out=0x8ce64801 the handle's mode 2: nothing moved, explained.
+    // Enemy latch: on the typed dispatch, out=0 handled=0 is the dispatcher's relay after the handler refused (-1:
+    // unrealized here, or no character) a guard whose slot exists on this copy: 0xbf6570 -> 0xbf6490 writes *out = 0
+    // and offers the message to the guard's unrealized form (realize bit clear, 0x9e9bc9) or, realize bit set, to
+    // leaf->vt[0xf0](idx)->vt[0x60] (0x9e9b9e); no component handled it. out=0x8ce64801 is the handle's mode 2. Either
+    // way nothing moved and the path is explained; whether the guard was realized is not known here [U].
     const bool relayed = result.chain.typed && result.handled == 0 &&
                          (result.out == 0 || static_cast<std::uint32_t>(result.out) == rc::mode2_answer);
     if (relayed) result.refusal = "relayed";
@@ -401,6 +404,10 @@ const char* Gate::Record(const Result& result) noexcept {
         return latched;
     }
     return count == kSoldierAnomalies ? "soldier" : nullptr;
+}
+
+const char* LeafName(const Chain& chain) noexcept {
+    return chain.pinned ? "pinned" : chain.typed ? "typed" : "engine";
 }
 
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,

@@ -153,6 +153,7 @@ int main() {
     Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=pinned") &&
           std::strstr(line, "hop=0xc15500") && std::strstr(line, "hop_bytes=488b4948488b0148ffa0a8000000") &&
           std::strstr(line, "leaf_vt=0x23e78f0") && std::strstr(line, "handled=1") && std::strstr(line, "refusal=none"), "census line");
+    Check(std::strcmp(sw::LeafName(r.chain), "pinned") == 0, "the warp log lines name a pinned hop leaf=pinned");
 
     // Vtable B is the second soldier class.
     Put(leaf, base + c::soldier_vtable_b_rva);
@@ -234,6 +235,7 @@ int main() {
           r.out == 0 && r.handled == 1 && seen.calls == 3, "unpinned hop: the engine's own dispatch answers");
     Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=engine") && std::strstr(line, "hop=0x200"),
           "census marks the unpinned hop");
+    Check(std::strcmp(sw::LeafName(r.chain), "engine") == 0, "the warp log lines name an unpinned, untyped hop leaf=engine");
     engine.answer = -1;
     r = sw::Warp(base, span, request);
     Check(r.refusal == nullptr && r.sent && r.out == -1 && r.handled == 0, "unpinned unrealized answer passes through");
@@ -267,6 +269,8 @@ int main() {
               engine.self == typed_type && engine.index == 3, "typed: the real hop reaches the soldier type dispatcher; moved");
         Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=typed") &&
               std::strstr(line, "hop=0xbf5450"), "census names the typed dispatch");
+        Check(std::strcmp(sw::LeafName(r.chain), "typed") == 0,
+              "the warp log lines (world_place=host_warp ...) name the typed dispatch leaf=typed, as the census does");
         // out=0 handled=0: the dispatcher relayed it to the guard's unrealized form (0xbf6490), nothing moved.
         engine.handled = 0;
         r = sw::Warp(base, span, request);
