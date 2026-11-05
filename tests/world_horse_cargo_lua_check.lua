@@ -371,6 +371,16 @@ check(f.holds[#f.holds]:find(" 2$"), "setVictimPose: the reset goes to hold0")
 check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET), "setVictimPose back to the defaults")
 check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
  "the victim_pin line carries the body's lag behind its last target and the target's source")
+-- M2g (runs 5a92c73f (c), 4585cc5a (a): right at M1's final placement body 0 went into fall / land, coop_carry=watch a=19 /
+-- 1a every frame, and ended crouched): the cargo tick held it again only 200 ms after the last placement, while hold0's C0
+-- reset ("no fall" for that frame) is what keeps it lying. Once M1's track has ended body 0 is held every tick.
+f.C.placed(173000, 2600, 310000, 0)
+f.W.horseShare = {}
+nw = #f.warps
+f.tick(50)
+check(#f.warps == nw + 1 and f.lastWarp(0).via == "hold0", "the tick right after M1's final placement holds body 0 (no 200 ms gap)")
+f.tick(50)
+check(#f.warps == nw + 2, "and every tick after it")
 -- M2f (run 131f88c6 (c): 1 ms after the final placement the victim's copy re-placed its horse on a KEEP pose sent before
 -- it, 11 m back, and that horse fell Unconscious 0.25 s later; three more 1 Hz jumps followed while the carrier's horse
 -- slowed): for 2 s after M1's track ended nothing is re-placed, then only on a KEEP pose sent after those 2 s.
