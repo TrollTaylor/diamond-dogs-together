@@ -323,6 +323,24 @@ void TestPillion() {
     hd::NoteSeat(450, 0, true, 2000);
     hd::Reset();
     Check(!hd::SeatLease(2000, back, up, pose), "reset ends the lease");
+    // M4 (run d935beae): a capture stalled the driver's game past kSeatMs, the lease lapsed for one tick and the overlay
+    // seat ended (body 1 then stood 1.9 m under the rear seat for the rest of the ride). A lease live on the partner
+    // driver's previous tick is kept kSeatGraceTicks more ticks with its last offsets; a lease gone that long ends.
+    hd::SeatHold sh{};
+    float hb = 0.f, hu = 0.f;
+    bool hp = false;
+    Check(!hd::HoldSeat(sh, false, hb, hu, hp), "no lease yet: no seat");
+    hb = 0.45f; hu = 0.3f; hp = true;
+    Check(hd::HoldSeat(sh, true, hb, hu, hp) && sh.live, "a live lease seats");
+    hb = hu = 0.f; hp = false;
+    Check(hd::kSeatGraceTicks == 2 && hd::HoldSeat(sh, false, hb, hu, hp) && Near(hb, 0.45f) && Near(hu, 0.3f) && hp,
+          "one lapsed tick keeps the seat with the last offsets");
+    hb = 0.45f; hu = 0.3f; hp = true;
+    Check(hd::HoldSeat(sh, true, hb, hu, hp) && sh.miss == 0, "the lease back: the miss count restarts");
+    hb = hu = 0.f;
+    Check(hd::HoldSeat(sh, false, hb, hu, hp) && hd::HoldSeat(sh, false, hb, hu, hp) && !hd::HoldSeat(sh, false, hb, hu, hp) && !sh.live,
+          "kSeatGraceTicks lapsed ticks are kept, the next one ends the seat");
+    Check(!hd::HoldSeat(sh, false, hb, hu, hp), "ended: stays off until a live lease");
     const float rider[3] = {10.f, 5.f, 20.f};
     float seat[3]{};
     hd::RearSeat(rider, 0.f, 0.45f, 0.1f, seat);
