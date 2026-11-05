@@ -2322,10 +2322,13 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 - `ACT_V1 "<op> <slot> <goId>"` (game_script_observer `ActReceipt`, Lua owner thread, soldier_act, 30010 / 30020 /
   30050): `t` the host registers a guard to send for 1.5 s; `s 0 0` the host sends the staged parts; `m` the guest
   mirrors a guard (the newest act into the hook's mailbox, `f=1` when its request is under 1.5 s old); `r` releases
-  him. Reply `{f,tx,rx,ap,od,sh,mi,fd,fn}` (parts sent, requests taken, requests applied, orders re-posted, the local
+  him (always taken, whatever the key, mission or partner: it only clears this copy's mailbox, apply stamp and fire-drop
+  bit). The fire-drop bit is also a lease: the hook clears it 1.5 s after the last fresh `m` (`act_status expired=`).
+  Reply `{f,tx,rx,ap,od,sh,mi,fd,fn}` (parts sent, requests taken, requests applied, orders re-posted, the local
   player's shots, mirrored guards, puppet bullets and noise dropped) or `{refused="<reason>"}` (`args`, `disabled`,
   `hook`, `mission`, `type`, `role`, `paused`).
-- `ACT_V1 "p <x_mm> <y_mm> <z_mm>"`: the local player for the census (Lua, every 250 ms while paired; reply `{p=1}`).
+- `ACT_V1 "p <x_mm> <y_mm> <z_mm>"`: the local player for the census (Lua, every 250 ms while paired; reply `{p=1}`;
+  after `{refused="hook"}`, as at the defaults, Lua waits 10 s before the next).
 - `DRIVE_V1 ... 2`: the mirror drive (no step under 5 m, the whole way beyond; a guest with soldier_act only).
 - Debug (research): `mirror off|on` (`soldier_act_mirror_cmd`), `act_status`, `act_probe [dst src ms mode]`.
 - Log lines: native `soldier_act=installed | refused`, `soldier_act_mirror=on|off; role; fire; noise`,

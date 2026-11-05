@@ -93,16 +93,33 @@ void DefenseReset() noexcept {
 
 namespace {
 std::atomic<std::uint64_t> g_mirror[kSoldiers / 64]{};
+std::atomic<std::uint64_t> g_mirrorAt[kSoldiers]{};  // the lease stamp of each mirrored index (partner_net::NowMs)
 std::atomic<std::uint32_t> g_mirrorFire{0}, g_mirrorNoise{0}, g_localShots{0};
 } // namespace
 
-void SetMirrored(std::uint16_t index, bool on, std::uint64_t) noexcept {
+void SetMirrored(std::uint16_t index, bool on, std::uint64_t now_ms) noexcept {
     if (index >= kSoldiers) return;
     const std::uint64_t bit = 1ull << (index % 64);
+    if (on) g_mirrorAt[index].store(now_ms, std::memory_order_relaxed);
     if (on) g_mirror[index / 64].fetch_or(bit, std::memory_order_relaxed);
     else g_mirror[index / 64].fetch_and(~bit, std::memory_order_relaxed);
 }
-unsigned ExpireMirrored(std::uint64_t, std::uint64_t) noexcept { return 0; }
+unsigned ExpireMirrored(std::uint64_t now_ms, std::uint64_t lease_ms) noexcept {
+    unsigned cleared = 0;
+    for (unsigned w = 0; w < kSoldiers / 64; ++w) {
+        const std::uint64_t bits = g_mirror[w].load(std::memory_order_relaxed);
+        for (unsigned b = 0; bits && b < 64; ++b) {
+            if (!((bits >> b) & 1u)) continue;
+            const unsigned index = w * 64 + b;
+            if (g_mirrorAt[index].load(std::memory_order_relaxed) + lease_ms >= now_ms) continue;  // fresh (or stamped later)
+            g_mirror[w].fetch_and(~(1ull << b), std::memory_order_relaxed);
+            // A stamp another thread wrote meanwhile keeps the bit (the next ACT_V1 m would set it again anyway).
+            if (g_mirrorAt[index].load(std::memory_order_relaxed) + lease_ms >= now_ms) g_mirror[w].fetch_or(1ull << b, std::memory_order_relaxed);
+            else ++cleared;
+        }
+    }
+    return cleared;
+}
 void ClearMirrored() noexcept { for (auto& w : g_mirror) w.store(0, std::memory_order_relaxed); }
 bool Mirrored(std::uint16_t attacker) noexcept {
     if (!IsSoldier(attacker)) return false;

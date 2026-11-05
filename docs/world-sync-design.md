@@ -350,8 +350,12 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   is 1.5 x the farthest first notice or engagement distance measured at the defaults (floors 80 m calm / caution, 120 m
   ALERT), capped at the realize radius minus 10 m. He is taken beyond R + 15 m and released within R, so nobody is made
   unseen who could be seen without the key. Any guest shot releases every puppet for 15 s. In the code now: 80 m calm /
-  caution (the floor; no first-notice distance measured yet) and 138 m evasion / ALERT (1.5 x the farthest ALERT hit,
-  122.4 m in `3bc7280b`, is 184 m; capped at the realize radius, at least 148 m, minus 10 m).
+  caution (the floor; no first-notice distance measured yet) and 184 m evasion / ALERT (1.5 x the farthest ALERT hit,
+  122.4 m, one hit on the host in `3bc7280b`). No realize cap applies: the same 12 copies stayed realized out to 212 m
+  from the host and 400 m from the guest, so the realize radius was not measured (an earlier 138 m cap rested on it).
+  [I] In `0a271c10` the guest took 424 hits from guards 13 / 18 / 231 whose nearest logged approach to its spot was
+  110-150 m, so ALERT engagement may reach about 150 m (R 225 m); one 333.8 m hit on the guest in `3bc7280b` by guard
+  176 of another CP is [U]. The gate run must log those distances again.
 - **The path** (native/soldier_act.cpp, lua/coop/world_mirror.lua, SOLDIER_ACT 0x58 in protocol section 33):
   - the host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m (`ACT_V1 t`); its hook packs
     them with the engine's pack each frame, stages a changed record (a destination 5 cm or a facing 1 degree off is
@@ -361,7 +365,13 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
     (a table that does not cover him is lent one for the call), swaps players 0 / 1 in facing ids and order target ids,
     and re-posts the order every update;
   - the puppets' own bullets and noise are dropped (`partner_fire_filter`, the `soldier_authority` mirror mask): the host
-    copy's shots are the real ones; the guest's own shots are counted to release the puppets;
+    copy's shots are the real ones; the guest's own shots are counted to release the puppets. The mask is a lease: the
+    hook clears a bit 1.5 s after the last fresh `ACT_V1 m` (the apply's own lease), and `r` is always taken, so a
+    puppet Lua forgets cannot keep his bullets dropped;
+  - every update Lua checks each puppet for the guest within R and a guest-local phase rise in his CP, and sends one `m`
+    (to the puppet asked longest ago) whose reply carries the guest's shot count, so those three releases do not wait
+    for the 12-per-update round robin (~0.8 s with ~280 roster entries); a puppet whose object is gone, and every puppet
+    at a mission start, is released with `r`;
   - DRIVE_V1 mode 2 (the mirror drive) never steps a puppet under 5 m and moves him the whole way beyond; a far puppet
     is outside the 60 m stream, so only the engine's 15 m rule and the catch-up keep him in place there.
 - **Probe P1** (`act_census`): every 0.5 s `soldier_act_census` per realized guard within 250 m (the U1 table, S's mode,
@@ -376,9 +386,12 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   with `soldier_act=1`: 0 latches, faults or game overs, place error p50 0.76 / p90 6.8 m; but `m` sent for mere
   candidates armed the fire drop of 9 guards whose own brain ran: 582 of their bullets and 343 noises dropped on the
   guest's copy; fixed after the run: candidates are only queried, `q`). [O] U1: `*(S+0xe0)` is NULL offline; the lent
-  table carried 125 unpacks in two runs with 0 faults. [O] ALERT hits came from up to 122.4 m (host) and 82-87 m
-  (guest); the watcher's walk south stops about 105 m from the outpost, inside that range. [U] U2, the frames and
-  counts of the gate.
+  table carried 125 unpacks in two runs with 0 faults, all on copies whose own brain ran (the candidate bug), none on a
+  puppet. [O] ALERT hits came from up to 122.4 m (host, one hit; the next 58.4 m) and 82-87 m (guest, `3bc7280b`;
+  `0a271c10` logged no distances); the watcher's walk south stops about 105 m from the outpost, inside that range.
+  [U] U3: payloads of kinds 1 and 0x12 often hold the u16 0x0400 (the 0x400|i soldier-id form) at +0x34, kind 25 0x0564
+  at +0x14 and kind 20 hash-like words; whether these are ids, and so the remap or refuse rule, is open. [U] U2, the
+  frames and counts of the gate.
 
 ### 8. Soldier transforms (W6)
 

@@ -1688,8 +1688,9 @@ if arg[7] and arg[8] then
     ticks(pb, 1)
     check(pCount(pb) == 2, 'FM1: ACT_V1 p offered again after 10 s')
     pb.pReply = nil
+    pb.now = pb.now + 10000
     ticks(pb, 60)
-    check(pCount(pb) >= 8, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
+    check(pCount(pb) >= 9, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
     end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.

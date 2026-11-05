@@ -187,10 +187,10 @@ int main() {
               "mirror lease: a lapsed stamp clears (his fire and noise pass again)");
         au::SetMirrored(16, true, 3000);
         Check(au::ExpireMirrored(4000, sa::kActFreshMs) == 0 && au::Mirrored(0x400 | 16), "mirror lease: a new stamp extends it");
+        au::SetMirrored(16, false);
+        Check(!au::Mirrored(0x400 | 16) && au::MirroredCount() == 0, "mirror lease: off clears at once");
         au::SetMirrored(17, true, 5000);
         Check(au::ExpireMirrored(4990, sa::kActFreshMs) == 0 && au::Mirrored(0x400 | 17), "mirror lease: a stamp later than now is fresh");
-        au::SetMirrored(16, false);
-        Check(!au::Mirrored(0x400 | 16) && au::MirroredCount() == 1, "mirror lease: off clears at once");
         Check(au::ExpireMirrored(1ull << 40, sa::kActFreshMs) == 1 && au::MirroredCount() == 0, "mirror lease: all lapse");
         au::ClearMirrored();
     }

@@ -3148,6 +3148,13 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         return debug_reply;
     }
     if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
+    // A release is always taken (skeptic of FM1, 7b709720: r refused on a mission or partner change left the fire drop
+    // armed); it only clears this copy's mailbox, apply stamp and fire-drop bit.
+    if (op == 'r' && (go >> 9) == 2) {
+        sa::SetMirror(go & 0x1ffu, slot, false, mgscoop::partner_net::NowMs());
+        if (!sa::FormatActReply(false, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
+        return debug_reply;
+    }
     if (!labc.soldier_act || !(labc.mode == mgscoop::LabMode::lab || labc.mode == mgscoop::LabMode::play)) return refuse("disabled");
     if (!sa::MirrorOn()) return refuse("hook");
     unsigned short mission = 0;

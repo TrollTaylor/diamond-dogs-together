@@ -206,6 +206,7 @@ struct Applied {
 Applied g_applied[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cSame{0}, g_cUnrealized{0};
+std::atomic<std::uint32_t> g_cExpired{0};  // fire-drop mask bits that lapsed (no ACT_V1 m within kActFreshMs)
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
 std::uint64_t g_sendWindowAt = 0;
@@ -688,6 +689,8 @@ bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) 
     }
 }
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
+    // The fire-drop mask lapses with the apply's own lease (kActFreshMs without ACT_V1 m), whatever Lua forgot to release.
+    g_cExpired.fetch_add(soldier_authority::ExpireMirrored(now, kActFreshMs), std::memory_order_relaxed);
     for (unsigned i = 0; i < v.count; ++i) {
         const std::uint64_t at = g_mirAt[i].load(std::memory_order_relaxed);
         if (!at || now - at > kActFreshMs) continue;
@@ -945,7 +948,7 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     ReleaseSRWLockExclusive(&g_actLock);
     if (!fresh) g_cStale.fetch_add(1, std::memory_order_relaxed);
     g_mirAt[idx].store(fresh ? (now_ms ? now_ms : 1) : 0, std::memory_order_relaxed);
-    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), fresh);
+    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), fresh, now_ms ? now_ms : 1);  // the fire-drop lease
     return fresh;
 }
 
@@ -988,9 +991,10 @@ bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capaci
 
 bool StatusLine(char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return false;
-    const int n = std::snprintf(out, capacity, "act;installed=%u;census=%u;m=%u;calls=%u;lines=%u;faults=%u;pack_faults=%u;threads=%u;probes=%u;probe=%u",
+    const int n = std::snprintf(out, capacity, "act;installed=%u;census=%u;m=%u;calls=%u;lines=%u;faults=%u;pack_faults=%u;threads=%u;probes=%u;probe=%u;expired=%u",
                                 g_installed.load() ? 1u : 0u, g_census.load() ? 1u : 0u, g_m.load() ? 1u : 0u, g_calls.load(), g_lines.load(),
-                                g_faults.load(), g_packFaults.load(), g_threads.load(), g_probeRuns.load(), g_probe.active ? 1u : 0u);
+                                g_faults.load(), g_packFaults.load(), g_threads.load(), g_probeRuns.load(), g_probe.active ? 1u : 0u,
+                                g_cExpired.load());
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 #endif

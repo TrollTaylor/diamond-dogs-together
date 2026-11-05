@@ -7,11 +7,12 @@
 -- (floors 80 m calm / caution, 120 m ALERT); a guard is taken beyond R + 15 m and released within R, so nobody is made
 -- unseen who could be seen without it. Released at once (event=mirror;on=0;why=...): near (within R), shot (the guest
 -- fired: every puppet, for 15 s), state (no longer NORMAL), stale (no fresh SOLDIER_ACT for 1.5 s), owner (M3 gave him to
--- the guest), phase (a guest-local phase rise in his CP), paused (research command mirror off), key_off, unpaired.
+-- the guest), phase (a guest-local phase rise in his CP), paused (research command mirror off), key_off, unpaired,
+-- gone (his object is gone). Every release sends ACT_V1 r (and native lets the fire drop lapse 1.5 s after the last m).
 -- The host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
 -- (ACT_V1 s). The guest queries a candidate (ACT_V1 q: is his stream fresh? nothing armed) and sends m only for a
 -- puppet (the mailbox, the hook's apply and the fire drop). 12 guards are scanned per update (one GetPosition each),
--- round robin; every puppet is checked every update.
+-- round robin; every puppet is checked every update (near, phase), and one m per update returns the guest's shots.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -23,23 +24,31 @@ do
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         -- R per phase, metres: calm / caution the 80 m floor (no first-notice distance measured yet); evasion / ALERT
-        -- 1.5 x the farthest ALERT hit (122.4 m on the host in run 3bc7280b; 92 m in 963ab276; the guest was hit from
-        -- 82-87 m) = 184 m, capped at the realize radius minus 10 m: the 12 realized copies reach at least 148 m, so
-        -- 138 m.
-        M.R = {[0] = 80, [1] = 80, [2] = 138, [3] = 138}
+        -- 1.5 x the farthest ALERT hit, 122.4 m on the host (one hit, run 3bc7280b; 92 m in 963ab276; the guest's
+        -- 82-87 m, 3bc7280b) = 184 m. No realize cap: 12 copies stayed realized out to 212 m (host) and 400 m (guest).
+        M.R = {[0] = 80, [1] = 80, [2] = 184, [3] = 184}
         M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
-        function M.reset()
-            M.pp, M.i, M.shots, M.shotAt, M.statAt, M.pAt, M.why = {}, 0, nil, nil, nil, nil, {}
-            M.n = {on = 0, off = 0, refused = 0, tx = 0}
-            M.last = {}
-        end
-        M.reset()
+        M.P_WAIT = 10000  -- ACT_V1 p refused "hook" (the defaults: no hook installed): offered again after 10 s
         local function act(op, slot, id)
             local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- %s %d %d", op, slot, id))
             if type(r) ~= "table" then return nil end
             M.last = r
             return r
+        end
+        -- Every way a puppet is dropped tells native (ACT_V1 r: mailbox, apply and fire-drop bit), also a mission start;
+        -- native lets the fire drop lapse by itself 1.5 s after the last m as well (soldier_authority::ExpireMirrored).
+        function M.reset()
+            if M.pp then for _, p in pairs(M.pp) do if p.slot and p.id then act("r", p.slot, p.id) end end end
+            M.pp, M.i, M.shots, M.shotAt, M.statAt, M.pAt, M.why = {}, 0, nil, nil, nil, nil, {}
+            M.n = {on = 0, off = 0, refused = 0, tx = 0}
+            M.last = {}
+        end
+        M.reset()
+        function M.drop(h, p, why)
+            if p and p.slot and p.id then act("r", p.slot, p.id) end
+            M.pp[h], M.n.off = nil, M.n.off + 1
+            L("event=mirror;ent=%.0f;on=0;why=%s;d_m=-1.0;R=0;ok=1", h, why)
         end
         function M.rOf(en)
             local c = W.cp and en.cp and W.cp[en.cp]
@@ -51,10 +60,10 @@ do
             local ok1 = pcall(W.api.send, en.id, {id = "SetPuppet", enabled = on})
             local ok2 = pcall(W.api.send, en.id, {id = "SetRestrictNotice", enabled = on})
             if on then
-                M.pp[h], M.n.on = {at = W.now(), fresh = W.now()}, M.n.on + 1
+                M.pp[h], M.n.on = {at = W.now(), fresh = W.now(), slot = S.slotOf(h), id = en.id}, M.n.on + 1
             else
                 M.pp[h], M.n.off = nil, M.n.off + 1
-                local slot = S.slotOf(h)
+                local slot = S.slotOf(h) or p.slot
                 if slot then act("r", slot, en.id) end
             end
             L("event=mirror;ent=%.0f;on=%d;why=%s;d_m=%.1f;R=%d;ok=%d", h, on and 1 or 0, why, d and d / 1000 or -1, R or 0,
@@ -63,7 +72,7 @@ do
         function M.releaseAll(why)
             for h in pairs(M.pp) do
                 local en = W.ent[h]
-                if en and type(en.id) == "number" then M.set(h, en, false, why) else M.pp[h] = nil end
+                if en and type(en.id) == "number" then M.set(h, en, false, why) else M.drop(h, M.pp[h], why) end
             end
         end
         -- world_snap.lua's drive mode: a mirror puppet the stream drives (within 60 m) takes DRIVE_V1 mode 2.
@@ -85,16 +94,31 @@ do
             if type(px) ~= "number" or type(pz) ~= "number" or type(list) ~= "table" or #list == 0 then return end
             px, pz = px * 1000, pz * 1000
             local quiet = not (M.shotAt and now - M.shotAt < M.SHOT_MS)
-            -- Every puppet is checked every update for the guest's approach (the round robin below visits a guard only
-            -- every ~0.8 s with ~280 roster entries; a puppet within R must go back to his own brain within 500 ms).
-            for h in pairs(M.pp) do
+            -- Every puppet is checked every update (the round robin below visits a guard only every ~0.8 s with ~280
+            -- roster entries): the guest within R, a guest-local phase rise in his CP, and the guest's own shot release at
+            -- once. One ACT_V1 m per update goes to the puppet asked longest ago (his lease and the shot count).
+            local due, dueAt
+            for h, p in pairs(M.pp) do
                 local en = W.ent[h]
-                local x, _, z = nil, nil, nil
-                if en and type(en.id) == "number" then x, _, z = pos(en.id) end
-                local d = x and flat(x, z, px, pz)
-                local R = en and M.rOf(en) or M.R[0]
-                if en and type(en.id) == "number" and (not d or d < R * 1000) then M.set(h, en, false, "near", d, R)
-                elseif not en or type(en.id) ~= "number" then M.pp[h] = nil end
+                if not en or type(en.id) ~= "number" then M.drop(h, p, "gone")
+                else
+                    local x, _, z = pos(en.id)
+                    local d = x and flat(x, z, px, pz)
+                    local R, c = M.rOf(en)
+                    if not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
+                    elseif c and c.ownAt and c.ownAt >= p.at then M.set(h, en, false, "phase", d, R)
+                    elseif not dueAt or (p.mAt or 0) < dueAt then due, dueAt = h, p.mAt or 0 end
+                end
+            end
+            local dp = due and M.pp[due]
+            if dp then
+                dp.mAt = now
+                local r = act("m", dp.slot or S.slotOf(due) or 0, W.ent[due].id)
+                M.shotCheck(r, now)
+                if M.pp[due] and type(r) == "table" then
+                    if r.refused then M.set(due, W.ent[due], false, r.refused)
+                    elseif r.f == 1 then dp.fresh = now end
+                end
             end
             for _ = 1, math.min(M.SCAN, #list) do
                 M.i = M.i % #list + 1
@@ -172,12 +196,13 @@ do
         P.tick = function(now)
             tick(now)
             -- The local player for the native census distances (act_census / soldier_act; refused without the hook).
-            if W.followOn == true and W.paired and (not M.pAt or now - M.pAt >= 250) then
-                M.pAt = now
+            if W.followOn == true and W.paired and (not M.pAt or now >= M.pAt) then
+                M.pAt = now + 250
                 local x, y, z = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
                 if type(x) == "number" and type(y) == "number" and type(z) == "number" then
-                    W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- p %d %d %d", math.floor(x * 1000 + 0.5),
+                    local r = W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- p %d %d %d", math.floor(x * 1000 + 0.5),
                         math.floor(y * 1000 + 0.5), math.floor(z * 1000 + 0.5)))
+                    if type(r) == "table" and r.refused == "hook" then M.pAt = now + M.P_WAIT end
                 end
             end
             local on = W.actOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and
