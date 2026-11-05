@@ -157,6 +157,11 @@ inline constexpr std::uint8_t act_caps = 0x5C;
 // its own newest-value slot, level 3: sender tick, an LRRP truck's id, xyz mm, yaw mrad, speed mm/s, NPC riders, flags (1
 // moving). Sent only with lrrp_follow (native-only lab key); a partner without 0x5D skips it by its length (unknown_op).
 inline constexpr std::uint8_t lrrp_fast = 0x5D;
+// Enemy round 10 track B (docs/world-sync-design.md 7.28, protocol section 45): LRRP_STEP (94), host to guest, world queue,
+// reliable, level 3: a crew member's ent hash, its LRRP travel plan hash, its travel step (255 no plan), its truck's id.
+// Sent only with lrrp_follow, on a change and every 5 s; a partner without 0x5E skips it by its length (unknown_op) and its
+// crews keep their own clock.
+inline constexpr std::uint8_t lrrp_step = 0x5E;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
