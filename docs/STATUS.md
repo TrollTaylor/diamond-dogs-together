@@ -1,4 +1,4 @@
-## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the walkers' place error fell from 4.75 to 1.3 m (p50), but the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
 sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, scenario `enemy-mirror6-calm.txt`: `226fc789`
@@ -8,8 +8,13 @@ first frames of both copies show binoculars, no modal). Two more jobs stopped be
 CTest (`worker_queue_tests` timed out on the verify lock; `partner_defer_pose_held_generation_tests` check 185: both timing
 tests, not this change); no game ran in them. Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
 
-- **What players get**: nothing new at the defaults. `act_plan` and `soldier_act` stay off unless named. Named, the far
-  mirror's walkers now walk the host's path about 1 s behind the host's copy instead of their own old leg.
+- **What players get**: nothing new at the defaults. `act_plan` and `soldier_act` stay off unless named. Named, the one
+  calm far walker that was mirrored (guard 18) walked the host copy's path, p50 1.2-1.3 m, instead of his own old leg
+  (9-14 m); at the shipped hold code (8447ee9) he ran slightly ahead of the host copy, at the round 8 build (b311df3) about
+  1 s behind. The other 3 calm walkers (15, 17, 246) were walking when the mirror started and were never taken
+  (`near_wait`): their guest copies stayed p50 17-45 m off (`226fc789` 44.0 / 16.8 / 45.2 m, `c0c3d088` 44.9 / 16.8 /
+  46.2 m), where `fcfb3acc`'s puppets 15 and 17 (no `act_plan`) were 4.0-4.5 m off. In caution, runners trailed 5-9 m, two
+  stood and jumped 16 m, and five released walkers froze 34-48 s (the release freeze below).
 - **Session 1 `226fc789`** (the round 8 build, `act_plan` named; calm lasted the whole watch, 174 s, no place correction):
   - [O] the plans land: 104 checked 300 ms after the plan, 100 with the path end within 1 m of R+0x80 (96.2 %), 4 with no
     path yet; 0 refused (`plan_none`), 2 brain slots cancelled first, 11 released; 0 plan faults.
@@ -39,29 +44,53 @@ tests, not this change); no game ran in them. Archives under `%USERPROFILE%\mgs-
   - [O] caution (not the gate): walkers at 1.7 m/s p50 1.2-2.4 m; runners at 3-4 m/s 4.5-8.7 m (lag 1.4-2.0 s); long
     caution walks (100-140 m) got a partial path at the 300 ms check (end 31-94 m short; 85 of 145 plans ok, 58.6 %) and a
     later plan reached R+0x80 (16: 13, then 17, then 16 points). A partial path is not held, so it is planned again.
+    (Land review: 46 far plans; the walks were 64-140 m and the ends 1.2-94.2 m short, 5 of 46 under 3.3 m.)
+  - [O] caution, runners 246 and 17: after their take they stood (v 0.2-0.9 m/s) while re-planned every 1 s on partial
+    paths (not held); the gap grew from 11 to 19.5 m and each then jumped 16 m (the 2 held warps below).
+  - [O] **the release freeze** (an `act_plan` defect from the round 8 code, open): `PlanStep`'s release branch cancels our
+    slot and writes R+0x19c = 0xffff but leaves the puppet's walk request in R. At the phase change five released walkers
+    (18, 19, 20, 219, 231) stood in ka 1 / dm 1 with an empty slot, fh 0 and v 0 for 34-48 s while their host copies
+    walked 33-173 m; walkers whose slot held a brain hash (13, 16) walked on. Guard 18 also froze at his release in
+    `226fc789` (hidden by a retake 16 s later); in `fcfb3acc` (no `act_plan`) released walkers resumed. Not fixed here (a
+    fix needs a run); `act_plan` stays off unless named.
   - [O] warps: calm 1 take (18, 52.1 m: a standing guard's take warp), 0 held; whole run 2 held (246 16.1 m, 17 16.5 m,
     in caution). Frame p95 off 22.34 / puppets 21.67 ms (PASS; without captures 21.54 / 20.86). 0 latches, faults, game
-    overs. `enemy_div_report`: the place error row FAILS (5 samples, p50 7.5 / p90 13.25 m: the guest's own guards' 3
-    corrections, the seed's swapped routes) [I not the mirror].
+    overs. `enemy_div_report`: the place error row FAILS (5 samples, p50 7.5 / p90 13.25 m). Only the first of the 3
+    corrections is the seed's (246, 39.5 m); the other two (145.2 m and 13.9 m) and all 5 samples are guard 18 after his
+    release at the phase change, frozen 48 s at his take spot while the host copy walked 173 m; the 145 m place warp then
+    startled him (ka 3) [O: the release freeze, so the mirror's].
 - **Session 3 `c0c3d088`** (`act_plan` with the hold, and `quiet_place=1` named for a longer calm; no flip was possible
   after it, so it is a named data run):
   - [O] calm lasted the whole watch: the one queued place correction (the seed's guard 246) was not applied (0/1, no
     `world_place` line), so no startle; not a `quiet_place` result.
   - [O] guard 18 (121 moving calm samples): place error p50 1.38 / p90 1.98 m (interpolated 1.22 / 2.02 m): the p90 row
-    passes, the p50 row fails; speed ratio 0.95 (mean); 13 plans in the watch (98 in session 1's), 63 held re-applies,
-    2 catch-ups; warps 1 take (46.5 m), 0 held. The error grows within a leg (0.4 -> 1.7 m) and jumps at a leg change
-    (1.5 -> 2.2 m until the new leg arrives).
+    passes, the p50 row fails; speed ratio 0.95 (mean); 9 plans for guard 18 (98 in session 1; 13 vs 109 for all guards;
+    he was a puppet about 96 s here, about 145 s there), 63 held re-applies, 2 catch-ups; warps 1 take (46.5 m), 0 held. The error grows within a leg (0.4 -> 1.7 m) and jumps at a leg change
+    (1.5 -> 2.2 m until the new leg arrives). He led the host copy: along-track p50 +1.18 m, nearer the host copy's
+    destination in 89 of 119 samples, the error smallest at about -1 s (0 ms 1.22 m, 1000 ms 2.16 m): with the hold the
+    1 s trail of session 1 is gone and he runs slightly ahead.
   - [O] plans: 11 of 13 with the path end within 1 m (84.6 %, FAIL): the other 2 had no path yet at the 300 ms check.
   - [O] frame p95 off 22.68 / puppets 23.43 ms (+0.75, FAIL; without captures 21.72 / 21.44 ms). 0 latches, faults,
-    game overs. The `w18` frames: the host's views are blocked by foliage, no guard visible on both: no matched pair.
+    game overs. The `w18` frames: no matched pair. In rounds 0-2 the host's view is open (hedgehogs, fence) and the
+    guest's is blocked by a bush in round 0; round `w18-0` was taken about 9 s before guard 18 was taken, so it could not
+    be a mirrored pair; no guard identifiable on both.
   - [O] as in session 1, 2-3 s after the scripted caution the guest requested ALERT with no puppet live [U who].
 - **Failing gate rows** (calm, per guard): place error (`226fc789` 18: 1.27 / 2.91 m; `77785f31` unmeasured; `c0c3d088` 18: 1.38 / 1.98 m, p50 fails);
   matched frame pair (none clear); frame p95 (`226fc789` +0.94 ms, `c0c3d088` +0.75 ms); plans within 1 m >= 90 % (`77785f31` whole
   run 58.6 %, calm 4 of 5; `c0c3d088` 11 of 13, 84.6 %). Passing: warps (take <= 2, held <= 1 in calm in every session), speed ratio (18:
-  0.94), no ChangePhase started by a puppet in calm, 0 faults / latches / game overs.
-- **Next**: the remaining error is the 1 s trail at the leg start (request delivery, the plan's query) plus a slow drift;
-  try leading the destination by the owner copy's measured lag, or a catch-up toward the owner copy extrapolated by the
-  order part's age; hold a partial path until its end stops moving; take walkers within 10 m only where the frames can
+  0.94), no ChangePhase started by a puppet in calm, 0 faults / latches / game overs. Also failing: 3 of 4 calm walkers
+  never taken (17-45 m off); in caution (the `soldier_act` band) the runners' stands and 16 m jumps and the release freeze.
+  The frame p95 row: with a true median `226fc789` +0.91, `c0c3d088` +0.51 ms; 6 of the 16 off seconds are 50-371 ms
+  capture hitches, and in `226fc789` the host, which runs no puppets, rose by the same +0.98 ms: not evidence of a mirror
+  cost.
+- **Land review** (the skeptic's refuted rows, corrected above): "about 1 s behind" was the round 8 build only (with the
+  hold he leads); "they walked 9-14 m off before" is guard 18 alone; the caution line left out the runners' stands, 16 m
+  jumps and the release freeze; the `77785f31` place-error FAIL is guard 18's release freeze, not the seed; the `c0c3d088`
+  frame description. Nit, open: `FormatFrameLine`'s worst case is 786 bytes, above `FrameCensus`'s 768-byte buffer (only
+  with 10-digit counters).
+- **Next**: do not lead the destination (with the hold guard 18 already leads by about 1 m); fix the release freeze (hand
+  the walk request back at release; test first); take walkers that are walking at take time (`near_wait` leaves 3 of 4
+  calm walkers unmirrored); hold a partial path until its end stops moving (the caution runners' stands); take walkers within 10 m only where the frames can
   match (spot A/B views of guard 18 are blocked by trees and fences at 160 m: pick a spot with a clear line to a calm
   walker). Then one named run, the flip per D-FM1 (a) and the no-key run.
 
