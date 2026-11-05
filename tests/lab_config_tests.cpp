@@ -2340,7 +2340,10 @@ int main() {
                   "enemy gaps 3: drive_vert parses, off unless named");
             // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place and range_flat (native only, no CFG bit)
             // parse in lab and play; off unless named until their runs (a named 0 records _given).
+            // FLIP: follows the gun profile since its hidden runs (docs/world-sync-design.md 7.22); a named 0 is the off switch.
             Check(!def.quiet_place && !gunDefault.quiet_place_given && !def.range_flat && !gunDefault.range_flat_given &&
+                  gunDefault.quiet_place &&
+                  !gunDefault.range_flat &&
                   Lab("enabled=1\nrole=guest\nquiet_place=1\n").quiet_place &&
                   !Lab("enabled=1\nrole=guest\npartner_native_profile=gun\nquiet_place=0\n").quiet_place &&
                   Lab("enabled=1\nrole=guest\nquiet_place=0\n").quiet_place_given &&
