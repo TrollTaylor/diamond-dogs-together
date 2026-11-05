@@ -86,8 +86,18 @@ const char* PlaceRefusal(const PlaceScope& s) noexcept;
 struct HoldScope {
     bool share{}, cargo{}, pins{}, field{}, body{}, mounted{};
     bool pillion{};  // M3: world_horse_pillion admits hold0 too (the passenger's body 0 at the rear seat)
+    // M4b: hold1 (body1) on the driver's copy: world_horse_pillion admits it only with world_horse_shot (shot): body 1
+    // aiming at the rear seat while the overlay leaves it to the native drive.
+    bool body1{}, shot{};
 };
 const char* HoldRefusal(const HoldScope& s) noexcept;
+// M2g (run f7e09c55: at the partner's mount the victim's copy unrealized body 1 for a frame; the census refused, hold0
+// refused "body", the fall check 0x14128E010 ran on body 0 and it squatted on the horse): a hold0 of body 0 alone may use
+// body 1's class from the last full census (T, A0 and C0 vtables and slots) while body 0's own T class equals it.
+struct BodyClass {
+    std::uintptr_t t_vt{}, t68{}, t70{}, t58{}, c0_vt{}, c090{}, a0_vt{}, a080{};
+};
+bool CachedBody1Usable(const BodyClass& body0, const BodyClass& cached) noexcept;
 
 // Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
 // behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the
@@ -122,6 +132,21 @@ struct SeatHold {
     bool pose{true};
 };
 bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexcept;
+// M4b (world_horse_shot; runs 28015a91 / 48d31500: the seat gun's hold ran under the overlay seat and no frame showed the
+// gun): while the remote aims (its live pose's Aiming flag) the DM overlay does not seat body 1, so body 1's native drive
+// runs the remote's squat-aim at the rear seat (the partner driver's pose), kAimLingerMs past the last aiming tick (the
+// gaps between shots keep it). on: the shot key with a live seat this tick; a false on clears it.
+inline constexpr std::uint32_t kAimLingerMs = 1500;
+struct SeatAim {
+    std::uint64_t last_ms{};
+};
+bool AimSeat(SeatAim& s, bool on, bool aiming, std::uint64_t now_ms) noexcept;
+// The partner driver notes the rear seat (metres, yaw radians) each tick it leaves body 1 to the native aim; the seat1
+// receipt hands it to Lua for kSeatMs (mm / mrad; |x|, |z| <= 1e6 m), whose hold1 pins body 1 there (C0 + watch + pin).
+void NoteSeatAim(bool aim, const float (&seat)[3], float yaw, std::uint64_t now_ms) noexcept;
+bool SeatAimTarget(std::uint64_t now_ms, std::int32_t (&mm)[3], std::int32_t& yaw_mrad) noexcept;
+// seat1's reply: "return {ready=true,seat=1,aim=0}" or with the aim seat (aim=1,sx,sy,sz mm,syaw mrad); false: no room.
+bool SeatReply(std::uint64_t now_ms, char* out, std::size_t size) noexcept;
 // Horse plan M4 (lab key world_horse_shot): the passenger's horse box for the seated-shot hook (pbox, mm / mrad), live
 // kBoxMs after the last pbox on the partner driver's clock; the partner driver publishes it as partner_seat_shot's horse
 // class while no vehicle passenger seat is live.

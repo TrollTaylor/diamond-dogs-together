@@ -213,7 +213,27 @@ do
    if #a ~= 2 or W.mode ~= 1 or not Q.setRelie(tonumber(a[2])) then return false, "cargo_relie;refused=args" end
    return true, "cargo_relie;v=" .. a[2]
   end
-  for k in pairs({wormhole = true, mb_weapons = true, rules = true, pillion_status = true, pillion_pose = true, cargo_relie = true}) do
+  -- Horse plan M2g (play 624148f9: goto_horse left the carrier at the horse's head, where E does not mount): horse_flank
+  -- puts this player 1.6 m beside the local D-Horse's census root (MGS_COOP_HORSE_DRIVE_V1 read) on the side they stand,
+  -- 0.4 m over their own height, facing the root (lab and play).
+  local function flank(a, id)
+   local warp, pose = get(A, "warp"), get(A, "pose")
+   if #a ~= 1 or type(W) ~= "table" or type(W.receipt) ~= "function" or type(warp) ~= "function" or type(pose) ~= "function" then
+    return false, "horse_flank;unavailable"
+   end
+   local ok, h = pcall(W.receipt, fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- read %d %d", tonumber(W.mission) or 0, tonumber(W.epoch) or 0))
+   local p = pose()
+   if not (ok and type(h) == "table" and h.ready == true and type(h.x) == "number" and type(h.z) == "number" and type(h.yaw) == "number" and
+    type(p) == "table" and type(p[1]) == "number") then return false, "horse_flank;horse_unknown" end
+   local hx, hz, r = h.x / 1000, h.z / 1000, h.yaw / 1000
+   local cr, sr = math.cos(r), math.sin(r)
+   local s = ((p[1] - hx) * cr - (p[3] - hz) * sr) >= 0 and 1 or -1
+   local x, z = hx + s * 1.6 * cr, hz - s * 1.6 * sr
+   local done, msg = warp({x, p[2] + 0.4, z, math.deg(math.atan2(hx - x, hz - z))}, id)
+   return done, fmt("%s;via=flank;side=%d", tostring(msg), s)
+  end
+  for k in pairs({wormhole = true, mb_weapons = true, rules = true, pillion_status = true, pillion_pose = true, cargo_relie = true,
+   horse_flank = true}) do
    P.handles[k] = true
   end
   local base = P.run
@@ -222,6 +242,7 @@ do
    if c == "wormhole" or c == "mb_weapons" or c == "rules" then return R.command(a) end
    if c == "pillion_status" or c == "pillion_pose" then return pillion(a) end
    if c == "cargo_relie" then return relie(a) end
+   if c == "horse_flank" then return flank(a, id) end
    return base(a, id)
   end
   local function tick()

@@ -116,6 +116,9 @@ constexpr OpSpec kOps[] = {
     {op::lrrp_fast, "LRRP_FAST", 1, Dir::host_to_guest, Wire::datagram, 3, false, false, 9, 0, 0, 26,
      {U32(), U16(25600, 26111), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-31416, 31416), U16(), U8(0, 8), U8(0, 15)}},
+    // Enemy round 10 track B (protocol section 45): a crew member's ent hash, travel plan hash, travel step, its truck's id.
+    {op::lrrp_step, "LRRP_STEP", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 4, 0, 0, 11,
+     {U32(), U32(), U8(), U16(25600, 26111)}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
     {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
      {U16(1), U32(), U8(0, 1), U8(0, 2), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),

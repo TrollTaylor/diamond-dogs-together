@@ -3084,10 +3084,13 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
 // Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
-struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped; };
+struct SlotState {
+    bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped;
+    mgscoop::soldier_warp::OwnerRestY oy; bool vert_waited;  // enemy round 10 track A: the owner copy's rest in y
+};
 SlotState slots[mgscoop::world::kSnapSlots]{};
 std::uint64_t stats_at = 0;
-unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0, vert_waits = 0;
 }
 const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -3117,9 +3120,10 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
     if (!drive::stats_at || now - drive::stats_at >= 10000) {
         drive::stats_at = now;
-        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u\r\n",
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u; "
+                  "vert_wait=%u\r\n",
                   drive::calls, drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies,
-                  drive::vert, drive::vert_stops);
+                  drive::vert, drive::vert_stops, drive::vert_waits);
     }
     if (!have) { ++drive::stale; return refuse("stale"); }
     sw::DriveSample a{}, b{};
@@ -3139,6 +3143,22 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     // Enemy gaps 3 (drive_vert, design 7.18): the soft follow also moves a copy at rest in x/z that stood more than 1.5 m
     // above or below the target for 1 s onto the target's spot (s=3; drive_sink at the defaults).
     bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    // Enemy round 10 track A (design 7.27): only while the owner copy is at rest in y (the rendered target within 0.2 m
+    // for 1 s; round 7's snaps chased an owner on stairs or a ladder); a due snap waits for it, logged once per due spell.
+    const bool owner_rest = sw::OwnerYAtRest(target[1], now, st.oy);
+    if (!st.vert_ms) st.vert_waited = false;
+    if (vert && !owner_rest) {
+        vert = false;
+        if (!st.vert_waited) {
+            st.vert_waited = true;
+            ++drive::vert_waits;
+            if (drive::vert_waits <= 32)
+                LogFormat("world_drive=vert_wait; go=%u; slot=%u; gap_cm=%d; rest_ms=%llu; span_cm=%d\r\n", request.go_id,
+                          unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f),
+                          static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0),
+                          static_cast<int>((st.oy.hi - st.oy.lo) * 100.0f));
+        }
+    }
     // Enemy round 7 track A (design 7.20): at most 2 snaps of a copy in 10 s (no thrash); the third due is logged once.
     if (vert && !sw::DriveVertAllow(now, st.vert_win, st.vert_n)) {
         vert = false;
@@ -3198,10 +3218,12 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
         st.vert_ms = 0;
         if (!st.vert_win || now - st.vert_win >= sw::kDriveVertWindowMs) st.vert_stopped = false;
         sw::DriveVertCount(now, st.vert_win, st.vert_n);
+        st.vert_waited = false;
         if (drive::vert <= 64)
-            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u\r\n", request.go_id, unsigned(slot),
-                      static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f), result.out,
-                      unsigned(result.handled), drive::vert);
+            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u; rest_ms=%llu\r\n", request.go_id,
+                      unsigned(slot), static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f),
+                      result.out, unsigned(result.handled), drive::vert,
+                      static_cast<unsigned long long>(st.oy.valid && now >= st.oy.since_ms ? now - st.oy.since_ms : 0));
     } else if (step.hard) ++drive::hard;
     else ++drive::steps;
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
@@ -5404,7 +5426,10 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=seat1; n=%u; back_mm=%ld; up_mm=%ld\r\n",horse_drive_log.seats,long(q.back),long(q.up));
             horse_drive_log.last=nullptr;
         }
-        return finish("return {ready=true,seat=1}");
+        // M4b (world_horse_shot): while the remote aims the partner driver leaves body 1 to its native aim at the rear seat and
+        // notes that seat; the reply hands it to Lua (aim=1, sx/sy/sz mm, syaw mrad), whose hold1 pins body 1 there.
+        if(!hd::SeatReply(mgscoop::partner_net::NowMs(),reply,sizeof(reply))) return finish("return {ready=true,seat=1,aim=0}");
+        return finish(reply);
     }
     // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
     // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
@@ -5413,18 +5438,35 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     if(q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1) {
         const unsigned kb=q.verb==hd::Verb::hold1?1u:0u;
         hd::HoldScope hs{};
-        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=labc.world_horse_pillion;hs.pins=sc.pins;
+        // M4b: body 1 under the pillion key only with world_horse_shot (the driver's copy: body 1 aiming at the rear seat).
+        hs.body1=kb==1;hs.shot=labc.world_horse_shot;
         hs.field=sc.field;
         pp::Census bodies{};
-        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t &&
-            bodies.k[kb].t68 && bodies.k[kb].t70;
+        const bool full=!pp::ResolveCensus(partner_addresses,player,bodies);
+        hs.body=full && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t && bodies.k[kb].t68 && bodies.k[kb].t70;
+        const auto classOf=[](const pp::Block& k) noexcept {
+            hd::BodyClass c{};c.t_vt=k.t_vt;c.t68=k.t68;c.t70=k.t70;c.t58=k.t58;c.c0_vt=k.c0_vt;c.c090=k.c090;c.a0_vt=k.a0_vt;c.a080=k.a080;
+            return c;
+        };
+        // M2g: body 1's class from the last full census; a hold0 of body 0 alone uses it while body 1 does not resolve (the
+        // partner's mount unrealizes it for a frame on this copy: run f7e09c55 hold0_refused body, then the fall / squat).
+        // Only with world_horse_cargo (off unless named): the pillion's hold0 at the defaults is unchanged.
+        static hd::BodyClass lastBody1{};
+        hd::BodyClass c1=classOf(bodies.k[1]);
+        bool alone=false;
+        if(hs.body) lastBody1=c1;
+        else if(kb==0 && labc.world_horse_cargo && !full && !bodies.k[0].refusal && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 && bodies.k[0].t70 &&
+                hd::CachedBody1Usable(classOf(bodies.k[0]),lastBody1)) {
+            hs.body=alone=true;c1=lastBody1;
+        }
         hs.mounted=kb==0 && a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];const auto& bh=bodies.k[kb];
+        const auto& b0=bodies.k[0];const auto& bh=bodies.k[kb];
         // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
         const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
-        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
-        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
+        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=c1.c0_vt || b0.c090!=c1.c090)) return refuse("reset");
+        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=c1.a0_vt || b0.a080!=c1.a080)) return refuse("reset");
         // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
         // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
         namespace hbw=mgscoop::horse_body_watch;
@@ -5440,6 +5482,8 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=held; n=%u; body=%u\r\n",horse_drive_log.holds,kb);
             horse_drive_log.last=nullptr;
         }
+        static unsigned alones=0;
+        if(alone && (++alones<=20 || alones%100==0)) LogFormat("horse_drive=held_alone; n=%u; body=0; census=body1\r\n",alones);
         // Every 2 s: the writers of body 0's centre / foot y since the last report (rva, count, thread, order after hold0,
         // the first image return rvas on the writer's stack) and how often the pin put the body back.
         static std::uint64_t watchAt=0;

@@ -99,6 +99,288 @@ beyond 15 m that opens with a warp while the outpost is calm (5 take warps a run
 release (the churn); (5) clear `g_rel[]` / `g_planned[]` on a mission change. The frame
   p95 row passed on 20 s off / 20 s on with no capture (+ 0.20 ms with 12 puppets); keep that A / B.
 
+## November 5, 2026: enemy round 10 track B - nothing new for players at the defaults; with `lrrp_follow` named, the crews of the 2 patrol trucks (of 6) the host saw manned run on the host's travel clock: they get in and out within about 1 s of the host's and stand within 2 m of them 20-40 s later; the other 4 trucks' crews are on no clock (the host sends no step for them and the guest unseats them), and one gate row fails (a truck near the guest at the pairing waits as its own copy for ~54 s), so `lrrp_follow` stays off unless named and the flip is a user decision (`wp/enemy-lrrp`, not pushed)
+
+Design 7.28, protocol section 45 (new op LRRP_STEP 0x5E). Markers: [O] seen in a log line or a frame, [I] inferred, [U]
+unknown. Hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the parts join,
+`enemy-lrrp-crew10.txt` (round 9's crew part without its 40 s lever window) and `enemy-lrrp-alert3.txt`: two jobs refused
+before the game by the worker's own audited CTest (`ddt_core_tests_1` CloseDuringSetup, a launcher timing test; track A's
+job failed the same way once), counted as one session; `ffd0248d` (`lrrp_follow=1`, code head a8c615a4); `a30a0b07` (no key
+named, the same code head; later commits are docs and one comment line). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults (`lrrp_follow` off unless named). Named (`ffd0248d`), the crews of
+  the 2 trucks the host saw manned (25605, 25606: 4 guards) follow the host's: they get out and back in at the host's
+  stops within about 1 s of the host's crew, and those trucks stay within 0.6 m (p90) of the host's. The other 4 LRRP
+  trucks (25602/3/4/7) had no riders on the host's copy and 2 each on the guest's: the host sends no LRRP_STEP for a crew
+  it has not seen seated, and the guest unseated those 8 guards at the pairing (24 `UnsetRelativeVehicle` lines, round
+  9's fallback) [O]; none of those trucks moved and the host's log has no line for any of the 8, so their place error and
+  a boarding after the unseat (round 8's "truck drives empty") were not measured [U]. (Corrected at the landing review.)
+- **RE** (read-only Ghidra) [O]: the soldier's travel cursor is settable with the stock command: `StartTravel` reads a
+  `step` number besides `travelPlan` and `keepInAlert` and sets T.vt[0x88](plan, step) (T = the soldier's travel / route
+  component, *(S+0x48)), then applies the step's CP and route group (0x14136de40); `RestoreFromSVars` sets the same cursor
+  from `svars.solTravelName` / `solTravelStepIndex`, which `StoreToSVars` writes from T.vt[0x78] / T.vt[0x80]. Design 7.28.
+- **Built** (red first): both copies read the crews' plan and step from svars after `StoreToSVars` once a second; the
+  host sends LRRP_STEP on a change (5 s refresh); the guest sets a differing step with `StartTravel{travelPlan, step,
+  keepInAlert}` while its truck follows the host's (or waits crewless), at most 3 tries per host step, and no longer
+  unseats a crew whose steps arrive; `step=follow` lines 1 Hz. 5e2b0f3a / 20ac2166, 3dce7916 / f71305ca, 4cfc2002 /
+  2f365581, d21096be, a8c615a4. Full build and CTest (see below), every contract `--check` as round 9 (known base failures
+  only); no new native read, patch or hook (stock Lua calls only).
+- **Gate rows** (`ffd0248d`, Afghanistan) [O]:
+  - PASS moving truck place error p50 0.15 / p90 0.55 / max 4.93 m (314 samples; 25605 p90 0.66, 25606 p90 0.48 m).
+  - PASS the clock: 24 `StartTravel` sent, 23 read back on their target step at the next 1 s read (e.g. 25606's crew
+    0 -> 1 -> 2 -> 3; the 24th, a set back 6 -> 5, was not seen);
+    the guest on the host's step after a host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes). Corrected at the
+    landing review: 3 of the 23 never held (the driver 2305481811's sets k=17 / k=18 6 -> 0 read 0, then his copy's own AI
+    put him back on 6 within 2.2 / 1.4 s; k=19 read 0, then 7 by the guest's AI while the host stayed on 0), and the lag
+    counts a guest record up to 0.5 s before the host change (two -0.05 s lags) although the mod then set those guards
+    back off the host's step for 5.2-6.6 s (k=10, k=12/13): on a stays-on-the-step basis the p90 is about 6.3 s.
+  - PASS get-outs and boardings: host 25605 riders 2 -> 1 -> 0 at 369222147 / 369228596, guest 369221276 / 369228631;
+    host 25606 2 -> 0 -> 1 -> 2 at 369225044 / 369282187 / 369287735, guest 369225275 / 369282283 / 369287596 (0.03-1.1 s
+    apart; recomputed at the landing review 0.035-0.87 s, one boarding event, 25606's); 0 trucks moving with the crews
+    differing, 0 `crew_wait` (no truck waiting or driving empty on one screen) - for the 2 trucks the host saw manned.
+  - PASS crews 20-40 s after the host's get-out (per guard, 17-18 samples each): p90 0.40, 1.75, 0.14, 0.00 m (round 9:
+    9.3-42.3 m). Caveats (landing review): 25606's two guards stood still on both copies (a constant 0.14 / 0.00 m), and
+    round 9's baseline had a 40 s lever-off window that crew10 removes, so the gain is not the step sync's alone.
+  - FAIL crews within 8 m while seated: 25605's two riders p90 498-499 m in the first 54 s after the pairing (46 of 46
+    samples over 8 m): the guest's copy of 25605 was 363 m from the guest's player and 410 m from the host's truck, so the
+    400 m no-jump rule kept it the guest's own (27 `defer` lines) until it jumped at near_m 400.0 (369062049). After that
+    window every rider p90 0.42-1.00 m, max 5.3 m, 0 samples over 8 m (both trucks); 25606's riders p90 0.52 m overall,
+    with one sample each at 385-386 m at its own pairing jump (369008326).
+  - PASS (by construction, as round 9) no jump within 400 m of the guest's player; the one at near_m 400.0 sits on the
+    boundary. 0 `log_cap` on either copy (was 224 / 340 guest drops), so every jump is logged.
+  - PASS 0 latches / faults / game overs / drive_sank. One host `place_sink` (guard 2929558510, an outpost guard in the
+    ALERT part, not a crew member; `enemy_div_report` counts it).
+  - Not a gate row: 7 of the 24 `StartTravel` set a guard back: 4 one step back while the guest's copy led the host's
+    by less than the step's latency (e.g. k=10 5 -> 4 57 ms after the host had reached 5; WanSim ~180 ms plus the 1 s
+    reads on both copies), and the 5 s per-guard spacing then kept it off the host's step 5.2-6.6 s; 3 were the driver's
+    6 -> 0 while the host's driver's step stayed 0 (then held `why=tries`); the get-outs still lined up.
+  - Truck error (landing review): 108 moving follow lines are left out for host line gaps over 700 ms (up to 1.57 s);
+    with 1.6 s gaps n=423, p90 1.26 m, max 6.13 m (inside the 8 m row).
+  - Frames: no matched pair of a crew member (the host's binoculars on rock in k-5..k-7); the guest's k-6 shows a
+    soldier on foot beside a truck at the stop, k-7 a Soviet soldier at 41 m.
+  - Cost / log: `step=cost` avg <= 0.07 (host) / 0.15 (guest) ms per tick with `StoreToSVars` once a second (max 2 ms,
+    os.clock's step); the guest's world log 7.1 lines/s (lrrp 5.4/s over the whole log, 7.2/s over its active span; was
+    41-47/s) against the 20/s budget; partner_tick median 45 / 44 Hz.
+  - Not evaluated: crew10's "hz p95 of the on windows within 2 ms of the off window" row (crew10 has no off window); only
+    across runs: frame p95 25.0 / 25.6 ms named against 30.3 / 29.4 ms with no key.
+- **Known defects, key-only, not fixed** (`lrrp_follow` stays off unless named) [I]: the guest skips the unseat
+  whenever a step for the truck arrived in the last 15 s, and the host refreshes every 5 s, so a crew whose `StartTravel`
+  is held (`why=plan|track|wait|tries`) could stay seated on the guest's copy while the host's crew is out;
+  `StartTravel` has no gate on the guard's phase or notice (a guest copy in caution or alert could be sent back to travel
+  with `keepInAlert` its own; the ALERT part had no set on a noticed guard); `StoreToSVars` once a second on both copies
+  rewrites the soldiers' svars between checkpoints (no checkpoint restore or continue was run with it on).
+- **No key named** `a30a0b07` (code head a8c615a4, build 0.15.2+fdcd239; all parts passed; first frames of both copies
+  in gameplay, no modal) [O]: no `event=lrrp` line on either copy (off at the defaults; no LRRP_STEP sent), VEHICLE_STATE
+  on (`lrrp=6`), 0 latches / faults / game overs / sank, guest place error p50 0.67 / p90 2.21 m; the report's FAIL rows
+  as round 9's no-key run: corrections 19/47 (28 `vehicle_local`), M3 host p90 7.17 m. partner_tick median 44 / 43 Hz,
+  frame p95 30.3 / 29.4 ms (host / guest) against 25.0 / 25.6 ms in the named run.
+- **Checks**: the worker's audited CTest (340 tests) passed at this source in `ffd0248d`'s job; my full CTest at
+  f71305ca 354/355 (only the composed check, stale after a Lua edit during the compile); the final full build and CTest
+  355/355 at 25005e2a (the code head plus one comment line); every contract `--check` as round 9 (known base failures).
+- **User decision (D-B10)**: turn `lrrp_follow` on with the gun profile in Afghanistan free roam (30010) although the
+  "riders within 8 m while seated" row fails for a truck within 400 m of the guest at the pairing (it stays the guest's own
+  copy, as in 0.15.2, until the guest is 400 m from it; ~54 s here), and although only the trucks the host saw manned get
+  the host's step (4 of 6 trucks here had no host riders; the guest unseated their 8 guards, and a later boarding by the
+  host's crews - round 8's empty truck on the guest's screen, reinforcements that may never reach the guest - was not
+  exercised)? The other rows passed; the known defects above are open. The flip is ready
+  (scratchpad enemy10/B-trucks/tools/flip_red.py + flip_green.py: gun default on, receipt 2 = 30010 only; then a named run
+  is not needed, but one run with no key named).
+- **Next**: send the step (or the empty seats) for crews the host has not seen seated, or stop unseating them; gate the
+  guest's unseat skip on the crew being on the host's step; hold a guest copy one step ahead for up to 20 s instead of
+  setting it back; skip guards whose host step never changes (the driver); a phase gate on `StartTravel`; a pairing jump hidden from the guest's camera, if the no-jump row may allow it; Africa
+  (`enemy-lrrp-africa.txt`, seed `africa-jeep`) not run.
+
+## November 5, 2026: horse M4b, shoot from the back of the horse: the driver sees the passenger's raised gun (`wp/horse`; `world_horse_shot` still off unless named)
+
+**Players get:** nothing new by default: shooting from the back of the horse stays off unless the lab key is named (the
+gate's lab half did not pass). With the key named, hidden two-copy tests now show the passenger on the driver's screen
+with the rifle raised and aimed while they aim (standing on the horse's rump behind the driver; before, they sat with the
+rifle on their back), and in both play rehearsals with a bad connection a shot from the rear seat put a sleeping
+guard down on the SHOOTER's screen only: the driver's (host's) copy failed to apply that hit both times (`apply; state=4;
+src=commit; result=fail; readback=2`, the world sync's Dying-state gap of design 8.30 / 8.31), so in `22926dbf` the
+guard stayed asleep on the driver's screen while dying on the passenger's; only a later kill (state 5) applied on both
+copies (corrected after the review: the round's first text said both copies had it). The driver's E after the
+passenger hops off got them off in every test (lab and play, both orders) except once, when guards had shot the driver
+down on the horse: a rider downed on the horse stays on it (a defect, cause [U]; README known limits); the stuck
+get-off of the last round was the test harness losing that key press. Details: `docs/mounts.md` section 13 ("M4b round"). Markers [O]/[I]/[U].
+
+- **Built** (red first each time: `2367a597` -> `41644ac9`): with `world_horse_shot`, while the remote aims the partner
+  driver leaves body 1 to its native aim at the rear seat (no DM overlay seat; `horse_drive::AimSeat`, 1.5 s linger), the
+  `seat1` reply hands that seat to Lua and the driver's copy pins body 1 there with `hold1` (C0 + write watch + pin; body
+  1 admitted under the pillion key only with the shot key), `free0` at the aim's end; the driver's raw E and the ride's
+  end logged for 8 s after a driver seat ends (`step=driver_e` / `driver_e_off`); `enemy_aim_nearest <up> <eye up> <eye
+  back>` (the rear seat's camera eye); the M4 scenarios as parts from the boot spot (`horse-pillion-shot(-play).txt` (a),
+  `-b.txt` (b), `-c.txt` lab A/B), the driver's E held 400 ms, holds within the runner's 1.5 s limit (`121e9144`), the
+  guard ladder 0.3 / 0.7 / 1.1 m (`5043fb4d`). No new hook, site, slot or wire.
+- **Proven** [O both copies' logs + frames looked at]: the driver's E after a hop-off in lab `11645acc` and play
+  `22926dbf` (`-WanSim bad`), both orders (the ride ended 16-25 ms after the E read 1.7-2.3 s after the hop-off); the
+  driver's screen with body 1 holding the rifle raised behind the driver in both runs and both orders (`partner_pillion=aim;
+  on=1`, `aim_hold; ok=1`, body 1 held at the seat, stats xz 0 / dy 0); play (a): the guest's first shot from the seat
+  put the sleeping guard 6.1 m away Dying on the guest's copy (guest `req; state=4`, host `commit; state=4;
+  actor=guest`; the host's apply of it `result=fail; readback=2`, so the guard slept on on the driver's screen) and in
+  play `2b9552f6` (a) two shots put the guard 4.3 m away Dying then Dead (`commit; state=4` / `state=5; actor=guest`;
+  on the host the state 4 apply failed the same way, the state 5 apply ok);
+  play `22926dbf` (b): the host's shot from the seat killed (a)'s dying guard (`commit; state=5; actor=host`);
+  cross-neck shots left the driver's life and the passenger's copy's horse unchanged (7801 / 6600, 12000 in every
+  window of part (a) and lab (c)), with `seatshot off` and on (lab `375df6ee` (c)); in `2b9552f6` (b) the passenger's
+  (host's) copy's horse read 10163 (5 windows) / 11965 (1) of 12000 in 6 of 34 `seat_pin` windows while awake guards
+  fired, cause [U]; no crash_probe line in the four runs (all four sessions ended with the harness's
+  `forced_job_termination=true`, one process exit 1223).
+- **Defects found by the review:** the rear-seat hit lands on the shooter's copy only (above); the play scenario's
+  waitlog checks only the host's `commit ... actor=guest`, not its apply; a rider downed on the horse stays mounted
+  (`2b9552f6` (b): the guest driver `localMounted=1` after E, `downed_control=refused; reason=controls_timeout_prone`
+  three times, downed generations 4 to 9). The watch pinned nearly every trap, not all (e.g. 100 of 108, 160 of 167).
+- **Not passed / never seen live:** a hit from the seat in lab (four parts: the line 0.7-0.9 m short, or the guest's
+  copy of the warped guard left 36 m away by the sleep's apply); the guard warped for (b) was never hit (only (a)'s
+  dying one); play `2b9552f6` (b): awake guards downed the driver on the horse, so the driver's E after the hop-off
+  did not get them off; the squat (body 1 stands or crouches on the rump while aiming, [U] why); in play (b) awake guards shot both players after the
+  kill and the driver's copy's horse went Unconscious after the dismount (life 4652, [I] the guards); the seat holds at
+  the pillion default; the cause of the harness's 266 ms keyboard gap in `1a7c5d0e` [U]; the seatshot A/B is not
+  discriminating (neither arm hurt anyone).
+- **Next:** the lab half of the gate: a camera-eye read for the aim lever (the ray's start in GunAimPointSolve
+  `0x141096F90`, Ghidra comment) or a standing, level target the enemy follow does not move; quiet guards after a kill
+  in play (b) (the outpost's guards outside the scenario's ignore list shot both players); why the native drive stands
+  body 1 on the rump instead of the squat; then the flip with a run not named; the three seat holds to the pillion
+  default with a run not naming the shot key (the driver's E condition for that is met: lab `11645acc`, play
+  `22926dbf`, both orders).
+- **Runs** (`-WanSim bad`, the gun profile, research build, afgh-ledge, `world_horse_shot` named; slim archives
+  `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with JPEG frames, sheets and slices): attempt 1 lab `11645acc`,
+  play `22926dbf` (passed every expect); attempt 2 lab `375df6ee`, play `2b9552f6`. Not counted (harness refusals
+  before any game): play job `07e51b` (worker qualification ownership receipt mismatch), lab job `980e39` (the audited
+  CTest's `partner_defer_pose_held_generation_tests` check 185 timing flake).
+- **Builds:** full build at `41644ac9` compiled 157/157, CTest 352/355 (the two `worker_session_tests` shards refused a
+  2.6 s hold, fixed in `121e9144`; `partner_defer_pose_held_generation_tests` check 185, passes alone with 378 checks);
+  the queue's audited CTest passed at `121e9144` and `5043fb4d` (jobs `2b5f24`, `0f3205`, `3ce5f9`, `c4711f`); every
+  generator `--check` as base (carry_info, sleep_plugin differ; native_ui, teammate_targeting no evidence).
+
+
+## November 5, 2026: horse M2g, put your downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named
+(the gate was not reached in three attempts). With the key named, in one full hidden two-copy lab run (`39fff762`,
+the host carrying: load, a 199 m ride, the dismount, the take-down at the same spot on both screens and the revive)
+the carrier's screen showed the downed partner lying ACROSS the horse's back behind the rider (it lay along the horse,
+over the saddle, before), and on their own screen they stayed lying on their back through the ride AND after the
+carrier got off: no more falling and crouching (the horse in their view only at the load; their HUD read `Teammate
+4 m` there and `5 m` at the gallop). Not in every run (corrected after the review): in `a53a243a` the carrier's screen
+showed them sitting up on the rump, leaning back with the knees up, at the load and the walk, and on the ground behind
+the trotting horse; on the carrier's copy the partner recon's warp moved body 1 during the hold in both runs. Details: `docs/mounts.md` section 11 ("Hidden runs, M2g
+round"). Markers [O]/[I]/[U].
+
+- **Built** (red first each time): on the carrier's screen the body is held a quarter turn from the horse's yaw, so it
+  lies across the rump behind the rider instead of along the horse over the saddle, and 0.15 m (was 0.4) over the rider
+  (df9c16ce / 965fe3d5); on the victim's copy body 0 is held every tick once the carrier's ride has ended (the 200 ms gap
+  after M1's final placement let the fall check run: cfdfe961 / 4faf6d81; Ghidra comment at the fall check
+  `0x14128E010`); the hold of body 0 keeps going when body 1 is unrealized for a frame at the partner's mount, with body
+  1's class from the last full census, cargo key only (3b2236a7 / e59c6840); the debug command `horse_flank` (b8a377eb /
+  9a0f75cb); the scenarios as parts, single frames, the shot away from the horse, the carrier at the flank before the
+  first E, the victim's camera a little down (da74e9e1, 6f708087, 687af3af, 52ef9dfd). Merged dev adbad887, 872e3519 and
+  e8f0c0f9 (W's capture retry and landing fix).
+- **Proven** [O both copies' logs + frames looked at]: lab `39fff762` order (a) end to end (above): the victim's stance
+  CRAWL in 25 / 25 windows, no stance change, no stance request and no hold refusal from the load to the take-down,
+  only prone_idle in the 6 s after the carrier's dismount (the old code fell / landed and squatted there: `5a92c73f`,
+  `4585cc5a`, and W's queue run `e759bc02` on the dev tree), the R take-down at the same x,z on both copies, the revive,
+  no Unconscious horse and no NEVER line. The carrier's screen shows the body across the rump at the load, walk, trot,
+  gallop, the stop and after the dismount (`39fff762`, `f7e09c55`, and in play at the load `bb7dde83` / `624148f9`,
+  floating high there); not in `a53a243a` (below).
+  `horse_flank` put the carrier at the flank and the first E mounted (`a53a243a`).
+- **Not passed / never seen live:** the guest-carrier order (b) with this code (`39fff762`: the guest's call left the
+  horse where (a) ended, by a rock wall, and the stock pickup never shouldered the host there), the link drop, any play
+  run past the load (`bb7dde83`: the carrier's own rifle put its horse Unconscious; `624148f9`: the carrier at the
+  horse's head; `72e6269a`: E at the horse gave no load and no refusal line, cause [U]), the `held_alone` path (no
+  `body` refusal came after the fix). In `a53a243a` (a): body 1 sat up on the rump on the carrier's screen at the load
+  and the walk (frames `host-h2-loaded`, `host-h2-ride-walk`) [O], and the partner recon warped body 1 off the horse
+  there at the trot (`partner_recon=place ... via=warp` while `horse_drive=held; body=1`, 32 lines, err up to 5.4 m;
+  frame `host-h2-ride-trot`: the body on the ground behind the horse) [O]; the same two drivers ran in `39fff762` (21
+  warp lines during the hold, err up to 5.1 m; no frame caught it) [O review's count, the full logs are not kept], one victim window dropped 250 cm across the final (no stance change),
+  and the revive after the take-down did not start (no `event=downed; step=grant`, the victim at hp 330 / 6600), so (b)
+  and (c) began with the guest still down. Worker: two jobs stopped on the audited CTest's timing check
+  `partner_defer_* check 185` before any game (it passes alone), re-queued; not counted.
+- **Next:** keep the partner recon off body 1 while hold1 holds it; find why the revive did not start after the 60 m
+  ride (`a53a243a`) and why the E at the horse gave no load in play (`72e6269a`); run (b) on open ground (the stock
+  pickup), then (c) and the play pair, both orders; then the flip with one run not named.
+- Builds: full 355/355 at 4f312de6 (and 3d2b9d39, da74e9e1; at 52ef9dfd 354/355, local_coop_windows_tests access denied
+  on a temp file, green re-run); every generator `--check` as base (carry_info, sleep_plugin differ; native_ui,
+  teammate_targeting no evidence; horse_drive 6 sites / 5 slots and vehicle_controller 17 / 9 with `--executable`).
+  Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` f7e09c55, bb7dde83, 39fff762, 624148f9, a53a243a, 72e6269a
+  (JPEG frames, contact sheets, slices).
+
+## November 5, 2026: enemy round 10 track A - the wall guard's copy at his height with `drive_vert` named (3 of 3 moves held; the guest saw him on the wall top, the host his outline through the wall), but while he climbs his copy still waits below about 3 s, so the `drive_sink` row fails and `drive_vert` stays off unless named; user decision D-A10 (`wp/enemy-m7`, not pushed)
+
+Design 7.27, protocol section 44. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge (join, latch-quiet, integ-carry,
+`enemy-vert-near.txt`): `c59ae699` (`drive_vert=1`, 0.15.2+fbd3def), `948c978a` (`drive_vert=1`, 0.15.2+0463d36: the
+guest onto the wall top) and `ef9584e4` (no key named, at the final code head 0463d36d, 0.15.2+0463d36). None void (first frames of both copies: gameplay, connected, no modal). Two earlier
+jobs stopped in the worker's own audited CTest before any game (`partner_defer_tests` check 185, `ddt_core_tests_1`
+CloseDuringSetup: timing tests; this tree's build passed 355/355); each was re-run once, and the three sessions above are
+the track's three. Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults (`drive_vert` stays off unless named; at the defaults only the
+  `world_drive=stats` line gains `vert_wait=0`). Named, the copy of a guard a storey above or below him is moved to his
+  height once his height has stayed level for 1 s (y only: a guard walking on level ground counts): 3 of 3 moves held
+  within 0.02 m at 0.5 s and 2 s, 3-49 m from the player (two up onto the wall top, one down to the wall's foot after
+  he climbed down). Each move is a visible jump of the copy, 4.2-5.8 m up or down (in `c59ae699` 3 m in front of the
+  guest).
+- **Built** (red first): a vert snap only while the owner copy is at rest in y (the rendered target within 0.2 m for 1
+  s; `sw::OwnerYAtRest`; a call gap over 600 ms or a NaN starts over); a waiting due snap logs `world_drive=vert_wait`;
+  the vert line adds `rest_ms`. 629f0a42 red (`soldier_warp_tests` FAIL "the owner copy level within 0.2 m for 1 s is at
+  rest") / fbd3def4 green. Scenario `enemy-vert-near.txt` (the host 31 m from the guard, the guest on the wall top).
+- **drive_vert gate (named runs)**:
+  - PASS [O] a vert snap within 60 m whose read-backs at 0.5 s and 2 s are within 1 m: 3 of 3 (2929558510: `c59ae699`
+    guest copy far 3 m, gap +4.24 m, 0.00 / 0.00 m; host copy far 31 m, gap -5.79 m, -0.02 / -0.02 m; `948c978a` guest
+    copy far 49 m, gap +4.44 m, 0.01 / 0.01 m). Owner rest at the snap 1058-1178 ms. 0 `vert_stop`. The `c59ae699`
+    host move was not a guard on a wall top: it took the host's copy, left on the wall top, down to the guard, who had
+    climbed down to the wall's foot on the guest's screen.
+  - FAIL [O] 0 `drive_sink`: 1 on the guest in each run, 2929558510 (-3.30 m, low 2.1 s; -3.48 m, low 2.3 s), in the
+    alert's first block while the host owned him. On the guest a `vert_wait` came first each time (gap 2.50 / 3.48 m,
+    `rest_ms` 0: the owner was still climbing); the host's copy rose 1.0-1.7 m more at 1.06-1.07 m planar [I: a ladder]
+    and came to rest within 25 ms of `drive_sink` firing; the snap came 1.1 s later. His copy was under 3.2-3.4 s, then
+    on him. `vert_wait` lines: `c59ae699` two (also the host's, before its down move: gap -2.42 m, `rest_ms` 197, span 17
+    cm; stats `vert_wait=1` on each copy), `948c978a` one. No rest-gated snap can beat the 2 s detector when the climb
+    alone keeps the gap over 1.5 m for 2 s.
+  - PASS [O] 0 `place_sink`, `guard_fell`, latches, faults, game overs, roster mismatches, overflow (both runs, both
+    copies; `enemy_div_report.py`).
+  - PASS [O] frame pair (`948c978a` v-a..v-c, looked at): the guest on the wall top sees him standing on it about 11 m
+    ahead (aim 10.9 m, 6.1 deg down, about 0.76 m below the guest's spot); the host's binoculars at 31 m (12.9 deg up)
+    show only his X-ray outline through the wall, at its top under his marker [I: both about the same height from the
+    two aim readouts; the copies 0.1 m apart in plane]. The snap seen is the guest's copy, 4 s before the guest took him
+    over; the host's copy (the climbing owner) was never snapped in this run. `c59ae699` FAIL: the guest's goto left
+    the guest at the wall's foot and its frames show only the wall.
+  - reported: guest place error p90 1.81 / 1.66 m (max 131.2 / 86.4 m: far reinforcements 3970963356, 2305481811
+    arriving, not `drive_vert`; 2.5 m in the no-key run); host M3 p90 15.09 m (6.55 m before the guest's down at
+    367062820) / 7.68 m. `c59ae699` host: 4 place read-backs did not hold (3970963356 under by 1.32-1.46 m x3 at
+    129-154 m; 667680985 +1.44 m at 103 m; M3 / far placements, not vert).
+  - not counted as void: `c59ae699` the host process exited 0xC0000005 during the owned shutdown (logs end with the
+    session; the same close-time exit is in 40+ archived runs across worktrees since 10-14); `948c978a` the job was
+    force-terminated at the end (host exit 1223, a common pattern).
+- **The no-key run `ef9584e4`** (`drive_vert` off; the shipped defaults plus the log line) [O]:
+  - the bug at the defaults, within 60 m: in block 1 the guest's copy of 2929558510 was under the host's (owner) copy,
+    `drive_sink` -4.54 m (low 3.5 s), as in the named runs, and nothing moved it (0 vert lines); 1.0 s later the guest
+    became his owner. In v-a / v-c the host's binoculars show him standing on the ground 28-29 m off (aim 1.3-2.4 deg up)
+    and the guest's aim from the wall top is 17-24 deg down: both copies on the ground by then [I: the host's copy walked
+    down]. The guest's frames show only the guest's own character lying on the wall top.
+  - PASS 0 latches, faults, game overs, roster mismatches, overflow, `guard_fell`; guest place error p50 0.57 / p90 1.17
+    m (165 samples; gate 2 m).
+  - FAIL `place_sink` 1 (host): 3268415846 4.89 m under where he was put, his owner's newest sample 4.89 m lower too, 0.1
+    m planar [I: he went down a ladder on both screens; that code is unchanged this round].
+  - reported: host M3 p50 2.15 / p90 6.94 m (934 samples; the guest was not downed).
+  - integ-carry: `body_tx sent=1` and `place_body fix=1` (13.7 m) [O]; the part failed at its second `placebehind` (the
+    host's viewer position did not settle within 3 s), so no c-b frames.
+- **Failing rows** (`enemy_div_report.py`): `c59ae699` M3 host placements 228/286, host M3 (2.21, 15.09) m, drive_sank 1;
+  `948c978a` host M3 (2.07, 7.68) m, drive_sank 1;
+  `ef9584e4` host M3 (2.15, 6.94) m, drive_sank 1, guard_sank 1 (the place_sink above), the integ-carry part's placebehind.
+- **User decision D-A10**: turn `drive_vert` on with the gun profile, reading the `drive_sink` row as "left under after
+  his height has stayed level for 1 s" (players: the copy of a guard on a wall top jumps 4-6 m onto the wall about 1 s
+  after his height levels off; while he climbs, his copy waits at the foot for about 3 s; at the defaults nothing moves
+  it: in `ef9584e4` it stayed 4.54 m under for at least 4.5 s until the guest's PC took him over), or keep it off. The
+  flip is one line plus its test, then one no-key run.
+- **Next**: on a yes, flip (lab_config red / green) and run this batch with no key. Otherwise a `drive_sink` counted only
+  while the owner copy is at rest in y measures the bug, not the climb (a detector change: needs a yes too).
+- **Checks**: full `tools/build.ps1 -Jobs 4` at fbd3def4: CTest 355/355; every `generate_*_contract.py --check` known
+  failures only (camera_mode_window, carry_info, horse_drive, master_server, native_ui, sleep_plugin,
+  teammate_targeting, vehicle_controller). No new contract site, Lua unchanged.
+
 ## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
