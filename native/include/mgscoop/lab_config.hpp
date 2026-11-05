@@ -761,6 +761,12 @@ struct LabConfig {
     // calm / caution (the far rule releases and skips a guard whose CP is in evasion / ALERT); soldier_act=all (research)
     // keeps every phase. Carried in the ACT_V1 p reply (pl=1), no CFG bit.
     bool soldier_act_calm = false;
+    // Enemy round 8 track C (docs/world-sync-design.md 7.23; soldier_act.hpp PlanGate): the far mirror's puppets plan their own
+    // path to the host copy's destination (0x1413725f0 with a shadow gate after the engine's own request start), the gait
+    // catch-up, the warped puppet's facing, walkers taken only within 10 m of the owner copy. Native only, no CFG bit, no
+    // wire; needs soldier_act. Lab and play; off unless named until its gate run passes.
+    bool act_plan = false;
+    bool act_plan_given = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
