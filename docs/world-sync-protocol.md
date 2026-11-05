@@ -2538,3 +2538,30 @@ running host copy, one a scripted goto beside him); the range pose below is off 
   the site 0x136ed8c).
 - `tools/enemy_div_report.py` `quiet`: `why` (the `quiet=` counts), `readback_5s`, `walk_on_within_2m_5s`, `moves_read`,
   `moves_both_within_1m`.
+
+## 42. Enemy round 9 track B: the LRRP crews (lab key `lrrp_follow`, native only; design 7.25)
+
+No new op; LRRP_FAST 0x5D is unchanged (section 38). The code is now its own world chunk, `lua/coop/world_lrrp.lua`,
+spliced after `world_vehicle_state.lua`.
+
+- Guest, at rest: a rider this copy has and the host's truck no longer has gets `UnsetRelativeVehicle` 2 s after the
+  host's count dropped, again at most every 5 s per guard; none once the host's count rose at that stop, until the host's
+  truck moves. `StartTravel{travelPlan=""}` is never sent.
+- Guest, crewless: while the host's truck has riders and this copy's known crew is out, and the host's truck moves (flags
+  1) or is 5 m+ off, ForceStop is lifted and the truck is not placed (`step=crew_wait; id; d_m; near_m; rh; rl`, every
+  2 s); taken again once manned here.
+- Guest, jumps: within 400 m of this player (either end) a move over 30 m waits (`step=defer`, same fields), 5..30 m
+  slides 1 m a frame (`step=catch; id; d_m; near_m`, once per catch-up); `step=jump` adds `near_m`.
+- Both roles: `step=crew; id; ent; x; z; in; rl` 1 Hz for 60 s after a rider-count change (on the guest also the host's
+  count); `step=cost; role; n; avg_ms; max_ms; tracks` every 10 s; `step=lever; on; role` for the lab lever
+  `vehicle_state_status lrrp 0|1` (pauses / resumes lrrp_follow on that copy, any mode).
+
+## 43. Enemy round 9 track C: the far mirror's walkers plan once per leg (lab key `act_plan`, native only; with `soldier_act`; design 7.26)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native only, the puppet side.
+
+- With `act_plan`, a due re-apply of a walk is held (no unpack, no restart, no new plan) while the request is the planned
+  one but for a destination moved within 1 m, our plan's handle is in R+0x19c and his planner slot (our type), its
+  300 ms check did not find the path end far or missing, the 15 m warp would not move him and the catch-up gait is unchanged.
+- The catch-up (`gait_up`) starts beyond 1 m (was 2 m): the owner copy ahead by 1..5 m gait + 1 (cap 3), beyond 5 m 3.
+- `soldier_act_frame` adds `plan_hold` (held re-applies) after `plan_release`.

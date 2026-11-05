@@ -1,3 +1,160 @@
+## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+
+Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, scenario `enemy-mirror6-calm.txt`: `226fc789`
+(`soldier_act=1, act_census=1, act_plan=1`, build 0.15.2+b311df3: the round 8 re-run), `77785f31` (the same keys, build
+0.15.2+8447ee9: plan once per leg) and `c0c3d088` (the same keys and `quiet_place=1`, build 0.15.2+8447ee9). None void (the
+first frames of both copies show binoculars, no modal). Two more jobs stopped before the game in the worker's own audited
+CTest (`worker_queue_tests` timed out on the verify lock; `partner_defer_pose_held_generation_tests` check 185: both timing
+tests, not this change); no game ran in them. Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. `act_plan` and `soldier_act` stay off unless named. Named, the one
+  calm far walker that was mirrored (guard 18) walked the host copy's path, p50 1.2-1.3 m, instead of his own old leg
+  (9-14 m); at the shipped hold code (8447ee9) he ran slightly ahead of the host copy, at the round 8 build (b311df3) about
+  1 s behind. The other 3 calm walkers (15, 17, 246) were walking when the mirror started and were never taken
+  (`near_wait`): their guest copies stayed p50 17-45 m off (`226fc789` 44.0 / 16.8 / 45.2 m, `c0c3d088` 44.9 / 16.8 /
+  46.2 m), where `fcfb3acc`'s puppets 15 and 17 (no `act_plan`) were 4.0-4.5 m off. In caution, runners trailed 5-9 m, two
+  stood and jumped 16 m, and five released walkers froze 34-48 s (the release freeze below).
+- **Session 1 `226fc789`** (the round 8 build, `act_plan` named; calm lasted the whole watch, 174 s, no place correction):
+  - [O] the plans land: 104 checked 300 ms after the plan, 100 with the path end within 1 m of R+0x80 (96.2 %), 4 with no
+    path yet; 0 refused (`plan_none`), 2 brain slots cancelled first, 11 released; 0 plan faults.
+  - [O] guard 18 (the only calm walker with moving samples; 15 and 17 were never taken: walkers beyond 10 m wait,
+    `near_wait` 53, `leg_wait` 775): place error while the host copy moves p50 1.27 / p90 2.91 m (173-177 samples; the
+    host copy interpolated to the guest's sample: 1.31 / 2.96 m), from 8.88 / 14.36 m in `fcfb3acc`; speed ratio 0.94
+    (mean); calm warps 1 take (47.3 m at his take), 0 held. The error grows over a leg (0.5 -> 1.5 m in 35 s of walking)
+    and the best-fitting lag is 1.0 s: he trails by about 1 s; each 1 s re-apply restarted the request and planned again
+    (98 plans for 18, one per 1.01 s); speed right after a plan 0.93 of the host copy's, later 0.96-1.0.
+  - [O] no ChangePhase in calm. 2.1 s after the scripted caution the guest requested ALERT (`req_phase` phase 3) with no
+    puppet live (all released at the shot 14 s before); who started it [U].
+  - [O] frame p95 (median of 1 s windows) mirror off 20.68 ms, with puppets 21.62 ms (+0.94, FAIL); seconds without a
+    screen capture only (>= 55 frames): 19.92 / 20.57 ms (+0.65, FAIL).
+  - [O] frames `w18-0-b`: the guest's shows a soldier at the crosshair beside a czech hedgehog; the host's shows a dark
+    shape at the crosshair beside a hedgehog that I cannot identify as the guard (census 0.58 m apart, both walking):
+    not a matched pair. `w18-5-a`: a tree fills the host's view.
+- **Built** (red first, 45670276 / 8447ee9b; `act_plan` only): plan once per leg. A due re-apply of a walk is held (no
+  unpack, no restart, no new plan; `plan_hold`) while the request is the planned one but for a destination moved within
+  1 m, our plan still holds his slot (R+0x19c and the slot carry our handle and type, its 300 ms check near), the 15 m
+  warp would not move him, and the catch-up gait equals the gait R holds. The catch-up starts beyond 1 m (was 2 m).
+- **Session 2 `77785f31`** (`act_plan` with the hold):
+  - [O] calm ended 42.5 s after the takes: the guest's own guard 246 (not a puppet) got the place warp `kind=3` before
+    the takes (the seed's swapped routes), then kinds 3 and 13 and the guest's ChangePhase (caution): the known
+    startle (round 8 track A's `quiet_place` subject). Guard 18 was taken 31 s in and stood: 1 moving calm sample, so the
+    calm place error and speed ratio are unmeasured; calm plans 5, 4 ok.
+  - [O] the hold works: 172 held re-applies; guard 16 kept one handle 7.3 s while he moved.
+  - [O] caution (not the gate): walkers at 1.7 m/s p50 1.2-2.4 m; runners at 3-4 m/s 4.5-8.7 m (lag 1.4-2.0 s); long
+    caution walks (100-140 m) got a partial path at the 300 ms check (end 31-94 m short; 85 of 145 plans ok, 58.6 %) and a
+    later plan reached R+0x80 (16: 13, then 17, then 16 points). A partial path is not held, so it is planned again.
+    (Land review: 46 far plans; the walks were 64-140 m and the ends 1.2-94.2 m short, 5 of 46 under 3.3 m.)
+  - [O] caution, runners 246 and 17: after their take they stood (v 0.2-0.9 m/s) while re-planned every 1 s on partial
+    paths (not held); the gap grew from 11 to 19.5 m and each then jumped 16 m (the 2 held warps below).
+  - [O] **the release freeze** (an `act_plan` defect from the round 8 code, open): `PlanStep`'s release branch cancels our
+    slot and writes R+0x19c = 0xffff but leaves the puppet's walk request in R. At the phase change five released walkers
+    (18, 19, 20, 219, 231) stood in ka 1 / dm 1 with an empty slot, fh 0 and v 0 for 34-48 s while their host copies
+    walked 33-173 m; walkers whose slot held a brain hash (13, 16) walked on. Guard 18 also froze at his release in
+    `226fc789` (hidden by a retake 16 s later); in `fcfb3acc` (no `act_plan`) released walkers resumed. Not fixed here (a
+    fix needs a run); `act_plan` stays off unless named.
+  - [O] warps: calm 1 take (18, 52.1 m: a standing guard's take warp), 0 held; whole run 2 held (246 16.1 m, 17 16.5 m,
+    in caution). Frame p95 off 22.34 / puppets 21.67 ms (PASS; without captures 21.54 / 20.86). 0 latches, faults, game
+    overs. `enemy_div_report`: the place error row FAILS (5 samples, p50 7.5 / p90 13.25 m). Only the first of the 3
+    corrections is the seed's (246, 39.5 m); the other two (145.2 m and 13.9 m) and all 5 samples are guard 18 after his
+    release at the phase change, frozen 48 s at his take spot while the host copy walked 173 m; the 145 m place warp then
+    startled him (ka 3) [O: the release freeze, so the mirror's].
+- **Session 3 `c0c3d088`** (`act_plan` with the hold, and `quiet_place=1` named for a longer calm; no flip was possible
+  after it, so it is a named data run):
+  - [O] calm lasted the whole watch: the one queued place correction (the seed's guard 246) was not applied (0/1, no
+    `world_place` line), so no startle; not a `quiet_place` result.
+  - [O] guard 18 (121 moving calm samples): place error p50 1.38 / p90 1.98 m (interpolated 1.22 / 2.02 m): the p90 row
+    passes, the p50 row fails; speed ratio 0.95 (mean); 9 plans for guard 18 (98 in session 1; 13 vs 109 for all guards;
+    he was a puppet about 96 s here, about 145 s there), 63 held re-applies, 2 catch-ups; warps 1 take (46.5 m), 0 held. The error grows within a leg (0.4 -> 1.7 m) and jumps at a leg change
+    (1.5 -> 2.2 m until the new leg arrives). He led the host copy: along-track p50 +1.18 m, nearer the host copy's
+    destination in 89 of 119 samples, the error smallest at about -1 s (0 ms 1.22 m, 1000 ms 2.16 m): with the hold the
+    1 s trail of session 1 is gone and he runs slightly ahead.
+  - [O] plans: 11 of 13 with the path end within 1 m (84.6 %, FAIL): the other 2 had no path yet at the 300 ms check.
+  - [O] frame p95 off 22.68 / puppets 23.43 ms (+0.75, FAIL; without captures 21.72 / 21.44 ms). 0 latches, faults,
+    game overs. The `w18` frames: no matched pair. In rounds 0-2 the host's view is open (hedgehogs, fence) and the
+    guest's is blocked by a bush in round 0; round `w18-0` was taken about 9 s before guard 18 was taken, so it could not
+    be a mirrored pair; no guard identifiable on both.
+  - [O] as in session 1, 2-3 s after the scripted caution the guest requested ALERT with no puppet live [U who].
+- **Failing gate rows** (calm, per guard): place error (`226fc789` 18: 1.27 / 2.91 m; `77785f31` unmeasured; `c0c3d088` 18: 1.38 / 1.98 m, p50 fails);
+  matched frame pair (none clear); frame p95 (`226fc789` +0.94 ms, `c0c3d088` +0.75 ms); plans within 1 m >= 90 % (`77785f31` whole
+  run 58.6 %, calm 4 of 5; `c0c3d088` 11 of 13, 84.6 %). Passing: warps (take <= 2, held <= 1 in calm in every session), speed ratio (18:
+  0.94), no ChangePhase started by a puppet in calm, 0 faults / latches / game overs. Also failing: 3 of 4 calm walkers
+  never taken (17-45 m off); in caution (the `soldier_act` band) the runners' stands and 16 m jumps and the release freeze.
+  The frame p95 row: with a true median `226fc789` +0.91, `c0c3d088` +0.51 ms; 6 of the 16 off seconds are 50-371 ms
+  capture hitches, and in `226fc789` the host, which runs no puppets, rose by the same +0.98 ms: not evidence of a mirror
+  cost.
+- **Land review** (the skeptic's refuted rows, corrected above): "about 1 s behind" was the round 8 build only (with the
+  hold he leads); "they walked 9-14 m off before" is guard 18 alone; the caution line left out the runners' stands, 16 m
+  jumps and the release freeze; the `77785f31` place-error FAIL is guard 18's release freeze, not the seed; the `c0c3d088`
+  frame description. Nit, open: `FormatFrameLine`'s worst case is 786 bytes, above `FrameCensus`'s 768-byte buffer (only
+  with 10-digit counters).
+- **Next**: do not lead the destination (with the hold guard 18 already leads by about 1 m); fix the release freeze (hand
+  the walk request back at release; test first); take walkers that are walking at take time (`near_wait` leaves 3 of 4
+  calm walkers unmirrored); hold a partial path until its end stops moving (the caution runners' stands); take walkers within 10 m only where the frames can
+  match (spot A/B views of guard 18 are blocked by trees and fences at 160 m: pick a spot with a clear line to a calm
+  walker). Then one named run, the flip per D-FM1 (a) and the no-key run.
+
+## November 5, 2026: enemy round 9 track B - the patrol trucks' crews: with `lrrp_follow` named the trucks follow within 0.6 m p90, but the crews still run on their own clock and an empty truck still moved once; it stays off unless named (`wp/enemy-lrrp`)
+
+Design 7.25, protocol section 42 (no new op). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the same three parts (join,
+`enemy-lrrp-crew.txt` with a 40 s key-off window by the lever, `enemy-lrrp-alert3.txt`): `68491f7f` (`lrrp_follow=1`,
+4f22843d), `801cd90b` (`lrrp_follow=1`, a0d3f1dd), `d7b3a81c` (no key named, the final code head dc6dabd3: the same parts with the key off). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Patrol trucks and their crews still run on their own on each PC,
+  the guest's ~72 s behind the host's, as in 0.15.2.
+- **Built** (red first each time): lrrp_follow is now its own world chunk `lua/coop/world_lrrp.lua` (moved out of
+  `world_vehicle_state.lua`); never `StartTravel ""` (it ended the guest crew's LRRP plan); while the host's truck drives
+  manned and the guest's crew is out, the guest's truck stays the guest's own (`step=crew_wait`) instead of driving off
+  empty; a jump over 30 m waits while the guest stands within 400 m of either end, 5..30 m slides 1 m a frame; crew
+  positions 1 Hz for 60 s after a seat change on both copies (`step=crew`), the module's cost (`step=cost`), and the lever
+  `vehicle_state_status lrrp 0|1` for a key-off window in the same session. 99cf1044 / aed13563 / 43f25a8c red,
+  4f22843d / a0d3f1dd green. Full build and CTest 355/355 at e57de763; every contract `--check` as round 8 (known base
+  failures only).
+- **Land fixes** (the review, red ee9f0367 / green e5cbe4c6; lrrp_follow only, so off unless named; not run): an empty
+  guest copy whose crew is out is never moved 5 m+ to a manned host truck, at rest too (801cd90b's 100.5 m jump below);
+  once the host's rider count rises at a stop, no `UnsetRelativeVehicle` until its truck drives (801cd90b sent it during
+  the host's boarding). Full build, CTest and the contract checks at the land head.
+- **Gate rows** (Afghanistan) [O]:
+  - PASS truck error while followed: p50 0.16-0.17 / p90 0.57-0.61 m (1039 / 708 samples), |dy| p90 0.05 m.
+  - PASS only by construction: no truck jump within 400 m of the guest (the code jumps only at 400 m+). 25605 waited
+    (18 `defer` lines before its first jump in 68491f7f) and jumped 366.9 m at near_m 400.0; in 801cd90b its first jump
+    (~368 m at ~356721333, the guest ~397-400 m away by the host's puppet) was dropped by the guest's `log_cap`, its
+    logged jumps are at 510 / 645 m. These jumps land right at the boundary, where a truck may still be in sight [U].
+  - FAIL (review) an empty truck moved: in 801cd90b 54 `crew_wait` lines held 25606 while the host's drove manned, but
+    when the host's truck paused (v=0) the guest's EMPTY copy (rl=0, rh=2) was taken again and jumped 100.5 m to
+    (-1689.36, 969.78), pinned 9 s, then released (`crew_out`) while its crew walked ~110 m away on foot (land fix above).
+    Session 1: 25606 drove off empty for 123.2 s: `SetRelativeVehicle{rideFromBeginning=true}` seated nobody in 50
+    tries (25 per guard), so a0d3f1dd dropped it.
+  - PASS 0 latches / faults / game overs / drive_sank in both.
+  - PASS (weak) frame time: p95 on / off / on 22.2-24.4 / 22.7-25.6 ms, at most +1.7 ms over the off window (4 samples
+    of 10 s per window); the module costs 0.05-0.15 ms per tick.
+  - FAIL riders within 8 m while seated: 25605 p90 426-427 m (its approach waited near the guest: the guest's own copy).
+  - FAIL crews within 5 m 20-40 s after the host's get-out: 9.3-42.3 m (session 2; the host's get-out time comes from
+    5 s `step=host` lines). 25606's guest crew got out 6.4 s after the mod sent `UnsetRelativeVehicle` during the host's
+    boarding (k=25, rh=1, rl=2; land fix above) and did not board again; its truck did not stay at the stop (the jump
+    above). Whether the get-outs follow the unseats or the crews' own clock is not established [U]: in 68491f7f too each
+    came 1-9 s after an unseat round.
+  - Log volume (review) [O]: with the key named, lrrp lines are 81-83% of the guest's world log (41-47 lines/s against
+    the 20/s budget); `world=log_cap` dropped 224 / 340 guest lines across all modules (the host and the no-key run 0),
+    so the guest-side report counts in the named runs are cut. Next: follow lines at 1 Hz.
+  - Not attributed: CP 3196907442 rose and fell in a loop in both named runs (host ChangePhase 52 / 40) and not in the
+    no-key run; round 8 saw the same loop in other no-key runs [U].
+  - Report FAILs in both named runs: guest place error p90 13.3-15.0 m and corrections 13/23-16/33 (25605's two guards
+    still in the guest's truck, `vehicle_local`); M3 host p90 4.96 / 7.54 m.
+  - The no-key run `d7b3a81c` (key off at the defaults, the same parts; all passed; first frames in gameplay): no
+    `event=lrrp; step=on` on either copy (the chunk move changes nothing at the defaults), VEHICLE_STATE on (`lrrp=6`),
+    0 latches / faults / game overs / drive_sank, guest place error p50 0.67 / p90 1.85 m (the late guest copies of 25605's
+    crew stay beyond 60 m of the guest, so the row does not see them), corrections 16/43 (26 `vehicle_local`), M3 host
+    p90 6.97 m. Frame p95 over the whole session 25.6 / 25.0 ms (host / guest) against 25.0-25.6 ms in the named runs.
+- **What blocks it**: the guest's crews follow their own LRRP clock; no tried command moves it (the board seats nobody,
+  whether UnsetRelativeVehicle causes the get-outs is unknown [U], StartTravel "" ends the plan). **Next**: set the guest copy's LRRP
+  step (the travel plan cursor) to the host's, or hand the unseated crew to M1..M6 as host-owned and seat them with the
+  vehicle's own get-in; a camera-hidden jump within 400 m; then Africa (`enemy-lrrp-africa.txt`, seed `africa-jeep`).
+- **Not done**: Africa (30020) not run (the seed exists; the sessions went to the fix); the frame-time row has 4 samples
+  per window; a mixed-version run.
+
 ## November 5, 2026: enemy round 9 track A - the quiet move only for a guard at rest: its gate failed (2 moves), `quiet_place` stays off unless named; the partner's network range pose is now off unless named too (`range_flat`) after the review (`wp/enemy-m7`, not pushed)
 
 Design 7.24, protocol section 41. Markers: [O] seen in a log line, a frame or code (Ghidra, read-only), [I] inferred,

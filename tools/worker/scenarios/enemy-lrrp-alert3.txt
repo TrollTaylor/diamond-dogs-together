@@ -1,0 +1,66 @@
+# Enemy round 9 track B: the first three 30 s blocks of enemy-latch-alert.txt (ALERT at afgh_field_cp; the guest from guard
+# to guard, the host 50 m south), after enemy-lrrp-crew.txt: the LRRP crews in the ALERT and the latch rows in the 600 s.
+logmark both
+host run world_status
+guest run world_status
+host run position
+guest run position
+host run enemy notice 2961503
+host run enemy notice 2942862796
+host run enemy notice 1740692850
+host run enemy notice 1799112697
+host run enemy notice 2929558510
+host run enemy notice 667680985
+host run enemy notice 1179373153
+host run enemy notice 3268415846
+host run enemy notice 753908875
+host run enemy notice 1904171355
+host run enemy notice 1845278687
+host run enemy notice 1926520947
+host run enemy notice 3970963356
+host run enemy notice 2305481811
+guest run enemy goto 1740692850 8
+wait 4000
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 3000
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-1
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 2929558510 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-2
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 1845278687 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-3
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+host run position
+guest run position

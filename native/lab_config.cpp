@@ -2096,7 +2096,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stays off unless named, the gun profile too. Its
     // truck rows passed (c784a5a7 / 0da27fc6), but the unseated near crew stayed 26-71 m off the host's copies for 80-100 s,
     // the unseat ends the guest's crew's LRRP plan (a re-boarding crew's truck drives empty on the guest's screen) and
-    // Africa was not run.
+    // Africa was not run. Round 9 B (7.25: 68491f7f / 801cd90b named, d7b3a81c not named): followed trucks within 0.6 m
+    // p90, but SetRelativeVehicle seated nobody, the crews' get-outs did not line up (9-42 m p90 20-40 s after the host's),
+    // a deferred truck's riders stayed ~427 m off, and its lines filled 81-83% of the guest's world log (log_cap drops).
     // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
     // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
     // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22

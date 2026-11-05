@@ -692,7 +692,7 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   at once when 1 m+ off; `step=settle` over 3 m). A crew still seated on the guest's copy while the host's truck rests
   empty gets `UnsetRelativeVehicle` after 2 s and `StartTravel{travelPlan=""}` after 5 s (s10090's get-off; `step=unseat`);
   once off, the M1..M6 corrections may take them (the runs show they mostly did not: see the review). A track 3 s stale, the local player's ride, unpaired, start and
-  stop release it. In `world_vehicle_state.lua` (`S.lf`); an error there turns only lrrp_follow off. Logs `event=lrrp;
+  stop release it. In `world_vehicle_state.lua` (`S.lf`; since round 9 B its own chunk `world_lrrp.lua`, 7.25, which drops the `StartTravel ""`); an error there turns only lrrp_follow off. Logs `event=lrrp;
   step=host|follow|riders|stop|release|settle|jump|unseat|stale|refused|error`.
 - **Session 1** `c90ab046` (key named; join, the truck watch, integ-carry, latch-alert) [O]: truck 25605 carries
   3970963356 / 2305481811. At the pairing the guest's copy jumped 460 m onto the host's, then followed it for 166 s: guest
@@ -1028,6 +1028,120 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   world (3D range); `range_flat=1` named (it now brings the pose and the drive fix) is the next run (enemy8-down-alert
   reproduces the fall; it happened in 0f020398's ALERT part too), then one no-key run before any default change. The
   quiet gate's 5 s row should measure from the owner's copy, not the original target.
+
+#### 7.25 Enemy round 9 track B: the patrol trucks' crews (lab key `lrrp_follow`, native only; own chunk `world_lrrp.lua`)
+
+- **Chunk**: lrrp_follow moved out of `world_vehicle_state.lua` (30887 of 32000 LF bytes) into `lua/coop/world_lrrp.lua`,
+  spliced right after it (CMake part `LRRP`, `world_lrrp_source`, the bootstrap splice, the host trial and composed checks).
+  The wire is unchanged (LRRP_FAST 0x5D, protocol 38 / 42). Off unless named; no CFG bit.
+- **What changed on the guest** (red first: 99cf1044, aed13563, 43f25a8c; green 4f22843d, a0d3f1dd):
+  - Never `StartTravel{travelPlan=""}` (round 8's unseat ended the crew's LRRP plan: 25606 drove off empty). At rest, a
+    rider this copy has and the host's truck no longer has gets `UnsetRelativeVehicle` 2 s after the host's crew got out,
+    again at most every 5 s (`step=unseat; id; ent; k; rh; rl`).
+  - First form (4f22843d): `SetRelativeVehicle{targetId, rideFromBeginning=true}` (TppEnemy.AssignSoldiersToCP's LRRP seat)
+    3 s after the host's crew boarded. Session 1 showed it seats nobody mid-mission (below), so a0d3f1dd removed it: while
+    the host's truck moves with riders and this copy's known crew is out, ForceStop is lifted and the truck is not placed
+    (`step=crew_wait`): this copy's own AI keeps it and its crew boards it on its own clock; it is taken again once manned.
+  - Jumps: within 400 m of this player (either end) a move over 30 m waits (`step=defer`; the truck stays this copy's own,
+    as 0.15.2); 5..30 m slides 1 m a frame (`step=catch`); farther out it jumps (`step=jump; ...; near_m`).
+  - Lines: `step=crew; id; ent; x; z; in; rl` (each crew member this copy has seen seated, 1 Hz for 60 s after its
+    rider count or, on the guest, the host's changed; both roles), `step=cost; role; n; avg_ms; max_ms; tracks` (os.clock
+    per tick, every 10 s), `step=lever; on; role`.
+  - Lever (both roles, any mode): `debug vehicle_state_status lrrp 0|1` pauses / resumes lrrp_follow on that copy (the
+    frame-time window of a hidden run).
+- **Session 1** `68491f7f` (`lrrp_follow=1`, 4f22843d; join, `enemy-lrrp-crew.txt`, `enemy-lrrp-alert3.txt`; all parts
+  passed; first frames of both copies in gameplay, no modal) [O]:
+  - Truck error while followed p50 0.16 / p90 0.57 / max 5.33 m (1039 samples; 25605 p90 0.66, 25606 p90 0.53), |dy|
+    p90 0.05 m. Jumps within 400 m of the guest: 0, by construction (the code jumps only at 400 m+). 25605 waited (18
+    `defer` lines before its first jump, near_m 150-400) and jumped 366.9 m at near_m 400.0, again 99 m (590 m away)
+    after the lever window.
+  - The board did not work: 50 `SetRelativeVehicle` (k=1..50, 25 per guard) to 25606's two guards, `rl` stayed 0; the
+    guest's 25606 drove off empty for 123.2 s while the host's carried its crew (the row the gate needs at 0).
+  - `UnsetRelativeVehicle`: cause unknown [U]: the parked trucks' guest crews got out 1.1 / 3.6 s after their 4th / 3rd
+    unseat round, 25606's 64 s after the host's and within 9 s of its last unseat burst.
+  - 25605 near the players: its guest copy was its own (deferred) on the approach, so its riders were p90 426 m apart and
+    its crew got out 53-73 s after the host's; the guest's place error p90 15.03 m comes from these two guards (29
+    `place_div` over 8 m each, 16-48 m), 11 corrections refused `vehicle_local` (they still sat in the guest's truck).
+  - Frame proxy (partner_tick hz, 4 windows of 10 s each): on 24.4 / off (lever 0 on both) 22.7 / on 23.3 ms p95 (+1.7 /
+    +0.6 ms); `step=cost` avg 0.05 (host) / 0.15 (guest) ms per tick, max 2-3 ms (os.clock's 1 ms step).
+  - Report: 0 latches / faults / game overs / drive_sank; M3 host p50 1.67 / p90 4.96 m; corrections 16/33.
+  - Frames k-5 / k-6 (both binoculars west at the stop): rock and terrain, no truck in view on either screen.
+- **Session 2** `801cd90b` (`lrrp_follow=1`, a0d3f1dd; the same parts; all passed; first frames in gameplay) [O]:
+  - Truck error while followed p50 0.17 / p90 0.61 / max 4.62 m (708); 25606's seated crew p90 0.53 m; jumps within
+    400 m of the guest: 0 logged (25605's first jump, ~368 m at ~356721333 with the guest ~397-400 m away, was dropped by
+    the guest's `log_cap`; its logged jumps 510 / 645 m); 0 latches / faults / game overs / drive_sank.
+  - Empty truck (the review): 54 `crew_wait` lines (398 follow lines in mode=wait) held 25606 while the host's drove
+    manned, but at 356989579, the host's truck paused (v=0), the guest's EMPTY copy (rl=0, rh=2) was taken again and
+    jumped 100.5 m to (-1689.36, 969.78), pinned 9 s, released (`crew_out` at 356998672); its crew walked NE on foot (to
+    -1564, 958). Its guest crew had got out at 356953086, 6.4 s after the mod sent `UnsetRelativeVehicle` during the
+    host's boarding (k=25, rh=1, rl=2 at 356946676), and did not board again (~110 s). Both fixed at the land (below).
+  - Crews 20-40 s after the host's get-out (step=crew on both copies, interpolated): 25605's 2305481811 p90 25.3 m and
+    3970963356 p90 42.3 m (the guest's copies still in the guest's own, deferred truck: they got out 51-70 s after the
+    host's); 25606's two 9.3 / 10.9 m (the guest's copies still seated in the pinned truck, the host's on foot).
+  - 25605's riders p90 427 m (deferred approach, as session 1); guest place error p90 13.32 m (these two guards),
+    corrections 13/23 (10 `vehicle_local`), M3 host p50 1.97 / p90 7.54 m.
+  - Frame proxy p95 on / off / on: host 23.8 / 23.3 / 22.2, guest 24.4 / 25.6 / 22.7 ms (session 1 24.4 / 22.7 / 23.3 on
+    both): within 2 ms of the off window (4 samples of 10 s each per window); `step=cost` avg <= 0.13 ms per tick.
+  - Frames k-8 (both binoculars aimed at 3970963356): the host's view SW with guard markers 38-95 m, the guest's W at a
+    rock: the rider is not in the same direction on both screens [I], no truck in view.
+- **Session 3** `d7b3a81c` (no key named, the final code head dc6dabd3; the same parts, the key off; all passed) [O]: no
+  `event=lrrp; step=on` on either copy, VEHICLE_STATE on (`lrrp=6`), 0 latches / faults / game overs / drive_sank, guest
+  place error p50 0.67 / p90 1.85 m (25605's late guest crew stays beyond the row's 60 m), corrections 16/43 (26
+  `vehicle_local`), M3 host p90 6.97 m; frame p95 over the session 25.6 / 25.0 ms (host / guest), the named runs
+  25.0-25.6 ms. Frames al-3: both copies in play (the host crouched south with guard markers, the guest in the outpost).
+- **Gate** (Afghanistan; Africa 30020 not run: seed `africa-jeep` exists and `enemy-lrrp-africa.txt` is ready) [O]: PASS
+  truck error while moving, no jump within 400 m (by construction), 0 driving empty on one screen (session 2; but one empty truck moved, below), 0 latches / faults / game
+  overs, frame time (weak); FAIL riders within 8 m while seated (25605, deferred near the guest), crews within 5 m 20 s
+  after the get-out (9-42 m), the guest's crew boarding when the host's does (it boards on its own clock or not at all).
+  `lrrp_follow` stays off unless named. Corrected at the land (the review): the no-jump row passes by construction (the
+  jumps sit at the 400 m boundary), and session 2 had one empty truck moved (the 100.5 m jump at a host pause), so that
+  row FAILs too.
+- **Land fixes** (red ee9f0367, green e5cbe4c6; off unless named, not run): `crewless` (no place, ForceStop lifted) also
+  holds at rest when the host's manned truck is 5 m+ off this copy's empty one; once the host's rider count rises at a
+  stop (`tr.hn`, `tr.boarding`), no unseat until the host's truck drives. Not fixed (debug only): `LF.paused` survives a
+  mission start; the scratch gate tool printed only 40 lines per command list and skipped jumps of empty trucks.
+- **Log volume** [O]: named, lrrp lines are 81-83% of the guest's world log (4947 / 6074, 5202 / 6236; 41-47 lines/s
+  against the 20/s budget in `native/world_link.cpp`); `world=log_cap` dropped 224 / 340 guest lines (all modules).
+- **What blocks it** [O unless marked]: the guest's crews run their own LRRP clock and no command tried moves it:
+  `SetRelativeVehicle{rideFromBeginning=true}` seats nobody mid-mission (50 tries), whether `UnsetRelativeVehicle` causes
+  the get-outs is unknown [U], `StartTravel ""` (round 8) gets them out but ends the plan. Near the guest the truck
+  waits (no visible jump), so the truck the players see is still the guest's own, ~72 s late, as in 0.15.2.
+- **Next**: (1) find the soldier's LRRP step in the exe (the travel plan cursor of SetLrrp / StartTravel) and set the
+  guest copy's to the host's at the pairing and at each get-out / boarding, instead of commanding seats; or (2) put the
+  guest's crew under the M1..M6 corrections as host-owned on foot for 60 s after the host's get-out (P.ownerOf from this
+  chunk) and seat them with the vehicle's own get-in action; (3) a jump hidden by the camera (outside the 100-degree view,
+  60 m+) instead of waiting within 400 m; then run `enemy-lrrp-africa.txt`.
+
+#### 7.26 Enemy round 9 track C: the far mirror's walkers plan once per leg (lab key `act_plan`, native only; with `soldier_act`)
+
+- **Re-run of 7.23's void session** (`226fc789`, the round 8 build): the plans land (100 of 104 path ends within 1 m of
+  R+0x80, 4 with no path yet at 300 ms) and the walker's place error fell to p50 1.27 / p90 2.91 m (guard 18, the one
+  calm walker taken; 8.88 / 14.36 m without the plan; walkers 15, 17 and 246 were walking at take time and never taken,
+  17-45 m off). What is left is a trail of about 1 s: every moving owner's 1 s re-apply restarted the
+  request (the engine's start cancels R+0x19c) and planned again (one plan per 1.01 s), each restart cost a little speed
+  (0.93 in the first 250 ms), and the catch-up raised the gait only beyond 2 m [O logs, I cause].
+- **Plan once per leg** (`act_plan`; red 45670276, green 8447ee9b): in `MirrorRx`, a due re-apply of a walk (wire +0x61 ==
+  1 on both requests) is held (no unpack, no restart, no new plan; `plan_hold`; the moving / still re-apply timer restarts
+  and the planned request stays the one compared) when `PlanHold`: not a first apply; `RequestChangedFar` is false (the
+  request equals the planned one but for the destination wire +0x40 moved within `kPlanMoveM` = 1 m; any other change is
+  a change as before); `PlanLiveFor` (our last plan's handle is in R+0x19c, his planner slot holds `kMoveHash` with that
+  handle, and its 300 ms check did not find the path end far or missing); the unpack's 15 m warp would not move him; and
+  the catch-up gait now (from the last unpack's gait) equals the gait R holds (each command copies the gait from R when it
+  is issued, so a gait change needs a restart). An unpack forgets our plan (the engine's start cancels it); `PlanStep`
+  remembers each new one. The catch-up starts beyond `kPlanCatchM` = 1 m (was 2 m, the engine's own mode 0 onset).
+- **Seen with it** (`77785f31`): 172 held re-applies; a caution runner kept one handle 7.3 s [O]. Long caution walks
+  (64-140 m) got a partial path first (end 1.2-94.2 m short at 300 ms; a later plan reached R+0x80) [O]; a partial path is
+  not held, and runners 246 and 17 stood while re-planned every 1 s, then jumped 16 m [O]. The release freeze [O]:
+  `PlanStep`'s release cancels our slot and writes R+0x19c = 0xffff but leaves the walk request in R, so five released
+  walkers stood 34-48 s (ka 1 / dm 1, empty slot) while their host copies walked on; open. Calm walkers unmeasured in that run (calm ended after 42.5 s by the guest's own guard 246's startle).
+- **Calm walker with the hold** (`c0c3d088`, `quiet_place=1` named; the seed's place correction was not applied, so calm
+  lasted the whole watch): guard 18 p50 1.38 / p90 1.98 m (121 samples), ratio 0.95, 9 plans for him (98 without the
+  hold), 63 held, 2 catch-ups; he leads the host copy (along-track p50 +1.18 m, 89 of 119 samples nearer the destination,
+  error smallest at about -1 s): the hold removed the 1 s trail; 11 of 13 plans within 1 m (2 had no path yet at 300 ms) [O]. The p90 row passes, p50 does not.
+- **Gate** (7.23's, per guard, calm frames): not reached; see docs/STATUS.md (2026-11-05, enemy round 9 track C).
+- **Next**: not a lead (he already leads with the hold); fix the release freeze (hand the walk request back at release),
+  take walkers that are walking at take time, hold a partial path while it grows, and a spot where a calm walker is in
+  clear view from both players for the frame pair.
 
 ### 8. Soldier transforms (W6)
 
