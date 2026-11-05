@@ -30,7 +30,8 @@
 -- M7 step 1 (soldier_perceive, CFG r[19] bit 256, W.perceiveOn; docs/world-sync-design.md 7.13): on the host each guard
 -- the M1 scan samples perceives one player, the nearer: the guest's body (target 1) once the guest is at least 3 m nearer
 -- than the host, the host (0) once the host is at least 3 m nearer; a choice holds 4 s (native soldier_perceive answers
--- the offense index getter per soldier: MGS_COOP_SOLDIER_PERCEIVE_V1).
+-- the offense index getter per soldier: MGS_COOP_SOLDIER_PERCEIVE_V1). P13c told sight: one offense player for every
+-- guard (the player nearest to a sampled guard, held 4 s); a calm guard 10 m from the guest is told SetDiscoveryPlayer.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -413,8 +414,9 @@ do
             end
         end
         -- M7 step 1: per-soldier perception targets (host) ---------------------------------------------------------
-        S.pc = {t = {}, at = {}, sent = 0}
-        W.startHooks[#W.startHooks + 1] = function() S.pc = {t = {}, at = {}, sent = 0} end
+        local function fresh() return {t = {}, at = {}, sent = 0, dw = {}, told = {}, offAt = -1e9} end
+        S.pc = fresh()
+        W.startHooks[#W.startHooks + 1] = function() S.pc = fresh() end
         local function perceive(text)
             local ok, r = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- " .. text)
             return ok and r or nil
@@ -430,6 +432,13 @@ do
             if want == cur or (cur ~= nil and heldMs < 4000) then return cur end
             return want
         end
+        -- P13c told sight (run dbba96de: the guards' own senses never pick up body 1, a told discovery finds the
+        -- offense player): one offense player for every guard, the player nearest to a sampled guard held 4 s; a tell
+        -- switches at once.
+        function S.offense(cur, want, heldMs, tell)
+            if want == cur or (cur ~= nil and heldMs < 4000 and not tell) then return cur end
+            return want
+        end
         function P.perceiveScan(h, en, dh, dq, now)
             if not (W.perceiveOn and W.host and W.paired and type(en.id) == "number") then return end
             local c = S.pc
@@ -443,6 +452,23 @@ do
                 c.t[h], c.at[h], c.sent = want, now, c.sent + 1
                 L("event=perceive;ent=%.0f;idx=%d;target=%d;dh_m=%.0f;dq_m=%s", h, en.id % 512, want, sqrt(dh) / 1000,
                     dq and fmt("%.0f", sqrt(dq) / 1000) or "na")
+            end
+            -- A calm guard within 10 m of the guest for 0.8 s is told it found the player (offense 1 first; once per 30 s).
+            local d, p = dh, 0
+            if dq and dq < dh then d, p = dq, 1 end
+            if not c.nd or d < c.nd or now - c.ndAt > 1000 then c.nd, c.np, c.ndAt = d, p, now end
+            local cp = W.cp and W.cp[en.cp]
+            local close = dq and dq <= 1e8 and c.t[h] == 1 and not (cp and cp.localPhase == 3)
+            c.dw[h] = close and (c.dw[h] or now) or nil
+            local tell = close and now - c.dw[h] >= 800 and now - (c.told[h] or -1e9) >= 30000
+            local o = S.offense(c.off, tell and 1 or c.np, now - c.offAt, tell)
+            if o ~= c.off and perceive("offense " .. o) == 1 then
+                c.off, c.offAt = o, now
+                L("event=perceive_offense;offense=%d;why=%s", o, tell and "tell" or "nearest")
+            end
+            if tell and c.off == 1 and pcall(W.api.send, en.id, {id = "SetDiscoveryPlayer"}) then
+                c.told[h] = now
+                L("event=perceive_tell;ent=%.0f;idx=%d;dq_m=%.1f", h, en.id % 512, sqrt(dq) / 1000)
             end
             if not c.statAt or now - c.statAt >= 10000 then
                 c.statAt = now

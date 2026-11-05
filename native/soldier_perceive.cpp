@@ -542,6 +542,17 @@ bool LocalLine(char* out, std::size_t capacity) noexcept {
     return n >= 0 && static_cast<std::size_t>(n) < capacity;
 }
 
+int OffenseCommand(const char* text, std::size_t size) noexcept {
+    constexpr char kHead[] = "offense ";
+    constexpr std::size_t kHeadSize = sizeof(kHead) - 1;
+    if (!text || size <= kHeadSize || std::memcmp(text, kHead, kHeadSize) != 0) return -2;
+    const char* arg = text + kHeadSize;
+    const std::size_t n = size - kHeadSize;
+    if (n == 1 && (arg[0] == '0' || arg[0] == '1')) return arg[0] - '0';
+    if (n == 3 && std::memcmp(arg, "off", 3) == 0) return -1;
+    return -2;
+}
+
 std::uint32_t OnlineBits(std::uint32_t was, bool online) noexcept { return online ? (was | 4u) & ~2u : (was | 2u) & ~4u; }
 void SetOnline(int online) noexcept { g_online.store(online == 0 || online == 1 ? online : -1, std::memory_order_relaxed); }
 int OnlineMode() noexcept { return g_online.load(std::memory_order_relaxed); }

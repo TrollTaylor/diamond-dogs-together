@@ -5961,8 +5961,9 @@ bool SelectSoldierAuthReceipt(const char* buffer,std::size_t size,mgscoop::scrip
     if(sa::Set(static_cast<std::uint16_t>(index),remote!=0)) replacement={yes,sizeof(yes)-1};
     return true;
 }
-// Enemy sync M7 step 1 (soldier_perceive.hpp): MGS_COOP_SOLDIER_PERCEIVE_V1 -- clear | status | <index 0..511> <target
-// -1|0|1>, on the runtime thread: the per-soldier target of the offense index getter (Lua: the host's nearer-player rule).
+// Enemy sync M7 step 1 (soldier_perceive.hpp): MGS_COOP_SOLDIER_PERCEIVE_V1 -- clear | status | offense <0|1|off> |
+// <index 0..511> <target -1|0|1>, on the runtime thread: the per-soldier target of the offense index getter (Lua: the
+// host's nearer-player rule) and the single offense player of P13c's told sight (clear also drops it).
 // While a debug perceive_pick holds the targets (perceive_auto 0), a set is acknowledged but not applied. Reply
 // return <installed>,<t0>,<t1>,<auto> (status, clear) or return 1|0 (set). No game read or call.
 bool SelectSoldierPerceiveReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -5976,10 +5977,16 @@ bool SelectSoldierPerceiveReceipt(const char* buffer,std::size_t size,mgscoop::s
     namespace sp=mgscoop::soldier_perceive;
     const bool automatic=perceive_auto.load();
     if(rest=="clear" || rest=="status") {
-        if(rest=="clear" && automatic) sp::ClearTargets();
+        if(rest=="clear" && automatic) {sp::ClearTargets();sp::SetForcedIndex(-1);}
         if(SUCCEEDED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return %u,%u,%u,%u",sp::PickInstalled()?1u:0u,sp::TargetCount(0),
                                       sp::TargetCount(1),automatic?1u:0u)))
             replacement={reply,std::strlen(reply)};
+        return true;
+    }
+    // P13c told sight: offense <0|1|off>, Lua's single offense player (the forced index; refused while a debug pick holds).
+    if(const int offense=sp::OffenseCommand(rest.data(),rest.size()); offense>=-1) {
+        static constexpr char yes[]="return 1";
+        if(automatic && sp::PickInstalled()) {sp::SetForcedIndex(offense);replacement={yes,sizeof(yes)-1};}
         return true;
     }
     unsigned index=0;int target=0;
@@ -6342,6 +6349,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity(); mgscoop::dog_guard::Disarm("terminating");
             mgscoop::soldier_authority::Clear();
             mgscoop::soldier_perceive::ClearTargets();
+            if(perceive_auto.load()) mgscoop::soldier_perceive::SetForcedIndex(-1);  // Lua's offense player ends with the mission
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),

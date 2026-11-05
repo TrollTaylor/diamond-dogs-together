@@ -1,0 +1,20 @@
+# Enemy sync M7 step 1, told sight proof part 2 of 3 (header: enemy-sight-1-tell.txt): the guest leaves 60 m south, so
+# the host is the player nearest to the guards; after the 4 s hold the offense player is the host again and the guards
+# turn on the host.
+logmark both
+host run perceive_reset
+guest run teleport 421.16 269.2 2070.0 0
+wait 6000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+wait 600
+host burst t2-host 4 1500
+wait 8000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t2-20
+host run damage_status
+host run position
+guest run position

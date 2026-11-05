@@ -283,6 +283,12 @@ void SetOnline(int online) noexcept;  // 1 on, 0 off (restore once), anything el
 int OnlineMode() noexcept;
 std::uint32_t OnlineWrites() noexcept;
 
+// P13c told sight (run dbba96de: forced 1 + a told SetDiscoveryPlayer made guards 15 and 246 fire 45 times at body 1
+// while the host stood ignored; the soldiers' own senses never pick up body 1): the host's Lua names ONE offense player
+// for every guard (MGS_COOP_SOLDIER_PERCEIVE_V1 -- offense <0|1|off>, the forced index of the getter while the debug
+// perceive_pick does not hold the targets). Pure: the text after the prefix -> 0 or 1, -1 for off, -2 refused.
+int OffenseCommand(const char* text, std::size_t size) noexcept;
+
 #ifdef _WIN32
 // Verifies soldier_sense_contract.hpp and hooks 0x14053C9D0 and 0x14053C990 (MinHook, each through its own stub).
 // Logs soldier_perceive_local=installed | refused; reason=.... Idempotent; after InstallPick (the same image base).

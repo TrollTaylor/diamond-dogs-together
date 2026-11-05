@@ -1536,6 +1536,31 @@ if arg[7] and arg[8] then
     local po = perceiveFix(true, false)
     ticks(po, 40)
     check(#po.perceive == 0, 'M7 perceive: off without the key')
+    -- P13c (run dbba96de): told sight. The soldiers' own senses never pick up body 1, but a told discovery
+    -- (SetDiscoveryPlayer) finds the offense player. One offense player for every guard: the player nearest to a sampled
+    -- guard, held 4 s; a calm guard within 10 m of the guest for 0.8 s is told (offense 1 first, at most once per 30 s).
+    local off = sh.W.snap.offense
+    check(off(nil, 1, 0, false) == 1 and off(0, 1, 3000, false) == 0 and off(0, 1, 4000, false) == 1 and off(0, 1, 100, true) == 1 and
+        off(1, 1, 0, false) == 1, 'M7 told sight: the offense player waits 4 s, a tell switches at once')
+    check(has(pv, 'offense 0') and cmdCount(pv, 'SetDiscoveryPlayer') == 0 and not logged(pv, 'event=perceive_tell'),
+        'M7 told sight: the host nearest to a guard is the offense player; nobody is told 30 m from the guest')
+    local pt = perceiveFix(true, true)
+    pt.positions[3] = {95.0, 1.8, 0}     -- 5 m from the partner body, 95 m from the host
+    ticks(pt, 60)
+    check(has(pt, '3 1') and has(pt, 'offense 1') and cmdCount(pt, 'SetDiscoveryPlayer') == 1 and
+        logged(pt, 'event=perceive_tell;ent=3000000003;idx=3;dq_m=5.0') and logged(pt, 'event=perceive_offense;offense=1;why=tell'),
+        'M7 told sight: a guard 5 m from the guest is told once, the offense player becomes body 1')
+    ticks(pt, 300)
+    check(cmdCount(pt, 'SetDiscoveryPlayer') == 1, 'M7 told sight: at most once per 30 s per guard')
+    local pa = perceiveFix(true, true)
+    pa.positions[3] = {95.0, 1.8, 0}
+    pa.W.cp[100].localPhase, pa.phase.cp_a = 3, 13  -- the guard's CP in ALERT
+    ticks(pa, 60)
+    check(cmdCount(pa, 'SetDiscoveryPlayer') == 0, 'M7 told sight: never a guard whose CP is in ALERT')
+    local pg2 = perceiveFix(false, true)
+    pg2.positions[3] = {95.0, 1.8, 0}
+    ticks(pg2, 60)
+    check(cmdCount(pg2, 'SetDiscoveryPlayer') == 0 and #pg2.perceive == 0, 'M7 told sight: never on the guest')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

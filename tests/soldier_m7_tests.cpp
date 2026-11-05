@@ -146,6 +146,13 @@ void TestLocal() {
     Check(sp::OnlineMode() == 0, "online off (restore once)");
     sp::SetOnline(4);
     Check(sp::OnlineMode() == -1 && sp::OnlineWrites() == 0, "any other value: untouched; nothing written in the test");
+    // P13c told sight: Lua's single offense player (MGS_COOP_SOLDIER_PERCEIVE_V1 -- offense <0|1|off>).
+    Check(sp::OffenseCommand("offense 1", 9) == 1 && sp::OffenseCommand("offense 0", 9) == 0 &&
+              sp::OffenseCommand("offense off", 11) == -1,
+          "offense 0, 1 or off");
+    Check(sp::OffenseCommand("offense 2", 9) == -2 && sp::OffenseCommand("offense", 7) == -2 && sp::OffenseCommand("offense 1 ", 10) == -2 &&
+              sp::OffenseCommand("15 1", 4) == -2 && sp::OffenseCommand(nullptr, 0) == -2 && sp::OffenseCommand("offense -1", 10) == -2,
+          "anything else is refused");
 #ifdef _WIN32
     // The stubs' C++ halves with fake game functions: the image base 0x140000000, a fabricated register block (regs[8]
     // the entry return, regs[14] the slot 0x30 above it).
