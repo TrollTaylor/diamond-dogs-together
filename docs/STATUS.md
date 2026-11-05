@@ -1,3 +1,56 @@
+## November 5, 2026: enemy flip B - in Afghanistan free roam the patrol trucks and their crews now drive and stop where the host's do: `lrrp_follow` is on with the gun profile in 30010 only (user decision D-B10, with its accepted limits); Africa and Mother Base stay off unless named, and a named 0 is the off switch (`wp/enemy-lrrp`, not pushed)
+
+Design 7.28 (flip note), protocol section 45. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+After merging dev 9c82692d (912f900e): red 1db52182 (`lab_config_tests` check 2000 and `world_vehicle_state_lua_check`
+"defaults (receipt 2): on in 30010" fail) / green e1bf27af. One hidden play session with no key named at e1bf27af (build
+0.15.2+e1bf27a): `139a1440` (`-WanSim bad`, the gun profile, research build, afgh-ledge; the parts join,
+`enemy-lrrp-crew10.txt`, `enemy-lrrp-alert3.txt`, `enemy-integ-carry.txt`; the run's lab settings are `nametag=1` only).
+Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\139a14400a00447bb9c85e143927d4ad`.
+
+- **What players get**: in Afghanistan free roam the LRRP patrol trucks follow the host's at the defaults, and the crews
+  of the trucks the host sees manned get out and back in at the host's stops on the host's travel step (round 10 B's
+  `StartTravel{travelPlan, step, keepInAlert}`). Africa (30020, never run) and Mother Base: off unless named.
+- **Built** (red first): `native/lab_config.cpp` - `lrrp_follow` follows the gun profile when not named; the receipt
+  `MGS_COOP_LRRP_CFG_V1` answers 2 for that default (1 named on, 0 off); `lua/coop/world_lrrp.lua` runs a 2 only while
+  `W.mission` is 30010 (a named 1 on any map). New fixture rows: the defaults on in 30010, off in 30020 and 30050, a named
+  1 on in 30020. No new native read, patch, hook or wire op.
+- **Gate rows** (`139a1440`, no key named) [O]:
+  - PASS `event=lrrp; step=on` on both roles (host and guest).
+  - PASS moving truck place error p50 0.14 / p90 0.53 / max 2.12 m (317 samples; 25605 p90 0.54, 25606 p90 0.51 m).
+  - PASS crews 20-40 s after the host's get-out (18 samples per guard): p90 1.79 / 2.05 m (25605's two), 4.83 / 4.76 m
+    (25606's two; both copies stood still at a constant offset).
+  - PASS get-outs and boardings matched for the 2 manned trucks: 25605 2 -> 1 -> 0 and 25606 2 -> 0 -> 1 -> 2 on both
+    copies; the guest's 25605 get-outs came 0.86 / 4.96 s before the host's (the guest's driver ran on to step 7 on its
+    own AI, was set back to 0, then to 7 [I]), 25606's get-out 0.31 s after; 0 trucks moving with the crews differing.
+  - PASS 0 latches / faults / game overs (`enemy_div_report`: soldier_warp disabled 0, latched 0, fault 0, game_over 0).
+    Its combined row fails on one host `drive_sink` (guard 1926520947, -3.52 m, in the ALERT part: an outpost guard, not
+    a crew member).
+  - PASS guest place error p50 0.72 / p90 1.95 m (465 samples).
+- **Known-limit rows** (information; accepted in D-B10) [O]:
+  - The pairing deferral: 25605's guest copy was 364 m from the guest's player at the pairing, so it stayed the guest's
+    own for 60.2 s (30 `defer` lines) until the jump at near_m 400.0; its two riders were 400-450 m off the host's then
+    (41 samples each over 8 m). After it every seated rider p90 0.56-0.86 m, max 7.36 m, 0 over 8 m.
+  - Unseated crews of unmanned trucks: 25602/3/4/7 had 0 riders on the host's copy and 2 each on the guest's; the guest
+    unseated those 8 guards at the pairing (24 `UnsetRelativeVehicle`, 3 tries each); none of the 4 trucks moved.
+  - Re-boarding: 25606's crew boarded again on both copies (host 0 -> 1 -> 2 59.5 / 63.0 s after its get-out), the guest's
+    4.40 / 6.17 s later. 26 `StartTravel` sets, 6 held (`why=track|wait`); the guest on the host's step after a host change
+    p50 2.0 / p90 5.4 s (24 changes; the max, 200 s, is a driver's host step the guest never read back).
+  - Not a gate part: `enemy-integ-carry.txt` failed at its first `placebehind` (step 6 of 40, "[host] viewer landing has
+    no new position sample", the harness step `c784a5a7`'s carry part failed at too); no carry ran.
+  - Report rows that fail as in the earlier no-key runs (not LRRP guards): corrections 15/20 applied (4 unrealized /
+    relayed, 1 backoff); M3 107/123 host placements applied (16 unrealized refusals of outpost guards in the ALERT part);
+    M3 host place error p50 1.49 / p90 7.97 m (`a30a0b07`: 19/47, 106/112, 1.96 / 7.17 m).
+  - 0 `log_cap`; `step=cost` avg <= 0.144 ms per tick; partner_tick median 38 / 38 Hz, frame p95 30.3 / 29.4 ms
+    (host / guest; `a30a0b07` 30.3 / 29.4 ms).
+  - Frames: the first frames of both copies in gameplay (no modal); no matched crew pair (the host's binoculars face
+    rock in k-6..k-8, as in `ffd0248d`); the guest's k-6 shows two soldiers on foot at the stop.
+- **Checks**: `lab_config_tests` 2148 pass, `world_vehicle_state_lua_check` 169 pass; full build and CTest 355/355 at
+  e1bf27af; every contract `--check` as round 10 (known base failures only; horse_drive and vehicle_controller pass with
+  `--executable`).
+- **Next** (as 7.28): send the step for crews the host has not seen seated, or stop unseating them; hold a copy one step
+  ahead instead of setting it back; leave a driver whose host step never changes alone; a phase gate on `StartTravel`;
+  Africa (`enemy-lrrp-africa.txt`, seed `africa-jeep`) before it is turned on there.
+
 ## November 5, 2026: enemy round 10 track C - the far mirror takes every calm walker, a released walker can walk his last walk on, the plans are checked again: 2 of 4 calm walkers within the gate and a matched frame pair, but the calm gate is not reached (a route's corners, 18-49 m take warps, released walkers that still stand 10-30 s); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.29, protocol section 46. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Two hidden play
