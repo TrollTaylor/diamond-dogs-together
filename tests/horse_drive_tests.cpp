@@ -7,6 +7,7 @@
 #include <cstring>
 #include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
+#include "../native/horse_drive_contract.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
 
@@ -348,12 +349,38 @@ void TestPillionKey() {
     Check(on.world_horse_pillion && on.world_horse_pillion_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
     Check(!off.world_horse_pillion && off.world_horse_pillion_given, "a named 0 is the off switch");
     Check(!bad.world_horse_pillion && bad.invalid_values == 1, "an invalid value stays off");
+    // M3c: on with the gun profile in lab and play (with its 2.5 / 2.8 m ride hold); a named 0 is the off switch.
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    Check(!gun.world_horse_pillion && !gun.world_horse_pillion_given && gun.world_horse_share, "before its gate: off with the gun profile");
+    Check(gun.world_horse_pillion && !gun.world_horse_pillion_given && gun.world_horse_share, "M3c: on with the gun profile");
+    const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_pillion=0\n");
+    Check(!gunOff.world_horse_pillion && gunOff.world_horse_pillion_given, "with the gun profile a named 0 is the off switch");
+    const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_pillion && playGun.play_refused == 0, "on in play with the gun profile");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_pillion=1\n");
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_pillion && play.play_refused == 0, "a named 1 runs in play too");
+}
+
+// M3c: body 1's readback against the rear seat it was given on the driver's copy (partner_pillion=stats), and the pinned
+// life table read of the passenger's copy's horse (receiver+0x30 -> +8, 0x28 per index: life u16, max u16; SetMaxLife).
+void TestSeatErr() {
+    hd::SeatErr e{};
+    const float seat[3] = {10.f, 5.f, 20.f};
+    const float b1[3] = {10.3f, 4.6f, 20.4f};
+    hd::NoteSeatErr(e, seat, b1);
+    Check(e.n == 1 && Near(e.xz_max, 0.5f) && Near(e.dy_max, -0.4f), "xz distance 0.5 m, 0.4 m under the seat");
+    const float b2[3] = {10.1f, 5.7f, 20.f};
+    hd::NoteSeatErr(e, seat, b2);
+    Check(e.n == 2 && Near(e.xz_max, 0.5f) && Near(e.dy_max, 0.7f), "the worst of the window: the larger |dy| wins with its sign");
+    const float bad[3] = {NAN, 5.f, 20.f};
+    hd::NoteSeatErr(e, seat, bad);
+    Check(e.n == 2, "a non-finite readback is not counted");
+    Check(hd::LifeEntry(0x1000, 0) == 0x1000 && hd::LifeEntry(0x1000, 1) == 0x1028, "life entry stride 0x28");
+    bool pinned = false;
+    for (const auto& s : mgscoop::horse_drive_contract::sites) if (s.rva == hd::kLifeSiteRva && s.size == 0x30) pinned = true;
+    Check(pinned && hd::kLifeSiteRva == 0xe4d340, "the life table's reader (SetMaxLife's loop 0x140E4D340) is a pinned site");
 }
 
 // BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
@@ -411,6 +438,7 @@ int main() {
     TestCargoKey();
     TestPillion();
     TestPillionKey();
+    TestSeatErr();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
                 checks);

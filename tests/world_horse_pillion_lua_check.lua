@@ -9,10 +9,10 @@ local HORSE, OP = 6656, 80
 local function fixture(o)
     o = o or {}
     local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, rides = false,
-        key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true,
+        key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true, placeOk = true, masked = false, mag = 0,
         horse = {x = 10000, y = 2000, z = 30000, yaw = 0, occupied = false}}
     local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3,
-        mission = 30010, epoch = 7,
+        mission = 30010, epoch = 7, M = {GameObject = 1}, kind = {[701] = "Unconscious", [702] = "Damage", [703] = "Conscious"},
         host = o.host ~= false, role = o.host == false and 2 or 1, active = true, downed = {records = {}}}
     W.get = function(t, k) if t == nil then return nil end return t[k] end
     W.now = function() return f.now end
@@ -21,17 +21,20 @@ local function fixture(o)
     W.log = function(s) f.logs[#f.logs + 1] = s end
     W.tick = function() end
     W.travel = {blocked = function() return nil end}
+    W.observe = function() f.observed = (f.observed or 0) + 1 end
     W.receipt = function(text)
         local verb = text:match("MGS_COOP_HORSE_DRIVE_V1' %-%- (.*)$")
         if not verb then return nil end
         if verb == "cfg" then return {on = f.key and 1 or 0, cargo = 0, pillion = f.pillion and 1 or 0} end
         local h = f.horse
         if verb:find("^read ") then
-            return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen}
+            return {ready = true, id = HORSE, realized = true, occupied = h.occupied, rider = 0, pending = 0, x = h.x, y = h.y, z = h.z, yaw = h.yaw, gen = f.gen,
+                life = 1000, maxlife = 1000}
         end
         if verb:find("^pad ") then
             if not f.padOk then return {ready = false, reason = "off"} end
-            return {ready = true, e = f.e and 1 or 0, masked = 1}
+            return {ready = true, e = f.e and 1 or 0, masked = f.masked and 1 or 0, held = f.e and 0x20 or 0, bm = f.masked and 0x20 or 0,
+                mag = f.mag}
         end
         local sb, su, sp = verb:match("^seat1 30010 7 (%d+) (%-?%d+) (%d)$")
         if sb then
@@ -46,6 +49,7 @@ local function fixture(o)
         end
         local m, e, x, y, z, yaw, a = verb:match("^place (%d+) (%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d)$")
         if m then
+            if not f.placeOk then return {ready = false, reason = "pending"} end
             f.places[#f.places + 1] = {x = tonumber(x), y = tonumber(y), z = tonumber(z), yaw = tonumber(yaw)}
             return {ready = true, placed = true, anchored = tonumber(a), bx = h.x, by = h.y, bz = h.z, byaw = h.yaw, x = tonumber(x),
                 y = tonumber(y), z = tonumber(z), gen = f.gen}
@@ -117,17 +121,39 @@ local far = fixture({host = false})
 far.env.vars.playerPosX = 13.1
 far.ride(2); far.e = false; far.ride(1); far.e = true; far.ride(1)
 check(#far.seatTx() == 0 and far.P.state == "off", "3 m from the ridden horse: E is not a claim (it acts normally)")
-far.W.downed.rawHeld, far.W.downed.rawHeldAt = true, far.now
-far.ride(1)
-far.W.downed.rawHeldAt = far.now
-far.tick(10)
-check(far.logged("event=horse_pillion;step=e_free;dist_cm=310;hold=0"), "an unmasked E 3.1 m from the ridden horse: step=e_free")
+-- M3c: the E there is read from the raw pad verb (not the downed poll, which is not polled with nobody downed).
+check(far.logged("event=horse_pillion;step=e_free;dist_cm=310;hold=0;masked=0"), "an unmasked E 3.1 m from the ridden horse: step=e_free")
+far.e = false; far.ride(1); far.masked = true; far.e = true; far.ride(1)
+check(far.logged("step=e_free;dist_cm=310;hold=0;masked=1"), "the pad's ACTION mask bit is logged with it")
+local far6 = fixture({host = false})
+far6.env.vars.playerPosX = 16.5
+far6.ride(2); far6.e = false; far6.ride(1); far6.e = true; far6.ride(1)
+check(not far6.logged("step=e_free"), "past 6 m: no e_free line")
 -- The driver's ride while a passenger sits behind: the ridden path every 2 s (runs 306525db / c4428efa: a horse that does not move).
 h2 = fixture()
 h2.rides, h2.horse.occupied = true, true
 h2.W.handlers[OP]({1, 1, 2, 1, 0, 4, 0, 0, 0, 0})
+h2.mag = 600
 for _ = 1, 50 do h2.horse.x = h2.horse.x + 100; h2.tick(50) end
 check(h2.logged("event=horse_pillion;step=drive;moved_cm="), "step=drive: the driver's ridden path every 2 s")
+-- M3c (run 7c0b9e71: the 'stall' was the scenario's first ride key 17 s after the stray claim, then a cliff): the census
+-- rider index and the pad words with every drive line, the time from the first ride key to 0.5 m, a stall line.
+check(h2.logged(";rider=0;occ=1;") and h2.logged(";mag=600;"), "step=drive carries the census rider / occupied and the pad words")
+check(h2.logged("event=horse_pillion;step=first_move;ms="), "step=first_move: the first ride key to 0.5 m of path")
+check(not h2.logged("step=stall"), "a moving horse: no stall line")
+local h4 = fixture()
+h4.rides, h4.horse.occupied = true, true
+h4.W.handlers[OP]({1, 1, 2, 1, 0, 4, 0, 0, 0, 0})
+h4.mag = 600
+for _ = 1, 30 do h4.tick(50) end
+check(not h4.logged("step=stall"), "1.5 s of ride keys without moving: not yet a stall")
+for _ = 1, 20 do h4.tick(50) end
+check(h4.logged("event=horse_pillion;step=stall;ms=") and h4.logged(";rider=0;occ=1;"), "ride keys 2 s and the horse under 0.5 m: step=stall")
+local h5 = fixture()
+h5.rides, h5.horse.occupied = true, true
+h5.W.handlers[OP]({1, 1, 2, 1, 0, 4, 0, 0, 0, 0})
+for _ = 1, 60 do h5.tick(50) end
+check(not h5.logged("step=stall") and not h5.logged("step=first_move"), "no ride keys: neither line")
 -- The host grants while it rides the shared horse and drives with the guest behind.
 h.rides, h.horse.occupied = true, true
 deliver(h, claim)
@@ -155,8 +181,17 @@ g.ride(1)
 local hold = g.holds[#g.holds]
 local pl = g.places[#g.places]
 -- Run ba6b4bb5: body 0 0.6 m over the root stood on the ground 1-1.8 m under its target (seat_pin dy_cm 99-176): 0.8 m.
-check(hold and hold[1] == pl.x and hold[2] == pl.y + 800 and hold[3] == pl.z - 350 and hold[5] == 1,
-    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.8 m up), hold0 with the A0 reset")
+-- M3c: BODY0's mechanism by default (run 7c0b9e71: seat_pin lag 0 / dy 0, squatting behind the driver on their own screen).
+check(hold and hold[1] == pl.x and hold[2] == pl.y + 800 and hold[3] == pl.z - 350 and hold[5] == 14,
+    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.8 m up), hold0 + C0 + watch + pin (14)")
+-- A refused placement (no P.placed call) still holds body 0 at its last target: no drop onto the horse.
+g.placeOk = false
+local nk = #g.holds
+g.ride(4)
+check(#g.holds >= nk + 2 and g.holds[#g.holds][1] == hold[1] and g.holds[#g.holds][2] == hold[2] and g.holds[#g.holds][5] == 14,
+    "placements refused: the last seat target held again (keepalive)")
+check(g.logged("step=hold_keep;"), "step=hold_keep once")
+g.placeOk = true
 check(g.P.busy() and g.S.busy(), "seated: busy (Travel / Bring wait)")
 -- KEEP both ways at 1 Hz.
 local n0 = #g.tx
@@ -189,6 +224,13 @@ hc.tick(33)
 check(hc.P.state == "driver" and hc.seats[1][3] == 0 and hc.logged("pose=0"), "a claim without the overlay seat: the first lease has pose 0")
 g.ride(10)
 check(g.logged("step=seat_pin;"), "step=seat_pin every second")
+check(g.logged(";occ=0;life=1000;max=1000"), "seat_pin carries this copy's horse census (occupied, life)")
+-- The passenger's copy's horse hit / knocked down: one line with the message, its arguments and the horse's life.
+g.W.observe(1, 701, HORSE, 0, 0, 0)
+check(g.logged("event=horse_pillion;step=horse_hit;m=Unconscious;") and g.logged("state=seated;") and g.observed == 1,
+    "W.observe wrapped: a 6656 Unconscious is logged with the seat state (and the original still runs)")
+g.W.observe(1, 702, 1234, 0, 0, 0)
+check(g.count("step=horse_hit") == 1, "other ids are not")
 check(g.logged("event=horse_pillion;step=pad;e=1;"), "the raw E's changes are logged (capped)")
 -- Hop off: E held 0.3 s again, after a release (run ba6b4bb5: a stray raw E for a frame ended a ride at a gallop).
 g.e = false
@@ -311,6 +353,15 @@ check(nr[5] == 5 and nr[6] == 7 and g.P.state == "off", "the guest not riding: U
 deliver(h, nr)
 check(h.P.state == "off" and h.logged("why=not_riding;side=passenger;placed=1;"), "the host is laid off")
 
+-- M3c tie (both press E at an unridden horse at once): each copy rides its own horse and the partner's RIDE_FAST arrives
+-- while this copy's player rides (no track opens): step=tie once per ride on both copies, the host drives.
+local th, tg = fixture(), fixture({host = false})
+th.rides, th.horse.occupied, tg.rides, tg.horse.occupied = true, true, true, true
+for _ = 1, 3 do th.t = th.t + 50; th.fast(th.t, 1, 2, 3, 0); th.tick(50); tg.t = tg.t + 50; tg.fast(tg.t, 1, 2, 3, 0); tg.tick(50) end
+check(th.count("event=horse_pillion;step=tie;role=host;verdict=drive") == 1, "tie on the host's copy: the host drives (once)")
+check(tg.count("event=horse_pillion;step=tie;role=guest;verdict=yield;getoff=none") == 1,
+    "tie on the guest's copy: the guest yields (no native get-off yet: logged)")
+check(th.S.track == nil and tg.S.track == nil, "no track opens while both ride")
 -- The pad read refused: no claim, one line.
 g = fixture({host = false})
 g.padOk = false
