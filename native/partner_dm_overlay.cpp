@@ -58,6 +58,7 @@ constexpr std::uint8_t kCount = static_cast<std::uint8_t>(sizeof(kEntries) / siz
 static_assert(kCount <= kMaxEntries, "the reply value carries a 5-bit index");
 constexpr std::uint8_t kFront = 0, kDead = 4, kBoxIdle = 5, kBoxMove = 6, kElude = 7, kClimbIdle = 8, kClimbUp = 9, kClimbDown = 10;
 constexpr std::uint8_t kFulton = 16;  // stateFultonStart
+constexpr std::uint8_t kRideOnIdle = 22;  // stateRideOnIdle
 
 std::uint32_t Ms(std::uint64_t from, std::uint64_t now) noexcept {
     if (now < from) return 0;
@@ -110,6 +111,8 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept {
 }
 
 std::uint8_t MapFulton(std::uint16_t act) noexcept { return act == 59 ? kFulton : kNone; }
+
+std::uint8_t MapHorse(std::uint16_t act) noexcept { return act == 121 || act == 122 ? kRideOnIdle : kNone; }
 
 const char* PhaseName(Phase phase) noexcept {
     switch (phase) {
@@ -167,10 +170,15 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     // the finished one-shot entry.
     // r1101 fulton: In::fulton adds the Fulton act map (the attach), also with the setting off or debug.
     const bool full_map = in.mode == PartnerNativeOverlay::map;
-    const bool map_mode = full_map || in.fulton;
+    const bool map_mode = full_map || in.fulton || in.horse || in.pillion;
     std::uint8_t want = full_map && in.remote_valid ? MapAct(in.remote_act, static_cast<std::int32_t>(s.vy)) : kNone;
     const bool fulton_act = in.fulton && in.remote_valid && want == kNone && MapFulton(in.remote_act) != kNone;
     if (fulton_act) want = MapFulton(in.remote_act);
+    // Horse plan M1: the shared-horse rider's seat (a map source the setting off never stops).
+    const bool horse_act = in.horse && want == kNone && (!in.remote_valid || MapHorse(in.remote_act) != kNone);
+    if (horse_act) want = kRideOnIdle;
+    // Horse plan M3: the partner behind this copy's rider is seated whatever its own copy's act is (it squats there).
+    if (in.pillion) want = kRideOnIdle;
     if (want != s.map_cand) {
         s.map_cand = want;
         s.map_cand_ms = now;
@@ -220,7 +228,9 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         const Entry* entry = At(index);
         return entry && entry->loop;
     };
-    const auto map_ms = [&](std::uint8_t index) noexcept { return map_entry(index) ? p.map_max_ms : p.once_max_ms; };
+    const auto map_ms = [&](std::uint8_t index) noexcept {
+        return (in.horse || in.pillion) && index == kRideOnIdle ? p.horse_max_ms : map_entry(index) ? p.map_max_ms : p.once_max_ms;
+    };
 
     // Debug commands.
     if (in.debug.stop) {
@@ -253,11 +263,12 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     }
     // A map start: idle, map mode, a held candidate the body does not show natively.
     if (s.phase == Phase::idle && map_mode && want_held && want != s.done_index && now >= s.cooldown_until && !in.blocked &&
-        !(in.body_valid && in.body_act == in.remote_act)) {
+        (in.pillion || !(in.body_valid && in.body_act == in.remote_act))) {
         begin(Source::map, want, map_entry(want), map_ms(want));
         event("request", "map", map_ms(want));
     }
-    if (in.mode == PartnerNativeOverlay::off && !(in.fulton && s.source == Source::map) && s.phase != Phase::idle && !s.stop_reason)
+    if (in.mode == PartnerNativeOverlay::off && !((in.fulton || in.horse || in.pillion) && s.source == Source::map) && s.phase != Phase::idle &&
+        !s.stop_reason)
         s.stop_reason = "setting_off";
     // The map source: before playing, a new candidate retargets; the remote
     // leaving the mapped acts cancels (a one-shot already playing runs out).

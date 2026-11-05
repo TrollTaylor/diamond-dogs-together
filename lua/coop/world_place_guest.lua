@@ -236,7 +236,8 @@ do
                 if ok and type(v) == "number" and v ~= W.api.null then return "vehicle_local" end
                 local off = W.get(TppGameObject, "NPC_STATE_DISABLE")
                 local good, s = pcall(send, en.id, {id = "GetStatus"})
-                if off ~= nil and good and s == off then return "disabled_local" end
+                -- Enemy gaps 2 (body_dead): a dead body's placement goes (run 41f2b07f: 6.8 m apart).
+                if off ~= nil and good and s == off and not (c.body and W.deadOn) then return "disabled_local" end
             end
         end
         -- The route name of a wire hash (sneak/caution route sets of every CP).
@@ -344,6 +345,7 @@ do
                 c.seq, c.h, KIND[c.kind],
                 why and "refused" or "applied", why or "none", c.native or "none", c.errCm / 100, c.frames or 0,
                 not why and c.dy and fmt(";dy_m=%.2f", c.dy / 1000) or "")
+            if P.doneHook then P.doneHook(c, why) end  -- enemy gaps 2 (world_place.lua)
             if not why and c.dy and c.pos and W.followOn == true then
                 P.sink[c.h] = {at = W.now(), x = c.pos[1], y = c.pos[2], z = c.pos[3], wy = c.y, dy = c.dy, seq = c.seq}
             end

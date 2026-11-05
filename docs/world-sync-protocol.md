@@ -2260,8 +2260,10 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 - Log lines: host `event=owner`, `event=hplace` (its own placements), `world_place=host_warp`, `event=route_tx`,
   `event=body_tx`; guest `event=owner_rx`, `event=place_ack; side=host`, `event=place_first; ...; side=guest`,
   `event=route_apply`, `event=place_body`, `event=holdup_show`; both `event=phase; ...; src=down`.
-- Reason (WHY) 23 `unrealized` (enemy latch, design 7.14): the receiving copy's guard is allocated but not realized there,
-  so the native set-transform was relayed (`refused="relayed"`, out=0 handled=0 on the typed dispatch) or that guard is
+- Reason (WHY) 23 `unrealized` (enemy latch, design 7.14): the receiving copy's soldier handler refused a guard whose slot
+  is allocated there (most likely not realized there [I]; realized with no character gives the same answer, so the name
+  is the likely case, not a reading), so the native set-transform was relayed (`refused="relayed"`, out=0 handled=0 on
+  the typed dispatch) or that guard is
   still in its native backoff (`refused="backoff"`). The sender backs that guard off 3 s (the host's ENEMY_DEBUG_ACK,
   the guest's ENEMY_PLACE_ACK); 10 s stays for `far`, `native_off`, `latched`. An older peer logs it as `?`.
 - `event=place_body` carries `why` (the receiver's own refusal, `none` when the fix is queued or not needed); a refused
@@ -2283,3 +2285,79 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 - Log lines: native `world_drive=stats; calls; steps; hard; rest; stale; refused; anomalies` (every 10 s); Lua
   `event=snap_stats; tx; calls; steps; hard; rest; stale; refused`, `event=puppet; ent; on; ok`, `event=place_sink`
   (any applied correction 1.5 m lower 2 s after landing), `event=body_fall`.
+
+## 32. Horse seat (horse plan M2; lab key `world_horse_cargo`; docs/mounts.md section 11)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x50 | HORSE_SEAT | both | R (world queue), level 3, never a request | 26 | seq, seat (0..2: 2 the cargo; 1 kept for the M3 pillion), the sender's role (1..2), action (1 claim, 2 grant, 3 deny, 4 loaded, 5 unloaded, 6 keep), cause (0..15), the victim's downed generation, x/y/z mm, yaw mrad |
+
+- Claim: a guest carrier, with its horse pose; the host answers grant (its own generation still down, not being
+  revived) or deny with a cause (1 awake, 2 generation, 10 busy, 12 mid_revive). A host carrier loads without a claim.
+- Loaded: the carrier, after the stock put-down and `SetCargoHold(1)`, with its horse pose; the victim's copy re-checks
+  its generation (else unloaded with cause 1 or 2). Keep: the carrier, 1 Hz, its horse pose.
+- Unloaded: either copy, with the cause (4 taken_down, 5 horse_lost, 6 stream_lost, 7 context, 8 victim_gone, 11
+  call_away, ...) and the lay-down point; a zero point lays nothing down (the other copy's own placement or the carry
+  takes the body).
+- Causes: 0 ok, 1 awake, 2 generation, 3 npc_cargo, 4 taken_down, 5 horse_lost, 6 stream_lost, 7 context, 8
+  victim_gone, 9 load_timeout, 10 busy, 11 call_away, 12 mid_revive.
+- A partner without the op skips it by its length (unknown_op): nothing is loaded. It replaces CARGO (0x2B, the offset
+  prototype's stream), which no Lua sends any more.
+- Seat 1 (horse plan M3, lab key `world_horse_pillion`, docs/mounts.md section 12; `lua/coop/world_horse_pillion.lua`):
+  the generation field is the passenger's claim token. Claim (guest passenger, cause 1 = no overlay seat, a lab flag) ->
+  grant (cause 0) or deny (6 busy, 7 not_riding, 11 locked); the host's own press is a grant with cause 1 (passenger) that
+  the guest driver answers by driving, or with unloaded cause 7 when it does not ride. Keep (action 6) 1 Hz both
+  ways (the passenger's cause 1 = no overlay seat). Unloaded (action 5) ends it with the cause (1 passenger, 2 driver_off,
+  3 horse_lost, 4 stream_lost, 5 context, 8 passenger_downed, 10 track_end) and the passenger's lay-off point. Actions 4
+  (loaded) is not used on seat 1. No new op or field.
+
+## 33. Enemy sync M7 FM1, the far mirror (lab key `soldier_act`, CFG r[19] bit 512; design 7.15)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x58 | SOLDIER_ACT | both | U (a datagram), level 2 | 49 | sender tick, roster slot 1..512, seq, part 0..3, ten u32 words |
+
+- Parts 0..2 (one seq) carry the owner's request as the engine's FOB pack writes it (0x13704a0, 0x70 bytes, the last
+  part zero-padded); part 3 (its own seq) the packed order (0x1370900, 0x18 bytes), then the owner copy's position
+  (x, y, z floats, metres) and a flags dword (bit 0: the position is valid). The words are the record's bytes,
+  little-endian.
+- `world::Core` keeps, per roster slot, the newest complete request (all three parts of one seq, a wrap-safe newer
+  seq) and the newest order (`ActLatest`, 64 slots, the least recently written reused); never in Lua's queues;
+  cleared with the grants (unpair, mission start and end, link session, epoch). A partner without the op skips each
+  part by its length (unknown_op).
+- 0x59 HANDOVER, 0x5A CLAIM and 0x5B stay reserved for the OB steps.
+- `ACT_V1 "<op> <slot> <goId>"` (game_script_observer `ActReceipt`, Lua owner thread, soldier_act, 30010 / 30020 /
+  30050): `t` the host registers a guard to send for 1.5 s; `s 0 0` the host sends the staged parts; `m` the guest
+  mirrors a guard (the newest act into the hook's mailbox, `f=1` when its request is under 1.5 s old); `r` releases
+  him (always taken, whatever the key, mission or partner: it only clears this copy's mailbox, apply stamp and fire-drop
+  bit). The fire-drop bit is also a lease: the hook clears it 1.5 s after the last fresh `m` (`act_status expired=`).
+  Reply `{f,tx,rx,ap,od,sh,mi,fd,fn}` (parts sent, requests taken, requests applied, orders re-posted, the local
+  player's shots, mirrored guards, puppet bullets and noise dropped) or `{refused="<reason>"}` (`args`, `disabled`,
+  `hook`, `mission`, `type`, `role`, `paused`). The `m` reply adds `ox,oy,oz` (mm), the owner copy's position from the
+  newest order part, when it has one: Lua releases a puppet more than 5 m from it for 2 s (`why=apart`, design 7.16).
+  The host registers guards within 300 m of the guest (was 250 m); R is 80 m calm / caution, 261 m evasion / ALERT.
+- `ACT_V1 "p <x_mm> <y_mm> <z_mm>"`: the local player for the census (Lua, every 250 ms while paired; reply `{p=1}`;
+  after `{refused="hook"}`, as at the defaults, Lua waits 10 s before the next).
+- `DRIVE_V1 ... 2`: the mirror drive (no step under 5 m, the whole way beyond; a guest with soldier_act only).
+- Debug (research): `mirror off|on` (`soldier_act_mirror_cmd`), `act_status`, `act_probe [dst src ms mode]`,
+  `aim_ent <hash> [up]`, `aim_partner [up]` (debug_character.lua: this copy's camera to a guard or the partner).
+- Log lines: native `soldier_act=installed | refused`, `soldier_act_mirror=on|off; role; fire; noise`,
+  `soldier_act_frame; t; frames; p95_ms; mirrored; tx; staged; rx; applied; orders; refuse_table; fault; remap;
+  puppet_fire; puppet_noise; shots; same; unrealized` (1 Hz), the census lines of design 7.15; Lua `event=mirror; ent; on; why; d_m; R;
+  ok`, `event=mirror_apart; ent; apart_m`, `event=mirror_stats` (10 s).
+
+## 34. Enemy gaps 2 (lab keys `place_reach`, CFG r[19] bit 2048; `body_dead`, bit 1024; design 7.17)
+
+No new op or world note. CFG r[19] (each PC's own reply) gains bit 1024 `body_dead` (Lua `W.deadOn`, only with bit 16
+`soldier_body`) and bit 2048 `place_reach` (`W.reachOn`, with follow); both are off unless named.
+
+- SOLDIER_SNAP (0x4B, section 30) with `place_reach`: the owner also streams a guard 60-160 m from the other player when
+  he stands within 60 m of the owner's own player, every 250 ms; the receiver sends `DRIVE_V1` for the other side's
+  guards within 160 m of its player (was 60 m both). `DriveReceipt` is unchanged (the step within 60 m of the nearer
+  player). A partner without the key ignores the extra snaps (kept per slot, not driven beyond 60 m).
+- The realize hold (`place_reach`): a correction / host placement answered `refused=relayed` (`why=unrealized`,
+  `native=relayed`) or a `DRIVE_V1` answered `{refused="relayed"}` sends this copy `SetForceRealize` for that guard; log
+  `event=realize_hold; ent; on=1; ok; n` (n holds now, at most 4) and `event=realize_hold; ent; on=0; why=landed |
+  timeout | stop` (`SetForceRealize` with `forceRealize=false`; 8 s; never Mother Base staff).
+- `body_dead`: a body placement (ENEMY_DEBUG kind 3 / ENEMY_PLACE, flag 8) of a dead guard is no longer refused
+  `disabled_local`; `place_body` lines are unchanged (`why=none` when queued).

@@ -136,6 +136,18 @@ inline constexpr std::uint8_t soldier_snap = 0x4B;
 // hash. The partner's copy applies it as its own damage (downed_player FriendlyControl) and lets its copy of that guard
 // engage it (world_snap.lua S.brain). Sent only with soldier_brain.
 inline constexpr std::uint8_t soldier_hit = 0x4C;
+// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT (80), both
+// directions, world queue, reliable: seq, seat (2 cargo; 1 the M3 pillion), the sender's role, action (1 claim, 2 grant,
+// 3 deny, 4 loaded, 5 unloaded, 6 keep), cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down
+// point), yaw mrad. 26 bytes. A partner without 0x50 skips it by its length (unknown_op): nothing is loaded.
+inline constexpr std::uint8_t horse_seat = 0x50;
+// Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15, protocol section 33): SOLDIER_ACT (88), both
+// directions, a datagram: one guard's request as the engine's FOB pack writes it (0x13704a0, 0x70 bytes; parts 0..2, one
+// seq) or his order (0x1370900, 0x18 bytes; part 3, its own seq): sender tick, roster slot, seq, part, ten u32 words (the
+// record's bytes, little-endian). Native keeps the newest complete request and order per slot (Core::ActLatest); never in
+// Lua's queues. Sent only with soldier_act (CFG r[19] bit 512). A partner without the op skips each part by its length.
+// 0x59 HANDOVER, 0x5A CLAIM and 0x5B are reserved for the OB steps (the horse round owns 0x50..0x53).
+inline constexpr std::uint8_t soldier_act = 0x58;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -179,6 +191,24 @@ struct Grant {
 };
 // Enemy sync M4: SOLDIER_SNAP records per roster slot (1..kSnapSlots), the newest two.
 inline constexpr unsigned kSnapSlots = 512;
+// FM1: SOLDIER_ACT parts (three request parts and the order part, ten u32 words each) and the receiver's table (the guards
+// mirrored at once: at most kActSlots slots, the least recently written one reused).
+inline constexpr unsigned kActParts = 4, kActWords = 10, kActSlots = 64;
+// The order part is 0x28 bytes: the packed order (0x18), then the owner copy's position (x, y, z floats, metres) and a
+// flags dword (bit 0: the position is valid); the puppet's network-position entry takes that position.
+inline constexpr std::size_t kActRequest = 0x70, kActOrder = 0x28;
+struct Act {
+    bool req_valid, order_valid;
+    std::uint16_t req_seq, order_seq;
+    std::uint32_t req_tick, order_tick;
+    std::uint64_t req_rx_ms, order_rx_ms;
+    std::uint8_t req[kActRequest];
+    std::uint8_t order[kActOrder];
+};
+// The ten words of one part: request bytes part*40 .. (parts 0..2, the last one zero-padded) or the order (part 3,
+// zero-padded); false for any other part.
+bool ActWords(unsigned part, const std::uint8_t (&req)[kActRequest], const std::uint8_t (&order)[kActOrder],
+              std::uint32_t (&words)[kActWords]) noexcept;
 struct Snap {
     bool valid;
     std::uint16_t epoch;
@@ -325,7 +355,7 @@ struct CfgReply {
     std::uint8_t fulton;
     // Enemy follow (docs/world-sync-design.md 7.8): r[19] bit 1 turns on the follow scan of the guards near either player
     // and place-first before every host outcome (lua/coop/world_place.lua; lab key soldier_follow), else 0; filled only
-    // by world_link::HandleCfg. Bits 2..256 the enemy sync keys (world::EnemySyncBits): 9 bits, 0..511.
+    // by world_link::HandleCfg. Bits 2..2048 the enemy sync keys (world::EnemySyncBits): 12 bits, 0..4095 (512 soldier_act).
     std::uint16_t follow;
 };
 
@@ -420,6 +450,8 @@ public:
     // Enemy sync M4: the newest (cur) and the one before (prev, may be invalid) SOLDIER_SNAP of `slot` in the current paired
     // epoch; false when none. Cleared with the grants.
     bool SnapPair(std::uint16_t slot, Snap& cur, Snap& prev) const noexcept;
+    // FM1: the newest complete SOLDIER_ACT request / order of `slot` in the current paired epoch; false when neither.
+    bool ActLatest(std::uint16_t slot, Act& out) const noexcept;
     unsigned grant_count() const noexcept;
 
     // Observers (tests and status).
@@ -557,6 +589,15 @@ private:
     std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     Snap snaps_[kSnapSlots][2]{};     // [slot - 1][0 newest, 1 the one before]
     void StoreSnap(const Entry& e, std::uint64_t now_ms) noexcept;
+    struct ActSlot {
+        std::uint16_t slot, epoch, pending_seq;
+        std::uint8_t pending_mask;
+        std::uint64_t used_ms;
+        std::uint8_t pending[kActRequest + 8];
+        Act act;
+    };
+    ActSlot acts_[kActSlots]{};
+    void StoreAct(const Entry& e, std::uint64_t now_ms) noexcept;
     OutEntry out_[kOutboundQueue]{};
     unsigned out_head_ = 0, out_size_ = 0, peeked_ = 0;
     std::uint32_t generation_ = 0;

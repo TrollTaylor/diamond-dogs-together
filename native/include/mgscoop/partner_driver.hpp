@@ -726,6 +726,9 @@ struct Settings {
     // friendly hit (cause sleep) to the downed owner's queue (Hooks::melee_hit). Key off: verdict=off lines only.
     bool melee;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
+    // Horse plan M1 (lab.ini world_horse_share): the remote riding the shared D-Horse this copy placed is shown seated
+    // (partner_ride_wire Visibility::horse, the DM overlay's horse map) instead of the mount hide.
+    bool horse_share;
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
@@ -819,6 +822,10 @@ struct Mission {
         std::uint8_t transient_seat;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    // Horse plan M3: body 1 rides behind this copy's player this tick (horse_drive::SeatLease; pose = the rear seat).
+    bool pillion;
+    bool pillion_logged;
+    bool pillion_pose;  // ... and the DM overlay seats it (the lease's pose flag)
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
     LogCap census_cap;

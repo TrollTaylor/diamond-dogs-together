@@ -1,0 +1,25 @@
+# Enemy sync M7 step 1, probe P13b part 2 of 3 (header: enemy-sense2-1-status.txt): forced 1, status 138 still cleared,
+# and every caller of the LOCAL accessors (the local player's record and index) reads body 1 (perceive_local all,
+# research: the host's own camera or HUD may follow). Does a guard notice body 1 now?
+logmark both
+host run perceive_reset
+host run perceive_local all
+host expect ^perceive_local;ok=1;key=1;local;mode=3
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t2-01
+wait 11000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t2-13
+wait 11000
+host run perceive_status
+host run perceive_local dump
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t2-25
+host run damage_status

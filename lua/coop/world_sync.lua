@@ -206,7 +206,7 @@ do
     W.companionOn, W.fultonOn, W.fultonEarlyOn, W.fultonLookOn, W.fultonOneSaveOn = false, false, false, false, false
     W.fultonGuestVehicleOn, W.followOn = false, false
     W.ownerOn, W.snapOn, W.routeOn, W.bodyOn, W.puppetOn, W.brainOn = false, false, false, false, false, false
-    W.perceiveOn, W.liftOn = false, false
+    W.perceiveOn, W.liftOn, W.actOn, W.deadOn, W.reachOn = false, false, false, false, false
     W.attribOverride, W.pr, W.gt = {}, nil, nil
     W.stats = {commits = 0, reqs = 0, applies = 0, noops = 0, ledger = 0, div = 0, obs = 0, resend = 0, unmapped = 0, bad_value = 0}
   end
@@ -243,7 +243,7 @@ do
     -- Enemy follow (docs/world-sync-design.md 7.8): r[19] 1 (lab key soldier_follow) the follow scan of the guards near
     -- either player in every W1 mission and place-first before every host outcome (world_place.lua), the guest's follow
     -- thresholds (world_place_guest.lua), crossfire outcomes (world_enemy.lua, world_outcome.lua).
-    local eb = type(r[19]) == "number" and r[19] >= 0 and r[19] <= 511 and floor(r[19]) == r[19] and r[19] or 0
+    local eb = type(r[19]) == "number" and r[19] >= 0 and r[19] <= 4095 and floor(r[19]) == r[19] and r[19] or 0
     W.followOn = eb % 2 == 1
     -- The enemy sync plan's M3..M7 (docs/world-sync-design.md 7.9+), each only with follow: bit 2 owner (soldier_owner: the
     -- guest owns the guards it fights far from the host), 4 snap (soldier_snap: the position stream and soft follow), 8
@@ -256,9 +256,14 @@ do
     -- M7 (soldier_brain): each guard's owner is its only brain (world_snap.lua S.brain; native soldier_authority).
     W.brainOn = W.followOn and eb % 128 >= 64
     -- M7 step 1 (soldier_perceive, bit 256): the host's guards perceive the nearer player (world_snap.lua P.perceiveScan).
-    W.perceiveOn = W.followOn and eb >= 256
+    W.perceiveOn = W.followOn and eb % 512 >= 256
+    -- FM1, the far mirror (soldier_act, bit 512; world_mirror.lua): the guest's far copies replay the host's requests.
+    W.actOn = W.followOn and eb % 1024 >= 512
     -- Enemy gaps: bit 128 place_lift (placements and the stream at the owner's own GetPosition y; world_place.lua P.reset).
     W.liftOn = W.followOn and eb % 256 >= 128
+    -- Enemy gaps 2 (7.17): bit 1024 body_dead (dead body placements, with soldier_body), 2048 place_reach (world_place.lua).
+    W.deadOn = W.bodyOn and eb % 2048 >= 1024
+    W.reachOn = W.followOn and eb >= 2048
     W.host = W.role == 1
     W.mission, W.feature = mission, W.MISSIONS[mission] or {}
     -- enemiesLab (30050): W1 and staff placement in the lab only until a hidden run shows staff on both screens in play.

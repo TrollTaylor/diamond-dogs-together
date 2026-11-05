@@ -64,6 +64,13 @@ local function fixture(host, level, mb)
     W.inGame = function() return c.inGame ~= false end
     -- Spawn sync receipts: WORLD_WARP_V1 answers from c.warp (FIFO, the last one repeats), REMOTE_V1 rows.
     W.receipt = function(source)
+        -- FM1 (world_mirror.lua): ACT_V1 receipts go to c.acts only (the other checks read c.receipts in order).
+        if source:find("'MGS_COOP_WORLD_ACT_V1'", 1, true) then
+            c.acts = c.acts or {}
+            c.acts[#c.acts + 1] = source
+            if source:find("-- p ", 1, true) then return c.pReply or {p = 1} end
+            return c.actReply or {f = 1, sh = c.shots or 0}
+        end
         c.receipts[#c.receipts + 1] = source
         if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) or source:find("'MGS_COOP_WORLD_WARP_HOST_V1'", 1, true) then
             local r = #c.warp > 1 and table.remove(c.warp, 1) or c.warp[1]
@@ -121,7 +128,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -1474,6 +1481,144 @@ if arg[7] and arg[8] then
         'M6: a body placement this copy refuses (disabled_local) is not queued')
     ticks(bd, 330)
     check(not logged(bd, 'event=body_tx;'), 'M6: this copy\'s body is not reported back for 10 s (no ping-pong)')
+    do
+    -- Enemy gaps 2, body_dead (CFG r[19] bit 1024, W.deadOn; run 41f2b07f: a dead guard 6.8 m apart, refused
+    -- disabled_local): the other copy's dead body placement goes through; after it the resting spot is where this
+    -- copy's body really lies, so a corpse the game does not move is not reported back either (no ping-pong).
+    local function deadFix(reply)
+        local c = guestFix(180)
+        c.W.bodyOn, c.W.deadOn = true, true
+        c.life[1] = 1
+        c.positions[1] = {0, 0.3, 20.0}
+        c.env.TppGameObject = {NPC_STATE_DISABLE = 9}; c.status = {[1] = 9}
+        c.warp = {reply}
+        ticks(c, 60)
+        return c
+    end
+    local dd = deadFix({r = 0, h = 1, leaf = 'typed'})
+    dd.W.handlers[34]({43, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dd.now)
+    check(#dd.P.q == 1 and logged(dd, 'event=place_body;seq=43;ent=3000000001;div_m=5.0;state=5;fix=1;why=none'),
+        'body_dead: the dead body 5 m off is queued (not disabled_local)')
+    ticks(dd, 8)
+    check(logged(dd, 'event=place;seq=43;ent=3000000001;kind=correct;result=applied'), 'body_dead: the dead body is placed')
+    ticks(dd, 330)
+    check(not logged(dd, 'event=body_tx;'), 'body_dead: a corpse that did not move is not reported back (rest = where it lies)')
+    -- The corpse moved by the placement: no report either; a later carry of it is reported once.
+    local dm = deadFix({r = 0, h = 1, leaf = 'typed'})
+    dm.W.handlers[34]({44, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dm.now)
+    dm.positions[1] = {5.0, 0.3, 20.0}
+    ticks(dm, 330)
+    check(logged(dm, 'event=place;seq=44;ent=3000000001;kind=correct;result=applied') and not logged(dm, 'event=body_tx;'),
+        'body_dead: a corpse the placement moved is not reported back')
+    dm.positions[1] = {12.0, 0.3, 20.0}
+    ticks(dm, 120)
+    check(logCount(dm, 'event=body_tx;ent=3000000001') == 1, 'body_dead: a later carry of it is reported once')
+    -- A dead body placement refused natively (relayed) leaves the resting spot where this body lies: no report.
+    local dr = deadFix({refused = 'relayed'})
+    dr.W.handlers[34]({45, ENT1, 3, 5000, 500, 20000, 0, 8, 0, 2}, dr.now)
+    ticks(dr, 330)
+    check(logged(dr, 'event=place;seq=45;ent=3000000001;kind=correct;result=refused;why=unrealized') and
+        not logged(dr, 'event=body_tx;'), 'body_dead: a refused corpse placement is not reported back')
+    -- Without body_dead (bodyOn only) the old refusal stands (the bd case above).
+    -- Enemy gaps 2, place_reach (CFG r[19] bit 2048, W.reachOn; run 798b51dd: 57 host placements and 22 guest
+    -- corrections refused unrealized, a dismounted rider 105-120 m off for 48 s): a correction the game relayed (not
+    -- realized on this copy) force-realizes that guard for 8 s, so the next one lands; released when one lands.
+    local rz = guestFix(180)
+    rz.W.reachOn = true
+    rz.positions[1] = {0, 1.8, 20.0}
+    rz.warp = {{refused = 'relayed'}, {r = 0, h = 1, leaf = 'typed'}}
+    sample(rz, 50, ENT1, 3000, 20000)
+    ticks(rz, 3)
+    check(logged(rz, 'event=place;seq=50;ent=3000000001;kind=correct;result=refused;why=unrealized;native=relayed') and
+        sent(rz, 1, 'SetForceRealize') == 1 and logged(rz, 'event=realize_hold;ent=3000000001;on=1'),
+        'place_reach: a relayed correction force-realizes that guard')
+    ticks(rz, 40)
+    sample(rz, 51, ENT1, 3000, 20000)
+    ticks(rz, 8)
+    check(logged(rz, 'event=place;seq=51;ent=3000000001;kind=correct;result=applied') and
+        sent(rz, 1, 'SetForceRealize', false) == 1 and logged(rz, 'event=realize_hold;ent=3000000001;on=0;why=landed'),
+        'place_reach: released once a placement of him lands')
+    -- Not landed within 8 s: released (timeout); at most 4 at once; never without the key.
+    local rt = guestFix(180)
+    rt.W.reachOn = true
+    rt.warp = {{refused = 'relayed'}}
+    for i = 1, 5 do
+        rt.positions[i] = {0, 1.8, 20.0 + i}
+        sample(rt, 60 + i, 3000000000 + i, 3000, 20000 + i * 1000)
+    end
+    ticks(rt, 12)
+    local holds = 0
+    for i = 1, 5 do holds = holds + sent(rt, i, 'SetForceRealize') end
+    check(holds == 4 and sent(rt, 5, 'SetForceRealize') == 0, 'place_reach: at most 4 guards held at once')
+    ticks(rt, 250)
+    check(sent(rt, 1, 'SetForceRealize', false) == 1 and logged(rt, 'event=realize_hold;ent=3000000001;on=0;why=timeout'),
+        'place_reach: a hold ends after 8 s')
+    local rn = guestFix(180)
+    rn.positions[1] = {0, 1.8, 20.0}
+    rn.warp = {{refused = 'relayed'}}
+    sample(rn, 70, ENT1, 3000, 20000)
+    ticks(rn, 3)
+    check(logged(rn, 'event=place;seq=70;ent=3000000001;kind=correct;result=refused;why=unrealized') and
+        sent(rn, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed correction is only refused')
+    -- The host's M3 placement (hplace) the same way.
+    local rh = followFixture(true)
+    rh.W.ownerOn, rh.W.reachOn = true, true
+    rh.env.vars.playerCameraRotation = {[0] = 0, [1] = 0}
+    rh.positions[900] = {100.0, 0, 0}
+    rh.positions[2] = {95.0, 1.8, 0}
+    rh.warp = {{refused = 'relayed'}}
+    rh.W.handlers[71]({6, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, rh.now)
+    ticks(rh, 6)
+    check(logged(rh, 'event=hplace;seq=6;ent=3000000002;kind=correct;result=refused;why=unrealized;native=relayed') and
+        sent(rh, 2, 'SetForceRealize') == 1, 'place_reach: a relayed host placement force-realizes the host copy')
+    -- The M4 stream reaches 160 m: the owner streams its guards within 160 m of the other player that stand within
+    -- 60 m of its own; the receiver drives the other side's guards within 160 m of its player (native: 60 m of the nearer).
+    local function snapsOf(c, slot)
+        local n = 0
+        for _, p in ipairs(placeTx(c, 75)) do if p.v[2] == slot then n = n + 1 end end
+        return n
+    end
+    local rp = followFixture(true)
+    rp.W.snapOn = true
+    rp.positions[900] = {120.0, 0, 0}
+    rp.positions[1] = {5.0, 1.8, 0}
+    ticks(rp, 61)
+    local far0 = snapsOf(rp, 1)
+    rp.W.reachOn = true
+    rp.tx = {}
+    ticks(rp, 61)
+    check(far0 == 0 and snapsOf(rp, 1) >= 3, 'place_reach: a guard 115 m from the other player (5 m from this one) is streamed')
+    rp.positions[1] = {60.0, 1.8, 70.0}
+    rp.tx = {}
+    ticks(rp, 61)
+    check(snapsOf(rp, 1) == 0, 'place_reach: not one 92 m from both players')
+    local rd = guestFix(180)
+    rd.W.snapOn = true
+    rd.positions[1] = {0, 1.8, 100.0}
+    ticks(rd, 2)
+    local d0 = rd.drives and #rd.drives or 0
+    rd.W.reachOn = true
+    ticks(rd, 20)
+    check(d0 == 0 and rd.drives and #rd.drives >= 1, 'place_reach: the receiver drives a guard 100 m away')
+    -- Run 9023e5c6: most relays came from the stream's steps (host 18 drive / 3 placements, guest 22 / 1), and the
+    -- native backoff after them refused the corrections (backoff 20 / 18): a relayed drive step holds the guard too.
+    local rv = guestFix(180)
+    rv.W.snapOn, rv.W.reachOn = true, true
+    rv.positions[1] = {0, 1.8, 100.0}
+    rv.driveReply = {refused = 'relayed'}
+    ticks(rv, 2)
+    check(sent(rv, 1, 'SetForceRealize') == 1 and logged(rv, 'event=realize_hold;ent=3000000001;on=1'),
+        'place_reach: a relayed drive step force-realizes that guard')
+    ticks(rv, 250)
+    check(sent(rv, 1, 'SetForceRealize', false) == 1 and logged(rv, 'event=realize_hold;ent=3000000001;on=0;why=timeout'),
+        'place_reach: a drive hold ends after 8 s')
+    local rw = guestFix(180)
+    rw.W.snapOn = true
+    rw.positions[1] = {0, 1.8, 20.0}
+    rw.driveReply = {refused = 'relayed'}
+    ticks(rw, 2)
+    check(sent(rw, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed drive step holds nobody')
+    end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
     hu.W.bodyOn = true
@@ -1546,6 +1691,180 @@ if arg[7] and arg[8] then
     pg.positions[1] = {0, 1.8, 90.0}
     ticks(pg, 2)
     check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
+    -- Enemy sync M7 FM1, the far mirror (W.actOn; lua/coop/world_mirror.lua): a host-owned NORMAL guard beyond R + 15 m of
+    -- the guest is a mirror puppet while his SOLDIER_ACT is fresh; within R, a guest shot (for 15 s), a stale stream, a
+    -- research pause and the key off release him; the host registers its own guards beyond R - 10 m of the guest.
+    do
+    local mg = guestFix(0)
+    mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
+    -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
+    -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
+    -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
+    -- 1.5 x 173.9 = 261 m by the plan's rule.
+    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[2] == 261 and mg.W.mirror.R[3] == 261,
+        'FM1: R 80 m calm, 261 m evasion / ALERT (1.5 x 173.9 m, 94a7bf2a)')
+    mg.positions[1] = {0, 1.8, 100.0}
+    ticks(mg, 4)
+    local function acted(c, text)
+        for _, s in ipairs(c.acts or {}) do if s == "return 'MGS_COOP_WORLD_ACT_V1' -- " .. text then return true end end
+        return false
+    end
+    check(logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=100.0;R=80') and acted(mg, 'q 1 1') and acted(mg, 'm 1 1') and
+        cmdCount(mg, 'SetPuppet') == 1 and cmdCount(mg, 'SetRestrictNotice') == 1,
+        'FM1: 100 m (beyond R + 15): queried (q), then a mirror puppet (m only once he is one)')
+    -- Run 3bc7280b: 'm' for a mere candidate armed the native fire drop for guards whose own brain still ran (582 of their
+    -- bullets dropped). A candidate is only queried; 'm' goes out only for puppets.
+    local firstM
+    for k, src in ipairs(mg.acts) do
+        if src:find(' -- m ', 1, true) and not firstM then firstM = k end
+    end
+    local firstQ
+    for k, src in ipairs(mg.acts) do
+        if src:find(' -- q ', 1, true) and not firstQ then firstQ = k end
+    end
+    check(firstQ and firstM and firstQ < firstM, 'FM1: the first q comes before any m')
+    mg.positions[1] = {0, 1.8, 85.0}
+    ticks(mg, 4)
+    check(not logged(mg, 'event=mirror;ent=3000000001;on=0'), 'FM1: between R and R + 15 m he stays a puppet')
+    mg.positions[1] = {0, 1.8, 70.0}
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=near;d_m=70.0;R=80') and acted(mg, 'r 1 1') and
+        cmdCount(mg, 'SetPuppet') == 2, 'FM1: within R: released (his own brain again)')
+    mg.positions[1] = {0, 1.8, 88.0}
+    ticks(mg, 4)
+    check(not logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=88.0'), 'FM1: 88 m (under R + 15): not taken again')
+    mg.positions[1] = {0, 1.8, 100.0}
+    ticks(mg, 4)
+    check(cmdCount(mg, 'SetPuppet') == 3, 'FM1: beyond R + 15 m again: a puppet again')
+    mg.shots = 1
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=shot'), 'FM1: the guest fired: released')
+    ticks(mg, 8)
+    check(cmdCount(mg, 'SetPuppet') == 4, 'FM1: no puppet again within 15 s of the shot')
+    mg.now = mg.now + 15000
+    ticks(mg, 4)
+    check(cmdCount(mg, 'SetPuppet') == 5, 'FM1: 15 s after the shot: a puppet again')
+    mg.actReply = {f = 0, sh = 1}
+    ticks(mg, 4)
+    check(not logged(mg, 'why=stale'), 'FM1: a missing act under 1.5 s keeps him')
+    mg.now = mg.now + 1600
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=stale'), 'FM1: no fresh SOLDIER_ACT for 1.5 s: released')
+    mg.actReply = {f = 1, sh = 1}
+    ticks(mg, 4)
+    mg.actReply = {refused = 'paused', sh = 1}
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=paused'), 'FM1: mirror off (native paused): released')
+    mg.actReply = {f = 1, sh = 1}
+    ticks(mg, 4)
+    local before = cmdCount(mg, 'SetPuppet')
+    mg.W.actOn = false
+    ticks(mg, 1)
+    check(logged(mg, 'why=key_off') and cmdCount(mg, 'SetPuppet') == before + 1, 'FM1: the key off releases every puppet')
+    -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
+    local mh = followFixture(true)
+    mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
+    mh.positions[900] = {0, 0, 0}
+    mh.positions[1] = {0, 1.8, 100.0}
+    mh.positions[2] = {0, 1.8, 30.0}
+    ticks(mh, 4)
+    check(acted(mh, 't 1 1') and not acted(mh, 't 2 2') and acted(mh, 's 0 0'), 'FM1 host: a guard beyond R - 10 m of the guest is sent')
+    -- FM1 retry: the ALERT watch point is ~255 m from the fight (beyond R(ALERT) + 15 = 199 m), so the range is 300 m.
+    check(mh.W.mirror.RANGE == 300, 'FM1: the mirror range is 300 m')
+    -- Run 94a7bf2a: guard 19's host copy climbed a tower and his puppet stood at its foot 7 m off for ~100 s (nothing
+    -- warps a copy under 15 m). A puppet > 5 m (3D) from his owner copy (the m reply's ox/oy/oz) for 2 s is released
+    -- (why=apart: his own brain and the follow corrections again) and not taken again for 30 s.
+    check((function()
+        local ma = guestFix(0)
+        ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
+        ma.positions[1] = {0, 1.8, 100.0}
+        ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
+        ticks(ma, 70)
+        if logged(ma, 'why=apart') or cmdCount(ma, 'SetPuppet') ~= 1 then return false end
+        ma.actReply = {f = 1, sh = 0, ox = 0, oy = 8800, oz = 100000}
+        ticks(ma, 20)
+        if logged(ma, 'why=apart') then return false end  -- not before 2 s, nor in his first 4 s as a puppet
+        ticks(ma, 100)
+        if not (logged(ma, 'event=mirror_apart;ent=3000000001;apart_m=7.0') and logged(ma, 'on=0;why=apart') and acted(ma, 'r 1 1') and
+            cmdCount(ma, 'SetPuppet') == 2) then return false end
+        ma.actReply = {f = 1, sh = 0}
+        ticks(ma, 300)
+        if cmdCount(ma, 'SetPuppet') ~= 2 then return false end  -- held 30 s
+        ticks(ma, 700)
+        return cmdCount(ma, 'SetPuppet') == 3
+    end)(), 'FM1: a puppet 7 m from his owner copy for 2 s is released (apart) and held off 30 s')
+    check((function()  -- its own function: the main chunk is at Lua's 200-local limit
+        local mr = followFixture(true)
+        mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+        mr.positions[900] = {0, 0, 0}
+        mr.positions[1] = {0, 1.8, 280.0}
+        mr.positions[2] = {0, 1.8, 320.0}
+        ticks(mr, 4)
+        return acted(mr, 't 1 1') and not acted(mr, 't 2 2')
+    end)(), 'FM1 host: a guard 280 m from the guest is sent, one at 320 m not')
+    -- Skeptic of FM1 (7b709720): a guest shot and a guest-local phase rise release the puppets within one update, not when
+    -- the 12-per-update round robin reaches them (~0.8 s with ~280 roster entries); every way a puppet is dropped tells
+    -- native (ACT_V1 r), so the fire-drop mask never outlives him; the local player's ACT_V1 p backs off 10 s while the
+    -- hook is not installed (the defaults).
+    local function actCount(c, text)
+        local n = 0
+        for _, s in ipairs(c.acts or {}) do if s == "return 'MGS_COOP_WORLD_ACT_V1' -- " .. text then n = n + 1 end end
+        return n
+    end
+    local mr = guestFix(0)
+    mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+    mr.positions[1] = {0, 1.8, 100.0}
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
+    mr.W.mirror.SCAN = 0                                   -- the round robin visits nobody
+    mr.shots = 1
+    ticks(mr, 1)
+    check(logged(mr, 'event=mirror;ent=3000000001;on=0;why=shot') and mr.W.mirror.pp[3000000001] == nil,
+        'FM1 release: a guest shot releases every puppet within one update')
+    mr.W.mirror.SCAN = 12
+    mr.now = mr.now + 16000
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: 15 s after the shot a puppet again')
+    mr.W.mirror.SCAN = 0
+    mr.W.cp[100].ownAt = mr.now + 1                         -- a guest-local phase rise in his CP
+    ticks(mr, 1)
+    check(logged(mr, 'event=mirror;ent=3000000001;on=0;why=phase') and mr.W.mirror.pp[3000000001] == nil,
+        'FM1 release: a guest-local phase rise in his CP releases him within one update')
+    mr.W.mirror.SCAN = 12
+    mr.now = mr.now + 16000
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet again after the rise')
+    mr.W.mirror.SCAN = 0
+    local r0 = actCount(mr, 'r 1 1')
+    mr.W.ent[3000000001].id = nil                           -- his game object is gone
+    ticks(mr, 1)
+    check(mr.W.mirror.pp[3000000001] == nil and actCount(mr, 'r 1 1') == r0 + 1,
+        'FM1 release: a puppet whose object is gone is released natively (r), not only forgotten')
+    mr.W.ent[3000000001].id = 1
+    mr.W.mirror.SCAN = 12
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet again (setup)')
+    local r1 = actCount(mr, 'r 1 1')
+    for _, f in ipairs(mr.W.startHooks) do f() end
+    check(next(mr.W.mirror.pp) == nil and actCount(mr, 'r 1 1') == r1 + 1,
+        'FM1 release: a mission start releases the puppets natively (r) before forgetting them')
+    local pb = guestFix(0)
+    pb.pReply = {refused = 'hook'}
+    local function pCount(c)
+        local n = 0
+        for _, s in ipairs(c.acts or {}) do if s:find(' -- p ', 1, true) then n = n + 1 end end
+        return n
+    end
+    ticks(pb, 60)
+    check(pCount(pb) == 1, 'FM1: ACT_V1 p refused (no hook, the defaults): not sent again for 10 s')
+    pb.now = pb.now + 10000
+    ticks(pb, 1)
+    check(pCount(pb) == 2, 'FM1: ACT_V1 p offered again after 10 s')
+    pb.pReply = nil
+    pb.now = pb.now + 10000
+    ticks(pb, 60)
+    check(pCount(pb) >= 9, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
+    end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.
     local pick = sh.W.snap.pick
@@ -1592,6 +1911,38 @@ if arg[7] and arg[8] then
     local po = perceiveFix(true, false)
     ticks(po, 40)
     check(#po.perceive == 0, 'M7 perceive: off without the key')
+    -- P13c (run dbba96de): told sight. The soldiers' own senses never pick up body 1, but a told discovery
+    -- (SetDiscoveryPlayer) finds the offense player. One offense player for every guard: the player nearest to a sampled
+    -- guard, held 4 s; a calm guard within 10 m of the guest for 0.8 s is told (offense 1 first, at most once per 30 s).
+    local off = sh.W.snap.offense
+    check(off(nil, 1, 0, false) == 1 and off(0, 1, 3000, false) == 0 and off(0, 1, 4000, false) == 1 and off(0, 1, 100, true) == 1 and
+        off(1, 1, 0, false) == 1, 'M7 told sight: the offense player waits 4 s, a tell switches at once')
+    check(has(pv, 'offense 0') and cmdCount(pv, 'SetDiscoveryPlayer') == 0 and not logged(pv, 'event=perceive_tell'),
+        'M7 told sight: the host nearest to a guard is the offense player; nobody is told 30 m from the guest')
+    local pt = perceiveFix(true, true)
+    pt.positions[3] = {95.0, 1.8, 0}     -- 5 m from the partner body, 95 m from the host
+    ticks(pt, 60)
+    check(has(pt, '3 1') and has(pt, 'offense 1') and cmdCount(pt, 'SetDiscoveryPlayer') == 1 and
+        logged(pt, 'event=perceive_tell;ent=3000000003;idx=3;dq_m=5.0') and logged(pt, 'event=perceive_offense;offense=1;why=tell'),
+        'M7 told sight: a guard 5 m from the guest is told once, the offense player becomes body 1')
+    ticks(pt, 300)
+    check(cmdCount(pt, 'SetDiscoveryPlayer') == 1, 'M7 told sight: at most once per 30 s per guard')
+    -- Run d7cb1b1d: the offense player flapped every 4.2-8.6 s with the guest 6-7 m from the guards and the host 15-20 m
+    -- away, because the nearest guard was a 1 s rolling minimum that a host-side sample reset. Each guard keeps its own
+    -- last sample; the nearest of the samples of the last 2 s decides.
+    local nearest = sh.W.snap.nearest
+    local nr = {[1] = {144e6, 0, 1000}, [3] = {25e6, 1, 0}}
+    check(nearest(nr, 1500) == 1 and nearest(nr, 2001) == 0 and nearest(nr, 3001) == nil and nearest({}, 0) == nil,
+        'M7 told sight: the nearest of every guard sampled in the last 2 s')
+    local pa = perceiveFix(true, true)
+    pa.positions[3] = {95.0, 1.8, 0}
+    pa.W.cp[100].localPhase, pa.phase.cp_a = 3, 13  -- the guard's CP in ALERT
+    ticks(pa, 60)
+    check(cmdCount(pa, 'SetDiscoveryPlayer') == 0, 'M7 told sight: never a guard whose CP is in ALERT')
+    local pg2 = perceiveFix(false, true)
+    pg2.positions[3] = {95.0, 1.8, 0}
+    ticks(pg2, 60)
+    check(cmdCount(pg2, 'SetDiscoveryPlayer') == 0 and #pg2.perceive == 0, 'M7 told sight: never on the guest')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest
@@ -1666,6 +2017,23 @@ do
         ag.now = ag.now + 600; ag.A.tick(ag.now)
         check(not ag.R.pending and ag.saves == 1 and ag.R.seen == 1 and logCount(ag, 'step=checkpoint;hash=0;ver=1;receipt=1') == 1,
             'off the helicopter: the held checkpoint applies and saves once')
+    end
+    -- Horse plan M1 (world_horse_share.lua): while anyone rides the shared D-Horse the guest's checkpoint waits too.
+    do
+        local hh, hg = fixture(true, 3), fixture(false, 3)
+        pairReady(hh, hg)
+        local busy = true
+        hg.W.horseShare = {busy = function() return busy end}
+        hh.env.TppMission.UpdateCheckPoint({atCurrentPosition = true})
+        hh.A.tick(hh.now); transfer(hh, hg, function(p) return p.op == OP.CHECKPOINT end)
+        hg.A.tick(hg.now)
+        check(hg.R.pending and not hg.saves and logCount(hg, 'step=checkpoint_wait;reason=horse;ver=1') == 1,
+            'someone rides the shared horse: the checkpoint waits, nothing saved')
+        hg.now = hg.now + 600; hg.A.tick(hg.now)
+        check(hg.R.pending and not hg.saves and logCount(hg, 'reason=horse') == 1, 'still riding: held, logged once')
+        busy = false
+        hg.now = hg.now + 600; hg.A.tick(hg.now)
+        check(not hg.R.pending and hg.saves == 1, 'off the horse: the held checkpoint applies once')
     end
     -- Named off (F.arrival.holdCheckpoint = false; world_follow's default is on since 0.14.6): riding in applies at once.
     local default = fixture(false, 3, true)

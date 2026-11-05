@@ -100,7 +100,8 @@ local function fixture(host)
         -- Item 4: polls and locks carry the posture field (the local CBOX status), nothing else does.
         if command == 0 or command == 1 then
             check(posture == ' 0' or posture == ' 1', 'polls and locks carry exactly one 0/1 posture field')
-            check((posture == ' 1') == (c.boxed == true), 'the posture field is the local PlayerStatus CBOX query')
+            check((posture == ' 1') == (c.boxed == true or c.cargoPosture == true),
+                'the posture field is the local PlayerStatus CBOX query, or a body held as cargo on the horse (horse plan M2)')
         else
             check(posture == '', 'only polls and locks carry the posture field')
         end
@@ -1043,6 +1044,22 @@ do
     check(polls >= 1 and locks == 1 and c.D.records[1].down, 'a boxed downed poll and its lock both report the box posture')
     c.boxed = false; c.now = 100; c.D.tick(100)
     check(c.nativeCalls[#c.nativeCalls][3] == ' 0', 'leaving the box clears the posture field on the next poll')
+end
+-- Horse plan M2 (runs 83ac3950 lab / 547b431e play): a downed body held on the shared horse is never prone, so the native
+-- controls timed out (controls_timeout_prone, step=abandoned) 1.5 s after it last touched the ground. While
+-- world_horse_cargo holds the local body as cargo, polls and locks report the held posture, as the box does.
+do
+    local c = fixture(true); down(c)
+    c.W.horseCargo = {downedPosture = function() return c.cargoPosture == true end}
+    c.cargoPosture = true; c.D.tick(0)
+    local polls, locks = 0, 0
+    for _, call in ipairs(c.nativeCalls) do
+        if call[1] == 0 and call[3] == ' 1' then polls = polls + 1 end
+        if call[1] == 1 and call[3] == ' 1' then locks = locks + 1 end
+    end
+    check(polls >= 1 and locks == 1 and c.D.records[1].down, 'held as cargo on the horse: the downed poll and its lock report the held posture')
+    c.cargoPosture = false; c.now = 100; c.D.tick(100)
+    check(c.nativeCalls[#c.nativeCalls][3] == ' 0', 'taken down: the posture field follows the stance again')
 end
 do
     -- Timeout before any lock: the prone request never took (the boxed body of

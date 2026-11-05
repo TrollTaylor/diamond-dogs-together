@@ -195,13 +195,16 @@ void Observe(Visibility& s, const In& in) noexcept {
     }
     const bool heli=in.anim_valid && in.remote_act>=kHeliActFirst && in.remote_act<=kHeliActLast;
     // partner_native_mount=hide: the remote's horse / D-Walker acts hide like the heli acts.
-    const bool mount=partner_mount_policy::Hide(in.mount_hide,in.anim_valid,in.remote_act);
+    // world_horse_share: a remote riding the shared D-Horse this copy placed is drawn, not hidden (horse plan M1).
+    const bool horse=HorseRider(in.horse_shown,in.anim_valid,in.remote_act,s.horse,in.ride_live && in.kind==Kind::horse);
+    const bool mount=!horse && partner_mount_policy::Hide(in.mount_hide,in.anim_valid,in.remote_act);
     // Seat mode: a live vehicle ride in a usable seat is drawn seated, not hidden.
     const bool seat_ok=in.seat_mode && !heli && !mount && in.ride_live && in.kind==Kind::vehicle && SeatUsable(in.seat,in.vehicle);
-    const bool riding=heli || mount || (in.ride_live && in.kind!=Kind::foot && !seat_ok);
+    const bool riding=heli || mount || (in.ride_live && in.kind!=Kind::foot && !seat_ok && !(horse && in.kind==Kind::horse));
     const bool stale=in.ride_have && !in.ride_live;
     const bool foot=!heli && !mount && (!in.ride_have || (in.ride_live && in.kind==Kind::foot));
     s.mount=mount;
+    s.horse=horse;
     if(s.air && in.body_anim_valid && in.body_act!=25) s.air=false;
     if(in.body_anim_valid && in.body_act==40) {
         if(s.dead_retry && in.rearmed) s.dead_locked=true;
@@ -218,8 +221,9 @@ void Observe(Visibility& s, const In& in) noexcept {
     s.seated=seat_ok && !s.air && !s.dead_locked && in.lease_live;
     if(riding || stale || s.air || s.dead_locked || !in.lease_live) {
         s.hidden=true; s.reason=s.dead_locked ? "dead" : s.air ? "air" : riding ? "ride" : "ride_stale";
-    } else if(s.seated) {
-        // Seated is shown at once (the driver's seat flow places and seats it).
+    } else if(s.seated || horse) {
+        // Seated is shown at once (the driver's seat flow places and seats it); so is a shared-horse rider (the DM
+        // overlay's horse map seats it, the fallback xform places it at the rider's stream in the saddle).
         s.hidden=false; s.reason=nullptr;
     }
     const bool valid=in.fresh && in.lease_live && in.time_valid && !in.jump && foot && in.anim_valid &&

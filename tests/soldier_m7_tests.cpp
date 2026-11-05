@@ -52,6 +52,141 @@ void CaptureLog(const char* line) noexcept {
     g_logged[n] = 0;
 }
 #endif
+
+// P13: the LOCAL player accessors' redirect (soldier_perceive.hpp kLocalRecRva / kLocalIdxRva).
+#ifdef _WIN32
+unsigned char g_records[3][0xE0]{};  // [0] the fake local record, [1] / [2] the fake records 0 and 1
+unsigned g_recIdx = 99, g_localRecCalls = 0, g_localIdxCalls = 0;
+void* __fastcall FakeLocalRec() { ++g_localRecCalls; return g_records[0]; }
+bool __fastcall FakeLocalIdx(std::uint32_t* out) { ++g_localIdxCalls; *out = 0; return true; }
+void* __fastcall FakeRec(unsigned idx) { g_recIdx = idx; return idx < 2 ? g_records[1 + idx] : nullptr; }
+#endif
+void TestLocal() {
+    namespace sp = mgscoop::soldier_perceive;
+    using K = sp::LocalKind;
+    // Who asked: the thunk's caller sits 0x30 above a LOCAL record read's entry; slot 0x208's caller above its index read.
+    Check(sp::LocalCaller(K::rec, 0x1E02E0E, 0xD59430) == 0xD59430, "a thunk's record read: the thunk's caller");
+    Check(sp::LocalCaller(K::rec, 0x1E03202, 0x14DCA77) == 0x14DCA77 && sp::LocalCaller(K::rec, 0x1E02000, 7) == 7,
+          "every return inside the thunk range");
+    Check(sp::LocalCaller(K::rec, 0x1E04000, 0xD59430) == 0x1E04000 && sp::LocalCaller(K::rec, 0x1D00000, 0xD59430) == 0x1D00000,
+          "a direct caller outside the thunks is itself");
+    Check(sp::LocalCaller(K::idx, sp::kIdThunkRet, 0x1350100) == 0x1350100, "slot 0x208's index read: its caller");
+    Check(sp::LocalCaller(K::idx, 0x134E8AE, 0x1D00000) == 0x134E8AE && sp::LocalCaller(K::idx, 0x1E02B50, 9) == 0x1E02B50,
+          "slot 0x1f8's tail jump: the return is the caller's own");
+    Check(sp::LocalScoped(0xD59430) && sp::LocalScoped(0x14DCA77) && sp::LocalScoped(0xD50000) && sp::LocalScoped(0x15FFFFF),
+          "the notice and soldier code are scoped");
+    Check(!sp::LocalScoped(0xD4FFFF) && !sp::LocalScoped(0xD80000) && !sp::LocalScoped(0x1600000) && !sp::LocalScoped(0x1E02E0E) &&
+              !sp::LocalScoped(0),
+          "the player, camera, UI and the thunks themselves are not");
+    Check(sp::LocalMode() == -1, "the redirect is off by default");
+    sp::SetLocalMode(1);
+    Check(sp::LocalMode() == 1, "mode 1");
+    sp::SetLocalMode(2);
+    Check(sp::LocalMode() == sp::kLocalPerSoldier, "per soldier");
+    sp::SetLocalMode(3);
+    Check(sp::LocalMode() == sp::kLocalAll, "every caller (research)");
+    sp::SetLocalMode(4);
+    Check(sp::LocalMode() == -1, "any other value turns it off");
+    sp::SetLocalMode(-7);
+    Check(sp::LocalMode() == -1, "negative: off");
+    Check(sp::LocalAnswer(sp::kLocalAll, false, -1) == 1 && sp::LocalAnswer(sp::kLocalAll, true, 0) == 1,
+          "every caller, scoped or not, reads body 1");
+    Check(sp::LocalAnswer(-1, true, 1) == -1 && sp::LocalAnswer(1, false, 1) == -1 && sp::LocalAnswer(0, false, 1) == -1,
+          "off or unscoped: stock");
+    Check(sp::LocalAnswer(1, true, -1) == 1 && sp::LocalAnswer(1, true, 0) == 1 && sp::LocalAnswer(0, true, 1) == 0,
+          "mode 0/1: every scoped call reads that player");
+    Check(sp::LocalAnswer(2, true, 1) == 1 && sp::LocalAnswer(2, true, 0) == 0 && sp::LocalAnswer(2, true, -1) == -1 &&
+              sp::LocalAnswer(2, true, 5) == -1,
+          "per soldier: the soldier's target, else stock");
+    // The census: per (caller, entry return), calls, redirects and the register ranges.
+    sp::LocalReset();
+    Check(!sp::LocalCensusOn(), "the census is off by default");
+    std::uint64_t regs[16]{};
+    regs[6] = 0x1'0000'0005ull;  // rbp: only the low 32 bits count
+    regs[3] = 200;               // r12
+    sp::LocalCount(0xD59430, 0x1E02E0E, true, regs);
+    regs[6] = 9;
+    regs[3] = 180;
+    sp::LocalCount(0xD59430, 0x1E02E0E, false, regs);
+    sp::LocalCount(0xD59430, 0x1E02E0E, false, nullptr);
+    sp::LocalCount(0x1350100, sp::kIdThunkRet, true, regs);
+    sp::LocalEntry e[4]{};
+    std::uint32_t overflow = 7;
+    Check(sp::LocalRead(e, 4, &overflow) == 2 && overflow == 0, "two entries");
+    Check(e[0].caller == 0xD59430 && e[0].entry == 0x1E02E0E && e[0].calls == 3 && e[0].redirected == 1, "most calls first");
+    Check(e[0].min[0] == 5 && e[0].max[0] == 9 && e[0].min[3] == 180 && e[0].max[3] == 200,
+          "rbp 5..9 and r12 180..200 (entry index rbp=0, rsi, rdi, r12=3, r13, r14, r15)");
+    Check(e[1].caller == 0x1350100 && e[1].entry == sp::kIdThunkRet && e[1].calls == 1 && e[1].redirected == 1, "the index read");
+    Check(sp::LocalRead(e, 1, nullptr) == 1 && e[0].calls == 3, "a short buffer keeps the top");
+    for (std::uint32_t i = 0; i < sp::kLocalCensus + 5; ++i) sp::LocalCount(0x1400000 + i * 16, 0x1E02E0E, false, nullptr);
+    Check(sp::LocalRead(e, 1, &overflow) == 1 && overflow == 7, "256 entries, the rest counted as overflow (2 + 254 fit)");
+    sp::LocalTally(K::rec, true, true);
+    sp::LocalTally(K::rec, false, false);
+    sp::LocalTally(K::idx, true, false);
+    const sp::LocalCounters lc = sp::LocalCountersRead();
+    Check(lc.rec == 2 && lc.idx == 1 && lc.scoped == 2 && lc.redirected == 1, "the tallies");
+    char line[160]{};
+    sp::SetLocalMode(1);
+    sp::SetLocalCensus(true);
+    Check(sp::LocalLine(line, sizeof(line)) &&
+              std::strcmp(line, "local;mode=1;census=1;rec=2;idx=1;scoped=2;redirected=1;online=-1;online_writes=0") == 0,
+          "the local line");
+    Check(!sp::LocalLine(line, 16), "a short buffer refuses");
+    sp::LocalReset();
+    sp::SetLocalCensus(false);
+    Check(sp::LocalRead(e, 4, &overflow) == 0 && overflow == 0 && sp::LocalCountersRead().rec == 0, "reset");
+    // L4: the online bit and its inverse in the manager's mode dword.
+    Check(sp::OnlineBits(0x2, true) == 0x4 && sp::OnlineBits(0x2 | 0x8 | 0x40, true) == (0x4 | 0x8 | 0x40) &&
+              sp::OnlineBits(0x4 | 0x10, false) == (0x2 | 0x10) && sp::OnlineBits(0x6, true) == 0x4,
+          "online sets bit 2 and clears bit 1; off the reverse; other bits kept");
+    Check(sp::OnlineMode() == -1, "online untouched by default");
+    sp::SetOnline(1);
+    Check(sp::OnlineMode() == 1, "online on");
+    sp::SetOnline(0);
+    Check(sp::OnlineMode() == 0, "online off (restore once)");
+    sp::SetOnline(4);
+    Check(sp::OnlineMode() == -1 && sp::OnlineWrites() == 0, "any other value: untouched; nothing written in the test");
+    // P13c told sight: Lua's single offense player (MGS_COOP_SOLDIER_PERCEIVE_V1 -- offense <0|1|off>).
+    Check(sp::OffenseCommand("offense 1", 9) == 1 && sp::OffenseCommand("offense 0", 9) == 0 &&
+              sp::OffenseCommand("offense off", 11) == -1,
+          "offense 0, 1 or off");
+    Check(sp::OffenseCommand("offense 2", 9) == -2 && sp::OffenseCommand("offense", 7) == -2 && sp::OffenseCommand("offense 1 ", 10) == -2 &&
+              sp::OffenseCommand("15 1", 4) == -2 && sp::OffenseCommand(nullptr, 0) == -2 && sp::OffenseCommand("offense -1", 10) == -2,
+          "anything else is refused");
+#ifdef _WIN32
+    // The stubs' C++ halves with fake game functions: the image base 0x140000000, a fabricated register block (regs[8]
+    // the entry return, regs[14] the slot 0x30 above it).
+    using Choose = std::uint64_t(__fastcall*)(void*, const std::uint64_t*, std::uintptr_t);
+    const auto rec = reinterpret_cast<Choose>(sp::LocalRecChooseAddress());
+    const auto idx = reinterpret_cast<Choose>(sp::LocalIdxChooseAddress());
+    sp::SetLocalTargets(0x140000000, &FakeLocalRec, &FakeLocalIdx, &FakeRec);
+    std::uint64_t r[16]{};
+    r[8] = 0x140000000 + 0x1E02E0E;   // slot 0x18's thunk
+    r[14] = 0x140000000 + 0xD59430;   // asked by the notice code
+    sp::SetLocalMode(-1);
+    Check(rec(nullptr, r, r[8]) == reinterpret_cast<std::uint64_t>(g_records[0]) && g_localRecCalls == 1, "off: the stock record");
+    sp::SetLocalMode(1);
+    Check(rec(nullptr, r, r[8]) == reinterpret_cast<std::uint64_t>(g_records[2]) && g_recIdx == 1 && g_localRecCalls == 1,
+          "mode 1: record 1 for a scoped caller, the stock function not called");
+    r[14] = 0x140000000 + 0x1D00000;  // asked by code outside the soldier ranges
+    Check(rec(nullptr, r, r[8]) == reinterpret_cast<std::uint64_t>(g_records[0]) && g_localRecCalls == 2, "unscoped: stock");
+    r[8] = 0x140000000 + 0x1350100;   // a direct caller in the soldier code (no thunk)
+    Check(rec(nullptr, r, r[8]) == reinterpret_cast<std::uint64_t>(g_records[2]), "a scoped direct caller is redirected");
+    std::uint32_t out = 77;
+    r[8] = 0x140000000 + sp::kIdThunkRet;
+    r[14] = 0x140000000 + 0x134EF2E;  // slot 0x208 asked by the soldier manager
+    Check(idx(&out, r, r[8]) == 1 && out == 1 && g_localIdxCalls == 0, "mode 1: the local index reads 1");
+    sp::SetLocalMode(0);
+    out = 77;
+    Check(idx(&out, r, r[8]) == 1 && out == 0 && g_localIdxCalls == 0, "mode 0: index 0 (the answer, not the stock call)");
+    sp::SetLocalMode(-1);
+    Check(idx(&out, r, r[8]) == 1 && g_localIdxCalls == 1, "off: the stock index");
+    const sp::LocalCounters after = sp::LocalCountersRead();
+    Check(after.rec == 4 && after.idx == 3 && after.scoped == 6 && after.redirected == 4, "the stubs tally every call");
+    sp::LocalReset();
+    sp::SetLocalTargets(0, nullptr, nullptr, nullptr);
+#endif
+}
 }  // namespace
 
 int main() {
@@ -292,8 +427,13 @@ int main() {
     Check(mo == 0xCB && mm == 0x01, "slot 0: +0xCB bit 0");
     sp::BodyMask(1, mo, mm);
     Check(mo == 0xC4 && mm == 0x20, "slot 1: +0xC4 bit 5");
-    Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xCC, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
+    Check(!sp::SetBodyMask(2, 0xC0, 1) && !sp::SetBodyMask(0, 0xBF, 1) && !sp::SetBodyMask(0, 0xE0, 1) && !sp::SetBodyMask(0, 0xC0, 0x100),
           "slot and offset bounds");
+    // P13 L3 (run 29e389d7): body 1 alone carries status 138 (+0xD1 bit 2); the mask reaches the whole bitset.
+    Check(sp::SetBodyMask(0, 0xD1, 0x04), "+0xD1 (status 138) is in range");
+    sp::BodyMask(0, mo, mm);
+    Check(mo == 0xD1 && mm == 0x04, "slot 0: +0xD1 bit 2");
+    Check(sp::SetBodyMask(1, 0xDF, 0x80) && sp::SetBodyMask(0, 0xC0, 0) && sp::SetBodyMask(1, 0xC0, 0), "+0xDF is the last byte");
     Check(!sp::BodyMaskSets(0) && sp::SetBodyMask(0, 0xC0, 0x88, true) && sp::BodyMaskSets(0), "a set mask");
     sp::BodyMask(0, mo, mm);
     Check(mo == 0xC0 && mm == 0x88, "slot 0: set +0xC0 bits 0x88");
@@ -317,6 +457,7 @@ int main() {
     Check(!sa::DefenseList(def, 2, dl, sizeof(dl)) && !sa::DefenseList(def, 1, dl, 1), "target 0 or 1; a buffer for the head");
     sa::DefenseReset();
     Check(sa::DefenseRead().hits[1] == 0 && sa::DefenseRead().by[1][0] == 0, "defense reset");
+    TestLocal();
     std::printf("soldier_m7_tests: %u checks passed\n", checks);
     return 0;
 }

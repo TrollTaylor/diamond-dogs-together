@@ -52,14 +52,17 @@ struct Chain {
 
 struct Result {
     // nullptr: the message was sent and the engine gave one of its two set-transform
-    // answers: out=0 handled=1 (moved) or out=-1 handled=0 (not realized / no handle).
+    // answers: out=0 handled=1 (moved) or out=-1 handled=0 (refused and not relayed: not
+    // realized or no character on a pinned hop, no slot on the typed dispatch, no handle).
     // Refusals before sending: contract type input range manager registry chain
     // leaf (a recognized forwarder hop that does not reach the verified handler)
     // unrealized (r=-1) index stance. After sending: fault (SEH), relayed (the typed
-    // dispatch answered out=0 handled=0: the guard's slot exists on this copy but is not
-    // realized here, the engine relayed the message to its unrealized form and nothing
-    // moved; or out=0x8ce64801, the handle's mode 2) and anomaly (any other out/handled
-    // pair, or out=0 handled=0 on an untyped chain).
+    // dispatch answered out=0 handled=0: the handler refused a guard whose slot exists on
+    // this copy - not realized here, or realized with no character - and the dispatcher
+    // passed the message to the guard's unrealized form or realized component, which did
+    // not handle it, so nothing moved; whether he was realized is not read [U]; or
+    // out=0x8ce64801, the handle's mode 2) and anomaly (any other out/handled pair, or
+    // out=0 handled=0 on an untyped chain).
     const char* refusal{};
     std::int32_t out{-2};
     std::uint8_t handled{};
@@ -192,7 +195,11 @@ struct DriveRule {
     unsigned short mission{};
     bool snap{}, owner{};
     bool puppet{}, puppet_key{};  // M7 probe: the puppet drive asked for, and lab.ini soldier_puppet (a guest only)
+    bool mirror{}, act_key{};     // FM1: the mirror drive (mode 2) asked for, and lab.ini soldier_act (a guest only for now)
 };
+// FM1, the mirror drive (DRIVE_V1 mode 2): a mirrored copy walks on its own legs toward the owner's request, so the drive
+// never steps it under kMirrorSnapM and moves it the whole way beyond (a lost stream, a far catch-up).
+inline constexpr float kMirrorSnapM = 5.0f;
 const char* DriveAdmit(const DriveRule& rule) noexcept;
 // The nearer-player range and the `far` refusal (enemy follow): the squared distance
 // from `pos` to the nearer of `host` (only when host_valid: the remote pose is fresh)
@@ -206,4 +213,7 @@ bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 // One "soldier_warp_census; ..." line ("\r\n" terminated); 0 on failure.
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,
                          std::size_t capacity) noexcept;
+// The chain's name in the warp log lines and replies (world_place=warp / host_warp, debug_menu=soldier_warp): pinned,
+// typed or engine, the same name the census line prints.
+const char* LeafName(const Chain& chain) noexcept;
 } // namespace mgscoop::soldier_warp

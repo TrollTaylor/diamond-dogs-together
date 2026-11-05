@@ -62,6 +62,9 @@ do
             local mount = kind == "horse" or kind == "walker"
             if mount and W.get(vars, "playerVehicleGameObjectId") == att then return "local" end
             if partnerIndex then return "mirror" end
+            -- Horse plan M1 (world_horse_share.lua): the shared D-Horse the partner rides is the partner's on this copy.
+            local HS = W.horseShare
+            if kind == "horse" and type(HS) == "table" and type(HS.partnerRides) == "function" and HS.partnerRides() then return "mirror" end
             local live = companionLive()
             if mount and not live then return "local" end
             if live and not W.host then return "mirror" end

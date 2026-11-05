@@ -734,9 +734,11 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
-    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive makes the offense index getter answer per soldier
-    // (soldier_perceive.hpp InstallPick; CFG r[19] bit 256: the host's Lua sends each guard's nearer player), so this
-    // copy's soldiers perceive body 1, the partner, too; soldier_brain makes each guard's owner
+    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive installs the offense index getter stub and the
+    // LOCAL accessor hooks (soldier_perceive.hpp InstallPick / InstallLocal; CFG r[19] bit 256): the host's Lua keeps one
+    // offense player for every guard (the nearer player of the nearest guard sampled in the last 2 s, held 4 s) and tells
+    // a calm guard within 10 m of the guest it found the player (SetDiscoveryPlayer: the guards' own senses never pick up
+    // body 1, runs 29e389d7 / 0608ad9f; told, they fire at it, d7cb1b1d); soldier_brain makes each guard's owner
     // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
     // nothing, the owner's hits on the replica reach the partner as SOLDIER_HIT 0x4C, world_friendly.lua) and holds the
     // other copy of a calm guard back (SetPuppet, world_snap.lua) until the owner's copy shoots that player (CFG r[19]
@@ -745,6 +747,16 @@ struct LabConfig {
     bool soldier_perceive_given = false;
     bool soldier_brain = false;
     bool soldier_brain_given = false;
+    // Enemy sync M7 FM1 probe P1 (docs/world-sync-design.md 7.15; soldier_act.hpp): act_census hooks the soldier request
+    // manager update 0x13735c0 read-only and logs the request/order census, the engage bins and the realize bands; the
+    // research command act_probe (U2) needs it. Lab and play; research only, off unless named. No CFG bit, no wire.
+    bool act_census = false;
+    // Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15; soldier_act.hpp, lua/coop/world_mirror.lua):
+    // while the guest's player is beyond R of a host-owned guard, the guest's copy is a puppet that replays the host
+    // copy's own request and order (SOLDIER_ACT 0x58) with its own animations. CFG r[19] bit 512, only with
+    // soldier_follow. Lab and play; off unless named until its gate run passes.
+    bool soldier_act = false;
+    bool soldier_act_given = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
@@ -752,6 +764,16 @@ struct LabConfig {
     // too (enemy latch, arm A 6348f361): the engine's relay to an unrealized guard, now refused "relayed" per guard.
     bool place_lift = false;
     bool place_lift_given = false;
+    // Enemy gaps 2 (docs/world-sync-design.md 7.17, lua/coop/world_place.lua): body_dead (CFG r[19] bit 1024, with
+    // soldier_body) lets the other copy's dead body placement through (run 41f2b07f: a dead guard 6.8 m apart, refused
+    // disabled_local) and keeps the resting spot where this copy's body lies after it (no report back); place_reach (bit
+    // 2048, with soldier_follow) force-realizes a guard whose placement the game relayed (not realized here) for 8 s and
+    // lets the M4 stream reach 160 m (run 798b51dd: every M3 host sample 60-160 m from the host, 57 refused unrealized).
+    // Lab and play; both off unless named (lab_config.cpp: why place_reach is not on by default yet).
+    bool body_dead = false;
+    bool body_dead_given = false;
+    bool place_reach = false;
+    bool place_reach_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -958,6 +980,27 @@ struct LabConfig {
     // FRAME and a play rehearsal prove it (project rule); a named value wins.
     bool companion_host_owned = false;
     bool companion_host_owned_given = false;
+    // world_horse_share=0|1 (horse plan M1, docs/mounts.md "Shared D-Horse"): the session's D-Horse (index 0, 6656)
+    // is one horse on both copies. The rider's copy streams it in RIDE_FAST (20 Hz, kind 3, id 6656) and one final
+    // reliable RIDE_BODY at the dismount; the other copy places its own 6656 every frame through
+    // MGS_COOP_HORSE_DRIVE_V1 (native/horse_drive.cpp) and shows body 1 seated in the saddle (partner_ride_wire
+    // Visibility horse, the DM overlay's horse map) instead of the mount hide. Both PCs must run it. Follows the
+    // native gun profile in lab and play since the M1 round (hidden FRAMEs on both copies, lab and a play rehearsal);
+    // a named 0 is the off switch.
+    bool world_horse_share = false;
+    bool world_horse_share_given = false;
+    // world_horse_cargo=0|1 (horse plan M2, docs/mounts.md "Downed partner on the horse"; with world_horse_share): carry a
+    // downed partner to the shared D-Horse and hold E: they lie across its back on both screens (HORSE_SEAT seat 2,
+    // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Off unless named
+    // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    bool world_horse_cargo = false;
+    bool world_horse_cargo_given = false;
+    // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
+    // the shared D-Horse the partner rides sits you behind them on both screens (HORSE_SEAT seat 1,
+    // lua/coop/world_horse_pillion.lua; MGS_COOP_HORSE_DRIVE_V1 pad / seat1 / hold0). Both PCs must run it. Off unless
+    // named in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    bool world_horse_pillion = false;
+    bool world_horse_pillion_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN
