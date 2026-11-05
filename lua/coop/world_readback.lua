@@ -78,13 +78,13 @@ do
         function R.tick(now)
             for h, t in pairs(R.stop) do if now >= t then R.stop[h], R.noted[h] = nil, nil end end
             for h, b in pairs(R.rb) do
-                local due = b.st == 0 and 500 or 2000
+                local due = b.st == 0 and 500 or b.st == 1 and 2000 or 5000
                 if now - b.at >= due then
                     local en = W.ent[h]
                     local x, y, z
                     if en and type(en.id) == "number" then x, y, z = pos(en.id) end
                     b.st = b.st + 1
-                    if b.st >= 2 or not x then R.rb[h] = nil end
+                    if b.st >= (b.src == "quiet" and 3 or 2) or not x then R.rb[h] = nil end  -- round 9: src=quiet at 5 s too
                     if x and type(y) == "number" then
                         local dy = y - b.ty
                         local held = abs(dy) <= 1000

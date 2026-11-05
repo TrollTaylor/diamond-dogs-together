@@ -295,7 +295,47 @@ bool FormatQuietLine(std::uint32_t go, std::uint16_t seq, unsigned moved, unsign
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
+QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t now_ms) noexcept {
+    if (!r.at) return QuietWhy::unknown;
+    if (now_ms > r.at && now_ms - r.at > kRestStaleMs) return QuietWhy::stale;
+    if (!r.realized) return QuietWhy::unrealized;
+    if (!r.listed) return QuietWhy::unlisted;
+    if (!(r.speed_mps >= 0.0f) || r.speed_mps > kRestSpeedMps) return QuietWhy::moving;
+    if (r.has) {
+        const float ex = r.end[0] - r.pos[0], ez = r.end[2] - r.pos[2], tx = r.end[0] - target[0], tz = r.end[2] - target[2];
+        const float lim = kRestPathM * kRestPathM;
+        if (!(ex * ex + ez * ez <= lim) && !(tx * tx + tz * tz <= lim)) return QuietWhy::path;
+    }
+    return QuietWhy::ok;
+}
+
+const char* QuietWhyName(QuietWhy why) noexcept {
+    switch (why) {
+    case QuietWhy::ok: return "ok";
+    case QuietWhy::unknown: return "unknown";
+    case QuietWhy::stale: return "stale";
+    case QuietWhy::unrealized: return "unrealized";
+    case QuietWhy::unlisted: return "unlisted";
+    case QuietWhy::moving: return "moving";
+    case QuietWhy::path: return "path";
+    }
+    return "?";
+}
+
+bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
+    if (!list) return false;
+    for (std::uint32_t k = 0; k < count; ++k)
+        if (list[k] == idx) return true;
+    return false;
+}
+
 #ifdef _WIN32
+int ListFind(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
+    __try {
+        return ListHas(list, count, idx) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
 namespace {
 namespace c = mgscoop::soldier_act_contract;
 using Update = void(__fastcall*)(void* m);
@@ -425,6 +465,13 @@ struct QuietMove { bool due; std::uint32_t go; std::uint16_t seq; float pos[3]; 
 QuietMove g_quiet[kMaxSoldiers]{};
 SRWLOCK g_quietLock = SRWLOCK_INIT;
 std::atomic<bool> g_quietPending{false};
+// Enemy round 9 (quiet_place, design 7.24): the rest views (hook thread writes g_restFresh, publishes under g_restLock).
+std::atomic<bool> g_restOn{false};
+SRWLOCK g_restLock = SRWLOCK_INIT;
+RestView g_rest[kMaxSoldiers]{}, g_restFresh[kMaxSoldiers]{};
+struct RestHist { std::uint64_t at[2]; float pos[2][3]; };
+RestHist g_restHist[kMaxSoldiers]{};
+std::uint64_t g_restAt = 0;  // hook thread
 
 // The runtime thread stamps every registration and mailbox with partner_net::NowMs (ACT_V1, world_link::ActLatest); the
 // hook compares with the same clock (run 0a271c10: GetTickCount64 here left every registration stale: 25 requests staged
@@ -1242,12 +1289,23 @@ void PlanStep(std::uintptr_t m) noexcept {
 // writes the slot position and yaw, and for a guard in the realized list *(S+0x18)+0x28 moves his body through the
 // character controller (S vt[0x100] -> vt[0x388]; rotation vt+0x70, position vt+0x68 with y + controller +0x160); it
 // tests no puppet bit, no S+0x2a4 mode and sends no message). A slot within 15 m of the target is biased first (QuietBias).
+// The realized list 0x136ece0 looks idx up in before it moves the body (u16 entries *(S+0x18)+0x28, count +0x44).
+bool Listed(const View& v, unsigned i) noexcept {
+    std::uintptr_t list = 0;
+    std::uint32_t count = 0;
+    if (!Rd(v.slots + c::slots_list, list) || !Rd(v.slots + c::slots_list_count, count) || !list || count > 4096) return false;
+    // Round 9 land step (the review): the list entries are game memory, read under SEH (QuietOne calls this outside its __try).
+    const int found = ListFind(reinterpret_cast<const std::uint16_t*>(list), count, i);
+    if (found < 0) g_faults.fetch_add(1, std::memory_order_relaxed);
+    return found == 1;
+}
 void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
     float slot[3]{}, biased[3]{}, after[3]{};
     unsigned moved = 0, bias = 0;
     float err = -1.0f, dy = 0.0f;
     float* p = nullptr;
-    if (i < v.count && Bit(v.realized, i) && Pos(v, i, slot)) {
+    // Round 9: not in the realized list now, the warp would write the slot and leave the body (1befcef4): no move.
+    if (i < v.count && Bit(v.realized, i) && Listed(v, i) && Pos(v, i, slot)) {
         p = reinterpret_cast<float*>(v.pos + static_cast<std::uintptr_t>(i) * c::slots_pos_stride);
         alignas(16) unsigned char entry[0x18]{};
         PrefillEntry(entry, q.pos, q.yaw);
@@ -1288,6 +1346,56 @@ void QuietStep(std::uintptr_t m) noexcept {
     }
 }
 
+// Round 9 (quiet_place, design 7.24): the rest view of every realized guard (QuietCheck reads it on the runtime thread).
+void RestStep(const View& v, std::uint64_t now) noexcept {
+    std::uintptr_t list = 0, planner = 0;
+    std::uint32_t listCount = 0;
+    if (!Rd(v.slots + c::slots_list, list) || !Rd(v.slots + c::slots_list_count, listCount) || listCount > 4096) list = 0;
+    Rd(v.s + c::s_planner, planner);
+    const bool known = PlannerKnown(planner);
+    for (unsigned i = 0; i < v.count; ++i) {
+        RestView& r = g_restFresh[i];
+        RestHist& h = g_restHist[i];
+        r = {};
+        r.at = now;
+        r.speed_mps = -1.0f;
+        r.realized = Bit(v.realized, i);
+        float p[3]{};
+        if (!r.realized || !Pos(v, i, p)) { h = {}; continue; }
+        r.pos[0] = p[0]; r.pos[1] = p[1]; r.pos[2] = p[2];
+        r.listed = list && ListHas(reinterpret_cast<const std::uint16_t*>(list), listCount, i);
+        if (h.at[0] && now > h.at[0] && now - h.at[0] <= 4 * kRestMs) {
+            const float dx = p[0] - h.pos[0][0], dz = p[2] - h.pos[0][2];
+            r.speed_mps = std::sqrt(dx * dx + dz * dz) * 1000.0f / static_cast<float>(now - h.at[0]);
+        }
+        h.at[0] = h.at[1];
+        std::memcpy(h.pos[0], h.pos[1], sizeof(h.pos[0]));
+        h.at[1] = now;
+        std::memcpy(h.pos[1], p, sizeof(p));
+        Follower f{};
+        bool has = false;
+        std::uint32_t count = 0;
+        float end[3]{};
+        if (known && FollowerFor(v, i, f) && FollowerPath(f, has, count, end) && has) {
+            r.has = true;
+            // A path whose points cannot be read: as if it led away (the message).
+            if (count) { r.end[0] = end[0]; r.end[1] = end[1]; r.end[2] = end[2]; }
+            else { r.end[0] = p[0] + 1000.0f; r.end[1] = p[1]; r.end[2] = p[2]; }
+        }
+    }
+    AcquireSRWLockExclusive(&g_restLock);
+    std::memcpy(g_rest, g_restFresh, sizeof(RestView) * v.count);
+    for (unsigned i = v.count; i < kMaxSoldiers; ++i) g_rest[i] = {};
+    ReleaseSRWLockExclusive(&g_restLock);
+}
+void RestSafe(std::uintptr_t m, std::uint64_t now) noexcept {
+    __try {
+        View v{};
+        if (!Resolve(m, v)) return;
+        RestStep(v, now);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { g_faults.fetch_add(1, std::memory_order_relaxed); }
+}
+
 void StepSafe(std::uintptr_t m) noexcept {
     __try {
         View v{};
@@ -1311,6 +1419,13 @@ void __fastcall UpdateDetour(void* m) {
         g_threads.store(2, std::memory_order_relaxed);
     else if (!g_threads.load(std::memory_order_relaxed)) g_threads.store(1, std::memory_order_relaxed);
     g_m.store(reinterpret_cast<std::uintptr_t>(m), std::memory_order_relaxed);
+    if (g_restOn.load(std::memory_order_relaxed)) {
+        const std::uint64_t now = NowMs();
+        if (now - g_restAt >= kRestMs) {
+            g_restAt = now;
+            RestSafe(reinterpret_cast<std::uintptr_t>(m), now);
+        }
+    }
     if (g_quietPending.load(std::memory_order_relaxed)) QuietStep(reinterpret_cast<std::uintptr_t>(m));
     if (g_census.load(std::memory_order_relaxed) || g_actOn.load(std::memory_order_relaxed) || g_probe.active ||
         g_probe.pending.load(std::memory_order_relaxed))
@@ -1381,15 +1496,14 @@ bool Installed() noexcept { return g_installed.load(); }
 void SetPlan(bool on) noexcept { g_planOn.store(on); }
 bool PlanOn() noexcept { return g_planOn.load(); }
 
-int QuietRealized(unsigned idx) noexcept {
-    const std::uintptr_t m = g_m.load(std::memory_order_relaxed);
-    if (!g_installed.load() || !m || idx >= kMaxSoldiers) return -1;
-    __try {
-        View v{};
-        if (!Resolve(m, v) || idx >= v.count) return -1;
-        return Bit(v.realized, idx) ? 1 : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+QuietWhy QuietCheck(unsigned idx, const float (&target)[3]) noexcept {
+    if (!g_installed.load() || !g_restOn.load() || idx >= kMaxSoldiers) return QuietWhy::unknown;
+    AcquireSRWLockShared(&g_restLock);
+    const RestView r = g_rest[idx];
+    ReleaseSRWLockShared(&g_restLock);
+    return QuietChoose(r, target, NowMs());
 }
+void SetQuietRest(bool on) noexcept { g_restOn.store(on); }
 
 bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept {
     if (!g_installed.load() || idx >= kMaxSoldiers) return false;

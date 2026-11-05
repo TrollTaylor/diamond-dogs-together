@@ -272,6 +272,31 @@ def analyse(host, guest):
     r['quiet'] = {'warps': len(qw), 'moved': sum(1 for f in ql if f.get('moved') == '1'),
                   'bias': sum(1 for f in ql if f.get('bias') == '1'), 'readback': len(qr),
                   'readback_within_1m': sum(1 for f in qr if within(f))}
+    # Enemy round 9 track A (design 7.24): why a quiet move was (not) taken (quiet=<why> on the warp line), the walk-on row
+    # (the 5 s read-back x/z within 2 m) and per move (an at=500 read-back starts one) both 0.5 s and 2 s within 1 m.
+    why = {}
+    for l in guest:
+        if l.startswith('world_place=warp') and 'quiet=' in l:
+            k = fields(l).get('quiet')
+            why[k] = why.get(k, 0) + 1
+    r5 = [f for f in qr if f.get('at') == '5000']
+
+    def near2(f):
+        try:
+            return float(f.get('dxz_m', 'x')) <= 2.0
+        except ValueError:
+            return False
+    moves, cur = [], {}
+    for f in qr:
+        e, at = f.get('ent'), f.get('at')
+        if at == '500':
+            cur[e] = {'500': f}
+            moves.append(cur[e])
+        elif e in cur:
+            cur[e][at] = f
+    read = [m for m in moves if '500' in m and '2000' in m]
+    r['quiet'].update({'why': why, 'readback_5s': len(r5), 'walk_on_within_2m_5s': sum(1 for f in r5 if near2(f)),
+                       'moves_read': len(read), 'moves_both_within_1m': sum(1 for m in read if within(m['500']) and within(m['2000']))})
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
