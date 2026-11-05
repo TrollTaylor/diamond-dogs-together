@@ -1,7 +1,7 @@
 # Horse plan M3, ride behind your partner (world_horse_pillion, on with the gun profile since M3c: NOT named here;
-# docs/mounts.md "Ride behind your partner"). Both role orders in one part. (b) The guest's first E mounts the unridden
-# horse; the host's own E sits the host behind (host_press); idle / walk / trot / gallop frames on both screens; the host
-# hops off, the guest gets off. (a) The host's first E mounts; the guest's E 3.2 m behind the rider reaches the game
+# docs/mounts.md "Ride behind your partner"). Both role orders in one part, (a) first since M3c attempt 4. (b) The guest's
+# first E mounts the unridden horse; the host's own E sits the host behind (host_press); idle / walk / trot / gallop frames
+# on both screens; the host hops off, the guest gets off. (a) The host's first E mounts; the guest's E 3.2 m behind the rider reaches the game
 # unmasked (step=e_free from the raw pad verb, the 2.5 / 2.8 m ride hold); beside the horse the guest's E claims the rear
 # seat, the host drives at once (M3c: run 7c0b9e71's 'stall' was this scenario's first ride key 17 s after a stray claim,
 # then a cliff; (a) starts from the boot spot again), the same gaits; the guest hops off; seated again, the host gets off and both are
@@ -32,99 +32,11 @@ host run pillion_status
 host require pillion;state=off;key=1;.*mode=6;
 guest run pillion_status
 guest require pillion;state=off;key=1;.*mode=6;
-# --- (b) the guest drives: its first E at the unridden horse mounts it; the host's own E sits the host behind.
+# --- (a) the host drives, first since M3c attempt 4 (runs 93b59ae4 / 85a49831 / e284fb1c: (a) after (b) started where
+# (b)'s gallop had coasted into rock, or a recalled horse arrived facing the rock south of the boot spot: step=stall;
+# from the boot spot the first ride goes north into open ground, as (b) did in every run). The host's first E at the
+# unridden horse mounts it.
 logmark both
-guest run goto_horse
-wait 1500
-both capture h3b-before
-guest press e 150
-wait 2500
-guest run horse_status
-guest require localMounted=1
-waitlog host 'world_lua=event=horse_share; step=placed;' 10
-waitlog host 'partner_mount=show; mount=horse;' 10
-host run goto_horse
-wait 1500
-logmark both
-host press e 150
-waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press; token=[0-9]+; mode=6;' 5
-waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
-waitlog guest 'partner_pillion=seat;' 5
-host run horse_status
-host require localMounted=0
-wait 1500
-host capture h3b-idle-host
-guest capture h3b-idle-guest
-# Side views (the rider in front hides the other from straight behind): the passenger's camera is free; the driver turns
-# its camera back before it rides (W steers by the camera).
-host mouse 1200 0
-guest mouse 1200 0
-wait 600
-host capture h3b-idle-side-host
-guest capture h3b-idle-side-guest
-host mouse -1200 0
-guest mouse -1200 0
-wait 600
-guest hold w 1500 nowait
-host burst h3b-walk-host 3 250
-guest hold w 1500 nowait
-guest burst h3b-walk-guest 3 250
-guest hold w 1500 nowait
-host burst h3b-trot-host 3 250
-guest hold w 1500 nowait
-guest burst h3b-trot-guest 3 250
-guest hold w+shift 1500 nowait
-host burst h3b-gallop-host 4 200
-guest hold w+shift 1500 nowait
-guest burst h3b-gallop-guest 4 200
-guest hold w+shift 1500 nowait
-host burst h3b-gallop3-host 4 200
-guest hold w+shift 1500 nowait
-guest burst h3b-gallop3-guest 4 200
-guest hold w+shift+a 1500 nowait
-host burst h3b-gallop2-host 3 250
-guest hold w+shift+a 1500 nowait
-guest burst h3b-gallop2-guest 3 250
-guest release
-host burst h3b-gallopfree-host 3 300
-guest burst h3b-gallopfree-guest 3 300
-wait 3000
-host capture h3b-stopped-host
-guest capture h3b-stopped-guest
-host mouse 1200 0
-guest mouse 1200 0
-wait 600
-host capture h3b-stopped-side-host
-guest capture h3b-stopped-side-guest
-host mouse -1200 0
-guest mouse -1200 0
-waitlog guest 'world_lua=event=horse_pillion; step=first_move; ms=' 5
-waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
-waitlog guest 'partner_pillion=stats;' 5
-logmark both
-host hold e 500
-waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
-waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
-wait 1500
-host capture h3b-hopped-off-host
-guest capture h3b-hopped-off-guest
-guest press e 150
-wait 3000
-guest run horse_status
-guest require localMounted=0
-waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
-wait 3000
-# --- (a) the host drives. Back to the boot spot first (run 93b59ae4: from (b)'s end the host's horse faced a cliff and
-# stopped at the gallop: step=stall), both players and both horses called there. The host's first E at the unridden
-# horse mounts it.
-logmark both
-host debug teleport 805.0 342.1 1636.5 -60
-guest debug teleport 802.8 342.1 1637.8 119
-wait 3000
-guest run horse_spawn
-wait 3000
-host run horse_spawn
-wait 10000
 host run goto_horse
 wait 1500
 both capture h3-before
@@ -253,3 +165,86 @@ wait 3000
 guest run horse_status
 guest expect localMounted=0
 both capture h3-end
+# --- (b) the guest drives (second, from where (a) ended; the trot turns left away from what may stand ahead): its first
+# E at the unridden horse mounts it; the host's own E sits the host behind.
+logmark both
+guest run goto_horse
+wait 1500
+both capture h3b-before
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host run goto_horse
+wait 1500
+logmark both
+host press e 150
+waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press; token=[0-9]+; mode=6;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
+waitlog guest 'partner_pillion=seat;' 5
+host run horse_status
+host require localMounted=0
+wait 1500
+host capture h3b-idle-host
+guest capture h3b-idle-guest
+# Side views (the rider in front hides the other from straight behind): the passenger's camera is free; the driver turns
+# its camera back before it rides (W steers by the camera).
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-idle-side-host
+guest capture h3b-idle-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+wait 600
+guest hold w 1500 nowait
+host burst h3b-walk-host 3 250
+guest hold w 1500 nowait
+guest burst h3b-walk-guest 3 250
+guest hold w+a 1500 nowait
+host burst h3b-trot-host 3 250
+guest hold w+a 1500 nowait
+guest burst h3b-trot-guest 3 250
+guest hold w+shift 1500 nowait
+host burst h3b-gallop-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop-guest 4 200
+guest hold w+shift 1500 nowait
+host burst h3b-gallop3-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop3-guest 4 200
+guest hold w+shift+a 1500 nowait
+host burst h3b-gallop2-host 3 250
+guest hold w+shift+a 1500 nowait
+guest burst h3b-gallop2-guest 3 250
+guest release
+host burst h3b-gallopfree-host 3 300
+guest burst h3b-gallopfree-guest 3 300
+wait 3000
+host capture h3b-stopped-host
+guest capture h3b-stopped-guest
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-stopped-side-host
+guest capture h3b-stopped-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+waitlog guest 'world_lua=event=horse_pillion; step=first_move; ms=' 5
+waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
+waitlog guest 'partner_pillion=stats;' 5
+logmark both
+host hold e 500
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+wait 1500
+host capture h3b-hopped-off-host
+guest capture h3b-hopped-off-guest
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
+wait 3000
