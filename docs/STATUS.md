@@ -46,7 +46,7 @@ under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
   guest p50 22.5 / p90 28.5 m and host M3 p90 26.3 m (both from the down). `1befcef4` place_sink 22, guard_fell 1,
   host M3 p90 6.64 m.
 - **Checks**: CTest 355 / 355 at 9276ae08 (full); the worker's audited CTest passed before each of the three sessions;
-  FINALCTEST; every `generate_*_contract.py --check` as round 7 except soldier_act (20 sites: three new windows of
+  full `tools/build.ps1 -Jobs 4` at the code head f8441a11: CTest 355 / 355; every `generate_*_contract.py --check` as round 7 except soldier_act (20 sites: three new windows of
   0x136ece0); `tests/enemy_div_report_check.py` 8 checks (new rows: while the guest is down, the quiet moves).
 - **Next**: bug 1: after a quiet move give the guard a stand at the target (the request start's offline mode 0 stand)
   or end his path, and move only guards in the realized list; bug 2: use the guest's network pose sample while their
