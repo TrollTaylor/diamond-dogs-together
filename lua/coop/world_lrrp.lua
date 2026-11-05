@@ -277,7 +277,7 @@ local function svStep(gid, e)
   end)
   nm, plan = u32(nm), u32(plan)
   if not ok or not nm or not plan or type(st) ~= "number" then return nil, "svars" end
-  if nm ~= e then return nil, "name" end
+  if nm ~= e then return nil, fmt("name:%.0f", nm) end
   return plan, st, type(fl) == "number" and floor(fl / 262144) % 2 == 1
 end
 local function storeSteps() send({type = "TppSoldier2"}, {id = "StoreToSVars"}) end
