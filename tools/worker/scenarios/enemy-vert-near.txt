@@ -3,9 +3,10 @@
 # guest's position there in 3e2611fc) and was the copy left 2.2-3.3 m under its target on the host in 6348f361,
 # 41f2b07f, 31a799e3 and b77e2104 (alert, ~30 s after the guest's first goto); round 7 stood the host at the quiet spot
 # 67-73 m from him, so no copy was driven within 60 m. Here the host goes to 415.78,268.45,2107.86 (a logged teleport
-# landing, 7c174346) before the alert: 44-54 m from the wall top. Block 2: the guest goes 3 m from him (onto the wall
-# top, as in 3e2611fc: he is guest-owned, the host's copy driven 44-54 m from the host), both cameras on him (aim_ent;
-# the host through binoculars), v-a / v-b / v-c 3-4 s apart, then the guest's shot; the host goes back to the quiet spot
+# landing, 7c174346) before the alert: 31-54 m from the wall top. Block 2: the guest goes onto the wall top at the guest's
+# logged spot there in 3e2611fc (373.86,276.73,2120.18; round 10's first run's goto 3 put the guest at its foot, where the
+# wall hid him: c59ae699), about 13 m from him on the same surface (he is guest-owned, the host's copy driven 31 m from the
+# host), both cameras on him (aim_ent; the host through binoculars), v-a / v-b / v-c 3-4 s apart, then the guest's shot; the host goes back to the quiet spot
 # for blocks 3-9 (the latch-alert firefight as before). Post: world_drive=vert / vert_wait / vert_stop and
 # event=readback src=vert (0.5 s / 2 s) on both copies; the host's and guest's positions after each move.
 # Firefight latch (enemy3 latch track): a long ALERT with the guest inside afgh_field_cp among the guards (enemy-prove-1-join.txt
@@ -51,7 +52,7 @@ guest release
 wait 24000
 host run world_status
 guest run world_status
-guest run enemy goto 2929558510 3
+guest run teleport 373.86 277.2 2120.18 118
 wait 2500
 guest run position
 host run enemy_aim_nearest 1.1
