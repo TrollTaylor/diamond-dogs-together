@@ -1,0 +1,25 @@
+# Horse plan M3c, the tie (lab, part 2 of the session after horse-pillion.txt): both players press E at the unridden
+# horse at the same moment. Each copy's player mounts its own copy's horse; the partner's RIDE_FAST then arrives while
+# this copy rides (no track opens): step=tie on both copies, the host drives, the guest yields (getoff=none: no native
+# get-off request yet), M1's two-driver fallback. Then both get off.
+logmark both
+host run goto_horse
+guest run goto_horse
+wait 1500
+both capture h3t-before
+both press e 150
+wait 3000
+host run horse_status
+host expect localMounted=1
+guest run horse_status
+guest expect localMounted=1
+waitlog host 'world_lua=event=horse_pillion; step=tie; role=host; verdict=drive;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=tie; role=guest; verdict=yield;' 5
+both capture h3t-tie
+both press e 150
+wait 3000
+host run horse_status
+host expect localMounted=0
+guest run horse_status
+guest expect localMounted=0
+wait 3000

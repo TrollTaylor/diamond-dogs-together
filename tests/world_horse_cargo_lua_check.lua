@@ -26,8 +26,18 @@ local function fixture(o)
    local r = {}; for k, v in pairs(f.horse) do r[k] = v end; return r
   end
   -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
+  if verb and verb:find("^free0 ") then f.frees = (f.frees or 0) + 1; return {ready = true, freed = true} end
+  if verb and verb:find("^hold1 ") then
+   local x, y, z, yaw = verb:match("^hold1 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
+   f.holds1 = (f.holds1 or 0) + 1
+   f.lastHold1 = verb
+   if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
+   f.warps[#f.warps + 1] = {index = 1, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
+    via = "hold1"}
+   return {ready = true, held = true}
+  end
   if verb and verb:find("^hold0 ") then
-   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) ([0-3])$")
+   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
    f.holds[#f.holds + 1] = verb
    if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
    f.warps[#f.warps + 1] = {index = 0, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
@@ -153,6 +163,7 @@ check(not f.C.downedPosture(), "the carrier's own downed posture is never the ca
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
  math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
+check(w.via == "hold1" and f.lastHold1:find(" 14$"), "the carrier's copy holds body 1 by hold1 (C0 + watch + pin)")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
 f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
@@ -277,11 +288,15 @@ check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RI
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
 -- Round 2: hold0 with no reset (a242d867, c2927350) or the A0 reset (8cfe8e97, 7f3155c8) kept body 0 with the horse but
--- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose. Default 4: the Lua Warp; the
--- lab lever picks hold0 with a reset 0..3 (C0 alone untried).
-check(w.via == nil and #f.holds == 0, "by default body 0 moves by the Lua Warp")
-check(f.C.RESET == 4, "the default is the Lua Warp (reset 4)")
+-- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose but drops under the horse.
+-- BODY0 round: the C0 reset alone (C0.vt+0x90 sets the 0x580 record's +0x2C0 bit 0x20, which C0.vt+0xD0 0x14128E010
+-- reads, clears and answers "no fall" for that frame) keeps the lying pose but the body still dropped under the horse
+-- (run cfd2b604, victim_pin drop 136-288 cm); with the native write watch (4) and pin (8) on body 0's transform the
+-- default is 14; the lab lever picks 0..15 (4 the Lua Warp).
+check(w.via == "hold0" and #f.holds == 1 and f.holds[1]:find(" 14$"), "by default body 0 moves by hold0 + C0 + watch + pin")
+check(f.C.RESET == 14, "the default is hold0 + C0 + watch + pin (14)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
+check(f.C.RESET1 == 14, "the carrier's copy holds body 1 by hold1 with C0 + watch + pin (14) by default")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
 f.W.horseShare = {track = {}}
@@ -320,8 +335,9 @@ f.C.placed(172800, 2600, 310000, 0)
 check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a rise: at once")
 check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
 -- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
-check(f.C.setVictimPose(1700, 1300, 200, 0, 2) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
- not f.C.setVictimPose(1700, 1300, 200, 0, 5), "setVictimPose: in range only (the reset 0..4, 4 the Lua Warp)")
+check(f.C.setVictimPose(1700, 1300, 200, 0, 15) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
+ not f.C.setVictimPose(1700, 1300, 200, 0, 16) and f.C.setVictimPose(1700, 1300, 200, 0, 2),
+ "setVictimPose: in range only (the reset 0..15, 4 the Lua Warp)")
 f.now = f.now + 50
 f.C.placed(172900, 2600, 310000, 0)
 w = f.lastWarp(0)
@@ -341,10 +357,17 @@ f.holdOff = "off"
 f.tick(50); f.tick(50)
 w = f.lastWarp(0)
 check(w.via == nil and f.count and f.logged("step=hold0_refused;reason=off"), "hold0 refused: body 0 by Lua Warp")
+-- Run 144d99bb (b): one transient refusal (body, at the mount) Lua-Warped body 0 once; Warp's A0 reset turned it prone for
+-- the rest of the ride. A transient refusal leaves body 0 to the pin (it holds 300 ms); only off / request / pins Warp.
+f.holdOff = "body"
+local nwb = #f.warps
+f.tick(50)
+check(#f.warps == nwb and f.logged("step=hold0_refused;reason=body"), "hold0 refused body (transient): no Lua Warp")
 f.holdOff = nil
 f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET)
 -- The take-down from the carrier: body 0 at the exact point.
 f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
+check((f.frees or 0) >= 1, "the take-down frees the pin (free0) before body 0's lay-down Warp")
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
  f.logged("from=partner"), "UNLOADED taken_down: off, the local hold cleared")
 w = f.lastWarp(0)
@@ -361,6 +384,7 @@ check(f.count(5) == 1, "a remote end sends nothing back")
 local function loaded(o) local x = fixture(o); load(x); return x end
 f = loaded(); f.horse.gen = 6; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 5 and f.lastWarp(1), "a new horse generation (dead / despawned): horse_lost, laid down")
+check((f.frees or 0) >= 1 and f.lastWarp(1).via == nil, "the carrier's lay-down frees the pin, then body 1 by the Lua Warp")
 f = loaded(); f.horse = nil; for i = 1, 40 do f.tick(50) end
 check(f.C.state == "off" and f.sent(5)[6] == 5, "the horse unreadable for 1.5 s: horse_lost")
 f = loaded(); f.horse.pending = 1; f.tick(50)
