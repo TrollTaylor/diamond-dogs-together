@@ -2306,10 +2306,10 @@ int main() {
             // user's decision D-FM1 (a), 2026-11-05: the far mirror mirrors only in calm and caution, so 1 (and calm) is on with
             // the calm / caution limit; all (research) keeps every phase (the behaviour of design 7.16).
             const auto calm = Lab("enabled=1\nrole=guest\nsoldier_act=calm\n");
-            const auto one = Lab("enabled=1\nrole=guest\nsoldier_act=1\n");
-            const auto all = Lab("enabled=1\nrole=guest\nsoldier_act=all\n");
-            Check(calm.soldier_act && calm.soldier_act_calm && calm.invalid_values == 0 && one.soldier_act && one.soldier_act_calm &&
-                  all.soldier_act && !all.soldier_act_calm && all.invalid_values == 0 &&
+            const auto actOne = Lab("enabled=1\nrole=guest\nsoldier_act=1\n");
+            const auto actAll = Lab("enabled=1\nrole=guest\nsoldier_act=all\n");
+            Check(calm.soldier_act && calm.soldier_act_calm && calm.invalid_values == 0 && actOne.soldier_act && actOne.soldier_act_calm &&
+                  actAll.soldier_act && !actAll.soldier_act_calm && actAll.invalid_values == 0 &&
                   !Lab("enabled=1\nrole=guest\nsoldier_act=0\n").soldier_act,
                   "FM1 round 6 (D-FM1 a): soldier_act=1 / calm is on in calm / caution only; all is every phase");
             // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
