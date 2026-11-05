@@ -661,6 +661,75 @@ lab and play (`native/lab_config.cpp`; a named 0 is the off switch), with M3's 2
   dismount with the guest driving (every driver_off run had the host driving), the `hold_keep` keepalive (it never fired),
   the link drop in play mode (lab only).
 
+## 13. Shoot from the back of the horse (horse plan M4, lab key `world_horse_shot`, off unless named)
+
+Built on section 12's rear seat (M4 round, `wp/horse`). The key `world_horse_shot` (lab and play, needs
+`world_horse_pillion`; a named 1 runs in play too) is **off unless named**: the M4 gate was not reached in three attempts.
+Markers [O]/[I]/[U].
+- **The passenger's own copy.** The pillion pad mask already leaves aim, fire and reload free, and body 0 is on foot
+  natively, so the stock squat-aim runs on the seat; the passenger aims and fires on its own screen [O frames, runs
+  `d935beae`, `28015a91`, `48d31500`, `1a7c5d0e`: the rifle raised behind the driver, the magazine counting down].
+  With the key, `world_horse_pillion.lua` leases `MGS_COOP_HORSE_DRIVE_V1 pbox <mission> <epoch> <x> <y> <z> <yaw>` (the
+  placed census root, mm / mrad) with every placement (`step=shot_box` once per seating; `pillion_status ... shot=`); the
+  partner driver publishes it to the RequestBullet hook as `partner_seat_shot` class `horse` (vehicle 6656, seat 1;
+  `TickHorseShot`): `kHorseBox` about the root, 1.3 m behind to 1.7 m ahead, 0.6 m a side, 0.6 m under to 2.2 m over.
+  A bullet starting inside it moves along its own line to the exit (+5 cm, never past the aim point - 0.3 m), as the
+  jeep's S1 (design 8.37). No new hook, site or wire. Lines `partner_seat_shot=published; vehicle=6656; seat=1;
+  class=horse` and one `partner_seat_shot=shot; result=shift` per shot.
+- **Cross-neck shots** [O logs, both copies, lab and play]: every straight-ahead shot (`d_milli=1000,..`) started 1.57 m
+  ahead of its muzzle (`exit_cm=152`), past the driver and the horse's head; the passenger's copy's horse kept 12000 /
+  12000 in every `seat_pin` window (40-86 windows a run); the driver's life read before and during the ride stayed the
+  same (status `life=7801,7801` host, `6600,6600` guest, godmode off while driving, `28015a91`). Not discriminating: no
+  stock (unshifted) shot on the same line was fired, so whether a stock shot hits the horse or the driver is [U].
+- **The driver's copy.** `partner_seat_gun`'s gate takes the pillion seat (the seat1 lease with the overlay seat) as a
+  seated passenger seat and its DM overlay as no block (`psg::Block`); it runs with `world_horse_shot` even with
+  `partner_seat_gun` off. The hold runs (`partner_seat_gun=hold; ...; pillion=1`, the gesture hook's `gun_start`
+  applied on graph 2 with body 1 at act 139) [O], but **no frame shows the gun raised**: body 1 sits behind the driver
+  with its arms forward and the rifle still on its back (`28015a91`, `48d31500`) [O looked]. This is the M7 seat gun's
+  known limit (docs/native-puppet.md "Seat gun": "the hold runs but the partner's gun does not show").
+- **Hits.** No shot from the rear seat put a guard down in five runs (both orders): sleeping guards 4-7 m away (attempts
+  1-2) and an awake one (attempt 3), aimed with `enemy_aim_nearest`. From the horse the lever's 1.5 m eye is too low: 0.3 m up put the reticle 1.4 m short of
+  the guard (`28015a91`: aim_nearest d=6.5 m, the shots' `dist_cm` 503-506); the 1.2 / 1.6 / 2.0 ladder (`48d31500`) hit
+  nothing either, and in (a) the enemy follow had moved the guest's copy of the warped guard back to the host's (39 m,
+  `place_div`). Whether a rear-seat bullet reaches a guard at all is [U] (design 8.22 saw the same with seated jeep
+  shots before 8.30's aim-camera fix).
+- **Seat fixes found by the M4 runs (on with `world_horse_pillion`, the gun profile).**
+  - `d935beae`: a frame capture stalled the driver's game past the 300 ms seat1 lease; the overlay seat stopped, and
+    because the lease was back before the stop completed, `finish()` kept stateRideOnIdle as the remote episode's done
+    entry and never seated body 1 again (`partner_pillion=stats; dy_cm=-190` for the rest of the ride: body 1 on the
+    ground behind the horse) [O]. Fixed: `horse_drive::HoldSeat` keeps a lease live on the previous tick 2 more ticks, and
+    the overlay re-enters a pillion seat once idle. `48d31500`: no lease end inside a seating (each `partner_pillion=end`
+    is a real hop-off or driver_off) [O].
+  - `28015a91` (play): a 0.9 s gap in the guest's RIDE_FAST ended the host's track (`stream_lost`) and the host's seat
+    behind the guest (`track_end`) while the ride went on [O]. Now a track ended by `stream_lost` is held 2 s
+    (`step=track_wait`, body 0 at its last target); a final or other end still lays off at once. Unit-tested; no run
+    logged a `track_wait` yet [U live].
+- **Coverage asked of M4.** The driver's dismount with the GUEST driving: `48d31500` (b), `why=driver_off; side=driver`
+  on the guest, `why=driver_off; side=passenger; placed=1; at=foot` on the host [O both logs]. The 2.5-2.8 m E band:
+  not reached (S held 350 ms moved the guest nowhere: claim at 1.56 m) [U]. The play-mode link drop: the worker's only
+  drop (`worldtrigger world=0`) is lab only, so it cannot be run in play [U].
+- **The tie's get-off** [O static, Ghidra]: `0x141230B30` is not a ride-state request. It takes (`ctrl =
+  *(*(blk+0x78)+0x238)`, id, layer 0, `FUN_14122f880(node)`, blend) and calls ctrl vt+0x190: a motion-node set with a
+  48-bit node hash (`0xf241f3bcf60b` in `FUN_141236940` case 9); its 20 callers are the ride states' event handlers
+  (a switch on the event code). There is no get-off id to pass there; a native get-off is the ride state machine's own
+  transition [U]. The tie rule (host drives, guest behind) is not built; comment at `0x141230B30`.
+- **D-H6 (`player2_cypr`)**: not started (it waits on this gate). Local evidence only: `player2_cypr.mtar` (184 clips, 7
+  referenced by the resident graph, names unknown; design 3.4); the rear-seat clip's name hash is [U].
+- **Hidden runs** (`horse-pillion-shot.txt` lab / `horse-pillion-shot-play.txt` play, 50 m south of afgh_field_cp, `-WanSim
+  bad -SaveSeed afgh-ledge`; slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`): attempt 1 `d935beae` (lab,
+  stopped in (b) at a capture refusal, `sequence_expiry_or_busy`) / `28015a91` (play, every step ran); attempt 2
+  `48d31500` (lab, every step ran) / `1a7c5d0e` (play, stopped after (a): the host's E did not dismount, cause [U]);
+  attempt 3 `88b7b621` (lab, the key named, the guards left awake: the warped guard did not ignore the
+  players, shot the passenger (228 a hit; the passenger's copy's horse 12000 -> 10885 from the guard's rounds) and the
+  outpost's guards took the driver to a lethal hit three times (downed_damage), the host's horse fell Unconscious
+  (life 4828) and the host's game changed mission (40010); the guest's debug commands were refused after) / `53af6597` (play, the same: the guards'
+  fire downed the driver and took the passenger's copy's horse to 6489 / 12000; stopped after (a)).
+- **Next:** the driver's screen needs the gun in body 1's hands: the plan's first route (while the remote aims, let body
+  1's native drive run the stock squat-aim at the rear seat, the overlay off, body 1 held by `hold1`'s write watch and
+  pin, which today needs `world_horse_cargo`), or design B of the seat gun (D18). For hits, a standing target and an
+  aim lever that uses the camera's own position (the jeep's 8.30 aim-camera fix), then an A/B with `seatshot off` on a
+  cross-neck line.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

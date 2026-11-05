@@ -1,3 +1,36 @@
+## November 5, 2026: horse M4, shoot from the back of the horse (`wp/horse`; `world_horse_shot` off unless named; `world_horse_pillion` still on with the gun profile)
+
+**Players get:** riding behind your partner holds up better: a short game hitch no longer drops you off your partner's
+horse seat on their screen (before, you then showed 1.9 m under the seat, on the ground behind the horse, for the rest
+of the ride), and the seat is kept through a connection gap of up to 2 s instead of ending. Seen in one hidden
+two-copy lab test after the fix (no seat dropped; before it, the seat dropped at the first hitch); the connection-gap
+hold is unit-tested only. Shooting from the back of the horse is NOT turned on:
+with the lab key named you can aim and fire from the seat on your own screen, and your shots start past the horse and
+your partner, but your partner does not see your gun raised and no test shot put a guard down. Details:
+`docs/mounts.md` section 13. Markers [O]/[I]/[U].
+
+- **Built** (red first each time): the rear seat's horse box for the seated-shot hook (`pbox`, `partner_seat_shot`
+  class `horse`), the seat gun's pillion gate on the driver's copy, the lab key `world_horse_shot` (2620c451 /
+  fe81384a); the seat lease held 2 ticks through a stall and the overlay seat re-entering after a lapse (613e8e19,
+  6b62eea0 / 018ccc45); a stream loss held 2 s (`step=track_wait`, 2254b9cd / 018ccc45); the key off unless named
+  (d9f36d26 / 230ef073).
+- **Proven** [O, both copies' logs]: each cross-neck shot from the seat (straight ahead along the horse) started 1.57 m
+  ahead of the muzzle, past the driver and the horse's head; the passenger's copy's horse kept 12000 / 12000 through the
+  shots; the drivers' life read the same before and during the ride (`28015a91`). The driver's dismount with the guest
+  driving put both off (`48d31500`, logs and the both-off frames on both screens). No seat lease ended inside a seating after the fix (`48d31500`).
+- **Not reached (the M4 gate):** no rear-seat shot put a guard down (five runs, sleeping and awake guards; the aim
+  lever's eye height is wrong from a horse, and the warped guard did not stay put); the driver's screen shows the
+  passenger with the arms forward and the rifle on the back (the M7 seat gun's known limit: the gun-hold node runs, no
+  weapon in the hands) [O frames]. Never seen live: the 2.5-2.8 m E band, the play-mode link drop (the worker's drop is
+  lab only), `step=track_wait`, the tie's get-off (not built: `0x141230B30` is a motion-node set, not a ride-state id).
+- **Next:** the plan's first route for the driver's screen (body 1's native squat-aim at the rear seat while the remote
+  aims, held by `hold1`) or seat-gun design B (D18); an aim lever from the camera's own position, a target that stays
+  put, then an A/B with `seatshot off` on a cross-neck line; D-H6 after that.
+- Builds: full 355/355 at 018ccc45 and at the off flip; every generator `--check` as base (carry_info, sleep_plugin,
+  native_ui, teammate_targeting). Archives `%USERPROFILE%\mgs-coop-run-archive\horse\` d935beae, 28015a91, 48d31500,
+  1a7c5d0e, 88b7b621, 53af6597 (attempt 3: the awake guards fought back, the outpost downed the driver and
+  the guards' rounds took the passenger's copy's horse to 6489 / 12000; nothing about the seat itself).
+
 ## November 5, 2026: horse M2f, a downed partner on the horse after you get off (`wp/horse`; `world_horse_cargo` still off unless named)
 
 **Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named.
