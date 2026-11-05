@@ -114,8 +114,17 @@ guest run horse_status
 guest require localMounted=0
 waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
 wait 3000
-# --- (a) the host drives. The host's first E at the unridden horse mounts it.
+# --- (a) the host drives. Back to the boot spot first (run 93b59ae4: from (b)'s end the host's horse faced a cliff and
+# stopped at the gallop: step=stall), both players and both horses called there. The host's first E at the unridden
+# horse mounts it.
 logmark both
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 3000
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
 host run goto_horse
 wait 1500
 both capture h3-before
@@ -175,9 +184,9 @@ host hold w+shift 1500 nowait
 guest burst h3-gallop3-guest 4 200
 host hold w+shift 1500 nowait
 host burst h3-gallop3-host 4 200
-host hold w+shift+d 1500 nowait
+host hold w+shift+a 1500 nowait
 guest burst h3-gallop2-guest 3 250
-host hold w+shift+d 1500 nowait
+host hold w+shift+a 1500 nowait
 host burst h3-gallop2-host 3 250
 host release
 wait 3000
