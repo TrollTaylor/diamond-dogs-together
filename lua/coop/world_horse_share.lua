@@ -5,8 +5,8 @@
 -- renders the track 100 ms behind and places its 6656 every frame (place, anchored under body 1 once native shows it
 -- seated), so the partner rides in the saddle on this screen; the final pose leaves the horse where it was left, then
 -- nothing moves it and the first E mounts it. Within 4 m of a horse the partner rides, an ACTION-only pad mask
--- (MgsCoopHorseHold, probe P5) stops a second native driver. A census generation change, a stale track or a context
--- change ends it; Travel / Bring partner here and the guest's checkpoint wait while anyone rides it. Both PCs must run
+-- (MgsCoopHorseHold, probe P5) stops a second native driver. A census generation change, a stale track, both players
+-- riding (two drivers; no new track until this copy's player is off) or a context change ends it; Travel / Bring partner here and the guest's checkpoint wait while anyone rides it. Both PCs must run
 -- the key (a copy without it drops 6656 from RIDE_FAST and refuses RIDE_BODY not_mirror, as before).
 do
 local W = e.MgsCoopWorld
@@ -95,7 +95,7 @@ function S.reset(why)
  local t = now()
  endTrack(t, why or "reset")
  release(why or "reset")
- S.sendId, S.lastPose, S.sendGen, S.closedAt, S.twoDrivers = nil, nil, nil, nil, nil
+ S.sendId, S.lastPose, S.sendGen, S.closedAt = nil, nil, nil, nil
 end
 local function read()
  local r = receipt(fmt("read %d %d", W.mission, W.epoch))
@@ -134,11 +134,11 @@ function S.apply(t)
  local x, y, z, yaw, state = R.trackPose(tr, t)
  if not x then return endTrack(t, "stream_lost") end
  if S.localRides() then
-  -- Two drivers (a same-moment E race): neither copy moves the other's horse; native keeps the hide.
-  if not S.twoDrivers then S.twoDrivers = true; log("step=two_drivers") end
-  return
+  -- Two drivers (a same-moment E race): neither copy moves the other's horse; native keeps the hide. The partner's
+  -- ride ends here and no new track opens while this copy's player rides (the RIDE_FAST handler).
+  log("step=two_drivers")
+  return endTrack(t, "two_drivers")
  end
- S.twoDrivers = nil
  local r = place(x, y, z, yaw, true)
  -- M2: a downed partner loaded on this horse follows the pose just written (world_horse_cargo.lua).
  local HC = W.horseCargo
@@ -187,6 +187,7 @@ W.handlers[FAST] = function(v)
   if S.closedAt and t - S.closedAt < CLOSED_MS then return end
   local tr = S.track
   if not tr then
+   if S.localRides() then return end
    tr = {samples = {}}
    S.track, S.stats, S.last, S.lastB, S.gen = tr, {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, up = 0, n = 0, at = t},
     nil, nil, nil
