@@ -1600,6 +1600,24 @@ if arg[7] and arg[8] then
     rd.W.reachOn = true
     ticks(rd, 20)
     check(d0 == 0 and rd.drives and #rd.drives >= 1, 'place_reach: the receiver drives a guard 100 m away')
+    -- Run 9023e5c6: most relays came from the stream's steps (host 18 drive / 3 placements, guest 22 / 1), and the
+    -- native backoff after them refused the corrections (backoff 20 / 18): a relayed drive step holds the guard too.
+    local rv = guestFix(180)
+    rv.W.snapOn, rv.W.reachOn = true, true
+    rv.positions[1] = {0, 1.8, 100.0}
+    rv.driveReply = {refused = 'relayed'}
+    ticks(rv, 2)
+    check(sent(rv, 1, 'SetForceRealize') == 1 and logged(rv, 'event=realize_hold;ent=3000000001;on=1'),
+        'place_reach: a relayed drive step force-realizes that guard')
+    ticks(rv, 250)
+    check(sent(rv, 1, 'SetForceRealize', false) == 1 and logged(rv, 'event=realize_hold;ent=3000000001;on=0;why=timeout'),
+        'place_reach: a drive hold ends after 8 s')
+    local rw = guestFix(180)
+    rw.W.snapOn = true
+    rw.positions[1] = {0, 1.8, 20.0}
+    rw.driveReply = {refused = 'relayed'}
+    ticks(rw, 2)
+    check(sent(rw, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed drive step holds nobody')
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
