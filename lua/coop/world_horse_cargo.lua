@@ -26,26 +26,24 @@ for k, v in pairs(CAUSE) do CODE[v] = k end
 -- TAKE_MS 0.3 s (run a49c4d76: the coop pickup shouldered the body off the horse before a 0.5 s hold).
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 300, 1500, 6000, 1000, 3500, 1500, 1000
 local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 450, 1100
--- Heights (runs 7359e4d2 / c667a209 / 6fd054c4, step=pin and frames): an unridden census root stands 0.75-1.04 m over
--- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, and 0.55 / 0.5 (runs
--- 144d99bb / 4585cc5a) a little high over the rump, so the body goes 0.45 m over an unridden census and, while this
--- copy's player rides, 0.54 m behind and 0.4 m over the rider's own position (no census lag). On foot within 3 m a point
--- outside 0.8-2.0 m over the carrier's ground is put 1.35 m over it (run 5a92c73f: a census root 0.52 m over it after a ride).
--- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
--- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
--- across: c667a209 frames).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 400, 800, 2000, 1350, 3000, 2000
+-- Heights (step=pin and frames): an unridden census root stands 0.5-1.3 m over the carrier's ground; body 1 goes 0.45 m
+-- over an unridden census and, while this copy's player rides, 0.54 m behind and 0.15 m over the rider's own position (no
+-- census lag; M2g: 0.4 drew its back at the rider's mid-back in 770368d0 / 4585cc5a). On foot within 3 m a point outside
+-- 0.8-2.0 m over the carrier's ground is put 1.35 m over it (5a92c73f: a census root 0.52 m over it after a ride). The
+-- victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose right
+-- after each placement, else 0.9 m over the census. Both bodies lie along their yaw: each is held a quarter turn from the
+-- horse's yaw, across its back (M2g: body 1 at the horse's yaw lay along it over the saddle, 770368d0 host-h2-loaded).
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 150, 800, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
--- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low at a gallop on the carrier's screen, body 0 slipping off at a
--- gallop on the victim's): a warped body is drawn after the frame's own move of the rider / the placed horse, so it
--- leads by the last per-tick move (at most 0.6 m; a bigger jump is no motion; placements more than 200 ms apart none).
+-- Round 2 (83ac3950 / 547b431e: body 1 trailing low at a gallop, body 0 slipping off): a warped body is drawn after
+-- the frame's own move of the rider / the placed horse, so it leads by the last per-tick move (at most 0.6 m; a bigger
+-- jump is no motion; placements more than 200 ms apart none).
 -- victim_gone lays body 0 beside the horse only while it is within 5 m of it (a respawned body stays where it is).
 local LEAD_MAX_MM, LEAD_MS, GONE_MM = 600, 200, 5000
 C.LEAD_MAX_MM = LEAD_MAX_MM
--- Runs a49c4d76 / 20aef564: body 0 lay on the ground under the moving horse for a second or more on the victim's screen
--- (right after the mount, at a gallop). Its target never drops faster than DOWN_MMPS (a rise is immediate); the lab
--- lever horse_probe cargo_pose sets the placed / census heights, the offset behind the root and the rate (V).
--- Within FACE_MM of the root the carrier is against the horse: no facing check (run 20aef564 refused 0.85 m away).
+-- Runs a49c4d76 / 20aef564: body 0 lay on the ground under the moving horse for a second or more. Its target never
+-- drops faster than DOWN_MMPS (a rise is immediate); the lab lever horse_probe cargo_pose sets the heights, back, rate (V).
+-- Within FACE_MM of the root the carrier is against the horse: no facing check (20aef564 refused 0.85 m away).
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
 -- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
 -- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
@@ -138,8 +136,9 @@ local function warp(index, x, y, z, yaw)
  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
  return pcall(GameObject.SendCommand, {type = "TppPlayer2", index = index}, {id = "Warp", pos = {x / 1000, y / 1000, z / 1000}, rotY = yaw})
 end
--- Body 1 on the carrier's copy: hold1 (C0 + watch + pin, RESET1), else the Lua Warp (one line a reason).
+-- Body 1 on the carrier's copy, a quarter turn from the horse's yaw a: hold1 (C0 + watch + pin), else the Lua Warp.
 local function hold1(x, y, z, a)
+ a = a + pi / 2
  local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- hold1 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z),
   round(a * 1000), RESET1))
  if r and r.ready == true then return true end
@@ -455,7 +454,8 @@ local function cargoTick(now)
  C.h = h
  local wa = h.yaw / 1000
  local wx, wy, wz = h.x - V.back * sin(wa), h.y + V.rise, h.z - V.back * cos(wa)
- if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp0(wx, wy, wz, wa + pi / 2, "census") end
+ -- M2g (5a92c73f / 4585cc5a: fall / land right at M1's final): once the track ended, held every tick (C0's "no fall").
+ if not tracked or now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp0(wx, wy, wz, wa + pi / 2, "census") end
  stanceTick(now, tracked)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS

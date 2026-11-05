@@ -1,0 +1,158 @@
+# M2g attempt 3 (lab 39fff762 (b): the recall after the teleport left the horse where (a) ended, by a rock wall, and
+# the guest's R there never shouldered the downed host): parts 2+ start at the horse where the last part left it (no
+# teleport, no recall), and the rides are shorter (about 100 m) so they end in the open.
+# M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
+# 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
+# front of them, facing away from the horse.
+# M2g attempt 2 (lab f7e09c55: a guest capture refused mid-ride, sequence_expiry_or_busy, ended the session): single frames,
+# fewer of them (load, walk, trot, gallop, gallop4, stop, after the dismount, take-down, revive), and a riding leg
+# waits out its 1.5 s hold after its captures.
+# M2g: part 2 of 2 of the play session (after horse-cargo-play.txt): order (b), the guest carrying the host, from the
+# boot spot; the same lines, frames and NEVER lines as (a); the ride as (a)'s with the roles swapped.
+logmark both
+both debug godmode 1
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
+guest run goto_horse
+wait 1000
+placebehind host guest 8 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind guest host -4 -0.7
+wait 3000
+host debug godmode 0
+guest press 1 120
+wait 2000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 1200
+host run downed_status
+host require down=1.*cause=1.*lock=1
+host debug godmode 1
+guest debug goto_carry
+wait 1500
+guest hold r 900
+guest release
+wait 3500
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+guest run goto_horse
+wait 1200
+guest hold e 900
+guest release
+wait 3000
+waitlog host 'world_lua=event=horse_cargo; step=grant; seat=2;' 6
+waitlog guest 'world_lua=event=horse_cargo; step=loaded; seat=2;' 6
+waitlog host 'world_lua=event=horse_cargo; step=cargo; seat=2;' 6
+guest run cargo_status
+guest require cargo;state=carrier
+host run cargo_status
+host require cargo;state=cargo
+wait 1500
+# M2g attempt 3 (39fff762: the victim's own frames showed the horse only at the load): the victim's camera looks down a
+# little so their frames show the horse under the body.
+host mouse 0 200
+wait 400
+both capture h2b-loaded
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+guest run horse_flank
+wait 1500
+logmark both
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+guest hold w 1500 nowait
+wait 300
+guest capture h2b-ride-walk
+host capture h2b-ride-walk-victim
+wait 600
+guest hold w+a 1500 nowait
+wait 300
+guest capture h2b-ride-trot
+host capture h2b-ride-trot-victim
+wait 600
+guest hold w+shift+a 1500 nowait
+wait 300
+guest capture h2b-ride-gallop
+host capture h2b-ride-gallop-victim
+wait 600
+guest hold w+shift+a 1500
+guest hold w+shift 1500
+guest hold w+shift+a 1500
+guest hold w+shift+a 1500 nowait
+wait 300
+guest capture h2b-ride-gallop4
+host capture h2b-ride-gallop4-victim
+wait 600
+guest hold w+shift+a 1500
+guest hold w+shift+a 1500
+guest release
+wait 2500
+both capture h2b-ride-stopped
+host run downed_status
+host require down=1
+# The dismount keeps them on (lying, M2f).
+logmark both
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+guest run cargo_status
+guest require cargo;state=carrier
+wait 1000
+both capture h2b-stays
+host run cargo_status
+host expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2b-stays2
+host run cargo_status
+host expect stance=CRAWL
+# Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
+guest debug goto_carry
+wait 1500
+logmark both
+guest hold r 400
+guest release
+wait 2500
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=cargo; placed=1;' 5
+host run cargo_status
+host require cargo;state=off
+guest run cargo_status
+guest require cargo;state=off
+host run position
+guest run position
+both capture h2b-unloaded
+host run downed_status
+host require down=1
+guest debug goto_carry
+wait 1500
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 4500
+host run downed_status
+host require down=0
+both capture h2b-revived

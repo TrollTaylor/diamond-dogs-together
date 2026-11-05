@@ -835,6 +835,9 @@ struct Mission {
     float pillion_seat[3];
     bool pillion_seat_ok;
     horse_drive::SeatHold pillion_hold;  // M4: a one-tick lease lapse (a game stall) keeps the seat (HoldSeat)
+    // M4b (world_horse_shot): the remote aims behind this copy's player: the overlay leaves body 1 to the native aim.
+    horse_drive::SeatAim pillion_aim;
+    bool pillion_aim_on;
     float pillion_xz_max, pillion_dy_max;
     unsigned pillion_err_n, pillion_stats_lines;
     std::uint64_t pillion_stats_ms;
