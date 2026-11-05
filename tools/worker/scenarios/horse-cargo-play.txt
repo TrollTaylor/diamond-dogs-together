@@ -1,3 +1,5 @@
+# M2f attempt 3: bursts of at most 2 frames 400 ms apart (runs d4aec0a2 / 05758736: a capture 250 ms after the last was
+# refused, sequence_expiry_or_busy, and ended the session).
 # Horse plan M2, a downed partner on the shared D-Horse: the play rehearsal (-Mode play -WanSim bad) of horse-cargo.txt
 # (boot, the lab fast boot and worldtrigger are lab only: the title, the paired wait, then the afgh-ledge spot by
 # teleport; no link-drop part). The same lines, frames and NEVER lines as horse-cargo.txt parts (a) and (b). Lab key
@@ -99,7 +101,7 @@ guest run cargo_status
 guest require cargo;state=cargo
 wait 1500
 both capture h2-loaded
-guest burst h2-loaded-victim 3 400
+guest burst h2-loaded-victim 2 400
 # The host's first E mounts the loaded horse.
 logmark both
 host press e 150
@@ -110,41 +112,41 @@ waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 host capture h2-mounted
 guest capture h2-mounted-victim
 host hold w 1500 nowait
-host burst h2-ride-walk 2 250
-guest burst h2-ride-walk-victim 2 250
+host burst h2-ride-walk 2 400
+guest burst h2-ride-walk-victim 2 400
 host hold w+a 1500 nowait
-host burst h2-ride-trot 2 250
-guest burst h2-ride-trot-victim 2 250
+host burst h2-ride-trot 2 400
+guest burst h2-ride-trot-victim 2 400
 host hold w+shift+a 1500 nowait
-host burst h2-ride-gallop 2 250
-guest burst h2-ride-gallop-victim 3 250
+host burst h2-ride-gallop 2 400
+guest burst h2-ride-gallop-victim 2 400
 host hold w+shift+a 1500 nowait
-host burst h2-ride-gallop2 2 250
-guest burst h2-ride-gallop2-victim 3 250
+host burst h2-ride-gallop2 2 400
+guest burst h2-ride-gallop2-victim 2 400
 host hold w+shift 1500 nowait
-host burst h2-ride-gallop3 2 250
-guest burst h2-ride-gallop3-victim 3 250
+host burst h2-ride-gallop3 2 400
+guest burst h2-ride-gallop3-victim 2 400
 host hold w+shift+a 1500
 host hold w+shift+a 1500 nowait
 host burst h2-ride-gallop4 2 400
-guest burst h2-ride-gallop4-victim 3 400
+guest burst h2-ride-gallop4-victim 2 400
 host hold w+shift+a 1500
 host hold w+shift+a 1500 nowait
 host burst h2-ride-gallop5 2 400
-guest burst h2-ride-gallop5-victim 3 400
+guest burst h2-ride-gallop5-victim 2 400
 host hold w+shift 1500
 host hold w+shift 1500 nowait
 host burst h2-ride-gallop6 2 400
-guest burst h2-ride-gallop6-victim 3 400
+guest burst h2-ride-gallop6-victim 2 400
 host hold w+shift+d 1500
 host hold w+shift+d 1500 nowait
 host burst h2-ride-gallop7 2 400
-guest burst h2-ride-gallop7-victim 3 400
+guest burst h2-ride-gallop7-victim 2 400
 host hold w+shift 1500
 host hold w+shift 1500
 host hold w+shift 1500 nowait
 host burst h2-ride-gallop8 2 400
-guest burst h2-ride-gallop8-victim 3 400
+guest burst h2-ride-gallop8-victim 2 400
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -154,7 +156,8 @@ host run cargo_status
 host require cargo;state=carrier
 guest run cargo_status
 guest require cargo;state=cargo
-# The dismount keeps them on.
+# The dismount keeps them on (lying, M2f).
+logmark both
 host press e 150
 wait 3000
 host run horse_status
@@ -165,6 +168,13 @@ wait 1000
 both capture h2-stays
 guest run downed_status
 guest require down=1
+# M2f: the victim's own copy keeps body 0 lying (CRAWL) after the dismount (BODY0 runs: it squatted; step=stance / relie).
+guest run cargo_status
+guest expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2-stays2
+guest run cargo_status
+guest expect stance=CRAWL
 # Taken down: the carry key (R) held 0.3 s beside the horse lays them on the ground beside it at the carrier's side, at
 # the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
 # Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
@@ -249,7 +259,7 @@ host run cargo_status
 host require cargo;state=cargo
 wait 1500
 both capture h2b-loaded
-host burst h2b-loaded-victim 3 400
+host burst h2b-loaded-victim 2 400
 logmark both
 guest press e 150
 wait 2500
@@ -259,46 +269,48 @@ waitlog host 'world_lua=event=horse_share; step=placed;' 10
 guest capture h2b-mounted
 host capture h2b-mounted-victim
 guest hold w 1500 nowait
-guest burst h2b-ride-walk 2 250
-host burst h2b-ride-walk-victim 2 250
+guest burst h2b-ride-walk 2 400
+host burst h2b-ride-walk-victim 2 400
 guest hold w+a 1500 nowait
-guest burst h2b-ride-trot 2 250
-host burst h2b-ride-trot-victim 2 250
+guest burst h2b-ride-trot 2 400
+host burst h2b-ride-trot-victim 2 400
 guest hold w+shift+a 1500 nowait
-guest burst h2b-ride-gallop 2 250
-host burst h2b-ride-gallop-victim 3 250
+guest burst h2b-ride-gallop 2 400
+host burst h2b-ride-gallop-victim 2 400
 guest hold w+shift+a 1500 nowait
-guest burst h2b-ride-gallop2 2 250
-host burst h2b-ride-gallop2-victim 3 250
+guest burst h2b-ride-gallop2 2 400
+host burst h2b-ride-gallop2-victim 2 400
 guest hold w+shift 1500 nowait
-guest burst h2b-ride-gallop3 2 250
-host burst h2b-ride-gallop3-victim 3 250
+guest burst h2b-ride-gallop3 2 400
+host burst h2b-ride-gallop3-victim 2 400
 guest hold w+shift+a 1500
 guest hold w+shift+a 1500 nowait
 guest burst h2b-ride-gallop4 2 400
-host burst h2b-ride-gallop4-victim 3 400
+host burst h2b-ride-gallop4-victim 2 400
 guest hold w+shift+a 1500
 guest hold w+shift+a 1500 nowait
 guest burst h2b-ride-gallop5 2 400
-host burst h2b-ride-gallop5-victim 3 400
+host burst h2b-ride-gallop5-victim 2 400
 guest hold w+shift 1500
 guest hold w+shift 1500 nowait
 guest burst h2b-ride-gallop6 2 400
-host burst h2b-ride-gallop6-victim 3 400
+host burst h2b-ride-gallop6-victim 2 400
 guest hold w+shift+d 1500
 guest hold w+shift+d 1500 nowait
 guest burst h2b-ride-gallop7 2 400
-host burst h2b-ride-gallop7-victim 3 400
+host burst h2b-ride-gallop7-victim 2 400
 guest hold w+shift 1500
 guest hold w+shift 1500
 guest hold w+shift 1500 nowait
 guest burst h2b-ride-gallop8 2 400
-host burst h2b-ride-gallop8-victim 3 400
+host burst h2b-ride-gallop8-victim 2 400
 guest release
 wait 2500
 both capture h2b-ride-stopped
 host run downed_status
 host require down=1
+# The dismount keeps them on (lying, M2f).
+logmark both
 guest press e 150
 wait 3000
 guest run horse_status
@@ -307,6 +319,12 @@ guest run cargo_status
 guest require cargo;state=carrier
 wait 1000
 both capture h2b-stays
+host run cargo_status
+host expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2b-stays2
+host run cargo_status
+host expect stance=CRAWL
 # Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
 guest debug goto_carry
 wait 1500
@@ -363,11 +381,11 @@ host capture m1r-guest-mounted
 guest hold w 1500
 guest hold w+a 1500 nowait
 host run goto_horse
-host burst m1r-guest-trot 2 250
+host burst m1r-guest-trot 2 400
 guest hold w+shift+a 1500
 guest hold w+shift+a 1500 nowait
 host run goto_horse
-host burst m1r-guest-gallop 3 250
+host burst m1r-guest-gallop 2 400
 guest hold w+shift+a 1500
 guest hold w+shift+a 1500
 guest release

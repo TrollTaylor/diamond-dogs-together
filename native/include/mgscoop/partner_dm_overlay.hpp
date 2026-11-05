@@ -150,6 +150,9 @@ struct In {
     // the rear seat): seated in stateRideOnIdle whatever the remote's own act is (its copy pins it squatting), whatever
     // `mode` says, also when body 1 already shows the remote's act natively.
     bool pillion;
+    // Horse plan M4 (world_horse_shot named; the review: no play pass of the driver's get-off with it): after a stop the
+    // pillion seat re-enters once idle instead of keeping stateRideOnIdle as the done entry.
+    bool pillion_reseat;
 };
 
 struct Out {

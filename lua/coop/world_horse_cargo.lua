@@ -25,15 +25,16 @@ local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
 -- TAKE_MS 0.3 s (run a49c4d76: the coop pickup shouldered the body off the horse before a 0.5 s hold).
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 300, 1500, 6000, 1000, 3500, 1500, 1000
-local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 550, 1100
+local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 450, 1100
 -- Heights (runs 7359e4d2 / c667a209 / 6fd054c4, step=pin and frames): an unridden census root stands 0.75-1.04 m over
--- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, so the body goes
--- 0.55 m over an unridden census and, while this copy's player rides, 0.54 m behind and 0.5 m over the rider's own
--- position (no census lag). On foot within 3 m a point outside 1.0-2.0 m over the carrier's ground is put 1.45 m over it.
+-- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, and 0.55 / 0.5 (runs
+-- 144d99bb / 4585cc5a) a little high over the rump, so the body goes 0.45 m over an unridden census and, while this
+-- copy's player rides, 0.54 m behind and 0.4 m over the rider's own position (no census lag). On foot within 3 m a point
+-- outside 0.8-2.0 m over the carrier's ground is put 1.35 m over it (run 5a92c73f: a census root 0.52 m over it after a ride).
 -- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
 -- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
 -- across: c667a209 frames).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 500, 1000, 2000, 1450, 3000, 2000
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 400, 800, 2000, 1350, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low at a gallop on the carrier's screen, body 0 slipping off at a
 -- gallop on the victim's): a warped body is drawn after the frame's own move of the rider / the placed horse, so it
@@ -59,8 +60,9 @@ local RESET1 = 14
 C.RESET1 = RESET1
 local WARP_WHY = {off = true, request = true, pins = true, receipt = true}
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
-local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
+local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET, relie = 1}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
+C.GROUND_LO_MM = GROUND_LO_MM
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
  VICTIM_RISE_MM, VICTIM_PLACED_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
@@ -72,6 +74,7 @@ function C.setVictimPose(placed, rise, back, down, reset)
  V.placed, V.rise, V.back, V.down, V.reset = placed, rise, back, down, reset
  return true
 end
+function C.setRelie(n) if not int(n, 0, 1) then return false end V.relie = n; return true end
 local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
 local function round(v) return floor(v + 0.5) end
 local function log(s) if type(W.log) == "function" then pcall(W.log, "event=horse_cargo;" .. s) end end
@@ -181,6 +184,7 @@ local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
  C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil, nil, nil, nil, nil
  C.lastMine, C.lastPlaced, C.want, C.lag, C.wantAt, C.takeArmed, C.rode, C.settleUntil = nil, nil, nil, nil, nil, nil, nil, nil
+ C.stance, C.relieAt, C.relies, C.tracked, C.trackOffAt = nil, nil, nil, nil, nil
 end
 -- The last move (dx, dz in mm) from the point L = {x, z} to (x, z), or none past LEAD_MAX_MM.
 local function lead(L, x, z)
@@ -223,6 +227,36 @@ local function warp0(x, y, z, a, src)
  if not WARP_WHY[why] then return false end
  C.via = "warp"
  return warp(0, x, y, z, a)
+end
+-- M2f: body 0's stance on the victim's copy (PlayerStance STAND 1 / SQUAT 2 / CRAWL 3 = the native stance byte; Ghidra
+-- 0x1409D3F25). BODY0 runs 911ce293 .. 4585cc5a: lying on the horse through the ride, squatting on it on this screen once
+-- the carrier got off. Each change is logged (step=stance: the target's source, ms since M1's track ended); with V.relie 1
+-- (lever cargo_relie) a SQUAT / STAND cargo body is asked back to CRAWL (the stock stance request) at most every RELIE_MS.
+local RELIE_MS, STANCES = 500, {"CRAWL", "SQUAT", "STAND"}
+local function stanceNow()
+ local q = W.get(PlayerInfo, "OrCheckStatus")
+ if type(q) ~= "function" then return "none" end
+ for _, k in ipairs(STANCES) do
+  local id = W.get(PlayerStatus, k)
+  if id ~= nil then
+   local ok, yes = pcall(q, {id})
+   if ok and yes == true then return k end
+  end
+ end
+ return "none"
+end
+local function stanceTick(now, tracked)
+ local s = stanceNow()
+ if s ~= C.stance then
+  capped("stance", fmt("step=stance;s=%s;was=%s;src=%s;tracked=%d;off_ms=%d", s, C.stance or "none", C.want and C.want[4] or "none",
+   tracked and 1 or 0, C.trackOffAt and round(now - C.trackOffAt) or -1), 40)
+  C.stance = s
+ end
+ if V.relie ~= 1 or (s ~= "SQUAT" and s ~= "STAND") or now < (C.relieAt or 0) then return end
+ C.relieAt, C.relies = now + RELIE_MS, (C.relies or 0) + 1
+ local f, id = W.get(Player, "RequestToSetTargetStance"), W.get(PlayerStance, "CRAWL")
+ local ok = type(f) == "function" and id ~= nil and pcall(f, id)
+ capped("relie", fmt("step=relie;from=%s;n=%d;ok=%d", s, C.relies, ok and 1 or 0), 30)
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
 -- remote: the partner ended it (nothing is sent back).
@@ -405,7 +439,12 @@ local function cargoTick(now)
  -- Unridden, this copy's horse stands on the carrier's pose (M1 places it while the carrier rides).
  local k, S = C.keepPose, W.horseShare
  local tracked = type(S) == "table" and S.track ~= nil
- if k and not tracked and not mounted() and now >= (C.placeAt or 0) and sqrt((h.x - k.x) ^ 2 + (h.z - k.z) ^ 2) > DRIFT_MM then
+ if tracked then C.tracked, C.trackOffAt = true, nil elseif C.tracked then C.tracked, C.trackOffAt = false, now end
+ -- M2f (run 131f88c6: right after the final a KEEP pose sent before it put the horse 11 m back; Unconscious 0.25 s later):
+ -- for SETTLE_MS after M1's track ended nothing is re-placed, then only on a KEEP pose sent after that.
+ local off = C.trackOffAt
+ local settled = not off or (now - off >= SETTLE_MS and (C.keepAt or 0) - off >= SETTLE_MS)
+ if k and not tracked and settled and not mounted() and now >= (C.placeAt or 0) and sqrt((h.x - k.x) ^ 2 + (h.z - k.z) ^ 2) > DRIFT_MM then
   C.placeAt = now + PLACE_MS
   local r = place(k)
   local ok = r and r.ready == true
@@ -417,12 +456,13 @@ local function cargoTick(now)
  local wa = h.yaw / 1000
  local wx, wy, wz = h.x - V.back * sin(wa), h.y + V.rise, h.z - V.back * cos(wa)
  if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp0(wx, wy, wz, wa + pi / 2, "census") end
+ stanceTick(now, tracked)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
   local L, t = C.lag or {lag = 0, drop = 0, n = 0}, C.want
-  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d;lag_cm=%d;drop_cm=%d;n=%d;src=%s;via=%s", round((t and t[2] or wy) / 10),
-   got, round(L.lag / 10), round(L.drop / 10), L.n, t and t[4] or "none", C.via or "none"), 60)
+  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d;lag_cm=%d;drop_cm=%d;n=%d;src=%s;via=%s;stance=%s", round((t and t[2] or wy) / 10),
+   got, round(L.lag / 10), round(L.drop / 10), L.n, t and t[4] or "none", C.via or "none", C.stance or "none"), 60)
   C.lag = nil
  end
 end
@@ -515,8 +555,8 @@ function C.setTesting(on)
  return true
 end
 function C.status()
- return fmt("cargo;state=%s;key=%d;testing=%d;gen=%d;role=%d;busy=%d", C.state, C.keyOn() and 1 or 0, C.testing and 1 or 0, C.gen or 0,
-  W.role or 0, C.busy() and 1 or 0)
+ return fmt("cargo;state=%s;key=%d;testing=%d;gen=%d;role=%d;busy=%d;stance=%s;relie=%d", C.state, C.keyOn() and 1 or 0, C.testing and 1 or 0,
+  C.gen or 0, W.role or 0, C.busy() and 1 or 0, C.stance or "none", V.relie)
 end
 local tick = W.tick
 function W.tick(...)

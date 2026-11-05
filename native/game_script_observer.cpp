@@ -5312,10 +5312,11 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     if(!hd::Parse(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),q)) return finish("return {ready=false,reason='request'}");
     const auto& labc=mgscoop::GetLabConfig();
     // cfg: world_horse_share (on), the M2 sub-key world_horse_cargo (cargo, lua/coop/world_horse_cargo.lua) and the M3
-    // sub-key world_horse_pillion (pillion, lua/coop/world_horse_pillion.lua).
+    // sub-key world_horse_pillion (pillion, lua/coop/world_horse_pillion.lua); M4's world_horse_shot (shot, with pillion).
     if(q.verb==hd::Verb::cfg) {
-        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u}",labc.world_horse_share?1u:0u,
-            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u))) return finish("return {ready=false,reason='read'}");
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {on=%u,cargo=%u,pillion=%u,shot=%u}",labc.world_horse_share?1u:0u,
+            labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u,labc.world_horse_pillion && labc.world_horse_shot?1u:0u)))
+            return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     // BODY0 free0: the write watch and pin on body 0 end before a take-down / lay-down Warp (never refused).
@@ -5384,6 +5385,13 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             RideMilli(a.position[2]),RideHeading(a.position[3]),gen,lifeOk?long(life):-1L,lifeOk?long(maxLife):-1L)))
             return finish("return {ready=false,reason='read'}");
         return finish(reply);
+    }
+    // M4 pbox (world_horse_shot): this copy's player sits behind the partner; its placed horse's census root and yaw, leased
+    // to the partner driver's seated-shot publication (partner_seat_shot horse class). Nothing in the game is read or written.
+    if(q.verb==hd::Verb::pbox) {
+        if(!labc.world_horse_pillion || !labc.world_horse_shot) return refuse("off");
+        hd::NoteShotBox(q.x,q.y,q.z,q.yaw,mgscoop::partner_net::NowMs());
+        return finish("return {ready=true,box=true}");
     }
     // M3 seat1 (world_horse_pillion): this copy's player rides the shared horse with the partner behind; the lease (on the
     // partner driver's clock) has the partner driver draw body 1 at the rear seat of this copy's body 0 every tick.

@@ -125,6 +125,7 @@ int main(int argc, char** argv) {
         std::printf("world_horse_share=%d\n", c.world_horse_share ? 1 : 0);
         std::printf("world_horse_cargo=%d\n", c.world_horse_cargo ? 1 : 0);
         std::printf("world_horse_pillion=%d\n", c.world_horse_pillion ? 1 : 0);
+        std::printf("world_horse_shot=%d\n", c.world_horse_shot ? 1 : 0);
         std::printf("world_relief=%d\n", c.world_relief ? 1 : 0);
         std::printf("world_vehicle_state=%d\n", c.world_vehicle_state ? 1 : 0);
         std::printf("world_vehicle_wreck=%d\n", c.world_vehicle_wreck ? 1 : 0);
