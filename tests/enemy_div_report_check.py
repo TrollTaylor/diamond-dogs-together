@@ -35,6 +35,13 @@ host = [
 ]
 guest = [
     'world_lua=event=readback; ent=1799112697; src=vert; at=500; ms=505; dy_m=0.00; held=1; far_m=30; t_ms=5',
+    # Runs 90d9b4d1 / ddcdec94: the guest was downed in the ALERT and the host's copies of its guards drifted 40-60 m
+    # (native range refusals, near=host) until the end; the host M3 error before that down is reported apart.
+    'world_lua=event=downed; step=entered; role=2; generation=4; cause=1; t_ms=1000',
+]
+host += [
+    'world_lua=event=place_err; n=10; h=10,0,0,0,0,0,0; p50=0.2; p95=0.5; max=0.5; fix=0; q=0; t_ms=900',
+    'world_lua=event=place_err; n=10; h=0,0,0,0,0,0,10; p50=40.0; p95=50.0; max=50.0; fix=0; q=0; t_ms=1100',
 ]
 r = rep.analyse(host, guest)
 check(r['never']['guard_fell'] == 1, 'guard_fell counts the host copies too')
@@ -44,4 +51,7 @@ check(rb['host']['vert'] == {'held': 1, 'fell': 1} and rb['host']['place'] == {'
 check(r['readback_fell_guards'] == {'host': ['1179373153', '2929558510'], 'guest': []}, 'the guards that fell, per side')
 check(r['readback_fix'] == {'host': 1, 'guest': 0} and r['vert_snaps'] == {'host': 1, 'guest': 0} and
       r['vert_stop'] == {'host': 1, 'guest': 0}, 'put-backs, vert snaps and vert stops per side')
+check(r['guest_downed_at'] == 1000 and r['m3_host_err_samples_before_down'] == 10 and
+      r['m3_host_err_p90_m_before_down'] is not None and r['m3_host_err_p90_m_before_down'] <= 1.0 and
+      r['m3_host_err_p90_m'] > 15.0, 'the host M3 error before the guest\'s first down, apart from the whole run')
 print('enemy_div_report_check: %d checks passed' % checks)
