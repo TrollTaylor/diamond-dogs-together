@@ -2332,7 +2332,8 @@ int main() {
             // track A's rest-gated snap held 3 of 3 within 0.02 m (c59ae699 / 948c978a, named); at the defaults the wall
             // guard's copy stayed 4.54 m under (ef9584e4). A named 0 opts out; a named 1 turns it on without the profile.
             const std::string vertPlayBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
-                                             "partner_source=net\npartner_native_profile=gun\nworld=3\n";
+                                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n"
+                                             "partner_native_profile=gun\nworld=3\n";
             const auto vertPlay = Lab(vertPlayBase);
             const auto vertPlayOff = Lab(vertPlayBase + "drive_vert=0\n");
             Check(!def.drive_vert && gunDefault.drive_vert && !gunDefault.drive_vert_given &&
