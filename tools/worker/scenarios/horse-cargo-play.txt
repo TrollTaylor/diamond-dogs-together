@@ -135,6 +135,15 @@ host hold w+shift 1500
 host hold w+shift 1500 nowait
 host burst h2-ride-gallop6 2 400
 guest burst h2-ride-gallop6-victim 3 400
+host hold w+shift+d 1500
+host hold w+shift+d 1500 nowait
+host burst h2-ride-gallop7 2 400
+guest burst h2-ride-gallop7-victim 3 400
+host hold w+shift 1500
+host hold w+shift 1500
+host hold w+shift 1500 nowait
+host burst h2-ride-gallop8 2 400
+guest burst h2-ride-gallop8-victim 3 400
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -275,6 +284,15 @@ guest hold w+shift 1500
 guest hold w+shift 1500 nowait
 guest burst h2b-ride-gallop6 2 400
 host burst h2b-ride-gallop6-victim 3 400
+guest hold w+shift+d 1500
+guest hold w+shift+d 1500 nowait
+guest burst h2b-ride-gallop7 2 400
+host burst h2b-ride-gallop7-victim 3 400
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop8 2 400
+host burst h2b-ride-gallop8-victim 3 400
 guest release
 wait 2500
 both capture h2b-ride-stopped
