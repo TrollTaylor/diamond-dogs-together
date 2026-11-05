@@ -38,7 +38,7 @@ guest require pillion;state=off;key=1
 # --- (a) the host drives. The host's first E at the unridden horse mounts it; the guest stands 3 m behind the host.
 host run goto_horse
 wait 1500
-placebehind guest host 3
+placebehind guest host 1.5
 wait 1500
 both capture h3-before
 host press e 150
@@ -47,9 +47,8 @@ host run horse_status
 host require localMounted=1
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 waitlog guest 'partner_mount=show; mount=horse;' 10
-# E about 3-4 m from the ridden horse acts normally (no ride hold there).
-guest hold w 400
-wait 800
+# E about 3 m from the ridden horse (1.5 m behind where the host stood, 1.6 m from the horse) acts normally (no ride hold).
+wait 1000
 guest press e 150
 wait 1200
 waitlog guest 'world_lua=event=horse_pillion; step=e_free;' 4
@@ -97,8 +96,8 @@ wait 3000
 guest capture h3-stopped-guest
 host capture h3-stopped-host
 waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
-# The passenger hops off with E (pressed after a release).
-guest press e 150
+# The passenger hops off with E held (after a release).
+guest hold e 500
 waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
 waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
 waitlog host 'partner_pillion=end;' 5
@@ -108,6 +107,7 @@ guest require localMounted=0
 guest capture h3-hopped-off-guest
 host capture h3-hopped-off-host
 # Seated again, then the driver gets off: both are off.
+wait 3000
 guest run goto_horse
 wait 1500
 guest press e 150
@@ -170,7 +170,7 @@ wait 3000
 host capture h3b-stopped-host
 guest capture h3b-stopped-guest
 waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
-host press e 150
+host hold e 500
 waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
 waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
 wait 1500
@@ -181,8 +181,10 @@ guest run horse_status
 guest require localMounted=0
 waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
 # The host's first E at the unridden horse mounts it.
+wait 3000
 host run goto_horse
 wait 1500
+host capture h3b-host-before-mount
 host press e 150
 wait 2500
 host run horse_status

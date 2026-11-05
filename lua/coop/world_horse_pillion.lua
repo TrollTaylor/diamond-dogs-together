@@ -23,13 +23,15 @@ local CAUSE = {[0] = "ok", "passenger", "driver_off", "horse_lost", "stream_lost
  "passenger_downed", "claim_timeout", "track_end", "locked"}
 local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
-local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM = 2500, 2000, 1000, 3500, 3000, 1300, 2000, 300
+local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM, HOP_MS = 2500, 2000, 1000, 3500, 3000, 1300, 1000, 300, 300
 local MASK, MASK_BUTTONS, FREE_E_MM = "MgsCoopPillion", 0xFFFFFFA7, 6000
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: it kept body 0 with the horse, lag 6-8 cm, crouched), 0 hold0 without a reset, 4 the
--- Lua Warp. Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
-local V = {back = 350, rise = 600, mode = 2, dback = 450, dup = 0}
+-- Lua Warp, 5 both. Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
+-- Run ba6b4bb5: at 0.6 m body 0 stood on the ground under its target (dy 1-1.8 m), and body 1 at the driver's root height
+-- on the ground beside the horse (the host's horse stood still until it left): both go over the horse's back.
+local V = {back = 350, rise = 800, mode = 2, dback = 450, dup = 300}
 P.V = V
 local floor, sin, cos, sqrt, fmt = math.floor, math.sin, math.cos, math.sqrt, string.format
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -57,7 +59,7 @@ end
 function P.on() return type(S.on) == "function" and S.on() and int(W.role, 1, 2) and P.keyOn() end
 function P.busy() return P.state ~= "off" end
 function P.setPose(back, rise, mode, dback, dup)
- if not (int(back, -1000, 1500) and int(rise, -500, 2000) and (mode == 0 or mode == 2 or mode == 4) and int(dback, 0, 1500) and
+ if not (int(back, -1000, 1500) and int(rise, -500, 2000) and (mode == 0 or mode == 2 or mode == 4 or mode == 5) and int(dback, 0, 1500) and
   int(dup, -500, 1500)) then return false end
  V.back, V.rise, V.mode, V.dback, V.dup = back, rise, mode, dback, dup
  return true
@@ -74,7 +76,11 @@ end
 -- The local E before the pad masks (pad verb); nil when unreadable.
 local function padE()
  local r = receipt(fmt("pad %d %d", W.mission, W.epoch))
- if r and r.ready == true then return r.e == 1 end
+ if r and r.ready == true then
+  local e = r.e == 1
+  if e ~= P.lastE then P.lastE = e; capped("pad", fmt("step=pad;e=%d;masked=%d;state=%s", e and 1 or 0, r.masked == 1 and 1 or 0, P.state), 40) end
+  return e
+ end
  local why = r and tostring(r.reason) or "receipt"
  if P.padWhy ~= why then P.padWhy = why; capped("pad_refused", "step=pad_refused;reason=" .. why) end
 end
@@ -119,7 +125,7 @@ P.besideLeft = besideLeft
 local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
- P.mission, P.epoch, P.role, P.gen, P.leaseWhy = nil, nil, nil, nil, nil
+ P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince = nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -206,8 +212,12 @@ local function pin(x, y, z, a)
  noteLag()
  P.want = {x, y, z}
  if V.mode == 4 then P.via = "warp"; return warp(x, y, z, a) end
- local r = receipt(fmt("hold0 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(a * 1000), V.mode == 2 and 1 or 0))
- if r and r.ready == true then P.via = "hold0"; return true end
+ local r = receipt(fmt("hold0 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(a * 1000), V.mode == 0 and 0 or 1))
+ if r and r.ready == true then
+  P.via = V.mode == 5 and "both" or "hold0"
+  if V.mode == 5 then warp(x, y, z, a) end
+  return true
+ end
  local why = r and tostring(r.reason) or "receipt"
  if P.holdWhy ~= why then P.holdWhy = why; capped("hold0_refused", "step=hold0_refused;reason=" .. why) end
  P.via = "warp"
@@ -226,9 +236,13 @@ local function seatedTick(now)
  if selfDown() then return stop("passenger_downed") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
  if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, 0) end
- -- E again hops off; it counts only after E was up once (the claiming E held on never ends it).
+ -- E held HOP_MS again hops off; it counts only after E was up once (the claiming E held on never ends it).
  local e = padE()
- if e == false then P.armed = true elseif e == true and P.armed then return stop("passenger") end
+ if e == false then P.armed, P.eSince = true, nil
+ elseif e == true and P.armed then
+  P.eSince = P.eSince or now
+  if now - P.eSince >= HOP_MS then return stop("passenger") end
+ end
  if now >= (P.statsAt or 0) then
   P.statsAt = now + STATS_MS
   local L, t = P.lag or {lag = 0, dy = 0, n = 0}, P.want
