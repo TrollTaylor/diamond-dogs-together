@@ -467,7 +467,9 @@ void Warp() {
         std::uint16_t aslot = 0;
         std::uint32_t ago = 0;
         const auto act = [](const char* rest) { return std::string(world::act_prefix) + rest; };
-        const std::string t = act("t 7 1037"), m = act("m 512 1037"), r = act("r 1 0"), s = act("s 0 0");
+        const std::string t = act("t 7 1037"), m = act("m 512 1037"), r = act("r 1 0"), s = act("s 0 0"), qq = act("q 9 1040");
+        // FM1 (run 3bc7280b): a candidate is only queried (q: freshness, no mailbox, no fire mask); m is for puppets.
+        Check(world::ParseAct(qq.data(), qq.size(), op, aslot, ago) && op == 'q' && aslot == 9 && ago == 1040, "act: q <slot> <goId>");
         Check(Kind(t) == world::Receipt::act && Kind(s) == world::Receipt::act, "ACT_V1 is its own receipt");
         Check(world::ParseAct(t.data(), t.size(), op, aslot, ago) && op == 't' && aslot == 7 && ago == 1037 &&
                   world::ParseAct(m.data(), m.size(), op, aslot, ago) && op == 'm' && aslot == 512 &&

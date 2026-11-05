@@ -1566,8 +1566,20 @@ if arg[7] and arg[8] then
         for _, s in ipairs(c.acts or {}) do if s == "return 'MGS_COOP_WORLD_ACT_V1' -- " .. text then return true end end
         return false
     end
-    check(logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=100.0;R=80') and acted(mg, 'm 1 1') and
-        cmdCount(mg, 'SetPuppet') == 1 and cmdCount(mg, 'SetRestrictNotice') == 1, 'FM1: 100 m (beyond R + 15): a mirror puppet')
+    check(logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=100.0;R=80') and acted(mg, 'q 1 1') and acted(mg, 'm 1 1') and
+        cmdCount(mg, 'SetPuppet') == 1 and cmdCount(mg, 'SetRestrictNotice') == 1,
+        'FM1: 100 m (beyond R + 15): queried (q), then a mirror puppet (m only once he is one)')
+    -- Run 3bc7280b: 'm' for a mere candidate armed the native fire drop for guards whose own brain still ran (582 of their
+    -- bullets dropped). A candidate is only queried; 'm' goes out only for puppets.
+    local firstM
+    for k, src in ipairs(mg.acts) do
+        if src:find(' -- m ', 1, true) and not firstM then firstM = k end
+    end
+    local firstQ
+    for k, src in ipairs(mg.acts) do
+        if src:find(' -- q ', 1, true) and not firstQ then firstQ = k end
+    end
+    check(firstQ and firstM and firstQ < firstM, 'FM1: the first q comes before any m')
     mg.positions[1] = {0, 1.8, 85.0}
     ticks(mg, 4)
     check(not logged(mg, 'event=mirror;ent=3000000001;on=0'), 'FM1: between R and R + 15 m he stays a puppet')
