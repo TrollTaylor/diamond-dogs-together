@@ -329,8 +329,17 @@ g.W.handlers[OP]({1, 2, 1, 4, 0, 5, 1, 2, 3, 0})
 check(got and got[2] == 2, "seat 2 goes on to world_horse_cargo")
 -- The lab lever's pose bounds.
 check(g.W.horsePillion.setPose(350, 600, 4, 450, 0) and g.W.horsePillion.setPose(350, 800, 5, 450, 300) and
-    not g.W.horsePillion.setPose(350, 600, 3, 450, 0) and not g.W.horsePillion.setPose(350, 600, 2, 1600, 0),
-    "setPose: mode 0 / 2 / 4 / 5, bounds")
+    g.W.horsePillion.setPose(350, 600, 3, 450, 0) and not g.W.horsePillion.setPose(350, 600, 1, 450, 0) and
+    not g.W.horsePillion.setPose(350, 600, 2, 1600, 0), "setPose: mode 0 / 2 / 3 / 4 / 5, bounds")
+-- BODY0 round: mode 3, hold0 with the C0 reset alone (reset 2), as world_horse_cargo's body 0.
+local m3h, m3g = fixture(), fixture({host = false})
+m3h.rides, m3h.horse.occupied = true, true
+m3g.ride(3); m3g.e = false; m3g.ride(1); m3g.e = true; m3g.ride(1)
+deliver(m3h, lastSeat(m3g)); deliver(m3g, lastSeat(m3h))
+m3g.P.setPose(350, 800, 3, 450, 300)
+local n3 = #m3g.holds
+m3g.ride(1)
+check(#m3g.holds == n3 + 1 and m3g.holds[#m3g.holds][5] == 2, "mode 3: hold0 with the C0 reset (2)")
 -- Mode 5: hold0 with the A0 reset and the Lua Warp in the same frame.
 local m5h, m5g = fixture(), fixture({host = false})
 m5h.rides, m5h.horse.occupied = true, true
