@@ -376,39 +376,67 @@ The viewer's copy now holds a body for the partner's horse: its own D-Horse (ind
 
 `lua/coop/world_horse_cargo.lua` (it replaces the offset prototype; op 43 is retired) puts a carried downed partner on
 the shared D-Horse of section 10. It reaches the carry only through the existing `MGS_COOP_CARGO_V2` calls.
-- **Load.** Carrying the downed partner (CarryRole 1), within 2.5 m of the horse and facing it, hold E 450 ms. A guard
-  on the horse (`IsCarriedHostage`) refuses `npc_cargo`; far / facing / busy / awake refuse too. A guest carrier asks the
-  host with HORSE_SEAT (`world-sync-protocol.md` section 32, seat 2) against the victim's downed generation; the host
-  grants while that generation is down and not being revived (else `awake`, `generation`, `mid_revive`, `busy`) and
-  loads for itself without a claim. The carrier's copy plays the stock put-down (`RequestLocalPutDown`), then
-  `SetCargoHold(1)` and LOADED with its horse pose.
+- **Load.** Carrying the downed partner (CarryRole 1), within 2.5 m of the horse, hold E 450 ms; beyond 1.2 m of the
+  horse's root the carrier must face it (run `20aef564` refused a carrier 0.85 m away facing off). A guard on the horse
+  (`IsCarriedHostage`) refuses `npc_cargo`; far / facing / busy / awake refuse too. A guest carrier asks the host with
+  HORSE_SEAT (`world-sync-protocol.md` section 32, seat 2) against the victim's downed generation; the host grants while
+  that generation is down and not being revived (else `awake`, `generation`, `mid_revive`, `busy`) and loads for itself
+  without a claim. The carrier's copy plays the stock put-down (`RequestLocalPutDown`), then `SetCargoHold(1)` and
+  LOADED with its horse pose.
 - **Bodies.** Carrier's copy: body 1 warped every tick 0.44 m behind and 0.55 m over the unridden census root (kept 1.0-2.0
   m over the carrier's ground within 3 m), or 0.54 m behind and 0.5 m over the rider while this copy rides, at the
-  horse's yaw (it lies across the back). Victim's copy: after the replica put-down, `SetCargoLocal(1)`; its own 6656 is
-  placed on the carrier's pose when unridden (KEEP at 1 Hz, re-placed past 0.5 m); body 0 is warped 0.9 m over its
-  census, and while M1 places the horse from the rider's stream, right after each placement 1.3 m over the pose just
-  written (`W.horseCargo.placed`), a quarter turn from the yaw (body 0 lies along its yaw, body 1 across). world_downed
-  reports the held posture (as the cardboard box) while body 0 is cargo, so the native downed controls take no prone
-  request (runs `83ac3950` / `547b431e` timed out `controls_timeout_prone` without it; the fix is not yet run).
-- **Take-down.** On foot within reach, R (the carry key) or E held 0.5 s lays the body on the ground beside the horse at
-  the carrier's side on both copies; an R held on then shoulders them from the ground (the coop pickup). A pickup that
-  still comes first sends the ground point so the victim's copy lays body 0 there before the carry (run `6fd054c4`: a
-  pickup straight off the horse timed out the victim's downed controls). E at the flank is the stock mount.
+  horse's yaw (it lies across the back), ahead by the rider's last per-tick move (at most 0.6 m). Victim's copy: after
+  the replica put-down, `SetCargoLocal(1)`; its own 6656 is placed on the carrier's pose when unridden (KEEP at 1 Hz,
+  re-placed past 0.5 m); body 0 goes 0.9 m over its census, and while M1 places the horse from the rider's stream, right
+  after each placement 1.3 m over the pose just written (`W.horseCargo.placed`, ahead by the horse's last move), a
+  quarter turn from the yaw; its target never drops faster than 1 m/s. world_downed reports the held posture (as the
+  cardboard box) while body 0 is cargo, so the native downed controls take no prone request (round 1's
+  `controls_timeout_prone`; held in every round 2 run). Body 0's mover: the per-tick Lua Warp by default; the lab lever
+  `horse_probe cargo_pose <placed_mm> <census_mm> <back_mm> <down_mmps> <reset>` picks `MGS_COOP_HORSE_DRIVE_V1 hold0`
+  (reset 0..3) or the Lua Warp (4).
+- **hold0** (`hold0 <mission> <epoch> <x> <y> <z> <yaw> <reset>`, world_horse_share and world_horse_cargo): body 0's
+  `T.vt+0x70` then `T.vt+0x68`, as the partner driver's xform mover moves body 1 (the partner contract's pinned T slots
+  0x24c8ef0 +0x70 / +0x68), then Warp's resets on request (bit 1 `C0.vt+0x90`, bit 0 `A0.vt+0x80`, only for objects of
+  body 1's class and slot). Static [O capstone]: the CS `vt+0xA8` write of horse_drive is the same `T.vt+0x68` call
+  (0x140B6ECF0, Ghidra comment at 0x140B6F027); the A0 reset (0x1410C3010) ors 0x21 into the posture word
+  `*(PS+0x298)[id]`, the C0 reset (0x14128B3E0) sets bit 0x20 of +0x2C0 in a 0x580-byte per-id record. Observed: the
+  Lua Warp draws body 0 lying on the horse but it spends a second or more at a time on the ground under the moving horse
+  (victim_pin lag 50-99 cm); hold0 with reset 0 or 1 keeps it with the horse (lag 6-8 cm) but in the airborne pose, on
+  the victim's screen and on the carrier's (the partner stream carries the pose). Reset 2 (C0 alone) is untried.
+- **Take-down.** On foot within reach, R (the carry key) or E held 0.3 s lays the body on the ground beside the horse at
+  the carrier's side on both copies; the coop pickup shoulders them at about 0.5 s of R (run `a49c4d76` lost a 0.5 s
+  take-down to it), and a pickup straight off the horse sends the ground point so the victim's copy lays body 0 there
+  first. After a load the take-down waits until E and R have been up once (the loading E held on took them down again in
+  `a49c4d76`). E at the flank is the stock mount.
 - **Automatic lay-down** beside the horse: `horse_lost` (census generation, unreadable 1.5 s), `call_away` (a pending
-  call or the unridden horse moved 3 m), `awake`, `victim_gone` (a new downed generation), `stream_lost` (no KEEP or
-  status 3.5 s, unpaired), `context` (mission, epoch or role). Travel / Bring partner here and the guest's checkpoint wait
-  while loaded (world_horse_share's `busy()`).
+  call, or the unridden horse 3 m from where it stood; for 2 s after a dismount the stand point follows the horse: run
+  `883dc6ab` called away a horse still slowing from a gallop), `awake`, `victim_gone` (a new downed generation; the
+  victim's copy lays body 0 down only while it is within 5 m of the horse), `stream_lost` (no KEEP or status 3.5 s,
+  unpaired), `context` (mission, epoch or role). Travel / Bring partner here and the guest's checkpoint wait while loaded
+  (world_horse_share's `busy()`).
 - **Log lines** (`world_lua=event=horse_cargo; ...`): `step=claim / grant / deny / loading / loaded; seat=2 / cargo; seat=2 /
-  take_down / unloaded; seat=2; why=..; side=carrier|cargo; placed=0|1 / refuse; why=..`, `step=pin` (how, mounted,
-  census / player / body heights) and `step=victim_pin` (wanted against reported body 0 height) every 2 s.
-- **Hidden runs** (`tools/worker/scenarios/horse-cargo.txt` lab, `horse-cargo-play.txt` play, `-WanSim bad`; the host
-  carries in all of them, the guest-carrier part was never reached): `7359e4d2`, `c667a209`, `6fd054c4`, `83ac3950`
-  (lab), `d26aaf70`, `547b431e` (play). Load, the first E mounting with the body on, the ride and the dismount keeping
-  them on passed on both copies in every lab run and in `547b431e`. Frames: the body across the back behind the rider
-  on the carrier's screen at a stand and a trot (`83ac3950`), and on the victim's own screen behind the rider at idle,
-  walk and trot (`c667a209`, `6fd054c4`, `83ac3950`, `547b431e`); at a gallop body 0 slips off to the ground under the
-  horse on the victim's screen. **Not yet:** the guest-carrier order, the take-down after the last fixes, the revive
-  after it, the link drop, a run of the held-posture fix, a gallop without the slip.
+  take_down / unloaded; seat=2; why=..; side=carrier|cargo; placed=0|1 / refuse; why=.. / hold0_refused; reason=..`,
+  `step=pin` (how, mounted, census / player / body heights) and `step=victim_pin` (want / got height, `lag_cm` / `drop_cm`
+  the worst of the window against the last target, `src=placed|census`, `via=hold0|warp`) every 2 s; native
+  `horse_drive=held; n=..; body=0`. world_horse_share's `step=final_sent` carries the ridden `path_cm`.
+- **Hidden runs, round 1** (`7359e4d2`, `c667a209`, `6fd054c4`, `83ac3950` lab; `d26aaf70`, `547b431e` play): load, the
+  first E mounting with the body on, the ride and the dismount keeping them on; the victim's controls timed out and the
+  guest-carrier order, the take-down, the revive and the link drop were never reached.
+- **Hidden runs, round 2** (`horse-cargo.txt` + `horse-cargo-drop.txt` lab, `horse-cargo-play.txt` play `-WanSim bad`,
+  `-SaveSeed afgh-ledge`; slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`), every claim on both logs
+  and frames looked at:
+  - `d2a5cafa` (lab) passed every step: host carrier and guest carrier (claim, host grant, load), the first E mounting,
+    the ride, the dismount keeping them on, the 0.3 s R take-down at the same point on both copies, the revive, and the
+    link drop (`why=stream_lost` on the host, `why=context` on the guest, both laid down). `c2927350` and `7f3155c8`
+    (play `-WanSim bad`) passed every step in both orders; `7f3155c8` ran with world_horse_cargo not named (on through
+    the gun profile for that session). `20aef564`, `883dc6ab` (play) and `a49c4d76`, `a242d867`, `8cfe8e97` (lab) each
+    failed one step (facing, call_away after a gallop, the pickup race, a slope timing out the downed controls before
+    the pickup, the guest carrier's E refused `horse_lost`); each but the last has its fix in.
+  - Frames: the carrier's screen shows the body across the horse's back at the load, walk, trot, gallop and after the
+    dismount, and on the ground with the revive prompt after the take-down, with the Lua Warp. On the victim's own screen
+    the body is across the back at the load and the stop and part of each ride, and on the ground under or beside the
+    moving horse for a second or more at a time (Lua Warp), or with the horse but in the airborne pose (hold0).
+  - **Gate not passed:** the downed player's own view of their body on the horse.
 
 ## Risks
 

@@ -1,3 +1,43 @@
+## November 4, 2026 (round 2): horse M2 finish, a downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new at the defaults. The M2 gate did not pass in this round's four proof attempts, so
+`world_horse_cargo` stays off unless named (lab and play). The M1 shared D-Horse (on with the gun profile) is unchanged
+and its regression checks passed: details below and `docs/mounts.md` sections 10-11.
+
+- **Fixed and proven this round** (every claim on both copies' logs, frames looked at): the downed player's controls now
+  hold through the whole ride and the dismount (the held posture of 04f68c11: `downed_control=observed; reason=downed;
+  posture=box`, no `controls_timeout_prone` on the horse in any run); the 0.3 s R take-down lays them on the ground at
+  the same point on both copies (the coop pickup shouldered them at 0.5 s, `a49c4d76`) and the 3 s revive after it works;
+  the guest-carrier order (claim, host grant over HORSE_SEAT, load) works; a load's E held on no longer takes them down
+  again; within 1.2 m of the horse the facing check is skipped (`20aef564`); for 2 s after a dismount the stand point
+  follows a horse still slowing from a gallop (`883dc6ab` laid them down `call_away`); the link drop lays the body down on
+  both copies (`why=stream_lost` / `why=context`); victim_gone lays body 0 down only within 5 m of the horse. Runs
+  `d2a5cafa` (lab), `c2927350` and `7f3155c8` (play `-WanSim bad`) passed every scripted step in both carrier orders;
+  `7f3155c8` ran with `world_horse_cargo` not named (on through the gun profile for that session only).
+- **What blocks the gate:** the downed player's own screen. With the per-tick Lua Warp their body lies across the
+  horse's back at the load and the stop and part of each ride, but spends a second or more at a time on the ground under
+  or beside the moving horse (`a49c4d76`, `20aef564`, `d2a5cafa`; no height or offset tried with the new lab lever
+  changes that). A native mover, `MGS_COOP_HORSE_DRIVE_V1 hold0` (body 0's `T.vt+0x70` / `+0x68` as the partner driver's
+  xform mover, pinned T slots; Warp's C0 / A0 resets on request), keeps the body with the horse (victim_pin lag 6-8 cm
+  against 50-99 cm) but plays the airborne pose with no reset (`a242d867`, `c2927350`) or the A0 reset (`8cfe8e97`,
+  `7f3155c8`), and that pose then also shows on the carrier's screen. The carrier's own screen is right with the Lua
+  Warp (the body across the back at every gait and after the dismount). The default is back on the Lua Warp; the
+  lab lever `horse_probe cargo_pose ... <reset>` picks hold0. `8cfe8e97` also refused the guest carrier's E
+  `horse_lost` once (not reproduced in play).
+- **Next:** one session that tries hold0 with the C0 reset alone (2) and both (3) against the Lua Warp (4) at a gallop,
+  `horse-cargo-drop.txt` already rides through them; if one keeps the lying pose with the horse, make it the default and
+  run the gate (lab + play, both orders, then a run with the key not named). If none does, the body-0 hold needs a post-
+  physics write (a hook after the player's update), a new pinned site.
+- **M1 regression (the round 1 skeptic's gaps), passed:** no run names `world_horse_share` (the gun profile's default);
+  the guest's ride really travels (path 128 m in `d2a5cafa`, 102 m in `883dc6ab`, 122 m in `c2927350`, 180 m in
+  `7f3155c8`: `step=final_sent; path_cm=`); in play the host's screen shows the horse beside the guest where they got
+  off (`883dc6ab` frames `m1r-horse-host-1..3`), and the host's first E then mounts it.
+- **Commits** 72dcc018..cf93335c (red/green pairs) and this docs commit; `tools/build.ps1 -Jobs 4` 353/353 each attempt; generators
+  `--check` as on the base (carry_info / sleep_plugin differ, native_ui / teammate_targeting need local evidence),
+  horse_drive 4 sites 4 slots. No new code site (hold0 uses the partner contract's pinned T slots); no never-edit file.
+  Ghidra: a comment at 0x140B6F027. Slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` (JPEG frames,
+  sheets, slices).
+
 ## November 4, 2026: horse M2, a downed partner on the horse (`wp/horse`; lab key `world_horse_cargo`, off unless named)
 
 **Players get:** nothing new at the defaults. The M2 gate did not pass in four proof attempts, so `world_horse_cargo`
