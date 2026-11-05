@@ -1,0 +1,96 @@
+# Enemy sync M7 step 1, P11c / P12d (docs/world-sync-design.md 7.13): with the offense index getter forced to 1 for
+# every caller before any guard has seen the host, does a guard shoot body 1 (the guest's body on the host's copy)?
+# Run 96216259 forced 1 for 60 s after the host was downed: 0 soldier hits on body 1, soldier 246 kept hitting the host.
+# Mode play over -WanSim bad, afgh_field_cp (afgh-ledge seed), 12:00 sunny, the host every guard's brain
+# (soldier_owner=0), the guest's driven copies puppets (soldier_puppet=1), godmode on both.
+#   A. Forced 1 from before the warp; the host backs off about 20 m; 30 s. soldier_perceive_bodies (P12d: body 0 / body 1
+#      position and state bytes +0xC0..+0xCB), soldier_perceive_hits (soldiers that hit body 0 / body 1).
+#   B. Forced 1 and body 1's +0xCB bit 0 and +0xC4 bit 5 cleared before the leaf snapshot each frame (perceive_mask;
+#      0x141390CA6 and 0x140D6D9E6 skip a player with those bits), 30 s.
+#   C. Lua targets (the nearer player per guard), 30 s.
+# Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive3-30010-play.txt
+#      -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive=installed; mode=per_soldier;' 5
+waitlog guest 'soldier_perceive=installed; mode=per_soldier;' 5
+host run perceive_status
+# --- A: forced 1 before the guards see anyone -------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 2500
+host run perceive_status
+host run enemy_aim_nearest 1.1
+wait 600
+host hold s 1500
+host hold s 1500
+host hold s 1500
+wait 6000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-15
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+host run perceive_status
+host run damage_status
+# --- B: forced 1, body 1's skip bits cleared ---------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_mask 0 cb 1
+host expect ^perceive_mask;ok=1
+host run perceive_mask 1 c4 20
+host expect ^perceive_mask;ok=1
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-15
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-30
+host run perceive_status
+host run damage_status
+host run perceive_mask off
+host run perceive_force off
+# --- C: Lua targets ---------------------------------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-15
+wait 14200
+host run enemy_aim_nearest 1.1
+wait 800
+both capture c-30
+host run perceive_status
+guest run perceive_status
+host run damage_status
+host run perceive_sites
+host run world_status
+guest run world_status

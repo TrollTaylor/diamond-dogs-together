@@ -1,0 +1,122 @@
+# Enemy sync M7 probe P11 (docs/world-sync-design.md 7.13): does the soldier perception filter patch (soldier_perceive,
+# 0x14132562B je -> jmp) make a copy's soldiers react to body 1, the partner? Mode play over -WanSim bad, Afghanistan
+# afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_perceive named on both copies, soldier_brain off (stock damage,
+# every soldier hit on a player logged: soldier_hit=replica|own; ... action=stock).
+#   B. Every guard ignores the players (restrict notice, shared): the host 10 m from 1740692850, the guest 6 m from it
+#      (enemy goto takes at most 10 m; run 5fb44105's host stayed 660 m away, its copies unrealized), 30 s. Does restrict notice also keep the host's soldiers off the guest's body (no soldier_hit=replica on the host)?
+#   A. Every guard notices again, 60 s: the host's soldiers shoot the guest's body (soldier_hit=replica on the host; none
+#      in 26 runs before the patch). damage_status counters after each part.
+#   perceive_status after each part: the scorer census (soldier_perceive.hpp; run ef3304dc had soldier_replica=0 on both
+#   copies with the players 6 m apart at the guard): the distinct category-5 words the player scorer is given. One word
+#   means body 1 never reaches the scorer (the patch cannot help: the sensor list lacks it); two mean it is scored.
+#   Run af17b899: calls=0 on both copies (the scorer never ran in free roam). perceive_sites: the return addresses of the
+#   offense index getter 0x141E02770 that do run (its live callers; soldier_perceive_site lines in the log).
+#   C. Run 32a93d27: 10-11 live callers (0xD5AF51, 0xD65320, 0xD7BECC, 0x1350035, 0xD782E3, 0xD6638E, 0xD6D9CE, 0xD6D82F,
+#      0xD6B87F (the notice gauge 0x140D6B7E0), 0xD59430, 0x14DCA77), none in the patched scorer: the single-player soldier AI
+#      reads "the" player from that getter everywhere. P11b: the host forces the getter to 1 (body 1, the guest's body) for
+#      30 s (Dynamite's single offense player): do the host's soldiers notice and shoot body 1 (soldier_hit=replica on the
+#      host)? Then 0 for 15 s and off.
+# Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive-30010-play.txt
+#      -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
+labsetting soldier_perceive=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive=patched; rva=0x132562b;' 5
+waitlog guest 'soldier_perceive=patched; rva=0x132562b;' 5
+# --- B: every guard ignores the players -------------------------------------------------------------------------------
+host run enemy ignore 2961503
+host run enemy ignore 2942862796
+host run enemy ignore 1740692850
+host run enemy ignore 1799112697
+host run enemy ignore 2929558510
+host run enemy ignore 667680985
+host run enemy ignore 1179373153
+host run enemy ignore 3268415846
+host run enemy ignore 753908875
+host run enemy ignore 1904171355
+host run enemy ignore 1845278687
+host run enemy ignore 1926520947
+host run enemy ignore 3970963356
+host run enemy ignore 2305481811
+wait 2000
+logmark both
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 15000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture b-15
+wait 14000
+host run damage_status
+guest run damage_status
+host run perceive_status
+guest run perceive_status
+host run perceive_sites
+guest run perceive_sites
+# --- A: every guard notices again -------------------------------------------------------------------------------------
+logmark both
+host run enemy notice 2961503
+host run enemy notice 2942862796
+host run enemy notice 1740692850
+host run enemy notice 1799112697
+host run enemy notice 2929558510
+host run enemy notice 667680985
+host run enemy notice 1179373153
+host run enemy notice 3268415846
+host run enemy notice 753908875
+host run enemy notice 1904171355
+host run enemy notice 1845278687
+host run enemy notice 1926520947
+host run enemy notice 3970963356
+host run enemy notice 2305481811
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-15
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-30
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture a-45
+wait 14200
+host run damage_status
+guest run damage_status
+host run perceive_status
+guest run perceive_status
+host run perceive_sites
+guest run perceive_sites
+# --- C: the host's soldiers see only body 1 ---------------------------------------------------------------------------
+logmark both
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+wait 15000
+host run enemy_aim_nearest 1.1
+wait 800
+both capture c-15
+wait 14200
+host run damage_status
+host run perceive_force 0
+wait 15000
+host run damage_status
+host run perceive_force off
+host run perceive_sites
+host run world_status
+guest run world_status

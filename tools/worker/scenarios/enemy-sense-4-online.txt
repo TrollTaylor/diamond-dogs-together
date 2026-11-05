@@ -1,0 +1,26 @@
+# Enemy sync M7 step 1, probe P13 part 4 of 4 (header: enemy-sense-1-census.txt): L4 research. The LOCAL redirect off,
+# the offense index still forced to 1, the soldier manager's online bit set at every leaf snapshot (perceive_online 1):
+# FOB mode replaces the local-id target messages with the offense id per soldier. Then everything back to stock.
+logmark both
+host run perceive_reset
+host run perceive_local off
+host expect ^perceive_local;ok=1;key=1;local;mode=-1
+host run perceive_online 1
+host expect ^perceive_online;ok=1;key=1;online=1
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s4-01
+wait 18000
+host run perceive_status
+guest run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s4-20
+host run perceive_online 0
+host run perceive_force off
+host run perceive_local census 0
+host run damage_status
+host run world_status
+guest run world_status

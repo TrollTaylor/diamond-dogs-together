@@ -2284,6 +2284,35 @@ int main() {
             Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
                   "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
+            Check(!def.partner_native_slot_rearm && !gunDefault.partner_native_slot_rearm &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_slot_rearm=1\n").partner_native_slot_rearm,
+                  "A1: the slot follower's drift re-arm is off unless named");
+            // Enemy gaps: place_lift follows the gun profile again (enemy latch, docs/STATUS.md 2026-11-04: the latch of
+            // e583ee62 came without it too, arm A 6348f361); a named 0 opts out, a named 1 turns it on without the profile.
+            Check(!def.place_lift && gunDefault.place_lift && !gunDefault.place_lift_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_lift=0\n").place_lift &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_lift=1\n").place_lift &&
+                  Lab("enabled=1\nrole=host\nplace_lift=1\n").place_lift,
+                  "enemy gaps: place_lift follows the gun profile; a named 0 opts out");
+            // Enemy sync M7 FM1 (far mirror, docs/world-sync-design.md 7.15): soldier_act (CFG r[19] bit 512) parses in lab
+            // and play and stays off unless named until its gate run passes; an invalid value is named and off.
+            Check(!def.soldier_act && !gunDefault.soldier_act && !gunDefault.soldier_act_given &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=1\n").soldier_act &&
+                  Lab("enabled=1\nrole=guest\nsoldier_act=1\n").soldier_act_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
+                  Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
+                  "FM1: soldier_act parses, off unless named");
+            // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
+            // lab and play, both off unless named: place_reach is proven in the logs of runs 9023e5c6 / 8281b868 / 3c9d1250 /
+            // b77e2104 but no frame shows the watched guard on the host's screen (terrain), so it stays off (design 7.17).
+            Check(!def.body_dead && !gunDefault.body_dead && !gunDefault.body_dead_given && !def.place_reach &&
+                  !gunDefault.place_reach && !gunDefault.place_reach_given &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=1\n").body_dead &&
+                  Lab("enabled=1\nrole=guest\nplace_reach=1\n").place_reach &&
+                  Lab("enabled=1\nrole=guest\nplace_reach=0\n").place_reach_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
+                  Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
+                  "enemy gaps 2: body_dead and place_reach parse, both off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

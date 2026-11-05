@@ -1,0 +1,133 @@
+# Horse probe P1b (the horse plan, section 4, lab only): P1's ride and recording, then the two candidate senders
+# (yaw20, sg20) with each viewer warped beside its horse (goto_horse, facing it) before every frame, so the frames show
+# the placed horse up close through the whole replay (legs, leaps, heading). play_stats now measure dy and yaw against
+# the last placement sent. Session C: -ScenarioPath tools/worker/scenarios/horse-p1b-follow.txt, flags as P1.
+# P1 (lua/coop/debug_horse.lua): replay a recorded ride onto the
+# unridden D-Horse with SetCallHorse. Both role orders: the host rides and records its own horse (horse_spawn) while the
+# guest stands, then the guest rides and records its own (horse_spawn) while the host stands; then both copies replay
+# at once (both on foot) in each sender mode, each viewer back at its ride's start (bookmark 1, beside the horse, facing
+# it) so the horse crosses the view. Modes: sg4 sg10 sg20 start==goal, yaw20 goal 2 cm ahead (20 Hz), chase2 chase1 from
+# where it stands to 3 m ahead of the target (2 / 1 Hz). Lines: world_lua=horse_probe=play_stats; mode=..; err_p50_cm=..;
+# leap=..; and every 500 ms horse_probe=play; rt=..; err_cm=..; dy_cm=... Frames p1-<mode>-host / -guest: leap, legs.
+# Session A (one hidden session, three parts), through the queue:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-probes
+#     -ScenarioPath tools/worker/scenarios/horse-p1-place.txt,tools/worker/scenarios/horse-p5-hold.txt,
+#     tools/worker/scenarios/horse-p4-pin.txt -Mode lab -WanSim bad -PartnerProfile native -NativeStage gun
+#     -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+labsetting nametag=1
+labsetting coop_hud=compact
+boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+host run horse_spawn
+# Both copies deploy D-Horse with the stock loader. With seed afgh-horse the guest's own horse sat at the world origin
+# after the lab boot and a recall left it there (runs 89e51a43, b3e42c23: goto_horse dropped the guest into the void).
+guest run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+# --- host rides and records its own horse; the first E at the horse must mount
+host run goto_horse
+wait 1500
+host run bookmark 1
+host capture p1-host-before
+# Debug commands are refused while mounted (debug_menu guard on_foot): the recording starts on foot.
+host run horse_probe rec 16000
+host expect horse_probe=rec;step=start
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host hold w 1500
+host hold w 1500
+host hold w+shift 1500
+host hold w+shift 1500
+host hold w+shift+a 1500
+host hold w 1500
+host release
+waitlog host 'world_lua=horse_probe=rec; step=done;' 20
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+# --- guest rides and records its own horse; the first E at the horse must mount
+guest run goto_horse
+wait 1500
+guest run bookmark 1
+guest capture p1-guest-before
+# Debug commands are refused while mounted (debug_menu guard on_foot): the recording starts on foot.
+guest run horse_probe rec 16000
+guest expect horse_probe=rec;step=start
+guest press e 150
+wait 2500
+guest run horse_status
+guest expect localMounted=1
+guest hold w 1500
+guest hold w 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift+a 1500
+guest hold w 1500
+guest release
+waitlog guest 'world_lua=horse_probe=rec; step=done;' 20
+guest press e 150
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+# --- both copies replay at once, both on foot; frames up close
+host run return 1
+guest run return 1
+wait 1200
+host run horse_probe play yaw20 10000
+host expect horse_probe=play;step=start;mode=yaw20
+guest run horse_probe play yaw20 10000
+guest expect horse_probe=play;step=start;mode=yaw20
+wait 1200
+host run goto_horse
+guest run goto_horse
+both capture p1b-yaw20-1
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-yaw20-2
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-yaw20-3
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-yaw20-4
+wait 500
+waitlog host 'world_lua=horse_probe=play_stats; mode=yaw20;' 15
+waitlog guest 'world_lua=horse_probe=play_stats; mode=yaw20;' 15
+host run return 1
+guest run return 1
+wait 1200
+host run horse_probe play sg20 10000
+host expect horse_probe=play;step=start;mode=sg20
+guest run horse_probe play sg20 10000
+guest expect horse_probe=play;step=start;mode=sg20
+wait 1200
+host run goto_horse
+guest run goto_horse
+both capture p1b-sg20-1
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-sg20-2
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-sg20-3
+wait 500
+host run goto_horse
+guest run goto_horse
+both capture p1b-sg20-4
+wait 500
+waitlog host 'world_lua=horse_probe=play_stats; mode=sg20;' 15
+waitlog guest 'world_lua=horse_probe=play_stats; mode=sg20;' 15
+both capture p1b-end

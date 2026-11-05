@@ -102,9 +102,11 @@ local function fixture(options)
             return function()
                 local p = c.peer
                 if options.follow ~= nil then
-                    -- Enemy follow: a 19-value loader, r[19] the follow flag (lab key soldier_follow).
+                    -- Enemy follow: a 19-value loader, r[19] the follow flag (lab key soldier_follow); a number is the
+                    -- enemy sync bit set as is.
+                    local eb = type(options.follow) == 'number' and options.follow or (options.follow and 1 or 0)
                     return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
-                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, options.follow and 1 or 0
+                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, eb
                 end
                 if options.fulton ~= nil then
                     -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
@@ -1777,6 +1779,27 @@ do
     local env, c = fixture({role = 2, follow = true})
     F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
     check(c.W.followOn == true, 'CFG r[19] 1: follow on')
+    -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn). FM1 (far mirror,
+    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048: enemy gaps 2,
+    -- checked below); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
+    for _, case in ipairs({{129, true, false, false, false}, {257, false, true, false, false}, {511, true, true, true, false},
+                           {1, false, false, false, false}, {512 + 129, true, false, false, true}, {512 + 1, false, false, false, true},
+                           {512 + 257, false, true, false, true}, {1024 + 1, false, false, false, false},
+                           {4095, true, true, true, true}, {4096 + 129, false, false, false, false}}) do
+        local envb, cb = fixture({role = 2, follow = case[1]})
+        F.start(envb, cb)
+        check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and cb.W.actOn == case[5] and
+            cb.W.followOn == (case[1] < 4096), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain / act as their own bits')
+    end
+    -- Enemy gaps 2 (docs/world-sync-design.md 7.17): bit 1024 body_dead (W.deadOn, only with bit 16 soldier_body), bit 2048
+    -- place_reach (W.reachOn); neither changes an older key.
+    for _, case in ipairs({{1024 + 16 + 1, true, false}, {1024 + 1, false, false}, {2048 + 1, false, true},
+                           {2048 + 1024 + 16 + 1, true, true}, {16 + 1, false, false}, {4095, true, true}, {2048 + 1024 + 16, false, false}}) do
+        local envd, cd = fixture({role = 2, follow = case[1]})
+        F.start(envd, cd)
+        check(cd.W.deadOn == case[2] and cd.W.reachOn == case[3] and cd.W.bodyOn == (case[1] % 2 == 1 and case[1] % 32 >= 16),
+            'CFG r[19] ' .. case[1] .. ': body_dead / place_reach as their own bits')
+    end
     F.pair(env, c, 3)
     F.push(c, 1, OP.AREA, 2, 30010)
     F.tick(env, c, 1)
@@ -2125,7 +2148,7 @@ if arg[8] then
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
     for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua', 'debug_vehicle.lua', 'debug_boot.lua', 'debug_character.lua',
-        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua', 'debug_vspawn.lua'}) do
+        'debug_spawn_play.lua', 'debug_rules.lua', 'debug_arms.lua', 'debug_vspawn.lua', 'debug_horse.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')

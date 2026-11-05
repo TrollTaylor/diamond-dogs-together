@@ -96,6 +96,40 @@ Gate Judge(const GateIn& in) noexcept {
     return own ? Gate::match : Gate::standin;
 }
 
+const char* MismatchWhyName(Mismatch why) noexcept {
+    switch (why) {
+    case Mismatch::plan: return "plan";
+    case Mismatch::slot: return "slot";
+    default: return "equip";
+    }
+}
+
+Mismatch MismatchWhy(bool plan_ok, const Plan& plan, unsigned remote_slot, unsigned body_slot) noexcept {
+    if (!plan_ok || remote_slot >= kSlots) return Mismatch::plan;
+    const unsigned want = plan.map[remote_slot];
+    if (want >= kSlots || !(plan.ok_mask & (1u << want))) return Mismatch::plan;
+    return body_slot != want ? Mismatch::slot : Mismatch::equip;
+}
+
+EpisodeVerdict EpisodeStep(Episode& e, const EpisodeIn& in) noexcept {
+    if (in.target != e.target || in.seq != e.seq) e = Episode{in.target, in.seq};
+    if (in.body == in.want) {
+        e.reached = true;
+        e.left_ms = 0;
+        return EpisodeVerdict::same;
+    }
+    if (e.reached && !e.left_ms) e.left_ms = in.now_ms ? in.now_ms : 1;
+    if (in.switching) return EpisodeVerdict::wait;
+    if (e.writes < kEpisodeWrites + e.rearms) return EpisodeVerdict::write;
+    if (in.rearm && e.reached && e.rearms < kEpisodeRearms && in.now_ms >= e.left_ms + kRearmAfterMs &&
+        (!e.rearm_ms || in.now_ms >= e.rearm_ms + kRearmGapMs)) {
+        ++e.rearms;
+        e.rearm_ms = in.now_ms ? in.now_ms : 1;
+        return EpisodeVerdict::drift;
+    }
+    return EpisodeVerdict::wait;
+}
+
 std::uint32_t StripBits(Gate gate) noexcept {
     switch (gate) {
     case Gate::mismatch:

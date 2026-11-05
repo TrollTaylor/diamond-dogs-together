@@ -58,6 +58,9 @@ struct Visibility {
     // partner_native_mount=hide: this observation hid by the remote's horse /
     // D-Walker act (partner_mount_policy), whatever the ride kind says.
     bool mount{};
+    // world_horse_share (horse plan M1): this observation shows body 1 as a horse rider on this copy's placed
+    // shared D-Horse (In::horse_shown and the remote's act 121, or 122 inside a shown ride), not hidden.
+    bool horse{};
     // The air candidate has held since air_since_ms (air_pending).
     bool air_pending{};
     std::uint64_t air_since_ms{};
@@ -79,7 +82,18 @@ struct In {
     // partner_native_mount=hide (docs/mounts.md): a remote horse / D-Walker act
     // 121..126 hides like a ride even when the sender reports foot.
     bool mount_hide{};
+    // world_horse_share (horse plan M1): this copy placed the shared D-Horse from the rider's stream under
+    // horse_drive::kFreshMs ago. A horse ride act then shows body 1 (Visibility::horse) instead of hiding it.
+    bool horse_shown{};
 };
+// The remote rides the shared D-Horse in view (pure): on a fresh placed horse (horse_shown) the ride wire's live
+// ON_HORSE (ride_horse) or the ride act 121; a missing act sample keeps a shown ride (it proves nothing: run 3d1439e6
+// lost the sample once body 1 was unrealized); 122 (the get-off, turns) holds a shown ride, also after the final pose
+// (the seat overlay then ends with the dismount's foot act and its own stop, never by a hide).
+constexpr bool HorseRider(bool horse_shown, bool act_valid, std::uint16_t act, bool shown_before, bool ride_horse) noexcept {
+    return (horse_shown && (ride_horse || (act_valid && act == 121) || (!act_valid && shown_before))) ||
+           (act_valid && act == 122 && shown_before);
+}
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;
 

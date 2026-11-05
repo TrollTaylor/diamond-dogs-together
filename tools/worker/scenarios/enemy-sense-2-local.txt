@@ -1,0 +1,24 @@
+# Enemy sync M7 step 1, probe P13 part 2 of 4 (header: enemy-sense-1-census.txt): the LOCAL accessors answer body 1 for
+# the soldier and notice code, the offense index stock (0). Does a guard notice body 1, and does its CP book the
+# sighting under player 0 (the host, 50 m away out of sight)?
+logmark both
+host run perceive_reset
+host run perceive_local 1
+host expect ^perceive_local;ok=1;key=1;local;mode=1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s2-01
+wait 12000
+host run perceive_status
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s2-13
+wait 12000
+host run perceive_status
+guest run perceive_status
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s2-26
+host run damage_status
+host run position
+guest run position

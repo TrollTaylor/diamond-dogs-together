@@ -174,9 +174,19 @@ void Cfg() {
     r.follow = 63;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,63") == 0,
           "the enemy sync bits ride r[19] as is");
+    // M7 step 1 (soldier_perceive): its bit survives the configured bits (run 96216259: the old 0x7E mask dropped it).
+    // The wp/enemy-gaps merge: place_lift keeps bit 128 (its first key), soldier_perceive moves to bit 256, so r[19]
+    // carries 9 bits (0..511).
+    Check(world::EnemySyncBits(0x1FF) == 0x1FE && world::EnemySyncBits(256) == 256 && world::EnemySyncBits(128) == 128 &&
+              world::EnemySyncBits(64 | 1) == 64 && world::EnemySyncBits(0x200 | 256) == 0x300 &&
+              world::EnemySyncBits(0x200) == 0x200 && world::EnemySyncBits(0xFFF) == 0xFFE && world::EnemySyncBits(0x1000) == 0,
+          "the enemy sync bits keep 2..256, never bit 1");
+    r.follow = 256 | 128 | 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,385") == 0,
+          "place_lift (128) and soldier_perceive (256) ride r[19] side by side");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
-    r.relief = 255; r.fulton = 255; r.follow = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,255") == 0 &&
+    r.relief = 255; r.fulton = 255; r.follow = 511;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,511") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
     r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0; r.fulton = 0;
@@ -444,11 +454,44 @@ void Warp() {
     std::uint8_t mode = 9;
     const std::string puppet = std::string(world::drive_prefix) + "7 1037 1 2 3 1";
     const std::string soft = std::string(world::drive_prefix) + "7 1037 1 2 3";
-    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    const std::string mirror = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 3";
     Check(world::ParseDriveMode(puppet.data(), puppet.size(), slot, go, pos, mode) && mode == 1 && pos[2] == 3 &&
               world::ParseDriveMode(soft.data(), soft.size(), slot, go, pos, mode) && mode == 0 &&
+              world::ParseDriveMode(mirror.data(), mirror.size(), slot, go, pos, mode) && mode == 2 &&
               !world::ParseDriveMode(bad.data(), bad.size(), slot, go, pos, mode),
-          "drive: the M7 probe's mode field (0 soft, 1 puppet)");
+          "drive: the mode field (0 soft, 1 puppet, FM1 2 mirror)");
+    // FM1, the far mirror (lua/coop/world_mirror.lua): ACT_V1 "<t|m|r|s> <slot> <goId>".
+    {
+        char op = 0;
+        std::uint16_t aslot = 0;
+        std::uint32_t ago = 0;
+        const auto act = [](const char* rest) { return std::string(world::act_prefix) + rest; };
+        const std::string t = act("t 7 1037"), m = act("m 512 1037"), r = act("r 1 0"), s = act("s 0 0"), qq = act("q 9 1040");
+        // FM1 (run 3bc7280b): a candidate is only queried (q: freshness, no mailbox, no fire mask); m is for puppets.
+        Check(world::ParseAct(qq.data(), qq.size(), op, aslot, ago) && op == 'q' && aslot == 9 && ago == 1040, "act: q <slot> <goId>");
+        Check(Kind(t) == world::Receipt::act && Kind(s) == world::Receipt::act, "ACT_V1 is its own receipt");
+        Check(world::ParseAct(t.data(), t.size(), op, aslot, ago) && op == 't' && aslot == 7 && ago == 1037 &&
+                  world::ParseAct(m.data(), m.size(), op, aslot, ago) && op == 'm' && aslot == 512 &&
+                  world::ParseAct(r.data(), r.size(), op, aslot, ago) && op == 'r' && ago == 0 &&
+                  world::ParseAct(s.data(), s.size(), op, aslot, ago) && op == 's' && aslot == 0,
+              "act: t / m / r with a slot and goId, s 0 0");
+        const char* bads[] = {"x 7 1037", "t 0 1037", "t 513 1037", "t 7 65536", "t 7", "t 7 1037 1", "s 1 0", "s 0 1", "t  7 1037",
+                              "t 7 -1", ""};
+        for (const char* b : bads) {
+            const std::string x = act(b);
+            Check(!world::ParseAct(x.data(), x.size(), op, aslot, ago), "act: a malformed receipt is refused");
+        }
+        std::int32_t pmm[3]{};
+        const std::string p = act("p 421159 -268759 2084588");
+        Check(Kind(p) == world::Receipt::act && world::ParseActPlayer(p.data(), p.size(), pmm) && pmm[0] == 421159 && pmm[1] == -268759 &&
+                  pmm[2] == 2084588 && !world::ParseAct(p.data(), p.size(), op, aslot, ago), "act: p <x y z mm>, the local player");
+        const char* pbads[] = {"p 1 2", "p 1 2 3 4", "p 1 2 100000001", "q 1 2 3", "p  1 2 3"};
+        for (const char* b : pbads) {
+            const std::string x = act(b);
+            Check(!world::ParseActPlayer(x.data(), x.size(), pmm), "act: a malformed p is refused");
+        }
+    }
 }
 } // namespace
 

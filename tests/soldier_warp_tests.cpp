@@ -11,10 +11,12 @@
 #include <cstdlib>
 #include <cstring>
 #include "mgscoop/soldier_warp.hpp"
+#include "soldier_relay_contract.hpp"
 #include "soldier_warp_contract.hpp"
 
 namespace {
 namespace c = mgscoop::soldier_warp_contract;
+namespace rc = mgscoop::soldier_relay_contract;
 namespace sw = mgscoop::soldier_warp;
 unsigned checks = 0;
 void Check(bool ok, const char* message) {
@@ -71,6 +73,8 @@ int main() {
     const auto base = reinterpret_cast<std::uintptr_t>(image);
     for (const auto& site : c::sites) std::memcpy(image + site.rva, site.bytes, site.size);
     for (const auto& slot : c::slots) Put(image + slot.rva, base + slot.target);
+    for (const auto& site : rc::sites) std::memcpy(image + site.rva, site.bytes, site.size);
+    for (const auto& slot : rc::slots) Put(image + slot.rva, base + slot.target);
     std::uintptr_t mismatch = 1;
     Check(sw::Verify(base, span, mismatch) == nullptr && mismatch == 0, "exact sites and slots verify");
     image[0x13619e5] ^= 1;
@@ -85,6 +89,14 @@ int main() {
     Check(std::strcmp(sw::Verify(base, 0x2c38000, mismatch), "image") == 0, "truncated span refuses");
     Check(std::strcmp(sw::Verify(0, span, mismatch), "image") == 0, "null image refuses");
     Check(sw::Verify(base, span, mismatch) == nullptr, "contract restored");
+    // Enemy latch: the relay contract (the typed hop 0xbf5450, the dispatcher 0x9e9ab0) is verified as well.
+    image[0x9e9bed] ^= 1;
+    Check(std::strcmp(sw::Verify(base, span, mismatch), "body_contract") == 0 && mismatch == 0x9e9ab0, "one-byte dispatcher change refuses");
+    image[0x9e9bed] ^= 1;
+    Put(image + 0x229c520, base + 0x9e9ab1);
+    Check(std::strcmp(sw::Verify(base, span, mismatch), "slot_contract") == 0 && mismatch == 0x229c520, "type vtable +0x70 change refuses");
+    Put(image + 0x229c520, base + rc::dispatcher_rva);
+    Check(sw::Verify(base, span, mismatch) == nullptr, "relay contract restored");
 
     // Replace the handler body and give the count call / engine hop image addresses.
     Stub(image + c::handler_rva, reinterpret_cast<const void*>(&Handler));
@@ -141,6 +153,7 @@ int main() {
     Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=pinned") &&
           std::strstr(line, "hop=0xc15500") && std::strstr(line, "hop_bytes=488b4948488b0148ffa0a8000000") &&
           std::strstr(line, "leaf_vt=0x23e78f0") && std::strstr(line, "handled=1") && std::strstr(line, "refusal=none"), "census line");
+    Check(std::strcmp(sw::LeafName(r.chain), "pinned") == 0, "the warp log lines name a pinned hop leaf=pinned");
 
     // Vtable B is the second soldier class.
     Put(leaf, base + c::soldier_vtable_b_rva);
@@ -222,6 +235,7 @@ int main() {
           r.out == 0 && r.handled == 1 && seen.calls == 3, "unpinned hop: the engine's own dispatch answers");
     Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=engine") && std::strstr(line, "hop=0x200"),
           "census marks the unpinned hop");
+    Check(std::strcmp(sw::LeafName(r.chain), "engine") == 0, "the warp log lines name an unpinned, untyped hop leaf=engine");
     engine.answer = -1;
     r = sw::Warp(base, span, request);
     Check(r.refusal == nullptr && r.sent && r.out == -1 && r.handled == 0, "unpinned unrealized answer passes through");
@@ -237,6 +251,104 @@ int main() {
     r = sw::Warp(base, span, request);
     Check(std::strcmp(r.refusal, "anomaly") == 0 && r.out == 0 && r.handled == 0 && seen.calls == 3,
           "a getter-shaped hop writes a qword into the 16-byte answer and is an anomaly");
+    // Enemy latch (run e583ee62, every census line hop=0xbf5450): the live typed dispatch. The real hop bytes call the
+    // object at handle+0x20 (a soldier type: vtable 0x229c4b0, +0x70 = the dispatcher, here the engine recorder).
+    {
+        const sw::Result getter_answer = r;  // the gate checks below record it
+        const unsigned engine_calls = engine.calls;  // and count the engine calls from here
+        Stub(image + rc::dispatcher_rva, reinterpret_cast<const void*>(&Engine));
+        Check(FlushInstructionCache(GetCurrentProcess(), image, span) != 0, "typed fixture instruction cache");
+        std::uintptr_t typed_type[2] = {base + rc::type_vtable_rva, 0};
+        const std::uintptr_t saved_vt = handle_object[0];
+        handle_object[0] = base + rc::handle_vtable_rva;
+        handle_object[rc::handle_type_object / 8] = reinterpret_cast<std::uintptr_t>(typed_type);
+        engine.answer = 0; engine.handled = 1;
+        const unsigned before = engine.calls;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal == nullptr && r.chain.typed && !r.chain.pinned && r.out == 0 && r.handled == 1 && engine.calls == before + 1 &&
+              engine.self == typed_type && engine.index == 3, "typed: the real hop reaches the soldier type dispatcher; moved");
+        Check(sw::FormatCensus(base, span, go, r, line, sizeof(line)) > 0 && std::strstr(line, "leaf=typed") &&
+              std::strstr(line, "hop=0xbf5450"), "census names the typed dispatch");
+        Check(std::strcmp(sw::LeafName(r.chain), "typed") == 0,
+              "the warp log lines (world_place=host_warp ...) name the typed dispatch leaf=typed, as the census does");
+        // out=0 handled=0: the dispatcher relayed it to the guard's unrealized form (0xbf6490), nothing moved.
+        engine.handled = 0;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal && std::strcmp(r.refusal, "relayed") == 0 && r.sent && r.out == 0 && r.handled == 0,
+              "typed out=0 handled=0 is relayed, not an anomaly");
+        // The handle's mode 2 (cmp [handle+0x30],2): the hop answers 0x8ce64801 without calling anything.
+        handle_object[rc::handle_mode / 8] = 2;
+        const unsigned mode_calls = engine.calls;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal && std::strcmp(r.refusal, "relayed") == 0 && static_cast<std::uint32_t>(r.out) == rc::mode2_answer &&
+              r.handled == 0 && engine.calls == mode_calls, "mode 2 answer is relayed, nothing called");
+        handle_object[rc::handle_mode / 8] = 0;
+        // Typed, any other answer is still an anomaly.
+        engine.answer = 7;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal && std::strcmp(r.refusal, "anomaly") == 0 && r.out == 7, "typed: an unexplained out value is an anomaly");
+        engine.answer = -1;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal == nullptr && r.out == -1 && r.handled == 0, "typed: out=-1 waits as before");
+        // A look-alike: handle+0x20 is no soldier type (its vtable is not 0x229c4b0): out=0 handled=0 stays an anomaly.
+        std::uintptr_t other_type_vt[0x80 / 8]{};
+        other_type_vt[rc::type_dispatch_slot / 8] = base + 0x200;
+        typed_type[0] = reinterpret_cast<std::uintptr_t>(other_type_vt);
+        engine.answer = 0; engine.handled = 0;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal && std::strcmp(r.refusal, "anomaly") == 0 && !r.chain.typed && r.out == 0 && r.handled == 0,
+              "untyped out=0 handled=0 stays an anomaly");
+        typed_type[0] = base + rc::type_vtable_rva;
+        r = sw::Warp(base, span, request);
+        Check(r.refusal && std::strcmp(r.refusal, "relayed") == 0 && r.chain.typed, "typed again: relayed");
+        const sw::Result relayed = r;
+        // The gate: a relay never latches anything. It backs only that guard off: 3 s, doubled per relay in a row up
+        // to 30 s; a move clears it. Six relays on six guards (e583ee62 latched the process at its fifth) latch nothing.
+        sw::Gate g{};
+        for (unsigned i = 0; i < 6; ++i)
+            Check(g.Admit(100 + i, go + i, 1000) == nullptr && g.Record(relayed) && std::strcmp(g.Record(relayed), "relayed") == 0,
+                  "each relay is recorded as a relay");
+        Check(!g.latched && g.anomalies == 0 && g.relayed == 12 && g.SoldierAnomalies(go) == 0 && g.soldier_count == 0,
+              "six guards relayed twice each: no guard and no process latch");
+        sw::Gate b{};
+        Check(b.Admit(1, go, 1000) == nullptr && std::strcmp(b.Record(relayed), "relayed") == 0 && b.RelayStreak(go) == 1 &&
+              b.BackoffLeft(go, 1000) == sw::kRelayBackoffMs, "first relay: 3 s");
+        Check(std::strcmp(b.Admit(2, go, 3999), "backoff") == 0 && b.Admit(3, go + 1, 3999) == nullptr,
+              "that guard waits (refused unsent), the others do not");
+        Check(std::strcmp(b.AdmitDrive(go, 3999), "backoff") == 0, "the drive waits too");
+        Check(b.Admit(4, go, 4000) == nullptr && std::strcmp(b.Record(relayed), "relayed") == 0 && b.RelayStreak(go) == 2 &&
+              b.BackoffLeft(go, 4000) == 2 * sw::kRelayBackoffMs, "retried after 3 s; a second relay in a row: 6 s");
+        std::uint64_t t = 10000;
+        for (unsigned i = 0; i < 6; ++i) {
+            Check(b.AdmitDrive(go, t) == nullptr && std::strcmp(b.Record(relayed), "relayed") == 0, "relayed again after its backoff");
+            t += b.BackoffLeft(go, t);
+        }
+        Check(b.RelayStreak(go) == 8 && b.BackoffLeft(go, t - sw::kRelayBackoffMaxMs) == sw::kRelayBackoffMaxMs && !b.latched,
+              "repeated relays: at most 30 s between tries, never a latch");
+        sw::Result moved{};
+        moved.out = 0; moved.handled = 1;
+        Check(b.AdmitDrive(go, t) == nullptr && b.Record(moved) == nullptr && b.RelayStreak(go) == 0 && b.BackoffLeft(go, t) == 0,
+              "a move clears that guard's backoff");
+        // Many relayed guards: the table reuses the backoff that ends first; nothing latches.
+        sw::Gate m{};
+        for (unsigned i = 0; i < 2 * sw::kRelayTracked; ++i)
+            Check(m.Admit(500 + i, (2u << 9) + (i % 0x1ff), 1000 + i) == nullptr && m.Record(relayed), "many guards relayed");
+        Check(!m.latched && m.relayed == 2 * sw::kRelayTracked && m.BackoffLeft((2u << 9) + ((2 * sw::kRelayTracked - 1) % 0x1ff),
+              1000 + 2 * sw::kRelayTracked) > 0, "the newest relayed guard waits; no latch");
+        // Unexplained answers still latch: a guard at its second, the process at its fifth (relays never count).
+        sw::Result unexplained{};
+        unexplained.refusal = "anomaly"; unexplained.sent = true; unexplained.out = 7;
+        for (unsigned i = 0; i < 4; ++i)
+            Check(m.Admit(900 + i, go + 0x100 + i, 99999) == nullptr && m.Record(unexplained) == nullptr, "an unexplained answer counts");
+        Check(!m.latched && m.anomalies == 4, "relays never add to the process latch count");
+        Check(m.Admit(904, go + 0x104, 99999) == nullptr && std::strcmp(m.Record(unexplained), "anomaly") == 0 && m.latched,
+              "the fifth unexplained answer still latches the process (a global fault)");
+        handle_object[0] = saved_vt;
+        handle_object[rc::handle_type_object / 8] = 0;
+        engine.answer = 0; engine.handled = 1;
+        r = getter_answer;
+        engine.calls = engine_calls;
+    }
     // Enemy follow multiplies warps: an anomaly counts against its guard; the second on one guard latches that guard off,
     // the fifth across guards latches the feature off.
     sw::Gate latch{};
@@ -368,9 +480,35 @@ int main() {
         Check(ds.move && ds.hard && ds.pos[0] == 9.0f && ds.pos[1] == 1.4f, "drive: beyond 8 m the whole way (the target y)");
         ds = sw::DriveStep(here, up_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
         Check(ds.move && ds.pos[1] == 5.0f, "drive: a target over 1 m off this copy's feet takes its own y");
+        // Enemy gaps (place_lift): the level y is this copy's own GetPosition y + 0.02 m, not 0.7 m under it.
+        const float lh[3] = {0.0f, 268.0f, 0.0f}, lt[3] = {3.0f, 268.0f, 0.0f}, lup[3] = {3.0f, 269.5f, 0.0f};
+        ds = sw::DriveStep(lh, lt, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && std::fabs(ds.pos[1] - 267.3f) < 1e-3f, "drive: the old level y (feet + 0.1 m = 267.3)");
+        ds = sw::DriveStep(lh, lt, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
+        Check(ds.move && std::fabs(ds.pos[1] - 268.02f) < 1e-3f, "drive (place_lift): its own height + 0.02 m = 268.02");
+        ds = sw::DriveStep(lh, lup, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
+        Check(ds.move && ds.pos[1] == 269.5f, "drive (place_lift): a target 1.5 m above takes its y");
         Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
                   sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
               "drive: a play guest; a lab host with soldier_owner");
+        // FM1: the mirror drive (mode 2) needs soldier_act and is a guest's only; it never steps under 5 m, the whole way
+        // beyond.
+        {
+            sw::DriveRule m{false, true, false, 30010, true, false};
+            m.mirror = true;
+            const char* noKey = sw::DriveAdmit(m);
+            m.act_key = true;
+            const char* ok = sw::DriveAdmit(m);
+            m.host = true;
+            m.owner = true;
+            const char* host = sw::DriveAdmit(m);
+            Check(noKey && std::strcmp(noKey, "mirror") == 0 && ok == nullptr && host && std::strcmp(host, "mirror") == 0,
+                  "FM1: the mirror drive needs soldier_act, a guest only");
+            const float origin[3] = {0, 10, 0}, inside[3] = {4.9f, 10, 0}, beyond[3] = {5.2f, 10, 0};
+            const auto rest = sw::DriveStep(origin, inside, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, 0.1f);
+            const auto snap = sw::DriveStep(origin, beyond, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, 0.1f);
+            Check(!rest.move && snap.move && snap.hard && snap.pos[0] == beyond[0], "FM1: no step under 5 m, the whole way beyond");
+        }
         Check(sw::DriveAdmit({false, true, false, 30010, true, false, true, true}) == nullptr &&
                   std::strcmp(sw::DriveAdmit({false, true, false, 30010, true, false, true, false}), "puppet") == 0 &&
                   std::strcmp(sw::DriveAdmit({false, true, true, 30010, true, true, true, true}), "puppet") == 0,
