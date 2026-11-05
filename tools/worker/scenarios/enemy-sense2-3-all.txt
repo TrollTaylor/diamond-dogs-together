@@ -1,0 +1,29 @@
+# Enemy sync M7 step 1, probe P13b part 3 of 3 (header: enemy-sense2-1-status.txt): forced 1 and perceive_local all,
+# status 138 left as it is (perceive_mask off): which of the two levers does it take? Then everything back to stock.
+logmark both
+host run perceive_reset
+host run perceive_mask off
+host expect ^perceive_mask;ok=1;m0=0:0
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t3-01
+wait 11000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t3-13
+wait 11000
+host run perceive_status
+host run perceive_local dump
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t3-25
+host run perceive_local off
+host run perceive_force off
+host run perceive_local census 0
+host run damage_status
+host run world_status
+guest run world_status

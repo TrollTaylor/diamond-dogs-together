@@ -1,0 +1,78 @@
+# Enemy sync M7 step 1, probe P13c (docs/world-sync-design.md 7.13), part 1 of 2. Runs 29e389d7 and 0608ad9f (P13,
+# P13b): the soldiers' own senses never pick up body 1, whatever the offense index, the LOCAL accessors (scoped or
+# every caller) or status 138 answer. Their discovery can still be told: SetDiscoveryPlayer (debug `enemy come`) makes a
+# guard discover "the player", and design 5 says its handler reads the offense index (0x141E02770). With the index
+# forced to 1, does the told guard turn to body 1, raise its gun and fire at it, with the host ignored 15-20 m away?
+#   1. forced 1, calm 6 s, then `enemy come 1740692850` (index 15, 6 m from the guest); 30 s
+#   2. index stock (Lua's per-guard targets: the guards next to the guest target body 1), the host out of sight again,
+#      `enemy come 2929558510` (index 17): whom does that guard engage? 30 s
+# perceive_sites logs which getter callers ran (the discovery handler's site). Mode play over -WanSim bad,
+# afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_owner=0, soldier_puppet=1, godmode on both.
+# Run both parts in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sense-p13c -ScenarioPath
+#     tools/worker/scenarios/enemy-sense3-1-discover.txt,tools/worker/scenarios/enemy-sense3-2-pick.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -TimeoutSec 600 -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive_local=installed;' 5
+host run teleport 421.16 269.2 2084.42 0
+wait 3000
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 2000
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 1500
+host hold s 1500
+host hold s 1500
+wait 1500
+host run position
+guest run position
+# --- 1: forced 1, then the told discovery ------------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_sites
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture d1-00
+wait 5000
+host run enemy come 1740692850
+host expect ^enemy_come;ent=1740692850
+host run enemy_aim_nearest 1.1
+wait 600
+host burst d1-come 4 1500
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture d1-08
+wait 8000
+host run perceive_status
+host run perceive_sites
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture d1-18
+wait 10000
+host run perceive_status
+guest run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture d1-30
+host run damage_status
+host run world_status

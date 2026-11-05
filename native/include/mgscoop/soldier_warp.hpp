@@ -43,17 +43,26 @@ struct Chain {
     std::uintptr_t type_object{}, type_vt{}, count_fn{}, handle_object{}, handle_vt{}, hop{}, leaf{}, leaf_vt{};
     unsigned char hop_bytes[24]{};
     bool hop_read{}, pinned{};              // pinned: the hop provably reaches 0x1360f90 on `leaf`
+    // typed: the live soldier dispatch (native/soldier_relay_contract.hpp): the handle vtable's hop 0xbf5450 reaches the
+    // soldier type dispatcher 0x9e9ab0 through the object at handle+0x20 (every census line of run e583ee62).
+    bool typed{};
     bool leaf_state{};                      // the three fields below were read (pinned only)
     std::uint32_t count{}, realized{}, stance{};
 };
 
 struct Result {
     // nullptr: the message was sent and the engine gave one of its two set-transform
-    // answers: out=0 handled=1 (moved) or out=-1 handled=0 (not realized / no handle).
+    // answers: out=0 handled=1 (moved) or out=-1 handled=0 (refused and not relayed: not
+    // realized or no character on a pinned hop, no slot on the typed dispatch, no handle).
     // Refusals before sending: contract type input range manager registry chain
     // leaf (a recognized forwarder hop that does not reach the verified handler)
-    // unrealized (r=-1) index stance. After sending: fault (SEH) and anomaly (any
-    // other out/handled pair, so the unpinned dispatch did not behave as the handler).
+    // unrealized (r=-1) index stance. After sending: fault (SEH), relayed (the typed
+    // dispatch answered out=0 handled=0: the handler refused a guard whose slot exists on
+    // this copy - not realized here, or realized with no character - and the dispatcher
+    // passed the message to the guard's unrealized form or realized component, which did
+    // not handle it, so nothing moved; whether he was realized is not read [U]; or
+    // out=0x8ce64801, the handle's mode 2) and anomaly (any other out/handled pair, or
+    // out=0 handled=0 on an untyped chain).
     const char* refusal{};
     std::int32_t out{-2};
     std::uint8_t handled{};
@@ -68,12 +77,18 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
 // command (or one guest spawn-sync grant, id 0x80000000|epoch<<16|seq) moves one
 // guard: a fixed GameObjectId, at most kMaxAttempts calls (the menu retries 151
 // times at most) and none after the engine handled it.
-// A fault latches the feature off for the rest of the process. An anomaly counts
-// against its guard (enemy follow multiplies warps, docs/world-sync-design.md 7.8):
-// kSoldierAnomalies on one GameObjectId latch that guard off, kProcessAnomalies
-// across guards latch the feature off, both for the rest of the process.
+// A fault latches the feature off for the rest of the process. An anomaly (an answer
+// none of the pinned paths explains) counts against its guard (enemy follow multiplies
+// warps, docs/world-sync-design.md 7.8): kSoldierAnomalies on one GameObjectId latch that
+// guard off, kProcessAnomalies across guards latch the feature off, both for the rest of
+// the process. Enemy latch (7.14, run e583ee62: five relays in a firefight latched the
+// process): a relayed answer is never counted. It backs only that guard off, without
+// sending: kRelayBackoffMs, doubled for each further relay in a row up to
+// kRelayBackoffMaxMs; a move clears it.
 inline constexpr unsigned kMaxAttempts = 160;
 inline constexpr unsigned kSoldierAnomalies = 2, kProcessAnomalies = 5, kTrackedSoldiers = 32;
+inline constexpr std::uint64_t kRelayBackoffMs = 3000, kRelayBackoffMaxMs = 30000;
+inline constexpr unsigned kRelayTracked = 64;
 struct Gate {
     std::uint32_t command{}, go_id{};
     unsigned attempts{};
@@ -86,18 +101,29 @@ struct Gate {
     };
     Soldier soldiers[kTrackedSoldiers]{};  // the guards with an anomaly (the first kTrackedSoldiers)
     unsigned soldier_count{};
+    struct Relay {
+        std::uint16_t go;
+        std::uint8_t streak;   // relays in a row (a move clears it)
+        std::uint64_t until;   // ms: backed off before this
+    };
+    Relay relays[kRelayTracked]{};  // the guards relayed lately (the oldest backoff is reused when full)
+    unsigned relayed{};             // every relayed answer of this process
+    std::uint64_t now{};            // ms of the last Admit / AdmitDrive
     // nullptr admits one Warp call; else latched, soldier (this guard is latched),
-    // target, landed or budget.
-    const char* Admit(std::uint32_t command_id, std::uint32_t go) noexcept;
+    // backoff (this guard was relayed lately), target, landed or budget.
+    const char* Admit(std::uint32_t command_id, std::uint32_t go, std::uint64_t now_ms = 0) noexcept;
     // The latch reason when this result newly latches the feature off ("fault", or
     // "anomaly" at the kProcessAnomalies-th anomaly), "soldier" when it newly latches
-    // only its guard, else nullptr.
+    // only its guard, "relayed" when it backs only its guard off, else nullptr.
     const char* Record(const Result& result) noexcept;
     // Anomalies recorded against this GameObjectId (0 if none).
     unsigned SoldierAnomalies(std::uint32_t go) const noexcept;
+    // This GameObjectId's relay backoff: ms left at now_ms (0: none) and relays in a row.
+    std::uint64_t BackoffLeft(std::uint32_t go, std::uint64_t now_ms) const noexcept;
+    unsigned RelayStreak(std::uint32_t go) const noexcept;
     // Enemy sync M4's drive (no command budget: one Warp per step): nullptr admits one Warp of `go` and makes it the
-    // guard Record() counts an anomaly against; else latched or soldier (this guard is latched).
-    const char* AdmitDrive(std::uint32_t go) noexcept;
+    // guard Record() counts an anomaly against; else latched, soldier (this guard is latched) or backoff.
+    const char* AdmitDrive(std::uint32_t go, std::uint64_t now_ms = 0) noexcept;
 };
 
 // Guest grant admission (game_script_observer.cpp GuestWarpReceipt), after the
@@ -150,14 +176,18 @@ bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t 
 // DriveStep: from this copy (`from`, GetPosition metres) toward `to` (the target, the request's y convention): planar
 // error; a guard at rest starts moving beyond start_m and stops under stop_m (`active` carries it); a step is at most
 // max_step metres planar; beyond snap_m the whole way (hard). y: the target's when hard or more than 1 m off this copy's
-// feet (GetPosition y - 0.8), else this copy's own feet plus lift_m (it stays on its own ground).
+// feet (GetPosition y - feet_m), else this copy's own feet plus lift_m (it stays on its own ground). Enemy gaps
+// (place_lift, place_sink): Warp takes GetPosition-space y (corrections read back +0.40 over a request 0.4 m under the
+// owner, or -0.01 when the engine left them there and they fell a storey), so with the key the level y is this copy's
+// own GetPosition y + kLiftLevelM (feet_m kLiftFeetM) instead of 0.7 m under it.
+inline constexpr float kDriveFeetM = 0.8f, kLiftFeetM = 0.0f, kLiftLevelM = 0.02f;
 struct DriveStepResult {
     float pos[3]{};
     float error{};
     bool move{}, hard{}, active{};
 };
 DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
-                          float snap_m, float lift_m) noexcept;
+                          float snap_m, float lift_m, float feet_m = kDriveFeetM) noexcept;
 // Who may drive (DriveReceipt): play or lab with soldier_follow + soldier_snap, 30010 / 30020 / 30050; a host only with
 // soldier_owner (its copies of guest-owned guards). nullptr admits; else "role", "disabled", "mission".
 struct DriveRule {
@@ -179,4 +209,7 @@ bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 // One "soldier_warp_census; ..." line ("\r\n" terminated); 0 on failure.
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,
                          std::size_t capacity) noexcept;
+// The chain's name in the warp log lines and replies (world_place=warp / host_warp, debug_menu=soldier_warp): pinned,
+// typed or engine, the same name the census line prints.
+const char* LeafName(const Chain& chain) noexcept;
 } // namespace mgscoop::soldier_warp

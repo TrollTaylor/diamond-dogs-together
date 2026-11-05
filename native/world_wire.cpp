@@ -125,6 +125,9 @@ constexpr OpSpec kOps[] = {
     // Authenticated local-shooter hit: shot sequence, owner generation/status sequence, damage milli, cause(normal/sleep).
     {op::friendly_hit, "FRIENDLY_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 15,
      {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2)}},
+    // Enemy sync M7: FRIENDLY_HIT's fields and the attacking guard's entity hash (protocol section 31).
+    {op::soldier_hit, "SOLDIER_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
+     {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2), U32(1)}},
     // RIDE_BODY: seq, kind (1 horse, 2 walker, 3 vehicle), body id, xyz mm, heading mrad, occupied, rider.
     // Horse and walker heading is the fourth float of the verified 16-byte census pose.
     // Vehicle heading is the second return of TppVehicle2 GetPosition.
@@ -147,7 +150,7 @@ constexpr OpSpec kOps[] = {
     {op::cargo, "CARGO", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
      {U16(1), U8(0, 3), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416)}},
-    // HORSE_SEAT (horse plan M2, world-sync-protocol.md section 31; lab key world_horse_cargo): seq, seat (0..2: 2 the
+    // HORSE_SEAT (horse plan M2, world-sync-protocol.md section 32; lab key world_horse_cargo): seq, seat (0..2: 2 the
     // cargo on the shared D-Horse), the sender's role, action (1 claim, 2 grant, 3 deny, 4 loaded, 5 unloaded, 6 keep),
     // cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down point), yaw mrad. World queue,
     // both directions, never a request (the host answers a claim with a grant or a deny). 26 bytes. A partner without

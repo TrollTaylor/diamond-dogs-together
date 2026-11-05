@@ -102,9 +102,11 @@ local function fixture(options)
             return function()
                 local p = c.peer
                 if options.follow ~= nil then
-                    -- Enemy follow: a 19-value loader, r[19] the follow flag (lab key soldier_follow).
+                    -- Enemy follow: a 19-value loader, r[19] the follow flag (lab key soldier_follow); a number is the
+                    -- enemy sync bit set as is.
+                    local eb = type(options.follow) == 'number' and options.follow or (options.follow and 1 or 0)
                     return options.level or 3, options.role or 1, 1, 1, 5, phase == '1' and (options.probe or 0) or 0,
-                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, options.follow and 1 or 0
+                        options.mode or 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, eb
                 end
                 if options.fulton ~= nil then
                     -- r1101 fulton: an 18-value loader, r[18] the fulton bits (lab keys fulton_sync 1, fulton_early 2,
@@ -1777,6 +1779,14 @@ do
     local env, c = fixture({role = 2, follow = true})
     F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
     check(c.W.followOn == true, 'CFG r[19] 1: follow on')
+    -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn); r[19] 0..511.
+    for _, case in ipairs({{129, true, false, false}, {257, false, true, false}, {511, true, true, true}, {1, false, false, false},
+                           {512 + 129, false, false, false}}) do
+        local envb, cb = fixture({role = 2, follow = case[1]})
+        F.start(envb, cb)
+        check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and
+            cb.W.followOn == (case[1] < 512), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain as their own bits')
+    end
     F.pair(env, c, 3)
     F.push(c, 1, OP.AREA, 2, 30010)
     F.tick(env, c, 1)

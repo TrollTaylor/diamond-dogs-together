@@ -1,0 +1,1180 @@
+// Original MGS Co-op: the soldier perception filter patch (docs/world-sync-design.md 7.13; header soldier_perceive.hpp).
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "mgscoop/soldier_perceive.hpp"
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#include <strsafe.h>
+#include <intrin.h>
+#include "MinHook.h"
+#include "mgscoop/near_code.hpp"
+#include "soldier_perceive_contract.hpp"
+#include "soldier_sense_contract.hpp"
+#endif
+
+namespace mgscoop::soldier_perceive {
+
+const unsigned char kBlock[kBlockSize] = {
+    0x48, 0x8b, 0x01, 0xff, 0x50, 0x50, 0x0f, 0xb7, 0xf8, 0xe8, 0x52, 0x9a, 0x8d, 0xff, 0x48, 0x8b,
+    0x88, 0x98, 0x00, 0x00, 0x00, 0xb8, 0x00, 0xfe, 0x00, 0x00, 0x48, 0x8b, 0x89, 0xa0, 0x01, 0x00,
+    0x00, 0x66, 0x85, 0xf8, 0x75, 0x77, 0x48, 0x8b, 0x01, 0xff, 0x90, 0x20, 0x02, 0x00, 0x00, 0x0f,
+    0xb7, 0xcf, 0xbf, 0xff, 0x01, 0x00, 0x00, 0x23, 0xcf, 0x3b, 0xc8, 0x74, 0x65, 0x8b, 0x55, 0xbc,
+    0x4c, 0x8b, 0x45, 0xd0, 0x4c, 0x8b, 0xce, 0x49, 0x83, 0xc6, 0x04, 0x49, 0xff, 0xcd, 0x75, 0x80,
+};
+
+bool BlockMatches(const unsigned char* live, std::size_t size, bool* patched) noexcept {
+    if (patched) *patched = false;
+    if (!live || size != kBlockSize) return false;
+    for (std::size_t i = 0; i < kBlockSize; ++i) {
+        if (i >= kPatchOffset && i < kPatchOffset + 4) continue;
+        if (live[i] != kBlock[i]) return false;
+    }
+    std::uint32_t dword = 0;
+    std::memcpy(&dword, live + kPatchOffset, sizeof(dword));
+    if (dword != kOld && dword != kNew) return false;
+    if (patched) *patched = dword == kNew;
+    return true;
+}
+
+// The scorer's first 0x40 bytes (push rbp .. mov eax,0xffff), as in the retail executable.
+const unsigned char kScorerHead[kScorerHeadSize] = {
+    0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8b, 0xec, 0x48, 0x83,
+    0xec, 0x70, 0x48, 0x8b, 0x05, 0xe7, 0x3d, 0x82, 0x01, 0x48, 0x33, 0xc4, 0x48, 0x89, 0x45, 0xf0,
+    0x48, 0x8b, 0x41, 0x58, 0x8b, 0xf2, 0x49, 0x8b, 0xd9, 0x4c, 0x8b, 0xa0, 0xc8, 0x00, 0x00, 0x00,
+    0x4c, 0x89, 0x45, 0xe0, 0x4c, 0x8b, 0x80, 0x88, 0x00, 0x00, 0x00, 0xb8, 0xff, 0xff, 0x00, 0x00,
+};
+
+namespace {
+std::atomic<std::uint32_t> g_calls{0}, g_entries{0}, g_players{0}, g_multi{0}, g_max{0}, g_overflow{0};
+// A slot holds word + 1 (0 = empty).
+std::atomic<std::uint32_t> g_word[kCensusWords]{};
+std::atomic<std::uint32_t> g_count[kCensusWords]{};
+void AddWord(std::uint16_t word) noexcept {
+    const std::uint32_t key = std::uint32_t(word) + 1u;
+    for (unsigned i = 0; i < kCensusWords; ++i) {
+        std::uint32_t seen = g_word[i].load(std::memory_order_relaxed);
+        if (seen == 0 && g_word[i].compare_exchange_strong(seen, key, std::memory_order_relaxed)) seen = key;
+        if (seen == key) { g_count[i].fetch_add(1, std::memory_order_relaxed); return; }
+    }
+    g_overflow.fetch_add(1, std::memory_order_relaxed);
+}
+} // namespace
+
+void CensusAdd(const unsigned char* entries, std::uint32_t count) noexcept {
+    g_calls.fetch_add(1, std::memory_order_relaxed);
+    if (!entries || !count) return;
+    g_entries.fetch_add(count, std::memory_order_relaxed);
+    std::uint32_t players = 0;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const unsigned char* e = entries + std::size_t(i) * 4u;
+        if (e[3] != 5) continue;
+        ++players;
+        std::uint16_t word = 0;
+        std::memcpy(&word, e, sizeof(word));
+        AddWord(word);
+    }
+    if (!players) return;
+    g_players.fetch_add(players, std::memory_order_relaxed);
+    if (players > 1) g_multi.fetch_add(1, std::memory_order_relaxed);
+    std::uint32_t max = g_max.load(std::memory_order_relaxed);
+    while (players > max && !g_max.compare_exchange_weak(max, players, std::memory_order_relaxed)) {}
+}
+
+CensusSnapshot CensusRead() noexcept {
+    CensusSnapshot s{};
+    s.calls = g_calls.load(std::memory_order_relaxed);
+    s.entries = g_entries.load(std::memory_order_relaxed);
+    s.players = g_players.load(std::memory_order_relaxed);
+    s.multi = g_multi.load(std::memory_order_relaxed);
+    s.maxPerCall = g_max.load(std::memory_order_relaxed);
+    s.overflow = g_overflow.load(std::memory_order_relaxed);
+    for (unsigned i = 0; i < kCensusWords; ++i) {
+        const std::uint32_t key = g_word[i].load(std::memory_order_relaxed);
+        if (!key) continue;
+        s.word[s.words] = static_cast<std::uint16_t>(key - 1u);
+        s.count[s.words] = g_count[i].load(std::memory_order_relaxed);
+        ++s.words;
+    }
+    return s;
+}
+
+void CensusReset() noexcept {
+    std::atomic<std::uint32_t>* const counters[] = {&g_calls, &g_entries, &g_players, &g_multi, &g_max, &g_overflow};
+    for (auto* a : counters) a->store(0, std::memory_order_relaxed);
+    for (unsigned i = 0; i < kCensusWords; ++i) { g_count[i].store(0, std::memory_order_relaxed); g_word[i].store(0, std::memory_order_relaxed); }
+}
+
+namespace {
+std::atomic<bool> g_censusOn{false};
+}
+
+bool CensusLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const CensusSnapshot s = CensusRead();
+    int n = std::snprintf(out, capacity, "perceive;census=%u;calls=%u;entries=%u;players=%u;multi=%u;max=%u;overflow=%u;words=",
+                          g_censusOn.load(std::memory_order_relaxed) ? 1u : 0u, s.calls, s.entries, s.players, s.multi, s.maxPerCall,
+                          s.overflow);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) return false;
+    std::size_t used = static_cast<std::size_t>(n);
+    for (unsigned i = 0; i < s.words; ++i) {
+        n = std::snprintf(out + used, capacity - used, "%s%x:%u", i ? "," : "", unsigned(s.word[i]), s.count[i]);
+        if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+        used += static_cast<std::size_t>(n);
+    }
+    return true;
+}
+
+
+// The getter's first 0x20 bytes (sub rsp,0x28; call; mov rcx,[rax+0x78]; ...), as targeting_contract.hpp pins them.
+const unsigned char kOffenseHead[kOffenseHeadSize] = {
+    0x48, 0x83, 0xec, 0x28, 0xe8, 0xd7, 0xc8, 0xdf, 0xfe, 0x48, 0x8b, 0x48, 0x78, 0x48, 0x8b, 0x01,
+    0xff, 0x50, 0x40, 0x48, 0x8b, 0xc8, 0x48, 0x85, 0xc0, 0x74, 0x1b, 0x48, 0x8b, 0x00, 0xff, 0x50,
+};
+
+namespace {
+std::atomic<std::uint32_t> g_siteRva[kSites]{};  // rva + 1 (0 = empty)
+std::atomic<std::uint32_t> g_siteCount[kSites]{};
+std::atomic<std::uint32_t> g_siteOverflow{0};
+}
+
+void SitesAdd(std::uint32_t rva) noexcept {
+    const std::uint32_t key = rva + 1u;
+    for (unsigned i = 0; i < kSites; ++i) {
+        std::uint32_t seen = g_siteRva[i].load(std::memory_order_relaxed);
+        if (seen == 0 && g_siteRva[i].compare_exchange_strong(seen, key, std::memory_order_relaxed)) seen = key;
+        if (seen == key) { g_siteCount[i].fetch_add(1, std::memory_order_relaxed); return; }
+    }
+    g_siteOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
+SitesSnapshot SitesRead() noexcept {
+    SitesSnapshot s{};
+    for (unsigned i = 0; i < kSites; ++i) {
+        const std::uint32_t key = g_siteRva[i].load(std::memory_order_relaxed);
+        if (!key) continue;
+        s.rva[s.sites] = key - 1u;
+        s.count[s.sites] = g_siteCount[i].load(std::memory_order_relaxed);
+        ++s.sites;
+    }
+    s.overflow = g_siteOverflow.load(std::memory_order_relaxed);
+    return s;
+}
+
+void SitesReset() noexcept {
+    for (unsigned i = 0; i < kSites; ++i) { g_siteCount[i].store(0, std::memory_order_relaxed); g_siteRva[i].store(0, std::memory_order_relaxed); }
+    g_siteOverflow.store(0, std::memory_order_relaxed);
+}
+
+bool SitesLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const SitesSnapshot s = SitesRead();
+    int n = std::snprintf(out, capacity, "sites;n=%u;overflow=%u;", s.sites, s.overflow);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) return false;
+    std::size_t used = static_cast<std::size_t>(n);
+    for (unsigned i = 0; i < s.sites; ++i) {
+        char item[32]{};
+        const int k = std::snprintf(item, sizeof(item), "%s%x:%u", i ? "," : "", s.rva[i], s.count[i]);
+        if (k < 0 || static_cast<std::size_t>(k) >= capacity - used) break;
+        std::memcpy(out + used, item, static_cast<std::size_t>(k) + 1u);
+        used += static_cast<std::size_t>(k);
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// M7 step 1: per-soldier perception (pure parts).
+int PickSiteIndex(std::uint32_t ret) noexcept {
+    for (unsigned i = 0; i < kPickSiteCount; ++i)
+        if (kPickSites[i].ret == ret) return static_cast<int>(i);
+    return -1;
+}
+
+int SoldierFor(std::uint32_t ret, const std::uint64_t* regs, int tls) noexcept {
+    const int site = PickSiteIndex(ret);
+    if (site >= 0 && regs && kPickSites[site].answers) {
+        const std::uint64_t v = regs[static_cast<unsigned>(kPickSites[site].reg)] & 0xFFFFFFFFull;
+        if (v < kPickSoldiers) return static_cast<int>(v);
+    }
+    return tls >= 0 && tls < static_cast<int>(kPickSoldiers) ? tls : -1;
+}
+
+unsigned Answer(std::uint32_t ret, int target, unsigned stock, int forced, Leaf leaf, bool anyOne) noexcept {
+    if (stock > 1) return stock;
+    if (forced == 0 || forced == 1) return static_cast<unsigned>(forced);
+    if (target == 0 || target == 1) return static_cast<unsigned>(target);
+    if (ret == kLeafRet && leaf == Leaf::any && anyOne) return 1;
+    return stock;
+}
+
+namespace {
+// A target is stored as target + 1 (0 = none).
+std::atomic<std::uint8_t> g_target[kPickSoldiers]{};
+std::atomic<std::uint32_t> g_targetCount[2]{};
+std::atomic<std::uint8_t> g_leaf{0};
+struct SiteAtoms {
+    std::atomic<std::uint32_t> calls{0}, inTls{0}, eqTls{0}, big{0}, min{0xFFFFFFFFu}, max{0};
+};
+SiteAtoms g_site[kPickSiteCount];
+std::atomic<std::uint32_t> g_pc[10]{};  // PickCounters in declaration order
+enum : unsigned { kCalls, kPerSoldier, kA0, kA1, kLeaf1, kTls, kUpdates, kSwaps, kMaxSoldier, kOtherThread };
+void Bump(unsigned i) noexcept { g_pc[i].fetch_add(1, std::memory_order_relaxed); }
+void Max(std::atomic<std::uint32_t>& a, std::uint32_t v) noexcept {
+    std::uint32_t seen = a.load(std::memory_order_relaxed);
+    while (v > seen && !a.compare_exchange_weak(seen, v, std::memory_order_relaxed)) {}
+}
+void Min(std::atomic<std::uint32_t>& a, std::uint32_t v) noexcept {
+    std::uint32_t seen = a.load(std::memory_order_relaxed);
+    while (v < seen && !a.compare_exchange_weak(seen, v, std::memory_order_relaxed)) {}
+}
+} // namespace
+
+void SetTarget(unsigned soldier, int target) noexcept {
+    if (soldier >= kPickSoldiers) return;
+    const std::uint8_t want = target == 0 || target == 1 ? static_cast<std::uint8_t>(target + 1) : 0;
+    const std::uint8_t old = g_target[soldier].exchange(want, std::memory_order_acq_rel);
+    if (old == want) return;
+    if (old) g_targetCount[old - 1].fetch_sub(1, std::memory_order_acq_rel);
+    if (want) g_targetCount[want - 1].fetch_add(1, std::memory_order_acq_rel);
+}
+
+int Target(unsigned soldier) noexcept {
+    if (soldier >= kPickSoldiers) return -1;
+    return static_cast<int>(g_target[soldier].load(std::memory_order_acquire)) - 1;
+}
+
+void ClearTargets() noexcept {
+    for (unsigned i = 0; i < kPickSoldiers; ++i) SetTarget(i, -1);
+}
+
+unsigned TargetCount(int target) noexcept {
+    return target == 0 || target == 1 ? g_targetCount[target].load(std::memory_order_acquire) : 0u;
+}
+
+void SetLeaf(Leaf leaf) noexcept { g_leaf.store(static_cast<std::uint8_t>(leaf), std::memory_order_release); }
+Leaf LeafMode() noexcept { return g_leaf.load(std::memory_order_acquire) == 1 ? Leaf::any : Leaf::stock; }
+
+void CensusSite(unsigned site, std::uint64_t value, int tls) noexcept {
+    if (site >= kPickSiteCount) return;
+    SiteAtoms& s = g_site[site];
+    s.calls.fetch_add(1, std::memory_order_relaxed);
+    const std::uint32_t v = value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value);
+    if ((value & 0xFFFFFFFFull) >= kPickSoldiers) s.big.fetch_add(1, std::memory_order_relaxed);
+    Min(s.min, v);
+    Max(s.max, v);
+    if (tls >= 0) {
+        s.inTls.fetch_add(1, std::memory_order_relaxed);
+        if ((value & 0xFFFFFFFFull) == static_cast<std::uint64_t>(tls)) s.eqTls.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+SiteCensus CensusSiteRead(unsigned site) noexcept {
+    SiteCensus c{};
+    if (site >= kPickSiteCount) return c;
+    const SiteAtoms& s = g_site[site];
+    c.calls = s.calls.load(std::memory_order_relaxed);
+    c.inTls = s.inTls.load(std::memory_order_relaxed);
+    c.eqTls = s.eqTls.load(std::memory_order_relaxed);
+    c.big = s.big.load(std::memory_order_relaxed);
+    c.min = s.min.load(std::memory_order_relaxed);
+    c.max = s.max.load(std::memory_order_relaxed);
+    return c;
+}
+
+void CountCall(bool perSoldier, int target, bool leaf1, bool tls) noexcept {
+    Bump(kCalls);
+    if (perSoldier) Bump(kPerSoldier);
+    if (target == 0) Bump(kA0);
+    if (target == 1) Bump(kA1);
+    if (leaf1) Bump(kLeaf1);
+    if (tls) Bump(kTls);
+}
+
+void CountUpdate(unsigned soldier, bool swapped, bool otherThread) noexcept {
+    Bump(kUpdates);
+    if (swapped) Bump(kSwaps);
+    if (otherThread) Bump(kOtherThread);
+    Max(g_pc[kMaxSoldier], soldier);
+}
+
+PickCounters PickRead() noexcept {
+    PickCounters p{};
+    p.calls = g_pc[kCalls].load(std::memory_order_relaxed);
+    p.perSoldier = g_pc[kPerSoldier].load(std::memory_order_relaxed);
+    p.answered0 = g_pc[kA0].load(std::memory_order_relaxed);
+    p.answered1 = g_pc[kA1].load(std::memory_order_relaxed);
+    p.leaf1 = g_pc[kLeaf1].load(std::memory_order_relaxed);
+    p.tlsCalls = g_pc[kTls].load(std::memory_order_relaxed);
+    p.updates = g_pc[kUpdates].load(std::memory_order_relaxed);
+    p.swaps = g_pc[kSwaps].load(std::memory_order_relaxed);
+    p.maxSoldier = g_pc[kMaxSoldier].load(std::memory_order_relaxed);
+    p.otherThread = g_pc[kOtherThread].load(std::memory_order_relaxed);
+    return p;
+}
+
+void PickReset() noexcept {
+    for (auto& a : g_pc) a.store(0, std::memory_order_relaxed);
+    for (auto& s : g_site) {
+        s.calls.store(0, std::memory_order_relaxed); s.inTls.store(0, std::memory_order_relaxed);
+        s.eqTls.store(0, std::memory_order_relaxed); s.big.store(0, std::memory_order_relaxed);
+        s.min.store(0xFFFFFFFFu, std::memory_order_relaxed); s.max.store(0, std::memory_order_relaxed);
+    }
+}
+
+namespace { std::atomic<int> g_forced{-1}; }
+
+bool PickLine(char* out, std::size_t capacity, bool installed) noexcept {
+    if (!out || !capacity) return false;
+    const PickCounters p = PickRead();
+    const int n = std::snprintf(out, capacity,
+                                "pick;on=%u;forced=%d;leaf=%s;t0=%u;t1=%u;calls=%u;soldier=%u;a0=%u;a1=%u;leaf1=%u;tls=%u;upd=%u;swaps=%u;max=%u;thr=%u",
+                                installed ? 1u : 0u, g_forced.load(std::memory_order_relaxed), LeafMode() == Leaf::any ? "any" : "stock",
+                                TargetCount(0), TargetCount(1), p.calls, p.perSoldier, p.answered0, p.answered1, p.leaf1, p.tlsCalls,
+                                p.updates, p.swaps, p.maxSoldier, p.otherThread);
+    return n >= 0 && static_cast<std::size_t>(n) < capacity;
+}
+
+std::uintptr_t BodyRecord(std::uintptr_t image, std::int32_t sel, unsigned idx) noexcept {
+    if (!image || idx >= 16 || sel < 0 || sel > 15) return 0;
+    return image + kBankRva + (static_cast<std::uintptr_t>(sel) * 16u + idx) * kBankStride;
+}
+
+namespace {
+std::atomic<std::uint32_t> g_bodyMask[kBodyMasks]{};  // set << 16 | offset << 8 | mask (0 = off)
+std::atomic<std::uint32_t> g_maskWrites{0};
+} // namespace
+
+bool SetBodyMask(unsigned slot, unsigned offset, unsigned mask, bool set) noexcept {
+    if (slot >= kBodyMasks || offset < 0xC0 || offset > 0xDF || mask > 0xFF) return false;
+    g_bodyMask[slot].store(mask ? (set ? 0x10000u : 0u) | (offset << 8) | mask : 0u, std::memory_order_release);
+    return true;
+}
+
+void BodyMask(unsigned slot, unsigned& offset, unsigned& mask) noexcept {
+    const std::uint32_t v = slot < kBodyMasks ? g_bodyMask[slot].load(std::memory_order_acquire) : 0u;
+    offset = (v >> 8) & 0xFFu;
+    mask = v & 0xFFu;
+}
+
+bool BodyMaskSets(unsigned slot) noexcept {
+    return slot < kBodyMasks && (g_bodyMask[slot].load(std::memory_order_acquire) & 0x10000u) != 0;
+}
+
+std::uint32_t BodyMaskWrites() noexcept { return g_maskWrites.load(std::memory_order_relaxed); }
+
+void BuildStub(unsigned char (&s)[kStubSize], std::uintptr_t choose) noexcept {
+    static constexpr unsigned char kCode[kStubSize] = {
+        0x53,                                      // 00 push rbx
+        0x55,                                      // 01 push rbp
+        0x56,                                      // 02 push rsi
+        0x57,                                      // 03 push rdi
+        0x41, 0x54,                                // 04 push r12
+        0x41, 0x55,                                // 06 push r13
+        0x41, 0x56,                                // 08 push r14
+        0x41, 0x57,                                // 0A push r15
+        0x48, 0x83, 0xEC, 0x28,                    // 0C sub rsp, 0x28 (rsp 16-aligned at the call)
+        0x48, 0x8D, 0x54, 0x24, 0x28,              // 10 lea rdx, [rsp+0x28]   (regs: r15 .. rbx)
+        0x4C, 0x8B, 0x44, 0x24, 0x68,              // 15 mov r8, [rsp+0x68]    (the caller's return address)
+        0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0,        // 1A mov rax, Choose
+        0xFF, 0xD0,                                // 24 call rax              (rcx = self, unchanged)
+        0x48, 0x83, 0xC4, 0x28,                    // 26 add rsp, 0x28
+        0x41, 0x5F,                                // 2A pop r15
+        0x41, 0x5E,                                // 2C pop r14
+        0x41, 0x5D,                                // 2E pop r13
+        0x41, 0x5C,                                // 30 pop r12
+        0x5F,                                      // 32 pop rdi
+        0x5E,                                      // 33 pop rsi
+        0x5D,                                      // 34 pop rbp
+        0x5B,                                      // 35 pop rbx
+        0xC3,                                      // 36 ret                   (eax = Choose's answer)
+    };
+    std::memcpy(s, kCode, kStubSize);
+    std::memcpy(s + 0x1C, &choose, sizeof(choose));
+}
+
+void BuildUnwind(unsigned char (&u)[kUnwindSize]) noexcept {
+    static constexpr unsigned char kInfo[kUnwindSize] = {
+        0x01, 0x10, 0x09, 0x00,  // version 1, no flags; prolog 0x10 bytes; 9 codes; no frame register
+        0x10, 0x42,              // 0x10: UWOP_ALLOC_SMALL 0x28
+        0x0C, 0xF0,              // 0x0C: UWOP_PUSH_NONVOL r15
+        0x0A, 0xE0,              // 0x0A: r14
+        0x08, 0xD0,              // 0x08: r13
+        0x06, 0xC0,              // 0x06: r12
+        0x04, 0x70,              // 0x04: rdi
+        0x03, 0x60,              // 0x03: rsi
+        0x02, 0x50,              // 0x02: rbp
+        0x01, 0x30,              // 0x01: rbx
+        0x00, 0x00,              // padding to an even count
+    };
+    std::memcpy(u, kInfo, kUnwindSize);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// P13: the LOCAL player accessors (pure parts).
+std::uint32_t LocalCaller(LocalKind kind, std::uint32_t entryRet, std::uint32_t above) noexcept {
+    if (kind == LocalKind::rec) return entryRet >= kThunkLo && entryRet < kThunkHi ? above : entryRet;
+    return entryRet == kIdThunkRet ? above : entryRet;
+}
+
+bool LocalScoped(std::uint32_t caller) noexcept {
+    for (const Range& r : kLocalRanges)
+        if (caller >= r.lo && caller < r.hi) return true;
+    return false;
+}
+
+namespace {
+std::atomic<int> g_localMode{-1};
+std::atomic<bool> g_localCensus{false};
+std::atomic<int> g_online{-1};
+std::atomic<std::uint32_t> g_onlineWrites{0};
+constexpr std::uint64_t kLocalTag = 1ull << 63;  // a used census key (rvas stay below 2^31)
+struct LocalAtoms {
+    std::atomic<std::uint64_t> key{0};
+    std::atomic<std::uint32_t> calls{0}, redirected{0};
+    std::atomic<std::uint32_t> min[kLocalRegs], max[kLocalRegs];
+    LocalAtoms() noexcept {
+        for (auto& m : min) m.store(0xFFFFFFFFu, std::memory_order_relaxed);
+        for (auto& m : max) m.store(0, std::memory_order_relaxed);
+    }
+};
+LocalAtoms g_local[kLocalCensus];
+std::atomic<std::uint32_t> g_localOverflow{0};
+std::atomic<std::uint32_t> g_lc[4]{};  // rec, idx, scoped, redirected
+// The entry's register order (rbp, rsi, rdi, r12, r13, r14, r15) as indices of the stub's block (Reg order r15 .. rbx).
+constexpr unsigned kRegOf[kLocalRegs] = {6, 5, 4, 3, 2, 1, 0};
+} // namespace
+
+void SetLocalMode(int mode) noexcept { g_localMode.store(mode >= -1 && mode <= kLocalAll ? mode : -1, std::memory_order_relaxed); }
+int LocalMode() noexcept { return g_localMode.load(std::memory_order_relaxed); }
+
+int LocalAnswer(int mode, bool scoped, int target) noexcept {
+    if (mode == kLocalAll) return 1;
+    if (!scoped) return -1;
+    if (mode == 0 || mode == 1) return mode;
+    if (mode == kLocalPerSoldier && (target == 0 || target == 1)) return target;
+    return -1;
+}
+
+void SetLocalCensus(bool on) noexcept { g_localCensus.store(on, std::memory_order_relaxed); }
+bool LocalCensusOn() noexcept { return g_localCensus.load(std::memory_order_relaxed); }
+
+void LocalCount(std::uint32_t caller, std::uint32_t entry, bool redirected, const std::uint64_t* regs) noexcept {
+    const std::uint64_t key = kLocalTag | (static_cast<std::uint64_t>(entry) << 32) | caller;
+    unsigned at = static_cast<unsigned>((key * 0x9E3779B97F4A7C15ull) >> 56) % kLocalCensus;
+    for (unsigned probe = 0; probe < kLocalCensus; ++probe, at = (at + 1) % kLocalCensus) {
+        LocalAtoms& s = g_local[at];
+        std::uint64_t seen = s.key.load(std::memory_order_relaxed);
+        if (seen == 0 && s.key.compare_exchange_strong(seen, key, std::memory_order_relaxed)) seen = key;
+        if (seen != key) continue;
+        s.calls.fetch_add(1, std::memory_order_relaxed);
+        if (redirected) s.redirected.fetch_add(1, std::memory_order_relaxed);
+        if (regs)
+            for (unsigned r = 0; r < kLocalRegs; ++r) {
+                const auto v = static_cast<std::uint32_t>(regs[kRegOf[r]] & 0xFFFFFFFFull);
+                Min(s.min[r], v);
+                Max(s.max[r], v);
+            }
+        return;
+    }
+    g_localOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
+unsigned LocalRead(LocalEntry* out, unsigned capacity, std::uint32_t* overflow) noexcept {
+    static LocalEntry all[kLocalCensus];  // the debug command thread only
+    unsigned n = 0;
+    for (const LocalAtoms& s : g_local) {
+        const std::uint64_t key = s.key.load(std::memory_order_relaxed);
+        if (!key) continue;
+        LocalEntry e{};
+        e.caller = static_cast<std::uint32_t>(key & 0xFFFFFFFFull);
+        e.entry = static_cast<std::uint32_t>((key >> 32) & 0x7FFFFFFFull);
+        e.calls = s.calls.load(std::memory_order_relaxed);
+        e.redirected = s.redirected.load(std::memory_order_relaxed);
+        for (unsigned r = 0; r < kLocalRegs; ++r) {
+            e.min[r] = s.min[r].load(std::memory_order_relaxed);
+            e.max[r] = s.max[r].load(std::memory_order_relaxed);
+            if (e.min[r] > e.max[r]) e.min[r] = e.max[r] = 0;  // no register block seen
+        }
+        unsigned k = n++;
+        while (k > 0 && all[k - 1].calls < e.calls) { all[k] = all[k - 1]; --k; }
+        all[k] = e;
+    }
+    if (overflow) *overflow = g_localOverflow.load(std::memory_order_relaxed);
+    const unsigned shown = out ? (n < capacity ? n : capacity) : 0;
+    for (unsigned i = 0; i < shown; ++i) out[i] = all[i];
+    return shown;
+}
+
+void LocalReset() noexcept {
+    for (LocalAtoms& s : g_local) {
+        s.key.store(0, std::memory_order_relaxed);
+        s.calls.store(0, std::memory_order_relaxed);
+        s.redirected.store(0, std::memory_order_relaxed);
+        for (auto& m : s.min) m.store(0xFFFFFFFFu, std::memory_order_relaxed);
+        for (auto& m : s.max) m.store(0, std::memory_order_relaxed);
+    }
+    g_localOverflow.store(0, std::memory_order_relaxed);
+    for (auto& c : g_lc) c.store(0, std::memory_order_relaxed);
+}
+
+void LocalTally(LocalKind kind, bool scoped, bool redirected) noexcept {
+    g_lc[kind == LocalKind::rec ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
+    if (scoped) g_lc[2].fetch_add(1, std::memory_order_relaxed);
+    if (redirected) g_lc[3].fetch_add(1, std::memory_order_relaxed);
+}
+
+LocalCounters LocalCountersRead() noexcept {
+    LocalCounters c{};
+    c.rec = g_lc[0].load(std::memory_order_relaxed);
+    c.idx = g_lc[1].load(std::memory_order_relaxed);
+    c.scoped = g_lc[2].load(std::memory_order_relaxed);
+    c.redirected = g_lc[3].load(std::memory_order_relaxed);
+    return c;
+}
+
+bool LocalLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const LocalCounters c = LocalCountersRead();
+    const int n = std::snprintf(out, capacity, "local;mode=%d;census=%u;rec=%u;idx=%u;scoped=%u;redirected=%u;online=%d;online_writes=%u",
+                                LocalMode(), LocalCensusOn() ? 1u : 0u, c.rec, c.idx, c.scoped, c.redirected, OnlineMode(), OnlineWrites());
+    return n >= 0 && static_cast<std::size_t>(n) < capacity;
+}
+
+int OffenseCommand(const char* text, std::size_t size) noexcept {
+    constexpr char kHead[] = "offense ";
+    constexpr std::size_t kHeadSize = sizeof(kHead) - 1;
+    if (!text || size <= kHeadSize || std::memcmp(text, kHead, kHeadSize) != 0) return -2;
+    const char* arg = text + kHeadSize;
+    const std::size_t n = size - kHeadSize;
+    if (n == 1 && (arg[0] == '0' || arg[0] == '1')) return arg[0] - '0';
+    if (n == 3 && std::memcmp(arg, "off", 3) == 0) return -1;
+    return -2;
+}
+
+std::uint32_t OnlineBits(std::uint32_t was, bool online) noexcept { return online ? (was | 4u) & ~2u : (was | 2u) & ~4u; }
+void SetOnline(int online) noexcept { g_online.store(online == 0 || online == 1 ? online : -1, std::memory_order_relaxed); }
+int OnlineMode() noexcept { return g_online.load(std::memory_order_relaxed); }
+std::uint32_t OnlineWrites() noexcept { return g_onlineWrites.load(std::memory_order_relaxed); }
+
+#ifdef _WIN32
+namespace {
+volatile LONG g_patched = 0;
+void Emit(LogFn log, const char* line) noexcept { if (log) log(line); }
+bool Live(const void* base, unsigned char (&out)[kBlockSize]) noexcept {
+    SIZE_T read = 0;
+    return base && ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + kBlockRva, out, kBlockSize, &read) &&
+           read == kBlockSize;
+}
+} // namespace
+
+bool Patch(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_patched) return true;
+    unsigned char live[kBlockSize]{};
+    bool already = false;
+    if (!Live(base, live) || !BlockMatches(live, kBlockSize, &already)) {
+        Emit(log, "soldier_perceive=refused; reason=block_bytes\r\n");
+        return false;
+    }
+    void* site = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kPatchRva;
+    if (!already) {
+        if (const char* why = near_code::PatchDword(site, kOld, kNew)) {
+            char line[96]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=refused; reason=patch_%s\r\n", why))) Emit(log, line);
+            return false;
+        }
+    }
+    InterlockedExchange(&g_patched, 1);
+    Emit(log, "soldier_perceive=patched; rva=0x132562b; old=74; new=eb; site=player_filter\r\n");
+    return true;
+}
+
+void Revert(const void* base, LogFn log, const char* reason) noexcept {
+    if (!base || !g_patched) return;
+    void* site = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kPatchRva;
+    if (const char* why = near_code::PatchDword(site, kNew, kOld)) {
+        char line[96]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=refused; reason=revert_%s\r\n", why))) Emit(log, line);
+        return;
+    }
+    InterlockedExchange(&g_patched, 0);
+    char line[96]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=reverted; reason=%s\r\n", reason ? reason : "unknown")))
+        Emit(log, line);
+}
+
+bool Patched() noexcept { return g_patched != 0; }
+
+namespace {
+using OffenseIndex = unsigned int(__fastcall*)(void* self);
+OffenseIndex g_offenseOriginal = nullptr;
+std::uintptr_t g_imageBase = 0;
+std::atomic<bool> g_sitesOn{false};
+unsigned int __fastcall SitesOffense(void* self) {
+    const auto ret = reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    if (ret > g_imageBase && ret - g_imageBase < 0x7fffffffu) SitesAdd(static_cast<std::uint32_t>(ret - g_imageBase));
+    const unsigned int stock = g_offenseOriginal(self);
+    const int forced = g_forced.load(std::memory_order_relaxed);
+    return forced == 0 || forced == 1 ? static_cast<unsigned int>(forced) : stock;
+}
+} // namespace
+
+void SetForcedIndex(int index) noexcept { g_forced.store(index == 0 || index == 1 ? index : -1, std::memory_order_relaxed); }
+int ForcedIndex() noexcept { return g_forced.load(std::memory_order_relaxed); }
+bool SitesInstalled() noexcept { return g_sitesOn.load(); }
+
+bool InstallSites(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_sitesOn.load()) return true;
+    unsigned char live[kOffenseHeadSize]{};
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + kOffenseRva, live, sizeof(live), &read) ||
+        read != sizeof(live) || std::memcmp(live, kOffenseHead, sizeof(live)) != 0) {
+        Emit(log, "soldier_perceive_sites=refused; reason=head_bytes\r\n");
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    g_imageBase = reinterpret_cast<std::uintptr_t>(base);
+    void* target = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kOffenseRva;
+    if (!g_offenseOriginal && MH_CreateHook(target, reinterpret_cast<void*>(&SitesOffense), reinterpret_cast<void**>(&g_offenseOriginal)) != MH_OK) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_create\r\n");
+        return false;
+    }
+    if (MH_EnableHook(target) != MH_OK) {
+        Emit(log, "soldier_perceive_sites=refused; reason=hook_enable\r\n");
+        return false;
+    }
+    g_sitesOn.store(true);
+    Emit(log, "soldier_perceive_sites=installed; rva=0x1e02770\r\n");
+    return true;
+}
+
+namespace {
+using Scorer = void(__fastcall*)(void* chain, unsigned soldier, void* out, void* extra);
+Scorer g_original = nullptr;
+// Reads exactly the fields the stock body reads next (same thread, same frame) and runs the stock body unchanged.
+void __fastcall CensusScorer(void* chain, unsigned soldier, void* out, void* extra) {
+    const auto* c = static_cast<const unsigned char*>(chain);
+    const unsigned char* p = c ? *reinterpret_cast<const unsigned char* const*>(c + 0x58) : nullptr;
+    const unsigned char* list = p ? *reinterpret_cast<const unsigned char* const*>(p + 0x88) : nullptr;
+    const auto* counts = list ? *reinterpret_cast<const std::uint32_t* const*>(list + 0x8) : nullptr;
+    const auto* const* tables = list ? *reinterpret_cast<const unsigned char* const* const*>(list + 0x10) : nullptr;
+    if (counts && tables) {
+        const std::uint32_t count = counts[soldier];
+        if (count <= 256) CensusAdd(count ? tables[soldier] : nullptr, count);
+    }
+    g_original(chain, soldier, out, extra);
+}
+} // namespace
+
+bool InstallCensus(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_censusOn.load()) return true;
+    unsigned char live[kScorerHeadSize]{};
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + kScorerRva, live, sizeof(live), &read) ||
+        read != sizeof(live) || std::memcmp(live, kScorerHead, sizeof(live)) != 0) {
+        Emit(log, "soldier_perceive_census=refused; reason=head_bytes\r\n");
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive_census=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    void* target = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kScorerRva;
+    if (!g_original && MH_CreateHook(target, reinterpret_cast<void*>(&CensusScorer), reinterpret_cast<void**>(&g_original)) != MH_OK) {
+        Emit(log, "soldier_perceive_census=refused; reason=hook_create\r\n");
+        return false;
+    }
+    if (MH_EnableHook(target) != MH_OK) {
+        Emit(log, "soldier_perceive_census=refused; reason=hook_enable\r\n");
+        return false;
+    }
+    g_censusOn.store(true);
+    Emit(log, "soldier_perceive_census=installed; rva=0x1325530; caller=0x14132638e\r\n");
+    return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// M7 step 1: per-soldier perception (the hooks).
+namespace {
+namespace pc = mgscoop::soldier_perceive_contract;
+thread_local int t_soldier = -1;
+std::atomic<bool> g_pickOn{false};
+std::atomic<DWORD> g_updateTid{0};
+std::atomic<void*> g_sys{nullptr};  // the notice system the per-slot update last ran for (P12e, read only)
+void* g_stubBlock = nullptr;  // stub + unwind + RUNTIME_FUNCTION; never freed once registered
+using Update = void(__fastcall*)(void* sys, unsigned soldier, float dt, unsigned flag);
+Update g_updateOriginal = nullptr;
+inline constexpr std::size_t kStubUnwindAt = 0x38, kStubFunctionAt = 0x50, kStubBlockSize = 0x60;
+static_assert(kStubSize <= kStubUnwindAt && kStubUnwindAt + kUnwindSize <= kStubFunctionAt &&
+                  kStubFunctionAt + sizeof(RUNTIME_FUNCTION) <= kStubBlockSize, "stub block layout");
+
+// P12d research: clear the commanded bits of body 1's record (read-modify-write of single bytes, AI thread).
+void ApplyBodyMasks() noexcept {
+    for (unsigned i = 0; i < kBodyMasks; ++i) {
+        unsigned offset = 0, mask = 0;
+        BodyMask(i, offset, mask);
+        if (!mask) continue;
+        const bool set = BodyMaskSets(i);
+        for (std::int32_t bank = 0; bank < 2; ++bank) {
+            const std::uintptr_t rec = BodyRecord(g_imageBase, bank, 1);
+            if (!rec) continue;
+            auto* byte = reinterpret_cast<volatile unsigned char*>(rec + offset);
+            const unsigned char was = *byte;
+            const unsigned char want = static_cast<unsigned char>(set ? was | mask : was & ~mask);
+            if (want != was) { *byte = want; g_maskWrites.fetch_add(1, std::memory_order_relaxed); }
+        }
+    }
+}
+
+// P13 L4 research: the manager's online bit at the leaf's getter call (rdi = the leaf, 0x14134FA09 mov rdi, rcx).
+void ApplyOnline(std::uint64_t leaf) noexcept {
+    const int mode = g_online.load(std::memory_order_relaxed);
+    if (mode < 0 || leaf < 0x10000) return;
+    auto* dword = reinterpret_cast<volatile std::uint32_t*>(static_cast<std::uintptr_t>(leaf) + kModeDword);
+    const std::uint32_t was = *dword;
+    const std::uint32_t want = OnlineBits(was, mode == 1);
+    if (want != was) { *dword = want; g_onlineWrites.fetch_add(1, std::memory_order_relaxed); }
+    if (mode == 0) g_online.store(-1, std::memory_order_relaxed);  // restored once: untouched from here on
+}
+
+// Called by the stub on the caller's thread: regs = the caller's callee-saved registers (Reg order).
+unsigned int __fastcall Choose(void* self, const std::uint64_t* regs, std::uintptr_t ret) {
+    const std::uint32_t rva = ret > g_imageBase && ret - g_imageBase < 0x7fffffffu ? static_cast<std::uint32_t>(ret - g_imageBase) : 0;
+    if (rva) SitesAdd(rva);
+    if (rva == kLeafRet) {
+        ApplyBodyMasks();
+        ApplyOnline(regs[static_cast<unsigned>(Reg::rdi)]);
+    }
+    const unsigned stock = g_offenseOriginal(self);
+    const int tls = t_soldier;
+    const int site = PickSiteIndex(rva);
+    if (site >= 0) CensusSite(static_cast<unsigned>(site), regs[static_cast<unsigned>(kPickSites[site].reg)], tls);
+    const int soldier = SoldierFor(rva, regs, -1);  // the thread slot is the notice system's, not a guard (census only)
+    const int target = soldier >= 0 ? Target(static_cast<unsigned>(soldier)) : -1;
+    const Leaf leaf = LeafMode();
+    const bool anyOne = leaf == Leaf::any && TargetCount(1) > 0;
+    const int forced = g_forced.load(std::memory_order_relaxed);
+    const unsigned answer = Answer(rva, target, stock, forced, leaf, anyOne);
+    CountCall(soldier >= 0, stock <= 1 && forced < 0 ? target : -1, rva == kLeafRet && answer == 1 && stock != 1, tls >= 0);
+    return answer;
+}
+
+void __fastcall UpdateDetour(void* sys, unsigned soldier, float dt, unsigned flag) {
+    const int prev = t_soldier;
+    t_soldier = soldier < kPickSoldiers ? static_cast<int>(soldier) : -1;
+    const DWORD tid = GetCurrentThreadId();
+    DWORD first = 0;
+    const bool other = !g_updateTid.compare_exchange_strong(first, tid, std::memory_order_relaxed) && first != tid;
+    CountUpdate(soldier, false, other);
+    g_sys.store(sys, std::memory_order_relaxed);
+    g_updateOriginal(sys, soldier, dt, flag);
+    t_soldier = prev;
+}
+
+bool WindowsMatch(const void* base, const char** which) noexcept {
+    for (const pc::Window& w : pc::windows) {
+        unsigned char live[64]{};
+        SIZE_T read = 0;
+        if (w.size > sizeof(live) ||
+            !ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + w.rva, live, w.size, &read) ||
+            read != w.size || std::memcmp(live, w.bytes, w.size) != 0) {
+            if (which) *which = w.name;
+            return false;
+        }
+    }
+    return true;
+}
+
+// A stub (BuildStub) calling `choose`, its unwind data and RUNTIME_FUNCTION in one executable block (registered; never
+// freed once in use). Null with *why on failure.
+void* MakeStubBlock(std::uintptr_t choose, const char** why) noexcept {
+    void* block = VirtualAlloc(nullptr, kStubBlockSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!block) { *why = "allocate"; return nullptr; }
+    auto* b = static_cast<unsigned char*>(block);
+    unsigned char stub[kStubSize]{};
+    BuildStub(stub, choose);
+    std::memcpy(b, stub, sizeof(stub));
+    unsigned char unwind[kUnwindSize]{};
+    BuildUnwind(unwind);
+    std::memcpy(b + kStubUnwindAt, unwind, sizeof(unwind));
+    RUNTIME_FUNCTION fn{};
+    fn.BeginAddress = 0;
+    fn.EndAddress = static_cast<DWORD>(kStubSize);
+    fn.UnwindData = static_cast<DWORD>(kStubUnwindAt);
+    std::memcpy(b + kStubFunctionAt, &fn, sizeof(fn));
+    DWORD old = 0;
+    if (!VirtualProtect(block, kStubBlockSize, PAGE_EXECUTE_READ, &old)) {
+        VirtualFree(block, 0, MEM_RELEASE);
+        *why = "protect";
+        return nullptr;
+    }
+    if (!RtlAddFunctionTable(reinterpret_cast<PRUNTIME_FUNCTION>(b + kStubFunctionAt), 1,
+                             static_cast<DWORD64>(reinterpret_cast<std::uintptr_t>(block)))) {
+        VirtualFree(block, 0, MEM_RELEASE);
+        *why = "unwind";
+        return nullptr;
+    }
+    FlushInstructionCache(GetCurrentProcess(), block, kStubBlockSize);
+    return block;
+}
+} // namespace
+
+std::uintptr_t ChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&Choose); }
+
+bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept {
+    if (!base || !out || !capacity) return false;
+    const auto image = reinterpret_cast<std::uintptr_t>(base);
+    std::int32_t sel = -1;
+    SIZE_T read = 0;
+    ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(image + kBankSelRva), &sel, sizeof(sel), &read);
+    int n = std::snprintf(out, capacity, "bodies;sel=%d", sel);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) return false;
+    std::size_t used = static_cast<std::size_t>(n);
+    for (unsigned idx = 0; idx < 2; ++idx) {
+        const std::uintptr_t rec = BodyRecord(image, sel, idx);
+        float pos[3]{};
+        unsigned char bits[32]{};  // P13 L3: the whole status bitset +0xC0..+0xDF (live reads reach status 0x92, +0xD2)
+        SIZE_T a = 0, b = 0;
+        const bool ok = rec && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0x10), pos, sizeof(pos), &a) &&
+                        a == sizeof(pos) &&
+                        ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0xC0), bits, sizeof(bits), &b) &&
+                        b == sizeof(bits);
+        n = ok ? std::snprintf(out + used, capacity - used, ";b%u=%.1f,%.1f,%.1f;s%u=", idx, pos[0], pos[1], pos[2], idx)
+               : std::snprintf(out + used, capacity - used, ";b%u=unread", idx);
+        if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+        used += static_cast<std::size_t>(n);
+        for (unsigned i = 0; ok && i < sizeof(bits); ++i) {
+            n = std::snprintf(out + used, capacity - used, i && i % 4 == 0 ? ".%02x" : "%02x", bits[i]);
+            if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+            used += static_cast<std::size_t>(n);
+        }
+    }
+    for (unsigned idx = 0; idx < 2; ++idx) {
+        const std::uintptr_t rec = BodyRecord(image, sel == 0 ? 1 : 0, idx);
+        unsigned char bits[4]{};
+        SIZE_T b = 0;
+        const bool ok = rec && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0xC0), bits, sizeof(bits), &b) &&
+                        b == sizeof(bits);
+        n = ok ? std::snprintf(out + used, capacity - used, ";o%u=%02x%02x%02x%02x", idx, bits[0], bits[1], bits[2], bits[3])
+               : std::snprintf(out + used, capacity - used, ";o%u=unread", idx);
+        if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+        used += static_cast<std::size_t>(n);
+    }
+    return true;
+}
+bool PickInstalled() noexcept { return g_pickOn.load(); }
+
+bool InstallPick(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_pickOn.load()) return true;
+    char line[160]{};
+    if (g_sitesOn.load()) { Emit(log, "soldier_perceive=refused; reason=sites_hook\r\n"); return false; }
+    const char* which = nullptr;
+    if (!WindowsMatch(base, &which)) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=refused; reason=bytes; window=%s\r\n", which ? which : "?")))
+            Emit(log, line);
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    g_imageBase = reinterpret_cast<std::uintptr_t>(base);
+    if (!g_stubBlock) {
+        const char* why = nullptr;
+        g_stubBlock = MakeStubBlock(ChooseAddress(), &why);
+        if (!g_stubBlock) {
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=refused; reason=%s\r\n", why ? why : "stub")))
+                Emit(log, line);
+            return false;
+        }
+    }
+    void* getter = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kOffenseRva;
+    void* update = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kUpdateRva;
+    if (!g_offenseOriginal && MH_CreateHook(getter, g_stubBlock, reinterpret_cast<void**>(&g_offenseOriginal)) != MH_OK) {
+        Emit(log, "soldier_perceive=refused; reason=hook_create_getter\r\n");
+        return false;
+    }
+    if (!g_updateOriginal && MH_CreateHook(update, reinterpret_cast<void*>(&UpdateDetour), reinterpret_cast<void**>(&g_updateOriginal)) != MH_OK) {
+        Emit(log, "soldier_perceive=refused; reason=hook_create_update\r\n");
+        return false;
+    }
+    // The update first: a thread soldier without the getter's answer changes nothing but the cache swap (targets are
+    // all none until Lua or perceive_pick sets one).
+    if (MH_EnableHook(update) != MH_OK) { Emit(log, "soldier_perceive=refused; reason=hook_enable_update\r\n"); return false; }
+    if (MH_EnableHook(getter) != MH_OK) {
+        MH_DisableHook(update);
+        Emit(log, "soldier_perceive=refused; reason=hook_enable_getter\r\n");
+        return false;
+    }
+    g_pickOn.store(true);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                                   "soldier_perceive=installed; mode=per_soldier; getter=0x1e02770; update=0xd65850; sites=%u; windows=%u\r\n",
+                                   kPickSiteCount, static_cast<unsigned>(sizeof(pc::windows) / sizeof(pc::windows[0])))))
+        Emit(log, line);
+    return true;
+}
+
+namespace {
+template <class T> bool ReadAt(std::uintptr_t address, T& out) noexcept {
+    SIZE_T n = 0;
+    return address >= 0x10000 && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), &out, sizeof(out), &n) &&
+           n == sizeof(out);
+}
+} // namespace
+
+void LogSlots(LogFn log) noexcept {
+    const auto sys = reinterpret_cast<std::uintptr_t>(g_sys.load(std::memory_order_relaxed));
+    std::uint32_t count = 0;
+    std::uintptr_t recs = 0, acts = 0, list = 0, starts = 0, counts = 0;
+    char line[320]{};
+    if (!sys || !ReadAt(sys + 0x198, count) || !ReadAt(sys + 0x208, recs) || !ReadAt(sys + 0x220, acts) || !ReadAt(sys + 0x150, list) ||
+        !ReadAt(sys + 0x158, starts) || !ReadAt(sys + 0x160, counts)) {
+        Emit(log, "soldier_perceive_slot; none=1\r\n");
+        return;
+    }
+    unsigned shown = 0;
+    for (std::uint32_t slot = 0; slot < count && slot < 96; ++slot) {
+        unsigned char rec[16]{};
+        std::uint32_t act = 0;
+        std::uint16_t start = 0, n = 0;
+        if (!ReadAt(recs + slot * 16u, rec) || !ReadAt(acts + slot * 4u, act)) continue;
+        ReadAt(starts + slot * 2u, start);
+        ReadAt(counts + slot * 2u, n);
+        if (!(rec[0xd] & 1) && !act && !n) continue;
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_slot; slot=%u; act=%u; rec=", slot, act);
+        for (unsigned i = 0; i < 16 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i)
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%02x", rec[i]);
+        if (k > 0 && static_cast<std::size_t>(k) < sizeof(line))
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "; n=%u; list=", n);
+        for (unsigned i = 0; i < n && i < 12 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i) {
+            std::uint32_t e = 0;
+            ReadAt(list + (static_cast<std::uintptr_t>(start) + i) * 4u, e);
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%s%u", i ? "," : "", e);
+        }
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+            ++shown;
+        }
+    }
+    std::snprintf(line, sizeof(line), "soldier_perceive_slots; count=%u; shown=%u\r\n", count, shown);
+    Emit(log, line);
+}
+
+void LogCensus(LogFn log) noexcept {
+    static const char* const kRegName[] = {"r15", "r14", "r13", "r12", "rdi", "rsi", "rbp", "rbx"};
+    for (unsigned i = 0; i < kPickSiteCount; ++i) {
+        const SiteCensus c = CensusSiteRead(i);
+        char line[200]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                                       "soldier_perceive_census; ret=0x%x; reg=%s; answers=%u; n=%u; min=%u; max=%u; big=%u; in_tls=%u; eq_tls=%u\r\n",
+                                       kPickSites[i].ret, kRegName[static_cast<unsigned>(kPickSites[i].reg)],
+                                       kPickSites[i].answers ? 1u : 0u, c.calls, c.calls ? c.min : 0u, c.max, c.big, c.inTls, c.eqTls)))
+            Emit(log, line);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// P13: the LOCAL player accessors (the hooks).
+namespace {
+namespace sc = mgscoop::soldier_sense_contract;
+std::atomic<bool> g_localOn{false};
+std::uintptr_t g_localImage = 0;
+LocalRecFn g_localRecFn = nullptr;  // the trampolines (stock behaviour) once installed
+LocalIdxFn g_localIdxFn = nullptr;
+RecFn g_recFn = nullptr;            // 0x14053CA40, the indexed record (never hooked)
+void* g_localRecBlock = nullptr;
+void* g_localIdxBlock = nullptr;
+
+std::uint32_t LocalRva(std::uint64_t address) noexcept {
+    return address > g_localImage && address - g_localImage < 0x7fffffffu ? static_cast<std::uint32_t>(address - g_localImage) : 0;
+}
+
+// The answer for one call: -1 stock, else the index to read. Counts the call (and, with the census, its caller).
+int LocalDecide(LocalKind kind, const std::uint64_t* regs, std::uintptr_t ret) noexcept {
+    const std::uint32_t entry = LocalRva(ret);
+    const std::uint32_t caller = LocalCaller(kind, entry, LocalRva(regs[kThunkAbove]));
+    const bool scoped = caller != 0 && LocalScoped(caller);
+    const int answer = LocalAnswer(g_localMode.load(std::memory_order_relaxed), scoped, -1);
+    LocalTally(kind, scoped, answer >= 0);
+    if (g_localCensus.load(std::memory_order_relaxed)) LocalCount(caller, entry, answer >= 0, regs);
+    return answer;
+}
+
+// The stubs' C++ halves (BuildStub: rcx unchanged, regs = the caller's callee-saved registers, ret = the entry return).
+std::uint64_t __fastcall LocalRecChoose(void*, const std::uint64_t* regs, std::uintptr_t ret) {
+    const int answer = g_recFn ? LocalDecide(LocalKind::rec, regs, ret) : -1;
+    if (answer >= 0) return reinterpret_cast<std::uint64_t>(g_recFn(static_cast<unsigned>(answer)));
+    return reinterpret_cast<std::uint64_t>(g_localRecFn());
+}
+
+std::uint64_t __fastcall LocalIdxChoose(void* rcx, const std::uint64_t* regs, std::uintptr_t ret) {
+    auto* out = static_cast<std::uint32_t*>(rcx);
+    const int answer = LocalDecide(LocalKind::idx, regs, ret);
+    if (answer >= 0 && out) {
+        *out = static_cast<std::uint32_t>(answer);
+        return 1;  // index < 16 (setb al)
+    }
+    return g_localIdxFn(out) ? 1u : 0u;
+}
+
+bool SenseWindowsMatch(const void* base, const char** which) noexcept {
+    for (const sc::Window& w : sc::windows) {
+        unsigned char live[64]{};
+        SIZE_T read = 0;
+        if (w.size > sizeof(live) ||
+            !ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + w.rva, live, w.size, &read) ||
+            read != w.size || std::memcmp(live, w.bytes, w.size) != 0) {
+            if (which) *which = w.name;
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
+std::uintptr_t LocalRecChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&LocalRecChoose); }
+std::uintptr_t LocalIdxChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&LocalIdxChoose); }
+
+void SetLocalTargets(std::uintptr_t image, LocalRecFn localRec, LocalIdxFn localIdx, RecFn rec) noexcept {
+    g_localImage = image;
+    g_localRecFn = localRec;
+    g_localIdxFn = localIdx;
+    g_recFn = rec;
+}
+
+bool LocalInstalled() noexcept { return g_localOn.load(); }
+
+bool InstallLocal(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_localOn.load()) return true;
+    char line[160]{};
+    const char* which = nullptr;
+    if (!SenseWindowsMatch(base, &which)) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local=refused; reason=bytes; window=%s\r\n", which ? which : "?")))
+            Emit(log, line);
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    const char* why = nullptr;
+    if (!g_localRecBlock) g_localRecBlock = MakeStubBlock(LocalRecChooseAddress(), &why);
+    if (g_localRecBlock && !g_localIdxBlock) g_localIdxBlock = MakeStubBlock(LocalIdxChooseAddress(), &why);
+    if (!g_localRecBlock || !g_localIdxBlock) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local=refused; reason=%s\r\n", why ? why : "stub")))
+            Emit(log, line);
+        return false;
+    }
+    auto* image = reinterpret_cast<unsigned char*>(const_cast<void*>(base));
+    g_localImage = reinterpret_cast<std::uintptr_t>(base);
+    g_recFn = reinterpret_cast<RecFn>(image + kRecRva);
+    void* rec = image + kLocalRecRva;
+    void* idx = image + kLocalIdxRva;
+    if (!g_localRecFn && MH_CreateHook(rec, g_localRecBlock, reinterpret_cast<void**>(&g_localRecFn)) != MH_OK) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_create_rec\r\n");
+        return false;
+    }
+    if (!g_localIdxFn && MH_CreateHook(idx, g_localIdxBlock, reinterpret_cast<void**>(&g_localIdxFn)) != MH_OK) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_create_idx\r\n");
+        return false;
+    }
+    // The redirect is off until commanded (perceive_local): both hooks answer stock until then.
+    if (MH_EnableHook(rec) != MH_OK) { Emit(log, "soldier_perceive_local=refused; reason=hook_enable_rec\r\n"); return false; }
+    if (MH_EnableHook(idx) != MH_OK) {
+        MH_DisableHook(rec);
+        Emit(log, "soldier_perceive_local=refused; reason=hook_enable_idx\r\n");
+        return false;
+    }
+    g_localOn.store(true);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                                   "soldier_perceive_local=installed; rec=0x53c9d0; idx=0x53c990; answer=0x53ca40; windows=%u\r\n",
+                                   static_cast<unsigned>(sizeof(sc::windows) / sizeof(sc::windows[0])))))
+        Emit(log, line);
+    return true;
+}
+
+void LogLocal(LogFn log, unsigned limit) noexcept {
+    static LocalEntry e[kLocalCensus];  // the debug command thread only
+    std::uint32_t overflow = 0;
+    const unsigned n = LocalRead(e, limit < kLocalCensus ? limit : kLocalCensus, &overflow);
+    static const char* const kName[kLocalRegs] = {"rbp", "rsi", "rdi", "r12", "r13", "r14", "r15"};
+    for (unsigned i = 0; i < n; ++i) {
+        char line[400]{};
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_local; caller=0x%x; entry=0x%x; n=%u; red=%u", e[i].caller, e[i].entry,
+                              e[i].calls, e[i].redirected);
+        for (unsigned r = 0; r < kLocalRegs && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++r)
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "; %s=%x-%x", kName[r], e[i].min[r], e[i].max[r]);
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+        }
+    }
+    char head[200]{};
+    if (LocalLine(head, sizeof(head))) {
+        char line[260]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local_status; %s; entries=%u; overflow=%u; on=%u\r\n", head, n,
+                                       overflow, g_localOn.load() ? 1u : 0u)))
+            Emit(log, line);
+    }
+}
+
+void LogMasks(LogFn log) noexcept {
+    const auto sys = reinterpret_cast<std::uintptr_t>(g_sys.load(std::memory_order_relaxed));
+    std::uint32_t count = 0;
+    std::uintptr_t recs = 0, acts = 0, list = 0, starts = 0, counts = 0, cps = 0, masks = 0;
+    if (!sys || !ReadAt(sys + 0x198, count) || !ReadAt(sys + 0x208, recs) || !ReadAt(sys + 0x220, acts) || !ReadAt(sys + 0x150, list) ||
+        !ReadAt(sys + 0x158, starts) || !ReadAt(sys + 0x160, counts) || !ReadAt(sys + 0x68, cps) || !ReadAt(sys + 0x78, masks)) {
+        Emit(log, "soldier_perceive_masks; none=1\r\n");
+        return;
+    }
+    unsigned shown = 0;
+    for (std::uint32_t slot = 0; slot < count && slot < 96; ++slot) {
+        unsigned char rec[16]{};
+        std::uint32_t act = 0;
+        std::uint16_t start = 0, n = 0;
+        if (!ReadAt(recs + slot * 16u, rec) || !ReadAt(acts + slot * 4u, act)) continue;
+        ReadAt(starts + slot * 2u, start);
+        ReadAt(counts + slot * 2u, n);
+        if (!(rec[0xd] & 1) && !act && !n) continue;
+        std::uint32_t m40 = 0, m44 = 0, m48 = 0;
+        const std::uintptr_t cp = cps + static_cast<std::uintptr_t>(slot) * 0x60u;
+        ReadAt(cp + 0x40, m40);
+        ReadAt(cp + 0x44, m44);
+        ReadAt(cp + 0x48, m48);
+        char line[400]{};
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_mask; slot=%u; m40=%x; m44=%x; m48=%x; n=%u; masks=", slot, m40, m44, m48, n);
+        for (unsigned i = 0; i < n && i < 24 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i) {
+            std::uint32_t e = 0, mask = 0;
+            unsigned char level = 0;
+            ReadAt(list + (static_cast<std::uintptr_t>(start) + i) * 4u, e);
+            ReadAt(masks + static_cast<std::uintptr_t>(e) * 0x18u, mask);
+            ReadAt(masks + static_cast<std::uintptr_t>(e) * 0x18u + 0x15u, level);
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%s%u:%x:%u", i ? "," : "", e, mask, unsigned(level));
+        }
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+            ++shown;
+        }
+    }
+    char line[96]{};
+    std::snprintf(line, sizeof(line), "soldier_perceive_masks; count=%u; shown=%u\r\n", count, shown);
+    Emit(log, line);
+}
+#endif
+
+} // namespace mgscoop::soldier_perceive

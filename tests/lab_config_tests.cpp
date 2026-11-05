@@ -2284,6 +2284,16 @@ int main() {
             Check(def.partner_native_stance_fast && gunDefault.partner_native_stance_fast &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_stance_fast=0\n").partner_native_stance_fast,
                   "the native stance window is on by default; partner_native_stance_fast=0 restores the 2 s rule");
+            Check(!def.partner_native_slot_rearm && !gunDefault.partner_native_slot_rearm &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_slot_rearm=1\n").partner_native_slot_rearm,
+                  "A1: the slot follower's drift re-arm is off unless named");
+            // Enemy gaps: place_lift follows the gun profile again (enemy latch, docs/STATUS.md 2026-11-04: the latch of
+            // e583ee62 came without it too, arm A 6348f361); a named 0 opts out, a named 1 turns it on without the profile.
+            Check(!def.place_lift && gunDefault.place_lift && !gunDefault.place_lift_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_lift=0\n").place_lift &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_lift=1\n").place_lift &&
+                  Lab("enabled=1\nrole=host\nplace_lift=1\n").place_lift,
+                  "enemy gaps: place_lift follows the gun profile; a named 0 opts out");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

@@ -174,9 +174,18 @@ void Cfg() {
     r.follow = 63;
     Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,63") == 0,
           "the enemy sync bits ride r[19] as is");
+    // M7 step 1 (soldier_perceive): its bit survives the configured bits (run 96216259: the old 0x7E mask dropped it).
+    // The wp/enemy-gaps merge: place_lift keeps bit 128 (its first key), soldier_perceive moves to bit 256, so r[19]
+    // carries 9 bits (0..511).
+    Check(world::EnemySyncBits(0x1FF) == 0x1FE && world::EnemySyncBits(256) == 256 && world::EnemySyncBits(128) == 128 &&
+              world::EnemySyncBits(64 | 1) == 64 && world::EnemySyncBits(0x200 | 256) == 256,
+          "the enemy sync bits keep 2..256, never bit 1");
+    r.follow = 256 | 128 | 1;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,30010,3,9,3,1,1,7,1,1,31,385") == 0,
+          "place_lift (128) and soldier_perceive (256) ride r[19] side by side");
     r.remote_mission = 4294967295u; r.remote_level = 255; r.wait = 255; r.handoff = 255; r.lock = 255; r.census = 255; r.vehicle_gone = 255; r.companion = 255;
-    r.relief = 255; r.fulton = 255; r.follow = 255;
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,255") == 0 &&
+    r.relief = 255; r.fulton = 255; r.follow = 511;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,7,4294967295,255,255,255,255,255,255,255,255,255,511") == 0 &&
               std::strlen(out) < world::reply_capacity,
           "the widest CFG reply fits");
     r.handoff = 0; r.lock = 0; r.census = 0; r.vehicle_gone = 0; r.companion = 0; r.relief = 0; r.fulton = 0;

@@ -2240,8 +2240,9 @@ the off switch) gives CFG r[19] = 1
 
 ## 29. Enemy sync M3, M5, M6 (lab keys `soldier_owner`, `soldier_route`, `soldier_body`; design 7.9, 7.11, 7.12)
 
-CFG r[19] is a bit set: 1 follow (section 28), 2 owner (M3), 4 snap (M4, section 30), 8 route (M5), 16 body (M6), 32 puppet
-(the M7 probe). Lua turns each bit on only together with bit 1.
+CFG r[19] is a bit set (0..511): 1 follow (section 28), 2 owner (M3), 4 snap (M4, section 30), 8 route (M5), 16 body (M6), 32 puppet
+(the M7 probe), 64 brain (M7, with perceive), 128 place_lift (enemy gaps, design 7.14), 256 perceive (M7 step 1; 128 before
+the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 
 | Op | Name | Dir | Wire | Body (bytes) | Fields |
 |---|---|---|---|---|---|
@@ -2259,6 +2260,15 @@ CFG r[19] is a bit set: 1 follow (section 28), 2 owner (M3), 4 snap (M4, section
 - Log lines: host `event=owner`, `event=hplace` (its own placements), `world_place=host_warp`, `event=route_tx`,
   `event=body_tx`; guest `event=owner_rx`, `event=place_ack; side=host`, `event=place_first; ...; side=guest`,
   `event=route_apply`, `event=place_body`, `event=holdup_show`; both `event=phase; ...; src=down`.
+- Reason (WHY) 23 `unrealized` (enemy latch, design 7.14): the receiving copy's soldier handler refused a guard whose slot
+  is allocated there (most likely not realized there [I]; realized with no character gives the same answer, so the name
+  is the likely case, not a reading), so the native set-transform was relayed (`refused="relayed"`, out=0 handled=0 on
+  the typed dispatch) or that guard is
+  still in its native backoff (`refused="backoff"`). The sender backs that guard off 3 s (the host's ENEMY_DEBUG_ACK,
+  the guest's ENEMY_PLACE_ACK); 10 s stays for `far`, `native_off`, `latched`. An older peer logs it as `?`.
+- `event=place_body` carries `why` (the receiver's own refusal, `none` when the fix is queued or not needed); a refused
+  body placement is not queued and its body's resting spot stays where it lies. Native: `soldier_warp=relayed; id; go;
+  r; h; streak; back_ms; relayed; anomalies` (id 0: the M4 drive).
 
 ## 30. Enemy sync M4 and the M7 probe (lab keys `soldier_snap`, `soldier_puppet`; design 7.10, 7.13)
 
@@ -2270,12 +2280,13 @@ CFG r[19] is a bit set: 1 follow (section 28), 2 owner (M3), 4 snap (M4, section
   grants (unpair, mission start and end, link session, epoch).
 - `DRIVE_V1 "<slot> <goId> <x_mm> <y_mm> <z_mm> [mode]"` (game_script_observer `DriveReceipt`): one step of this copy
   toward the slot's snaps; mode 0 the soft follow, 1 the puppet drive (only with soldier_puppet, on a guest). Reply
-  `{e=<error_cm>,s=<0 rest|1 step|2 hard>,r,h}` or `{refused="..."}` (`stale`, `far`, `puppet`, `latched`, `soldier`, ...).
+  `{e=<error_cm>,s=<0 rest|1 step|2 hard>,r,h}` or `{refused="..."}` (`stale`, `far`, `puppet`, `latched`, `soldier`,
+  `relayed` and `backoff`: the copy is not realized here, section 29, ...).
 - Log lines: native `world_drive=stats; calls; steps; hard; rest; stale; refused; anomalies` (every 10 s); Lua
   `event=snap_stats; tx; calls; steps; hard; rest; stale; refused`, `event=puppet; ent; on; ok`, `event=place_sink`
   (any applied correction 1.5 m lower 2 s after landing), `event=body_fall`.
 
-## 31. Horse seat (horse plan M2; lab key `world_horse_cargo`; docs/mounts.md section 11)
+## 32. Horse seat (horse plan M2; lab key `world_horse_cargo`; docs/mounts.md section 11)
 
 | Op | Name | Dir | Wire | Body (bytes) | Fields |
 |---|---|---|---|---|---|

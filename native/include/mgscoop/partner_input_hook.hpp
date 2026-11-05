@@ -251,7 +251,7 @@ struct NativeStats {
     // The slot follower (W4): writes (each switched instance 1's current
     // slot), refusals (once per episode and reason), the last verdict, the
     // last remote slot it acted on and whether a fault turned it off.
-    std::uint32_t slot_writes, slot_refused, slot_target;
+    std::uint32_t slot_writes, slot_refused, slot_target, slot_rearms;  // slot_rearms: A1 drift re-arms
     SlotRefusal slot_last;
     bool slot_faulted;
     // D3: the look of the last windowed drain (the remote's, injected) and

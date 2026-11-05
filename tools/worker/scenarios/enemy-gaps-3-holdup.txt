@@ -1,0 +1,45 @@
+# Enemy gaps batch, part 3 of 6 (a hold-up's raised hands on both screens): the guest takes guard 2929558510
+# (rt_field_n_0009_sub, about 45 m west of the host's quiet spot while the route watch runs: M3 gives him to the guest)
+# and, crouched, aims at him from 3 m right after a goto (attempt 2, run 0b4a1509: the goto left the camera on a wall,
+# so enemy_aim_nearest turns it to him first); three tries. Expected: host event=owner owner=guest, host event=commit
+# state=1 actor=guest, host event=holdup_show ok=1 (world_snap.lua: SetForceHoldup on the host's copy), frames hu-g
+# (guest) and hu-h (host, placed behind the guest) with the hands up.
+logmark both
+stance guest crouch
+guest run enemy goto 2929558510 3
+wait 1000
+waitlog host 'world_lua=event=owner; ent=2929558510; owner=guest' 15
+guest run enemy goto 2929558510 3
+guest run enemy_aim_nearest 1.1
+wait 300
+guest hold rmb 1500 nowait
+heldcapture guest guest rmb hu-g1 2
+waitlog host 'world_lua=event=commit; ent=2929558510; state=1; ver=[0-9]+; actor=guest;' 4
+guest release
+wait 4000
+guest run enemy goto 2929558510 3
+guest run enemy_aim_nearest 1.1
+wait 300
+guest hold rmb 1500 nowait
+heldcapture guest guest rmb hu-g2 2
+waitlog host 'world_lua=event=commit; ent=2929558510; state=1; ver=[0-9]+; actor=guest;' 4
+guest release
+wait 4000
+guest run enemy goto 2929558510 3
+guest run enemy_aim_nearest 1.1
+wait 300
+guest hold rmb 1500 nowait
+heldcapture guest guest rmb hu-g3 2
+waitlog host 'world_lua=event=commit; ent=2929558510; state=1; ver=[0-9]+; actor=guest;' 4
+guest release
+wait 4000
+waitlog host 'world_lua=event=holdup_show; ent=2929558510; ok=1' 4
+guest release
+placebehind host guest 5 3
+wait 1500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture hu-h
+host run enemy info 2929558510
+guest run enemy info 2929558510

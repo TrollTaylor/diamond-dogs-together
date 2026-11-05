@@ -734,6 +734,26 @@ struct LabConfig {
     // soldier_follow. Lab and play; off unless named (a probe: its puppets never notice the guest).
     bool soldier_puppet = false;
     bool soldier_puppet_given = false;
+    // Enemy sync M7 (docs/world-sync-design.md 7.13): soldier_perceive installs the offense index getter stub and the
+    // LOCAL accessor hooks (soldier_perceive.hpp InstallPick / InstallLocal; CFG r[19] bit 256): the host's Lua keeps one
+    // offense player for every guard (the nearer player of the nearest guard sampled in the last 2 s, held 4 s) and tells
+    // a calm guard within 10 m of the guest it found the player (SetDiscoveryPlayer: the guards' own senses never pick up
+    // body 1, runs 29e389d7 / 0608ad9f; told, they fire at it, d7cb1b1d); soldier_brain makes each guard's owner
+    // the only brain for the damage it deals (downed_damage + soldier_authority: the other copy's hits on a player do
+    // nothing, the owner's hits on the replica reach the partner as SOLDIER_HIT 0x4C, world_friendly.lua) and holds the
+    // other copy of a calm guard back (SetPuppet, world_snap.lua) until the owner's copy shoots that player (CFG r[19]
+    // bit 64). Lab and play; off unless named until their hidden runs pass.
+    bool soldier_perceive = false;
+    bool soldier_perceive_given = false;
+    bool soldier_brain = false;
+    bool soldier_brain_given = false;
+    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
+    // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
+    // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
+    // play; follows the gun profile (a named 0 opts out). The latch of its first default run, e583ee62, came without it
+    // too (enemy latch, arm A 6348f361): the engine's relay to an unrealized guard, now refused "relayed" per guard.
+    bool place_lift = false;
+    bool place_lift_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
@@ -752,6 +772,9 @@ struct LabConfig {
     // The native stance level fix: 1 = the round-1 window (500 ms behind the
     // guards, partner_recon NativeParams), 0 = the previous 2 s rule.
     bool partner_native_stance_fast = true;
+    // A1 (enemy gaps): the slot follower re-arms once body 1 drifted out of the
+    // remote's slot inside one switch episode (partner_slots::EpisodeStep).
+    bool partner_native_slot_rearm = false;
     // r1101 animtruth (docs/anim-truth.md): the puppet draws what the remote's
     // body does, not what its pad asked (partner_slots TruthStep): the remote's
     // raw HOLD/FIRE are stripped while its gun-lane act is plain locomotion with

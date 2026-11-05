@@ -378,7 +378,7 @@ The viewer's copy now holds a body for the partner's horse: its own D-Horse (ind
 the shared D-Horse of section 10. It reaches the carry only through the existing `MGS_COOP_CARGO_V2` calls.
 - **Load.** Carrying the downed partner (CarryRole 1), within 2.5 m of the horse and facing it, hold E 450 ms. A guard
   on the horse (`IsCarriedHostage`) refuses `npc_cargo`; far / facing / busy / awake refuse too. A guest carrier asks the
-  host with HORSE_SEAT (`world-sync-protocol.md` section 31, seat 2) against the victim's downed generation; the host
+  host with HORSE_SEAT (`world-sync-protocol.md` section 32, seat 2) against the victim's downed generation; the host
   grants while that generation is down and not being revived (else `awake`, `generation`, `mid_revive`, `busy`) and
   loads for itself without a claim. The carrier's copy plays the stock put-down (`RequestLocalPutDown`), then
   `SetCargoHold(1)` and LOADED with its horse pose.

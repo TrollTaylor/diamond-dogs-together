@@ -1,0 +1,72 @@
+# Enemy sync M7 step 1, told sight proof (docs/world-sync-design.md 7.13), part 1 of 3. P13/P13b/P13c (runs 29e389d7,
+# 0608ad9f, dbba96de): the guards' own senses never pick up body 1 (offense index, LOCAL accessors, status 138), but a
+# told SetDiscoveryPlayer makes them discover the offense player, and with the index forced to 1 guards 15 and 246 fired
+# 45 times at body 1 while the host stood ignored. soldier_perceive now does it from the host's Lua, no debug command:
+# one offense player for every guard (the player nearest to a sampled guard, held 4 s), and a calm guard within 10 m of
+# the guest for 0.8 s is told it found the player (offense 1 first; once per 30 s per guard).
+#   1. the host out of sight 50 m south; the guest walks up to 6 m of guard 1740692850 (index 15): the told guard turns,
+#      raises its gun and fires at body 1 (soldier_perceive_hits body1, downed_defense target=1), the host ignored
+#      while it walks to 15-20 m to watch; 40 s
+#   2. the guest leaves 60 m south: the host is nearest, the offense player goes back to the host after the 4 s hold
+#      and the guards turn on the host; 25 s
+#   3. the guest comes back to 6 m: the offense player is body 1 again; 25 s
+# Mode play over -WanSim bad, afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_perceive=1, soldier_owner=0,
+# soldier_puppet=1 (the guest's copies calm until their CP is in ALERT), soldier_brain off (every hit stays on its own
+# copy: body 1 takes no damage the guest feels), godmode on both.
+# Run all three parts in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sight -ScenarioPath
+#     tools/worker/scenarios/enemy-sight-1-tell.txt,tools/worker/scenarios/enemy-sight-2-host.txt,
+#     tools/worker/scenarios/enemy-sight-3-back.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -TimeoutSec 600 -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive_local=installed;' 5
+host run teleport 421.16 269.2 2084.42 0
+wait 4000
+host run position
+# --- 1: the guest walks up to the guards ---------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+waitlog host 'world_lua=event=perceive_tell; ent=[0-9]+; idx=[0-9]+;' 15
+wait 1500
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture t1-tell
+wait 3000
+host run perceive_status
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 1500
+host hold s 1500
+host hold s 1500
+wait 1000
+host run enemy_aim_nearest 1.1
+wait 600
+host burst t1-watch 4 1500
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture t1-20
+wait 10000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t1-32
+host run damage_status
+host run position
+guest run position

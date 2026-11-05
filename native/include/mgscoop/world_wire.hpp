@@ -131,7 +131,12 @@ inline constexpr std::uint8_t enemy_place = 0x47, enemy_place_ack = 0x48, owner 
 // yaw mrad, flags 1 alert 2 moving, speed mm/s). Native keeps the newest two per slot (Core::SnapPair, newest sender tick
 // wins); never in Lua's queues. Sent only with soldier_snap (CFG r[19] bit 4); the receiver's DRIVE_V1 moves its copy.
 inline constexpr std::uint8_t soldier_snap = 0x4B;
-// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 31): HORSE_SEAT (80), both
+// Enemy sync M7 (docs/world-sync-design.md 7.13, protocol section 31): SOLDIER_HIT (76), both directions, control queue:
+// a guard this copy owns hit the replica (the partner's body here); FRIENDLY_HIT's fields plus the attacker's entity
+// hash. The partner's copy applies it as its own damage (downed_player FriendlyControl) and lets its copy of that guard
+// engage it (world_snap.lua S.brain). Sent only with soldier_brain.
+inline constexpr std::uint8_t soldier_hit = 0x4C;
+// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT (80), both
 // directions, world queue, reliable: seq, seat (2 cargo; 1 the M3 pillion), the sender's role, action (1 claim, 2 grant,
 // 3 deny, 4 loaded, 5 unloaded, 6 keep), cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down
 // point), yaw mrad. 26 bytes. A partner without 0x50 skips it by its length (unknown_op): nothing is loaded.
@@ -325,8 +330,8 @@ struct CfgReply {
     std::uint8_t fulton;
     // Enemy follow (docs/world-sync-design.md 7.8): r[19] bit 1 turns on the follow scan of the guards near either player
     // and place-first before every host outcome (lua/coop/world_place.lua; lab key soldier_follow), else 0; filled only
-    // by world_link::HandleCfg.
-    std::uint8_t follow;
+    // by world_link::HandleCfg. Bits 2..256 the enemy sync keys (world::EnemySyncBits): 9 bits, 0..511.
+    std::uint16_t follow;
 };
 
 // The published pair-wait code (world_link): raw, except different_mission is

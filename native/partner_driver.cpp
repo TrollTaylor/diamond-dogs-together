@@ -718,6 +718,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
                                                                               : set.nslot;
+    a.slot_rearm = gun_stage && set.nslot_rearm;
     a.slot_ok = m.slot_plan_ok ? m.slot_plan.ok_mask : static_cast<std::uint8_t>(0);
     for (unsigned s = 0; s < 3; ++s) a.slot_equip[s] = m.slot_plan_ok ? m.slot_plan.equip[s] : static_cast<std::uint16_t>(0);
     // Weapons4: a remote slot body 1 follows with the plan's stand-in.
@@ -4549,8 +4550,17 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
         m.weapon_logged = m.weapon_mismatch;
-        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; remote_equip=%d; remote_base=%d; body_equip=%u; strip=0x%x\r\n",
-                   m.weapon_mismatch ? "mismatch" : "match", m.remote_gun_equip, m.remote_gun_base, gun.fields.equip, m.weapon_strip);
+        // A1: a mismatch names the remote's slot, body 1's and why (plan: no body slot or stand-in for that remote slot).
+        if (m.weapon_mismatch)
+            EmitNative(m, h, m.weapon_cap, "partner_weapon",
+                       "partner_weapon=mismatch; remote_equip=%d; remote_base=%d; body_equip=%u; strip=0x%x; remote_slot=%u; body_slot=%u; why=%s\r\n",
+                       m.remote_gun_equip, m.remote_gun_base, gun.fields.equip, m.weapon_strip, unsigned(m.remote_slot),
+                       m.slots1_ok ? unsigned(m.slots1.nibble) : 0xFFu,
+                       partner_slots::MismatchWhyName(partner_slots::MismatchWhy(m.slot_plan_ok, m.slot_plan, m.remote_slot,
+                                                                                 m.slots1_ok ? m.slots1.nibble : 0xFFu)));
+        else
+            EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; remote_equip=%d; remote_base=%d; body_equip=%u; strip=0x%x\r\n",
+                       "match", m.remote_gun_equip, m.remote_gun_base, gun.fields.equip, m.weapon_strip);
         // The fire verdict line of a visual-fire run (a first match is not a change).
         if (set.nfire == PartnerNativeFire::visual && (m.weapon_mismatch || !first))
             EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_fire=%s; reason=%s; remote_equip=%d; body_equip=%u\r\n",
@@ -4781,14 +4791,17 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
     // The follower's verdicts (process totals of the hook): a write or a new refusal.
     if (ns.slot_writes != m.slot_logged_writes || ns.slot_refused != m.slot_logged_refused) {
         const bool wrote = ns.slot_writes != m.slot_logged_writes;
+        // A1: a write the drift re-arm granted (partner_native_slot_rearm) logs as drift.
+        const bool drift = wrote && ns.slot_rearms != m.slot_logged_rearms;
         m.slot_logged_writes = ns.slot_writes;
         m.slot_logged_refused = ns.slot_refused;
+        m.slot_logged_rearms = ns.slot_rearms;
         m.slot_logged_last = static_cast<std::uint32_t>(ns.slot_last);
         EmitNative(m, h, m.slot_cap, "partner_slot",
-                   "partner_slot=%s; reason=%s; target=%u; remote_seq=%u; body_slot=%u; hand_slot=%u; writes=%u; refused=%u\r\n",
-                   wrote ? "write" : "refused", partner_input_hook::SlotRefusalName(ns.slot_last), ns.slot_target,
+                   "partner_slot=%s; reason=%s; target=%u; remote_seq=%u; body_slot=%u; hand_slot=%u; writes=%u; refused=%u; rearms=%u\r\n",
+                   drift ? "drift" : wrote ? "write" : "refused", partner_input_hook::SlotRefusalName(ns.slot_last), ns.slot_target,
                    unsigned(m.remote_switch_seq), m.slots1_ok ? unsigned(m.slots1.nibble) : 0xFFu,
-                   gun_ok && gun.fields_ok ? unsigned(gun.hand_slot) : 0xFFu, ns.slot_writes, ns.slot_refused);
+                   gun_ok && gun.fields_ok ? unsigned(gun.hand_slot) : 0xFFu, ns.slot_writes, ns.slot_refused, ns.slot_rearms);
     }
 }
 
@@ -7170,6 +7183,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.naimpt = lab.partner_native_aimpt;
     d.settings.nreload = lab.partner_native_reload;
     d.settings.nslot = lab.partner_native_slot;
+    d.settings.nslot_rearm = lab.partner_native_slot_rearm;
     d.settings.nequip = lab.partner_native_equip;
     d.settings.nride = lab.partner_native_ride;
     d.settings.seat_enter = lab.partner_ride_seat_enter;
