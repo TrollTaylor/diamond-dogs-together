@@ -769,8 +769,7 @@ struct LabConfig {
     // disabled_local) and keeps the resting spot where this copy's body lies after it (no report back); place_reach (bit
     // 2048, with soldier_follow) force-realizes a guard whose placement the game relayed (not realized here) for 8 s and
     // lets the M4 stream reach 160 m (run 798b51dd: every M3 host sample 60-160 m from the host, 57 refused unrealized).
-    // Lab and play; body_dead off unless named, place_reach follows the gun profile since runs 617311eb / 025fbb28 (a named 0
-    // opts out; lab_config.cpp).
+    // Lab and play; both off unless named (lab_config.cpp: place_reach's no-key run 35d4074f failed the drive_sink row).
     bool body_dead = false;
     bool body_dead_given = false;
     bool place_reach = false;
