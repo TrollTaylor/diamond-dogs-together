@@ -2110,10 +2110,13 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
-    // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert stays off unless named. Every vert snap seen (runs
-    // 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its receiver, so it needed place_reach's 60-160 m band and
-    // the 60 m band live at the defaults was never exercised; "landed" is h=1 with no position read-back, a second snap
-    // 1.4-1.7 s later shows at most 4 of 8 moves held, its 1 s snap masks the 2 s drive_sink detector, and no frame shows it.
+    // Enemy gaps 3 / round 10 A (docs/world-sync-design.md 7.18, 7.27): drive_vert follows the gun profile in lab and play
+    // since the user's decision D-A10 (2026-11-05). Its rest-gated snap (only while the owner copy has been level in y for
+    // 1 s, sw::OwnerYAtRest) held 3 of 3 within 0.02 m at 0.5 s and 2 s within 60 m (named runs c59ae699 / 948c978a; the
+    // guest on the wall top saw him on it); at the defaults the wall guard's copy stayed 4.54 m under (ef9584e4). While he
+    // climbs his copy still waits below about 3 s (the drive_sink row; D-A10 reads the gate as "left under after the
+    // owner's height has stayed level for 1 s"). A named 0 opts out.
+    if (!c.drive_vert_given) c.drive_vert = gun;
     // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): place_reach and body_dead stay off unless named. place_reach's
     // frames matched in runs 617311eb / 025fbb28 (the host's binoculars 108-109 m from guest-owned 1740692850: his body at
     // the crosshair beside the guest's character, copies 0.1-1.4 m apart; host place error p90 2.5 / 1.99 m), but its no-key
