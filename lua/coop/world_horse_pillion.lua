@@ -24,14 +24,15 @@ local CAUSE = {[0] = "ok", "passenger", "driver_off", "horse_lost", "stream_lost
 local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
 local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM, HOP_MS = 2500, 2000, 1000, 3500, 3000, 1300, 1000, 300, 300
-local MASK, MASK_BUTTONS, FREE_E_MM = "MgsCoopPillion", 0xFFFFFFA7, 6000
+local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30000, 2000
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: it kept body 0 with the horse, lag 6-8 cm, crouched), 0 hold0 without a reset, 4 the
 -- Lua Warp, 5 both. Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
 -- Run ba6b4bb5: at 0.6 m body 0 stood on the ground under its target (dy 1-1.8 m), and body 1 at the driver's root height
--- on the ground beside the horse (the host's horse stood still until it left): both go over the horse's back.
-local V = {back = 350, rise = 800, mode = 2, dback = 450, dup = 300}
+-- on the ground beside the horse (the host's horse stood still until it left). Runs 306525db / c4428efa: 0.8 m / 0.3 m
+-- kept the driver's horse still for 12-17 s and knocked the passenger's copy's horse out: clear of the horse (a test).
+local V = {back = 350, rise = 1200, mode = 2, dback = 450, dup = 700}
 P.V = V
 local floor, sin, cos, sqrt, fmt = math.floor, math.sin, math.cos, math.sqrt, string.format
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -125,7 +126,7 @@ P.besideLeft = besideLeft
 local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
- P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince = nil, nil, nil, nil, nil, nil
+ P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt = nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -255,6 +256,12 @@ local function driverTick(now)
  if not S.localRides() then return stop("driver_off") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
  if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, 0) end
+ -- The ridden path every DRIVE_MS (runs 306525db / c4428efa: the driver's horse stood still under the ride keys).
+ if now >= (P.driveAt or 0) then
+  local path = S.path or 0
+  if P.drivePath then capped("drive", fmt("step=drive;moved_cm=%d;leases=%d", round((path - P.drivePath) / 10), P.seatN or 0), 60) end
+  P.drivePath, P.driveAt = path, now + DRIVE_MS
+ end
  local r = receipt(fmt("seat1 %d %d %d %d", W.mission, W.epoch, V.dback, V.dup))
  if r and r.ready == true then
   P.seatN = (P.seatN or 0) + 1

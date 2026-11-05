@@ -35,7 +35,64 @@ host run pillion_status
 host require pillion;state=off;key=1
 guest run pillion_status
 guest require pillion;state=off;key=1
-# --- (a) the host drives. The host's first E at the unridden horse mounts it; the guest stands 3 m behind the host.
+# --- (b) the guest drives: its first E at the unridden horse mounts it; the host's own E sits the host behind.
+guest run goto_horse
+wait 1500
+both capture h3b-before
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host run goto_horse
+wait 1500
+host press e 150
+waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
+waitlog guest 'partner_pillion=seat;' 5
+host run horse_status
+host require localMounted=0
+wait 2500
+host capture h3b-two-riders-host
+guest capture h3b-two-riders-guest
+guest hold w 1500 nowait
+host burst h3b-walk-host 3 250
+guest hold w 1500 nowait
+guest burst h3b-walk-guest 3 250
+guest hold w+a 1500 nowait
+host burst h3b-trot-host 3 250
+guest hold w+a 1500 nowait
+guest burst h3b-trot-guest 3 250
+guest hold w+shift 1500 nowait
+host burst h3b-gallop-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop-guest 4 200
+guest hold w+shift+a 1500 nowait
+wait 300
+guest press space 150
+host burst h3b-jump-host 4 150
+guest hold w+shift+a 1500 nowait
+wait 300
+guest press space 150
+guest burst h3b-jump-guest 4 150
+guest release
+wait 3000
+host capture h3b-stopped-host
+guest capture h3b-stopped-guest
+waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
+host hold e 500
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+wait 1500
+host capture h3b-hopped-off-host
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
+wait 3000
+# --- (a) after (b): the host drives. The host's first E at the unridden horse mounts it; the guest stands 3 m behind the host.
 host run goto_horse
 wait 1500
 placebehind guest host 1.5
@@ -123,75 +180,18 @@ guest run horse_status
 guest require localMounted=0
 guest capture h3-both-off-guest
 host capture h3-both-off-host
-# --- (b) the guest drives: its first E at the unridden horse mounts it; the host's own E sits the host behind.
+# The guest's first E at the unridden horse mounts it.
+wait 3000
 guest run goto_horse
 wait 1500
-placebehind host guest 3
-wait 1500
+guest capture h3-guest-before-mount
 guest press e 150
 wait 2500
 guest run horse_status
 guest require localMounted=1
-waitlog host 'world_lua=event=horse_share; step=placed;' 10
-waitlog host 'partner_mount=show; mount=horse;' 10
-host run goto_horse
-wait 1500
-host press e 150
-waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press;' 5
-waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
-waitlog guest 'partner_pillion=seat;' 5
-host run horse_status
-host require localMounted=0
-wait 2500
-host capture h3b-two-riders-host
-guest capture h3b-two-riders-guest
-guest hold w 1500 nowait
-host burst h3b-walk-host 3 250
-guest hold w 1500 nowait
-guest burst h3b-walk-guest 3 250
-guest hold w+a 1500 nowait
-host burst h3b-trot-host 3 250
-guest hold w+a 1500 nowait
-guest burst h3b-trot-guest 3 250
-guest hold w+shift 1500 nowait
-host burst h3b-gallop-host 4 200
-guest hold w+shift 1500 nowait
-guest burst h3b-gallop-guest 4 200
-guest hold w+shift+a 1500 nowait
-wait 300
-guest press space 150
-host burst h3b-jump-host 4 150
-guest hold w+shift+a 1500 nowait
-wait 300
-guest press space 150
-guest burst h3b-jump-guest 4 150
-guest release
-wait 3000
-host capture h3b-stopped-host
-guest capture h3b-stopped-guest
-waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
-host hold e 500
-waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
-waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
-wait 1500
-host capture h3b-hopped-off-host
+guest capture h3-guest-mounts
 guest press e 150
 wait 3000
 guest run horse_status
-guest require localMounted=0
-waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
-# The host's first E at the unridden horse mounts it.
-wait 3000
-host run goto_horse
-wait 1500
-host capture h3b-host-before-mount
-host press e 150
-wait 2500
-host run horse_status
-host require localMounted=1
-host capture h3b-host-mounts
-host press e 150
-wait 3000
-host run horse_status
-host expect localMounted=0
+guest expect localMounted=0
 both capture h3-end
