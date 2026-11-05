@@ -1,3 +1,52 @@
+## November 4, 2026: horse M1, your partner rides on your screen (the shared D-Horse, `wp/horse`; on with the gun profile)
+
+**Players get:** in Afghanistan and Africa free roam, when either player rides D-Horse the other screen shows them
+seated in the saddle on a horse that moves with them (walk, trot, gallop), instead of hiding them until they get off.
+After the dismount the horse stands where it was left on both screens and the other player's first E mounts it; E
+beside a horse the partner rides does nothing. Both players need their D-Horse out (each copy's own 6656 stands for the
+shared one). Lab key `world_horse_share`, now on with the native gun profile in lab and play (a named 0 is the off
+switch). Details: `docs/mounts.md` section 10.
+
+- **Placement, plan B of the probes [O static, Ghidra + capstone].** `MGS_COOP_HORSE_DRIVE_V1`
+  (`native/horse_drive.cpp`, receipt in `game_script_observer.cpp`) does only the pose part of the call-enter
+  (`0x140E6AA90`): census pose[0] plus the CS transform write. Resolved: receiver `vt+0x78` = `0x140E4C540` (the
+  realized slot of a record, `receiver+0x110[slot / receiver+0xF0]`, setter `0x140E4E710`), the group's `+0x10` is a CS
+  (vtable `0x1422E6070`, the player's CS class too), CS `vt+0xA8` = `0x140AF35F0` -> `0x140B6ECF0(entry, mat4)`; the
+  matrix rows from the sincos lanes. Contract `tools/generate_horse_drive_contract.py` --check: 4 sites, 4 slots (the
+  handler table `0x142C47DD0` is runtime data, not pinned). Never `rec+0x2E3/+0x2E4`; refused while this copy rides it.
+- **The rider.** `partner_ride_wire::HorseRider` (Visibility::horse): ON_HORSE or act 121 on a horse placed under
+  500 ms ago shows body 1; the DM overlay's horse map seats it in `stateRideOnIdle` for the whole ride (whatever the
+  overlay setting); the horse is anchored under the realized body (P2 seat offsets, within 1.5 m of the stream).
+- **Lua.** `lua/coop/world_horse_share.lua` (a new world chunk after the snap chunk, 10.9 KB): RIDE_FAST 6656 at 20 Hz
+  and the final RIDE_BODY (rider 65534), the viewer's track and per-frame place, the 4 m ACTION ride hold, the ends
+  (final, stream_lost, generation, two_drivers, context), Travel / Bring refused and the guest's checkpoint deferred
+  while anyone rides, `world_companion`'s hold gains HORSE. `world_outcome` attClass: the horse the partner rides is a
+  mirror. No new op (RIDE_FAST kind 3 with id 6656 on today's schema) and no world note.
+- **Hidden runs (queue, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed
+  afgh-ledge`, slim archives in `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).** `05232637` (lab): the viewer
+  placed its horse 60 times a second but the rider stayed hidden (the placement was noted on another clock) and
+  `placebehind` refuses a mounted target. `3d1439e6` (lab, every require passed): the first E mounted each time, the
+  horse stood at the dismount spot on both screens, the hold blocked E, but the rider showed for one tick only (the act
+  sample went invalid once body 1 was unrealized: an empty saddle in the frames). **`3b2f0955` (lab) and `9d98fa2c`
+  (play) passed with no expect failure [O both copies, both role orders, frames looked at]:** `partner_mount=show`,
+  then `partner_overlay` playing `stateRideOnIdle` for the 21-22 s rides and released at the dismount; frames on the
+  guest's screen of the host seated at idle, walk, trot and gallop, and on the host's screen of the guest seated at idle,
+  walk, trot and gallop; the final pose equal on both copies' logs and the horse beside the dismounted rider in the
+  frames; the first E mounted in (a) by the host, in (b) by the guest and at the end by the host; the ride hold
+  (`horse_hold; step=action_masked`) left `localMounted=0` after E beside the ridden horse. Placement stats: 60
+  places a second, anchored after the first 2 s, gap 1-48 cm, the census readback 30 cm / 20-45 cm up off each write
+  (steady), no `crash_probe=av`, no `two_drivers`.
+- **Not proven [U].** The `leap` counter (the readback offset rising over 0.3 m between two frames) reads 0-3 per 2 s
+  window; no hop shows in any frame. The guest loading the host's horse from the seeds (D-H1) without
+  `companion_host_owned`; the horse's legs while placed (they may slide); a jump; E19-horse (guards shooting the
+  unridden horse on the viewer's copy); the key-off live run (the Lua check keeps the `not_mirror` refusal); a two-PC
+  session. D-Walker riders stay hidden.
+- **Checks.** Failing-first pairs 8f80a855/03ede6e1, 934d6692/7a82836e, fbbc1cf6/99fd6250, 69cebd1c/6c7fc4c5 (the gun-profile flip).
+  `tools/build.ps1 -Jobs 4`: 352/352. Generators --check: horse_drive ok; carry_info / sleep_plugin differ and
+  native_ui / teammate_targeting need local evidence, as on the base. Merging after M7: the world chunk lists
+  (CMake, bootstrap, composed checks), the `game_script_observer.cpp` registration line, `partner_driver.cpp` and the
+  worker allow-lists.
+
 ## November 4, 2026: horse probes P0..P5 ("Saddle Up" round 1, `wp/horse`, lab only; players get nothing new yet)
 
 The user approved the two-on-one-horse plan (scratchpad `horse/horse-plan.md`) with its defaults: D-H1 yes (the host's

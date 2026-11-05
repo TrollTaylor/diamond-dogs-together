@@ -339,6 +339,38 @@ RIDE_BODY (user decision 2026-10-22, section 2) no longer moves the viewer's own
 `5a044a4d` confirm it: the Part 3 behaviour of the first four runs (the viewer's horse in the air, the partner's first
 E finding no horse) is gone.
 
+## 10. Shared D-Horse (horse plan M1, lab key `world_horse_share`, on with the gun profile)
+
+The viewer's copy now holds a body for the partner's horse: its own D-Horse (index 0, 6656) is moved under the rider.
+- **Wire.** The rider's copy streams its census pose (`MGS_COOP_HORSE_DRIVE_V1 read`) in RIDE_FAST (op 44, kind 3, id
+  6656, 20 Hz) and one final reliable RIDE_BODY (op 42, kind 1, rider 65534) at the dismount
+  (`lua/coop/world_horse_share.lua`). A copy without the key drops 6656 from RIDE_FAST and refuses RIDE_BODY
+  `not_mirror`, as before.
+- **Placement.** The viewer renders the track 100 ms behind and places its 6656 every frame through
+  `MGS_COOP_HORSE_DRIVE_V1 place` (`native/horse_drive.cpp`): only the pose part of the D-Horse call-enter
+  (`0x140E6AA90`, state 2 enter): census pose[0] = x, y, z, yaw, and the CS transform write
+  `(receiver+0x110[slot / receiver+0xF0])+0x10` (CS vtable `0x1422E6070`) `vt+0xA8` (`0x140AF35F0`) with the
+  call-enter's own matrix (rows (cos,0,-sin,0) (0,1,0,0) (sin,0,cos,0) (x,y,z,1)). It never sets `rec+0x2E3/+0x2E4`
+  (no call run), and refuses while this copy's player rides the horse (`rec+0x2DD`: the rider beats the owner) or a
+  call is pending. Contract: `tools/generate_horse_drive_contract.py` (4 sites, 4 slots). The census reads back about
+  0.3 m off in xz and 0.2-0.45 m above each write (the unridden census over the ridden one; P1), steadily.
+- **The rider.** With the horse placed under 500 ms ago, the ride wire's live ON_HORSE (or act 121) shows body 1
+  (`partner_ride_wire::HorseRider`, Visibility::horse) instead of the mount hide; the DM overlay's horse map
+  (`partner_dm_overlay` In::horse, MapHorse) seats it in `stateRideOnIdle` for the whole ride, and the fallback xform
+  keeps it on the rider's stream. Once body 1 is realized and loaded the horse is anchored under it
+  (`horse_drive::HorseUnderRider`, the P2 seat 0.10 m forward / 0.49 m up; only within 1.5 m of the stream), so the rider
+  sits in the saddle on this screen whatever the two streams' delays are.
+- **Handoff.** Within 4 m of a horse the partner rides, an ACTION-only pad mask (`MgsCoopHorseHold`) stops a second
+  driver (probe P5); it goes with the final pose, and the first E mounts the horse where it was left. Both players
+  riding at once (`step=two_drivers`) places nothing. A census generation change, a stale track (1.5 s) or a context
+  change ends the ride. Travel / Bring partner here and the guest's checkpoint wait while anyone rides it
+  (`checkpoint_wait; reason=horse`). On this copy a hit by the horse the partner rides counts as `mirror`.
+- **Proof.** `tools/worker/scenarios/horse-shared.txt` (lab) and `horse-shared-play.txt` (play): runs `3b2f0955`
+  (lab) and `9d98fa2c` (play, `-WanSim bad`), both copies, both role orders.
+- **Not yet.** The guest loading the host's horse from the seeds (D-H1) runs only with `companion_host_owned` (the
+  module's hold gains HORSE); without it each copy's own D-Horse stands in. No gait on the rider, no type-13 DM anchor,
+  no horse damage protection on the viewer's copy (E19-horse not observed), no D-Walker.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed
