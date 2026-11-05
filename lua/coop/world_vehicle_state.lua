@@ -402,6 +402,172 @@ function W.tick(...)
   if not ok then fail(err) end
 end
 
+-- Enemy round 8 B (design 7.21, protocol 38; native lab key lrrp_follow, off unless named): the host streams its LRRP
+-- trucks (LRRP_FAST 93: 10 Hz moving, 1 Hz still); the guest's copy, moving or manned there, ForceStop + SetPosition
+-- each frame (riders ride along); still and empty: ForceStop off (its crew may get out), put back > 3 m once / 30 s.
+local LF = {OP = 93, SEND_MS = 50, MOVE_MS = 100, REST_MS = 1000, STALE_MS = 3000, JUMP_MM = 5000, SETTLE_MM = 3000,
+  SETTLE_MS = 30000, MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400}
+S.lf = LF
+W.OP.LRRP_FAST = LF.OP
+function LF.reset() LF.cfg, LF.askAt, LF.tr, LF.hs, LF.next, LF.refused = nil, nil, {}, {}, 0, {} end
+LF.reset()
+function LF.on()
+  if not S.on() then return false end
+  local t = now()
+  if LF.cfg == nil and (not LF.askAt or t - LF.askAt >= 5000) then
+    LF.askAt = t
+    local ok, r = pcall(W.receipt, "return 'MGS_COOP_LRRP_CFG_V1'")
+    if ok and (r == 0 or r == 1) then LF.cfg = r == 1 end
+  end
+  return LF.cfg == true
+end
+local function riders(id)
+  local r, n, s = send(id, {id = "GetRiderId"}), 0, ""
+  if type(r) == "table" then
+    for _, v in pairs(r) do
+      if integer(v, 0, NULL - 1) then
+        n = n + 1
+        local h = type(W.byId) == "table" and W.byId[v]
+        local okP, p = pcall(W.api.send, v, {id = "GetPosition"})
+        local okX, x, z = pcall(function() return p:GetX(), p:GetZ() end)
+        s = s .. fmt("%s%s@%s", n > 1 and "|" or "", h and fmt("%.0f", h) or tostring(v), okP and okX and fmt("%.1f,%.1f", x, z) or "?")
+      end
+    end
+  end
+  return n, s
+end
+local function ridden(id)
+  local g, rp = G(), W.ridePose
+  if g and type(g.localVehicle) == "function" and g.localVehicle() == id then return "local" end
+  local tr = type(rp) == "table" and type(rp.fast) == "table" and rp.fast.tracks
+  if type(tr) == "table" and tr[id] ~= nil then return "partner" end
+end
+function LF.hostTick(t)
+  if t < LF.next then return end
+  LF.next = t + LF.SEND_MS
+  local best, bh
+  for id in pairs(S.lrrp) do
+    local h = LF.hs[id] or {sent = -1e9, v = 0, logAt = -1e9}
+    LF.hs[id] = h
+    local x, y, z, yaw
+    if S.alive(id) and not ridden(id) then x, y, z, yaw = S.pose(id) end
+    h.x, h.y, h.z, h.yaw = x, y, z, yaw
+    if x then
+      if not h.pt or t - h.pt >= 250 then
+        if h.pt and t > h.pt then h.v = math.min(65535, floor(sqrt((x - h.px) ^ 2 + (z - h.pz) ^ 2) * 1000 / (t - h.pt))) end
+        h.px, h.pz, h.pt = x, z, t
+      end
+      if t - h.sent >= (h.v >= LF.MOVING and LF.MOVE_MS or LF.REST_MS) and (not bh or h.sent < bh.sent) then best, bh = id, h end
+    end
+  end
+  if not best then return end
+  local n, list = riders(best)
+  local moving = bh.v >= LF.MOVING
+  if W.tx(LF.OP, W.tick32(t), best, bh.x, bh.y, bh.z, bh.yaw, bh.v, math.min(n, 8), moving and 1 or 0) ~= true then return end
+  bh.sent, bh.n = t, (bh.n or 0) + 1
+  if t - bh.logAt >= ((moving or n > 0) and 250 or 5000) then
+    bh.logAt = t
+    L("event=lrrp;step=host;id=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%d;v=%d;riders=%d;r=%s;n=%d", best, bh.x / 1000, bh.y / 1000, bh.z / 1000,
+      bh.yaw, bh.v, n, list, bh.n)
+  end
+end
+local function force(id, tr, on, why)
+  if tr.stop == on then return end
+  tr.stop = on
+  send(id, {id = "ForceStop", enabled = on})
+  L("event=lrrp;step=%s;id=%d;why=%s", on and "stop" or "release", id, why)
+end
+-- An error turns lrrp_follow off, never VEHICLE_STATE.
+local function lfail(err)
+  LF.cfg = false
+  pcall(function() for id, tr in pairs(LF.tr) do if tr.stop then send(id, {id = "ForceStop", enabled = false}) end end end)
+  LF.tr = {}
+  L("event=lrrp;step=error;msg=%s", string.sub(tostring(err), 1, 100))
+end
+H[LF.OP] = function(...)
+  local ok, err = pcall(function(v)
+  if W.host or type(v) ~= "table" or #v < 9 or not LF.on() or not linked() then return end
+  local id, t = v[2], now()
+  if not S.lrrp[id] then
+    if not LF.refused[id] then LF.refused[id] = true; L("event=lrrp;step=refused;id=%d;reason=not_lrrp", id) end
+    return
+  end
+  local tr = LF.tr[id]
+  if not tr then tr = {jumps = 0, n = 0, settleAt = -1e9, logAt = -1e9}; LF.tr[id] = tr end
+  local b = tr.b
+  if b and ((v[1] - b.tick) % 4294967296 >= 2147483648 or v[1] == b.tick) then return end
+  local off = t - v[1]
+  if not tr.off or off < tr.off or off - tr.off > 10000 then tr.off = off else tr.off = tr.off + (off - tr.off) * 0.02 end
+  tr.a, tr.b, tr.at = b, {tick = v[1], x = v[3], y = v[4], z = v[5], yaw = v[6], v = v[7], n = v[8], f = v[9]}, t
+  end, ...)
+  if not ok then lfail(err) end
+end
+function LF.frame(t)
+  for id, tr in pairs(LF.tr) do
+    local b, a = tr.b, tr.a
+    local busy = ridden(id)
+    if t - tr.at > LF.STALE_MS or busy then
+      force(id, tr, false, busy and "ride_" .. busy or "stale")
+      if not busy then LF.tr[id] = nil; L("event=lrrp;step=stale;id=%d;jumps=%d;n=%d", id, tr.jumps, tr.n) end
+    else
+      local ahead = math.min(t - (b.tick + tr.off) + LF.AHEAD_MS, LF.MAX_AHEAD_MS)
+      local tx, ty, tz = b.x, b.y, b.z
+      local dt = a and (b.tick - a.tick) % 4294967296
+      if dt and dt >= 20 and dt <= 1500 and b.f % 2 == 1 then
+        tx, ty, tz = tx + (b.x - a.x) * ahead / dt, ty + (b.y - a.y) * ahead / dt, tz + (b.z - a.z) * ahead / dt
+      end
+      local follow = b.f % 2 == 1 or b.n > 0
+      local x, _, z = S.pose(id)
+      local d = x and hdist(x, z, tx, tz) or -1
+      local place = false
+      if follow then
+        force(id, tr, true, b.n > 0 and "riders" or "moving")
+        place = x ~= nil and d >= 1
+      else
+        force(id, tr, false, "rest")
+        if x and d > LF.SETTLE_MM and t - tr.settleAt >= LF.SETTLE_MS then
+          tr.settleAt, place = t, true
+          L("event=lrrp;step=settle;id=%d;d_m=%.1f", id, d / 1000)
+        end
+      end
+      local rp = W.ridePose
+      if place and type(rp) == "table" and rp.place and rp.place(id, floor(tx), floor(ty), floor(tz), b.yaw) then
+        tr.n = tr.n + 1
+        if d > LF.JUMP_MM then
+          tr.jumps = tr.jumps + 1
+          L("event=lrrp;step=jump;id=%d;d_m=%.1f;mode=%s;jumps=%d", id, d / 1000, follow and "follow" or "rest", tr.jumps)
+        end
+      end
+      if t - tr.logAt >= (follow and 250 or 2000) then
+        tr.logAt = t
+        local x2, y2, z2 = S.pose(id)
+        local n, list = riders(id)
+        L("event=lrrp;step=follow;id=%d;mode=%s;x=%.2f;y=%.2f;z=%.2f;tx=%.2f;tz=%.2f;d_m=%.2f;v=%d;rh=%d;rl=%d;r=%s;jumps=%d;n=%d", id,
+          follow and "follow" or "rest", (x2 or 0) / 1000, (y2 or 0) / 1000, (z2 or 0) / 1000, tx / 1000, tz / 1000, d / 1000, b.v, b.n, n,
+          list, tr.jumps, tr.n)
+      end
+    end
+  end
+end
+local function releaseAll(why)
+  for id, tr in pairs(LF.tr) do force(id, tr, false, why) end
+  LF.tr = {}
+end
+W.startHooks[#W.startHooks + 1] = function()
+  pcall(releaseAll, "start")
+  LF.reset()
+  if LF.on() then L("event=lrrp;step=on;role=%s", W.host and "host" or "guest") end
+end
+if type(W.unpairedHooks) == "table" then W.unpairedHooks[#W.unpairedHooks + 1] = function() pcall(releaseAll, "unpaired") end end
+W.stopHooks[#W.stopHooks + 1] = function() pcall(releaseAll, "stop") end
+local tickLF = W.tick
+function W.tick(...)
+  if tickLF then tickLF(...) end
+  if not LF.on() or not linked() then return end
+  local ok, err = pcall(function() if W.host then LF.hostTick(now()) else LF.frame(now()) end end)
+  if not ok then lfail(err) end
+end
+
 -- Lab levers (debug_vehicle.lua): this copy only.
 local function target(arg)
   if arg == "nearest" then

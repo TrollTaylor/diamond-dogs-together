@@ -536,6 +536,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.drive_vert_given = true;
         if (!ok) result.drive_vert = false;
     }
+    else if (Equals(key, "lrrp_follow")) {
+        // Enemy round 8 track B (lab and play; docs/world-sync-design.md 7.21); a named value records _given, an invalid one
+        // is named and off. Off unless named: no hidden run has passed its truck gate yet.
+        ok = ParseBool(value, result.lrrp_follow);
+        result.lrrp_follow_given = true;
+        if (!ok) result.lrrp_follow = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);
