@@ -423,8 +423,8 @@ void TestShot() {
     const float right[3] = {-1.f, 0.f, 0.f};  // the horse's right at yaw 0 (partner_seat_shot Axes)
     pl = pss::PlanShot(pub, start, right);
     Check(pl.move && pl.t > 0.5f && pl.t < 0.75f, "to the side: past the horse's flank within 0.75 m");
-    const float high[3] = {0.f, 2.5f, -0.25f};
-    pl = pss::PlanShot(pub, high, ahead);
+    const float behind[3] = {0.f, 1.3f, -2.0f};  // behind the tail, the line crossing the horse
+    pl = pss::PlanShot(pub, behind, ahead);
     Check(!pl.move && std::strcmp(pl.result, "outside") == 0, "a start outside the box is never moved");
     const float driver_head[3] = {0.f, 0.49f + 1.0f, 0.1f};
     pl = pss::PlanShot(pub, driver_head, ahead);

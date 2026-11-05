@@ -61,7 +61,7 @@ end
 function P.keyOn()
  if P.key == nil then
   local r = receipt("cfg")
-  if r and (r.on == 0 or r.on == 1) then P.key = r.on == 1 and r.pillion == 1 end
+  if r and (r.on == 0 or r.on == 1) then P.key, P.shot = r.on == 1 and r.pillion == 1, r.shot == 1 end
  end
  return P.key == true
 end
@@ -162,7 +162,7 @@ local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
- P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot = nil, nil, nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot, P.boxed = nil, nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -277,6 +277,11 @@ function P.placed(x, y, z, yaw)
  trail(x, y, z)
  local sx, sy, sz, a = seatPoint(P.h)
  pin(sx, sy, sz, a)
+ -- M4 (world_horse_shot): the placed horse's box (mm, mrad) for the seated-shot hook (this copy's own bullets start past it).
+ if P.shot then
+  local r = receipt(fmt("pbox %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(yaw)))
+  if not P.boxed then P.boxed = true; log(fmt("step=shot_box;ok=%d;", r and r.ready == true and 1 or 0)) end
+ end
 end
 local function seatedTick(now)
  if not S.track then return stop("track_end") end
@@ -446,8 +451,8 @@ function P.tick(now)
  if s == "driver" then return driverTick(now) end
 end
 function P.status()
- return fmt("pillion;state=%s;key=%d;token=%d;role=%d;mode=%d;masked=%d", P.state, P.keyOn() and 1 or 0, P.token or 0, W.role or 0,
-  V.mode, P.masked and 1 or 0)
+ return fmt("pillion;state=%s;key=%d;token=%d;role=%d;mode=%d;masked=%d;shot=%d", P.state, P.keyOn() and 1 or 0, P.token or 0, W.role or 0,
+  V.mode, P.masked and 1 or 0, P.shot and 1 or 0)
 end
 local tick = W.tick
 function W.tick(...)
