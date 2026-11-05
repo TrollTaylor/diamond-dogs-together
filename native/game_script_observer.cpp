@@ -5187,7 +5187,7 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
         hd::SeatScope ss{};
         ss.pillion=labc.world_horse_pillion;ss.pins=sc.pins;ss.field=sc.field;ss.riding=a.occupied && a.rider==0;
         if(const char* why=hd::SeatRefusal(ss)) return refuse(why);
-        hd::NoteSeat(q.back,q.up,mgscoop::partner_net::NowMs());
+        hd::NoteSeat(q.back,q.up,q.seat_pose!=0,mgscoop::partner_net::NowMs());
         if(!horse_drive_log.seats++ || horse_drive_log.last) {
             LogFormat("horse_drive=seat1; n=%u; back_mm=%ld; up_mm=%ld\r\n",horse_drive_log.seats,long(q.back),long(q.up));
             horse_drive_log.last=nullptr;

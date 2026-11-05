@@ -25,7 +25,7 @@
 //   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1} | refusal  (M3, world_horse_pillion: the
 //     local E before the pad masks: (src+0x48 ?: PP+0x460) & ACTION without & ~PP+0x28. The ride hold's ACTION mask
 //     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.)
-//   seat1 <mission> <epoch> <back_mm> <up_mm>   -> {ready=true,seat=1} | refusal  (M3: this copy's player rides the
+//   seat1 <mission> <epoch> <back_mm> <up_mm> <pose 0|1> -> {ready=true,seat=1} | refusal  (M3: this copy's player rides the
 //     shared horse with the partner behind; leases kSeatMs: the partner driver draws body 1 at RearSeat of this copy's
 //     own body 0 every tick, the DM overlay seating it, instead of the partner's stream.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
@@ -59,6 +59,7 @@ struct Request {
     std::uint8_t anchor{};
     std::uint8_t reset{};  // hold0: bit 0 A0.vt+0x80, bit 1 C0.vt+0x90 after the move (Warp's resets, C0 first)
     std::int32_t back{}, up{};  // seat1: the rear seat behind (0..1500 mm) and over (-500..1500 mm) the driver's root
+    std::uint8_t seat_pose{};   // seat1: 1 the DM overlay seats body 1 (stateRideOnIdle), 0 not (a lab test)
 };
 // The text after the prefix. Missions 30010 / 30020 only (free roam; Mother Base has no horse), epoch 1..65535,
 // |x|,|y|,|z| <= 1e9 mm, |yaw| <= 31416 mrad, anchor 0 or 1.
@@ -93,9 +94,9 @@ const char* SeatRefusal(const SeatScope& s) noexcept;
 bool RawAction(std::uint32_t src_held, std::uint32_t kb_held) noexcept;
 // The rear seat: back metres behind the rider root along yaw's forward (sin, cos) and up metres over it.
 void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&out)[3]) noexcept;
-void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, std::uint64_t now_ms) noexcept;
-// The live lease (kSeatMs after the last seat1) and its offsets in metres.
-bool SeatLease(std::uint64_t now_ms, float& back, float& up) noexcept;
+void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool pose, std::uint64_t now_ms) noexcept;
+// The live lease (kSeatMs after the last seat1), its offsets in metres and whether the overlay seats body 1.
+bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcept;
 // hold0's two engine calls: the T vtable and its +0x70 / +0x68 targets, pinned in native/partner_player_contract.hpp
 // (vtable_slots {0x24c8ef0,0x70,0x1ad4450} / {0x24c8ef0,0x68,0x1ad56d0}, code_sites 0x1ad4450 / 0x1ad56d0: the partner
 // code gate checks them at start); HoldBody refuses any other vtable or target.

@@ -33,9 +33,9 @@ local function fixture(o)
             if not f.padOk then return {ready = false, reason = "off"} end
             return {ready = true, e = f.e and 1 or 0, masked = 1}
         end
-        local sb, su = verb:match("^seat1 30010 7 (%d+) (%-?%d+)$")
+        local sb, su, sp = verb:match("^seat1 30010 7 (%d+) (%-?%d+) (%d)$")
         if sb then
-            f.seats[#f.seats + 1] = {tonumber(sb), tonumber(su)}
+            f.seats[#f.seats + 1] = {tonumber(sb), tonumber(su), tonumber(sp)}
             if not f.seatOk then return {ready = false, reason = "not_riding"} end
             return {ready = true, seat = 1}
         end
@@ -140,8 +140,11 @@ h.tick(33)
 -- Runs 306525db / c4428efa (attempt 2): with body 1 0.3 m over the driver's root the driver's horse still stood still
 -- (census static 12-17 s under the ride keys) and the passenger's copy's horse fell unconscious: the bodies go clear of the
 -- horse (body 1 0.7 m over the driver's root, body 0 1.2 m over the placed root) to test the collision.
-check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 700, "the driver leases seat1 450 700 every tick")
-check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=700"), "step=seat1 ok")
+-- Runs bdd49a57 / a295d660 (attempt 3): clear of the horse the driver's horse still stood still (host driving) and the
+-- passenger's copy's horse still fell: not the collision; back to 0.3 m / 0.8 m (the better look).
+check(#h.seats >= 1 and h.seats[#h.seats][1] == 450 and h.seats[#h.seats][2] == 300 and h.seats[#h.seats][3] == 1,
+    "the driver leases seat1 450 300 1 every tick (the overlay seat on)")
+check(h.logged("step=seat1;ok=1;back_mm=450;up_mm=300;pose=1"), "step=seat1 ok")
 deliver(g, grant)
 check(g.P.state == "seated" and g.logged("step=seated;seat=1;how=grant;token=1"), "the guest is seated")
 local mask = g.masks[#g.masks]
@@ -152,8 +155,8 @@ g.ride(1)
 local hold = g.holds[#g.holds]
 local pl = g.places[#g.places]
 -- Run ba6b4bb5: body 0 0.6 m over the root stood on the ground 1-1.8 m under its target (seat_pin dy_cm 99-176): 0.8 m.
-check(hold and hold[1] == pl.x and hold[2] == pl.y + 1200 and hold[3] == pl.z - 350 and hold[5] == 1,
-    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 1.2 m up), hold0 with the A0 reset")
+check(hold and hold[1] == pl.x and hold[2] == pl.y + 800 and hold[3] == pl.z - 350 and hold[5] == 1,
+    "body 0 every frame on the rear seat of the placed horse (0.35 m behind the root, 0.8 m up), hold0 with the A0 reset")
 check(g.P.busy() and g.S.busy(), "seated: busy (Travel / Bring wait)")
 -- KEEP both ways at 1 Hz.
 local n0 = #g.tx
@@ -165,6 +168,17 @@ for _ = 1, 25 do h.tick(50) end
 for _, t in ipairs(h.seatTx()) do if t[5] == 6 then deliver(g, t) end end
 for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
 check(h.P.state == "driver" and g.P.state == "seated", "KEEP holds both sides")
+-- The lab lever's seat flag (pillion_pose ... 0): the passenger's KEEP asks the driver's copy for no overlay seat.
+check(g.P.setPose(350, 800, 2, 450, 300, 0), "setPose with the seat flag")
+g.ride(25)
+for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
+h.tick(33)
+check(h.seats[#h.seats][3] == 0 and h.logged("pose=0"), "the driver's lease follows the passenger's seat flag")
+g.P.setPose(350, 800, 2, 450, 300, 1)
+g.ride(25)
+for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
+h.tick(33)
+check(h.seats[#h.seats][3] == 1, "and back")
 g.ride(10)
 check(g.logged("step=seat_pin;"), "step=seat_pin every second")
 check(g.logged("event=horse_pillion;step=pad;e=1;"), "the raw E's changes are logged (capped)")

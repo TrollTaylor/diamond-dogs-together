@@ -5551,7 +5551,7 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     release_map = false;
     const bool pending = d.overlay_pending;
     d.overlay_pending = false;
-    if (set.noverlay == PartnerNativeOverlay::off && !set.fulton_sync && !(set.horse_share && m.visibility.horse) && !m.pillion &&
+    if (set.noverlay == PartnerNativeOverlay::off && !set.fulton_sync && !(set.horse_share && m.visibility.horse) && !m.pillion_pose &&
         !pending && !pdo::Active(m.overlay)) {
         m.overlay_out = pdo::Out{};
         return false;
@@ -5564,7 +5564,7 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     // Horse plan M1: the shared-horse rider is shown this tick (partner_ride_wire Visibility::horse).
     in.horse = set.horse_share && m.visibility.horse;
     // Horse plan M3: body 1 rides behind this copy's player (the seat1 lease): seated whatever the remote's act.
-    in.pillion = m.pillion;
+    in.pillion = m.pillion_pose;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -7885,10 +7885,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // (RearSeat: back behind its root along its yaw, up over it), not the partner's stream, whose copy pins it on a horse
     // placed a latency behind; the DM overlay seats it (In::pillion). The lease's end hands body 1 back to the stream.
     {
-        bool pillion = false;
+        bool pillion = false, seat_pose = true;
         float back = 0.f, up = 0.f, lp[4]{}, lq[4]{};
         if (set.horse_share && set.source == PartnerSource::net && st.local == 0 && h.read_local_body &&
-            horse_drive::SeatLease(now, back, up) && h.read_local_body(h.context, st, lp, lq)) {
+            horse_drive::SeatLease(now, back, up, seat_pose) && h.read_local_body(h.context, st, lp, lq)) {
             const float yaw = partner::QuatToYaw(lq);
             const float rider[3] = {lp[0], lp[1], lp[2]};
             float seat[3]{};
@@ -7908,6 +7908,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                            pose.x_mm, pose.z_mm);
         }
         m.pillion = pillion;
+        m.pillion_pose = pillion && seat_pose;
     }
     dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
     // Sender: publish the local body facing (LocalBodyYaw), else vars.playerRotY.

@@ -67,7 +67,8 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
     } else if (word("seat1")) {
         r.verb = Verb::seat1;
-        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(0, 1500, seat[0]) || !number(-500, 1500, seat[1]))
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(0, 1500, seat[0]) || !number(-500, 1500, seat[1]) ||
+            !number(0, 1, v[6]))
             return false;
     } else if (word("place")) {
         r.verb = Verb::place;
@@ -142,15 +143,16 @@ void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&
     out[1] = rider[1] + up;
     out[2] = rider[2] - back * std::cos(yaw);
 }
-void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, std::uint64_t now_ms) noexcept {
+void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool, std::uint64_t now_ms) noexcept {
     g_seat_back = static_cast<float>(back_mm) / 1000.f;
     g_seat_up = static_cast<float>(up_mm) / 1000.f;
     g_seat_ms = now_ms ? now_ms : 1;
 }
-bool SeatLease(std::uint64_t now_ms, float& back, float& up) noexcept {
+bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcept {
     if (!g_seat_ms || now_ms < g_seat_ms || now_ms - g_seat_ms > kSeatMs) return false;
     back = g_seat_back;
     up = g_seat_up;
+    pose = true;
     return true;
 }
 

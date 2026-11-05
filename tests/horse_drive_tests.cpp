@@ -270,14 +270,15 @@ void TestPillion() {
     hd::Request r{};
     Check(Parse("pad 30010 7", r) && r.verb == hd::Verb::pad && r.mission == 30010 && r.epoch == 7, "pad");
     Check(!Parse("pad 30050 7", r) && !Parse("pad 30010 0", r) && !Parse("pad 30010 7 1", r), "pad: free roam, epoch, exact grammar");
-    Check(Parse("seat1 30020 9 450 0", r) && r.verb == hd::Verb::seat1 && r.mission == 30020 && r.epoch == 9 && r.back == 450 &&
-              r.up == 0,
-          "seat1 with the default rear seat");
-    Check(Parse("seat1 30010 1 0 -500", r) && r.back == 0 && r.up == -500 && Parse("seat1 30010 1 1500 1500", r) && r.back == 1500 &&
+    Check(Parse("seat1 30020 9 450 0 1", r) && r.verb == hd::Verb::seat1 && r.mission == 30020 && r.epoch == 9 && r.back == 450 &&
+              r.up == 0 && r.seat_pose == 1,
+          "seat1 with the default rear seat, the overlay seat on");
+    Check(Parse("seat1 30020 9 450 0 0", r) && r.seat_pose == 0 && !Parse("seat1 30020 9 450 0 2", r), "seat1: the pose flag 0 or 1");
+    Check(Parse("seat1 30010 1 0 -500 1", r) && r.back == 0 && r.up == -500 && Parse("seat1 30010 1 1500 1500 1", r) && r.back == 1500 &&
               r.up == 1500,
           "seat1 bounds: back 0..1500, up -500..1500");
-    Check(!Parse("seat1 30010 1 1501 0", r) && !Parse("seat1 30010 1 -1 0", r) && !Parse("seat1 30010 1 450 -501", r) &&
-              !Parse("seat1 30010 1 450", r) && !Parse("seat1 30050 1 450 0", r),
+    Check(!Parse("seat1 30010 1 1501 0 1", r) && !Parse("seat1 30010 1 -1 0 1", r) && !Parse("seat1 30010 1 450 -501 1", r) &&
+              !Parse("seat1 30010 1 450 0", r) && !Parse("seat1 30050 1 450 0 1", r),
           "seat1: out of bounds, short, Mother Base");
     Check(hd::kRearBackMm == 450 && hd::kRearUpMm == 0 && hd::kSeatMs == 300, "rear seat 0.45 m behind the rider, a 300 ms lease");
     // The PlayerPad held getter's word choice without the mask (probe P5: the ACTION mask hides E from the downed poll).
@@ -295,14 +296,19 @@ void TestPillion() {
     Check(hd::SeatRefusal(s) == nullptr, "seat1: lease");
     hd::Reset();
     float back = -1.f, up = -1.f;
-    Check(!hd::SeatLease(1000, back, up), "no lease yet");
-    hd::NoteSeat(450, 100, 1000);
-    Check(hd::SeatLease(1000, back, up) && Near(back, 0.45f) && Near(up, 0.1f), "a lease carries the offsets in metres");
-    Check(hd::SeatLease(1000 + hd::kSeatMs, back, up) && !hd::SeatLease(1001 + hd::kSeatMs, back, up), "live for kSeatMs");
-    Check(!hd::SeatLease(999, back, up), "a clock that went back has no lease");
-    hd::NoteSeat(450, 0, 2000);
+    bool pose = false;
+    Check(!hd::SeatLease(1000, back, up, pose), "no lease yet");
+    hd::NoteSeat(450, 100, true, 1000);
+    Check(hd::SeatLease(1000, back, up, pose) && Near(back, 0.45f) && Near(up, 0.1f) && pose, "a lease carries the offsets in metres");
+    Check(hd::SeatLease(1000 + hd::kSeatMs, back, up, pose) && !hd::SeatLease(1001 + hd::kSeatMs, back, up, pose), "live for kSeatMs");
+    Check(!hd::SeatLease(999, back, up, pose), "a clock that went back has no lease");
+    // Runs bdd49a57 / a295d660: the host's horse stood still under the ride keys while the overlay seated body 1 behind
+    // it; a lease without the overlay seat (a lab test) keeps body 1 at the rear seat in its own pose.
+    hd::NoteSeat(450, 300, false, 1500);
+    Check(hd::SeatLease(1500, back, up, pose) && !pose && Near(up, 0.3f), "a lease without the overlay seat");
+    hd::NoteSeat(450, 0, true, 2000);
     hd::Reset();
-    Check(!hd::SeatLease(2000, back, up), "reset ends the lease");
+    Check(!hd::SeatLease(2000, back, up, pose), "reset ends the lease");
     const float rider[3] = {10.f, 5.f, 20.f};
     float seat[3]{};
     hd::RearSeat(rider, 0.f, 0.45f, 0.1f, seat);

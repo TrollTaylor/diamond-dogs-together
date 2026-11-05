@@ -825,6 +825,7 @@ struct Mission {
     // Horse plan M3: body 1 rides behind this copy's player this tick (horse_drive::SeatLease; pose = the rear seat).
     bool pillion;
     bool pillion_logged;
+    bool pillion_pose;  // ... and the DM overlay seats it (the lease's pose flag)
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
     LogCap census_cap;
