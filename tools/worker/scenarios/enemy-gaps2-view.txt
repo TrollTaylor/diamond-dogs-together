@@ -1,0 +1,40 @@
+# Enemy gaps 2 (place_reach, docs/world-sync-design.md 7.17), the calm view: after enemy-integ-carry.txt and before
+# enemy-latch-alert.txt (every guard still ignores the players). The host moves to a ground point with a view of the
+# outpost wall (488.53, 268.24, 2206.17: placebehind settled the host there in run 3c9d1250, whose host w-3 showed guards
+# 58-70 m away by the wall), the guest stands 6 m from guard 667680985 inside afgh_field_cp (about 90 m from that
+# point: guest-owned, so with place_reach the guest's M4 stream drives the host's copy of him, beyond the old 60 m).
+# Both cameras turn to him (aim_ent) through binoculars and both copies capture at the same moment (v-1, v-2), then the
+# same for 1740692850 (v-3). The host goes back to the quiet spot 50 m south for the ALERT part.
+logmark both
+host run teleport 488.53 268.24 2206.17 -122
+wait 2500
+host run position
+guest run enemy goto 667680985 6
+wait 3000
+stance guest stand
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture v-1
+wait 2000
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture v-2
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture v-3
+host run enemy info 667680985
+guest run enemy info 667680985
+host run teleport 421.16 269.2 2084.42 0
+wait 3000
