@@ -1,3 +1,6 @@
+# M2g attempt 3 (lab 39fff762 (b): the recall after the teleport left the horse where (a) ended, by a rock wall, and
+# the guest's R there never shouldered the downed host): parts 2+ start at the horse where the last part left it (no
+# teleport, no recall), and the rides are shorter (about 100 m) so they end in the open.
 # M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
 # 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
 # front of them, facing away from the horse.
@@ -11,16 +14,8 @@
 # Unconscious horse in either log). Then the guest's world link goes off: both copies lay the body beside the horse
 # (why=stream_lost on the host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and
 # h2c-dropped on both screens.
-# M2g: this part starts from the boot spot (both on foot, teleported back; the guest's horse called first).
 logmark both
 both debug godmode 1
-host debug teleport 805.0 342.1 1636.5 -60
-guest debug teleport 802.8 342.1 1637.8 119
-wait 3000
-guest run horse_spawn
-wait 3000
-host run horse_spawn
-wait 10000
 host run horse_status
 host require horse;selected=horse;available=1;actor0=6656;localMounted=0
 guest run horse_status
@@ -68,6 +63,9 @@ guest require cargo;state=cargo
 both capture h2c-loaded
 guest run cargo_status
 guest expect cargo;state=cargo;.*relie=1
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+host run horse_flank
+wait 1500
 logmark both
 host press e 150
 wait 2500

@@ -108,6 +108,9 @@ guest require cargo;state=cargo
 wait 1500
 both capture h2-loaded
 # The host's first E mounts the loaded horse.
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+host run horse_flank
+wait 1500
 logmark both
 host press e 150
 wait 2500
@@ -138,13 +141,6 @@ wait 300
 host capture h2-ride-gallop4
 guest capture h2-ride-gallop4-victim
 wait 600
-host hold w+shift 1500
-host hold w+shift 1500
-host hold w+shift 1500
-host hold w+shift 1500
-host hold w+shift+d 1500
-host hold w+shift+d 1500
-host hold w+shift 1500
 host hold w+shift 1500
 host hold w+shift 1500
 host release

@@ -1,3 +1,6 @@
+# M2g attempt 3 (lab 39fff762 (b): the recall after the teleport left the horse where (a) ended, by a rock wall, and
+# the guest's R there never shouldered the downed host): parts 2+ start at the horse where the last part left it (no
+# teleport, no recall), and the rides are shorter (about 100 m) so they end in the open.
 # M2g attempt 2 (play bb7dde83: the carrier's rifle put the host's horse Unconscious before the load, the aim ray on
 # 6656, so the first E did not mount it): the victim stands 8 m behind the carrier at the horse and the carrier 4 m in
 # front of them, facing away from the horse.
@@ -6,16 +9,8 @@
 # waits out its 1.5 s hold after its captures.
 # M2g: part 2 of 3 of the lab session (after horse-cargo.txt): order (b), the guest carrying the host, from the boot
 # spot; the same lines, frames and NEVER lines as (a) (horse-cargo.txt); the ride as (a)'s with the roles swapped.
-# M2g: this part starts from the boot spot (both on foot, teleported back; the guest's horse called first).
 logmark both
 both debug godmode 1
-host debug teleport 805.0 342.1 1636.5 -60
-guest debug teleport 802.8 342.1 1637.8 119
-wait 3000
-guest run horse_spawn
-wait 3000
-host run horse_spawn
-wait 10000
 host run horse_status
 host require horse;selected=horse;available=1;actor0=6656;localMounted=0
 guest run horse_status
@@ -69,6 +64,9 @@ host run cargo_status
 host require cargo;state=cargo
 wait 1500
 both capture h2b-loaded
+# M2g attempt 3 (play 624148f9: the carrier stood at the horse's head and this E did not mount): to its flank first.
+guest run horse_flank
+wait 1500
 logmark both
 guest press e 150
 wait 2500
@@ -98,13 +96,6 @@ wait 300
 guest capture h2b-ride-gallop4
 host capture h2b-ride-gallop4-victim
 wait 600
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift 1500
-guest hold w+shift+d 1500
-guest hold w+shift+d 1500
-guest hold w+shift 1500
 guest hold w+shift 1500
 guest hold w+shift 1500
 guest release
