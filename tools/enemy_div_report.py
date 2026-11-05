@@ -137,7 +137,10 @@ def analyse(host, guest):
         'soldier_warp_disabled': sum(1 for l in host + guest if 'soldier_warp=disabled' in l),
         'soldier_warp_soldier_latched': sum(1 for l in host + guest if 'soldier_warp=soldier_latched' in l),
         'fault': sum(1 for l in host + guest if 'refused=fault' in l or 'reason=fault' in l),
-        'game_over': sum(1 for l in host + guest if 'GameOver' in l or 'reason=game_over' in l),
+        # The mod's shared game over (world_recovery.lua: both players downed) logs step=shared_game_over on the host and
+        # step=game_over_applied on the guest (run 617311eb: missed by the old patterns).
+        'game_over': sum(1 for l in host + guest if 'GameOver' in l or 'reason=game_over' in l or
+                         'step=shared_game_over' in l or 'step=host_game_over' in l or 'step=game_over_applied' in l),
         'roster_mismatch': sum(1 for l in host + guest if 'roster_mismatch' in l),
         'overflow': 0,
         # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.

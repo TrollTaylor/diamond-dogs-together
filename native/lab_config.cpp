@@ -2052,6 +2052,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert follows the gun profile in lab and play since run 617311eb
+    // (named): 0 drive_sink on both copies (at the defaults 6348f361 / 41f2b07f / 31a799e3 / b77e2104 had one each, a
+    // driven copy 2.2-3.3 m under its target); the guest's copy of 1799112697, 5.64 m under its target at 0.86 m planar,
+    // was put on it and landed. A named 0 opts out.
+    if (!c.drive_vert_given) c.drive_vert = gun;
     // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach and body_dead stay off unless named. place_reach's runs
     // 9023e5c6, 8281b868, 3c9d1250 (named) and b77e2104 (on by default for that run) show it in both copies' logs (the
     // host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 / 2.63 m, 798b51dd without it 6.97 m; 0 latches),
