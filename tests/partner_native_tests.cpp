@@ -1646,7 +1646,79 @@ void TestReload() {
 
 // The weapon switch plan and the generalized gate (W4/W5).
 namespace ps = mgscoop::partner_slots;
+// A1 (enemy gaps, fb1101 friend session 30010): the plan was complete (873 alias of 46 in slot 1, 875 alias of 9 in
+// slot 2: map 0,1,2), yet one mismatch lasted 19.8 s: after a prone/dive body 1 dropped back to slot 0 while the
+// follower had spent its two writes of the (slot 2, seq 9) episode. The drift re-arm (partner_native_slot_rearm).
+void TestSlotEpisode() {
+    // The friend's plan (regression): body 36:1 / 46:4 / 9:2, remote bases 0 (871, type 1) / 46 / 9.
+    ps::PlanIn fin{};
+    fin.body_ok = true;
+    fin.body[0] = {true, 36, 1}; fin.body[1] = {true, 46, 4}; fin.body[2] = {true, 9, 2};
+    fin.remote_base[0] = 0; fin.remote_base[1] = 46; fin.remote_base[2] = 9;
+    fin.remote_type[0] = 1; fin.remote_type[1] = 4; fin.remote_type[2] = 2;
+    fin.remote_type_ok[0] = fin.remote_type_ok[1] = fin.remote_type_ok[2] = true;
+    fin.standin = true;
+    const ps::Plan fp = ps::MakePlan(fin);
+    Check(fp.ok_mask == 0x7 && fp.map[0] == 0 && fp.map[1] == 1 && fp.map[2] == 2 && fp.tier[0] == ps::Tier::sub &&
+              fp.tier[1] == ps::Tier::same && fp.tier[2] == ps::Tier::same, "friend plan: tiers sub,same,same, map 0,1,2");
+    Check(ps::Judge(ps::GateIn{873, 46, 46, false, true, 4}) == ps::Gate::match &&
+              ps::Judge(ps::GateIn{875, 9, 9, false, true, 2}) == ps::Gate::match, "873 on 46 and 875 on 9 match");
+    // Why a mismatch: the plan has no slot for the remote's (a missing stand-in), the body is in another slot, or the
+    // right slot holds another weapon.
+    Check(Is(ps::MismatchWhyName(ps::MismatchWhy(true, fp, 2, 0)), "slot"), "friend: remote slot 2, body slot 0 -> slot");
+    Check(Is(ps::MismatchWhyName(ps::MismatchWhy(true, fp, 2, 2)), "equip"), "the right slot, another weapon -> equip");
+    ps::Plan np = fp;
+    np.map[2] = ps::kNoSlot; np.ok_mask = 0x3;
+    Check(Is(ps::MismatchWhyName(ps::MismatchWhy(true, np, 2, 0)), "plan"), "no stand-in for slot 2 -> plan");
+    Check(Is(ps::MismatchWhyName(ps::MismatchWhy(false, fp, 2, 0)), "plan"), "no plan -> plan");
+    Check(Is(ps::MismatchWhyName(ps::MismatchWhy(true, fp, 3, 0)), "plan"), "a slot above 2 -> plan");
+    // The friend's sequence: target 2, seq 9.
+    using V = ps::EpisodeVerdict;
+    const auto step = [](ps::Episode& e, std::uint32_t body, std::uint64_t t, bool rearm, std::uint32_t seq = 9,
+                         bool switching = false) {
+        return ps::EpisodeStep(e, ps::EpisodeIn{2, seq, 2, body, switching, t, rearm});
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool rearm = pass == 1;
+        ps::Episode e{};
+        Check(step(e, 0, 1000, rearm) == V::write, "episode: body 0 -> write");
+        ps::EpisodeWrote(e);
+        Check(step(e, 2, 1100, rearm) == V::same, "body reached 2 -> same");
+        Check(step(e, 0, 1200, rearm) == V::write, "the engine reverts the first write once -> second write");
+        ps::EpisodeWrote(e);
+        Check(step(e, 2, 1300, rearm) == V::same, "same again");
+        Check(step(e, 0, 20000, rearm) == V::wait, "prone/dive drops the body to 0: wait for 750 ms");
+        Check(step(e, 0, 20500, rearm) == V::wait, "still under 750 ms");
+        const V late = step(e, 0, 20800, rearm);
+        if (!rearm) Check(late == V::wait, "without the re-arm: wait until the remote switches again (the 19.8 s mismatch)");
+        else Check(late == V::drift && e.rearms == 1, "with the re-arm: one more write after 750 ms (drift)");
+        if (rearm) {
+            ps::EpisodeWrote(e);
+            Check(step(e, 2, 20900, rearm) == V::same, "re-armed write landed");
+        }
+    }
+    {   // An engine that reverts every frame: at most 2 + 3 writes, one re-arm per 2 s.
+        ps::Episode e{};
+        unsigned writes = 0;
+        std::uint32_t body = 0;
+        for (std::uint64_t t = 0; t < 60000; t += 16) {
+            const V v = step(e, body, t, true);
+            if (v == V::write || v == V::drift) { ps::EpisodeWrote(e); ++writes; body = 2; }
+            else body = 0;  // reverted on the next frame
+        }
+        Check(writes == ps::kEpisodeWrites + ps::kEpisodeRearms && e.rearms == ps::kEpisodeRearms, "storm cap: 2 + 3 writes");
+    }
+    {   // A body that never reached the target: no drift re-arm (switch lag or a refusal: the old two writes).
+        ps::Episode e{};
+        Check(step(e, 0, 0, true) == V::write, "write 1"); ps::EpisodeWrote(e);
+        Check(step(e, 0, 100, true) == V::write, "write 2"); ps::EpisodeWrote(e);
+        Check(step(e, 0, 5000, true) == V::wait, "never reached: wait");
+        Check(step(e, 0, 6000, true, 10, true) == V::wait && e.writes == 0, "a new seq resets the episode; switching waits");
+        Check(step(e, 0, 6100, true, 10) == V::write, "new seq: write");
+    }
+}
 void TestSlots() {
+    TestSlotEpisode();
     Check(!ps::Decode(0xFFFF0000u).filled, "handle >> 16 == 0xFFFF: empty");
     // Body 1's never-filled slots hold 0 at runtime (the stock46 preflight's Zero(remote_handles)): empty, as is
     // any equip 0 handle (phase 0 reads both as equip 0).

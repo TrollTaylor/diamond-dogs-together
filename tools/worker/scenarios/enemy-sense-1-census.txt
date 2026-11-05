@@ -1,0 +1,61 @@
+# Enemy sync M7 step 1, probe P13 (docs/world-sync-design.md 7.13; scout P12f), part 1 of 4: the census, stock.
+# The soldiers' player-info service answers two families: indexed slots (a player index) and LOCAL ones (no index: the
+# local player's record, 0x14053C9D0, and index, 0x14053C990). Forcing the offense index alone never let a guard notice
+# body 1 (runs 37c9604c, 183e2cf7). soldier_perceive now also hooks the two LOCAL functions (soldier_sense_contract.hpp):
+# perceive_local census 1 counts their callers (caller rva, the thunk's return, the caller's callee-saved register
+# ranges); perceive_local 1 / 0 answers body 1 / body 0 for callers in the soldier and notice code; perceive_online 1
+# sets the soldier manager's online bit (L4). perceive_status also logs the notice masks (soldier_perceive_mask) and
+# the whole status bitset of both bodies (+0xC0..+0xDF).
+# Mode play over -WanSim bad, afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_owner=0, soldier_puppet=1 (the guest's
+# copies never notice: only the host's copy decides), soldier_brain off, godmode on both. The host waits out of sight
+# 50 m south (the q1 spot of enemy-prove-1), the guest stands 6 m from guard 1740692850 among the afgh_field_cp guards.
+#   1. stock 20 s: census and masks (body 1 among the guards, unseen as in 0.15.0)
+#   2. perceive_local 1, the offense index stock: does a guard notice body 1, and is it booked as player 0? 26 s
+#   3. perceive_local 1 + perceive_force 1, the host walks to 15-20 m of the guard: a guard engaging body 1 while the
+#      host stays ignored decides lever L1. 50 s
+#   4. perceive_online 1 with the offense forced 1 (L4, research), 20 s
+# Run all four parts in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sense -ScenarioPath
+#     tools/worker/scenarios/enemy-sense-1-census.txt,tools/worker/scenarios/enemy-sense-2-local.txt,
+#     tools/worker/scenarios/enemy-sense-3-forced.txt,tools/worker/scenarios/enemy-sense-4-online.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -TimeoutSec 900 -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive_local=installed;' 5
+waitlog guest 'soldier_perceive_local=installed;' 5
+host run teleport 421.16 269.2 2084.42 0
+wait 4000
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 3000
+host run world_status
+host run position
+guest run position
+# --- 1: stock, the census ------------------------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_local census 1
+host expect ^perceive_local;ok=1;key=1;local;mode=-1;census=1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s1-00
+wait 18000
+host run perceive_status
+guest run perceive_status
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s1-20
+host run damage_status

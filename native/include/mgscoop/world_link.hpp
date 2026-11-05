@@ -50,8 +50,9 @@ struct Config {
     // follow scan around both players and place-first (lua/coop/world_place.lua).
     bool follow = false;
     // Enemy sync plan M3..M7 (docs/world-sync-design.md 7.9+): CFG r[19] bits 2 owner (soldier_owner), 4 snap
-    // (soldier_snap), 8 route (soldier_route), 16 body (soldier_body), 32 puppet (soldier_puppet), next to bit 1 follow.
-    std::uint8_t enemy_sync = 0;
+    // (soldier_snap), 8 route (soldier_route), 16 body (soldier_body), 32 puppet (soldier_puppet), 64 brain (soldier_brain),
+    // 128 place_lift (enemy gaps), 256 perceive (soldier_perceive), next to bit 1 follow.
+    std::uint16_t enemy_sync = 0;
     // M4 (docs/vehicles-companions-design.md 6.4): lab.ini world_vehicle_state (lab
     // and play): CFG r[15] bit 2 turns on lua/coop/world_vehicle_state.lua.
     bool vehicle_state = false;
@@ -128,6 +129,12 @@ WarpGrant FindGrant(std::uint16_t seq) noexcept;
 // Enemy sync M4: the newest two SOLDIER_SNAP records of a roster slot (world::Core::SnapPair), metres / radians on the
 // receiver's clock; false when none in the current paired epoch.
 bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept;
+// Enemy sync M7 FM1 (docs/world-sync-design.md 7.15): the newest SOLDIER_ACT request / order of a roster slot
+// (world::Core::ActLatest); false when none in the current paired epoch.
+bool ActLatest(std::uint16_t slot, std::uint64_t& now_ms, world::Act& out) noexcept;
+// FM1: sends one SOLDIER_ACT part from native (the game thread): world::Core::Tx then the datagram. The status.
+world::TxStatus SendAct(std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
+                        const std::uint8_t (&req)[world::kActRequest], const std::uint8_t (&order)[world::kActOrder]) noexcept;
 
 // Observer boundaries: the runtime entry (next to PartnerMissionStart) and the
 // returned termination (next to PartnerMissionEnd).

@@ -75,6 +75,10 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept;
 // doors) and other held interacts under Params::fulton_hold_ms (1 s) never play; 59 is not Fulton-specific, so a
 // longer held interact still would (the false-positive rate is the next run's question).
 std::uint8_t MapFulton(std::uint16_t act) noexcept;
+// Horse plan M1 (lab key world_horse_share, In::horse): the remote's ride acts 121 / 122 on the shared D-Horse this copy
+// placed -> stateRideOnIdle (22, a loop; P4 frames 0059d2b6: seated at saddle height on body 1). kNone for every other
+// act. A horse map source runs whatever `mode` says (as the Fulton map) and for at most Params::horse_max_ms.
+std::uint8_t MapHorse(std::uint16_t act) noexcept;
 
 enum class Phase : std::uint8_t { idle, suspend, patch, play_sent, playing, stop_sent };
 const char* PhaseName(Phase phase) noexcept;
@@ -95,6 +99,7 @@ struct Params {
     std::uint32_t max_ms = 60000;      // a debug request's ms bound
     std::uint32_t replays = 1;         // a loop the game ended is replayed this often
     std::uint32_t fulton_hold_ms = 1000;  // r1101 fulton: a remote Fulton act held this long starts
+    std::uint32_t horse_max_ms = 1800000; // horse plan M1: a shared-horse ride overlay at most this long
 };
 
 // A debug command (applied on the next tick).
@@ -138,6 +143,13 @@ struct In {
     // r1101 fulton (lab key fulton_sync): the Fulton act map (MapFulton) runs too, whatever `mode` says; a Fulton
     // overlay is a map source that the setting off never stops.
     bool fulton;
+    // Horse plan M1 (lab key world_horse_share): body 1 is shown as the shared D-Horse's rider this tick
+    // (partner_ride_wire Visibility::horse); the horse map (MapHorse) runs too, whatever `mode` says.
+    bool horse;
+    // Horse plan M3 (lab key world_horse_pillion): body 1 rides behind this copy's player (the seat1 lease places it at
+    // the rear seat): seated in stateRideOnIdle whatever the remote's own act is (its copy pins it squatting), whatever
+    // `mode` says, also when body 1 already shows the remote's act natively.
+    bool pillion;
 };
 
 struct Out {

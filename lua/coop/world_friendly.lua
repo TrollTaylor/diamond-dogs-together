@@ -4,6 +4,10 @@
 do
     local W, floor, fmt = e.MgsCoopWorld, math.floor, string.format
     local D = W.downed
+    -- Enemy sync M7 (soldier_brain, docs/world-sync-design.md 7.13): SOLDIER_HIT 76, a guard this copy owns hit the
+    -- replica; the same queue and apply as FRIENDLY_HIT, never dropped by the friendly fire switch, and the receiver's
+    -- copy of that guard engages it (world_snap.lua W.soldierEngaged).
+    W.OP.SOLDIER_HIT = W.OP.SOLDIER_HIT or 76
     local U32, F = 4294967296, {}
     local function valid(n, lo, hi)
         return type(n) == "number" and n == floor(n) and n >= lo and n <= hi
@@ -40,16 +44,27 @@ do
         F.dropLog = now
         W.log(fmt("event=friendly_fire;step=dropped;side=%s;seq=%.0f", side, seq))
     end
+    local function admit(v, now, n)
+        return on() and type(v) == "table" and #v == n and valid(v[1], 1, U32 - 1) and
+            valid(v[2], 0, U32 - 1) and valid(v[3], 1, 65535) and
+            valid(v[4], 0, 1000000000) and (v[5] == 0 or v[5] == 2) and newer(v[1], F.seen)
+    end
     W.handlers[W.OP.FRIENDLY_HIT] = function(v, now)
         now = now or W.now()
-        if not on() or type(v) ~= "table" or #v ~= 5 or not valid(v[1], 1, U32 - 1) or
-            not valid(v[2], 0, U32 - 1) or not valid(v[3], 1, 65535) or
-            not valid(v[4], 0, 1000000000) or (v[5] ~= 0 and v[5] ~= 2) or
-            not newer(v[1], F.seen) then return end
+        if not admit(v, now, 5) then return end
         F.seen = v[1]
         if ffOff() then dropped("target", v[1]); return end
         if not current(v, now) or #F.pending >= 8 then return end
         F.pending[#F.pending + 1] = {v = v, at = now}
+    end
+    W.handlers[W.OP.SOLDIER_HIT] = function(v, now)
+        now = now or W.now()
+        if not admit(v, now, 6) or not valid(v[6], 1, U32 - 1) then return end
+        F.seen = v[1]
+        W.log(fmt("event=soldier_hit;step=rx;seq=%.0f;attacker=%.0f;damage_milli=%.0f;cause=%d", v[1], v[6], v[4], v[5]))
+        if W.soldierEngaged then pcall(W.soldierEngaged, v[6], now) end
+        if not current(v, now) or #F.pending >= 8 then return end
+        F.pending[#F.pending + 1] = {v = v, at = now, soldier = v[6]}
     end
     function D.hitTick(r, now)
         if not on() then return end
@@ -59,12 +74,35 @@ do
             local p = F.pending[1]
             if not current(p.v, now) or now < p.at or now - p.at > 500 then table.remove(F.pending, 1)
             elseif receipt(1, p.v[1], p.v[2], p.v[4], p.v[5]) then
-                W.log(fmt("event=downed;step=friendly_applied;seq=%.0f;damage_milli=%.0f;cause=%d", p.v[1], p.v[4], p.v[5]))
+                if p.soldier then
+                    W.log(fmt("event=soldier_hit;step=applied;seq=%.0f;attacker=%.0f;damage_milli=%.0f;cause=%d", p.v[1], p.soldier,
+                        p.v[4], p.v[5]))
+                else
+                    W.log(fmt("event=downed;step=friendly_applied;seq=%.0f;damage_milli=%.0f;cause=%d", p.v[1], p.v[4], p.v[5]))
+                end
                 table.remove(F.pending, 1)
             else break end
         end
         local seq, damage, cause = r.hitSequence, r.hitDamageMilli, r.hitCause
         if not valid(seq, 1, U32 - 1) or not valid(damage, 0, 1000000000) or (cause ~= 0 and cause ~= 2) then return end
+        -- M7: a guard this copy owns hit the replica (hitAttacker its GameObjectId): SOLDIER_HIT with its entity hash.
+        local attacker = r.hitAttacker
+        if valid(attacker, 0, 65534) then
+            local hash = W.byId and W.byId[attacker]
+            local target = D.records[3 - W.role]
+            if not hash then
+                if receipt(0, seq, 0, 0, 0) then W.log(fmt("event=soldier_hit;step=dropped;seq=%.0f;reason=unmapped", seq)) end
+                return
+            end
+            if not target or not target.ready or now < target.at or now - target.at > 500 then return end
+            if target.down or W.tx(W.OP.SOLDIER_HIT, seq, target.generation, target.sequence, damage, cause, hash) then
+                if receipt(0, seq, 0, 0, 0) then
+                    W.log(fmt("event=soldier_hit;step=tx;seq=%.0f;attacker=%.0f;damage_milli=%.0f;cause=%d;down=%d", seq, hash, damage,
+                        cause, target.down and 1 or 0))
+                end
+            end
+            return
+        end
         if ffOff() then
             if receipt(0, seq, 0, 0, 0) then dropped("shooter", seq) end
             return

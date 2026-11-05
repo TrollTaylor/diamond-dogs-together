@@ -4908,7 +4908,7 @@ void TestNativePolish() {
         s.fake.latest.packet.gun_equip = 871;
         s.N();
         Check(s.fake.arms.back().strip == 0x50u && s.driver.mission.remote_gun_base == 343 &&
-                  s.fake.Has("partner_weapon=mismatch; remote_equip=871; remote_base=343; body_equip=46; strip=0x50\r\n"),
+                  s.fake.Containing("partner_weapon=mismatch; remote_equip=871; remote_base=343; body_equip=46; strip=0x50; remote_slot=") == 1,
               "the alias 871 of base 343 is another gun (masked)");
         s.fake.latest.packet.gun_equip = 46;
         s.N();

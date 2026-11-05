@@ -16,8 +16,22 @@
 -- M7 probe (docs/world-sync-design.md 7.13; soldier_puppet, CFG r[19] bit 32, W.puppetOn; the plan's own scope for now:
 -- probes behind a switch): on the guest, the copies of the host's guards it drives become puppets (SetPuppet true and
 -- restrict notice: they neither move by themselves nor notice this player) driven every update (DRIVE_V1 mode 1);
--- outside 60 m or off NORMAL they are set back. The host's AI does not perceive the guest's body (the target filter at
--- 0x1325629 compares the target with the local player only; not patched), so inside the bubble no guard fights the guest.
+-- outside 60 m or off NORMAL they are set back. Without soldier_perceive the host's AI does not perceive the guest's body
+-- (the target filter at 0x1325629 compares the target with the local player only), so the probe's puppets never fight.
+-- M7 brain (soldier_brain with soldier_perceive, CFG r[19] bit 64, W.brainOn): each guard's owner (the host, or the guest
+-- for the guards it owns: M3) is its only brain. Native soldier_authority (MGS_COOP_SOLDIER_AUTH_V1 bits, sent here)
+-- drops the other copy's hits on a player and forwards the owner's hits on the replica as SOLDIER_HIT
+-- (world_friendly.lua). The other copy of a calm guard is a puppet (SetPuppet: it never notices or fights; it stands in its
+-- idle pose (run ef7e9088) and only the M4 stream moves it; M1 corrections refuse it as disabled_local;
+-- restrict notice did not hold the copies back: run 5fb44105, 89 hits on a restrict-noticed guest in 30 s); it is set free
+-- (its own AI fights, its damage counted only by the owner) while its CP is in ALERT, for 8 s after its owner's copy hit
+-- this player (SOLDIER_HIT: W.soldierEngaged, which also makes it discover this player), and for 8 s after this player
+-- damaged it (so a shot guard still reacts and its CP raises the alarm).
+-- M7 step 1 (soldier_perceive, CFG r[19] bit 256, W.perceiveOn; docs/world-sync-design.md 7.13): on the host each guard
+-- the M1 scan samples perceives one player, the nearer: the guest's body (target 1) once the guest is at least 3 m nearer
+-- than the host, the host (0) once the host is at least 3 m nearer; a choice holds 4 s (native soldier_perceive answers
+-- the offense index getter per soldier: MGS_COOP_SOLDIER_PERCEIVE_V1). P13c told sight: one offense player for every
+-- guard (the player nearest to a sampled guard, held 4 s); a calm guard 10 m from the guest is told SetDiscoveryPlayer.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -25,17 +39,18 @@ do
         local S, OP = {}, W.OP
         W.snap = S
         OP.SOLDIER_SNAP = 75
-        local fmt, floor, min = string.format, math.floor, math.min
+        local fmt, floor, min, sqrt = string.format, math.floor, math.min, math.sqrt
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
         function S.reset()
             S.slot, S.tx, S.dv, S.rr, S.dr, S.statAt, S.bd, S.br, S.hu = nil, {}, {}, 0, 0, nil, {}, 0, {}
             S.rt = {names = nil, i = 0, cur = {}, want = {}}
-            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0}
+            S.n = {tx = 0, calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, sink = 0}
         end
         S.reset()
         W.startHooks[#W.startHooks + 1] = S.reset
         W.unpairedHooks[#W.unpairedHooks + 1] = function()
+            if S.brainRelease then pcall(S.brainRelease, "unpaired") end
             S.tx, S.dv, S.slot, S.rt.cur, S.rt.want = {}, {}, nil, {}, {}
             for h in pairs(S.pp or {}) do
                 local en = W.ent[h]
@@ -78,10 +93,10 @@ do
                     if P.state(en) == 0 then
                         local x, y, z = pos(en.id)
                         local d = x and (x ~= 0 or z ~= 0) and flat(x, z, qx, qz)
-                        if d and d <= 60000 then
+                        if d and P.reach(d, x, z) then  -- enemy gaps 2 (place_reach): to 160 m, 4 Hz (world_place.lua)
                             local cp = W.cp and W.cp[en.cp]
                             local alert = cp ~= nil and cp.localPhase == 3
-                            t.every = (d <= 30000 or alert) and 100 or 200
+                            t.every = d > 60000 and 250 or (d <= 30000 or alert) and 100 or 200
                             local moved = t.x and flat(x, z, t.x, t.z) or 0
                             local dt = t.x and now - t.sampleAt or 0
                             local speed = dt > 0 and dt < 2000 and floor(min(65535, moved * 1000 / dt)) or 0
@@ -113,18 +128,29 @@ do
                     not (dv and dv.back and now < dv.back) and P.state(en) == 0 then
                     local x, y, z = pos(en.id)
                     local slot = S.slotOf(h)
-                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= 60000 then
+                    if slot and x and (x ~= 0 or z ~= 0) and flat(x, z, px, pz) <= (W.reachOn and 160000 or 60000) then
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
-                        local mode = W.puppetOn and not W.host and S.puppet(h, en, true) and 1 or 0
-                        local r = W.receipt(fmt(mode == 1 and "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d 1" or
+                        local mode = W.mirrorMode and W.mirrorMode(h) or (W.puppetOn and not W.host and S.puppet(h, en, true) and 1 or 0)
+                        local r = W.receipt(fmt(mode > 0 and "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d " .. mode or
                             "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d", slot, en.id, x, y, z))
                         if type(r) == "table" and r.refused then
                             if r.refused == "stale" then S.n.stale, dv.back = S.n.stale + 1, now + 500
                             else S.n.refused, dv.back = S.n.refused + 1, now + 2000 end
+                            if r.refused == "relayed" then P.hold(h, en.id) end  -- enemy gaps 2 (place_reach)
                         elseif type(r) == "table" then
                             dv.ok, dv.err = now, r.e
+                            -- Enemy gaps (place_sink): a driven copy 1.5 m under its owner for 2 s (r.v: its y minus the
+                            -- target's, cm; the stream's y is the owner's GetPosition y - 800 + LIFT) is event=drive_sink.
+                            local off = type(r.v) == "number" and r.v * 10 - (800 - P.LIFT) or nil
+                            if off and off < -1500 then
+                                dv.lowAt = dv.lowAt or now
+                                if now - dv.lowAt >= 2000 and not dv.sunk then
+                                    dv.sunk, S.n.sink = true, S.n.sink + 1
+                                    L("event=drive_sink;ent=%.0f;off_m=%.2f;e_cm=%d", h, off / 1000, r.e or -1)
+                                end
+                            else dv.lowAt, dv.sunk = nil, nil end
                             if r.s == 2 then S.n.hard = S.n.hard + 1
                             elseif r.s == 1 then S.n.steps = S.n.steps + 1
                             else S.n.rest = S.n.rest + 1 end
@@ -188,7 +214,7 @@ do
                         if not b then b = {x = x, z = z, restX = x, restZ = z, still = now}; S.bd[h] = b end
                         b.at = now
                         if flat(x, z, b.x, b.z) >= 200 then b.x, b.z, b.still = x, z, now
-                        elseif now - b.still >= 1500 and flat(x, z, b.restX, b.restZ) > 1500 then
+                        elseif now - b.still >= 1500 and not (b.pend and now - b.pend < 15000) and flat(x, z, b.restX, b.restZ) > 1500 then
                             b.restX, b.restZ = x, z
                             local ok
                             if W.host then ok = P.announce(3, h, x, y + 200, z, 0, 8, 0)
@@ -202,21 +228,23 @@ do
                 elseif not st or st < 2 or st > 5 then S.bd[h] = nil end
             end
         end
-        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too)
-        -- more than 1 m off goes there through the same FIFO and native placement (kind 3; P.check lets a dead one go).
+        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too) more
+        -- than 1 m off goes there through the FIFO (kind 3). P.check first: refused (a dead guard is NPC_STATE_DISABLE:
+        -- disabled_local, unless body_dead), it stays put and is not "carried" (e583ee62: 384 / 383 body_tx echoed).
         function P.body(c, en)
             if not W.bodyOn then return end
             local st = P.state(en)
             local x, _, z = pos(en.id)
             if not (st and st >= 2 and st <= 5 and x) then return end
             local d = flat(x, z, c.x, c.z)
-            local fix = d > 1000 and #P.q < 16 and not (P.cur and P.cur.h == c.h)
-            L("event=place_body;seq=%d;ent=%.0f;div_m=%.1f;state=%d;fix=%d", c.seq, c.h, d / 1000, st, fix and 1 or 0)
-            if fix then
-                c.body = true
-                P.q[#P.q + 1] = c
-            end
-            if S.bd[c.h] then S.bd[c.h].restX, S.bd[c.h].restZ = c.x, c.z end
+            c.body = true
+            local why = d > 1000 and P.check(c, en)
+            local fix = d > 1000 and not why and #P.q < 16 and not (P.cur and P.cur.h == c.h)
+            L("event=place_body;seq=%d;ent=%.0f;div_m=%.1f;state=%d;fix=%d;why=%s", c.seq, c.h, d / 1000, st, fix and 1 or 0,
+                why or "none")
+            if fix then P.q[#P.q + 1] = c end
+            local b = S.bd[c.h]
+            if b then b.restX, b.restZ, b.pend = why and x or c.x, why and z or c.z, fix and W.deadOn and W.now() or nil end
         end
         -- M6 hold-ups: a hold-up applied here (W1 state 1) also raises this copy's hands (SetForceHoldup, handler 0x135D0B2).
         local applyOne = W.enemy.applyOne
@@ -291,9 +319,184 @@ do
             local en = name and W.ent[c.h]
             if en and type(en.id) == "number" then S.routeApply(c.h, en, name, "landed") end
         end
+        -- M7 brain ------------------------------------------------------------------------------------------------------
+        S.bn = {auth = {}, gate = {}, i = 0, n = {set = 0, lift = 0, engage = 0}}
+        W.startHooks[#W.startHooks + 1] = function() S.bn = {auth = {}, gate = {}, i = 0, n = {set = 0, lift = 0, engage = 0}} end
+        local function auth(text)
+            local ok, r = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_AUTH_V1' -- " .. text)
+            return ok and r or nil
+        end
+        -- The other copy is this guard's brain: on the host a guard the guest owns (M3), on the guest every guard but those.
+        function S.remote(h)
+            if W.host then return W.ownerOn == true and P.own ~= nil and P.own[h] ~= nil and P.own[h].o == 1 end
+            return not (W.ownerOn == true and P.owned ~= nil and P.owned[h] == true)
+        end
+        local function debugIgnored(en)
+            local m = W.get(W.get(e, "MgsCoopDebug"), "enemy")
+            return type(m) == "table" and type(m.ignored) == "table" and m.ignored[en.name] == true
+        end
+        local function setRestrict(h, en, g, want, why)
+            pcall(W.api.send, en.id, {id = "SetPuppet", enabled = want})
+            g.restricted = want
+            S.bn.n[want and "set" or "lift"] = S.bn.n[want and "set" or "lift"] + 1
+            L("event=brain_gate;ent=%.0f;puppet=%d;why=%s", h, want and 1 or 0, why)
+        end
+        -- This player damaged a guard: that copy is free for 8 s (it reacts; its CP raises the alarm).
+        if type(W.observers) == "table" then
+            W.observers[#W.observers + 1] = function(kind, h, cls)
+                if not (W.brainOn and kind == "Damage" and cls == "local" and h) then return end
+                local g = S.bn.gate[h]
+                if not g then g = {}; S.bn.gate[h] = g end
+                g.free = W.now() + 8000
+                local en = W.ent[h]
+                if g.restricted and en and type(en.id) == "number" then setRestrict(h, en, g, false, "damaged") end
+            end
+        end
+        -- SOLDIER_HIT from the owner's copy of guard `hash` (world_friendly.lua): this copy engages this player.
+        function W.soldierEngaged(hash, now)
+            if not W.brainOn then return end
+            local en = W.ent[hash]
+            local g = S.bn.gate[hash]
+            if not g then g = {}; S.bn.gate[hash] = g end
+            local first = not (g.until_ and now < g.until_)
+            g.until_ = now + 8000
+            if first then S.bn.n.engage = S.bn.n.engage + 1 end
+            if en and type(en.id) == "number" and P.state(en) == 0 and not debugIgnored(en) then
+                if g.restricted then setRestrict(hash, en, g, false, "engaged") end
+                if first then pcall(W.api.send, en.id, {id = "SetDiscoveryPlayer"}) end
+            end
+        end
+        -- Every restrict notice this module set is lifted (brain off, unpaired, mission end).
+        function S.brainRelease(why)
+            for h, g in pairs(S.bn.gate) do
+                local en = W.ent[h]
+                if g.restricted and en and type(en.id) == "number" and not debugIgnored(en) then setRestrict(h, en, g, false, why) end
+            end
+            S.bn.gate = {}
+        end
+        function S.brainTick(now)
+            if not S.bn.cleared then
+                if auth("clear") ~= nil then S.bn.cleared = true end
+            end
+            local list = W.entOrder
+            local n = type(list) == "table" and #list or 0
+            for _ = 1, min(8, n) do
+                S.bn.i = S.bn.i % n + 1
+                local h = list[S.bn.i]
+                local en = W.ent[h]
+                if en and type(en.id) == "number" then
+                    local remote = S.remote(h)
+                    if S.bn.auth[h] ~= remote and auth(fmt("%d %d", en.id % 512, remote and 1 or 0)) == 1 then S.bn.auth[h] = remote end
+                    local g = S.bn.gate[h]
+                    if not g then g = {}; S.bn.gate[h] = g end
+                    local engaged = g.until_ ~= nil and now < g.until_
+                    local cp = W.cp and W.cp[en.cp]
+                    local alert = cp ~= nil and cp.localPhase == 3
+                    local free = engaged or alert or (g.free ~= nil and now < g.free)
+                    if P.state(en) == 0 and not debugIgnored(en) then
+                        local want = remote and not free
+                        if want ~= (g.restricted == true) then
+                            setRestrict(h, en, g, want, want and "remote" or
+                                (not remote and "owned" or engaged and "engaged" or alert and "alert" or "damaged"))
+                        end
+                    elseif g.restricted and P.state(en) ~= 0 then
+                        g.restricted = nil  -- a downed guard: the puppet flag no longer matters; set again when NORMAL
+                    end
+                end
+            end
+            if not S.bn.statAt or now - S.bn.statAt >= 10000 then
+                S.bn.statAt = now
+                local ok, en, rc = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_AUTH_V1' -- status")
+                local restricted, engaged = 0, 0
+                for _, g in pairs(S.bn.gate) do
+                    if g.restricted then restricted = restricted + 1 end
+                    if g.until_ and now < g.until_ then engaged = engaged + 1 end
+                end
+                L("event=brain_stats;native=%s;remote=%s;restricted=%d;engaged=%d;set=%d;lift=%d;engages=%d", ok and tostring(en) or "?",
+                    ok and tostring(rc) or "?", restricted, engaged, S.bn.n.set, S.bn.n.lift, S.bn.n.engage)
+            end
+        end
+        -- M7 step 1: per-soldier perception targets (host) ---------------------------------------------------------
+        local function fresh() return {t = {}, at = {}, sent = 0, dw = {}, told = {}, nr = {}, offAt = -1e9} end
+        S.pc = fresh()
+        W.startHooks[#W.startHooks + 1] = function() S.pc = fresh() end
+        local function perceive(text)
+            local ok, r = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- " .. text)
+            return ok and r or nil
+        end
+        -- From P.scan (world_place.lua): dh / dq = squared mm to the host's player / the guest's (nil when unknown).
+        function S.pick(cur, dh, dq, heldMs)
+            local want = cur or 0
+            if not dq then want = 0
+            else
+                local gap = sqrt(dh) - sqrt(dq)
+                if gap >= 3000 then want = 1 elseif gap <= -3000 then want = 0 end
+            end
+            if want == cur or (cur ~= nil and heldMs < 4000) then return cur end
+            return want
+        end
+        -- P13c told sight (run dbba96de: the guards' own senses never pick up body 1, a told discovery finds the
+        -- offense player): one offense player for every guard, the player nearest to a sampled guard held 4 s; a tell
+        -- switches at once.
+        -- Each sampled guard's last {squared mm to its nearer player, that player, time}: the nearest of the last 2 s
+        -- (run d7cb1b1d: a 1 s rolling minimum flapped the offense player every 4.2-8.6 s).
+        function S.nearest(nr, now)
+            local bd, bp
+            for _, r in pairs(nr) do
+                if now - r[3] <= 2000 and (not bd or r[1] < bd) then bd, bp = r[1], r[2] end
+            end
+            return bp
+        end
+        function S.offense(cur, want, heldMs, tell)
+            if want == cur or (cur ~= nil and heldMs < 4000 and not tell) then return cur end
+            return want
+        end
+        function P.perceiveScan(h, en, dh, dq, now)
+            if not (W.perceiveOn and W.host and W.paired and type(en.id) == "number") then return end
+            local c = S.pc
+            if not c.cleared then
+                if perceive("clear") == nil then return end
+                c.cleared = true
+            end
+            local cur = c.t[h]
+            local want = S.pick(cur, dh, dq, now - (c.at[h] or -1e9))
+            if want ~= cur and perceive(fmt("%d %d", en.id % 512, want)) == 1 then
+                c.t[h], c.at[h], c.sent = want, now, c.sent + 1
+                L("event=perceive;ent=%.0f;idx=%d;target=%d;dh_m=%.0f;dq_m=%s", h, en.id % 512, want, sqrt(dh) / 1000,
+                    dq and fmt("%.0f", sqrt(dq) / 1000) or "na")
+            end
+            -- A calm guard within 10 m of the guest for 0.8 s is told it found the player (offense 1 first; once per 30 s).
+            local d, p = dh, 0
+            if dq and dq < dh then d, p = dq, 1 end
+            c.nr[h] = {d, p, now}
+            local cp = W.cp and W.cp[en.cp]
+            local close = dq and dq <= 1e8 and c.t[h] == 1 and not (cp and cp.localPhase == 3)
+            c.dw[h] = close and (c.dw[h] or now) or nil
+            local tell = close and now - c.dw[h] >= 800 and now - (c.told[h] or -1e9) >= 30000
+            local o = S.offense(c.off, tell and 1 or S.nearest(c.nr, now), now - c.offAt, tell)
+            if o ~= c.off and perceive("offense " .. o) == 1 then
+                c.off, c.offAt = o, now
+                L("event=perceive_offense;offense=%d;why=%s", o, tell and "tell" or "nearest")
+            end
+            if tell and c.off == 1 and pcall(W.api.send, en.id, {id = "SetDiscoveryPlayer"}) then
+                c.told[h] = now
+                L("event=perceive_tell;ent=%.0f;idx=%d;dq_m=%.1f", h, en.id % 512, sqrt(dq) / 1000)
+            end
+            if not c.statAt or now - c.statAt >= 10000 then
+                c.statAt = now
+                local ok, on, t0, t1, auto = pcall(W.receipt, "return 'MGS_COOP_SOLDIER_PERCEIVE_V1' -- status")
+                L("event=perceive_stats;native=%s;t0=%s;t1=%s;auto=%s;sent=%d", ok and tostring(on) or "?", ok and tostring(t0) or "?",
+                    ok and tostring(t1) or "?", ok and tostring(auto) or "?", c.sent)
+            end
+        end
         local tick = P.tick
         P.tick = function(now)
             tick(now)
+            if W.brainOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then
+                S.brainTick(now)
+            elseif not W.brainOn and next(S.bn.gate) ~= nil then
+                S.brainRelease("brain_off")
+            end
             if W.routeOn and W.host and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true then
                 S.routes(now)
             end
@@ -305,8 +508,8 @@ do
             if not S.statAt or now - S.statAt >= 10000 then
                 S.statAt = now
                 local c = S.n
-                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d", c.tx, c.calls, c.steps, c.hard, c.rest,
-                    c.stale, c.refused)
+                L("event=snap_stats;tx=%d;calls=%d;steps=%d;hard=%d;rest=%d;stale=%d;refused=%d;sink=%d", c.tx, c.calls, c.steps,
+                    c.hard, c.rest, c.stale, c.refused, c.sink)
             end
         end
     end

@@ -1,0 +1,37 @@
+# Firefight latch proof (enemy3 latch track), the quiet part: after enemy-prove-1-join.txt (both players at the spot
+# 50 m south of afgh_field_cp, every guard ignores them) and before enemy-latch-alert.txt. No goto (the outpost alerts at
+# the first goto near it): ~20 s of place error at rest, then a sleep and a kill (host debug outcomes, placed first on the
+# guest's copy), then the dead guard lies there for the rest of the session (the M6 body_tx check: <= 2 per body).
+logmark both
+host run world_status
+guest run world_status
+stance host crouch
+stance guest crouch
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture q-0
+wait 18000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture q-20
+host run enemy sleep 2961503
+host expect ^enemy_sleep;ent=2961503;
+waitlog guest 'world_lua=event=apply; ent=2961503; state=2; ver=[0-9]+; src=outcome;' 10
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 600
+both capture q-sleep
+host run enemy kill 753908875
+host expect ^enemy_kill;ent=753908875;
+waitlog guest 'world_lua=event=apply; ent=753908875; state=5; ver=[0-9]+; src=outcome;' 10
+wait 800
+both capture q-kill
+wait 10000
+host run world_status
+guest run world_status
+host run enemy info 2961503
+guest run enemy info 2961503
+host run enemy info 753908875
+guest run enemy info 753908875

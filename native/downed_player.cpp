@@ -41,7 +41,7 @@ std::uint64_t revivedAt = 0;
 float originalHealth = 0, maximumHealth = 0, observedLife = 0;
 bool configuredOnce = false, configurePending = false, pendingPassed = false, shutdownPending = false;
 partner_player::Addresses pendingAddresses{};
-struct Hit { std::uint32_t sequence, damage; std::uint8_t cause; std::uint64_t at; };
+struct Hit { std::uint32_t sequence, damage; std::uint8_t cause; std::uint64_t at; std::uint16_t attacker = 0xFFFF; };
 Hit hits[8]{};
 unsigned hitHead = 0, hitCount = 0;
 std::uint32_t hitSerial = 0, incomingSerial = 0;
@@ -702,7 +702,10 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
     while (hitCount && lastPoll >= hits[hitHead].at && lastPoll - hits[hitHead].at > 1500) {
         hitHead = (hitHead + 1) % 8; --hitCount;
     }
-    if (hitCount) { out.hitSequence = hits[hitHead].sequence; out.hitDamageMilli = hits[hitHead].damage; out.hitCause = hits[hitHead].cause; }
+    if (hitCount) {
+        out.hitSequence = hits[hitHead].sequence; out.hitDamageMilli = hits[hitHead].damage; out.hitCause = hits[hitHead].cause;
+        out.hitAttacker = hits[hitHead].attacker;
+    }
     if (command == 5) {
         if (!cycle.down || generation!=cycle.generation || cycle.cause!=2) return finish(false,"generation");
         if (NativeActive()) { NativeAdvance(admitted,true,out); return finish(true,out.reason); }
@@ -930,6 +933,17 @@ bool PassiveOfflineContext(std::uintptr_t P, std::uint32_t& local) noexcept {
     const bool ok = P && Live(s, record, cur, max) && s.P == P;
     if (ok) local = s.local;
     ReleaseSRWLockShared(&lock); return ok;
+}
+bool QueueSoldierHit(std::uintptr_t P, float damage, std::uint8_t cause, std::uint16_t attacker) noexcept {
+    if (attacker == 0xFFFF || !std::isfinite(damage) || damage < 0 || damage > 1e6f || (cause != 0 && cause != 2)) return false;
+    AcquireSRWLockExclusive(&lock);
+    const auto now = GetTickCount64();
+    partner_player::State s{}; std::uintptr_t record = 0; float cur = 0, max = 0;
+    if (!armed || failed || P != ownedP || !detail::FreshScope(now, lastPoll) ||
+        hitCount == 8 || !Owned(s, record, cur, max)) { ReleaseSRWLockExclusive(&lock); return false; }
+    ++hitSerial; if (!hitSerial) ++hitSerial;
+    hits[(hitHead + hitCount) % 8] = {hitSerial, static_cast<std::uint32_t>(std::llround(static_cast<double>(damage)*1000)), cause, now, attacker};
+    ++hitCount; ReleaseSRWLockExclusive(&lock); return true;
 }
 bool QueueFriendlyHit(std::uintptr_t P, float damage, std::uint8_t cause) noexcept {
     if (!std::isfinite(damage) || damage < 0 || damage > 1e6f || (cause != 0 && cause != 2)) return false;

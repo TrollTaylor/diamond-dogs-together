@@ -27,7 +27,7 @@ do
         P.LIFT = 400
         P.WHY = {"not_ready", "roster", "unknown_entity", "unmapped", "terminal_local", "vehicle_local", "disabled_local",
             "native_off", "grant", "pose", "range", "stance", "realize_timeout", "position_timeout", "route_unknown", "context",
-            "native_other", "unreadable_local", "busy", "far", "latched", "near_player"}
+            "native_other", "unreadable_local", "busy", "far", "latched", "near_player", "unrealized"}
         local KIND, WHY = P.KIND, P.WHY
         local function L(...) W.log(fmt(...)) end
         -- The wire state of this PC's copy (world_enemy.lua), or nil when unreadable or unbound.
@@ -53,11 +53,16 @@ do
         end
 
         function P.reset()
+            -- Enemy gaps (place_sink; lab key place_lift, CFG r[19] bit 128): the owner's own GetPosition y (LIFT 800, no
+            -- 0.4 m under the owner's surface: the 1-2.5 % of copies the engine left there fell a storey, runs 2d967b8a,
+            -- d4460ea5, 25098847).
+            P.LIFT = W.liftOn == true and 800 or 400
             P.seq, P.out, P.live, P.q, P.cur, P.pin, P.come, P.div, P.last, P.lastAck, P.routes =
                 0, {}, {}, {}, nil, {}, {}, {}, nil, nil, nil
             P.patrol, P.lastS, P.sink = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}, {}
             -- M3: the host's owner decisions and both players' engagements (ms), the guest's owned guards and samples.
             P.own, P.engG, P.engH, P.owned, P.ownS = {}, {}, {}, {}, {}
+            P.rz = {}  -- enemy gaps 2 (place_reach): the force-realize holds, forgotten at a start (the game reloads)
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
@@ -80,10 +85,60 @@ do
             local ok, live = pcall(W.inGame)
             if ok and live == true then pcall(W.api.send, c.en.id, {id = "SetForceRealize", forceRealize = false}) end
         end
+        -- Enemy gaps 2 (place_reach, CFG r[19] bit 2048, W.reachOn; docs/world-sync-design.md 7.17): a correction or M3
+        -- placement the game relayed (not realized on this copy: 57 host placements and 22 guest corrections in run
+        -- 798b51dd, a dismounted rider 48 s) force-realizes that guard for RZ_MS (at most RZ_MAX at once, never Mother
+        -- Base staff) so the next one lands; released when a placement of him lands, at RZ_MS or at stop.
+        -- body_dead (bit 1024, W.deadOn): after a body placement the resting spot (world_snap.lua S.bd) is where this
+        -- copy's body lies, moved or not, so it is never reported back (the M6 ping-pong).
+        P.RZ_MS, P.RZ_MAX = 8000, 4
+        local function unhold(h, why)
+            local r = P.rz[h]
+            if not r then return end
+            P.rz[h] = nil
+            P.release({forced = true, en = r})
+            L("event=realize_hold;ent=%.0f;on=0;why=%s", h, why)
+        end
+        function P.doneHook(c, why)
+            local S = c.body and W.deadOn and W.snap
+            local b = S and S.bd and S.bd[c.h]
+            if b then
+                local x, y, z
+                if c.en then x, y, z = pos(c.en.id) end
+                if x then b.restX, b.restZ = x, z end
+                b.pend = nil
+            end
+            if not why then return unhold(c.h, "landed") end
+            if why == "unrealized" and c.native == "relayed" and c.kind == 3 and c.en then P.hold(c.h, c.en.id) end
+        end
+        -- One hold: placements (above) and the M4 stream's relayed steps (world_snap.lua S.drive; run 9023e5c6: 18 / 22 of
+        -- the relays there, and the native backoff after them refused the corrections).
+        function P.hold(h, id)
+            if not W.reachOn or P.rz[h] or type(id) ~= "number" or (W.feature and W.feature.staffPlace) then return end
+            local n = 0
+            for _ in pairs(P.rz) do n = n + 1 end
+            if n >= P.RZ_MAX then return end
+            local ok = pcall(W.api.send, id, {id = "SetForceRealize"})
+            P.rz[h] = {id = id, at = W.now()}
+            L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d", h, ok and 1 or 0, n + 1)
+        end
+        -- The M4 stream's reach (world_snap.lua S.produce): a guard d mm from the other player within 60 m of it, or with
+        -- place_reach within 160 m of it when he stands within 60 m of this player (the receiver drives to 160 m; the
+        -- native step still needs 60 m of the nearer player). Run 798b51dd: every M3 host sample 60-160 m from the host.
+        function P.reach(d, x, z)
+            if d <= 60000 then return true end
+            local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+            return W.reachOn == true and d <= 160000 and type(px) == "number" and type(pz) == "number" and
+                flat(x, z, px * 1000, pz * 1000) <= 60000
+        end
+        function P.rzTick(now)
+            for h, r in pairs(P.rz) do if now - r.at >= P.RZ_MS then unhold(h, "timeout") end end
+        end
         -- Stop (OnTerminate, LEVEL 0): release a pending force-realize, then forget. W1 off
         -- (full=false) keeps everything: spawn sync does not depend on outcome sync.
         W.stopHooks[#W.stopHooks + 1] = function(full)
             if not full then return end
+            for h in pairs(P.rz) do unhold(h, "stop") end
             P.release(P.cur)
             P.q, P.cur, P.live, P.pin = {}, nil, {}, {}
             W.pinned = P.pin
@@ -214,6 +269,7 @@ do
                         if x then
                             local dh = (x - hx) ^ 2 + (z - hz) ^ 2
                             local dq = qx and (x - qx) ^ 2 + (z - qz) ^ 2 or nil
+                            if P.perceiveScan then P.perceiveScan(h, en, dh, dq, now) end  -- M7 step 1 (world_snap.lua)
                             local near = dh <= K.host or (dq ~= nil and dq <= K.partner)
                             -- Follow: at least 15 m nearer the partner than the host is the guest's copy's to move; M3
                             -- (W.ownerOn): the owner decision (P.ownerOf), the guest's ENEMY_PLACE then moves this copy.
@@ -358,10 +414,10 @@ do
                 KIND[kind] or "unknown", ok and "applied" or "refused", why, v[5] / 100, v[6])
             L("event=place_ack;%s", string.sub(text, 13))
             -- A correction the guest's copy cannot take (its native placement off, the target too far, that guard latched):
-            -- that guard waits 10 s.
+            -- that guard waits 10 s; not realized on that copy (unrealized: the native relay, enemy latch) 3 s.
             if kind == 3 and not ok and P.patrol and (why == "native_off" or why == "far" or why == "latched") then
                 P.patrol.back[v[2]] = W.now() + 10000
-            end
+            elseif kind == 3 and not ok and P.patrol and why == "unrealized" then P.patrol.back[v[2]] = W.now() + 3000 end
             if kind ~= 3 then P.lastAck = text; P.remote(ok, text) end
         end
         -- A re-pair in the same epoch re-sends the tracked guards' positions; any pairing re-reads every guard near either
@@ -371,10 +427,12 @@ do
             if W.host and P.patrol then P.patrol.s, P.patrol.back, P.patrol.skip = {}, {}, {} end
         end
         function P.tick(now)
+            if next(P.rz) then P.rzTick(now) end  -- enemy gaps 2 (place_reach)
             if W.host then
                 P.hostTick(now)
                 -- M3: the host's own placements of guest-owned guards (the same FIFO and steps as the guest's).
-                if W.ownerOn and (P.cur or #P.q > 0) and P.guestTick then P.guestTick(now) end
+                if W.ownerOn and (P.cur or #P.q > 0) and P.guestTick then P.guestTick(now)
+                elseif W.followOn == true and P.sinkTick then P.sinkTick(now) end  -- place_sink: every tick, not only queued
             elseif (W.paired or P.cur) and P.guestTick then P.guestTick(now) end
         end
 

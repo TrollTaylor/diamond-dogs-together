@@ -1,0 +1,69 @@
+# Enemy sync M7 step 1, probe P13b (docs/world-sync-design.md 7.13), part 1 of 3. Run 29e389d7 (P13): with the offense
+# index forced to 1 and the LOCAL accessors answering body 1 for the soldier and notice code, no guard noticed body 1
+# (0 hits, calm guards in the host's frames, the host ignored at 25 m in the open); the online bit (L4) stalled the
+# host. Body 1's status bitset differs from body 0's only in +0xD1 bit 2 (status 138, no Lua PlayerStatus name).
+#   1. forced 1, status 138 cleared on body 1 before every leaf snapshot (perceive_mask 0 d1 4), 30 s
+#   2. forced 1, status 138 cleared and EVERY caller of the LOCAL accessors reading body 1 (perceive_local all), 25 s
+#   3. forced 1, perceive_local all, status 138 left as it is, 25 s
+# Mode play over -WanSim bad, afgh_field_cp (afgh-ledge seed), 12:00 sunny, soldier_owner=0, soldier_puppet=1, godmode
+# on both. The guest stands 6 m from guard 1740692850; the host walks to 10 m of it and backs off (ignored while the
+# index is forced to 1) to watch.
+# Run all three parts in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy-sense-p13b -ScenarioPath
+#     tools/worker/scenarios/enemy-sense2-1-status.txt,tools/worker/scenarios/enemy-sense2-2-both.txt,
+#     tools/worker/scenarios/enemy-sense2-3-all.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     -TimeoutSec 600 -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive_local=installed;' 5
+host run teleport 421.16 269.2 2084.42 0
+wait 3000
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+host run perceive_local census 1
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 2000
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 1500
+host hold s 1500
+host hold s 1500
+wait 1500
+host run position
+guest run position
+# --- 1: forced 1, status 138 cleared ------------------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_mask 0 d1 4
+host expect ^perceive_mask;ok=1;m0=d1:4
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t1-01
+wait 13000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t1-15
+wait 13000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture t1-30
+host run damage_status

@@ -1,0 +1,100 @@
+# Horse probe P3 (the horse plan, section 4; lab only): the existing offset prototype lua/coop/world_horse_cargo.lua
+# (cargo_test 1, world op 43, MGS_COOP_CARGO_V2) once: the host's rifle downs the guest (wounded, cause 1), the host
+# carries them (stock player carry), holds E beside its horse (the stock put-down, then body 1 pinned 0.55 m back and
+# 1.55 m up), mounts with one E, rides, dismounts, then takes them down with an R hold. Frames on both screens, the
+# carried-player prompt frame beside the horse (p3-carry-prompt). E-victim: the guest's copy warps its downed body 0 to
+# the streamed point every tick for about 60 s: downed_status (still down, no bleed-out death), camera / blackout frames.
+# Part 2 of session B (see horse-p2-guard.txt).
+logmark both
+both debug godmode 1
+host run cargo_test 1
+host expect cargo;testing=1
+guest run cargo_test 1
+guest expect cargo;testing=1
+host debug clear_enemies 100
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run goto_horse
+wait 1000
+host run position
+guest run position
+placebehind guest host 3 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 3000
+guest debug godmode 0
+both capture p3-before
+host press 1 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+guest debug godmode 1
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+both capture p3-carried
+host run goto_horse
+wait 1200
+host capture p3-carry-prompt
+host run cargo_status
+host require cargo;state=off
+host hold e 900
+host release
+wait 2500
+host run cargo_status
+host require cargo;state=carrier
+guest run cargo_status
+guest require cargo;state=cargo
+both capture p3-loaded
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host hold w 1500
+host hold w 1500 nowait
+guest burst p3-victim-ride 3 400
+host hold w+shift 1500 nowait
+host capture p3-host-ride
+host release
+wait 1500
+both capture p3-ride-stopped
+guest run downed_status
+guest expect down=1
+guest burst p3-victim 6 2000
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+both capture p3-stays
+guest burst p3-victim-late 6 3000
+guest run downed_status
+guest expect down=1
+guest run cargo_status
+guest expect cargo;state=cargo
+host run goto_horse
+wait 1000
+host hold r 1200
+host release
+wait 2500
+host run cargo_status
+host expect cargo;state=off
+guest run cargo_status
+guest expect cargo;state=off
+both capture p3-unloaded
+host run cargo_test 0
+guest run cargo_test 0

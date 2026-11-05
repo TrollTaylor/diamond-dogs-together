@@ -537,6 +537,107 @@ void TestFultonMap() {
     Check(!pdo::Active(b.s) && b.plays == 0, "blocked: no Fulton entry");
 }
 
+// Horse plan M1 (lab key world_horse_share): the remote riding the shared D-Horse this copy placed is shown
+// (partner_ride_wire Visibility::horse -> In::horse); its ride acts 121 / 122 seat body 1 in stateRideOnIdle (22, a loop),
+// whatever the overlay setting says, for a whole ride (Params::horse_max_ms), and the dismount ends it.
+void TestHorseMap() {
+    const std::uint8_t ride = pdo::Find("stateRideOnIdle", 15);
+    Check(ride == 22 && pdo::At(ride)->loop, "the seated rider entry: index 22, a loop");
+    Check(pdo::MapHorse(121) == ride && pdo::MapHorse(122) == ride, "acts 121 / 122: the seated rider");
+    for (const int act : {0, 1, 2, 25, 59, 120, 123, 125, 126, 139})
+        Check(pdo::MapHorse(static_cast<std::uint16_t>(act)) == pdo::kNone, "other acts: no seat");
+    Check(pdo::MapAct(121, 0) == pdo::kNone, "the full map never seats a rider by itself");
+    Check(pdo::Params{}.horse_max_ms >= 600000, "a ride overlay lasts at least 10 minutes");
+    // In::horse off (the key off, or no placed horse): nothing, in every setting.
+    for (const PartnerNativeOverlay mode : {PartnerNativeOverlay::off, PartnerNativeOverlay::debug, PartnerNativeOverlay::map}) {
+        Game o;
+        o.in.mode = mode;
+        o.in.remote_valid = true;
+        o.in.remote_act = 121;
+        o.Run(3000);
+        Check(!pdo::Active(o.s) && o.plays == 0, "no shared horse shown: act 121 never seats");
+    }
+    Game g;
+    g.in.mode = PartnerNativeOverlay::off;
+    g.in.horse = true;
+    g.in.remote_valid = true;
+    g.in.remote_act = 121;
+    g.Run(400);
+    Check(pdo::Active(g.s) && g.s.source == pdo::Source::map && g.s.index == ride && g.s.loop, "seated: the ride entry, a loop");
+    g.Run(600);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:setting_off"), "playing with the overlay setting off");
+    g.in.remote_act = 122;
+    g.Run(2000);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1, "a turn (122) keeps the same seat");
+    g.in.remote_act = 121;
+    g.Run(90000);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:timeout"), "a 90 s ride stays seated (past map_max_ms)");
+    // The dismount: the remote on foot, the overlay stops and releases.
+    g.in.remote_act = 1;
+    g.Run(400);
+    Check(g.Saw("stop:map_exit"), "the dismount stops the seat");
+    g.in.q18[1] = 1;
+    g.Run(200);
+    Check(!pdo::Active(g.s), "released");
+    // Run 3d1439e6: while body 1 is shown as the shared-horse rider the remote's act sample can be missing; the seat
+    // plays on In::horse alone, and a valid foot act (the dismount) still ends it.
+    Game n;
+    n.in.mode = PartnerNativeOverlay::off;
+    n.in.horse = true;
+    n.in.remote_valid = false;
+    n.Run(600);
+    Check(pdo::Active(n.s) && n.s.index == ride, "no act sample on a shown rider: seated");
+    n.in.remote_valid = true;
+    n.in.remote_act = 1;
+    n.Run(400);
+    Check(n.Saw("stop:map_exit"), "a valid foot act stops the seat");
+    // Blocked (a range hide, a carry): never starts.
+    Game b;
+    b.in.mode = PartnerNativeOverlay::off;
+    b.in.horse = true;
+    b.in.blocked = "range";
+    b.in.remote_valid = true;
+    b.in.remote_act = 121;
+    b.Run(2000);
+    Check(!pdo::Active(b.s) && b.plays == 0, "blocked: no seat");
+}
+
+// Horse plan M3 (lab key world_horse_pillion): body 1 rides behind this copy's player. Its own copy pins it squatting,
+// so the remote's act is a foot act (and body 1 may already show it natively): In::pillion seats it in stateRideOnIdle
+// anyway, whatever the overlay setting says, and the lease's end stops it.
+void TestPillionMap() {
+    const std::uint8_t ride = pdo::Find("stateRideOnIdle", 15);
+    Game g;
+    g.in.mode = PartnerNativeOverlay::off;
+    g.in.pillion = true;
+    g.in.remote_valid = true;
+    g.in.remote_act = 3;
+    g.in.body_valid = true;
+    g.in.body_act = 3;
+    g.Run(400);
+    Check(pdo::Active(g.s) && g.s.source == pdo::Source::map && g.s.index == ride && g.s.loop,
+          "pillion: the seated rider entry, also when body 1 already shows the remote's foot act");
+    g.Run(600);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:setting_off"), "pillion: playing with the overlay setting off");
+    g.Run(90000);
+    Check(g.s.phase == pdo::Phase::playing && g.plays == 1 && !g.Saw("stop:timeout"), "pillion: a 90 s ride stays seated");
+    g.in.pillion = false;
+    g.Run(400);
+    Check(g.Saw("stop:map_exit") || g.Saw("stop:setting_off"), "the lease's end stops the seat");
+    Game n;
+    n.in.mode = PartnerNativeOverlay::off;
+    n.in.pillion = true;
+    n.in.remote_valid = false;
+    n.Run(600);
+    Check(pdo::Active(n.s) && n.s.index == ride, "pillion without an act sample: seated");
+    Game b;
+    b.in.mode = PartnerNativeOverlay::off;
+    b.in.pillion = true;
+    b.in.blocked = "range";
+    b.Run(2000);
+    Check(!pdo::Active(b.s) && b.plays == 0, "pillion blocked: no seat");
+}
+
 void TestSuspendTimeout() {
     Game g;
     g.stuck = true;
@@ -566,6 +667,8 @@ int main(int argc, char** argv) {
     TestUnconsumedAndLost();
     TestMapFlow();
     TestFultonMap();
+    TestHorseMap();
+    TestPillionMap();
     TestSuspendTimeout();
     std::printf("%u partner DM overlay checks passed: catalogue (verified graph-0 codes, clip paths, reply codes, Lua OVERLAY order%s), "
                 "remote-act map, debug flow (suspend, patch, play, confirm, timeout stop, release), stop/refusals, play gate (camera "

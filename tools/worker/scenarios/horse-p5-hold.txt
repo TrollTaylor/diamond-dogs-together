@@ -1,0 +1,94 @@
+# Horse probe P5 (the horse plan, section 4, lab only): the ACTION-only pad mask (horse_probe hold 1,
+# MgsCoopHorseHold, buttons 0x20 as world_revive_input's own mask) beside each copy's own horse: the stock mount is
+# blocked (localMounted stays 0 after E and an E hold), world_downed's raw E is still read (horse_probe=raw_e; held=1),
+# the release is clean (the first E after hold 0 mounts), and the stock ride icon at growing distances (frames, with a
+# watch line for the distance at each one). Part 2 of session A (see horse-p1-place.txt).
+logmark both
+host run goto_horse
+guest run goto_horse
+wait 1500
+both capture p5-icon-near
+host run horse_probe hold 1
+host expect horse_probe=hold;on=1;ok=1
+guest run horse_probe hold 1
+guest expect horse_probe=hold;on=1;ok=1
+wait 500
+both capture p5-masked
+host press e 150
+guest press e 150
+wait 2000
+host run horse_status
+host require localMounted=0
+guest run horse_status
+guest expect localMounted=0
+waitlog host 'world_lua=horse_probe=raw_e; held=1;' 5
+waitlog guest 'world_lua=horse_probe=raw_e; held=1;' 5
+host hold e 1200
+host release
+guest hold e 1200
+guest release
+wait 800
+host run horse_status
+host require localMounted=0
+guest run horse_status
+guest expect localMounted=0
+host run horse_probe hold 0
+host expect horse_probe=hold;on=0;ok=1
+guest run horse_probe hold 0
+guest expect horse_probe=hold;on=0;ok=1
+wait 600
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host capture p5-released-mounted-host
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+guest press e 150
+wait 2500
+guest run horse_status
+guest expect localMounted=1
+guest capture p5-released-mounted-guest
+guest press e 150
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+# The ride icon range: step 1 m along world x from the goto_horse spot, then along -x; a watch line at each frame.
+host run goto_horse
+wait 1200
+host run step 1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-x1
+host run step 1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-x2
+host run step 1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-x3
+host run step 1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-x4
+host run goto_horse
+wait 1200
+host run step -1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-n1
+host run step -1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-n2
+host run step -1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-n3
+host run step -1 0 0
+wait 700
+host run horse_probe watch 300
+host capture p5-range-n4

@@ -631,6 +631,7 @@ struct Settings {
     // nslot= triggers; play runs nslot=call as write).
     PartnerNativeReload nreload;
     PartnerNativeSlot nslot;
+    bool nslot_rearm;  // A1: partner_native_slot_rearm (the follower's drift re-arm)
     // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
     PartnerNativeEquip nequip;
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
@@ -725,6 +726,9 @@ struct Settings {
     // friendly hit (cause sleep) to the downed owner's queue (Hooks::melee_hit). Key off: verdict=off lines only.
     bool melee;
     PartnerNativeMount nmount;  // horse / D-Walker rider hide by act (partner_native_mount, docs/mounts.md)
+    // Horse plan M1 (lab.ini world_horse_share): the remote riding the shared D-Horse this copy placed is shown seated
+    // (partner_ride_wire Visibility::horse, the DM overlay's horse map) instead of the mount hide.
+    bool horse_share;
     bool ui_filter;    // G1: body 1's HUD hints swallowed in its drain job (partner_native_ui_filter)
     // G5: the other ride hides unrealize body 1, and the net-quality rebase after
     // a ride logs partner_ride=net_rebased (partner_native_unrealize_all, "Ride hides").
@@ -818,6 +822,10 @@ struct Mission {
         std::uint8_t transient_seat;
     } seat;
     bool ride_seated;      // the seat flow owns body 1 this tick (vehicle_attached gates)
+    // Horse plan M3: body 1 rides behind this copy's player this tick (horse_drive::SeatLease; pose = the rear seat).
+    bool pillion;
+    bool pillion_logged;
+    bool pillion_pose;  // ... and the DM overlay seats it (the lease's pose flag)
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
     LogCap census_cap;
@@ -1369,7 +1377,7 @@ struct Mission {
     std::uint64_t slot_plan_key;
     LogCap slot_cap;
     // The follower's last logged verdict (hook totals: writes, refusals).
-    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last;
+    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last, slot_logged_rearms;
     // The generalized weapon gate (W5): the verdict, body 1's in-hand type
     // (kNull unread) and whether it is mid-switch.
     partner_slots::Gate weapon_gate;

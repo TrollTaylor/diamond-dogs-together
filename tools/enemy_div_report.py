@@ -142,7 +142,9 @@ def analyse(host, guest):
         'overflow': 0,
         # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
         'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
-        'guard_sank': sum(1 for l in guest if 'event=place_sink' in l),
+        # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
+        'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
+        'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
         'body_fell': sum(1 for l in host + guest if 'event=body_fall' in l),
     }
     for l in host + guest:
@@ -150,6 +152,9 @@ def analyse(host, guest):
         if m and 'world=stats' in l:
             never['overflow'] = max(never['overflow'], int(m.group(1)))
     r['never'] = never
+    r['place_drop'] = sum(1 for l in host + guest if 'event=place_drop' in l)
+    # No landing (dy_m) histogram: its pattern never matched the logged lines (it printed 0 for e583ee62 and the gaps runs),
+    # and this tool has no test to pin a fixed one; count dy_m by hand until it has (docs/STATUS.md 2026-11-04 landing).
     # The host's scan cost (event=place_scan, follow only).
     scans = [fields(l) for l in host if 'event=place_scan' in l]
     us = [float(s.get('avg_us', 0)) for s in scans]
@@ -200,6 +205,28 @@ def analyse(host, guest):
         s, d = last(lines, 'event=snap_stats'), last(lines, 'world_drive=stats')
         r['m4_' + side] = {k: int(s.get(k, 0) or 0) for k in ('tx', 'calls', 'steps', 'hard', 'rest', 'stale', 'refused')}
         r['m4_' + side + '_native'] = {k: int(d.get(k, 0) or 0) for k in ('calls', 'steps', 'hard', 'rest', 'stale', 'refused', 'anomalies')}
+    # Enemy latch (docs/world-sync-design.md 7.14): the typed dispatch's relays (out=0 handled=0, the guard not realized
+    # on that copy) are no anomaly; each backs only that guard off (native refused=backoff, Lua why=unrealized). Per copy,
+    # per path: grant (the host's M3 copies, the guest's M1 corrections) or drive (M4, id=0).
+    for side, lines in (('host', host), ('guest', guest)):
+        paths = {'grant': 0, 'drive': 0}
+        for l in lines:
+            if 'soldier_warp=relayed' in l:
+                paths['drive' if re.search(r'\bid=0;', l) else 'grant'] += 1
+        r['relayed_' + side] = paths
+        r['backoff_' + side] = sum(1 for l in lines if 'refused=backoff' in l)
+        r['unrealized_' + side] = sum(1 for l in lines if 'why=unrealized' in l and re.search(r'event=(hplace|place);', l))
+    # M6: body_tx per body and copy (run e583ee62's ping-pong: 384 / 383 for one dead guard), the refused body placements.
+    tx = {}
+    for side, lines in (('host', host), ('guest', guest)):
+        for l in lines:
+            if 'event=body_tx' in l:
+                key = (side, fields(l).get('ent'))
+                tx[key] = tx.get(key, 0) + 1
+    r['body_tx'] = sum(tx.values())
+    r['body_tx_max'] = max(tx.values()) if tx else 0
+    r['place_body_refused'] = sum(1 for l in host + guest if 'event=place_body' in l and 'fix=0' in l and 'why=' in l and
+                                  'why=none' not in l)
     return r
 
 
@@ -229,6 +256,8 @@ def gates(r):
         gate('M3: host place error for guest-owned guards median <= 2 m, p90 <= 5 m',
              None if hp50 is None else (hp50 <= 2.0 and hp90 <= 5.0), None if hp50 is None else (round(hp50, 2), round(hp90, 2)))
         gate('M3: <= 1 owner change per guard per 10 s', r['m3_owner_fast_flips'] == 0, r['m3_owner_fast_flips'])
+    if r['body_tx']:
+        gate('M6: <= 2 body_tx per body per copy', r['body_tx_max'] <= 2, '%d sent, max %d' % (r['body_tx'], r['body_tx_max']))
     n = r['never']
     gate('0 latches, faults, game overs, roster mismatches, overflow, guard copies under the ground', all(v == 0 for v in n.values()), n)
     return g
@@ -270,6 +299,10 @@ def main(argv=None):
     if r['m4_host']['tx'] or r['m4_guest']['calls']:
         print('  M4: host snap %s / drive %s; guest snap %s / drive %s' % (r['m4_host'], r['m4_host_native'], r['m4_guest'],
                                                                           r['m4_guest_native']))
+    print('  relays (not realized on that copy): host %s backoff %d unrealized %d; guest %s backoff %d unrealized %d; '
+          'body_tx %d (max per body %d), body placements refused here %d' % (
+              r['relayed_host'], r['backoff_host'], r['unrealized_host'], r['relayed_guest'], r['backoff_guest'],
+              r['unrealized_guest'], r['body_tx'], r['body_tx_max'], r['place_body_refused']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

@@ -1,0 +1,42 @@
+# Enemy sync M7 step 1, probe P13 part 3 of 4 (header: enemy-sense-1-census.txt): the LOCAL accessors answer body 1 AND
+# the offense index is forced to 1 (every soldier-side read names body 1). The host walks to 10 m of guard 1740692850
+# and backs off to about 20 m, in the open: a guard turning, aiming and firing at body 1 while the host stays ignored
+# decides lever L1 (soldier_perceive_hits body1, downed_damage id=1, the frames of both copies).
+logmark both
+host run perceive_reset
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+host run perceive_local 1
+host expect ^perceive_local;ok=1;key=1;local;mode=1
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 1500
+host hold s 1500
+host hold s 1500
+wait 2000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-06
+wait 11000
+host run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-18
+wait 12000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-31
+wait 12000
+host run perceive_status
+guest run perceive_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture s3-44
+host run damage_status
+host run position
+guest run position
+host run world_status

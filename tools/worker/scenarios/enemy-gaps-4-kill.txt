@@ -1,0 +1,32 @@
+# Enemy gaps batch, part 4 of 6 (the guest's own kill placed first on the host): the host goes back to the quiet spot
+# (over 40 m from the guard: the host's place-first rule, else why=visible); after the 10 s owner hold the guest owns
+# guard 2929558510 again (M3 owner=guest) and shoots him from 3 m (aim and fire held: attempt 2's press lmb fired
+# nothing). Expected: guest event=place_first; step=tx; side=guest, host event=hplace result=applied (first), host
+# event=commit state=2..5 actor=guest; frames k-body on both copies (one body, the same spot).
+logmark both
+host run teleport 421.16 269.2 2084.42 0
+wait 2000
+waitlog host 'world_lua=event=owner; ent=2929558510; owner=guest' 15
+guest run enemy goto 2929558510 3
+guest run enemy_aim_nearest 1.0
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+guest run enemy_aim_nearest 1.0
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+waitlog guest 'world_lua=event=place_first; step=tx; side=guest;' 6
+waitlog host 'world_lua=event=hplace; .*result=applied' 6
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[2345]; ver=[0-9]+; actor=guest;' 8
+wait 2000
+placebehind host guest 6 2
+wait 1500
+host run enemy_aim_nearest 0.3
+guest run enemy_aim_nearest 0.3
+wait 800
+both capture k-body
+host run enemy info 2929558510
+guest run enemy info 2929558510

@@ -1,0 +1,132 @@
+# Enemy sync M7 step 1 (docs/world-sync-design.md 7.13): per-soldier perception on the host's copy (soldier_perceive:
+# the offense index getter 0x141E02770 answers per soldier; the host's Lua sends each sampled guard's nearer player,
+# MGS_COOP_SOLDIER_PERCEIVE_V1). Mode play over -WanSim bad, afgh_field_cp (afgh-ledge seed), 12:00 sunny. The host is
+# every guard's brain (soldier_owner=0), the guest's driven copies are puppets (soldier_puppet=1), godmode on both.
+# Evidence per part (perceive_reset at its start; perceive_status and damage_status at its end, both copies):
+#   soldier_perceive_status (pick counters: answers 0/1 per soldier, cache swaps), soldier_perceive_census (P12a: the
+#   captured soldier register per call site vs the thread soldier), soldier_perceive_hits (the soldiers that hit body 0 /
+#   body 1 in the defense callback), soldier_perceive_targets, the Lua event=perceive lines; frames every 15 s.
+#   1. Both players near guard 1740692850 (host 10 m, guest 6 m), Lua targets, 60 s: each guard hits only the player
+#      it targets.
+#   2. The host backs off about 20 m (aimed at the nearest guard), 60 s: the guards near the guest target body 1 only.
+#   3. P11c: perceive_force 1 (every caller, the leaf snapshot too) for 60 s: does any soldier shoot body 1 at all?
+#   4. Lua targets with perceive_leaf any (the leaf snapshot says 1 while any soldier targets 1), 45 s.
+# Run: tools/worker/Submit-WorkerJob.ps1 ... -ScenarioPath tools/worker/scenarios/enemy-perceive2-30010-play.txt
+#      -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -Mode play -WanSim bad -Wait
+labsetting soldier_perceive=1
+labsetting soldier_owner=0
+labsetting soldier_puppet=1
+labsetting nametag=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1' 90
+wait 3000
+both debug godmode 1
+both debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+waitlog host 'soldier_perceive=installed; mode=per_soldier;' 5
+waitlog guest 'soldier_perceive=installed; mode=per_soldier;' 5
+# --- 1: both players near the guards, Lua targets -------------------------------------------------------------------
+logmark both
+host run perceive_reset
+guest run perceive_reset
+host run enemy goto 1740692850 10
+host expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+guest run enemy goto 1740692850 6
+guest expect ^(enemy_goto;ent=1740692850;submitted_warp|warp_position_readback)
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p1-15
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p1-30
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p1-45
+wait 14200
+host run perceive_status
+guest run perceive_status
+host run damage_status
+guest run damage_status
+# --- 2: the host backs off; the guards near the guest see only body 1 ------------------------------------------------
+logmark both
+host run perceive_reset
+guest run perceive_reset
+host run enemy_aim_nearest 1.1
+wait 600
+host hold s 1500
+host hold s 1500
+host hold s 1500
+wait 12000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p2-15
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p2-30
+wait 14200
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p2-45
+wait 14200
+host run perceive_status
+guest run perceive_status
+host run damage_status
+guest run damage_status
+# --- 3: P11c, every caller answers 1 ----------------------------------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_force 1
+host expect ^perceive_force;ok=1;forced=1
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p3-15
+wait 14200
+host run enemy_aim_nearest 1.1
+wait 800
+both capture p3-30
+wait 14200
+host run enemy_aim_nearest 1.1
+wait 800
+both capture p3-45
+wait 14200
+host run perceive_status
+host run damage_status
+host run perceive_force off
+# --- 4: Lua targets, the leaf snapshot follows any target 1 -----------------------------------------------------------
+logmark both
+host run perceive_reset
+host run perceive_leaf any
+host expect ^perceive_leaf;ok=1;leaf=any
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture p4-15
+wait 14200
+host run enemy_aim_nearest 1.1
+wait 800
+both capture p4-30
+wait 14200
+host run perceive_status
+guest run perceive_status
+host run damage_status
+host run perceive_leaf stock
+host run perceive_sites
+host run world_status
+guest run world_status

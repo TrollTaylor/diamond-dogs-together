@@ -40,7 +40,7 @@ bool g_relief = false;         // M3 sortie vehicle: CFG r[17] (lab key world_re
 std::uint8_t g_fulton = 0;     // r1101 fulton: CFG r[18] bits (fulton_sync 1, fulton_early 2, fulton_look 4, fulton_one_save 8,
                                // fulton_guest_vehicle 16)
 bool g_follow = false;         // enemy follow: CFG r[19] bit 1 (lab key soldier_follow, lab and play)
-std::uint8_t g_enemy_sync = 0;  // enemy sync M3..M7: CFG r[19] bits 2..32 (soldier_owner .. soldier_puppet)
+std::uint16_t g_enemy_sync = 0;  // enemy sync: CFG r[19] bits 2..256 (soldier_owner .. soldier_brain, place_lift, perceive)
 wchar_t g_trigger_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_trigger_poll_ms = 0;
 // LOG receipts (0.13.6): a token bucket of kLogBurst lines refilled at kLogPerS
@@ -230,7 +230,7 @@ void Configure(const Config& config) noexcept {
     g_relief = config.relief;
     g_fulton = static_cast<std::uint8_t>(config.fulton & 31u);
     g_follow = config.follow;
-    g_enemy_sync = static_cast<std::uint8_t>(config.enemy_sync & 0x3Eu);
+    g_enemy_sync = world::EnemySyncBits(config.enemy_sync);
     g_vehicle_state = config.vehicle_state;
     g_vehicle_wreck = config.vehicle_wreck;
     g_vehicle_break = config.vehicle_break;
@@ -314,8 +314,9 @@ const char* HandleCfg(const char* source, std::size_t size, std::uint32_t read_m
     reply.relief = g_relief ? 1 : 0;
     // r1101 fulton: r[18] the Fulton lift and FULTON 0x46 (lab and play).
     reply.fulton = g_fulton;
-    // Enemy follow: r[19] bit 1 the follow scan and place-first, bits 2..32 the enemy sync plan's M3..M7 (lab and play).
-    reply.follow = static_cast<std::uint8_t>((g_follow ? 1u : 0u) | g_enemy_sync);
+    // Enemy follow: r[19] bit 1 the follow scan and place-first, bits 2..256 the enemy sync plan's M3..M7 and place_lift
+    // (lab and play).
+    reply.follow = static_cast<std::uint16_t>((g_follow ? 1u : 0u) | g_enemy_sync);
     Flush(now);
     return Reply(world::FormatCfgReply(reply, g_reply, sizeof(g_reply)));
 }
@@ -429,6 +430,31 @@ bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world
     if (!Configured()) return false;
     Locked lock;
     return g_core.SnapPair(slot, cur, prev);
+}
+
+bool ActLatest(std::uint16_t slot, std::uint64_t& now_ms, world::Act& out) noexcept {
+    now_ms = partner_net::NowMs();
+    if (!Configured()) return false;
+    Locked lock;
+    return g_core.ActLatest(slot, out);
+}
+
+world::TxStatus SendAct(std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
+                        const std::uint8_t (&req)[world::kActRequest], const std::uint8_t (&order)[world::kActOrder]) noexcept {
+    if (!Configured()) return world::TxStatus::disabled;
+    std::uint32_t words[world::kActWords]{};
+    if (!world::ActWords(part, req, order, words)) return world::TxStatus::bad_args;
+    std::int64_t values[4 + world::kActWords] = {tick, slot, seq, static_cast<std::int64_t>(part)};
+    for (unsigned i = 0; i < world::kActWords; ++i) values[4 + i] = words[i];
+    static thread_local world::Datagram datagram;
+    datagram.size = 0;
+    world::TxStatus status{};
+    {
+        Locked lock;
+        status = g_core.Tx(world::op::soldier_act, values, 4 + world::kActWords, partner_net::NowMs(), &datagram);
+    }
+    if (status == world::TxStatus::ok && datagram.size) partner_net::SendDatagram(1, datagram.bytes, datagram.size);
+    return status;
 }
 
 WarpGrant FindGrant(std::uint16_t seq) noexcept {

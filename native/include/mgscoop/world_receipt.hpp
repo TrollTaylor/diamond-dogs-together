@@ -27,10 +27,10 @@
 //        companion_host_owned, lab and play), also from HandleCfg; r[17] the M3
 //        sortie vehicle module 0|1 (lab key world_relief, lab and play), also from
 //        HandleCfg; r[18] the r1101 Fulton bits 0..31 (FultonCfgBits, lab and play);
-//        r[19] enemy sync bits 0..63: 1 follow (lab key soldier_follow, lab and play: the
+//        r[19] enemy sync bits 0..511: 1 follow (lab key soldier_follow, lab and play: the
 //        follow scan and place-first, docs/world-sync-design.md 7.8), 2 owner, 4 snap,
-//        8 route, 16 body, 32 puppet (soldier_owner .. soldier_puppet, the plan's
-//        M3..M7, 7.9+); Lua treats a missing or out-of-range value as 0)
+//        8 route, 16 body, 32 puppet, 64 brain (soldier_owner .. soldier_brain, the plan's
+//        M3..M7, 7.9+), 128 place_lift (enemy gaps, 7.14), 256 perceive (soldier_perceive, M7 step 1); Lua treats a missing or out-of-range value as 0)
 //   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
 //        -> return 1 | return 0,<reason>   (TxStatus)
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
@@ -56,7 +56,7 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp, drive };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp, note, save, peer, hostwarp, drive, act };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
@@ -69,6 +69,10 @@ inline constexpr char hostwarp_prefix[] = "return 'MGS_COOP_WORLD_WARP_HOST_V1' 
 // Enemy sync M4 (docs/world-sync-design.md 7.10): one soft-follow step of this copy of roster slot <slot>, "<slot> <goId>
 // <x_mm> <y_mm> <z_mm>" (this copy's GetPosition), toward the owner's SOLDIER_SNAP (wire data, Core::SnapPair).
 inline constexpr char drive_prefix[] = "return 'MGS_COOP_WORLD_DRIVE_V1' -- ";
+// FM1, the far mirror (lua/coop/world_mirror.lua): "<op> <slot> <goId>", op t (the owner sends this guard), m (this copy
+// mirrors him), r (releases him), s (the owner sends the staged parts; slot and goId 0) or q (is his stream fresh?
+// nothing armed: a candidate before Lua makes him a puppet).
+inline constexpr char act_prefix[] = "return 'MGS_COOP_WORLD_ACT_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
 // Enemy follow (docs/world-sync-design.md 7.8): the partner's position as this copy sees it (the remote pose), no
@@ -98,7 +102,13 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
-// Enemy sync M7 probe: an optional sixth field, the mode (0 the M4 soft follow, 1 the puppet drive).
+// FM1: ACT_V1 "<t|m|r|s|q> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.
+bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slot, std::uint32_t& go_id) noexcept;
+// FM1 probe: ACT_V1 "p <x_mm> <y_mm> <z_mm>" (|v| <= 100000000): the local player's position (Lua's vars), for the
+// census distances (run 0a271c10: the debug snapshot never published one to the hook). Outputs only on success.
+bool ParseActPlayer(const char* source, std::size_t size, std::int32_t (&pos_mm)[3]) noexcept;
+// Enemy sync M7 probe: an optional sixth field, the mode (0 the M4 soft follow, 1 the puppet drive, 2 the FM1 mirror drive:
+// no step under 5 m, the whole way beyond).
 bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3],
                     std::uint8_t& mode) noexcept;
 // NOTE_V1: code 1..15, a and b 0..4294967295 (strict integers, no sign).
@@ -122,6 +132,12 @@ constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool br
     return static_cast<std::uint8_t>((gone ? 1 : 0) | (state ? 2 : 0) | (wreck ? 4 : 0) | (brk ? 8 : 0) | (credit ? 16 : 0) |
                                      (loadout ? 32 : 0) | (crew ? 64 : 0) | (damage ? 128 : 0));
 }
+
+// Enemy sync M3..M7: the CFG r[19] bits next to bit 1 follow (2 owner, 4 snap, 8 route, 16 body, 32 puppet, 64 brain,
+// 128 place_lift, 256 perceive: docs/world-sync-design.md 7.9+, 7.14).
+// FM1 (docs/world-sync-design.md 7.15): bit 512 soldier_act; enemy gaps 2 (7.17): 1024 body_dead, 2048 place_reach
+// (12 bits, 0..4095; the OB steps need a wider field).
+constexpr std::uint16_t EnemySyncBits(std::uint16_t configured) noexcept { return static_cast<std::uint16_t>(configured & 0xFFEu); }
 
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;
