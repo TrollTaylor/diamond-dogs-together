@@ -1,3 +1,54 @@
+## November 5, 2026: horse M4b, shoot from the back of the horse: the driver sees the passenger's raised gun (`wp/horse`; `world_horse_shot` still off unless named)
+
+**Players get:** nothing new by default: shooting from the back of the horse stays off unless the lab key is named (the
+gate's lab half did not pass). With the key named, hidden two-copy tests now show the passenger on the driver's screen
+with the rifle raised and aimed while they aim (standing on the horse's rump behind the driver; before, they sat with the
+rifle on their back), and in the play rehearsal with a bad connection a shot from the rear seat put a sleeping guard down
+(both copies logged it, in both rehearsals). The driver's E after the passenger hops off got them off in every test
+(lab and play, both orders) except once, when guards had shot the driver down on the horse: the stuck get-off of the
+last round was the test harness losing that key press. Details: `docs/mounts.md` section 13 ("M4b round"). Markers [O]/[I]/[U].
+
+- **Built** (red first each time: `2367a597` -> `41644ac9`): with `world_horse_shot`, while the remote aims the partner
+  driver leaves body 1 to its native aim at the rear seat (no DM overlay seat; `horse_drive::AimSeat`, 1.5 s linger), the
+  `seat1` reply hands that seat to Lua and the driver's copy pins body 1 there with `hold1` (C0 + write watch + pin; body
+  1 admitted under the pillion key only with the shot key), `free0` at the aim's end; the driver's raw E and the ride's
+  end logged for 8 s after a driver seat ends (`step=driver_e` / `driver_e_off`); `enemy_aim_nearest <up> <eye up> <eye
+  back>` (the rear seat's camera eye); the M4 scenarios as parts from the boot spot (`horse-pillion-shot(-play).txt` (a),
+  `-b.txt` (b), `-c.txt` lab A/B), the driver's E held 400 ms, holds within the runner's 1.5 s limit (`121e9144`), the
+  guard ladder 0.3 / 0.7 / 1.1 m (`5043fb4d`). No new hook, site, slot or wire.
+- **Proven** [O both copies' logs + frames looked at]: the driver's E after a hop-off in lab `11645acc` and play
+  `22926dbf` (`-WanSim bad`), both orders (the ride ended 16-25 ms after the E read 1.7-2.3 s after the hop-off); the
+  driver's screen with body 1 holding the rifle raised behind the driver in both runs and both orders (`partner_pillion=aim;
+  on=1`, `aim_hold; ok=1`, body 1 held at the seat, stats xz 0 / dy 0); play (a): the guest's first shot from the seat
+  put the sleeping guard 6.1 m away Dying (guest `req; state=4`, host `commit; state=4; actor=guest`) and in play
+  `2b9552f6` (a) two shots put the guard 4.3 m away Dying then Dead (`commit; state=4` / `state=5; actor=guest`);
+  play `22926dbf` (b): the host's shot from the seat killed (a)'s dying guard (`commit; state=5; actor=host`);
+  cross-neck shots left the driver's life and the passenger's copy's horse unchanged (7801 / 6600, 12000 in every
+  window), with `seatshot off` and on (lab `375df6ee` (c)); no crash_probe line in the four runs.
+- **Not passed / never seen live:** a hit from the seat in lab (four parts: the line 0.7-0.9 m short, or the guest's
+  copy of the warped guard left 36 m away by the sleep's apply); the guard warped for (b) was never hit (only (a)'s
+  dying one); play `2b9552f6` (b): awake guards downed the driver on the horse, so the driver's E after the hop-off
+  did not get them off; the squat (body 1 stands or crouches on the rump while aiming, [U] why); in play (b) awake guards shot both players after the
+  kill and the driver's copy's horse went Unconscious after the dismount (life 4652, [I] the guards); the seat holds at
+  the pillion default; the cause of the harness's 266 ms keyboard gap in `1a7c5d0e` [U]; the seatshot A/B is not
+  discriminating (neither arm hurt anyone).
+- **Next:** the lab half of the gate: a camera-eye read for the aim lever (the ray's start in GunAimPointSolve
+  `0x141096F90`, Ghidra comment) or a standing, level target the enemy follow does not move; quiet guards after a kill
+  in play (b) (the outpost's guards outside the scenario's ignore list shot both players); why the native drive stands
+  body 1 on the rump instead of the squat; then the flip with a run not named; the three seat holds to the pillion
+  default with a run not naming the shot key (the driver's E condition for that is met: lab `11645acc`, play
+  `22926dbf`, both orders).
+- **Runs** (`-WanSim bad`, the gun profile, research build, afgh-ledge, `world_horse_shot` named; slim archives
+  `%USERPROFILE%\mgs-coop-run-archive\horse\<run>` with JPEG frames, sheets and slices): attempt 1 lab `11645acc`,
+  play `22926dbf` (passed every expect); attempt 2 lab `375df6ee`, play `2b9552f6`. Not counted (harness refusals
+  before any game): play job `07e51b` (worker qualification ownership receipt mismatch), lab job `980e39` (the audited
+  CTest's `partner_defer_pose_held_generation_tests` check 185 timing flake).
+- **Builds:** full build at `41644ac9` compiled 157/157, CTest 352/355 (the two `worker_session_tests` shards refused a
+  2.6 s hold, fixed in `121e9144`; `partner_defer_pose_held_generation_tests` check 185, passes alone with 378 checks);
+  the queue's audited CTest passed at `121e9144` and `5043fb4d` (jobs `2b5f24`, `0f3205`, `3ce5f9`, `c4711f`); every
+  generator `--check` as base (carry_info, sleep_plugin differ; native_ui, teammate_targeting no evidence).
+
+
 ## November 5, 2026: horse M2g, put your downed partner on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
 
 **Players get:** nothing new by default: putting a downed partner on the horse stays off unless the lab key is named

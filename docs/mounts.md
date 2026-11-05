@@ -766,7 +766,8 @@ Markers [O]/[I]/[U].
   `partner_seat_gun` off. The hold runs (`partner_seat_gun=hold; ...; pillion=1`, the gesture hook's `gun_start`
   applied on graph 2 with body 1 at act 139) [O], but **no frame shows the gun raised**: body 1 sits behind the driver
   with its arms forward and the rifle still on its back (`28015a91`, `48d31500`) [O looked]. This is the M7 seat gun's
-  known limit (docs/native-puppet.md "Seat gun": "the hold runs but the partner's gun does not show").
+  known limit (docs/native-puppet.md "Seat gun": "the hold runs but the partner's gun does not show"). Since M4b (below)
+  the overlay leaves body 1 to its native aim while the remote aims, and the raised gun shows.
 - **Hits.** No shot from the rear seat put a guard down in five runs (both orders): sleeping guards 4-7 m away (attempts
   1-2) and an awake one (attempt 3), aimed with `enemy_aim_nearest`. From the horse the lever's 1.5 m eye is too low: 0.3 m up put the reticle 1.4 m short of
   the guard (`28015a91`: aim_nearest d=6.5 m, the shots' `dist_cm` 503-506); the 1.2 / 1.6 / 2.0 ladder (`48d31500`) hit
@@ -819,12 +820,73 @@ Markers [O]/[I]/[U].
   the rear seat) failed in all 6 runs. Process: `world_horse_shot` was on by default from fe81384a to d9f36d26, before
   any proof run, and went back off before the head (never released). Under the shot key the seat gun's gesture runs on
   body 1 while the DM overlay seats it (`psg::Block` exempts the overlay): two systems on body 1, lab key only.
-- **Next:** the driver's screen needs the gun in body 1's hands: the plan's first route (while the remote aims, let body
-  1's native drive run the stock squat-aim at the rear seat, the overlay off, body 1 held by `hold1`'s write watch and
-  pin, which today needs `world_horse_cargo`), or design B of the seat gun (D18). For hits, a standing target and an
-  aim lever that uses the camera's own position (the jeep's 8.30 aim-camera fix), then an A/B with `seatshot off` on a
-  cross-neck line.
-
+- **M4b round** (`wp/horse`; scenarios as parts from the boot spot: `horse-pillion-shot.txt` / `-play.txt` (a),
+  `horse-pillion-shot-b.txt` (b, both sessions), `horse-pillion-shot-c.txt` (lab: an A/B and driver_off); markers
+  [O]/[I]/[U]).
+  - **The driver's get-off after a hop-off** (play `1a7c5d0e`). Cause [I]: the harness lost the E, not the horse code.
+    The host's `press e 150` (worker seq 62) was accepted at 352892765 and the game's next keyboard read came 266 ms
+    later (352893031; every other keyboard command of that run 0 ms) [O host.worker.jsonl]; the worker releases a press
+    at accept + duration and never delivers a late press (native/worker_scenario.cpp `Scenario::Tick` and its prune),
+    and the release stamps the same command, so that `input_consumed` read already saw E up [I code]. The scenarios hold
+    the driver's E 400 ms, and the driver's copy logs its raw E and the ride's end for 8 s after a driver seat ends
+    (`step=driver_e; e=1; after_ms`, `step=driver_e_off; after_ms`). Lab `11645acc` and play `22926dbf` (`-WanSim bad`),
+    both orders: the E read 1.70 / 1.82 s (lab a / b) and 2.26 / 1.82 s (play a / b) after the hop-off and the ride
+    ended 16-25 ms later; every `localMounted=0` require passed; driver_off with the host driving too (lab c) [O both
+    logs]. The three seat holds still follow `world_horse_shot`: moving them to the pillion default needs a run with
+    them at the defaults (the shot key not named), not run yet.
+  - **The driver sees the gun.** With `world_horse_shot`, while the remote aims (its live pose's Aiming flag;
+    `horse_drive::AimSeat`, 1.5 s past the last aiming tick) the partner driver does not let the DM overlay seat body 1
+    (`m.pillion_pose` false; the seat gun's pillion gate follows it), keeps body 1's pose at the rear seat and notes it
+    (`NoteSeatAim`); the `seat1` reply carries it (`aim=1, sx, sy, sz` mm, `syaw` mrad; `SeatReply`), and the driver's
+    copy's Lua pins body 1 there every tick with `hold1` reset 14 (C0 + the write watch + pin; `HoldScope` admits body 1
+    under the pillion key only with the shot key), `free0` at the aim's or the seat's end. Lines `partner_pillion=aim;
+    on=0|1`, `step=aim_hold; on=1; n; ok` / `on=0; n; ticks`, `step=aim_hold_refused`. No new hook, site, slot or wire.
+    [O both logs, lab and play, both orders] every remote aim gave `aim; on=1`, `aim_hold; ok=1`, `horse_drive=held;
+    body=1`, the watch pinning every trap (4 writers) and `partner_pillion=stats` xz 0 / dy 0 while held (exceptions: the
+    walk shot up to 195 cm, one partner_recon teleport warp of 0.94 m). [O frames looked at] the driver's screen shows
+    body 1 on the horse's rump behind the seated driver with the rifle raised, aimed ahead or down at the guard: lab
+    `host-h4-pillion-aim-host`, `host-h4-guard-aim-host`, `guest-h4b-pillion-aim-guest`; play `host-h4-pillion-aim-host`,
+    `host-h4-guard-shot-host`, `guest-h4b-pillion-aim-guest` (from behind: hunched behind the driver, the barrel out to
+    the left). Not the squat: body 1 stands or crouches on the rump; why the native drive shows a standing aim is [U].
+    The seat gun's gesture still starts for 15-62 ms on the input frame's aim flag before the pose flag turns the
+    overlay off (`partner_seat_gun=release; cause=gate; refusal=key_off`).
+  - **Hits.** `enemy_aim_nearest <up> <eye up> <eye back>` puts the lever's eye at the rear seat's camera (28015a91's
+    miss fits h - 0.80 b = 0.385 m: eye 1.2 m up, 1.0 m back). A camera read is not built: the aim ray starts at the
+    camera eye `*(*(*(gun+8)+0x138)+0xB8)+0xE0` in GunAimPointSolve `0x141096F90` (Ghidra comment) [O static]. Attempt 1
+    (target 0.3 m up): play (a) the guest's first shot at the sleeping guard 6.1 m away put him Dying (guest `event=req;
+    state=4`, host `commit; state=4; actor=guest; rid=2`; frame `guest-h4-guard-shot`: the guard sitting up, hit) and the
+    host's apply of it failed (readback 2, as in design 8.30); play (b) the host's second shot killed that dying guard
+    (host `commit; state=5; actor=host`, guest `apply; result=ok`) - the guard warped 5.6 m ahead was missed. Lab: no hit
+    in either order: (a) the reticle at the lying guard's head (frame `guest-h4-guard-aim`) and the line's aim point
+    about 0.8 m short (664-682 cm against 6.8 m), (b) 0.7-0.9 m short (the reticle on the road).
+  - **Cross-neck.** Every straight-ahead shot started past the box (exit 152-153 cm); the driver's life 7801 / 6600
+    and the passenger's copy's horse 12000 in every window (lab, play (a): 30 seat_pin windows) [O]. A/B in lab (c):
+    with `seatshot off` the unshifted straight-ahead line (`result=census; apply=0`) left the horse at 12000 and the
+    driver at 7801 [O] (which body the line crossed is [U]); in attempt 1 the `on` shot 0.8 s into the aim did not fire [O no line] (attempt 2: below).
+  - **Harm seen in play (b)** (`22926dbf`): after the passenger's kill awake guards shot both players
+    (`downed_damage` attackers 1039 / 1243; the guest driver 6600 -> 3450) and the guest's copy's horse went Unconscious
+    3 s after the dismount (life 4652 / 12000) [O]; that the guards' rounds hurt the horse is [I].
+  - **Attempt 2** (`5043fb4d`, scenarios only: the guard 0.3 / 0.7 / 1.1 m up from the 1.2 / 1.0 m eye; the A/B shots
+    1.5 s into the aim). Play `2b9552f6`: (a) passed every expect: the guest's first shot put the sleeping guard 4.3 m
+    away Dying, the second killed him (guest `req; state=4` then `state=5`; host `commit; state=4` and `state=5; actor=guest`,
+    the host's state 5 apply ok); frames `guest-h4-guard-shot` (the guard hit, the reticle red) and `host-h4-guard-aim-host`
+    (body 1 leaning over the driver, the rifle aimed down at him) [O]. (b) failed: awake guards (`downed_damage` attackers
+    1041 / 1044 / 1243 / 1270) took the guest driver to lethal hits three times (`downed_damage=intercept; cause=lethal`,
+    life 330, `event=downed; step=abandoned`), so after the host's hop-off the guest's E was read (`driver_e; e=1; masked=1`)
+    but did not get a downed rider off (`localMounted=1`) [O]; the host's three shots at the guard 4.2-5.4 m ahead hit
+    nothing. Lab `375df6ee`: (a) the guest's copy of the warped guard ended 36.4 m away (the sleep's apply moved it 39.7 m;
+    the d check failed), so the ladder shot at a far guard; (b) the host's shots at its own guard 4.3-5.1 m ahead (aim
+    points 3.9-4.5 m out) hit nothing; (c) passed: the A/B's two straight-ahead shots (`seatshot off`: `census; apply=0`;
+    on: `shift`, exit 152 cm) both left the driver at 7801 and the passenger's copy's horse at 12000 [O]; the driver's E
+    after a hop-off 1.80-1.85 s and the ride's end 16-17 ms later in (a), (b), and driver_off in (c) [O].
+  - **Gate: not reached in two attempts** (lab: no hit from the seat in either order in four parts; the (b) order's hit
+    only on (a)'s dying guard in play `22926dbf`; play `2b9552f6` (b) the driver downed by awake guards).
+    `world_horse_shot` stays off unless named; README unchanged (it already says there is no aiming or shooting from the
+    seat at the defaults).
+- **Next:** the gate's lab half: a hit from the rear seat in lab in both orders (a camera-eye read instead of the eye
+  model, or a target that stands still and level), the squat (why the native drive shows a standing aim), keep the
+  guards quiet after a kill in play (b), then the flip with a run not named; the seat holds to the pillion default with
+  a run not naming the shot key.
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed
