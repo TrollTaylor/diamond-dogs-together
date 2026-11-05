@@ -359,6 +359,13 @@ void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& co
     ++count;
 }
 
+bool OwnerYAtRest(float y, std::uint64_t now_ms, OwnerRestY& state) noexcept {
+    (void)y;
+    (void)now_ms;
+    (void)state;
+    return true;  // red: no owner rest test yet (round 7's behaviour)
+}
+
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept {
     if (!out || !capacity || !why) return false;
     const HRESULT hr = back_ms ? StringCchPrintfA(out, capacity, "return {refused=\"%s\",b=%llu}", why, static_cast<unsigned long long>(back_ms))
