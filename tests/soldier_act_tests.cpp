@@ -156,6 +156,24 @@ int main() {
         au::ClearMirrored();
         Check(au::MirroredCount() == 0, "cleared");
     }
+    // The ACT_V1 reply compiles in Lua: no reserved word as a key (run 963ab276: "or=" did not, so no puppet was set).
+    {
+        sa::Counters k{};
+        k.tx_parts = 3; k.rx = 2; k.applied = 1; k.orders = 7; k.local_shots = 4;
+        char out[160]{};
+        Check(sa::FormatActReply(true, k, out, sizeof(out)) &&
+                  std::strcmp(out, "return {f=1,tx=3,rx=2,ap=1,od=7,sh=4,mi=0,fd=0,fn=0}") == 0, "the ACT_V1 reply");
+        static const char* reserved[] = {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+                                         "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"};
+        for (const char* word : reserved) {
+            char key1[16]{}, key2[16]{};
+            std::snprintf(key1, sizeof(key1), "{%s=", word);
+            std::snprintf(key2, sizeof(key2), ",%s=", word);
+            Check(!std::strstr(out, key1) && !std::strstr(out, key2), "no Lua reserved word as a reply key");
+        }
+        char tiny[8]{};
+        Check(!sa::FormatActReply(false, k, tiny, sizeof(tiny)), "a short buffer is refused");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");
