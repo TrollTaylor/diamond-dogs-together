@@ -34,6 +34,12 @@
       "why": "T.vt+0x58 (0x24c8ef0, body 0's transform): centre T+0x20, foot T+0x10 = centre - (0, T+0x160, 0), foot y T+0x174 (horse_body_watch: the pin target and its DR0 / DR1 watch addresses T+0x24 / T+0x14)",
       "bytes": "0f281a33c00f57c00f2959200f57d2f30f1089600100000f14c80f14d10f5cda0f29591083a1a0010000fb0fc6db558981a4010000488981f0010000f30f119974010000c3",
       "sha256": "0549c7283df38ef5c37479d49d6173ed9603327600c8143dcc64bb76a79d46c2"
+    },
+    {
+      "rva": 14996288,
+      "why": "M3c: the D-Horse Lua dispatcher's SetMaxLife loop (0x140E4D250 case 0x8acd3779): *(receiver+0x30)->+8 entries of 0x28 bytes per record index, +2 max life, +0 life clamped to it (the passenger's copy's horse life read, horse_drive::ReadLife)",
+      "bytes": "498b4e308bc74c8d1c80488b410866428954d8024c8b5108470fb74cda026647390cda66470f420cdaffc76647890cda",
+      "sha256": "4d8e6107973da9c313e3974276c993f45f2b494df0db7b447387338e7cf89ad7"
     }
   ],
   "slots": [

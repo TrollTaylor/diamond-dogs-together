@@ -138,7 +138,7 @@ for _ = 1, 50 do h2.horse.x = h2.horse.x + 100; h2.tick(50) end
 check(h2.logged("event=horse_pillion;step=drive;moved_cm="), "step=drive: the driver's ridden path every 2 s")
 -- M3c (run 7c0b9e71: the 'stall' was the scenario's first ride key 17 s after the stray claim, then a cliff): the census
 -- rider index and the pad words with every drive line, the time from the first ride key to 0.5 m, a stall line.
-check(h2.logged(";rider=0;occ=1;") and h2.logged(";mag=600;"), "step=drive carries the census rider / occupied and the pad words")
+check(h2.logged(";rider=0;occ=1;") and h2.logged(";mag=600"), "step=drive carries the census rider / occupied and the pad words")
 check(h2.logged("event=horse_pillion;step=first_move;ms="), "step=first_move: the first ride key to 0.5 m of path")
 check(not h2.logged("step=stall"), "a moving horse: no stall line")
 local h4 = fixture()

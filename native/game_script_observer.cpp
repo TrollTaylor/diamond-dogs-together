@@ -5265,8 +5265,12 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
         if(!labc.world_horse_pillion) return refuse("off");
         mgscoop::partner_input::PadRaw raw{};
         if(!pp::ReadPad(partner_addresses,player,raw)) return refuse("pad");
-        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,e=%u,masked=%u}",
-            hd::RawAction(raw.src_w[0],raw.kb_w[0])?1u:0u,(raw.pp_mask[0]&0x20u)?1u:0u))) return finish("return {ready=false,reason='read'}");
+        // M3c: the getter's word with the mask, the button mask and the move stick's magnitude (the driver's stall watch).
+        const auto eff=mgscoop::partner_input::Effective(raw);
+        const float mag=std::isfinite(eff.mag)?eff.mag:0.f;
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,e=%u,masked=%u,held=%lu,bm=%lu,mag=%ld}",
+            hd::RawAction(raw.src_w[0],raw.kb_w[0])?1u:0u,(raw.pp_mask[0]&0x20u)?1u:0u,static_cast<unsigned long>(eff.held),
+            static_cast<unsigned long>(raw.pp_mask[0]),static_cast<long>(std::lround(mag*1000.f))))) return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     const auto now=GetTickCount64();const auto thread=GetCurrentThreadId();
@@ -5282,11 +5286,15 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     const bool pendRead=UpperPhaseRead(nullptr,a.record+0x2e3,pend,sizeof(pend));
     const unsigned gen=hd::Generation(horse.records,horse.receiver,horse.realized_mask);
     if(q.verb==hd::Verb::read) {
+        // M3c: record 0's life from the receiver's life table (SetMaxLife's loop, a pinned site; -1 unreadable).
+        std::uint16_t life=0,maxLife=0;
+        const bool lifeOk=hd::ReadLife(horse.receiver,0,life,maxLife);
         if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-            "return {ready=true,id=%u,realized=%s,occupied=%s,rider=%u,pending=%u,x=%ld,y=%ld,z=%ld,yaw=%ld,gen=%u}",
+            "return {ready=true,id=%u,realized=%s,occupied=%s,rider=%u,pending=%u,x=%ld,y=%ld,z=%ld,yaw=%ld,gen=%u,life=%ld,maxlife=%ld}",
             unsigned(a.game_id),a.realized?"true":"false",a.occupied?"true":"false",unsigned(a.rider),
             pendRead?unsigned((pend[0]?1u:0u)|(pend[1]?2u:0u)):4u,RideMilli(a.position[0]),RideMilli(a.position[1]),
-            RideMilli(a.position[2]),RideHeading(a.position[3]),gen))) return finish("return {ready=false,reason='read'}");
+            RideMilli(a.position[2]),RideHeading(a.position[3]),gen,lifeOk?long(life):-1L,lifeOk?long(maxLife):-1L)))
+            return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     // M3 seat1 (world_horse_pillion): this copy's player rides the shared horse with the partner behind; the lease (on the

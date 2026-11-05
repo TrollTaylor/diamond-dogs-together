@@ -12,7 +12,8 @@
 // Verbs (Lua -> native, after "return 'MGS_COOP_HORSE_DRIVE_V1' -- "):
 //   cfg                                         -> {on=0|1,cargo=0|1,pillion=0|1}  (world_horse_share, M2's world_horse_cargo,
 //                                                  M3's world_horse_pillion)
-//   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen} | {ready=false,reason}
+//   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen,life,maxlife} | {ready=false,reason}
+//     (M3c: life / maxlife of record 0 from the receiver's life table, -1 when unreadable; SetMaxLife's loop, a pinned site)
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
 //                                               -> {ready=true,bx,by,bz,byaw,x,y,z,anchored,gen} | refusal
 //   hold0 <mission> <epoch> <x> <y> <z> <yaw> <reset 0..3> -> {ready=true,held=true} | refusal
@@ -27,9 +28,10 @@
 //   free0 <mission> <epoch>                     -> {ready=true,freed=true}  (the watch and pin end before a lay-down Warp)
 //   hold1 <mission> <epoch> <x> <y> <z> <yaw> <reset 0..15> -> as hold0 for body 1 (world_horse_cargo, the carrier's copy:
 //     the downed partner on its horse; also while this copy's player rides; run cfd2b604 drew body 1 low behind the rider)
-//   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1} | refusal  (M3, world_horse_pillion: the
+//   pad <mission> <epoch>                       -> {ready=true,e=0|1,masked=0|1,held,bm,mag} | refusal  (M3, world_horse_pillion: the
 //     local E before the pad masks: (src+0x48 ?: PP+0x460) & ACTION without & ~PP+0x28. The ride hold's ACTION mask
-//     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.)
+//     hides E from the downed poll (probe P5), so the rear-seat claim beside a partner-ridden horse reads it here.
+//     M3c: held = the getter's word with the mask, bm = PP+0x28 (button mask), mag = PP+0x10 (move stick) * 1000.)
 //   seat1 <mission> <epoch> <back_mm> <up_mm> <pose 0|1> -> {ready=true,seat=1} | refusal  (M3: this copy's player rides the
 //     shared horse with the partner behind; leases kSeatMs: the partner driver draws body 1 at RearSeat of this copy's
 //     own body 0 every tick, the DM overlay seating it, instead of the partner's stream.)
@@ -107,6 +109,19 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
 // (vtable_slots {0x24c8ef0,0x70,0x1ad4450} / {0x24c8ef0,0x68,0x1ad56d0}, code_sites 0x1ad4450 / 0x1ad56d0: the partner
 // code gate checks them at start); HoldBody refuses any other vtable or target.
 inline constexpr std::uintptr_t kBodyTVtableRva = 0x24c8ef0, kBodySetRotRva = 0x1ad4450, kBodySetPoseRva = 0x1ad56d0;
+// M3c: body 1's readback on the driver's copy against the rear seat it was given (partner_pillion=stats, 1 s): the worst
+// xz distance and the height gap with the larger magnitude (body minus seat, m); non-finite readbacks are skipped.
+struct SeatErr {
+    float xz_max{}, dy_max{};
+    unsigned n{};
+};
+void NoteSeatErr(SeatErr& e, const float (&seat)[3], const float (&body)[3]) noexcept;
+// M3c: the D-Horse receiver's life table (the Lua dispatcher 0x140E4D250's SetMaxLife loop at 0x140E4D340, pinned in
+// native/horse_drive_contract.hpp): *(receiver+0x30) -> +8 = entries of 0x28 bytes per record index, +0 life, +2 max life.
+inline constexpr std::uintptr_t kLifeSiteRva = 0xe4d340;
+constexpr std::uintptr_t LifeEntry(std::uintptr_t base, unsigned idx) noexcept { return base + std::uintptr_t(idx) * 0x28u; }
+// Live: life / max of record idx (false when unreadable). Pins first (PinsReason).
+bool ReadLife(std::uintptr_t receiver, unsigned idx, std::uint16_t& life, std::uint16_t& max) noexcept;
 // The census identity (records, receiver, realized mask): a change ends every seat (Lua's horse generation).
 std::uint32_t Generation(std::uintptr_t records, std::uintptr_t receiver, std::uint32_t mask) noexcept;
 

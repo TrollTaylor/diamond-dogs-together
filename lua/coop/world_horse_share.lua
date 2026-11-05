@@ -206,7 +206,8 @@ W.handlers[FAST] = function(v)
   if S.closedAt and t - S.closedAt < CLOSED_MS then return end
   local tr = S.track
   if not tr then
-   if S.localRides() then return end
+   -- M3c: the partner rides too (a same-moment tie): world_horse_pillion's step=tie.
+   if S.localRides() then S.partnerRidesAt = t; return end
    tr = {samples = {}}
    S.track, S.stats, S.last, S.lastB, S.gen = tr, {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, up = 0, n = 0, at = t},
     nil, nil, nil

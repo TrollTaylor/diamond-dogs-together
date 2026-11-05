@@ -826,6 +826,13 @@ struct Mission {
     bool pillion;
     bool pillion_logged;
     bool pillion_pose;  // ... and the DM overlay seats it (the lease's pose flag)
+    // M3c: this tick's rear seat and body 1's readback against it (horse_drive::NoteSeatErr), one
+    // partner_pillion=stats line a second while it rides behind (the driver's screen within 0.5 m).
+    float pillion_seat[3];
+    bool pillion_seat_ok;
+    float pillion_xz_max, pillion_dy_max;
+    unsigned pillion_err_n, pillion_stats_lines;
+    std::uint64_t pillion_stats_ms;
     // WS3 ride census (partner_ride_census=1): one line per ridden vehicle every
     // kRideCensusMs (the local one and the remote driver's copy), own cap.
     LogCap census_cap;

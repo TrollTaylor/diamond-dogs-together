@@ -180,6 +180,15 @@ bool RiderBody(std::uint64_t now_ms, float (&p)[3]) noexcept {
     std::memcpy(p, g_body, sizeof(g_body));
     return true;
 }
+void NoteSeatErr(SeatErr& e, const float (&seat)[3], const float (&body)[3]) noexcept {
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(seat[i]) || !std::isfinite(body[i])) return;
+    const float dx = body[0] - seat[0], dz = body[2] - seat[2], dy = body[1] - seat[1];
+    const float xz = std::sqrt(dx * dx + dz * dz);
+    if (xz > e.xz_max) e.xz_max = xz;
+    if (std::fabs(dy) > std::fabs(e.dy_max)) e.dy_max = dy;
+    ++e.n;
+}
 void Reset() noexcept {
     g_placed_ms = g_body_ms = g_seat_ms = 0;
     g_body_ok = false;

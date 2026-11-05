@@ -5,8 +5,8 @@
 -- under its press lock: a guest's claim is granted while the host rides the shared horse; the host's own press beside the
 -- guest's ride commits for itself (GRANT with cause passenger) and blocks a guest claim for 3 s. The passenger's copy
 -- masks the pad (movement, sprint, stance, ACTION, CQC, roll; the camera stays free), squats, and puts body 0 every frame
--- on the rear seat of its own placed horse (world_horse_share calls P.placed right after each placement; hold0 with the
--- A0 reset by default). The driver's copy leases MGS_COOP_HORSE_DRIVE_V1 seat1 every tick: the partner driver draws body
+-- on the rear seat of its own placed horse (world_horse_share calls P.placed right after each placement; since M3c
+-- BODY0's hold0 + C0 + write watch + pin, held again at its last target in a tick without a placement). The driver's copy leases MGS_COOP_HORSE_DRIVE_V1 seat1 every tick: the partner driver draws body
 -- 1 at the rear seat of this copy's ridden horse, seated by the DM overlay. E again (pressed after a release) hops off on
 -- the horse's left; the driver getting off, the ride's end on the passenger's copy, a census generation change, no KEEP
 -- for 3.5 s (1 Hz both ways), a downed passenger, unpairing or a context change lay the passenger beside the horse.
@@ -16,7 +16,7 @@ if type(W) == "table" and type(W.handlers) == "table" and type(W.OP) == "table" 
 local S = W.horseShare
 local P = {state = "off", seq = 0, token = 0, n = {}}
 W.horsePillion = P
-local OP, SEAT = W.OP.HORSE_SEAT or 80, 1
+local OP, SEAT, HORSE = W.OP.HORSE_SEAT or 80, 1, 6656
 W.OP.HORSE_SEAT = OP
 local CLAIM, GRANT, DENY, UNSEATED, KEEP = 1, 2, 3, 5, 6
 local CAUSE = {[0] = "ok", "passenger", "driver_off", "horse_lost", "stream_lost", "context", "busy", "not_riding",
@@ -24,7 +24,10 @@ local CAUSE = {[0] = "ok", "passenger", "driver_off", "horse_lost", "stream_lost
 local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
 local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM, HOP_MS = 2500, 2000, 1000, 3500, 3000, 1300, 1000, 300, 300
-local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30000, 2000
+local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 6000, 2000
+-- M3c: the driver's stall watch (ride keys = the move stick's magnitude over MAG_ON / 1000 for STALL_MS with under MOVE_MM of
+-- ridden path) and the same-moment tie (the partner's RIDE_FAST while this copy's player rides, within TIE_MS).
+local STALL_MS, MOVE_MM, MAG_ON, TIE_MS = 2000, 500, 100, 500
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: lag mostly 6-9 cm, peaks 74-80 cm, crouched), 0 hold0 without a reset, 4 the
@@ -33,7 +36,9 @@ local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30
 -- on the ground beside the horse. Runs bdd49a57 / a295d660: 1.2 m / 0.7 m (clear of the horse) changed neither the
 -- host-driven horse standing still nor the passenger's copy's horse falling, and floated: 0.8 m / 0.3 m. seat 1: the
 -- driver's copy seats body 1 with the DM overlay; 0 (lab lever) not, a test of the stall (the passenger's KEEP carries it).
-local V = {back = 350, rise = 800, mode = 2, dback = 450, dup = 300, seat = 1}
+-- M3c: mode 6 by default (BODY0 run 7c0b9e71: seat_pin lag 0 / dy 0, the passenger squatting behind the driver on their
+-- own screen at walk / trot / gallop, no horse knocked down; mode 2 dropped body 0 1-2.3 m onto the horse every run).
+local V = {back = 350, rise = 800, mode = 6, dback = 450, dup = 300, seat = 1}
 local RESET = {[0] = 0, 1, 1, 2, 1, 1, 14}
 P.V = V
 local floor, sin, cos, sqrt, fmt = math.floor, math.sin, math.cos, math.sqrt, string.format
@@ -82,6 +87,7 @@ local function padE()
  if r and r.ready == true then
   local e = r.e == 1
   if e ~= P.lastE then P.lastE = e; capped("pad", fmt("step=pad;e=%d;masked=%d;state=%s", e and 1 or 0, r.masked == 1 and 1 or 0, P.state), 40) end
+  P.pad = r
   return e
  end
  local why = r and tostring(r.reason) or "receipt"
@@ -125,10 +131,13 @@ local function besideLeft(h)
  return h.x - SIDE_MM * cos(a), y, h.z + SIDE_MM * sin(a), a
 end
 P.besideLeft = besideLeft
+local function receiptRead() return receipt(fmt("read %d %d", W.mission, W.epoch)) end
+local function n(v) return type(v) == "number" and v == v and floor(v) or -1 end
 local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick = nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -175,10 +184,15 @@ local function offTick(now)
  local d = sqrt((x - L[1]) ^ 2 + (z - L[3]) ^ 2)
  if d > CLAIM_MM then
   P.prevE = nil
-  -- Past the shrunken ride hold E reaches the game as usual: the downed poll's E is the masked one.
-  local dd = W.downed
-  if d <= FREE_E_MM and type(dd) == "table" and dd.rawHeld == true and num(dd.rawHeldAt) and now >= dd.rawHeldAt and
-   now - dd.rawHeldAt < 300 then capped("e_free", fmt("step=e_free;dist_cm=%d;hold=%d", round(d / 10), S.hold and 1 or 0), 5) end
+  -- Past the shrunken ride hold E reaches the game as usual (a pickup, a revive). M3c: read from the raw pad verb with
+  -- its ACTION mask bit (the downed poll is not polled while nobody is downed: no e_free line in seven runs).
+  if d > FREE_E_MM then P.prevFree = nil; return end
+  local e = padE()
+  if e == true and P.prevFree == false then
+   local r = P.pad
+   capped("e_free", fmt("step=e_free;dist_cm=%d;hold=%d;masked=%d", round(d / 10), S.hold and 1 or 0, r and r.masked == 1 and 1 or 0), 10)
+  end
+  if e ~= nil then P.prevFree = e end
   return
  end
  local HC = W.horseCargo
@@ -214,7 +228,7 @@ local function noteLag()
 end
 local function pin(x, y, z, a)
  noteLag()
- P.want = {x, y, z}
+ P.want, P.wantA = {x, y, z}, a
  if V.mode == 4 then P.via = "warp"; return warp(x, y, z, a) end
  local r = receipt(fmt("hold0 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z), round(a * 1000), RESET[V.mode] or 1))
  if r and r.ready == true then
@@ -231,6 +245,7 @@ end
 function P.placed(x, y, z, yaw)
  P.yaw = yaw
  if P.state ~= "seated" or not (num(x) and num(y) and num(z) and num(yaw)) then return end
+ P.placedTick = true
  P.h = {x = x, y = y, z = z, yaw = yaw}
  local sx, sy, sz, a = seatPoint(P.h)
  pin(sx, sy, sz, a)
@@ -239,6 +254,13 @@ local function seatedTick(now)
  if not S.track then return stop("track_end") end
  if selfDown() then return stop("passenger_downed") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
+ -- M3c: a tick without a placement (a refused place) holds body 0 at its last target: a lapsed hold dropped the body onto
+ -- the horse (BODY0: Unconscious ~0.18 s after a 100 ms pin gap; every M3 run with mode 2's drop).
+ if not P.placedTick and P.want and P.wantA then
+  capped("hold_keep", "step=hold_keep;why=no_place", 5)
+  pin(P.want[1], P.want[2], P.want[3], P.wantA)
+ end
+ P.placedTick = nil
  if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, V.seat == 0 and 1 or 0) end
  -- E held HOP_MS again hops off; it counts only after E was up once (the claiming E held on never ends it).
  local e = padE()
@@ -250,21 +272,42 @@ local function seatedTick(now)
  if now >= (P.statsAt or 0) then
   P.statsAt = now + STATS_MS
   local L, t = P.lag or {lag = 0, dy = 0, n = 0}, P.want
-  capped("seat_pin", fmt("step=seat_pin;lag_cm=%d;dy_cm=%d;n=%d;via=%s;y_cm=%d", round(L.lag / 10), round(L.dy / 10), L.n,
-   P.via or "none", t and round(t[2] / 10) or -1), 60)
+  local r = receiptRead()
+  capped("seat_pin", fmt("step=seat_pin;lag_cm=%d;dy_cm=%d;n=%d;via=%s;y_cm=%d;occ=%d;life=%d;max=%d", round(L.lag / 10), round(L.dy / 10),
+   L.n, P.via or "none", t and round(t[2] / 10) or -1, r and r.occupied == true and 1 or 0, n(r and r.life), n(r and r.maxlife)), 90)
   P.lag = nil
  end
+end
+-- The census rider index and the pad words for the driver's lines.
+local function driveTail()
+ local r, p = receiptRead(), P.pad
+ return fmt("rider=%d;occ=%d;held=0x%x;bm=0x%x;mag=%d", n(r and r.rider), r and r.occupied == true and 1 or 0, p and math.max(n(p.held), 0) or 0,
+  p and math.max(n(p.bm), 0) or 0, p and n(p.mag) or -1)
 end
 local function driverTick(now)
  if not S.localRides() then return stop("driver_off") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
  if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, 0) end
- -- The ridden path every DRIVE_MS (runs 306525db / c4428efa: the driver's horse stood still under the ride keys).
+ padE()
+ local path = S.path or 0
+ -- The ridden path every DRIVE_MS (runs 306525db / c4428efa: the driver's horse stood still under the ride keys). M3c (run
+ -- 7c0b9e71): that 'stall' was the scenario's first ride key 17 s after a stray claim, then a cliff in front of the horse.
  if now >= (P.driveAt or 0) then
-  local path = S.path or 0
-  if P.drivePath then capped("drive", fmt("step=drive;moved_cm=%d;leases=%d", round((path - P.drivePath) / 10), P.seatN or 0), 60) end
+  if P.drivePath then capped("drive", fmt("step=drive;moved_cm=%d;leases=%d;%s", round((path - P.drivePath) / 10), P.seatN or 0, driveTail()), 90) end
   P.drivePath, P.driveAt = path, now + DRIVE_MS
  end
+ -- The stall watch: ride keys held, the horse under MOVE_MM in STALL_MS; first_move: the first ride key to MOVE_MM of path.
+ local p = P.pad
+ if p and num(p.mag) and p.mag >= MAG_ON then
+  if not P.keyAt then P.keyAt, P.keyPath, P.keyFirst = now, path, P.keyFirst or now end
+  if path - P.keyPath >= MOVE_MM then
+   if not P.moved then P.moved = true; log(fmt("step=first_move;ms=%d;%s", now - P.keyFirst, driveTail())) end
+   P.keyAt, P.keyPath = now, path
+  elseif now - P.keyAt >= STALL_MS then
+   capped("stall", fmt("step=stall;ms=%d;moved_cm=%d;%s", now - P.keyAt, round((path - P.keyPath) / 10), driveTail()), 20)
+   P.keyAt, P.keyPath = now, path
+  end
+ else P.keyAt, P.keyPath = nil, nil end
  local pose = P.remoteSeat == false and 0 or 1
  local r = receipt(fmt("seat1 %d %d %d %d %d", W.mission, W.epoch, V.dback, V.dup, pose))
  if r and r.ready == true then
@@ -327,12 +370,43 @@ W.handlers[OP] = (function(base)
   end
  end
 end)(W.handlers[OP])
+-- M3c tie: both players pressed E at the unridden horse at once, each rides its own copy's horse and the partner's
+-- RIDE_FAST arrives while this copy's player rides (world_horse_share opens no track). The host drives; the guest should sit
+-- behind, but there is no local get-off request yet (no Lua command; the ride states' 0x141230B30 request is unnamed), so
+-- the guest's copy logs it and M1's two-driver fallback stays.
+local function tieTick(now)
+ if not S.localRides() then P.tied = nil; return end
+ local at = S.partnerRidesAt
+ if P.tied or not (num(at) and now >= at and now - at <= TIE_MS) then return end
+ P.tied = true
+ capped("tie", fmt("step=tie;role=%s;verdict=%s;state=%s", W.host and "host" or "guest", W.host and "drive" or "yield;getoff=none", P.state), 10)
+end
+-- M3c: the shared horse hit or knocked down on this copy (the Unconscious of M3's passenger copies): the message, its
+-- arguments, this copy's seat state, the horse's life and body 0's height over the horse.
+function P.hit(kind, a1, a2, a3)
+ local r, x, y, z = receiptRead(), mine()
+ local h = P.h
+ capped("horse_hit", fmt("step=horse_hit;m=%s;a1=%s;a2=%s;a3=%s;state=%s;life=%d;max=%d;body_dy_cm=%d", kind, tostring(a1), tostring(a2),
+  tostring(a3), P.state, n(r and r.life), n(r and r.maxlife), (y and h) and round((y - h.y) / 10) or -1), 40)
+end
+local observe = W.observe
+if type(observe) == "function" then
+ function W.observe(class, msg, a0, a1, a2, a3, ...)
+  local M, K = W.M, W.kind
+  if a0 == HORSE and type(M) == "table" and class == M.GameObject and type(K) == "table" then
+   local kind = K[msg]
+   if (kind == "Unconscious" or kind == "Damage" or kind == "Dead" or kind == "Conscious") and P.on() then pcall(P.hit, kind, a1, a2, a3) end
+  end
+  return observe(class, msg, a0, a1, a2, a3, ...)
+ end
+end
 function P.tick(now)
  if not P.on() then
   if P.state ~= "off" then stop("stream_lost", W.paired ~= true) end
   P.prevE = nil
   return
  end
+ tieTick(now)
  if P.mission ~= nil and (P.mission ~= W.mission or P.epoch ~= W.epoch or P.role ~= W.role) then return stop("context") end
  local s = P.state
  if s == "off" then return offTick(now) end
