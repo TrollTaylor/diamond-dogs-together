@@ -1,0 +1,48 @@
+# Enemy gaps 3 (place_reach, docs/world-sync-design.md 7.18), the watch: after enemy-integ-carry.txt and before
+# enemy-latch-alert.txt (every guard still ignores the players). The host stands on the ground point (488.53, 268.24,
+# 2206.17) from which its binoculars showed guard 1740692850's body about 110 m away at aim bearing -131 in run b77e2104
+# (host v-3; the old view target 667680985 at -76 was hidden by a rise). The guest goes 6 m from him, so he is
+# guest-owned (the guest's M4 stream reaches the host's copy 110 m from the host only with place_reach). Both cameras
+# on him (aim_ent) through binoculars, both copies capture at the same moment: w-a, w-b 3 s later, w-c 4 s after that.
+# Each copy's aim readout (d, rotY, rotX) and position give where its copy of him stands. Then the host goes back to
+# the quiet spot 50 m south for the ALERT part. Run 617311eb: the frames matched (w-b), but with the guest standing 6 m
+# from him he discovered the guest after w-c, the CP's ALERT began 10 s before the ALERT part and the guest was downed
+# early in it (then both players, a shared game over): now 10 m and crouched.
+logmark both
+host run teleport 488.53 268.24 2206.17 -131
+wait 2500
+host run position
+guest run enemy goto 1740692850 10
+stance guest crouch
+wait 5000
+guest run position
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-a
+wait 2000
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-b
+wait 3000
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-c
+host run enemy info 1740692850
+guest run enemy info 1740692850
+guest run position
+host run world_status
+guest run world_status
+host run teleport 421.16 269.2 2084.42 0
+wait 3000

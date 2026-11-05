@@ -773,11 +773,16 @@ struct LabConfig {
     // disabled_local) and keeps the resting spot where this copy's body lies after it (no report back); place_reach (bit
     // 2048, with soldier_follow) force-realizes a guard whose placement the game relayed (not realized here) for 8 s and
     // lets the M4 stream reach 160 m (run 798b51dd: every M3 host sample 60-160 m from the host, 57 refused unrealized).
-    // Lab and play; both off unless named (lab_config.cpp: why place_reach is not on by default yet).
+    // Lab and play; both off unless named (lab_config.cpp: place_reach's no-key run 35d4074f failed the drive_sink row).
     bool body_dead = false;
     bool body_dead_given = false;
     bool place_reach = false;
     bool place_reach_given = false;
+    // Enemy gaps 3 (docs/world-sync-design.md 7.18, native DriveReceipt only, no CFG bit): the soft follow also puts a copy
+    // at rest in x/z that stands more than 1.5 m above or below the owner's for 1 s on the owner's spot (drive_sink at the
+    // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
+    bool drive_vert = false;
+    bool drive_vert_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

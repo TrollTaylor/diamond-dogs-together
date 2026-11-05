@@ -60,6 +60,95 @@ Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
   `--check`: the known failures only, plus generate_targeting_contract.py (its build/targeting-scripts-20260910 input is
   not in this worktree's build folder; no targeting file changed).
 
+## November 5, 2026: enemy gaps 3 - no change at the defaults: `drive_vert` and `place_reach` built and run, both off unless named (`wp/enemy-m7`, not pushed)
+
+Track A of the enemy6 round (design 7.18, protocol 35). Markers: [O] seen in a log line or a frame, [I] inferred, [U]
+unknown. Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `617311eb`
+(`place_reach=1, drive_vert=1`, at d470f1ec), `025fbb28` (`place_reach=1`, drive_vert on by default then, at cdfc3651)
+and `35d4074f` (no key named, at d4d4cb65, where both were on by default). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`. A skeptic's check refuted five claims of this entry's first
+version (drive_vert proven, "eight copies all landed", the cause's range and frame, the hold's breakdown, the README
+line); this version keeps only what held.
+
+- **What players get**: nothing changes at the defaults. `drive_vert` was on by default for two commits and is off
+  unless named again (dec7c687 red, 7736b898 green); `place_reach` and `body_dead` stay off unless named. The realize
+  hold and the refusal replies' `b` are inert while `place_reach` is off.
+- **drive_vert, why it is off** [O]: the 8 `world_drive=vert` snaps were of 4 copies (the guest's copy of 1799112697 once
+  in `617311eb`; the host's copy of 2929558510 twice in `025fbb28` and twice in `35d4074f`; the host's copy of 2942862796
+  three times in `025fbb28`), each 63-121 m from the receiving player, so each needed `place_reach`'s 60-160 m reach: the
+  60 m band live at the defaults was never exercised, and no run had drive_vert on with place_reach off. "Landed" is
+  `h=1` only, with no position read-back; a second snap 1.4-1.7 s later with the gap back over 1.5 m (2929558510 -2.47
+  then +1.80 m and -2.41 then +1.84 m; 2942862796 2.61, 4.06, 5.80 m in 3 s) means at most 4 of the 8 moves held [I: a
+  copy popping up and dropping, maybe a guard on a ladder]. Its 1 s snap also masks the 2 s `drive_sink` detector (in
+  `025fbb28` the host's copy of 2942862796 was more than 1.5 m under its target for at least 3 of about 4 s with 0
+  `drive_sink`), so "0 drive_sink" with it on is no proof. No frame shows the fix; `DriveAdmit` would also run it at
+  Mother Base and in Africa, untried. Its only no-key run, `35d4074f`, failed the `drive_sink` row.
+- **drive_sink at the defaults** [O]: `6348f361`, `41f2b07f`, `31a799e3` and `b77e2104` each left one driven copy 2.2-3.3
+  m under its target; `e583ee62` and `798b51dd` none (4 of 6 runs). Cause [O code]: `sw::DriveStep`'s rest test is
+  planar (a copy at rest moves only beyond 1.5 m) and its y is set only on a moving step, so a copy within 1.5 m in x / z
+  but a storey off is never moved; every such `drive_sink` had 0.14-1.14 m planar (`3bc7280b` e_cm 114). [O frame]
+  `b77e2104` guest al-2 shows the guest's camera looking up a wall under a red threat arc, the wall top empty: no guard
+  is visible. The "about 5 m over the guest" comes only from the aim readout (`aim_nearest` 2929558510 d 9.4 m, rotX
+  -31.5) [I].
+- **place_reach, the frames** [O, looked at]: from the ground point (488.53, 268.24, 2206.17) the host's binoculars on
+  guest-owned 1740692850 (`aim_ent`) show his body at the crosshair beside the guest's character 107.6 / 109.2 m away,
+  while the guest's crosshair is on him 5.1 / 10.1 m away (his legs; the analyzer's "Soviet Soldier", his body not
+  clearly visible) (`617311eb` / `025fbb28` w-b; calm); the aim readouts put the copies 0.11 / 1.40 m apart (w-a 1.00 /
+  1.38 m, w-c 0.57 / 0.68 m). Only w-b matched in each run: in w-a / w-c the host's frame shows his marker without a
+  clear body, and `025fbb28` host w-c shows a red `!` (discovered). The host's place error for the guest-owned guards
+  p90 2.5 / 1.99 / 2.67 m (`798b51dd` without the key 6.97 m).
+- **place_reach, what blocks it** [O]: in `35d4074f` the host's copy of guest-owned 1179373153, about 150 m away, landed
+  an M3 placement (`dy_m -0.01`, 329556708), the next drive step relayed and the hold force-realized him, 2 s later he
+  stood 3.73 m lower (`place_sink`), at the next landed drive step 5.10 m under his owner (`drive_sink`, 2.63 m planar),
+  2 s later still 5.4 m under; at 329630983 a host `place_div why=fall` had him 82.5 m off and 10.5 m under.
+  `enemy_div_report.py` counts `guard_fell` on guest lines only, so this row was missing from the report (not fixed: the
+  report has no test). [I] a copy realized far from the host's player drops through a floor that PC has not loaded;
+  [U] whether the force-realize causes it. Next: read a far copy's y back 2 s after a placement and place him again at
+  the owner's y (or no force-realize beyond ~120 m), then one named run and the no-key run.
+- **The realize hold** [O]: `3c9d1250`'s 14 host drive holds all "timed out" only because a landed drive step never
+  released one (every relay `streak=1`). Now a relayed or backoff placement or drive step holds the guard, the receipts
+  name the ms left of his backoff (`b`), a held drive step waits for its end, a held placement is queued again then, and
+  a landed drive step releases him. `35d4074f`: host 39 holds, 35 landed (by `st`: 10 by a landed drive step, 25 by a
+  placement, mostly re-queued `rq=1`; `src=` names what started the hold, not what landed it; most 3.09 s after the
+  hold), 4 timed out; guest 20 of 20 landed (round 5: 8 of 26); `617311eb` 1 of 1 (`rq=1`); `025fbb28` had no relay. A
+  held placement's retry is now kept when a drive step is refused meanwhile (`r.c = c or r.c`; unit-tested, in no run).
+- **Failing rows** (every run): `617311eb` GAME OVER: in the watch part 1740692850 discovered the guest 6 m from him
+  after w-c, the CP's ALERT began 10 s before the ALERT part, the guest was downed and the host 93 s later (the shared
+  game over, MISSION FAILED on the guest; the report counted 0 and now counts `step=shared_game_over` /
+  `game_over_applied`: 2); corrections applied 6/20, M3 host placements 3/11. `025fbb28`: discovered again (CP ALERT
+  right after w-b, no downs); corrections 4/13, M3 host placements 9/12, guest place error max 350 m (the riders).
+  `35d4074f`: `drive_sink` 1, `place_sink` 1, the host-side `fall` (above), corrections 15/33, M3 host placements 43/70.
+- **Frames I looked at**: w-a / w-b / w-c on both copies of `617311eb` and `025fbb28`; `617311eb` guest al-4 (MISSION
+  FAILED); `35d4074f` c-b (the sleeping guard by the guest's character on both screens) and al-9 (both alive);
+  `b77e2104` guest al-2 (the empty wall top).
+- **Not shown**: no run at the final head. With both keys off unless named the default path is 0.15.1's [I: the diff
+  touches no default-on step; `b` in the refusal replies is read only by the hold, which returns while `place_reach` is
+  off].
+- **Built** (red first each time): the hold's backoff retry, `b`, `drive_vert` (32f1cdc0 red, d470f1ec green), drive_vert
+  on by default and the report's game-over patterns (61470582 / cdfc3651), place_reach on (3255e43f / 61965742) and back
+  off (6eb410a7 / 2496c1c4), the kept retry (d85c80e0 / a06dd62a), drive_vert back off (dec7c687 / 7736b898); scenario
+  `enemy-reach-watch.txt`. No wire change, no CFG bit.
+- **Checks**: full `tools/build.ps1 -Jobs 4` at the merged head; every `generate_*_contract.py --check` identical to the
+  merge head (known failures only).
+
+## November 5, 2026: 0.15.1 package (0.15.1: guards stay in sync through long firefights; riding D-Horse together)
+
+**Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.1-20261105T110337Z-01f35bc2/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `5a55e36` with Release receipt `20261105-110107-e9e199f1426d4b80b1bd8f11b6d493fd` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.1+5a55e36` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `DiamondDogsTogether-0.15.1.zip` (the player zip: exe, dll, `mgs-coop/package.json`, README, notices and licences; no source) | 3,324,111 | `4657739D0E2D37D2BE6025B908A712CBAEEA046C3D40565B1AC331874B359CAC` |
+| `DDT-source-0.15.1.zip` (1,670 source files plus `source-files.json`) | 9,821,431 | `C38DF35A03F93C166329D81225C2C73BC1B28562DB7C4E8DB410FC91F993AA06` |
+| `DiamondDogsTogether.exe` | 2,387,456 | `D8E2316ADD956D83A36822CCDEF40EA0DECE5746FAB1813075B863EEAAE732A9` |
+| `dinput8.dll` | 7,756,800 | `F1557AA5ABBE74FFD3C371EA01E3B6F6E5A5D0D50962621CFF8484E5867978DA` |
+
+- **Package checks:** the checks of `tools/package.ps1 -Friend` itself (a passing Release receipt with the Release flags; the staged exe and dll are the receipt's; each zip holds exactly its staged files with their hashes; only tracked source files). `package.json`: version 0.15.1, `source_commit` `5a55e36`, `source_dirty` false. No separate zip audit.
+- **Windows Defender** (`MpCmdRun.exe -Scan -ScanType 3 -File <path> -DisableRemediation`, one scan per file; engine 1.1.26100.4, signatures 1.463.129.0): the exe, the dll and both zips "found no threats" (exit 0); the four hashes unchanged after the scans.
+- **Privacy:** the tracked files at `cd2ee39` and every file in both zips: no Windows profile path (both slash styles), persona name or the user's e-mail. History was not rewritten.
+- **Version.** 0.15.1 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.1 and still 0.15.0; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.2", "0.15.1")`.
+- **Checks at the bump commit `5a55e36`:** the Release receipt above is the only test run (342 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
+- **To release:** upload **both** zips to the GitHub release `v0.15.1`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.1 -PackageDir dist/DiamondDogsTogether-0.15.1-20261105T110337Z-01f35bc2` before publishing. Nothing was pushed, tagged or released by the packaging.
+
 ## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
@@ -783,7 +872,7 @@ The user asked to finish the enemy sync plan (scratchpad fb1101) completely. Thi
 - **A1** [O] (the fb1101 friend log): not a missing stand-in (every plan line `map=0,1,2`; 873 / 875 are aliases of 46 / 9). The 19.8 s mismatch: body 1 dropped back to slot 0 after a prone/dive while the follower had spent its two writes of that (slot, switch) episode. `partner_slots::EpisodeStep` re-arms one write 750 ms after the body left a reached slot (at most 3 per episode, 2 s apart; `partner_slot=drift`) behind `partner_native_slot_rearm` (off unless named: the drift case did not come up in a game). `partner_weapon=mismatch` now names `remote_slot`, `body_slot` and `why=plan|slot|equip` (plan: no body slot or stand-in for that remote slot). [O] In the runs below the late joiner's 875 had no body weapon and the plan's stand-in (slot 0, 36) took it (`partner_weapon=standin`, the host HUD "gun stand-in"); every `why=slot` mismatch cleared within about 0.4 s (the join-time `why=plan` mismatch of 873, body equip 2047, lasted about 1-3 s).
 - **The gaps batch** (`tools/worker/scenarios/enemy-gaps-1..6`, one hidden play session per attempt, `-WanSim bad`, gun profile, afgh-ledge, `place_lift=1` and `partner_native_slot_rearm=1` named, no soldier_* key; slim archive `enemy-follow/<run>/` with JPEG frames):
   - `7c174346` (attempt 1): [O] the host alone 50 m south of afgh_field_cp stayed quiet (Q1); at the second spot patroller 1926520947 came within 10 m and the CP alerted, 2 ms before the host's clock `fast_end` [I: reflex mode after a guard spotted the host; the scout's 21-run "arrival alert at fast_end" is a guard seeing a player]. Both players then lay downed (godmode is autoheal only), so the stimuli ran in a fight. `titlemenu both` let the guest follow into 30010: no late join.
-  - `0b4a1509` (attempt 2): [O] a true late join (the host played alone about 2 min; the guest paired mid-mission, epoch 3 roster match), 14 guards ignored on both copies, the guest teleported 3 m behind the host: the guards within 60 m read p50 under 1 m in every window after the arrival (the max reached 1.0-1.1 m in 3e2611fc); the route watch stayed quiet. Carry: the host slept 667680985, the guest picked him up (remote act 39), walked and put him down; guest `body_tx sent=1`, host `place_body fix=1` (19.1 m: the sleep had been applied where each copy stood) and `hplace applied`; frame guest c-b shows the sleeping guard next to the guest's character. Corrected at the landing: in host c-b / s-aim the host's own character lies in the foreground and the guard and the guest's character are behind sandbags (only the 'Taylor' nametag and, in s-aim, a ZZZ marker show), so on the host's screen this rests on HUD markers. Defect seen in the log: from the carry walk on, the host's partner body lay on its back (body act 32, `partner_recon=frozen; reason=act`) while the guest stood; not fixed (the carry code is out of bounds for this track).
+  - `0b4a1509` (attempt 2): [O] a true late join (the host played alone about 2 min; the guest paired mid-mission, epoch 3 roster match), 14 guards ignored on both copies, the guest teleported 3 m behind the host: the guards within 60 m read p50 under 1 m in every window after the arrival (the max reached 1.0-1.1 m in 3e2611fc); the route watch stayed quiet. Carry: the host slept 667680985, the guest picked him up (remote act 39), walked and put him down; guest `body_tx sent=1`, host `place_body fix=1` (19.1 m: the sleep had been applied where each copy stood) and `hplace applied`; frame guest c-b shows the sleeping guard next to the guest's character. Corrected at the landing: in host c-b / s-aim the host's own character lies in the foreground and the guard and the guest's character are behind sandbags (only the partner's nametag and, in s-aim, a ZZZ marker show), so on the host's screen this rests on HUD markers. Defect seen in the log: from the carry walk on, the host's partner body lay on its back (body act 32, `partner_recon=frozen; reason=act`) while the guest stood; not fixed (the carry code is out of bounds for this track).
   - `3e2611fc` (attempt 3): late join and route watch again; the hold-up guard 2929558510 walked away 3 m in front of the crouched guest, unaware, the reticle below him (frame hu-g3-02): no hold-up.
   - All three: place error p50 0.95 / 1.01 / 0.73 m, p90 2.29 / 2.82 / 1.87 m; 124 of 127 placements landed within 0.1 m of the owner's height (a hand count); 0 place_sink, 0 drive_sink, 0 latches, faults, Game Overs, roster mismatches. Corrected at the landing: drive hard snaps were host 1 in 7c174346 and guest 5 / 4 / 5 (not 0), and 7c174346 fails the M3 host-side p90 gate (5.93 m).
 - **Not seen** [U]: a hold-up's raised hands; the guest's own kill placed first on the host (three tries: the camera on a wall, the guard behind a wall or below a ledge, and the guest's own CP alerting, `src=req`, on its goto next to an ignored guard: restrict notice does not stop a guard 3-8 m away); M5 copies walking in step (no route change in the 45 s windows: `route_tx` 0); a real drop and re-pair (no play lever; the late join stands in); the slot drift case in a game.
