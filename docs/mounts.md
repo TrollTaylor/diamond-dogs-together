@@ -531,9 +531,11 @@ lab and play (`native/lab_config.cpp`; a named 0 is the off switch), with M3's 2
   horse, which the frames show is the horse's RIGHT (not its left, as this section said): in `51f6a2cc` (a) it put the
   passenger inside the rock wall the horse had ridden along (1.5 s later only the rifle and a forearm show on both
   screens). Now the passenger's copy keeps the placed root every 0.25 m from the seating (24 points) and lays them at the
-  newest one 2-4 m from the root now, ground the horse stood on (`step=unseated; ...; at=trail`); the side point only
-  without one (`at=side`: a horse that has not moved 2 m, a jump of the placed horse). Travel / Bring partner here wait
-  while seated.
+  newest one 2-4 m from the root now, ground the horse stood on (`step=unseated; ...; at=trail`); without one (a horse
+  that has not moved 2 m since the seating) the spot the passenger stood on at the claim, 0.3 m up, when it is within 5 m
+  of the root (`at=foot`; play `16f3f282` / `023f9167`: the side point put the passenger inside the rock on the driver's
+  dismount right after a seating); the side point only past that (`at=side`: a jump of the placed horse). Travel /
+  Bring partner here wait while seated.
 - **Ride hold.** With the pillion key the M1 hold is 2.5 m / 2.8 m (4 m / 4.5 m without it). M3c: an E 3.16-4.04 m from the
   ridden horse reached the game unmasked (`step=e_free; hold=0; masked=0`, read from the pad verb; guest lines in runs
   `93b59ae4`, `85a49831` (316 cm), `51f6a2cc` (404 cm), `5687aa1c`, `e284fb1c`, `4f52fa2a`); the host's e_free lines in
@@ -552,7 +554,7 @@ lab and play (`native/lab_config.cpp`; a named 0 is the off switch), with M3's 2
   2 s, the census rider index and the pad words) `/ first_move; ms=..` (the first ride key to 0.5 m of path) `/ stall`
   (ride keys 2 s with under 0.5 m) `/ horse_hit; m=..` (W.observe: a 6656 Damage / Unconscious / Conscious / Dead with the
   seat state, the life and body 0's height) `/ tie / hold_keep / pad / e_free; dist_cm; hold; masked / unseated; seat=1;
-  why=..; side=passenger|driver` (the passenger's with `x; z; at=trail|side`). The read verb carries record 0's `life` / `maxlife` from the receiver's life table
+  why=..; side=passenger|driver` (the passenger's with `x; z; at=trail|foot|side`). The read verb carries record 0's `life` / `maxlife` from the receiver's life table
   (`horse_drive::ReadLife`: `*(receiver+0x30)+8`, 0x28 bytes per index, +0 life, +2 max; the reader is the D-Horse Lua
   dispatcher's SetMaxLife loop at 0x140E4D340, pinned in `tools/horse_drive_sites.json`, contract 6 sites 5 slots).
 - **Hidden runs, round 1** (`ba6b4bb5` / `b48f897b`, `306525db` / `c4428efa`, `bdd49a57` / `a295d660`, `718b6411`): the
@@ -601,6 +603,13 @@ lab and play (`native/lab_config.cpp`; a named 0 is the off switch), with M3's 2
     ride, mostly hidden behind the driver (the skeptic: (b)'s `guest-h3b-idle-side-guest` is a rear view with one body).
   - Every hop-off and drop frame seen from behind the horse (`4f52fa2a`, `51f6a2cc`, both copies) shows the passenger on
     the horse's right; `51f6a2cc` (a) inside the rock wall (the Endings item above has the fix).
+- **Hidden runs, M3d** (the skeptic's corrections, same scenarios, the key not named, `-WanSim bad`): lab `d795ab11` (at
+  54e96e67: the ridden-path lay-off) and `da67ef81`, play `975a0641` (at 7564a60a: plus the claim-time spot): every hop-off
+  in both orders `at=trail`, the passenger on the ground behind the horse on their own screen and beside its rear on the
+  driver's; the lab drops `at=trail`; the driver's dismount right after the second seating `at=foot` (standing beside the
+  horse). Play `16f3f282` / `023f9167` (at 54e96e67): that dismount used the side point and put the passenger inside the
+  rock on their own screen, and the guest's next first E at the unridden horse did not mount. `975a0641` passed every
+  step (one `step=stall` in (b), rock ahead in the frames); the lab runs every step but the drop's `world_inactive` expect.
 - **Not yet:** the tie's get-off (above); on the driver's screen the first second of each seat shows the passenger beside
   the horse before they come up; the passenger squats (no seated rider pose: `player2_cypr` waits for M4, D-H6); the stock
   E / horse prompt still shows on the passenger's screen (E is masked; held 0.3 s it hops off); no aiming or shooting from

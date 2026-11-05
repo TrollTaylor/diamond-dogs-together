@@ -1,3 +1,34 @@
+## November 5, 2026: horse M3d, ride behind your partner corrected as the skeptic checked it (`wp/horse`; `world_horse_pillion` still on with the gun profile)
+
+**Players get:** getting off the back of your partner's horse (hold E, your partner getting off, or a link drop) now
+puts you on the ground the horse just crossed, about 2 m behind it, or where you stood when you got on. Before, it put
+you 1.3 m to the horse's right (not its left, as the M3c entry said), and next to a rock wall that was inside the rock.
+Once the ride hold is on, E within 2.8 m of the horse always takes the seat (between 2.5 and 2.8 m it did nothing).
+Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role orders, the key not named); not tried
+by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
+
+- **Built** (red first each time): the lay-off order ridden path 2-4 m back (`at=trail`), then the claim-time spot within
+  5 m (`at=foot`), then the old side point (`at=side`, only a jump of the placed horse) (5bc07a4b / 54e96e67, c20e65d7 /
+  7564a60a); the claim inside the ride hold's 2.5 / 2.8 m band (unit-tested; [U] live: no scenario presses E in the band).
+  No wire, note, CFG or native change.
+- **Proven [O, both logs, frames looked at on both copies]:** lab `d795ab11` (at 54e96e67) and `da67ef81`, play
+  `975a0641` (at 7564a60a; `-WanSim bad`, the key not named, receipt source hashes equal the tested tree): every hop-off
+  (orders (a) and (b) in each run) logs `at=trail` and shows the passenger on the ground behind the horse on their own
+  screen and beside its rear on the driver's (also by the rock walls of the routes); the lab link drops log `at=trail`
+  and show the passenger standing on open ground on their own screen; the driver's
+  dismount right after the second seating logs `at=foot` and shows them standing beside the horse (`da67ef81`,
+  `975a0641`). Seat pin 0 / 0 after the first window of each seating (39-58 cm in it); no Unconscious, horse_hit or crash
+  line; `975a0641` passed every step, `da67ef81` / `d795ab11` every step but the drop part's known `world_inactive` expect.
+- **Failed on the way [O]:** play `16f3f282` / `023f9167` (at 54e96e67): the driver's dismount right after a seating used
+  the side point and put the passenger inside the rock on their own screen (frames `guest-h3-both-off-guest`), and the
+  guest's next first E at the unridden horse then did not mount (the part stopped there): the reason for `at=foot`.
+- **Corrected docs:** first_move 266-1034 ms (not 266-583); `step=stall` lines 2 / 1 / 3 in `93b59ae4` / `85a49831` /
+  `e284fb1c` and 1 in `975a0641` (b), each with rock ahead in the frames [I: terrain]; not every idle / stop side view shows
+  both bodies; e_free 3.16-4.04 m.
+- **Not yet:** the tie rule (plan item 5) is only logged (`getoff=none`); never seen live: the driver's dismount with the
+  guest driving, the `hold_keep` keepalive, the link drop in play mode, an E in the 2.5-2.8 m band. On their own screen a
+  passenger can still be crouched for a moment after landing (`da67ef81` host (b)).
+
 ## November 5, 2026: horse M3c, ride behind your partner (`wp/horse`; `world_horse_pillion` on with the gun profile)
 
 **Players get:** beside the D-Horse your partner rides, press E and you sit behind them, on both screens, while they
