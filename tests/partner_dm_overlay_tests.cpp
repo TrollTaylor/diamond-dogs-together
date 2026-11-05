@@ -630,6 +630,7 @@ void TestPillionMap() {
     Game r;
     r.in.mode = PartnerNativeOverlay::off;
     r.in.pillion = true;
+    r.in.pillion_reseat = true;  // world_horse_shot named
     r.in.remote_valid = true;
     r.in.remote_act = 3;
     r.in.body_valid = true;
@@ -644,6 +645,23 @@ void TestPillionMap() {
     r.stops = true;
     r.Run(3000);
     Check(pdo::Active(r.s) && r.s.index == ride && r.plays == 2, "pillion: the lease back seats body 1 again");
+    // The review of M4: the re-entry is part of world_horse_shot (off unless named); at the defaults the 0.15.2 rule holds
+    // (the stopped seat stays the done entry until the remote's act changes).
+    Game q;
+    q.in.mode = PartnerNativeOverlay::off;
+    q.in.pillion = true;
+    q.in.remote_valid = true;
+    q.in.remote_act = 3;
+    q.in.body_valid = true;
+    q.in.body_act = 3;
+    q.Run(1000);
+    q.stops = false;
+    q.in.pillion = false;
+    q.Run(400);
+    q.in.pillion = true;
+    q.stops = true;
+    q.Run(3000);
+    Check(q.plays == 1, "pillion, reseat off (the defaults): the lapsed seat is not re-entered");
     Game n;
     n.in.mode = PartnerNativeOverlay::off;
     n.in.pillion = true;

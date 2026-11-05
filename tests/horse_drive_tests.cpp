@@ -326,7 +326,16 @@ void TestPillion() {
     // M4 (run d935beae): a capture stalled the driver's game past kSeatMs, the lease lapsed for one tick and the overlay
     // seat ended (body 1 then stood 1.9 m under the rear seat for the rest of the ride). A lease live on the partner
     // driver's previous tick is kept kSeatGraceTicks more ticks with its last offsets; a lease gone that long ends.
+    // The review of M4: the grace is part of world_horse_shot (off unless named); without it a lapsed tick ends the seat.
+    hd::SeatHold off{};
+    float ob = 0.45f, ou = 0.3f;
+    bool op = true;
+    Check(!off.grace && hd::HoldSeat(off, true, ob, ou, op), "grace off: a live lease seats");
+    ob = ou = 0.f;
+    op = false;
+    Check(!hd::HoldSeat(off, false, ob, ou, op) && !off.live, "grace off (the defaults): one lapsed tick ends the seat");
     hd::SeatHold sh{};
+    sh.grace = true;
     float hb = 0.f, hu = 0.f;
     bool hp = false;
     Check(!hd::HoldSeat(sh, false, hb, hu, hp), "no lease yet: no seat");
