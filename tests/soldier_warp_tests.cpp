@@ -598,6 +598,24 @@ int main() {
     Check(sw::GuestMayWarp(true, false, true) && sw::GuestMayWarp(false, true, false) && sw::GuestMayWarp(true, false, false) &&
           !sw::GuestMayWarp(false, false, true), "Verify runs for a play or lab guest");
     VirtualFree(image, 0, MEM_RELEASE);
+    // Enemy round 8 track A (range_flat, docs/world-sync-design.md 7.22): run ddcdec94, the guest fell 178 m below the
+    // outpost (x/z 436.1, 2181.7) and stayed the owner (x/z rule) of guards 5-30 m from them on the ledge; the 3D rule
+    // made the host (70 m away) the nearer player and refused every placement `range`. On the ground plane the guest is.
+    {
+        const float guard[3] = {440.8f, 270.0f, 2175.8f}, host_p[3] = {418.3f, 268.3f, 2083.5f}, guest_p[3] = {436.1f, 92.1f, 2181.7f};
+        bool g_near = true;
+        const float d3 = sw::NearerSquared(guard, host_p, guest_p, true, true, g_near);
+        Check(!g_near && !(d3 <= sw::kMaxRangeLimitM * sw::kMaxRangeLimitM), "3D: the fallen guest is not nearer; out of range");
+        const float flat = sw::NearerSquaredFlat(guard, host_p, guest_p, true, true, g_near);
+        Check(g_near && std::fabs(flat - (4.7f * 4.7f + 5.9f * 5.9f)) < 0.05f, "flat: the guest on the ground plane, 7.5 m");
+        Check(std::fabs(sw::NearerSquaredFlat(guard, host_p, guest_p, true, false, g_near) - (22.5f * 22.5f + 92.3f * 92.3f)) < 1.0f &&
+                  !g_near, "flat: a stale guest pose leaves the host's leg");
+        sw::Request fr{};
+        for (unsigned i = 0; i < 3; ++i) { fr.pos[i] = guard[i]; fr.player[i] = guest_p[i]; }
+        sw::FlattenRange(fr);
+        Check(fr.player[1] == fr.pos[1] && fr.player[0] == guest_p[0] && fr.player[2] == guest_p[2],
+              "FlattenRange: Warp's range is then measured on the ground plane");
+    }
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);
     return 0;
 }

@@ -536,6 +536,18 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.drive_vert_given = true;
         if (!ok) result.drive_vert = false;
     }
+    else if (Equals(key, "quiet_place")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.quiet_place);
+        result.quiet_place_given = true;
+        if (!ok) result.quiet_place = false;
+    }
+    else if (Equals(key, "range_flat")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.range_flat);
+        result.range_flat_given = true;
+        if (!ok) result.range_flat = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);
@@ -2057,6 +2069,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
+    // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
+    // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
+    // place_sink lines), and 8 of 115 quiet moves (4 guards) left the body 2-92 m off while the slot read the target.
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.

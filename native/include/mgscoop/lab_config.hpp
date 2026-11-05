@@ -783,6 +783,19 @@ struct LabConfig {
     // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
     bool drive_vert = false;
     bool drive_vert_given = false;
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22, native only, no CFG bit). quiet_place: a correction the guest's
+    // Lua makes of a guard off its player's screen moves him with the engine's quiet network-position warp 0x136ece0 in the
+    // request manager update (no set-transform message: after 499 of 539 applied place warps of the census runs the guard
+    // was in action kind 3 within 0.5 s, 260 of them already before the warp, and run 0d801772's guard 246 then radioed a
+    // possible intruder and the outpost went to caution on the guest). range_flat: the host's M3 placement and drive range
+    // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
+    // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
+    // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
+    bool quiet_place = false;
+    bool quiet_place_given = false;
+    bool range_flat = false;
+    bool range_flat_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still

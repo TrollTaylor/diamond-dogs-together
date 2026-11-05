@@ -1,3 +1,74 @@
+## November 5, 2026: enemy round 8 track A - the false radio report and the host's drift while the guest is down: both fixes built, neither turned on; `quiet_place` and `range_flat` stay off unless named (`wp/enemy-m7`, not pushed)
+
+Design 7.22, protocol section 39. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge: `bcd95b14` (`quiet_place=1, range_flat=1,
+act_census=1`; enemy8-quiet-calm + enemy8-down-alert), `8b581a26` (`range_flat=1, act_census=1`, quiet_place at its
+then default ON; same parts) and `1befcef4` (no key named, code head cde0cbb4 with quiet_place ON by default:
+enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert). Two queue jobs ran no game (the worker
+refused the new keys' names until 07c0767a; the worker's own CTest flaked once on a drain-window timing check). Archives
+under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Both fixes are test switches (`quiet_place=1`, `range_flat=1` in
+  lab.ini). Only log lines change at the defaults (`world_place=host_warp` adds `flat; g_age_ms; dgy_m`; read-backs add
+  `dxz_m`).
+- **Bug 1, the false radio report** [O]: at the seed the guest's copy of guard 246 (56 m off, off the guest's screen)
+  got the default-on place correction, the set-transform message, went to action kind 3, radioed a possible intruder
+  and the outpost went to CAUTION (runs fbf3522a, 0d801772; f11fe8a1 kind 3 only). Census runs of rounds 5-7 (9 runs,
+  539 applied place warps, 57 guard-runs; recount of the review, the earlier 282 / 54 did not reproduce): kind 3 within
+  0.5 s after 499 (55 guard-runs), but 260 of the 539 found the guard in kind 3 already (263 changed into it, 52
+  guard-runs), so kind 3 after a warp does not show the warp caused it [I]; kind 13 within 30 s once (0d801772's 246).
+  Built `quiet_place` (native only): an off-screen correction moves the guard through the engine's network-position
+  warp 0x14136ece0 in the request manager hook (Ghidra, read only: it touches only the slot table and the body's
+  controller; no message, no puppet bit, no FOB state); every quiet move is read back at 0.5 s and 2 s (x/z and y).
+  - `bcd95b14` (named): gate PASS: 246's correction 8.7 s after align was quiet, read back 0.08 / 0.15 m x/z and 0.00 m
+    y at 0.5 / 2 s, kind 1 for the next 118 s (no 3, no 13), 0 guest `req_phase` in calm, 0 latches / faults / game
+    overs. Frames q246-a / c / d (both): no radio subtitle or caution on the guest's screen; 246 not picked out [U].
+  - Turned on (64ab8909 / cde0cbb4), then back OFF (f8441a11 red / green): the no-key run `1befcef4` failed the place_sink
+    row. 115 quiet moves of 7 guards: 106 landed within 1 m, but 8 (4 guards) left the body 2-92 m off while the slot
+    read the target; in 5 of them (1926520947 4 times at 33.9-34.8 m, 667680985 once at 91.9 m) the body did not move
+    at all (the landing error equals the error before the move; the log's `moved=1 err_m=0.00` is the slot table's, not
+    the body's). After 22 of his 43 quiet moves guard 1904171355 walked 9.4-14.1 m on (`place_sink moved_m`) and stood
+    2.15 m under his owner (22 `place_sink`; 1870d1bf at the old defaults: 0). The 2 s read-backs show the walk-off for
+    others too (maxima 14.3-17.2 m). [I] the quiet warp leaves his brain's path; the message's kind 3 had stopped him.
+    Process note: it was turned on although 2 of the 3 quiet moves of `bcd95b14` (its ALERT part) read back 5.29 / 8.87 m
+    off at 2 s and its down gate was not reached.
+  - `8b581a26`: no quiet move (246 only 36.5 m off and not sampled in calm this time).
+- **Bug 2, the host's copies while the guest is down** [O]: the downs were falls, not gunfire (lethal damage 10000,
+  attacker 0): in round 7 (ddcdec94, 90d9b4d1) a goto put the guest on the outpost's cliff edge, in `8b581a26` the
+  scenario dropped them from the air on that fall line, and in all three they fell on through the world to y -79.65 m
+  (ddcdec94's y 92 m was a sample mid-fall: 5 s later y -79.65 at the same x/z). The cause seen [O]: beyond 200 m (3D)
+  the host hides the guest's body (`partner_range=hide`), which clears the driver's `have_cmd`, so the receipts (and
+  the PEER answer the owner rule reads) treat the guest's pose as unknown (position 0) and keep only the host's leg:
+  ddcdec94's 111 `near=host` refusals all came after the hide at 202573 mm (before it 3 `range` refusals, all
+  `near=guest`); in 8b581a26 every `near=host` refusal came with the guest's position 0. The host's 3D range rule
+  against the x/z owner rule is a code fact never seen refusing a placement [I]. Built `range_flat`
+  (native only: the host's M3 placement and drive range on x/z); it is untested for a guest whose pose is known.
+  `8b581a26`: gate FAIL: the host refused 142 of 142
+  placements while the guest was down (48 s; `near=host flat=1`, the guest's y read as 0), host M3 error while down
+  p50 17.1 / p90 27.4 m (bins; ddcdec94 without it 27.1 m). Frames dd-1: "WOUNDED" over a void on the guest's screen,
+  "TEAMMATE WOUNDED" on the host's.
+- **The no-key run `1befcef4`** (quiet_place on by default): PASS 0 latches / faults / game overs; guest place error
+  p50 0.69 / p90 1.88 m (gate 2 m); 0 `drive_sink`; corrections 119 / 126 (7 `vehicle_local`); reported host M3 p50 1.7
+  / p90 6.64 m. FAIL 22 `place_sink` (one guard, after quiet moves) and 1 `guard_fell` (the host's copy of 3268415846,
+  10.6 m under the guest's sample; the host makes no quiet move; cause [U]). Frames c-b (both): the sleeping guard's
+  ZZZ by the barriers beside the guest's character.
+- **Failing rows**: `bcd95b14` down gate not reached (no down: the guest stood on the goto point); host M3 p90 7.46 m;
+  quiet read-backs within 1 m 4 of 6 (2 s: 5.29 m, guard 246's ALERT-part move, and 8.87 m, guard 1904171355).
+  `8b581a26` down gate (142 / 142 refused, p90 27.4 m); corrections 0 / 5 (refused `far`: the guest under the world);
+  guest p50 22.5 / p90 28.5 m and host M3 p90 26.3 m (both from the down; before the down host M3 p50 1.8 / p90
+  7.75 m); guest drive refused 148 of 149. `1befcef4` place_sink 22, guard_fell 1, host M3 p90 6.64 m; quiet read-backs
+  within 1 m 55 of 207 (guards 1740692850, 1926520947, 667680985 among them), 80 of 115 0.5 s read-backs over 1 m x/z;
+  terminal_win 1 on the host; 1 2 s read-back open.
+- **Not run live**: the final code head f8441a11 at the defaults (no session). The guest's Lua now always adds ` 1` to
+  WORLD_WARP_V1 for an off-screen correction; with quiet_place off the native ignores it and takes the old `sw::Warp`
+  (unit tests and code only [I]; the token's parse ran live in all three sessions, with quiet_place on).
+- **Checks**: CTest 355 / 355 at 9276ae08 (full); the worker's audited CTest passed before each of the three sessions;
+  full `tools/build.ps1 -Jobs 4` at the code head f8441a11: CTest 355 / 355; every `generate_*_contract.py --check` as round 7 except soldier_act (20 sites: three new windows of
+  0x136ece0); `tests/enemy_div_report_check.py` 8 checks (new rows: while the guest is down, the quiet moves).
+- **Next**: bug 1: after a quiet move give the guard a stand at the target (the request start's offline mode 0 stand)
+  or end his path, and move only guards in the realized list; bug 2: use the guest's network pose sample while their
+  body is hidden for range, with range_flat's x/z plane; the fall through the world reproduces it (design 7.22).
+
 ## November 5, 2026: 0.15.2 package
 
 **Package (2026-11-05):** `dist/DiamondDogsTogether-0.15.2-20261105T155910Z-fcd6d4da/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `252ee74` with Release receipt `20261105-155628-fd3984294a3344e18a7eda7107e62b71` (passed, 342 audited tests, 0 failures; `-BuildJobs 4 -TestJobs 4`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.2+252ee74` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.

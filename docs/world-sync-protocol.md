@@ -2433,3 +2433,29 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
   (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
   got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
+
+## 39. Enemy round 8 track A: the quiet place correction, the host's range on the ground plane (lab keys `quiet_place`, `range_flat`, native only; design 7.22)
+
+No new op, world note or CFG bit. One optional receipt token, log lines, and two behaviours behind native-only lab keys,
+both off unless named (design 7.22: quiet_place's no-key run failed the place_sink row; range_flat's gate failed).
+
+- `MGS_COOP_WORLD_WARP_V1 -- <seq> <goId> 1` (guest, `lua/coop/world_place_guest.lua` `P.step`): the trailing ` 1` is
+  sent for a correction whose sample was off this player's screen (`place_div ... view=off`); without it the receipt is
+  the old two-token text. `world::ParseWarp(..., quiet)` takes both; the two-token parse still refuses three tokens.
+- Native `GuestWarpReceipt` with `quiet_place`: a correction (grant kind 3) named quiet, of a soldier (`go >> 9 == 2`)
+  realized on this copy (the request manager's slot table, read through the `soldier_act` hook's last M), after the
+  same grant, gate, pose, range and budget checks, is staged instead of sent: the request manager hook (installed for a
+  play / lab guest with the key: `soldier_act_quiet=on`) calls the engine's network-position warp `0x136ece0(M-0x20,
+  idx, entry)` (entry: target x, y, z, yaw) in its next update, before the engine's own. A slot within 15 m of the
+  target is first set 20 m off along x (the function moves a copy only beyond 15 m and overwrites the slot with the
+  target). Reply `{r=0,h=1,leaf="quiet"}`; `world_place=warp; ... leaf=quiet`; then from the hook
+  `world_place=quiet; go; seq; moved; bias; err_m; dy_m` (the slot read back after the call: x/z and y from the target).
+  Not realized, or the hook not installed: the set-transform message as before.
+- Lua `event=readback` (`lua/coop/world_readback.lua`): every quiet move is read back 0.5 s and 2 s after
+  (`src=quiet`), and a read-back of a known placement adds `dxz_m` (x/z from the target) after `far_m`.
+- Native `HostWarpReceipt` and the host's `DriveReceipt` with `range_flat`: the nearer player and the 60 m range on the
+  ground plane (x/z; `NearerSquaredFlat`, `FlattenRange`), as the M3 owner rule. `world_place=host_warp` adds
+  `flat; g_age_ms; dgy_m` (the key, the guest pose's age, the guest's height over the target).
+- Contract `native/soldier_act_contract.hpp` (20 sites): `quiet_warp_rva = 0x136ece0` and three windows of it (the slot
+  write and the realized-list walk 0x136ed8c, the controller 0x136edf5, rotation / position 0x136f002).
+- `tools/enemy_div_report.py`: rows `guest_down_windows`, `m3_host_err_*_while_down`, `m3_hplace_while_down`, `quiet`.
