@@ -360,10 +360,24 @@ void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& co
 }
 
 bool OwnerYAtRest(float y, std::uint64_t now_ms, OwnerRestY& state) noexcept {
-    (void)y;
-    (void)now_ms;
-    (void)state;
-    return true;  // red: no owner rest test yet (round 7's behaviour)
+    if (!std::isfinite(y)) {
+        state = {};
+        return false;
+    }
+    if (!state.valid || now_ms < state.last_ms || now_ms - state.last_ms > kDriveVertRestGapMs) {
+        state = {now_ms, now_ms, y, y, true};
+        return false;
+    }
+    const float lo = y < state.lo ? y : state.lo, hi = y > state.hi ? y : state.hi;
+    state.last_ms = now_ms;
+    if (!(hi - lo < kDriveVertRestM)) {
+        state.since_ms = now_ms;
+        state.lo = state.hi = y;
+        return false;
+    }
+    state.lo = lo;
+    state.hi = hi;
+    return now_ms >= state.since_ms && now_ms - state.since_ms >= kDriveVertRestMs;
 }
 
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept {

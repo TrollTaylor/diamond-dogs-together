@@ -1,0 +1,192 @@
+# Enemy round 10 track A (drive_vert, docs/world-sync-design.md 7.27): enemy-vert-alert.txt with the host within 50 m
+# of the wall guard 2929558510 for the first two blocks. He walks the wall top (y 276.7, x 367-374 / z 2120-2131, the
+# guest's position there in 3e2611fc) and was the copy left 2.2-3.3 m under its target on the host in 6348f361,
+# 41f2b07f, 31a799e3 and b77e2104 (alert, ~30 s after the guest's first goto); round 7 stood the host at the quiet spot
+# 67-73 m from him, so no copy was driven within 60 m. Here the host goes to 415.78,268.45,2107.86 (a logged teleport
+# landing, 7c174346) before the alert: 44-54 m from the wall top. Block 2: the guest goes 3 m from him (onto the wall
+# top, as in 3e2611fc: he is guest-owned, the host's copy driven 44-54 m from the host), both cameras on him (aim_ent;
+# the host through binoculars), v-a / v-b / v-c 3-4 s apart, then the guest's shot; the host goes back to the quiet spot
+# for blocks 3-9 (the latch-alert firefight as before). Post: world_drive=vert / vert_wait / vert_stop and
+# event=readback src=vert (0.5 s / 2 s) on both copies; the host's and guest's positions after each move.
+# Firefight latch (enemy3 latch track): a long ALERT with the guest inside afgh_field_cp among the guards (enemy-prove-1-join.txt
+# first). M3: the host corrects its copies of the guest-owned guards 40-140 m from its own player; M1/M4: the guest its copies
+# of the host-owned guards. ~4.5 min of ALERT: nine 30 s blocks, each a guest goto next to another guard, both aim, frames on
+# both copies, a guest shot. Post: tools/enemy_div_report.py on both slices.
+logmark both
+host run world_status
+guest run world_status
+host run position
+guest run position
+host run enemy notice 2961503
+host run enemy notice 2942862796
+host run enemy notice 1740692850
+host run enemy notice 1799112697
+host run enemy notice 2929558510
+host run enemy notice 667680985
+host run enemy notice 1179373153
+host run enemy notice 3268415846
+host run enemy notice 753908875
+host run enemy notice 1904171355
+host run enemy notice 1845278687
+host run enemy notice 1926520947
+host run enemy notice 3970963356
+host run enemy notice 2305481811
+host run teleport 415.80 269.0 2106.92 -73
+wait 3000
+host run position
+guest run enemy goto 1740692850 8
+wait 4000
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 3000
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-1
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 2929558510 3
+wait 2500
+guest run position
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-2
+wait 2500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 300
+host hold f 1500 nowait
+wait 900
+both capture v-a
+host run enemy info 2929558510
+guest run enemy info 2929558510
+wait 3000
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 300
+host hold f 1500 nowait
+wait 900
+both capture v-b
+host run enemy info 2929558510
+guest run enemy info 2929558510
+wait 3500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 300
+host hold f 1500 nowait
+wait 900
+both capture v-c
+host run enemy info 2929558510
+guest run enemy info 2929558510
+guest run position
+host run position
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 8000
+host run teleport 421.16 269.2 2084.42 0
+wait 2000
+host run position
+host run world_status
+guest run world_status
+guest run enemy goto 1845278687 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-3
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 667680985 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-4
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 1179373153 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-5
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 2305481811 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-6
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 2961503 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-7
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 1799112697 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-8
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+guest run enemy goto 1904171355 8
+wait 2500
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture al-9
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 24000
+host run world_status
+guest run world_status
+host run position
+guest run position
