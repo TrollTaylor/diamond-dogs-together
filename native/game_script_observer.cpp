@@ -3316,10 +3316,44 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 used+=static_cast<std::size_t>(k);
             }
             LogFormat("soldier_perceive_targets; %s\r\n",used?targets:"none");
-            char bodies[240]{};
+            char bodies[440]{};
             if(sp::BodiesLine(GetModuleHandleW(nullptr),bodies,sizeof(bodies)))
                 LogFormat("soldier_perceive_bodies; %s; mask_writes=%u\r\n",bodies,sp::BodyMaskWrites());
+            sp::LogMasks(Log);
+            sp::LogLocal(Log,40);
             debug::Result(pending.id,1,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_local ", 15) == 0) {
+            // M7 step 1 probe P13 (soldier_perceive.hpp InstallLocal): perceive_local <0|1|pick|off> answers the LOCAL
+            // accessors (record, index) for callers in the soldier / notice code with that player (pick: each soldier's
+            // target); perceive_local census <0|1> counts the callers (logged by perceive_status).
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+15;
+            const bool on=sp::LocalInstalled();
+            bool ok=false;
+            if(std::strncmp(arg,"census ",7)==0 && (arg[7]=='0' || arg[7]=='1') && arg[8]==0) {sp::SetLocalCensus(arg[7]=='1');ok=on;}
+            else {
+                const int want=std::strcmp(arg,"0")==0?0:std::strcmp(arg,"1")==0?1:std::strcmp(arg,"pick")==0?sp::kLocalPerSoldier:-1;
+                ok=on && (want>=0 || std::strcmp(arg,"off")==0);
+                if(ok) sp::SetLocalMode(want);
+            }
+            char head[160]{},line[200]{};
+            if(!sp::LocalLine(head,sizeof(head))) StringCchCopyA(head,ARRAYSIZE(head),"local;overflow");
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_local;ok=%u;key=%u;%s",ok?1u:0u,on?1u:0u,head);
+            LogFormat("soldier_perceive_local_set; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "perceive_online ", 16) == 0) {
+            // P13 L4 research: perceive_online 1 sets the soldier manager's online bit at each leaf snapshot; 0 restores
+            // the offline bits once.
+            namespace sp=mgscoop::soldier_perceive;
+            const char* arg=pending.text+16;
+            const bool on=sp::PickInstalled();
+            const bool ok=on && (std::strcmp(arg,"0")==0 || std::strcmp(arg,"1")==0);
+            if(ok) sp::SetOnline(arg[0]=='1'?1:0);
+            char line[120]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"perceive_online;ok=%u;key=%u;online=%d;writes=%u",ok?1u:0u,on?1u:0u,sp::OnlineMode(),
+                             sp::OnlineWrites());
+            LogFormat("soldier_perceive_online; %s\r\n",line);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strncmp(pending.text, "perceive_pick ", 14) == 0) {
             // M7 step 1 probe P12c: perceive_pick <index> <0|1|off> (the debug pick holds the targets: Lua sets are
             // ignored until perceive_auto 1), perceive_pick clear.
@@ -3387,7 +3421,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("soldier_perceive_mask; %s\r\n",line);
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_reset") == 0) {
-            mgscoop::soldier_perceive::PickReset();mgscoop::soldier_authority::DefenseReset();
+            mgscoop::soldier_perceive::PickReset();mgscoop::soldier_perceive::LocalReset();mgscoop::soldier_authority::DefenseReset();
             Log("soldier_perceive_reset; counters=0\r\n");
             debug::Result(pending.id,1,"perceive_reset;ok=1");
         } else if (pending.id && std::strncmp(pending.text, "perceive_force ", 15) == 0) {
@@ -6816,8 +6850,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     // (soldier_perceive.hpp InstallPick: the offense index getter answers per soldier; the targets come
                     // from Lua, MGS_COOP_SOLDIER_PERCEIVE_V1, or perceive_pick). The scorer patch of probe P11 is no
                     // longer installed (run af17b899: a no-op in free roam).
-                    if (labc.soldier_perceive) mgscoop::soldier_perceive::InstallPick(base, Log);
-                    else Log("soldier_perceive=off; reason=key_off\r\n");
+                    if (labc.soldier_perceive) {
+                        // P13: the LOCAL accessor hooks (stock answers until perceive_local names a redirect).
+                        if (mgscoop::soldier_perceive::InstallPick(base, Log)) mgscoop::soldier_perceive::InstallLocal(base, Log);
+                    } else Log("soldier_perceive=off; reason=key_off\r\n");
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

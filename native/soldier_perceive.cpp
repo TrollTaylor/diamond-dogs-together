@@ -12,6 +12,7 @@
 #include "MinHook.h"
 #include "mgscoop/near_code.hpp"
 #include "soldier_perceive_contract.hpp"
+#include "soldier_sense_contract.hpp"
 #endif
 
 namespace mgscoop::soldier_perceive {
@@ -410,6 +411,141 @@ void BuildUnwind(unsigned char (&u)[kUnwindSize]) noexcept {
     std::memcpy(u, kInfo, kUnwindSize);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// P13: the LOCAL player accessors (pure parts).
+std::uint32_t LocalCaller(LocalKind kind, std::uint32_t entryRet, std::uint32_t above) noexcept {
+    if (kind == LocalKind::rec) return entryRet >= kThunkLo && entryRet < kThunkHi ? above : entryRet;
+    return entryRet == kIdThunkRet ? above : entryRet;
+}
+
+bool LocalScoped(std::uint32_t caller) noexcept {
+    for (const Range& r : kLocalRanges)
+        if (caller >= r.lo && caller < r.hi) return true;
+    return false;
+}
+
+namespace {
+std::atomic<int> g_localMode{-1};
+std::atomic<bool> g_localCensus{false};
+std::atomic<int> g_online{-1};
+std::atomic<std::uint32_t> g_onlineWrites{0};
+constexpr std::uint64_t kLocalTag = 1ull << 63;  // a used census key (rvas stay below 2^31)
+struct LocalAtoms {
+    std::atomic<std::uint64_t> key{0};
+    std::atomic<std::uint32_t> calls{0}, redirected{0};
+    std::atomic<std::uint32_t> min[kLocalRegs], max[kLocalRegs];
+    LocalAtoms() noexcept {
+        for (auto& m : min) m.store(0xFFFFFFFFu, std::memory_order_relaxed);
+        for (auto& m : max) m.store(0, std::memory_order_relaxed);
+    }
+};
+LocalAtoms g_local[kLocalCensus];
+std::atomic<std::uint32_t> g_localOverflow{0};
+std::atomic<std::uint32_t> g_lc[4]{};  // rec, idx, scoped, redirected
+// The entry's register order (rbp, rsi, rdi, r12, r13, r14, r15) as indices of the stub's block (Reg order r15 .. rbx).
+constexpr unsigned kRegOf[kLocalRegs] = {6, 5, 4, 3, 2, 1, 0};
+} // namespace
+
+void SetLocalMode(int mode) noexcept { g_localMode.store(mode >= -1 && mode <= kLocalPerSoldier ? mode : -1, std::memory_order_relaxed); }
+int LocalMode() noexcept { return g_localMode.load(std::memory_order_relaxed); }
+
+int LocalAnswer(int mode, bool scoped, int target) noexcept {
+    if (!scoped) return -1;
+    if (mode == 0 || mode == 1) return mode;
+    if (mode == kLocalPerSoldier && (target == 0 || target == 1)) return target;
+    return -1;
+}
+
+void SetLocalCensus(bool on) noexcept { g_localCensus.store(on, std::memory_order_relaxed); }
+bool LocalCensusOn() noexcept { return g_localCensus.load(std::memory_order_relaxed); }
+
+void LocalCount(std::uint32_t caller, std::uint32_t entry, bool redirected, const std::uint64_t* regs) noexcept {
+    const std::uint64_t key = kLocalTag | (static_cast<std::uint64_t>(entry) << 32) | caller;
+    unsigned at = static_cast<unsigned>((key * 0x9E3779B97F4A7C15ull) >> 56) % kLocalCensus;
+    for (unsigned probe = 0; probe < kLocalCensus; ++probe, at = (at + 1) % kLocalCensus) {
+        LocalAtoms& s = g_local[at];
+        std::uint64_t seen = s.key.load(std::memory_order_relaxed);
+        if (seen == 0 && s.key.compare_exchange_strong(seen, key, std::memory_order_relaxed)) seen = key;
+        if (seen != key) continue;
+        s.calls.fetch_add(1, std::memory_order_relaxed);
+        if (redirected) s.redirected.fetch_add(1, std::memory_order_relaxed);
+        if (regs)
+            for (unsigned r = 0; r < kLocalRegs; ++r) {
+                const auto v = static_cast<std::uint32_t>(regs[kRegOf[r]] & 0xFFFFFFFFull);
+                Min(s.min[r], v);
+                Max(s.max[r], v);
+            }
+        return;
+    }
+    g_localOverflow.fetch_add(1, std::memory_order_relaxed);
+}
+
+unsigned LocalRead(LocalEntry* out, unsigned capacity, std::uint32_t* overflow) noexcept {
+    static LocalEntry all[kLocalCensus];  // the debug command thread only
+    unsigned n = 0;
+    for (const LocalAtoms& s : g_local) {
+        const std::uint64_t key = s.key.load(std::memory_order_relaxed);
+        if (!key) continue;
+        LocalEntry e{};
+        e.caller = static_cast<std::uint32_t>(key & 0xFFFFFFFFull);
+        e.entry = static_cast<std::uint32_t>((key >> 32) & 0x7FFFFFFFull);
+        e.calls = s.calls.load(std::memory_order_relaxed);
+        e.redirected = s.redirected.load(std::memory_order_relaxed);
+        for (unsigned r = 0; r < kLocalRegs; ++r) {
+            e.min[r] = s.min[r].load(std::memory_order_relaxed);
+            e.max[r] = s.max[r].load(std::memory_order_relaxed);
+            if (e.min[r] > e.max[r]) e.min[r] = e.max[r] = 0;  // no register block seen
+        }
+        unsigned k = n++;
+        while (k > 0 && all[k - 1].calls < e.calls) { all[k] = all[k - 1]; --k; }
+        all[k] = e;
+    }
+    if (overflow) *overflow = g_localOverflow.load(std::memory_order_relaxed);
+    const unsigned shown = out ? (n < capacity ? n : capacity) : 0;
+    for (unsigned i = 0; i < shown; ++i) out[i] = all[i];
+    return shown;
+}
+
+void LocalReset() noexcept {
+    for (LocalAtoms& s : g_local) {
+        s.key.store(0, std::memory_order_relaxed);
+        s.calls.store(0, std::memory_order_relaxed);
+        s.redirected.store(0, std::memory_order_relaxed);
+        for (auto& m : s.min) m.store(0xFFFFFFFFu, std::memory_order_relaxed);
+        for (auto& m : s.max) m.store(0, std::memory_order_relaxed);
+    }
+    g_localOverflow.store(0, std::memory_order_relaxed);
+    for (auto& c : g_lc) c.store(0, std::memory_order_relaxed);
+}
+
+void LocalTally(LocalKind kind, bool scoped, bool redirected) noexcept {
+    g_lc[kind == LocalKind::rec ? 0 : 1].fetch_add(1, std::memory_order_relaxed);
+    if (scoped) g_lc[2].fetch_add(1, std::memory_order_relaxed);
+    if (redirected) g_lc[3].fetch_add(1, std::memory_order_relaxed);
+}
+
+LocalCounters LocalCountersRead() noexcept {
+    LocalCounters c{};
+    c.rec = g_lc[0].load(std::memory_order_relaxed);
+    c.idx = g_lc[1].load(std::memory_order_relaxed);
+    c.scoped = g_lc[2].load(std::memory_order_relaxed);
+    c.redirected = g_lc[3].load(std::memory_order_relaxed);
+    return c;
+}
+
+bool LocalLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const LocalCounters c = LocalCountersRead();
+    const int n = std::snprintf(out, capacity, "local;mode=%d;census=%u;rec=%u;idx=%u;scoped=%u;redirected=%u;online=%d;online_writes=%u",
+                                LocalMode(), LocalCensusOn() ? 1u : 0u, c.rec, c.idx, c.scoped, c.redirected, OnlineMode(), OnlineWrites());
+    return n >= 0 && static_cast<std::size_t>(n) < capacity;
+}
+
+std::uint32_t OnlineBits(std::uint32_t was, bool online) noexcept { return online ? (was | 4u) & ~2u : (was | 2u) & ~4u; }
+void SetOnline(int online) noexcept { g_online.store(online == 0 || online == 1 ? online : -1, std::memory_order_relaxed); }
+int OnlineMode() noexcept { return g_online.load(std::memory_order_relaxed); }
+std::uint32_t OnlineWrites() noexcept { return g_onlineWrites.load(std::memory_order_relaxed); }
+
 #ifdef _WIN32
 namespace {
 volatile LONG g_patched = 0;
@@ -587,11 +723,25 @@ void ApplyBodyMasks() noexcept {
     }
 }
 
+// P13 L4 research: the manager's online bit at the leaf's getter call (rdi = the leaf, 0x14134FA09 mov rdi, rcx).
+void ApplyOnline(std::uint64_t leaf) noexcept {
+    const int mode = g_online.load(std::memory_order_relaxed);
+    if (mode < 0 || leaf < 0x10000) return;
+    auto* dword = reinterpret_cast<volatile std::uint32_t*>(static_cast<std::uintptr_t>(leaf) + kModeDword);
+    const std::uint32_t was = *dword;
+    const std::uint32_t want = OnlineBits(was, mode == 1);
+    if (want != was) { *dword = want; g_onlineWrites.fetch_add(1, std::memory_order_relaxed); }
+    if (mode == 0) g_online.store(-1, std::memory_order_relaxed);  // restored once: untouched from here on
+}
+
 // Called by the stub on the caller's thread: regs = the caller's callee-saved registers (Reg order).
 unsigned int __fastcall Choose(void* self, const std::uint64_t* regs, std::uintptr_t ret) {
     const std::uint32_t rva = ret > g_imageBase && ret - g_imageBase < 0x7fffffffu ? static_cast<std::uint32_t>(ret - g_imageBase) : 0;
     if (rva) SitesAdd(rva);
-    if (rva == kLeafRet) ApplyBodyMasks();
+    if (rva == kLeafRet) {
+        ApplyBodyMasks();
+        ApplyOnline(regs[static_cast<unsigned>(Reg::rdi)]);
+    }
     const unsigned stock = g_offenseOriginal(self);
     const int tls = t_soldier;
     const int site = PickSiteIndex(rva);
@@ -631,6 +781,39 @@ bool WindowsMatch(const void* base, const char** which) noexcept {
     }
     return true;
 }
+
+// A stub (BuildStub) calling `choose`, its unwind data and RUNTIME_FUNCTION in one executable block (registered; never
+// freed once in use). Null with *why on failure.
+void* MakeStubBlock(std::uintptr_t choose, const char** why) noexcept {
+    void* block = VirtualAlloc(nullptr, kStubBlockSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!block) { *why = "allocate"; return nullptr; }
+    auto* b = static_cast<unsigned char*>(block);
+    unsigned char stub[kStubSize]{};
+    BuildStub(stub, choose);
+    std::memcpy(b, stub, sizeof(stub));
+    unsigned char unwind[kUnwindSize]{};
+    BuildUnwind(unwind);
+    std::memcpy(b + kStubUnwindAt, unwind, sizeof(unwind));
+    RUNTIME_FUNCTION fn{};
+    fn.BeginAddress = 0;
+    fn.EndAddress = static_cast<DWORD>(kStubSize);
+    fn.UnwindData = static_cast<DWORD>(kStubUnwindAt);
+    std::memcpy(b + kStubFunctionAt, &fn, sizeof(fn));
+    DWORD old = 0;
+    if (!VirtualProtect(block, kStubBlockSize, PAGE_EXECUTE_READ, &old)) {
+        VirtualFree(block, 0, MEM_RELEASE);
+        *why = "protect";
+        return nullptr;
+    }
+    if (!RtlAddFunctionTable(reinterpret_cast<PRUNTIME_FUNCTION>(b + kStubFunctionAt), 1,
+                             static_cast<DWORD64>(reinterpret_cast<std::uintptr_t>(block)))) {
+        VirtualFree(block, 0, MEM_RELEASE);
+        *why = "unwind";
+        return nullptr;
+    }
+    FlushInstructionCache(GetCurrentProcess(), block, kStubBlockSize);
+    return block;
+}
 } // namespace
 
 std::uintptr_t ChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&Choose); }
@@ -647,19 +830,21 @@ bool BodiesLine(const void* base, char* out, std::size_t capacity) noexcept {
     for (unsigned idx = 0; idx < 2; ++idx) {
         const std::uintptr_t rec = BodyRecord(image, sel, idx);
         float pos[3]{};
-        unsigned char bits[12]{};
+        unsigned char bits[32]{};  // P13 L3: the whole status bitset +0xC0..+0xDF (live reads reach status 0x92, +0xD2)
         SIZE_T a = 0, b = 0;
         const bool ok = rec && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0x10), pos, sizeof(pos), &a) &&
                         a == sizeof(pos) &&
                         ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(rec + 0xC0), bits, sizeof(bits), &b) &&
                         b == sizeof(bits);
-        n = ok ? std::snprintf(out + used, capacity - used,
-                               ";b%u=%.1f,%.1f,%.1f;s%u=%02x%02x%02x%02x.%02x%02x%02x%02x.%02x%02x%02x%02x", idx, pos[0], pos[1],
-                               pos[2], idx, bits[0], bits[1], bits[2], bits[3], bits[4], bits[5], bits[6], bits[7], bits[8], bits[9],
-                               bits[10], bits[11])
+        n = ok ? std::snprintf(out + used, capacity - used, ";b%u=%.1f,%.1f,%.1f;s%u=", idx, pos[0], pos[1], pos[2], idx)
                : std::snprintf(out + used, capacity - used, ";b%u=unread", idx);
         if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
         used += static_cast<std::size_t>(n);
+        for (unsigned i = 0; ok && i < sizeof(bits); ++i) {
+            n = std::snprintf(out + used, capacity - used, i && i % 4 == 0 ? ".%02x" : "%02x", bits[i]);
+            if (n < 0 || static_cast<std::size_t>(n) >= capacity - used) return false;
+            used += static_cast<std::size_t>(n);
+        }
     }
     for (unsigned idx = 0; idx < 2; ++idx) {
         const std::uintptr_t rec = BodyRecord(image, sel == 0 ? 1 : 0, idx);
@@ -694,34 +879,13 @@ bool InstallPick(const void* base, LogFn log) noexcept {
     }
     g_imageBase = reinterpret_cast<std::uintptr_t>(base);
     if (!g_stubBlock) {
-        void* block = VirtualAlloc(nullptr, kStubBlockSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        if (!block) { Emit(log, "soldier_perceive=refused; reason=allocate\r\n"); return false; }
-        auto* b = static_cast<unsigned char*>(block);
-        unsigned char stub[kStubSize]{};
-        BuildStub(stub, ChooseAddress());
-        std::memcpy(b, stub, sizeof(stub));
-        unsigned char unwind[kUnwindSize]{};
-        BuildUnwind(unwind);
-        std::memcpy(b + kStubUnwindAt, unwind, sizeof(unwind));
-        RUNTIME_FUNCTION fn{};
-        fn.BeginAddress = 0;
-        fn.EndAddress = static_cast<DWORD>(kStubSize);
-        fn.UnwindData = static_cast<DWORD>(kStubUnwindAt);
-        std::memcpy(b + kStubFunctionAt, &fn, sizeof(fn));
-        DWORD old = 0;
-        if (!VirtualProtect(block, kStubBlockSize, PAGE_EXECUTE_READ, &old)) {
-            VirtualFree(block, 0, MEM_RELEASE);
-            Emit(log, "soldier_perceive=refused; reason=protect\r\n");
+        const char* why = nullptr;
+        g_stubBlock = MakeStubBlock(ChooseAddress(), &why);
+        if (!g_stubBlock) {
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive=refused; reason=%s\r\n", why ? why : "stub")))
+                Emit(log, line);
             return false;
         }
-        if (!RtlAddFunctionTable(reinterpret_cast<PRUNTIME_FUNCTION>(b + kStubFunctionAt), 1,
-                                 static_cast<DWORD64>(reinterpret_cast<std::uintptr_t>(block)))) {
-            VirtualFree(block, 0, MEM_RELEASE);
-            Emit(log, "soldier_perceive=refused; reason=unwind\r\n");
-            return false;
-        }
-        FlushInstructionCache(GetCurrentProcess(), block, kStubBlockSize);
-        g_stubBlock = block;
     }
     void* getter = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kOffenseRva;
     void* update = reinterpret_cast<unsigned char*>(const_cast<void*>(base)) + kUpdateRva;
@@ -807,6 +971,197 @@ void LogCensus(LogFn log) noexcept {
                                        kPickSites[i].answers ? 1u : 0u, c.calls, c.calls ? c.min : 0u, c.max, c.big, c.inTls, c.eqTls)))
             Emit(log, line);
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// P13: the LOCAL player accessors (the hooks).
+namespace {
+namespace sc = mgscoop::soldier_sense_contract;
+std::atomic<bool> g_localOn{false};
+std::uintptr_t g_localImage = 0;
+LocalRecFn g_localRecFn = nullptr;  // the trampolines (stock behaviour) once installed
+LocalIdxFn g_localIdxFn = nullptr;
+RecFn g_recFn = nullptr;            // 0x14053CA40, the indexed record (never hooked)
+void* g_localRecBlock = nullptr;
+void* g_localIdxBlock = nullptr;
+
+std::uint32_t LocalRva(std::uint64_t address) noexcept {
+    return address > g_localImage && address - g_localImage < 0x7fffffffu ? static_cast<std::uint32_t>(address - g_localImage) : 0;
+}
+
+// The answer for one call: -1 stock, else the index to read. Counts the call (and, with the census, its caller).
+int LocalDecide(LocalKind kind, const std::uint64_t* regs, std::uintptr_t ret) noexcept {
+    const std::uint32_t entry = LocalRva(ret);
+    const std::uint32_t caller = LocalCaller(kind, entry, LocalRva(regs[kThunkAbove]));
+    const bool scoped = caller != 0 && LocalScoped(caller);
+    const int answer = LocalAnswer(g_localMode.load(std::memory_order_relaxed), scoped, -1);
+    LocalTally(kind, scoped, answer >= 0);
+    if (g_localCensus.load(std::memory_order_relaxed)) LocalCount(caller, entry, answer >= 0, regs);
+    return answer;
+}
+
+// The stubs' C++ halves (BuildStub: rcx unchanged, regs = the caller's callee-saved registers, ret = the entry return).
+std::uint64_t __fastcall LocalRecChoose(void*, const std::uint64_t* regs, std::uintptr_t ret) {
+    const int answer = g_recFn ? LocalDecide(LocalKind::rec, regs, ret) : -1;
+    if (answer >= 0) return reinterpret_cast<std::uint64_t>(g_recFn(static_cast<unsigned>(answer)));
+    return reinterpret_cast<std::uint64_t>(g_localRecFn());
+}
+
+std::uint64_t __fastcall LocalIdxChoose(void* rcx, const std::uint64_t* regs, std::uintptr_t ret) {
+    auto* out = static_cast<std::uint32_t*>(rcx);
+    const int answer = LocalDecide(LocalKind::idx, regs, ret);
+    if (answer >= 0 && out) {
+        *out = static_cast<std::uint32_t>(answer);
+        return 1;  // index < 16 (setb al)
+    }
+    return g_localIdxFn(out) ? 1u : 0u;
+}
+
+bool SenseWindowsMatch(const void* base, const char** which) noexcept {
+    for (const sc::Window& w : sc::windows) {
+        unsigned char live[64]{};
+        SIZE_T read = 0;
+        if (w.size > sizeof(live) ||
+            !ReadProcessMemory(GetCurrentProcess(), static_cast<const unsigned char*>(base) + w.rva, live, w.size, &read) ||
+            read != w.size || std::memcmp(live, w.bytes, w.size) != 0) {
+            if (which) *which = w.name;
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
+std::uintptr_t LocalRecChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&LocalRecChoose); }
+std::uintptr_t LocalIdxChooseAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&LocalIdxChoose); }
+
+void SetLocalTargets(std::uintptr_t image, LocalRecFn localRec, LocalIdxFn localIdx, RecFn rec) noexcept {
+    g_localImage = image;
+    g_localRecFn = localRec;
+    g_localIdxFn = localIdx;
+    g_recFn = rec;
+}
+
+bool LocalInstalled() noexcept { return g_localOn.load(); }
+
+bool InstallLocal(const void* base, LogFn log) noexcept {
+    if (!base) return false;
+    if (g_localOn.load()) return true;
+    char line[160]{};
+    const char* which = nullptr;
+    if (!SenseWindowsMatch(base, &which)) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local=refused; reason=bytes; window=%s\r\n", which ? which : "?")))
+            Emit(log, line);
+        return false;
+    }
+    const MH_STATUS initialized = MH_Initialize();
+    if (initialized != MH_OK && initialized != MH_ERROR_ALREADY_INITIALIZED) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_initialize\r\n");
+        return false;
+    }
+    const char* why = nullptr;
+    if (!g_localRecBlock) g_localRecBlock = MakeStubBlock(LocalRecChooseAddress(), &why);
+    if (g_localRecBlock && !g_localIdxBlock) g_localIdxBlock = MakeStubBlock(LocalIdxChooseAddress(), &why);
+    if (!g_localRecBlock || !g_localIdxBlock) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local=refused; reason=%s\r\n", why ? why : "stub")))
+            Emit(log, line);
+        return false;
+    }
+    auto* image = reinterpret_cast<unsigned char*>(const_cast<void*>(base));
+    g_localImage = reinterpret_cast<std::uintptr_t>(base);
+    g_recFn = reinterpret_cast<RecFn>(image + kRecRva);
+    void* rec = image + kLocalRecRva;
+    void* idx = image + kLocalIdxRva;
+    if (!g_localRecFn && MH_CreateHook(rec, g_localRecBlock, reinterpret_cast<void**>(&g_localRecFn)) != MH_OK) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_create_rec\r\n");
+        return false;
+    }
+    if (!g_localIdxFn && MH_CreateHook(idx, g_localIdxBlock, reinterpret_cast<void**>(&g_localIdxFn)) != MH_OK) {
+        Emit(log, "soldier_perceive_local=refused; reason=hook_create_idx\r\n");
+        return false;
+    }
+    // The redirect is off until commanded (perceive_local): both hooks answer stock until then.
+    if (MH_EnableHook(rec) != MH_OK) { Emit(log, "soldier_perceive_local=refused; reason=hook_enable_rec\r\n"); return false; }
+    if (MH_EnableHook(idx) != MH_OK) {
+        MH_DisableHook(rec);
+        Emit(log, "soldier_perceive_local=refused; reason=hook_enable_idx\r\n");
+        return false;
+    }
+    g_localOn.store(true);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                                   "soldier_perceive_local=installed; rec=0x53c9d0; idx=0x53c990; answer=0x53ca40; windows=%u\r\n",
+                                   static_cast<unsigned>(sizeof(sc::windows) / sizeof(sc::windows[0])))))
+        Emit(log, line);
+    return true;
+}
+
+void LogLocal(LogFn log, unsigned limit) noexcept {
+    static LocalEntry e[kLocalCensus];  // the debug command thread only
+    std::uint32_t overflow = 0;
+    const unsigned n = LocalRead(e, limit < kLocalCensus ? limit : kLocalCensus, &overflow);
+    static const char* const kName[kLocalRegs] = {"rbp", "rsi", "rdi", "r12", "r13", "r14", "r15"};
+    for (unsigned i = 0; i < n; ++i) {
+        char line[400]{};
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_local; caller=0x%x; entry=0x%x; n=%u; red=%u", e[i].caller, e[i].entry,
+                              e[i].calls, e[i].redirected);
+        for (unsigned r = 0; r < kLocalRegs && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++r)
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "; %s=%x-%x", kName[r], e[i].min[r], e[i].max[r]);
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+        }
+    }
+    char head[200]{};
+    if (LocalLine(head, sizeof(head))) {
+        char line[260]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "soldier_perceive_local_status; %s; entries=%u; overflow=%u; on=%u\r\n", head, n,
+                                       overflow, g_localOn.load() ? 1u : 0u)))
+            Emit(log, line);
+    }
+}
+
+void LogMasks(LogFn log) noexcept {
+    const auto sys = reinterpret_cast<std::uintptr_t>(g_sys.load(std::memory_order_relaxed));
+    std::uint32_t count = 0;
+    std::uintptr_t recs = 0, acts = 0, list = 0, starts = 0, counts = 0, cps = 0, masks = 0;
+    if (!sys || !ReadAt(sys + 0x198, count) || !ReadAt(sys + 0x208, recs) || !ReadAt(sys + 0x220, acts) || !ReadAt(sys + 0x150, list) ||
+        !ReadAt(sys + 0x158, starts) || !ReadAt(sys + 0x160, counts) || !ReadAt(sys + 0x68, cps) || !ReadAt(sys + 0x78, masks)) {
+        Emit(log, "soldier_perceive_masks; none=1\r\n");
+        return;
+    }
+    unsigned shown = 0;
+    for (std::uint32_t slot = 0; slot < count && slot < 96; ++slot) {
+        unsigned char rec[16]{};
+        std::uint32_t act = 0;
+        std::uint16_t start = 0, n = 0;
+        if (!ReadAt(recs + slot * 16u, rec) || !ReadAt(acts + slot * 4u, act)) continue;
+        ReadAt(starts + slot * 2u, start);
+        ReadAt(counts + slot * 2u, n);
+        if (!(rec[0xd] & 1) && !act && !n) continue;
+        std::uint32_t m40 = 0, m44 = 0, m48 = 0;
+        const std::uintptr_t cp = cps + static_cast<std::uintptr_t>(slot) * 0x60u;
+        ReadAt(cp + 0x40, m40);
+        ReadAt(cp + 0x44, m44);
+        ReadAt(cp + 0x48, m48);
+        char line[400]{};
+        int k = std::snprintf(line, sizeof(line), "soldier_perceive_mask; slot=%u; m40=%x; m44=%x; m48=%x; n=%u; masks=", slot, m40, m44, m48, n);
+        for (unsigned i = 0; i < n && i < 24 && k > 0 && static_cast<std::size_t>(k) < sizeof(line); ++i) {
+            std::uint32_t e = 0, mask = 0;
+            unsigned char level = 0;
+            ReadAt(list + (static_cast<std::uintptr_t>(start) + i) * 4u, e);
+            ReadAt(masks + static_cast<std::uintptr_t>(e) * 0x18u, mask);
+            ReadAt(masks + static_cast<std::uintptr_t>(e) * 0x18u + 0x15u, level);
+            k += std::snprintf(line + k, sizeof(line) - static_cast<std::size_t>(k), "%s%u:%x:%u", i ? "," : "", e, mask, unsigned(level));
+        }
+        if (k > 0 && static_cast<std::size_t>(k) + 3 < sizeof(line)) {
+            std::memcpy(line + k, "\r\n", 3);
+            Emit(log, line);
+            ++shown;
+        }
+    }
+    char line[96]{};
+    std::snprintf(line, sizeof(line), "soldier_perceive_masks; count=%u; shown=%u\r\n", count, shown);
+    Emit(log, line);
 }
 #endif
 
