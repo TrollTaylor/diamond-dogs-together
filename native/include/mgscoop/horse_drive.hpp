@@ -88,6 +88,13 @@ struct HoldScope {
     bool pillion{};  // M3: world_horse_pillion admits hold0 too (the passenger's body 0 at the rear seat)
 };
 const char* HoldRefusal(const HoldScope& s) noexcept;
+// M2g (run f7e09c55: at the partner's mount the victim's copy unrealized body 1 for a frame; the census refused, hold0
+// refused "body", the fall check 0x14128E010 ran on body 0 and it squatted on the horse): a hold0 of body 0 alone may use
+// body 1's class from the last full census (T, A0 and C0 vtables and slots) while body 0's own T class equals it.
+struct BodyClass {
+    std::uintptr_t t_vt{}, t68{}, t70{}, t58{}, c0_vt{}, c090{}, a0_vt{}, a080{};
+};
+bool CachedBody1Usable(const BodyClass& body0, const BodyClass& cached) noexcept;
 
 // Horse plan M3 (lab key world_horse_pillion): ride behind your partner. The prologue's rear rider sits about 0.4-0.5 m
 // behind the front rider at the same height (vehicles-companions-design 3.3); probe P2 put a guard 0.44 m behind the

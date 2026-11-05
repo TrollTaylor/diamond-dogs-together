@@ -5395,15 +5395,30 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
         hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
         hs.field=sc.field;
         pp::Census bodies{};
-        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t &&
-            bodies.k[kb].t68 && bodies.k[kb].t70;
+        const bool full=!pp::ResolveCensus(partner_addresses,player,bodies);
+        hs.body=full && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t && bodies.k[kb].t68 && bodies.k[kb].t70;
+        const auto classOf=[](const pp::Block& k) noexcept {
+            hd::BodyClass c{};c.t_vt=k.t_vt;c.t68=k.t68;c.t70=k.t70;c.t58=k.t58;c.c0_vt=k.c0_vt;c.c090=k.c090;c.a0_vt=k.a0_vt;c.a080=k.a080;
+            return c;
+        };
+        // M2g: body 1's class from the last full census; a hold0 of body 0 alone uses it while body 1 does not resolve (the
+        // partner's mount unrealizes it for a frame on this copy: run f7e09c55 hold0_refused body, then the fall / squat).
+        // Only with world_horse_cargo (off unless named): the pillion's hold0 at the defaults is unchanged.
+        static hd::BodyClass lastBody1{};
+        hd::BodyClass c1=classOf(bodies.k[1]);
+        bool alone=false;
+        if(hs.body) lastBody1=c1;
+        else if(kb==0 && labc.world_horse_cargo && !full && !bodies.k[0].refusal && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 && bodies.k[0].t70 &&
+                hd::CachedBody1Usable(classOf(bodies.k[0]),lastBody1)) {
+            hs.body=alone=true;c1=lastBody1;
+        }
         hs.mounted=kb==0 && a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];const auto& bh=bodies.k[kb];
+        const auto& b0=bodies.k[0];const auto& bh=bodies.k[kb];
         // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
         const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
-        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
-        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
+        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=c1.c0_vt || b0.c090!=c1.c090)) return refuse("reset");
+        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=c1.a0_vt || b0.a080!=c1.a080)) return refuse("reset");
         // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
         // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
         namespace hbw=mgscoop::horse_body_watch;
@@ -5419,6 +5434,8 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=held; n=%u; body=%u\r\n",horse_drive_log.holds,kb);
             horse_drive_log.last=nullptr;
         }
+        static unsigned alones=0;
+        if(alone && (++alones<=20 || alones%100==0)) LogFormat("horse_drive=held_alone; n=%u; body=0; census=body1\r\n",alones);
         // Every 2 s: the writers of body 0's centre / foot y since the last report (rva, count, thread, order after hold0,
         // the first image return rvas on the writer's stack) and how often the pin put the body back.
         static std::uint64_t watchAt=0;

@@ -119,6 +119,10 @@ const char* HoldRefusal(const HoldScope& s) noexcept {
     return nullptr;
 }
 
+bool CachedBody1Usable(const BodyClass& b0, const BodyClass& c) noexcept {
+    return c.t_vt && c.t68 && c.t70 && c.t58 && b0.t_vt == c.t_vt && b0.t68 == c.t68 && b0.t70 == c.t70 && b0.t58 == c.t58;
+}
+
 const char* PlaceRefusal(const PlaceScope& s) noexcept {
     if (!s.key) return "off";
     if (!s.pins) return "pins";
