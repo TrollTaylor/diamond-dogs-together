@@ -7172,7 +7172,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
                                   labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
                                   labc.soldier_act_calm ? "calm" : "all");
-                    } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        // Enemy round 8 track C (docs/world-sync-design.md 7.23): the puppets plan their own path (act_plan,
+                        // native only, off unless named; the puppet side runs it).
+                        mgscoop::soldier_act::SetPlan(hooked && labc.act_plan);
+                        LogFormat("soldier_act_plan=%s; given=%u\r\n", hooked && labc.act_plan ? "on" : "off", labc.act_plan_given ? 1u : 0u);
+                    } else {
+                        mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
+                        mgscoop::soldier_act::SetPlan(false);
+                    }
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

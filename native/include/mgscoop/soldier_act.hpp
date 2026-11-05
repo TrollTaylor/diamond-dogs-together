@@ -184,6 +184,7 @@ struct Counters {
     // plan_ok / plan_far / plan_nopath = the path end kPlanCheckMs after a plan within / beyond kPlanEndM of R+0x80, or no
     // path; near_wait = walkers not taken beyond kActTakeNearM of the owner copy (TakeNear).
     std::uint32_t plan, plan_skip, warp15, plan_ok, plan_far, plan_nopath, near_wait;
+    std::uint32_t gait_up, plan_fault;  // gait_up: requests whose gait the catch-up raised; plan_fault: PlanStep faults
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

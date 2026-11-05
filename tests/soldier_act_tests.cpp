@@ -357,8 +357,9 @@ int main() {
         req[0x63] = 17;
         Check(sa::TakeNear(req, a, far11, true) && sa::TakeNear(req, a, far11, false), "take: a guard who does not walk as before");
         // warp15: the unpack's 15 m warp (225.0 squared, 3D) moves the copy.
-        const float e0[3] = {0.0f, 0.0f, 0.0f}, e15[3] = {10.0f, 10.0f, 5.0f}, e14[3] = {10.0f, 10.0f, 1.0f};
-        Check(sa::Warp15(e0, e15) && !sa::Warp15(e0, e14), "warp15: beyond 15 m (3D)");
+        const float e0[3] = {0.0f, 0.0f, 0.0f}, e15[3] = {10.0f, 10.0f, 6.0f}, e14[3] = {10.0f, 10.0f, 1.0f};
+        const float e15x[3] = {10.0f, 10.0f, 5.0f};  // exactly 15 m: the engine tests 225.0 < d squared
+        Check(sa::Warp15(e0, e15) && !sa::Warp15(e0, e14) && !sa::Warp15(e0, e15x), "warp15: beyond 15 m (3D)");
         const float d0[3] = {100.0f, 270.0f, 200.0f}, end1[3] = {100.6f, 270.5f, 200.6f}, end2[3] = {101.0f, 270.0f, 200.8f};
         Check(sa::PlanEndNear(end1, d0) && !sa::PlanEndNear(end2, d0), "plan end: within 1 m (3D) of R+0x80");
         Check(sa::kActTakeNearM == 10.0f && sa::kPlanEndM == 1.0f && sa::kPlanCheckMs == 300, "act_plan constants");

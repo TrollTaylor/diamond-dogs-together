@@ -196,15 +196,77 @@ void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw
     entry[0x14] = 1;
 }
 
-bool PlanGate(unsigned, std::uint16_t, std::uint16_t, bool) noexcept { return false; }
-void BuildShadow(Shadow& shadow) noexcept { std::memset(&shadow, 0, sizeof(shadow)); }
-bool ShadowGatePasses(const void*, unsigned) noexcept { return false; }
-unsigned GaitCatchUp(float, unsigned gait) noexcept { return gait; }
-float AheadM(const float (&)[3], const float (&)[3], const float (&)[3]) noexcept { return 0.0f; }
-float EntryYaw(const unsigned char (&)[0x70], float fallback) noexcept { return fallback; }
-bool TakeNear(const unsigned char (&)[0x70], const float (&)[3], const float (&)[3], bool) noexcept { return true; }
-bool Warp15(const float (&)[3], const float (&)[3]) noexcept { return false; }
-bool PlanEndNear(const float (&)[3], const float (&)[3]) noexcept { return false; }
+bool PlanGate(unsigned dest_mode, std::uint16_t r19c, std::uint16_t r19e, bool applied_now) noexcept {
+    return applied_now && dest_mode == 1 && r19c == 0xffff && (r19e & 3u) == 2u;
+}
+
+void BuildShadow(Shadow& shadow) noexcept {
+    std::memset(&shadow, 0, sizeof(shadow));
+    const std::uintptr_t s = reinterpret_cast<std::uintptr_t>(shadow.s), slots = reinterpret_cast<std::uintptr_t>(shadow.slots),
+                         owner = reinterpret_cast<std::uintptr_t>(shadow.owner);
+    std::memcpy(shadow.p + 0x70, &s, sizeof(s));
+    std::memcpy(shadow.s + 0x18, &slots, sizeof(slots));
+    std::memcpy(shadow.slots + 0x18, &owner, sizeof(owner));
+    const std::uint32_t online = 4;  // S+0x2a4 bit 2: a FOB session
+    std::memcpy(shadow.s + 0x2a4, &online, sizeof(online));
+    shadow.s[0x2a8] = 0;  // this peer
+    std::memset(shadow.owner, 1, sizeof(shadow.owner));  // every guard owned by the other peer: a remote copy
+}
+
+bool ShadowGatePasses(const void* p, unsigned idx) noexcept {
+    if (!p || idx >= kMaxSoldiers) return false;
+    std::uintptr_t s = 0, slots = 0, owner = 0;
+    std::memcpy(&s, static_cast<const unsigned char*>(p) + 0x70, sizeof(s));
+    if (!s) return false;
+    const auto* sb = reinterpret_cast<const unsigned char*>(s);
+    std::uint32_t mode = 0;
+    std::memcpy(&mode, sb + 0x2a4, sizeof(mode));
+    if (((mode >> 2) & 1u) == 0) return false;
+    std::memcpy(&slots, sb + 0x18, sizeof(slots));
+    if (!slots) return false;
+    std::memcpy(&owner, reinterpret_cast<const unsigned char*>(slots) + 0x18, sizeof(owner));
+    if (!owner) return false;
+    return reinterpret_cast<const unsigned char*>(owner)[idx] != sb[0x2a8];
+}
+
+unsigned GaitCatchUp(float ahead_m, unsigned gait) noexcept {
+    if (!(ahead_m > 2.0f)) return gait;  // NaN, behind, under 2 m: unchanged (0x1420e00e0 = 4.0, squared)
+    const unsigned want = ahead_m > 5.0f ? 3u : (gait < 3u ? gait + 1u : gait);  // 0x1421a7fc0 = 25.0, squared
+    return want > gait ? want : gait;
+}
+
+float AheadM(const float (&self)[3], const float (&owner)[3], const float (&dest)[3]) noexcept {
+    const auto flat = [](const float (&a)[3], const float (&b)[3]) noexcept {
+        const float dx = a[0] - b[0], dz = a[2] - b[2];
+        return std::sqrt(dx * dx + dz * dz);
+    };
+    const float d = flat(self, owner);
+    if (!(flat(owner, dest) < flat(self, dest))) return 0.0f;  // NaN or not nearer the destination: not ahead
+    return d;
+}
+
+float EntryYaw(const unsigned char (&wire)[0x70], float fallback) noexcept {
+    if (wire[0x68] != 1) return fallback;
+    const auto v = static_cast<std::int16_t>(static_cast<std::uint16_t>((wire[0x50] << 8) | wire[0x51]));
+    return static_cast<float>(v) * (3.14159265358979f / 32767.0f);  // the unpack's 0x142338970
+}
+
+bool TakeNear(const unsigned char (&host_request)[0x70], const float (&self)[3], const float (&owner)[3], bool have) noexcept {
+    if (host_request[0x63] != 1) return true;  // not a walk: as before
+    if (!have) return false;
+    const float dx = self[0] - owner[0], dz = self[2] - owner[2];
+    return dx * dx + dz * dz <= kActTakeNearM * kActTakeNearM;  // NaN: not taken
+}
+
+bool Warp15(const float (&self)[3], const float (&entry)[3]) noexcept {
+    const float dx = self[0] - entry[0], dy = self[1] - entry[1], dz = self[2] - entry[2];
+    return dx * dx + dy * dy + dz * dz > 225.0f;  // 0x142329c00
+}
+
+bool PlanEndNear(const float (&end)[3], const float (&dest)[3]) noexcept {
+    const float dx = end[0] - dest[0], dy = end[1] - dest[1], dz = end[2] - dest[2];
+    return dx * dx + dy * dy + dz * dz <= kPlanEndM * kPlanEndM;
+}
 
 #ifdef _WIN32
 namespace {
@@ -215,6 +277,12 @@ using PackOrder = void(__fastcall*)(void* fob, void* out18, void* order);
 using UnpackRequest = void(__fastcall*)(void* fob, void* r, const void* in70, unsigned idx);
 using UnpackOrder = void(__fastcall*)(void* fob, void* order, const void* in18);
 using Post = void(__fastcall*)(void* m, unsigned idx, const void* req);
+// Round 8 track C: the walk-request start (P, idx, waypoints, R, *(S+0x18), F, planner) -> 1 planned; the planner's
+// follower getter vt[0x20] (planner, idx) -> {obj, u32}; the follower's vt[0x90] has a path / vt[0xa0] the path (obj, u32).
+using PlanStart = char(__fastcall*)(void* p, unsigned idx, unsigned waypoints, void* r, void* slots, void* follower, void* planner);
+using FollowerOf = void*(__fastcall*)(void* planner, unsigned idx);
+using FollowerHas = char(__fastcall*)(void* obj, std::uint32_t key);
+using FollowerPathOf = void*(__fastcall*)(void* obj, std::uint32_t key);
 
 std::uintptr_t g_base = 0;
 std::size_t g_span = 0;
@@ -279,6 +347,22 @@ std::atomic<std::uint64_t> g_ownAt[kMaxSoldiers]{};
 std::uint64_t g_ownScanAt = 0;
 std::atomic<std::uint32_t> g_cLegWait{0};
 std::atomic<std::uint32_t> g_cExpired{0};  // fire-drop mask bits that lapsed (no ACT_V1 m within kActFreshMs)
+// Round 8 track C (act_plan, design 7.23): the puppets plan their own path (PlanStep after the original update).
+std::atomic<bool> g_planOn{false};
+std::atomic<std::uint32_t> g_cPlan{0}, g_cPlanSkip{0}, g_cWarp15{0}, g_cPlanOk{0}, g_cPlanFar{0}, g_cPlanNoPath{0}, g_cNearWait{0},
+    g_cGaitUp{0}, g_cPlanFault{0};
+std::atomic<float> g_ownPos[kMaxSoldiers][3]{};  // each realized non-puppet guard's own position (OwnDests), for TakeNear
+Shadow g_shadow{};
+bool g_shadowBuilt = false;
+bool g_appliedNow[kMaxSoldiers]{};  // hook thread: requests unpacked in this update, before the original
+struct PlanCheck {
+    bool pending;
+    std::uint16_t handle;
+    std::uint64_t at;
+    float dest[3], from[3];
+};
+PlanCheck g_planCheck[kMaxSoldiers]{};
+bool g_plannerLogged = false;
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
 std::uint64_t g_sendWindowAt = 0;
@@ -387,6 +471,63 @@ bool Player(float (&p)[3], std::uint64_t now) noexcept {
     return at && now - at < 3000;
 }
 
+// Round 8 track C: a code pointer read from a vtable is called only when it lies in the image.
+bool InImage(std::uintptr_t fn) noexcept { return fn >= g_base && fn < g_base + g_span; }
+struct Follower {
+    std::uintptr_t planner, pair, obj;
+    std::uint32_t key;
+};
+// The planner *(S+0x30) and its follower pair for guard i (vt[0x20], as 0x14136f0f2 / 0x141372bae call it).
+bool FollowerFor(const View& v, unsigned i, Follower& f) noexcept {
+    f = {};
+    std::uintptr_t vt = 0, fn = 0;
+    if (!Rd(v.s + c::s_planner, f.planner) || !f.planner || !Rd(f.planner, vt) || !vt || !Rd(vt + c::planner_follower, fn) || !InImage(fn))
+        return false;
+    f.pair = reinterpret_cast<std::uintptr_t>(reinterpret_cast<FollowerOf>(fn)(reinterpret_cast<void*>(f.planner), i));
+    if (!f.pair || !Rd(f.pair, f.obj) || !f.obj) return false;
+    Rd(f.pair + 8, f.key);
+    return true;
+}
+// The follower's path: has (vt[0x90]), the point count (+0x20) and the last point (+8 stride 0x10), as the path step reads.
+bool FollowerPath(const Follower& f, bool& has, std::uint32_t& count, float (&end)[3]) noexcept {
+    has = false;
+    count = 0;
+    end[0] = end[1] = end[2] = 0.0f;
+    std::uintptr_t vt = 0, fnHas = 0, fnPath = 0;
+    if (!Rd(f.obj, vt) || !vt || !Rd(vt + c::follower_has, fnHas) || !Rd(vt + c::follower_path, fnPath) || !InImage(fnHas) || !InImage(fnPath))
+        return false;
+    has = reinterpret_cast<FollowerHas>(fnHas)(reinterpret_cast<void*>(f.obj), f.key) != 0;
+    if (!has) return true;
+    const auto path = reinterpret_cast<std::uintptr_t>(reinterpret_cast<FollowerPathOf>(fnPath)(reinterpret_cast<void*>(f.obj), f.key));
+    std::uintptr_t points = 0;
+    if (!path || !Rd(path + c::path_points, points) || !Rd(path + c::path_count, count)) return true;
+    if (points && count && count < 4096) {
+        const auto* e = reinterpret_cast<const float*>(points + static_cast<std::uintptr_t>(count - 1) * 0x10);
+        end[0] = e[0]; end[1] = e[1]; end[2] = e[2];
+    }
+    return true;
+}
+// One line with the planner's and the follower's vtables (RVAs) for the read-only decompile (session 1).
+void PlannerLine(const View& v, unsigned i) noexcept {
+    if (g_plannerLogged) return;
+    Follower f{};
+    if (!FollowerFor(v, i, f)) return;
+    g_plannerLogged = true;
+    std::uintptr_t pvt = 0, fvt = 0, p0 = 0, p10 = 0, p20 = 0, p38 = 0, f90 = 0, f98 = 0, fa0 = 0, fa8 = 0, fd0 = 0;
+    Rd(f.planner, pvt);
+    Rd(f.obj, fvt);
+    if (pvt) { Rd(pvt, p0); Rd(pvt + 0x10, p10); Rd(pvt + 0x20, p20); Rd(pvt + 0x38, p38); }
+    if (fvt) { Rd(fvt + 0x90, f90); Rd(fvt + 0x98, f98); Rd(fvt + 0xa0, fa0); Rd(fvt + 0xa8, fa8); Rd(fvt + 0xd0, fd0); }
+    const auto rva = [](std::uintptr_t a) noexcept { return static_cast<unsigned long long>(a >= g_base && a < g_base + g_span ? a - g_base : 0); };
+    char line[640]{};
+    const int n = std::snprintf(line, sizeof(line),
+        "soldier_act_planner; idx=%u; planner_vt=0x%llx; p00=0x%llx; p10=0x%llx; p20=0x%llx; p38=0x%llx; follower_vt=0x%llx; key=%u; "
+        "f90=0x%llx; f98=0x%llx; fa0=0x%llx; fa8=0x%llx; fd0=0x%llx; pair_in_planner=%lld\r\n",
+        i, rva(pvt), rva(p0), rva(p10), rva(p20), rva(p38), rva(fvt), f.key, rva(f90), rva(f98), rva(fa0), rva(fa8), rva(fd0),
+        static_cast<long long>(f.pair - f.planner));
+    if (n > 0) Emit(line);
+}
+
 int PackSafe(const View& v, unsigned i, unsigned char (&w)[0x70], unsigned char (&o)[0x18]) noexcept {
     __try {
         std::memset(w, 0, sizeof(w));
@@ -444,16 +585,32 @@ void CensusLine(const View& v, unsigned i, const float (&player)[3], std::uint64
     Hex(o, sizeof(o), ord18, sizeof(ord18));
     Hex(w + 0x60, 14, w61, sizeof(w61));
     Hex(ammo, sizeof(ammo), ammoHex, sizeof(ammoHex));
-    char line[1100]{};
+    // Round 8 track C: the plan handle R+0x19c, R+0x198, the follower's path (vt[0x90] has, its count and last point; -1:
+    // no follower) and R+0x80 (the request's destination), so a path end can be compared with the host copy's destination.
+    std::uint16_t r19c = 0;
+    std::uint32_t r198 = 0, fn = 0;
+    Rd(r + c::r_handle, r19c);
+    Rd(r + c::r_198, r198);
+    float fend[3]{}, r80[3]{};
+    std::memcpy(r80, reinterpret_cast<const void*>(r + c::r_dest), sizeof(r80));
+    int fhas = -1;
+    Follower fol{};
+    if (FollowerFor(v, i, fol)) {
+        PlannerLine(v, i);
+        bool has = false;
+        if (FollowerPath(fol, has, fn, fend)) fhas = has ? 1 : 0;
+    }
+    char line[1400]{};
     const int n = std::snprintf(line, sizeof(line),
         "soldier_act_census; t=%llu; idx=%u; d=%.1f; p=%.2f,%.2f,%.2f; v=%.2f; ex=%u; rz=%u; ac=%u; own=%u; peer=%u; mode=0x%x; "
         "puppet=%u; st=%u; np=%u; npf=0x%02x; npp=%.2f,%.2f,%.2f; r19e=0x%04x; r1a0=0x%04x; r1d2=0x%04x; packed=%d; ka=%u; "
         "kb=%u; dm=%u; gait=%u; post=%u; fm=%u; b66=%u; path=%u; wep=0x%02x; dest=%.2f,%.2f,%.2f; w60=%s; o18=%s; o=%s; "
-        "aim=%.2f,%.2f,%.2f; ammo=%s; mag=%u\r\n",
+        "aim=%.2f,%.2f,%.2f; ammo=%s; mag=%u; r19c=0x%04x; r198=0x%x; fh=%d; fn=%u; fend=%.2f,%.2f,%.2f; r80=%.2f,%.2f,%.2f\r\n",
         static_cast<unsigned long long>(now), i, d, p[0], p[1], p[2], speed, Bit(v.exists, i) ? 1u : 0u, Bit(v.realized, i) ? 1u : 0u,
         Bit(v.active, i) ? 1u : 0u, own, v.peer, v.mode, Puppet(v, i) ? 1u : 0u, stance, covered ? 1u : 0u, npf, np[0], np[1], np[2],
         r19e, r1a0, r1d2, packed, f.kind_a, f.kind_b, f.dest_mode, f.gait, f.posture, f.face_mode, f.b66, f.path, f.weapon, f.dest[0],
-        f.dest[1], f.dest[2], w61, ord18, order, aim[0], aim[1], aim[2], ammoHex, mag);
+        f.dest[1], f.dest[2], w61, ord18, order, aim[0], aim[1], aim[2], ammoHex, mag, r19c, r198, fhas, fn, fend[0], fend[1], fend[2],
+        r80[0], r80[1], r80[2]);
     if (n > 0) Emit(line);
     // The payloads (U3) every 2 s per guard and on a kind change.
     if (packed && (!t.valid || now - t.payloadAt >= kPayloadPeriodMs || t.kinds[0] != f.kind_a || t.kinds[1] != f.kind_b)) {
@@ -698,7 +855,7 @@ struct FakeTable {
 };
 alignas(16) unsigned char g_fakeEntries[kMaxSoldiers][0x18]{};
 FakeTable g_fake{0, &g_fakeEntries[0][0], kMaxSoldiers, 0};
-bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3]) noexcept {
+bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3], bool first) noexcept {
     const std::uintptr_t r = Record(v, i);
     const std::uintptr_t slotTable = v.s + c::s_netpos;
     std::uintptr_t table = 0;
@@ -708,8 +865,17 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
     std::uintptr_t data = 0;
     if (table) Rd(table + c::net_data, data);
     const bool covered = table && data && i < count;
+    const bool plan = g_planOn.load(std::memory_order_relaxed);
+    // Round 8 track C: where this copy stands before the unpack (warp15: the unpack's 15 m warp, read back after) and, with
+    // act_plan, the lent entry's yaw: a warped puppet faces the request's facing (face mode 1) or keeps his own yaw (the
+    // slot entry +0xc), not yaw 0.
+    float self[3]{}, ownYaw = 0.0f;
+    const bool haveSelf = Pos(v, i, self);
+    if (haveSelf) ownYaw = reinterpret_cast<const float*>(v.pos + static_cast<std::uintptr_t>(i) * c::slots_pos_stride)[3];
+    if (!std::isfinite(ownYaw)) ownYaw = 0.0f;
+    const bool warp = haveSelf && Warp15(self, at);
     unsigned char saved[0x18]{}, entry[0x18]{};
-    PrefillEntry(entry, at, 0.0f);
+    PrefillEntry(entry, at, plan ? EntryYaw(w, ownYaw) : 0.0f);
     __try {
         if (covered) {
             const std::uintptr_t e = data + static_cast<std::uintptr_t>(i) * c::net_stride;
@@ -733,7 +899,34 @@ bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70]
             const std::uint16_t was = *id, now = RemapPlayer(was);
             if (now != was) { *id = now; g_cRemap.fetch_add(1, std::memory_order_relaxed); }
         }
+        // Round 8 track C (act_plan): the gait catch-up for a walk (dest mode 1, which the unpack copies as sent): the owner
+        // copy ahead toward R+0x80 by 2..5 m: gait + 1 (cap 3), beyond 5 m: 3 (the unpack's own mode 0 rule).
+        if (plan && ((bits >> 9) & 0xfu) == 1u) {
+            float now3[3]{}, dest[3]{};
+            std::memcpy(dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(dest));
+            if (Pos(v, i, now3)) {
+                const unsigned gait = (bits >> 1) & 7u, up = GaitCatchUp(AheadM(now3, at, dest), gait);
+                if (up != gait) {
+                    auto* rb = reinterpret_cast<volatile std::uint32_t*>(r + c::r_bits);
+                    *rb = (*rb & ~0xeu) | ((up & 7u) << 1);
+                    g_cGaitUp.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
         *reinterpret_cast<volatile std::uint16_t*>(r + c::r_flags) |= 0x80u;
+        if (plan && i < kMaxSoldiers) g_appliedNow[i] = true;
+        if (warp) {
+            float after[3]{};
+            Pos(v, i, after);
+            g_cWarp15.fetch_add(1, std::memory_order_relaxed);
+            char line[400]{};
+            const int n = std::snprintf(line, sizeof(line),
+                "soldier_act_warp15; t=%llu; idx=%u; first=%u; d_m=%.1f; p=%.2f,%.2f,%.2f; at=%.2f,%.2f,%.2f; after=%.2f,%.2f,%.2f; "
+                "moved_m=%.1f; yaw=%.3f; plan=%u\r\n",
+                static_cast<unsigned long long>(NowMs()), i, first ? 1u : 0u, Dist(self, at), self[0], self[1], self[2], at[0], at[1], at[2],
+                after[0], after[1], after[2], Dist(self, after), plan ? EntryYaw(w, ownYaw) : 0.0f, plan ? 1u : 0u);
+            if (n > 0) Emit(line);
+        }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         if (!covered) *reinterpret_cast<volatile std::uintptr_t*>(slotTable) = table;
@@ -782,6 +975,9 @@ void OwnDests(const View& v, std::uint64_t now) noexcept {
         float d[3]{};
         DecodePacked(p, d);
         for (int k = 0; k < 3; ++k) g_ownDest[i][k].store(d[k], std::memory_order_relaxed);
+        float self[3]{};
+        if (Pos(v, i, self))
+            for (int k = 0; k < 3; ++k) g_ownPos[i][k].store(self[k], std::memory_order_relaxed);  // round 8 C: TakeNear
         g_ownAt[i].store(now, std::memory_order_release);
     }
 }
@@ -824,7 +1020,7 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
             const bool moving = !first && haveOwner && a.have_owner && OwnerMoved(a.owner, owner);
             if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0)) {
                 g_cDue.fetch_add(1, std::memory_order_relaxed);
-                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own)) {
+                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own, first)) {
                     g_cApplied.fetch_add(1, std::memory_order_relaxed);
                     if (!first && !changed && moving) g_cReapply.fetch_add(1, std::memory_order_relaxed);
                     std::memcpy(a.req, w, sizeof(w));
@@ -869,9 +1065,79 @@ void FrameCensus(std::uint64_t now) noexcept {
     g_frameP95.store(p95, std::memory_order_relaxed);
     g_frames.store(g_frameN, std::memory_order_relaxed);
     // Round 6 (3): the line also prints payload_ids (the aim-target swaps), due and reapply (FormatFrameLine).
-    char line[512]{};
+    char line[768]{};
     if (FormatFrameLine(now, ReadCounters(), line, sizeof(line))) Emit(line);
     g_frameN = 0;
+}
+
+// Round 8 track C (act_plan): kPlanCheckMs after a plan, the follower's path end against R+0x80 (soldier_act_plan line).
+void PlanCheckStep(const View& v, unsigned i, std::uint64_t now) noexcept {
+    PlanCheck& pc = g_planCheck[i];
+    if (!pc.pending || now - pc.at < kPlanCheckMs) return;
+    pc.pending = false;
+    Follower f{};
+    bool has = false;
+    std::uint32_t count = 0;
+    float end[3]{}, p[3]{};
+    const bool read = FollowerFor(v, i, f) && FollowerPath(f, has, count, end);
+    Pos(v, i, p);
+    const bool path = read && has && count;
+    const bool ok = path && PlanEndNear(end, pc.dest);
+    (path ? (ok ? g_cPlanOk : g_cPlanFar) : g_cPlanNoPath).fetch_add(1, std::memory_order_relaxed);
+    std::uint16_t r19c = 0, r19e = 0;
+    Rd(Record(v, i) + c::r_handle, r19c);
+    Rd(Record(v, i) + c::r_flags, r19e);
+    char line[480]{};
+    const int n = std::snprintf(line, sizeof(line),
+        "soldier_act_plan; t=%llu; idx=%u; handle=0x%04x; r19c=0x%04x; r19e=0x%04x; ms=%llu; has=%u; n=%u; end=%.2f,%.2f,%.2f; "
+        "dest=%.2f,%.2f,%.2f; d_end=%.2f; ok=%u; from=%.2f,%.2f,%.2f; p=%.2f,%.2f,%.2f\r\n",
+        static_cast<unsigned long long>(now), i, pc.handle, r19c, r19e, static_cast<unsigned long long>(now - pc.at), has ? 1u : 0u, count,
+        end[0], end[1], end[2], pc.dest[0], pc.dest[1], pc.dest[2], path ? Dist(end, pc.dest) : -1.0f, ok ? 1u : 0u, pc.from[0],
+        pc.from[1], pc.from[2], p[0], p[1], p[2]);
+    if (n > 0) Emit(line);
+}
+
+// Round 8 track C (act_plan; hook thread, after the original manager update, so after the engine's own offline start of
+// each puppet's new request): 0x1413725f0 again with the shadow gate object, for the planner to plan from where he stands
+// to R+0x80 (finding 1: offline the start plans nothing and his follower keeps his brain's old path).
+void PlanStep(std::uintptr_t m) noexcept {
+    __try {
+        View v{};
+        if (!Resolve(m, v)) return;
+        const std::uint64_t now = NowMs();
+        if (!g_shadowBuilt) { BuildShadow(g_shadow); g_shadowBuilt = true; }
+        std::uintptr_t slots = 0;
+        Rd(v.s + c::s_slots, slots);
+        for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
+            PlanCheckStep(v, i, now);
+            if (!g_appliedNow[i]) continue;
+            g_appliedNow[i] = false;
+            const std::uintptr_t r = Record(v, i);
+            std::uint32_t bits = 0;
+            std::uint16_t r19c = 0, r19e = 0;
+            Rd(r + c::r_bits, bits);
+            Rd(r + c::r_handle, r19c);
+            Rd(r + c::r_flags, r19e);
+            const unsigned mode = (bits >> 9) & 0xfu;
+            if (mode != 1) continue;  // modes 0 / 2 are not planned this round (not counted)
+            Follower f{};
+            if (!PlanGate(mode, r19c, r19e, true) || !slots || !FollowerFor(v, i, f)) { g_cPlanSkip.fetch_add(1, std::memory_order_relaxed); continue; }
+            const char planned = reinterpret_cast<PlanStart>(g_base + c::plan_start_rva)(g_shadow.p, i, bits & 1u, reinterpret_cast<void*>(r),
+                reinterpret_cast<void*>(slots), reinterpret_cast<void*>(f.pair), reinterpret_cast<void*>(f.planner));
+            if (!planned) { g_cPlanSkip.fetch_add(1, std::memory_order_relaxed); continue; }
+            g_cPlan.fetch_add(1, std::memory_order_relaxed);
+            PlanCheck& pc = g_planCheck[i];
+            pc.pending = true;
+            pc.at = now;
+            Rd(r + c::r_handle, pc.handle);
+            std::memcpy(pc.dest, reinterpret_cast<const void*>(r + c::r_dest), sizeof(pc.dest));
+            Pos(v, i, pc.from);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_cPlanFault.fetch_add(1, std::memory_order_relaxed);
+        g_faults.fetch_add(1, std::memory_order_relaxed);
+        std::memset(g_appliedNow, 0, sizeof(g_appliedNow));
+    }
 }
 
 void StepSafe(std::uintptr_t m) noexcept {
@@ -901,6 +1167,9 @@ void __fastcall UpdateDetour(void* m) {
         g_probe.pending.load(std::memory_order_relaxed))
         StepSafe(reinterpret_cast<std::uintptr_t>(m));
     g_original(m);
+    // Round 8 track C (act_plan): after the engine's own start of each puppet's new request.
+    if (g_planOn.load(std::memory_order_relaxed) && g_actOn.load(std::memory_order_relaxed) && !g_actHost.load(std::memory_order_relaxed))
+        PlanStep(reinterpret_cast<std::uintptr_t>(m));
 }
 
 bool Matches(std::uintptr_t base, std::size_t span, const char** which) noexcept {
@@ -920,6 +1189,9 @@ bool Matches(std::uintptr_t base, std::size_t span, const char** which) noexcept
     float radius = 0.0f;
     std::memcpy(&radius, reinterpret_cast<const void*>(base + 0x2329c00), sizeof(radius));
     if (radius != c::netpos_warp_sq) { if (which) *which = "data"; return false; }
+    float planDist = 0.0f;
+    std::memcpy(&planDist, reinterpret_cast<const void*>(base + c::plan_dist_rva), sizeof(planDist));
+    if (planDist != c::plan_dist) { if (which) *which = "data"; return false; }
     return true;
 }
 } // namespace
@@ -949,11 +1221,18 @@ bool Install(const void* base, std::size_t span, LogFn log) noexcept {
     }
     if (MH_EnableHook(target) != MH_OK) { if (log) log("soldier_act=refused; reason=hook_enable\r\n"); return false; }
     g_installed.store(true);
-    if (log) log("soldier_act=installed; rva=0x13735c0; sites=17; slots=6\r\n");
+    if (log) {
+        char line[96]{};
+        std::snprintf(line, sizeof(line), "soldier_act=installed; rva=0x13735c0; sites=%u; slots=%u\r\n",
+                      static_cast<unsigned>(sizeof(c::sites) / sizeof(c::sites[0])), static_cast<unsigned>(sizeof(c::slots) / sizeof(c::slots[0])));
+        log(line);
+    }
     return true;
 }
 
 bool Installed() noexcept { return g_installed.load(); }
+void SetPlan(bool on) noexcept { g_planOn.store(on); }
+bool PlanOn() noexcept { return g_planOn.load(); }
 void SetCensus(bool on) noexcept { g_census.store(on); }
 bool CensusOn() noexcept { return g_census.load(); }
 
@@ -1077,6 +1356,19 @@ bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     unsigned char req[0x70];
     std::memcpy(req, act.req, sizeof(req));
     if (!LegMatch(req, own, valid)) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
+    // Round 8 track C (act_plan): and only within kActTakeNearM (flat) of the owner copy (the order part's position).
+    if (g_planOn.load(std::memory_order_relaxed)) {
+        float self[3]{}, owner[3]{};
+        std::uint32_t flags = 0;
+        std::memcpy(&flags, act.order + 0x24, sizeof(flags));
+        std::memcpy(owner, act.order + 0x18, sizeof(owner));
+        if (idx < kMaxSoldiers)
+            for (int k = 0; k < 3; ++k) self[k] = g_ownPos[idx][k].load(std::memory_order_relaxed);
+        if (!TakeNear(req, self, owner, valid && act.order_valid && (flags & 1u) != 0)) {
+            g_cNearWait.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
     return true;
 }
 
@@ -1098,6 +1390,9 @@ Counters ReadCounters() noexcept {
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
     k.due = g_cDue.load(); k.reapply_moving = g_cReapply.load(); k.same = g_cSame.load(); k.unrealized = g_cUnrealized.load();
     k.expired = g_cExpired.load(); k.order_clear = g_cOrderClear.load(); k.leg_wait = g_cLegWait.load();
+    k.plan = g_cPlan.load(); k.plan_skip = g_cPlanSkip.load(); k.warp15 = g_cWarp15.load(); k.plan_ok = g_cPlanOk.load();
+    k.plan_far = g_cPlanFar.load(); k.plan_nopath = g_cPlanNoPath.load(); k.near_wait = g_cNearWait.load(); k.gait_up = g_cGaitUp.load();
+    k.plan_fault = g_cPlanFault.load();
     return k;
 }
 
@@ -1106,10 +1401,12 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
     const int n = std::snprintf(out, capacity,
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
-        "expired=%u; order_clear=%u; leg_wait=%u\r\n",
+        "expired=%u; order_clear=%u; leg_wait=%u; plan=%u; plan_skip=%u; warp15=%u; plan_ok=%u; plan_far=%u; plan_nopath=%u; "
+        "near_wait=%u; gait_up=%u; plan_fault=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
-        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait);
+        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait, k.plan, k.plan_skip, k.warp15,
+        k.plan_ok, k.plan_far, k.plan_nopath, k.near_wait, k.gait_up, k.plan_fault);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
