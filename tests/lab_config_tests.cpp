@@ -2338,6 +2338,17 @@ int main() {
                   Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
                   Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
                   "enemy gaps 3: drive_vert parses, off unless named");
+            // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place and range_flat (native only, no CFG bit)
+            // parse in lab and play; off unless named until their runs (a named 0 records _given).
+            Check(!def.quiet_place && !gunDefault.quiet_place_given && !def.range_flat && !gunDefault.range_flat_given &&
+                  Lab("enabled=1\nrole=guest\nquiet_place=1\n").quiet_place &&
+                  !Lab("enabled=1\nrole=guest\npartner_native_profile=gun\nquiet_place=0\n").quiet_place &&
+                  Lab("enabled=1\nrole=guest\nquiet_place=0\n").quiet_place_given &&
+                  Lab("enabled=1\nrole=host\nrange_flat=1\n").range_flat &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nrange_flat=0\n").range_flat &&
+                  Lab("enabled=1\nrole=host\nrange_flat=0\n").range_flat_given &&
+                  Lab("enabled=1\nrole=host\nquiet_place=2\nrange_flat=x\n").invalid_values == 2,
+                  "enemy round 8: quiet_place and range_flat parse");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
