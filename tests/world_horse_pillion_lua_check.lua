@@ -179,6 +179,14 @@ g.ride(25)
 for _, t in ipairs(g.seatTx()) do if t[5] == 6 then deliver(h, t) end end
 h.tick(33)
 check(h.seats[#h.seats][3] == 1, "and back")
+-- The claim carries the flag too: the first lease already follows it.
+local hc, gc = fixture(), fixture({host = false})
+hc.rides, hc.horse.occupied = true, true
+gc.P.setPose(350, 800, 2, 450, 300, 0)
+gc.ride(3); gc.e = false; gc.ride(1); gc.e = true; gc.ride(1)
+deliver(hc, lastSeat(gc))
+hc.tick(33)
+check(hc.P.state == "driver" and hc.seats[1][3] == 0 and hc.logged("pose=0"), "a claim without the overlay seat: the first lease has pose 0")
 g.ride(10)
 check(g.logged("step=seat_pin;"), "step=seat_pin every second")
 check(g.logged("event=horse_pillion;step=pad;e=1;"), "the raw E's changes are logged (capped)")

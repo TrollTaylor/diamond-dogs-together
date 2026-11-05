@@ -30,9 +30,10 @@ local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30
 -- hold0 with the A0 reset (round 2: it kept body 0 with the horse, lag 6-8 cm, crouched), 0 hold0 without a reset, 4 the
 -- Lua Warp, 5 both. Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
 -- Run ba6b4bb5: at 0.6 m body 0 stood on the ground under its target (dy 1-1.8 m), and body 1 at the driver's root height
--- on the ground beside the horse (the host's horse stood still until it left). Runs 306525db / c4428efa: 0.8 m / 0.3 m
--- kept the driver's horse still for 12-17 s and knocked the passenger's copy's horse out: clear of the horse (a test).
-local V = {back = 350, rise = 1200, mode = 2, dback = 450, dup = 700}
+-- on the ground beside the horse. Runs bdd49a57 / a295d660: 1.2 m / 0.7 m (clear of the horse) changed neither the
+-- host-driven horse standing still nor the passenger's copy's horse falling, and floated: 0.8 m / 0.3 m. seat 1: the
+-- driver's copy seats body 1 with the DM overlay; 0 (lab lever) not, a test of the stall (the passenger's KEEP carries it).
+local V = {back = 350, rise = 800, mode = 2, dback = 450, dup = 300, seat = 1}
 P.V = V
 local floor, sin, cos, sqrt, fmt = math.floor, math.sin, math.cos, math.sqrt, string.format
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -59,10 +60,10 @@ function P.keyOn()
 end
 function P.on() return type(S.on) == "function" and S.on() and int(W.role, 1, 2) and P.keyOn() end
 function P.busy() return P.state ~= "off" end
-function P.setPose(back, rise, mode, dback, dup)
+function P.setPose(back, rise, mode, dback, dup, seat)
  if not (int(back, -1000, 1500) and int(rise, -500, 2000) and (mode == 0 or mode == 2 or mode == 4 or mode == 5) and int(dback, 0, 1500) and
-  int(dup, -500, 1500)) then return false end
- V.back, V.rise, V.mode, V.dback, V.dup = back, rise, mode, dback, dup
+  int(dup, -500, 1500) and (seat == nil or seat == 0 or seat == 1)) then return false end
+ V.back, V.rise, V.mode, V.dback, V.dup, V.seat = back, rise, mode, dback, dup, seat or V.seat
  return true
 end
 local function mine()
@@ -126,7 +127,7 @@ P.besideLeft = besideLeft
 local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
- P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt = nil, nil, nil, nil, nil, nil, nil, nil
+ P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -195,7 +196,7 @@ local function offTick(now)
  end
  bind()
  P.state, P.claimAt = "claim", now
- send(CLAIM, 0, L[1], L[2], L[3], P.yaw or 0)
+ send(CLAIM, V.seat == 0 and 1 or 0, L[1], L[2], L[3], P.yaw or 0)
  log(fmt("step=claim;seat=1;dist_cm=%d;token=%d", round(d / 10), P.token))
 end
 -- Body 0 against its last target before the next move: the worst lag of the stats window.
@@ -236,7 +237,7 @@ local function seatedTick(now)
  if not S.track then return stop("track_end") end
  if selfDown() then return stop("passenger_downed") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
- if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, 0) end
+ if now >= P.keepAt then P.keepAt = now + KEEP_MS; send(KEEP, V.seat == 0 and 1 or 0) end
  -- E held HOP_MS again hops off; it counts only after E was up once (the claiming E held on never ends it).
  local e = padE()
  if e == false then P.armed, P.eSince = true, nil
@@ -262,10 +263,12 @@ local function driverTick(now)
   if P.drivePath then capped("drive", fmt("step=drive;moved_cm=%d;leases=%d", round((path - P.drivePath) / 10), P.seatN or 0), 60) end
   P.drivePath, P.driveAt = path, now + DRIVE_MS
  end
- local r = receipt(fmt("seat1 %d %d %d %d", W.mission, W.epoch, V.dback, V.dup))
+ local pose = P.remoteSeat == false and 0 or 1
+ local r = receipt(fmt("seat1 %d %d %d %d %d", W.mission, W.epoch, V.dback, V.dup, pose))
  if r and r.ready == true then
   P.seatN = (P.seatN or 0) + 1
-  if P.leaseWhy ~= "ok" then P.leaseWhy = "ok"; log(fmt("step=seat1;ok=1;back_mm=%d;up_mm=%d", V.dback, V.dup)) end
+  local ok = "ok" .. pose
+  if P.leaseWhy ~= ok then P.leaseWhy = ok; log(fmt("step=seat1;ok=1;back_mm=%d;up_mm=%d;pose=%d", V.dback, V.dup, pose)) end
  else
   local why = r and tostring(r.reason) or "receipt"
   if P.leaseWhy ~= why then P.leaseWhy = why; capped("seat1_refused", "step=seat1;ok=0;reason=" .. why) end
@@ -293,7 +296,11 @@ W.handlers[OP] = (function(base)
   local role, action, cause, token = v[3], v[4], v[5], v[6]
   if role ~= 3 - W.role or not int(action, 1, 6) or not int(cause, 0, 255) or not int(token, 0, 65535) then return end
   local now = W.now and W.now() or 0
-  if action == CLAIM then return onClaim(now, token) end
+  if action == CLAIM then
+   onClaim(now, token)
+   if P.state == "driver" then P.remoteSeat = cause ~= 1 end
+   return
+  end
   if action == GRANT then
    if cause == CODE.passenger then
     -- The host sits behind this copy's player: drive with them, or say this copy's player is not riding.
@@ -312,6 +319,7 @@ W.handlers[OP] = (function(base)
    end
   elseif action == KEEP then
    if (P.state == "seated" or P.state == "driver") and token == P.token then P.rxAt = now end
+   if P.state == "driver" and token == P.token then P.remoteSeat = cause ~= 1 end
   elseif action == UNSEATED then
    if (P.state == "seated" or P.state == "driver") and token == P.token then stop(CAUSE[cause] or "remote_end", true) end
   end

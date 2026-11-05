@@ -8,6 +8,7 @@ namespace mgscoop::horse_drive {
 namespace {
 std::uint64_t g_placed_ms = 0, g_body_ms = 0, g_seat_ms = 0;
 float g_seat_back = 0.f, g_seat_up = 0.f;
+bool g_seat_pose = true;
 float g_body[3]{};
 bool g_body_ok = false;
 }
@@ -91,6 +92,10 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     r.reset = static_cast<std::uint8_t>(v[7]);
     r.back = static_cast<std::int32_t>(seat[0]);
     r.up = static_cast<std::int32_t>(seat[1]);
+    if (r.verb == Verb::seat1) {
+        r.seat_pose = static_cast<std::uint8_t>(v[6]);
+        r.anchor = 0;
+    }
     out = r;
     return true;
 }
@@ -143,7 +148,8 @@ void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&
     out[1] = rider[1] + up;
     out[2] = rider[2] - back * std::cos(yaw);
 }
-void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool, std::uint64_t now_ms) noexcept {
+void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool pose, std::uint64_t now_ms) noexcept {
+    g_seat_pose = pose;
     g_seat_back = static_cast<float>(back_mm) / 1000.f;
     g_seat_up = static_cast<float>(up_mm) / 1000.f;
     g_seat_ms = now_ms ? now_ms : 1;
@@ -152,7 +158,7 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
     if (!g_seat_ms || now_ms < g_seat_ms || now_ms - g_seat_ms > kSeatMs) return false;
     back = g_seat_back;
     up = g_seat_up;
-    pose = true;
+    pose = g_seat_pose;
     return true;
 }
 

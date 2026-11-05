@@ -70,11 +70,9 @@ guest hold w+shift 1500 nowait
 guest burst h3b-gallop-guest 4 200
 guest hold w+shift+a 1500 nowait
 wait 300
-guest press space 150
 host burst h3b-jump-host 4 150
 guest hold w+shift+a 1500 nowait
 wait 300
-guest press space 150
 guest burst h3b-jump-guest 4 150
 guest release
 wait 3000
@@ -92,6 +90,7 @@ guest run horse_status
 guest require localMounted=0
 waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
 wait 3000
+logmark both
 # --- (a) after (b): the host drives. The host's first E at the unridden horse mounts it; the guest stands 3 m behind the host.
 host run goto_horse
 wait 1500
@@ -142,11 +141,9 @@ host hold w+shift 1500 nowait
 host burst h3-gallop-host 4 200
 host hold w+shift+a 1500 nowait
 wait 300
-host press space 150
 guest burst h3-jump-guest 4 150
 host hold w+shift+a 1500 nowait
 wait 300
-host press space 150
 host burst h3-jump-host 4 150
 host release
 wait 3000

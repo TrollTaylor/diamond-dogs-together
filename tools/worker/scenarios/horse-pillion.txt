@@ -2,7 +2,7 @@
 # your partner"). Both role orders in one part, (b) first since attempt 3. (a) The host's first E mounts the unridden horse; the guest's E 3 m from
 # the ridden horse acts normally (no ride hold: step=e_free); beside it the guest's E claims the rear seat (HORSE_SEAT
 # seat 1), the host grants and drives, the guest's copy pins body 0 on the rear seat, the host's copy draws body 1 there
-# (partner_pillion=seat); idle / walk / trot / gallop / a space press at the gallop, frames on both screens; the guest's E
+# (partner_pillion=seat); idle / walk / trot / gallop / a turn at the gallop (no space press since attempt 4), frames on both screens; the guest's E
 # hops off; seated again, the host gets off and both are off. (b) The guest's first E mounts; the host's own E sits the host
 # behind (host_press), the same gaits; the host hops off, the guest gets off; the host's first E mounts the unridden horse.
 # Lines: world_lua=event=horse_pillion; step=claim / grant / seated / driver / seat1 / seat_pin / unseated; native
@@ -66,23 +66,21 @@ guest hold w+shift 1500 nowait
 guest burst h3b-gallop-guest 4 200
 guest hold w+shift+a 1500 nowait
 wait 300
-guest press space 150
 host burst h3b-jump-host 4 150
 guest hold w+shift+a 1500 nowait
 wait 300
-guest press space 150
 guest burst h3b-jump-guest 4 150
 guest release
 wait 3000
 host capture h3b-stopped-host
 guest capture h3b-stopped-guest
 waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
-host debug pillion_pose 350 1200 4 450 700
+host debug pillion_pose 350 800 4 450 300
 guest hold w 1500 nowait
 host burst h3b-m4-host 3 300
 guest release
 wait 1500
-host debug pillion_pose 350 1200 2 450 700
+host debug pillion_pose 350 800 2 450 300
 wait 1000
 host hold e 500
 waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
@@ -95,6 +93,7 @@ guest run horse_status
 guest require localMounted=0
 waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
 wait 3000
+logmark both
 # --- (a) after (b): the host drives. The host's first E at the unridden horse mounts it; the guest stands 3 m behind the host.
 host run goto_horse
 wait 1500
@@ -113,6 +112,8 @@ guest press e 150
 wait 1200
 waitlog guest 'world_lua=event=horse_pillion; step=e_free;' 4
 guest capture h3-e-free
+# Lab only (runs bdd49a57 / a295d660: the host-driven horse stood still with the overlay seat): this ride without it.
+guest debug pillion_pose 350 800 2 450 300 0
 # Beside it (goto_horse: 1.6 m) the ride hold masks the stock mount and E claims the rear seat.
 guest run goto_horse
 wait 1500
@@ -121,7 +122,7 @@ guest press e 150
 waitlog guest 'world_lua=event=horse_pillion; step=claim; seat=1;' 5
 waitlog host 'world_lua=event=horse_pillion; step=grant; seat=1;' 5
 waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant;' 5
-waitlog host 'world_lua=event=horse_pillion; step=seat1; ok=1;' 5
+waitlog host 'world_lua=event=horse_pillion; step=seat1; ok=1; back_mm=450; up_mm=300; pose=0;' 5
 waitlog host 'partner_pillion=seat;' 5
 guest run horse_status
 guest require localMounted=0
@@ -145,35 +146,43 @@ host hold w+shift 1500 nowait
 host burst h3-gallop-host 4 200
 host hold w+shift+a 1500 nowait
 wait 300
-host press space 150
 guest burst h3-jump-guest 4 150
 host hold w+shift+a 1500 nowait
 wait 300
-host press space 150
 host burst h3-jump-host 4 150
 host release
 wait 3000
 guest capture h3-stopped-guest
 host capture h3-stopped-host
 waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+# Lab only: the overlay seat back on for a short walk (the first (a) ride ran without it).
+guest debug pillion_pose 350 800 2 450 300 1
+wait 2500
+waitlog host 'world_lua=event=horse_pillion; step=seat1; ok=1; back_mm=450; up_mm=300; pose=1;' 5
+host hold w 1500 nowait
+host burst h3-seat-walk-host 3 250
+host hold w 1500 nowait
+guest burst h3-seat-walk-guest 3 250
+host release
+wait 2000
 # Lab only (run ba6b4bb5: body 0 on the ground under its target): the passenger's own body 0 by the Lua Warp (mode 4),
 # 1.0 m over the root (mode 2), hold0 plus the Warp (mode 5), each at a walk; seat_pin dy_cm every second; then the default.
-guest debug pillion_pose 350 1200 4 450 700
+guest debug pillion_pose 350 800 4 450 300
 host hold w 1500 nowait
 guest burst h3-m4-guest 3 300
 host release
 wait 1500
-guest debug pillion_pose 350 1500 2 450 700
+guest debug pillion_pose 350 1000 2 450 300
 host hold w 1500 nowait
-guest burst h3-r1500-guest 3 300
+guest burst h3-r1000-guest 3 300
 host release
 wait 1500
-guest debug pillion_pose 350 1200 5 450 700
+guest debug pillion_pose 350 800 5 450 300
 host hold w 1500 nowait
 guest burst h3-m5-guest 3 300
 host release
 wait 1500
-guest debug pillion_pose 350 1200 2 450 700
+guest debug pillion_pose 350 800 2 450 300
 wait 1500
 # The passenger hops off with E held (after a release).
 guest hold e 500
