@@ -114,7 +114,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 73, "73 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 74, "74 ops (FM1 soldier act, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
                        "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, and local ops)");
@@ -1446,7 +1446,7 @@ void SoldierSnapOp() {
 // complete request and order per roster slot (Core::ActLatest), never in Lua's queues; a link session change clears them.
 // A partner without the op skips each part by its length (unknown_op).
 world::TxStatus ActTx(world::Core& core, std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
-                      const std::uint8_t (&req)[0x70], const std::uint8_t (&order)[0x18], std::uint64_t now, world::Datagram* d) {
+                      const std::uint8_t (&req)[0x70], const std::uint8_t (&order)[world::kActOrder], std::uint64_t now, world::Datagram* d) {
     std::uint32_t w[world::kActWords]{};
     if (!world::ActWords(part, req, order, w)) return world::TxStatus::bad_args;
     std::int64_t v[4 + world::kActWords] = {tick, slot, seq, static_cast<std::int64_t>(part)};
@@ -1460,7 +1460,7 @@ void SoldierActOp() {
               s->lua == 14 && s->body == 49 && !s->lab_only && std::strcmp(s->name, "SOLDIER_ACT") == 0,
           "SOLDIER_ACT: a 49-byte datagram both ways, level 2, play too");
     Check(!world::FindOp(0x59) && !world::FindOp(0x5A) && !world::FindOp(0x5B), "0x59..0x5B stay reserved (HANDOVER, CLAIM)");
-    std::uint8_t req[0x70]{}, order[0x18]{}, req2[0x70]{};
+    std::uint8_t req[0x70]{}, order[world::kActOrder]{}, req2[0x70]{};
     for (unsigned i = 0; i < sizeof(req); ++i) { req[i] = static_cast<std::uint8_t>(i * 7 + 1); req2[i] = static_cast<std::uint8_t>(i ^ 0x5A); }
     for (unsigned i = 0; i < sizeof(order); ++i) order[i] = static_cast<std::uint8_t>(200 - i);
     std::uint32_t w[world::kActWords]{};

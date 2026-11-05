@@ -77,6 +77,85 @@ int main() {
         Check(au::TakeShooterHits(hits) == 3 && hits[15] == 2 && hits[246] == 1 && hits[3] == 0, "shooter hits on body 0");
         Check(au::TakeShooterHits(hits) == 0 && hits[15] == 0, "taking clears");
     }
+    // FM1, the far mirror: players swap between the copies; soldiers and other ids stay.
+    Check(sa::RemapPlayer(0) == 1 && sa::RemapPlayer(1) == 0 && sa::RemapPlayer(2) == 2 && sa::RemapPlayer(0x400 | 15) == (0x400 | 15) &&
+              sa::RemapPlayer(0xffff) == 0xffff, "player ids 0 <-> 1 only");
+    // The change hash ignores jitter under 5 cm and 1 degree.
+    {
+        unsigned char a[0x70]{}, b[0x70]{};
+        a[0x63] = b[0x63] = 0x0d;
+        const float d0[3] = {100.0f, 20.0f, 300.0f}, d1[3] = {100.03f, 20.0f, 300.02f}, d2[3] = {100.08f, 20.0f, 300.0f};
+        const std::uint64_t v0 = sa::EncodePacked(d0), v1 = sa::EncodePacked(d1), v2 = sa::EncodePacked(d2);
+        std::memcpy(a + 0x40, &v0, 8);
+        std::memcpy(b + 0x40, &v1, 8);
+        Check(!sa::RequestChanged(a, b), "a destination 3.6 cm off is jitter");
+        std::memcpy(b + 0x40, &v2, 8);
+        Check(sa::RequestChanged(a, b), "8 cm is a change");
+        std::memcpy(b + 0x40, &v0, 8);
+        a[0x68] = b[0x68] = 1;
+        const std::uint16_t y0 = 1000, y1 = 1150, y2 = 1200;
+        std::memcpy(a + 0x50, &y0, 2);
+        std::memcpy(b + 0x50, &y1, 2);
+        Check(!sa::RequestChanged(a, b), "a facing 150/65536 off is jitter");
+        std::memcpy(b + 0x50, &y2, 2);
+        Check(sa::RequestChanged(a, b), "200/65536 (1.1 degree) is a change");
+        std::memcpy(b + 0x50, &y0, 2);
+        b[0x63] = 0x14;
+        Check(sa::RequestChanged(a, b), "another kind is a change");
+        b[0x63] = 0x0d;
+        b[0x05] = 9;
+        Check(sa::RequestChanged(a, b), "another payload byte is a change");
+        unsigned char o[0x18]{}, p[0x18]{};
+        o[0xe] = p[0xe] = 1;
+        std::memcpy(o, &v0, 8);
+        std::memcpy(p, &v1, 8);
+        Check(!sa::OrderChanged(o, p), "an aim point 3.6 cm off is jitter");
+        std::memcpy(p, &v2, 8);
+        Check(sa::OrderChanged(o, p), "an aim point 8 cm off is a change");
+        o[0xe] = p[0xe] = 2;
+        std::memcpy(p, o, 8);
+        p[0] ^= 1;
+        Check(sa::OrderChanged(o, p), "another target id is a change");
+    }
+    // The rate cap: a change at most every 100 ms, the same record again after 1 s.
+    Check(sa::DueSend(true, 0, 5) && sa::DueSend(false, 0, 5), "the first send is due");
+    Check(!sa::DueSend(true, 1000, 1099) && sa::DueSend(true, 1000, 1100), "a change 100 ms after the last");
+    Check(!sa::DueSend(false, 1000, 1999) && sa::DueSend(false, 1000, 2000), "unchanged: the 1 s resend");
+    // The entry pre-fill: this copy's own position (no 15 m warp), flag bit 0.
+    {
+        unsigned char e[0x18];
+        std::memset(e, 0xcc, sizeof(e));
+        const float p[3] = {1.5f, -2.0f, 3.25f};
+        sa::PrefillEntry(e, p, 0.5f);
+        float back[3]{}, yaw = 0;
+        std::memcpy(back, e, sizeof(back));
+        std::memcpy(&yaw, e + 0xc, 4);
+        Check(back[0] == 1.5f && back[1] == -2.0f && back[2] == 3.25f && yaw == 0.5f && e[0x14] == 1 && e[0x10] == 0 && e[0x17] == 0,
+              "entry: xyz, yaw, +0x14 bit 0, the rest zero");
+    }
+    // The mirror mask (soldier_authority): soldier GameObjectIds only; the drops and local shots counted.
+    {
+        namespace au = mgscoop::soldier_authority;
+        au::ClearMirrored();
+        au::SetMirrored(15, true);
+        au::SetMirrored(246, true);
+        Check(au::Mirrored(static_cast<std::uint16_t>(0x400 | 15)) && au::Mirrored(static_cast<std::uint16_t>(0x400 | 246)) &&
+                  !au::Mirrored(15) && !au::Mirrored(1) && !au::Mirrored(static_cast<std::uint16_t>(0x400 | 16)) && au::MirroredCount() == 2,
+              "the mirror mask holds soldiers only");
+        au::SetMirrored(15, false);
+        Check(!au::Mirrored(static_cast<std::uint16_t>(0x400 | 15)) && au::MirroredCount() == 1, "a release clears its bit");
+        std::uint32_t f0 = 0, n0 = 0, f1 = 0, n1 = 0;
+        au::MirrorDrops(f0, n0);
+        au::NoteMirrorDrop(false);
+        au::NoteMirrorDrop(true);
+        au::NoteMirrorDrop(false);
+        au::MirrorDrops(f1, n1);
+        const std::uint32_t s0 = au::LocalShots();
+        au::NoteLocalShot();
+        Check(f1 - f0 == 2 && n1 - n0 == 1 && au::LocalShots() == s0 + 1, "drops and local shots are counted");
+        au::ClearMirrored();
+        Check(au::MirroredCount() == 0, "cleared");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

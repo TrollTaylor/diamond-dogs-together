@@ -11,7 +11,7 @@ inline constexpr std::uintptr_t pack_order_rva=0x1370900;      // (M-0x20, out18
 inline constexpr std::uintptr_t unpack_request_rva=0x136f810;  // (M-0x20, R, in70, idx)
 inline constexpr std::uintptr_t unpack_order_rva=0x13701f0;    // (M-0x20, R+0x1b0, in18)
 inline constexpr std::uintptr_t post_rva=0x1368980;            // (M, idx, req 0xc0)
-inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a18;
+inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a48;  // M = P+0x20 (P, the constructed object: vtable 0x23e8a18)
 inline constexpr std::uintptr_t codec_vtable_rva=0x23e9638;
 // M: records +0x10 (stride 0x1e0), S +0x50, codec +0x58; the FOB functions take M-0x20.
 inline constexpr std::size_t m_records=0x10, m_soldier=0x50, m_codec=0x58, fob_this=0x20, record_stride=0x1e0;
@@ -91,6 +91,7 @@ inline constexpr Site sites[]={
 struct Slot {std::uintptr_t rva;std::uintptr_t target;};  // qword at rva == base + target
 inline constexpr Slot slots[]={
 {0x23e8a58,0x13735c0},  // request manager vtable +0x40 = the manager update 0x13735c0
+{0x23e8a58,0x13735c0},  // its +0x20 sub-object M (vtable 0x23e8a48) +0x10 = the same update, this = M
 {0x23e9638,0x1381630},  // action codec vtable +0x00 = pack A
 {0x23e9640,0x1381660},  // action codec vtable +0x08 = pack B
 {0x23e9648,0x13815b0},  // action codec vtable +0x10 = unpack A

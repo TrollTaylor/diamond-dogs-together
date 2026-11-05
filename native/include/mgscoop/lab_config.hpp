@@ -751,6 +751,12 @@ struct LabConfig {
     // manager update 0x13735c0 read-only and logs the request/order census, the engage bins and the realize bands; the
     // research command act_probe (U2) needs it. Lab and play; research only, off unless named. No CFG bit, no wire.
     bool act_census = false;
+    // Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15; soldier_act.hpp, lua/coop/world_mirror.lua):
+    // while the guest's player is beyond R of a host-owned guard, the guest's copy is a puppet that replays the host
+    // copy's own request and order (SOLDIER_ACT 0x58) with its own animations. CFG r[19] bit 512, only with
+    // soldier_follow. Lab and play; off unless named until its gate run passes.
+    bool soldier_act = false;
+    bool soldier_act_given = false;
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and

@@ -48,5 +48,16 @@ bool DefenseList(const DefenseSnapshot& s, unsigned target, char* out, std::size
 // Enemy sync M7 FM1 probe (soldier_act engage bins): the Defend hits on the local player (target 0) per shooter index since
 // the last take; returns the total and clears.
 std::uint32_t TakeShooterHits(std::uint16_t (&out)[kSoldiers]) noexcept;
+// Enemy sync M7 FM1 (the far mirror, soldier_act.hpp): the guards this copy mirrors (puppets replaying the owner's
+// requests). partner_fire_filter drops their RequestBullet and AddNoise (their shots are the owner copy's, seen only), and
+// counts the local player's own shots (the guest's shot releases every mirror puppet for 15 s). Lock-free; any thread.
+void SetMirrored(std::uint16_t index, bool on) noexcept;
+void ClearMirrored() noexcept;
+bool Mirrored(std::uint16_t attacker) noexcept;       // a soldier GameObjectId whose index is mirrored here
+unsigned MirroredCount() noexcept;
+void NoteMirrorDrop(bool noise) noexcept;
+void MirrorDrops(std::uint32_t& fire, std::uint32_t& noise) noexcept;
+void NoteLocalShot() noexcept;
+std::uint32_t LocalShots() noexcept;
 
 } // namespace mgscoop::soldier_authority

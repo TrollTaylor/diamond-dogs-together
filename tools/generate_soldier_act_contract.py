@@ -6,7 +6,7 @@ before it hooks the manager update or calls any of the request functions (docs/w
 M7 FM1 "far mirror"; the plan's owner-brains act layer).
 
 The engine's own FOB act sync (Ghidra decompile, mgsvtpp 1.0.15.4):
-  - the request manager M (vtable 0x23e8a18, M+0x50 = the soldier impl S, M+0x58 = the action codec, M+0x10 the
+  - the request manager M (the +0x20 sub-object of P, vtable 0x23e8a48; P = M-0x20 has 0x23e8a18; M+0x50 = the soldier impl S, M+0x58 = the action codec, M+0x10 the
     0x1e0-byte request records R, M+8 the 0xd0-byte locomotion commands) runs 0x13735c0 every frame: offline
     0x1373c20 + 0x1373800 per soldier, online ([S+0x2a4] bit 2) 0x13738b0 + 0x1373800;
   - 0x13738b0: the non-owner (S+0x2a8 != owner byte *(*(S+0x18)+0x18)+idx) unpacks a 0x70 request with 0x136f810 and
@@ -191,6 +191,7 @@ SITES = [
 # (vtable rva, slot offset, expected target rva, description). Data qwords are absolute (no relocations).
 SLOTS = [
     (0x23E8A18, 0x40, 0x13735C0, 'request manager vtable +0x40 = the manager update 0x13735c0'),
+    (0x23E8A48, 0x10, 0x13735C0, 'its +0x20 sub-object M (vtable 0x23e8a48) +0x10 = the same update, this = M'),
     (0x23E9638, 0x00, 0x1381630, 'action codec vtable +0x00 = pack A'),
     (0x23E9638, 0x08, 0x1381660, 'action codec vtable +0x08 = pack B'),
     (0x23E9638, 0x10, 0x13815B0, 'action codec vtable +0x10 = unpack A'),
@@ -224,7 +225,7 @@ lines = [
     'inline constexpr std::uintptr_t unpack_request_rva=0x136f810;  // (M-0x20, R, in70, idx)',
     'inline constexpr std::uintptr_t unpack_order_rva=0x13701f0;    // (M-0x20, R+0x1b0, in18)',
     'inline constexpr std::uintptr_t post_rva=0x1368980;            // (M, idx, req 0xc0)',
-    'inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a18;',
+    'inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a48;  // M = P+0x20 (P, the constructed object: vtable 0x23e8a18)',
     'inline constexpr std::uintptr_t codec_vtable_rva=0x23e9638;',
     '// M: records +0x10 (stride 0x1e0), S +0x50, codec +0x58; the FOB functions take M-0x20.',
     'inline constexpr std::size_t m_records=0x10, m_soldier=0x50, m_codec=0x58, fob_this=0x20, record_stride=0x1e0;',

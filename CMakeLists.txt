@@ -447,7 +447,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # (LF). A chunk over 16000 bytes is emitted as two adjacent raw literals,
   # split at the last line break in its first 16000 bytes, so each stays at most
   # 16000 bytes, under the MSVC literal limit (16380).
-  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO FOLLOW_SEED FOLLOW HANDOFF ALIGN RECOVERY ARRIVAL DOWNED SLEEP_CLOCK PARTNER_SLEEP REVIVE_INPUT FRIENDLY BUDDY RIDE_POSE HORSE_CARGO BUDDY_RIDE PLACE PLACE_GUEST VEHICLE VEHICLE_STATE VEHICLE_RULES VEHICLE_DAMAGE COMPANION COMPANION_DOG COMPANION_GUARD RELIEF RELIEF_SYNC SUPPLY SNAP MIRROR)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")
@@ -702,11 +702,11 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   # (native/soldier_act_contract.hpp, tools/generate_soldier_act_contract.py). Installed only with lab.ini act_census=1.
   add_library(mgs_soldier_act STATIC native/soldier_act.cpp)
   target_include_directories(mgs_soldier_act PUBLIC native/include PRIVATE native)
-  target_link_libraries(mgs_soldier_act PRIVATE mgs_coop_core minhook)
+  target_link_libraries(mgs_soldier_act PRIVATE mgs_coop_core mgs_coop_lab minhook)
   target_compile_options(mgs_soldier_act PRIVATE /W4 /WX)
   add_executable(soldier_act_tests tests/soldier_act_tests.cpp)
   target_include_directories(soldier_act_tests PRIVATE native)
-  target_link_libraries(soldier_act_tests PRIVATE mgs_soldier_act mgs_coop_core minhook)
+  target_link_libraries(soldier_act_tests PRIVATE mgs_soldier_act mgs_coop_lab mgs_coop_core minhook ws2_32 bcrypt)
   target_compile_options(soldier_act_tests PRIVATE /W4 /WX)
   add_test(NAME soldier_act_tests COMMAND soldier_act_tests)
   # Enemy sync M7 (docs/world-sync-design.md 7.13): the perception patch block and the soldier damage authority.

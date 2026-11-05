@@ -38,6 +38,24 @@ unsigned Band(float metres) noexcept;
 // Lower-case hex of `size` bytes into out (2 * size + 1); false when it does not fit.
 bool Hex(const unsigned char* bytes, std::size_t size, char* out, std::size_t capacity) noexcept;
 
+// FM1, the far mirror (lab key soldier_act; docs/world-sync-design.md 7.15). The owner's copy packs each mirrored guard's
+// request and order (0x13704a0 / 0x1370900, the hook thread) and sends them as SOLDIER_ACT parts; the other copy's puppet
+// takes them (0x136f810 with its network-position entry pre-filled with its own position, then R+0x19e |= 0x80; the
+// order 0x13701f0 every update, R+0x1d2 |= 1) and runs them with its own legs, aim and fire motions.
+inline constexpr std::uint64_t kActMinMs = 100, kActResendMs = 1000, kActFreshMs = 1500;
+inline constexpr unsigned kActPartsPer100Ms = 24;
+// Players 0 and 1 swap between the copies (GameObjectId type 0); any other id is unchanged.
+std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
+// Whether two packed requests differ beyond jitter: the destination (+0x40) moved >= 5 cm, a facing position (face mode
+// 2, +0x50) >= 5 cm, a facing yaw (face mode 1, u16 at +0x50) by >= 1 degree (182 of 65536), or any other byte.
+bool RequestChanged(const unsigned char (&a)[0x70], const unsigned char (&b)[0x70]) noexcept;
+// Orders: a target position (mode 1, packed at +0) moved >= 5 cm, or any other byte.
+bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]) noexcept;
+// The rate cap: a change goes out kActMinMs after the last send at the earliest, an unchanged record every kActResendMs.
+bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
+// The network-position entry 0x136f810 reads (0x18 bytes): xyz, yaw, flags +0x14 bit 0 (valid).
+void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw) noexcept;
+
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
 // `base`/`span`: the image. Verifies every site and slot of soldier_act_contract.hpp and hooks the manager update (MinHook).
@@ -57,6 +75,25 @@ void SetLocalPlayer(const float (&pos)[3], std::uint64_t now_ms) noexcept;
 bool StartProbe(std::uint16_t dst, std::uint16_t src, std::uint32_t ms, unsigned mode) noexcept;
 // "act;installed=;census=;m=;s=;calls=;lines=;faults=;probe=..." for the act_status reply.
 bool StatusLine(char* out, std::size_t capacity) noexcept;
+// FM1 (the runtime thread). Configure: soldier_act on this copy (both roles; the hook is installed with it).
+void ConfigureMirror(bool on, bool host) noexcept;
+bool MirrorOn() noexcept;
+// Owner: send guard `idx` (roster `slot`) for kActFreshMs; the hook packs it every update.
+void SetTx(unsigned idx, std::uint16_t slot, std::uint64_t now_ms) noexcept;
+// Owner: sends the staged parts (world_link::SendAct), at most kActPartsPer100Ms per 100 ms. Parts sent.
+unsigned SendStaged(std::uint64_t now_ms) noexcept;
+// Puppet side: mirror guard `idx` (roster `slot`) or release him. On, pulls the newest SOLDIER_ACT of the slot into the
+// hook's mailbox; true when the request is fresh (kActFreshMs). Off clears his mailbox and the fire-drop bit.
+bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept;
+void ReleaseAll() noexcept;
+// Research command "mirror off|on": while paused, ACT_V1 m is refused "paused" (Lua releases every puppet).
+void SetPaused(bool paused) noexcept;
+bool Paused() noexcept;
+struct Counters {
+    std::uint32_t tx_parts, staged, rx, applied, orders, refuse_table, refuse_fault, refuse_stale, remap_player, payload_ids,
+        mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
+};
+Counters ReadCounters() noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

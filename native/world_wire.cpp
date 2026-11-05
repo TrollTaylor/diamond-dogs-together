@@ -106,6 +106,9 @@ constexpr OpSpec kOps[] = {
      {U32(), U16(1, kSnapSlots), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
       I32(-8000, 8000), U8(0, 7), U16()}},
     {op::engage, "ENGAGE", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 2, 0, 0, 5, {U32(), U8(0, 7)}},
+    // Enemy sync M7 FM1 (protocol section 32): tick, slot, seq, part 0..3, ten u32 words; a datagram, both directions.
+    {op::soldier_act, "SOLDIER_ACT", 1, Dir::both, Wire::datagram, 2, false, false, 14, 0, 0, 49,
+     {U32(), U16(1, kSnapSlots), U16(), U8(0, 3), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32()}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
     {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
      {U16(1), U32(), U8(0, 1), U8(0, 2), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
@@ -787,6 +790,10 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         StoreSnap(entry, now_ms);
         return;
     }
+    if (op.code == op::soldier_act) {
+        StoreAct(entry, now_ms);
+        return;
+    }
     if (spec->wire == Wire::datagram) {
         Slot& slot = op.code == op::digest ? digest_ : op.code == op::guest_digest ? guest_digest_ :
                      op.code == op::ride_fast ? ride_fast_ : op.code == op::ride_tilt ? ride_tilt_ :
@@ -1238,6 +1245,88 @@ void Core::RecordGrant(const Entry& e, std::uint64_t now_ms) noexcept {
 void Core::ClearGrants() noexcept {
     for (Grant& g : grants_) g = Grant{};
     for (auto& pair : snaps_) pair[0] = pair[1] = Snap{};
+    for (auto& a : acts_) a = ActSlot{};
+}
+
+bool ActWords(unsigned part, const std::uint8_t (&req)[kActRequest], const std::uint8_t (&order)[kActOrder],
+              std::uint32_t (&words)[kActWords]) noexcept {
+    std::uint8_t bytes[kActWords * 4]{};
+    if (part < 3) {
+        const std::size_t at = part * sizeof(bytes);
+        const std::size_t n = at + sizeof(bytes) <= kActRequest ? sizeof(bytes) : kActRequest - at;
+        std::memcpy(bytes, req + at, n);
+    } else if (part == 3) {
+        std::memcpy(bytes, order, kActOrder);
+    } else {
+        return false;
+    }
+    std::memcpy(words, bytes, sizeof(bytes));
+    return true;
+}
+
+// FM1: SOLDIER_ACT parts per roster slot. A request is taken when all three parts of one seq arrived and the seq is newer
+// than the one kept (wrap-safe u16); an order when its seq is newer. A slot not in the table takes the least recently
+// written entry.
+void Core::StoreAct(const Entry& e, std::uint64_t now_ms) noexcept {
+    if (e.count < 4 + kActWords || e.v[1] < 1 || e.v[1] > static_cast<std::int64_t>(kSnapSlots) || e.v[3] < 0 || e.v[3] > 3) return;
+    const auto slot = static_cast<std::uint16_t>(e.v[1]);
+    const auto seq = static_cast<std::uint16_t>(e.v[2]);
+    const auto part = static_cast<unsigned>(e.v[3]);
+    ActSlot* entry = nullptr;
+    ActSlot* oldest = &acts_[0];
+    for (ActSlot& a : acts_) {
+        if (a.slot == slot) { entry = &a; break; }
+        if (a.used_ms < oldest->used_ms) oldest = &a;
+    }
+    if (!entry || entry->epoch != e.epoch) {
+        if (!entry) entry = oldest;
+        *entry = ActSlot{};
+        entry->slot = slot;
+        entry->epoch = e.epoch;
+    }
+    entry->used_ms = now_ms ? now_ms : 1;
+    const auto newer = [](std::uint16_t a, std::uint16_t b) noexcept {
+        const std::uint16_t d = static_cast<std::uint16_t>(a - b);
+        return d != 0 && d < 0x8000u;
+    };
+    std::uint8_t bytes[kActWords * 4]{};
+    for (unsigned i = 0; i < kActWords; ++i) {
+        const std::uint32_t w = U(e.v[4 + i]);
+        std::memcpy(bytes + i * 4, &w, sizeof(w));
+    }
+    Act& act = entry->act;
+    if (part == 3) {
+        if (act.order_valid && !newer(seq, act.order_seq)) { ++stats_.stale_u; return; }
+        std::memcpy(act.order, bytes, kActOrder);
+        act.order_valid = true;
+        act.order_seq = seq;
+        act.order_tick = U(e.v[0]);
+        act.order_rx_ms = now_ms;
+        return;
+    }
+    if (act.req_valid && !newer(seq, act.req_seq)) { ++stats_.stale_u; return; }
+    if (entry->pending_mask && entry->pending_seq != seq) entry->pending_mask = 0;
+    entry->pending_seq = seq;
+    std::memcpy(entry->pending + part * sizeof(bytes), bytes, sizeof(bytes));  // 3 x 40 = 0x78 bytes
+    entry->pending_mask = static_cast<std::uint8_t>(entry->pending_mask | (1u << part));
+    if (entry->pending_mask != 7) return;
+    std::memcpy(act.req, entry->pending, kActRequest);
+    act.req_valid = true;
+    act.req_seq = seq;
+    act.req_tick = U(e.v[0]);
+    act.req_rx_ms = now_ms;
+    entry->pending_mask = 0;
+}
+
+bool Core::ActLatest(std::uint16_t slot, Act& out) const noexcept {
+    out = Act{};
+    if (!paired_ || !level_ || slot < 1 || slot > kSnapSlots) return false;
+    for (const ActSlot& a : acts_) {
+        if (a.slot != slot || a.epoch != epoch_ || !(a.act.req_valid || a.act.order_valid)) continue;
+        out = a.act;
+        return true;
+    }
+    return false;
 }
 
 // Enemy sync M4: the newest SOLDIER_SNAP per slot by sender tick (an older or repeated tick is stale_u).

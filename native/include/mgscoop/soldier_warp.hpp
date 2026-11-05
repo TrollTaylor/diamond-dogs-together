@@ -195,7 +195,11 @@ struct DriveRule {
     unsigned short mission{};
     bool snap{}, owner{};
     bool puppet{}, puppet_key{};  // M7 probe: the puppet drive asked for, and lab.ini soldier_puppet (a guest only)
+    bool mirror{}, act_key{};     // FM1: the mirror drive (mode 2) asked for, and lab.ini soldier_act (a guest only for now)
 };
+// FM1, the mirror drive (DRIVE_V1 mode 2): a mirrored copy walks on its own legs toward the owner's request, so the drive
+// never steps it under kMirrorSnapM and moves it the whole way beyond (a lost stream, a far catch-up).
+inline constexpr float kMirrorSnapM = 5.0f;
 const char* DriveAdmit(const DriveRule& rule) noexcept;
 // The nearer-player range and the `far` refusal (enemy follow): the squared distance
 // from `pos` to the nearer of `host` (only when host_valid: the remote pose is fresh)

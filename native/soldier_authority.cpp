@@ -91,6 +91,39 @@ void DefenseReset() noexcept {
     }
 }
 
+namespace {
+std::atomic<std::uint64_t> g_mirror[kSoldiers / 64]{};
+std::atomic<std::uint32_t> g_mirrorFire{0}, g_mirrorNoise{0}, g_localShots{0};
+} // namespace
+
+void SetMirrored(std::uint16_t index, bool on) noexcept {
+    if (index >= kSoldiers) return;
+    const std::uint64_t bit = 1ull << (index % 64);
+    if (on) g_mirror[index / 64].fetch_or(bit, std::memory_order_relaxed);
+    else g_mirror[index / 64].fetch_and(~bit, std::memory_order_relaxed);
+}
+void ClearMirrored() noexcept { for (auto& w : g_mirror) w.store(0, std::memory_order_relaxed); }
+bool Mirrored(std::uint16_t attacker) noexcept {
+    if (!IsSoldier(attacker)) return false;
+    const unsigned index = attacker & 0x1FFu;
+    return (g_mirror[index / 64].load(std::memory_order_relaxed) >> (index % 64)) & 1u;
+}
+unsigned MirroredCount() noexcept {
+    unsigned n = 0;
+    for (const auto& w : g_mirror) {
+        std::uint64_t v = w.load(std::memory_order_relaxed);
+        while (v) { v &= v - 1; ++n; }
+    }
+    return n;
+}
+void NoteMirrorDrop(bool noise) noexcept { (noise ? g_mirrorNoise : g_mirrorFire).fetch_add(1, std::memory_order_relaxed); }
+void MirrorDrops(std::uint32_t& fire, std::uint32_t& noise) noexcept {
+    fire = g_mirrorFire.load(std::memory_order_relaxed);
+    noise = g_mirrorNoise.load(std::memory_order_relaxed);
+}
+void NoteLocalShot() noexcept { g_localShots.fetch_add(1, std::memory_order_relaxed); }
+std::uint32_t LocalShots() noexcept { return g_localShots.load(std::memory_order_relaxed); }
+
 std::uint32_t TakeShooterHits(std::uint16_t (&out)[kSoldiers]) noexcept {
     std::uint32_t total = 0;
     for (unsigned i = 0; i < kSoldiers; ++i) {

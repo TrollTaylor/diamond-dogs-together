@@ -454,11 +454,33 @@ void Warp() {
     std::uint8_t mode = 9;
     const std::string puppet = std::string(world::drive_prefix) + "7 1037 1 2 3 1";
     const std::string soft = std::string(world::drive_prefix) + "7 1037 1 2 3";
-    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    const std::string mirror = std::string(world::drive_prefix) + "7 1037 1 2 3 2";
+    const std::string bad = std::string(world::drive_prefix) + "7 1037 1 2 3 3";
     Check(world::ParseDriveMode(puppet.data(), puppet.size(), slot, go, pos, mode) && mode == 1 && pos[2] == 3 &&
               world::ParseDriveMode(soft.data(), soft.size(), slot, go, pos, mode) && mode == 0 &&
+              world::ParseDriveMode(mirror.data(), mirror.size(), slot, go, pos, mode) && mode == 2 &&
               !world::ParseDriveMode(bad.data(), bad.size(), slot, go, pos, mode),
-          "drive: the M7 probe's mode field (0 soft, 1 puppet)");
+          "drive: the mode field (0 soft, 1 puppet, FM1 2 mirror)");
+    // FM1, the far mirror (lua/coop/world_mirror.lua): ACT_V1 "<t|m|r|s> <slot> <goId>".
+    {
+        char op = 0;
+        std::uint16_t aslot = 0;
+        std::uint32_t ago = 0;
+        const auto act = [](const char* rest) { return std::string(world::act_prefix) + rest; };
+        const std::string t = act("t 7 1037"), m = act("m 512 1037"), r = act("r 1 0"), s = act("s 0 0");
+        Check(Kind(t) == world::Receipt::act && Kind(s) == world::Receipt::act, "ACT_V1 is its own receipt");
+        Check(world::ParseAct(t.data(), t.size(), op, aslot, ago) && op == 't' && aslot == 7 && ago == 1037 &&
+                  world::ParseAct(m.data(), m.size(), op, aslot, ago) && op == 'm' && aslot == 512 &&
+                  world::ParseAct(r.data(), r.size(), op, aslot, ago) && op == 'r' && ago == 0 &&
+                  world::ParseAct(s.data(), s.size(), op, aslot, ago) && op == 's' && aslot == 0,
+              "act: t / m / r with a slot and goId, s 0 0");
+        const char* bads[] = {"x 7 1037", "t 0 1037", "t 513 1037", "t 7 65536", "t 7", "t 7 1037 1", "s 1 0", "s 0 1", "t  7 1037",
+                              "t 7 -1", ""};
+        for (const char* b : bads) {
+            const std::string x = act(b);
+            Check(!world::ParseAct(x.data(), x.size(), op, aslot, ago), "act: a malformed receipt is refused");
+        }
+    }
 }
 } // namespace
 

@@ -76,6 +76,11 @@ local function fixture(host, level, mb)
             c.drives[#c.drives + 1] = source
             return c.driveReply or {e = 120, s = 1, r = 0, h = 1}
         end
+        if source:find("'MGS_COOP_WORLD_ACT_V1'", 1, true) then
+            c.acts = c.acts or {}
+            c.acts[#c.acts + 1] = source
+            return c.actReply or {f = 1, sh = c.shots or 0}
+        end
         return nil
     end
     env.TppEnemy = {}
@@ -121,7 +126,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -1546,6 +1551,68 @@ if arg[7] and arg[8] then
     pg.positions[1] = {0, 1.8, 90.0}
     ticks(pg, 2)
     check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
+    -- Enemy sync M7 FM1, the far mirror (W.actOn; lua/coop/world_mirror.lua): a host-owned NORMAL guard beyond R + 15 m of
+    -- the guest is a mirror puppet while his SOLDIER_ACT is fresh; within R, a guest shot (for 15 s), a stale stream, a
+    -- research pause and the key off release him; the host registers its own guards beyond R - 10 m of the guest.
+    do
+    local mg = guestFix(0)
+    mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
+    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[3] == 120, 'FM1: R floors 80 m calm, 120 m ALERT')
+    mg.positions[1] = {0, 1.8, 100.0}
+    ticks(mg, 4)
+    local function acted(c, text)
+        for _, s in ipairs(c.acts or {}) do if s == "return 'MGS_COOP_WORLD_ACT_V1' -- " .. text then return true end end
+        return false
+    end
+    check(logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=100.0;R=80') and acted(mg, 'm 1 1') and
+        cmdCount(mg, 'SetPuppet') == 1 and cmdCount(mg, 'SetRestrictNotice') == 1, 'FM1: 100 m (beyond R + 15): a mirror puppet')
+    mg.positions[1] = {0, 1.8, 85.0}
+    ticks(mg, 4)
+    check(not logged(mg, 'event=mirror;ent=3000000001;on=0'), 'FM1: between R and R + 15 m he stays a puppet')
+    mg.positions[1] = {0, 1.8, 70.0}
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=near;d_m=70.0;R=80') and acted(mg, 'r 1 1') and
+        cmdCount(mg, 'SetPuppet') == 2, 'FM1: within R: released (his own brain again)')
+    mg.positions[1] = {0, 1.8, 88.0}
+    ticks(mg, 4)
+    check(not logged(mg, 'event=mirror;ent=3000000001;on=1;why=far;d_m=88.0'), 'FM1: 88 m (under R + 15): not taken again')
+    mg.positions[1] = {0, 1.8, 100.0}
+    ticks(mg, 4)
+    check(cmdCount(mg, 'SetPuppet') == 3, 'FM1: beyond R + 15 m again: a puppet again')
+    mg.shots = 1
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=shot'), 'FM1: the guest fired: released')
+    ticks(mg, 8)
+    check(cmdCount(mg, 'SetPuppet') == 4, 'FM1: no puppet again within 15 s of the shot')
+    mg.now = mg.now + 15000
+    ticks(mg, 4)
+    check(cmdCount(mg, 'SetPuppet') == 5, 'FM1: 15 s after the shot: a puppet again')
+    mg.actReply = {f = 0, sh = 1}
+    ticks(mg, 4)
+    check(not logged(mg, 'why=stale'), 'FM1: a missing act under 1.5 s keeps him')
+    mg.now = mg.now + 1600
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=stale'), 'FM1: no fresh SOLDIER_ACT for 1.5 s: released')
+    mg.actReply = {f = 1, sh = 1}
+    ticks(mg, 4)
+    mg.actReply = {refused = 'paused', sh = 1}
+    ticks(mg, 2)
+    check(logged(mg, 'event=mirror;ent=3000000001;on=0;why=paused'), 'FM1: mirror off (native paused): released')
+    mg.actReply = {f = 1, sh = 1}
+    ticks(mg, 4)
+    local before = cmdCount(mg, 'SetPuppet')
+    mg.W.actOn = false
+    ticks(mg, 1)
+    check(logged(mg, 'why=key_off') and cmdCount(mg, 'SetPuppet') == before + 1, 'FM1: the key off releases every puppet')
+    -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
+    local mh = followFixture(true)
+    mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
+    mh.positions[900] = {0, 0, 0}
+    mh.positions[1] = {0, 1.8, 100.0}
+    mh.positions[2] = {0, 1.8, 30.0}
+    ticks(mh, 4)
+    check(acted(mh, 't 1 1') and not acted(mh, 't 2 2') and acted(mh, 's 0 0'), 'FM1 host: a guard beyond R - 10 m of the guest is sent')
+    end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.
     local pick = sh.W.snap.pick

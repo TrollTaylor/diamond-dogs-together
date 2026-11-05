@@ -7,6 +7,8 @@
 #include <cstring>
 
 #include "mgscoop/soldier_authority.hpp"
+#include "mgscoop/world_link.hpp"
+#include "mgscoop/world_wire.hpp"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -86,6 +88,60 @@ bool Hex(const unsigned char* bytes, std::size_t size, char* out, std::size_t ca
     return true;
 }
 
+std::uint16_t RemapPlayer(std::uint16_t id) noexcept {
+    if ((id >> 9) != 0) return id;
+    const unsigned index = id & 0x1ffu;
+    return index == 0 ? 1 : index == 1 ? 0 : id;
+}
+
+namespace {
+bool PackedNear(const unsigned char* a, const unsigned char* b) noexcept {
+    std::uint64_t va = 0, vb = 0;
+    std::memcpy(&va, a, 8);
+    std::memcpy(&vb, b, 8);
+    float pa[3]{}, pb[3]{};
+    DecodePacked(va, pa);
+    DecodePacked(vb, pb);
+    const float dx = pa[0] - pb[0], dy = pa[1] - pb[1], dz = pa[2] - pb[2];
+    return dx * dx + dy * dy + dz * dz < 0.05f * 0.05f;
+}
+} // namespace
+
+bool RequestChanged(const unsigned char (&a)[0x70], const unsigned char (&b)[0x70]) noexcept {
+    if (std::memcmp(a, b, 0x40) != 0 || std::memcmp(a + 0x58, b + 0x58, 0x70 - 0x58) != 0) return true;
+    if (!PackedNear(a + 0x40, b + 0x40) || std::memcmp(a + 0x48, b + 0x48, 8) != 0) return true;
+    const std::uint8_t mode = a[0x68];
+    if (mode == 2) return !PackedNear(a + 0x50, b + 0x50);
+    if (mode == 1) {
+        std::uint16_t ya = 0, yb = 0;
+        std::memcpy(&ya, a + 0x50, 2);
+        std::memcpy(&yb, b + 0x50, 2);
+        const std::uint16_t d = static_cast<std::uint16_t>(ya - yb);
+        const unsigned diff = d < 0x8000u ? d : 0x10000u - d;
+        return diff >= 182u || std::memcmp(a + 0x52, b + 0x52, 6) != 0;
+    }
+    return std::memcmp(a + 0x50, b + 0x50, 8) != 0;
+}
+
+bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]) noexcept {
+    if (std::memcmp(a + 8, b + 8, 0x18 - 8) != 0) return true;
+    if (a[0xe] == 1) return !PackedNear(a, b);
+    return std::memcmp(a, b, 8) != 0;
+}
+
+bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
+    if (!last_ms) return true;
+    const std::uint64_t age = now_ms >= last_ms ? now_ms - last_ms : 0;
+    return changed ? age >= kActMinMs : age >= kActResendMs;
+}
+
+void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw) noexcept {
+    std::memset(entry, 0, sizeof(entry));
+    std::memcpy(entry, pos, sizeof(pos));
+    std::memcpy(entry + 0xc, &yaw, sizeof(yaw));
+    entry[0x14] = 1;
+}
+
 #ifdef _WIN32
 namespace {
 namespace c = mgscoop::soldier_act_contract;
@@ -117,6 +173,36 @@ struct Track {
     bool valid;
 };
 Track g_track[kMaxSoldiers]{};
+
+// FM1 mirror state. tx/mirror registrations: the runtime thread writes, the hook thread reads (atomics); the staged packs
+// and the mailboxes under g_actLock.
+std::atomic<bool> g_actOn{false}, g_actHost{false};
+std::atomic<std::uint64_t> g_txAt[kMaxSoldiers]{}, g_mirAt[kMaxSoldiers]{};
+std::atomic<std::uint16_t> g_txSlot[kMaxSoldiers]{}, g_mirSlot[kMaxSoldiers]{};
+SRWLOCK g_actLock = SRWLOCK_INIT;
+struct Stage {
+    std::uint16_t slot, req_seq, order_seq;
+    bool req_dirty, order_dirty;
+    std::uint64_t req_at, order_at;  // hook: last staged
+    unsigned char req[0x70], order[world::kActOrder];  // order: the packed 0x18, the owner position, flags
+};
+Stage g_stage[kMaxSoldiers]{};
+struct Mail {
+    bool req_valid, order_valid;
+    std::uint16_t req_seq, order_seq, applied_seq;
+    std::uint64_t req_rx_ms;
+    unsigned char req[0x70], order[world::kActOrder];
+};
+Mail g_mail[kMaxSoldiers]{};
+std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
+    g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
+std::uint64_t g_sendWindowAt = 0;
+unsigned g_sendWindowParts = 0;
+// Frame interval census (hook thread): the manager update's interval, p95 over each second.
+std::uint64_t g_frameLast = 0, g_frameAt = 0;
+std::uint32_t g_frameUs[256]{};
+unsigned g_frameN = 0;
+LARGE_INTEGER g_qpf{};
 
 // U2 probe state (the runtime thread starts it; the hook thread runs it).
 struct Probe {
@@ -479,12 +565,190 @@ void ProbeStep(const View& v, std::uint64_t now) noexcept {
     }
 }
 
+// FM1, the owner (hook thread): pack every registered guard; stage a changed record (rate-capped) for SendStaged.
+void MirrorTx(const View& v, std::uint64_t now) noexcept {
+    for (unsigned i = 0; i < v.count; ++i) {
+        const std::uint64_t at = g_txAt[i].load(std::memory_order_relaxed);
+        if (!at || now - at > kActFreshMs || !Bit(v.realized, i)) continue;
+        unsigned char w[0x70]{}, o[0x18]{};
+        if (!PackSafe(v, i, w, o)) continue;
+        float own[3]{};
+        const bool havePos = Pos(v, i, own);
+        AcquireSRWLockExclusive(&g_actLock);
+        Stage& s = g_stage[i];
+        s.slot = g_txSlot[i].load(std::memory_order_relaxed);
+        unsigned char prev[0x18];
+        std::memcpy(prev, s.order, sizeof(prev));
+        const bool reqChanged = RequestChanged(w, s.req), orderChanged = OrderChanged(o, prev);
+        if (DueSend(reqChanged, s.req_at, now)) {
+            std::memcpy(s.req, w, sizeof(w));
+            ++s.req_seq;
+            s.req_dirty = true;
+            s.req_at = now;
+            g_cStaged.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (DueSend(orderChanged, s.order_at, now)) {
+            std::memcpy(s.order, o, sizeof(o));
+            const std::uint32_t flags = havePos ? 1u : 0u;
+            std::memcpy(s.order + 0x18, own, sizeof(own));
+            std::memcpy(s.order + 0x24, &flags, sizeof(flags));
+            ++s.order_seq;
+            s.order_dirty = true;
+            s.order_at = now;
+        }
+        ReleaseSRWLockExclusive(&g_actLock);
+    }
+}
+
+// FM1, the puppet side (hook thread, before the manager update): a new request is unpacked into the puppet's record
+// with his network-position entry pre-filled with his own position (a table that does not cover him is lent one for the
+// call); the order is re-posted every update (offline the manager marks a new order done at once).
+struct FakeTable {
+    std::uint64_t pad;
+    unsigned char* data;
+    std::uint32_t count, pad2;
+};
+alignas(16) unsigned char g_fakeEntries[kMaxSoldiers][0x18]{};
+FakeTable g_fake{0, &g_fakeEntries[0][0], kMaxSoldiers, 0};
+bool UnpackRequestSafe(const View& v, unsigned i, const unsigned char (&w)[0x70], const float (&at)[3]) noexcept {
+    const std::uintptr_t r = Record(v, i);
+    const std::uintptr_t slotTable = v.s + c::s_netpos;
+    std::uintptr_t table = 0;
+    Rd(slotTable, table);
+    std::uint32_t count = 0;
+    if (table) Rd(table + c::net_count, count);
+    std::uintptr_t data = 0;
+    if (table) Rd(table + c::net_data, data);
+    const bool covered = table && data && i < count;
+    unsigned char saved[0x18]{}, entry[0x18]{};
+    PrefillEntry(entry, at, 0.0f);
+    __try {
+        if (covered) {
+            const std::uintptr_t e = data + static_cast<std::uintptr_t>(i) * c::net_stride;
+            std::memcpy(saved, reinterpret_cast<const void*>(e), sizeof(saved));
+            std::memcpy(entry + 0xc, saved + 0xc, 4);
+            std::memcpy(reinterpret_cast<void*>(e), entry, sizeof(entry));
+        } else {
+            g_cTable.fetch_add(1, std::memory_order_relaxed);
+            std::memcpy(g_fakeEntries[i], entry, sizeof(entry));
+            *reinterpret_cast<volatile std::uintptr_t*>(slotTable) = reinterpret_cast<std::uintptr_t>(&g_fake);
+        }
+        reinterpret_cast<UnpackRequest>(g_base + c::unpack_request_rva)(reinterpret_cast<void*>(v.fob), reinterpret_cast<void*>(r), w, i);
+        if (covered) std::memcpy(reinterpret_cast<void*>(data + static_cast<std::uintptr_t>(i) * c::net_stride), saved, sizeof(saved));
+        else *reinterpret_cast<volatile std::uintptr_t*>(slotTable) = table;
+        // Facing by id (modes 3 / 4): the players swap between the copies.
+        std::uint32_t bits = 0;
+        Rd(r + c::r_bits, bits);
+        const unsigned face = (bits >> 6) & 7u;
+        if (face == 3 || face == 4) {
+            auto* id = reinterpret_cast<volatile std::uint16_t*>(r + 0x98);
+            const std::uint16_t was = *id, now = RemapPlayer(was);
+            if (now != was) { *id = now; g_cRemap.fetch_add(1, std::memory_order_relaxed); }
+        }
+        *reinterpret_cast<volatile std::uint16_t*>(r + c::r_flags) |= 0x80u;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (!covered) *reinterpret_cast<volatile std::uintptr_t*>(slotTable) = table;
+        g_cFault.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+}
+bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) noexcept {
+    const std::uintptr_t r = Record(v, i);
+    __try {
+        reinterpret_cast<UnpackOrder>(g_base + c::unpack_order_rva)(reinterpret_cast<void*>(v.fob), reinterpret_cast<void*>(r + c::r_order), o);
+        // Target by id (mode 2: u16 id + u16 part at R+0x1b0): the players swap between the copies.
+        std::uint8_t mode = 0;
+        Rd(r + c::r_order_mode, mode);
+        if ((mode & 7u) == 2) {
+            auto* id = reinterpret_cast<volatile std::uint16_t*>(r + c::r_order);
+            const std::uint16_t was = *id, now = RemapPlayer(was);
+            if (now != was) { *id = now; g_cRemap.fetch_add(1, std::memory_order_relaxed); }
+        }
+        *reinterpret_cast<volatile std::uint16_t*>(r + c::r_order_flags) |= 1u;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_cFault.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+}
+void MirrorRx(const View& v, std::uint64_t now) noexcept {
+    for (unsigned i = 0; i < v.count; ++i) {
+        const std::uint64_t at = g_mirAt[i].load(std::memory_order_relaxed);
+        if (!at || now - at > kActFreshMs) continue;
+        unsigned char w[0x70]{}, o[0x18]{};
+        float owner[3]{};
+        bool newReq = false, haveOrder = false, haveOwner = false;
+        std::uint16_t seq = 0;
+        AcquireSRWLockShared(&g_actLock);
+        const Mail& m = g_mail[i];
+        if (m.req_valid && m.req_seq != m.applied_seq) { std::memcpy(w, m.req, sizeof(w)); seq = m.req_seq; newReq = true; }
+        if (m.order_valid) {
+            std::memcpy(o, m.order, sizeof(o));
+            haveOrder = true;
+            std::uint32_t flags = 0;
+            std::memcpy(&flags, m.order + 0x24, sizeof(flags));
+            if (flags & 1u) { std::memcpy(owner, m.order + 0x18, sizeof(owner)); haveOwner = true; }
+        }
+        ReleaseSRWLockShared(&g_actLock);
+        // The entry takes the owner copy's position (the engine's own FOB rule: the copy is warped beyond 15 m of it, and
+        // the catch-up runs it toward the packed position), or this copy's own one before the first order part.
+        float own[3]{};
+        if (newReq && Pos(v, i, own)) {
+            if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own)) g_cApplied.fetch_add(1, std::memory_order_relaxed);
+            AcquireSRWLockExclusive(&g_actLock);
+            g_mail[i].applied_seq = seq;
+            ReleaseSRWLockExclusive(&g_actLock);
+        }
+        if (haveOrder && UnpackOrderSafe(v, i, o)) g_cOrders.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void FrameCensus(std::uint64_t now) noexcept {
+    LARGE_INTEGER t{};
+    QueryPerformanceCounter(&t);
+    if (!g_qpf.QuadPart) QueryPerformanceFrequency(&g_qpf);
+    const std::uint64_t us = g_qpf.QuadPart ? static_cast<std::uint64_t>(t.QuadPart) * 1000000ull / static_cast<std::uint64_t>(g_qpf.QuadPart) : 0;
+    if (g_frameLast && us > g_frameLast && g_frameN < 256) g_frameUs[g_frameN++] = static_cast<std::uint32_t>(us - g_frameLast);
+    g_frameLast = us;
+    if (now - g_frameAt < 1000) return;
+    g_frameAt = now;
+    if (!g_frameN) return;
+    std::uint32_t sorted[256];
+    std::memcpy(sorted, g_frameUs, g_frameN * sizeof(std::uint32_t));
+    for (unsigned a = 1; a < g_frameN; ++a) {  // insertion sort, <= 256
+        const std::uint32_t x = sorted[a];
+        unsigned b = a;
+        while (b && sorted[b - 1] > x) { sorted[b] = sorted[b - 1]; --b; }
+        sorted[b] = x;
+    }
+    const std::uint32_t p95 = sorted[(g_frameN * 95) / 100 < g_frameN ? (g_frameN * 95) / 100 : g_frameN - 1];
+    g_frameP95.store(p95, std::memory_order_relaxed);
+    g_frames.store(g_frameN, std::memory_order_relaxed);
+    char line[300]{};
+    std::uint32_t fire = 0, noise = 0;
+    soldier_authority::MirrorDrops(fire, noise);
+    const int n = std::snprintf(line, sizeof(line),
+        "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
+        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u\r\n",
+        static_cast<unsigned long long>(now), g_frameN, p95 / 1000.0, soldier_authority::MirroredCount(), g_cTx.load(), g_cStaged.load(),
+        g_cRx.load(), g_cApplied.load(), g_cOrders.load(), g_cTable.load(), g_cFault.load(), g_cRemap.load(), fire, noise,
+        soldier_authority::LocalShots());
+    if (n > 0) Emit(line);
+    g_frameN = 0;
+}
+
 void StepSafe(std::uintptr_t m) noexcept {
     __try {
         View v{};
         if (!Resolve(m, v)) return;
         const std::uint64_t now = NowMs();
         ProbeStep(v, now);
+        if (g_actOn.load(std::memory_order_relaxed)) {
+            FrameCensus(now);
+            if (g_actHost.load(std::memory_order_relaxed)) MirrorTx(v, now);
+            else MirrorRx(v, now);
+        }
         if (g_census.load(std::memory_order_relaxed)) Census(v, now);
     } __except (EXCEPTION_EXECUTE_HANDLER) { g_faults.fetch_add(1, std::memory_order_relaxed); }
 }
@@ -497,7 +761,8 @@ void __fastcall UpdateDetour(void* m) {
         g_threads.store(2, std::memory_order_relaxed);
     else if (!g_threads.load(std::memory_order_relaxed)) g_threads.store(1, std::memory_order_relaxed);
     g_m.store(reinterpret_cast<std::uintptr_t>(m), std::memory_order_relaxed);
-    if (g_census.load(std::memory_order_relaxed) || g_probe.active || g_probe.pending.load(std::memory_order_relaxed))
+    if (g_census.load(std::memory_order_relaxed) || g_actOn.load(std::memory_order_relaxed) || g_probe.active ||
+        g_probe.pending.load(std::memory_order_relaxed))
         StepSafe(reinterpret_cast<std::uintptr_t>(m));
     g_original(m);
 }
@@ -548,7 +813,7 @@ bool Install(const void* base, std::size_t span, LogFn log) noexcept {
     }
     if (MH_EnableHook(target) != MH_OK) { if (log) log("soldier_act=refused; reason=hook_enable\r\n"); return false; }
     g_installed.store(true);
-    if (log) log("soldier_act=installed; rva=0x13735c0; sites=17; slots=5\r\n");
+    if (log) log("soldier_act=installed; rva=0x13735c0; sites=17; slots=6\r\n");
     return true;
 }
 
@@ -572,6 +837,110 @@ bool StartProbe(std::uint16_t dst, std::uint16_t src, std::uint32_t ms, unsigned
     g_probe.modeWant = mode;
     g_probe.pending.store(true, std::memory_order_release);
     return true;
+}
+
+void ConfigureMirror(bool on, bool host) noexcept {
+    g_actHost.store(host);
+    g_actOn.store(on && g_installed.load());
+    if (!on) ReleaseAll();
+}
+bool MirrorOn() noexcept { return g_actOn.load(); }
+
+void SetTx(unsigned idx, std::uint16_t slot, std::uint64_t now_ms) noexcept {
+    if (idx >= kMaxSoldiers || !slot) return;
+    g_txSlot[idx].store(slot, std::memory_order_relaxed);
+    g_txAt[idx].store(now_ms ? now_ms : 1, std::memory_order_relaxed);
+}
+
+unsigned SendStaged(std::uint64_t now_ms) noexcept {
+    if (!g_actOn.load() || !g_actHost.load()) return 0;
+    if (now_ms - g_sendWindowAt >= 100) { g_sendWindowAt = now_ms; g_sendWindowParts = 0; }
+    unsigned sent = 0;
+    for (unsigned i = 0; i < kMaxSoldiers && g_sendWindowParts < kActPartsPer100Ms; ++i) {
+        Stage s{};
+        AcquireSRWLockExclusive(&g_actLock);
+        const bool any = g_stage[i].req_dirty || g_stage[i].order_dirty;
+        if (any) {
+            s = g_stage[i];
+            const unsigned need = (s.req_dirty ? 3u : 0u) + (s.order_dirty ? 1u : 0u);
+            if (g_sendWindowParts + need > kActPartsPer100Ms) { ReleaseSRWLockExclusive(&g_actLock); break; }
+            g_stage[i].req_dirty = g_stage[i].order_dirty = false;
+        }
+        ReleaseSRWLockExclusive(&g_actLock);
+        if (!any || !s.slot) continue;
+        world::Act a{};
+        std::uint8_t req[world::kActRequest]{}, order[world::kActOrder]{};  // order: packed 0x18, owner position, flags
+        std::memcpy(req, s.req, sizeof(req));
+        std::memcpy(order, s.order, sizeof(order));
+        (void)a;
+        const auto tick = static_cast<std::uint32_t>(now_ms);
+        if (s.req_dirty)
+            for (unsigned part = 0; part < 3; ++part)
+                if (world_link::SendAct(tick, s.slot, s.req_seq, part, req, order) == world::TxStatus::ok) { ++sent; ++g_sendWindowParts; }
+        if (s.order_dirty && world_link::SendAct(tick, s.slot, s.order_seq, 3, req, order) == world::TxStatus::ok) { ++sent; ++g_sendWindowParts; }
+    }
+    g_cTx.fetch_add(sent, std::memory_order_relaxed);
+    return sent;
+}
+
+bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept {
+    if (idx >= kMaxSoldiers) return false;
+    if (!on || !g_actOn.load()) {
+        g_mirAt[idx].store(0, std::memory_order_relaxed);
+        soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), false);
+        AcquireSRWLockExclusive(&g_actLock);
+        g_mail[idx] = Mail{};
+        ReleaseSRWLockExclusive(&g_actLock);
+        return false;
+    }
+    g_mirSlot[idx].store(slot, std::memory_order_relaxed);
+    std::uint64_t now = 0;
+    world::Act act{};
+    const bool have = world_link::ActLatest(slot, now, act);
+    bool fresh = false;
+    AcquireSRWLockExclusive(&g_actLock);
+    Mail& m = g_mail[idx];
+    if (have && act.req_valid && (!m.req_valid || m.req_seq != act.req_seq)) {
+        std::memcpy(m.req, act.req, sizeof(m.req));
+        m.req_seq = act.req_seq;
+        m.req_rx_ms = act.req_rx_ms;
+        m.req_valid = true;
+        g_cRx.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (have && act.order_valid && (!m.order_valid || m.order_seq != act.order_seq)) {
+        std::memcpy(m.order, act.order, sizeof(m.order));
+        m.order_seq = act.order_seq;
+        m.order_valid = true;
+    }
+    fresh = m.req_valid && now >= m.req_rx_ms && now - m.req_rx_ms <= kActFreshMs;
+    ReleaseSRWLockExclusive(&g_actLock);
+    if (!fresh) g_cStale.fetch_add(1, std::memory_order_relaxed);
+    g_mirAt[idx].store(fresh ? (now_ms ? now_ms : 1) : 0, std::memory_order_relaxed);
+    soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), fresh);
+    return fresh;
+}
+
+std::atomic<bool> g_paused{false};
+void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }
+bool Paused() noexcept { return g_paused.load(); }
+
+void ReleaseAll() noexcept {
+    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); }
+    soldier_authority::ClearMirrored();
+    AcquireSRWLockExclusive(&g_actLock);
+    for (auto& m : g_mail) m = Mail{};
+    ReleaseSRWLockExclusive(&g_actLock);
+}
+
+Counters ReadCounters() noexcept {
+    Counters k{};
+    k.tx_parts = g_cTx.load(); k.staged = g_cStaged.load(); k.rx = g_cRx.load(); k.applied = g_cApplied.load();
+    k.orders = g_cOrders.load(); k.refuse_table = g_cTable.load(); k.refuse_fault = g_cFault.load(); k.refuse_stale = g_cStale.load();
+    k.remap_player = g_cRemap.load(); k.payload_ids = g_cPayloadIds.load(); k.mirrored = soldier_authority::MirroredCount();
+    soldier_authority::MirrorDrops(k.fire_dropped, k.noise_dropped);
+    k.local_shots = soldier_authority::LocalShots();
+    k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
+    return k;
 }
 
 bool StatusLine(char* out, std::size_t capacity) noexcept {
