@@ -1,7 +1,7 @@
 -- Horse probes (lab only, CFG mode 1; horse plan section 4), F9 commands of the player module; one probe at a time.
 -- rec <ms> / play <mode> <ms> (P1: census pose every frame, replayed by SetCallHorse sg4 sg10 sg20 yaw20 chase1 chase2;
 -- play_stats err_cm, leap). hold 0|1 (P5: ACTION mask, raw E). hostage, watch <ms> (P2). pin <dy_cm> <ms> (P4: body 1
--- warped every frame). cargo_pose <placed> <census> <back> <down> (M2 body 0). stop, status.
+-- warped every frame). cargo_pose p c b d r (M2). stop, status.
 do
  local D, W = e.MgsCoopDebug, e.MgsCoopWorld
  local P = type(D) == "table" and D.player
@@ -296,10 +296,11 @@ do
    local b = {q[1] / 1000, q[2] / 1000 + dy / 100, q[3] / 1000}
    return start({kind = "pin", ms = ms, n = 0, base = b},
     fmt("horse_probe=pin;step=start;dy_cm=%d;at=%d,%d,%d", dy, round(b[1] * 100), round(b[2] * 100), round(b[3] * 100)))
-  elseif sub == "cargo_pose" and #a == 6 then
-   local C, p, q, b, d = W.horseCargo, whole(a[3], 0, 3000), whole(a[4], 0, 3000), whole(a[5], -1000, 1500), whole(a[6], 0, 20000)
-   if type(C) ~= "table" or not (p and q and b and d) or not C.setVictimPose(p, q, b, d) then return false, "horse_probe;refused=args" end
-   return true, fmt("horse_probe=cargo_pose;placed_mm=%d;census_mm=%d;back_mm=%d;down_mmps=%d", p, q, b, d)
+  elseif sub == "cargo_pose" and #a == 7 then
+   local C, p, q, b, d, r = W.horseCargo, whole(a[3], 0, 3000), whole(a[4], 0, 3000), whole(a[5], -1000, 1500), whole(a[6], 0, 20000),
+    whole(a[7], 0, 3)
+   if type(C) ~= "table" or not (p and q and b and d and r) or not C.setVictimPose(p, q, b, d, r) then return false, "horse_probe;refused=args" end
+   return true, fmt("horse_probe=cargo_pose;placed_mm=%d;census_mm=%d;back_mm=%d;down_mmps=%d;reset=%d", p, q, b, d, r)
   end
   return false, "horse_probe;refused=args"
  end

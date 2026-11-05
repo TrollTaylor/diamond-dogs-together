@@ -49,7 +49,7 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         return true;
     };
     Request r{};
-    std::int64_t v[7]{};
+    std::int64_t v[8]{};
     if (word("cfg")) {
         r.verb = Verb::cfg;
     } else if (word("read")) {
@@ -58,7 +58,8 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     } else if (word("hold0")) {
         r.verb = Verb::hold0;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
-            !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]))
+            !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]) ||
+            !number(0, 3, v[7]))
             return false;
     } else if (word("place")) {
         r.verb = Verb::place;
@@ -78,6 +79,7 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     r.z = static_cast<std::int32_t>(v[4]);
     r.yaw = static_cast<std::int32_t>(v[5]);
     r.anchor = static_cast<std::uint8_t>(v[6]);
+    r.reset = static_cast<std::uint8_t>(v[7]);
     out = r;
     return true;
 }

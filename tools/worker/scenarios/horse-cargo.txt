@@ -1,9 +1,10 @@
-# Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo; world_horse_share is never named: the
-# gun profile turns it on, the shipped path; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
-# drop and the lab body-0 pose levers are part 2 (horse-cargo-drop.txt); the M1 regression is section (m1):
+# Horse plan M2, a downed partner on the shared D-Horse (world_horse_cargo and world_horse_share are never named: the
+# gun profile turns them on, the shipped path; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
+# drop and the lab body-0 levers are part 2 (horse-cargo-drop.txt); the M1 regression (m1) runs in horse-cargo-play.txt
+# (in the lab it passed in run d2a5cafa and is left out here so part 2 runs at the boot spot):
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
 #     put-down, then the body across the horse's back on both screens (HORSE_SEAT seat 2); the host's first E mounts;
-#     walk / trot / gallop; the dismount keeps them on; the carry key (R) held 0.5 s beside the horse lays them on the
+#     walk / trot / gallop; the dismount keeps them on; the carry key (R) held 0.3 s beside the horse lays them on the
 #     ground beside it on both screens (held on, the coop pickup shoulders them as usual); the 3 s E revive.
 # (b) the same with the roles swapped (the guest carries the host; the host grants its own load).
 # (c) in horse-cargo-drop.txt: loaded again (host carries guest), then the guest's world link off (stream_lost).
@@ -18,7 +19,6 @@
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
-labsetting world_horse_cargo=1
 boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
 logmark both
 both debug godmode 1
@@ -34,61 +34,6 @@ host run cargo_status
 host require cargo;state=off;key=1
 guest run cargo_status
 guest require cargo;state=off;key=1
-# --- (m1) M1 regression (round 2; the round 1 skeptic's gaps; expects only, so a miss never stops the cargo parts):
-# world_horse_share is never named in this session (the gun profile's default). The guest's first E mounts the unridden
-# horse and rides a left loop at a gallop (more than 50 m: the guest's step=final_sent path_cm), gets off, and the host's
-# screen shows the horse where the guest left it (placebehind and goto_horse frames; the host's goto_horse lands beside
-# the guest's dismount spot on the host's own copy); the host's first E then mounts it (part (a) below).
-guest run goto_horse
-wait 1500
-placebehind host guest 4 2
-wait 1500
-guest run position
-host capture m1r-before
-guest press e 150
-wait 2500
-guest run horse_status
-guest expect localMounted=1
-waitlog host 'world_lua=event=horse_share; step=placed;' 10
-waitlog host 'partner_mount=show; mount=horse;' 10
-host capture m1r-guest-mounted
-guest hold w 1500
-guest hold w+a 1500 nowait
-host run goto_horse
-host burst m1r-guest-trot 2 250
-guest hold w+shift+a 1500
-guest hold w+shift+a 1500 nowait
-host run goto_horse
-host burst m1r-guest-gallop 3 250
-guest hold w+shift+a 1500
-guest hold w+shift+a 1500
-guest release
-wait 3000
-host run goto_horse
-wait 800
-host capture m1r-guest-stopped
-waitlog host 'world_lua=horse_place=stats; placed=' 10
-guest press e 150
-wait 3000
-guest run horse_status
-guest expect localMounted=0
-waitlog guest 'world_lua=event=horse_share; step=final_sent; ok=1;' 8
-waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
-guest run position
-guest capture m1r-left-guest
-placebehind host guest 5 2
-wait 1500
-host capture m1r-left-host
-host run goto_horse
-wait 1500
-host run position
-host capture m1r-horse-host-1
-host mouse 750 0
-wait 600
-host capture m1r-horse-host-2
-host mouse 750 0
-wait 600
-host capture m1r-horse-host-3
 # The host's first E mounts; a short ride and the dismount leave the one horse at the same spot on both copies (M1).
 host run goto_horse
 wait 1500

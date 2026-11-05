@@ -46,16 +46,20 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 -- lever horse_probe cargo_pose sets the placed / census heights, the offset behind the root and the rate (V).
 -- Within FACE_MM of the root the carrier is against the horse: no facing check (run 20aef564 refused 0.85 m away).
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
-C.DOWN_MMPS = DOWN_MMPS
-local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS}
+-- hold0's reset (run a242d867: none kept body 0 at its target but in the airborne pose): bit 0 A0, bit 1 C0 (Warp's).
+local RESET = 1
+C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
+local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
  VICTIM_RISE_MM, VICTIM_PLACED_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
-function C.setVictimPose(placed, rise, back, down)
- if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000)) then return false end
- V.placed, V.rise, V.back, V.down = placed, rise, back, down
+function C.setVictimPose(placed, rise, back, down, reset)
+ if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 3)) then
+  return false
+ end
+ V.placed, V.rise, V.back, V.down, V.reset = placed, rise, back, down, reset
  return true
 end
 local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
@@ -188,8 +192,8 @@ local function warp0(x, y, z, a, src)
  -- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa): the Lua Warp (with its C0 / A0 resets) left body 0 on the ground under
  -- the moving horse for a second or more at a time; hold0 moves it as the partner driver moves body 1 (no reset). A
  -- refused hold0 (the cargo key off while cargo_test runs it, an old native) keeps the Lua Warp, one line a reason.
- local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- hold0 %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z),
-  round(a * 1000)))
+ local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- hold0 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y),
+  round(z), round(a * 1000), V.reset))
  if r and r.ready == true then C.via = "hold0"; return true end
  local why = r and tostring(r.reason) or "receipt"
  if C.holdWhy ~= why then C.holdWhy = why; capped("hold0_refused", "step=hold0_refused;reason=" .. why) end

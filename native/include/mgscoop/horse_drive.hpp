@@ -14,11 +14,13 @@
 //   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen} | {ready=false,reason}
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
 //                                               -> {ready=true,bx,by,bz,byaw,x,y,z,anchored,gen} | refusal
-//   hold0 <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,held=true} | refusal
+//   hold0 <mission> <epoch> <x> <y> <z> <yaw> <reset 0..3> -> {ready=true,held=true} | refusal
 //     (M2, world_horse_cargo: this copy's own downed body 0 lying on the horse, moved every frame as the partner
 //     driver's xform mover moves body 1: T.vt+0x70 then T.vt+0x68 on body 0's transform, no C0 / A0 reset; the
 //     partner contract's T vtable slots. A per-tick Lua Warp of body 0, which adds both resets, left it on the ground
-//     under the moving horse for a second or more at a time: runs a49c4d76 / 20aef564 / d2a5cafa.)
+//     under the moving horse for a second or more at a time: runs a49c4d76 / 20aef564 / d2a5cafa. With no reset body 0
+//     stayed at its target but played the airborne pose (a242d867): reset bit 0 adds A0.vt+0x80(id), bit 1 C0.vt+0x90(id)
+//     after the move, C0 first as Warp, each only when body 0's A0 / C0 class and slot target equal body 1's.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -88,7 +90,9 @@ const char* Write(std::uintptr_t image, std::size_t span, std::uintptr_t receive
 // hold0 (live): t = body 0's transform view (partner_player ResolveCensus block 0: t, t_vt, t70, t68), then
 // T.vt+0x70(t, quat) and T.vt+0x68(t, pos, quat) as the partner driver's xform mover does for body 1 with reset none.
 // Returns nullptr, or body (vtable / targets not the pinned ones) or call (an exception inside the engine call).
+// c0 / c090 and a0 / a080: the reset objects and their slot targets (0: no such reset).
 const char* HoldBody(std::uintptr_t image, std::uintptr_t t, std::uintptr_t t_vt, std::uintptr_t set_rot, std::uintptr_t set_pose,
-                     float x, float y, float z, float yaw) noexcept;
+                     float x, float y, float z, float yaw, std::uintptr_t c0, std::uintptr_t c090, std::uintptr_t a0,
+                     std::uintptr_t a080, std::uint32_t id) noexcept;
 
 } // namespace mgscoop::horse_drive

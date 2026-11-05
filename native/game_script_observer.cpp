@@ -5178,9 +5178,14 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             bodies.k[0].t70;
         hs.mounted=a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];
+        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];
+        // Warp's resets on request, only for body 0's objects of body 1's class and slot (as ApplyTransform's guard).
+        const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
+        if(wantC && (!b0.c0 || !b0.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
+        if(wantA && (!b0.a0 || !b0.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
         if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),b0.t,b0.t_vt,b0.t70,b0.t68,float(q.x)/1000.f,
-                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f)) return refuse(why);
+                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f,wantC?b0.c0:0,wantC?b0.c090:0,
+                                        wantA?b0.a0:0,wantA?b0.a080:0,b0.id)) return refuse(why);
         if(!horse_drive_log.holds++ || horse_drive_log.last) {
             LogFormat("horse_drive=held; n=%u; body=0\r\n",horse_drive_log.holds);
             horse_drive_log.last=nullptr;

@@ -21,10 +21,14 @@ using SetFn = void (*)(void*, std::uint32_t, const float*);
 using RotFn = void (*)(void*, const float*);
 using PoseFn = void (*)(void*, const float*, const float*);
 // SEH wrapper (hold0): T.vt+0x70(t, quat) then T.vt+0x68(t, pos, quat); POD arguments only.
-bool CallHold(std::uintptr_t rot, std::uintptr_t pose, std::uintptr_t t, const float* p, const float* q) noexcept {
+using ResetFn = void (*)(void*, std::uint32_t);
+bool CallHold(std::uintptr_t rot, std::uintptr_t pose, std::uintptr_t t, const float* p, const float* q, std::uintptr_t c0,
+              std::uintptr_t c090, std::uintptr_t a0, std::uintptr_t a080, std::uint32_t id) noexcept {
     __try {
         reinterpret_cast<RotFn>(rot)(reinterpret_cast<void*>(t), q);
         reinterpret_cast<PoseFn>(pose)(reinterpret_cast<void*>(t), p, q);
+        if (c0 && c090) reinterpret_cast<ResetFn>(c090)(reinterpret_cast<void*>(c0), id);
+        if (a0 && a080) reinterpret_cast<ResetFn>(a080)(reinterpret_cast<void*>(a0), id);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -89,7 +93,8 @@ const char* Write(std::uintptr_t image, std::size_t span, std::uintptr_t receive
 }
 
 const char* HoldBody(std::uintptr_t image, std::uintptr_t t, std::uintptr_t t_vt, std::uintptr_t set_rot, std::uintptr_t set_pose,
-                     float x, float y, float z, float yaw) noexcept {
+                     float x, float y, float z, float yaw, std::uintptr_t c0, std::uintptr_t c090, std::uintptr_t a0,
+                     std::uintptr_t a080, std::uint32_t id) noexcept {
     std::uintptr_t vt = 0, rot = 0, pose = 0;
     if (!image || !t || !Get(t, vt) || vt != t_vt || vt != image + kBodyTVtableRva || !Get(vt + 0x70, rot) || !Get(vt + 0x68, pose) ||
         rot != set_rot || pose != set_pose || rot != image + kBodySetRotRva || pose != image + kBodySetPoseRva)
@@ -98,7 +103,7 @@ const char* HoldBody(std::uintptr_t image, std::uintptr_t t, std::uintptr_t t_vt
     // Aligned as the partner driver's ApplyTransform passes them (Warp passes aligned vectors).
     alignas(16) const float p[4] = {x, y, z, 0.f};
     alignas(16) const float q[4] = {0.f, std::sin(yaw * 0.5f), 0.f, std::cos(yaw * 0.5f)};
-    return CallHold(rot, pose, t, p, q) ? nullptr : "call";
+    return CallHold(rot, pose, t, p, q, c0, c090, a0, a080, id) ? nullptr : "call";
 }
 
 } // namespace mgscoop::horse_drive
