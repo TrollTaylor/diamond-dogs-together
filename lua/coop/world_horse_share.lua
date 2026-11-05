@@ -74,16 +74,17 @@ local function statsLine(t, why)
  table.sort(e)
  local p50 = #e > 0 and e[math.max(1, floor(#e * 0.5 + 0.5))] or -1
  if type(W.log) == "function" then
-  W.log(fmt("horse_place=stats;placed=%d;err_cm=%d;err_max_cm=%d;leap=%d;anchored=%d;gap_cm=%d;refused=%d;why=%s", s.placed,
-   round(p50 / 10), round((e[#e] or -10) / 10), s.leap, s.anchored, round(s.gap / 10), s.refused, why))
+  W.log(fmt("horse_place=stats;placed=%d;err_cm=%d;err_max_cm=%d;up_cm=%d;leap=%d;anchored=%d;gap_cm=%d;refused=%d;why=%s",
+   s.placed, round(p50 / 10), round((e[#e] or -10) / 10), s.n > 0 and round(s.up / s.n / 10) or 0, s.leap, s.anchored,
+   round(s.gap / 10), s.refused, why))
  end
- S.stats = {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, at = t}
+ S.stats = {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, up = 0, n = 0, at = t}
 end
 -- The partner's ride ended (why: final, stream_lost, generation, two_drivers, context).
 local function endTrack(t, why)
  if not S.track then return end
  statsLine(t, why)
- S.track, S.closedAt, S.last, S.gen = nil, t, nil, nil
+ S.track, S.closedAt, S.last, S.lastB, S.gen = nil, t, nil, nil, nil
  release(why)
  log(fmt("step=end;why=%s", why))
 end
@@ -148,11 +149,16 @@ function S.apply(t)
   if r.anchored == 1 then s.anchored = s.anchored + 1 end
   local gap = sqrt((r.x - x) ^ 2 + (r.z - z) ^ 2)
   if gap > s.gap then s.gap = gap end
-  local L = S.last
-  if L then
+  -- Readback before this write against the last write: the steady census offset (err_cm in xz, up_cm); a leap is that
+  -- offset rising by more than 0.3 m from one frame to the next (run 05232637: the census sits 0.3-0.45 m over each write).
+  local L, B = S.last, S.lastB
+  local off = L and r.by - L[2] or nil
+  if off then
    s.errs[#s.errs + 1] = sqrt((r.bx - L[1]) ^ 2 + (r.bz - L[3]) ^ 2)
-   if r.by - L[2] > LEAP_MM then s.leap = s.leap + 1 end
+   s.up, s.n = s.up + off, s.n + 1
+   if B and off - B > LEAP_MM then s.leap = s.leap + 1 end
   end
+  S.lastB = off
   if not L then log(fmt("step=placed;state=%s;anchored=%d;gen=%d", tostring(state), r.anchored or 0, r.gen or 0)) end
   S.last = {r.x, r.y, r.z}
  end
@@ -176,7 +182,8 @@ W.handlers[FAST] = function(v)
   local tr = S.track
   if not tr then
    tr = {samples = {}}
-   S.track, S.stats, S.last, S.gen = tr, {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, at = t}, nil, nil
+   S.track, S.stats, S.last, S.lastB, S.gen = tr, {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, up = 0, n = 0, at = t},
+    nil, nil, nil
    S.refused = {}
    log("step=track;from=partner")
   end

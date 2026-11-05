@@ -4995,13 +4995,16 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     float target[3]={float(q.x)/1000.f,float(q.y)/1000.f,float(q.z)/1000.f};
     const float yaw=float(q.yaw)/1000.f;
     float body[3]{};
-    const bool anchored=q.anchor && hd::RiderBody(now,body);
+    // The shared placed/rider state runs on the partner driver's clock (pd::Clock.now_ms = partner_net::NowMs), not
+    // GetTickCount64: run 05232637 never showed the rider (partner_mount=hide on a placed horse).
+    const auto driverNow=mgscoop::partner_net::NowMs();
+    const bool anchored=q.anchor && hd::RiderBody(driverNow,body);
     if(anchored) hd::HorseUnderRider(body,yaw,target);
     sc.cs=true;
     if(const char* why=hd::PlaceRefusal(sc)) return refuse(why);
     if(const char* why=hd::Write(reinterpret_cast<std::uintptr_t>(base),span,horse.receiver,horse.kind,0,target[0],target[1],target[2],yaw))
         return refuse(why);
-    hd::NotePlaced(now);
+    hd::NotePlaced(driverNow);
     if(!horse_drive_log.places++ || horse_drive_log.last) {
         LogFormat("horse_drive=placed; n=%u; anchored=%u; gen=%u\r\n",horse_drive_log.places,anchored?1u:0u,gen);
         horse_drive_log.last=nullptr;

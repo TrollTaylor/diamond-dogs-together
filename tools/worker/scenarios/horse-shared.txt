@@ -25,9 +25,13 @@ host run horse_status
 host require horse;selected=horse;available=1;actor0=6656;localMounted=0
 guest run horse_status
 guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
-# --- (a) the host rides; the first E at the horse mounts
+# --- (a) the host rides; the first E at the horse mounts. The guest stands 3 m behind the host (placebehind needs the
+# target on foot: run 05232637), so the horse is in its view, and the host rides away along that line.
 host run goto_horse
 wait 1500
+placebehind guest host 3
+wait 1500
+guest capture h1-before
 host press e 150
 wait 2500
 host run horse_status
@@ -35,78 +39,66 @@ host require localMounted=1
 waitlog guest 'world_lua=event=horse_share; step=track; from=partner;' 10
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 waitlog guest 'partner_mount=show; mount=horse;' 10
-# The guest beside its placed horse with the host in the saddle: its E does nothing (the ride hold).
-guest run goto_horse
 wait 1500
-waitlog guest 'world_lua=event=horse_hold; step=action_masked;' 5
 guest capture h1-host-idle
 host capture h1-host-idle-own
+# The guest steps up to the ridden horse: its E does nothing (the ride hold).
+guest hold w 900
+wait 600
+waitlog guest 'world_lua=event=horse_hold; step=action_masked;' 5
+guest capture h1-hold-near
 guest press e 150
 wait 2000
 guest run horse_status
 guest require localMounted=0
-guest hold e 1200
-guest release
-wait 800
-guest run horse_status
-guest require localMounted=0
-# The host rides off: walk, trot, gallop (frames from the guest's screen, behind and beside the rider).
-placebehind guest host 7 2
-wait 800
+# The host rides off: walk, trot, gallop (frames from the guest's screen).
 heldcapture host guest w h1-host-walk 3
-placebehind guest host 8 2
-wait 600
-heldcapture host guest w h1-host-trot 3
-placebehind guest host 9 2
-wait 600
+heldcapture host guest w h1-host-trot 2
 host hold w+shift 1500 nowait
 guest burst h1-host-gallop 4 300
 host hold w+shift 1500 nowait
 guest burst h1-host-gallop2 4 300
-host hold w+shift+a 1500 nowait
-guest burst h1-host-turn 4 300
 host release
 wait 3000
 waitlog guest 'world_lua=horse_place=stats; placed=' 10
-# The host gets off beside the guest: the horse stays where it was left on both screens.
-placebehind guest host 6 3
-wait 1200
+# The host gets off where it stopped: the horse stays there on both screens.
 host press e 150
 wait 3000
 host run horse_status
 host require localMounted=0
 waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
 wait 1500
-guest capture h1-left-guest
 host capture h1-left-host
-# The guest's single E mounts it.
+placebehind guest host 5
+wait 1500
+guest capture h1-left-guest
+# --- (b) the guest's single E mounts it; the host watches from 3 m behind it.
 guest run goto_horse
 wait 1500
+placebehind host guest 3
+wait 1500
+host capture h1b-before
 guest press e 150
 wait 2500
 guest run horse_status
 guest require localMounted=1
 guest capture h1-guest-mounts
-# --- (b) the guest rides on; the host watches from its own screen
 waitlog host 'world_lua=event=horse_share; step=track; from=partner;' 10
 waitlog host 'world_lua=event=horse_share; step=placed;' 10
 waitlog host 'partner_mount=show; mount=horse;' 10
-host run goto_horse
 wait 1500
-waitlog host 'world_lua=event=horse_hold; step=action_masked;' 5
 host capture h1b-guest-idle
+guest capture h1b-guest-idle-own
+host hold w 900
+wait 600
+waitlog host 'world_lua=event=horse_hold; step=action_masked;' 5
+host capture h1b-hold-near
 host press e 150
 wait 2000
 host run horse_status
 host require localMounted=0
-placebehind host guest 7 2
-wait 800
 heldcapture guest host w h1b-guest-walk 3
-placebehind host guest 8 2
-wait 600
-heldcapture guest host w h1b-guest-trot 3
-placebehind host guest 9 2
-wait 600
+heldcapture guest host w h1b-guest-trot 2
 guest hold w+shift 1500 nowait
 host burst h1b-guest-gallop 4 300
 guest hold w+shift 1500 nowait
@@ -114,16 +106,16 @@ host burst h1b-guest-gallop2 4 300
 guest release
 wait 3000
 waitlog host 'world_lua=horse_place=stats; placed=' 10
-placebehind host guest 6 3
-wait 1200
 guest press e 150
 wait 3000
 guest run horse_status
 guest require localMounted=0
 waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
 wait 1500
-host capture h1b-left-host
 guest capture h1b-left-guest
+placebehind host guest 5
+wait 1500
+host capture h1b-left-host
 # The host's single E mounts it.
 host run goto_horse
 wait 1500
