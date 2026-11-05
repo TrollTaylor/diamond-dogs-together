@@ -2433,3 +2433,31 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
   (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
   got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
+
+## 40. Enemy round 8 track C: the far mirror's walkers plan their own path (lab key `act_plan`, native only; with `soldier_act`; design 7.23)
+
+No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the puppet side (the guest's copies).
+
+- `act_plan=1` (lab and play; off unless named; `soldier_act_plan=on|off; given=` at install) with `soldier_act`:
+  - after the request manager update's original, for each puppet whose request the hook unpacked in that update: dest
+    mode 1, R+0x19c 0xffff, (R+0x19e & 3) == 2 -> the walk-request start 0x1413725f0 with a shadow gate object (`plan`
+    when R+0x19c then holds a handle, else `plan_none`); otherwise `plan_skip`. The planner's slot of another type with a
+    live handle is cancelled first (`plan_cancel`), with no handle left alone (`plan_busy`); at a release our handle
+    still in the slot is cancelled and R+0x19c set to 0xffff (`plan_release`).
+  - the gait catch-up (R+0xb0 bits 1..3): the owner copy (the order part's position) ahead toward R+0x80 by 2..5 m
+    flat: + 1 (cap 3), beyond 5 m: 3, never lowered (`gait_up`).
+  - the lent network-position entry's yaw: the request's facing (face mode 1) or the copy's own yaw.
+  - `ACT_V1 q` (QueryFresh) answers `f=1` for a host copy's walk only when this copy stands within 10 m (flat) of the
+    owner copy's position (the order part, flag bit 0) (`near_wait`).
+- Log lines (with `soldier_act` / `act_census`, whether or not `act_plan` is named):
+  - `soldier_act_census` adds `r19c; r198; fh; fn; fend; r80; psh; psl; psd` (R+0x19c, R+0x198, the follower's path:
+    has (-1 no follower), point count, last point; R+0x80; the planner slot's hash, handle, done).
+  - `soldier_act_planner; idx; planner_vt; p00; p10; p20; p38; follower_vt; key; f90; f98; fa0; fa8; fd0;
+    pair_in_planner; obj_is_planner` once (RVAs).
+  - `soldier_act_warp15; t; idx; first; d_m; p; at; after; moved_m; yaw; plan`: an unpack whose 15 m warp moved the
+    copy (over 15 m from the entry position, 3D), the position read back after it; `first=1` a take.
+  - `soldier_act_plan; t; idx; handle; r19c; r19e; ms; has; n; end; dest; d_end; ok; from; p`: 300 ms after each plan,
+    the follower's path end against R+0x80 (`ok` within 1 m, 3D).
+  - `soldier_act_frame` adds `plan; plan_skip; warp15; plan_ok; plan_far; plan_nopath; near_wait; gait_up; plan_fault;
+    plan_cancel; plan_busy; plan_none; plan_release`.
+- `soldier_act=installed` prints the contract's site and slot counts (now 31 and 13).

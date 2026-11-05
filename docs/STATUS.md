@@ -1,3 +1,49 @@
+## November 5, 2026: enemy round 8 track C - the far mirror's walkers plan their own path: built, the gate not reached (the act_plan session was void); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
+
+Design 7.23, protocol section 40. Markers: [O] seen in a log line, a frame or code (Ghidra / capstone, read-only), [I]
+inferred, [U] unknown. Two hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, scenario
+`enemy-mirror6-calm.txt`: `fcfb3acc` (`soldier_act=1, act_census=1`, build 0.15.1+946864a) and `afeddbdc`
+(`soldier_act=1, act_census=1, act_plan=1`, build 0.15.1+4977020). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. The new native key `act_plan` and `soldier_act` stay off unless
+  named; with neither named nothing runs (the hook is installed only with `soldier_act` or `act_census`).
+- **Built** (red first: ee8f36d3 / 946864af, 0ee53a71 / 49770205): `act_plan` (native only, no CFG bit, no wire): after
+  the manager update's original, the walk-request start 0x1413725f0 again for each puppet's dest-mode-1 request applied
+  in that update, with a shadow gate object (the function reads its first argument only at +0x70), so the planner plans
+  from where he stands to R+0x80 (the FOB remote copy's own code); a slot his own brain's walk holds is cancelled first
+  with the engine's cancel, ours is cancelled at his release; the gait catch-up of the unpack's mode 0 rule; a warped
+  puppet keeps the request's facing; a walker is taken only within 10 m of the owner copy. Census, `soldier_act_warp15`,
+  `soldier_act_plan` and frame counters; 14 new contract sites, 7 planner vtable slots.
+- **Session 1 `fcfb3acc`** (census, `act_plan` off; passed):
+  - [O] the planner `*(S+0x30)` has vtable 0x23a1610 on both copies; the follower pair is {that planner, idx}.
+  - [O] finding 1 confirmed: puppets in a walk had their follower's path end p50 1.86 / p90 65.45 m from R+0x80 (487 of
+    1000 samples within 1 m); the guards' own brains p50 0.00 m.
+  - reference numbers at this head without the plan (calm until the guest's `ChangePhase` 45 s after the teleports, the
+    report of the guest's own guard 246 again): walkers' place error while the host copy moves p50 4.75 / p90 13.30 m; per
+    guard 15: 4.72 / 4.77 m, 17: 4.20 / 4.24 m, 18: 8.88 / 14.36 m; speed ratio (mean) 0.64 / 0.71 / 1.69; 15 m warps in
+    calm: 3 takes (15, 17, 18), 3 held (18); frame p95 19.17 ms mirror off, 19.36 ms with puppets; 0 faults, latches,
+    game overs (enemy_div_report: all its rows PASS).
+- **Decompile** (read-only, the vtable from session 1): vt[0] 0x140fa2430 is the soldier route planner's request (a
+  per-guard record and slot, a path query); no FOB state read; it refuses a request whose type differs from the slot's.
+  vt[0xd0] is a float setter. Judged safe offline [O code]; F1 kept, with the cancel-first step added.
+- **Session 2 `afeddbdc`** (`act_plan=1`): **void**. [O] every host frame (w17-0-a .. c-1-b) shows the game's modal "You
+  have signed out ... online features" over a paused game, the host's character still at its first spot; its request
+  manager update stopped at t 343370490, before the guest paired (hook calls frozen at 1264, the host's aim readouts of
+  the three guards identical every round, `staged=0`, `tx=0`). So no SOLDIER_ACT part, 0 takes, 0 plans. [U] why the
+  modal came (not seen in session 1; the mod runs offline).
+  - [O] usable: the guest's own guards' census shows the planner slot holding one of seven brain type hashes in 61 % of
+    samples (0xdf31ba77279e in 36 %), free in 39 %; so without the cancel-first step most plans would be refused [I].
+  - [O] the calm window ended 45 s after the teleports on the guest's `ChangePhase` again, this time after the guest's
+    own guard 15 (not a puppet) took a place correction `world_place=warp; kind=3` 6 s after the teleports and ran kind
+    3 from 0.4 s later, then kind 13 (as 246 in round 7).
+- **Failing gate rows**: every row of the plan's gate is unmeasured (no puppet in session 2): walkers' place error,
+  15 m warps, speed ratio, `plan` with the path end within 1 m, the frame pair, ChangePhase by a puppet, frame p95.
+  0 faults / latches / game overs (PASS, both sessions).
+- **Frames looked at**: `fcfb3acc` w18-0-a (both); `afeddbdc` w15-0-a (both), c-1-b (host).
+- **Next**: one rerun of session 2 (the same command; watch the host's first frame for the modal); then, if the gate
+  passes, `soldier_act` (calm / caution) and `act_plan` on by default per D-FM1 (a) and the no-key run.
+
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
 Design 7.20, protocol section 37. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
