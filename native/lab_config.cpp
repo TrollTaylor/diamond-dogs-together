@@ -1956,10 +1956,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // screen at walk / trot / gallop, the horse left where it was dismounted, the first E mounting; lab and the play
     // rehearsal -WanSim bad); a named 0 is the off switch.
     if (!c.world_horse_share_given) c.world_horse_share = gun;
-    // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): follows the gun
-    // profile in lab and play (BODY0 round: hold0 / hold1 with the C0 reset and horse_body_watch's pin keep the downed
-    // player lying on the horse on both screens); a named 0 is the off switch.
-    if (!c.world_horse_cargo_given) c.world_horse_cargo = gun;
+    // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): off unless
+    // named in lab and play (BODY0 round: the downed player lies on the horse on both screens through the ride, but on
+    // their own screen crouches on it after the dismount; the gate did not pass); a named 1 runs in play too.
+    if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
     // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): off unless named in lab and play
     // until a hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.world_horse_pillion_given) c.world_horse_pillion = false;
