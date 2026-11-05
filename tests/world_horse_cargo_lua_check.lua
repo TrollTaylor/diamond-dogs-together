@@ -363,9 +363,18 @@ check(f.holds[#f.holds]:find(" 2$"), "setVictimPose: the reset goes to hold0")
 check(f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET), "setVictimPose back to the defaults")
 check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged(";src="),
  "the victim_pin line carries the body's lag behind its last target and the target's source")
+-- M2f (run 131f88c6 (c): 1 ms after the final placement the victim's copy re-placed its horse on a KEEP pose sent before
+-- it, 11 m back, and that horse fell Unconscious 0.25 s later; three more 1 Hz jumps followed while the carrier's horse
+-- slowed): for 2 s after M1's track ended nothing is re-placed, then only on a KEEP pose sent after those 2 s.
 f.W.horseShare = {}
+f.tick(50)
+check(#f.places == 1, "M1's track just ended: the KEEP pose sent before it is not placed")
+for i = 1, 38 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.places == 1, "for 2 s after the track ended: nothing re-placed")
+for i = 1, 4 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
+check(#f.places == 2, "then a KEEP pose sent after those 2 s, drifted over 0.5 m: re-placed")
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
-check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
+check(#f.places == 2, "on the KEEP pose: not re-placed again")
 -- A refused hold0 (an old native, the cargo key off while cargo_test runs it): the Lua Warp as before, one line a reason.
 f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, 1)
 f.tick(50)
