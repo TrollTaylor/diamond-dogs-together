@@ -87,6 +87,13 @@ do
             if R.why ~= "heli" then log(fmt("step=checkpoint_wait;reason=arrival_heli;ver=%d", v[2])); R.why = "heli" end
             return
         end
+        -- Horse plan M1 (world_horse_share.lua): never while anyone rides the shared D-Horse (a saved saddle pose).
+        local HS = W.horseShare
+        if type(HS) == "table" and type(HS.busy) == "function" and HS.busy() then
+            R.retryAt = now + 500
+            if R.why ~= "horse" then log(fmt("step=checkpoint_wait;reason=horse;ver=%d", v[2])); R.why = "horse" end
+            return
+        end
         local options = {ignoreAlert = true, permitHelicopter = true}
         if v[1] == 0 then
             if type(W.get(TppPlayer, "SetInitialPosition")) ~= "function" then return end

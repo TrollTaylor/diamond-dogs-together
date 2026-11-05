@@ -315,6 +315,10 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.world_supply = false;
     }
     // M1 host-owned companion (lab and play, default off until proven; see the defaults below).
+    else if (Equals(key, "world_horse_share")) {
+        ok = ParseBool(value, result.world_horse_share);
+        if (ok) result.world_horse_share_given = true;
+    }
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
@@ -1896,6 +1900,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
     // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
     if (!c.companion_host_owned_given) c.companion_host_owned = false;
+    // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): off unless named, in lab and play, until a
+    // hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
+    if (!c.world_horse_share_given) c.world_horse_share = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;

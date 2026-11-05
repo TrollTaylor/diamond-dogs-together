@@ -90,7 +90,7 @@ struct In {
 // horse, or 122 (the get-off, turns) while a shown ride already holds (the seat overlay then ends with the
 // dismount's foot act and its own stop, never by a hide).
 constexpr bool HorseRider(bool horse_shown, bool act_valid, std::uint16_t act, bool shown_before) noexcept {
-    return false && horse_shown && act_valid && act == 0 && shown_before;  // red: not built
+    return act_valid && ((horse_shown && act == 121) || (act == 122 && shown_before));
 }
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;
