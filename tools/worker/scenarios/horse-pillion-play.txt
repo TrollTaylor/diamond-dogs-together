@@ -57,6 +57,16 @@ host require localMounted=0
 wait 1500
 host capture h3b-idle-host
 guest capture h3b-idle-guest
+# Side views (the rider in front hides the other from straight behind): the passenger's camera is free; the driver turns
+# its camera back before it rides (W steers by the camera).
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-idle-side-host
+guest capture h3b-idle-side-guest
+host mouse -1200 0
+guest mouse -1200 0
+wait 600
 guest hold w 1500 nowait
 host burst h3b-walk-host 3 250
 guest hold w 1500 nowait
@@ -69,6 +79,10 @@ guest hold w+shift 1500 nowait
 host burst h3b-gallop-host 4 200
 guest hold w+shift 1500 nowait
 guest burst h3b-gallop-guest 4 200
+guest hold w+shift 1500 nowait
+host burst h3b-gallop3-host 4 200
+guest hold w+shift 1500 nowait
+guest burst h3b-gallop3-guest 4 200
 guest hold w+shift+a 1500 nowait
 host burst h3b-gallop2-host 3 250
 guest hold w+shift+a 1500 nowait
@@ -77,6 +91,13 @@ guest release
 wait 3000
 host capture h3b-stopped-host
 guest capture h3b-stopped-guest
+host mouse 1200 0
+guest mouse 1200 0
+wait 600
+host capture h3b-stopped-side-host
+guest capture h3b-stopped-side-guest
+host mouse -1200 0
+guest mouse -1200 0
 waitlog guest 'world_lua=event=horse_pillion; step=first_move; ms=' 5
 waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
 waitlog guest 'partner_pillion=stats;' 5
@@ -104,9 +125,12 @@ host run horse_status
 host require localMounted=1
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 waitlog guest 'partner_mount=show; mount=horse;' 10
-# The guest 3.2 m behind the rider (past the 2.8 m release of the pillion ride hold): its E reaches the game unmasked.
-placebehind guest host 3.2
-wait 2000
+# The guest walks away from the ridden horse (past the 2.8 m release of the pillion ride hold; placebehind needs the host's
+# position, refused while it rides: run 763f071d): its E reaches the game unmasked.
+guest run goto_horse
+wait 1500
+guest hold s 900
+wait 1500
 logmark both
 guest press e 150
 wait 1200
@@ -127,6 +151,14 @@ guest require localMounted=0
 wait 1500
 guest capture h3-idle-guest
 host capture h3-idle-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture h3-idle-side-guest
+host capture h3-idle-side-host
+guest mouse -1200 0
+host mouse -1200 0
+wait 600
 host hold w 1500 nowait
 guest burst h3-walk-guest 3 250
 host hold w 1500 nowait
@@ -139,6 +171,10 @@ host hold w+shift 1500 nowait
 guest burst h3-gallop-guest 4 200
 host hold w+shift 1500 nowait
 host burst h3-gallop-host 4 200
+host hold w+shift 1500 nowait
+guest burst h3-gallop3-guest 4 200
+host hold w+shift 1500 nowait
+host burst h3-gallop3-host 4 200
 host hold w+shift+d 1500 nowait
 guest burst h3-gallop2-guest 3 250
 host hold w+shift+d 1500 nowait
@@ -147,6 +183,13 @@ host release
 wait 3000
 guest capture h3-stopped-guest
 host capture h3-stopped-host
+guest mouse 1200 0
+host mouse 1200 0
+wait 600
+guest capture h3-stopped-side-guest
+host capture h3-stopped-side-host
+guest mouse -1200 0
+host mouse -1200 0
 waitlog host 'world_lua=event=horse_pillion; step=first_move; ms=' 5
 waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
 waitlog host 'partner_pillion=stats;' 5
