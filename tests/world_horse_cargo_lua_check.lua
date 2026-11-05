@@ -242,6 +242,16 @@ w = f.lastWarp(1)
 check(math.abs(w.y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6 and f.logged("how=ground"), "a census 2 m high: the body kept 1.45 m over the ground")
 f.horse.y = 3000; f.tick(50)
 check(math.abs(f.lastWarp(1).y - (2.0 + f.C.RISE_MM / 1000 + 1.0)) < 1e-6, "a census in the window: the census cargo point")
+-- M2f (run 5a92c73f (c), the carrier's copy after the dismount: census root 0.52 m over the carrier's ground, so 0.45 m over it
+-- fell under the old 1.0 m edge and the body went 1.35 m over the ground, 0.38 m high over the rump): the window's low
+-- edge is 0.8 m.
+check(f.C.GROUND_LO_MM == 800, "the ground window's low edge is 0.8 m")
+f.horse.y = 2520; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.52 + f.C.RISE_MM / 1000)) < 1e-6 and f.logged("how=census"),
+ "a census 0.52 m over the carrier's ground: still the census cargo point")
+f.horse.y = 2300; f.tick(50)
+check(math.abs(f.lastWarp(1).y - (2.0 + f.C.GROUND_MM / 1000)) < 1e-6, "a census 0.3 m over the ground: kept 1.35 m over the ground")
+f.horse.y = 3000; f.tick(50)
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)
 check(f.C.state == "carrier", "the R hold out of reach: still on")
