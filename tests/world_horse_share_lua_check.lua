@@ -33,7 +33,7 @@ local function fixture(o)
             if not f.placeOk then return {ready = false, reason = "pins"} end
             local r = {ready = true, placed = true, anchored = tonumber(a), bx = h.x, by = h.y, bz = h.z, byaw = h.yaw,
                 x = tonumber(x), y = tonumber(y), z = tonumber(z), gen = f.gen}
-            h.x, h.y, h.z, h.yaw = r.x, r.y, r.z, tonumber(yaw)
+            h.x, h.y, h.z, h.yaw = r.x, r.y + (f.up or 0), r.z, tonumber(yaw)
             return r
         end
     end
@@ -111,6 +111,22 @@ check(not f.S.track and #f.places == n + 1, "a late datagram after the final pos
 f.tick(800)
 check(#f.places == n + 1, "nothing places the unridden horse")
 check(f.logged("horse_place=stats;placed="), "horse_place=stats")
+
+-- Run 05232637: the census reads back a steady offset above each write (about 0.3-0.45 m, the unridden census over the
+-- ridden one, probe P1). That is the offset (err_cm / up_cm), not a leap; a leap is the readback jumping up between
+-- two frames.
+f = fixture()
+f.up = 450
+for i = 0, 70 do f.fast(1000 + i * 50, 10000, 2000, 30000, 0); f.tick(33) end
+local line
+for _, l in ipairs(f.logs) do if l:find("horse_place=stats;", 1, true) then line = l end end
+check(line and line:find("up_cm=45;", 1, true) and line:find(";leap=0;", 1, true), "a steady 45 cm readback offset: up_cm=45, leap=0")
+f.horse.y = f.horse.y + 900
+f.fast(1000 + 71 * 50, 10000, 2000, 30000, 0); f.tick(33)
+f.fast(1000 + 72 * 50, 10000, 2000, 30000, 0); f.tick(2100)
+line = nil
+for _, l in ipairs(f.logs) do if l:find("horse_place=stats;", 1, true) then line = l end end
+check(line and line:find(";leap=1;", 1, true), "a readback 0.9 m above the previous one: one leap")
 
 -- Stream lost: the horse stays at its last placement, the ride ends.
 f = fixture()
