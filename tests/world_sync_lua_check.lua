@@ -1780,8 +1780,8 @@ do
     F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
     check(c.W.followOn == true, 'CFG r[19] 1: follow on')
     -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn). FM1 (far mirror,
-    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048 reserved for the
-    -- OB steps); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
+    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048: enemy gaps 2,
+    -- checked below); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
     for _, case in ipairs({{129, true, false, false, false}, {257, false, true, false, false}, {511, true, true, true, false},
                            {1, false, false, false, false}, {512 + 129, true, false, false, true}, {512 + 1, false, false, false, true},
                            {512 + 257, false, true, false, true}, {1024 + 1, false, false, false, false},
@@ -1790,6 +1790,15 @@ do
         F.start(envb, cb)
         check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and cb.W.actOn == case[5] and
             cb.W.followOn == (case[1] < 4096), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain / act as their own bits')
+    end
+    -- Enemy gaps 2 (docs/world-sync-design.md 7.17): bit 1024 body_dead (W.deadOn, only with bit 16 soldier_body), bit 2048
+    -- place_reach (W.reachOn); neither changes an older key.
+    for _, case in ipairs({{1024 + 16 + 1, true, false}, {1024 + 1, false, false}, {2048 + 1, false, true},
+                           {2048 + 1024 + 16 + 1, true, true}, {16 + 1, false, false}, {4095, true, true}, {2048 + 1024 + 16, false, false}}) do
+        local envd, cd = fixture({role = 2, follow = case[1]})
+        F.start(envd, cd)
+        check(cd.W.deadOn == case[2] and cd.W.reachOn == case[3] and cd.W.bodyOn == (case[1] % 2 == 1 and case[1] % 32 >= 16),
+            'CFG r[19] ' .. case[1] .. ': body_dead / place_reach as their own bits')
     end
     F.pair(env, c, 3)
     F.push(c, 1, OP.AREA, 2, 30010)

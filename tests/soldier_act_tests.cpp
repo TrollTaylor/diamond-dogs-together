@@ -80,6 +80,33 @@ int main() {
     // FM1, the far mirror: players swap between the copies; soldiers and other ids stay.
     Check(sa::RemapPlayer(0) == 1 && sa::RemapPlayer(1) == 0 && sa::RemapPlayer(2) == 2 && sa::RemapPlayer(0x400 | 15) == (0x400 | 15) &&
               sa::RemapPlayer(0xffff) == 0xffff, "player ids 0 <-> 1 only");
+    // U3: the aim action (B kind 1 at wire +0x64) names its target by id in modes 2 and 4 (big-endian u16 at wire +0x20,
+    // the mode at +0x35); the players swap, nothing else does.
+    {
+        unsigned char w[0x70]{};
+        w[0x64] = 1;
+        w[0x35] = 4;
+        Check(sa::RemapAimTarget(w) && w[0x20] == 0 && w[0x21] == 1, "U3: an aim at player 0 aims at player 1 on the other copy");
+        Check(sa::RemapAimTarget(w) && w[0x20] == 0 && w[0x21] == 0, "U3: and back");
+        w[0x35] = 2;
+        w[0x23] = 1;  // the part
+        Check(sa::RemapAimTarget(w) && w[0x21] == 1 && w[0x23] == 1, "U3: mode 2 (id + part) swaps the id, keeps the part");
+        unsigned char s[0x70]{};
+        s[0x64] = 1;
+        s[0x35] = 4;
+        s[0x20] = 0x04;
+        s[0x21] = 0x0f;
+        Check(!sa::RemapAimTarget(s) && s[0x20] == 0x04 && s[0x21] == 0x0f, "U3: a soldier target stays");
+        unsigned char m[0x70]{};
+        m[0x64] = 1;
+        m[0x35] = 1;  // a packed position
+        Check(!sa::RemapAimTarget(m) && m[0x21] == 0, "U3: mode 1 (a position) is not an id");
+        unsigned char k[0x70]{};
+        k[0x64] = 2;
+        k[0x35] = 4;
+        Check(!sa::RemapAimTarget(k) && k[0x21] == 0, "U3: only the aim kind (B kind 1)");
+    }
+    Check(sa::kCensusRangeM >= 300.0f, "the census covers the far mirror's 300 m range (puppets beyond 250 m logged)");
     // The change hash ignores jitter under 5 cm and 1 degree.
     {
         unsigned char a[0x70]{}, b[0x70]{};
@@ -173,6 +200,13 @@ int main() {
         }
         char tiny[8]{};
         Check(!sa::FormatActReply(false, k, tiny, sizeof(tiny)), "a short buffer is refused");
+        // The m reply carries the owner copy's position (mm) when the mailbox has it (the apart release, run 94a7bf2a).
+        const std::int32_t owner[3] = {1500, -2000, 3250};
+        Check(sa::FormatActReply(true, k, out, sizeof(out), owner) &&
+                  std::strcmp(out, "return {f=1,tx=3,rx=2,ap=1,od=7,sh=4,mi=0,fd=0,fn=0,ox=1500,oy=-2000,oz=3250}") == 0,
+              "the m reply with the owner's position");
+        std::int32_t none[3]{};
+        Check(!sa::MailOwner(sa::kMaxSoldiers, none) && !sa::MailOwner(7, none), "no mailbox, no owner position");
     }
     // The fire-drop mask is a lease (skeptic of FM1, 7b709720): a puppet dropped without ACT_V1 r must not keep his
     // bullets and noise dropped. The hook expires every bit not stamped again within kActFreshMs.

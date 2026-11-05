@@ -1707,7 +1707,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
                                                  (labc.soldier_puppet ? 32u : 0u) |
                                                  (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u) |
                                                  (labc.place_lift ? 128u : 0u) | (labc.soldier_perceive ? 256u : 0u) |
-                                                 (labc.soldier_act ? 512u : 0u));
+                                                 (labc.soldier_act ? 512u : 0u) | (labc.body_dead ? 1024u : 0u) |
+                                                 (labc.place_reach ? 2048u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -3175,6 +3176,12 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         if (host) return refuse("role");
         if (sa::Paused()) { sa::SetMirror(go & 0x1ffu, slot, false, now); return refuse("paused"); }
         fresh = sa::SetMirror(go & 0x1ffu, slot, true, now);
+        // The owner copy's position for Lua's apart release (FM1 retry, run 94a7bf2a: a puppet 7 m below a tower top).
+        std::int32_t owner_mm[3]{};
+        if (sa::MailOwner(go & 0x1ffu, owner_mm)) {
+            if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply), owner_mm)) return refuse("format");
+            return debug_reply;
+        }
     }
     else sa::SetMirror(go & 0x1ffu, slot, false, now);
     if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");

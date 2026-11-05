@@ -95,6 +95,18 @@ std::uint16_t RemapPlayer(std::uint16_t id) noexcept {
     return index == 0 ? 1 : index == 1 ? 0 : id;
 }
 
+bool RemapAimTarget(unsigned char (&w)[0x70]) noexcept {
+    if (w[0x64] != 1) return false;  // action B kind (R+0xb5): 1 = the aim
+    const unsigned mode = w[0x35] & 7u;  // B+0x15 = R+0x4c & 7
+    if (mode != 2 && mode != 4) return false;
+    const std::uint16_t was = static_cast<std::uint16_t>((w[0x20] << 8) | w[0x21]);
+    const std::uint16_t now = RemapPlayer(was);
+    if (now == was) return false;
+    w[0x20] = static_cast<unsigned char>(now >> 8);
+    w[0x21] = static_cast<unsigned char>(now & 0xffu);
+    return true;
+}
+
 namespace {
 bool PackedNear(const unsigned char* a, const unsigned char* b) noexcept {
     std::uint64_t va = 0, vb = 0;
@@ -710,6 +722,9 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
             if (flags & 1u) { std::memcpy(owner, m.order + 0x18, sizeof(owner)); haveOwner = true; }
         }
         ReleaseSRWLockShared(&g_actLock);
+        // U3: the aim's target id names the owner's own player (id 0 on the host): swapped, the puppet aims at the host's
+        // character here, not at the guest (payload_ids counts the swaps).
+        if (newReq && RemapAimTarget(w)) g_cPayloadIds.fetch_add(1, std::memory_order_relaxed);
         // The entry takes the owner copy's position (the engine's own FOB rule: the copy is warped beyond 15 m of it, and
         // the catch-up runs it toward the packed position), or this copy's own one before the first order part.
         float own[3]{};
@@ -982,10 +997,34 @@ Counters ReadCounters() noexcept {
     return k;
 }
 
-bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept {
+bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {
+    if (idx >= kMaxSoldiers) return false;
+    float p[3]{};
+    bool ok = false;
+    AcquireSRWLockShared(&g_actLock);
+    const Mail& m = g_mail[idx];
+    if (m.order_valid) {
+        std::uint32_t flags = 0;
+        std::memcpy(&flags, m.order + 0x24, sizeof(flags));
+        if (flags & 1u) { std::memcpy(p, m.order + 0x18, sizeof(p)); ok = true; }
+    }
+    ReleaseSRWLockShared(&g_actLock);
+    if (!ok) return false;
+    for (int k = 0; k < 3; ++k) {
+        if (!(p[k] >= -100000.0f && p[k] <= 100000.0f)) return false;
+        mm[k] = static_cast<std::int32_t>(p[k] * 1000.0f + (p[k] < 0.0f ? -0.5f : 0.5f));
+    }
+    return true;
+}
+
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm) noexcept {
     if (!out || !capacity) return false;
-    const int n = std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
-                                k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
+    const int n = owner_mm
+        ? std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u,ox=%d,oy=%d,oz=%d}", fresh ? 1u : 0u,
+                        k.tx_parts, k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped,
+                        static_cast<int>(owner_mm[0]), static_cast<int>(owner_mm[1]), static_cast<int>(owner_mm[2]))
+        : std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
+                        k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 

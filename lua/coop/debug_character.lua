@@ -87,11 +87,55 @@ do
   expect(temp.playerType)
   return done("switched","character_switched;"..target,temp.playerType)
  end
+ -- FM1 watch lever (docs/world-sync-design.md 7.15): this copy's camera toward the partner's character (1.1 m up, or the
+ -- metres given) through the stock Player.RequestToSetCameraRotation at any distance (enemy_aim_nearest stops at 60 m).
+ local function aim(a)
+  local up=#a==1 and 1.1 or #a==2 and tonumber(a[2])
+  if type(up)~="number" or up<0 or up>2 then return false,"aim_args" end
+  -- The command's pose (native attaches it to goto_partner / spawn_sync only), else world sync's peer position at this
+  -- copy's own height (run 94a7bf2a: every aim_partner was refused without it).
+  local pp,p,via=D.partnerPose,A.pose(),"pose"
+  if type(pp)~="table" or type(pp[1])~="number" or type(pp[2])~="number" or type(pp[3])~="number" then
+   local W=get(e,"MgsCoopWorld");local P=type(W)=="table" and W.place
+   local x,z
+   if type(P)=="table" and type(P.partnerXZ)=="function" and type(W.now)=="function" then x,z=P.partnerXZ(W.now())end
+   if type(x)~="number" or type(z)~="number" then return false,"partner_pose_unavailable" end
+   pp,via={x,p[2]*1000-up*1000+1500,z},"peer"
+  end
+  if type(get(Player,"RequestToSetCameraRotation"))~="function" then return false,"camera_unavailable" end
+  local dx,dz,dy=pp[1]/1000-p[1],pp[3]/1000-p[3],(pp[2]/1000+up)-(p[2]+1.5)
+  local d=math.sqrt(dx*dx+dz*dz)
+  local yaw,pitch=math.deg(math.atan2(dx,dz)),math.deg(math.atan2(-dy,d))
+  call(Player,"RequestToSetCameraRotation",{rotX=pitch,rotY=yaw,interpTime=0.2})
+  return true,fmt("aim_partner;d=%.1f;rotY=%.1f;rotX=%.1f;age_ms=%s;via=%s",d,yaw,pitch,tostring(pp[4]),via)
+ end
+ -- aim_ent <hash> [up]: the camera toward that guard (world sync's roster: both copies look at the same guard).
+ local function aimEnt(a)
+  local h,up=tonumber(a[2]),#a==2 and 1.1 or #a==3 and tonumber(a[3])
+  if not h or type(up)~="number" or up<0 or up>2 then return false,"aim_args" end
+  local W=get(e,"MgsCoopWorld");local en=type(W)=="table" and type(W.ent)=="table" and W.ent[h]
+  local P=type(W)=="table" and W.place
+  if type(en)~="table" or type(en.id)~="number" or type(P)~="table" or type(P.pos)~="function" then return false,"aim_ent_unknown" end
+  local x,y,z=P.pos(en.id)
+  if type(x)~="number" then return false,"aim_ent_position" end
+  if type(get(Player,"RequestToSetCameraRotation"))~="function" then return false,"camera_unavailable" end
+  local p=A.pose()
+  local dx,dz,dy=x/1000-p[1],z/1000-p[3],(y/1000+up)-(p[2]+1.5)
+  local d=math.sqrt(dx*dx+dz*dz)
+  local yaw,pitch=math.deg(math.atan2(dx,dz)),math.deg(math.atan2(-dy,d))
+  call(Player,"RequestToSetCameraRotation",{rotX=pitch,rotY=yaw,interpTime=0.2})
+  return true,fmt("aim_ent;ent=%.0f;d=%.1f;rotY=%.1f;rotX=%.1f",h,d,yaw,pitch)
+ end
  -- Merge-friendly dispatch: debug_menu.lua routes D.player's handles to D.player.run.
  local P=D.player
  if type(P)=="table" and type(P.handles)=="table" and type(P.run)=="function" then
   local prior=P.run
-  P.handles.character=true
-  P.run=function(a,id)if a[1]=="character" then return S.run(a,id)end;return prior(a,id)end
+  P.handles.character=true;P.handles.aim_partner=true;P.handles.aim_ent=true
+  P.run=function(a,id)
+   if a[1]=="character" then return S.run(a,id)end
+   if a[1]=="aim_partner" then return aim(a)end
+   if a[1]=="aim_ent" then return aimEnt(a)end
+   return prior(a,id)
+  end
  end
 end
