@@ -136,6 +136,7 @@ local l = f.sent(4)
 check(l and l[3] == 2 and l[4] == 1 and l[6] == 0 and l[7] == 22 and l[8] == 101000 and l[9] == 3000 and l[10] == 300000 and l[11] == 0,
  "LOADED: seat 2, the host, the victim's generation, this copy's horse pose")
 check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "step=loaded seat=2")
+check(not f.C.downedPosture(), "the carrier's own downed posture is never the cargo's")
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
  math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
@@ -237,6 +238,7 @@ check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RI
  math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-6,
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
+check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
 f.W.horseShare = {track = {}}
