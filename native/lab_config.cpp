@@ -538,7 +538,7 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
     }
     else if (Equals(key, "lrrp_follow")) {
         // Enemy round 8 track B (lab and play; docs/world-sync-design.md 7.21); a named value records _given, an invalid one
-        // is named and off. Follows the gun profile (the defaults below).
+        // is named and off. Off unless named (the defaults below say why).
         ok = ParseBool(value, result.lrrp_follow);
         result.lrrp_follow_given = true;
         if (!ok) result.lrrp_follow = false;
@@ -2064,9 +2064,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
-    // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow follows the gun profile in lab and play since run
-    // c784a5a7 (the guest's LRRP truck on the host's while it drove in); a named 0 opts out.
-    if (!c.lrrp_follow_given) c.lrrp_follow = gun;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stays off unless named, the gun profile too. Its
+    // truck rows passed (c784a5a7 / 0da27fc6), but the unseated near crew stayed 26-71 m off the host's copies for 80-100 s,
+    // the unseat ends the guest's crew's LRRP plan (a re-boarding crew's truck drives empty on the guest's screen) and
+    // Africa was not run.
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
