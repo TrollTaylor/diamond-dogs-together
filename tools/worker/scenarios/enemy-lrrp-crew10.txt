@@ -1,0 +1,126 @@
+# Enemy round 10 track B (lrrp_follow, docs/world-sync-design.md 7.28): enemy-lrrp-crew.txt without the lever window (the crews on the host's travel step must not be cut by 40 s of each copy's own AI). Round 9 B: the LRRP crews, after enemy-prove-1-join.txt
+# (the host alone 50 m south of afgh_field_cp, the guest pairs ~70 s later). In 0da27fc6 / c784a5a7 (same seed) truck 25605
+# (riders 3970963356 / 2305481811) stops ~190-210 s after the pairing at (546.9, 2081.0) or (415.1, 2093.3) and its
+# crew gets out near the players; truck 25606's crew gets out at (-1643, 880) and boards again ~265-270 s after the
+# pairing (far: logs only). While 25605 drives, cameras on its rider (no lrrp-off lever window in this part),
+# then the stop and the get-out through binoculars on both screens, and the crews on foot until ~290 s after the pairing.
+# Session (key named; the last session with no key at the final head):
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Owner enemy10-B-trucks -ScenarioPath
+#     tools/worker/scenarios/enemy-prove-1-join.txt,tools/worker/scenarios/enemy-lrrp-crew10.txt,
+#     tools/worker/scenarios/enemy-lrrp-alert3.txt
+#     -Mode play -WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge
+#     [-LabSetting lrrp_follow=1] -TimeoutSec 600 -Wait
+# Gate (post, both logs): truck place error while it moves p50 <= 3 / p90 <= 8 m; riders within 8 m seated and 5 m (p90)
+# 20 s after the get-out; the guest's crew boards when the host's (no truck driving empty on one screen only); no jump
+# within 400 m of a player; 0 latches / faults / game overs; frame-time p95 only against the no-key run (no off window).
+logmark both
+host run world_status
+guest run world_status
+stance host crouch
+stance guest crouch
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture k-0
+wait 14000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 9500
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 14500
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 10000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 14500
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 15000
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 10000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture k-1
+wait 14000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture k-2
+wait 14000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture k-3
+wait 14000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 800
+both capture k-4
+wait 14000
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture k-5
+wait 13500
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture k-6
+wait 13500
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture k-7
+wait 13500
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture k-8
+wait 13500
+logmark both
+host run aim_ent 3970963356 1.1
+guest run aim_ent 3970963356 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture k-9
+wait 13500
+host run world_status
+guest run world_status
+host run enemy info 3970963356
+guest run enemy info 3970963356
+host run enemy info 2305481811
+guest run enemy info 2305481811

@@ -682,4 +682,97 @@ do
     s3(5700000, 0, 0)
     check(forces(g, 25603, false) == 1 and g:count('event=lrrp;step=jump;id=25603') == 1, 'near: 64 m off: released to its own AI, no jump')
 end
+
+-- Enemy round 10 B (docs/world-sync-design.md 7.28, protocol section 45): the crews on the host's travel clock. The host
+-- reads each seen crew member's LRRP travel plan and step from svars after StoreToSVars (TppEnemy.StoreSVars' own call;
+-- the exe's 0x1413695a0 writes T.vt[0x78] / T.vt[0x80] there) once a second and sends LRRP_STEP 94 (0x5E) on a change
+-- (5 s refresh). The guest reads its own the same way; when they differ and its truck follows the host's (or waits
+-- crewless) it sends StartTravel{travelPlan, step, keepInAlert} (the stock call; RestoreFromSVars sets the same cursor),
+-- one per guard per 5 s, and no longer unseats a crew whose steps arrive. Red first: no op 94, no StoreToSVars.
+do
+    local function cmdsOf(t, gid, cmd) local r = {} for _, s in ipairs(t.cmds) do if s.id == gid and s.cmd == cmd then r[#r + 1] = s end end return r end
+    local function stores(t) local n = 0 for _, s in ipairs(t.cmds) do if type(s.id) == 'table' and s.id.type == 'TppSoldier2' and s.cmd == 'StoreToSVars' then n = n + 1 end end return n end
+    local function sv(t) t.env.svars = {solName = {}, solTravelName = {}, solTravelStepIndex = {}, solFlagAndStance = {}}; t.W.byId, t.W.ent = {}, {} end
+    local function crewOf(t, gid, name, plan, st, keep, svName)
+        local s, i = t.env.svars, gid % 512
+        s.solName[i], s.solTravelName[i], s.solTravelStepIndex[i] = str32(svName or name), plan and str32(plan) or 255, st or 255
+        s.solFlagAndStance[i] = keep and 0x40000 + 3 or 3
+        t.W.byId[gid], t.W.ent[str32(name)] = str32(name), {name = name, id = gid}
+    end
+    local function stepsOf(t, name) local r = {} for _, m in ipairs(t:sent(94)) do if m[2] == str32(name) then r[#r + 1] = m end end return r end
+    -- Host: StoreToSVars once a second, each seated crew member's plan and step once, again on a change, 5 s refresh.
+    local h = Fixture('host', {lrrp = true})
+    sv(h)
+    h:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195, 1196}})
+    crewOf(h, 1194, 'sol_a', 'travel_a', 3); crewOf(h, 1195, 'sol_b', 'travel_a', 3); crewOf(h, 1196, 'sol_c', 'travel_a', 3, false, 'other')
+    h:start(); h:pair()
+    for i = 1, 30 do h.pool[25602].x = 100 + i * 0.5; h:poll(50) end
+    check(h.W.OP.LRRP_STEP == 94 and type(h.H[94]) == 'function', 'op 94 LRRP_STEP and its handler')
+    local sa = stepsOf(h, 'sol_a')
+    check(#sa == 1 and sa[1][3] == str32('travel_a') and sa[1][4] == 3 and sa[1][5] == 25602 and #stepsOf(h, 'sol_b') == 1,
+        'host: each seated crew member\'s plan hash and step once, with its truck')
+    check(stores(h) >= 1 and stores(h) <= 2, 'host: StoreToSVars at most once a second (' .. stores(h) .. ')')
+    check(#stepsOf(h, 'sol_c') == 0 and h:has('event=lrrp;step=tstep_miss;role=host;'), 'host: an svars row of another soldier is never sent')
+    h.env.svars.solTravelStepIndex[1194 % 512] = 4
+    for _ = 1, 24 do h:poll(50) end
+    sa = stepsOf(h, 'sol_a')
+    check(#sa == 2 and sa[2][4] == 4 and h:has('event=lrrp;step=tstep;role=host;id=25602;') and h:has(';st=4'), 'host: a step change is sent within 1.2 s')
+    for _ = 1, 100 do h:poll(50) end
+    check(#stepsOf(h, 'sol_b') == 2 and #stepsOf(h, 'sol_a') == 3, 'host: unchanged steps again every 5 s (' .. #stepsOf(h, 'sol_b') .. ')')
+    check(h:count('event=lrrp;step=host;id=25602') <= 16, 'host: step=host lines 4 Hz moving, once a second at rest (' .. h:count('event=lrrp;step=host;id=25602') .. ')')
+    -- Guest: its crew member a step behind gets the host's step; one on it gets nothing.
+    local g = Fixture('guest', {lrrp = true})
+    sv(g)
+    g.env.mvars = {ene_travelPlans = {travel_a = {}, travel_b = {}}}
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    crewOf(g, 1194, 'sol_a', 'travel_a', 1, true); crewOf(g, 1195, 'sol_b', 'travel_a', 3)
+    g:start(); g:pair()
+    local tick = 1000
+    local function s2(x, v, nn, f) tick = tick + 100; g.H[93]({tick, 25602, x, 1000, 200000, 0, v, nn, f}); g:poll(100) end
+    for i = 1, 5 do s2(100000 + i * 1000, 10000, 2, 1) end
+    g.H[94]({str32('sol_a'), str32('travel_a'), 3, 25602}); g.H[94]({str32('sol_b'), str32('travel_a'), 3, 25602})
+    for i = 6, 20 do s2(100000 + i * 1000, 10000, 2, 1) end
+    local a = cmdsOf(g, 1194, 'StartTravel')
+    check(#a == 1 and a[1].t.travelPlan == 'travel_a' and a[1].t.step == 3 and a[1].t.keepInAlert == true and
+        g:has('event=lrrp;step=tset;id=25602;') and stores(g) >= 1, 'guest: a step behind: StartTravel{travelPlan, step = the host\'s, keepInAlert = its own}')
+    check(#cmdsOf(g, 1195, 'StartTravel') == 0, 'guest: on the host\'s step: nothing sent')
+    for i = 21, 40 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(#cmdsOf(g, 1194, 'StartTravel') == 1, 'guest: at most one StartTravel per guard per 5 s')
+    g.env.svars.solTravelStepIndex[1194 % 512] = 3
+    for i = 41, 80 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(#cmdsOf(g, 1194, 'StartTravel') == 1 and g:has('event=lrrp;step=tstep;role=guest;id=25602;ent=' .. str32('sol_a') .. ';plan=' .. str32('travel_a') .. ';st=3'),
+        'guest: read back on the host\'s step: no more commands, a tstep line')
+    check(g:count('event=lrrp;step=follow;id=25602') <= 10, 'guest: step=follow lines at most once a second (' .. g:count('event=lrrp;step=follow;id=25602') .. ')')
+    -- A plan this copy does not know, a host plan of 255 (no travel): never sent.
+    g.H[94]({str32('sol_b'), str32('travel_x'), 5, 25602})
+    for i = 81, 95 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(#cmdsOf(g, 1195, 'StartTravel') == 0 and g:has('event=lrrp;step=tstep_hold;id=25602;ent=' .. str32('sol_b') .. ';why=plan'), 'guest: an unknown plan: held')
+    g.H[94]({str32('sol_b'), 255, 255, 25602})
+    for i = 96, 110 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(#cmdsOf(g, 1195, 'StartTravel') == 0 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 0, 'guest: the host\'s soldier travels no plan: nothing sent (never StartTravel "")')
+    -- The host's crew gets out at a stop: with its steps arriving, this copy's crew is not unseated (the step does it).
+    g.H[94]({str32('sol_a'), str32('travel_a'), 4, 25602})
+    for _ = 1, 40 do s2(111000, 0, 0, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 0 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 0 and #cmdsOf(g, 1194, 'StartTravel') == 2,
+        'guest: steps arriving: no UnsetRelativeVehicle; the stop step is set instead')
+    -- A StartTravel with no effect (the read-back stays off the host's step): at most 3 tries per host step, then held.
+    g.H[94]({str32('sol_b'), str32('travel_a'), 6, 25602})
+    for _ = 1, 200 do g.H[94]({str32('sol_b'), str32('travel_a'), 6, 25602}); s2(111000, 0, 0, 0) end
+    check(#cmdsOf(g, 1195, 'StartTravel') == 3 and g:has('event=lrrp;step=tstep_hold;id=25602;ent=' .. str32('sol_b') .. ';why=tries'),
+        'guest: no effect: 3 tries per host step, then held (' .. #cmdsOf(g, 1195, 'StartTravel') .. ')')
+    -- A truck that waits near this player (its copy its own, 30 m+ off): the crew keeps its own step.
+    g = Fixture('guest', {lrrp = true})
+    sv(g)
+    g.env.mvars = {ene_travelPlans = {travel_a = {}}}
+    g:add(25603, 5100.0, 5000.0, 4, 'veh_trc_0001', {riders = {1194}})
+    crewOf(g, 1194, 'sol_a', 'travel_a', 1)
+    g:start(); g:pair()
+    tick = 1000
+    local function s3(x, v, f) tick = tick + 100; g.H[93]({tick, 25603, x, 1000, 5000000, 0, v, 1, f}); g:poll(100) end
+    for i = 1, 5 do s3(5600000 + i * 1000, 10000, 1) end
+    g.H[94]({str32('sol_a'), str32('travel_a'), 3, 25603})
+    for i = 6, 20 do s3(5600000 + i * 1000, 10000, 1) end
+    check(#cmdsOf(g, 1194, 'StartTravel') == 0 and g:has('event=lrrp;step=tstep_hold;id=25603;ent=' .. str32('sol_a') .. ';why=wait'),
+        'guest: its truck waits near this player: the crew keeps its own step')
+end
 print('world_vehicle_state_lua_check: ' .. checks .. ' checks PASS')

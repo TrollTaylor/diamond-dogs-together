@@ -7,6 +7,10 @@
 --          ended the crew's own LRRP plan); while the host's drives manned and this copy's crew is out, the truck is left
 --          to this copy's own AI (its crew boards on its own clock; SetRelativeVehicle seated nobody mid-mission, 68491f7f). Within 400 m of this player (either end) a move over 30 m waits
 --          (the truck stays this copy's own, as 0.15.2) and one of 5..30 m slides 1 m a frame; farther out it jumps.
+-- Round 10 B (design 7.28, protocol 45): the crews on the host's travel clock. Both read each crew member's LRRP plan and
+--          step from svars after StoreToSVars (TppEnemy.StoreSVars' call) once a second; the host sends LRRP_STEP 94 on a
+--          change (5 s refresh); the guest sets a differing one with StartTravel{travelPlan, step, keepInAlert} (the cursor
+--          RestoreFromSVars sets) while its truck follows the host's or waits crewless, and then no longer unseats that crew.
 -- Lever (both roles, debug vehicle_state_status lrrp 0|1): pause / resume lrrp_follow on this copy (a key-off window).
 do
 local W = e.MgsCoopWorld
@@ -37,10 +41,13 @@ local function me()
 end
 local LF = {OP = 93, SEND_MS = 50, MOVE_MS = 100, REST_MS = 1000, STALE_MS = 3000, JUMP_MM = 5000, SETTLE_MM = 3000,
   MOVING = 500, AHEAD_MS = 100, MAX_AHEAD_MS = 400, UNSEAT_MS = 2000, CMD_MS = 5000, NEAR_MM = 400000,
-  STEP_MM = 1000, CATCH_MM = 30000, COST_MS = 10000}
+  STEP_MM = 1000, CATCH_MM = 30000, COST_MS = 10000, STEP_OP = 94, TS_MS = 1000, TS_SEND_MS = 5000, TS_LIVE_MS = 15000}
 S.lf = LF
-W.OP.LRRP_FAST = LF.OP
-function LF.reset() LF.cfg, LF.askAt, LF.tr, LF.hs, LF.next, LF.refused, LF.cost = nil, nil, {}, {}, 0, {}, {n = 0, sum = 0, max = 0} end
+W.OP.LRRP_FAST, W.OP.LRRP_STEP = LF.OP, LF.STEP_OP
+function LF.reset()
+  LF.cfg, LF.askAt, LF.tr, LF.hs, LF.next, LF.refused, LF.cost = nil, nil, {}, {}, 0, {}, {n = 0, sum = 0, max = 0}
+  LF.ts, LF.hst, LF.stepAt, LF.tsAt, LF.tsets, LF.plans, LF.miss = {}, {}, {}, 0, 0, nil, {}
+end
 LF.reset()
 function LF.on()
   if not S.on() or LF.paused then return false end
@@ -126,7 +133,7 @@ function LF.hostTick(t)
   local moving = bh.v >= LF.MOVING
   if W.tx(LF.OP, W.tick32(t), best, bh.x, bh.y, bh.z, bh.yaw, bh.v, math.min(n, 8), moving and 1 or 0) ~= true then return end
   bh.sent, bh.n = t, (bh.n or 0) + 1
-  if t - bh.logAt >= ((moving or n > 0) and 250 or 5000) then
+  if t - bh.logAt >= (moving and 250 or n > 0 and 1000 or 5000) then
     bh.logAt = t
     L("event=lrrp;step=host;id=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%d;v=%d;riders=%d;n=%d", best, bh.x / 1000, bh.y / 1000, bh.z / 1000, bh.yaw, bh.v, n, bh.n)
     if n > 0 then L("event=lrrp;step=riders;id=%d;n=%d%s", best, n, list) end
@@ -170,7 +177,9 @@ local function crew(id, tr, t, b, moving, n, gids)
   -- The host's count rose at the stop (its crew boards again): no unseat until its truck drives (801cd90b).
   tr.boarding = not moving and (tr.boarding or (tr.hn ~= nil and b.n > tr.hn)) or nil
   tr.hn = b.n
-  tr.outAt = (not moving and b.n < n and not tr.boarding) and (tr.outAt or t) or nil
+  -- Round 10 B: the host's travel steps arrive for this crew: the step gets it out (never UnsetRelativeVehicle).
+  local stepped = t - (LF.stepAt[id] or -1e9) <= LF.TS_LIVE_MS
+  tr.outAt = (not moving and b.n < n and not tr.boarding and not stepped) and (tr.outAt or t) or nil
   if tr.outAt and t - tr.outAt >= LF.UNSEAT_MS then
     local extra = n - b.n
     for _, v in ipairs(gids) do
@@ -190,6 +199,7 @@ function LF.frame(t)
     local b, a = tr.b, tr.a
     local busy = ridden(id)
     if t - tr.at > LF.STALE_MS or busy then
+      tr.sync = false
       force(id, tr, false, busy and "ride_" .. busy or "stale")
       if not busy then LF.tr[id] = nil; L("event=lrrp;step=stale;id=%d;jumps=%d;n=%d", id, tr.jumps, tr.n) end
     else
@@ -210,6 +220,8 @@ function LF.frame(t)
       -- The host's truck is manned and this copy's known crew is out: never drive it off empty, nor move it 5 m+ to a
       -- paused host truck (801cd90b: a 100.5 m jump away from its crew); its own AI keeps it.
       local crewless = (moving or d > LF.JUMP_MM) and b.n > 0 and tr.rl == 0 and next(tr.crew) ~= nil
+      -- Round 10 B: the crew may take the host's travel step while this copy follows (30 m or nearer) or waits crewless.
+      tr.sync = crewless or (not wait and d >= 0 and d <= LF.CATCH_MM)
       if wait or crewless then
         force(id, tr, false, crewless and "crew_out" or "near")
         if t - (tr.deferAt or -1e9) >= 2000 then
@@ -237,7 +249,7 @@ function LF.frame(t)
           end
         end
       end
-      local logs = t - tr.logAt >= (follow and 250 or 2000)
+      local logs = t - tr.logAt >= (follow and 1000 or 5000)
       if logs or t - (tr.seatAt or 0) >= 500 then
         tr.seatAt = t
         local n, gids, list = riders(id)
@@ -255,6 +267,111 @@ function LF.frame(t)
     end
   end
 end
+-- Round 10 B: a soldier's travel plan hash, step and keep-in-alert from svars (StoreToSVars wrote them this tick; the
+-- row is GameObjectId & 0x1ff), or nil and why when the row is not this soldier's.
+local function u32(n) return type(n) == "number" and (n < 0 and n + 4294967296 or n) or nil end
+local function svStep(gid, e)
+  local ok, nm, plan, st, fl = pcall(function()
+    local i = gid % 512
+    return svars.solName[i], svars.solTravelName[i], svars.solTravelStepIndex[i], svars.solFlagAndStance[i]
+  end)
+  nm, plan = u32(nm), u32(plan)
+  if not ok or not nm or not plan or type(st) ~= "number" then return nil, "svars" end
+  if nm ~= e then return nil, fmt("name:%.0f", nm) end
+  return plan, st, type(fl) == "number" and floor(fl / 262144) % 2 == 1
+end
+local function storeSteps() send({type = "TppSoldier2"}, {id = "StoreToSVars"}) end
+local function miss(role, gid, why)
+  local t = now()
+  if t - (LF.miss[gid] or -1e9) >= 10000 then
+    LF.miss[gid] = t
+    L("event=lrrp;step=tstep_miss;role=%s;ent=%s;why=%s", role, ent(gid), tostring(why))
+  end
+end
+-- The plan name of a hash (mvars.ene_travelPlans keys, the crews' lrrpTravelPlan), rebuilt at most every 10 s.
+local function planName(hash, t)
+  local m = LF.plans
+  if not m or (m[hash] == nil and t - (LF.plansAt or -1e9) >= 10000) then
+    m = {}
+    pcall(function()
+      for k in pairs(mvars.ene_travelPlans or {}) do if type(k) == "string" then m[W.h(k)] = k end end
+      for _, k in pairs(mvars.ene_lrrpTravelPlan or {}) do if type(k) == "string" then m[W.h(k)] = k end end
+    end)
+    LF.plans, LF.plansAt = m, t
+  end
+  return m[hash]
+end
+function LF.hostSteps(t)
+  if t < LF.tsAt then return end
+  local any
+  for _, h in pairs(LF.hs) do if h.crew and next(h.crew) then any = true; break end end
+  if not any then return end
+  LF.tsAt = t + LF.TS_MS
+  storeSteps()
+  for id, h in pairs(LF.hs) do
+    for v in pairs(h.crew or {}) do
+      local e = type(W.byId) == "table" and W.byId[v]
+      local plan, st = nil, "ent"
+      if e then plan, st = svStep(v, e) end
+      if not plan then miss("host", v, st)
+      else
+        local k = LF.ts[v] or {at = -1e9}
+        LF.ts[v] = k
+        local chg = k.plan ~= plan or k.st ~= st
+        if (chg or t - k.at >= LF.TS_SEND_MS) and W.tx(LF.STEP_OP, e, plan, st, id) == true then
+          if chg then L("event=lrrp;step=tstep;role=host;id=%d;ent=%s;plan=%.0f;st=%d", id, ent(v), plan, st) end
+          k.plan, k.st, k.at = plan, st, t
+        end
+      end
+    end
+  end
+end
+function LF.guestSteps(t)
+  if t < LF.tsAt or next(LF.hst) == nil then return end
+  LF.tsAt = t + LF.TS_MS
+  storeSteps()
+  for e, hs in pairs(LF.hst) do
+    local en = type(W.ent) == "table" and W.ent[e]
+    local gid = type(en) == "table" and en.id
+    if t - hs.at > LF.TS_LIVE_MS or not integer(gid, 0, NULL - 1) then LF.hst[e] = nil
+    else
+      local plan, st, keep = svStep(gid, e)
+      if not plan then miss("guest", gid, st)
+      else
+        if hs.gp ~= plan or hs.gs ~= st then
+          hs.gp, hs.gs = plan, st
+          L("event=lrrp;step=tstep;role=guest;id=%d;ent=%s;plan=%.0f;st=%d;host_st=%d", hs.truck, ent(gid), plan, st, hs.st)
+        end
+        if hs.plan ~= 255 and hs.st ~= 255 and (plan ~= hs.plan or st ~= hs.st) then
+          local tr, name = LF.tr[hs.truck], planName(hs.plan, t)
+          local key = hs.plan * 256 + hs.st
+          if hs.tryKey ~= key then hs.tryKey, hs.tries = key, 0 end
+          local why = not name and "plan" or not tr and "track" or not tr.sync and "wait" or t - (hs.cmdAt or -1e9) < LF.CMD_MS and "rate" or
+            hs.tries >= 3 and "tries" or nil
+          if not why then
+            hs.cmdAt, hs.tries, LF.tsets = t, hs.tries + 1, LF.tsets + 1
+            send(gid, {id = "StartTravel", travelPlan = name, step = hs.st, keepInAlert = keep == true})
+            L("event=lrrp;step=tset;id=%d;ent=%s;plan=%s;from=%d;to=%d;k=%d", hs.truck, ent(gid), name, st, hs.st, LF.tsets)
+          elseif why ~= "rate" and t - (hs.holdAt or -1e9) >= 10000 then
+            hs.holdAt = t
+            L("event=lrrp;step=tstep_hold;id=%d;ent=%s;why=%s;st=%d;host_st=%d", hs.truck, ent(gid), why, st, hs.st)
+          end
+        end
+      end
+    end
+  end
+end
+-- LRRP_STEP (host to guest): a crew member's ent hash, plan hash, step, truck.
+H[LF.STEP_OP] = function(...)
+  local ok, err = pcall(function(v)
+    if W.host or type(v) ~= "table" or #v < 4 or not LF.on() or not linked() then return end
+    local t, hs = now(), LF.hst[v[1]] or {}
+    LF.hst[v[1]] = hs
+    hs.plan, hs.st, hs.truck, hs.at = v[2], v[3], v[4], t
+    LF.stepAt[v[4]] = t
+  end, ...)
+  if not ok then lfail(err) end
+end
 local function releaseAll(why)
   for id, tr in pairs(LF.tr) do force(id, tr, false, why) end
   LF.tr = {}
@@ -271,7 +388,7 @@ function W.tick(...)
   if tickLF then tickLF(...) end
   if not LF.on() or not linked() then return end
   local t, c0 = now(), cpu()
-  local ok, err = pcall(function() if W.host then LF.hostTick(t) else LF.frame(t) end end)
+  local ok, err = pcall(function() if W.host then LF.hostTick(t); LF.hostSteps(t) else LF.frame(t); LF.guestSteps(t) end end)
   if not ok then lfail(err) end
   cost(t, c0)
 end

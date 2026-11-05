@@ -114,7 +114,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 77, "77 ops (enemy round 8 LRRP fast, FM1 act caps, FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 78, "78 ops (enemy round 10 LRRP step, enemy round 8 LRRP fast, FM1 act caps, FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
                        "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, horse plan M2 horse seat, and local ops)");
@@ -2248,6 +2248,37 @@ void LrrpFastOp() {
     world::Datagram low{};
     Check(Tx(g_host, op::lrrp_fast, {1, 25602, 0, 0, 0, 0, 0, 0, 0}, 201, &low) == world::TxStatus::disabled, "level 3 only");
 }
+// Enemy round 10 track B (docs/world-sync-protocol.md section 45): LRRP_STEP 0x5E, host to guest, world queue, reliable,
+// level 3, play too, never a request: a crew member's ent hash, its LRRP travel plan hash, its travel step (0..255; 255 no
+// plan) and its truck's id (25600..26111): 4 fields, 11 bytes. Sent only with lrrp_follow; a partner without 0x5E skips it
+// by its length (unknown_op) and its crew keeps its own clock, as before.
+void LrrpStepOp() {
+    constexpr std::uint8_t kLrrpStep = 0x5E;
+    const auto* s = world::FindOp(kLrrpStep);
+    Check(s && std::strcmp(s->name, "LRRP_STEP") == 0, "LRRP_STEP 0x5E exists");
+    Check(s && s->queue == 1 && s->wire == world::Wire::reliable && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::host_to_guest && s->lua == 4 && s->native == 0 && s->rx == 0 && s->body == 11,
+          "LRRP_STEP: world queue, reliable, level 3, play too, host to guest, 4 fields, 11 bytes");
+    if (!s) return;
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_host, kLrrpStep, {3970963356LL, 2305481811LL, 4, 25605}, 101) == world::TxStatus::ok, "the host sends a crew member's step");
+    Check(Tx(g_guest, kLrrpStep, {1, 2, 3, 25605}, 101) != world::TxStatus::ok, "the guest never sends one");
+    Check(Tx(g_host, kLrrpStep, {1, 2, 256, 25605}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, kLrrpStep, {1, 2, 3, 25599}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, kLrrpStep, {1, 2, 3, 26112}, 101) == world::TxStatus::bad_args,
+          "step u8, a vehicle id");
+    Exchange(102);
+    auto toGuest = Drain(g_guest, 3, 103);
+    const auto* got = Find(toGuest, kLrrpStep);
+    Check(got && got->count == 4 && got->v[0] == 3970963356LL && got->v[1] == 2305481811LL && got->v[2] == 4 && got->v[3] == 25605,
+          "the guest's world queue delivers it with its exact fields");
+    Setup(2, 2, true);
+    Pair(30010, 200);
+    Check(Tx(g_host, kLrrpStep, {1, 2, 3, 25605}, 201) == world::TxStatus::disabled, "level 3 only");
+}
 // Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT 0x50, both
 // directions, world queue, reliable, level 3, play too, never a request; seq, seat 0..2, the sender's role, action 1..6,
 // cause 0..15, the victim's downed generation, xyz mm, yaw mrad: 10 fields, 26 bytes.
@@ -2523,6 +2554,7 @@ int main() {
     HorseSeatOp();
     ActCapsOp();
     LrrpFastOp();
+    LrrpStepOp();
     TravelOp();
     RulesOp();
     FultonOp();
