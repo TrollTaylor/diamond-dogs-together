@@ -192,9 +192,9 @@ do
     tostring(get(vars, "missionCode")))
   end
   -- Horse plan M3 (lua/coop/world_horse_pillion.lua; debug_horse.lua and debug_buddy.lua are at their size limit):
-  -- pillion_status, and the lab lever pillion_pose <back> <rise> <mode 0|2|4|5> <dback> <dup> [seat 0|1] (mm: the passenger's
-  -- body 0 on its placed horse, hold0 without / with the A0 reset, the Lua Warp or both; the driver's body 1 behind its own
-  -- root; seat 0 asks the driver's copy for no overlay seat).
+  -- pillion_status, and the lab lever pillion_pose <back> <rise> <mode 0|2|3|4|5> <dback> <dup> [seat 0|1] (mm: the
+  -- passenger's body 0 on its placed horse, hold0 without / with the A0 / with the C0 reset, the Lua Warp or both; the
+  -- driver's body 1 behind its own root; seat 0 asks the driver's copy for no overlay seat).
   local function pillion(a)
    local Q = type(W) == "table" and W.horsePillion
    if type(Q) ~= "table" or type(Q.status) ~= "function" then return false, "pillion_unavailable" end

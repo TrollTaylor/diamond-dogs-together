@@ -2361,3 +2361,75 @@ No new op or world note. CFG r[19] (each PC's own reply) gains bit 1024 `body_de
   timeout | stop` (`SetForceRealize` with `forceRealize=false`; 8 s; never Mother Base staff).
 - `body_dead`: a body placement (ENEMY_DEBUG kind 3 / ENEMY_PLACE, flag 8) of a dead guard is no longer refused
   `disabled_local`; `place_body` lines are unchanged (`why=none` when queued).
+
+## 35. Enemy gaps 3 (lab keys `place_reach`, CFG r[19] bit 2048; `drive_vert`, native only; design 7.18)
+
+No new op, world note or CFG bit. Receipt and log changes only.
+
+- The refusal replies of `WORLD_WARP_V1` (the guest's M1 corrections), `WORLD_WARP_HOST_V1` (the host's M3 placements)
+  and `DRIVE_V1` (section 30): a `relayed` or `backoff` refusal names the ms left of that guard's native relay backoff,
+  `{refused="backoff",b=<ms>}` (`b` absent when 0). An older Lua ignores `b`.
+- `DRIVE_V1` reply `s=3` (`drive_vert`): the copy stood at rest in x / z more than 1.5 m above or below the target for
+  1 s and was put on the target's spot (`r`, `h` as for a step). Native logs `world_drive=vert; go; slot; gap_cm; e_cm; r;
+  h; n` (the first 64) and `world_drive=stats; ...; vert`. Lua counts `s=3` with the resting steps.
+- The realize hold (`place_reach`, section 34): `event=realize_hold; ent; on=1; ok; n; why=relayed|backoff; b` (b -1
+  when the reply had none) and `event=realize_hold; ent; on=0; why=landed|timeout|stop; ms; src=place|drive; st; rs;
+  rf; rq; landed; timeout` (st / rs: his landed / resting drive steps while held, rf: refusals, rq: placements queued
+  again at the backoff end; landed / timeout: this copy's totals since the mission start).
+
+## 36. Enemy sync M7 FM1 round 6: the version gate, the 1 s re-apply, the phase limit, the leg check (lab key `soldier_act`; design 7.19)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x5C | ACT_CAPS | both | R (world queue), level 2, play too | 3 | caps (u16: bit 1 the far mirror runs on this PC, bit 2 its calm / caution phase limit), FM1 revision (u8, 6) |
+
+- Why: the link handshake checks only `kLinkVersion` 2, so a 0.15.0 partner connects to a newer build, and CFG r[19] is
+  each PC's own (0.15.0's Lua takes only r[19] 0..63, newer builds 0..4095). A 0.15.0 partner has no SOLDIER_ACT
+  (0x58) and no ACT_CAPS: it skips both by their length (`unknown_op`). A 0.15.1 partner has round 5's SOLDIER_ACT
+  but no ACT_CAPS: it skips 0x5C by its length, and this side never runs the mirror against it.
+- Lua (world_mirror.lua) sends ACT_CAPS once per pairing and once per mission start, only on a PC with `soldier_act`
+  (`event=mirror_caps; caps; rev`). The receiver keeps the partner's caps until unpaired (`event=mirror_peer; caps;
+  rev`). The far mirror (the host's `ACT_V1 t` / `s`, the guest's `q` / `m`, so every SOLDIER_ACT part and every
+  puppet) runs only while the partner's caps has bit 1: an old partner never sends one, so nothing of `soldier_act`
+  runs against it; a partner announcing caps 0 releases every puppet (`why=peer`).
+- `soldier_act=1` / `calm` (the user's decision D-FM1 (a)): on, calm / caution only; `soldier_act=all` (a test value;
+  play and release builds accept it too): every phase; no CFG bit. Native answers `ACT_V1 p` with `{p=1,pl=1}` (`{p=1,pl=0}` for `all`); Lua then releases
+  and skips a guard whose CP is in evasion / ALERT (`why=phase_limit`, before the R check).
+  `soldier_act_mirror=on; ...; phase=calm|all` logs it.
+- The far rule skips riders: a guard whose `GetVehicleGameObjectId` is a game object is never taken, a puppet who
+  mounts is released (`why=vehicle`), and the host does not register him.
+- `ACT_V1 q` (QueryFresh) answers `f=1` for a host copy's move (action A kind 1) only when this copy's own destination
+  (its packed request's +0x40, sampled by the hook every 0.5 s) is within 3 m (flat) of the host copy's (`leg_wait`).
+- The puppet side re-applies an unchanged request every 1 s while the owner copy moves (the order part's position
+  >= 0.3 m from where it was at the last apply), else every 5 s, from the mailbox whether or not a new part came; an
+  order without a target clears the puppet's own stale target (`order_clear`).
+- `soldier_act_frame` adds `payload_ids` (the aim-target swaps of `RemapAimTarget`), `due` (applies the rule asked
+  for, counted just before the unpack: applied / due restates only unpack faults), `reapply` (the moving owner's 1 s re-applies), `expired` (fire-drop bits that lapsed), `order_clear`, `leg_wait`.
+- Lua's apart release (`why=apart`) waits for a still owner copy: its position moved under 0.5 m for 2 s.
+
+## 37. Enemy round 7 track A: the y read-backs, drive_sink apart from snaps, the far put-back, no vert thrash (lab keys `drive_vert`, native only; `place_reach`, CFG r[19] bit 2048; design 7.20)
+
+No new op, world note, CFG bit or receipt field. Log lines only, and two behaviours behind existing keys.
+
+- Native `DRIVE_V1` (`drive_vert`): at most 2 vert snaps (`s=3`) of one copy in 10 s from the first snap of that
+  window; a third due snap is not taken and is logged once per window, `world_drive=vert_stop; go; slot; n; gap_cm;
+  left_ms`; `world_drive=stats` adds `vert_stop`.
+- Lua (new chunk `lua/coop/world_readback.lua`, after `world_mirror.lua`; both roles, follow only):
+  - `event=readback; ent; src; at; ms; dy_m; held; far_m`: 0.5 s (`at=500`) and 2 s (`at=2000`) after a vert snap
+    (`src=vert`), a landed drive step that ends a place_reach hold (`src=drive`), a landed kind-3 placement of a held
+    copy or of a copy beyond 60 m of this player (`src=place`) and a put-back (`src=put`). `dy_m` is the copy's
+    GetPosition y minus where it was put (the drive target's y, or the placement's wire y), `held=1` within 1 m,
+    `far_m` its distance from this PC's player when it was put there. `ms` is the real delay (the check runs in the
+    placement tick).
+  - `event=drive_sink; ent; off_m; e_cm; low_ms` (was in `world_snap.lua`): the reply's `v` more than 1.5 m under the
+    target for 2 s in all, summed across readings (a reading level for less than 2 s does not reset it; level for 2 s
+    does; each gap between two low readings counts up to 2 s). Once per such episode.
+  - place_reach only: a read-back of a copy beyond 60 m more than 1.5 m under where it was put (and under the owner's
+    newest sample of him, when one is at most 3 s old) logs `event=readback_fix; ent; src; far_m; dy_m; put=1` and
+    queues that placement (or the owner's newest sample) again once; its force-realize ends when that put-back is done;
+    or `put=0; why=once|owner|busy|none` (`once`: the put-back fell too; `owner`: the owner went down with him, nothing
+    done). For 10 s after a fix no realize hold starts for him: `event=readback_nohold; ent; why; left_ms` once.
+- `tools/enemy_div_report.py`: `guard_fell` counts the host's `place_div why=fall` lines too; new rows `readback`
+  (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
+  got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
+  (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).

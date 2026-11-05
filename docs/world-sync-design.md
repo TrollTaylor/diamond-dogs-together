@@ -469,6 +469,208 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   shield takes the pick-up key (`9023e5c6`), and two rifle shots at 2.5 m left a sleeping guard asleep (`3c9d1250`);
   next: a firefight kill the guest then carries, or a CQC kill.
 
+#### 7.18 Enemy gaps 3: the hold waits out the backoff, a copy a storey off its owner (lab keys `place_reach`, CFG r[19] bit 2048; `drive_vert`, native only)
+
+- **The hold's logs, read again** [O] (run `3c9d1250`, design 7.17): all 14 host holds were drive relays, every relay
+  `streak=1`, so each relayed guard had a landed move before his next relay (a move ends the streak; the relay table has
+  64 rows, none evicted). The hold was released only by a landed placement (`P.doneHook`), never by a landed drive step,
+  so a drive hold always "timed out" at 8 s; and a refusal in the native backoff (3 s, doubled per relay in a row up to
+  30 s) never got a hold.
+- **The hold now** (`place_reach`; `world_place.lua` `P.hold` / `P.hdr` / `P.rzTick`): a correction, M3 host placement or
+  drive step refused `relayed` or `backoff` holds the guard (`event=realize_hold; on=1; ...; why; b`). The receipts'
+  refusal names the ms left of that guard's backoff (`{refused="backoff",b=<ms>}`, `sw::FormatRefusal`,
+  `RefuseWarp` in the guest / host warp receipts and `DriveReceipt`); a held drive step is not tried again before the
+  backoff ends; a held placement is queued again then (the refused entry, or a newer queued sample of him; not while
+  the stream drives him). A landed drive step (`s >= 1`, `h=1`) releases the hold like a landed placement. The release
+  line names `ms`, `src` (place / drive), `st` / `rs` (his landed / resting drive steps while held), `rf` (refusals),
+  `rq` (re-queued placements) and the running `landed` / `timeout` totals. Still 8 s and at most 4 guards.
+- **drive_sink at the defaults** [O]: one in `6348f361` (the shipped defaults, arm A), `41f2b07f` and `31a799e3` (the
+  defaults), 2929558510 each time, 3.28-3.32 m under its target at 1.02-1.05 m planar; also `3bc7280b` (1.14 m planar) /
+  `46c0da9e` (`soldier_act`), `9023e5c6` (1799112697, 3.45 m, 0.15 m planar), `b77e2104` (2.15 m, 0.14 m) and on the guest 667680985
+  (`125d916b` / `0a271c10`, 3.6-5.5 m). Cause [O code]: `sw::DriveStep`'s rest test is planar (a copy at rest moves
+  beyond 1.5 m), and the y is only set on a moving step, so a copy within 1.5 m in x / z but a storey off its target is
+  never moved; M1 / M3 corrections skip a driven guard (`why=driven`). [O frame] `b77e2104` guest al-2 (goto 2929558510
+  8): the guest's camera looks up a high wall under a red threat arc and the wall top is empty, so no guard is visible;
+  that the guest's copy stood about 5 m over the guest comes only from the aim readout (`aim_nearest` d 9.4 m at rotX
+  -31.5) [I]. Every such `drive_sink` had 0.14-1.14 m planar.
+- **drive_vert** (lab key, lab and play, native only, no CFG bit; off unless named, see Defaults): the soft
+  follow's step (`DriveReceipt`, mode 0 only) also moves a copy at rest in x / z that stood more than 1.5 m
+  (`kDriveVertM`) above or below the target for 1 s (`kDriveVertMs`, `sw::DriveVertDue`) onto the target's spot
+  (`DriveStep` `vert_m`, reply `s=3`, `world_drive=vert; go; slot; gap_cm; e_cm; r; h; n` for the first 64, stats
+  `vert=`). Run `617311eb` (named): 0 `drive_sink` on both copies, one snap (the guest's copy of 1799112697, 5.64 m under
+  its target at 0.86 m planar, `r=0 h=1`).
+- **The watch** (`enemy-reach-watch.txt`, after `enemy-integ-carry.txt`): the host on the ground point (488.53, 268.24,
+  2206.17), where `b77e2104`'s host v-3 had shown 1740692850's body about 110 m away; the guest 6 m (`617311eb`), then 10 m
+  crouched (`025fbb28`) from him, so he is guest-owned (`event=owner; owner=guest; why=near; dh_m=109`); both cameras on
+  him (`aim_ent`) through binoculars, three captures 2-3 s apart. Each copy's aim readout and position give where its
+  copy stood (scratch `aimpos.py`).
+- **Frames** [O, looked at]: `617311eb` w-b: on the host's screen a guard's body at the crosshair beside the guest's
+  character 107.6 m away; on the guest's his legs at the crosshair 5.1 m away (`SCANNING`); copies 0.11 m apart (w-a
+  1.00 m: the host's two bodies just left of the crosshair; w-c 0.57 m: the body right of it, the guest's view the
+  flashlight only). `025fbb28` w-b: two bodies at the host's crosshair beside the guest's character, 109.2 m; on the
+  guest's the analyzer's "Soviet Soldier" at the crosshair, 10.1 m, his body dark behind grass; copies 1.40 m apart
+  (w-a 1.38 m, his marker by the nametag with no clear body; w-c 0.68 m). All in calm. Both times he discovered the
+  guest after w-c (`phase_discovery`) and the CP's ALERT began before the ALERT part; in `617311eb` the guest was downed
+  6 s into it and the host 93 s later, so both were down: the mod's shared game over (MISSION FAILED on the guest), which
+  `enemy_div_report.py` did not count (it now counts `step=shared_game_over` / `game_over_applied`).
+- **Runs** (play, `-WanSim bad`, the gun profile, research build, afgh-ledge; join, quiet, integ-carry, watch, alert):
+  `617311eb` (`place_reach=1`, `drive_vert=1`): host M3 place error p50 0.83 / p90 2.5 m (200 samples: the guest was
+  down for most of the ALERT), 0 latches / faults / `drive_sink`, one `drive_vert` snap, one hold (guest, the rider
+  2305481811, re-queued at the backoff end and landed 3.1 s after it began), the game over above. `025fbb28`
+  (`place_reach=1`, `drive_vert` at its new default): host M3 p50 0.91 / p90 1.99 m (863), guest p50 0.61 / p90 2.0 m
+  (150), 0 latches, faults, game overs, `drive_sink`; five `drive_vert` snaps on the host (2929558510 2.47 m over and 1.80
+  m under its target, 2942862796 2.61 / 4.06 / 5.80 m under; 0.11-1.17 m planar; all `r=0 h=1`, `h=1` only: no position read-back); 0 relays and 0 holds on
+  either copy. Failing rows in both: corrections applied 6/20 and 4/13 (`far` 5 / 6 and `vehicle_local` 8 / 3: the
+  riders, 7.17 (a)), M3 host placements applied 3/11 and 9/12 (native `range` 8 / 3: a target more than 60 m from the
+  nearer player, `near=host` [I: the guest's pose more than 1 s old]).
+- **The no-key run after the flips** `35d4074f` (both on by default then, d4d4cb65; join, quiet, integ-carry, alert): 0
+  latches, faults, game overs; guest place error p50 0.61 / p90 1.47 m (126); host M3 p50 1.09 / p90 2.67 m (940); the hold
+  [O]: host 39 holds (37 relayed, 2 backoff), 35 landed (by `st`: 10 by a landed drive step, 25 by a placement, mostly re-queued `rq=1`; `src` names what started
+  the hold, not what landed it; 1.2-3.1 s, most 3.09 s,
+  i.e. at the 3 s backoff's end) and 4 timed out (within 2 s of each other mid-ALERT); guest 20, all landed (round 5: 8 of
+  26); two `drive_vert` snaps (2929558510, 2.41 m over and 1.84 m under). FAIL rows: `drive_sink` 1 and `place_sink` 1, the
+  host's copy of guest-owned 1179373153 about 150 m off: an M3 placement landed (`dy_m -0.01`, 329556708), a drive step
+  relayed 19 ms later and the hold force-realized him, 2 s later he stood 3.73 m lower (`place_sink`, moved 0.4 m), the
+  next landed drive step (329559830, 2.63 m planar, so a moving step at his target's y) logged him 5.10 m under, and 2 s
+  later the guest's sample still had him 5.4 m over the host's copy; at 329630983 a host `place_div why=fall` had him
+  82.5 m off and 10.5 m under (`enemy_div_report.py` counts `guard_fell` on guest lines only, so it missed this row).
+  [I] a copy realized far from the host's player drops through a floor whose collision that PC has not loaded (the same
+  `place_sink` came at the defaults in `41f2b07f`, without the hold); whether the force-realize causes it is [U]. Also
+  corrections applied 15/33 (`unrealized/backoff` 12: samples arriving inside the backoff) and M3 host placements 43/70
+  (unrealized 27). Frames looked at: c-b (the sleeping guard by the guest's character on both screens), al-9 (both alive).
+- **Defaults**: both off unless named. `place_reach` is off again (6eb410a7 red, then green): its no-key run failed the
+  `drive_sink` row. `drive_vert` was on by default from 61470582 / cdfc3651 and is off again (dec7c687 red, 7736b898
+  green): a skeptic's check of the runs [O] found that its 8 snaps were of 4 copies (1799112697 once in `617311eb`,
+  2929558510 twice each in `025fbb28` and `35d4074f`, 2942862796 three times in `025fbb28`), every one 63-121 m from the
+  receiving player, so inside `place_reach`'s 60-160 m reach only (the 60 m band live at the defaults never ran, and no
+  run had drive_vert without place_reach); a second snap 1.4-1.7 s later with the gap back over 1.5 m (-2.47 then +1.80,
+  -2.41 then +1.84, 2.61 / 4.06 / 5.80 m) means at most 4 of 8 moves held (`h=1` is no read-back); its 1 s snap masks the
+  2 s `drive_sink` detector (2942862796 more than 1.5 m under for at least 3 of about 4 s in `025fbb28`, 0 `drive_sink`);
+  no frame shows it; `DriveAdmit` also admits Mother Base and Africa, untried. Next for it: a y read-back after the snap,
+  a test within 60 m with place_reach off, a frame, then the no-key run. No wire change: an older partner streams and
+  drives within 60 m and ignores `b`.
+- **What blocks place_reach and what to try next**: (1) the far-copy drop: after a landed placement of a copy 100-160 m
+  from this PC's player, read its y back at 2 s (as `P.sinkTick`) and, when it dropped more than 1.5 m under the owner,
+  place it again at the owner's y (or skip the force-realize beyond ~120 m); (2) a drive refusal cleared a held
+  placement's pending retry (`P.hold` set `r.c = c`, nil for a drive step): fixed (`r.c = c or r.c`, unit-tested, not
+  yet in a run); (3) then one run with place_reach named, then the no-key run. Also not done: `body_dead`'s stimulus; the riders'
+  in-vehicle part (7.17); the guest is discovered at 10 m crouched in calm (restrict notice does not stop it, 7.14).
+
+#### 7.19 Enemy sync M7 FM1 round 6: the calm half, the walkers' legs, the version gate (lab key `soldier_act`)
+
+- **The user's decision D-FM1 (a)** (2026-11-05): the far mirror mirrors only in calm and caution and is judged on calm
+  frames; in ALERT guards work as before (no puppets). `soldier_act=1` (and `calm`) is on with that phase limit;
+  `soldier_act=all` keeps every phase (7.16; a test value, but play and release builds accept it too). The limit rides in soldier_act's own value and the `ACT_V1 p`
+  reply (`pl=1`), no CFG bit (r[19] has none free); Lua releases and skips a guard of a CP in evasion / ALERT
+  (`why=phase_limit`, before the R check).
+- **Version gate** (protocol section 36): a 0.15.0 or 0.15.1 partner connects (the handshake checks only `kLinkVersion`
+  2) but has no ACT_CAPS (0.15.0 has no SOLDIER_ACT either; 0.15.1 has round 5's 0x58). Each PC with `soldier_act` sends ACT_CAPS (0x5C: caps bit 1 on, bit 2 its calm limit;
+  revision 6) once per pairing and mission start; the far mirror (registration, every SOLDIER_ACT part, every puppet)
+  runs only after the partner's ACT_CAPS with bit 1, so nothing of it runs against an old partner or one with the key
+  off (`why=peer`). The defaults of a PC without the key send nothing new. Unit-tested with an old partner
+  (world_align_lua_check, world_wire_tests; 0.15.1 skips 0x5C by its length, checked by reading); in game both copies
+  logged `event=mirror_peer; caps=1|3; rev=6`.
+- **Walkers, three causes** [O, runs `fbf3522a`, `f11fe8a1`; Ghidra decompiles read-only]:
+  - the 5 s re-apply (7.16): an unchanged request is now re-applied from the mailbox every 1 s while the owner copy
+    moves (its order-part position >= 0.3 m from the last apply; `ReapplyDue`, `OwnerMoved`), else every 5 s. The
+    speed ratio while the owner copy moves is now p50 0.99 / 0.95 taken together (was 0.19 / 0.78), but not per
+    guard: guard 246 stood about 4.5 s and then jumped 16-20 m, again and again (ratio 0.0 in both runs). The apart
+    release waits for a still owner copy (moved under 0.5 m for 2 s); apart releases were still 4 / 10 / 1 a run
+    (`fbf3522a` / `f11fe8a1` / `0d801772`; round 5 12-13).
+  - a stale order target: the order unpack 0x1413701f0 writes the target (R+0x1b0..+0x1bb) and its mode (the low 3 bits
+    of +0x1bc) only for packed modes 1..4, so a host order without a target left the puppet's own brain's target
+    (guard 15 in `fbf3522a`: 413.5, 267.6, 2133.3). Now cleared (`OrderHasTarget`, `ClearOrderTarget`, `order_clear`).
+  - his own leg: with the request record byte-identical to the host copy's (the census packs of both copies differ in
+    one facing-yaw bit) and the destination R+0x80 the host copy's, a puppet keeps walking the leg his own brain had
+    before the take, at the host copy's speed (guard 15: the host copy toward 363.6, 2159.8, the puppet toward
+    414.4, 2133.6, 15.8 m apart before the engine's 15 m warp). The leg is not the whole cause: by the 3 m
+    test below, the same-leg takes of `fbf3522a` had p50 1.81 m (per-take medians 0.18-9.77 m), `f11fe8a1`'s one 8.05 m. The request unpack 0x14136f810 runs its
+    catch-up (gait + 1 at 2..5 m, gait 3 beyond) only for dest mode 0; 99 % of the moving samples are kind 1, dest mode
+    1. A walker (action A kind 1) is now taken only when his own destination is within 3 m (flat) of the host copy's
+    (`LegMatch`; the hook packs each realized non-puppet guard every 0.5 s; frame line `leg_wait`). That it helps is
+    not shown [U]: in `0d801772` every take passed it, p90 was still 9.4 m, guard 19 with the host copy's destination
+    ran the opposite way, and on the same guards (15, 17, 18, 246) the error went 6.43 to 4.38 m. [U] what in the
+    body keeps the old leg (the path follower's own target is not in the 0x70 request).
+- **What a player sees with the key named** [O]: puppets jump 15-22 m between two 0.5 s census samples 7 / 13 / 13
+  times a run (the engine's 15 m warp of a copy left too far behind [I]); Lua's near release took puppets at 73.9 m
+  (after a 16 m warp toward the guest), 79.8 m and 79.9 m, which the 0.5 s census (minimum 80.4-99.5 m) missed;
+  ALERT came at the end of `fbf3522a` and `f11fe8a1` with no puppet, so `why=phase_limit` never fired in a game.
+  Unexplained [U]: in `0d801772` the guest's screen alone showed a CP radio report of a possible intruder about 1 s
+  after the run's only `order_clear` and guard 17's take, in calm, before any shot.
+- **Riders**: the far rule skips a guard whose `GetVehicleGameObjectId` is a game object (never taken, released
+  `why=vehicle`, not registered by the host). [U] whether a soldier at a gun emplacement answers that command.
+- **Logs**: `soldier_act_frame` adds `payload_ids` (the aim-target swaps), `due`, `reapply`, `expired`, `order_clear`,
+  `leg_wait` (`due` counts just before the unpack, so applied / due restates only 0 unpack faults; delivery is the
+  host's `staged` against the guest's `rx`, 55-66 % under `-WanSim bad`); `event=mirror_caps`, `event=mirror_peer`, `soldier_act_mirror=...; phase=calm|all`.
+- **The watch spots** (known ground, both measured standing points of `fbf3522a`): A (424.627, 271.559, 2025.110), the
+  end of the walk south (four runs) and B (414.897, 274.034, 2017.557). From A a bush hides guard 17's later route;
+  from B a bush hides 17's whole route; guard 15's patrol by the fence is visible from both.
+
+#### 7.20 Enemy round 7 track A: guards at the same height, the far fights (lab keys `drive_vert`, native only; `place_reach`, CFG r[19] bit 2048)
+
+- **What round 6 left** (7.18): `drive_vert` snapped copies only 63-121 m out (place_reach's band), at most 4 of 8 snaps
+  held, "landed" was `h=1` with no position read-back, and its 1 s snap reset the 2 s `drive_sink` window. At the old
+  defaults the host's copy of 2929558510 (a guard on a wall top about 49 m from the host's quiet spot) was left 2.2-3.3 m
+  under its target in 4 of 6 runs, every time within 60 m. place_reach's no-key run `35d4074f` had a far copy (1179373153,
+  ~150 m) drop 3.7-5.4 m after a landed placement.
+- **The y read-back** (`lua/coop/world_readback.lua`, a new chunk after `world_mirror.lua`; protocol section 37): 0.5 s
+  and 2 s after every vert snap, every landed drive step that ends a place_reach hold, every landed kind-3 placement of a
+  held copy or of a copy beyond 60 m, and every put-back, the copy's GetPosition y against where it was put
+  (`event=readback; src; at; dy_m; held` within 1 m). It runs in the placement tick (`P.sinkTick`), so it does not
+  depend on the guard still being driven.
+- **drive_sink apart from snaps**: moved from `world_snap.lua` into the new chunk (P.hdr). The time the reply's `v` puts
+  the copy more than 1.5 m under the target is summed across readings; a reading level for less than 2 s (a snap that
+  did not hold) does not reset it, level for 2 s does. Each gap between two low readings counts up to 2 s, so sparse
+  readings count as in 0.15.1 (the round's first cap, 500 ms, made readings 1 s apart need 4 s; fixed after the
+  skeptic, 835bcfae). Not yet seen on a sinking copy in a run (below).
+- **No thrash** (native `DriveReceipt`): at most 2 vert snaps of one copy in 10 s from the first; the third due snap is
+  not taken (`world_drive=vert_stop`, once per window).
+- **Far copies** (place_reach only): a read-back that finds a copy beyond 60 m more than 1.5 m under where it was put
+  (and under the owner's newest sample of him, when one is at most 3 s old: the owner did not go down too) puts him back
+  once (his placement queued again, or that newest sample), ends his force-realize when that put-back is done (or at once
+  when nothing can put him back) and starts no new realize hold for him for 10 s (`event=readback_fix`,
+  `event=readback_nohold`). Why this fix: in `35d4074f` the drop came while the hold force-realized him ~150 m from the
+  host [I: on a floor the host has not loaded]; one put-back gives the copy its place again, and ending the force-realize
+  lets the engine stop simulating him there instead of letting him fall again; the 10 s without a hold stops the hold /
+  fall / hold loop.
+- **Report**: `enemy_div_report.py` counts `guard_fell` on both copies (it missed `35d4074f`'s host row) and prints the
+  read-backs per copy and source (held, under or above where the copy was put: a copy driven on after it was put
+  measures the ground he ran to, not a fall), the guards under / above, the 2 s read-backs got, cut by a newer arm of
+  the same copy (one slot per copy) or open at the log end, the put-backs, the vert snaps and stops
+  (`tests/enemy_div_report_check.py`).
+- **Scenario** `enemy-vert-alert.txt`: `enemy-latch-alert.txt` with a height watch of 2929558510 in its second block
+  (the guest 8 m from him, so he is guest-owned and the host's copy is driven 49 m from the host as in `41f2b07f`; this round he was 67-73 m off; both cameras on him
+  with `aim_ent`, the host through binoculars, frames v-a / v-b 3 s apart, before the guest's shot).
+- **Runs** (play, `-WanSim bad`, the gun profile, research build, afgh-ledge, at f945663d) [O]:
+  - `90d9b4d1` (`drive_vert=1`; join, vert-alert): 0 vert snaps on both copies. The host stood at the quiet spot 67-73
+    m from 2929558510 (49 m in `41f2b07f`: he moves along the wall), so its copy of him was placed by M3, not driven
+    (his place read-backs 0.00 m). Read-backs: host 293 / guest 48, all held (place); 2 s read-backs host 102 of 191
+    (87 cut by a newer arm). 0 `drive_sink` (no copy driven in the 60 m band: the counter not exercised [U]). The guest
+    was downed in the ALERT (t 336621486); host M3 p90 15.83 m, 4.32 m before that (161 samples, the first ~80 s of the
+    alert part); during the down the per-second median place error was 14-29 m (max 48.9 m) for about 12 s.
+  - `ddcdec94` (`place_reach=1, drive_vert=1`; join, quiet, integ-carry, vert-alert): 2 vert snaps, both of the host's
+    copy of 2929558510 at 70-71 m: gap -2.40 m, then +1.88 m 1.7 s later; read-backs -1.27 m (0.5 s), -1.26 m (0.5 s),
+    -1.88 m (2 s; the fix skipped `why=owner`). Far placement read-backs 37 of 41 held (+1.02..+1.55 m over where put
+    for three guards within 3.5 s; one `place_drop` with its owner). 0 put-backs needed. 9 holds, 9 landed. 0
+    `drive_sink` / `place_sink` / `guard_fell`, latches, faults, game overs. Host M3 p90 11.63 m; 2.27 m (p50 0.94 m,
+    983 samples) before the guest was downed (t 337325821); after it 110 M3 placements were refused `range` with
+    `near=host` and the per-second median place error rose to 52 m (max 65.2 m) by 25 s after the down, when the log
+    ended. The three not-held place lines above where put were driven copies (`place_div why=driven`), not pops.
+  - `1870d1bf` (no key named, at e0bd0352; join, quiet, integ-carry, latch-alert): 0 latches, faults, game overs,
+    `drive_sink`, `place_sink`, `guard_fell`; guest place error p90 1.72 m; host M3 p50 1.93 / p90 6.89 m (no guest
+    down); read-backs host 486 / guest 26, all `src=place`, all held; 0 vert snaps, 0 put-backs, 0 holds.
+- **Frames** [O, looked at]: no matched pair. `90d9b4d1` v-a: host binoculars, a guard by his marker at 67 m; guest 8 m
+  from him, a high wall and its empty top under a red threat arc. `ddcdec94` v-a / v-b: host binoculars, only his
+  marker at 72 / 70 m, no body; the guest's v-b figure stands 3-4 m from the camera where the third-person character
+  stands: most likely the guest's own character, not the guard [I] (corrected after the skeptic).
+- **Defaults**: both keys stay off unless named. drive_vert: no snap within 60 m, 0 of 3 read-backs held, no frame.
+  place_reach: the run's host M3 p90 failed (11.63 m; the pre-down 2.27 m passes, though not like-for-like with
+  `90d9b4d1`'s 4.32 m; the drift after the guest's down happens without the key too) and its frame row failed (the host
+  saw only the marker with the key, the guard's body by his marker without it).
+- **Next**: a host point within 60 m of 2929558510 and a guest point that sees the wall top; a vert snap only while
+  the owner copy is at rest in y (the two snaps chased an owner going down and up); the host's M3 placements while the
+  guest is downed (`near=host` range refusals), then place_reach's gate again and a no-key run after any flip.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.

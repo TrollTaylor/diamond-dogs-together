@@ -228,6 +228,66 @@ int main() {
         Check(au::ExpireMirrored(1ull << 40, sa::kActFreshMs) == 1 && au::MirroredCount() == 0, "mirror lease: all lapse");
         au::ClearMirrored();
     }
+    // Round 6 (docs/world-sync-design.md 7.19): a moving puppet's unchanged request is re-applied every 1 s (runs adecad01 /
+    // 80cc0176: with 5 s the walkers lagged 5-12 m, the catch-up ran only then); a still one every 5 s; a first or changed
+    // request at once. The owner copy moves when its order-part position is >= 0.3 m from where it was at the last apply.
+    // Run fbf3522a: guard 15's puppet kept his own brain's order target (413.5, 267.6, 2133.3; mode 1) under the host's
+    // order without a target (wire +0x0e 0) and walked to it, away from the request's destination: such an order now
+    // clears the record's target (+0x00..+0x0b, the mode bits of +0x0c), as the owner's record of it is.
+    {
+        const unsigned char none[0x18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1f, 0, 0, 0, 0};
+        unsigned char pos[0x18]{};
+        std::memcpy(pos, none, sizeof(pos));
+        pos[0xe] = 1;
+        Check(!sa::OrderHasTarget(none) && sa::OrderHasTarget(pos), "an order names a target in packed modes 1..4 only");
+        pos[0xe] = 4;
+        Check(sa::OrderHasTarget(pos), "mode 4 (an id) is a target");
+        // The guest's record of guard 15 in fbf3522a (census o=): x, y, z floats, +0x0c mode 1, more bytes.
+        unsigned char rec[0x20] = {0xec, 0xbe, 0xce, 0x43, 0x31, 0xc6, 0x85, 0x43, 0xae, 0x54, 0x05, 0x45, 0x01, 0, 0, 0,
+                                   0, 0, 0, 0, 0x01, 0, 0, 0, 0, 0x01, 0, 0x1b, 0x1f, 0, 0, 0};
+        Check(sa::ClearOrderTarget(rec), "a stale target is cleared");
+        bool zero = true;
+        for (int b = 0; b < 0xc; ++b) zero = zero && rec[b] == 0;
+        Check(zero && (rec[0xc] & 7) == 0 && rec[0x14] == 0x01 && rec[0x19] == 0x01 && rec[0x1b] == 0x1b && rec[0x1c] == 0x1f,
+              "target and mode cleared, the other bytes kept");
+        Check(!sa::ClearOrderTarget(rec), "nothing to clear the second time");
+    }
+    // Runs fbf3522a / f11fe8a1: a puppet keeps walking his own pre-take leg. Guard 15: the host copy walked to (363.6,
+    // 2159.8), this copy's own brain to (414.9, 2132.8); a walker is taken only on the same leg (kActLegM 3 m, flat).
+    {
+        unsigned char req[0x70]{};
+        const float hostDest[3] = {363.64f, 270.96f, 2159.78f};
+        const std::uint64_t packed = sa::EncodePacked(hostDest);
+        std::memcpy(req + 0x40, &packed, sizeof(packed));
+        req[0x63] = 1;  // action A kind 1: a move
+        const float other[3] = {414.94f, 268.0f, 2132.75f}, same[3] = {362.0f, 275.0f, 2161.5f}, far3[3] = {367.0f, 271.0f, 2159.78f};
+        Check(!sa::LegMatch(req, other, true) && sa::LegMatch(req, same, true) && !sa::LegMatch(req, far3, true),
+              "a walker on another leg is not taken; the same leg (within 3 m flat, any height) is");
+        Check(!sa::LegMatch(req, same, false), "a walker whose own destination is unknown is not taken");
+        req[0x63] = 17;  // not a move (standing at a point): the leg does not matter
+        Check(sa::LegMatch(req, other, true) && sa::LegMatch(req, other, false), "a guard who does not move is taken as before");
+    }
+    {
+        Check(sa::kActReapplyMovingMs == 1000 && sa::kActReapplyMs == 5000, "re-apply: 1 s moving, 5 s still");
+        Check(sa::ReapplyDue(true, false, false, 0) && sa::ReapplyDue(false, true, false, 0), "re-apply: first / changed at once");
+        Check(!sa::ReapplyDue(false, false, true, 999) && sa::ReapplyDue(false, false, true, 1000), "re-apply: moving every 1 s");
+        Check(!sa::ReapplyDue(false, false, false, 4999) && sa::ReapplyDue(false, false, false, 5000), "re-apply: still every 5 s");
+        const float o0[3] = {10.0f, 2.0f, -5.0f}, o1[3] = {10.2f, 2.0f, -4.8f}, o2[3] = {10.0f, 2.0f, -4.6f}, o3[3] = {10.0f, 2.35f, -5.0f};
+        Check(!sa::OwnerMoved(o0, o1) && sa::OwnerMoved(o0, o2) && sa::OwnerMoved(o0, o3), "owner moved: >= 0.3 m (3D)");
+        // (4) the phase lever travels in the ACT_V1 p reply (no CFG bit): pl=1 calm / caution only.
+        char p[40]{};
+        Check(sa::FormatPlayerReply(1, p, sizeof(p)) && std::strcmp(p, "return {p=1,pl=1}") == 0 && sa::FormatPlayerReply(0, p, sizeof(p)) &&
+                  std::strcmp(p, "return {p=1,pl=0}") == 0, "the p reply carries the phase limit");
+        // (3) the frame line prints the aim-swap counter payload_ids (RemapAimTarget) and the apply accounting.
+        sa::Counters k{};
+        k.payload_ids = 5; k.due = 9; k.applied = 8; k.reapply_moving = 4; k.frames = 61; k.frame_p95_us = 18950;
+        char line[512]{};
+        Check(sa::FormatFrameLine(123, k, line, sizeof(line)) && std::strstr(line, "soldier_act_frame; t=123; frames=61; p95_ms=18.95;") &&
+                  std::strstr(line, "; payload_ids=5;") && std::strstr(line, "; due=9;") && std::strstr(line, "; reapply=4") &&
+                  std::strstr(line, "; applied=8;"), "the frame line prints payload_ids, due and reapply");
+        char tiny[16]{};
+        Check(!sa::FormatFrameLine(1, k, tiny, sizeof(tiny)), "the frame line refuses a short buffer");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

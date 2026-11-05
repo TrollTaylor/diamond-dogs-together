@@ -46,6 +46,19 @@ inline constexpr std::uint64_t kActMinMs = 100, kActResendMs = 1000, kActFreshMs
 // The puppet side re-applies an unchanged request only every kActReapplyMs (the 1 s resend keeps the stream fresh; the
 // FOB peer applies only new requests, and a re-posted request restarts its motion).
 inline constexpr std::uint64_t kActReapplyMs = 5000;
+// FM1 round 6 (docs/world-sync-design.md 7.19): while the owner copy moves, an unchanged request is re-applied every
+// kActReapplyMovingMs, so the engine's catch-up in the unpack (gait + 1 at 2..5 m from the owner position, gait 3 and that
+// destination beyond 5 m) runs every second (runs adecad01 / 80cc0176: with 5 s the walkers lagged 5-12 m, speed ratio p50
+// 0.19 / 0.78). The owner copy moves while its order-part position is >= kActMoveM (3D) from where it was at the last apply.
+inline constexpr std::uint64_t kActReapplyMovingMs = 1000;
+inline constexpr float kActMoveM = 0.3f;
+bool OwnerMoved(const float (&was)[3], const float (&now)[3]) noexcept;
+// Whether the hook unpacks the mailbox request now: a first (or re-mirrored) or changed request at once, an unchanged one
+// kActReapplyMovingMs after the last apply while the owner copy moves, else kActReapplyMs.
+bool ReapplyDue(bool first, bool changed, bool moving, std::uint64_t age_ms) noexcept;
+// The ACT_V1 p reply "return {p=1,pl=<limit>}": the local player taken, and the phase limit of lab key soldier_act (0 every
+// phase, soldier_act=1; 1 calm / caution only, soldier_act=calm), which the far rule reads (world_mirror.lua M.lim).
+bool FormatPlayerReply(unsigned phase_limit, char* out, std::size_t capacity) noexcept;
 inline constexpr unsigned kActPartsPer100Ms = 24;
 // Players 0 and 1 swap between the copies (GameObjectId type 0); any other id is unchanged.
 std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
@@ -60,6 +73,21 @@ bool RemapAimTarget(unsigned char (&wire)[0x70]) noexcept;
 bool RequestChanged(const unsigned char (&a)[0x70], const unsigned char (&b)[0x70]) noexcept;
 // Orders: a target position (mode 1, packed at +0) moved >= 5 cm, or any other byte.
 bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]) noexcept;
+// Round 6, run fbf3522a (design 7.19): the order unpack 0x1413701f0 writes the target (+0x00..+0x0b) and its mode (the low
+// 3 bits of +0x0c) only for packed modes 1..4 (wire +0x0e); a packed order without a target leaves the puppet's own
+// stale one (his brain's, from before he was a puppet), and his legs walked to it, away from the host copy's request
+// (guard 15: 15.7 m off at the host copy's speed). Whether a packed order names a target (wire +0x0e is 1..4):
+bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept;
+// Clears the target of an unpacked order record (R+0x1b0, 0x20 bytes): +0x00..+0x0b zero, +0x0c's low 3 bits zero (as the
+// owner's record of an order without a target); true when it held one.
+bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept;
+// Round 6, runs fbf3522a / f11fe8a1 (design 7.19): a puppet keeps walking his own leg (the destination his own brain had
+// before the take) at the host copy's speed although his record holds the host copy's request (packed byte-identical):
+// takes whose own destination was the host copy's replayed at p50 0.0 m, the others at 3.5 m (guards 15 / 18: 56-58 m
+// apart, 7-11 m off). A candidate is taken only when the host copy's request is not a move (action A kind 1) or this
+// copy's own destination (R+0x80) is within kActLegM (flat) of its destination; unknown own destination: not a move match.
+inline constexpr float kActLegM = 3.0f;
+bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)[3], bool own_valid) noexcept;
 // The rate cap: a change goes out kActMinMs after the last send at the earliest, an unchanged record every kActResendMs.
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
 // The network-position entry 0x136f810 reads (0x18 bytes): xyz, yaw, flags +0x14 bit 0 (valid).
@@ -98,15 +126,22 @@ void ReleaseAll() noexcept;
 // Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
 // hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
 // drop of 9 guards whose own brain still ran).
-bool QueryFresh(std::uint16_t slot) noexcept;
+// Round 6: and, for a host copy's move, this copy's own destination on his leg (LegMatch; frame line leg_wait).
+bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept;
 // Research command "mirror off|on": while paused, ACT_V1 m is refused "paused" (Lua releases every puppet).
 void SetPaused(bool paused) noexcept;
 bool Paused() noexcept;
 struct Counters {
     std::uint32_t tx_parts, staged, rx, applied, orders, refuse_table, refuse_fault, refuse_stale, remap_player, payload_ids,
         mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
+    // Round 6: due = request applies the rule asked for (first, changed, moving 1 s, still 5 s) on realized puppets;
+    // reapply_moving = those that were a moving owner's 1 s re-apply; same / unrealized / expired as the frame line's.
+    std::uint32_t due, reapply_moving, same, unrealized, expired, order_clear, leg_wait;  // order_clear: stale order targets cleared; leg_wait: walkers not taken (LegMatch)
 };
 Counters ReadCounters() noexcept;
+// The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the
+// aim-target swaps, RemapAimTarget), due and reapply. False when it does not fit.
+bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_t capacity) noexcept;
 // The ACT_V1 reply, a Lua table constructor: {f,tx,rx,ap,od,sh,mi,fd,fn} (od: orders re-posted; never a Lua reserved
 // word as a key: run 963ab276's {..,or=..} did not compile in Lua, so the guest's Lua never saw f=1 and set no puppet).
 // With owner_mm (the m reply), ",ox=,oy=,oz=" the owner copy's position in mm from the newest order part (run 94a7bf2a:

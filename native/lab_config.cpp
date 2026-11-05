@@ -508,8 +508,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.soldier_perceive = false;
     }
     else if (Equals(key, "soldier_act")) {
-        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off.
-        ok = ParseBool(value, result.soldier_act);
+        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off. Round 6, the
+        // user's decision D-FM1 (a): on (1, calm) mirrors only in calm / caution (the ACT_V1 p reply's pl=1, no CFG bit);
+        // all (research) keeps every phase (design 7.16).
+        const bool every = Equals(value, "all");
+        ok = every || Equals(value, "calm") || ParseBool(value, result.soldier_act);
+        if (ok && (every || Equals(value, "calm"))) result.soldier_act = true;
+        result.soldier_act_calm = ok && result.soldier_act && !every;
         result.soldier_act_given = true;
         if (!ok) result.soldier_act = false;
     }
@@ -524,6 +529,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.place_reach);
         result.place_reach_given = true;
         if (!ok) result.place_reach = false;
+    }
+    else if (Equals(key, "drive_vert")) {
+        // Enemy gaps 3 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.drive_vert);
+        result.drive_vert_given = true;
+        if (!ok) result.drive_vert = false;
     }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
@@ -1957,12 +1968,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // rehearsal -WanSim bad); a named 0 is the off switch.
     if (!c.world_horse_share_given) c.world_horse_share = gun;
     // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): off unless
-    // named in lab and play (round 2's gate did not pass: 8cfe8e97 / 7f3155c8, the downed player's own view of their body
-    // on the horse); a named 1 runs in play too.
+    // named in lab and play (BODY0 round: the downed player lies on the horse on both screens through the ride, but on
+    // their own screen crouches on it after the dismount; the gate did not pass); a named 1 runs in play too.
     if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
-    // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): off unless named in lab and play
-    // until a hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
-    if (!c.world_horse_pillion_given) c.world_horse_pillion = false;
+    // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): follows the gun profile in lab and
+    // play since the M3c round (with its 2.5 / 2.8 m ride hold, lua/coop/world_horse_share.lua); a named 0 is the off switch.
+    if (!c.world_horse_pillion_given) c.world_horse_pillion = gun;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
@@ -2046,10 +2057,18 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
-    // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach and body_dead stay off unless named. place_reach's runs
-    // 9023e5c6, 8281b868, 3c9d1250 (named) and b77e2104 (on by default for that run) show it in both copies' logs (the
-    // host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 / 2.63 m, 798b51dd without it 6.97 m; 0 latches),
-    // but no frame shows the watched guard on the host's screen (terrain hid him at 95 m); body_dead's runs carried no corpse.
+    // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
+    // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
+    // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
+    // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert stays off unless named. Every vert snap seen (runs
+    // 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its receiver, so it needed place_reach's 60-160 m band and
+    // the 60 m band live at the defaults was never exercised; "landed" is h=1 with no position read-back, a second snap
+    // 1.4-1.7 s later shows at most 4 of 8 moves held, its 1 s snap masks the 2 s drive_sink detector, and no frame shows it.
+    // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): place_reach and body_dead stay off unless named. place_reach's
+    // frames matched in runs 617311eb / 025fbb28 (the host's binoculars 108-109 m from guest-owned 1740692850: his body at
+    // the crosshair beside the guest's character, copies 0.1-1.4 m apart; host place error p90 2.5 / 1.99 m), but its no-key
+    // run 35d4074f failed the drive_sink row: the host's copy of 1179373153, ~150 m off and held, dropped 3.7 m after a
+    // landed placement and was 5.1 m under his owner. body_dead's runs carried no corpse.
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

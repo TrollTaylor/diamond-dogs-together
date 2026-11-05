@@ -137,11 +137,15 @@ def analyse(host, guest):
         'soldier_warp_disabled': sum(1 for l in host + guest if 'soldier_warp=disabled' in l),
         'soldier_warp_soldier_latched': sum(1 for l in host + guest if 'soldier_warp=soldier_latched' in l),
         'fault': sum(1 for l in host + guest if 'refused=fault' in l or 'reason=fault' in l),
-        'game_over': sum(1 for l in host + guest if 'GameOver' in l or 'reason=game_over' in l),
+        # The mod's shared game over (world_recovery.lua: both players downed) logs step=shared_game_over on the host and
+        # step=game_over_applied on the guest (run 617311eb: missed by the old patterns).
+        'game_over': sum(1 for l in host + guest if 'GameOver' in l or 'reason=game_over' in l or
+                         'step=shared_game_over' in l or 'step=host_game_over' in l or 'step=game_over_applied' in l),
         'roster_mismatch': sum(1 for l in host + guest if 'roster_mismatch' in l),
         'overflow': 0,
-        # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
-        'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
+        # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only. Both copies (run
+        # 35d4074f: the host's copy of 1179373153 10.5 m under; this row counted guest lines only).
+        'guard_fell': sum(1 for l in host + guest if 'event=place_div' in l and 'why=fall' in l),
         # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
         'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
         'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
@@ -184,6 +188,31 @@ def analyse(host, guest):
     r['m3_host_err_samples'] = hs
     r['m3_host_err_p50_m'] = quantile(hb, 0.5)
     r['m3_host_err_p90_m'] = quantile(hb, 0.9)
+    # Enemy round 7 (runs 90d9b4d1 / ddcdec94): after the guest is downed the host refuses its M3 placements as out of
+    # range (near=host) and its copies of the guest's guards drift 40-60 m; the error before the guest's first down apart.
+    down = None
+    for l in guest:
+        if 'event=downed' in l and 'step=entered' in l:
+            m = re.search(r't_ms=(\d+)', l)
+            if m:
+                down = int(m.group(1))
+                break
+    r['guest_downed_at'] = down
+    db, ds = [0] * 7, 0
+    for l in host:
+        if 'event=place_err' not in l:
+            continue
+        f = fields(l)
+        try:
+            h = [int(x) for x in f.get('h', '').split(',')]
+            t = int(f.get('t_ms', 0) or 0)
+        except ValueError:
+            continue
+        if len(h) == 7 and (down is None or t < down):
+            db, ds = [a + b for a, b in zip(db, h)], ds + int(f.get('n', 0))
+    r['m3_host_err_samples_before_down'] = ds
+    r['m3_host_err_p50_m_before_down'] = quantile(db, 0.5)
+    r['m3_host_err_p90_m_before_down'] = quantile(db, 0.9)
     owners = [fields(l) for l in host if 'event=owner;' in l or 'event=owner; ' in l]
     r['m3_owner_changes'] = len(owners)
     last, fast = {}, 0
@@ -227,6 +256,49 @@ def analyse(host, guest):
     r['body_tx_max'] = max(tx.values()) if tx else 0
     r['place_body_refused'] = sum(1 for l in host + guest if 'event=place_body' in l and 'fix=0' in l and 'why=' in l and
                                   'why=none' not in l)
+    # Enemy round 7 track A (design 7.20, lua/coop/world_readback.lua): the y read-backs 0.5 s / 2 s after a vert snap,
+    # a held landing, a far placement or a put-back, per copy and source (held = within 1 m of where he was put; a
+    # not-held line is under or above that spot: a copy driven on after it was put measures the ground he ran to, not
+    # a fall); the guards under / above; the 2 s read-backs (one slot per copy: a newer arm within 2 s cuts the older
+    # one's 2 s line); the far put-backs; the drive_vert snaps and the no-thrash stops (native world_drive lines).
+    r['readback'], r['readback_fix'], r['vert_snaps'], r['vert_stop'] = {}, {}, {}, {}
+    r['readback_under_guards'], r['readback_above_guards'], r['readback_2s'] = {}, {}, {}
+    for side, lines in (('host', host), ('guest', guest)):
+        per, under, above, pend = {}, set(), set(), set()
+        two = {'armed': 0, 'got': 0, 'cut': 0, 'open': 0}
+        for l in lines:
+            if 'event=readback;' in l or 'event=readback; ' in l:
+                f = fields(l)
+                row = per.setdefault(f.get('src', '?'), {'held': 0, 'under': 0, 'above': 0})
+                try:
+                    dy = float(f.get('dy_m', '0'))
+                except ValueError:
+                    dy = 0.0
+                if f.get('held') == '1':
+                    row['held'] += 1
+                elif dy < 0:
+                    row['under'] += 1
+                    under.add(f.get('ent'))
+                else:
+                    row['above'] += 1
+                    above.add(f.get('ent'))
+                ent = f.get('ent')
+                if f.get('at') == '500':
+                    two['armed'] += 1
+                    if ent in pend:
+                        two['cut'] += 1
+                    pend.add(ent)
+                elif f.get('at') == '2000':
+                    two['got'] += 1
+                    pend.discard(ent)
+        two['open'] = len(pend)
+        r['readback'][side] = per
+        r['readback_under_guards'][side] = sorted(under)
+        r['readback_above_guards'][side] = sorted(above)
+        r['readback_2s'][side] = two
+        r['readback_fix'][side] = sum(1 for l in lines if 'event=readback_fix' in l and 'put=1' in l)
+        r['vert_snaps'][side] = sum(1 for l in lines if 'world_drive=vert;' in l)
+        r['vert_stop'][side] = sum(1 for l in lines if 'world_drive=vert_stop' in l)
     return r
 
 
@@ -296,6 +368,11 @@ def main(argv=None):
                   r['m3_host_err_samples'], r['m3_host_err_p50_m'] and round(r['m3_host_err_p50_m'], 2),
                   r['m3_host_err_p90_m'] and round(r['m3_host_err_p90_m'], 2), r['m3_guest_place_first'], r['m3_engage'],
                   r['m3_phase_down'], r['m3_phase_down_applied']))
+        if r['guest_downed_at'] is not None:
+            print('  M3: the guest was first downed at t_ms %d; host place error before it %d samples p50 %s m p90 %s m' % (
+                r['guest_downed_at'], r['m3_host_err_samples_before_down'],
+                r['m3_host_err_p50_m_before_down'] and round(r['m3_host_err_p50_m_before_down'], 2),
+                r['m3_host_err_p90_m_before_down'] and round(r['m3_host_err_p90_m_before_down'], 2)))
     if r['m4_host']['tx'] or r['m4_guest']['calls']:
         print('  M4: host snap %s / drive %s; guest snap %s / drive %s' % (r['m4_host'], r['m4_host_native'], r['m4_guest'],
                                                                           r['m4_guest_native']))
@@ -303,6 +380,13 @@ def main(argv=None):
           'body_tx %d (max per body %d), body placements refused here %d' % (
               r['relayed_host'], r['backoff_host'], r['unrealized_host'], r['relayed_guest'], r['backoff_guest'],
               r['unrealized_guest'], r['body_tx'], r['body_tx_max'], r['place_body_refused']))
+    print('  read-backs (held / under / above per source): host %s guest %s; under: host %s guest %s; above: host %s '
+          'guest %s; 2 s read-backs (armed / got / cut by a newer arm / open): host %s guest %s; far put-backs %s; '
+          'vert snaps %s, vert stops %s' % (
+              r['readback']['host'], r['readback']['guest'], r['readback_under_guards']['host'] or 'none',
+              r['readback_under_guards']['guest'] or 'none', r['readback_above_guards']['host'] or 'none',
+              r['readback_above_guards']['guest'] or 'none', r['readback_2s']['host'], r['readback_2s']['guest'],
+              r['readback_fix'], r['vert_snaps'], r['vert_stop']))
     print('  crossfire: terminal_win %d, REJECT 12 %d, not_attributed %d; host scan avg %s us, max %s us' % (
         r['terminal_win'], r['reject_12'], r['not_attributed'],
         None if r['scan_avg_us'] is None else round(r['scan_avg_us']), r['scan_max_us']))

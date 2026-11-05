@@ -298,7 +298,7 @@ do
     fmt("horse_probe=pin;step=start;dy_cm=%d;at=%d,%d,%d", dy, round(b[1] * 100), round(b[2] * 100), round(b[3] * 100)))
   elseif sub == "cargo_pose" and #a == 7 then
    local C, p, q, b, d, r = W.horseCargo, whole(a[3], 0, 3000), whole(a[4], 0, 3000), whole(a[5], -1000, 1500), whole(a[6], 0, 20000),
-    whole(a[7], 0, 4)
+    whole(a[7], 0, 15)
    if type(C) ~= "table" or not (p and q and b and d and r) or not C.setVictimPose(p, q, b, d, r) then return false, "horse_probe;refused=args" end
    return true, fmt("horse_probe=cargo_pose;placed_mm=%d;census_mm=%d;back_mm=%d;down_mmps=%d;reset=%d", p, q, b, d, r)
   end
