@@ -109,6 +109,8 @@ constexpr OpSpec kOps[] = {
     // Enemy sync M7 FM1 (protocol section 33): tick, slot, seq, part 0..3, ten u32 words; a datagram, both directions.
     {op::soldier_act, "SOLDIER_ACT", 1, Dir::both, Wire::datagram, 2, false, false, 14, 0, 0, 49,
      {U32(), U16(1, kSnapSlots), U16(), U8(0, 3), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32(), U32()}},
+    // FM1 round 6 (protocol section 36): caps (bit 1 the far mirror on, bit 2 its calm phase limit), the FM1 revision.
+    {op::act_caps, "ACT_CAPS", 1, Dir::both, Wire::reliable, 2, false, false, 2, 0, 0, 3, {U16(), U8()}},
     // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
     {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
      {U16(1), U32(), U8(0, 1), U8(0, 2), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
