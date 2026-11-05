@@ -1,0 +1,24 @@
+# Enemy round 8 track A (docs/world-sync-design.md 7.22), the short down part for the no-key session: after
+# enemy-latch-alert.txt (its ALERT, the guest among the outpost guards, the host 50 m south) the guest is dropped from the
+# air on run ddcdec94's fall line beside the outpost cliff (436.105, 240.0, 2181.736; they came to rest at y 92.1 on the
+# cliff foot there) and stays down about 30 s under the guards they own. Gate (range_flat): the host M3 place error p90
+# while the guest is down <= 5 m, those placements applied (near=guest), 0 latches, faults, game overs.
+# Session: enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert, enemy8-down-short (~550 s).
+logmark both
+guest run teleport 436.105 240.000 2181.736 0
+wait 9000
+guest run downed_status
+guest run position
+logmark both
+host run enemy_aim_nearest 1.1
+wait 800
+both capture ds-1
+wait 14000
+host run world_status
+guest run world_status
+guest run downed_status
+both capture ds-2
+wait 10000
+host run world_status
+guest run world_status
+logmark both
