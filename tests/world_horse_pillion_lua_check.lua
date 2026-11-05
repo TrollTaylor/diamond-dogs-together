@@ -39,7 +39,7 @@ local function fixture(o)
             if not f.seatOk then return {ready = false, reason = "not_riding"} end
             return {ready = true, seat = 1}
         end
-        local hx, hy, hz, hyaw, hr = verb:match("^hold0 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d)$")
+        local hx, hy, hz, hyaw, hr = verb:match("^hold0 30010 7 (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
         if hx then
             f.holds[#f.holds + 1] = {tonumber(hx), tonumber(hy), tonumber(hz), tonumber(hyaw), tonumber(hr)}
             return {ready = true, held = true}
@@ -340,6 +340,9 @@ m3g.P.setPose(350, 800, 3, 450, 300)
 local n3 = #m3g.holds
 m3g.ride(1)
 check(#m3g.holds == n3 + 1 and m3g.holds[#m3g.holds][5] == 2, "mode 3: hold0 with the C0 reset (2)")
+m3g.P.setPose(350, 800, 6, 450, 300)
+m3g.ride(1)
+check(m3g.holds[#m3g.holds][5] == 14, "mode 6: hold0 with the C0 reset, the write watch and the pin (14)")
 -- Mode 5: hold0 with the A0 reset and the Lua Warp in the same frame.
 local m5h, m5g = fixture(), fixture({host = false})
 m5h.rides, m5h.horse.occupied = true, true

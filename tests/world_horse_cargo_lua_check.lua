@@ -27,7 +27,7 @@ local function fixture(o)
   end
   -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
   if verb and verb:find("^hold0 ") then
-   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) ([0-3])$")
+   local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
    f.holds[#f.holds + 1] = verb
    if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
    f.warps[#f.warps + 1] = {index = 0, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
@@ -279,9 +279,11 @@ check(f.C.busy(), "the victim's copy is busy too")
 -- Round 2: hold0 with no reset (a242d867, c2927350) or the A0 reset (8cfe8e97, 7f3155c8) kept body 0 with the horse but
 -- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose but drops under the horse.
 -- BODY0 round: the C0 reset alone (C0.vt+0x90 sets the 0x580 record's +0x2C0 bit 0x20, which C0.vt+0xD0 0x14128E010
--- reads, clears and answers "no fall" for that frame) with hold0's position: default 2; the lab lever picks 0..4.
-check(w.via == "hold0" and #f.holds == 1 and f.holds[1]:find(" 2$"), "by default body 0 moves by hold0 with the C0 reset")
-check(f.C.RESET == 2, "the default is hold0 + C0 (reset 2)")
+-- reads, clears and answers "no fall" for that frame) keeps the lying pose but the body still dropped under the horse
+-- (run cfd2b604, victim_pin drop 136-288 cm); with the native write watch (4) and pin (8) on body 0's transform the
+-- default is 14; the lab lever picks 0..15 (4 the Lua Warp).
+check(w.via == "hold0" and #f.holds == 1 and f.holds[1]:find(" 14$"), "by default body 0 moves by hold0 + C0 + watch + pin")
+check(f.C.RESET == 14, "the default is hold0 + C0 + watch + pin (14)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -321,8 +323,9 @@ f.C.placed(172800, 2600, 310000, 0)
 check(math.abs(f.lastWarp(0).y - (2.6 + f.C.VICTIM_PLACED_MM / 1000)) < 1e-6, "a rise: at once")
 check(f.C.DOWN_MMPS == 1000, "the drop rate is 1 m/s")
 -- The lab lever horse_probe cargo_pose: the placed / census heights, the offset behind the root, the drop rate.
-check(f.C.setVictimPose(1700, 1300, 200, 0, 2) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
- not f.C.setVictimPose(1700, 1300, 200, 0, 5), "setVictimPose: in range only (the reset 0..4, 4 the Lua Warp)")
+check(f.C.setVictimPose(1700, 1300, 200, 0, 15) and not f.C.setVictimPose(9000, 1300, 200, 0, 1) and
+ not f.C.setVictimPose(1700, 1300, 200, 0, 16) and f.C.setVictimPose(1700, 1300, 200, 0, 2),
+ "setVictimPose: in range only (the reset 0..15, 4 the Lua Warp)")
 f.now = f.now + 50
 f.C.placed(172900, 2600, 310000, 0)
 w = f.lastWarp(0)

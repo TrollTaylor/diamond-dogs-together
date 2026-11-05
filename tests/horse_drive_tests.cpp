@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_ride_wire.hpp"
@@ -70,7 +71,10 @@ void TestParse() {
               r.x == -656010 && r.y == 1200 && r.z == 877730 && r.yaw == -3141 && r.reset == 1,
           "hold0 with the A0 reset");
     Check(Parse("hold0 30010 7 0 0 0 0 3", r) && r.reset == 3 && Parse("hold0 30010 7 0 0 0 0 0", r) && r.reset == 0, "hold0 resets 0..3");
-    Check(!Parse("hold0 30010 7 0 0 0 0 4", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
+    // BODY0 round: bit 2 (4) the write watch on body 0's transform, bit 3 (8) the pin (horse_body_watch).
+    Check(Parse("hold0 30010 7 0 0 0 0 14", r) && r.reset == 14 && Parse("hold0 30010 7 0 0 0 0 4", r) && r.reset == 4,
+          "hold0 resets 0..15 (C0 + watch + pin = 14)");
+    Check(!Parse("hold0 30010 7 0 0 0 0 16", r) && !Parse("hold0 30010 7 0 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0 1", r) &&
               !Parse("hold0 30010 7 0 0 0 31417 1", r),
           "hold0: seven numbers, free roam, yaw and reset bounds");
 }
@@ -344,9 +348,44 @@ void TestPillionKey() {
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_pillion && play.play_refused == 0, "a named 1 runs in play too");
 }
 
+// BODY0 round: the pure part of the hardware write watch on body 0's transform (native/include/mgscoop/horse_body_watch.hpp).
+void TestBodyWatch() {
+    namespace w = mgscoop::horse_body_watch;
+    // DR7: L0 (bit 0) and L1 (bit 2), RW0 = RW1 = 01 (write), LEN0 = LEN1 = 11 (4 bytes); other bits kept.
+    const std::uint64_t on = w::Dr7(0x400, true);
+    Check(on == (0x400ull | 1ull | 4ull | (1ull << 16) | (3ull << 18) | (1ull << 20) | (3ull << 22)), "Dr7: two 4-byte write watches");
+    Check(w::Dr7(on, false) == 0x400ull, "Dr7 off: only our bits cleared");
+    Check(w::Dr7(0x10 | (3ull << 24), true) == (0x10ull | (3ull << 24) | 5ull | (1ull << 16) | (3ull << 18) | (1ull << 20) | (3ull << 22)),
+          "Dr7: DR2's bits untouched");
+    Check(w::Ours(1) && w::Ours(2) && w::Ours(3) && !w::Ours(4) && !w::Ours(0x4000), "Ours: B0 / B1 only");
+    w::Table t{};
+    const std::uint32_t ret[w::kRets] = {0x9c1b90, 0x123, 0, 0};
+    w::Note(t, 0x1ad566c, 7, 0, ret);
+    w::Note(t, 0x1ad566c, 7, 0, ret);
+    w::Note(t, 0x1ad1f82, 9, 3, ret);
+    w::Note(t, 0x1ad1f82, 9, 1, ret);
+    Check(t.used == 2 && t.traps == 4 && t.rip[0].rva == 0x1ad566c && t.rip[0].n == 2 && t.rip[1].n == 2 && t.rip[1].ord_min == 1 &&
+              t.rip[1].ord_max == 3 && t.rip[1].tid == 9 && t.rip[1].ret[0] == 0x9c1b90,
+          "Note: one row per writer, its count, thread, order range and return rvas");
+    for (std::uint32_t i = 0; i < 20; ++i) w::Note(t, 0x100 + i, 1, 0, ret);
+    Check(t.used == w::kRips && t.dropped == 20 - (w::kRips - 2), "Note: a full table counts dropped");
+    const std::uint64_t stack[6] = {0x5, 0x140001234, 0x7ff000000000, 0x1409c1b95, 0x142100000, 0x140abc000};
+    std::uint32_t r[w::kRets]{};
+    Check(w::StackRets(stack, 6, 0x140000000, 0x1000, 0x2000000, r) == 3 && r[0] == 0x1234 && r[1] == 0x9c1b95 && r[2] == 0xabc000 &&
+              r[3] == 0,
+          "StackRets: image text values in order (outside the text range skipped)");
+    // The pin target: T+0x20 = the centre, T+0x10 = the centre minus (0, h, 0), T+0x174 the foot y (T.vt+0x58 0x141AD5660).
+    float c[4]{}, f[4]{}, fy = 0.f;
+    w::Target(1.f, 5.f, 3.f, 0.9f, c, f, fy);
+    Check(Near(c[0], 1.f) && Near(c[1], 5.f) && Near(c[2], 3.f) && Near(c[3], 0.f) && Near(f[0], 1.f) && Near(f[1], 4.1f) && Near(f[2], 3.f) &&
+              Near(fy, 4.1f),
+          "Target: centre, foot and foot y as T.vt+0x58 writes them");
+}
+
 } // namespace
 
 int main() {
+    TestBodyWatch();
     TestMatrix();
     TestUnderRider();
     TestParse();
