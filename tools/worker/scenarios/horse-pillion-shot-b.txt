@@ -1,0 +1,98 @@
+# Horse plan M4b, part 2 of the lab and the play session (after horse-pillion-shot.txt / horse-pillion-shot-play.txt):
+# from the boot spot, (b) the guest drives and the host behind (host_press) shoots a sleeping guard 5 m ahead of the horse
+# across the driver and the neck; then the host hops off and the guest's E gets them off (the hop-off then the driver's E
+# in this order too). Frames h4b-pillion-aim-guest / h4b-pillion-shot-guest: the driver's screen.
+logmark both
+both debug godmode 1
+host debug teleport 421.16 269.2 2084.42 180
+guest debug teleport 423.00 269.5 2081.00 180
+wait 4000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+# --- (b) the guest drives, the host behind shoots a guard ahead of the horse -----------------------------------------
+logmark both
+guest run goto_horse
+wait 1500
+guest debug godmode 0
+wait 500
+guest run status
+guest expect ^status;.*god=0;.*life=
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host run goto_horse
+wait 1500
+logmark both
+host press e 150
+waitlog host 'world_lua=event=horse_pillion; step=seated; seat=1; how=host_press; token=[0-9]+; mode=6;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=driver; seat=1; how=host_press;' 5
+waitlog guest 'partner_pillion=seat;' 5
+waitlog host 'partner_seat_shot=published; vehicle=6656; seat=1; class=horse;' 5
+wait 1500
+host run spawn_enemy here
+host expect ^guard_here;ent=
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=
+wait 1500
+both capture h4b-seated
+logmark both
+host run enemy_aim_nearest 0.3 1.2 1.0
+host expect ^aim_nearest;ent=\d+;d=[2-9]\.
+wait 800
+host hold rmb 2600 nowait
+wait 1500
+host capture h4b-pillion-aim
+guest capture h4b-pillion-aim-guest
+host press lmb 120
+wait 250
+host capture h4b-pillion-shot
+guest capture h4b-pillion-shot-guest
+wait 900
+host release
+waitlog guest 'partner_pillion=aim; on=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=aim_hold; on=1; n=[0-9]+; ok=1;' 5
+wait 1200
+host run enemy_aim_nearest 0.3 1.35 1.2
+wait 800
+host hold rmb 1500 nowait
+wait 1100
+host press lmb 120
+wait 250
+host release
+wait 1200
+host run enemy_aim_nearest 0.3 1.05 0.8
+wait 800
+host hold rmb 1500 nowait
+wait 1100
+host press lmb 120
+wait 250
+host release
+wait 1000
+waitlog host 'partner_seat_shot=shot; result=shift; vehicle=6656; seat=1; apply=1;' 5
+waitlog host 'world_lua=event=commit; ent=[0-9]+; state=[45]; ver=[0-9]+; actor=host;' 8
+waitlog guest 'world_lua=event=apply; ent=[0-9]+; state=[45];' 8
+waitlog host 'world_lua=event=horse_pillion; step=seat_pin;' 5
+guest run status
+guest expect ^status;.*god=0;.*life=
+# The passenger (the host) hops off, the driver (the guest) gets off: E held 400 ms (part 1's note).
+logmark both
+host hold e 500
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=passenger; placed=1;' 5
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=passenger; side=driver;' 5
+waitlog host 'partner_seat_shot=withdrawn;' 5
+wait 1500
+guest press e 400
+waitlog guest 'world_lua=event=horse_pillion; step=driver_e_off;' 5
+wait 2500
+guest run horse_status
+guest require localMounted=0
+guest debug godmode 1
+host run horse_status
+host require localMounted=0
+host capture h4b-both-off-host
+guest capture h4b-both-off-guest

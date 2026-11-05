@@ -7991,7 +7991,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // placed a latency behind; the DM overlay seats it (In::pillion). The lease's end hands body 1 back to the stream.
     {
         bool pillion = false, seat_pose = true;
-        float back = 0.f, up = 0.f, lp[4]{}, lq[4]{};
+        float back = 0.f, up = 0.f, lp[4]{}, lq[4]{}, seat_yaw = 0.f;
         // M4: a lease live on the previous tick survives kSeatGraceTicks lapsed ticks (run d935beae: a capture's stall),
         // only with world_horse_shot named (the review: no play pass of the driver's get-off with it).
         m.pillion_hold.grace = set.horse_shot;
@@ -8007,10 +8007,23 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 pose = partner::PoseFromMetres(seat[0], seat[1], seat[2], yaw);
                 pose_valid = true;
                 pillion = true;
+                seat_yaw = yaw;
                 std::memcpy(m.pillion_seat, seat, sizeof(m.pillion_seat));
             }
         }
         m.pillion_seat_ok = pillion;
+        // M4b (world_horse_shot; runs 28015a91 / 48d31500: under the overlay seat the seat gun's hold never showed the gun):
+        // while the remote aims (its live pose's Aiming flag, kAimLingerMs past the last) the DM overlay does not seat body
+        // 1, so its native drive runs the remote's squat-aim at the rear seat (the pose above); the seat1 reply hands the
+        // seat to Lua, whose hold1 pins body 1 there (C0 + the write watch + pin). Off: 0.15.2's overlay seat whatever the aim.
+        const bool remote_aim = sample_status == pose::Status::live && (remote_flags & sync::ActionFlag::Aiming) != 0;
+        const bool aim = horse_drive::AimSeat(m.pillion_aim, set.horse_shot && pillion, remote_aim, now);
+        horse_drive::NoteSeatAim(aim, m.pillion_seat, seat_yaw, now);
+        if (aim != m.pillion_aim_on) {
+            m.pillion_aim_on = aim;
+            EmitCapped(m.mount_cap, h, "partner_mount", "partner_pillion=aim; on=%u; x_mm=%d; z_mm=%d\r\n", aim ? 1u : 0u, pose.x_mm,
+                       pose.z_mm);
+        }
         if (pillion != m.pillion || !m.pillion_logged) {
             m.pillion_logged = true;
             if (pillion || m.pillion)
@@ -8019,7 +8032,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                            pose.x_mm, pose.z_mm);
         }
         m.pillion = pillion;
-        m.pillion_pose = pillion && seat_pose;
+        m.pillion_pose = pillion && seat_pose && !aim;
     }
     dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
     // Sender: publish the local body facing (LocalBodyYaw), else vars.playerRotY.

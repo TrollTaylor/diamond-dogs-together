@@ -5404,7 +5404,10 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             LogFormat("horse_drive=seat1; n=%u; back_mm=%ld; up_mm=%ld\r\n",horse_drive_log.seats,long(q.back),long(q.up));
             horse_drive_log.last=nullptr;
         }
-        return finish("return {ready=true,seat=1}");
+        // M4b (world_horse_shot): while the remote aims the partner driver leaves body 1 to its native aim at the rear seat and
+        // notes that seat; the reply hands it to Lua (aim=1, sx/sy/sz mm, syaw mrad), whose hold1 pins body 1 there.
+        if(!hd::SeatReply(mgscoop::partner_net::NowMs(),reply,sizeof(reply))) return finish("return {ready=true,seat=1,aim=0}");
+        return finish(reply);
     }
     // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
     // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
@@ -5413,7 +5416,9 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     if(q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1) {
         const unsigned kb=q.verb==hd::Verb::hold1?1u:0u;
         hd::HoldScope hs{};
-        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=labc.world_horse_pillion;hs.pins=sc.pins;
+        // M4b: body 1 under the pillion key only with world_horse_shot (the driver's copy: body 1 aiming at the rear seat).
+        hs.body1=kb==1;hs.shot=labc.world_horse_shot;
         hs.field=sc.field;
         pp::Census bodies{};
         const bool full=!pp::ResolveCensus(partner_addresses,player,bodies);

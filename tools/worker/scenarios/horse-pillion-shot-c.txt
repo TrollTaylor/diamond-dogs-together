@@ -1,0 +1,76 @@
+# Horse plan M4b, part 3 of the lab session (after horse-pillion-shot-b.txt): from the boot spot, the host drives and
+# the guest sits behind; an A/B of the seated-shot shift on the cross-neck line (the lab lever seatshot off, then on: the
+# passenger's copy's horse life in seat_pin, the driver's life in status, the frames); then the host's E with the guest
+# behind gets both off (driver_off with the host driving).
+logmark both
+both debug godmode 1
+host debug teleport 421.16 269.2 2084.42 180
+guest debug teleport 423.00 269.5 2081.00 180
+wait 4000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+logmark both
+host run goto_horse
+wait 1500
+host debug godmode 0
+wait 500
+host run status
+host expect ^status;.*god=0;.*life=
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+guest run goto_horse
+wait 1500
+guest press e 150
+waitlog guest 'world_lua=event=horse_pillion; step=seated; seat=1; how=grant; token=[0-9]+; mode=6;' 5
+waitlog host 'partner_pillion=seat;' 5
+wait 1500
+logmark both
+guest run enemy_cam_turn 0 0
+guest expect ^cam_turn;
+guest debug seatshot off
+wait 800
+guest hold rmb 1500 nowait
+wait 800
+guest capture h4c-ab-off-aim
+guest press lmb 120
+wait 300
+guest capture h4c-ab-off-shot
+host capture h4c-ab-off-host
+guest release
+wait 1500
+waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+host run status
+host expect ^status;.*god=0;.*life=
+logmark both
+guest debug seatshot on
+wait 800
+guest hold rmb 1500 nowait
+wait 800
+guest capture h4c-ab-on-aim
+guest press lmb 120
+wait 300
+guest capture h4c-ab-on-shot
+host capture h4c-ab-on-host
+guest release
+wait 1500
+waitlog guest 'world_lua=event=horse_pillion; step=seat_pin;' 5
+host run status
+host expect ^status;.*god=0;.*life=
+waitlog guest 'partner_seat_shot=shot; result=shift; vehicle=6656; seat=1; apply=1;' 5
+logmark both
+host press e 400
+waitlog host 'world_lua=event=horse_pillion; step=unseated; seat=1; why=driver_off; side=driver;' 8
+waitlog guest 'world_lua=event=horse_pillion; step=unseated; seat=1; why=driver_off; side=passenger; placed=1;' 8
+wait 2500
+host run horse_status
+host require localMounted=0
+host debug godmode 1
+guest run horse_status
+guest require localMounted=0
+host capture h4c-both-off-host
+guest capture h4c-both-off-guest

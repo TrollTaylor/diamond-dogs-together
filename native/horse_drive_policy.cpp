@@ -2,6 +2,7 @@
 #include "mgscoop/horse_drive.hpp"
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace mgscoop::horse_drive {
@@ -13,6 +14,8 @@ std::uint64_t g_box_ms = 0;
 float g_box[3]{}, g_box_yaw = 0.f;
 float g_body[3]{};
 bool g_body_ok = false;
+std::uint64_t g_aim_ms = 0;
+std::int32_t g_aim_mm[3]{}, g_aim_yaw = 0;
 }
 
 void Matrix(float x, float y, float z, float yaw, float (&m)[16]) noexcept {
@@ -111,7 +114,9 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
 }
 
 const char* HoldRefusal(const HoldScope& s) noexcept {
-    if (!s.share || !(s.cargo || s.pillion)) return "off";
+    // M4b: the pillion key admits body 1 (the driver's copy) only with the shot key; body 0 as in M3.
+    const bool pillion = s.pillion && (!s.body1 || s.shot);
+    if (!s.share || !(s.cargo || pillion)) return "off";
     if (!s.pins) return "pins";
     if (!s.field) return "scope";
     if (!s.body) return "body";
@@ -237,8 +242,55 @@ void NoteSeatErr(SeatErr& e, const float (&seat)[3], const float (&body)[3]) noe
     ++e.n;
 }
 void Reset() noexcept {
-    g_placed_ms = g_body_ms = g_seat_ms = g_box_ms = 0;
+    g_placed_ms = g_body_ms = g_seat_ms = g_box_ms = g_aim_ms = 0;
     g_body_ok = false;
+}
+
+bool AimSeat(SeatAim& s, bool on, bool aiming, std::uint64_t now_ms) noexcept {
+    if (!on) {
+        s.last_ms = 0;
+        return false;
+    }
+    if (aiming) s.last_ms = now_ms ? now_ms : 1;
+    return s.last_ms && now_ms >= s.last_ms && now_ms - s.last_ms <= kAimLingerMs;
+}
+
+void NoteSeatAim(bool aim, const float (&seat)[3], float yaw, std::uint64_t now_ms) noexcept {
+    const bool ok = aim && std::isfinite(seat[0]) && std::isfinite(seat[1]) && std::isfinite(seat[2]) && std::isfinite(yaw) &&
+                    std::fabs(seat[0]) <= 1e6f && std::fabs(seat[1]) <= 1e6f && std::fabs(seat[2]) <= 1e6f;
+    if (!ok) {
+        g_aim_ms = 0;
+        return;
+    }
+    for (int i = 0; i < 3; ++i) g_aim_mm[i] = static_cast<std::int32_t>(std::lround(seat[i] * 1000.f));
+    float a = std::remainder(yaw, 6.2831853f);
+    g_aim_yaw = static_cast<std::int32_t>(std::lround(a * 1000.f));
+    if (g_aim_yaw > 31416) g_aim_yaw = 31416;
+    if (g_aim_yaw < -31416) g_aim_yaw = -31416;
+    g_aim_ms = now_ms ? now_ms : 1;
+}
+
+bool SeatAimTarget(std::uint64_t now_ms, std::int32_t (&mm)[3], std::int32_t& yaw_mrad) noexcept {
+    if (!g_aim_ms || now_ms < g_aim_ms || now_ms - g_aim_ms > kSeatMs) return false;
+    std::memcpy(mm, g_aim_mm, sizeof(mm));
+    yaw_mrad = g_aim_yaw;
+    return true;
+}
+
+bool SeatReply(std::uint64_t now_ms, char* out, std::size_t size) noexcept {
+    if (!out || !size) return false;
+    std::int32_t mm[3]{}, yaw = 0;
+    int n = 0;
+    if (SeatAimTarget(now_ms, mm, yaw))
+        n = std::snprintf(out, size, "return {ready=true,seat=1,aim=1,sx=%ld,sy=%ld,sz=%ld,syaw=%ld}", long(mm[0]), long(mm[1]), long(mm[2]),
+                          long(yaw));
+    else
+        n = std::snprintf(out, size, "return {ready=true,seat=1,aim=0}");
+    if (n < 0 || static_cast<std::size_t>(n) >= size) {
+        out[0] = 0;
+        return false;
+    }
+    return true;
 }
 
 } // namespace mgscoop::horse_drive
