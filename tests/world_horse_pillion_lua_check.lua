@@ -11,7 +11,8 @@ local function fixture(o)
     local f = {now = 1000, tx = {}, logs = {}, places = {}, masks = {}, warps = {}, holds = {}, seats = {}, stances = {}, rides = false,
         key = o.key ~= false, pillion = o.pillion ~= false, gen = 5, e = false, padOk = true, seatOk = true,
         horse = {x = 10000, y = 2000, z = 30000, yaw = 0, occupied = false}}
-    local W = {OP = {}, handlers = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3, mission = 30010, epoch = 7,
+    local W = {OP = {}, handlers = {}, stopHooks = {}, pairedHooks = {}, startHooks = {}, unpairedHooks = {}, paired = true, eff = 3,
+        mission = 30010, epoch = 7,
         host = o.host ~= false, role = o.host == false and 2 or 1, active = true, downed = {records = {}}}
     W.get = function(t, k) if t == nil then return nil end return t[k] end
     W.now = function() return f.now end
@@ -96,9 +97,9 @@ check(not off.P.on(), "world_horse_pillion off: off")
 -- (a) The host drives, the guest claims the rear seat with E beside the ridden horse (the raw pad read before the masks).
 local h = fixture()
 g = fixture({host = false})
+g.e = true
 g.ride(4)
 check(g.S.track ~= nil and #g.places > 0, "the guest's copy places the host's ride")
-g.e = true
 g.ride(2)
 check(#g.seatTx() == 0, "an E held on entering the zone is no press")
 g.e = false
@@ -116,6 +117,11 @@ local far = fixture({host = false})
 far.env.vars.playerPosX = 13.1
 far.ride(2); far.e = false; far.ride(1); far.e = true; far.ride(1)
 check(#far.seatTx() == 0 and far.P.state == "off", "3 m from the ridden horse: E is not a claim (it acts normally)")
+far.W.downed.rawHeld, far.W.downed.rawHeldAt = true, far.now
+far.ride(1)
+far.W.downed.rawHeldAt = far.now
+far.tick(10)
+check(far.logged("event=horse_pillion;step=e_free;dist_cm=310;hold=0"), "an unmasked E 3.1 m from the ridden horse: step=e_free")
 -- The host grants while it rides the shared horse and drives with the guest behind.
 h.rides, h.horse.occupied = true, true
 deliver(h, claim)

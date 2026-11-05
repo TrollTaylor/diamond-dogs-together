@@ -325,6 +325,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_horse_cargo);
         if (ok) result.world_horse_cargo_given = true;
     }
+    // Horse plan M3, ride behind your partner (lab and play, off unless named until its gate).
+    else if (Equals(key, "world_horse_pillion")) {
+        ok = ParseBool(value, result.world_horse_pillion);
+        if (ok) result.world_horse_pillion_given = true;
+    }
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
@@ -1932,6 +1937,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // named in lab and play (round 2's gate did not pass: 8cfe8e97 / 7f3155c8, the downed player's own view of their body
     // on the horse); a named 1 runs in play too.
     if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
+    // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): off unless named in lab and play
+    // until a hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
+    if (!c.world_horse_pillion_given) c.world_horse_pillion = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;

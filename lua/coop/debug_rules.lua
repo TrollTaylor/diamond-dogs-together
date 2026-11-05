@@ -191,11 +191,25 @@ do
    return true, fmt("mb_weapons=%s;sent=%d;applied=%d;mission=%s", R.mb and "on" or "off", sent and 1 or 0, R.mbForced and 1 or 0,
     tostring(get(vars, "missionCode")))
   end
-  for k in pairs({wormhole = true, mb_weapons = true, rules = true}) do P.handles[k] = true end
+  -- Horse plan M3 (lua/coop/world_horse_pillion.lua; debug_horse.lua and debug_buddy.lua are at their size limit):
+  -- pillion_status, and the lab lever pillion_pose <back> <rise> <mode 0|2|4> <dback> <dup> (mm: the passenger's body 0
+  -- on its placed horse, hold0 without / with the A0 reset or the Lua Warp; the driver's body 1 behind its own root).
+  local function pillion(a)
+   local Q = type(W) == "table" and W.horsePillion
+   if type(Q) ~= "table" or type(Q.status) ~= "function" then return false, "pillion_unavailable" end
+   if a[1] == "pillion_status" and #a == 1 then return true, Q.status() end
+   if a[1] ~= "pillion_pose" or #a ~= 6 or W.mode ~= 1 then return false, "pillion_pose;refused=args" end
+   local v = {}
+   for i = 2, 6 do v[i - 1] = tonumber(a[i]) end
+   if not Q.setPose(unpack(v, 1, 5)) then return false, "pillion_pose;refused=args" end
+   return true, "pillion_pose;v=" .. table.concat(v, ",")
+  end
+  for k in pairs({wormhole = true, mb_weapons = true, rules = true, pillion_status = true, pillion_pose = true}) do P.handles[k] = true end
   local base = P.run
   P.run = function(a, id)
    local c = type(a) == "table" and a[1]
    if c == "wormhole" or c == "mb_weapons" or c == "rules" then return R.command(a) end
+   if c == "pillion_status" or c == "pillion_pose" then return pillion(a) end
    return base(a, id)
   end
   local function tick()

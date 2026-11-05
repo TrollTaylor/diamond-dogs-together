@@ -5551,8 +5551,8 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     release_map = false;
     const bool pending = d.overlay_pending;
     d.overlay_pending = false;
-    if (set.noverlay == PartnerNativeOverlay::off && !set.fulton_sync && !(set.horse_share && m.visibility.horse) && !pending &&
-        !pdo::Active(m.overlay)) {
+    if (set.noverlay == PartnerNativeOverlay::off && !set.fulton_sync && !(set.horse_share && m.visibility.horse) && !m.pillion &&
+        !pending && !pdo::Active(m.overlay)) {
         m.overlay_out = pdo::Out{};
         return false;
     }
@@ -5563,6 +5563,8 @@ bool TickOverlay(Driver& d, const Hooks& h, const pp::State& st, const Clock& cl
     in.fulton = set.fulton_sync;
     // Horse plan M1: the shared-horse rider is shown this tick (partner_ride_wire Visibility::horse).
     in.horse = set.horse_share && m.visibility.horse;
+    // Horse plan M3: body 1 rides behind this copy's player (the seat1 lease): seated whatever the remote's act.
+    in.pillion = m.pillion;
     if (pending) in.debug = d.overlay_request;
     in.blocked = OverlayBlocked(d, h, st, terminating, parts_loaded, anim_ok, anim);
     in.body_present = !terminating && set.stage >= 3 && parts_loaded && !m.range_hidden && !m.visibility.hidden && !m.visibility_logged;
@@ -7877,6 +7879,35 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             dmobs.anim_stance = local_anim.stance;
             dmobs.anim_speed = local_anim.speed;
         }
+    }
+    // Horse plan M3 (lab key world_horse_pillion): the partner rides behind this copy's player on the shared D-Horse
+    // (MGS_COOP_HORSE_DRIVE_V1 seat1 lease, kSeatMs): body 1's pose is the rear seat of this copy's own body 0 this tick
+    // (RearSeat: back behind its root along its yaw, up over it), not the partner's stream, whose copy pins it on a horse
+    // placed a latency behind; the DM overlay seats it (In::pillion). The lease's end hands body 1 back to the stream.
+    {
+        bool pillion = false;
+        float back = 0.f, up = 0.f, lp[4]{}, lq[4]{};
+        if (set.horse_share && set.source == PartnerSource::net && st.local == 0 && h.read_local_body &&
+            horse_drive::SeatLease(now, back, up) && h.read_local_body(h.context, st, lp, lq)) {
+            const float yaw = partner::QuatToYaw(lq);
+            const float rider[3] = {lp[0], lp[1], lp[2]};
+            float seat[3]{};
+            horse_drive::RearSeat(rider, yaw, back, up, seat);
+            if (std::isfinite(yaw) && std::isfinite(seat[0]) && std::isfinite(seat[1]) && std::isfinite(seat[2]) &&
+                std::fabs(seat[0]) < 1000000.f && std::fabs(seat[2]) < 1000000.f) {
+                pose = partner::PoseFromMetres(seat[0], seat[1], seat[2], yaw);
+                pose_valid = true;
+                pillion = true;
+            }
+        }
+        if (pillion != m.pillion || !m.pillion_logged) {
+            m.pillion_logged = true;
+            if (pillion || m.pillion)
+                EmitCapped(m.mount_cap, h, "partner_mount", "partner_pillion=%s; back_mm=%d; up_mm=%d; x_mm=%d; z_mm=%d\r\n",
+                           pillion ? "seat" : "end", static_cast<int>(std::lround(back * 1000.f)), static_cast<int>(std::lround(up * 1000.f)),
+                           pose.x_mm, pose.z_mm);
+        }
+        m.pillion = pillion;
     }
     dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
     // Sender: publish the local body facing (LocalBodyYaw), else vars.playerRotY.
