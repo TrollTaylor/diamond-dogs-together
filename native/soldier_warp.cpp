@@ -345,6 +345,20 @@ bool DriveVertDue(float gap_m, std::uint64_t now_ms, std::uint64_t& since_ms) no
     return now_ms >= since_ms && now_ms - since_ms >= kDriveVertMs;
 }
 
+bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept {
+    if (!window_ms || now_ms < window_ms || now_ms - window_ms >= kDriveVertWindowMs) {
+        window_ms = 0;
+        count = 0;
+        return true;
+    }
+    return count < kDriveVertMax;
+}
+
+void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept {
+    if (!window_ms) window_ms = now_ms ? now_ms : 1;
+    ++count;
+}
+
 bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept {
     if (!out || !capacity || !why) return false;
     const HRESULT hr = back_ms ? StringCchPrintfA(out, capacity, "return {refused=\"%s\",b=%llu}", why, static_cast<unsigned long long>(back_ms))

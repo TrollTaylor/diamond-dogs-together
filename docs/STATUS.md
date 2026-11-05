@@ -1,3 +1,94 @@
+## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
+
+Design 7.20, protocol section 37. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
+sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, at f945663d (build 0.15.1+f945663):
+`90d9b4d1` (`drive_vert=1`; join, vert-alert), `ddcdec94` (`place_reach=1, drive_vert=1`; join, quiet, integ-carry,
+vert-alert) and `1870d1bf` (no key named, at the final code head e0bd0352, build 0.15.1+e0bd035; join, quiet, integ-carry, latch-alert). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. `drive_vert` and `place_reach` stay off unless named. At the
+  defaults only log lines change (the read-backs below, drive_sink's counting) ([O] `1870d1bf` with no key: 0 vert snaps, 0 put-backs, 0 holds; 512 read-back lines, all held, but only 169 of the host's 317
+  placements got their 2 s read-back: 146 were cut by a newer placement of the same copy, so "all held" is mostly a
+  0.5 s figure for the rest).
+- **Built** (red first each time): a y read-back 0.5 s and 2 s after every vert snap, every landed drive step that
+  ends a place_reach hold, every landed placement of a held copy or of one beyond 60 m, and every put-back
+  (`event=readback`; new chunk `lua/coop/world_readback.lua`); `drive_sink` counts the time under the target apart
+  from snaps (a snap that does not hold still counts); at most 2 vert snaps of a copy in 10 s (native,
+  `world_drive=vert_stop`); place_reach only: a far copy (beyond 60 m) more than 1.5 m under its target at a read-back
+  is put back once, its force-realize ends and he is not held again for 10 s (`event=readback_fix`,
+  `event=readback_nohold`); `enemy_div_report.py` counts `guard_fell` on both copies (it missed `35d4074f`'s host row),
+  prints the read-backs, and the host M3 error before the guest's first down. Commits 64157173 red / f945663d green,
+  9b772c83 red / 44618bd9 green the report row. No wire change, no CFG bit.
+- **drive_vert gate: not reached** [O]:
+  - FAIL: a vert snap of a copy within 60 m: none. `90d9b4d1` had 0 vert snaps on both copies: the host's copy of
+    2929558510 stood 67-73 m from the host (owner change `dh_m=73`; aim readouts 67.1 / 67.2 m), so it was not driven
+    but placed by M3 (its read-backs 0.00 m, held). `ddcdec94` had 2 snaps, both of the host's copy of 2929558510 at
+    70-71 m (place_reach's band).
+  - FAIL: read-backs within 1 m at 0.5 s and 2 s: 0 of 3 held (-1.27 m at 0.5 s; then -1.26 m and -1.88 m). The two
+    snaps' gaps were -2.40 m (the copy over its target) and +1.88 m 1.7 s later, so the owner copy itself went down and
+    up [I: stairs or a ladder on the wall]; the 2 s read-back's fix was skipped `why=owner` (the owner's newest sample
+    level with the copy). 0 `vert_stop`.
+  - not shown (corrected after the skeptic): drive_sink apart from snaps. 0 `drive_sink` on both copies, but no copy
+    was driven in the 60 m band where round 6 saw it (the host's copy of 2929558510 was 63-76 m off and placed by M3),
+    so the new counting never ran on a sinking copy [U]. Its 500 ms cap per reading gap also made readings 1 s apart
+    need 4 s (0.15.1: 2 s); fixed to 2 s per gap (8efb6ac7 red / 835bcfae green; log only).
+  - FAIL: frame pair: none matched. `90d9b4d1` v-a: the host's binoculars show a guard by his marker at 67 m; the
+    guest, 8 m from him, looks up a high wall under a red threat arc and the wall top is empty (as in `b77e2104`).
+    `ddcdec94` v-a / v-b: the host's binoculars show only his marker (72 / 70 m) on a dark slope, no body. The guest's
+    v-b figure (first read as the guard 11.7 m away) stands 3-4 m from the camera where the third-person character
+    stands and looks like the guest's own character in its r-3s: most likely the guest, not 2929558510 [I].
+- **place_reach gate: not reached** (`ddcdec94`) [O]:
+  - FAIL: host M3 place error p90 11.63 m over the run (gate 3 m). Before the guest was downed (t 337325821, in the
+    ALERT's last block) p90 2.27 m (983 of 1158 samples, p50 0.94 m). After it the host refused 110 of its placements as
+    out of range (`near=host`: the downed guest's pose not used [I]) and the per-second median of its place error rose
+    to 52 m (max 65.2 m) by 25 s after the down, when the log ended [O] (corrected: was "40-60 m"). Without the key:
+    `90d9b4d1` p90 15.83 m, 4.32 m before the guest's down; during that down the per-second medians were 14-29 m (max
+    48.9 m) for about 12 s, then back under 4 m. The two pre-down figures are not like-for-like: 161 samples over the
+    first ~80 s of the alert part there, 977 over ~260 s here, with the 60-160 m guards place_reach adds.
+  - FAIL (not reported before): the frame row (DECISIONS: matched frames). With the key the host's binoculars at 70-72
+    m showed only the guard's marker, no body (`ddcdec94` v-a / v-b); without it the host saw the guard by his marker
+    at 67 m (`90d9b4d1` v-a).
+  - not shown: every far read-back held or handled. Placements: 37 of 41 far read-backs held (per guard: 4 of 9
+    guards with read-backs had a not-held line); 3 not held stood over where they were put (2929558510 +1.28,
+    1179373153 +1.02, 2961503 +1.55 m, all within 3.5 s): running copies driven on after it (`place_div why=driven`),
+    so that is the ground they ran to, not a pop, and the row as written cannot be met by moving guards (the report now
+    calls them "above", not "fell"); 1845278687 went down 1.73 m with its owner (`place_drop`, `why=owner`). The three vert read-backs above (drive_vert's) were 1.26-1.88
+    m under. 0 put-backs were needed (`readback_fix put=1`: 0); the far fix is unit-tested only.
+  - PASS: 0 `drive_sink`, `place_sink`, `guard_fell` on both copies; 0 latches, faults, game overs.
+  - holds: 9 started, 9 landed, 0 timed out (host). Corrections applied 3 of 22 on the guest (`vehicle_local` 15: the
+    riders, 7.17 (a)); M3 host placements 22 of 144 (range 114, 110 of them after the guest's down).
+- **The no-key run `1870d1bf`** (both keys off; the shipped defaults plus the read-back lines) [O]:
+  - PASS: 0 latches, faults, game overs, roster mismatches, overflow; 0 `drive_sink`, `place_sink`, `guard_fell` on
+    both copies (`guard_fell` now counts the host too).
+  - PASS: guest place error p50 0.64 / p90 1.72 m (152 samples; gate 2 m).
+  - reported: host M3 place error p50 1.93 / p90 6.89 m (1132 samples; the guest was not downed; `798b51dd` at the
+    old defaults 6.97 m).
+  - read-backs: host 486, guest 26, all `src=place` (far M3 placements and corrections), all held; 0 vert snaps, 0
+    `vert_stop`, 0 put-backs.
+  - FAIL rows of the report: corrections applied 18 of 46 (`vehicle_local` 19: the riders; `relayed` 5, `backoff` 4);
+    host M3 p90 6.89 m (its own gate 5 m). Seen too: an applied correction of 3970963356 left that copy 123.5 m from
+    its target (warp `h=1`, his x / z unchanged; his y read-back held, as it checks y only).
+  - frames looked at: al-2 (host: markers at 42-56 m and a small figure by the 42 m one; guest: the high wall, its top
+    empty, a red threat arc), c-b (the sleeping guard by the guest's character on both screens).
+- **Failing rows** (named runs): `90d9b4d1` corrections 35/43, M3 host placements 194/313, host M3 p50 1.85 / p90 15.83
+  m; `ddcdec94` corrections 3/22, M3 host placements 22/144, host M3 p90 11.63 m. In both the guest was downed in the
+  ALERT (no game over).
+- **Frames looked at**: `90d9b4d1` v-a (both); `ddcdec94` v-a, v-b (both); `1870d1bf` al-2, c-b (both).
+- **Not reported before** [O]: 2 s read-backs got / armed: `1870d1bf` host 169 / 317, `90d9b4d1` host 102 / 191,
+  `ddcdec94` host 22 / 24 (its first vert snap's 2 s read-back was cut by the second 1.7 s later), as the one slot per
+  copy is re-armed (the report now prints this). Not a gate row: in `ddcdec94` the guest's kill of 2942862796
+  committed while the host's copy was 94.8-95.5 m off (guest apply `terminal_local d_m=95.5`).
+- **Known, not fixed** (place_reach only, off): the 2 s fix compares the copy's y with the owner's newest sample
+  without the `800 - LIFT` offset that place_sink uses (a 0.4-0.8 m bias in `why=owner`).
+- **Next**: a drive_vert test needs the host within 60 m of 2929558510 while the guest owns him (the quiet spot is 67-73 m
+  from him this round, 49 m in `41f2b07f`: he moves along the wall) and a guest standing point that sees the wall top
+  (from 8 m below it the wall hides him); snaps of a copy whose owner moves up or down should wait for the owner at
+  rest. For place_reach: the host's M3 placements while the guest is downed (the range rule with `near=host`), then the
+  gate again (its pre-down numbers pass). Both keys need their own no-key run after a flip.
+- **Checks**: full `tools/build.ps1 -Jobs 4` (tree of f945663d): 318/318 linked, CTest 355/355; every
+  `generate_*_contract.py --check` identical to round 6 (known failures only); Lua check 451; report check 5. The
+  native red for DriveVertAllow / DriveVertCount was not observed (no build directory at the red commit): inferred.
+
 ## November 5, 2026: enemy sync M7 FM1 round 6 - the far mirror's calm half: the calm gate not reached; `soldier_act` stays off unless named (`wp/enemy-latch`, not pushed)
 
 Track B of the enemy6 round (the far mirror, calm / caution only: the user's decision D-FM1 (a) of 2026-11-05).
