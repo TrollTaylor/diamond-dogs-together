@@ -330,7 +330,7 @@ int main() {
     }
     {
         // The gait catch-up, as the unpack's mode 0 rule (2..5 m: + 1 capped at 3; beyond 5 m: 3), never lowered.
-        Check(sa::GaitCatchUp(0.0f, 1) == 1 && sa::GaitCatchUp(1.9f, 1) == 1, "gait: under 2 m ahead unchanged");
+        Check(sa::GaitCatchUp(0.0f, 1) == 1 && sa::GaitCatchUp(0.9f, 1) == 1, "gait: within 1 m ahead unchanged (round 9 C; was 2 m)");
         Check(sa::GaitCatchUp(2.5f, 1) == 2 && sa::GaitCatchUp(4.9f, 2) == 3 && sa::GaitCatchUp(3.0f, 3) == 3, "gait: 2..5 m + 1, cap 3");
         Check(sa::GaitCatchUp(5.1f, 0) == 3 && sa::GaitCatchUp(12.0f, 1) == 3, "gait: beyond 5 m 3");
         Check(sa::GaitCatchUp(8.0f, 5) == 5 && sa::GaitCatchUp(3.0f, 4) == 4, "gait: a faster gait is kept");

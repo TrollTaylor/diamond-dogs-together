@@ -123,8 +123,9 @@ struct alignas(16) Shadow {
 void BuildShadow(Shadow& shadow) noexcept;
 // What 0x1413725f0's gate (0x141372635..0x141372664) reads from a first argument p for guard idx: true = it plans.
 bool ShadowGatePasses(const void* p, unsigned idx) noexcept;
-// The gait catch-up (R+0xb0 bits 1..3) after the unpack, the unpack's own mode 0 rule (0x14136f810) for a mode 1 walk: the
-// owner copy ahead by 2..5 m: gait + 1 (cap 3); beyond 5 m: 3; never lowered; not ahead (<= 0, NaN): unchanged.
+// The gait catch-up (R+0xb0 bits 1..3) after the unpack, after the unpack's own mode 0 rule (0x14136f810) for a mode 1 walk
+// but from kPlanCatchM (round 9 C; the engine's rule starts at 2 m): the owner copy ahead by 1..5 m: gait + 1 (cap 3);
+// beyond 5 m: 3; never lowered; not ahead (<= 1 m, NaN): unchanged.
 unsigned GaitCatchUp(float ahead_m, unsigned gait) noexcept;
 // How far (flat) the owner copy is ahead of this copy toward dest: their distance when the owner copy is nearer dest, else 0.
 float AheadM(const float (&self)[3], const float (&owner)[3], const float (&dest)[3]) noexcept;
