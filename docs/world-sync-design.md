@@ -1176,15 +1176,24 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   (rechecked); a matched host / guest frame pair of one mirrored guard walking; no ChangePhase started by a puppet; 0
   faults / latches / game overs.
 - **Seen** (`15aa58cb`; docs/STATUS.md 2026-11-05 enemy round 10 track C): 4 of 4 calm walkers mirrored; 17 and 18 within
-  the gate (p50 0.55 / 1.18 m); plans 97.6 % within 1 m; 28 released walks kept, 0 frozen with no path. Not reached:
-  guard 15 leads by p50 3 m (the host copy walks the route's line, the plan the straight line to the leg's end), guard
-  246's guest copy does not walk at all (as unmirrored in `c0c3d088`) and drew 2 held warps, frame p95 + 1.52 ms with 12
-  puppets, no matched frame pair. `689e654c` (spot A): 17 and 18 within the gate again, 246 walked
+  the gate (p50 0.55 / 1.18 m); plans 97.6 % within 1 m; 28 released walks kept (0 `finish`, 20 taken again within
+  about 1.5 s), 0 with round 9's freeze signature. Not reached: 5 released stands > 5 s (guard 246 29.9 s straight
+  after a keep release and 11.0 s after the mirror off, in calm); guard 15 leads by p50 3 m (the host copy walks the
+  route's line, the plan the straight line to the leg's end), guard 246's guest copy stood at the spot his 27.1 m take
+  warp put him (he walked 15 m and 28 m once released; cause [U]) and drew 2 held warps, frame p95 + 1.52 ms with 12
+  puppets, no matched frame pair. 5 take warps of 18-49 m (round 9: 1): `TakeWait` takes walkers at any distance. `689e654c` (spot A): 17 and 18 within the gate again, 246 walked
   (1.57 / 3.13 m), 15 1.99 / 6.56 m; held warps 1; frame p95 + 0.20 ms on 20 s off / 20 s on with no capture; a matched
-  frame pair of guard 17 walking (`w17-2`); but 5 released walkers stood 10-26 s: at the end of the kept walk his brain
-  set a new R+0x80 without a new request and planned nothing (guard 15, R+0x1a0 unchanged, R+0x19c and slot cleared).
+  frame pair of guard 17 walking (`w17-2`); but 6 released stands of 10.5-26.2 s, 5 with no path: at the end of the
+  kept walk his brain set a new R+0x80 without a new request and planned nothing (guard 15, R+0x1a0 unchanged, R+0x19c
+  and slot cleared); guard 18 stood 20.1 s straight from a release with no walk (`step=none`, dm 0); 5 take warps of
+  18-49 m in calm and 5 at once (15.8-45.2 m) at the caution retake; 27 of 36 kept releases taken again within about
+  1.5 s. Mirrored 42-89 % of the host-moving samples per walker in both runs.
+- **Nits** (not fixed; `act_plan` only): `g_rel[]` / `g_planned[]` are not cleared on a mission or level change (a
+  reused index within 180 s could have a stale handle cancelled); `TakeWait`'s `take_near` is unused.
 - **Next**: plan a released copy's brain re-target that has no path (until his brain's own type shows in his slot); the
-  host copy's path on the wire (or a plan through the owner positions); no take of a copy that cannot walk; then one
+  host copy's path on the wire (or a plan through the owner positions); no take of a copy that cannot walk; no far
+  take that opens with a warp in calm and no retake within 1.5 s of a release; clear the per-guard state on a mission
+  change; then one
   named run, the flip per D-FM1 (a) and the no-key run.
 
 ### 8. Soldier transforms (W6)
