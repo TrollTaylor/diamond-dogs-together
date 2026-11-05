@@ -425,6 +425,43 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
 - **Next**: decision D-FM1 (calm / caution only, or a watch point beyond 276 m for the ALERT half); a host spot with a
   clear view of a walking puppet; moving puppets re-applied every 1 s; apart only for a still owner copy; skip riders.
 
+#### 7.17 Enemy gaps 2: the stream's reach, the realize hold, dead bodies (lab keys `place_reach`, CFG r[19] bit 2048; `body_dead`, bit 1024)
+
+- **Causes** (archived logs of `798b51dd`, `41f2b07f`): every M3 host place sample of the ALERT part lay 60-160 m from
+  the host's player, beyond the M4 stream (the owner streamed its guards within 60 m of the other player, the receiver
+  drove within 60 m of its own), so the host's copies of the guards the guest fought moved only by 1 s corrections: 157
+  of the 214 samples over 5 m (p90 6.97 m); 57 of the 58 refused host placements were `unrealized` (relays 120-160 m
+  from the host). The LRRP riders (3970963356, 2305481811: in the roster from the start, 435.9 m apart at the join):
+  11 s `far` (the guest's copy in its truck more than 250 m from both players), 17 s `vehicle_local` (riding on the
+  guest's screen, on foot on the host's), then 48 s `unrealized` after it got out. A dead guard 6.8 m apart: the
+  guest's corpse lay 7 m from where it died 63 s later; the host refused the body placement (`disabled_local`: a dead
+  guard is NPC_STATE_DISABLE).
+- **place_reach** (off unless named; no matched frame yet):
+  - The M4 stream reaches 160 m (`world_place.lua` `P.reach`): the owner streams a guard within 160 m of the other
+    player when he stands within 60 m of its own (4 Hz beyond 60 m); the receiver drives the other side's guards within
+    160 m of its player. The native step still needs the target within 60 m of the nearer player, as before.
+  - The realize hold (`P.hold`): a kind-3 placement (an M1 correction, an M3 host placement) or a drive step the game
+    relayed (`refused=relayed`: not realized on this copy) sends `SetForceRealize` to that guard (`event=realize_hold;
+    on=1`; at most 4 at once, never Mother Base staff); released (`forceRealize=false`) when a placement of him lands
+    (`why=landed`), after 8 s (`timeout`) or at stop. The native per-guard backoff after a relay (3 s, doubling) is
+    unchanged, so the next try after it finds him realized.
+  - No wire change: a partner without the key streams and drives within 60 m as before.
+- **body_dead** (off unless named): `P.check` lets the other copy's dead body placement (M6 flag 8) through; after any
+  body placement (`P.doneHook`) the body's resting spot is where this copy's body lies, moved or not, and the body scan
+  skips a body while its placement is pending (at most 15 s), so a corpse the game does not move is never reported back
+  (no ping-pong). Whether the native set-transform moves a corpse is still [U].
+- **Runs** (play, `-WanSim bad`, the gun profile, afgh-ledge): `9023e5c6`, `8281b868`, `3c9d1250` with both keys named,
+  `b77e2104` with no key named (place_reach on by default for that run). The host's place error for the guest-owned
+  guards p90 2.78 / 2.63 / 1.95 / 2.63 m (`798b51dd` without it 6.97 m); 0 latches. No frame shows the watched guard on
+  the host's screen (a rock, grass or a rise of ground in every host view), so both keys stay off unless named. STATUS
+  has the numbers.
+- **Not done**: the riders' in-vehicle part (the LRRP truck is each copy's own: VEHICLE_STATE skips LRRP trucks and
+  occupied vehicles), so their copies stay `far` / `vehicle_local` while the truck drives; the next step is the vehicle
+  owner path (the host streams an LRRP truck with riders, the guest's copy follows) or a soldier dismount command [U].
+  body_dead's stimulus: a guard killed by the debug outcome offers no pick-up prompt (`8281b868` d-a), a dropped steel
+  shield takes the pick-up key (`9023e5c6`), and two rifle shots at 2.5 m left a sleeping guard asleep (`3c9d1250`);
+  next: a firefight kill the guest then carries, or a CQC kill.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.

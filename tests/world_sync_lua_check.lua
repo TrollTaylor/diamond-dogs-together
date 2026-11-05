@@ -1780,8 +1780,8 @@ do
     F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
     check(c.W.followOn == true, 'CFG r[19] 1: follow on')
     -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn). FM1 (far mirror,
-    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048 reserved for the
-    -- OB steps); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
+    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048: enemy gaps 2,
+    -- checked below); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
     for _, case in ipairs({{129, true, false, false, false}, {257, false, true, false, false}, {511, true, true, true, false},
                            {1, false, false, false, false}, {512 + 129, true, false, false, true}, {512 + 1, false, false, false, true},
                            {512 + 257, false, true, false, true}, {1024 + 1, false, false, false, false},

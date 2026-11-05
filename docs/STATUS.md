@@ -1,3 +1,74 @@
+## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
+
+The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
+the carry act). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Four hidden play sessions over
+`-WanSim bad`, the gun profile, research build, afgh-ledge: `9023e5c6`, `8281b868`, `3c9d1250` (`body_dead=1,
+place_reach=1`) and `b77e2104` (no key named; `place_reach` was on by default for that run). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Both keys are off unless named: `place_reach` works in both
+  copies' logs in all four runs, but no frame shows the watched guard on the host's screen (below); `body_dead` was
+  never exercised (no corpse was carried in its runs). With `place_reach=1` in lab.ini on both PCs:
+  - [O] on the host's screen the guards the guest fights 60-160 m from the host stand where the guest's screen has
+    them: the host's place error for the guest-owned guards p50 1.05 / 0.96 / 0.86 / 1.08 m, p90 2.78 / 2.63 / 1.95 /
+    2.63 m (931-1132 samples a run; `798b51dd` without it 1.93 / 6.97 m, `41f2b07f` p90 11.46 m, `31a799e3` 18.5 m);
+  - [O] a guard the game had not loaded on that PC is loaded for the next move: 26 holds in the four runs (host 3 / 0 /
+    14 / 1, guest 1 / 0 / 7 / 0); the next placement of a held guard landed 3.3-4.1 s later in 3 of 4 (`9023e5c6`), 3 of
+    21 (`3c9d1250`) and 1 of 1 (`b77e2104`); the rest were refused by the game's own per-guard backoff after a relayed
+    drive step (the drive steps after it are not logged per guard [U]); the dismounted rider 2305481811 was placed 3.4 s after his first refusal in `9023e5c6`
+    (48 s in `798b51dd`);
+  - [O] the guest's place error (guards within 60 m of it) stays p50 0.6-0.71 / p90 1.44-1.83 m (`798b51dd` 0.60 / 1.56);
+    0 latches, faults, game overs, roster mismatches or overflow in all four runs.
+- **Causes found** (archived `798b51dd`, `41f2b07f`; design 7.17):
+  - (c) every M3 host place sample of the ALERT part lay 60-160 m from the host's player, beyond the M4 stream (owner:
+    its guards within 60 m of the other player; receiver: within 60 m of its own), so those copies moved only by 1 s
+    corrections: 157 of the 214 samples over 5 m; 57 of the 58 refused host placements were `unrealized` (relays 120-160 m
+    from the host). Fixed by `place_reach` (the stream to 160 m when the guard stands within 60 m of the owner's player,
+    the realize hold on a relayed placement or drive step).
+  - (a) the "reinforcements" are the two LRRP truck riders (3970963356, 2305481811: in the roster from the start, 435.9 m
+    apart at the join): in `798b51dd` 11 s `far` (the guest's copy in its truck more than 250 m from both players), 17 s
+    `vehicle_local` (riding on the guest's screen, on foot on the host's), then 48 s `unrealized`. `place_reach` fixes the
+    last part (3.4 s in `9023e5c6`; 3970963356 placed at once on dismount there and in `b77e2104`). The in-vehicle part
+    needs the vehicle owner path: the LRRP truck is each copy's own (VEHICLE_STATE skips LRRP trucks and occupied
+    vehicles), so `far` / `vehicle_local` lasted 30-68 s and 7-14 s in these runs [O].
+  - (b) `41f2b07f`: the guest's corpse lay 7 m from where it died 63 s later, the host refused its placement
+    (`disabled_local`: a dead guard is NPC_STATE_DISABLE). The same in `b77e2104` (defaults): 2961503 3.9 m and
+    2942862796 1.8 m, both refused `disabled_local` [O]. `body_dead` lets the dead body placement through and keeps the
+    resting spot where this copy's body lies after it (no ping-pong, unit-tested), but its stimulus failed three times:
+    753908875's dropped steel shield took the guest's pick-up key (`9023e5c6` guest d-a: the R prompt is the shield's; the
+    guest then carried the shield through the ALERT), a guard killed by the debug outcome showed no pick-up prompt
+    (`8281b868` guest d-a: the guest crouched over the corpse, no prompt), and two rifle shots at 2.5 m left the sleeping
+    2961503 asleep (`3c9d1250`, state 2; the guest then carried him asleep). Whether set-transform moves a corpse is [U].
+  - (d) the partner's carry act on the host: unchanged in `8281b868` / `b77e2104` (`partner_act remote=39(carry_body);
+    body=3(crouch_idle); match_ms=miss`); its drawing goes through the partner driver and coop_carry (never-edit), not
+    touched.
+- **Frames I looked at**: `b77e2104` host / guest v-1 and v-2 (calm, both cameras on guard 667680985 through
+  binoculars): the host's view shows only his 95 m marker over a rise of ground and the guest's nametag; the guest's
+  shows him walking 9 m away by sandbags (his host copy stood where the guest's sample had him, 0.3 m by the aim
+  readouts, logs only). `3c9d1250` w-2 / w-3 (after the ALERT, the host 40 m behind the guest): the host sees his 93 m
+  marker behind a bush, and guards by the outpost wall at 62 m / 70 m; the guest's views are rock and grass. `8281b868`
+  w-1: the host's view is grass and rock. No matched frame of a guard on both screens, so `place_reach` stays off.
+  `b77e2104` host / guest c-b: the carried sleeping guard (ZZZ) lies by the guest's character on both screens, as in
+  `798b51dd`.
+- **Regression at the defaults** (`b77e2104`, place_reach on for that run, no key named): 0 latches; place error p50 0.62 /
+  p90 1.51 m (203); M3 placements 39/40, host error 1.08 / 2.63 m; body_tx 4 (max 2 per body); corrections 5/9 (4
+  `vehicle_local`) and one `drive_sank` (2929558510, 2.15 m under) are the report's FAIL rows, as in `46c0da9e` /
+  `9023e5c6`. At the final head both keys are off: every new path is gated by `W.reachOn` / `W.deadOn` (unit-tested off).
+- [I] The second CP 3196907442's rise-and-fall loop (`src=down` 48 times in `8281b868`, 3 in `9023e5c6` / `b77e2104`) is
+  in runs without the keys too (`5526d92a` 25, `46c0da9e` 19): not attributed to the keys.
+- **Built** (red first each time): `place_reach` and `body_dead` (3c56138e red, c46d207e green), the drive-step hold
+  (b427e010 red, 9eb717bc green), world_snap.lua's second literal under 16000 bytes (582b72f1), the default flip and its
+  revert (debe034e / b5fd9bdb, f7d1bd60 / bc0146b6); scenarios enemy-gaps2-dead.txt, enemy-gaps2-watch.txt,
+  enemy-gaps2-view.txt. CFG r[19] bits 1024 / 2048 (protocol section 34). No wire change, so no version gate is needed for
+  a later default flip (the link handshake checks only kLinkVersion; an older partner streams and drives within 60 m).
+- **Next**: `place_reach`: one run with a host watch point that sees a guest-owned guard 60-160 m away (or the user's
+  decision to turn it on from the logs); a hold that waits out the native backoff (retry the placement when the backoff
+  ends instead of the next sample). `body_dead`: a corpse from a real kill the guest then carries (a firefight kill or
+  a CQC kill), with both cameras on the corpse. (a): the vehicle owner path for LRRP trucks with riders. (d): the carry
+  pose on the host needs the partner driver / coop_carry owners.
+- **Checks**: full `tools/build.ps1 -Jobs 4` 354/354 at each green and at the head; every `generate_*_contract.py
+  --check` as on dev (known failures only).
+
 ## November 5, 2026: enemy sync M7 FM1 retry - the far mirror's first puppets, in calm; the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 FM1 retry (plan: owner-brains, the far-mirror form first; design 7.16). Markers: [O] seen in a log line or a

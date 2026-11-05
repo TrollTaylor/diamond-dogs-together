@@ -2338,3 +2338,19 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
   `soldier_act_frame; t; frames; p95_ms; mirrored; tx; staged; rx; applied; orders; refuse_table; fault; remap;
   puppet_fire; puppet_noise; shots; same; unrealized` (1 Hz), the census lines of design 7.15; Lua `event=mirror; ent; on; why; d_m; R;
   ok`, `event=mirror_apart; ent; apart_m`, `event=mirror_stats` (10 s).
+
+## 34. Enemy gaps 2 (lab keys `place_reach`, CFG r[19] bit 2048; `body_dead`, bit 1024; design 7.17)
+
+No new op or world note. CFG r[19] (each PC's own reply) gains bit 1024 `body_dead` (Lua `W.deadOn`, only with bit 16
+`soldier_body`) and bit 2048 `place_reach` (`W.reachOn`, with follow); both are off unless named.
+
+- SOLDIER_SNAP (0x4B, section 30) with `place_reach`: the owner also streams a guard 60-160 m from the other player when
+  he stands within 60 m of the owner's own player, every 250 ms; the receiver sends `DRIVE_V1` for the other side's
+  guards within 160 m of its player (was 60 m both). `DriveReceipt` is unchanged (the step within 60 m of the nearer
+  player). A partner without the key ignores the extra snaps (kept per slot, not driven beyond 60 m).
+- The realize hold (`place_reach`): a correction / host placement answered `refused=relayed` (`why=unrealized`,
+  `native=relayed`) or a `DRIVE_V1` answered `{refused="relayed"}` sends this copy `SetForceRealize` for that guard; log
+  `event=realize_hold; ent; on=1; ok; n` (n holds now, at most 4) and `event=realize_hold; ent; on=0; why=landed |
+  timeout | stop` (`SetForceRealize` with `forceRealize=false`; 8 s; never Mother Base staff).
+- `body_dead`: a body placement (ENEMY_DEBUG kind 3 / ENEMY_PLACE, flag 8) of a dead guard is no longer refused
+  `disabled_local`; `place_body` lines are unchanged (`why=none` when queued).

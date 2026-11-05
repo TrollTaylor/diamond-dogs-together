@@ -135,7 +135,8 @@ constexpr std::uint8_t VehicleModules(bool gone, bool state, bool wreck, bool br
 
 // Enemy sync M3..M7: the CFG r[19] bits next to bit 1 follow (2 owner, 4 snap, 8 route, 16 body, 32 puppet, 64 brain,
 // 128 place_lift, 256 perceive: docs/world-sync-design.md 7.9+, 7.14).
-// FM1 (docs/world-sync-design.md 7.15): bit 512 soldier_act; 1024 / 2048 are reserved for the OB steps (12 bits, 0..4095).
+// FM1 (docs/world-sync-design.md 7.15): bit 512 soldier_act; enemy gaps 2 (7.17): 1024 body_dead, 2048 place_reach
+// (12 bits, 0..4095; the OB steps need a wider field).
 constexpr std::uint16_t EnemySyncBits(std::uint16_t configured) noexcept { return static_cast<std::uint16_t>(configured & 0xFFEu); }
 
 // NUL-terminated replies; 0 when they do not fit.
