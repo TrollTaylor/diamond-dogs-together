@@ -129,6 +129,7 @@
 #include "mgscoop/supply_cbox.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/soldier_perceive.hpp"
+#include "mgscoop/soldier_act.hpp"
 #include "mgscoop/soldier_authority.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -1705,7 +1706,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
                                                  (labc.soldier_route ? 8u : 0u) | (labc.soldier_body ? 16u : 0u) |
                                                  (labc.soldier_puppet ? 32u : 0u) |
                                                  (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u) |
-                                                 (labc.place_lift ? 128u : 0u) | (labc.soldier_perceive ? 256u : 0u));
+                                                 (labc.place_lift ? 128u : 0u) | (labc.soldier_perceive ? 256u : 0u) |
+                                                 (labc.soldier_act ? 512u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
@@ -2674,6 +2676,7 @@ void PublishDebugSnapshot() noexcept {
     if (pp::ReadState(partner_addresses, current) == pp::Refusal::none && current.vars_ok) {
         snapshot.pose_valid = true;
         for (unsigned i = 0; i < 3; ++i) snapshot.player_pos[i] = current.vars_pos[i];
+        if (mgscoop::soldier_act::Installed()) mgscoop::soldier_act::SetLocalPlayer(snapshot.player_pos, now);
         if (current.slots_ok) {
             snapshot.player_yaw = current.slot[0][3] * 57.2957795f;
             snapshot.local_yaw_valid = true;
@@ -3050,7 +3053,8 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
     const sw::DriveRule rule{labc.mode == mgscoop::LabMode::lab, labc.mode == mgscoop::LabMode::play, labc.role == mgscoop::LabRole::host,
-                             mission, labc.soldier_follow && labc.soldier_snap, labc.soldier_owner, mode == 1, labc.soldier_puppet};
+                             mission, labc.soldier_follow && labc.soldier_snap, labc.soldier_owner, mode == 1, labc.soldier_puppet,
+                             mode == 2, labc.soldier_act};
     if (const char* why = sw::DriveAdmit(rule)) return refuse(why);
     ++drive::calls;
     std::uint64_t now = 0;
@@ -3074,8 +3078,11 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool puppet = mode == 1;
     // Enemy gaps (place_lift): the copy's own height + 0.02 m (sw::kLiftFeetM 0) instead of its feet + 0.1 m (place_sink).
     const float feet = labc.place_lift ? sw::kLiftFeetM : sw::kDriveFeetM, lift = labc.place_lift ? sw::kLiftLevelM : 0.1f;
-    const auto step = puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, lift, feet)
-                             : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet);
+    // FM1 (mode 2, the mirror drive): the mirrored request walks him; only beyond 5 m is he moved, the whole way.
+    const bool mirror = mode == 2;
+    const auto step = mirror ? sw::DriveStep(here, target, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, lift, feet)
+                      : puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, lift, feet)
+                               : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet);
     const bool due = !st.last_ms || now - st.last_ms >= (puppet ? 30u : 100u);
     if (!step.move || !due) {
         if (!step.move) { st.active = false; ++drive::rest; }
@@ -3112,6 +3119,65 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     else ++drive::steps;
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
                      step.hard ? 2 : 1, result.out, unsigned(result.handled), static_cast<int>((here[1] - target[1]) * 100.0f));
+    return debug_reply;
+}
+
+// ACT_V1 (FM1, the far mirror; docs/world-sync-design.md 7.15, lua/coop/world_mirror.lua): soldier_act on, play or lab,
+// 30010 / 30020 / 30050. t <slot> <goId>: the owner registers a guard to send (the hook packs him, soldier_act.hpp);
+// s 0 0: the owner sends the staged parts; q <slot> <goId>: is a candidate's stream fresh (f=1; nothing armed);
+// m <slot> <goId>: this copy mirrors a puppet (the newest SOLDIER_ACT goes to the
+// hook's mailbox; f=1 when fresh); r <slot> <goId>: releases him. Reply {f=,tx=,rx=,ap=,od=,sh=,mi=,fd=} (the counters,
+// sh the local player's shots, fd the dropped puppet shots) or {refused="<reason>"}.
+const char* ActReceipt(const char* text, std::size_t size) noexcept {
+    namespace sa = mgscoop::soldier_act;
+    const auto refuse = [](const char* why) noexcept {
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"%s\"}", why);
+        return static_cast<const char*>(debug_reply);
+    };
+    char op = 0;
+    std::uint16_t slot = 0;
+    std::uint32_t go = 0;
+    const auto& labc = mgscoop::GetLabConfig();
+    std::int32_t player_mm[3]{};
+    if (mgscoop::world::ParseActPlayer(text, size, player_mm)) {
+        // The local player for the census distances (act_census) and the mirror's frame lines; nothing else.
+        if (!sa::Installed()) return refuse("hook");
+        const float pos[3] = {player_mm[0] * 0.001f, player_mm[1] * 0.001f, player_mm[2] * 0.001f};
+        sa::SetLocalPlayer(pos, mgscoop::partner_net::NowMs());
+        StringCchCopyA(debug_reply, ARRAYSIZE(debug_reply), "return {p=1}");
+        return debug_reply;
+    }
+    if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
+    // A release is always taken (skeptic of FM1, 7b709720: r refused on a mission or partner change left the fire drop
+    // armed); it only clears this copy's mailbox, apply stamp and fire-drop bit.
+    if (op == 'r' && (go >> 9) == 2) {
+        sa::SetMirror(go & 0x1ffu, slot, false, mgscoop::partner_net::NowMs());
+        if (!sa::FormatActReply(false, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
+        return debug_reply;
+    }
+    if (!labc.soldier_act || !(labc.mode == mgscoop::LabMode::lab || labc.mode == mgscoop::LabMode::play)) return refuse("disabled");
+    if (!sa::MirrorOn()) return refuse("hook");
+    unsigned short mission = 0;
+    if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::soldier_warp::FollowMission(mission))
+        return refuse("mission");
+    const bool host = labc.role == mgscoop::LabRole::host;
+    const std::uint64_t now = mgscoop::partner_net::NowMs();
+    if (op != 's' && (go >> 9) != 2) return refuse("type");
+    bool fresh = false;
+    if (op == 't') { if (!host) return refuse("role"); sa::SetTx(go & 0x1ffu, slot, now); }
+    else if (op == 's') { if (host) sa::SendStaged(now); }
+    else if (op == 'q') {
+        if (host) return refuse("role");
+        if (sa::Paused()) return refuse("paused");
+        fresh = sa::QueryFresh(slot);
+    }
+    else if (op == 'm') {
+        if (host) return refuse("role");
+        if (sa::Paused()) { sa::SetMirror(go & 0x1ffu, slot, false, now); return refuse("paused"); }
+        fresh = sa::SetMirror(go & 0x1ffu, slot, true, now);
+    }
+    else sa::SetMirror(go & 0x1ffu, slot, false, now);
+    if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
     return debug_reply;
 }
 
@@ -3305,6 +3371,32 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 StringCchCopyA(line,ARRAYSIZE(line),"teammate_aim=refused;reason=owned_worker_required");
             else mgscoop::teammate_targeting::StatusLine(line,sizeof(line));
             debug::Result(pending.id,worker && (observe || filter || status) ? 1u:0u,line);
+        } else if (pending.id && (std::strcmp(pending.text, "mirror off") == 0 || std::strcmp(pending.text, "mirror on") == 0)) {
+            // FM1 research (soldier_act.hpp SetPaused): mirror off releases every mirror puppet (ACT_V1 m refused "paused").
+            const bool off = std::strcmp(pending.text, "mirror off") == 0;
+            mgscoop::soldier_act::SetPaused(off);
+            char line[80]{};
+            StringCchPrintfA(line, ARRAYSIZE(line), "mirror=%s;hook=%u", off ? "off" : "on", mgscoop::soldier_act::MirrorOn() ? 1u : 0u);
+            LogFormat("soldier_act_mirror_cmd; %s\r\n", line);
+            debug::Result(pending.id, 1, line);
+        } else if (pending.id && (std::strcmp(pending.text, "act_status") == 0 || std::strncmp(pending.text, "act_probe", 9) == 0)) {
+            // Enemy sync M7 FM1 probe P1 (soldier_act.hpp): act_status, or act_probe [<dst idx|auto> <src idx|auto> <ms>
+            // <native|raw|auto>] (U2: this copy puppets dst and posts src's request to him every update; auto picks both).
+            namespace sa2=mgscoop::soldier_act;
+            bool ok=true;
+            if (std::strncmp(pending.text, "act_probe", 9) == 0) {
+                char a[16]{},b[16]{},m[16]{};unsigned ms=12000;
+                (void)sscanf_s(pending.text+9," %15s %15s %u %15s",a,static_cast<unsigned>(sizeof(a)),b,static_cast<unsigned>(sizeof(b)),&ms,m,static_cast<unsigned>(sizeof(m)));
+                const auto idx=[](const char* t) noexcept -> std::uint16_t {
+                    if(!*t||std::strcmp(t,"auto")==0) return 0xffff;
+                    const unsigned long v=std::strtoul(t,nullptr,10);return v<512?static_cast<std::uint16_t>(v):0xfffe;};
+                const unsigned mode=std::strcmp(m,"native")==0?0u:std::strcmp(m,"raw")==0?1u:2u;
+                ok=sa2::StartProbe(idx(a),idx(b),ms,mode);
+            }
+            char line[200]{};
+            if(!sa2::StatusLine(line,sizeof(line))) StringCchCopyA(line,ARRAYSIZE(line),"act;overflow");
+            LogFormat("soldier_act_status; %s; ok=%u\r\n",line,ok?1u:0u);
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "perceive_status") == 0) {
             // M7 step 1: the per-soldier pick counters (result), plus the P12a census lines, the soldiers' hits on each
             // player as the defense callback saw them and the current targets (log).
@@ -4844,6 +4936,9 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
     } else if(kind==world::Receipt::drive) {
         // Enemy sync M4: one soft-follow step (Lua owner thread only; every other gate in the handler).
         if(OnRuntimeThread()) reply=DriveReceipt(buffer,size);
+    } else if(kind==world::Receipt::act) {
+        // FM1, the far mirror (Lua owner thread only; every other gate in the handler).
+        if(OnRuntimeThread()) reply=ActReceipt(buffer,size);
     } else if(kind==world::Receipt::hostwarp) {
         // Enemy sync M3: the host's own copy of a guest-owned guard (Lua owner thread only; every other gate in the handler).
         if(OnRuntimeThread()) reply=HostWarpReceipt(buffer,size);
@@ -6966,6 +7061,22 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         // P13: the LOCAL accessor hooks (stock answers until perceive_local names a redirect).
                         if (mgscoop::soldier_perceive::InstallPick(base, Log)) mgscoop::soldier_perceive::InstallLocal(base, Log);
                     } else Log("soldier_perceive=off; reason=key_off\r\n");
+                    // Enemy sync M7 FM1 probe P1 (soldier_act.hpp, docs/world-sync-design.md 7.15): the request manager
+                    // census (read-only) and the act_probe research command, only with lab.ini act_census=1.
+                    if (labc.act_census) {
+                        if (mgscoop::soldier_act::Install(base, game_span, Log)) mgscoop::soldier_act::SetCensus(true);
+                    }
+                    // FM1, the far mirror (soldier_act.hpp, lua/coop/world_mirror.lua): the same hook, the mirror on this
+                    // copy's role, and the bullet / noise filters for the mirror puppets' shots (installed here, not only
+                    // when body 1 shows a gun class).
+                    if (labc.soldier_act && labc.soldier_follow) {
+                        const bool hooked = mgscoop::soldier_act::Install(base, game_span, Log);
+                        mgscoop::soldier_act::ConfigureMirror(hooked, labc.role == mgscoop::LabRole::host);
+                        const char* fire = mgscoop::partner_fire_filter::Install(base, Log);
+                        const char* noise = mgscoop::partner_fire_filter::InstallNoise(base, Log);
+                        LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s\r\n", hooked ? "on" : "off",
+                                  labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok");
+                    } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.
                     const bool brain = labc.soldier_brain && labc.soldier_perceive && mgscoop::soldier_perceive::PickInstalled();

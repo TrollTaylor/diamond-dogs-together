@@ -502,6 +502,17 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_perceive_given = true;
         if (!ok) result.soldier_perceive = false;
     }
+    else if (Equals(key, "soldier_act")) {
+        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.soldier_act);
+        result.soldier_act_given = true;
+        if (!ok) result.soldier_act = false;
+    }
+    else if (Equals(key, "act_census")) {
+        // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
+        ok = ParseBool(value, result.act_census);
+        if (!ok) result.act_census = false;
+    }
     else if (Equals(key, "soldier_brain")) {
         ok = ParseBool(value, result.soldier_brain);
         result.soldier_brain_given = true;

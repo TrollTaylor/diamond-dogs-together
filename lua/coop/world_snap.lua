@@ -132,8 +132,8 @@ do
                         calls = calls + 1
                         S.n.calls = S.n.calls + 1
                         if not dv then dv = {}; S.dv[h] = dv end
-                        local mode = W.puppetOn and not W.host and S.puppet(h, en, true) and 1 or 0
-                        local r = W.receipt(fmt(mode == 1 and "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d 1" or
+                        local mode = W.mirrorMode and W.mirrorMode(h) or (W.puppetOn and not W.host and S.puppet(h, en, true) and 1 or 0)
+                        local r = W.receipt(fmt(mode > 0 and "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d " .. mode or
                             "return 'MGS_COOP_WORLD_DRIVE_V1' -- %d %d %d %d %d", slot, en.id, x, y, z))
                         if type(r) == "table" and r.refused then
                             if r.refused == "stale" then S.n.stale, dv.back = S.n.stale + 1, now + 500

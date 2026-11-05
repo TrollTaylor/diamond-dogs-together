@@ -1779,13 +1779,17 @@ do
     local env, c = fixture({role = 2, follow = true})
     F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
     check(c.W.followOn == true, 'CFG r[19] 1: follow on')
-    -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn); r[19] 0..511.
-    for _, case in ipairs({{129, true, false, false}, {257, false, true, false}, {511, true, true, true}, {1, false, false, false},
-                           {512 + 129, false, false, false}}) do
+    -- The wp/enemy-gaps merge: bit 128 place_lift (W.liftOn), bit 256 soldier_perceive (W.perceiveOn). FM1 (far mirror,
+    -- docs/world-sync-design.md 7.15): bit 512 soldier_act (W.actOn); r[19] 0..4095 (bits 1024 / 2048 reserved for the
+    -- OB steps); bit 512 alone decodes every older key exactly as before (perceive is eb % 512 >= 256, not eb >= 256).
+    for _, case in ipairs({{129, true, false, false, false}, {257, false, true, false, false}, {511, true, true, true, false},
+                           {1, false, false, false, false}, {512 + 129, true, false, false, true}, {512 + 1, false, false, false, true},
+                           {512 + 257, false, true, false, true}, {1024 + 1, false, false, false, false},
+                           {4095, true, true, true, true}, {4096 + 129, false, false, false, false}}) do
         local envb, cb = fixture({role = 2, follow = case[1]})
         F.start(envb, cb)
-        check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and
-            cb.W.followOn == (case[1] < 512), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain as their own bits')
+        check(cb.W.liftOn == case[2] and cb.W.perceiveOn == case[3] and cb.W.brainOn == case[4] and cb.W.actOn == case[5] and
+            cb.W.followOn == (case[1] < 4096), 'CFG r[19] ' .. case[1] .. ': lift / perceive / brain / act as their own bits')
     end
     F.pair(env, c, 3)
     F.push(c, 1, OP.AREA, 2, 30010)

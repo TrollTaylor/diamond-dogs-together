@@ -1,0 +1,236 @@
+# Enemy sync M7 FM1 probe P1 (docs/world-sync-design.md 7.15; enemy4 plan step FM1-far-mirror-guest, part A4), at the
+# shipped defaults plus act_census=1 (native/soldier_act.hpp: the request manager census on BOTH copies every 0.5 s, the
+# engage bins every second, the realize bands every 10 s) and the U2 probe on the host (act_probe: the host's own copy
+# of the guard nearest the host is puppeted and given another guard's request for 15 s, read-only otherwise).
+#   1. the host alone 50 m south of afgh_field_cp; the guest pairs and walks ~100 m further south (the watcher; its
+#      distance is measured by the census, not assumed), its camera turned to the outpost (enemy_aim_nearest);
+#   2. quiet: the host walks to ~30 m of the guards; 45 s of census;
+#   3. U2: act_probe auto auto 15000 auto on the host, frames on both copies every 3 s;
+#   4. CAUTION (cp_phase nearest caution) 15 s, then ALERT (cp_phase nearest alert): the host fights ~110 s (godmode,
+#      enemy_aim_nearest, aim and fire held), frames every 15 s;
+#   5. the guest walks in: enemy goto <guard> 40 for the last 30 s.
+# Run in ONE hidden session:
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner FM1-far-mirror-guest
+#     -ScenarioPath tools/worker/scenarios/enemy-act-0-census.txt -Mode play -WanSim bad -PartnerProfile native
+#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+# Post: soldier_act_census / soldier_act_payload / soldier_engage_bins / soldier_act_bands / soldier_act_probe lines on
+# both slices; tools/enemy_div_report.py; frames.
+labsetting act_census=1
+labsetting nametag=1
+titlemenu host 240
+title host 240
+waitgameplay host 150
+host debug godmode 1
+host debug infinite_ammo 1
+host debug time 43200
+host debug weather sunny
+wait 6000
+host run teleport 421.16 269.2 2084.42 0
+wait 8000
+host run world_status
+host capture q1
+logmark both
+titlemenu guest 240
+title guest 240
+waitgameplay guest 240
+waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
+guest debug godmode 1
+guest debug infinite_ammo 1
+guest run teleport 423.00 269.5 2081.00 0
+wait 3000
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+guest hold s 1500
+wait 1500
+guest run position
+host run position
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture w-0
+host run act_status
+guest run act_status
+# --- 2: quiet, the host closes to ~30 m ------------------------------------------------------------------------------
+host hold w 1500
+host hold w 1000
+wait 1500
+host run position
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture q-0
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture q-15
+wait 14000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture q-30
+# --- 3: U2 probe on the host --------------------------------------------------------------------------------------
+host run act_probe auto auto 15000 auto
+waitlog host 'soldier_act_probe=(start|refused);' 5
+host run enemy_aim_nearest 0.6
+guest run enemy_aim_nearest 1.1
+wait 600
+both capture u2-0
+wait 2400
+both capture u2-3
+wait 2400
+host run enemy_aim_nearest 0.6
+wait 600
+both capture u2-6
+wait 2400
+both capture u2-9
+wait 2400
+host run enemy_aim_nearest 0.6
+wait 600
+both capture u2-12
+waitlog host 'soldier_act_probe=end;' 8
+host run act_status
+# --- 4: CAUTION, then the ALERT fight --------------------------------------------------------------------------------
+host run cp_phase nearest caution
+host expect ^submitted_phase;cp=[^;]+;phase=caution;
+wait 12000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture c-12
+host run cp_phase nearest alert
+host expect ^submitted_phase;cp=[^;]+;phase=alert;
+wait 2000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-0
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-1
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-2
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-3
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-4
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-5
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 600
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+both capture al-6
+host hold rmb 900 nowait
+wait 500
+host hold rmb+lmb 1200
+host release
+wait 9000
+host run world_status
+guest run world_status
+# --- 5: the guest walks in to ~40 m --------------------------------------------------------------------------------
+guest run enemy goto 1740692850 40
+wait 3000
+guest run enemy_aim_nearest 1.1
+host run enemy_aim_nearest 1.1
+wait 800
+both capture in-0
+wait 12000
+guest run enemy_aim_nearest 1.1
+host run enemy_aim_nearest 1.1
+wait 800
+both capture in-15
+wait 10000
+host run act_status
+guest run act_status
+host run world_status
+guest run world_status
+host run position
+guest run position

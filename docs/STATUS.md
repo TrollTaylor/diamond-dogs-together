@@ -1,3 +1,92 @@
+## November 4, 2026: enemy sync M7 FM1, the far mirror - built, the gate not reached; `soldier_act` stays off (`wp/enemy-m7`, merged into `dev/oct7-continue`, not pushed)
+
+The enemy4 FM1 step (plan: owner-brains with the act layer as its act mirror, the far form first). Markers: [O] seen in
+a log line or a frame, [I] inferred, [U] unknown. Four hidden play sessions over `-WanSim bad`, the gun profile,
+research build, afgh-ledge: `125d916b` (census), `0a271c10` and `963ab276` (the gate scenarios, `soldier_act=1`),
+`3bc7280b` (the latch regression, `soldier_act=1`). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new. `soldier_act` (CFG r[19] bit 512) and the research key `act_census` stay off unless
+  named; at the defaults nothing of this step runs. In the three sessions with the key on, no guard became a mirror
+  puppet on the guest's screen, so no frame shows a mirrored walk, aim or shot: each session hit a different bug (below).
+- **What was built** (design 7.15, protocol section 33):
+  - the census (`act_census`): a hook of the soldier request manager update 0x13735c0 that logs each guard's request
+    record, the request and order packed with the engine's own FOB pack, the engage bins and the realize bands;
+  - the far mirror (`soldier_act`): the host packs its guards' requests and orders (0x13704a0 / 0x1370900) and sends
+    them as SOLDIER_ACT 0x58; the guest's copy of a host guard beyond R + 15 m is to become a puppet that unpacks them
+    (0x136f810 with a lent network-position table, 0x13701f0 every update), with its bullets and noise dropped; any
+    guest shot, the guest within R, a stale stream, a guest-local phase rise in his CP or `mirror off` release him
+    (lua/coop/world_mirror.lua, a new chunk);
+  - CFG r[19] is 12 bits (0..4095); `W.perceiveOn` now decodes as `eb % 512 >= 256` (red first: `world_sync_lua_check`).
+- **Probe answers** [O unless marked]:
+  - U1: `*(S+0xE0)` (the network-position table the FOB unpack reads) is NULL offline on both copies, every census line
+    (`net=0`); the native unpack would dereference NULL. The mirror lends a table for the call: 88 unpacks on the guest
+    in `963ab276`, 0 faults, but all of them on copies whose own brain ran (the candidate bug below), none on a puppet.
+    While the call runs `*(S+0xE0)` points at the lent table; another reader in that window is [U] (the hook runs on the
+    update thread, so low risk).
+  - `S+0x2A4` = 0x7F2 at load, 0x782 after (bit 2 online clear; bit 1 set offline), `S+0x2A8` 0, owner bytes 0.
+  - U3 [U]: hand-read samples of kinds 1, 4, 0x11 and 0x12 held floats and 0xFFFF, but a scan of every
+    `soldier_act_payload` line finds the u16 0x0400 (the 0x400|i soldier-id form) at +0x34 in most kind 1 and 0x12
+    payloads (690 / 937 and 282 / 423 on the `3bc7280b` host), 0x0564 at +0x14 in kind 25 and hash-like words in kind
+    20. Whether these are ids is open, so the remap or refuse rule for payloads is open.
+  - U4: gait 2 = running (median 2.84 m/s), gait 1 standing or walking (median 0.0), gait 3 seen at rest (median 0.0;
+    the catch-up gait) [I]; posture 0/1 against stance nibbles 1, 2, 4 (no clean map yet) [U].
+  - U5: no order of kind 1 (the aim/look target) in 7728 host census samples (kinds 0 and 2 only); the aim seems to
+    ride the request's action B payload (kb = 1 in the fight) [I].
+  - R inputs: the host was hit by field-CP guards from up to 92 m in ALERT (`963ab276`, 17 samples; p90 90.6 m), the
+    guest by field-CP guards while about 105 m away (`0a271c10`, 424 hits from guards 13 / 18 / 231; the distances were
+    not logged then). [I] In `963ab276` those guards came no nearer than 110-150 m (flat) to that spot, so ALERT
+    engagement may reach about 150 m. The calm / caution floors (80 m) have no measured notice distance yet [U].
+    Realize: 12 of 281 slots were realized on both copies at every distance seen, out to 212.6 m from the host and 400 m
+    or more (3D) from the guest, so no realize radius was measured and none caps R.
+  - U2 (a puppet's body runs a posted request) [U]: no puppet was set in any session.
+- **The three gate sessions**:
+  - `0a271c10`: 0 puppets. The hook compared the runtime thread's ACT_V1 stamps (partner_net::NowMs) with
+    GetTickCount64, so every registration was stale (25 requests staged in five minutes, 0 applied); and the census had
+    no local player (0 `soldier_act_census` lines). Fixed (b736940c: one clock; Lua sends `ACT_V1 p` every 250 ms).
+  - `963ab276`: the transport works (host 1999 parts, guest 447 complete requests, 88 unpacks, 25051 order re-posts,
+    0 faults), but 0 puppets: the ACT_V1 reply `{..,or=..}` used the Lua reserved word `or` as a key, so Lua never read
+    `f=1` (the requests landed on copies whose own brain still ran). Fixed after the run (red 9a0f7553, green 9bcbed3b:
+    `od=`, `soldier_act::FormatActReply`, a test that no reply key is a Lua reserved word) [U unrun]. The watcher's debug teleport
+    40 m further south left it under the terrain (y -79.2); removed from the scenario (bf56454c).
+  - The walk south stops near z 2018-2025, about 105 m from the outpost, inside the ALERT engagement range: from there
+    the far rule can never take an ALERT guard, so the gate's ALERT frames need another watch point [U].
+- **Not done / [U]**: a gate session with both fixes (the step's four sessions were used); U2; the frames of gate (1);
+  the counts of (2)-(4) with puppets; the hold-up in the quiet scene; world note 30 (not needed so far); FM2.
+- **Regression** (`3bc7280b`, enemy-prove-1-join + enemy-latch-alert with `soldier_act=1`, the guest inside the outpost):
+  [O] passed both parts; 0 latches, anomalies, faults, game overs, roster mismatches or overflow (1 `drive_sank`); place
+  error p50 0.76 / p90 6.8 m (58 samples; 798b51dd at the defaults: 0.60 / 1.56); M3 host placements 177 / 203 (24
+  unrealized); frame p95 19.1 ms (host) / 19.2 ms (guest), as without the key. [O] But the guest's native dropped 582
+  bullets and 343 noises of 9 guards that were never puppets (`m` for candidates armed the fire drop; the reply bug
+  kept Lua from releasing them): with the key on, far guards' shots at the guest did nothing on its copy. Fixed after
+  the run (red af28a5a2, green 9bcbed3b: candidates are only queried with `q`; `m` only for puppets) [U unrun].
+  [O] More R input: ALERT hits on the host from up to 122.4 m (a single hit by guard 16; the next farthest 58.4 m), on
+  the guest from 82-87 m, and one 333.8 m hit on the guest by guard 176 of another CP ([U] real or misattributed).
+  R(ALERT) is now 184 m (1.5 x 122.4; the 138 m of 7b709720 rested on a realize cap the bands do not show). [O] The
+  divergence report itself marks that run's place check [FAIL] (`drive_sank=1`), and also p90 <= 5 m, M3 177 / 203,
+  the M3 place error (1.5 / 6.91 m) and the guest apply d_m; p90 6.8 m is about 4x the 1.56 m of `798b51dd`. It ran
+  the candidate-bug build, so it is not a regression run of the final head.
+- **Review fixes before landing** (red 3df4f8ec, then green; all behind `soldier_act`, unrun in a game):
+  - the fire-drop mask is a lease: the hook clears a bit 1.5 s after the last fresh `ACT_V1 m`, and `r` is always
+    taken (it was refused on a mission or partner change), so a puppet Lua forgot cannot keep his bullets and noise
+    dropped (the failure class of the 582 bullets above);
+  - a guest shot and a guest-local phase rise release the puppets within one update (one `m` per update carries the
+    shot count), not when the 12-per-update round robin reaches them (~0.8 s);
+  - a puppet whose object is gone, and every puppet at a mission start, is released with `r`;
+  - R(ALERT) 184 m (above);
+  - at the defaults the `ACT_V1 p` receipt (refused "hook") now goes out once per 10 s, not every 250 ms. The final
+    head has never run in a game, at the defaults or with the key on.
+- **Process gaps, recorded**: the FM1 green fa2db64e added soldier_act_tests, the fire / noise drop checks, DRIVE_V1
+  mode 2 checks, the far-rule Lua checks and world_receipt checks without a red commit first; 96feab57 (5 s re-apply),
+  35b8048a (every puppet each update) and fe37f874 (realized-only apply) have no tests. `act_census` is a lab key off
+  unless named, like every other research key; no lab key is compiled out of a release build. A 0.15.0 partner refuses
+  r[19] above 511 and turns enemy follow off: a default flip of bit 512 needs a version gate first.
+- **Checks** at the landing head: full `tools/build.ps1 -Jobs 4` 354/354. `generate_*_contract.py --check`: 32 of 40
+  pass; the eight that do not are untouched by this branch and fail the same way on dev: carry_info and sleep_plugin
+  (header differs), native_ui and teammate_targeting (their evidence JSON is not in the tree), master_server (takes
+  `--check` as a path), camera_mode_window (has no `--check`), horse_drive and vehicle_controller (need
+  `--executable`; with it they pass). The new `generate_soldier_act_contract.py`: 17 sites, 6 slots. Merged `dev/oct7-continue` (4689d0f4, the horse round): the horse round took protocol section 32, so
+  SOLDIER_ACT is section 33.
+
 ## November 4, 2026: horse M2, a downed partner on the horse (`wp/horse`; lab key `world_horse_cargo`, off unless named)
 
 **Players get:** nothing new at the defaults. The M2 gate did not pass in four proof attempts, so `world_horse_cargo`

@@ -129,6 +129,12 @@ WarpGrant FindGrant(std::uint16_t seq) noexcept;
 // Enemy sync M4: the newest two SOLDIER_SNAP records of a roster slot (world::Core::SnapPair), metres / radians on the
 // receiver's clock; false when none in the current paired epoch.
 bool SnapPair(std::uint16_t slot, std::uint64_t& now_ms, world::Snap& cur, world::Snap& prev) noexcept;
+// Enemy sync M7 FM1 (docs/world-sync-design.md 7.15): the newest SOLDIER_ACT request / order of a roster slot
+// (world::Core::ActLatest); false when none in the current paired epoch.
+bool ActLatest(std::uint16_t slot, std::uint64_t& now_ms, world::Act& out) noexcept;
+// FM1: sends one SOLDIER_ACT part from native (the game thread): world::Core::Tx then the datagram. The status.
+world::TxStatus SendAct(std::uint32_t tick, std::uint16_t slot, std::uint16_t seq, unsigned part,
+                        const std::uint8_t (&req)[world::kActRequest], const std::uint8_t (&order)[world::kActOrder]) noexcept;
 
 // Observer boundaries: the runtime entry (next to PartnerMissionStart) and the
 // returned termination (next to PartnerMissionEnd).

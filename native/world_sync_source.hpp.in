@@ -124,3 +124,7 @@ constexpr char world_snap_source[] = R"MGS_WORLD(
 constexpr char world_horse_share_source[] = R"MGS_WORLD(
 @MGS_WORLD_HORSE_SHARE_SOURCE@
 )MGS_WORLD";
+// Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15: SOLDIER_ACT 0x58, lab key soldier_act; after snap).
+constexpr char world_mirror_source[] = R"MGS_WORLD(
+@MGS_WORLD_MIRROR_SOURCE@
+)MGS_WORLD";

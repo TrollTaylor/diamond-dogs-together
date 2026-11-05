@@ -2303,3 +2303,35 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
   victim_gone, 9 load_timeout, 10 busy, 11 call_away, 12 mid_revive.
 - A partner without the op skips it by its length (unknown_op): nothing is loaded. It replaces CARGO (0x2B, the offset
   prototype's stream), which no Lua sends any more.
+
+## 33. Enemy sync M7 FM1, the far mirror (lab key `soldier_act`, CFG r[19] bit 512; design 7.15)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x58 | SOLDIER_ACT | both | U (a datagram), level 2 | 49 | sender tick, roster slot 1..512, seq, part 0..3, ten u32 words |
+
+- Parts 0..2 (one seq) carry the owner's request as the engine's FOB pack writes it (0x13704a0, 0x70 bytes, the last
+  part zero-padded); part 3 (its own seq) the packed order (0x1370900, 0x18 bytes), then the owner copy's position
+  (x, y, z floats, metres) and a flags dword (bit 0: the position is valid). The words are the record's bytes,
+  little-endian.
+- `world::Core` keeps, per roster slot, the newest complete request (all three parts of one seq, a wrap-safe newer
+  seq) and the newest order (`ActLatest`, 64 slots, the least recently written reused); never in Lua's queues;
+  cleared with the grants (unpair, mission start and end, link session, epoch). A partner without the op skips each
+  part by its length (unknown_op).
+- 0x59 HANDOVER, 0x5A CLAIM and 0x5B stay reserved for the OB steps.
+- `ACT_V1 "<op> <slot> <goId>"` (game_script_observer `ActReceipt`, Lua owner thread, soldier_act, 30010 / 30020 /
+  30050): `t` the host registers a guard to send for 1.5 s; `s 0 0` the host sends the staged parts; `m` the guest
+  mirrors a guard (the newest act into the hook's mailbox, `f=1` when its request is under 1.5 s old); `r` releases
+  him (always taken, whatever the key, mission or partner: it only clears this copy's mailbox, apply stamp and fire-drop
+  bit). The fire-drop bit is also a lease: the hook clears it 1.5 s after the last fresh `m` (`act_status expired=`).
+  Reply `{f,tx,rx,ap,od,sh,mi,fd,fn}` (parts sent, requests taken, requests applied, orders re-posted, the local
+  player's shots, mirrored guards, puppet bullets and noise dropped) or `{refused="<reason>"}` (`args`, `disabled`,
+  `hook`, `mission`, `type`, `role`, `paused`).
+- `ACT_V1 "p <x_mm> <y_mm> <z_mm>"`: the local player for the census (Lua, every 250 ms while paired; reply `{p=1}`;
+  after `{refused="hook"}`, as at the defaults, Lua waits 10 s before the next).
+- `DRIVE_V1 ... 2`: the mirror drive (no step under 5 m, the whole way beyond; a guest with soldier_act only).
+- Debug (research): `mirror off|on` (`soldier_act_mirror_cmd`), `act_status`, `act_probe [dst src ms mode]`.
+- Log lines: native `soldier_act=installed | refused`, `soldier_act_mirror=on|off; role; fire; noise`,
+  `soldier_act_frame; t; frames; p95_ms; mirrored; tx; staged; rx; applied; orders; refuse_table; fault; remap;
+  puppet_fire; puppet_noise; shots; same; unrealized` (1 Hz), the census lines of design 7.15; Lua `event=mirror; ent; on; why; d_m; R;
+  ok`, `event=mirror_stats` (10 s).

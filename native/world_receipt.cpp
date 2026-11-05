@@ -66,6 +66,7 @@ Receipt Classify(const char* source, std::size_t size, const char* name) noexcep
     if (Prefixed(source, size, warp_prefix)) return Receipt::warp;
     if (Prefixed(source, size, hostwarp_prefix)) return Receipt::hostwarp;
     if (Prefixed(source, size, drive_prefix)) return Receipt::drive;
+    if (Prefixed(source, size, act_prefix)) return Receipt::act;
     if (Prefixed(source, size, note_prefix)) return Receipt::note;
     if (Prefixed(source, size, save_prefix)) return Receipt::save;
     if (SameText(source, size, peer_source)) return Receipt::peer;
@@ -164,7 +165,7 @@ bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, s
         if (!Token(p, end, v[i])) return false;
         n = i + 1;
     }
-    if (n == 6 && (v[5] < 0 || v[5] > 1)) return false;
+    if (n == 6 && (v[5] < 0 || v[5] > 2)) return false;
     if (p != end || n < 5 || v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots) || v[1] < 0 || v[1] > 65535) return false;
     for (unsigned i = 0; i < 3; ++i)
         if (v[2 + i] < -100000000 || v[2 + i] > 100000000) return false;
@@ -172,6 +173,44 @@ bool ParseDriveMode(const char* source, std::size_t size, std::uint16_t& slot, s
     go_id = static_cast<std::uint32_t>(v[1]);
     for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[2 + i]);
     mode = static_cast<std::uint8_t>(n == 6 ? v[5] : 0);
+    return true;
+}
+
+bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slot, std::uint32_t& go_id) noexcept {
+    if (!source || !Prefixed(source, size, act_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(act_prefix) - 1;
+    const char* end = source + size;
+    if (p >= end) return false;
+    const char o = *p++;
+    if (o != 't' && o != 'm' && o != 'r' && o != 's' && o != 'q') return false;
+    std::int64_t v[2]{};
+    for (unsigned i = 0; i < 2; ++i) {
+        if (p >= end || *p != ' ') return false;
+        ++p;
+        if (!Token(p, end, v[i])) return false;
+    }
+    if (p != end || v[1] < 0 || v[1] > 65535) return false;
+    if (o == 's' ? (v[0] != 0 || v[1] != 0) : (v[0] < 1 || v[0] > static_cast<std::int64_t>(kSnapSlots))) return false;
+    op = o;
+    slot = static_cast<std::uint16_t>(v[0]);
+    go_id = static_cast<std::uint32_t>(v[1]);
+    return true;
+}
+
+bool ParseActPlayer(const char* source, std::size_t size, std::int32_t (&pos_mm)[3]) noexcept {
+    if (!source || !Prefixed(source, size, act_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(act_prefix) - 1;
+    const char* end = source + size;
+    if (p >= end || *p++ != 'p') return false;
+    std::int64_t v[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        if (p >= end || *p != ' ') return false;
+        ++p;
+        if (!Token(p, end, v[i])) return false;
+        if (v[i] < -100000000 || v[i] > 100000000) return false;
+    }
+    if (p != end) return false;
+    for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[i]);
     return true;
 }
 

@@ -491,6 +491,24 @@ int main() {
         Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
                   sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
               "drive: a play guest; a lab host with soldier_owner");
+        // FM1: the mirror drive (mode 2) needs soldier_act and is a guest's only; it never steps under 5 m, the whole way
+        // beyond.
+        {
+            sw::DriveRule m{false, true, false, 30010, true, false};
+            m.mirror = true;
+            const char* noKey = sw::DriveAdmit(m);
+            m.act_key = true;
+            const char* ok = sw::DriveAdmit(m);
+            m.host = true;
+            m.owner = true;
+            const char* host = sw::DriveAdmit(m);
+            Check(noKey && std::strcmp(noKey, "mirror") == 0 && ok == nullptr && host && std::strcmp(host, "mirror") == 0,
+                  "FM1: the mirror drive needs soldier_act, a guest only");
+            const float origin[3] = {0, 10, 0}, inside[3] = {4.9f, 10, 0}, beyond[3] = {5.2f, 10, 0};
+            const auto rest = sw::DriveStep(origin, inside, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, 0.1f);
+            const auto snap = sw::DriveStep(origin, beyond, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, 0.1f);
+            Check(!rest.move && snap.move && snap.hard && snap.pos[0] == beyond[0], "FM1: no step under 5 m, the whole way beyond");
+        }
         Check(sw::DriveAdmit({false, true, false, 30010, true, false, true, true}) == nullptr &&
                   std::strcmp(sw::DriveAdmit({false, true, false, 30010, true, false, true, false}), "puppet") == 0 &&
                   std::strcmp(sw::DriveAdmit({false, true, true, 30010, true, true, true, true}), "puppet") == 0,
