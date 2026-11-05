@@ -46,6 +46,19 @@ inline constexpr std::uint64_t kActMinMs = 100, kActResendMs = 1000, kActFreshMs
 // The puppet side re-applies an unchanged request only every kActReapplyMs (the 1 s resend keeps the stream fresh; the
 // FOB peer applies only new requests, and a re-posted request restarts its motion).
 inline constexpr std::uint64_t kActReapplyMs = 5000;
+// FM1 round 6 (docs/world-sync-design.md 7.19): while the owner copy moves, an unchanged request is re-applied every
+// kActReapplyMovingMs, so the engine's catch-up in the unpack (gait + 1 at 2..5 m from the owner position, gait 3 and that
+// destination beyond 5 m) runs every second (runs adecad01 / 80cc0176: with 5 s the walkers lagged 5-12 m, speed ratio p50
+// 0.19 / 0.78). The owner copy moves while its order-part position is >= kActMoveM (3D) from where it was at the last apply.
+inline constexpr std::uint64_t kActReapplyMovingMs = 5000;
+inline constexpr float kActMoveM = 0.3f;
+bool OwnerMoved(const float (&was)[3], const float (&now)[3]) noexcept;
+// Whether the hook unpacks the mailbox request now: a first (or re-mirrored) or changed request at once, an unchanged one
+// kActReapplyMovingMs after the last apply while the owner copy moves, else kActReapplyMs.
+bool ReapplyDue(bool first, bool changed, bool moving, std::uint64_t age_ms) noexcept;
+// The ACT_V1 p reply "return {p=1,pl=<limit>}": the local player taken, and the phase limit of lab key soldier_act (0 every
+// phase, soldier_act=1; 1 calm / caution only, soldier_act=calm), which the far rule reads (world_mirror.lua M.lim).
+bool FormatPlayerReply(unsigned phase_limit, char* out, std::size_t capacity) noexcept;
 inline constexpr unsigned kActPartsPer100Ms = 24;
 // Players 0 and 1 swap between the copies (GameObjectId type 0); any other id is unchanged.
 std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
@@ -105,8 +118,14 @@ bool Paused() noexcept;
 struct Counters {
     std::uint32_t tx_parts, staged, rx, applied, orders, refuse_table, refuse_fault, refuse_stale, remap_player, payload_ids,
         mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
+    // Round 6: due = request applies the rule asked for (first, changed, moving 1 s, still 5 s) on realized puppets;
+    // reapply_moving = those that were a moving owner's 1 s re-apply; same / unrealized / expired as the frame line's.
+    std::uint32_t due, reapply_moving, same, unrealized, expired;
 };
 Counters ReadCounters() noexcept;
+// The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the
+// aim-target swaps, RemapAimTarget), due and reapply. False when it does not fit.
+bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_t capacity) noexcept;
 // The ACT_V1 reply, a Lua table constructor: {f,tx,rx,ap,od,sh,mi,fd,fn} (od: orders re-posted; never a Lua reserved
 // word as a key: run 963ab276's {..,or=..} did not compile in Lua, so the guest's Lua never saw f=1 and set no puppet).
 // With owner_mm (the m reply), ",ox=,oy=,oz=" the owner copy's position in mm from the newest order part (run 94a7bf2a:

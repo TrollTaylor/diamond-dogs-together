@@ -46,6 +46,7 @@ local function fixture(host, level, mb)
             if command.id == 'GetStatus' and c.status then return c.status[id] end
             if command.id == 'GetGameObjectIdUsingRoute' then return c.routeIds and c.routeIds[command.route] end
             if command.id == 'IsOnRoute' then return c.onRoute ~= nil and c.onRoute[id] == command.route end
+            if command.id == 'GetVehicleGameObjectId' and c.vehicles then return c.vehicles[id] or 65535 end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then if not c.inert then c.life[id] = command.state end
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
@@ -1697,6 +1698,7 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
+    mg.W.handlers[92]({1, 6})                               -- the partner's ACT_CAPS (round 6)
     -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
     -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
     -- FM1 retry (run 94a7bf2a): the guest's own copies hit it from up to 173.9 m in ALERT (guard 16), so R(ALERT) is
@@ -1764,6 +1766,7 @@ if arg[7] and arg[8] then
     -- The host side: its own NORMAL guard within 250 m of the guest and beyond R - 10 m is registered; nearer ones not.
     local mh = followFixture(true)
     mh.W.snapOn, mh.W.actOn, mh.W.mission = true, true, 30010
+    mh.W.handlers[92]({1, 6})
     mh.positions[900] = {0, 0, 0}
     mh.positions[1] = {0, 1.8, 100.0}
     mh.positions[2] = {0, 1.8, 30.0}
@@ -1777,6 +1780,7 @@ if arg[7] and arg[8] then
     check((function()
         local ma = guestFix(0)
         ma.W.snapOn, ma.W.actOn, ma.W.mission = true, true, 30010
+        ma.W.handlers[92]({1, 6})
         ma.positions[1] = {0, 1.8, 100.0}
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
         ticks(ma, 70)
@@ -1784,7 +1788,7 @@ if arg[7] and arg[8] then
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 8800, oz = 100000}
         ticks(ma, 20)
         if logged(ma, 'why=apart') then return false end  -- not before 2 s, nor in his first 4 s as a puppet
-        ticks(ma, 100)
+        ticks(ma, 160)  -- round 6: the owner copy still for 2 s first (here it jumped 7 m up), then 2 s apart
         if not (logged(ma, 'event=mirror_apart;ent=3000000001;apart_m=7.0') and logged(ma, 'on=0;why=apart') and acted(ma, 'r 1 1') and
             cmdCount(ma, 'SetPuppet') == 2) then return false end
         ma.actReply = {f = 1, sh = 0}
@@ -1796,6 +1800,7 @@ if arg[7] and arg[8] then
     check((function()  -- its own function: the main chunk is at Lua's 200-local limit
         local mr = followFixture(true)
         mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+        mr.W.handlers[92]({1, 6})
         mr.positions[900] = {0, 0, 0}
         mr.positions[1] = {0, 1.8, 280.0}
         mr.positions[2] = {0, 1.8, 320.0}
@@ -1813,6 +1818,7 @@ if arg[7] and arg[8] then
     end
     local mr = guestFix(0)
     mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+    mr.W.handlers[92]({1, 6})
     mr.positions[1] = {0, 1.8, 100.0}
     ticks(mr, 4)
     check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
@@ -1864,6 +1870,120 @@ if arg[7] and arg[8] then
     pb.now = pb.now + 10000
     ticks(pb, 60)
     check(pCount(pb) >= 9, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
+    -- FM1 round 6 (docs/world-sync-design.md 7.19, protocol section 36): the far mirror runs only after the partner's
+    -- ACT_CAPS (0x5C) with bit 1. A 0.15.0 partner has no op 0x5C and never sends one: nothing of soldier_act runs.
+    ;(function()
+        local function n(c, pat)
+            local k = 0
+            for _, s in ipairs(c.acts or {}) do if s:find(pat, 1, true) then k = k + 1 end end
+            return k
+        end
+        local og = guestFix(0)
+        og.W.snapOn, og.W.actOn, og.W.mission = true, true, 30010
+        og.positions[1] = {0, 1.8, 100.0}
+        ticks(og, 60)
+        check(n(og, ' -- q ') == 0 and n(og, ' -- m ') == 0 and next(og.W.mirror.pp) == nil and cmdCount(og, 'SetPuppet') == 0,
+            'FM1 round 6: an old partner (no ACT_CAPS): the guest asks nothing and takes no puppet')
+        local oh = followFixture(true)
+        oh.W.snapOn, oh.W.actOn, oh.W.mission = true, true, 30010
+        oh.positions[900] = {0, 0, 0}
+        oh.positions[1] = {0, 1.8, 100.0}
+        ticks(oh, 60)
+        check(n(oh, ' -- t ') == 0 and n(oh, ' -- s ') == 0, 'FM1 round 6: an old partner: the host registers and sends nothing')
+        local capsTx = 0
+        for _, t in ipairs(oh.tx) do if t.op == 92 and t.v[1] == 1 and t.v[2] == 6 then capsTx = capsTx + 1 end end
+        check(capsTx == 1, 'FM1 round 6: a PC with soldier_act announces ACT_CAPS {1, 6} once while paired')
+        og.W.handlers[92]({1, 6})
+        ticks(og, 8)
+        check(og.W.mirror.pp[3000000001] ~= nil and logged(og, 'event=mirror_peer;caps=1;rev=6'),
+            'FM1 round 6: after the partner\'s ACT_CAPS: a puppet')
+        oh.W.handlers[92]({1, 6})
+        ticks(oh, 8)
+        check(n(oh, ' -- t 1 1') >= 1 and n(oh, ' -- s ') >= 1, 'FM1 round 6: after the partner\'s ACT_CAPS: the host sends')
+        og.W.handlers[92]({0, 6})
+        ticks(og, 2)
+        check(logged(og, 'on=0;why=peer') and next(og.W.mirror.pp) == nil, 'FM1 round 6: a partner without the mirror releases every puppet')
+        og.W.handlers[92]({1, 6})
+        for _, f in ipairs(og.W.unpairedHooks) do f(1) end
+        check(og.W.mirror.peer == nil, 'FM1 round 6: unpaired forgets the partner\'s caps')
+        local ow = guestFix(0)
+        ow.W.snapOn, ow.W.mission = true, 30010
+        ticks(ow, 60)
+        local quiet = true
+        for _, t in ipairs(ow.tx) do if t.op == 92 then quiet = false end end
+        check(quiet, 'FM1 round 6: without soldier_act nothing is announced (the defaults send nothing new)')
+    end)()
+    -- FM1 round 6 (4): the phase lever (soldier_act=calm, native's ACT_V1 p reply pl=1) mirrors only in calm / caution;
+    -- without it (pl=0, the current behaviour) an ALERT puppet beyond R(ALERT) + 15 m stays.
+    ;(function()
+        local pl = guestFix(0)
+        pl.W.snapOn, pl.W.actOn, pl.W.mission = true, true, 30010
+        pl.W.handlers[92]({1, 6})
+        pl.positions[1] = {0, 1.8, 280.0}
+        ticks(pl, 8)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever: a puppet at 280 m in calm (setup)')
+        pl.W.cp[100].localPhase = 3
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil and not logged(pl, 'why=phase_limit'), 'phase lever off (pl=0): an ALERT puppet at 280 m stays')
+        pl.pReply = {p = 1, pl = 1}
+        ticks(pl, 20)
+        check(logged(pl, 'event=mirror;ent=3000000001;on=0;why=phase_limit') and pl.W.mirror.pp[3000000001] == nil,
+            'phase lever pl=1: released in ALERT')
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] == nil, 'phase lever pl=1: none taken in ALERT')
+        pl.W.cp[100].localPhase = 1
+        ticks(pl, 40)
+        check(pl.W.mirror.pp[3000000001] ~= nil, 'phase lever pl=1: a puppet again in caution')
+    end)()
+    -- FM1 round 6 (2): riders (GetVehicleGameObjectId) are skipped by the far rule (run adecad01: two LRRP riders of another
+    -- CP were puppeted at 297 m and released apart 283-285 m off); a puppet who mounts is released (why=vehicle).
+    ;(function()
+        local rv = guestFix(0)
+        rv.W.snapOn, rv.W.actOn, rv.W.mission = true, true, 30010
+        rv.W.handlers[92]({1, 6})
+        rv.vehicles = {[1] = 77}
+        rv.positions[1] = {0, 1.8, 120.0}
+        ticks(rv, 40)
+        check(next(rv.W.mirror.pp) == nil, 'riders: a guard in a vehicle is never taken')
+        rv.vehicles = {}
+        ticks(rv, 40)
+        check(rv.W.mirror.pp[3000000001] ~= nil, 'riders: on foot he is taken (setup)')
+        rv.vehicles = {[1] = 77}
+        ticks(rv, 40)
+        check(logged(rv, 'event=mirror;ent=3000000001;on=0;why=vehicle') and rv.W.mirror.pp[3000000001] == nil,
+            'riders: a puppet who mounts is released')
+        local hv = followFixture(true)
+        hv.W.snapOn, hv.W.actOn, hv.W.mission = true, true, 30010
+        hv.W.handlers[92]({1, 6})
+        hv.positions[900] = {0, 0, 0}
+        hv.positions[1] = {0, 1.8, 100.0}
+        hv.vehicles = {[1] = 77}
+        ticks(hv, 8)
+        local t = 0
+        for _, s in ipairs(hv.acts or {}) do if s:find(' -- t 1 1', 1, true) then t = t + 1 end end
+        check(t == 0, 'riders: the host does not send a rider')
+    end)()
+    -- FM1 round 6 (1): apart only for a still owner copy (the tower case); a walker lagging behind a moving owner copy is the
+    -- catch-up's (native re-applies his request every 1 s), not apart's (runs adecad01 / 80cc0176: apart took them).
+    ;(function()
+        local mw = guestFix(0)
+        mw.W.snapOn, mw.W.actOn, mw.W.mission = true, true, 30010
+        mw.W.handlers[92]({1, 6})
+        mw.positions[1] = {0, 1.8, 100.0}
+        mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = 100000}
+        ticks(mw, 70)
+        local oz = 107000
+        for _ = 1, 300 do
+            oz = oz + 33
+            mw.actReply = {f = 1, sh = 0, ox = 0, oy = 1800, oz = oz}
+            mw.positions[1] = {0, 1.8, (oz - 7000) / 1000}
+            ticks(mw, 1)
+        end
+        check(not logged(mw, 'why=apart') and mw.W.mirror.pp[3000000001] ~= nil,
+            'apart: a walker 7 m behind a moving owner copy stays a puppet')
+        ticks(mw, 200)
+        check(logged(mw, 'on=0;why=apart'), 'apart: once the owner copy is still 2 s, 7 m off for 2 s releases him')
+    end)()
     end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.

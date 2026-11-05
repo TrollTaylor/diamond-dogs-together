@@ -228,6 +228,30 @@ int main() {
         Check(au::ExpireMirrored(1ull << 40, sa::kActFreshMs) == 1 && au::MirroredCount() == 0, "mirror lease: all lapse");
         au::ClearMirrored();
     }
+    // Round 6 (docs/world-sync-design.md 7.19): a moving puppet's unchanged request is re-applied every 1 s (runs adecad01 /
+    // 80cc0176: with 5 s the walkers lagged 5-12 m, the catch-up ran only then); a still one every 5 s; a first or changed
+    // request at once. The owner copy moves when its order-part position is >= 0.3 m from where it was at the last apply.
+    {
+        Check(sa::kActReapplyMovingMs == 1000 && sa::kActReapplyMs == 5000, "re-apply: 1 s moving, 5 s still");
+        Check(sa::ReapplyDue(true, false, false, 0) && sa::ReapplyDue(false, true, false, 0), "re-apply: first / changed at once");
+        Check(!sa::ReapplyDue(false, false, true, 999) && sa::ReapplyDue(false, false, true, 1000), "re-apply: moving every 1 s");
+        Check(!sa::ReapplyDue(false, false, false, 4999) && sa::ReapplyDue(false, false, false, 5000), "re-apply: still every 5 s");
+        const float o0[3] = {10.0f, 2.0f, -5.0f}, o1[3] = {10.2f, 2.0f, -4.8f}, o2[3] = {10.0f, 2.0f, -4.6f}, o3[3] = {10.0f, 2.35f, -5.0f};
+        Check(!sa::OwnerMoved(o0, o1) && sa::OwnerMoved(o0, o2) && sa::OwnerMoved(o0, o3), "owner moved: >= 0.3 m (3D)");
+        // (4) the phase lever travels in the ACT_V1 p reply (no CFG bit): pl=1 calm / caution only.
+        char p[40]{};
+        Check(sa::FormatPlayerReply(1, p, sizeof(p)) && std::strcmp(p, "return {p=1,pl=1}") == 0 && sa::FormatPlayerReply(0, p, sizeof(p)) &&
+                  std::strcmp(p, "return {p=1,pl=0}") == 0, "the p reply carries the phase limit");
+        // (3) the frame line prints the aim-swap counter payload_ids (RemapAimTarget) and the apply accounting.
+        sa::Counters k{};
+        k.payload_ids = 5; k.due = 9; k.applied = 8; k.reapply_moving = 4; k.frames = 61; k.frame_p95_us = 18950;
+        char line[512]{};
+        Check(sa::FormatFrameLine(123, k, line, sizeof(line)) && std::strstr(line, "soldier_act_frame; t=123; frames=61; p95_ms=18.95;") &&
+                  std::strstr(line, "; payload_ids=5;") && std::strstr(line, "; due=9;") && std::strstr(line, "; reapply=4") &&
+                  std::strstr(line, "; applied=8;"), "the frame line prints payload_ids, due and reapply");
+        char tiny[16]{};
+        Check(!sa::FormatFrameLine(1, k, tiny, sizeof(tiny)), "the frame line refuses a short buffer");
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

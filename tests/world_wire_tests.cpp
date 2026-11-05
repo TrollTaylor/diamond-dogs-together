@@ -114,7 +114,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 75, "75 ops (FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 76, "76 ops (FM1 act caps, FM1 soldier act, horse seat, world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
                        "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, horse plan M2 horse seat, and local ops)");
@@ -2177,6 +2177,34 @@ void SeatOp() {
     Pair(30010, 200);
     Check(Tx(g_guest, op::seat, {1, 25608, 0, 2, 1}, 201) == world::TxStatus::disabled, "SEAT needs world level 3");
 }
+// FM1 round 6 (docs/world-sync-protocol.md section 36): ACT_CAPS 0x5C, both directions, world queue, reliable, level 2, play
+// too, never a request: caps (bit 1 the far mirror on this PC, bit 2 its calm / caution phase limit), the FM1 revision.
+// 2 fields, 3 bytes. The far mirror runs only after the partner's ACT_CAPS with bit 1; a 0.15.0 partner has no op 0x5C
+// (it skips it by its length, unknown_op) and never sends one, so nothing of soldier_act runs against it.
+void ActCapsOp() {
+    const auto* s = world::FindOp(op::act_caps);
+    Check(op::act_caps == 0x5C && s && std::strcmp(s->name, "ACT_CAPS") == 0, "ACT_CAPS 0x5C exists");
+    Check(s && s->queue == 1 && s->wire == world::Wire::reliable && s->level == 2 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::both && s->lua == 2 && s->native == 0 && s->rx == 0 && s->body == 3,
+          "ACT_CAPS: world queue, reliable, level 2, play too, both directions, 2 fields, 3 bytes");
+    if (!s) return;
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_guest, op::act_caps, {1, 6}, 101) == world::TxStatus::ok && Tx(g_host, op::act_caps, {3, 6}, 101) == world::TxStatus::ok,
+          "both roles announce");
+    Check(Tx(g_host, op::act_caps, {65536, 6}, 101) == world::TxStatus::bad_args && Tx(g_host, op::act_caps, {1, 256}, 101) == world::TxStatus::bad_args,
+          "caps u16, revision u8");
+    Exchange(102);
+    auto toHost = Drain(g_host, 3, 103);
+    auto toGuest = Drain(g_guest, 3, 103);
+    Check(toHost.size() == 1 && toHost[0].op == op::act_caps && toHost[0].count == 2 && toHost[0].v[0] == 1 && toHost[0].v[1] == 6,
+          "the host's world queue delivers the guest's caps");
+    Check(toGuest.size() == 1 && toGuest[0].op == op::act_caps && toGuest[0].v[0] == 3, "the guest's world queue delivers the host's caps");
+    g_guest.LocalMissionEnd(105);
+    Check(Tx(g_guest, op::act_caps, {1, 6}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
+}
 // Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT 0x50, both
 // directions, world queue, reliable, level 3, play too, never a request; seq, seat 0..2, the sender's role, action 1..6,
 // cause 0..15, the victim's downed generation, xyz mm, yaw mrad: 10 fields, 26 bytes.
@@ -2450,6 +2478,7 @@ int main() {
     VehicleDamageOp();
     SeatOp();
     HorseSeatOp();
+    ActCapsOp();
     TravelOp();
     RulesOp();
     FultonOp();

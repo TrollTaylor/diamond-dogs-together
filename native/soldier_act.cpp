@@ -148,6 +148,21 @@ bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept
     return changed ? age >= kActMinMs : age >= kActResendMs;
 }
 
+bool OwnerMoved(const float (&was)[3], const float (&now)[3]) noexcept {
+    (void)was; (void)now;
+    return false;
+}
+
+bool ReapplyDue(bool first, bool changed, bool moving, std::uint64_t age_ms) noexcept {
+    (void)moving;
+    return first || changed || age_ms >= kActReapplyMs;
+}
+
+bool FormatPlayerReply(unsigned phase_limit, char* out, std::size_t capacity) noexcept {
+    (void)phase_limit; (void)out; (void)capacity;
+    return false;
+}
+
 void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw) noexcept {
     std::memset(entry, 0, sizeof(entry));
     std::memcpy(entry, pos, sizeof(pos));
@@ -995,6 +1010,11 @@ Counters ReadCounters() noexcept {
     k.local_shots = soldier_authority::LocalShots();
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
     return k;
+}
+
+bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_t capacity) noexcept {
+    (void)now; (void)k; (void)out; (void)capacity;
+    return false;
 }
 
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {
