@@ -74,6 +74,9 @@ void TestParse() {
     // BODY0 round: bit 2 (4) the write watch on body 0's transform, bit 3 (8) the pin (horse_body_watch).
     Check(Parse("hold0 30010 7 0 0 0 0 14", r) && r.reset == 14 && Parse("hold0 30010 7 0 0 0 0 4", r) && r.reset == 4,
           "hold0 resets 0..15 (C0 + watch + pin = 14)");
+    // hold1: the carrier's copy holds body 1 (the downed partner) the same way (cfd2b604: body 1 low on the carrier's screen).
+    Check(Parse("hold1 30010 7 1 2 3 4 14", r) && r.verb == hd::Verb::hold1 && r.x == 1 && r.reset == 14 && !Parse("hold1 30010 7 1 2 3 4 16", r),
+          "hold1: hold0's numbers for body 1");
     // free0: the take-down / lay-down ends the pin before its Warp (else the pin would put the body back on the horse).
     Check(Parse("free0 30010 7", r) && r.verb == hd::Verb::free0 && r.mission == 30010 && r.epoch == 7 && !Parse("free0 30010", r) &&
               !Parse("free0 30010 7 1", r),
@@ -243,7 +246,7 @@ void TestLabKey() {
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_share && play.play_refused == 0, "on in play with the gun profile");
     Check(!gunOff.world_horse_share && gunOff.world_horse_share_given, "a named 0 is the off switch");
 }
-// Horse plan M2 (a downed partner on the shared horse): world_horse_cargo, off unless named in lab and play until its gate.
+// Horse plan M2 (a downed partner on the shared horse): world_horse_cargo, on with the gun profile since the BODY0 round.
 void TestCargoKey() {
     const auto lab = [](const char* text) {
         mgscoop::LabConfig c{};
@@ -259,14 +262,14 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    // Round 2's final session (8cfe8e97 lab, 7f3155c8 play) did not pass the gate: off unless named again, gun profile too.
-    Check(!gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share,
-          "after the round 2 gate failed: off with the gun profile (the M1 key stays on)");
+    // BODY0 round: the gun profile turns it on in lab and play (runs 911ce293 / its play rehearsal: the downed player lies on
+    // the horse on both screens); a named 0 is the off switch.
+    Check(gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share, "on with the gun profile (and the M1 key)");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
     Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
-    Check(playGun.mode == mgscoop::LabMode::play && !playGun.world_horse_cargo && playGun.play_refused == 0, "off in play unless named");
+    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_cargo && playGun.play_refused == 0, "on in play with the gun profile");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_cargo=1\n");
@@ -364,6 +367,9 @@ void TestBodyWatch() {
     Check(w::Ours(1) && w::Ours(2) && w::Ours(3) && !w::Ours(4) && !w::Ours(0x4000), "Ours: B0 / B1 only");
     // The pin holds only within kPinMs of the last hold0 (a later Warp of body 0 is not undone).
     Check(w::PinLive(1000, 1000 + w::kPinMs) && !w::PinLive(1000, 1001 + w::kPinMs) && !w::PinLive(0, 10), "PinLive");
+    // Run 911ce293: world_horse_cargo pins nothing for TRACK_PIN_MS (200 ms) after M1's last placement; a 100 ms pin let body 0
+    // drop to the ground under the horse right after the dismount (drop_cm 246) and the victim's copy's horse fell (Unconscious).
+    Check(w::kPinMs >= 300, "the pin outlasts world_horse_cargo's 200 ms track-pin gap");
     w::Table t{};
     const std::uint32_t ret[w::kRets] = {0x9c1b90, 0x123, 0, 0};
     w::Note(t, 0x1ad566c, 7, 0, ret);

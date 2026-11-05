@@ -27,6 +27,15 @@ local function fixture(o)
   end
   -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
   if verb and verb:find("^free0 ") then f.frees = (f.frees or 0) + 1; return {ready = true, freed = true} end
+  if verb and verb:find("^hold1 ") then
+   local x, y, z, yaw = verb:match("^hold1 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
+   f.holds1 = (f.holds1 or 0) + 1
+   f.lastHold1 = verb
+   if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
+   f.warps[#f.warps + 1] = {index = 1, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
+    via = "hold1"}
+   return {ready = true, held = true}
+  end
   if verb and verb:find("^hold0 ") then
    local x, y, z, yaw, rs = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%d+)$")
    f.holds[#f.holds + 1] = verb
@@ -154,6 +163,7 @@ check(not f.C.downedPosture(), "the carrier's own downed posture is never the ca
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
  math.abs(w.z - (300.0 - f.C.BACK_MM / 1000)) < 1e-6 and w.rotY == 0, "body 1 on the cargo point (behind the root, up), the horse's yaw")
+check(w.via == "hold1" and f.lastHold1:find(" 14$"), "the carrier's copy holds body 1 by hold1 (C0 + watch + pin)")
 f.horse.x, f.horse.yaw = 102000, 1571
 f.mounted = true
 f.env.vars.playerPosX, f.env.vars.playerPosY = 102.1, 2.5
@@ -286,6 +296,7 @@ check(f.C.busy(), "the victim's copy is busy too")
 check(w.via == "hold0" and #f.holds == 1 and f.holds[1]:find(" 14$"), "by default body 0 moves by hold0 + C0 + watch + pin")
 check(f.C.RESET == 14, "the default is hold0 + C0 + watch + pin (14)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
+check(f.C.RESET1 == 14, "the carrier's copy holds body 1 by hold1 with C0 + watch + pin (14) by default")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
 f.W.horseShare = {track = {}}
@@ -367,6 +378,7 @@ check(f.count(5) == 1, "a remote end sends nothing back")
 local function loaded(o) local x = fixture(o); load(x); return x end
 f = loaded(); f.horse.gen = 6; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 5 and f.lastWarp(1), "a new horse generation (dead / despawned): horse_lost, laid down")
+check((f.frees or 0) >= 1 and f.lastWarp(1).via == nil, "the carrier's lay-down frees the pin, then body 1 by the Lua Warp")
 f = loaded(); f.horse = nil; for i = 1, 40 do f.tick(50) end
 check(f.C.state == "off" and f.sent(5)[6] == 5, "the horse unreadable for 1.5 s: horse_lost")
 f = loaded(); f.horse.pending = 1; f.tick(50)
