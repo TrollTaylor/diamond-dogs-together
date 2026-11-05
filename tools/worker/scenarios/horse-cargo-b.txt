@@ -1,0 +1,158 @@
+# M2g: part 2 of 3 of the lab session (after horse-cargo.txt): order (b), the guest carrying the host, from the boot
+# spot; the same lines, frames and NEVER lines as (a) (horse-cargo.txt); the ride as (a)'s with the roles swapped.
+# M2g: this part starts from the boot spot (both on foot, teleported back; the guest's horse called first).
+logmark both
+both debug godmode 1
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 3000
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
+guest run goto_horse
+wait 1000
+placebehind host guest 3 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 3000
+host debug godmode 0
+both capture h2b-before
+guest press 1 120
+wait 2000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 1200
+host run downed_status
+host require down=1.*cause=1.*lock=1
+host debug godmode 1
+guest debug goto_carry
+wait 1500
+guest hold r 900
+guest release
+wait 3500
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+guest run goto_horse
+wait 1200
+guest capture h2b-carry-at-horse
+guest hold e 900
+guest release
+wait 3000
+waitlog host 'world_lua=event=horse_cargo; step=grant; seat=2;' 6
+waitlog guest 'world_lua=event=horse_cargo; step=loaded; seat=2;' 6
+waitlog host 'world_lua=event=horse_cargo; step=cargo; seat=2;' 6
+guest run cargo_status
+guest require cargo;state=carrier
+host run cargo_status
+host require cargo;state=cargo
+wait 1500
+both capture h2b-loaded
+host burst h2b-loaded-victim 2 400
+logmark both
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+guest capture h2b-mounted
+host capture h2b-mounted-victim
+guest hold w 1500 nowait
+guest burst h2b-ride-walk 2 400
+host burst h2b-ride-walk-victim 2 400
+guest hold w+a 1500 nowait
+guest burst h2b-ride-trot 2 400
+host burst h2b-ride-trot-victim 2 400
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop 2 400
+host burst h2b-ride-gallop-victim 2 400
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop2 2 400
+host burst h2b-ride-gallop2-victim 2 400
+guest hold w+shift 1500
+guest hold w+shift+d 1500
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop4 2 400
+host burst h2b-ride-gallop4-victim 2 400
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop6 2 400
+host burst h2b-ride-gallop6-victim 2 400
+guest hold w+shift+d 1500
+guest hold w+shift+d 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest hold w+shift 1500
+guest release
+wait 2500
+both capture h2b-ride-stopped
+host run downed_status
+host require down=1
+# The dismount keeps them on (lying, M2f).
+logmark both
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+guest run cargo_status
+guest require cargo;state=carrier
+wait 1000
+both capture h2b-stays
+host run cargo_status
+host expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2b-stays2
+host run cargo_status
+host expect stance=CRAWL
+# Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
+guest debug goto_carry
+wait 1500
+logmark both
+guest hold r 400
+guest release
+wait 2500
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=cargo; placed=1;' 5
+host run cargo_status
+host require cargo;state=off
+guest run cargo_status
+guest require cargo;state=off
+host run position
+guest run position
+both capture h2b-unloaded
+host run downed_status
+host require down=1
+guest debug goto_carry
+wait 1500
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 4500
+host run downed_status
+host require down=0
+both capture h2b-revived
