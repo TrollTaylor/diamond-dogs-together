@@ -88,6 +88,23 @@ void TestParse() {
           "hold0: seven numbers, free roam, yaw and reset bounds");
 }
 
+// M2g (run f7e09c55: at the partner's mount the victim's copy unrealized body 1 for a frame, the census refused, hold0
+// refused "body", the fall check ran on body 0 and it squatted on the horse): hold0 of body 0 alone may use body 1's class
+// from the last full census, only while body 0's own T class equals it.
+void TestHoldAlone() {
+    hd::BodyClass b0{}, cached{};
+    b0.t_vt = 0x10; b0.t68 = 0x20; b0.t70 = 0x30; b0.t58 = 0x40; b0.c0_vt = 0x50; b0.c090 = 0x60; b0.a0_vt = 0x70; b0.a080 = 0x80;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: no full census yet, no cached class");
+    cached = b0;
+    Check(hd::CachedBody1Usable(b0, cached), "hold alone: body 0's T class equals the cached body 1 class");
+    cached.t68 = 0x21;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: another T set-pose slot refuses");
+    cached = b0; cached.t_vt = 0x11;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: another T vtable refuses");
+    cached = b0; b0.t58 = 0;
+    Check(!hd::CachedBody1Usable(b0, cached), "hold alone: an unread slot refuses");
+}
+
 void TestHoldRefusal() {
     hd::HoldScope s{};
     Check(std::strcmp(hd::HoldRefusal(s), "off") == 0, "hold0: the keys first");
@@ -531,6 +548,7 @@ int main() {
     TestUnderRider();
     TestParse();
     TestRefusal();
+    TestHoldAlone();
     TestHoldRefusal();
     TestShared();
     TestVisibility();
