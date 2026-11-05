@@ -785,12 +785,13 @@ struct LabConfig {
     bool drive_vert_given = false;
     // Enemy round 8 track A (docs/world-sync-design.md 7.22, native only, no CFG bit). quiet_place: a correction the guest's
     // Lua makes of a guard off its player's screen moves him with the engine's quiet network-position warp 0x136ece0 in the
-    // request manager update (no set-transform message: 282 of 539 applied place warps of the census runs were followed by
-    // action kind 3 within 0.5 s, and run 0d801772's guard 246 then radioed a possible intruder and the outpost went to
-    // caution on the guest). range_flat: the host's M3 placement and drive range from the nearer player is measured on the
-    // ground plane (x/z), as the owner rule (runs ddcdec94 / 90d9b4d1: the guest fell 178 m below the outpost, stayed the
-    // owner, and the host refused 110 placements `range`, near=host). Lab and play; both off unless named (lab_config.cpp:
-    // quiet_place's no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
+    // request manager update (no set-transform message: after 499 of 539 applied place warps of the census runs the guard
+    // was in action kind 3 within 0.5 s, 260 of them already before the warp, and run 0d801772's guard 246 then radioed a
+    // possible intruder and the outpost went to caution on the guest). range_flat: the host's M3 placement and drive range
+    // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
+    // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
+    // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
     bool quiet_place = false;
     bool quiet_place_given = false;
     bool range_flat = false;

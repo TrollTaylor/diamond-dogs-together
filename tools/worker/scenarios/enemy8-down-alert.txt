@@ -1,12 +1,12 @@
 # Enemy round 8 track A (docs/world-sync-design.md 7.22), the host's copies while the guest is down in an ALERT. Runs
 # ddcdec94 / 90d9b4d1 (enemy-vert-alert.txt): a guest `enemy goto <guard> 8` put the guest on the outpost's cliff edge
-# and they fell 178 m (to x/z 436.1, 2181.7, y 92) and were downed by the fall; they stayed the owner of the outpost
-# guards (the M3 owner rule is x/z) while the host's 3D range rule found the host nearer (70 m) and refused every
-# placement `range` (near=host): the host's copies drifted 14-65 m for 12-25 s. After enemy8-quiet-calm.txt (or any
-# join): the host to the quiet spot 50 m south, the guest among the guards, ALERT, then the guest in the air on
-# ddcdec94's fall line beside that cliff (436.105, 240.0, 2181.736: the host saw the guest fall through it; they came
-# to rest at y 92.1 on the cliff foot below; run bcd95b14 put them on ddcdec94's goto point 434.047, 269.924, 2182.728
-# instead and they stood there, 1.5 m up on the ledge) and about 45 s down at the cliff foot under the guards.
+# and they fell on through the world (y 92 at x/z 436.1, 2181.7 mid-fall, then y -79.65) and were downed by the fall;
+# they stayed the owner of the outpost guards (the M3 owner rule is x/z) while the host, hiding their body beyond 200 m
+# (pose unknown), refused every placement `range` (near=host): the host's copies drifted 14-65 m for 12-25 s. After
+# enemy8-quiet-calm.txt (or any join): the host to the quiet spot 50 m south, the guest among the guards, ALERT, then
+# the guest in the air on ddcdec94's fall line beside that cliff (436.105, 240.0, 2181.736: in 8b581a26 they fell on
+# through the world to y -79.65; run bcd95b14 put them on ddcdec94's goto point 434.047, 269.924, 2182.728 instead and
+# they stood there, 1.5 m up on the ledge) and about 45 s down under the guards.
 # Gate (range_flat): host place error (event=place_div div_m of the guest-owned guards) p90 <= 5 m while the guest is
 # down, its host_warp placements applied (near=guest), 0 latches, faults, game overs.
 logmark both

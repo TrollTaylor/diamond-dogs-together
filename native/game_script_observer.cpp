@@ -3005,8 +3005,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     const float target[3] = {grant.pos[0], grant.pos[1], grant.pos[2]};
     const float own[3] = {snapshot.player_pos[0], snapshot.player_pos[1], snapshot.player_pos[2]};
     const float guest[3] = {snapshot.remote_pos[0], snapshot.remote_pos[1], snapshot.remote_pos[2]};
-    // Enemy round 8 track A (range_flat, design 7.22): on the ground plane (x/z), as the M3 owner rule (runs ddcdec94 /
-    // 90d9b4d1: the guest fell 178 m below the outpost and stayed the owner; the 3D range refused 110 placements, near=host).
+    // Enemy round 8 track A (range_flat, design 7.22): on the ground plane (x/z), as the M3 owner rule (a code fact; the
+    // seen near=host refusals of ddcdec94 / 8b581a26 came while the guest's body was hidden for range, pose unknown).
     const float nearer = labc.range_flat ? sw::NearerSquaredFlat(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer)
                                          : sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
     for (unsigned i = 0; i < 3; ++i) {
@@ -3038,7 +3038,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
         }
-        // Enemy round 8: the guest's pose age and its height over the target (dgy_m; the fallen guest of ddcdec94: -178 m).
+        // Enemy round 8: the guest's pose age and its height over the target (dgy_m; about -270 m while the guest's pose is
+        // unknown and read as 0, 8b581a26).
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s; flat=%u; "
                   "g_age_ms=%u; dgy_m=%.1f\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),

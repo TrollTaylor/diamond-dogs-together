@@ -682,10 +682,12 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   the radio report of a possible intruder, and about 20 s later the outpost goes to CAUTION on the guest, which the host
   then applies.
   - **How often** [O, census runs of rounds 5-7: 963ab276, 3bc7280b, 94a7bf2a, 46c0da9e, adecad01, 80cc0176, fbf3522a,
-    f11fe8a1, 0d801772]: 282 of 539 applied place warps (the guest's corrections and the host's M3 placements, both the
-    set-transform message) were followed by action kind 3 within 0.5 s (not in kind 3 just before); kind 13 within 30 s:
-    1 (0d801772's 246; in fbf3522a his kind 13 came 52 s after). So kind 3 is the guard's normal answer to the message
-    and the report is rare; only these census runs log the kinds, so the rate at the shipped defaults is inferred [I].
+    f11fe8a1, 0d801772; recount of the review, the earlier 282 / 54 did not reproduce]: of 539 applied place warps (the
+    guest's corrections and the host's M3 placements, both the set-transform message; 57 guard-runs) 499 had the guard in
+    action kind 3 within 0.5 s (55 guard-runs), but 260 found him in kind 3 already before the warp (263 changed into
+    kind 3, 52 guard-runs), so kind 3 after a warp does not by itself show the warp caused it [I]; kind 13 within 30 s:
+    1 (0d801772's 246; in fbf3522a his kind 13 came 52 s after). The report is rare; only these census runs log the
+    kinds, so the rate at the shipped defaults is inferred [I].
   - **The quiet path** [O code]: `0x14136ece0(M-0x20, idx, entry)`, the request unpack's network-position warp (its only
     engine callers are the three in the FOB unpack). It reads S = (M-0x20)+0x70's slot table only: if the slot position
     `*(*(S+0x18)+0x20)+idx*0x10` is more than 15 m (225.0 squared, 0x142329c00) from the entry it writes the slot
@@ -702,12 +704,15 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     Three contract sites pin the function's body (soldier_act, 20 sites).
 - **Bug 2, the host's copies drift while the guest is down** (round 7 [O ddcdec94, 90d9b4d1]): the cause is not the
   down itself. In both runs the guest's `enemy goto <guard> 8` put them on the outpost's cliff edge and they fell
-  (ddcdec94: y 269.9 -> 92.1 m at x/z 436.1, 2181.7; 90d9b4d1: y 270.7 -> -79.7 m) and the fall downed them (damage
-  10000, attacker 0). The M3 owner rule is x/z (`P.ownerOf`, the PEER pose's x and z), so the guest stayed the owner of
-  the ledge guards 5-30 m away horizontally; the host's range rule (`NearerSquared`) is 3D, so the guest 178 m below
-  was not the nearer player, the host (70 m) was, and every placement beyond 60 m of the host was refused `range`
-  (ddcdec94: 0 of 110 applied while down, host place error p90 27 m from the bins; 90d9b4d1: 63 of 135, p90 21.7 m). [Corrected by session 2 below: the 3D rule is half of it;
-  the guest's pose is also not used at all while the host hides the guest's body for range.]
+  through the world (ddcdec94: y 269.9 -> 92.1 m at x/z 436.1, 2181.7 was a sample mid-fall, 5 s later y -79.65 at the
+  same x/z; 90d9b4d1: y 270.7 -> -79.7 m) and the fall downed them (damage 10000, attacker 0). The M3 owner rule is x/z
+  (`P.ownerOf`, the PEER pose's x and z), so the guest stayed the owner of the ledge guards 5-30 m away horizontally.
+  The host's range rule (`NearerSquared`) is 3D, and every placement beyond 60 m of the host was refused `range`
+  (ddcdec94: 0 of 110 applied while down, host place error p90 27 m from the bins; 90d9b4d1: 63 of 135, p90 21.7 m).
+  [Corrected by session 2 and the review below: the refusals came from the guest's pose not being used at all while the
+  host hides the guest's body for range (ddcdec94: all 111 `near=host` refusals after `partner_range=hide` at
+  202573 mm; before it 3 `range` refusals, all `near=guest`). The 3D rule against the x/z owner rule is a code fact
+  never seen refusing a placement [I].]
   - **Built**: `range_flat` (native only): the host's M3 placement range and its soft-follow range from the nearer
     player on the ground plane (x/z), as the owner rule; `world_place=host_warp` prints `flat`, the guest pose age and
     the guest's height over the target (`dgy_m`).
@@ -743,7 +748,9 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     refusals) or unrealized, `have_cmd` is false (partner_driver.cpp), `snapshot.remote_valid` is false and the remote
     position is not copied (left 0), so `NearerSquared(Flat)` keeps only the host's leg: near=host whatever the plane.
     The same invalid pose answers the Lua PEER receipt (the M3 owner rule's `dq`), so the owner falls back to the host
-    after 10 s. range_flat fixes the plane only; it cannot help while the body is hidden. It stays off unless named.
+    after 10 s. range_flat fixes the plane only; it cannot help while the body is hidden, and it is untested for a guest
+    whose pose is known (every down so far fell through the world). It stays off unless named. Before the down the host
+    M3 error was p50 1.8 / p90 7.75 m (its own 5 m row fails); the guest's drive was refused 148 of 149.
   - quiet_place: no quiet move in this run [O]: this time the seed's 246 was 36.5 m off and the host sent no sample of
     him in calm (no `place_div` of 246 on the guest), and the guest's 5 corrections in the down part were refused `far`
     (the guest under the world, more than 250 m from them in 3D). 0 guest `req_phase` in calm.
@@ -755,12 +762,17 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - 115 quiet moves of 7 guards (72 biased: under 15 m), all `moved=1`; 106 within 1 m of the target at the 3-frame
     read-back, 8 more than 2 m off (4 guards: 1926520947 4 of 5 at 34 m, 667680985 once 91.9 m, 2305481811 twice,
     1740692850 once) while the slot table read the target: the warp wrote the slot but did not move the body [O], most
-    likely a guard not in the realized list `*(S+0x18)+0x28` although his realized bit was set [I]. 4 corrections went
-    by the message (`leaf=typed`, among them 246's, 0.01 m).
-  - FAIL (the no-key row 0 drive_sink / place_sink / guard_fell): 22 `place_sink` of one guard, 1904171355: each quiet
-    move landed (`land_dy_m` -0.03..0.02) and he then walked 12.6-14.1 m on and stood 2.15 m under his owner's sample
-    (round 7's `1870d1bf` at the old defaults, same parts: 0). The 2 s read-backs show the same walk-off for others
-    (guard 15: 10-17 m x/z, y held): the quiet warp leaves the brain's path, so a guard walks on along it, where the
+    likely a guard not in the realized list `*(S+0x18)+0x28` although his realized bit was set [I]. In 5 of the 8
+    (1926520947 4 times at 33.9-34.8 m, 667680985 once at 91.9 m) the landing error equals the error before the move: the
+    body was not moved at all [O]. `world_place=quiet moved=1 err_m=0.00` reads the slot table only: 0x136ece0 returns 1
+    after writing the slot whenever the delta is over 15 m, also when idx is not in the realized list, so the line does
+    not prove a body move (off at the defaults; only the read-backs do). 4 corrections went by the message
+    (`leaf=typed`, among them 246's, 0.01 m). Quiet read-backs within 1 m: 55 of 207; 80 of the 115 0.5 s read-backs
+    over 1 m x/z; 1 2 s read-back open; `terminal_win` 1 on the host.
+  - FAIL (the no-key row 0 drive_sink / place_sink / guard_fell): 22 `place_sink` of one guard, 1904171355: after 22 of
+    his 43 quiet moves, each landed (`land_dy_m` -0.03..0.02), he walked 9.4-14.1 m on (`moved_m`) and stood 2.15 m under
+    his owner's sample (round 7's `1870d1bf` at the old defaults, same parts: 0). The 2 s read-backs show the same
+    walk-off for others (maxima 14.3-17.2 m x/z, y held): the quiet warp leaves the brain's path, so a guard walks on along it, where the
     message's kind 3 had stopped him [I, plan (3) of enemy7 track C]. Also 1 `guard_fell` on the HOST (its copy of
     3268415846 10.6 m under the guest's sample, `place_div why=fall`; the host has no quiet move) [U cause].
   - PASS: 0 latches, faults, game overs; guest place error p50 0.69 / p90 1.88 m; corrections 119 of 126 (7
@@ -769,6 +781,10 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - Frames looked at: c-b (both: the sleeping guard's ZZZ by the barriers beside the guest's character).
   - **Decision**: quiet_place back off unless named (f8441a11 red / green): a row failed by the flipped key. range_flat
     off unless named (gate failed). Nothing changes at the defaults; the receipt's quiet token and the log fields stay.
+    No session ran f8441a11 at the defaults: with quiet_place off the native ignores the Lua's ` 1` and takes the old
+    `sw::Warp` (unit tests and code [I]; the token's parse ran live in all three sessions). Process note: quiet_place was
+    turned on although session 1's gate rested on one move (n=1) and its other two quiet moves read back 5.29 / 8.87 m
+    off at 2 s (4 of 6 read-backs within 1 m), with the down gate not reached.
   - **Next for bug 1**: stop the walk-off: after a quiet move, give the guard a stand at the target (the request start
     0x14136f090 mode 0 issues a stand command offline, plan (1)) or end his path (the planner cancel), and move only
     guards in the realized list (read `*(S+0x18)+0x28`, not the realized bit), then the calm gate and a no-key run.
