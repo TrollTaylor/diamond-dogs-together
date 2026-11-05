@@ -425,6 +425,12 @@ int main() {
         const std::uint16_t list[4] = {3, 17, 40, 200};
         Check(sa::ListHas(list, 4, 17) && !sa::ListHas(list, 4, 18) && !sa::ListHas(list, 3, 200) && !sa::ListHas(nullptr, 4, 3),
               "the realized list: idx found only among the first count entries");
+#ifdef _WIN32
+        // Round 9 land step (the review): QuietOne read the list outside its __try; the guarded read faults to -1.
+        Check(sa::ListFind(list, 4, 17) == 1 && sa::ListFind(list, 4, 18) == 0 && sa::ListFind(nullptr, 4, 3) == 0 &&
+                  sa::ListFind(reinterpret_cast<const std::uint16_t*>(static_cast<std::uintptr_t>(0x10)), 4, 3) == -1,
+              "the realized list read: SEH-guarded, a fault reads -1");
+#endif
         sa::RestView r{};
         const float target[3] = {410.0f, 270.0f, 2130.0f};
         Check(sa::QuietChoose(r, target, 10000) == sa::QuietWhy::unknown, "rest: no view yet");

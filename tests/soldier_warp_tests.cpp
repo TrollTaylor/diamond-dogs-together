@@ -619,12 +619,26 @@ int main() {
     // Enemy round 9 track A (bug 2, design 7.24): while the host hides the guest's body for range (partner_range=hide,
     // beyond 200 m) the driver has no command and the pose was left unknown (run 8b581a26: 142 of 142 placements refused,
     // the guest's position read 0); the guest's network pose sample, at most 1 s old, stands in for the nearer-player rules.
-    Check(sw::RemoteRangeSource(true, false, true, 50) == sw::RemoteSource::cmd, "pose: the driver's command when it has one");
-    Check(sw::RemoteRangeSource(true, true, true, 50) == sw::RemoteSource::cmd, "pose: the command first, hidden or not");
-    Check(sw::RemoteRangeSource(false, true, true, 400) == sw::RemoteSource::net, "pose: hidden for range: the network sample");
-    Check(sw::RemoteRangeSource(false, true, true, 1001) == sw::RemoteSource::none, "pose: hidden: a sample over 1 s old is unknown");
-    Check(sw::RemoteRangeSource(false, false, true, 100) == sw::RemoteSource::none, "pose: no command for another reason: unknown");
-    Check(sw::RemoteRangeSource(false, true, false, 0) == sw::RemoteSource::none, "pose: no sample: unknown");
+    Check(sw::RemoteRangeSource(true, false, true, 50, true) == sw::RemoteSource::cmd, "pose: the driver's command when it has one");
+    Check(sw::RemoteRangeSource(true, true, true, 50, true) == sw::RemoteSource::cmd, "pose: the command first, hidden or not");
+    Check(sw::RemoteRangeSource(false, true, true, 400, true) == sw::RemoteSource::net, "pose: hidden for range: the network sample");
+    Check(sw::RemoteRangeSource(false, true, true, 1001, true) == sw::RemoteSource::none, "pose: hidden: a sample over 1 s old is unknown");
+    Check(sw::RemoteRangeSource(false, false, true, 100, true) == sw::RemoteSource::none, "pose: no command for another reason: unknown");
+    Check(sw::RemoteRangeSource(false, true, false, 0, true) == sw::RemoteSource::none, "pose: no sample: unknown");
+    // Round 9 land step (the review): the network pose only when range_flat is named (off at the defaults, as 0.15.2: the
+    // no-key runs at 554b2fa9 did not back it, and it is also live from every 30010/30020 mission start until 'near').
+    Check(sw::RemoteRangeSource(false, true, true, 400, false) == sw::RemoteSource::none, "pose: the network sample only when named");
+    Check(sw::RemoteRangeSource(true, true, true, 50, false) == sw::RemoteSource::cmd, "pose: the command as before when not named");
+    // The review: DriveReceipt measured a 'partner nearer' drive from the command pose (0,0,0 while hidden) instead of the
+    // pose the nearer test used, so every such drive was refused 'range'. Both receipts now take the player point here.
+    {
+        const float own[3] = {10.0f, 20.0f, 30.0f}, partner[3] = {400.0f, 21.0f, 2100.0f};
+        float out[3]{};
+        sw::RangePlayer(true, own, partner, out);
+        Check(out[0] == 400.0f && out[1] == 21.0f && out[2] == 2100.0f, "range player: the nearer test's partner pose when nearer");
+        sw::RangePlayer(false, own, partner, out);
+        Check(out[0] == 10.0f && out[1] == 20.0f && out[2] == 30.0f, "range player: this player's pose otherwise");
+    }
     Check(std::strcmp(sw::RemoteSourceName(sw::RemoteSource::net), "net") == 0 &&
               std::strcmp(sw::RemoteSourceName(sw::RemoteSource::cmd), "cmd") == 0 &&
               std::strcmp(sw::RemoteSourceName(sw::RemoteSource::none), "none") == 0,
