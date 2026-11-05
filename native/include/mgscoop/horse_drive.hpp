@@ -64,6 +64,10 @@ struct HoldScope {
     bool share{}, cargo{}, pins{}, field{}, body{}, mounted{};
 };
 const char* HoldRefusal(const HoldScope& s) noexcept;
+// hold0's two engine calls: the T vtable and its +0x70 / +0x68 targets, pinned in native/partner_player_contract.hpp
+// (vtable_slots {0x24c8ef0,0x70,0x1ad4450} / {0x24c8ef0,0x68,0x1ad56d0}, code_sites 0x1ad4450 / 0x1ad56d0: the partner
+// code gate checks them at start); HoldBody refuses any other vtable or target.
+inline constexpr std::uintptr_t kBodyTVtableRva = 0x24c8ef0, kBodySetRotRva = 0x1ad4450, kBodySetPoseRva = 0x1ad56d0;
 // The census identity (records, receiver, realized mask): a change ends every seat (Lua's horse generation).
 std::uint32_t Generation(std::uintptr_t records, std::uintptr_t receiver, std::uint32_t mask) noexcept;
 
@@ -80,5 +84,10 @@ void Reset() noexcept;
 const char* PinsReason(std::uintptr_t image, std::size_t span) noexcept;
 const char* Write(std::uintptr_t image, std::size_t span, std::uintptr_t receiver, std::uintptr_t kind, std::uint16_t idx,
                   float x, float y, float z, float yaw) noexcept;
+// hold0 (live): t = body 0's transform view (partner_player ResolveCensus block 0: t, t_vt, t70, t68), then
+// T.vt+0x70(t, quat) and T.vt+0x68(t, pos, quat) as the partner driver's xform mover does for body 1 with reset none.
+// Returns nullptr, or body (vtable / targets not the pinned ones) or call (an exception inside the engine call).
+const char* HoldBody(std::uintptr_t image, std::uintptr_t t, std::uintptr_t t_vt, std::uintptr_t set_rot, std::uintptr_t set_pose,
+                     float x, float y, float z, float yaw) noexcept;
 
 } // namespace mgscoop::horse_drive

@@ -5109,7 +5109,7 @@ bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_b
 // without the call (native/include/mgscoop/horse_drive.hpp, contract native/horse_drive_contract.hpp). cfg answers the
 // key; read the local D-Horse record 0 from the verified census (body 1 may be hidden); place moves it (refused while
 // this copy's player rides it or a call is pending). One refusal line per reason change.
-struct HorseDriveLog { const char* last; unsigned refusals, places; } horse_drive_log{};
+struct HorseDriveLog { const char* last; unsigned refusals, places, holds; } horse_drive_log{};
 bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace hd=mgscoop::horse_drive;namespace b=mgscoop::buddy_capacity_census;
     constexpr char prefix[]="return 'MGS_COOP_HORSE_DRIVE_V1' -- ";
@@ -5126,7 +5126,7 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
                                             :(labc.world_horse_cargo?"return {on=0,cargo=1}":"return {on=0,cargo=0}"));
     const auto refuse=[&](const char* why) noexcept {
         ++horse_drive_log.refusals;
-        if(q.verb==hd::Verb::place && horse_drive_log.last!=why) {
+        if((q.verb==hd::Verb::place || q.verb==hd::Verb::hold0) && horse_drive_log.last!=why) {
             horse_drive_log.last=why;
             LogFormat("horse_drive=refused; reason=%s; n=%u; places=%u\r\n",why,horse_drive_log.refusals,horse_drive_log.places);
         }
@@ -5167,6 +5167,25 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             pendRead?unsigned((pend[0]?1u:0u)|(pend[1]?2u:0u)):4u,RideMilli(a.position[0]),RideMilli(a.position[1]),
             RideMilli(a.position[2]),RideHeading(a.position[3]),gen))) return finish("return {ready=false,reason='read'}");
         return finish(reply);
+    }
+    // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
+    // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
+    if(q.verb==hd::Verb::hold0) {
+        hd::HoldScope hs{};
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pins=sc.pins;hs.field=sc.field;
+        pp::Census bodies{};
+        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 &&
+            bodies.k[0].t70;
+        hs.mounted=a.occupied && a.rider==0;
+        if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
+        const auto& b0=bodies.k[0];
+        if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),b0.t,b0.t_vt,b0.t70,b0.t68,float(q.x)/1000.f,
+                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f)) return refuse(why);
+        if(!horse_drive_log.holds++ || horse_drive_log.last) {
+            LogFormat("horse_drive=held; n=%u; body=0\r\n",horse_drive_log.holds);
+            horse_drive_log.last=nullptr;
+        }
+        return finish("return {ready=true,held=true}");
     }
     sc.realized=a.realized;sc.ridden=a.occupied;sc.pending=!pendRead || pend[0] || pend[1];
     float target[3]={float(q.x)/1000.f,float(q.y)/1000.f,float(q.z)/1000.f};

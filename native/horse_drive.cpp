@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <cmath>
 #include <cstring>
 #include "mgscoop/horse_drive.hpp"
 #include "horse_drive_contract.hpp"
@@ -17,6 +18,16 @@ bool Get(std::uintptr_t address, T& value) noexcept {
 }
 bool Inside(std::uintptr_t image, std::size_t span, std::uintptr_t v) noexcept { return v >= image && v - image < span; }
 using SetFn = void (*)(void*, std::uint32_t, const float*);
+using RotFn = void (*)(void*, const float*);
+using PoseFn = void (*)(void*, const float*, const float*);
+// SEH wrapper (hold0): T.vt+0x70(t, quat) then T.vt+0x68(t, pos, quat); POD arguments only.
+bool CallHold(std::uintptr_t rot, std::uintptr_t pose, std::uintptr_t t, const float* p, const float* q) noexcept {
+    __try {
+        reinterpret_cast<RotFn>(rot)(reinterpret_cast<void*>(t), q);
+        reinterpret_cast<PoseFn>(pose)(reinterpret_cast<void*>(t), p, q);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 // SEH wrapper: POD arguments only.
 bool CallSet(std::uintptr_t fn, std::uintptr_t cs, std::uint32_t slot, const float* m) noexcept {
     __try {
@@ -75,6 +86,19 @@ const char* Write(std::uintptr_t image, std::size_t span, std::uintptr_t receive
     // 2. The engine's own transform write (0x140E6AF3F).
     if (!CallSet(fn, cs, slot, m)) return "call";
     return nullptr;
+}
+
+const char* HoldBody(std::uintptr_t image, std::uintptr_t t, std::uintptr_t t_vt, std::uintptr_t set_rot, std::uintptr_t set_pose,
+                     float x, float y, float z, float yaw) noexcept {
+    std::uintptr_t vt = 0, rot = 0, pose = 0;
+    if (!image || !t || !Get(t, vt) || vt != t_vt || vt != image + kBodyTVtableRva || !Get(vt + 0x70, rot) || !Get(vt + 0x68, pose) ||
+        rot != set_rot || pose != set_pose || rot != image + kBodySetRotRva || pose != image + kBodySetPoseRva)
+        return "body";
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(yaw)) return "body";
+    // Aligned as the partner driver's ApplyTransform passes them (Warp passes aligned vectors).
+    alignas(16) const float p[4] = {x, y, z, 0.f};
+    alignas(16) const float q[4] = {0.f, std::sin(yaw * 0.5f), 0.f, std::cos(yaw * 0.5f)};
+    return CallHold(rot, pose, t, p, q) ? nullptr : "call";
 }
 
 } // namespace mgscoop::horse_drive

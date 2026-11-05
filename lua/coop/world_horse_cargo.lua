@@ -45,7 +45,7 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 -- (right after the mount, at a gallop). Its target never drops faster than DOWN_MMPS (a rise is immediate); the lab
 -- lever horse_probe cargo_pose sets the placed / census heights, the offset behind the root and the rate (V).
 -- Within FACE_MM of the root the carrier is against the horse: no facing check (run 20aef564 refused 0.85 m away).
-local DOWN_MMPS, FACE_MM = 1000, 1200
+local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
 C.DOWN_MMPS = DOWN_MMPS
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
@@ -156,7 +156,7 @@ end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
  C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil, nil, nil, nil, nil
- C.lastMine, C.lastPlaced, C.want, C.lag, C.wantAt, C.takeArmed = nil, nil, nil, nil, nil, nil
+ C.lastMine, C.lastPlaced, C.want, C.lag, C.wantAt, C.takeArmed, C.rode, C.settleUntil = nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- The last move (dx, dz in mm) from the point L = {x, z} to (x, z), or none past LEAD_MAX_MM.
 local function lead(L, x, z)
@@ -185,6 +185,15 @@ local function warp0(x, y, z, a, src)
   if y < lo then y = lo end
  end
  C.want, C.wantAt = {x, y, z, src}, now
+ -- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa): the Lua Warp (with its C0 / A0 resets) left body 0 on the ground under
+ -- the moving horse for a second or more at a time; hold0 moves it as the partner driver moves body 1 (no reset). A
+ -- refused hold0 (the cargo key off while cargo_test runs it, an old native) keeps the Lua Warp, one line a reason.
+ local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- hold0 %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z),
+  round(a * 1000)))
+ if r and r.ready == true then C.via = "hold0"; return true end
+ local why = r and tostring(r.reason) or "receipt"
+ if C.holdWhy ~= why then C.holdWhy = why; capped("hold0_refused", "step=hold0_refused;reason=" .. why) end
+ C.via = "warp"
  return warp(0, x, y, z, a)
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
@@ -311,9 +320,12 @@ local function carrierTick(now)
  end
  C.lostAt = nil
  local rides = mounted()
- if rides then C.park = nil
+ -- For SETTLE_MS after a dismount the stand point follows the horse (run 883dc6ab: still slowing from a gallop, it moved
+ -- 3 m right after the rider got off); then a 3 m move is a call away.
+ if rides then C.park, C.rode = nil, true
  elseif h.pending == 1 then C.h = h; return stop(now, "call_away", true)
- elseif not C.park then C.park = h
+ elseif C.rode then C.rode, C.settleUntil, C.park = nil, now + SETTLE_MS, h
+ elseif not C.park or now < (C.settleUntil or 0) then C.park = h
  elseif sqrt((h.x - C.park.x) ^ 2 + (h.z - C.park.z) ^ 2) > CALL_MM then C.h = h; return stop(now, "call_away", true) end
  C.h = h
  local bx, by, bz, ba, how = bodyPoint(h, rides)
@@ -378,8 +390,8 @@ local function cargoTick(now)
   C.statsAt = now + STATS_MS
   local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
   local L, t = C.lag or {lag = 0, drop = 0, n = 0}, C.want
-  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d;lag_cm=%d;drop_cm=%d;n=%d;src=%s", round((t and t[2] or wy) / 10), got,
-   round(L.lag / 10), round(L.drop / 10), L.n, t and t[4] or "none"), 60)
+  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d;lag_cm=%d;drop_cm=%d;n=%d;src=%s;via=%s", round((t and t[2] or wy) / 10),
+   got, round(L.lag / 10), round(L.drop / 10), L.n, t and t[4] or "none", C.via or "none"), 60)
   C.lag = nil
  end
 end

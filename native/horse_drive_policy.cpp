@@ -55,6 +55,11 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     } else if (word("read")) {
         r.verb = Verb::read;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
+    } else if (word("hold0")) {
+        r.verb = Verb::hold0;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
+            !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]))
+            return false;
     } else if (word("place")) {
         r.verb = Verb::place;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
@@ -77,7 +82,14 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     return true;
 }
 
-const char* HoldRefusal(const HoldScope&) noexcept { return "stub"; }
+const char* HoldRefusal(const HoldScope& s) noexcept {
+    if (!s.share || !s.cargo) return "off";
+    if (!s.pins) return "pins";
+    if (!s.field) return "scope";
+    if (!s.body) return "body";
+    if (s.mounted) return "mounted";
+    return nullptr;
+}
 
 const char* PlaceRefusal(const PlaceScope& s) noexcept {
     if (!s.key) return "off";
