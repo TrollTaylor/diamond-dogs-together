@@ -3175,6 +3175,12 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         if (host) return refuse("role");
         if (sa::Paused()) { sa::SetMirror(go & 0x1ffu, slot, false, now); return refuse("paused"); }
         fresh = sa::SetMirror(go & 0x1ffu, slot, true, now);
+        // The owner copy's position for Lua's apart release (FM1 retry, run 94a7bf2a: a puppet 7 m below a tower top).
+        std::int32_t owner_mm[3]{};
+        if (sa::MailOwner(go & 0x1ffu, owner_mm)) {
+            if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply), owner_mm)) return refuse("format");
+            return debug_reply;
+        }
     }
     else sa::SetMirror(go & 0x1ffu, slot, false, now);
     if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");

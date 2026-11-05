@@ -998,16 +998,33 @@ Counters ReadCounters() noexcept {
 }
 
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {
-    (void)idx;
-    (void)mm;
-    return false;
+    if (idx >= kMaxSoldiers) return false;
+    float p[3]{};
+    bool ok = false;
+    AcquireSRWLockShared(&g_actLock);
+    const Mail& m = g_mail[idx];
+    if (m.order_valid) {
+        std::uint32_t flags = 0;
+        std::memcpy(&flags, m.order + 0x24, sizeof(flags));
+        if (flags & 1u) { std::memcpy(p, m.order + 0x18, sizeof(p)); ok = true; }
+    }
+    ReleaseSRWLockShared(&g_actLock);
+    if (!ok) return false;
+    for (int k = 0; k < 3; ++k) {
+        if (!(p[k] >= -100000.0f && p[k] <= 100000.0f)) return false;
+        mm[k] = static_cast<std::int32_t>(p[k] * 1000.0f + (p[k] < 0.0f ? -0.5f : 0.5f));
+    }
+    return true;
 }
 
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm) noexcept {
-    (void)owner_mm;
     if (!out || !capacity) return false;
-    const int n = std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
-                                k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
+    const int n = owner_mm
+        ? std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u,ox=%d,oy=%d,oz=%d}", fresh ? 1u : 0u,
+                        k.tx_parts, k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped,
+                        static_cast<int>(owner_mm[0]), static_cast<int>(owner_mm[1]), static_cast<int>(owner_mm[2]))
+        : std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
+                        k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 

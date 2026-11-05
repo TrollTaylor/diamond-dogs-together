@@ -1645,8 +1645,8 @@ if arg[7] and arg[8] then
         if logged(ma, 'why=apart') or cmdCount(ma, 'SetPuppet') ~= 1 then return false end
         ma.actReply = {f = 1, sh = 0, ox = 0, oy = 8800, oz = 100000}
         ticks(ma, 20)
-        if logged(ma, 'why=apart') then return false end  -- not before 2 s
-        ticks(ma, 60)
+        if logged(ma, 'why=apart') then return false end  -- not before 2 s, nor in his first 4 s as a puppet
+        ticks(ma, 100)
         if not (logged(ma, 'event=mirror_apart;ent=3000000001;apart_m=7.0') and logged(ma, 'on=0;why=apart') and acted(ma, 'r 1 1') and
             cmdCount(ma, 'SetPuppet') == 2) then return false end
         ma.actReply = {f = 1, sh = 0}
