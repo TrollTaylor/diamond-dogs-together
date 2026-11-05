@@ -108,6 +108,17 @@ void RearSeat(const float (&rider)[3], float yaw, float back, float up, float (&
 void NoteSeat(std::int32_t back_mm, std::int32_t up_mm, bool pose, std::uint64_t now_ms) noexcept;
 // The live lease (kSeatMs after the last seat1), its offsets in metres and whether the overlay seats body 1.
 bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcept;
+// M4 (run d935beae): a capture stalled the driver's game past kSeatMs and the lease lapsed for one tick, which ended the
+// overlay seat. The partner driver keeps a lease that was live on its previous tick kSeatGraceTicks more ticks with its
+// last offsets (in: this tick's SeatLease and its values; out: the values to use); a lease gone longer ends the seat.
+inline constexpr unsigned kSeatGraceTicks = 2;
+struct SeatHold {
+    bool live{};
+    unsigned miss{};
+    float back{}, up{};
+    bool pose{true};
+};
+bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexcept;
 // Horse plan M4 (lab key world_horse_shot): the passenger's horse box for the seated-shot hook (pbox, mm / mrad), live
 // kBoxMs after the last pbox on the partner driver's clock; the partner driver publishes it as partner_seat_shot's horse
 // class while no vehicle passenger seat is live.

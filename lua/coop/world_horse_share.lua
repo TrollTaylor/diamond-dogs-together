@@ -97,7 +97,7 @@ end
 local function endTrack(t, why)
  if not S.track then return end
  statsLine(t, why)
- S.track, S.closedAt, S.last, S.lastB, S.gen = nil, t, nil, nil, nil
+ S.track, S.closedAt, S.last, S.lastB, S.gen, S.endWhy = nil, t, nil, nil, nil, why
  release(why)
  log(fmt("step=end;why=%s", why))
 end

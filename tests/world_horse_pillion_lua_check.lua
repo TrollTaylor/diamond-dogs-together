@@ -304,12 +304,13 @@ while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
 check(g.S.track == nil and g.P.state == "seated" and g.logged("event=horse_pillion;step=track_wait;why=stream_lost"),
     "a stream loss: still seated, waiting for the track")
 g.t = g.t + 1500
-g.ride(3)
-check(g.S.track ~= nil and g.P.state == "seated", "the stream back: still seated")
+g.ride(20)
+check(g.S.track ~= nil and g.P.state == "seated" and g.count("step=unseated") == 0, "the stream back (1 s later): still seated")
 guard = 0
 while g.S.track and guard < 60 do g.tick(50); guard = guard + 1 end
 for _ = 1, 50 do g.tick(50) end
-check(g.P.state == "off" and g.logged("why=track_end;side=passenger;placed=1"), "a stream loss past 2 s: laid off")
+check(g.P.state == "off" and (g.logged("why=track_end;side=passenger;placed=1") or g.logged("why=stream_lost;side=passenger;placed=1")),
+    "a loss past 2 s (no ride, no KEEP): laid off")
 -- Link drop: no KEEP for 3.5 s on either side.
 h, g = fixture(), fixture({host = false})
 h.rides, h.horse.occupied = true, true

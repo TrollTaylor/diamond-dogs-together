@@ -7989,8 +7989,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     {
         bool pillion = false, seat_pose = true;
         float back = 0.f, up = 0.f, lp[4]{}, lq[4]{};
-        if (set.horse_share && set.source == PartnerSource::net && st.local == 0 && h.read_local_body &&
-            horse_drive::SeatLease(now, back, up, seat_pose) && h.read_local_body(h.context, st, lp, lq)) {
+        // M4: a lease live on the previous tick survives kSeatGraceTicks lapsed ticks (run d935beae: a capture's stall).
+        const bool lease = set.horse_share && set.source == PartnerSource::net && st.local == 0 &&
+                           horse_drive::HoldSeat(m.pillion_hold, horse_drive::SeatLease(now, back, up, seat_pose), back, up, seat_pose);
+        if (lease && h.read_local_body && h.read_local_body(h.context, st, lp, lq)) {
             const float yaw = partner::QuatToYaw(lq);
             const float rider[3] = {lp[0], lp[1], lp[2]};
             float seat[3]{};

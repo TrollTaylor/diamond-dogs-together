@@ -38,6 +38,7 @@
 #include "mgscoop/partner_act_log.hpp"
 #include "mgscoop/partner_melee.hpp"
 #include "mgscoop/partner_dm_overlay.hpp"
+#include "mgscoop/horse_drive.hpp"
 #include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
@@ -833,6 +834,7 @@ struct Mission {
     // partner_pillion=stats line a second while it rides behind (the driver's screen within 0.5 m).
     float pillion_seat[3];
     bool pillion_seat_ok;
+    horse_drive::SeatHold pillion_hold;  // M4: a one-tick lease lapse (a game stall) keeps the seat (HoldSeat)
     float pillion_xz_max, pillion_dy_max;
     unsigned pillion_err_n, pillion_stats_lines;
     std::uint64_t pillion_stats_ms;

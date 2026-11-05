@@ -172,6 +172,27 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
     return true;
 }
 
+bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexcept {
+    if (lease) {
+        h.live = true;
+        h.miss = 0;
+        h.back = back;
+        h.up = up;
+        h.pose = pose;
+        return true;
+    }
+    if (h.live && h.miss < kSeatGraceTicks) {
+        ++h.miss;
+        back = h.back;
+        up = h.up;
+        pose = h.pose;
+        return true;
+    }
+    h.live = false;
+    h.miss = 0;
+    return false;
+}
+
 void NoteShotBox(std::int32_t x_mm, std::int32_t y_mm, std::int32_t z_mm, std::int32_t yaw_mrad, std::uint64_t now_ms) noexcept {
     g_box[0] = static_cast<float>(x_mm) / 1000.f;
     g_box[1] = static_cast<float>(y_mm) / 1000.f;

@@ -28,7 +28,7 @@ local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM,
 local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 6000, 2000
 -- M3c: the driver's stall watch (ride keys = the move stick's magnitude over MAG_ON / 1000 for STALL_MS with under MOVE_MM of
 -- ridden path) and the same-moment tie (the partner's RIDE_FAST while this copy's player rides, within TIE_MS).
-local STALL_MS, MOVE_MM, MAG_ON, TIE_MS = 2000, 500, 100, 500
+local STALL_MS, MOVE_MM, MAG_ON, TIE_MS, TRACK_GRACE_MS = 2000, 500, 100, 500, 2000
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
 -- hold0 with the A0 reset (round 2: lag mostly 6-9 cm, peaks 74-80 cm, crouched), 0 hold0 without a reset, 4 the
@@ -162,7 +162,7 @@ local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
- P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot, P.boxed = nil, nil, nil, nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot, P.boxed, P.noTrack = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -284,7 +284,15 @@ function P.placed(x, y, z, yaw)
  end
 end
 local function seatedTick(now)
- if not S.track then return stop("track_end") end
+ -- M4 (play run 28015a91, -WanSim bad): a RIDE_FAST gap ended the track (stream_lost) for 0.9 s while the ride went on;
+ -- a stream loss is held TRACK_GRACE_MS (body 0 at its last target), a final or any other end is not.
+ if not S.track then
+  P.noTrack = P.noTrack or now
+  if S.endWhy ~= "stream_lost" or now - P.noTrack > TRACK_GRACE_MS then return stop("track_end") end
+  capped("track_wait", "step=track_wait;why=stream_lost", 10)
+ else
+  P.noTrack = nil
+ end
  if selfDown() then return stop("passenger_downed") end
  if now - P.rxAt > LOST_MS then return stop("stream_lost") end
  -- M3c: a tick without a placement (a refused place) holds body 0 at its last target: a lapsed hold dropped the body onto

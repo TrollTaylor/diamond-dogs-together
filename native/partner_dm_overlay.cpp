@@ -192,6 +192,9 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     const bool want_held = want != kNone && now - s.map_cand_ms >= (fulton_act ? p.fulton_hold_ms : p.map_hold_ms);
     const bool unmapped_long = s.unmapped_ms && now - s.unmapped_ms >= p.map_exit_ms;
     if (unmapped_long || (want != kNone && want != s.done_index)) s.done_index = kNone;
+    // Horse plan M4 (run d935beae): the pillion seat is a held lease, not a remote episode: after a stop (a lease lapse)
+    // it seats body 1 again once idle (the cooldown still applies), instead of waiting for the remote to change its act.
+    if (in.pillion && s.phase == Phase::idle && s.done_index == kRideOnIdle) s.done_index = kNone;
 
     const auto begin = [&](Source source, std::uint8_t index, bool loop, std::uint32_t ms) noexcept {
         s.phase = Phase::suspend;
