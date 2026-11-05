@@ -971,6 +971,11 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     both): within 2 ms of the off window (4 samples of 10 s each per window); `step=cost` avg <= 0.13 ms per tick.
   - Frames k-8 (both binoculars aimed at 3970963356): the host's view SW with guard markers 38-95 m, the guest's W at a
     rock: the rider is not in the same direction on both screens [I], no truck in view.
+- **Session 3** `d7b3a81c` (no key named, the final code head dc6dabd3; the same parts, the key off; all passed) [O]: no
+  `event=lrrp; step=on` on either copy, VEHICLE_STATE on (`lrrp=6`), 0 latches / faults / game overs / drive_sank, guest
+  place error p50 0.67 / p90 1.85 m (25605's late guest crew stays beyond the row's 60 m), corrections 16/43 (26
+  `vehicle_local`), M3 host p90 6.97 m; frame p95 over the session 25.6 / 25.0 ms (host / guest), the named runs
+  25.0-25.6 ms. Frames al-3: both copies in play (the host crouched south with guard markers, the guest in the outpost).
 - **Gate** (Afghanistan; Africa 30020 not run: seed `africa-jeep` exists and `enemy-lrrp-africa.txt` is ready) [O]: PASS
   truck error while moving, no jump within 400 m, 0 driving empty on one screen (session 2), 0 latches / faults / game
   overs, frame time (weak); FAIL riders within 8 m while seated (25605, deferred near the guest), crews within 5 m 20 s

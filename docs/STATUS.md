@@ -1,3 +1,46 @@
+## November 5, 2026: enemy round 9 track B - the patrol trucks' crews: with `lrrp_follow` named no truck drives off empty, but the crews still run on their own clock; it stays off unless named (`wp/enemy-lrrp`, not pushed)
+
+Design 7.25, protocol section 42 (no new op). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the same three parts (join,
+`enemy-lrrp-crew.txt` with a 40 s key-off window by the lever, `enemy-lrrp-alert3.txt`): `68491f7f` (`lrrp_follow=1`,
+4f22843d), `801cd90b` (`lrrp_follow=1`, a0d3f1dd), `d7b3a81c` (no key named, the final code head dc6dabd3: the same parts with the key off). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. Patrol trucks and their crews still run on their own on each PC,
+  the guest's ~72 s behind the host's, as in 0.15.2.
+- **Built** (red first each time): lrrp_follow is now its own world chunk `lua/coop/world_lrrp.lua` (moved out of
+  `world_vehicle_state.lua`); never `StartTravel ""` (it ended the guest crew's LRRP plan); while the host's truck drives
+  manned and the guest's crew is out, the guest's truck stays the guest's own (`step=crew_wait`) instead of driving off
+  empty; a jump over 30 m waits while the guest stands within 400 m of either end, 5..30 m slides 1 m a frame; crew
+  positions 1 Hz for 60 s after a seat change on both copies (`step=crew`), the module's cost (`step=cost`), and the lever
+  `vehicle_state_status lrrp 0|1` for a key-off window in the same session. 99cf1044 / aed13563 / 43f25a8c red,
+  4f22843d / a0d3f1dd green.
+- **Gate rows** (Afghanistan) [O]:
+  - PASS truck error while followed: p50 0.16-0.17 / p90 0.57-0.61 m (1039 / 708 samples), |dy| p90 0.05 m.
+  - PASS no truck jump within 400 m of the guest (0 in both; 25605 waited 13-22 times and jumped at 400-590 m).
+  - PASS (session 2) 0 trucks moving with the host's crew and the guest's copy empty (session 1: 25606 drove off empty
+    for 123 s: `SetRelativeVehicle{rideFromBeginning=true}` seated nobody in 40 tries, so a0d3f1dd dropped it).
+  - PASS 0 latches / faults / game overs / drive_sank in both.
+  - PASS (weak) frame time: p95 on / off / on 22.2-24.4 / 22.7-25.6 ms, at most +1.7 ms over the off window (4 samples
+    of 10 s per window); the module costs 0.05-0.15 ms per tick.
+  - FAIL riders within 8 m while seated: 25605 p90 426-427 m (its approach waited near the guest: the guest's own copy).
+  - FAIL crews within 5 m 20-40 s after the host's get-out: 9.3-42.3 m (session 2); the guest's crews got out 51-70 s
+    after the host's, and 25606's did not board again in the ~110 s left (that truck and crew stayed at their stop on
+    the guest's PC while the host's drove on).
+  - Report FAILs in both named runs: guest place error p90 13.3-15.0 m and corrections 13/23-16/33 (25605's two guards
+    still in the guest's truck, `vehicle_local`); M3 host p90 4.96 / 7.54 m.
+  - The no-key run `d7b3a81c` (key off at the defaults, the same parts; all passed; first frames in gameplay): no
+    `event=lrrp; step=on` on either copy (the chunk move changes nothing at the defaults), VEHICLE_STATE on (`lrrp=6`),
+    0 latches / faults / game overs / drive_sank, guest place error p50 0.67 / p90 1.85 m (the late guest copies of 25605's
+    crew stay beyond 60 m of the guest, so the row does not see them), corrections 16/43 (26 `vehicle_local`), M3 host
+    p90 6.97 m. Frame p95 over the whole session 25.6 / 25.0 ms (host / guest) against 25.0-25.6 ms in the named runs.
+- **What blocks it**: the guest's crews follow their own LRRP clock; no tried command moves it (the board seats nobody,
+  UnsetRelativeVehicle shows no effect apart from the crews' own get-out [I], StartTravel "" ends the plan). **Next**: set the guest copy's LRRP
+  step (the travel plan cursor) to the host's, or hand the unseated crew to M1..M6 as host-owned and seat them with the
+  vehicle's own get-in; a camera-hidden jump within 400 m; then Africa (`enemy-lrrp-africa.txt`, seed `africa-jeep`).
+- **Not done**: Africa (30020) not run (the seed exists; the sessions went to the fix); the frame-time row has 4 samples
+  per window; a mixed-version run.
+
 ## November 5, 2026: enemy round 8 track C - the far mirror's walkers plan their own path: built, the gate not reached (the act_plan session was void); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.23, protocol section 40. Markers: [O] seen in a log line, a frame or code (Ghidra / capstone, read-only), [I]
