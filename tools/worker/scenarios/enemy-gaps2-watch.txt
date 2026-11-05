@@ -1,0 +1,29 @@
+# Enemy gaps 2 (place_reach, docs/world-sync-design.md 7.17), the watch: right after enemy-latch-alert.txt (the guest
+# 8 m from 1904171355 inside afgh_field_cp, the host at the quiet spot 50 m south, about 100 m from the guest's guards).
+# Both cameras turn to the same guard (aim_ent) through binoculars and both copies capture at the same moment: with
+# place_reach the guest's stream drives the host's copies of the guards it owns out to 160 m from the host (M4), so
+# the host's frame should show the guard where the guest's does. Three guards, frames w-1..w-3 on both copies.
+logmark both
+host run aim_ent 1904171355 1.1
+guest run aim_ent 1904171355 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-1
+host run aim_ent 1799112697 1.1
+guest run aim_ent 1799112697 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-2
+host run aim_ent 1926520947 1.1
+guest run aim_ent 1926520947 1.1
+wait 300
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture w-3
+host run enemy info 1904171355
+guest run enemy info 1904171355
