@@ -244,7 +244,10 @@ g.e = true
 g.ride(8)
 check(g.P.state == "off" and g.logged("step=unseated;seat=1;why=passenger;side=passenger;placed=1"), "E held 0.3 s again: hop off")
 local w = g.warps[#g.warps]
-check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - (pl.x - 1300)) < 2, "laid on the horse's left (yaw 0: -x), body 0 warped once")
+-- The skeptic's frames (runs 51f6a2cc / 4f52fa2a): -x at yaw 0 is the horse's RIGHT. A horse that has not moved 2 m since
+-- the seating has no ridden path to use: the side point.
+check(w and w[1] == 0 and math.abs(w[2][1] * 1000 - (pl.x - 1300)) < 2 and g.logged(";at=side"),
+    "a horse that has not moved: laid beside its right (yaw 0: -x), body 0 warped once")
 check(g.masks[#g.masks][1] == "reset" and g.masks[#g.masks][2].settingName == "MgsCoopPillion" and g.stances[#g.stances] == 0,
     "the pad mask released, standing")
 local un = lastSeat(g)
@@ -403,5 +406,54 @@ m5g.P.setPose(350, 800, 5, 450, 300)
 local nh, nw = #m5g.holds, #m5g.warps
 m5g.ride(1)
 check(#m5g.holds == nh + 1 and #m5g.warps == nw + 1, "mode 5: hold0 and the Warp each frame")
+-- The skeptic (run 51f6a2cc (a)): the side lay-off put the passenger inside the rock wall beside the ridden horse. The lay-off
+-- point is now where the horse's root was 2-4 m back along the path ridden since the seating (ground the horse stood on).
+local th, tg = fixture(), fixture({host = false})
+th.rides, th.horse.occupied = true, true
+tg.ride(3)
+seatBoth(th, tg)
+check(tg.P.state == "seated", "trail: seated")
+for _ = 1, 20 do tg.horse.z = tg.horse.z + 300; tg.ride(1) end
+tg.e = false; tg.ride(1); tg.e = true; tg.ride(8)
+check(tg.P.state == "off" and tg.logged("why=passenger;side=passenger;placed=1;x=1000;z=3390;at=trail"),
+    "hop-off after 6 m forward: on the ridden path 2.1 m behind the root (yaw 0: -z), not beside the horse")
+local tw = tg.warps[#tg.warps]
+check(tw and math.abs(tw[2][1] * 1000 - 10000) < 2 and math.abs(tw[2][2] * 1000 - 1400) < 2 and math.abs(tw[2][3] * 1000 - 33900) < 2,
+    "the Warp: the path point's x,z, its root height plus the claim's foot offset and 0.3 m")
+local un2 = lastSeat(tg)
+check(un2[5] == 5 and un2[8] == 10000 and un2[10] == 33900, "UNSEATED carries the path point")
+-- The driver getting off and the link drop use the same point.
+th, tg = fixture(), fixture({host = false})
+th.rides, th.horse.occupied = true, true
+tg.ride(3)
+seatBoth(th, tg)
+for _ = 1, 20 do tg.horse.z = tg.horse.z + 300; tg.ride(1) end
+tg.ride(75)
+check(tg.P.state == "off" and tg.logged("why=stream_lost;side=passenger;placed=1;x=1000;z=3390;at=trail"), "the link drop: on the path too")
+-- A jump of the placed horse (a teleport) leaves no path point 2-4 m back: the side point.
+th, tg = fixture(), fixture({host = false})
+th.rides, th.horse.occupied = true, true
+tg.ride(3)
+seatBoth(th, tg)
+tg.horse.z = tg.horse.z + 6000
+tg.ride(1)
+tg.e = false; tg.ride(1); tg.e = true; tg.ride(8)
+check(tg.P.state == "off" and tg.logged("why=passenger;side=passenger;placed=1;x=870;z=3600;at=side"), "no path point within 2-4 m: the side point")
+-- The skeptic (runs 93b59ae4 / 5687aa1c: E masked and nothing claimed at 2.59 / 2.76 m): inside the ride hold (released past
+-- 2.8 m) E claims the seat, so a masked E is never lost.
+local bg = fixture({host = false})
+bg.ride(3)
+check(bg.S.hold == true, "band: the ride hold masks E beside the ridden horse")
+bg.env.vars.playerPosX = 12.65
+bg.ride(2)
+check(bg.S.hold == true, "band: still held at 2.65 m")
+bg.e = false; bg.ride(1); bg.e = true; bg.ride(1)
+check(bg.P.state == "claim" and bg.logged("step=claim;seat=1;dist_cm=265;"), "band: E at 2.65 m inside the ride hold claims the rear seat")
+local bo = fixture({host = false})
+bo.env.vars.playerPosX = 12.65
+bo.ride(3)
+check(bo.S.hold ~= true, "band: approached from outside, 2.65 m is not held")
+bo.e = false; bo.ride(1); bo.e = true; bo.ride(1)
+check(bo.P.state == "off" and #bo.seatTx() == 0, "band: unheld at 2.65 m, E claims nothing (it reaches the game)")
 check(g.W.horsePillion.status():find("pillion;state=off;key=1;", 1, true) ~= nil, "status line")
 print("world_horse_pillion_lua_check: " .. checks .. " checks passed")
