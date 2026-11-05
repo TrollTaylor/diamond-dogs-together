@@ -2846,6 +2846,14 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
 // staff rules against the nearer of the host and this guest's own player. Same Warp(),
 // contract, budget and latches as the host.
 // Reply: {r=<out>,h=<0|1>,leaf="pinned|engine"} or {refused="<reason>"}.
+// Enemy gaps 3 (place_reach's retry, docs/world-sync-design.md 7.18): a refusal reply; a relayed or backoff one names the
+// ms left of that guard's backoff (b), so Lua's realize hold retries when it ends.
+const char* RefuseWarp(const char* why, std::uint32_t go, std::uint64_t now) noexcept {
+    const bool back = std::strcmp(why, "relayed") == 0 || std::strcmp(why, "backoff") == 0;
+    if (!mgscoop::soldier_warp::FormatRefusal(debug_reply, ARRAYSIZE(debug_reply), why, back ? soldier_warp_gate.BackoffLeft(go, now) : 0))
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"args\"}");
+    return debug_reply;
+}
 const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
     namespace sw = mgscoop::soldier_warp;
@@ -2934,7 +2942,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
                   unsigned(result.handled), sw::LeafName(result.chain), result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
-    if (result.refusal && !unrealized) return refuse(result.refusal);
+    if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
                      unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
     return debug_reply;
@@ -3015,7 +3023,7 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
                   sw::LeafName(result.chain), guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
     }
     const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
-    if (result.refusal && !unrealized) return refuse(result.refusal);
+    if (result.refusal && !unrealized) return RefuseWarp(result.refusal, request.go_id, now);
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
                      unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
     return debug_reply;
@@ -3031,10 +3039,10 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
 // Reply: {e=<error_cm>,s=<0 rest|1 step|2 hard>,r=<out>,h=<0|1>,v=<cm>} or {refused="<reason>"}; v (enemy gaps, the
 // Lua drive_sink check) = this copy's y minus the rendered target's y, in cm.
 namespace drive {
-struct SlotState { bool active; std::uint64_t last_ms; };
+struct SlotState { bool active; std::uint64_t last_ms; std::uint64_t vert_ms; std::uint64_t vert_win; unsigned vert_n; bool vert_stopped; };
 SlotState slots[mgscoop::world::kSnapSlots]{};
 std::uint64_t stats_at = 0;
-unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0;
+unsigned calls = 0, steps = 0, hard = 0, rest = 0, stale = 0, refused = 0, vert = 0, vert_stops = 0;
 }
 const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -3064,8 +3072,9 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const bool have = mgscoop::world_link::SnapPair(slot, now, cur, prev);
     if (!drive::stats_at || now - drive::stats_at >= 10000) {
         drive::stats_at = now;
-        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u\r\n", drive::calls,
-                  drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies);
+        LogFormat("world_drive=stats; calls=%u; steps=%u; hard=%u; rest=%u; stale=%u; refused=%u; anomalies=%u; vert=%u; vert_stop=%u\r\n",
+                  drive::calls, drive::steps, drive::hard, drive::rest, drive::stale, drive::refused, soldier_warp_gate.anomalies,
+                  drive::vert, drive::vert_stops);
     }
     if (!have) { ++drive::stale; return refuse("stale"); }
     sw::DriveSample a{}, b{};
@@ -3082,9 +3091,24 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const float feet = labc.place_lift ? sw::kLiftFeetM : sw::kDriveFeetM, lift = labc.place_lift ? sw::kLiftLevelM : 0.1f;
     // FM1 (mode 2, the mirror drive): the mirrored request walks him; only beyond 5 m is he moved, the whole way.
     const bool mirror = mode == 2;
+    // Enemy gaps 3 (drive_vert, design 7.18): the soft follow also moves a copy at rest in x/z that stood more than 1.5 m
+    // above or below the target for 1 s onto the target's spot (s=3; drive_sink at the defaults).
+    bool vert = labc.drive_vert && !mirror && !puppet && sw::DriveVertDue(target[1] - here[1], now, st.vert_ms);
+    // Enemy round 7 track A (design 7.20): at most 2 snaps of a copy in 10 s (no thrash); the third due is logged once.
+    if (vert && !sw::DriveVertAllow(now, st.vert_win, st.vert_n)) {
+        vert = false;
+        if (!st.vert_stopped) {
+            st.vert_stopped = true;
+            ++drive::vert_stops;
+            LogFormat("world_drive=vert_stop; go=%u; slot=%u; n=%u; gap_cm=%d; left_ms=%llu\r\n", request.go_id, unsigned(slot),
+                      st.vert_n, static_cast<int>((target[1] - here[1]) * 100.0f),
+                      static_cast<unsigned long long>(sw::kDriveVertWindowMs - (now - st.vert_win)));
+        }
+    }
     const auto step = mirror ? sw::DriveStep(here, target, false, sw::kMirrorSnapM, sw::kMirrorSnapM, 0.0f, sw::kMirrorSnapM, lift, feet)
                       : puppet ? sw::DriveStep(here, target, true, 0.05f, 0.02f, 0.2f + speed * 0.05f, 8.0f, lift, feet)
-                               : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet);
+                               : sw::DriveStep(here, target, st.active, 1.5f, 0.3f, 0.4f + speed * 0.1f, 8.0f, lift, feet,
+                                               vert ? sw::kDriveVertM : 0.0f);
     const bool due = !st.last_ms || now - st.last_ms >= (puppet ? 30u : 100u);
     if (!step.move || !due) {
         if (!step.move) { st.active = false; ++drive::rest; }
@@ -3116,11 +3140,24 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     }
     st.last_ms = now;
     st.active = step.active;
-    if (result.refusal && std::strcmp(result.refusal, "unrealized") != 0) return refuse(result.refusal);
-    if (step.hard) ++drive::hard;
+    if (result.refusal && std::strcmp(result.refusal, "unrealized") != 0) {
+        ++drive::refused;
+        return RefuseWarp(result.refusal, request.go_id, mgscoop::partner_net::NowMs());
+    }
+    if (step.vert) {
+        ++drive::vert;
+        st.vert_ms = 0;
+        if (!st.vert_win || now - st.vert_win >= sw::kDriveVertWindowMs) st.vert_stopped = false;
+        sw::DriveVertCount(now, st.vert_win, st.vert_n);
+        if (drive::vert <= 64)
+            LogFormat("world_drive=vert; go=%u; slot=%u; gap_cm=%d; e_cm=%d; r=%d; h=%u; n=%u\r\n", request.go_id, unsigned(slot),
+                      static_cast<int>((target[1] - here[1]) * 100.0f), static_cast<int>(step.error * 100.0f), result.out,
+                      unsigned(result.handled), drive::vert);
+    } else if (step.hard) ++drive::hard;
     else ++drive::steps;
     StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {e=%d,s=%d,r=%d,h=%u,v=%d}", static_cast<int>(step.error * 100.0f),
-                     step.hard ? 2 : 1, result.out, unsigned(result.handled), static_cast<int>((here[1] - target[1]) * 100.0f));
+                     step.vert ? 3 : step.hard ? 2 : 1, result.out, unsigned(result.handled),
+                     static_cast<int>((here[1] - target[1]) * 100.0f));
     return debug_reply;
 }
 
@@ -3146,7 +3183,8 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         if (!sa::Installed()) return refuse("hook");
         const float pos[3] = {player_mm[0] * 0.001f, player_mm[1] * 0.001f, player_mm[2] * 0.001f};
         sa::SetLocalPlayer(pos, mgscoop::partner_net::NowMs());
-        StringCchCopyA(debug_reply, ARRAYSIZE(debug_reply), "return {p=1}");
+        // FM1 round 6 (4): the reply carries soldier_act's phase lever (pl=1: soldier_act=calm, calm / caution only).
+        if (!sa::FormatPlayerReply(labc.soldier_act_calm ? 1u : 0u, debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
         return debug_reply;
     }
     if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
@@ -3171,7 +3209,7 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
     else if (op == 'q') {
         if (host) return refuse("role");
         if (sa::Paused()) return refuse("paused");
-        fresh = sa::QueryFresh(slot);
+        fresh = sa::QueryFresh(slot, go & 0x1ffu);
     }
     else if (op == 'm') {
         if (host) return refuse("role");
@@ -7176,8 +7214,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::soldier_act::ConfigureMirror(hooked, labc.role == mgscoop::LabRole::host);
                         const char* fire = mgscoop::partner_fire_filter::Install(base, Log);
                         const char* noise = mgscoop::partner_fire_filter::InstallNoise(base, Log);
-                        LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s\r\n", hooked ? "on" : "off",
-                                  labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok");
+                        LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
+                                  labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
+                                  labc.soldier_act_calm ? "calm" : "all");
                     } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.

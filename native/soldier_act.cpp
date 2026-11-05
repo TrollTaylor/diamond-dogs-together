@@ -142,10 +142,51 @@ bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]
     return std::memcmp(a, b, 8) != 0;
 }
 
+bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept {
+    return packed[0xe] >= 1 && packed[0xe] <= 4;
+}
+
+bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept {
+    bool had = (record[0xc] & 7u) != 0;
+    for (int b = 0; b < 0xc; ++b) {
+        had = had || record[b] != 0;
+        record[b] = 0;
+    }
+    record[0xc] = static_cast<unsigned char>(record[0xc] & 0xf8u);
+    return had;
+}
+
+bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)[3], bool own_valid) noexcept {
+    if (host_request[0x63] != 1) return true;  // not a move: the leg does not matter
+    if (!own_valid) return false;
+    std::uint64_t v = 0;
+    std::memcpy(&v, host_request + 0x40, sizeof(v));
+    float d[3]{};
+    DecodePacked(v, d);
+    const float dx = d[0] - own_dest[0], dz = d[2] - own_dest[2];
+    return dx * dx + dz * dz <= kActLegM * kActLegM;  // NaN: no match
+}
+
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
     if (!last_ms) return true;
     const std::uint64_t age = now_ms >= last_ms ? now_ms - last_ms : 0;
     return changed ? age >= kActMinMs : age >= kActResendMs;
+}
+
+bool OwnerMoved(const float (&was)[3], const float (&now)[3]) noexcept {
+    const float dx = now[0] - was[0], dy = now[1] - was[1], dz = now[2] - was[2];
+    return dx * dx + dy * dy + dz * dz >= kActMoveM * kActMoveM;  // NaN: not moving
+}
+
+bool ReapplyDue(bool first, bool changed, bool moving, std::uint64_t age_ms) noexcept {
+    if (first || changed) return true;
+    return age_ms >= (moving ? kActReapplyMovingMs : kActReapplyMs);
+}
+
+bool FormatPlayerReply(unsigned phase_limit, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const int n = std::snprintf(out, capacity, "return {p=1,pl=%u}", phase_limit ? 1u : 0u);
+    return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
 void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw) noexcept {
@@ -210,14 +251,23 @@ Mail g_mail[kMaxSoldiers]{};
 // The hook's last applied request per guard (hook thread only); a release bumps the guard's generation (any thread), so a
 // guard mirrored again takes his first request whatever it is.
 struct Applied {
-    bool valid;
+    bool valid, have_owner;
     std::uint32_t gen;
     std::uint64_t at;
     unsigned char req[0x70];
+    float owner[3];  // the owner copy's position at this apply (round 6: moving = OwnerMoved since)
 };
 Applied g_applied[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cSame{0}, g_cUnrealized{0};
+// Round 6: request applies the rule asked for (first, changed, moving 1 s, still 5 s) and the moving owner's 1 s re-applies.
+std::atomic<std::uint32_t> g_cDue{0}, g_cReapply{0}, g_cOrderClear{0};
+// Round 6 (runs fbf3522a / f11fe8a1): each realized non-puppet guard's own destination (his packed request's +0x40) on the
+// puppet side, every kCensusPeriodMs, for the take's leg check (LegMatch). The hook writes, the runtime thread reads.
+std::atomic<float> g_ownDest[kMaxSoldiers][3]{};
+std::atomic<std::uint64_t> g_ownAt[kMaxSoldiers]{};
+std::uint64_t g_ownScanAt = 0;
+std::atomic<std::uint32_t> g_cLegWait{0};
 std::atomic<std::uint32_t> g_cExpired{0};  // fire-drop mask bits that lapsed (no ACT_V1 m within kActFreshMs)
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
@@ -685,6 +735,16 @@ bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) 
     const std::uintptr_t r = Record(v, i);
     __try {
         reinterpret_cast<UnpackOrder>(g_base + c::unpack_order_rva)(reinterpret_cast<void*>(v.fob), reinterpret_cast<void*>(r + c::r_order), o);
+        // Round 6 (run fbf3522a): an order without a target leaves the puppet's own stale target (the unpack writes one
+        // only for modes 1..4) and his legs walk to it: clear it, as the owner's record of that order is.
+        if (!OrderHasTarget(o)) {
+            unsigned char rec[0x20];
+            std::memcpy(rec, reinterpret_cast<const void*>(r + c::r_order), sizeof(rec));
+            if (ClearOrderTarget(rec)) {
+                std::memcpy(reinterpret_cast<void*>(r + c::r_order), rec, 0xd);
+                g_cOrderClear.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         // Target by id (mode 2: u16 id + u16 part at R+0x1b0): the players swap between the copies.
         std::uint8_t mode = 0;
         Rd(r + c::r_order_mode, mode);
@@ -700,6 +760,21 @@ bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) 
         return false;
     }
 }
+void OwnDests(const View& v, std::uint64_t now) noexcept {
+    if (g_ownScanAt && now - g_ownScanAt < kCensusPeriodMs) return;
+    g_ownScanAt = now;
+    for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
+        if (!Bit(v.realized, i) || g_mirAt[i].load(std::memory_order_relaxed)) continue;  // a puppet holds the host's request
+        unsigned char w[0x70]{}, o[0x18]{};
+        if (!PackSafe(v, i, w, o)) continue;
+        std::uint64_t p = 0;
+        std::memcpy(&p, w + 0x40, sizeof(p));
+        float d[3]{};
+        DecodePacked(p, d);
+        for (int k = 0; k < 3; ++k) g_ownDest[i][k].store(d[k], std::memory_order_relaxed);
+        g_ownAt[i].store(now, std::memory_order_release);
+    }
+}
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
     // The fire-drop mask lapses with the apply's own lease (kActFreshMs without ACT_V1 m), whatever Lua forgot to release.
     g_cExpired.fetch_add(soldier_authority::ExpireMirrored(now, kActFreshMs), std::memory_order_relaxed);
@@ -709,11 +784,11 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
         if (!Bit(v.realized, i)) { g_cUnrealized.fetch_add(1, std::memory_order_relaxed); continue; }  // nothing drawn to animate
         unsigned char w[0x70]{}, o[0x18]{};
         float owner[3]{};
-        bool newReq = false, haveOrder = false, haveOwner = false;
+        bool haveReq = false, newReq = false, haveOrder = false, haveOwner = false;
         std::uint16_t seq = 0;
         AcquireSRWLockShared(&g_actLock);
         const Mail& m = g_mail[i];
-        if (m.req_valid && m.req_seq != m.applied_seq) { std::memcpy(w, m.req, sizeof(w)); seq = m.req_seq; newReq = true; }
+        if (m.req_valid) { std::memcpy(w, m.req, sizeof(w)); seq = m.req_seq; haveReq = true; newReq = m.req_seq != m.applied_seq; }
         if (m.order_valid) {
             std::memcpy(o, m.order, sizeof(o));
             haveOrder = true;
@@ -724,27 +799,39 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
         ReleaseSRWLockShared(&g_actLock);
         // U3: the aim's target id names the owner's own player (id 0 on the host): swapped, the puppet aims at the host's
         // character here, not at the guest (payload_ids counts the swaps).
-        if (newReq && RemapAimTarget(w)) g_cPayloadIds.fetch_add(1, std::memory_order_relaxed);
+        // The mailbox keeps the wire bytes, so every copy taken from it is swapped; counted once per new request.
+        if (haveReq && RemapAimTarget(w) && newReq) g_cPayloadIds.fetch_add(1, std::memory_order_relaxed);
         // The entry takes the owner copy's position (the engine's own FOB rule: the copy is warped beyond 15 m of it, and
         // the catch-up runs it toward the packed position), or this copy's own one before the first order part.
+        // Round 6 (design 7.19): a first or changed request at once; an unchanged one every 1 s while the owner copy moves
+        // (so the catch-up runs every second), else every 5 s (ReapplyDue), whether or not a new part arrived.
         float own[3]{};
-        if (newReq && Pos(v, i, own)) {
+        if (haveReq && Pos(v, i, own)) {
             Applied& a = g_applied[i];
             const std::uint32_t gen = g_mirGen[i].load(std::memory_order_relaxed);
-            if (!a.valid || a.gen != gen || RequestChanged(w, a.req) || now - a.at >= kActReapplyMs) {
+            const bool first = !a.valid || a.gen != gen;
+            const bool changed = !first && newReq && RequestChanged(w, a.req);
+            const bool moving = !first && haveOwner && a.have_owner && OwnerMoved(a.owner, owner);
+            if (ReapplyDue(first, changed, moving, now >= a.at ? now - a.at : 0)) {
+                g_cDue.fetch_add(1, std::memory_order_relaxed);
                 if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own)) {
                     g_cApplied.fetch_add(1, std::memory_order_relaxed);
+                    if (!first && !changed && moving) g_cReapply.fetch_add(1, std::memory_order_relaxed);
                     std::memcpy(a.req, w, sizeof(w));
                     a.valid = true;
                     a.gen = gen;
                     a.at = now;
+                    a.have_owner = haveOwner;
+                    if (haveOwner) std::memcpy(a.owner, owner, sizeof(owner));
                 }
-            } else {
+            } else if (newReq) {
                 g_cSame.fetch_add(1, std::memory_order_relaxed);
             }
-            AcquireSRWLockExclusive(&g_actLock);
-            g_mail[i].applied_seq = seq;
-            ReleaseSRWLockExclusive(&g_actLock);
+            if (newReq) {
+                AcquireSRWLockExclusive(&g_actLock);
+                g_mail[i].applied_seq = seq;
+                ReleaseSRWLockExclusive(&g_actLock);
+            }
         }
         if (haveOrder && UnpackOrderSafe(v, i, o)) g_cOrders.fetch_add(1, std::memory_order_relaxed);
     }
@@ -771,16 +858,9 @@ void FrameCensus(std::uint64_t now) noexcept {
     const std::uint32_t p95 = sorted[(g_frameN * 95) / 100 < g_frameN ? (g_frameN * 95) / 100 : g_frameN - 1];
     g_frameP95.store(p95, std::memory_order_relaxed);
     g_frames.store(g_frameN, std::memory_order_relaxed);
-    char line[300]{};
-    std::uint32_t fire = 0, noise = 0;
-    soldier_authority::MirrorDrops(fire, noise);
-    const int n = std::snprintf(line, sizeof(line),
-        "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
-        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u\r\n",
-        static_cast<unsigned long long>(now), g_frameN, p95 / 1000.0, soldier_authority::MirroredCount(), g_cTx.load(), g_cStaged.load(),
-        g_cRx.load(), g_cApplied.load(), g_cOrders.load(), g_cTable.load(), g_cFault.load(), g_cRemap.load(), fire, noise,
-        soldier_authority::LocalShots(), g_cSame.load(), g_cUnrealized.load());
-    if (n > 0) Emit(line);
+    // Round 6 (3): the line also prints payload_ids (the aim-target swaps), due and reapply (FormatFrameLine).
+    char line[512]{};
+    if (FormatFrameLine(now, ReadCounters(), line, sizeof(line))) Emit(line);
     g_frameN = 0;
 }
 
@@ -793,7 +873,7 @@ void StepSafe(std::uintptr_t m) noexcept {
         if (g_actOn.load(std::memory_order_relaxed)) {
             FrameCensus(now);
             if (g_actHost.load(std::memory_order_relaxed)) MirrorTx(v, now);
-            else MirrorRx(v, now);
+            else { OwnDests(v, now); MirrorRx(v, now); }
         }
         if (g_census.load(std::memory_order_relaxed)) Census(v, now);
     } __except (EXCEPTION_EXECUTE_HANDLER) { g_faults.fetch_add(1, std::memory_order_relaxed); }
@@ -971,11 +1051,23 @@ std::atomic<bool> g_paused{false};
 void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }
 bool Paused() noexcept { return g_paused.load(); }
 
-bool QueryFresh(std::uint16_t slot) noexcept {
+bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     std::uint64_t now = 0;
     world::Act act{};
     if (!g_actOn.load() || !world_link::ActLatest(slot, now, act) || !act.req_valid) return false;
-    return now >= act.req_rx_ms && now - act.req_rx_ms <= kActFreshMs;
+    if (!(now >= act.req_rx_ms && now - act.req_rx_ms <= kActFreshMs)) return false;
+    // Round 6: a walker is taken only on the host copy's leg (his own pre-take leg is what his legs keep walking).
+    float own[3]{};
+    bool valid = false;
+    if (idx < kMaxSoldiers) {
+        const std::uint64_t at = g_ownAt[idx].load(std::memory_order_acquire);
+        valid = at && now >= at && now - at <= kActFreshMs;
+        for (int k = 0; k < 3; ++k) own[k] = g_ownDest[idx][k].load(std::memory_order_relaxed);
+    }
+    unsigned char req[0x70];
+    std::memcpy(req, act.req, sizeof(req));
+    if (!LegMatch(req, own, valid)) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
+    return true;
 }
 
 void ReleaseAll() noexcept {
@@ -994,7 +1086,21 @@ Counters ReadCounters() noexcept {
     soldier_authority::MirrorDrops(k.fire_dropped, k.noise_dropped);
     k.local_shots = soldier_authority::LocalShots();
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
+    k.due = g_cDue.load(); k.reapply_moving = g_cReapply.load(); k.same = g_cSame.load(); k.unrealized = g_cUnrealized.load();
+    k.expired = g_cExpired.load(); k.order_clear = g_cOrderClear.load(); k.leg_wait = g_cLegWait.load();
     return k;
+}
+
+bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const int n = std::snprintf(out, capacity,
+        "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
+        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
+        "expired=%u; order_clear=%u; leg_wait=%u\r\n",
+        static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
+        k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
+        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait);
+    return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept {

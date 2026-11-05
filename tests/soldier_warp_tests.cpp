@@ -488,6 +488,45 @@ int main() {
         Check(ds.move && std::fabs(ds.pos[1] - 268.02f) < 1e-3f, "drive (place_lift): its own height + 0.02 m = 268.02");
         ds = sw::DriveStep(lh, lup, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
         Check(ds.move && ds.pos[1] == 269.5f, "drive (place_lift): a target 1.5 m above takes its y");
+        // Enemy gaps 3 (drive_vert, docs/world-sync-design.md 7.18): at rest in x/z (1.05 m) but 3.3 m under the target
+        // (drive_sink of 2929558510 at the defaults in 6348f361 / 41f2b07f / 31a799e3, e 102-105 cm): without vert_m nothing
+        // moves (as before), with it the target's spot; 0.9 m apart in y stays.
+        const float vh[3] = {0.0f, 268.3f, 0.0f}, vt[3] = {1.05f, 271.6f, 0.0f}, vlow[3] = {1.05f, 269.2f, 0.0f};
+        ds = sw::DriveStep(vh, vt, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
+        Check(!ds.move && !ds.vert, "drive: 3.3 m under the target at rest in x/z is not moved without drive_vert (drive_sink)");
+        ds = sw::DriveStep(vh, vt, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM, sw::kDriveVertM);
+        Check(ds.move && ds.vert && !ds.hard && ds.pos[0] == vt[0] && ds.pos[1] == vt[1] && ds.pos[2] == vt[2],
+              "drive_vert: 3.3 m under the target at rest: put on the target's spot");
+        ds = sw::DriveStep(vh, vlow, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM, sw::kDriveVertM);
+        Check(!ds.move && !ds.vert, "drive_vert: 0.9 m apart in y at rest stays");
+        {
+            std::uint64_t since = 0;
+            const bool v0 = sw::DriveVertDue(3.3f, 5000, since), v1 = sw::DriveVertDue(-3.3f, 5900, since),
+                       v2 = sw::DriveVertDue(3.3f, 6000, since), v3 = sw::DriveVertDue(0.4f, 6100, since),
+                       v4 = sw::DriveVertDue(3.3f, 6200, since);
+            Check(!v0 && !v1 && v2 && !v3 && !v4 && since == 6200,
+                  "drive_vert: due once more than 1.5 m apart in y for 1 s; a smaller gap starts over");
+            // Enemy round 7 track A (design 7.20): no thrash. Round 6's copies popped up and dropped again 1.4-1.7 s after a
+            // snap (2929558510 -2.47 then +1.80 m; 2942862796 2.61 / 4.06 / 5.80 m in 3 s): at most 2 snaps of one copy in
+            // 10 s from the first; a third due in that window is not taken (the caller logs world_drive=vert_stop once).
+            std::uint64_t win = 0;
+            unsigned n = 0;
+            const bool a0 = sw::DriveVertAllow(10000, win, n);
+            sw::DriveVertCount(10000, win, n);
+            const bool a1 = sw::DriveVertAllow(11500, win, n);
+            sw::DriveVertCount(11500, win, n);
+            const bool a2 = sw::DriveVertAllow(13000, win, n), a3 = sw::DriveVertAllow(19999, win, n);
+            const bool a4 = sw::DriveVertAllow(20000, win, n);
+            Check(a0 && a1 && !a2 && !a3 && a4 && n == 0 && win == 0,
+                  "drive_vert: at most 2 snaps of a copy in 10 s from the first; the window then starts over");
+            sw::DriveVertCount(20100, win, n);
+            Check(win == 20100 && n == 1, "drive_vert: the next snap opens a new window");
+            char reply[64]{};
+            const bool b1 = sw::FormatRefusal(reply, sizeof(reply), "backoff", 2500) &&
+                            std::strcmp(reply, "return {refused=\"backoff\",b=2500}") == 0;
+            const bool b0 = sw::FormatRefusal(reply, sizeof(reply), "relayed", 0) && std::strcmp(reply, "return {refused=\"relayed\"}") == 0;
+            Check(b1 && b0, "place_reach: a backoff refusal names the ms left of the guard's backoff (b)");
+        }
         Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
                   sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
               "drive: a play guest; a lab host with soldier_owner");

@@ -181,13 +181,32 @@ bool DriveTarget(const DriveSample& prev, const DriveSample& cur, std::uint64_t 
 // owner, or -0.01 when the engine left them there and they fell a storey), so with the key the level y is this copy's
 // own GetPosition y + kLiftLevelM (feet_m kLiftFeetM) instead of 0.7 m under it.
 inline constexpr float kDriveFeetM = 0.8f, kLiftFeetM = 0.0f, kLiftLevelM = 0.02f;
+// Enemy gaps 3 (lab key drive_vert, docs/world-sync-design.md 7.18): with vert_m > 0 a copy at rest in x/z that stands
+// more than vert_m above or below the target is put on the target's spot (vert): the planar rest test never moved one
+// (drive_sink at the defaults: 2929558510 2.2-3.3 m under its target at 0.14-1.05 m planar in 6348f361 / 41f2b07f /
+// 31a799e3 / b77e2104, while M1 / M3 corrections skip a driven guard). DriveVertDue: the gap held kDriveVertMs.
+inline constexpr float kDriveVertM = 1.5f;
+inline constexpr std::uint64_t kDriveVertMs = 1000;
 struct DriveStepResult {
     float pos[3]{};
     float error{};
-    bool move{}, hard{}, active{};
+    bool move{}, hard{}, active{}, vert{};
 };
 DriveStepResult DriveStep(const float (&from)[3], const float (&to)[3], bool active, float start_m, float stop_m, float max_step,
-                          float snap_m, float lift_m, float feet_m = kDriveFeetM) noexcept;
+                          float snap_m, float lift_m, float feet_m = kDriveFeetM, float vert_m = 0.0f) noexcept;
+// True once |gap_m| (the target's y minus this copy's) has stayed over kDriveVertM for kDriveVertMs (since_ms carries
+// when it began; a smaller gap clears it).
+bool DriveVertDue(float gap_m, std::uint64_t now_ms, std::uint64_t& since_ms) noexcept;
+// Enemy round 7 track A (design 7.20): no thrash. A copy is snapped at most kDriveVertMax times in kDriveVertWindowMs
+// from the first snap of the window (round 6: copies popped up and dropped again 1.4-1.7 s after a snap). Allow: may
+// this due snap be taken (an expired window starts over: window 0, count 0); Count: a snap was taken.
+inline constexpr unsigned kDriveVertMax = 2;
+inline constexpr std::uint64_t kDriveVertWindowMs = 10000;
+bool DriveVertAllow(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
+void DriveVertCount(std::uint64_t now_ms, std::uint64_t& window_ms, unsigned& count) noexcept;
+// The receipts' refusal reply: return {refused="<why>"}, with ,b=<back_ms> (the ms left of that guard's relay backoff,
+// so Lua's realize hold retries when it ends) when back_ms > 0. False when it does not fit.
+bool FormatRefusal(char* out, std::size_t capacity, const char* why, std::uint64_t back_ms) noexcept;
 // Who may drive (DriveReceipt): play or lab with soldier_follow + soldier_snap, 30010 / 30020 / 30050; a host only with
 // soldier_owner (its copies of guest-owned guards). nullptr admits; else "role", "disabled", "mission".
 struct DriveRule {

@@ -62,7 +62,7 @@ do
             P.patrol, P.lastS, P.sink = {rr = 0, s = {}, combat = {}, back = {}, skip = {}, scan = {}}, {}, {}
             -- M3: the host's owner decisions and both players' engagements (ms), the guest's owned guards and samples.
             P.own, P.engG, P.engH, P.owned, P.ownS = {}, {}, {}, {}, {}
-            P.rz = {}  -- enemy gaps 2 (place_reach): the force-realize holds, forgotten at a start (the game reloads)
+            P.rz, P.rzN = {}, {landed = 0, timeout = 0}  -- place_reach: the force-realize holds, forgotten at a start
             P.n = {sent = 0, acked = 0, corrected = 0, refused = 0, applied = 0, failed = 0}
             W.pinned, W.rosterMatch = P.pin, false
         end
@@ -85,20 +85,22 @@ do
             local ok, live = pcall(W.inGame)
             if ok and live == true then pcall(W.api.send, c.en.id, {id = "SetForceRealize", forceRealize = false}) end
         end
-        -- Enemy gaps 2 (place_reach, CFG r[19] bit 2048, W.reachOn; docs/world-sync-design.md 7.17): a correction or M3
-        -- placement the game relayed (not realized on this copy: 57 host placements and 22 guest corrections in run
-        -- 798b51dd, a dismounted rider 48 s) force-realizes that guard for RZ_MS (at most RZ_MAX at once, never Mother
-        -- Base staff) so the next one lands; released when a placement of him lands, at RZ_MS or at stop.
+        -- place_reach (bit 2048, W.reachOn; design 7.17 / 7.18): a placement or drive step relayed or refused in the backoff
+        -- force-realizes the guard (<= RZ_MAX, never staff) and retries at the backoff end (native b); released when he
+        -- lands (placement or drive step), at RZ_MS or at stop.
         -- body_dead (bit 1024, W.deadOn): after a body placement the resting spot (world_snap.lua S.bd) is where this
         -- copy's body lies, moved or not, so it is never reported back (the M6 ping-pong).
         P.RZ_MS, P.RZ_MAX = 8000, 4
         local function unhold(h, why)
-            local r = P.rz[h]
+            local r, N = P.rz[h], P.rzN
             if not r then return end
             P.rz[h] = nil
             P.release({forced = true, en = r})
-            L("event=realize_hold;ent=%.0f;on=0;why=%s", h, why)
+            N[why] = (N[why] or 0) + 1
+            L("event=realize_hold;ent=%.0f;on=0;why=%s;ms=%d;src=%s;st=%d;rs=%d;rf=%d;rq=%d;landed=%d;timeout=%d", h, why,
+                floor(W.now() - r.at), r.src, r.st, r.rs, r.rf, r.rq, N.landed, N.timeout)
         end
+        P.unhold = unhold
         function P.doneHook(c, why)
             local S = c.body and W.deadOn and W.snap
             local b = S and S.bd and S.bd[c.h]
@@ -109,22 +111,37 @@ do
                 b.pend = nil
             end
             if not why then return unhold(c.h, "landed") end
-            if why == "unrealized" and c.native == "relayed" and c.kind == 3 and c.en then P.hold(c.h, c.en.id) end
+            if why == "unrealized" and c.kind == 3 and c.en then P.hold(c.h, c.en.id, c.native, c.back, c) end
         end
-        -- One hold: placements (above) and the M4 stream's relayed steps (world_snap.lua S.drive; run 9023e5c6: 18 / 22 of
-        -- the relays there, and the native backoff after them refused the corrections).
-        function P.hold(h, id)
-            if not W.reachOn or P.rz[h] or type(id) ~= "number" or (W.feature and W.feature.staffPlace) then return end
-            local n = 0
-            for _ in pairs(P.rz) do n = n + 1 end
-            if n >= P.RZ_MAX then return end
-            local ok = pcall(W.api.send, id, {id = "SetForceRealize"})
-            P.rz[h] = {id = id, at = W.now()}
-            L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d", h, ok and 1 or 0, n + 1)
+        function P.hold(h, id, why, b, c)
+            if not W.reachOn or type(id) ~= "number" or (W.feature and W.feature.staffPlace) then return end
+            local r, now = P.rz[h], W.now()
+            if not r then
+                local n = 0
+                for _ in pairs(P.rz) do n = n + 1 end
+                if n >= P.RZ_MAX then return end
+                local ok = pcall(W.api.send, id, {id = "SetForceRealize"})
+                r = {id = id, at = now, src = c and "place" or "drive", st = 0, rs = 0, rf = 0, rq = 0}
+                P.rz[h] = r
+                L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d;why=%s;b=%d", h, ok and 1 or 0, n + 1, tostring(why), b or -1)
+            end
+            r.rf, r.retry, r.c = r.rf + 1, now + (tonumber(b) or 3000) + 50, c or r.c
+            return r
         end
-        -- The M4 stream's reach (world_snap.lua S.produce): a guard d mm from the other player within 60 m of it, or with
-        -- place_reach within 160 m of it when he stands within 60 m of this player (the receiver drives to 160 m; the
-        -- native step still needs 60 m of the nearer player). Run 798b51dd: every M3 host sample 60-160 m from the host.
+        -- S.drive's side (world_snap.lua): st / rs count a held guard's landed / resting steps.
+        function P.hdr(h, id, r, dv)
+            if not W.reachOn or type(r) ~= "table" then return end
+            if r.refused == "relayed" or r.refused == "backoff" then
+                local z = P.hold(h, id, r.refused, r.b)
+                if z then dv.back = z.retry end
+                return
+            end
+            local z = P.rz[h]
+            if not z or r.refused then return end
+            if r.h == 1 and (r.s or 0) >= 1 then z.st = z.st + 1; return unhold(h, "landed") end
+            z.rs = z.rs + 1
+        end
+        -- S.produce's reach: d (mm, to the other player) <= 60 m, with place_reach <= 160 m if he is within 60 m of ours.
         function P.reach(d, x, z)
             if d <= 60000 then return true end
             local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
@@ -132,7 +149,20 @@ do
                 flat(x, z, px * 1000, pz * 1000) <= 60000
         end
         function P.rzTick(now)
-            for h, r in pairs(P.rz) do if now - r.at >= P.RZ_MS then unhold(h, "timeout") end end
+            for h, r in pairs(P.rz) do
+                if now - r.at >= P.RZ_MS then unhold(h, "timeout")
+                elseif r.c and now >= r.retry then
+                    local c, s, busy = r.c, P.lastS[h], P.cur and P.cur.h == h or W.snapDriving and W.snapDriving(h, now)
+                    for _, q in ipairs(P.q) do busy = busy or q.h == h end
+                    if s and s.used and s.kind == 3 and s.at > c.at then c = s end
+                    r.c = nil
+                    if not busy then
+                        c.landed, c.native, c.back, c.dy, c.pos = nil, nil, nil, nil, nil
+                        r.rq = r.rq + 1
+                        P.q[#P.q + 1] = c
+                    end
+                end
+            end
         end
         -- Stop (OnTerminate, LEVEL 0): release a pending force-realize, then forget. W1 off
         -- (full=false) keeps everything: spawn sync does not depend on outcome sync.
