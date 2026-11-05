@@ -620,10 +620,34 @@ do
     for i = 1, 10 do s2(100000 + i * 1000, 10000, 2, 1) end
     check(forces(g, 25602, false) == 1 and #placedOf(g, 25602) == fx and g:has('event=lrrp;step=crew_wait;id=25602') and
         #cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: the host truck drives manned, ours is out: released, never driven off empty, no board command')
+    -- Round 9 B land (801cd90b, the review): the host's manned truck paused (v=0) 100 m on and this copy's EMPTY 25606
+    -- was taken again and jumped 100.5 m away from its crew. Now an empty copy whose crew is out is never moved 5 m+
+    -- to a manned host truck, driving or at rest.
+    for _ = 1, 10 do s2(200000, 0, 2, 0) end
+    check(forces(g, 25602, true) == 1 and #placedOf(g, 25602) == fx and g:count('event=lrrp;step=jump;id=25602') == 0 and
+        math.abs(g.pool[25602].x - 100.0) < 0.01, 'crew: the host truck pauses manned 100 m on, ours is out: not taken again, never jumped empty')
     g.pool[25602].riders = {1194, 1195}
     for i = 11, 30 do s2(100000 + i * 1000, 10000, 2, 1) end
     check(forces(g, 25602, true) == 2 and #placedOf(g, 25602) > fx and #cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1,
         'crew: manned here again: taken and placed again')
+    -- Round 9 B land (801cd90b, the review): UnsetRelativeVehicle went to this copy's still-seated crew while the host's
+    -- boarded again (rh 0 -> 1 -> 2; k=25 rh=1 rl=2) and this copy's crew got out 6.4 s later as the host's truck left.
+    -- Now: once the host's count rises at the stop, no unseat until the host's truck drives.
+    local gc = g
+    g = Fixture('guest', {lrrp = true})
+    g:add(25602, 100.0, 200.0, 4, 'veh_trc_0000', {riders = {1194, 1195}})
+    g:start(); g:pair()
+    for _ = 1, 5 do s2(100000, 0, 2, 0) end
+    for _ = 1, 30 do s2(100000, 0, 0, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 1, 'boarding: the host crew out: this copy unseats its crew once each')
+    for _ = 1, 60 do s2(100000, 0, 1, 0) end
+    for _ = 1, 30 do s2(100000, 0, 2, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 1,
+        'boarding: the host crew boards again (1, then 2): never unseated during the boarding (' .. #cmdsOf(g, 1194, 'UnsetRelativeVehicle') .. ')')
+    for _ = 1, 5 do s2(100000, 10000, 2, 1) end
+    for _ = 1, 30 do s2(110000, 0, 0, 0) end
+    check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 2, 'boarding: driven, then out at the next stop: unseated again')
+    g = gc
     check(g:has('event=lrrp;step=cost;role=guest;'), 'a cost line every 10 s')
     -- The lab lever (both roles): vehicle_state_status lrrp 0 pauses lrrp_follow on this copy, 1 resumes it.
     local okL, msgL = g.S.lever({'vehicle_state_status', 'lrrp', '0'})
