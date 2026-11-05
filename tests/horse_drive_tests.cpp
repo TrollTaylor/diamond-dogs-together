@@ -246,7 +246,7 @@ void TestLabKey() {
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_share && play.play_refused == 0, "on in play with the gun profile");
     Check(!gunOff.world_horse_share && gunOff.world_horse_share_given, "a named 0 is the off switch");
 }
-// Horse plan M2 (a downed partner on the shared horse): world_horse_cargo, on with the gun profile since the BODY0 round.
+// Horse plan M2 (a downed partner on the shared horse): world_horse_cargo, off unless named in lab and play until its gate.
 void TestCargoKey() {
     const auto lab = [](const char* text) {
         mgscoop::LabConfig c{};
@@ -262,14 +262,15 @@ void TestCargoKey() {
     Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
     Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
-    // BODY0 round: the gun profile turns it on in lab and play (runs 911ce293 / its play rehearsal: the downed player lies on
-    // the horse on both screens); a named 0 is the off switch.
-    Check(gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share, "on with the gun profile (and the M1 key)");
+    // BODY0 round: its final sessions (144d99bb / 7117d3ac / 47101768 and the play rehearsal) did not pass the gate (the downed
+    // player crouches on the horse on their own screen after the dismount): off unless named again, the gun profile too.
+    Check(!gun.world_horse_cargo && !gun.world_horse_cargo_given && gun.world_horse_share,
+          "after the BODY0 gate failed: off with the gun profile (the M1 key stays on)");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=0\n");
     Check(!gunOff.world_horse_cargo && gunOff.world_horse_cargo_given, "with the gun profile a named 0 is the off switch");
     const auto playGun = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                              "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
-    Check(playGun.mode == mgscoop::LabMode::play && playGun.world_horse_cargo && playGun.play_refused == 0, "on in play with the gun profile");
+    Check(playGun.mode == mgscoop::LabMode::play && !playGun.world_horse_cargo && playGun.play_refused == 0, "off in play unless named");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
                           "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
                           "world_horse_cargo=1\n");
