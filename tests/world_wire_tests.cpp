@@ -114,10 +114,10 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 72, "72 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 73, "73 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
-                       "M3 place / ack / owner / engage, M4 soldier snap, and local ops)");
+                       "M3 place / ack / owner / engage, M4 soldier snap, horse plan M2 horse seat, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -2071,6 +2071,48 @@ void SeatOp() {
     Pair(30010, 200);
     Check(Tx(g_guest, op::seat, {1, 25608, 0, 2, 1}, 201) == world::TxStatus::disabled, "SEAT needs world level 3");
 }
+// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 31): HORSE_SEAT 0x50, both
+// directions, world queue, reliable, level 3, play too, never a request; seq, seat 0..2, the sender's role, action 1..6,
+// cause 0..15, the victim's downed generation, xyz mm, yaw mrad: 10 fields, 26 bytes.
+void HorseSeatOp() {
+    const auto* s = world::FindOp(op::horse_seat);
+    Check(op::horse_seat == 0x50 && s && std::strcmp(s->name, "HORSE_SEAT") == 0, "HORSE_SEAT 0x50 exists");
+    Check(s && s->queue == 1 && s->wire == world::Wire::reliable && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::both && s->lua == 10 && s->native == 0 && s->rx == 0 && s->body == 26,
+          "HORSE_SEAT: world queue, reliable, level 3, play too, both directions, 10 fields, 26 bytes");
+    if (!s) return;
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    // seq, seat, role, action, cause, generation, x, y, z, yaw
+    Check(Tx(g_guest, op::horse_seat, {1, 2, 2, 1, 0, 4000000000LL, 101000, 2000, -300000, -31416}, 101) == world::TxStatus::ok,
+          "the guest's claim for seat 2");
+    Check(Tx(g_host, op::horse_seat, {1, 2, 1, 2, 0, 4000000000LL, 0, 0, 0, 0}, 101) == world::TxStatus::ok, "the host's grant");
+    Check(Tx(g_host, op::horse_seat, {0, 2, 1, 2, 0, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 3, 1, 2, 0, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 3, 2, 0, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 1, 0, 0, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 1, 7, 0, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 1, 2, 16, 1, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 1, 2, 0, 1, 1000000001, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::horse_seat, {2, 2, 1, 2, 0, 1, 0, 0, 0, 31417}, 101) == world::TxStatus::bad_args,
+          "seq 1.., seat 0..2, role 1..2, action 1..6, cause 0..15, xyz within 1e9 mm, yaw within pi");
+    Exchange(102);
+    auto toHost = Drain(g_host, 3, 103);
+    auto toGuest = Drain(g_guest, 3, 103);
+    Check(toHost.size() == 1 && toHost[0].op == op::horse_seat && toHost[0].count == 10 && toHost[0].v[1] == 2 &&
+              toHost[0].v[2] == 2 && toHost[0].v[3] == 1 && toHost[0].v[5] == 4000000000LL && toHost[0].v[6] == 101000 &&
+              toHost[0].v[8] == -300000 && toHost[0].v[9] == -31416,
+          "the host's world queue delivers the claim with its exact fields");
+    Check(toGuest.size() == 1 && toGuest[0].op == op::horse_seat && toGuest[0].v[2] == 1 && toGuest[0].v[3] == 2,
+          "the guest's world queue delivers the grant");
+    g_guest.LocalMissionEnd(105);
+    Check(Tx(g_guest, op::horse_seat, {3, 2, 2, 1, 0, 1, 0, 0, 0, 0}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
+    Setup(2, 2, true);
+    Pair(30010, 200);
+    Check(Tx(g_guest, op::horse_seat, {1, 2, 2, 1, 0, 1, 0, 0, 0, 0}, 201) == world::TxStatus::disabled, "HORSE_SEAT needs world level 3");
+}
 } // namespace
 
 // Debug menu Travel (docs/world-sync-protocol.md section 22): TRAVEL 0x3B, both directions, control queue, reliable,
@@ -2299,6 +2341,7 @@ int main() {
     VehicleSpawnOp();
     VehicleDamageOp();
     SeatOp();
+    HorseSeatOp();
     TravelOp();
     RulesOp();
     FultonOp();

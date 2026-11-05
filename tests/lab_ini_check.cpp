@@ -123,6 +123,7 @@ int main(int argc, char** argv) {
         std::printf("world_vehicle_gone=%d\n", c.world_vehicle_gone ? 1 : 0);
         std::printf("companion_host_owned=%d\n", c.companion_host_owned ? 1 : 0);
         std::printf("world_horse_share=%d\n", c.world_horse_share ? 1 : 0);
+        std::printf("world_horse_cargo=%d\n", c.world_horse_cargo ? 1 : 0);
         std::printf("world_relief=%d\n", c.world_relief ? 1 : 0);
         std::printf("world_vehicle_state=%d\n", c.world_vehicle_state ? 1 : 0);
         std::printf("world_vehicle_wreck=%d\n", c.world_vehicle_wreck ? 1 : 0);

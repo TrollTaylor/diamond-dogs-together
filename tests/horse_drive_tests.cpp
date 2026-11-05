@@ -206,6 +206,28 @@ void TestLabKey() {
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_share && play.play_refused == 0, "on in play with the gun profile");
     Check(!gunOff.world_horse_share && gunOff.world_horse_share_given, "a named 0 is the off switch");
 }
+// Horse plan M2 (a downed partner on the shared horse): world_horse_cargo, off unless named in lab and play until its gate.
+void TestCargoKey() {
+    const auto lab = [](const char* text) {
+        mgscoop::LabConfig c{};
+        (void)mgscoop::ParseLabConfig(text, std::strlen(text), c);
+        return c;
+    };
+    const auto def = lab("enabled=1\nrole=host\n");
+    const auto on = lab("enabled=1\nrole=guest\nworld_horse_cargo=1\n");
+    const auto off = lab("enabled=1\nrole=guest\nworld_horse_cargo=0\n");
+    const auto bad = lab("enabled=1\nrole=host\nworld_horse_cargo=2\n");
+    Check(!def.world_horse_cargo && !def.world_horse_cargo_given, "world_horse_cargo: off unless named");
+    Check(on.world_horse_cargo && on.world_horse_cargo_given && on.unknown_keys == 0 && on.invalid_values == 0, "a named 1 turns it on");
+    Check(!off.world_horse_cargo && off.world_horse_cargo_given, "a named 0 is the off switch");
+    Check(!bad.world_horse_cargo && bad.invalid_values == 1, "an invalid value stays off");
+    const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
+    Check(!gun.world_horse_cargo && gun.world_horse_share, "before its gate: off with the gun profile (the M1 key stays on)");
+    const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                          "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n"
+                          "world_horse_cargo=1\n");
+    Check(play.mode == mgscoop::LabMode::play && play.world_horse_cargo && play.play_refused == 0, "a named 1 runs in play too");
+}
 
 } // namespace
 
@@ -218,6 +240,7 @@ int main() {
     TestVisibility();
     TestRideKindShows();
     TestLabKey();
+    TestCargoKey();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
                 checks);

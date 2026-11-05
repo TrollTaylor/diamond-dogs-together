@@ -180,4 +180,10 @@ f = fixture()
 f.W.companion = {HOLD = {DOG = true}}
 f.tick(33)
 check(f.W.companion.HOLD.HORSE == true, "world_companion's hold gains HORSE")
+-- M2: a downed partner on the shared horse (world_horse_cargo.lua) keeps Travel, Bring and the guest's checkpoint waiting.
+f = fixture()
+f.W.horseCargo = {busy = function() return true end}
+check(f.S.busy() and f.W.travel.blocked() == 3, "M2: a body on the horse: busy")
+f.W.horseCargo.busy = function() return false end
+check(not f.S.busy() and f.W.travel.blocked() == nil, "M2: unloaded: not busy")
 print("world_horse_share_lua_check: " .. checks .. " checks passed")
