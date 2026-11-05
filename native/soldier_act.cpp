@@ -205,7 +205,7 @@ struct Applied {
 };
 Applied g_applied[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
-std::atomic<std::uint32_t> g_cSame{0};
+std::atomic<std::uint32_t> g_cSame{0}, g_cUnrealized{0};
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
 std::uint64_t g_sendWindowAt = 0;
@@ -691,6 +691,7 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
     for (unsigned i = 0; i < v.count; ++i) {
         const std::uint64_t at = g_mirAt[i].load(std::memory_order_relaxed);
         if (!at || now - at > kActFreshMs) continue;
+        if (!Bit(v.realized, i)) { g_cUnrealized.fetch_add(1, std::memory_order_relaxed); continue; }  // nothing drawn to animate
         unsigned char w[0x70]{}, o[0x18]{};
         float owner[3]{};
         bool newReq = false, haveOrder = false, haveOwner = false;
@@ -757,10 +758,10 @@ void FrameCensus(std::uint64_t now) noexcept {
     soldier_authority::MirrorDrops(fire, noise);
     const int n = std::snprintf(line, sizeof(line),
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
-        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u\r\n",
+        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u\r\n",
         static_cast<unsigned long long>(now), g_frameN, p95 / 1000.0, soldier_authority::MirroredCount(), g_cTx.load(), g_cStaged.load(),
         g_cRx.load(), g_cApplied.load(), g_cOrders.load(), g_cTable.load(), g_cFault.load(), g_cRemap.load(), fire, noise,
-        soldier_authority::LocalShots(), g_cSame.load());
+        soldier_authority::LocalShots(), g_cSame.load(), g_cUnrealized.load());
     if (n > 0) Emit(line);
     g_frameN = 0;
 }
