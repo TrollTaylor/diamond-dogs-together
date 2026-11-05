@@ -2327,17 +2327,23 @@ int main() {
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
                   Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
                   "enemy gaps 2 / 3: body_dead and place_reach parse, both off unless named");
-            // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert (native only, no CFG bit) parses in lab and play and is
-            // off unless named. Every vert snap seen (runs 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its
-            // receiver, inside place_reach's 60-160 m band only, so the 60 m band live at the defaults was never exercised;
-            // a second snap 1.4-1.7 s later (gap back over 1.5 m) shows at most 4 of 8 moves held, and no frame shows it.
-            Check(!def.drive_vert && !gunDefault.drive_vert && !gunDefault.drive_vert_given &&
+            // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert (native only, no CFG bit) parses in lab and play. Since
+            // the enemy flip A-vert (7.27, user decision D-A10, 2026-11-05) it follows the gun profile in lab and play: round 10
+            // track A's rest-gated snap held 3 of 3 within 0.02 m (c59ae699 / 948c978a, named); at the defaults the wall
+            // guard's copy stayed 4.54 m under (ef9584e4). A named 0 opts out; a named 1 turns it on without the profile.
+            const std::string vertPlayBase = "enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                                             "partner_source=net\npartner_native_profile=gun\nworld=3\n";
+            const auto vertPlay = Lab(vertPlayBase);
+            const auto vertPlayOff = Lab(vertPlayBase + "drive_vert=0\n");
+            Check(!def.drive_vert && gunDefault.drive_vert && !gunDefault.drive_vert_given &&
+                  vertPlay.mode == mgscoop::LabMode::play && vertPlay.drive_vert && !vertPlay.drive_vert_given &&
+                  vertPlayOff.mode == mgscoop::LabMode::play && !vertPlayOff.drive_vert && vertPlayOff.drive_vert_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\ndrive_vert=0\n").drive_vert &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\ndrive_vert=1\n").drive_vert &&
                   Lab("enabled=1\nrole=host\ndrive_vert=1\n").drive_vert &&
                   Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
                   Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
-                  "enemy gaps 3: drive_vert parses, off unless named");
+                  "enemy flip A-vert (D-A10): drive_vert follows the gun profile in lab and play; a named 0 opts out");
             // Enemy round 8 track C (docs/world-sync-design.md 7.23): act_plan (native only, no CFG bit) parses in lab and play
             // and is off unless named: the far mirror's puppets plan their own path to the host copy's destination.
             Check(!def.act_plan && !gunDefault.act_plan && !gunDefault.act_plan_given &&
