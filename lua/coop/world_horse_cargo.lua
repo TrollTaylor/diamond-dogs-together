@@ -24,13 +24,19 @@ local CAUSE = {[0] = "ok", "awake", "generation", "npc_cargo", "taken_down", "ho
 local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 1000, 1500, 6000, 1000, 3500, 1500, 1000
-local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 1250, 1100
--- Body 1 while this copy's player rides: from the rider's own position (P2: the rider sits 0.10 m ahead of and 0.49 m
--- over the census root, so 0.54 m behind and 0.76 m over the rider is the census cargo point). On foot within 3 m of
--- the horse its height stays 1.1-1.7 m over the carrier's ground (run 7359e4d2: an unridden census drew it ~2 m high).
-local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, CAP_MS, STATS_MS = 540, 760, 1100, 1700, 1450, 3000, 4000, 2000
+local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 800, 1100
+-- Heights (runs 7359e4d2 / c667a209, step=pin and frames): an unridden census root stands 0.75-1.04 m over the
+-- carrier's ground and the body lies on the back 0.8 m over it; a ridden census sits ~0.45 m lower (P1) and the rider
+-- 0.39-0.46 m over it, so while this copy's player rides body 1 goes 0.54 m behind and 0.76 m over the rider's own
+-- position (no census lag). On foot within 3 m a point outside 1.2-2.3 m over the carrier's ground is put 1.7 m over it.
+-- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
+-- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
+-- across: c667a209 frames).
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, CAP_MS, STATS_MS = 540, 760, 1200, 2300, 1700, 3000, 4000, 2000
+local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
-C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM
+C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
+ VICTIM_RISE_MM, VICTIM_PLACED_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
@@ -128,7 +134,7 @@ end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
  C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.releaseP, C.releaseAt = nil, nil, nil, nil, nil, nil, nil
- C.takeKey, C.dyFix, C.statsAt = nil, nil, nil
+ C.takeKey, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
 -- remote: the partner ended it (nothing is sent back). keep (a take-down on the carrier's copy): body 1 stays held at p
@@ -141,7 +147,7 @@ local function stop(now, why, place, remote, p, keep)
    local _, y = mine()
    p = beside(h, -1, s == "carrier" and not mounted() and y or h.y)
   end
-  if place and p then warp(s == "carrier" and 1 or 0, p[1], p[2], p[3], p[4]) end
+  if place and p then warp(s == "carrier" and 1 or 0, p[1], p[2], p[3], p[4] + (s == "cargo" and pi / 2 or 0)) end
   if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end
   log(fmt("step=unloaded;seat=2;why=%s;side=%s;placed=%d;x=%d;z=%d%s", why, s, (place and p) and 1 or 0, p and round(p[1] / 10) or 0,
    p and round(p[3] / 10) or 0, remote and ";from=partner" or ""))
@@ -248,7 +254,12 @@ local function finishTake(now, h, x, y, z, keep)
  return stop(now, "taken_down", true, false, beside(h, side, y), keep)
 end
 local function carrierTick(now)
- cargo(true, false, false)
+ if cargo(true, false, false) == 1 then
+  -- The carry key held beside the horse picked them up off it (the coop pickup, as the stock unload of a guard, P2;
+  -- runs 7359e4d2 / c667a209): end here, nothing placed on either copy, the carry takes over.
+  log("step=take_down;key=r;how=pickup")
+  return stop(now, "taken_down", false)
+ end
  local other = rec(3 - W.role)
  if not fresh(other, now, LOST_MS) then return stop(now, "stream_lost", true) end
  if other.generation ~= C.gen then return stop(now, "victim_gone", true) end
@@ -318,13 +329,24 @@ local function cargoTick(now)
   if ok then h = {x = k.x, y = k.y, z = k.z, yaw = k.yaw, gen = h.gen} end
  end
  C.h = h
- local _, wy = cargoPoint(h)
- pin(0, h)
+ local wx, wy, wz, wa = cargoPoint(h)
+ wy = h.y + VICTIM_RISE_MM
+ if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp(0, wx, wy, wz, wa + pi / 2) end
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
   capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d", round(wy / 10), got))
  end
+end
+-- world_horse_share calls this right after it placed this copy's horse from the rider's stream (the same frame): the
+-- victim's body 0 follows the pose just written, not last frame's census.
+function C.placed(x, y, z, yaw)
+ if C.state ~= "cargo" or not num(x) or not num(y) or not num(z) or not num(yaw) then return end
+ local p = C.physical
+ if p and p.localCarried == true then return end
+ local a = yaw / 1000
+ warp(0, x - BACK_MM * sin(a), y + VICTIM_PLACED_MM, z - BACK_MM * cos(a), a + pi / 2)
+ C.trackPinAt = W.now and W.now() or 0
 end
 local function onClaim(now, gen, pose)
  if not W.host then return end
@@ -370,7 +392,7 @@ W.handlers[OP] = function(v)
   if C.state == "cargo" and gen == C.gen then C.keepAt, C.keepPose = now, pose end
  elseif action == UNLOADED and (C.state == "cargo" or C.state == "carrier") and gen == C.gen then
   local p = (v[7] ~= 0 or v[9] ~= 0) and {v[7], v[8], v[9], v[10] / 1000} or nil
-  stop(now, CAUSE[cause] or "remote_end", true, true, p)
+  stop(now, CAUSE[cause] or "remote_end", p ~= nil, true, p)
  end
 end
 function C.tick(now)

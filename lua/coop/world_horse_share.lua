@@ -140,6 +140,9 @@ function S.apply(t)
  end
  S.twoDrivers = nil
  local r = place(x, y, z, yaw, true)
+ -- M2: a downed partner loaded on this horse follows the pose just written (world_horse_cargo.lua).
+ local HC = W.horseCargo
+ if r and r.ready == true and type(HC) == "table" and type(HC.placed) == "function" then pcall(HC.placed, r.x, r.y, r.z, yaw) end
  local s = S.stats
  if not r or r.ready ~= true then
   s.refused = s.refused + 1
