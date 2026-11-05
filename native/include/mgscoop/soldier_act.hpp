@@ -73,6 +73,14 @@ bool RemapAimTarget(unsigned char (&wire)[0x70]) noexcept;
 bool RequestChanged(const unsigned char (&a)[0x70], const unsigned char (&b)[0x70]) noexcept;
 // Orders: a target position (mode 1, packed at +0) moved >= 5 cm, or any other byte.
 bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]) noexcept;
+// Round 6, run fbf3522a (design 7.19): the order unpack 0x1413701f0 writes the target (+0x00..+0x0b) and its mode (the low
+// 3 bits of +0x0c) only for packed modes 1..4 (wire +0x0e); a packed order without a target leaves the puppet's own
+// stale one (his brain's, from before he was a puppet), and his legs walked to it, away from the host copy's request
+// (guard 15: 15.7 m off at the host copy's speed). Whether a packed order names a target (wire +0x0e is 1..4):
+bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept;
+// Clears the target of an unpacked order record (R+0x1b0, 0x20 bytes): +0x00..+0x0b zero, +0x0c's low 3 bits zero (as the
+// owner's record of an order without a target); true when it held one.
+bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept;
 // The rate cap: a change goes out kActMinMs after the last send at the earliest, an unchanged record every kActResendMs.
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
 // The network-position entry 0x136f810 reads (0x18 bytes): xyz, yaw, flags +0x14 bit 0 (valid).

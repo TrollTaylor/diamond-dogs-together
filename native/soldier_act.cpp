@@ -142,6 +142,16 @@ bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]
     return std::memcmp(a, b, 8) != 0;
 }
 
+bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept {
+    (void)packed;
+    return true;
+}
+
+bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept {
+    (void)record;
+    return false;
+}
+
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
     if (!last_ms) return true;
     const std::uint64_t age = now_ms >= last_ms ? now_ms - last_ms : 0;

@@ -231,6 +231,27 @@ int main() {
     // Round 6 (docs/world-sync-design.md 7.19): a moving puppet's unchanged request is re-applied every 1 s (runs adecad01 /
     // 80cc0176: with 5 s the walkers lagged 5-12 m, the catch-up ran only then); a still one every 5 s; a first or changed
     // request at once. The owner copy moves when its order-part position is >= 0.3 m from where it was at the last apply.
+    // Run fbf3522a: guard 15's puppet kept his own brain's order target (413.5, 267.6, 2133.3; mode 1) under the host's
+    // order without a target (wire +0x0e 0) and walked to it, away from the request's destination: such an order now
+    // clears the record's target (+0x00..+0x0b, the mode bits of +0x0c), as the owner's record of it is.
+    {
+        const unsigned char none[0x18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1f, 0, 0, 0, 0};
+        unsigned char pos[0x18]{};
+        std::memcpy(pos, none, sizeof(pos));
+        pos[0xe] = 1;
+        Check(!sa::OrderHasTarget(none) && sa::OrderHasTarget(pos), "an order names a target in packed modes 1..4 only");
+        pos[0xe] = 4;
+        Check(sa::OrderHasTarget(pos), "mode 4 (an id) is a target");
+        // The guest's record of guard 15 in fbf3522a (census o=): x, y, z floats, +0x0c mode 1, more bytes.
+        unsigned char rec[0x20] = {0xec, 0xbe, 0xce, 0x43, 0x31, 0xc6, 0x85, 0x43, 0xae, 0x54, 0x05, 0x45, 0x01, 0, 0, 0,
+                                   0, 0, 0, 0, 0x01, 0, 0, 0, 0, 0x01, 0, 0x1b, 0x1f, 0, 0, 0};
+        Check(sa::ClearOrderTarget(rec), "a stale target is cleared");
+        bool zero = true;
+        for (int b = 0; b < 0xc; ++b) zero = zero && rec[b] == 0;
+        Check(zero && (rec[0xc] & 7) == 0 && rec[0x14] == 0x01 && rec[0x19] == 0x01 && rec[0x1b] == 0x1b && rec[0x1c] == 0x1f,
+              "target and mode cleared, the other bytes kept");
+        Check(!sa::ClearOrderTarget(rec), "nothing to clear the second time");
+    }
     {
         Check(sa::kActReapplyMovingMs == 1000 && sa::kActReapplyMs == 5000, "re-apply: 1 s moving, 5 s still");
         Check(sa::ReapplyDue(true, false, false, 0) && sa::ReapplyDue(false, true, false, 0), "re-apply: first / changed at once");
