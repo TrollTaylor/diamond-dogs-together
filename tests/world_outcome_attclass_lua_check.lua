@@ -87,4 +87,20 @@ check(W.mirrorCount == 1 and W.logs[#W.logs]:find("event=mirror_engaged;kind=dog
 W.mirrorEngaged("Damage", 8, WALKER0)
 check(W.mirrorCount == 2 and W.logs[#W.logs]:find("kind=walker;msg=Damage;ent=8;", 1, true) ~= nil, "a mirror walker's damage")
 
+-- Horse plan M1 (world_horse_share.lua): the shared D-Horse the partner rides on this copy is the partner's (mirror),
+-- on either copy and with or without the companion module; unridden or ridden by this copy's player it is as before.
+for _, o in ipairs({{host = true}, {host = false}, {host = true, live = true}}) do
+    W = Fixture(o)
+    local rides = true
+    W.horseShare = {partnerRides = function() return rides end}
+    check(W.attClass(HORSE0) == "mirror", "the partner rides the shared horse: its hits are the partner's (mirror)")
+    rides = false
+    check(W.attClass(HORSE0) ~= "mirror" or (o.live and not o.host), "unridden: as before M1")
+    rides = true
+    check(W.attClass(WALKER0) ~= "mirror" or (o.live and not o.host), "a walker is never the shared horse")
+end
+W = Fixture({host = true, riding = HORSE0})
+W.horseShare = {partnerRides = function() return true end}
+check(W.attClass(HORSE0) == "local", "this copy's player rides it (two drivers): local first")
+
 print("world_outcome_attclass_lua_check: " .. checks .. " checks passed")

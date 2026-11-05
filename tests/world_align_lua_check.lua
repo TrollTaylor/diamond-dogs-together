@@ -1517,6 +1517,23 @@ do
         check(not ag.R.pending and ag.saves == 1 and ag.R.seen == 1 and logCount(ag, 'step=checkpoint;hash=0;ver=1;receipt=1') == 1,
             'off the helicopter: the held checkpoint applies and saves once')
     end
+    -- Horse plan M1 (world_horse_share.lua): while anyone rides the shared D-Horse the guest's checkpoint waits too.
+    do
+        local hh, hg = fixture(true, 3), fixture(false, 3)
+        pairReady(hh, hg)
+        local busy = true
+        hg.W.horseShare = {busy = function() return busy end}
+        hh.env.TppMission.UpdateCheckPoint({atCurrentPosition = true})
+        hh.A.tick(hh.now); transfer(hh, hg, function(p) return p.op == OP.CHECKPOINT end)
+        hg.A.tick(hg.now)
+        check(hg.R.pending and not hg.saves and logCount(hg, 'step=checkpoint_wait;reason=horse;ver=1') == 1,
+            'someone rides the shared horse: the checkpoint waits, nothing saved')
+        hg.now = hg.now + 600; hg.A.tick(hg.now)
+        check(hg.R.pending and not hg.saves and logCount(hg, 'reason=horse') == 1, 'still riding: held, logged once')
+        busy = false
+        hg.now = hg.now + 600; hg.A.tick(hg.now)
+        check(not hg.R.pending and hg.saves == 1, 'off the horse: the held checkpoint applies once')
+    end
     -- Named off (F.arrival.holdCheckpoint = false; world_follow's default is on since 0.14.6): riding in applies at once.
     local default = fixture(false, 3, true)
     default.W.w1 = true

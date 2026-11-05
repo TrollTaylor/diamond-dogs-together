@@ -111,6 +111,8 @@ std::uint8_t MapAct(std::uint16_t act, std::int32_t vy_mmps) noexcept {
 
 std::uint8_t MapFulton(std::uint16_t act) noexcept { return act == 59 ? kFulton : kNone; }
 
+std::uint8_t MapHorse(std::uint16_t) noexcept { return kNone; }  // red: not built
+
 const char* PhaseName(Phase phase) noexcept {
     switch (phase) {
     case Phase::suspend: return "suspend";
