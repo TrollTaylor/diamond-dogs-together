@@ -1559,7 +1559,7 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
-    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[3] == 120, 'FM1: R floors 80 m calm, 120 m ALERT')
+    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[3] == 138, 'FM1: R 80 m calm, 138 m ALERT (963ab276)')
     mg.positions[1] = {0, 1.8, 100.0}
     ticks(mg, 4)
     local function acted(c, text)

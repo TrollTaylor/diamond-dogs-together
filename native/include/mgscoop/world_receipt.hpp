@@ -70,7 +70,8 @@ inline constexpr char hostwarp_prefix[] = "return 'MGS_COOP_WORLD_WARP_HOST_V1' 
 // <x_mm> <y_mm> <z_mm>" (this copy's GetPosition), toward the owner's SOLDIER_SNAP (wire data, Core::SnapPair).
 inline constexpr char drive_prefix[] = "return 'MGS_COOP_WORLD_DRIVE_V1' -- ";
 // FM1, the far mirror (lua/coop/world_mirror.lua): "<op> <slot> <goId>", op t (the owner sends this guard), m (this copy
-// mirrors him), r (releases him) or s (the owner sends the staged parts; slot and goId 0).
+// mirrors him), r (releases him), s (the owner sends the staged parts; slot and goId 0) or q (is his stream fresh?
+// nothing armed: a candidate before Lua makes him a puppet).
 inline constexpr char act_prefix[] = "return 'MGS_COOP_WORLD_ACT_V1' -- ";
 inline constexpr char note_prefix[] = "return 'MGS_COOP_WORLD_NOTE_V1' -- ";
 inline constexpr char save_prefix[] = "return 'MGS_COOP_WORLD_SAVE_V1' -- ";
@@ -101,7 +102,7 @@ bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseHostWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 bool ParseDrive(const char* source, std::size_t size, std::uint16_t& slot, std::uint32_t& go_id, std::int32_t (&pos_mm)[3]) noexcept;
-// FM1: ACT_V1 "<t|m|r|s> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.
+// FM1: ACT_V1 "<t|m|r|s|q> <slot> <goId>": slot 1..512 and goId 0..65535 (s: both 0). Outputs only on success.
 bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slot, std::uint32_t& go_id) noexcept;
 // FM1 probe: ACT_V1 "p <x_mm> <y_mm> <z_mm>" (|v| <= 100000000): the local player's position (Lua's vars), for the
 // census distances (run 0a271c10: the debug snapshot never published one to the hook). Outputs only on success.

@@ -9,7 +9,9 @@
 -- fired: every puppet, for 15 s), state (no longer NORMAL), stale (no fresh SOLDIER_ACT for 1.5 s), owner (M3 gave him to
 -- the guest), phase (a guest-local phase rise in his CP), paused (research command mirror off), key_off, unpaired.
 -- The host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
--- (ACT_V1 s). 12 guards are scanned per update (one GetPosition each), round robin.
+-- (ACT_V1 s). The guest queries a candidate (ACT_V1 q: is his stream fresh? nothing armed) and sends m only for a
+-- puppet (the mailbox, the hook's apply and the fire drop). 12 guards are scanned per update (one GetPosition each),
+-- round robin; every puppet is checked every update.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -20,7 +22,10 @@ do
         local fmt = string.format
         local pos, flat = P.pos, P.flat
         local function L(...) W.log(fmt(...)) end
-        M.R = {[0] = 80, [1] = 80, [2] = 120, [3] = 120}
+        -- R per phase, metres: calm / caution the 80 m floor (no first-notice distance measured yet); evasion / ALERT
+        -- 1.5 x 92 m (run 963ab276: field-CP guards hit the host from up to 92 m in ALERT) = 138 m, above the 120 m floor
+        -- and under the realize radius (12 copies realized out to at least 141 m and ~150 m on the two copies).
+        M.R = {[0] = 80, [1] = 80, [2] = 138, [3] = 138}
         M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
         function M.reset()
@@ -117,10 +122,11 @@ do
                         end
                         if why and M.pp[h] then M.set(h, en, false, why, d, R) end
                     elseif not why and d > (R + M.ENTER) * 1000 and not (rise and now - rise < M.SHOT_MS) then
-                        local r = act("m", slot, en.id)
+                        local r = act("q", slot, en.id)
                         M.shotCheck(r, now)
                         if type(r) == "table" and r.f == 1 and not (M.shotAt and now - M.shotAt < M.SHOT_MS) then
                             M.set(h, en, true, "far", d, R)
+                            act("m", slot, en.id)  -- arm the mailbox, the hook's apply and the fire drop now
                         elseif type(r) == "table" and r.refused then
                             M.n.refused = M.n.refused + 1
                             M.why[r.refused] = (M.why[r.refused] or 0) + 1
@@ -157,9 +163,9 @@ do
             for _ in pairs(M.pp) do n = n + 1 end
             local why = {}
             for w, c in pairs(M.why) do why[#why + 1] = w .. ":" .. c end
-            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;why=%s;reg=%d;tx=%s;rx=%s;ap=%s;or=%s;fd=%s;fn=%s;sh=%s",
+            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;why=%s;reg=%d;tx=%s;rx=%s;ap=%s;od=%s;fd=%s;fn=%s;sh=%s",
                 W.host and "host" or "guest", n, M.n.on, M.n.off, M.n.refused, table.concat(why, ","), M.n.tx, tostring(k.tx),
-                tostring(k.rx), tostring(k.ap), tostring(k["or"]), tostring(k.fd), tostring(k.fn), tostring(k.sh))
+                tostring(k.rx), tostring(k.ap), tostring(k.od), tostring(k.fd), tostring(k.fn), tostring(k.sh))
         end
         local tick = P.tick
         P.tick = function(now)

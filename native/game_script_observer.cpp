@@ -3124,8 +3124,9 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
 
 // ACT_V1 (FM1, the far mirror; docs/world-sync-design.md 7.15, lua/coop/world_mirror.lua): soldier_act on, play or lab,
 // 30010 / 30020 / 30050. t <slot> <goId>: the owner registers a guard to send (the hook packs him, soldier_act.hpp);
-// s 0 0: the owner sends the staged parts; m <slot> <goId>: this copy mirrors him (the newest SOLDIER_ACT goes to the
-// hook's mailbox; f=1 when fresh); r <slot> <goId>: releases him. Reply {f=,tx=,rx=,ap=,or=,sh=,mi=,fd=} (the counters,
+// s 0 0: the owner sends the staged parts; q <slot> <goId>: is a candidate's stream fresh (f=1; nothing armed);
+// m <slot> <goId>: this copy mirrors a puppet (the newest SOLDIER_ACT goes to the
+// hook's mailbox; f=1 when fresh); r <slot> <goId>: releases him. Reply {f=,tx=,rx=,ap=,od=,sh=,mi=,fd=} (the counters,
 // sh the local player's shots, fd the dropped puppet shots) or {refused="<reason>"}.
 const char* ActReceipt(const char* text, std::size_t size) noexcept {
     namespace sa = mgscoop::soldier_act;
@@ -3158,15 +3159,18 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
     bool fresh = false;
     if (op == 't') { if (!host) return refuse("role"); sa::SetTx(go & 0x1ffu, slot, now); }
     else if (op == 's') { if (host) sa::SendStaged(now); }
+    else if (op == 'q') {
+        if (host) return refuse("role");
+        if (sa::Paused()) return refuse("paused");
+        fresh = sa::QueryFresh(slot);
+    }
     else if (op == 'm') {
         if (host) return refuse("role");
         if (sa::Paused()) { sa::SetMirror(go & 0x1ffu, slot, false, now); return refuse("paused"); }
         fresh = sa::SetMirror(go & 0x1ffu, slot, true, now);
     }
     else sa::SetMirror(go & 0x1ffu, slot, false, now);
-    const auto k = sa::ReadCounters();
-    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {f=%u,tx=%u,rx=%u,ap=%u,or=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u,
-                     k.tx_parts, k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
+    if (!sa::FormatActReply(fresh, sa::ReadCounters(), debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
     return debug_reply;
 }
 

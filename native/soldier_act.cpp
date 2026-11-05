@@ -953,6 +953,13 @@ std::atomic<bool> g_paused{false};
 void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }
 bool Paused() noexcept { return g_paused.load(); }
 
+bool QueryFresh(std::uint16_t slot) noexcept {
+    std::uint64_t now = 0;
+    world::Act act{};
+    if (!g_actOn.load() || !world_link::ActLatest(slot, now, act) || !act.req_valid) return false;
+    return now >= act.req_rx_ms && now - act.req_rx_ms <= kActFreshMs;
+}
+
 void ReleaseAll() noexcept {
     for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); }
     soldier_authority::ClearMirrored();
@@ -970,6 +977,13 @@ Counters ReadCounters() noexcept {
     k.local_shots = soldier_authority::LocalShots();
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
     return k;
+}
+
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const int n = std::snprintf(out, capacity, "return {f=%u,tx=%u,rx=%u,ap=%u,od=%u,sh=%u,mi=%u,fd=%u,fn=%u}", fresh ? 1u : 0u, k.tx_parts,
+                                k.rx, k.applied, k.orders, k.local_shots, k.mirrored, k.fire_dropped, k.noise_dropped);
+    return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
 bool StatusLine(char* out, std::size_t capacity) noexcept {

@@ -89,6 +89,10 @@ unsigned SendStaged(std::uint64_t now_ms) noexcept;
 // hook's mailbox; true when the request is fresh (kActFreshMs). Off clears his mailbox and the fire-drop bit.
 bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) noexcept;
 void ReleaseAll() noexcept;
+// Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
+// hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
+// drop of 9 guards whose own brain still ran).
+bool QueryFresh(std::uint16_t slot) noexcept;
 // Research command "mirror off|on": while paused, ACT_V1 m is refused "paused" (Lua releases every puppet).
 void SetPaused(bool paused) noexcept;
 bool Paused() noexcept;
@@ -97,6 +101,9 @@ struct Counters {
         mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
 };
 Counters ReadCounters() noexcept;
+// The ACT_V1 reply, a Lua table constructor: {f,tx,rx,ap,od,sh,mi,fd,fn} (od: orders re-posted; never a Lua reserved
+// word as a key: run 963ab276's {..,or=..} did not compile in Lua, so the guest's Lua never saw f=1 and set no puppet).
+bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act
