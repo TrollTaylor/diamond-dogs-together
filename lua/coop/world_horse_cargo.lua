@@ -25,7 +25,12 @@ local CODE = {}
 for k, v in pairs(CAUSE) do CODE[v] = k end
 local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 1000, 1500, 6000, 1000, 3500, 1500, 1000
 local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 1250, 1100
+-- Body 1 while this copy's player rides: from the rider's own position (P2: the rider sits 0.10 m ahead of and 0.49 m
+-- over the census root, so 0.54 m behind and 0.76 m over the rider is the census cargo point). On foot within 3 m of
+-- the horse its height stays 1.1-1.7 m over the carrier's ground (run 7359e4d2: an unridden census drew it ~2 m high).
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, CAP_MS, STATS_MS = 540, 760, 1100, 1700, 1450, 3000, 4000, 2000
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
+C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
@@ -123,6 +128,7 @@ end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
  C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.releaseP, C.releaseAt = nil, nil, nil, nil, nil, nil, nil
+ C.takeKey, C.dyFix, C.statsAt = nil, nil, nil
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
 -- remote: the partner ended it (nothing is sent back). keep (a take-down on the carrier's copy): body 1 stays held at p
@@ -217,6 +223,30 @@ local function loadTick(now)
   pin(1, h)
  elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
 end
+-- Where body 1 goes on this copy (mm, rad) and how it was found.
+local function bodyPoint(h, rides)
+ local x, y, z, a = cargoPoint(h)
+ local px, py, pz = mine()
+ if rides and px then
+  return px - RIDE_BACK_MM * sin(a), py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a), a, "rider"
+ end
+ if px and sqrt((h.x - px) ^ 2 + (h.z - pz) ^ 2) <= NEAR_MM then
+  if y > py + GROUND_HI_MM or y < py + GROUND_LO_MM then
+   C.dyFix = py + GROUND_MM - h.y
+   return x, py + GROUND_MM, z, a, "ground"
+  end
+  C.dyFix = nil
+ elseif C.dyFix then
+  return x, h.y + C.dyFix, z, a, "ground_kept"
+ end
+ return x, y, z, a, "census"
+end
+local function finishTake(now, h, x, y, z, keep)
+ local cx, _, cz, a = cargoPoint(h)
+ local side = (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1
+ log(fmt("step=take_down;key=%s;side=%d", C.takeKey or "?", side))
+ return stop(now, "taken_down", true, false, beside(h, side, y), keep)
+end
 local function carrierTick(now)
  cargo(true, false, false)
  local other = rec(3 - W.role)
@@ -236,19 +266,30 @@ local function carrierTick(now)
  elseif not C.park then C.park = h
  elseif sqrt((h.x - C.park.x) ^ 2 + (h.z - C.park.z) ^ 2) > CALL_MM then C.h = h; return stop(now, "call_away", true) end
  C.h = h
- pin(1, h)
- if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
- if rides then C.takeSince = nil; return end
- local x, y, z = mine()
- local cx, _, cz, a = cargoPoint(h)
- local near = x and sqrt((cx - x) ^ 2 + (cz - z) ^ 2) <= TAKE_MM
- local key = near and (held("R", now) and "r" or held("E", now) and "e") or nil
- C.takeSince = key and (C.takeSince or now) or nil
- if C.takeSince and now - C.takeSince >= TAKE_MS then
-  local side = (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1
-  log(fmt("step=take_down;key=%s;side=%d", key, side))
-  return stop(now, "taken_down", true, false, beside(h, side, y), true)
+ local bx, by, bz, ba, how = bodyPoint(h, rides)
+ warp(1, bx, by, bz, ba)
+ if now >= (C.statsAt or 0) then
+  C.statsAt = now + STATS_MS
+  local _, py = mine()
+  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d", how, rides and 1 or 0, round(h.y / 10),
+   py and round(py / 10) or -1, round(by / 10)))
  end
+ if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
+ if rides then C.takeSince, C.takeKey = nil, nil; return end
+ -- Take-down: R or E held 1 s on foot within reach arms it; the body comes off when the key is up (an R still down
+ -- over a body on the ground would start a stock pickup: run 7359e4d2), or after 4 s (then held until the key is up).
+ local x, y, z = mine()
+ local cx, _, cz = cargoPoint(h)
+ local near = x and sqrt((cx - x) ^ 2 + (cz - z) ^ 2) <= TAKE_MM
+ local key = x and (held("R", now) and "r" or held("E", now) and "e") or nil
+ if key and (near or C.takeKey) then
+  C.takeSince = C.takeSince or now
+  if not C.takeKey and now - C.takeSince >= TAKE_MS then C.takeKey = key; log(fmt("step=take_armed;key=%s", key)) end
+  if C.takeKey and now - C.takeSince >= CAP_MS then return finishTake(now, h, x, y, z, true) end
+  return
+ end
+ C.takeSince = nil
+ if C.takeKey then return finishTake(now, h, x, y, z, false) end
 end
 local function cargoTick(now)
  cargo(false, false, true)
@@ -277,7 +318,13 @@ local function cargoTick(now)
   if ok then h = {x = k.x, y = k.y, z = k.z, yaw = k.yaw, gen = h.gen} end
  end
  C.h = h
+ local _, wy = cargoPoint(h)
  pin(0, h)
+ if now >= (C.statsAt or 0) then
+  C.statsAt = now + STATS_MS
+  local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
+  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d", round(wy / 10), got))
+ end
 end
 local function onClaim(now, gen, pose)
  if not W.host then return end
