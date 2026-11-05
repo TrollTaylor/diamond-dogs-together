@@ -1,0 +1,276 @@
+# Horse plan M2, a downed partner on the shared D-Horse: the play rehearsal (-Mode play -WanSim bad) of horse-cargo.txt
+# (boot, the lab fast boot and worldtrigger are lab only: the title, the paired wait, then the afgh-ledge spot by
+# teleport; no link-drop part). The same lines, frames and NEVER lines as horse-cargo.txt parts (a) and (b).
+#   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2-play
+#     -ScenarioPath tools/worker/scenarios/horse-cargo-play.txt -Mode play -WanSim bad -PartnerProfile native
+#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
+labsetting nametag=1
+labsetting coop_hud=compact
+labsetting world_horse_share=1
+labsetting world_horse_cargo=1
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+waitlog host 'event=paired' 120
+waitlog guest 'event=paired' 120
+wait 3000
+both debug godmode 1
+host debug time 43200
+host debug weather sunny
+host debug teleport 805.0 342.1 1636.5 -60
+guest debug teleport 802.8 342.1 1637.8 119
+wait 5000
+logmark both
+both debug godmode 1
+host debug clear_enemies 100
+# The guest's D-Horse first (run d26aaf70: after the host's, the guest's buddy sync refused it, second_ride_unavailable).
+guest run horse_spawn
+wait 3000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest require horse;selected=horse;available=1;actor0=6656;localMounted=0
+host run cargo_status
+host require cargo;state=off;key=1
+guest run cargo_status
+guest require cargo;state=off;key=1
+# The host's first E mounts; a short ride and the dismount leave the one horse at the same spot on both copies (M1).
+host run goto_horse
+wait 1500
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+host hold w 1200
+host release
+wait 1500
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
+# --- (a) the host downs and carries the guest, loads them on the horse.
+host run goto_horse
+wait 1000
+placebehind guest host 3 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 3000
+guest debug godmode 0
+both capture h2-before
+host press 1 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+guest debug godmode 1
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+host run goto_horse
+wait 1200
+host capture h2-carry-at-horse
+host hold e 900
+host release
+wait 3000
+waitlog host 'world_lua=event=horse_cargo; step=loaded; seat=2;' 6
+waitlog guest 'world_lua=event=horse_cargo; step=cargo; seat=2;' 6
+waitlog host 'coop_carry=cargo_hold; on=1' 4
+host run cargo_status
+host require cargo;state=carrier
+guest run cargo_status
+guest require cargo;state=cargo
+wait 1500
+both capture h2-loaded
+guest burst h2-loaded-victim 3 400
+# The host's first E mounts the loaded horse.
+host press e 150
+wait 2500
+host run horse_status
+host require localMounted=1
+waitlog guest 'world_lua=event=horse_share; step=placed;' 10
+host capture h2-mounted
+guest capture h2-mounted-victim
+host hold w 1500 nowait
+guest burst h2-ride-walk-victim 3 300
+host hold w+a 1500 nowait
+host burst h2-ride-trot 2 300
+guest burst h2-ride-trot-victim 3 300
+host hold w+shift+a 1500 nowait
+host burst h2-ride-gallop 2 300
+guest burst h2-ride-gallop-victim 3 300
+host hold w+shift+a 1500 nowait
+guest burst h2-ride-gallop2-victim 3 300
+host release
+wait 2500
+both capture h2-ride-stopped
+guest run downed_status
+guest require down=1
+host run cargo_status
+host require cargo;state=carrier
+guest run cargo_status
+guest require cargo;state=cargo
+# The dismount keeps them on.
+host press e 150
+wait 3000
+host run horse_status
+host require localMounted=0
+host run cargo_status
+host require cargo;state=carrier
+wait 1000
+both capture h2-stays
+guest run downed_status
+guest require down=1
+# Taken down: the carry key (R) held 0.5 s beside the horse lays them on the ground beside it at the carrier's side, at
+# the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
+host hold r 700
+host release
+wait 2500
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=cargo; placed=1;' 5
+host run cargo_status
+host require cargo;state=off
+guest run cargo_status
+guest require cargo;state=off
+host run position
+guest run position
+both capture h2-unloaded
+guest run downed_status
+guest require down=1
+# The 3 s revive.
+host debug goto_carry
+wait 1500
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest require down=0
+both capture h2-revived
+# --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
+guest run goto_horse
+wait 1000
+placebehind host guest 3 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind guest host 6 -0.7
+wait 3000
+host debug godmode 0
+both capture h2b-before
+guest press 1 120
+wait 2000
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 600
+guest hold rmb+lmb 1500
+guest release
+wait 1200
+host run downed_status
+host require down=1.*cause=1.*lock=1
+host debug godmode 1
+guest debug goto_carry
+wait 1500
+guest hold r 900
+guest release
+wait 3500
+guest run coop_carry_bodies
+guest expect carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+guest run goto_horse
+wait 1200
+guest capture h2b-carry-at-horse
+guest hold e 900
+guest release
+wait 3000
+waitlog host 'world_lua=event=horse_cargo; step=grant; seat=2;' 6
+waitlog guest 'world_lua=event=horse_cargo; step=loaded; seat=2;' 6
+waitlog host 'world_lua=event=horse_cargo; step=cargo; seat=2;' 6
+guest run cargo_status
+guest require cargo;state=carrier
+host run cargo_status
+host require cargo;state=cargo
+wait 1500
+both capture h2b-loaded
+host burst h2b-loaded-victim 3 400
+guest press e 150
+wait 2500
+guest run horse_status
+guest require localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+guest capture h2b-mounted
+host capture h2b-mounted-victim
+guest hold w 1500 nowait
+host burst h2b-ride-walk-victim 3 300
+guest hold w+a 1500 nowait
+guest burst h2b-ride-trot 2 300
+host burst h2b-ride-trot-victim 3 300
+guest hold w+shift+a 1500 nowait
+guest burst h2b-ride-gallop 2 300
+host burst h2b-ride-gallop-victim 3 300
+guest release
+wait 2500
+both capture h2b-ride-stopped
+host run downed_status
+host require down=1
+guest press e 150
+wait 3000
+guest run horse_status
+guest require localMounted=0
+guest run cargo_status
+guest require cargo;state=carrier
+wait 1000
+both capture h2b-stays
+guest hold r 700
+guest release
+wait 2500
+waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=cargo; placed=1;' 5
+host run cargo_status
+host require cargo;state=off
+guest run cargo_status
+guest require cargo;state=off
+host run position
+guest run position
+both capture h2b-unloaded
+host run downed_status
+host require down=1
+guest debug goto_carry
+wait 1500
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest hold e 1500 nowait
+wait 850
+guest release
+wait 4500
+host run downed_status
+host require down=0
+both capture h2b-revived

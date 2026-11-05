@@ -2285,3 +2285,21 @@ the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 - Log lines: native `world_drive=stats; calls; steps; hard; rest; stale; refused; anomalies` (every 10 s); Lua
   `event=snap_stats; tx; calls; steps; hard; rest; stale; refused`, `event=puppet; ent; on; ok`, `event=place_sink`
   (any applied correction 1.5 m lower 2 s after landing), `event=body_fall`.
+
+## 32. Horse seat (horse plan M2; lab key `world_horse_cargo`; docs/mounts.md section 11)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x50 | HORSE_SEAT | both | R (world queue), level 3, never a request | 26 | seq, seat (0..2: 2 the cargo; 1 kept for the M3 pillion), the sender's role (1..2), action (1 claim, 2 grant, 3 deny, 4 loaded, 5 unloaded, 6 keep), cause (0..15), the victim's downed generation, x/y/z mm, yaw mrad |
+
+- Claim: a guest carrier, with its horse pose; the host answers grant (its own generation still down, not being
+  revived) or deny with a cause (1 awake, 2 generation, 10 busy, 12 mid_revive). A host carrier loads without a claim.
+- Loaded: the carrier, after the stock put-down and `SetCargoHold(1)`, with its horse pose; the victim's copy re-checks
+  its generation (else unloaded with cause 1 or 2). Keep: the carrier, 1 Hz, its horse pose.
+- Unloaded: either copy, with the cause (4 taken_down, 5 horse_lost, 6 stream_lost, 7 context, 8 victim_gone, 11
+  call_away, ...) and the lay-down point; a zero point lays nothing down (the other copy's own placement or the carry
+  takes the body).
+- Causes: 0 ok, 1 awake, 2 generation, 3 npc_cargo, 4 taken_down, 5 horse_lost, 6 stream_lost, 7 context, 8
+  victim_gone, 9 load_timeout, 10 busy, 11 call_away, 12 mid_revive.
+- A partner without the op skips it by its length (unknown_op): nothing is loaded. It replaces CARGO (0x2B, the offset
+  prototype's stream), which no Lua sends any more.

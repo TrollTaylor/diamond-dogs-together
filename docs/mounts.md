@@ -339,6 +339,77 @@ RIDE_BODY (user decision 2026-10-22, section 2) no longer moves the viewer's own
 `5a044a4d` confirm it: the Part 3 behaviour of the first four runs (the viewer's horse in the air, the partner's first
 E finding no horse) is gone.
 
+## 10. Shared D-Horse (horse plan M1, lab key `world_horse_share`, on with the gun profile)
+
+The viewer's copy now holds a body for the partner's horse: its own D-Horse (index 0, 6656) is moved under the rider.
+- **Wire.** The rider's copy streams its census pose (`MGS_COOP_HORSE_DRIVE_V1 read`) in RIDE_FAST (op 44, kind 3, id
+  6656, 20 Hz) and one final reliable RIDE_BODY (op 42, kind 1, rider 65534) at the dismount
+  (`lua/coop/world_horse_share.lua`). A copy without the key drops 6656 from RIDE_FAST and refuses RIDE_BODY
+  `not_mirror`, as before.
+- **Placement.** The viewer renders the track 100 ms behind and places its 6656 every frame through
+  `MGS_COOP_HORSE_DRIVE_V1 place` (`native/horse_drive.cpp`): only the pose part of the D-Horse call-enter
+  (`0x140E6AA90`, state 2 enter): census pose[0] = x, y, z, yaw, and the CS transform write
+  `(receiver+0x110[slot / receiver+0xF0])+0x10` (CS vtable `0x1422E6070`) `vt+0xA8` (`0x140AF35F0`) with the
+  call-enter's own matrix (rows (cos,0,-sin,0) (0,1,0,0) (sin,0,cos,0) (x,y,z,1)). It never sets `rec+0x2E3/+0x2E4`
+  (no call run), and refuses while this copy's player rides the horse (`rec+0x2DD`: the rider beats the owner) or a
+  call is pending. Contract: `tools/generate_horse_drive_contract.py` (4 sites, 4 slots). The census reads back about
+  0.3 m off in xz and 0.2-0.45 m above each write (the unridden census over the ridden one; P1), steadily.
+- **The rider.** With the horse placed under 500 ms ago, the ride wire's live ON_HORSE (or act 121) shows body 1
+  (`partner_ride_wire::HorseRider`, Visibility::horse) instead of the mount hide; the DM overlay's horse map
+  (`partner_dm_overlay` In::horse, MapHorse) seats it in `stateRideOnIdle` for the whole ride, and the fallback xform
+  keeps it on the rider's stream. Once body 1 is realized and loaded the horse is anchored under it
+  (`horse_drive::HorseUnderRider`, the P2 seat 0.10 m forward / 0.49 m up; only within 1.5 m of the stream), so the rider
+  sits in the saddle on this screen whatever the two streams' delays are.
+- **Handoff.** Within 4 m of a horse the partner rides, an ACTION-only pad mask (`MgsCoopHorseHold`) stops a second
+  driver (probe P5); it goes with the final pose, and the first E mounts the horse where it was left. Both players
+  riding at once (`step=two_drivers`, a same-moment E race) places nothing and ends the partner's ride on this copy; no
+  new track opens until this copy's player is off (Lua check only). A census generation change, a stale track (1.5 s)
+  or a context change ends the ride. Travel / Bring partner here and the guest's checkpoint wait while anyone rides it
+  (`checkpoint_wait; reason=horse`). On this copy a hit by the horse the partner rides counts as `mirror`.
+- **Proof.** `tools/worker/scenarios/horse-shared.txt` (lab) and `horse-shared-play.txt` (play): runs `3b2f0955`
+  (lab) and `9d98fa2c` (play, `-WanSim bad`), both copies, both role orders.
+- **Not yet.** The guest loading the host's horse from the seeds (D-H1) runs only with `companion_host_owned` (the
+  module's hold gains HORSE); without it each copy's own D-Horse stands in. No gait on the rider, no type-13 DM anchor,
+  no horse damage protection on the viewer's copy (E19-horse not observed), no D-Walker.
+
+## 11. Downed partner on the horse (horse plan M2, lab key `world_horse_cargo`, off unless named)
+
+`lua/coop/world_horse_cargo.lua` (it replaces the offset prototype; op 43 is retired) puts a carried downed partner on
+the shared D-Horse of section 10. It reaches the carry only through the existing `MGS_COOP_CARGO_V2` calls.
+- **Load.** Carrying the downed partner (CarryRole 1), within 2.5 m of the horse and facing it, hold E 450 ms. A guard
+  on the horse (`IsCarriedHostage`) refuses `npc_cargo`; far / facing / busy / awake refuse too. A guest carrier asks the
+  host with HORSE_SEAT (`world-sync-protocol.md` section 32, seat 2) against the victim's downed generation; the host
+  grants while that generation is down and not being revived (else `awake`, `generation`, `mid_revive`, `busy`) and
+  loads for itself without a claim. The carrier's copy plays the stock put-down (`RequestLocalPutDown`), then
+  `SetCargoHold(1)` and LOADED with its horse pose.
+- **Bodies.** Carrier's copy: body 1 warped every tick 0.44 m behind and 0.55 m over the unridden census root (kept 1.0-2.0
+  m over the carrier's ground within 3 m), or 0.54 m behind and 0.5 m over the rider while this copy rides, at the
+  horse's yaw (it lies across the back). Victim's copy: after the replica put-down, `SetCargoLocal(1)`; its own 6656 is
+  placed on the carrier's pose when unridden (KEEP at 1 Hz, re-placed past 0.5 m); body 0 is warped 0.9 m over its
+  census, and while M1 places the horse from the rider's stream, right after each placement 1.3 m over the pose just
+  written (`W.horseCargo.placed`), a quarter turn from the yaw (body 0 lies along its yaw, body 1 across). world_downed
+  reports the held posture (as the cardboard box) while body 0 is cargo, so the native downed controls take no prone
+  request (runs `83ac3950` / `547b431e` timed out `controls_timeout_prone` without it; the fix is not yet run).
+- **Take-down.** On foot within reach, R (the carry key) or E held 0.5 s lays the body on the ground beside the horse at
+  the carrier's side on both copies; an R held on then shoulders them from the ground (the coop pickup). A pickup that
+  still comes first sends the ground point so the victim's copy lays body 0 there before the carry (run `6fd054c4`: a
+  pickup straight off the horse timed out the victim's downed controls). E at the flank is the stock mount.
+- **Automatic lay-down** beside the horse: `horse_lost` (census generation, unreadable 1.5 s), `call_away` (a pending
+  call or the unridden horse moved 3 m), `awake`, `victim_gone` (a new downed generation), `stream_lost` (no KEEP or
+  status 3.5 s, unpaired), `context` (mission, epoch or role). Travel / Bring partner here and the guest's checkpoint wait
+  while loaded (world_horse_share's `busy()`).
+- **Log lines** (`world_lua=event=horse_cargo; ...`): `step=claim / grant / deny / loading / loaded; seat=2 / cargo; seat=2 /
+  take_down / unloaded; seat=2; why=..; side=carrier|cargo; placed=0|1 / refuse; why=..`, `step=pin` (how, mounted,
+  census / player / body heights) and `step=victim_pin` (wanted against reported body 0 height) every 2 s.
+- **Hidden runs** (`tools/worker/scenarios/horse-cargo.txt` lab, `horse-cargo-play.txt` play, `-WanSim bad`; the host
+  carries in all of them, the guest-carrier part was never reached): `7359e4d2`, `c667a209`, `6fd054c4`, `83ac3950`
+  (lab), `d26aaf70`, `547b431e` (play). Load, the first E mounting with the body on, the ride and the dismount keeping
+  them on passed on both copies in every lab run and in `547b431e`. Frames: the body across the back behind the rider
+  on the carrier's screen at a stand and a trot (`83ac3950`), and on the victim's own screen behind the rider at idle,
+  walk and trot (`c667a209`, `6fd054c4`, `83ac3950`, `547b431e`); at a gallop body 0 slips off to the ground under the
+  horse on the victim's screen. **Not yet:** the guest-carrier order, the take-down after the last fixes, the revive
+  after it, the link drop, a run of the held-posture fix, a gallop without the slip.
+
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed

@@ -1,3 +1,157 @@
+## November 4, 2026: horse M2, a downed partner on the horse (`wp/horse`; lab key `world_horse_cargo`, off unless named)
+
+**Players get:** nothing new at the defaults. The M2 gate did not pass in four proof attempts, so `world_horse_cargo`
+stays off unless named (lab and play; a named 1 runs it). Details: `docs/mounts.md` section 11, the op:
+`docs/world-sync-protocol.md` section 32.
+
+- **Built.** `lua/coop/world_horse_cargo.lua` rewritten for M2 (the offset prototype and its op 43 stream retired):
+  carry the downed partner to the shared D-Horse, hold E 450 ms facing it within 2.5 m (`IsCarriedHostage` refuses
+  `npc_cargo`), a guest's claim granted by the host over the new HORSE_SEAT (0x50, seat 2) against the victim's downed
+  generation, the stock put-down then `SetCargoHold(1)` (only the existing `MGS_COOP_CARGO_V2` calls), body 1 pinned on
+  the carrier's horse, LOADED / KEEP with the horse pose, the victim's copy placing its own horse there and pinning body 0
+  (right after each M1 placement while the carrier rides), the 0.5 s R / E take-down to the ground beside the horse,
+  the automatic lay-downs (horse lost / called away, link, context, victim up or gone), Travel / Bring / the guest's
+  checkpoint waiting while loaded, and world_downed reporting a held posture (as the cardboard box) while body 0 is
+  cargo. Native: the HORSE_SEAT op spec, the lab key, the HORSE_DRIVE cfg reply's `cargo` field. No patch, read or hook
+  site; no never-edit file. Commits 284b7b97..04f68c11 (red/green pairs); `tools/build.ps1 -Jobs 4` 352/352; generators
+  `--check` as on the base.
+- **Hidden runs (queue, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed
+  afgh-ledge`, the host carrying; slim archives `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).** Every run loaded
+  (`step=loaded; seat=2`, `coop_carry=cargo_hold; on=1`, guest `step=cargo; seat=2`), mounted with the first E, rode at
+  walk / trot / gallop and kept the body on through the dismount, on both copies. `7359e4d2` / `c667a209` (lab): the R
+  take-down laid them down but the same R hold's coop pickup shouldered them again, and the revive E loaded them a
+  second time. `6fd054c4` (lab): a pickup straight off the horse timed out the victim's downed controls
+  (`downed_control=refused; reason=controls_timeout_prone`, `step=abandoned`). `83ac3950` (lab) / `547b431e` (play):
+  after the dismount the victim's controls timed out the same way (a body held on the horse is never prone; fixed in
+  04f68c11 by the held posture, not yet run). `d26aaf70` (play): the guest's horse_spawn after the host's was refused by
+  its buddy sync (the play scenario now spawns the guest's first).
+- **Frames [O, looked at].** `83ac3950`: the carrier's screen shows the body across the horse's back at the load, behind
+  the rider at a trot and a gallop; the victim's own screen shows its body across the back behind the rider at the load,
+  a trot and a stop. At a gallop body 0 slips off to the ground under the horse on the victim's screen (also
+  `6fd054c4`, `547b431e`), and in `547b431e` body 1 trailed low at a gallop on the carrier's screen.
+- **Blocks the gate.** (1) the victim's downed controls timing out on the horse (fix in, unproven); (2) body 0 slipping
+  off at a gallop (a per-tick Warp holds the local body only while the horse supports it: `step=victim_pin` wanted
+  338.4-340.7 m, reported 336.7-339.9 m); (3) never reached: the guest-carrier order, the 0.5 s take-down and the revive
+  after it, the link drop. Next: one lab + play session with the held posture; if body 0 still slips at a gallop, a
+  native per-frame hold of body 0 (the CS `vt+0xA8` write of `horse_drive`, a new site) is the next step.
+- **Deviation from the plan text.** E at the horse's flank is the stock mount, so the take-down is the carry key (R) or
+  an E hold where E does not mount, 0.5 s, and lays the body on the ground; an R held on then shoulders them (the stock
+  unload of a guard on D-Horse is an R hold too, P2).
+
+## November 4, 2026: horse M1, your partner rides on your screen (the shared D-Horse, `wp/horse`; on with the gun profile)
+
+**Players get:** in free roam (tried in Afghanistan; Africa not yet), when either player rides D-Horse the other screen shows them
+seated in the saddle on a horse that moves with them (walk, trot, gallop), instead of hiding them until they get off.
+After the dismount the horse stands where it was left on both screens and the other player's first E mounts it; E
+beside a horse the partner rides does nothing. Both players need their D-Horse out (each copy's own 6656 stands for the
+shared one). Lab key `world_horse_share`, now on with the native gun profile in lab and play (a named 0 is the off
+switch). Details: `docs/mounts.md` section 10.
+
+- **Placement, plan B of the probes [O static, Ghidra + capstone].** `MGS_COOP_HORSE_DRIVE_V1`
+  (`native/horse_drive.cpp`, receipt in `game_script_observer.cpp`) does only the pose part of the call-enter
+  (`0x140E6AA90`): census pose[0] plus the CS transform write. Resolved: receiver `vt+0x78` = `0x140E4C540` (the
+  realized slot of a record, `receiver+0x110[slot / receiver+0xF0]`, setter `0x140E4E710`), the group's `+0x10` is a CS
+  (vtable `0x1422E6070`, the player's CS class too), CS `vt+0xA8` = `0x140AF35F0` -> `0x140B6ECF0(entry, mat4)`; the
+  matrix rows from the sincos lanes. Contract `tools/generate_horse_drive_contract.py` --check: 4 sites, 4 slots (the
+  handler table `0x142C47DD0` is runtime data, not pinned). Never `rec+0x2E3/+0x2E4`; refused while this copy rides it.
+- **The rider.** `partner_ride_wire::HorseRider` (Visibility::horse): ON_HORSE or act 121 on a horse placed under
+  500 ms ago shows body 1; the DM overlay's horse map seats it in `stateRideOnIdle` for the whole ride (whatever the
+  overlay setting); the horse is anchored under the realized body (P2 seat offsets, within 1.5 m of the stream).
+- **Lua.** `lua/coop/world_horse_share.lua` (a new world chunk after the snap chunk, 10.9 KB): RIDE_FAST 6656 at 20 Hz
+  and the final RIDE_BODY (rider 65534), the viewer's track and per-frame place, the 4 m ACTION ride hold, the ends
+  (final, stream_lost, generation, two_drivers, context), Travel / Bring refused and the guest's checkpoint deferred
+  while anyone rides, `world_companion`'s hold gains HORSE. `world_outcome` attClass: the horse the partner rides is a
+  mirror. No new op (RIDE_FAST kind 3 with id 6656 on today's schema) and no world note.
+- **Hidden runs (queue, `-WanSim bad -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed
+  afgh-ledge`, slim archives in `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`).** `05232637` (lab): the viewer
+  placed its horse 60 times a second but the rider stayed hidden (the placement was noted on another clock) and
+  `placebehind` refuses a mounted target. `3d1439e6` (lab, every require passed): the first E mounted each time, the
+  horse stood at the dismount spot on both screens, the hold blocked E, but the rider showed for one tick only (the act
+  sample went invalid once body 1 was unrealized: an empty saddle in the frames). **`3b2f0955` (lab) and `9d98fa2c`
+  (play) passed with no expect failure [O both copies, both role orders, frames looked at]:** `partner_mount=show`,
+  then `partner_overlay` playing `stateRideOnIdle` for the 21-22 s rides and released at the dismount; frames on the
+  guest's screen of the host seated at idle, walk, trot and gallop, and on the host's screen of the guest seated at idle,
+  walk, trot and gallop; the final pose equal on both copies' logs and the horse beside the dismounted rider in the
+  frames; the first E mounted in (a) by the host, in (b) by the guest and at the end by the host; the ride hold
+  (`horse_hold; step=action_masked`) left `localMounted=0` after E beside the ridden horse. Placement stats: 60
+  places a second, anchored after the first 2 s, gap 1-48 cm, the census readback 30 cm / 20-45 cm up off each write
+  (steady), no `crash_probe=av`, no `two_drivers`.
+- **Not proven [U].** The `leap` counter (the readback offset rising over 0.3 m between two frames) reads 0-3 per 2 s
+  window; no hop shows in any frame. The guest loading the host's horse from the seeds (D-H1) without
+  `companion_host_owned`; the horse's legs while placed (they may slide); a jump; E19-horse (guards shooting the
+  unridden horse on the viewer's copy); the key-off live run (the Lua check keeps the `not_mirror` refusal); a two-PC
+  session. D-Walker riders stay hidden.
+- **Checks.** Failing-first pairs 8f80a855/03ede6e1, 934d6692/7a82836e, fbbc1cf6/99fd6250, 69cebd1c/6c7fc4c5 (the gun-profile flip),
+  63d46230/452e3db2 (the skeptic review: two drivers only skipped the placement and the partner's ride lingered until
+  stream_lost; it now ends with `why=two_drivers` and no new track opens while this copy's player rides; Lua check only).
+  `tools/build.ps1 -Jobs 4`: 352/352. Generators --check: horse_drive ok; carry_info / sleep_plugin differ and
+  native_ui / teammate_targeting need local evidence, as on the base. Merging after M7: the world chunk lists
+  (CMake, bootstrap, composed checks), the `game_script_observer.cpp` registration line, `partner_driver.cpp` and the
+  worker allow-lists.
+
+## November 4, 2026: horse probes P0..P5 ("Saddle Up" round 1, `wp/horse`, lab only; players get nothing new yet)
+
+The user approved the two-on-one-horse plan (scratchpad `horse/horse-plan.md`) with its defaults: D-H1 yes (the host's
+D-Horse is the shared one), D-H2 yes, D-H3 the bleed-out keeps running while loaded, D-H4 no (no M6), D-H5 no downloads,
+D-H6 yes after M4, D-H7 hidden frames plus a WanSim rehearsal. This round ran the plan's probes. Nothing is on by default:
+the levers are lab-only F9 commands (`lua/coop/debug_horse.lua`, refused unless CFG mode 1, as `world_probe.lua`):
+`horse_probe rec|play|hold|hostage|watch|pin|stop|status` (`tests/debug_horse_lua_check.lua`, 50 checks). Scenarios
+`tools/worker/scenarios/horse-p1-place.txt`, `horse-p1b-follow.txt`, `horse-p5-hold.txt`, `horse-p4-pin.txt`,
+`horse-p2-guard.txt`, `horse-p3-cargo.txt`; all hidden lab sessions with `-WanSim bad -PartnerProfile native -NativeStage gun
+-BuildProfile research -SaveSeed afgh-ledge`, through the queue. Frames and slices: `%USERPROFILE%\mgs-coop-run-archive\horse\<run>`.
+
+- **P0 (static, Ghidra comments added) [O].** D-Horse's AI is a 5-state machine (handlers at `0x142C47DD0`: 0 idle
+  `0x140E6A2E0`, 1 run-to-goal `0x140E6A400`, 2 call `0x140E6AA90`, 3 `0x140E69860`, 4 `0x140E69820` -> idle).
+  `SetCallHorse` (`0x140E4D805`) always sets `rec+0x2E3`; a missing `startPosition` keeps the old `rec+0x20`. The idle
+  state hands a pending call to state 2, whose enter warps the horse: census pose `[idx]` = start and
+  yaw = atan2(goal - start) (start==goal gives yaw 0, the horse faces +Z), then the physical write
+  `(receiver->vt+0x78(idx))+0x10 ->vt+0xA8(slot, 4x4)` at `0x140E6AF3F`. Its first update still arms a call run (a path
+  from start to goal, substate 4), then state 1 issues a locomotion request; state 1's exit clears `rec+0x2E3`, so a call
+  sent while it runs is lost. `TppPlayer.AppearHorseOnMissionStart` only writes `vars.initialBuddyPos` (Lua; read once at
+  the buddy realize): no runtime placement.
+- **P1, per-frame placement [O both copies; runs `0059d2b6`, `582ddf33`]:** 16 s rides recorded (878-960 census samples,
+  117-126 m), replayed onto the unridden horse. yaw20 (start = target, goal 2 cm ahead, 20 Hz): err p50 29-58 cm, p95
+  59-167 cm, heading p50 10-18 deg; the frames show running legs (the call run's locomotion) but also rear-ups, and the
+  placed census sits about 0.45 m above the ridden recording. sg20 (start==goal): similar err, the horse always faces +Z
+  (yaw error p50 151-162 deg on a southward path) and once ran 50 m back for 2.5 s instead of warping (a call lost in
+  state 1). sg4/sg10: p95 1.5-1.9 m. chase1/chase2: p50 4.9-16 m. **No Lua route meets the plan's "no leap and err < 0.5
+  m" gate, so M1 takes plan B:** a native `MGS_COOP_HORSE_DRIVE_V1` that performs only the call state's enter write
+  (census pose plus the vt+0xA8 transform, through the census reader's verified receiver chain), never sets `rec+0x2E3`,
+  refuses while the local player rides or a call runs, and pins the enter block `0x140E6AB6B..0x140E6AF7D`, the table and
+  the two vtable targets. yaw20 at 20 Hz stays the interim fallback.
+- **P5, ride hold [O both copies, `0059d2b6`]:** an ACTION-only pad mask blocks the stock mount (an E press and a 1.2 s E
+  hold leave `localMounted=0`), the ride icon still shows, and after the release the first E mounts. The mask also hides
+  E from the downed poll (`horse_probe=raw_e` edges appear only once the mask is gone): M3's "hold E beside the ridden
+  horse" needs a raw pad read before the masks. The icon shows at 1.6 m facing the horse; the stepped frames (0.8-4.6 m,
+  not facing it) show none.
+- **P2, a stock guard on D-Horse [O host copy, `fa31b4f7`; loads also seen in `df011236`, `fe39b57d`]:**
+  `IsCarriedHostage` / `GetCarriedHostage` are real: false/0 empty, true while loaded and ridden, true/1 after the
+  dismount (the guard stays on), false/0 after the R unload (the carrier picks the body back up). The native slot reads
+  cargo=1086,1086,1 with a finite matrix while loaded. One E beside the horse while carrying loads the body and mounts in
+  the same action. In the horse census frame the rider sits 10 cm ahead and 49 cm up (44-58 cm at trot/gallop) and the
+  guard lies 44 cm behind, centred; the guard's `GetPosition` height is not usable while loaded. Not done: a jump, the
+  guest order.
+- **P3, the `world_horse_cargo.lua` prototype once [O both copies, `355972d2`]:** the host's rifle downs the guest, the
+  host carries them, holds E at the horse: put-down, `step=carrier` and `cargo`, the body lies across the horse's back on
+  the host's screen (a little high), stays on through the ride and the dismount; the first E mounts; an R hold takes it
+  down (`why=taken_down` / `remote_end`). E-victim: 48.5 s of per-tick warps of the downed body 0, still down, no blackout,
+  downed HUD and camera fine, but no horse on that copy, so the body lies on the ground and slides with the stream.
+  Carrying a player beside the horse shows two crossed-out action boxes and no load prompt. **M2 reuses the prototype's
+  trigger, put-down, CARGO_V2 and take-down flow** and rewrites the victim side (place body 0 on its own placed shared
+  horse), the wire (HORSE_SEAT events instead of op 43 at 10 Hz) and the cargo point (P2: 0.44 m back, lower than 1.55 m).
+- **P4, a seated pose under per-tick placement [O both orders, `0059d2b6`]:** DM `stateRideOnIdle` on body 1 plus a
+  per-frame Warp 1.2 m up shows a seated rider at saddle height (host frames `pin-raised-01`, `-04`); the CARGO_V2 hold
+  releases the overlay after about 2 s (`partner_overlay=stop; reason=carry`), and the body then stands. M1's rider
+  episode keeps the DM loop running without the carry hold (the plan's native partner_driver episode), with per-tick
+  placement as the fallback.
+- **Also found:** debug commands are refused while mounted (debug_menu's `on_foot` guard); with seed `afgh-horse` the
+  guest's own horse sits at the world origin after the lab boot and a recall leaves it there (`89e51a43`, `b3e42c23`:
+  `goto_horse` dropped the guest into the void); Spawn enemy here warps natively only from within 250 m.
+- **Checks:** full build 349/349 at the start; `tools/build.ps1 -Fast -Jobs 4` at the end: 316/316. Contract generators
+  with `--check`: unchanged; `generate_carry_info_contract.py` and `generate_sleep_plugin_contract.py` report "Generated
+  header differs" and the native-ui / teammate-targeting generators need local evidence reports, identically on the 0.15.0
+  release worktree (not touched here).
+
 ## November 4, 2026: landing review of the enemy sync defaults - the refuted claims corrected, no default changed (`wp/enemy-m7`, merged into `dev/oct7-continue`; not pushed)
 
 The enemy3 landing step. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. No new hidden run: the corrections come from the archived logs of `798b51dd` and `31a799e3` (`enemy-follow/<run>/`) and a read-only Ghidra decompile plus capstone of the shipped executable.

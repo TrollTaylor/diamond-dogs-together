@@ -136,6 +136,11 @@ inline constexpr std::uint8_t soldier_snap = 0x4B;
 // hash. The partner's copy applies it as its own damage (downed_player FriendlyControl) and lets its copy of that guard
 // engage it (world_snap.lua S.brain). Sent only with soldier_brain.
 inline constexpr std::uint8_t soldier_hit = 0x4C;
+// Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT (80), both
+// directions, world queue, reliable: seq, seat (2 cargo; 1 the M3 pillion), the sender's role, action (1 claim, 2 grant,
+// 3 deny, 4 loaded, 5 unloaded, 6 keep), cause, the victim's downed generation, xyz mm (the horse pose, or the lay-down
+// point), yaw mrad. 26 bytes. A partner without 0x50 skips it by its length (unknown_op): nothing is loaded.
+inline constexpr std::uint8_t horse_seat = 0x50;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;

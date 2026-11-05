@@ -960,6 +960,21 @@ struct LabConfig {
     // FRAME and a play rehearsal prove it (project rule); a named value wins.
     bool companion_host_owned = false;
     bool companion_host_owned_given = false;
+    // world_horse_share=0|1 (horse plan M1, docs/mounts.md "Shared D-Horse"): the session's D-Horse (index 0, 6656)
+    // is one horse on both copies. The rider's copy streams it in RIDE_FAST (20 Hz, kind 3, id 6656) and one final
+    // reliable RIDE_BODY at the dismount; the other copy places its own 6656 every frame through
+    // MGS_COOP_HORSE_DRIVE_V1 (native/horse_drive.cpp) and shows body 1 seated in the saddle (partner_ride_wire
+    // Visibility horse, the DM overlay's horse map) instead of the mount hide. Both PCs must run it. Follows the
+    // native gun profile in lab and play since the M1 round (hidden FRAMEs on both copies, lab and a play rehearsal);
+    // a named 0 is the off switch.
+    bool world_horse_share = false;
+    bool world_horse_share_given = false;
+    // world_horse_cargo=0|1 (horse plan M2, docs/mounts.md "Downed partner on the horse"; with world_horse_share): carry a
+    // downed partner to the shared D-Horse and hold E: they lie across its back on both screens (HORSE_SEAT seat 2,
+    // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Off unless named
+    // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    bool world_horse_cargo = false;
+    bool world_horse_cargo_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN

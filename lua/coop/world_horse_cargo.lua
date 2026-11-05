@@ -1,335 +1,421 @@
--- Offset transport test; disabled in normal play.
+-- Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo with world_horse_share; docs/mounts.md
+-- "Downed partner on the horse"). The carrier (CarryRole 1, MGS_COOP_CARGO_V2) stands within 2.5 m of the shared horse
+-- (index 0, 6656), facing it, and holds E 450 ms; a horse with a guard on it (IsCarriedHostage) refuses npc_cargo. A
+-- guest carrier asks the host over HORSE_SEAT (0x50, seat 2) against the victim's downed generation; the host grants
+-- only while that generation is down and not being revived, and grants its own load itself. The carrier's copy plays
+-- the stock put-down (RequestLocalPutDown), then SetCargoHold(1) and warps body 1 every tick to the cargo point of its
+-- own horse (probe P2: 0.44 m behind the census root, centred). LOADED carries that horse's pose: the victim's copy
+-- re-checks its generation, puts its own 6656 there (MGS_COOP_HORSE_DRIVE_V1 place), sets SetCargoLocal(1) and warps
+-- body 0 every tick to its own horse's cargo point (M1 moves that horse while the carrier rides). KEEP at 1 Hz holds it.
+-- Take-down: on foot within reach of the body, hold R (the stock unload of a guard on the horse, P2) or E for 1 s; both
+-- copies lay the body at the carrier's point beside the horse. A horse lost or called away, a stale link, a context
+-- change or the victim up or gone lays it down beside the horse. The bleed-out timer keeps running (D-H3). Replaces the
+-- offset prototype (op 43 retired); cargo_test 1 runs it in the lab without the cargo key.
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.handlers) == "table" and type(W.OP) == "table" then
-local C = {testing = false, seq = 0, state = "off", txAt = 0, rxAt = 0, maskOwned = false}
+local C = {testing = false, state = "off", seq = 0, n = {}}
 W.horseCargo = C
-local OP = 43
-W.OP.CARGO = OP
-local HORSE = 6656
-local floor, sin, cos, sqrt, atan2, fmt = math.floor, math.sin, math.cos, math.sqrt, math.atan2, string.format
-local HOLD_MS, NEAR_M, LOAD_MS, STALE_MS, RIDE_MS = 450, 3.2, 6000, 1500, 900
-local OFFSET = {horse = {back = 0.55, rise = 1.55}, vehicle = {back = 1.25, rise = 1.25}}
-local function finite(n) return type(n) == "number" and n == n and n > -1e9 and n < 1e9 end
-local function milli(v) return floor(v * 1000 + (v >= 0 and 0.5 or -0.5)) end
-local function integer(v,lo,hi) return finite(v) and v==floor(v) and v>=lo and v<=hi end
-local function D() return W.downed end
-local function context()
-  return W.paired and W.eff and W.eff>=3 and integer(W.mission,1,99999) and integer(W.epoch,1,65535)
-    and integer(W.role,1,2) and type(D())=="table"
+local OP, HORSE, SEAT = 80, 6656, 2
+W.OP.HORSE_SEAT = OP
+local CLAIM, GRANT, DENY, LOADED, UNLOADED, KEEP = 1, 2, 3, 4, 5, 6
+local CAUSE = {[0] = "ok", "awake", "generation", "npc_cargo", "taken_down", "horse_lost", "stream_lost", "context",
+ "victim_gone", "load_timeout", "busy", "call_away", "mid_revive"}
+local CODE = {}
+for k, v in pairs(CAUSE) do CODE[v] = k end
+local HOLD_MS, TAKE_MS, CLAIM_MS, LOAD_MS, KEEP_MS, LOST_MS, HORSE_MS, PLACE_MS = 450, 500, 1500, 6000, 1000, 3500, 1500, 1000
+local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 2600, 3000, 500, 440, 550, 1100
+-- Heights (runs 7359e4d2 / c667a209 / 6fd054c4, step=pin and frames): an unridden census root stands 0.75-1.04 m over
+-- the carrier's ground; 0.8 m over it and 0.76 m over the rider still drew the body high at a stand, so the body goes
+-- 0.55 m over an unridden census and, while this copy's player rides, 0.54 m behind and 0.5 m over the rider's own
+-- position (no census lag). On foot within 3 m a point outside 1.0-2.0 m over the carrier's ground is put 1.45 m over it.
+-- The victim's body 0 (its copy's horse placed by M1 from the rider's ridden census) goes 1.3 m over the placed pose
+-- right after each placement, else 0.9 m over the census, turned a quarter turn (body 0 lies along its yaw, body 1
+-- across: c667a209 frames).
+local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 500, 1000, 2000, 1450, 3000, 2000
+local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
+C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
+C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
+ VICTIM_RISE_MM, VICTIM_PLACED_MM
+local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
+local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
+local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
+local function round(v) return floor(v + 0.5) end
+local function log(s) if type(W.log) == "function" then pcall(W.log, "event=horse_cargo;" .. s) end end
+local function capped(kind, s)
+ local c = (C.n[kind] or 0) + 1
+ C.n[kind] = c
+ if c <= 20 then log(s) end
 end
-local function fresh(r,now)
-  return type(r)=="table" and finite(r.at) and now>=r.at and now-r.at<1000 and type(r.pos)=="table"
-    and integer(r.pos[1],-1000000000,1000000000) and integer(r.pos[2],-1000000000,1000000000)
-    and integer(r.pos[3],-1000000000,1000000000)
+local function receipt(text)
+ if type(W.receipt) ~= "function" then return nil end
+ local ok, r = pcall(W.receipt, text)
+ if ok and type(r) == "table" then return r end
 end
-local function current(now)
-  return context() and C.mission==W.mission and C.epoch==W.epoch and C.role==W.role and finite(now)
-    and (not C.lastNow or now>=C.lastNow)
+-- The lab keys (fixed for the process): world_horse_share (on) and world_horse_cargo (cargo), asked until native answers.
+function C.keyOn()
+ if C.share == nil then
+  local r = receipt("return 'MGS_COOP_HORSE_DRIVE_V1' -- cfg")
+  if r and (r.on == 0 or r.on == 1) then C.share, C.cargoKey = r.on == 1, r.cargo == 1 end
+ end
+ return C.share == true and (C.cargoKey == true or C.testing == true)
 end
-function C.horsePose()
-  local x, y, z, rot
-  if type(W.receipt) == "function" and W.mission and W.epoch then
-    local ok, r = pcall(W.receipt, fmt("return 'MGS_COOP_RIDE_POSE_V1' -- %d %d 1", W.mission, W.epoch))
-    if ok and type(r) == "table" and r.ready == true and type(r.actors) == "table" then
-      for i = 1, #r.actors do
-        local a = r.actors[i]
-        if type(a) == "table" and a.realized == true and a.id == HORSE and finite(a.x) and finite(a.y) and finite(a.z) then
-          x, y, z, rot = a.x / 1000, a.y / 1000, a.z / 1000, finite(a.yaw) and a.yaw / 1000 or nil
-        end
-      end
-    end
-  end
-  if not x then return nil end
-  local h = C.horse
-  local yaw = rot
-  if not yaw and h then
-    local dx, dz = x - h.x, z - h.z
-    yaw = (dx * dx + dz * dz > 0.04) and atan2(dx, dz) or h.yaw
-  end
-  C.horse = {x = x, y = y, z = z, yaw = yaw or (h and h.yaw) or 0}
-  return C.horse
+function C.on()
+ return W.active ~= false and W.paired == true and (W.eff or 0) >= 3 and (W.mission == 30010 or W.mission == 30020) and
+  int(W.epoch, 1, 65535) and int(W.role, 1, 2) and type(W.downed) == "table" and C.keyOn()
 end
+function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" end
+-- While this copy's downed body is held on the horse it is never prone: world_downed reports the held posture to the
+-- native downed controls (as the cardboard box; runs 83ac3950 / 547b431e timed out controls_timeout_prone without it).
+function C.downedPosture() return C.state == "cargo" end
 local function mounted()
-  if type(PlayerInfo) ~= "table" or type(PlayerStatus) ~= "table" then return false end
-  local ok, yes = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_HORSE})
-  return ok and yes == true
+ if type(PlayerInfo) ~= "table" or type(PlayerInfo.OrCheckStatus) ~= "function" or type(PlayerStatus) ~= "table" then return false end
+ local ok, yes = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_HORSE})
+ return ok and yes == true
 end
-local function localPos()
-  local x, y, z = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
-  if finite(x) and finite(y) and finite(z) then return x, y, z end
+local function mine()
+ local x, y, z = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
+ if num(x) and num(y) and num(z) then return x * 1000, y * 1000, z * 1000 end
 end
-local function near(px, pz, radius)
-  local x, _, z = localPos()
-  return x and ((px - x) ^ 2 + (pz - z) ^ 2 <= radius * radius) or false
+-- This copy's horse: the census pose in mm / mrad (MGS_COOP_HORSE_DRIVE_V1 read).
+local function horse()
+ local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- read %d %d", W.mission, W.epoch))
+ if r and r.ready == true and r.realized ~= false and int(r.x, -1000000000, 1000000000) and int(r.y, -1000000000, 1000000000) and
+  int(r.z, -1000000000, 1000000000) and int(r.yaw, -31416, 31416) then return r end
 end
-local function point(h)
-  local o = OFFSET[h.kind or "horse"]
-  return h.x - o.back * sin(h.yaw), h.y + o.rise, h.z - o.back * cos(h.yaw), h.yaw
+local function place(p)
+ return receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- place %d %d %d %d %d %d 0", W.mission, W.epoch, round(p.x), round(p.y),
+  round(p.z), round(p.yaw)))
 end
-local function drivenVehicle()
-  if type(PlayerInfo) ~= "table" or type(PlayerStatus) ~= "table" or type(Tpp) ~= "table" then return nil end
-  local ok, on = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_VEHICLE})
-  local id = W.get(vars, "playerVehicleGameObjectId")
-  if not ok or on ~= true or type(id) ~= "number" or id < 0 or id > 65534 or id == HORSE then return nil end
-  local typed, yes = pcall(Tpp.IsVehicle, id)
-  return typed and yes == true and id or nil
+-- The cargo point of a horse pose: BACK_MM behind the census root along its heading (sin, cos), RISE_MM up; yaw in rad.
+local function cargoPoint(h)
+ local a = h.yaw / 1000
+ return h.x - BACK_MM * sin(a), h.y + RISE_MM, h.z - BACK_MM * cos(a), a
 end
-local function vehiclePose(id)
-  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return nil end
-  local ok, pos, rot = pcall(GameObject.SendCommand, id, {id = "GetPosition"})
-  if not ok or pos == nil or (type(pos) ~= "userdata" and type(pos) ~= "table") then return nil end
-  local read, x, y, z = pcall(function() return pos:GetX(), pos:GetY(), pos:GetZ() end)
-  if not read or not finite(x) or not finite(y) or not finite(z) then return nil end
-  C.horse = {x = x, y = y, z = z, yaw = finite(rot) and rot or 0, kind = "vehicle"}
-  return C.horse
-end
-local function mountPose()
-  if C.mount and C.mount ~= HORSE then return vehiclePose(C.mount) end
-  local h = C.horsePose()
-  if h then h.kind = "horse" end
-  return h
+C.cargoPoint = cargoPoint
+-- Beside the body on side s (1 the horse's right, -1 its left), at height y (mm).
+local function beside(h, s, y)
+ local x, _, z, a = cargoPoint(h)
+ return {x + s * SIDE_MM * cos(a), y, z - s * SIDE_MM * sin(a), a}
 end
 local function warp(index, x, y, z, yaw)
-  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
-  return pcall(GameObject.SendCommand, {type = "TppPlayer2", index = index}, {id = "Warp", pos = {x, y, z}, rotY = yaw})
+ if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
+ return pcall(GameObject.SendCommand, {type = "TppPlayer2", index = index}, {id = "Warp", pos = {x / 1000, y / 1000, z / 1000}, rotY = yaw})
 end
-local function native(hold, putdown, mine)
-  if type(W.receipt)~="function" then C.physical=nil;C.nativeRole=-1;return -1 end
-  local ok,r=pcall(W.receipt,"return 'MGS_COOP_CARGO_V2' -- "..(hold and "1" or "0").." "..(putdown and "1" or "0").." "..(mine and "1" or "0"))
-  C.physical=nil;C.nativeRole=-1
-  if ok and type(r)=="table" and r.ready==true and integer(r.role,0,2)
-    and type(r.carrying)=="boolean" and type(r.carried)=="boolean" and type(r.localCarried)=="boolean" and type(r.peerCarrying)=="boolean" then
-    C.physical=r;C.nativeRole=r.role
+local function pin(index, h)
+ local x, y, z, a = cargoPoint(h)
+ return warp(index, x, y, z, a)
+end
+local function npcCargo()
+ if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
+ local ok, is = pcall(GameObject.SendCommand, {type = "TppHorse2", index = 0}, {id = "IsCarriedHostage"})
+ return ok and is == true
+end
+-- MGS_COOP_CARGO_V2 "<hold> <putdown> <local>": the carry role (-1 unreadable); C.physical the attachment state.
+local function cargo(hold, putdown, loc)
+ local r = receipt("return 'MGS_COOP_CARGO_V2' -- " .. (hold and "1" or "0") .. " " .. (putdown and "1" or "0") .. " " .. (loc and "1" or "0"))
+ C.physical = nil
+ if r and r.ready == true and int(r.role, 0, 2) and type(r.carrying) == "boolean" and type(r.carried) == "boolean" and
+  type(r.localCarried) == "boolean" then C.physical = r; return r.role end
+ return -1
+end
+local function send(action, cause, gen, x, y, z, yaw)
+ if type(W.tx) ~= "function" then return false end
+ C.seq = C.seq % 65535 + 1
+ local ym = round(yaw or 0)
+ if ym > 31416 or ym < -31416 then ym = 0 end
+ return W.tx(OP, C.seq, SEAT, W.role, action, cause or 0, gen or 0, round(x or 0), round(y or 0), round(z or 0), ym)
+end
+local function rec(role) local d = W.downed; return type(d.records) == "table" and d.records[role] or nil end
+local function fresh(r, now, ms) return type(r) == "table" and num(r.at) and now >= r.at and now - r.at < (ms or 1000) end
+local function held(key, now)
+ local d = W.downed
+ local at, on
+ if key == "E" then at, on = d.rawHeldAt, d.rawHeld else at, on = d.rawCarryHeldAt, d.rawCarryHeld end
+ return on == true and num(at) and now >= at and now - at < 300
+end
+local function reset()
+ C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
+ C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil, nil, nil, nil, nil
+end
+-- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
+-- remote: the partner ended it (nothing is sent back).
+local function stop(now, why, place, remote, p)
+ local s = C.state
+ if s == "carrier" or s == "cargo" then
+  local h = C.h
+  if place and not p and h then
+   local _, y = mine()
+   p = beside(h, -1, s == "carrier" and not mounted() and y or h.y)
   end
-  return C.nativeRole
+  if place and p then warp(s == "carrier" and 1 or 0, p[1], p[2], p[3], p[4] + (s == "cargo" and pi / 2 or 0)) end
+  if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end
+  log(fmt("step=unloaded;seat=2;why=%s;side=%s;placed=%d;x=%d;z=%d%s", why, s, (place and p) and 1 or 0, p and round(p[1] / 10) or 0,
+   p and round(p[3] / 10) or 0, remote and ";from=partner" or ""))
+ elseif s ~= "off" then
+  log(fmt("step=refuse;why=%s;state=%s", why, s))
+ end
+ if s ~= "off" then cargo(false, false, false) end
+ reset()
 end
-local function send(state, x, y, z, yaw)
-  if type(W.tx) ~= "function" then return false end
-  C.seq = C.seq % 65535 + 1
-  local yawm = milli(yaw or 0)
-  if yawm > 31416 or yawm < -31416 then yawm = 0 end
-  return W.tx(OP, C.seq, state, milli(x or 0), milli(y or 0), milli(z or 0), yawm)
+C.stop = stop
+local function refuse(why, d)
+ capped("refuse_" .. why, fmt("step=refuse;why=%s;dist_cm=%d", why, d and round(d / 10) or -1))
 end
-local function log(text) if type(W.log) == "function" then pcall(W.log, "horse_cargo;" .. text) end end
-local function padMask(on)
-  local f = W.get(Player, on and "SetPadMask" or "ResetPadMask")
-  if type(f) ~= "function" then return false end
-  local stick = W.get(PlayerPad, "STICK_L")
-  local ok,result
-  if on then ok,result=pcall(f,{settingName="MgsCoopCargo",except=false,buttons=0xFFFFFFA7,sticks=type(stick)=="number" and stick or 0,triggers=0})
-  else ok,result=pcall(f,{settingName="MgsCoopCargo"}) end
-  if ok and result~=false then C.maskOwned=on;return true end
-  return false
+-- Every state is bound to the context it began in (a mission, epoch or role change ends it).
+local function bind() C.mission, C.epoch, C.role = W.mission, W.epoch, W.role end
+local function beginLoad(now)
+ bind()
+ C.state, C.loadAt = "loading", now
+ cargo(false, true, false)
+ log(fmt("step=loading;seat=2;gen=%d", C.gen))
 end
-local function stance(name)
-  local f, s = W.get(Player, "RequestToSetTargetStance"), W.get(PlayerStance, name)
-  if type(f) == "function" and s ~= nil then pcall(f, s) end
+-- On foot, carrying the downed partner, E held 450 ms within reach of this copy's horse and facing it.
+local function offTick(now)
+ if not held("E", now) then C.heldSince, C.heldDone = nil, nil; return end
+ C.heldSince = C.heldSince or now
+ if C.heldDone or now - C.heldSince < HOLD_MS or mounted() then return end
+ C.heldDone = true
+ if cargo(false, false, false) ~= 1 then return end
+ local other = rec(3 - W.role)
+ if not (fresh(other, now) and other.down == true and int(other.generation, 1, 4294967295)) then return refuse("awake") end
+ local h = horse()
+ if not h then return refuse("horse_lost") end
+ if h.occupied == true then return refuse("busy") end
+ local x, _, z = mine()
+ if not x then return refuse("position") end
+ local dx, dz = h.x - x, h.z - z
+ local d = sqrt(dx * dx + dz * dz)
+ if d > REACH_MM then return refuse("far", d) end
+ local ry = W.get(vars, "playerRotY")
+ local a = ((num(ry) and ry or 0) + 180) % 360 - 180
+ a = a * pi / 180
+ if d > 300 and sin(a) * dx + cos(a) * dz < 0 then return refuse("facing", d) end
+ if npcCargo() then return refuse("npc_cargo", d) end
+ C.gen, C.h = other.generation, h
+ if W.host then return beginLoad(now) end
+ bind()
+ C.state, C.claimAt = "claim", now
+ send(CLAIM, 0, C.gen, h.x, h.y, h.z, h.yaw)
+ log(fmt("step=claim;seat=2;gen=%d;dist_cm=%d", C.gen, round(d / 10)))
 end
-local function besidePoint(x, y, z, yaw)
-  local s, d = yaw + math.pi / 2, (C.horse and C.horse.kind == "vehicle") and 2.2 or 1.3
-  return x + d * sin(s), y, z + d * cos(s), yaw
+-- The stock put-down plays; once the attachment is clear, hold body 1 and tell the victim's copy where the horse is.
+local function loadTick(now)
+ local role = cargo(false, true, false)
+ local p = C.physical
+ if role == 0 and p and not p.carrying and not p.carried then
+  local h = horse()
+  if not h then return stop(now, "horse_lost", false) end
+  cargo(true, false, false)
+  C.state, C.h, C.hgen, C.park, C.keepAt = "carrier", h, h.gen, h, now + KEEP_MS
+  send(LOADED, 0, C.gen, h.x, h.y, h.z, h.yaw)
+  log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d", C.gen, round(h.x / 10), round(h.z / 10)))
+  pin(1, h)
+ elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
 end
-local function stop(now, why, place, remote)
-  if C.state == "carrier" or C.state == "loading" then
-    local h = C.horse
-    if C.state == "carrier" and place and h then local x, y, z, r = besidePoint(h.x, h.y + 0.3, h.z, h.yaw); warp(1, x, y, z, r) end
-    if not remote then send(0,0,0,0,0) end
-  elseif C.state == "cargo" then
-    local p = C.rx
-    if place and p then local x, y, z, r = besidePoint(p.x, p.y - 1.1, p.z, p.yaw); warp(0, x, y, z, r) end
-    if C.awake then stance("STAND") end
-    if not remote then send(0,0,0,0,0) end
+-- Where body 1 goes on this copy (mm, rad) and how it was found.
+local function bodyPoint(h, rides)
+ local x, y, z, a = cargoPoint(h)
+ local px, py, pz = mine()
+ if rides and px then
+  return px - RIDE_BACK_MM * sin(a), py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a), a, "rider"
+ end
+ if px and sqrt((h.x - px) ^ 2 + (h.z - pz) ^ 2) <= NEAR_MM then
+  if y > py + GROUND_HI_MM or y < py + GROUND_LO_MM then
+   C.dyFix = py + GROUND_MM - h.y
+   return x, py + GROUND_MM, z, a, "ground"
   end
-  if C.maskOwned then padMask(false) end
-  if C.state ~= "off" then log("stop;why=" .. tostring(why)) end
-  C.state, C.heldSince, C.rx, C.loadAt, C.awake, C.unloadSince, C.hopSince = "off", nil, nil, nil, nil, nil, nil
-  C.mount,C.horse,C.offer,C.sentOffer,C.offerShown,C.requestAt,C.pullSince,C.lostAt,C.startAt,C.why=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-  C.ownerGeneration,C.localGeneration=nil,nil
-  C.txAt=now
-  native(false,false,false)
+  C.dyFix = nil
+ elseif C.dyFix then
+  return x, h.y + C.dyFix, z, a, "ground_kept"
+ end
+ return x, y, z, a, "census"
 end
-C.stop=stop
-function C.setTesting(on)
-  if type(on)~="boolean" then return false end
-  if not on then stop(W.now(),"test_disabled",false) end
-  C.testing=on;return true
+-- The lay-down point beside the body on the carrier's side, at the carrier's ground height.
+local function takePoint(h, x, y, z)
+ local cx, _, cz, a = cargoPoint(h)
+ return beside(h, (cos(a) * (x - cx) - sin(a) * (z - cz)) >= 0 and 1 or -1, y)
 end
-function C.status()
-  local p=C.physical
-  return fmt("cargo;state=%s;awake=%d;mask=%d;mount=%s;role=%d;physical=%s;attachment=offset",C.state,C.awake and 1 or 0,C.maskOwned and 1 or 0,
-    C.mount==HORSE and "horse" or C.mount and "vehicle" or "none",C.nativeRole or -1,p and ((p.carrying or p.carried) and "busy" or "clear") or "unknown")
+local function carrierTick(now)
+ if cargo(true, false, false) == 1 then
+  -- The coop pickup took them off the horse before the lay-down: body 1 is left to the carry here, and the victim's
+  -- copy still lays body 0 on the ground point first (run 6fd054c4: a pickup straight off the horse timed out the
+  -- victim's downed controls, controls_timeout_prone; c667a209 with that ground warp kept them down).
+  local x, y, z = mine()
+  log("step=take_down;key=r;how=pickup")
+  return stop(now, "taken_down", false, false, (x and C.h) and takePoint(C.h, x, y, z) or nil)
+ end
+ local other = rec(3 - W.role)
+ if not fresh(other, now, LOST_MS) then return stop(now, "stream_lost", true) end
+ if other.generation ~= C.gen then return stop(now, "victim_gone", true) end
+ if other.down ~= true then return stop(now, "awake", true) end
+ local h = horse()
+ if not h or (C.hgen and h.gen ~= C.hgen) then
+  C.lostAt = C.lostAt or now
+  if not h and now - C.lostAt < HORSE_MS then return end
+  return stop(now, "horse_lost", true)
+ end
+ C.lostAt = nil
+ local rides = mounted()
+ if rides then C.park = nil
+ elseif h.pending == 1 then C.h = h; return stop(now, "call_away", true)
+ elseif not C.park then C.park = h
+ elseif sqrt((h.x - C.park.x) ^ 2 + (h.z - C.park.z) ^ 2) > CALL_MM then C.h = h; return stop(now, "call_away", true) end
+ C.h = h
+ local bx, by, bz, ba, how = bodyPoint(h, rides)
+ warp(1, bx, by, bz, ba)
+ if now >= (C.statsAt or 0) then
+  C.statsAt = now + STATS_MS
+  local _, py = mine()
+  capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d", how, rides and 1 or 0, round(h.y / 10),
+   py and round(py / 10) or -1, round(by / 10)))
+ end
+ if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
+ if rides then C.takeSince = nil; return end
+ -- Take-down: R (the carry key) or E held 0.5 s on foot within reach lays the body on the ground beside the horse at
+ -- the carrier's side on both copies; an R held on then picks them up from the ground as usual (the coop pickup).
+ local x, y, z = mine()
+ local cx, _, cz = cargoPoint(h)
+ local near = x and sqrt((cx - x) ^ 2 + (cz - z) ^ 2) <= TAKE_MM
+ local key = near and (held("R", now) and "r" or held("E", now) and "e") or nil
+ C.takeSince = key and (C.takeSince or now) or nil
+ if C.takeSince and now - C.takeSince >= TAKE_MS then
+  log(fmt("step=take_down;key=%s", key))
+  return stop(now, "taken_down", true, false, takePoint(h, x, y, z))
+ end
 end
-local function records()
-  local d = D()
-  if type(d) ~= "table" or type(d.records) ~= "table" or not W.role then return nil end
-  return d.records[3 - W.role], d.records[W.role]
+local function cargoTick(now)
+ cargo(false, false, true)
+ if now - C.keepAt > LOST_MS then return stop(now, "stream_lost", true) end
+ local me = rec(W.role)
+ if not me or me.generation ~= C.gen then return stop(now, "victim_gone", false) end
+ if me.down ~= true then return stop(now, "awake", true) end
+ local p = C.physical
+ if p and p.localCarried == true and now - C.putAt < LOAD_MS then return end
+ local h = horse()
+ if not h then
+  C.lostAt = C.lostAt or now
+  if now - C.lostAt > HORSE_MS then return stop(now, "horse_lost", true) end
+  return
+ end
+ C.lostAt = nil
+ -- Unridden, this copy's horse stands on the carrier's pose (M1 places it while the carrier rides).
+ local k, S = C.keepPose, W.horseShare
+ local tracked = type(S) == "table" and S.track ~= nil
+ if k and not tracked and not mounted() and now >= (C.placeAt or 0) and sqrt((h.x - k.x) ^ 2 + (h.z - k.z) ^ 2) > DRIFT_MM then
+  C.placeAt = now + PLACE_MS
+  local r = place(k)
+  local ok = r and r.ready == true
+  capped("horse_placed", fmt("step=horse_placed;ok=%d;reason=%s;x=%d;z=%d", ok and 1 or 0, ok and "ok" or tostring(r and r.reason),
+   round(k.x / 10), round(k.z / 10)))
+  if ok then h = {x = k.x, y = k.y, z = k.z, yaw = k.yaw, gen = h.gen} end
+ end
+ C.h = h
+ local wx, wy, wz, wa = cargoPoint(h)
+ wy = h.y + VICTIM_RISE_MM
+ if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp(0, wx, wy, wz, wa + pi / 2) end
+ if now >= (C.statsAt or 0) then
+  C.statsAt = now + STATS_MS
+  local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
+  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d", round(wy / 10), got))
+ end
 end
-local function held(d, key, now)
-  local at,on
-  if key=="E" then at,on=d.rawHeldAt,d.rawHeld else at,on=d.rawCarryHeldAt,d.rawCarryHeld end
-  return on==true and finite(at) and now>=at and now-at<300
+-- world_horse_share calls this right after it placed this copy's horse from the rider's stream (the same frame): the
+-- victim's body 0 follows the pose just written, not last frame's census.
+function C.placed(x, y, z, yaw)
+ if C.state ~= "cargo" or not num(x) or not num(y) or not num(z) or not num(yaw) then return end
+ local p = C.physical
+ if p and p.localCarried == true then return end
+ local a = yaw / 1000
+ warp(0, x - BACK_MM * sin(a), y + VICTIM_PLACED_MM, z - BACK_MM * cos(a), a + pi / 2)
+ C.trackPinAt = W.now and W.now() or 0
 end
-local function offTick(now, d, other, me)
-  local role = native(false, false, false)
-  local vehicle = role == 0 and not mounted() and drivenVehicle() or nil
-  if role == 0 and (mounted() or vehicle) then
-    C.mount = vehicle or HORSE
-    local h = mountPose()
-    if not h then return end
-    if now>=C.txAt then
-      local x,y,z,r=point(h)
-      if send(2,x,y,z,r) then C.sentOffer={x=x,y=y,z=z,yaw=r,at=now,mount=C.mount} end
-      C.txAt=now+250
-    end
-    local downed=fresh(other,now) and other.down==true
-    local reach = downed and near(other.pos[1] / 1000, other.pos[3] / 1000, NEAR_M + 1)
-    C.pullSince = reach and held(d, "R", now) and (C.pullSince or now) or nil
-    if C.pullSince and now - C.pullSince >= 1000 then
-      C.state,C.awake,C.pullSince,C.unloadSince,C.ownerGeneration="carrier",false,nil,nil,other.generation
-      native(true, false, false)
-
-      log("carrier;pulled=1;mount=" .. tostring(C.mount))
-    end
-    return
-  end
-  C.pullSince = nil
-  if role == 1 then
-    C.heldSince = held(d, "E", now) and (C.heldSince or now) or nil
-    if not C.heldSince or now - C.heldSince < HOLD_MS then return end
-    C.mount = HORSE
-    local h = mountPose()
-    if not h or not near(h.x, h.z, NEAR_M) then return end
-    C.state,C.loadAt,C.heldSince,C.awake,C.ownerGeneration="loading",now,nil,false,other and other.generation
-    native(false, true, false)
-    log("loading")
-    return
-  end
-  C.heldSince = nil
-  local o=C.offer
-  if C.requestAt and now-C.requestAt>3000 then C.requestAt=nil end
-  local why = (not o or now<o.at or now-o.at>1000) and "no_offer" or role ~= 0 and "role" or mounted() and "mounted" or
-    (me and me.down == true) and "down" or not near(o.x, o.z, NEAR_M) and "far" or held(d, "R", now) and "holding" or "ready"
-  C.why=why
-  if why ~= "far" and why ~= "ready" and why ~= "holding" then C.hopSince = nil; return end
-  local close = near(o.x, o.z, NEAR_M)
-  if close and not C.offerShown then C.offerShown = true;  end
-  if not close then C.offerShown = nil end
-  C.hopSince = close and held(d, "R", now) and (C.hopSince or now) or nil
-  if C.hopSince and now-C.hopSince>=RIDE_MS and not C.requestAt then
-    if send(3,o.x,o.y,o.z,o.yaw) then C.requestAt=now;log("ride_request") end
-    C.hopSince=nil
-  end
+local function onClaim(now, gen, pose)
+ if not W.host then return end
+ local me, D = rec(W.role), W.downed
+ local why = C.state ~= "off" and "busy" or not (me and me.down == true) and "awake" or me.generation ~= gen and "generation" or
+  (D.target == W.role and (D.progress or 0) > 0) and "mid_revive" or nil
+ if why then
+  send(DENY, CODE[why], gen, 0, 0, 0, 0)
+  log(fmt("step=deny;seat=2;why=%s;gen=%d", why, gen))
+  return
+ end
+ send(GRANT, 0, gen, pose.x, pose.y, pose.z, pose.yaw)
+ log(fmt("step=grant;seat=2;gen=%d", gen))
 end
-function C.tick(now)
-  if not C.testing then return end
-  local d = D()
-  if not context() or not finite(now) then stop(finite(now) and now or 0,"unpaired",false);return end
-  if not current(now) then
-    stop(now,"context_changed",false)
-    C.mission,C.epoch,C.role,C.rxSeq=W.mission,W.epoch,W.role,nil
-  end
-  C.lastNow=now
-  local other,me=records()
-  if C.maskOwned and C.state~="cargo" then padMask(false) end
-  if C.state == "off" then return offTick(now, d, other, me) end
-  if C.state == "loading" then
-    local role=native(false,true,false)
-    local p=C.physical
-    if role==0 and p and not p.carrying and not p.carried then
-      C.state, C.unloadSince = "carrier", nil
-      native(true, false, false)
-      log("carrier")
-    elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
-    return
-  end
-  if C.state == "carrier" then
-    native(true, false, false)
-    if not fresh(other,now) or (C.ownerGeneration and C.ownerGeneration~=other.generation) then stop(now,"teammate_lost",true);return end
-    if C.awake and (other.down or (not mounted() and not drivenVehicle())) then stop(now,"ride_ended",true);return end
-    if not C.awake and other.down ~= true then stop(now, "teammate_up", true); return end
-    local h = mountPose()
-    if not h then
-      C.lostAt = C.lostAt or now
-      if now - C.lostAt > STALE_MS then stop(now, "horse_lost", false) end
-      return
-    end
-    C.lostAt = nil
-    local x, y, z, yaw = point(h)
-    warp(1, x, y, z, yaw)
-    if now >= C.txAt then send(1, x, y, z, yaw); C.txAt = now + 100 end
-    C.unloadSince = (not mounted() and not drivenVehicle() and held(d, "R", now) and near(h.x, h.z, NEAR_M + 0.8)) and (C.unloadSince or now) or nil
-    if C.unloadSince and now - C.unloadSince >= 1000 then stop(now, "taken_down", true) end
-    return
-  end
-  if C.state == "cargo" then
-    native(false, false, true)
-    local p = C.rx
-    if not p or now<C.rxAt or now-C.rxAt>STALE_MS then stop(now,"stream_lost",true);return end
-    if not fresh(me,now) or C.localGeneration~=me.generation then stop(now,"player_changed",false);return end
-    if C.awake and me.down then stop(now,"passenger_downed",true);return end
-    if not C.awake and me and me.down ~= true then stop(now, "awake", true); return end
-    warp(0, p.x, p.y, p.z, p.yaw)
-    if C.awake then
-      C.hopSince = (now - C.startAt > 1500 and held(d, "R", now)) and (C.hopSince or now) or nil
-      if C.hopSince and now - C.hopSince >= RIDE_MS then stop(now, "hopped_off", true); return end
-    end
-  end
+local function onLoaded(now, gen, pose)
+ if C.state ~= "off" then return end
+ local me = rec(W.role)
+ local why = not (me and me.down == true) and "awake" or me.generation ~= gen and "generation" or nil
+ if why then
+  send(UNLOADED, CODE[why], gen, 0, 0, 0, 0)
+  log(fmt("step=refuse;why=%s;state=loaded;gen=%d", why, gen))
+  return
+ end
+ bind()
+ C.state, C.gen, C.keepAt, C.keepPose, C.putAt = "cargo", gen, now, pose, now
+ log(fmt("step=cargo;seat=2;gen=%d;hx=%d;hz=%d", gen, round(pose.x / 10), round(pose.z / 10)))
 end
 W.handlers[OP] = function(v)
-  if not C.testing then return end
-  if type(v)~="table" or #v~=6 or not integer(v[1],1,65535) or not integer(v[2],0,3)
-    or not integer(v[3],-1000000000,1000000000) or not integer(v[4],-1000000000,1000000000)
-    or not integer(v[5],-1000000000,1000000000) or not integer(v[6],-31416,31416) then return end
-  local now=W.now and W.now() or 0
-  if not current(now) then return end
-  if C.rxSeq then local delta=(v[1]-C.rxSeq)%65535;if delta==0 or delta>32767 then return end end
-  C.rxSeq=v[1]
-  local p = {x = v[3] / 1000, y = v[4] / 1000, z = v[5] / 1000, yaw = v[6] / 1000, at = now}
-  local state = v[2]
-  if state == 2 then C.offer = p; return end
-  if state == 3 then
-    local other=records()
-    local o=C.sentOffer
-    if C.state=="off" and o and now>=o.at and now-o.at<1000 and fresh(other,now) and other.down~=true
-      and (mounted() or drivenVehicle()) and near(other.pos[1]/1000,other.pos[3]/1000,NEAR_M+1)
-      and (p.x-o.x)^2+(p.y-o.y)^2+(p.z-o.z)^2<4 then
-      C.mount = mounted() and HORSE or drivenVehicle()
-      C.state,C.awake,C.unloadSince,C.ownerGeneration="carrier",true,nil,other.generation
-      native(true, false, false)
-
-      log("carrier;awake=1")
-    end
-    return
-  end
-  if state == 1 then
-    if C.state == "carrier" or C.state == "loading" then return end
-    if C.state ~= "cargo" then
-      local _, me = records()
-      local awake = not (me and me.down == true)
-      if not fresh(me,now) or (awake and not (C.requestAt and now>=C.requestAt and now-C.requestAt<3000)) then return end
-      if not near(p.x,p.z,NEAR_M+1) then return end
-      C.awake,C.startAt,C.localGeneration=awake,now,me.generation
-      if awake then
-        if not padMask(true) then stop(now,"pad_mask_refused",false);return end
-        stance("SQUAT");
-      end
-      log("cargo;awake=" .. (awake and "1" or "0"))
-    end
-    C.state, C.rxAt, C.rx = "cargo", now, p
-  elseif state == 0 and (C.state == "cargo" or C.state == "carrier") then
-    stop(now,"remote_end",true,true)
-  end
+ if type(v) ~= "table" or #v < 10 or not C.on() then return end
+ local seat, role, action, cause, gen = v[2], v[3], v[4], v[5], v[6]
+ if seat ~= SEAT or role ~= 3 - W.role or not int(action, 1, 6) or not int(cause, 0, 255) or not int(gen, 0, 4294967295) or
+  not int(v[10], -31416, 31416) then return end
+ for i = 7, 9 do if not int(v[i], -1000000000, 1000000000) then return end end
+ local now = W.now and W.now() or 0
+ local pose = {x = v[7], y = v[8], z = v[9], yaw = v[10]}
+ if action == CLAIM then return onClaim(now, gen, pose) end
+ if action == GRANT then
+  if C.state == "claim" and gen == C.gen then beginLoad(now) end
+ elseif action == DENY then
+  if C.state == "claim" and gen == C.gen then stop(now, CAUSE[cause] or "deny", false, true) end
+ elseif action == LOADED then onLoaded(now, gen, pose)
+ elseif action == KEEP then
+  if C.state == "cargo" and gen == C.gen then C.keepAt, C.keepPose = now, pose end
+ elseif action == UNLOADED and (C.state == "cargo" or C.state == "carrier") and gen == C.gen then
+  local p = (v[7] ~= 0 or v[9] ~= 0) and {v[7], v[8], v[9], v[10] / 1000} or nil
+  stop(now, CAUSE[cause] or "remote_end", p ~= nil, true, p)
+ end
+end
+function C.tick(now)
+ if not C.on() then
+  if C.state ~= "off" then stop(now, "stream_lost", true, W.paired ~= true) end
+  C.heldSince, C.heldDone = nil, nil
+  return
+ end
+ if C.mission ~= W.mission or C.epoch ~= W.epoch or C.role ~= W.role then
+  if C.state ~= "off" then stop(now, "context", true) end
+  C.mission, C.epoch, C.role = W.mission, W.epoch, W.role
+ end
+ local s = C.state
+ if s == "off" then return offTick(now) end
+ if s == "claim" then
+  if now - C.claimAt > CLAIM_MS then stop(now, "claim_timeout", false, true) end
+  return
+ end
+ if s == "loading" then return loadTick(now) end
+ if s == "carrier" then return carrierTick(now) end
+ if s == "cargo" then return cargoTick(now) end
+end
+function C.setTesting(on)
+ if type(on) ~= "boolean" then return false end
+ if not on and C.state ~= "off" then stop(W.now and W.now() or 0, "context", true) end
+ C.testing = on
+ return true
+end
+function C.status()
+ return fmt("cargo;state=%s;key=%d;testing=%d;gen=%d;role=%d;busy=%d", C.state, C.keyOn() and 1 or 0, C.testing and 1 or 0, C.gen or 0,
+  W.role or 0, C.busy() and 1 or 0)
 end
 local tick = W.tick
 function W.tick(...)
-  if tick then tick(...) end
-  local now = W.now and W.now() or 0
-  local ok, err = pcall(C.tick, now)
-  if not ok then stop(now,"error",false);log("error;"..tostring(err)) end
+ if tick then tick(...) end
+ local now = W.now and W.now() or 0
+ local ok, err = pcall(C.tick, now)
+ if not ok then log("step=error;" .. tostring(err)); pcall(stop, now, "context", true) end
 end
-local function reset() stop(W.now and W.now() or 0,"reset",false);C.mission,C.epoch,C.role,C.rxSeq,C.lastNow=nil,nil,nil,nil,nil end
-if type(W.startHooks) == "table" then W.startHooks[#W.startHooks + 1] = reset end
-if type(W.unpairedHooks) == "table" then W.unpairedHooks[#W.unpairedHooks + 1] = reset end
+local function hook() pcall(stop, W.now and W.now() or 0, "context", true, true); C.mission, C.epoch, C.role = nil, nil, nil end
+if type(W.startHooks) == "table" then W.startHooks[#W.startHooks + 1] = hook end
+if type(W.unpairedHooks) == "table" then W.unpairedHooks[#W.unpairedHooks + 1] = hook end
 end
 end

@@ -56,6 +56,7 @@
 #include "mgscoop/dog_guard.hpp"
 #include "mgscoop/buddy_capacity_census.hpp"
 #include "mgscoop/buddy_capacity_walker.hpp"
+#include "mgscoop/horse_drive.hpp"
 #include "mgscoop/buddy_capacity_pins.hpp"
 #include "mgscoop/buddy_ride_read.hpp"
 #include "mgscoop/ride_player_observer.hpp"
@@ -5104,6 +5105,95 @@ bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_b
     replacement={reply,std::strlen(reply)};
     return true;
 }
+// M1 shared D-Horse (horse plan; lab key world_horse_share): MGS_COOP_HORSE_DRIVE_V1, the call-enter's pose write
+// without the call (native/include/mgscoop/horse_drive.hpp, contract native/horse_drive_contract.hpp). cfg answers the
+// key; read the local D-Horse record 0 from the verified census (body 1 may be hidden); place moves it (refused while
+// this copy's player rides it or a call is pending). One refusal line per reason change.
+struct HorseDriveLog { const char* last; unsigned refusals, places; } horse_drive_log{};
+bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace hd=mgscoop::horse_drive;namespace b=mgscoop::buddy_capacity_census;
+    constexpr char prefix[]="return 'MGS_COOP_HORSE_DRIVE_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>200 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    world_quiet=true;
+    static char reply[400]{};
+    const auto finish=[&](const char* text) noexcept {replacement={text,std::strlen(text)};return true;};
+    hd::Request q{};
+    if(!hd::Parse(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),q)) return finish("return {ready=false,reason='request'}");
+    const auto& labc=mgscoop::GetLabConfig();
+    // cfg: world_horse_share (on) and the M2 sub-key world_horse_cargo (cargo, lua/coop/world_horse_cargo.lua).
+    if(q.verb==hd::Verb::cfg)
+        return finish(labc.world_horse_share?(labc.world_horse_cargo?"return {on=1,cargo=1}":"return {on=1,cargo=0}")
+                                            :(labc.world_horse_cargo?"return {on=0,cargo=1}":"return {on=0,cargo=0}"));
+    const auto refuse=[&](const char* why) noexcept {
+        ++horse_drive_log.refusals;
+        if(q.verb==hd::Verb::place && horse_drive_log.last!=why) {
+            horse_drive_log.last=why;
+            LogFormat("horse_drive=refused; reason=%s; n=%u; places=%u\r\n",why,horse_drive_log.refusals,horse_drive_log.places);
+        }
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=false,reason='%s'}",why))) return finish("return {ready=false,reason='read'}");
+        return finish(reply);
+    };
+    hd::PlaceScope sc{};
+    sc.key=labc.world_horse_share;
+    if(!sc.key) return refuse("off");
+    const auto base=game_base;const auto span=game_span;
+    static int pins=-1;
+    if(pins<0 && base && span)
+        pins=BuddyPinsMatch(base,span,b::kPins) && !hd::PinsReason(reinterpret_cast<std::uintptr_t>(base),span)?1:0;
+    sc.pins=pins==1;
+    if(!sc.pins) return refuse("pins");
+    const auto status=mgscoop::world_link::GetStatus();unsigned short mission{};pp::State player{};
+    std::uintptr_t controller{};std::uint8_t active{};
+    sc.field=OnRuntimeThread() && !mission_terminating && ReadMission(mission) && mission==q.mission && partner_mission==q.mission &&
+        status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==q.epoch &&
+        pp::ReadState(partner_addresses,player)==pp::Refusal::none && pp::Realized(player,0) && BuddySelection(controller,active) && active==1;
+    if(!sc.field) return refuse("scope");
+    const auto now=GetTickCount64();const auto thread=GetCurrentThreadId();
+    const auto generation=worker_loading_generation?worker_loading_generation:1u;
+    const b::Authorization auth{true,true,true,true,true,true};
+    b::Owner owner{player.P,mission,generation,thread,1,status.epoch,now,true,true,false,false};
+    b::Census horse{};
+    const char* read=b::ReadPlayPose({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(base),auth,owner,thread,now,horse);
+    sc.census=!read && horse.count>=1;
+    if(!sc.census) return refuse(read?read:"census");
+    const auto& a=horse.actors[0];
+    std::uint8_t pend[2]{};
+    const bool pendRead=UpperPhaseRead(nullptr,a.record+0x2e3,pend,sizeof(pend));
+    const unsigned gen=hd::Generation(horse.records,horse.receiver,horse.realized_mask);
+    if(q.verb==hd::Verb::read) {
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
+            "return {ready=true,id=%u,realized=%s,occupied=%s,rider=%u,pending=%u,x=%ld,y=%ld,z=%ld,yaw=%ld,gen=%u}",
+            unsigned(a.game_id),a.realized?"true":"false",a.occupied?"true":"false",unsigned(a.rider),
+            pendRead?unsigned((pend[0]?1u:0u)|(pend[1]?2u:0u)):4u,RideMilli(a.position[0]),RideMilli(a.position[1]),
+            RideMilli(a.position[2]),RideHeading(a.position[3]),gen))) return finish("return {ready=false,reason='read'}");
+        return finish(reply);
+    }
+    sc.realized=a.realized;sc.ridden=a.occupied;sc.pending=!pendRead || pend[0] || pend[1];
+    float target[3]={float(q.x)/1000.f,float(q.y)/1000.f,float(q.z)/1000.f};
+    const float yaw=float(q.yaw)/1000.f;
+    float body[3]{};
+    // The shared placed/rider state runs on the partner driver's clock (pd::Clock.now_ms = partner_net::NowMs), not
+    // GetTickCount64: run 05232637 never showed the rider (partner_mount=hide on a placed horse).
+    const auto driverNow=mgscoop::partner_net::NowMs();
+    float under[3]{};
+    bool anchored=q.anchor && hd::RiderBody(driverNow,body);
+    if(anchored) {hd::HorseUnderRider(body,yaw,under);anchored=hd::AnchorUsable(target,under);}
+    if(anchored) std::memcpy(target,under,sizeof(target));
+    sc.cs=true;
+    if(const char* why=hd::PlaceRefusal(sc)) return refuse(why);
+    if(const char* why=hd::Write(reinterpret_cast<std::uintptr_t>(base),span,horse.receiver,horse.kind,0,target[0],target[1],target[2],yaw))
+        return refuse(why);
+    hd::NotePlaced(driverNow);
+    if(!horse_drive_log.places++ || horse_drive_log.last) {
+        LogFormat("horse_drive=placed; n=%u; anchored=%u; gen=%u\r\n",horse_drive_log.places,anchored?1u:0u,gen);
+        horse_drive_log.last=nullptr;
+    }
+    if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
+        "return {ready=true,placed=true,anchored=%u,bx=%ld,by=%ld,bz=%ld,byaw=%ld,x=%ld,y=%ld,z=%ld,gen=%u}",anchored?1u:0u,
+        RideMilli(a.position[0]),RideMilli(a.position[1]),RideMilli(a.position[2]),RideHeading(a.position[3]),
+        RideMilli(target[0]),RideMilli(target[1]),RideMilli(target[2]),gen))) return finish("return {ready=false,reason='read'}");
+    return finish(reply);
+}
 // RIDE_TILT (WS3 A1, docs/vehicle-ws3.md; partner_ride_tilt, default on in lab and play):
 //   return 'MGS_COOP_RIDE_TILT_V1' -- read <id>             -> return <a44_mrad>,<a48_mrad> | return nil
 //   return 'MGS_COOP_RIDE_TILT_V1' -- write <id> <a44> <a48> -> return true | return false
@@ -6189,6 +6279,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectVehicleNamesReceipt(buffer,size,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
+    if (SelectHorseDriveReceipt(buffer, size, replacement)) return true;
     if (SelectRideTiltReceipt(buffer, size, replacement)) return true;
     if (SelectVehicleDoorReceipt(buffer, size, replacement)) return true;
     if (SelectBoardSeatReceipt(buffer, size, replacement)) return true;
