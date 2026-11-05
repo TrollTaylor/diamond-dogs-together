@@ -277,10 +277,11 @@ check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RI
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
 -- Round 2: hold0 with no reset (a242d867, c2927350) or the A0 reset (8cfe8e97, 7f3155c8) kept body 0 with the horse but
--- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose. Default 4: the Lua Warp; the
--- lab lever picks hold0 with a reset 0..3 (C0 alone untried).
-check(w.via == nil and #f.holds == 0, "by default body 0 moves by the Lua Warp")
-check(f.C.RESET == 4, "the default is the Lua Warp (reset 4)")
+-- in the airborne pose, also on the carrier's screen; the Lua Warp keeps the lying pose but drops under the horse.
+-- BODY0 round: the C0 reset alone (C0.vt+0x90 sets the 0x580 record's +0x2C0 bit 0x20, which C0.vt+0xD0 0x14128E010
+-- reads, clears and answers "no fall" for that frame) with hold0's position: default 2; the lab lever picks 0..4.
+check(w.via == "hold0" and #f.holds == 1 and f.holds[1]:find(" 2$"), "by default body 0 moves by hold0 with the C0 reset")
+check(f.C.RESET == 2, "the default is hold0 + C0 (reset 2)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
