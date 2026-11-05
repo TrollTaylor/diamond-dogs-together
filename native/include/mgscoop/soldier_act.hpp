@@ -124,6 +124,10 @@ QuietWhy QuietChoose(const RestView& r, const float (&target)[3], std::uint64_t 
 const char* QuietWhyName(QuietWhy why) noexcept;
 // Whether idx is among the first count entries of the realized list.
 bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
+#ifdef _WIN32
+// The same read under SEH (the review: QuietOne read the game's list outside its __try): 1 listed, 0 not, -1 fault.
+int ListFind(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept;
+#endif
 
 // Enemy round 8 track C (docs/world-sync-design.md 7.23; native-only lab key act_plan, off unless named; no CFG bit, no
 // wire): the walk-request start 0x1413725f0 plans a path only for a FOB remote copy (S+0x2a4 bit 2 and the owner byte !=

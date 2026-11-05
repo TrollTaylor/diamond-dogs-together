@@ -330,6 +330,12 @@ bool ListHas(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexc
 }
 
 #ifdef _WIN32
+int ListFind(const std::uint16_t* list, std::uint32_t count, unsigned idx) noexcept {
+    __try {
+        return ListHas(list, count, idx) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
 namespace {
 namespace c = mgscoop::soldier_act_contract;
 using Update = void(__fastcall*)(void* m);
@@ -1288,7 +1294,10 @@ bool Listed(const View& v, unsigned i) noexcept {
     std::uintptr_t list = 0;
     std::uint32_t count = 0;
     if (!Rd(v.slots + c::slots_list, list) || !Rd(v.slots + c::slots_list_count, count) || !list || count > 4096) return false;
-    return ListHas(reinterpret_cast<const std::uint16_t*>(list), count, i);
+    // Round 9 land step (the review): the list entries are game memory, read under SEH (QuietOne calls this outside its __try).
+    const int found = ListFind(reinterpret_cast<const std::uint16_t*>(list), count, i);
+    if (found < 0) g_faults.fetch_add(1, std::memory_order_relaxed);
+    return found == 1;
 }
 void QuietOne(const View& v, unsigned i, const QuietMove& q) noexcept {
     float slot[3]{}, biased[3]{}, after[3]{};

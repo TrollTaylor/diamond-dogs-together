@@ -236,10 +236,15 @@ void FlattenRange(Request& request) noexcept;
 // while this PC hides the partner's body for range (partner_range=hide, beyond 200 m) the driver has none, and the
 // partner's network pose sample, at most kRangePoseMaxAgeMs old, stands in (run 8b581a26: 142 of 142 host placements
 // refused while the guest's pose read 0). Unknown otherwise.
+// Round 9 land step (the review): the network sample only with net_allowed (range_flat named, both roles; off at the
+// defaults as 0.15.2). range_hidden also starts true at every 30010/30020 mission start until partner_range=near.
 enum class RemoteSource : unsigned char { none, cmd, net };
 inline constexpr unsigned kRangePoseMaxAgeMs = 1000;
-RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms) noexcept;
+RemoteSource RemoteRangeSource(bool have_cmd, bool range_hidden, bool net_valid, unsigned net_age_ms, bool net_allowed) noexcept;
 const char* RemoteSourceName(RemoteSource source) noexcept;
+// The player point a nearer-player range is measured from: the same partner pose the nearer test used when the partner
+// is nearer, else this player's (the review: DriveReceipt took the command pose, 0,0,0 while hidden, and was refused).
+void RangePlayer(bool partner_nearer, const float (&own)[3], const float (&partner)[3], float (&out)[3]) noexcept;
 // Whether a guest process needs the startup Verify() byte gate for either rule.
 bool GuestMayWarp(bool lab, bool play, bool key) noexcept;
 

@@ -802,7 +802,9 @@ struct LabConfig {
     // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
     // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
     // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
-    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26). Round 9 (design 7.24): with
+    // range_flat named, both roles' nearer-player rules (host placement, soft follow, PEER) also take the partner's network
+    // pose while this PC hides the partner's body for range (soldier_warp::RemoteRangeSource); off at the defaults.
     bool quiet_place = false;
     bool quiet_place_given = false;
     bool range_flat = false;

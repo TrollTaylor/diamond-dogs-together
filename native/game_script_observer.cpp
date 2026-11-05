@@ -2717,7 +2717,8 @@ void PublishDebugSnapshot() noexcept {
     // hides the partner's body for range (the driver then has no command). One line when the source changes.
     {
         namespace sw = mgscoop::soldier_warp;
-        const auto src = sw::RemoteRangeSource(mission.have_cmd, mission.range_hidden, sample.valid, sample.age_ms);
+        // Round 9 land step (the review): the network sample only with range_flat named (off at the defaults, as 0.15.2).
+        const auto src = sw::RemoteRangeSource(mission.have_cmd, mission.range_hidden, sample.valid, sample.age_ms, config.range_flat);
         snapshot.remote_range_src = static_cast<unsigned char>(src);
         snapshot.remote_range_valid = src != sw::RemoteSource::none;
         for (unsigned i = 0; i < 3; ++i)
@@ -3030,10 +3031,8 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     // seen near=host refusals of ddcdec94 / 8b581a26 came while the guest's body was hidden for range, pose unknown).
     const float nearer = labc.range_flat ? sw::NearerSquaredFlat(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer)
                                          : sw::NearerSquared(target, own, guest, snapshot.pose_valid, remote_fresh, guest_nearer);
-    for (unsigned i = 0; i < 3; ++i) {
-        request.pos[i] = grant.pos[i];
-        request.player[i] = guest_nearer ? snapshot.remote_range_pos[i] : snapshot.player_pos[i];
-    }
+    for (unsigned i = 0; i < 3; ++i) request.pos[i] = grant.pos[i];
+    sw::RangePlayer(guest_nearer, own, guest, request.player);
     if (labc.range_flat) sw::FlattenRange(request);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
     request.yaw = grant.yaw;
@@ -3175,10 +3174,9 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     const float nearer = flat ? sw::NearerSquaredFlat(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer)
                               : sw::NearerSquared(step.pos, own, remote, snapshot.pose_valid, remote_fresh, remote_nearer);
     if (!(nearer <= sw::kFollowFarM * sw::kFollowFarM)) return refuse("far");
-    for (unsigned i = 0; i < 3; ++i) {
-        request.pos[i] = step.pos[i];
-        request.player[i] = remote_nearer ? snapshot.remote_pos[i] : snapshot.player_pos[i];
-    }
+    for (unsigned i = 0; i < 3; ++i) request.pos[i] = step.pos[i];
+    // Round 9 land step (the review): from the pose the nearer test used (was the command pose, 0,0,0 while hidden).
+    sw::RangePlayer(remote_nearer, own, remote, request.player);
     if (flat) sw::FlattenRange(request);
     request.yaw = yaw;
     request.max_range = sw::kMaxRangeLimitM;
