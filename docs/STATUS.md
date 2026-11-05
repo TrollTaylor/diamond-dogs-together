@@ -5,7 +5,8 @@ sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge (join, 
 `enemy-vert-near.txt`): `c59ae699` (`drive_vert=1`, 0.15.2+fbd3def), `948c978a` (`drive_vert=1`, 0.15.2+0463d36: the
 guest onto the wall top) and `ef9584e4` (no key named, at the final code head 0463d36d, 0.15.2+0463d36). None void (first frames of both copies: gameplay, connected, no modal). Two earlier
 jobs stopped in the worker's own audited CTest before any game (`partner_defer_tests` check 185, `ddt_core_tests_1`
-CloseDuringSetup: timing tests; this tree's build passed 355/355); I counted the second against the three. Archives under
+CloseDuringSetup: timing tests; this tree's build passed 355/355); each was re-run once, and the three sessions above are
+the track's three. Archives under
 `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
 
 - **What players get**: nothing new at the defaults (`drive_vert` stays off unless named; at the defaults only the
