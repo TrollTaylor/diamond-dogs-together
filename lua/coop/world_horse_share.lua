@@ -47,7 +47,10 @@ function S.localRides()
 end
 -- The partner rides the shared horse (a live track) / anyone rides it (Travel, Bring, the guest's checkpoint).
 function S.partnerRides() return S.track ~= nil end
-function S.busy() return S.track ~= nil or S.sendId ~= nil end
+function S.busy()
+ local C = W.horseCargo
+ return S.track ~= nil or S.sendId ~= nil or (type(C) == "table" and type(C.busy) == "function" and C.busy() == true)
+end
 local function capped(kind, line)
  local c = (S.n[kind] or 0) + 1
  S.n[kind] = c

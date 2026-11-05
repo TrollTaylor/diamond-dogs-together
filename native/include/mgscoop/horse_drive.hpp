@@ -10,7 +10,7 @@
 // rides the horse (rec+0x2DD: the rider beats the owner) or a call is pending, and checks every site and slot of
 // native/horse_drive_contract.hpp (tools/generate_horse_drive_contract.py) before the one engine call.
 // Verbs (Lua -> native, after "return 'MGS_COOP_HORSE_DRIVE_V1' -- "):
-//   cfg                                         -> {on=0|1}  (the lab key; both PCs must run it)
+//   cfg                                         -> {on=0|1,cargo=0|1}  (world_horse_share and M2's world_horse_cargo)
 //   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen} | {ready=false,reason}
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
 //                                               -> {ready=true,bx,by,bz,byaw,x,y,z,anchored,gen} | refusal

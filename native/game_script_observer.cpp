@@ -4946,7 +4946,10 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     hd::Request q{};
     if(!hd::Parse(buffer+sizeof(prefix)-1,size-(sizeof(prefix)-1),q)) return finish("return {ready=false,reason='request'}");
     const auto& labc=mgscoop::GetLabConfig();
-    if(q.verb==hd::Verb::cfg) return finish(labc.world_horse_share?"return {on=1}":"return {on=0}");
+    // cfg: world_horse_share (on) and the M2 sub-key world_horse_cargo (cargo, lua/coop/world_horse_cargo.lua).
+    if(q.verb==hd::Verb::cfg)
+        return finish(labc.world_horse_share?(labc.world_horse_cargo?"return {on=1,cargo=1}":"return {on=1,cargo=0}")
+                                            :(labc.world_horse_cargo?"return {on=0,cargo=1}":"return {on=0,cargo=0}"));
     const auto refuse=[&](const char* why) noexcept {
         ++horse_drive_log.refusals;
         if(q.verb==hd::Verb::place && horse_drive_log.last!=why) {
