@@ -1143,6 +1143,31 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   take walkers that are walking at take time, hold a partial path while it grows, and a spot where a calm walker is in
   clear view from both players for the frame pair.
 
+#### 7.28 Enemy round 10 track B: the LRRP crews on the host's travel step (lab key `lrrp_follow`, native only; op LRRP_STEP 0x5E)
+
+- **RE** (read-only Ghidra, exe 085c2f82...bb45) [O unless marked]: the TppSoldier2 command dispatcher 0x141356170 (this =
+  S, the soldier subobject the soldier_warp chain reaches; S-0x20 = P). `StartTravel` (0x385d1071) reads `travelPlan`
+  (string -> plan index, 0x141352130), `step` (number; the key string at 0x1423e7bd8) and `keepInAlert`, then calls
+  T.vt[0x88](T, idx, plan, step), T.vt[0x98](T, idx, keep), 0x14136de40 (applies the step's CP and route group) and
+  0x14136bc80, with T = *(S+0x48), the soldier travel / route component (`SetRelativeVehicle` is T.vt[0x110],
+  `UnsetRelativeVehicle` T.vt[0x118]). `SetLrrp` also takes `travelPlanStep` (0x1423e7ca8) into the same T.vt[0x88].
+  `StoreToSVars` (0x1413695a0; site 0x14136a3d9) writes plan = T.vt[0x78](idx) (0xff none) as its name hash
+  *(P+0x6f8)[plan] into `svars.solTravelName[idx]`, step = T.vt[0x80](idx) into `svars.solTravelStepIndex[idx]`, and
+  T.vt[0x90] as `solFlagAndStance` bit 18 (keep travel in alert); `RestoreFromSVars` (0x141367770) puts them back with
+  the same T.vt[0x88] + 0x14136de40. So a checkpoint restore is "set this soldier's travel cursor", and
+  `StartTravel{travelPlan, step, keepInAlert}` is the same call from Lua. 0x14136de40 keeps the last applied plan / step
+  per soldier at *(P+0x6d8) / *(P+0x6e0) (written only there, through 0x141368620), so those bytes go stale during
+  ordinary travel: read T (svars), not them. [I] svars row = GameObjectId & 0x1ff. [U] the hold timer at a stop lives in
+  T; StartTravel restarts the step, so its timer starts at the call.
+- **Route** (no native write, no new contract site): both copies call `StoreToSVars` (TppEnemy.StoreSVars' own call)
+  once a second while a crew is known and read the crew's rows; the host sends LRRP_STEP on a change (5 s refresh); the
+  guest sets a differing step with `StartTravel` while its truck follows the host's (30 m or nearer) or waits crewless, one
+  per guard per 5 s and at most 3 per host step; while steps arrive it no longer sends `UnsetRelativeVehicle`.
+  Protocol section 45. `step=follow` 1 Hz (was 4 Hz) for the guest's log budget.
+- **Built** (red first): 5e2b0f3a / 20ac2166 (Lua), 3dce7916 / f71305ca (LRRP_STEP), d21096be (host lines 4 Hz moving),
+  4cfc2002 / 2f365581 (3 tries per host step); scenario `enemy-lrrp-crew10.txt` (round 9's crew part without the 40 s
+  lever window, which let each copy's own AI run off the host's step).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
