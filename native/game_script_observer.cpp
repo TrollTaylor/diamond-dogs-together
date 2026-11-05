@@ -2758,10 +2758,15 @@ void PublishDebugSnapshot() noexcept {
 }
 
 // soldier_warp::Gate::Record's answer: a process latch (fault, or the fifth anomaly) or one guard's latch (its
-// second anomaly), each logged once.
+// second anomaly), each logged once; or (enemy latch, docs/world-sync-design.md 7.14) a relay: only that guard waits.
 void LogSoldierWarpLatch(const char* latched, std::uint32_t id, std::uint32_t go, const mgscoop::soldier_warp::Result& result) noexcept {
     if (!latched) return;
-    if (std::strcmp(latched, "soldier") == 0)
+    if (std::strcmp(latched, "relayed") == 0)
+        LogFormat("soldier_warp=relayed; id=%u; go=%u; r=%d; h=%u; streak=%u; back_ms=%llu; relayed=%u; anomalies=%u\r\n", id, go,
+                  result.out, unsigned(result.handled), soldier_warp_gate.RelayStreak(go),
+                  static_cast<unsigned long long>(soldier_warp_gate.BackoffLeft(go, soldier_warp_gate.now)), soldier_warp_gate.relayed,
+                  soldier_warp_gate.anomalies);
+    else if (std::strcmp(latched, "soldier") == 0)
         LogFormat("soldier_warp=soldier_latched; id=%u; go=%u; r=%d; h=%u; anomalies=%u; until=process_exit\r\n", id, go, result.out,
                   unsigned(result.handled), soldier_warp_gate.anomalies);
     else
@@ -2795,9 +2800,9 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
     // One command, one guard, bounded attempts; a fault (or the fifth anomaly) latches the feature off, a guard's
-    // second anomaly latches that guard off.
+    // second anomaly latches that guard off; a relay backs that guard off.
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, mgscoop::partner_net::NowMs())) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2901,7 +2906,7 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2982,7 +2987,7 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
     const std::uint32_t id = 0x80000000u | grant.serial;
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id, now)) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), id, request.go_id, result);
@@ -2994,6 +2999,11 @@ const char* HostWarpReceipt(const char* text, std::size_t size) noexcept {
     if (id != last_id || request.go_id != last_go || result.out != last_out || result.handled != last_handled ||
         result.refusal != last_refusal) {
         last_id = id; last_go = request.go_id; last_out = result.out; last_handled = result.handled; last_refusal = result.refusal;
+        if (soldier_warp_census < 24 && result.chain.type_object) {
+            ++soldier_warp_census;
+            char line[512]{};
+            if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
+        }
         LogFormat("world_place=host_warp; seq=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; near=%s; refused=%s\r\n", unsigned(seq),
                   grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out, unsigned(result.handled),
                   result.chain.pinned ? "pinned" : "engine", guest_nearer ? "guest" : "host", result.refusal ? result.refusal : "none");
@@ -3089,7 +3099,7 @@ const char* DriveReceipt(const char* text, std::size_t size) noexcept {
     request.max_range = sw::kMaxRangeLimitM;
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
     sw::Result result{};
-    if (const char* gate = soldier_warp_gate.AdmitDrive(request.go_id)) result.refusal = gate;
+    if (const char* gate = soldier_warp_gate.AdmitDrive(request.go_id, mgscoop::partner_net::NowMs())) result.refusal = gate;
     else {
         result = sw::Warp(base, game_span, request);
         LogSoldierWarpLatch(soldier_warp_gate.Record(result), 0, request.go_id, result);

@@ -27,7 +27,7 @@ do
         P.LIFT = 400
         P.WHY = {"not_ready", "roster", "unknown_entity", "unmapped", "terminal_local", "vehicle_local", "disabled_local",
             "native_off", "grant", "pose", "range", "stance", "realize_timeout", "position_timeout", "route_unknown", "context",
-            "native_other", "unreadable_local", "busy", "far", "latched", "near_player"}
+            "native_other", "unreadable_local", "busy", "far", "latched", "near_player", "unrealized"}
         local KIND, WHY = P.KIND, P.WHY
         local function L(...) W.log(fmt(...)) end
         -- The wire state of this PC's copy (world_enemy.lua), or nil when unreadable or unbound.
@@ -363,10 +363,10 @@ do
                 KIND[kind] or "unknown", ok and "applied" or "refused", why, v[5] / 100, v[6])
             L("event=place_ack;%s", string.sub(text, 13))
             -- A correction the guest's copy cannot take (its native placement off, the target too far, that guard latched):
-            -- that guard waits 10 s.
+            -- that guard waits 10 s; not realized on that copy (unrealized: the native relay, enemy latch) 3 s.
             if kind == 3 and not ok and P.patrol and (why == "native_off" or why == "far" or why == "latched") then
                 P.patrol.back[v[2]] = W.now() + 10000
-            end
+            elseif kind == 3 and not ok and P.patrol and why == "unrealized" then P.patrol.back[v[2]] = W.now() + 3000 end
             if kind ~= 3 then P.lastAck = text; P.remote(ok, text) end
         end
         -- A re-pair in the same epoch re-sends the tracked guards' positions; any pairing re-reads every guard near either

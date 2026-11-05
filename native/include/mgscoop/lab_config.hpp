@@ -750,7 +750,8 @@ struct LabConfig {
     // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): placements and the position stream carry the owner's own
     // GetPosition y (LIFT 800 mm instead of 400: never below the floor the copy must reach) and the soft follow keeps the
     // copy's own height (+ 0.02 m) instead of its feet + 0.1 m. CFG r[19] bit 128, only with soldier_follow. Lab and
-    // play; off unless named, the gun profile included (its first default run, e583ee62, latched the warp off).
+    // play; follows the gun profile (a named 0 opts out). The latch of its first default run, e583ee62, came without it
+    // too (enemy latch, arm A 6348f361): the engine's relay to an unrealized guard, now refused "relayed" per guard.
     bool place_lift = false;
     bool place_lift_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's

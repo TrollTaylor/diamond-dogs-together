@@ -9,11 +9,13 @@
 #include <cmath>
 #include <cstring>
 #include "mgscoop/soldier_warp.hpp"
+#include "soldier_relay_contract.hpp"
 #include "soldier_warp_contract.hpp"
 
 namespace mgscoop::soldier_warp {
 namespace {
 namespace c = soldier_warp_contract;
+namespace rc = soldier_relay_contract;
 
 template <class T>
 bool ReadValue(std::uintptr_t address, T& value) noexcept {
@@ -79,6 +81,13 @@ const char* ResolveChain(std::uintptr_t base, std::size_t span, std::uint32_t id
         return "chain";
     chain.hop_read = ReadBlock(chain.hop, chain.hop_bytes, sizeof(chain.hop_bytes));
     if (!chain.hop_read) return "chain";
+    // Enemy latch: the live typed dispatch (soldier_relay_contract): the soldier handle vtable's hop 0xbf5450, and the
+    // object it calls (handle+0x20) is a soldier type whose +0x70 is the dispatcher 0x9e9ab0.
+    std::uintptr_t typed_object = 0, typed_vt = 0, dispatch = 0;
+    chain.typed = chain.handle_vt == base + rc::handle_vtable_rva && chain.hop == base + rc::hop_rva &&
+                  ReadValue(chain.handle_object + rc::handle_type_object, typed_object) && typed_object &&
+                  ReadValue(typed_object, typed_vt) && typed_vt == base + rc::type_vtable_rva &&
+                  ReadValue(typed_vt + rc::type_dispatch_slot, dispatch) && dispatch == base + rc::dispatcher_rva;
     std::uint32_t displacement = 0;
     if (!Forwarder(chain.hop_bytes, displacement)) return nullptr;  // unknown hop shape: engine dispatch, unpinned
     // A recognized forwarder is evidence of where the message goes: it must reach the
@@ -138,17 +147,20 @@ const char* Verify(std::uintptr_t base, std::size_t span, std::uintptr_t& mismat
     mismatch = 0;
     if (!base || !span) return "image";
     unsigned char bytes[512]{};
-    for (const auto& site : c::sites) {
-        mismatch = site.rva;
-        if (site.size > sizeof(bytes) || site.rva > span || site.size > span - site.rva ||
-            !ReadBlock(base + site.rva, bytes, site.size) || std::memcmp(bytes, site.bytes, site.size) != 0) return "body_contract";
-    }
-    for (const auto& slot : c::slots) {
-        mismatch = slot.rva;
+    const auto site_ok = [&](std::uintptr_t rva, std::size_t size, const unsigned char* expected) noexcept {
+        mismatch = rva;
+        return size <= sizeof(bytes) && rva <= span && size <= span - rva && ReadBlock(base + rva, bytes, size) &&
+               std::memcmp(bytes, expected, size) == 0;
+    };
+    const auto slot_ok = [&](std::uintptr_t rva, std::uintptr_t target) noexcept {
+        mismatch = rva;
         std::uintptr_t value = 0;
-        if (slot.rva > span || span - slot.rva < sizeof(value) || !ReadValue(base + slot.rva, value) || value != base + slot.target)
-            return "slot_contract";
-    }
+        return rva <= span && span - rva >= sizeof(value) && ReadValue(base + rva, value) && value == base + target;
+    };
+    for (const auto& site : c::sites) if (!site_ok(site.rva, site.size, site.bytes)) return "body_contract";
+    for (const auto& site : rc::sites) if (!site_ok(site.rva, site.size, site.bytes)) return "body_contract";
+    for (const auto& slot : c::slots) if (!slot_ok(slot.rva, slot.target)) return "slot_contract";
+    for (const auto& slot : rc::slots) if (!slot_ok(slot.rva, slot.target)) return "slot_contract";
     constexpr std::uintptr_t statics[] = {c::manager_object_rva, c::manager_guard_rva, c::registry_slot_rva};
     for (const std::uintptr_t rva : statics) {
         mismatch = rva;
@@ -207,7 +219,12 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
     result.handled = message[c::message_handled];
     // The handler (0x13619e5/0x13619ea, 0x1364e5b) and SendCommand (0xbf3aa6) give only these two answers.
     const bool moved = result.out == 0 && result.handled == 1, waiting = result.out == -1 && result.handled == 0;
-    if (!moved && !waiting) result.refusal = "anomaly";
+    // Enemy latch: on the typed dispatch, out=0 handled=0 is the relay to the guard's unrealized form (0x9e9bc9 ->
+    // 0xbf6490 writes *out = 0, the handler never runs) and out=0x8ce64801 the handle's mode 2: nothing moved, explained.
+    const bool relayed = result.chain.typed && result.handled == 0 &&
+                         (result.out == 0 || static_cast<std::uint32_t>(result.out) == rc::mode2_answer);
+    if (relayed) result.refusal = "relayed";
+    else if (!moved && !waiting) result.refusal = "anomaly";
     return result;
 }
 
@@ -217,10 +234,26 @@ unsigned Gate::SoldierAnomalies(std::uint32_t go) const noexcept {
     return 0;
 }
 
-const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
+std::uint64_t Gate::BackoffLeft(std::uint32_t go, std::uint64_t now_ms) const noexcept {
+    const auto g = static_cast<std::uint16_t>(go);
+    for (const auto& r : relays)
+        if (r.streak && r.go == g) return r.until > now_ms ? r.until - now_ms : 0;
+    return 0;
+}
+
+unsigned Gate::RelayStreak(std::uint32_t go) const noexcept {
+    const auto g = static_cast<std::uint16_t>(go);
+    for (const auto& r : relays)
+        if (r.streak && r.go == g) return r.streak;
+    return 0;
+}
+
+const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go, std::uint64_t now_ms) noexcept {
+    now = now_ms;
     if (latched) return "latched";
     if (!command_id) return "target";
     if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
+    if (BackoffLeft(go, now_ms)) return "backoff";
     if (command_id != command) { command = command_id; go_id = go; attempts = 0; landed = false; }
     else if (go != go_id) return "target";
     if (landed) return "landed";
@@ -238,9 +271,11 @@ const char* GuestAdmit(const GuestRule& rule, GuestGrant& grant) noexcept {
     return "disabled";
 }
 
-const char* Gate::AdmitDrive(std::uint32_t go) noexcept {
+const char* Gate::AdmitDrive(std::uint32_t go, std::uint64_t now_ms) noexcept {
+    now = now_ms;
     if (latched) return "latched";
     if (SoldierAnomalies(go) >= kSoldierAnomalies) return "soldier";
+    if (BackoffLeft(go, now_ms)) return "backoff";
     command = 0;
     go_id = go;
     attempts = 0;
@@ -321,17 +356,40 @@ float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
 
 const char* Gate::Record(const Result& result) noexcept {
-    if (!result.refusal && result.out == 0 && result.handled == 1) landed = true;
+    const auto go = static_cast<std::uint16_t>(go_id);
+    if (!result.refusal && result.out == 0 && result.handled == 1) {
+        landed = true;
+        for (auto& r : relays)
+            if (r.streak && r.go == go) r = Relay{};  // moved: that guard's relay streak ends
+    }
     if (latched || !result.refusal) return nullptr;
     if (std::strcmp(result.refusal, "fault") == 0) {
         latched = result.refusal;
         return latched;
     }
+    if (std::strcmp(result.refusal, "relayed") == 0) {
+        // Never a latch: only this guard waits (its row, else a free row, else the row whose backoff ends first).
+        ++relayed;
+        Relay* row = nullptr;
+        for (auto& r : relays)
+            if (r.streak && r.go == go) { row = &r; break; }
+        if (!row) {
+            for (auto& r : relays) {
+                if (!r.streak) { row = &r; break; }
+                if (!row || r.until < row->until) row = &r;
+            }
+            *row = Relay{go, 0, 0};
+        }
+        if (row->streak < 255) ++row->streak;
+        std::uint64_t back = kRelayBackoffMs;
+        for (unsigned i = 1; i < row->streak && back < kRelayBackoffMaxMs; ++i) back *= 2;
+        row->until = now + (back < kRelayBackoffMaxMs ? back : kRelayBackoffMaxMs);
+        return result.refusal;
+    }
     if (std::strcmp(result.refusal, "anomaly") != 0) return nullptr;
     // An anomaly counts against the gate's current guard and against the process.
     ++anomalies;
     unsigned count = 0;
-    const auto go = static_cast<std::uint16_t>(go_id);
     for (unsigned i = 0; i < soldier_count && i < kTrackedSoldiers; ++i)
         if (soldiers[i].go == go) { count = ++soldiers[i].anomalies; break; }
     if (!count) {
@@ -359,7 +417,8 @@ std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go
             "leaf_vt=0x%llx; leaf=%s; count=%u; realized=%u; stance=%u; out=%d; handled=%u; refusal=%s\r\n",
             go_id, static_cast<unsigned long long>(Rva(base, span, k.type_vt)), static_cast<unsigned long long>(Rva(base, span, k.count_fn)),
             static_cast<unsigned long long>(Rva(base, span, k.handle_vt)), static_cast<unsigned long long>(Rva(base, span, k.hop)),
-            k.hop_read ? hop : "unread", static_cast<unsigned long long>(Rva(base, span, k.leaf_vt)), k.pinned ? "pinned" : "engine",
+            k.hop_read ? hop : "unread", static_cast<unsigned long long>(Rva(base, span, k.leaf_vt)),
+            k.pinned ? "pinned" : k.typed ? "typed" : "engine",
             k.count, k.realized, k.stance, result.out, unsigned(result.handled), result.refusal ? result.refusal : "none"))) {
         out[0] = 0;
         return 0;
