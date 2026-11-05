@@ -50,7 +50,7 @@ inline constexpr std::uint64_t kActReapplyMs = 5000;
 // kActReapplyMovingMs, so the engine's catch-up in the unpack (gait + 1 at 2..5 m from the owner position, gait 3 and that
 // destination beyond 5 m) runs every second (runs adecad01 / 80cc0176: with 5 s the walkers lagged 5-12 m, speed ratio p50
 // 0.19 / 0.78). The owner copy moves while its order-part position is >= kActMoveM (3D) from where it was at the last apply.
-inline constexpr std::uint64_t kActReapplyMovingMs = 5000;
+inline constexpr std::uint64_t kActReapplyMovingMs = 1000;
 inline constexpr float kActMoveM = 0.3f;
 bool OwnerMoved(const float (&was)[3], const float (&now)[3]) noexcept;
 // Whether the hook unpacks the mailbox request now: a first (or re-mirrored) or changed request at once, an unchanged one

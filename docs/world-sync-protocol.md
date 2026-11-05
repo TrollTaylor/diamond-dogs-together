@@ -2361,3 +2361,28 @@ No new op or world note. CFG r[19] (each PC's own reply) gains bit 1024 `body_de
   timeout | stop` (`SetForceRealize` with `forceRealize=false`; 8 s; never Mother Base staff).
 - `body_dead`: a body placement (ENEMY_DEBUG kind 3 / ENEMY_PLACE, flag 8) of a dead guard is no longer refused
   `disabled_local`; `place_body` lines are unchanged (`why=none` when queued).
+
+## 36. Enemy sync M7 FM1 round 6: the version gate, the 1 s re-apply, the phase lever (lab key `soldier_act`; design 7.19)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x5C | ACT_CAPS | both | R (world queue), level 2, play too | 3 | caps (u16: bit 1 the far mirror runs on this PC, bit 2 its calm / caution phase limit), FM1 revision (u8, 6) |
+
+- Why: the link handshake checks only `kLinkVersion` 2, so a 0.15.0 partner connects to a newer build, and CFG r[19] is
+  each PC's own (0.15.0's Lua takes only r[19] 0..63, newer builds 0..4095). A 0.15.0 partner has no SOLDIER_ACT
+  (0x58) and no ACT_CAPS: it skips both by their length (`unknown_op`).
+- Lua (world_mirror.lua) sends ACT_CAPS once per pairing and once per mission start, only on a PC with `soldier_act`
+  (the defaults send nothing new; `event=mirror_caps; caps; rev`). The receiver keeps the partner's caps until unpaired
+  (`event=mirror_peer; caps; rev`). The far mirror (the host's `ACT_V1 t` / `s`, the guest's `q` / `m`, so every
+  SOLDIER_ACT part and every puppet) runs only while the partner's caps has bit 1: an old partner never sends one, so
+  nothing of `soldier_act` runs against it; a partner announcing caps 0 releases every puppet (`why=peer`).
+- `soldier_act=calm` (lab.ini; no CFG bit): `soldier_act` on with the phase lever. Native answers `ACT_V1 p` with
+  `{p=1,pl=1}` (`{p=1,pl=0}` for `soldier_act=1`); Lua then releases and skips a guard whose CP is in evasion / ALERT
+  (`why=phase_limit`). `soldier_act_mirror=on; ...; phase=calm|all` logs it.
+- The far rule skips riders: a guard whose `GetVehicleGameObjectId` is a game object is never taken, a puppet who
+  mounts is released (`why=vehicle`), and the host does not register him.
+- The puppet side re-applies an unchanged request every 1 s while the owner copy moves (the order part's position
+  >= 0.3 m from where it was at the last apply), else every 5 s, from the mailbox whether or not a new part came.
+- `soldier_act_frame` adds `payload_ids` (the aim-target swaps of `RemapAimTarget`), `due` (applies the rule asked
+  for), `reapply` (the moving owner's 1 s re-applies) and `expired` (fire-drop bits that lapsed).
+- Lua's apart release (`why=apart`) waits for a still owner copy: its position moved under 0.5 m for 2 s.

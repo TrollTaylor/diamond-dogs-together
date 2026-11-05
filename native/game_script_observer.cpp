@@ -3145,7 +3145,8 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
         if (!sa::Installed()) return refuse("hook");
         const float pos[3] = {player_mm[0] * 0.001f, player_mm[1] * 0.001f, player_mm[2] * 0.001f};
         sa::SetLocalPlayer(pos, mgscoop::partner_net::NowMs());
-        StringCchCopyA(debug_reply, ARRAYSIZE(debug_reply), "return {p=1}");
+        // FM1 round 6 (4): the reply carries soldier_act's phase lever (pl=1: soldier_act=calm, calm / caution only).
+        if (!sa::FormatPlayerReply(labc.soldier_act_calm ? 1u : 0u, debug_reply, ARRAYSIZE(debug_reply))) return refuse("format");
         return debug_reply;
     }
     if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
@@ -7131,8 +7132,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::soldier_act::ConfigureMirror(hooked, labc.role == mgscoop::LabRole::host);
                         const char* fire = mgscoop::partner_fire_filter::Install(base, Log);
                         const char* noise = mgscoop::partner_fire_filter::InstallNoise(base, Log);
-                        LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s\r\n", hooked ? "on" : "off",
-                                  labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok");
+                        LogFormat("soldier_act_mirror=%s; role=%s; fire=%s; noise=%s; phase=%s\r\n", hooked ? "on" : "off",
+                                  labc.role == mgscoop::LabRole::host ? "host" : "guest", fire ? fire : "ok", noise ? noise : "ok",
+                                  labc.soldier_act_calm ? "calm" : "all");
                     } else mgscoop::soldier_act::ConfigureMirror(false, labc.role == mgscoop::LabRole::host);
                     // The brain only with perception: the other copy of a guard is held back and relies on its owner
                     // seeing this player.

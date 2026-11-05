@@ -469,6 +469,30 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   shield takes the pick-up key (`9023e5c6`), and two rifle shots at 2.5 m left a sleeping guard asleep (`3c9d1250`);
   next: a firefight kill the guest then carries, or a CQC kill.
 
+#### 7.19 Enemy sync M7 FM1 round 6: the calm half, the 1 s re-apply, the version gate (lab key `soldier_act`, off)
+
+- **Walkers**: the puppet side re-applies an unchanged request every 1 s while the owner copy moves (its order-part
+  position >= 0.3 m from where it was at the last apply; `soldier_act::ReapplyDue`, `OwnerMoved`), else every 5 s as
+  before, and from the mailbox whether or not a new part arrived: the engine's catch-up in the unpack (gait + 1 at
+  2..5 m from the owner position, gait 3 and that destination beyond 5 m) then runs every second. With 5 s the walkers of
+  `adecad01` / `80cc0176` lagged 5-12 m (speed ratio p50 0.19 / 0.78). The apart release (7.16) waits for a still owner
+  copy (moved under 0.5 m for 2 s): the tower case only, not a lagging walker.
+- **Riders**: the far rule skips a guard whose `GetVehicleGameObjectId` is a game object (the guest never takes him, a
+  puppet who mounts is released `why=vehicle`, the host does not register him): `adecad01` puppeted two LRRP riders of
+  another CP at 297 m. [U] whether a soldier at a gun emplacement answers that command; the census has no emplacement
+  user yet, and the apart release covers a still owner copy whose puppet stands elsewhere.
+- **The phase lever** (plan decision D-FM1, the user's): `soldier_act=calm` turns the mirror on in calm / caution only
+  (`why=phase_limit` releases and skips a guard whose CP is in evasion / ALERT); `soldier_act=1` keeps every phase (the
+  behaviour of 7.16). It rides in soldier_act's own value and the `ACT_V1 p` reply (`pl`), no CFG bit (r[19] has none
+  free). By 7.16's rule R(ALERT) is 261 m, so an ALERT puppet exists only 276-300 m out.
+- **Version gate** (protocol section 36): a 0.15.0 partner connects (the handshake checks only `kLinkVersion` 2) but has
+  no SOLDIER_ACT and no ACT_CAPS. Each PC with `soldier_act` sends ACT_CAPS (0x5C, caps bit 1, revision 6) once per
+  pairing and mission start, and the far mirror runs only after the partner's ACT_CAPS with bit 1: against an old
+  partner (or one with the key off) nothing of it runs (no registration, no SOLDIER_ACT part, no puppet; `why=peer`).
+  The defaults send nothing new. Unit-tested with an old partner (world_align_lua_check, world_wire_tests).
+- **Logs**: `soldier_act_frame` adds `payload_ids` (the aim-target swaps), `due`, `reapply`, `expired`;
+  `event=mirror_caps`, `event=mirror_peer`, `soldier_act_mirror=...; phase=calm|all`.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
