@@ -1,7 +1,8 @@
 ## November 5, 2026: horse M3c, ride behind your partner (`wp/horse`; `world_horse_pillion` on with the gun profile)
 
 **Players get:** beside the D-Horse your partner rides, press E and you sit behind them, on both screens, while they
-walk, trot and gallop; hold E to hop off on the left; if they get off, you are both off; if the link drops you are laid
+walk, trot and gallop; hold E to hop off (the frames show the horse's right, not the left this entry said; see the
+corrections entry above); if they get off, you are both off; if the link drops you are laid
 beside the horse. Within about 2.5 m of a horse your partner rides E takes the seat behind (before: E did nothing within
 4 m); farther out E works as usual. Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role
 orders, the key not named); not tried by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
@@ -14,15 +15,17 @@ orders, the key not named); not tried by two people yet. Details: `docs/mounts.m
   screen); `step=tie` on both copies; `world_horse_pillion` follows the gun profile (lab and play; a named 0 is off).
 - **Found [O]:** the host-driven 16 s stall was the scenario (its first ride key came 17 s after a stray claim, then a
   cliff, run `7c0b9e71` re-read against the worker's input ticks); with the keys right after the claim the horse moves
-  0.5 m within 266-583 ms of the first key in both orders. No M3c run logged an Unconscious horse (life 12000 throughout);
+  0.5 m within 266-1034 ms of the first key in both orders (corrected: 1034 ms host `5687aa1c`, 600 ms host `85a49831`;
+  `step=stall` 2 / 1 / 3 in `93b59ae4` / `85a49831` / `e284fb1c`, the horse against rock [I], none in the gate runs). No M3c run logged an Unconscious horse (life 12000 throughout);
   [I] round 1's falls came from body 0 dropping onto the horse (mode 2: 1-2.3 m under its target).
 - **Proven** (both logs, both role orders, frames looked at; lab `51f6a2cc`, play `4f52fa2a`, both `-WanSim bad`, the key not
   named; earlier attempts `763f071d`/`f3d04eca`, `93b59ae4`/`5687aa1c`, `85a49831`/`e284fb1c`): the claim, the grant or
   the host's own press, two riders on the driver's screen and the passenger behind the driver on their own screen at
-  idle / walk / trot / gallop, passenger seat_pin 0 / 0 after the first window (body 1 within 50 cm / 36 cm of the seat on
+  walk / trot / gallop (corrected: not every idle / stop side view shows both bodies; order (b)'s driver side views show
+  none, and on their own screen the passenger is mostly hidden behind the driver), passenger seat_pin 0 / 0 after the first window (body 1 within 50 cm / 36 cm of the seat on
   the driver's screen after the first second), hop-off, both off on the driver's dismount, the first E at the unridden
   horse mounting, no stall line, no Unconscious line, the link drop laying the passenger beside the horse
-  (`why=context` on the passenger's copy, `why=stream_lost` on the driver's), an unmasked E 3.7-4.0 m from the ridden horse
+  (`why=context` on the passenger's copy, `why=stream_lost` on the driver's), an unmasked E 3.16-4.04 m from the ridden horse
   (`step=e_free; hold=0; masked=0`), and the tie logged on both copies.
 - **Not yet:** the tie's second half (both press E at an empty horse at once: the host drives, but the guest stays on their
   own copy's horse; no get-off by code: no Lua command, 0x141230B30 is a generic ride-state request whose get-off id is [U]);
