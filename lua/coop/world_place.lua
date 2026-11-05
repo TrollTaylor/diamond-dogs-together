@@ -109,13 +109,18 @@ do
                 b.pend = nil
             end
             if not why then return unhold(c.h, "landed") end
-            if P.rz[c.h] or not (W.reachOn and why == "unrealized" and c.native == "relayed" and c.kind == 3 and c.en) then return end
+            if why == "unrealized" and c.native == "relayed" and c.kind == 3 and c.en then P.hold(c.h, c.en.id) end
+        end
+        -- One hold: placements (above) and the M4 stream's relayed steps (world_snap.lua S.drive; run 9023e5c6: 18 / 22 of
+        -- the relays there, and the native backoff after them refused the corrections).
+        function P.hold(h, id)
+            if not W.reachOn or P.rz[h] or type(id) ~= "number" or (W.feature and W.feature.staffPlace) then return end
             local n = 0
             for _ in pairs(P.rz) do n = n + 1 end
-            if n >= P.RZ_MAX or (W.feature and W.feature.staffPlace) then return end
-            local ok = pcall(W.api.send, c.en.id, {id = "SetForceRealize"})
-            P.rz[c.h] = {id = c.en.id, at = W.now()}
-            L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d", c.h, ok and 1 or 0, n + 1)
+            if n >= P.RZ_MAX then return end
+            local ok = pcall(W.api.send, id, {id = "SetForceRealize"})
+            P.rz[h] = {id = id, at = W.now()}
+            L("event=realize_hold;ent=%.0f;on=1;ok=%d;n=%d", h, ok and 1 or 0, n + 1)
         end
         -- The M4 stream's reach (world_snap.lua S.produce): a guard d mm from the other player within 60 m of it, or with
         -- place_reach within 160 m of it when he stands within 60 m of this player (the receiver drives to 160 m; the
