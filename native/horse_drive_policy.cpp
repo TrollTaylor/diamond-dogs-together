@@ -57,12 +57,15 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     } else if (word("read")) {
         r.verb = Verb::read;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
-    } else if (word("hold0")) {
-        r.verb = Verb::hold0;
+    } else if (word("hold0") || word("hold1")) {
+        r.verb = p[-1] == '1' ? Verb::hold1 : Verb::hold0;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
             !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]) ||
-            !number(0, 3, v[7]))
+            !number(0, 15, v[7]))
             return false;
+    } else if (word("free0")) {
+        r.verb = Verb::free0;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
     } else if (word("pad")) {
         r.verb = Verb::pad;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1])) return false;
@@ -176,6 +179,15 @@ bool RiderBody(std::uint64_t now_ms, float (&p)[3]) noexcept {
     if (!g_body_ok || now_ms < g_body_ms || now_ms - g_body_ms > kAnchorMs) return false;
     std::memcpy(p, g_body, sizeof(g_body));
     return true;
+}
+void NoteSeatErr(SeatErr& e, const float (&seat)[3], const float (&body)[3]) noexcept {
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(seat[i]) || !std::isfinite(body[i])) return;
+    const float dx = body[0] - seat[0], dz = body[2] - seat[2], dy = body[1] - seat[1];
+    const float xz = std::sqrt(dx * dx + dz * dz);
+    if (xz > e.xz_max) e.xz_max = xz;
+    if (std::fabs(dy) > std::fabs(e.dy_max)) e.dy_max = dy;
+    ++e.n;
 }
 void Reset() noexcept {
     g_placed_ms = g_body_ms = g_seat_ms = 0;

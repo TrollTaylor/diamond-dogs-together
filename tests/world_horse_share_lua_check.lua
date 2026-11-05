@@ -105,6 +105,18 @@ check(#f.places == n + 1 and f.places[n + 1].x == 55000 and f.places[n + 1].z ==
 check(f.logged("event=horse_share;step=final;placed=1;reason=ok") and f.logged("step=end;why=final"), "step=final, the track ends")
 check(not f.S.hold and f.masks[#f.masks][1] == "reset" and not f.S.busy(), "the hold is released: the first E mounts")
 check(f.W.travel.blocked() == nil, "Travel free again")
+-- BODY0 round (runs 911ce293 / 144d99bb): the downed player held on the horse as cargo never gets the ride hold: its release
+-- at the dismount (ResetPadMask) came with the victim's body going from lying to crouched on their own screen.
+do
+ local g = fixture()
+ g.W.horseCargo = {state = "cargo", busy = function() return true end}
+ for i = 0, 6 do g.fast(5000 + i * 50, 10000, 2000, 30000, 100); g.tick(50) end
+ local q = g.places[#g.places]
+ g.env.vars.playerPosX, g.env.vars.playerPosZ = q.x / 1000, q.z / 1000
+ g.fast(5400, q.x, 2000, q.z, 100)
+ g.tick(50)
+ check(not g.S.hold and #g.masks == 0 and not g.logged("event=horse_hold;step=action_masked;"), "cargo on the horse: no ride hold")
+end
 f.fast(6000, 60000, 2000, 30000, 0)
 f.tick(50)
 check(not f.S.track and #f.places == n + 1, "a late datagram after the final pose is ignored")

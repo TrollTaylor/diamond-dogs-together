@@ -21,7 +21,8 @@ local SEND_MS, CLOSED_MS, STATS_MS, HOLD_MM, FREE_MM, LEAP_MM = 50, 700, 2000, 4
 local PILLION_HOLD_MM, PILLION_FREE_MM = 2500, 2800
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
 S.HOLD_MM, S.FREE_MM, S.SEND_MS, S.PILLION_HOLD_MM, S.PILLION_FREE_MM = HOLD_MM, FREE_MM, SEND_MS, PILLION_HOLD_MM, PILLION_FREE_MM
--- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (unproven for the default).
+-- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (the default with the gun profile
+-- since M3c: lab 51f6a2cc / play 4f52fa2a, the key not named).
 local function holdRange()
  local P = W.horsePillion
  if type(P) == "table" and type(P.keyOn) == "function" and P.keyOn() == true then return PILLION_HOLD_MM, PILLION_FREE_MM end
@@ -190,7 +191,10 @@ function S.apply(t)
  if L and type(px) == "number" and type(pz) == "number" then
   local d = sqrt((px * 1000 - L[1]) ^ 2 + (pz * 1000 - L[3]) ^ 2)
   local hold, free = holdRange()
-  if not S.hold and d < hold then
+  -- BODY0 round: never for this copy's downed player held on the horse (its release at the dismount crouched the body).
+  local HC = W.horseCargo
+  local cargo = type(HC) == "table" and HC.state == "cargo"
+  if not S.hold and d < hold and not cargo then
    if setHold(true) and type(W.log) == "function" then W.log(fmt("event=horse_hold;step=action_masked;dist_cm=%d", round(d / 10))) end
   elseif S.hold and d > free then release("far") end
  end
@@ -203,7 +207,8 @@ W.handlers[FAST] = function(v)
   if S.closedAt and t - S.closedAt < CLOSED_MS then return end
   local tr = S.track
   if not tr then
-   if S.localRides() then return end
+   -- M3c: the partner rides too (a same-moment tie): world_horse_pillion's step=tie.
+   if S.localRides() then S.partnerRidesAt = t; return end
    tr = {samples = {}}
    S.track, S.stats, S.last, S.lastB, S.gen = tr, {placed = 0, refused = 0, leap = 0, anchored = 0, gap = 0, errs = {}, up = 0, n = 0, at = t},
     nil, nil, nil

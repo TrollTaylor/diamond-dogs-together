@@ -56,6 +56,7 @@
 #include "mgscoop/dog_guard.hpp"
 #include "mgscoop/buddy_capacity_census.hpp"
 #include "mgscoop/buddy_capacity_walker.hpp"
+#include "mgscoop/horse_body_watch.hpp"
 #include "mgscoop/horse_drive.hpp"
 #include "mgscoop/buddy_capacity_pins.hpp"
 #include "mgscoop/buddy_ride_read.hpp"
@@ -5267,9 +5268,14 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
             labc.world_horse_cargo?1u:0u,labc.world_horse_pillion?1u:0u))) return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
+    // BODY0 free0: the write watch and pin on body 0 end before a take-down / lay-down Warp (never refused).
+    if(q.verb==hd::Verb::free0) {
+        mgscoop::horse_body_watch::Release();
+        return finish("return {ready=true,freed=true}");
+    }
     const auto refuse=[&](const char* why) noexcept {
         ++horse_drive_log.refusals;
-        if((q.verb==hd::Verb::place || q.verb==hd::Verb::hold0 || q.verb==hd::Verb::seat1) && horse_drive_log.last!=why) {
+        if((q.verb==hd::Verb::place || q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1 || q.verb==hd::Verb::seat1) && horse_drive_log.last!=why) {
             horse_drive_log.last=why;
             LogFormat("horse_drive=refused; reason=%s; n=%u; places=%u\r\n",why,horse_drive_log.refusals,horse_drive_log.places);
         }
@@ -5297,8 +5303,12 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
         if(!labc.world_horse_pillion) return refuse("off");
         mgscoop::partner_input::PadRaw raw{};
         if(!pp::ReadPad(partner_addresses,player,raw)) return refuse("pad");
-        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,e=%u,masked=%u}",
-            hd::RawAction(raw.src_w[0],raw.kb_w[0])?1u:0u,(raw.pp_mask[0]&0x20u)?1u:0u))) return finish("return {ready=false,reason='read'}");
+        // M3c: the getter's word with the mask, the button mask and the move stick's magnitude (the driver's stall watch).
+        const auto eff=mgscoop::partner_input::Effective(raw);
+        const float mag=std::isfinite(eff.mag)?eff.mag:0.f;
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,e=%u,masked=%u,held=%lu,bm=%lu,mag=%ld}",
+            hd::RawAction(raw.src_w[0],raw.kb_w[0])?1u:0u,(raw.pp_mask[0]&0x20u)?1u:0u,static_cast<unsigned long>(eff.held),
+            static_cast<unsigned long>(raw.pp_mask[0]),static_cast<long>(std::lround(mag*1000.f))))) return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     const auto now=GetTickCount64();const auto thread=GetCurrentThreadId();
@@ -5314,11 +5324,15 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     const bool pendRead=UpperPhaseRead(nullptr,a.record+0x2e3,pend,sizeof(pend));
     const unsigned gen=hd::Generation(horse.records,horse.receiver,horse.realized_mask);
     if(q.verb==hd::Verb::read) {
+        // M3c: record 0's life from the receiver's life table (SetMaxLife's loop, a pinned site; -1 unreadable).
+        std::uint16_t life=0,maxLife=0;
+        const bool lifeOk=hd::ReadLife(horse.receiver,0,life,maxLife);
         if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-            "return {ready=true,id=%u,realized=%s,occupied=%s,rider=%u,pending=%u,x=%ld,y=%ld,z=%ld,yaw=%ld,gen=%u}",
+            "return {ready=true,id=%u,realized=%s,occupied=%s,rider=%u,pending=%u,x=%ld,y=%ld,z=%ld,yaw=%ld,gen=%u,life=%ld,maxlife=%ld}",
             unsigned(a.game_id),a.realized?"true":"false",a.occupied?"true":"false",unsigned(a.rider),
             pendRead?unsigned((pend[0]?1u:0u)|(pend[1]?2u:0u)):4u,RideMilli(a.position[0]),RideMilli(a.position[1]),
-            RideMilli(a.position[2]),RideHeading(a.position[3]),gen))) return finish("return {ready=false,reason='read'}");
+            RideMilli(a.position[2]),RideHeading(a.position[3]),gen,lifeOk?long(life):-1L,lifeOk?long(maxLife):-1L)))
+            return finish("return {ready=false,reason='read'}");
         return finish(reply);
     }
     // M3 seat1 (world_horse_pillion): this copy's player rides the shared horse with the partner behind; the lease (on the
@@ -5336,25 +5350,56 @@ bool SelectHorseDriveReceipt(const char* buffer,std::size_t size,mgscoop::script
     }
     // M2 hold0 (world_horse_cargo): this copy's own downed body 0 lying on its horse, moved as the partner driver's xform
     // mover moves body 1 (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset; the partner contract's pinned T slots).
-    if(q.verb==hd::Verb::hold0) {
+    // BODY0 round hold1: the carrier's copy holds body 1 (the downed partner) the same way (world_horse_cargo only; also
+    // while this copy's player rides the horse).
+    if(q.verb==hd::Verb::hold0 || q.verb==hd::Verb::hold1) {
+        const unsigned kb=q.verb==hd::Verb::hold1?1u:0u;
         hd::HoldScope hs{};
-        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=labc.world_horse_pillion;hs.pins=sc.pins;hs.field=sc.field;
+        hs.share=labc.world_horse_share;hs.cargo=labc.world_horse_cargo;hs.pillion=kb==0 && labc.world_horse_pillion;hs.pins=sc.pins;
+        hs.field=sc.field;
         pp::Census bodies{};
-        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[0].t && bodies.k[0].t68 &&
-            bodies.k[0].t70;
-        hs.mounted=a.occupied && a.rider==0;
+        hs.body=!pp::ResolveCensus(partner_addresses,player,bodies) && bodies.k[0].id==0 && bodies.k[kb].id==kb && bodies.k[kb].t &&
+            bodies.k[kb].t68 && bodies.k[kb].t70;
+        hs.mounted=kb==0 && a.occupied && a.rider==0;
         if(const char* why=hd::HoldRefusal(hs)) return refuse(why);
-        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];
-        // Warp's resets on request, only for body 0's objects of body 1's class and slot (as ApplyTransform's guard).
+        const auto& b0=bodies.k[0];const auto& b1=bodies.k[1];const auto& bh=bodies.k[kb];
+        // Warp's resets on request, only while body 0's and body 1's objects share their class and slot (ApplyTransform's guard).
         const bool wantC=(q.reset&2)!=0,wantA=(q.reset&1)!=0;
-        if(wantC && (!b0.c0 || !b0.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
-        if(wantA && (!b0.a0 || !b0.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
-        if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),b0.t,b0.t_vt,b0.t70,b0.t68,float(q.x)/1000.f,
-                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f,wantC?b0.c0:0,wantC?b0.c090:0,
-                                        wantA?b0.a0:0,wantA?b0.a080:0,b0.id)) return refuse(why);
+        if(wantC && (!bh.c0 || !bh.c090 || b0.c0_vt!=b1.c0_vt || b0.c090!=b1.c090)) return refuse("reset");
+        if(wantA && (!bh.a0 || !bh.a080 || b0.a0_vt!=b1.a0_vt || b0.a080!=b1.a080)) return refuse("reset");
+        // BODY0 round: the write watch (bit 2) and pin (bit 3) on body 0's transform (native/include/mgscoop/horse_body_watch.hpp),
+        // set up before hold0's own write (its trap is order 0; the pin target is what it writes).
+        namespace hbw=mgscoop::horse_body_watch;
+        const bool watch=(q.reset&(hbw::kWatchBit|hbw::kPinBit))!=0;
+        if(watch) {
+            if(const char* why=hbw::BeforeHold(reinterpret_cast<std::uintptr_t>(base),span,bh.t,float(q.x)/1000.f,float(q.y)/1000.f,
+                                               float(q.z)/1000.f,(q.reset&hbw::kPinBit)!=0)) return refuse(why);
+        }
+        if(const char* why=hd::HoldBody(reinterpret_cast<std::uintptr_t>(base),bh.t,bh.t_vt,bh.t70,bh.t68,float(q.x)/1000.f,
+                                        float(q.y)/1000.f,float(q.z)/1000.f,float(q.yaw)/1000.f,wantC?bh.c0:0,wantC?bh.c090:0,
+                                        wantA?bh.a0:0,wantA?bh.a080:0,bh.id)) return refuse(why);
         if(!horse_drive_log.holds++ || horse_drive_log.last) {
-            LogFormat("horse_drive=held; n=%u; body=0\r\n",horse_drive_log.holds);
+            LogFormat("horse_drive=held; n=%u; body=%u\r\n",horse_drive_log.holds,kb);
             horse_drive_log.last=nullptr;
+        }
+        // Every 2 s: the writers of body 0's centre / foot y since the last report (rva, count, thread, order after hold0,
+        // the first image return rvas on the writer's stack) and how often the pin put the body back.
+        static std::uint64_t watchAt=0;
+        const std::uint64_t watchNow=GetTickCount64();
+        if(watch && watchNow-watchAt>=hbw::kReportMs) {
+            watchAt=watchNow;
+            hbw::Table wt{};std::uint32_t threads=0;
+            if(hbw::Take(wt,threads)) {
+                LogFormat("horse_drive=watch; traps=%u; writers=%u; dropped=%u; pinned=%u; threads=%u; pin=%u\r\n",wt.traps,wt.used,
+                    wt.dropped,wt.pinned,threads,(q.reset&hbw::kPinBit)?1u:0u);
+                for(std::uint32_t i=0;i<wt.used;++i) {
+                    const auto& r=wt.rip[i];
+                    LogFormat("horse_drive=watch_rip; rva=0x%x; n=%u; tid=%u; ord=%u-%u; ret=0x%x,0x%x,0x%x,0x%x\r\n",r.rva,r.n,r.tid,
+                        r.ord_min,r.ord_max,r.ret[0],r.ret[1],r.ret[2],r.ret[3]);
+                }
+            } else {
+                LogFormat("horse_drive=watch; traps=0; threads=%u\r\n",threads);
+            }
         }
         return finish("return {ready=true,held=true}");
     }

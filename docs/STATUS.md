@@ -1,3 +1,100 @@
+## November 5, 2026: horse M3d, ride behind your partner corrected as the skeptic checked it (`wp/horse`; `world_horse_pillion` still on with the gun profile)
+
+**Players get:** getting off the back of your partner's horse (hold E, your partner getting off, or a link drop) now
+puts you on the ground the horse just crossed, about 2 m behind it, or where you stood when you got on. Before, it put
+you 1.3 m to the horse's right (not its left, as the M3c entry said), and next to a rock wall that was inside the rock.
+Once the ride hold is on, E within 2.8 m of the horse always takes the seat (between 2.5 and 2.8 m it did nothing).
+Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role orders, the key not named); not tried
+by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
+
+- **Built** (red first each time): the lay-off order ridden path 2-4 m back (`at=trail`), then the claim-time spot within
+  5 m (`at=foot`), then the old side point (`at=side`, only a jump of the placed horse) (5bc07a4b / 54e96e67, c20e65d7 /
+  7564a60a); the claim inside the ride hold's 2.5 / 2.8 m band (unit-tested; [U] live: no scenario presses E in the band).
+  No wire, note, CFG or native change.
+- **Proven [O, both logs, frames looked at on both copies]:** lab `d795ab11` (at 54e96e67) and `da67ef81`, play
+  `975a0641` (at 7564a60a; `-WanSim bad`, the key not named, receipt source hashes equal the tested tree): every hop-off
+  (orders (a) and (b) in each run) logs `at=trail` and shows the passenger on the ground behind the horse on their own
+  screen and beside its rear on the driver's (also by the rock walls of the routes); the lab link drops log `at=trail`
+  and show the passenger standing on open ground on their own screen; the driver's
+  dismount right after the second seating logs `at=foot` and shows them standing beside the horse (`da67ef81`,
+  `975a0641`). Seat pin 0 / 0 after the first window of each seating (39-58 cm in it); no Unconscious, horse_hit or crash
+  line; `975a0641` passed every step, `da67ef81` / `d795ab11` every step but the drop part's known `world_inactive` expect.
+- **Failed on the way [O]:** play `16f3f282` / `023f9167` (at 54e96e67): the driver's dismount right after a seating used
+  the side point and put the passenger inside the rock on their own screen (frames `guest-h3-both-off-guest`), and the
+  guest's next first E at the unridden horse then did not mount (the part stopped there): the reason for `at=foot`.
+- **Corrected docs:** first_move 266-1034 ms (not 266-583); `step=stall` lines 2 / 1 / 3 in `93b59ae4` / `85a49831` /
+  `e284fb1c` and 1 in `975a0641` (b), each with rock ahead in the frames [I: terrain]; not every idle / stop side view shows
+  both bodies; e_free 3.16-4.04 m.
+- **Not yet:** the tie rule (plan item 5) is only logged (`getoff=none`); never seen live: the driver's dismount with the
+  guest driving, the `hold_keep` keepalive, the link drop in play mode, an E in the 2.5-2.8 m band. On their own screen a
+  passenger can still be crouched for a moment after landing (`da67ef81` host (b)).
+
+## November 5, 2026: horse M3c, ride behind your partner (`wp/horse`; `world_horse_pillion` on with the gun profile)
+
+**Players get:** beside the D-Horse your partner rides, press E and you sit behind them, on both screens, while they
+walk, trot and gallop; hold E to hop off (the frames show the horse's right, not the left this entry said; see the
+corrections entry above); if they get off, you are both off; if the link drops you are laid
+beside the horse. Within about 2.5 m of a horse your partner rides E takes the seat behind (before: E did nothing within
+4 m); farther out E works as usual. Seen in hidden two-copy tests (lab and play, a bad connection simulated, both role
+orders, the key not named); not tried by two people yet. Details: `docs/mounts.md` section 12. Markers [O]/[I]/[U].
+
+- **Built:** BODY0's body hold (hold0 + C0 + write watch + pin) as the passenger's default, a keepalive hold when a
+  placement is refused; the driver's census rider index and pad words on every drive line, `step=first_move` and
+  `step=stall`; e_free read from the raw pad verb with its mask bit; the passenger's copy's horse life in the read verb
+  (the D-Horse Lua dispatcher's SetMaxLife loop 0x140E4D340, a pinned site: contract 6 sites 5 slots) and
+  `step=horse_hit` on any 6656 Damage / Unconscious; `partner_pillion=stats` (body 1 against its rear seat on the driver's
+  screen); `step=tie` on both copies; `world_horse_pillion` follows the gun profile (lab and play; a named 0 is off).
+- **Found [O]:** the host-driven 16 s stall was the scenario (its first ride key came 17 s after a stray claim, then a
+  cliff, run `7c0b9e71` re-read against the worker's input ticks); with the keys right after the claim the horse moves
+  0.5 m within 266-1034 ms of the first key in both orders (corrected: 1034 ms host `5687aa1c`, 600 ms host `85a49831`;
+  `step=stall` 2 / 1 / 3 in `93b59ae4` / `85a49831` / `e284fb1c`, the horse against rock [I], none in the gate runs). No M3c run logged an Unconscious horse (life 12000 throughout);
+  [I] round 1's falls came from body 0 dropping onto the horse (mode 2: 1-2.3 m under its target).
+- **Proven** (both logs, both role orders, frames looked at; lab `51f6a2cc`, play `4f52fa2a`, both `-WanSim bad`, the key not
+  named; earlier attempts `763f071d`/`f3d04eca`, `93b59ae4`/`5687aa1c`, `85a49831`/`e284fb1c`): the claim, the grant or
+  the host's own press, two riders on the driver's screen and the passenger behind the driver on their own screen at
+  walk / trot / gallop (corrected: not every idle / stop side view shows both bodies; order (b)'s driver side views show
+  none, and on their own screen the passenger is mostly hidden behind the driver), passenger seat_pin 0 / 0 after the first window (body 1 within 50 cm / 36 cm of the seat on
+  the driver's screen after the first second), hop-off, both off on the driver's dismount, the first E at the unridden
+  horse mounting, no stall line, no Unconscious line, the link drop laying the passenger beside the horse
+  (`why=context` on the passenger's copy, `why=stream_lost` on the driver's), an unmasked E 3.16-4.04 m from the ridden horse
+  (`step=e_free; hold=0; masked=0`), and the tie logged on both copies.
+- **Not yet:** the tie's second half (both press E at an empty horse at once: the host drives, but the guest stays on their
+  own copy's horse; no get-off by code: no Lua command, 0x141230B30 is a generic ride-state request whose get-off id is [U]);
+  the driver's screen shows the passenger beside the horse for about a second after each seating; the passenger squats
+  (no seated pose until M4, D-H6) and sees the stock E / horse prompt; no aiming from the rear seat (M4); Africa untried.
+- **Next:** M4 (shoot from the back of the horse); the tie's get-off needs the ride state's get-off request named
+  (0x141230B30's callers in the ride states) or asked natively.
+
+## November 5, 2026: horse BODY0, a downed player's own body on the horse (`wp/horse`; `world_horse_cargo` still off unless named)
+
+**Players get:** nothing new at the defaults: the M2 gate did not pass in this round's four proof attempts, so
+`world_horse_cargo` stays off unless named (lab and play). With `world_horse_cargo=1` on both PCs it is now close: the
+downed partner lies across the horse's back on both screens while you walk, trot and gallop (play rides of 84-164 m),
+stays on when you get off, and the take-down and revive work; on the downed player's own screen they crouch on the horse
+once the carrier has got off (still down, still on the horse). Details: `docs/mounts.md` section 11. Markers [O]/[I]/[U].
+
+- **Built:** `native/horse_body_watch` (hardware write watches on the held body's transform on every thread, a first
+  vectored handler that records the writers and pins the body back to its target after the physics update; no code
+  patch; the contract pins T.vt+0x58), `hold0` / new `hold1` with reset 14 (C0 + watch + pin), `free0`, world_horse_cargo
+  holding body 0 on the victim's copy and body 1 on the carrier's, the Lua Warp only when the native has no hold, no ride
+  hold for the cargo; `pillion_pose` modes 3 and 6. Static [O]: Warp's C0 reset sets bit 0x20 of the 0x580 record's
+  +0x2C0, read only by C0.vt+0xD0 0x14128E010 ("no fall" for that frame), the pose fix; the A0 reset re-applies the
+  stance and drops the body.
+- **Found [O, run `911ce293`]:** what moves body 0 after the script tick: T's update 0x141AD2900 (called at 0x140B6C3CE)
+  writes the foot and centre at 0x141AD1F5E / 0x141AD1F7E right after the hold's own T.vt+0x58 write.
+- **Proven** (both logs, both role orders, frames looked at; lab and play `-WanSim bad`; runs `911ce293`, `dd0cd5d7`,
+  `144d99bb`, `7117d3ac`, `4585cc5a`): load, the first E mounting with the body on, lying on the horse on both screens at
+  walk / trot / gallop, the body kept on after the dismount, the R take-down at the same x,z on both copies, the revive,
+  the link drop laying them down on both (`144d99bb`), victim_pin lag 0 / drop 0, no horse knocked over during a ride
+  (`4585cc5a`, `7117d3ac`: no Unconscious line). M3 check `7c0b9e71`: with mode 6 the passenger squats on the horse behind
+  the driver on their own screen (seat_pin dy 0, was 1-2.3 m), no Unconscious line; the host-driven stall remains.
+- **What blocks the gate:** the downed player's own screen after the dismount (crouched on the horse, in both orders,
+  with or without the ride hold); the last lab session's (b) and link drop did not run (a placebehind fell through the
+  ground), and the lab (a) rides were 35-38 m.
+- **Next:** log body 0's action / posture words through the dismount on the victim's copy and keep the ridden height
+  while unridden; or the D-Horse cargo slot (route i, which the user now allows) for the engine's carried pose; then
+  M3 with mode 6 as its default.
+
 ## November 5, 2026: enemy round 7 track A - guards at the same height, the far fights: both gates not reached; `drive_vert` and `place_reach` stay off unless named (`wp/enemy-m7`, not pushed)
 
 Design 7.20, protocol section 37. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
