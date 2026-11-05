@@ -174,6 +174,26 @@ int main() {
         char tiny[8]{};
         Check(!sa::FormatActReply(false, k, tiny, sizeof(tiny)), "a short buffer is refused");
     }
+    // The fire-drop mask is a lease (skeptic of FM1, 7b709720): a puppet dropped without ACT_V1 r must not keep his
+    // bullets and noise dropped. The hook expires every bit not stamped again within kActFreshMs.
+    {
+        namespace au = mgscoop::soldier_authority;
+        au::ClearMirrored();
+        au::SetMirrored(15, true, 1000);
+        au::SetMirrored(16, true, 2000);
+        Check(au::ExpireMirrored(2400, sa::kActFreshMs) == 0 && au::Mirrored(0x400 | 15) && au::Mirrored(0x400 | 16),
+              "mirror lease: fresh stamps stay");
+        Check(au::ExpireMirrored(2600, sa::kActFreshMs) == 1 && !au::Mirrored(0x400 | 15) && au::Mirrored(0x400 | 16),
+              "mirror lease: a lapsed stamp clears (his fire and noise pass again)");
+        au::SetMirrored(16, true, 3000);
+        Check(au::ExpireMirrored(4000, sa::kActFreshMs) == 0 && au::Mirrored(0x400 | 16), "mirror lease: a new stamp extends it");
+        au::SetMirrored(17, true, 5000);
+        Check(au::ExpireMirrored(4990, sa::kActFreshMs) == 0 && au::Mirrored(0x400 | 17), "mirror lease: a stamp later than now is fresh");
+        au::SetMirrored(16, false);
+        Check(!au::Mirrored(0x400 | 16) && au::MirroredCount() == 1, "mirror lease: off clears at once");
+        Check(au::ExpireMirrored(1ull << 40, sa::kActFreshMs) == 1 && au::MirroredCount() == 0, "mirror lease: all lapse");
+        au::ClearMirrored();
+    }
     // The contract's layout constants match the decompile the census reads by.
     Check(c::record_stride == 0x1e0 && c::fob_this == 0x20 && c::m_soldier == 0x50 && c::m_codec == 0x58, "M layout");
     Check(c::s_netpos == 0xe0 && c::net_stride == 0x18 && c::net_count == 0x10 && c::net_flags == 0x14, "network position table");

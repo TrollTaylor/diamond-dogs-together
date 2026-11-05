@@ -68,7 +68,7 @@ local function fixture(host, level, mb)
         if source:find("'MGS_COOP_WORLD_ACT_V1'", 1, true) then
             c.acts = c.acts or {}
             c.acts[#c.acts + 1] = source
-            if source:find("-- p ", 1, true) then return {p = 1} end
+            if source:find("-- p ", 1, true) then return c.pReply or {p = 1} end
             return c.actReply or {f = 1, sh = c.shots or 0}
         end
         c.receipts[#c.receipts + 1] = source
@@ -1559,7 +1559,10 @@ if arg[7] and arg[8] then
     do
     local mg = guestFix(0)
     mg.W.snapOn, mg.W.actOn, mg.W.mission = true, true, 30010
-    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[3] == 138, 'FM1: R 80 m calm, 138 m ALERT (963ab276)')
+    -- R(ALERT) is 1.5 x the farthest ALERT hit (122.4 m on the host, run 3bc7280b) = 184 m, not capped: 12 copies stayed
+    -- realized out to 212 m (host) and 400 m (guest), so no realize radius was measured (skeptic of 7b709720).
+    check(mg.W.mirror and mg.W.mirror.R[0] == 80 and mg.W.mirror.R[2] == 184 and mg.W.mirror.R[3] == 184,
+        'FM1: R 80 m calm, 184 m evasion / ALERT (1.5 x 122.4 m, 3bc7280b)')
     mg.positions[1] = {0, 1.8, 100.0}
     ticks(mg, 4)
     local function acted(c, text)
@@ -1626,6 +1629,67 @@ if arg[7] and arg[8] then
     mh.positions[2] = {0, 1.8, 30.0}
     ticks(mh, 4)
     check(acted(mh, 't 1 1') and not acted(mh, 't 2 2') and acted(mh, 's 0 0'), 'FM1 host: a guard beyond R - 10 m of the guest is sent')
+    -- Skeptic of FM1 (7b709720): a guest shot and a guest-local phase rise release the puppets within one update, not when
+    -- the 12-per-update round robin reaches them (~0.8 s with ~280 roster entries); every way a puppet is dropped tells
+    -- native (ACT_V1 r), so the fire-drop mask never outlives him; the local player's ACT_V1 p backs off 10 s while the
+    -- hook is not installed (the defaults).
+    local function actCount(c, text)
+        local n = 0
+        for _, s in ipairs(c.acts or {}) do if s == "return 'MGS_COOP_WORLD_ACT_V1' -- " .. text then n = n + 1 end end
+        return n
+    end
+    local mr = guestFix(0)
+    mr.W.snapOn, mr.W.actOn, mr.W.mission = true, true, 30010
+    mr.positions[1] = {0, 1.8, 100.0}
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet (setup)')
+    mr.W.mirror.SCAN = 0                                   -- the round robin visits nobody
+    mr.shots = 1
+    ticks(mr, 1)
+    check(logged(mr, 'event=mirror;ent=3000000001;on=0;why=shot') and mr.W.mirror.pp[3000000001] == nil,
+        'FM1 release: a guest shot releases every puppet within one update')
+    mr.W.mirror.SCAN = 12
+    mr.now = mr.now + 16000
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: 15 s after the shot a puppet again')
+    mr.W.mirror.SCAN = 0
+    mr.W.cp[100].ownAt = mr.now + 1                         -- a guest-local phase rise in his CP
+    ticks(mr, 1)
+    check(logged(mr, 'event=mirror;ent=3000000001;on=0;why=phase') and mr.W.mirror.pp[3000000001] == nil,
+        'FM1 release: a guest-local phase rise in his CP releases him within one update')
+    mr.W.mirror.SCAN = 12
+    mr.now = mr.now + 16000
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet again after the rise')
+    mr.W.mirror.SCAN = 0
+    local r0 = actCount(mr, 'r 1 1')
+    mr.W.ent[3000000001].id = nil                           -- his game object is gone
+    ticks(mr, 1)
+    check(mr.W.mirror.pp[3000000001] == nil and actCount(mr, 'r 1 1') == r0 + 1,
+        'FM1 release: a puppet whose object is gone is released natively (r), not only forgotten')
+    mr.W.ent[3000000001].id = 1
+    mr.W.mirror.SCAN = 12
+    ticks(mr, 4)
+    check(mr.W.mirror.pp[3000000001] ~= nil, 'FM1 release: a puppet again (setup)')
+    local r1 = actCount(mr, 'r 1 1')
+    for _, f in ipairs(mr.W.startHooks) do f() end
+    check(next(mr.W.mirror.pp) == nil and actCount(mr, 'r 1 1') == r1 + 1,
+        'FM1 release: a mission start releases the puppets natively (r) before forgetting them')
+    local pb = guestFix(0)
+    pb.pReply = {refused = 'hook'}
+    local function pCount(c)
+        local n = 0
+        for _, s in ipairs(c.acts or {}) do if s:find(' -- p ', 1, true) then n = n + 1 end end
+        return n
+    end
+    ticks(pb, 60)
+    check(pCount(pb) == 1, 'FM1: ACT_V1 p refused (no hook, the defaults): not sent again for 10 s')
+    pb.now = pb.now + 10000
+    ticks(pb, 1)
+    check(pCount(pb) == 2, 'FM1: ACT_V1 p offered again after 10 s')
+    pb.pReply = nil
+    ticks(pb, 60)
+    check(pCount(pb) >= 8, 'FM1: ACT_V1 p every 250 ms once the hook takes it')
     end
     -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
     -- choice held 4 s); the guest never does.

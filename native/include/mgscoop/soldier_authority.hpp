@@ -51,7 +51,12 @@ std::uint32_t TakeShooterHits(std::uint16_t (&out)[kSoldiers]) noexcept;
 // Enemy sync M7 FM1 (the far mirror, soldier_act.hpp): the guards this copy mirrors (puppets replaying the owner's
 // requests). partner_fire_filter drops their RequestBullet and AddNoise (their shots are the owner copy's, seen only), and
 // counts the local player's own shots (the guest's shot releases every mirror puppet for 15 s). Lock-free; any thread.
-void SetMirrored(std::uint16_t index, bool on) noexcept;
+// The mask is a lease (skeptic of FM1, 7b709720: a puppet Lua dropped without ACT_V1 r kept his bullets dropped):
+// SetMirrored(on) stamps now_ms; ExpireMirrored clears every bit not stamped again within lease_ms (the soldier_act hook
+// calls it every update with kActFreshMs, the apply's own lease) and returns how many it cleared. A stamp later than
+// now_ms (another thread's clock read) is fresh.
+void SetMirrored(std::uint16_t index, bool on, std::uint64_t now_ms = 0) noexcept;
+unsigned ExpireMirrored(std::uint64_t now_ms, std::uint64_t lease_ms) noexcept;
 void ClearMirrored() noexcept;
 bool Mirrored(std::uint16_t attacker) noexcept;       // a soldier GameObjectId whose index is mirrored here
 unsigned MirroredCount() noexcept;
