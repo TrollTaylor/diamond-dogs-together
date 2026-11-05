@@ -9,7 +9,7 @@
 -- fired: every puppet, for 15 s), state (no longer NORMAL), stale (no fresh SOLDIER_ACT for 1.5 s), owner (M3 gave him to
 -- the guest), phase (a guest-local phase rise in his CP), paused (research command mirror off), key_off, unpaired,
 -- gone (his object is gone). Every release sends ACT_V1 r (and native lets the fire drop lapse 1.5 s after the last m).
--- The host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
+-- The host registers its own NORMAL guards within 300 m of the guest and beyond R - 10 m of it (ACT_V1 t), then sends
 -- (ACT_V1 s). The guest queries a candidate (ACT_V1 q: is his stream fresh? nothing armed) and sends m only for a
 -- puppet (the mailbox, the hook's apply and the fire drop). 12 guards are scanned per update (one GetPosition each),
 -- round robin; every puppet is checked every update (near, phase), and one m per update returns the guest's shots.
@@ -27,7 +27,8 @@ do
         -- 1.5 x the farthest ALERT hit, 122.4 m on the host (one hit, run 3bc7280b; 92 m in 963ab276; the guest's
         -- 82-87 m, 3bc7280b) = 184 m. No realize cap: 12 copies stayed realized out to 212 m (host) and 400 m (guest).
         M.R = {[0] = 80, [1] = 80, [2] = 184, [3] = 184}
-        M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
+        -- RANGE 300 m: the ALERT watch point (beyond R(ALERT) + 15 m of the fight) is ~255 m from it (FM1 retry).
+        M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 300, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
         M.P_WAIT = 10000  -- ACT_V1 p refused "hook" (the defaults: no hook installed): offered again after 10 s
         local function act(op, slot, id)

@@ -16,7 +16,7 @@
 namespace mgscoop::soldier_act {
 
 inline constexpr unsigned kMaxSoldiers = 512;
-inline constexpr float kCensusRangeM = 250.0f;
+inline constexpr float kCensusRangeM = 320.0f;  // past the far mirror's 300 m range (lua/coop/world_mirror.lua M.RANGE)
 inline constexpr std::uint64_t kCensusPeriodMs = 500, kBinsPeriodMs = 1000, kBandsPeriodMs = 10000, kPayloadPeriodMs = 2000;
 inline constexpr unsigned kBands = 11;  // 25 m bands 0..250 m, then beyond
 
