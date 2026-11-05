@@ -461,6 +461,7 @@ $script:LabPartnerKeys = @(
     # M1 host-owned companion (docs/vehicles-companions-design.md 6.1): the host's buddy is the
     # session's one companion (lab and play, default 0 until proven; written only when set).
     @{ Key = 'companion_host_owned'; Json = 'companion_host_owned'; Kind = 'bool' },
+    @{ Key = 'world_horse_share'; Json = 'world_horse_share'; Kind = 'bool' },
     # M3 sortie vehicle (docs/vehicles-companions-design.md 6.3): the host's relief vehicle on both
     # copies (lab and play, default 0: on from 5a6bac8 until the review of 2026-10-29; written only when set).
     @{ Key = 'world_relief'; Json = 'world_relief'; Kind = 'bool' },
