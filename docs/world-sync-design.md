@@ -706,7 +706,8 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   10000, attacker 0). The M3 owner rule is x/z (`P.ownerOf`, the PEER pose's x and z), so the guest stayed the owner of
   the ledge guards 5-30 m away horizontally; the host's range rule (`NearerSquared`) is 3D, so the guest 178 m below
   was not the nearer player, the host (70 m) was, and every placement beyond 60 m of the host was refused `range`
-  (ddcdec94: 0 of 110 applied while down, host place error p90 27 m from the bins; 90d9b4d1: 63 of 135, p90 21.7 m).
+  (ddcdec94: 0 of 110 applied while down, host place error p90 27 m from the bins; 90d9b4d1: 63 of 135, p90 21.7 m). [Corrected by session 2 below: the 3D rule is half of it;
+  the guest's pose is also not used at all while the host hides the guest's body for range.]
   - **Built**: `range_flat` (native only): the host's M3 placement range and its soft-follow range from the nearer
     player on the ground plane (x/z), as the owner rule; `world_place=host_warp` prints `flat`, the guest pose age and
     the guest's height over the target (`dgy_m`).
@@ -729,6 +730,26 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
     `unrealized`); host M3 p90 7.46 m over the run (its own 5 m row fails, as at the 0.15.1 defaults: 1870d1bf 6.89 m).
   - quiet_place then follows the gun profile (64ab8909 red / cde0cbb4 green); the down part drops the guest from the
     air on ddcdec94's fall line (436.105, 240.0, 2181.736).
+- **Session 2, `8b581a26`** (`range_flat=1, act_census=1`; quiet_place at its new default, not named; same two parts)
+  [O]:
+  - range_flat gate FAIL: the guest was downed (fell from the air point; the fall went on through the cliff foot to y
+    -79.65 at x/z 436.137, 2184.572, under the world; frame dd-1: "WOUNDED" over a pale void on the guest's screen,
+    "TEAMMATE WOUNDED" on the host's). While down (48 s) the host refused 142 of 142 placements `range`, all
+    `near=host flat=1`, `dgy_m` -268..-271 (the guest pose's y read as about 0); host M3 error while down p50 17.1 /
+    p90 27.4 m (bins; ddcdec94 without the key 27.1 m). 0 latches, faults, game overs.
+  - **The second cause** [O code + logs, corrects the bug 2 finding above]: the receipts take the guest's pose from the
+    partner body driver's `mission.cmd`, valid only while `have_cmd`. When the host's copy of the guest's body is hidden
+    for range (`partner_range=hide`, beyond 200 m in 3D: `distance_mm=200264` here, 202573 in ddcdec94 before its
+    refusals) or unrealized, `have_cmd` is false (partner_driver.cpp), `snapshot.remote_valid` is false and the remote
+    position is not copied (left 0), so `NearerSquared(Flat)` keeps only the host's leg: near=host whatever the plane.
+    The same invalid pose answers the Lua PEER receipt (the M3 owner rule's `dq`), so the owner falls back to the host
+    after 10 s. range_flat fixes the plane only; it cannot help while the body is hidden. It stays off unless named.
+  - quiet_place: no quiet move in this run [O]: this time the seed's 246 was 36.5 m off and the host sent no sample of
+    him in calm (no `place_div` of 246 on the guest), and the guest's 5 corrections in the down part were refused `far`
+    (the guest under the world, more than 250 m from them in 3D). 0 guest `req_phase` in calm.
+  - **Next for bug 2**: give the M3 / drive nearer rule (and PEER) the guest's network pose sample
+    (`partner_net::SampleRemote` x / y / z, age at most 1 s) when the body is range-hidden or unrealized, keep the x/z
+    plane (range_flat), then the same down part (the fall through the world reproduces it: 90d9b4d1, 8b581a26).
 
 ### 8. Soldier transforms (W6)
 
