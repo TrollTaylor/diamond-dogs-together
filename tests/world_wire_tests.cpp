@@ -114,10 +114,10 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 72, "72 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
+    Check(count == 73, "73 ops (world, rescue, companion, ride body, horse cargo, fast ride, ride tilt, vehicle gone, M1 companion "
                        "and character, M2 companion ack and pose, M4 vehicle state, M3 vehicle spawn, the guest's vehicle damage, "
                        "M6 seat, debug travel, game rules, debug arms, debug vehicle spawn, r1101 supply, r1101 fulton, enemy sync "
-                       "M3 place / ack / owner / engage, M4 soldier snap, and local ops)");
+                       "M3 place / ack / owner / engage, M4 soldier snap, M7 soldier hit, and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -142,7 +142,7 @@ void Table() {
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
                           {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22},
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}, {op::enemy_place, 30}, {op::enemy_place_ack, 12},
-                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}};
+                          {op::owner, 6}, {op::engage, 5}, {op::soldier_snap, 25}, {op::soldier_hit, 19}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
     Check(!world::FindOp(0) && !world::FindOp(0x32) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
@@ -1440,6 +1440,26 @@ void SoldierSnapOp() {
     Check(!g_guest.SnapPair(7, cur, prev), "a link session change clears them");
 }
 
+// Enemy sync M7 (docs/world-sync-protocol.md section 31): SOLDIER_HIT, both directions, control queue, level 3, play too.
+void SoldierHitOp() {
+    Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+    const world::OpSpec* s = world::FindOp(op::soldier_hit);
+    Check(op::soldier_hit == 0x4C && s && s->queue == 0 && s->dir == world::Dir::both && s->wire == world::Wire::reliable &&
+              s->level == 3 && s->lua == 6 && s->body == 19 && !s->lab_only && !s->request,
+          "SOLDIER_HIT: control queue, reliable, level 3, both directions, 19 bytes");
+    Check(Tx(g_host, op::soldier_hit, {7, 3, 12, 25000, 0, 1740692850}, 101) == world::TxStatus::ok, "the host's guard hit the guest");
+    Check(Tx(g_guest, op::soldier_hit, {8, 1, 4, 0, 2, 2961503}, 101) == world::TxStatus::ok, "the guest's guard slept the host");
+    Check(Tx(g_host, op::soldier_hit, {9, 3, 12, 25000, 1, 1740692850}, 101) == world::TxStatus::bad_args, "cause 0 or 2 only");
+    Check(Tx(g_host, op::soldier_hit, {9, 3, 12, 25000, 0, 0}, 101) == world::TxStatus::bad_args, "an attacker hash");
+    Exchange(102);
+    const auto g = Drain(g_guest, 1, 103), h = Drain(g_host, 1, 103);
+    Check(Count(g, op::soldier_hit) == 1 && Find(g, op::soldier_hit)->v[5] == 1740692850 && Find(g, op::soldier_hit)->v[3] == 25000 &&
+              Count(h, op::soldier_hit) == 1 && Find(h, op::soldier_hit)->v[4] == 2,
+          "each side hears the other's soldier hit once, on the control queue");
+    Setup(2, 2, true); Pair(30010, 200);
+    Check(Tx(g_host, op::soldier_hit, {7, 3, 12, 25000, 0, 1740692850}, 201) == world::TxStatus::disabled, "level 3 only");
+}
+
 void SpawnSync() {
     Setup();
     Pair(30010, 100);
@@ -2289,6 +2309,7 @@ int main() {
     SpawnSync();
     EnemyOwnerOps();
     SoldierSnapOp();
+    SoldierHitOp();
     RescueAndBuddies();
     RideFast();
     RideTilt();

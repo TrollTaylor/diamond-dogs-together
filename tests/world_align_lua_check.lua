@@ -1222,6 +1222,39 @@ if arg[7] and arg[8] then
     check(hp.receipts[#hp.receipts]:find("'MGS_COOP_WORLD_WARP_HOST_V1' -- 5 2", 1, true) and
         logged(hp, 'event=hplace;seq=5;ent=3000000002;kind=correct;result=applied') and #ack == 1 and ack[1].v[3] == 0 and
         #placeTx(hp, 35) == 0, 'M3: the host receipt, event=hplace, ENEMY_PLACE_ACK (never ENEMY_DEBUG_ACK)')
+    -- Enemy gaps (place_sink): the host reads its placed copy 2 s after landing although its FIFO is empty (runs d4460ea5,
+    -- 2d967b8a checked at 3.3 s and 8 s); a copy 3.3 m under the owner's newest sample is a sink, with owner_dy_m and moved_m.
+    check(#hp.P.q == 0 and hp.P.cur == nil and hp.P.sink[3000000002], 'place_sink: the host copy landed, FIFO empty')
+    hp.positions[2] = {100.5, -1.5, 0}
+    ticks(hp, 70)
+    check(logged(hp, 'event=place_sink;seq=5;ent=3000000002;land_dy_m=0.40;dy_m=-2.90;owner_dy_m=-3.30;moved_m=0.5'),
+        'place_sink: the host checks every tick, against the owner (owner_dy_m) and the travel (moved_m)')
+    -- A copy 3 m under its landing but level with its owner (the owner went down a step too) is a drop, not a sink.
+    local hq = followFixture(true)
+    hq.W.ownerOn = true
+    hq.positions[900] = {100.0, 0, 0}
+    hq.positions[2] = {95.0, 1.8, 0}
+    hq.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    hq.W.handlers[71]({5, 3000000002, 3, 100000, 1400, 0, 0, 0, 0, 2}, hq.now)
+    hq.positions[2] = {100.0, 1.8, 0}
+    ticks(hq, 6)
+    hq.W.handlers[71]({6, 3000000002, 3, 100000, -1600, 0, 0, 0, 0, 2}, hq.now)
+    hq.positions[2] = {100.0, -1.2, 0}
+    ticks(hq, 70)
+    check(logged(hq, 'event=place_drop;seq=5;ent=3000000002;land_dy_m=0.40;dy_m=-2.60;owner_dy_m=0.00;moved_m=0.0') and
+        not logged(hq, 'event=place_sink;'), 'place_drop: down with its owner')
+    -- place_lift (CFG r[19] bit 128, W.liftOn): placements and the stream carry the owner's own GetPosition y (LIFT 800).
+    local lf = followFixture(true)
+    lf.W.liftOn = true
+    lf.P.reset()
+    lf.W.handlers[OP.PAIRED]({7, 30010, lf.W.roster, 5, 1, 3})
+    lf.positions[1] = {10.0, 1.8, 0}
+    ticks(lf, 4)
+    check(lf.P.LIFT == 800 and #sentFor(lf, ENT1) == 1 and sentFor(lf, ENT1)[1].v[5] == 1800,
+        'place_lift: the scan sends GetPosition y (1800), not y - 800 + 400 (1400)')
+    local nl = followFixture(true)
+    nl.P.reset()
+    check(nl.P.LIFT == 400, 'without place_lift: LIFT 400')
     -- A guest place-first (flag 4) moves the host's copy only while the host's player is over 40 m away or the gap is
     -- under 3 m; meanwhile the host's apply of that guest outcome waits (W.placeHoldHost, at most 1.5 s).
     local hv = followFixture(true)
@@ -1339,6 +1372,21 @@ if arg[7] and arg[8] then
     check(#ss.drives == n1 and not ss.W.snapDriving(ENT1, ss.now), 'M4: a stale stream backs the guard off')
     ticks(ss, 10)
     check(#ss.drives > n1, 'M4: and tries again after 500 ms')
+    -- Enemy gaps: a driven copy 1.5 m under its owner for 2 s logs event=drive_sink once (v: its y minus the target's, cm).
+    local sk = guestFix(180)
+    sk.W.snapOn = true
+    sk.positions[1] = {0, 1.8, 20.0}
+    sk.driveReply = {e = 50, s = 1, r = 0, h = 1, v = -300}
+    ticks(sk, 30)
+    check(not logged(sk, 'event=drive_sink;'), 'drive_sink: not before 2 s')
+    ticks(sk, 40)
+    check(logCount(sk, 'event=drive_sink;ent=3000000001;off_m=-3.40;e_cm=50') == 1, 'drive_sink: once, 3.4 m under the owner')
+    local sl = guestFix(180)
+    sl.W.snapOn = true
+    sl.positions[1] = {0, 1.8, 20.0}
+    sl.driveReply = {e = 50, s = 1, r = 0, h = 1, v = 40}
+    ticks(sl, 80)
+    check(not logged(sl, 'event=drive_sink;'), 'drive_sink: level with the owner (v = +0.4 m with LIFT 400) is none')
     -- Enemy sync M6 (W.bodyOn, docs/world-sync-design.md 7.12) ---------------------------------------------------------
     -- A body carried more than 1.5 m and at rest 1.5 s is reported (host: ENEMY_DEBUG kind 3 flag 8, 0.2 m over it).
     local bh = followFixture(true)
@@ -1442,6 +1490,52 @@ if arg[7] and arg[8] then
     pg.positions[1] = {0, 1.8, 90.0}
     ticks(pg, 2)
     check(cmdCount(pg, 'SetPuppet') == 2 and logged(pg, 'event=puppet;ent=3000000001;on=0'), 'M7: outside 60 m set back')
+    -- M7 step 1 (W.perceiveOn): the host tells native soldier_perceive each sampled guard's nearer player (3 m band, a
+    -- choice held 4 s); the guest never does.
+    local pick = sh.W.snap.pick
+    check(pick(nil, 400e6, 100e6, 0) == 1 and pick(nil, 100e6, 400e6, 0) == 0 and pick(nil, 400e6, nil, 0) == 0,
+        'M7 perceive: the nearer player, the host when the guest is unknown')
+    check(pick(1, (21000) ^ 2, (19000) ^ 2, 9000) == 1 and pick(0, (21000) ^ 2, (19000) ^ 2, 9000) == 0,
+        'M7 perceive: within the 3 m band the choice stays')
+    check(pick(1, (10000) ^ 2, (30000) ^ 2, 3000) == 1 and pick(1, (10000) ^ 2, (30000) ^ 2, 4000) == 0,
+        'M7 perceive: a change waits until the choice is 4 s old')
+    local function perceiveFix(host, on)
+        local c = followFixture(host)
+        c.W.perceiveOn = on
+        local recv = c.W.receipt
+        c.perceive = {}
+        c.W.receipt = function(source)
+            local text = source:match("^return 'MGS_COOP_SOLDIER_PERCEIVE_V1' %-%- (.*)$")
+            if text then
+                c.perceive[#c.perceive + 1] = text
+                if text == 'status' then return 1, 1, 1, 1 end
+                return 1
+            end
+            return recv(source)
+        end
+        c.positions[900] = {100.0, 0, 0}     -- the partner body
+        c.positions[1] = {10.0, 1.8, 0}      -- 10 m from the host, 90 m from the partner
+        c.positions[3] = {70.0, 1.8, 0}      -- 70 m from the host, 30 m from the partner
+        return c
+    end
+    local function has(c, text) for _, t in ipairs(c.perceive) do if t == text then return true end end return false end
+    local pv = perceiveFix(true, true)
+    ticks(pv, 4)
+    check(pv.perceive[1] == 'clear' and has(pv, '1 0') and has(pv, '3 1') and
+        logged(pv, 'event=perceive;ent=3000000003;idx=3;target=1;dh_m=70;dq_m=30'), 'M7 perceive: the host sends each guard\'s player')
+    local before = #pv.perceive
+    ticks(pv, 40)
+    check(not has(pv, '3 0') and #pv.perceive - before <= 1, 'M7 perceive: sent on a change only')
+    pv.positions[3] = {20.0, 1.8, 0}
+    ticks(pv, 400)
+    check(has(pv, '3 0') and logged(pv, 'event=perceive;ent=3000000003;idx=3;target=0'), 'M7 perceive: back to the host when it is nearer')
+    check(logged(pv, 'event=perceive_stats;native=1;t0=1;t1=1;auto=1;sent='), 'M7 perceive: the stats line')
+    local pq = perceiveFix(false, true)
+    ticks(pq, 40)
+    check(#pq.perceive == 0, 'M7 perceive: never on the guest')
+    local po = perceiveFix(true, false)
+    ticks(po, 40)
+    check(#po.perceive == 0, 'M7 perceive: off without the key')
 end
 -- Mother Base (30050, feature allCp): no area trap ever sets W.activeCp, so every CP counts as loaded. The
 -- snapshot reads each soldier (before: all unreadable, the guest refused it and W1 never came on), the guest

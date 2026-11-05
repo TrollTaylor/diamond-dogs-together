@@ -631,6 +631,7 @@ struct Settings {
     // nslot= triggers; play runs nslot=call as write).
     PartnerNativeReload nreload;
     PartnerNativeSlot nslot;
+    bool nslot_rearm;  // A1: partner_native_slot_rearm (the follower's drift re-arm)
     // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
     PartnerNativeEquip nequip;
     PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
@@ -1369,7 +1370,7 @@ struct Mission {
     std::uint64_t slot_plan_key;
     LogCap slot_cap;
     // The follower's last logged verdict (hook totals: writes, refusals).
-    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last;
+    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last, slot_logged_rearms;
     // The generalized weapon gate (W5): the verdict, body 1's in-hand type
     // (kNull unread) and whether it is mid-switch.
     partner_slots::Gate weapon_gate;

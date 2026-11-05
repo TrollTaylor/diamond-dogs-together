@@ -74,18 +74,24 @@ do
             if #w.v < 256 then w.v[#w.v + 1] = d end
             if fix then w.fix = w.fix + 1 end
         end
-        -- A corrected copy is read again 2 s after it landed: event=place_sink when it is more than 1.5 m lower (run
-        -- 6e22bed0: copies fell up to 113 m, the fall's speed kept through later corrections).
+        -- A corrected copy is read again 2 s after it landed (both roles, every tick): more than 1.5 m under its landing is
+        -- event=place_sink (run 6e22bed0: copies fell up to 113 m), or event=place_drop when it is level with the owner's
+        -- newest sample (owner_dy_m over -1.5: the owner went down too); moved_m its travel since landing.
         function P.sinkTick(now)
             for h, s in pairs(P.sink) do
                 if now - s.at >= 2000 then
                     P.sink[h] = nil
                     local en = W.ent[h]
-                    local x, y = nil, nil
-                    if en and type(en.id) == "number" then x, y = pos(en.id) end
+                    local x, y, z
+                    if en and type(en.id) == "number" then x, y, z = pos(en.id) end
                     if x and type(y) == "number" and s.y - y > 1500 then
-                        P.n.sink = (P.n.sink or 0) + 1
-                        L("event=place_sink;seq=%d;ent=%.0f;land_dy_m=%.2f;dy_m=%.2f", s.seq, h, s.dy / 1000, (y - s.wy) / 1000)
+                        local o = P.lastS[h]
+                        local ody = o and now - o.at <= 3000 and type(o.y) == "number" and y - (o.y + 800 - P.LIFT) or nil
+                        local drop = ody and ody > -1500
+                        if not drop then P.n.sink = (P.n.sink or 0) + 1 end
+                        L("event=%s;seq=%d;ent=%.0f;land_dy_m=%.2f;dy_m=%.2f;owner_dy_m=%s;moved_m=%.1f", drop and "place_drop" or
+                            "place_sink", s.seq, h, s.dy / 1000, (y - s.wy) / 1000, ody and fmt("%.2f", ody / 1000) or "nil",
+                            flat(x, z, s.x, s.z) / 1000)
                     end
                 end
             end
@@ -339,7 +345,7 @@ do
                 why and "refused" or "applied", why or "none", c.native or "none", c.errCm / 100, c.frames or 0,
                 not why and c.dy and fmt(";dy_m=%.2f", c.dy / 1000) or "")
             if not why and c.dy and c.pos and W.followOn == true then
-                P.sink[c.h] = {at = W.now(), y = c.pos[2], wy = c.y, dy = c.dy, seq = c.seq}
+                P.sink[c.h] = {at = W.now(), x = c.pos[1], y = c.pos[2], z = c.pos[3], wy = c.y, dy = c.dy, seq = c.seq}
             end
             if c.first then
                 L("event=place_first;step=done;seq=%d;ent=%.0f;result=%s;why=%s;err_m=%.2f;ms=%d", c.seq, c.h,

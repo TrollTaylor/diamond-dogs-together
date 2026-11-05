@@ -368,6 +368,14 @@ int main() {
         Check(ds.move && ds.hard && ds.pos[0] == 9.0f && ds.pos[1] == 1.4f, "drive: beyond 8 m the whole way (the target y)");
         ds = sw::DriveStep(here, up_to, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
         Check(ds.move && ds.pos[1] == 5.0f, "drive: a target over 1 m off this copy's feet takes its own y");
+        // Enemy gaps (place_lift): the level y is this copy's own GetPosition y + 0.02 m, not 0.7 m under it.
+        const float lh[3] = {0.0f, 268.0f, 0.0f}, lt[3] = {3.0f, 268.0f, 0.0f}, lup[3] = {3.0f, 269.5f, 0.0f};
+        ds = sw::DriveStep(lh, lt, false, 1.5f, 0.3f, 0.4f, 8.0f, 0.1f);
+        Check(ds.move && std::fabs(ds.pos[1] - 267.3f) < 1e-3f, "drive: the old level y (feet + 0.1 m = 267.3)");
+        ds = sw::DriveStep(lh, lt, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
+        Check(ds.move && std::fabs(ds.pos[1] - 268.02f) < 1e-3f, "drive (place_lift): its own height + 0.02 m = 268.02");
+        ds = sw::DriveStep(lh, lup, false, 1.5f, 0.3f, 0.4f, 8.0f, sw::kLiftLevelM, sw::kLiftFeetM);
+        Check(ds.move && ds.pos[1] == 269.5f, "drive (place_lift): a target 1.5 m above takes its y");
         Check(sw::DriveAdmit({false, true, false, 30010, true, false}) == nullptr &&
                   sw::DriveAdmit({true, false, true, 30050, true, true}) == nullptr,
               "drive: a play guest; a lab host with soldier_owner");

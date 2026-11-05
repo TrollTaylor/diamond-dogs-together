@@ -125,6 +125,9 @@ constexpr OpSpec kOps[] = {
     // Authenticated local-shooter hit: shot sequence, owner generation/status sequence, damage milli, cause(normal/sleep).
     {op::friendly_hit, "FRIENDLY_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 15,
      {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2)}},
+    // Enemy sync M7: FRIENDLY_HIT's fields and the attacking guard's entity hash (protocol section 31).
+    {op::soldier_hit, "SOLDIER_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
+     {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2), U32(1)}},
     // RIDE_BODY: seq, kind (1 horse, 2 walker, 3 vehicle), body id, xyz mm, heading mrad, occupied, rider.
     // Horse and walker heading is the fourth float of the verified 16-byte census pose.
     // Vehicle heading is the second return of TppVehicle2 GetPosition.

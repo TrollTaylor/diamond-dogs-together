@@ -16,6 +16,8 @@ struct Reply {
     std::int32_t pos[3];
     std::uint32_t hitSequence, hitDamageMilli;
     std::uint8_t hitCause;
+    // Enemy sync M7: the soldier whose hit on the replica this is (its GameObjectId), 0xFFFF for a friendly hit.
+    std::uint16_t hitAttacker = 0xFFFF;
     const char* reason;
     bool nativeSleepActive=false, nativeSleepReleaseReady=false;
     bool carryHeld=false; // raw RELOAD/CARRY (R), for horse cargo unloading
@@ -69,6 +71,9 @@ NativeRestDiagnostics GetNativeRestDiagnostics() noexcept; // cache only; no gam
 bool PassiveOfflineContext(std::uintptr_t P, std::uint32_t& local) noexcept;
 // Natural local-attacker0 -> replica1 only, admitted by the exact damage hook.
 bool QueueFriendlyHit(std::uintptr_t P, float damage, std::uint8_t cause) noexcept;
+// Enemy sync M7 (soldier_authority forward): a guard this copy owns hit the replica; the same queue, the attacker kept
+// (Lua sends it as SOLDIER_HIT instead of FRIENDLY_HIT; the friendly fire switch never drops it).
+bool QueueSoldierHit(std::uintptr_t P, float damage, std::uint8_t cause, std::uint16_t attacker) noexcept;
 // Cmd0 acknowledges one cached outgoing event; cmd1 applies an authenticated
 // peer event to this natural owner with exact target cycle and serial guards.
 bool FriendlyControl(std::uint32_t mission, std::uint16_t epoch, bool admitted,

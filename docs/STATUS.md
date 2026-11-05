@@ -1,3 +1,129 @@
+## November 4, 2026: wp/enemy-m7 lands on dev/oct7-continue after review - `place_lift` back to off unless named (`dev/oct7-continue`, local only; not pushed)
+
+The integration step below was reviewed claim by claim against the e583ee62 and gaps archives before landing. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+
+- **What players get**: for enemies, the same as 0.15.0. The gaps track's placement height (`place_lift`) was on with the native gun profile on this branch; it is off unless named again, so a moved guard is asked for 0.4 m under the other copy's height as in 0.15.0 (the engine lifts most onto the floor; about 1 in 100 dropped a storey in earlier runs). The README's `place_lift` sentence and its "the carried guard lay where the guest put him on both screens" claim are removed. Known limits now say that the warp can switch itself off for the session (e583ee62), and the carry lying-pose line says it was seen in the log, not on screen. The M7 keys (`soldier_puppet`, `soldier_perceive`, `soldier_brain`) and `partner_native_slot_rearm` stay off unless named. The gaps measurement (`place_sink` / `place_drop` / `drive_sink` lines, the `partner_weapon=mismatch` fields) still runs at the defaults; it only logs.
+- **Why `place_lift` is off** [O]: in e583ee62, the first run with it on by default, both copies hit the gate's process latch after 5 anomalies each. On the host these were all M3 `hplace` of guest-owned guards. The latch logged `soldier_warp=disabled` until exit on both copies, and the guest's drive refusals climbed from 513 to 1828. After it, place error p90 was 24.9 m, and kills and sleeps applied 7.4-45.6 m from the guard (place-first refused `native_off`). In the 37 archived runs, this is the only host anomaly. The note that y cannot cause the out=0 handled=0 answer is [I], and no 0.15.0 A/B under a long ALERT was run. One gaps claim also failed: "0 hard drive steps". The full logs show host 1 in 7c174346 and guest 5 / 4 / 5, and 7c174346 fails the M3 host-side p90 gate (5.93 m). Red/green: `lab_config_tests` failed first on "enemy gaps: place_lift is off unless named (the gun profile too)" (check 1968). It passes after `ResolveWeaponDefaults` no longer sets the key.
+- **Corrected in the entries below** (review claims that did not hold, fixed in place):
+  - e583ee62 frames: b-45 has both players down, hu-h has the host crouched and upright, and m5-30 is unclear.
+  - M7 step 1: two live getter callers carry per-guard values (0xD59430 r12 176..272; 0x14DCA77 rdi 13..246 on the guest), so "no per-soldier caller in free roam" does not hold as stated. Design 7.13 says the same.
+  - Gaps: the drive hard snaps above. Landings were "within 0.1 m", a hand count.
+  - The carried body on the host's screen (0b4a1509 host c-b / s-aim) shows only HUD markers. The host's own character lies in the foreground, and the guard and the guest are behind sandbags.
+  - Smaller corrections: 875's mismatch was `why=slot`, not `why=plan`. The join-time `why=plan` mismatch lasted about 1-3 s. The late-join windows' max reached 1.0-1.1 m (p50 under 1 m).
+- **Defects left as they are** (off by default, or already in 0.15.0; from the review):
+  - `soldier_brain` (off unless named, never run): `downed_damage` `Calculate` neutralizes the replica's hit on `Action::forward` even when `downed_player::QueueSoldierHit` returns false (queue full, stale scope, not armed or not owned), so that damage is lost on both copies. Lua `D.hitTick` drops a stale (> 500 ms) target record without an ack, so the hit expires after 1.5 s. No unit test reaches `Calculate`. Fix and test this before the brain's first run.
+  - `soldier_perceive` (off unless named, debug commands only): `InstallPick` hooks the getter and the per-slot update for the whole process. Mission end clears only the targets, so a `perceive_force`, `perceive_leaf` or `perceive_mask` left set carries into the next mission, story missions and FOB included. The post-merge bit-256 path has never run in a game; every M7 run used bit 128.
+  - Already in 0.15.0: the M6 `body_tx` / `place_body` ping-pong on a dead guard (2961503 in e583ee62: 384 / 383, every one refused `disabled_local`; 9a44af58: 303 / 301). On its own it sinks the ">= 90 % corrections applied" and M3 placement gates.
+  - [U] Whether 0.15.0's defaults latch the same way under a long ALERT. Follow-up: an A/B of the defaults vs `place_lift=1` in a long firefight, then a per-guard-only latch or an exemption for that answer.
+  - `tools/enemy_div_report.py`: its landing (`dy_m`) histogram pattern never matched the logged lines, so it printed 0 for e583ee62 and the gaps runs. It is removed, because the tool has no test to pin a fixed pattern. Count landings by hand.
+- **Doc fixes**: `lab_config.hpp` now says that `soldier_brain` sends SOLDIER_HIT 0x4C (not FRIENDLY_HIT), that the other copy is held back with SetPuppet, and that `place_lift` is design 7.14.
+- **Checks**: full `tools/build.ps1 -Jobs 4` passed 350/350 at `9a6fb645` and again at this entry's commit (docs only since). Of the generators that take `--check`, all pass except four. Those four fail the same way at dev `796e3c07` (checked in an export), and their inputs and outputs are untouched here: carry_info and sleep_plugin report "Generated header differs", and native_ui and teammate_targeting are missing their docs/evidence json. targeting passes once `build/targeting-scripts-20260910` is copied in (an untracked input); vehicle_controller passes with `--executable`. camera_mode_window and master_server have no `--check`.
+- **Merge**: dev/oct7-continue had not moved (`796e3c07`, already contained). wp/enemy-m7 is merged into dev/oct7-continue with --no-ff in the main checkout. Nothing was pushed, tagged or released.
+
+## November 4, 2026: enemy sync integration - wp/enemy-gaps merged into wp/enemy-m7, one default batch run (`wp/enemy-m7`, local only; not merged)
+
+The user asked to finish the enemy sync plan (scratchpad fb1101) completely. This entry is the integration step: the gaps track and M7 step 1 on one branch, then one hidden batch at the shipped defaults. Markers: [O] seen in logs or frames of both copies, [I] inferred, [U] unknown.
+
+- **What players get**: nothing new in this step. The defaults of this run are the gaps track's (`place_lift` on with the native gun profile; back to off unless named at the landing, entry above) and M1..M6 as in 0.15.0. The M7 keys (`soldier_puppet`, `soldier_perceive`, `soldier_brain`) stay off unless named, and the README says nothing new about M7. No default was turned off: the one regression the run shows (below) is in 0.15.0 code that this step does not change.
+- **Merge** (`cac25e09`): dev/oct7-continue was already contained, so there was nothing to merge. wp/enemy-gaps was merged with --no-ff, keeping both sides: the STATUS entries, the lab keys, the worker LabSetting patterns, the DriveReceipt `v=` reply and the M7 CFG fix. **Collision**: both tracks used CFG r[19] bit 128 (`place_lift` and `soldier_perceive`). `place_lift` keeps 128 because it was the gaps track's shipped default (off unless named since the landing), and `soldier_perceive` moves to bit 256. r[19] now carries 9 bits: `CfgReply.follow`, `world_link::Config::enemy_sync` and `world::EnemySyncBits` are 16-bit (mask 0x1FE), and Lua reads r[19] in 0..511 (`W.liftOn` eb % 256 >= 128, `W.perceiveOn` eb >= 256). Protocol section 29 and design 7.13 say so. The tests failed first: world_receipt_tests did not compile (0x1FF truncated to uint8_t), and world_sync_lua_check failed on 'CFG r[19] 129: lift / perceive / brain as their own bits'. Both pass now.
+- **The batch** (`37b93420`, run `e583ee62`, job 20261104-230311-305-1c7c18): one queued hidden play session with `-WanSim bad`, the native gun profile, the research build, afgh-ledge and `-TimeoutSec 600`. No soldier_* key, `place_lift` or `partner_native_slot_rearm` was named (labsettings: nametag=1 only). It ran eight parts:
+  1. `enemy-prove-1-join` (the gaps late join)
+  2. `enemy-prove-2-follow` (enemy-follow-30010-play's gotos, A at 60 s and B)
+  3. to 7. `enemy-gaps-2..6`
+  8. `enemy-prove-3-acts` (C, D, C' and E at 30 s)
+
+  There was no Mother Base part: one session has one save seed and a 600 s hard limit, and these eight parts already filled it (part 8 stopped at the limit, 79 of 85 steps). The slim archive with JPEG frames is `enemy-follow/e583ee62.../`.
+  - [O] On both copies `soldier_warp=ready; follow=1; owner=1; snap=1`, `soldier_perceive=off; reason=key_off` and `soldier_authority=off`, so the M7 code stayed inert. The late join paired at epoch 3 with matching rosters, and frame r-8s shows a quiet arrival on both screens.
+  - [O] The outpost alerted at the first goto of part 2 (phase 3, `src=req` from the guest). This is the stimulus failure of runs 7c174346, 0b4a1509 and 3e2611fc (the arrival alert). The whole session then ran in ALERT. The frames show the guest downed in a-30, b-15, b-45, hu-h, c-a, c-b and e-10, and the host downed too in b-15 and b-45 (in a-30 the host fights, in hu-h he stands crouched, in e-10 he is held at gunpoint; m5-30 is unclear: a guard over a lying body) (godmode only autoheals), and guard 2961503 died in crossfire during B (`att=other`). The quiet sections, the hold-up, the guest's kill, the carry, the M5 route watch and the stance drift therefore did not happen (parts 4-7 failed their waitlogs). The part 2 failure is a scenario bug: its `logmark` came before the boot-time ready line it waited for (fixed at the final head).
+  - [O] Place error (`tools/enemy_div_report.py`): p50 1.25 m, p90 18.47 m, max 77 m over 815 samples. Split at the first warp anomaly (t 287665709): **before it, 463 samples gave p50 0.76 m / p90 1.87 m**, in ALERT, which matches 0.15.0's 9a44af58 (0.69 / 1.99) and the gaps runs. After it, 352 samples gave p50 4.90 m / p90 24.87 m.
+  - [O] `place_lift`: 120 of 123 applied landings were within 0.1 m of the owner's height (one 0.1-0.3 m, two 0.5-1.0 m, bodies; a hand count: the report tool's landing histogram never matched the logged lines). There were 0 place_sink, 0 place_drop and 0 drive_sink, and no Game Over, roster mismatch, fault or overflow.
+  - [O] **Regression found, not caused by this merge: the warp anomaly latch.** soldier_warp's set-transform sends returned out=0 handled=0. This happened 5 times on the host, all M3 `hplace` of guest-owned guards right after `place_combat` (1845278687 twice, 667680985 twice, 1179373153), and 3 times on the guest (2305481811 twice, just after its `vehicle_local` refusals, and 1845278687). That latched those guards, and at the fifth anomaly in each process the gate's process latch turned the warp off on both copies until exit (`soldier_warp=disabled; reason=anomaly`). From then on the guards' positions were not corrected, which is the 24.9 m p90 above. No earlier archived run had a host anomaly (about 35 runs; guest anomalies only in 96216259 and 79804732).
+    - [I] The handler 0x1413619e5 answers the set-transform hash either moved (out 0, handled 1) or not realized (out -1). out 0 handled 0 is another object's answer, so the y value (`place_lift`) cannot choose it, and the anomalies come from the guards' state in a long firefight (a vehicle dismount, CQC on a downed player). This unverified reading was why `place_lift` stayed on here; the landing review turned it off unless named (entry above).
+    - [U] Which state it is, and whether 0.15.0 latches the same way under this stimulus. Follow-up: an A/B under a long ALERT, then either an exemption for that answer or a per-guard latch only (the process latch is 0.15.0 code: `soldier_warp.hpp` kProcessAnomalies 5).
+  - [O] A1: the late joiner's 873 got `partner_weapon=mismatch why=plan` and 875 `why=slot`, then `partner_slot=plan ... standin=on` (36 in slot 0). Host frame e-10 shows the HUD's "gun stand-in".
+- **Not shown** [U]: anything at Mother Base; the quiet A / B windows; a hold-up's raised hands; the guest's own kill placed first; the carry (it passed in 0b4a1509); M5 in step; the A1 drift (the re-arm stays off). Plan decisions 4 and 5 stay with the user.
+- **Checks**: full `tools/build.ps1 -Jobs 4` passed 349/350 at the merge. The one failure was save_handoff_io_tests check 116 (the `.partial` rename, a timing test this step does not touch); it passed 3 of 3 times alone. At the final head the full build passed 350/350. Every `generate_*_contract.py --check` passes except the four that fail identically at 0.15.0 (carry_info and sleep_plugin "Generated header differs"; native_ui and teammate_targeting, whose docs/evidence json is missing). vehicle_controller passes with `--executable`. Notes: scratchpad m7fin/prove/PROGRESS.md.
+
+## November 4, 2026: enemy sync M7 step 1 - per-soldier perception built and probed; the gate is not reached (`wp/enemy-m7`, local only; not merged)
+
+The enemy sync plan's M7 step 1: each guard on the host's copy should perceive both players and fight the one it
+should. The machinery is built and pinned, but four hidden runs show that the guards cannot be made to see the
+guest's body (body 1) through the offense player index alone. The key stays off unless named.
+
+- **What players get**: nothing yet. `soldier_perceive` is off unless named; named, the host's guards behave as
+  before (only the host is perceived). The guest is still hurt only by the guest's own copies of the guards (stock):
+  on the host's copy a soldier's hit on body 1 does no damage (step 2, the damage path, is not built).
+- **Code** (design 7.13; keys and wire unchanged apart from CFG r[19] bit 128):
+  - `5b6c4842`: `soldier_perceive` now installs `InstallPick` instead of the scorer patch (a no-op in free roam, run
+    `af17b899`): the offense index getter 0x141E02770 goes through a stub that saves the caller's callee-saved
+    registers and calls `Choose` (per-site soldier register, a forced index, per-soldier targets, the leaf snapshot
+    mode), and the notice system's per-slot update 0x140D65850 is hooked for a thread slot (census). The host's Lua
+    (`world_snap.lua` `P.perceiveScan`, fed by the M1 scan) sends each sampled guard's nearer player (3 m band, 4 s
+    hold; `MGS_COOP_SOLDIER_PERCEIVE_V1`). Debug: `perceive_status`, `perceive_pick`, `perceive_auto`, `perceive_leaf`,
+    `perceive_reset`, `perceive_force` (P11b/P11c). `soldier_authority::NoteDefense`: the soldiers that hit body 0 /
+    body 1 in the defense callback. Contract `tools/generate_soldier_perceive_contract.py --check` (28 windows at the
+    head, with each site's register flow). Scenario `enemy-perceive2-30010-play.txt`.
+  - `c46dafb6`: `world_link` masked the enemy sync bits with 0x7E, so bit 128 never reached Lua
+    (`world::EnemySyncBits` keeps 2..128); the notice-system sites are census only (see below); P12d
+    `soldier_perceive_bodies` (the two player records of the 0x14053CA40 bank) and the research command
+    `perceive_mask`. `8735b116`: `perceive_mask ... set` on both banks. `ff212297`: P12e `soldier_perceive_slot`
+    (the notice system's active slots, read only).
+  - Tests, red first: `soldier_m7_tests` 92 checks (the pure answer, targets, census, the stub bytes, the stub run for
+    real with its unwind data checked by `RtlVirtualUnwind`, the defense hit lists, the body records and masks);
+    `world_align_lua_check` M7 perceive checks (red with the old Lua: `S.pick` missing); `world_receipt_tests`
+    `EnemySyncBits`. Full `tools/build.ps1 -Jobs 4` 350/350 at `5b6c4842`; `-Fast` 316/316 after each later change.
+- **Runs** (queue, play, `-WanSim bad`, research build, native gun profile, afgh-ledge seed, afgh_field_cp at guard
+  1740692850; `soldier_owner=0` so the host is every guard's brain, `soldier_puppet=1`, godmode; archive
+  `enemy-follow/<run>/`, frames looked at on both copies):
+  - `96216259` (`enemy-perceive2`): no Lua target was ever sent (the CFG mask above), so parts 1, 2 and 4 were stock.
+    P12a census, both copies: every call at the six notice-system "per-soldier" sites carries the same slot, 45 (the
+    thread slot agrees); 0xD59430's r12 is 176..272. P11c (forced 1 for 60 s, after the host had been downed): 0
+    soldier hits on body 1, 22 on the host (guard index 246).
+  - `37c9604c` (`enemy-perceive3`): forced 1 from before the warp for 60 s: no hit on either body and no ALERT from
+    the host's own guards; frame `host-a-30`: the guards stand calmly next to body 1 and ignore the host 20 m away in
+    the open; the guest's puppets idle (`guest-a-30`). P12d: the two records differ only in +0xC0 (0x9e / 0x16 in one
+    bank, briefly), +0xC4 and +0xCB are 0 for both (the clear masks wrote nothing). Part C (Lua targets: 221 guards 0,
+    50 guards 1; ALERT from the phase sync): guards 13, 219, 231 hit the host 16 times, guard 246 hit body 1 5 times;
+    frame `guest-c-30`: the guest's player downed by its own copy of a guard.
+  - `183e2cf7` (`enemy-perceive4`): forced 1, then forced 1 with body 1's +0xC0 bits set like the host's (the bytes
+    were already equal, 9e001000: no write): 50 s, no hit, no notice (frame `host-b-30`). Stock ALERT part: 43 hits
+    on the host by 13, 15, 16, 219, 231, 246 and 8 on body 1 by 246; 0xD59430 answered only for guards 176..179 of
+    another CP, so 246's hits had no per-guard answer behind them ([I] shots at the host that hit body 1).
+  - `7e658437` (`enemy-perceive5`, P12e): the notice system has 77 slots, one per CP; slot 45 is afgh_field_cp
+    (index list 13..20, 219, 231, 240, 246: exactly the guards that fought), the others list the other CPs' guards.
+    Its per-slot getter calls stop while the index is forced to 1 (0 calls at those sites in the forced parts of
+    `37c9604c` and `183e2cf7`). Stock: 46 hits on the host, 0 on body 1 (frame `host-d-20`: shield guards face the host).
+- **What blocks the gate** (exactly): (1) [O] the six notice-system callers (0xD6638E, 0xD6B87F, 0xD782E3, 0xD6D82F, 0xD6D9CE,
+  0xD56834) carry only the CP's slot 45. Corrected at the landing: two other live callers do carry per-guard values
+  (0xD59430 r12 = 176..272 in all four runs; 0x14DCA77 rdi = 13..246, afgh_field_cp's own guards, on the guest in
+  96216259 and 18 in 7e658437), so "no per-soldier caller in free roam" does not hold as stated [U: whether either
+  decides a guard's target]. The other "per-soldier" callers are the CP-level notice update (one slot per CP) and the soldier leaf's once-a-frame snapshot
+  (0x14134F9D0, ret 0x1350035), which the leaf's per-soldier code then reads directly ([leaf+0x28c] index, +0x1d0
+  position, +0x294 state: readers 0x14134F34C, 0x141366792, 0x141388B88, 0x141390C96, 0x141392433, 0x14138E03C,
+  0x14138F8C4, 0x14139051C, 0x141392830, 0x14139433E); a per-guard answer needs those readers patched per soldier.
+  (2) [O] even with every caller and the leaf saying 1 and body 1's state bytes equal to the host's, the guards do
+  not notice body 1 standing among them, while they stop seeing the host: something outside the index keeps body 1
+  out of the soldiers' sight ([I] body 1 is not registered as a noticeable target of the soldier sensors; soldier
+  bullets do reach its defense callback).
+- **Not done**: the gate (a guard that only sees body 1 turns, aims and fires at it; each guard picks one player);
+  soldier_brain (still never run); the act mirror. The P11 nametag wording in the entry below is replaced.
+- **Next**: P12f, find where the local player is registered as a soldier-sensor target (and whether a second player
+  instance can be), then a per-soldier swap of the leaf snapshot around the leaf's per-soldier readers.
+## November 4, 2026: enemy gaps - placement height (place_lift on with the gun profile here; off unless named since the landing), the slot drift re-arm, the gaps batch (`wp/enemy-gaps`, local only; hidden play runs below)
+
+The user asked to finish the enemy sync plan (scratchpad fb1101) completely. This entry is the gaps track: A1, place_sink, and the stimuli the M3..M6 runs never landed (the guest's own kill placed first on the host, a hold-up's raised hands, a carried body, M5 in step, a rejoin). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
+
+- **What players get** (README "Guards in the same place", "Enemies"): a guard moved to where the other screen has him lands at that copy's own height instead of 0.4 m below it, so he no longer drops through a thin floor (`place_lift`, on with the native gun profile on this branch; off unless named since the landing, entry at the top). A guard the guest carries and puts down is placed where the guest put him on the host's PC [O in the logs; on the host's screen only HUD markers show it, see 0b4a1509 below].
+- **place_sink** (design 7.14): [O] Warp takes GetPosition-space y: the old `y - 800 + 400` rule asked for 0.4 m under the owner's GetPosition, and about 1 in 100 copies were left there and fell a storey. `place_lift` sends the owner's own GetPosition y (LIFT 800) and the soft follow keeps the copy's own height + 0.02 m. Measurement without a key: the host reads its placed copies every tick, `place_sink` gains `owner_dy_m` / `moved_m`, a copy level with its owner is `place_drop`, a driven copy 1.5 m under its owner for 2 s is `drive_sink`; `enemy_div_report.py` counts both roles. Tests failed first: `world_align_lua_check` (the host sink check, drive_sink, LIFT 800), `soldier_warp_tests` (DriveStep 268 -> 268.02), `lab_config_tests` (the gun default).
+- **A1** [O] (the fb1101 friend log): not a missing stand-in (every plan line `map=0,1,2`; 873 / 875 are aliases of 46 / 9). The 19.8 s mismatch: body 1 dropped back to slot 0 after a prone/dive while the follower had spent its two writes of that (slot, switch) episode. `partner_slots::EpisodeStep` re-arms one write 750 ms after the body left a reached slot (at most 3 per episode, 2 s apart; `partner_slot=drift`) behind `partner_native_slot_rearm` (off unless named: the drift case did not come up in a game). `partner_weapon=mismatch` now names `remote_slot`, `body_slot` and `why=plan|slot|equip` (plan: no body slot or stand-in for that remote slot). [O] In the runs below the late joiner's 875 had no body weapon and the plan's stand-in (slot 0, 36) took it (`partner_weapon=standin`, the host HUD "gun stand-in"); every `why=slot` mismatch cleared within about 0.4 s (the join-time `why=plan` mismatch of 873, body equip 2047, lasted about 1-3 s).
+- **The gaps batch** (`tools/worker/scenarios/enemy-gaps-1..6`, one hidden play session per attempt, `-WanSim bad`, gun profile, afgh-ledge, `place_lift=1` and `partner_native_slot_rearm=1` named, no soldier_* key; slim archive `enemy-follow/<run>/` with JPEG frames):
+  - `7c174346` (attempt 1): [O] the host alone 50 m south of afgh_field_cp stayed quiet (Q1); at the second spot patroller 1926520947 came within 10 m and the CP alerted, 2 ms before the host's clock `fast_end` [I: reflex mode after a guard spotted the host; the scout's 21-run "arrival alert at fast_end" is a guard seeing a player]. Both players then lay downed (godmode is autoheal only), so the stimuli ran in a fight. `titlemenu both` let the guest follow into 30010: no late join.
+  - `0b4a1509` (attempt 2): [O] a true late join (the host played alone about 2 min; the guest paired mid-mission, epoch 3 roster match), 14 guards ignored on both copies, the guest teleported 3 m behind the host: the guards within 60 m read p50 under 1 m in every window after the arrival (the max reached 1.0-1.1 m in 3e2611fc); the route watch stayed quiet. Carry: the host slept 667680985, the guest picked him up (remote act 39), walked and put him down; guest `body_tx sent=1`, host `place_body fix=1` (19.1 m: the sleep had been applied where each copy stood) and `hplace applied`; frame guest c-b shows the sleeping guard next to the guest's character. Corrected at the landing: in host c-b / s-aim the host's own character lies in the foreground and the guard and the guest's character are behind sandbags (only the 'Taylor' nametag and, in s-aim, a ZZZ marker show), so on the host's screen this rests on HUD markers. Defect seen in the log: from the carry walk on, the host's partner body lay on its back (body act 32, `partner_recon=frozen; reason=act`) while the guest stood; not fixed (the carry code is out of bounds for this track).
+  - `3e2611fc` (attempt 3): late join and route watch again; the hold-up guard 2929558510 walked away 3 m in front of the crouched guest, unaware, the reticle below him (frame hu-g3-02): no hold-up.
+  - All three: place error p50 0.95 / 1.01 / 0.73 m, p90 2.29 / 2.82 / 1.87 m; 124 of 127 placements landed within 0.1 m of the owner's height (a hand count); 0 place_sink, 0 drive_sink, 0 latches, faults, Game Overs, roster mismatches. Corrected at the landing: drive hard snaps were host 1 in 7c174346 and guest 5 / 4 / 5 (not 0), and 7c174346 fails the M3 host-side p90 gate (5.93 m).
+- **Not seen** [U]: a hold-up's raised hands; the guest's own kill placed first on the host (three tries: the camera on a wall, the guard behind a wall or below a ledge, and the guest's own CP alerting, `src=req`, on its goto next to an ignored guard: restrict notice does not stop a guard 3-8 m away); M5 copies walking in step (no route change in the 45 s windows: `route_tx` 0); a real drop and re-pair (no play lever; the late join stands in); the slot drift case in a game.
+- **Checks**: `tools/build.ps1 -Jobs 4` at the final head; every `generate_*_contract.py --check` passes except four that fail identically at the release tree `a53344f5` (carry_info and sleep_plugin "Generated header differs", native_ui and teammate_targeting missing their docs/evidence json; areas this track does not touch); `generate_vehicle_controller_contract.py` needs `--executable` and passes with it.
+
 ## November 1, 2026: 0.15.0 package (Enemy sync: guards in the same place on both screens (positions, glides, routes, bodies), binoculars)
 
 **Package (2026-11-01):** `dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82/`, built by `tools/package.ps1 -Friend -CheckReceipt` from the clean tree at the version bump `29b11f7` with Release receipt `20261102-035555-ce323bba84674c6a8c7b1ff36b39251a` (passed, 336 audited tests, 0 failures; `-BuildJobs 8 -TestJobs 8`). `DiamondDogsTogether.exe` and `dinput8.dll` both carry build id `0.15.0+29b11f7` and are the receipt's own files. Made by `tools/release/Invoke-FastRelease.ps1`; this record is committed after the packaged commit.
@@ -15,6 +141,47 @@
 - **Version.** 0.15.0 in `CMakeLists.txt`, `README.md`, `tools/package.ps1` and `tools/probe.ps1`; `tools/set-session-mode.ps1`, `tools/package-install.ps1` and `tools/dev/Play-LocalCoop.ps1` accept 0.15.0 and still 0.14.7; `tests/ddt_core_tests.cpp` checks `IsVersionNewer("0.15.1", "0.15.0")`.
 - **Checks at the bump commit `29b11f7`:** the Release receipt above is the only test run (336 audited tests); no other CTest run, hidden-game run, smoke run or review panel.
 - **To release:** upload **both** zips to the GitHub release `v0.15.0`, then run `pwsh -NoProfile -File tools/check-release.ps1 -Version 0.15.0 -PackageDir dist/DiamondDogsTogether-0.15.0-20261102T035755Z-a07dec82` before publishing. Nothing was pushed, tagged or released by the packaging.
+
+## November 2, 2026: enemy sync M7 probes P11 / P11b - soldier perception of body 1 (`wp/enemy-m7`, local only; not merged)
+
+Continues the enemy sync plan's M7 (plan decision 3: probes only, behind switches). All keys stay off unless named.
+
+- **Code** (`wp/enemy-m7`, on top of the 0.15.0 merge):
+  - `b37c4b4f` / `fdcffa91` (the earlier agent): `soldier_perceive` (the scorer filter patch at 0x14132562B, je -> jmp) and
+    `soldier_brain` (owner-only soldier damage, SOLDIER_HIT 0x4C, gated copies), both off unless named.
+  - `85ec22d7`: with `soldier_brain`, the other copy of a calm guard is held back with SetPuppet instead of restrict notice
+    (run ef3304dc: guards under restrict notice / debug ignore still shot their own player, 44 hits in part B); it is set
+    free while its CP is in ALERT, for 8 s after its owner's copy hit this player, and for 8 s after this player damaged it.
+    Not run with the brain on yet.
+  - `8d581d0e`: census of the patched scorer 0x141325530 (MinHook on its verified first 0x40 bytes; reads only the fields
+    the stock body reads next): `perceive_status`.
+  - `ed64a5b7`: return-address census of the offense index getter 0x141E02770 (`GetFobOffensePlayerInstanceIndex`, head
+    pinned as targeting_contract.hpp; refuses when player_team already hooks it): `perceive_sites` (full list in the log as
+    `soldier_perceive_site`).
+  - `d5abdaf4`: `perceive_force 0|1|off` (P11b): the getter returns that index to every caller (Dynamite's single offense
+    player, fixed by hand).
+  - `soldier_m7_tests` 45 checks; `-Fast` 316/316 after each change. Scenario `enemy-perceive-30010-play.txt` parts B, A, C.
+- **Runs** (queue, play, `-WanSim bad`, research build, native gun profile, afgh-ledge seed; afgh_field_cp, players 6 m
+  apart at guard 1740692850, godmode):
+  - `ef3304dc` (patch only): soldier hits host 131 / guest 269, all `soldier_own`; `soldier_replica=0` on both copies. The
+    patch did not make any soldier hit body 1.
+  - `af17b899` (census): **the patched scorer was never called** (`calls=0` on both copies) while soldiers shot both players
+    (133 / 239 hits). The earlier static reading ("the only perception filter") is wrong for free roam: 0x1413262F0 runs
+    only from 0x141326240, skipped when flag 0x100 or 0x200 is set [I: an FOB/online-only component]. The patch is a no-op.
+  - `32a93d27` (sites): 10-11 live callers of the getter on each copy: 0xD5AF51, 0xD65320, 0xD7BECC (each ~8.4 k per 3 min),
+    0x1350035 (~7.4 k), 0xD782E3, 0xD6638E, 0xD6D9CE, 0xD6D82F (~5.8 k), 0xD6B87F (the notice gauge 0x140D6B7E0: it reads
+    "the" player's position and its bit in the soldier's mask), 0xD59430, 0x14DCA77 (guest only), 0xD56834 (rare). The
+    single-player soldier AI reads the one offense player from this getter everywhere; there is no per-target filter to flip.
+  - `65e2440a` (P11b, host forces 1 for 30 s, then 0 for 15 s): host soldier hits on the host stopped (73 -> 79, then 79),
+    `soldier_replica` stayed 0. Frame `host-c-15`: a shield guard faced body 1 (the partner's nametag) and not the host, who lay on
+    the ground; no shot on body 1 seen. [I] Forcing the index retargets the AI's attention but not (yet) its fire, or the
+    30 s window and shield guard were too short/unlucky; [U] whether body 1 can be damaged by a soldier at all.
+- **What this means for M7**: per-guard perception of both players needs a per-call answer from the getter (which soldier
+  is asking, and which of the two players it should treat as "the" player), i.e. Dynamite's approach made per soldier.
+  The scorer patch should be dropped (kept only because it is off unless named).
+- **Next**: (1) P11c: a longer forced-1 window with an unshielded rifle guard, the host out of sight, `soldier_hit` lines and
+  the guest's health; (2) find which callers run per soldier with the soldier in a register/frame (the gauge 0x140D6B7E0
+  has the soldier index in edx) to choose the index per soldier; (3) only then run `soldier_brain`.
 
 ## November 2, 2026: enemy sync M3..M7 - two-way follow, glides, routes, bodies on with the gun profile; the M7 puppet bubble a probe; the plan's other defects (`wp/enemy-follow`, local only; hidden play runs below)
 

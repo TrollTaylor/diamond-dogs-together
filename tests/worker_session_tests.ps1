@@ -351,7 +351,7 @@ Assert-True ('labsetting world_vehicle_wreck=1' -cmatch $lineMatch.Groups[1].Val
 # The vehicle decisions of 2026-10-29: world_loadout_block (D11), world_vehicle_break (D12), world_vehicle_credit (D14), each 0|1.
 # Enemy follow (docs/world-sync-design.md 7.8) and the M2 binoculars: soldier_follow / partner_native_binocle=0|1 (lab and
 # play, both follow the gun profile; a named 0 opts out).
-foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage','world_supply','soldier_follow','partner_native_binocle','soldier_owner','soldier_snap','soldier_route','soldier_body','soldier_puppet')){
+foreach($vk in @('world_loadout_block','world_vehicle_break','world_vehicle_credit','world_vehicle_crew','world_vehicle_damage','world_supply','soldier_follow','partner_native_binocle','soldier_owner','soldier_snap','soldier_route','soldier_body','soldier_puppet','soldier_perceive','soldier_brain')){
     foreach($ok in @("$vk=1","$vk=0","host:$vk=1","guest:$vk=0")){
         Assert-True ($ok -cmatch $scenarioPattern -and $ok -cmatch $sessionPattern) ('-LabSetting admits '+$ok)
     }

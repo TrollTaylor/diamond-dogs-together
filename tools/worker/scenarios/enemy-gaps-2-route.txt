@@ -1,0 +1,30 @@
+# Enemy gaps batch, part 2 of 6 (M5 walking in step): both players crouched at the quiet spot 50 m south of
+# patroller 1926520947's route (rt_field_n_0008, x 400-470 z 2137-2188) for 45 s. Each frame names its guard through
+# the aim_nearest ent of that role's log; post: per-guard p50/p90 place error, route_tx (host) = route_apply ok=1 (guest),
+# world_drive=stats, drive_sink / place_sink / place_drop counts, landing dy_m (place_lift on).
+logmark both
+host run cp_phase nearest sneak
+stance host crouch
+stance guest crouch
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture m5-0
+wait 13000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture m5-15
+both burst m5w 4 400
+wait 12000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture m5-30
+wait 13000
+host run enemy_aim_nearest 1.1
+guest run enemy_aim_nearest 1.1
+wait 800
+both capture m5-45
+host run enemy info 1926520947
+guest run enemy info 1926520947

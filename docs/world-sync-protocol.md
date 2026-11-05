@@ -2240,8 +2240,9 @@ the off switch) gives CFG r[19] = 1
 
 ## 29. Enemy sync M3, M5, M6 (lab keys `soldier_owner`, `soldier_route`, `soldier_body`; design 7.9, 7.11, 7.12)
 
-CFG r[19] is a bit set: 1 follow (section 28), 2 owner (M3), 4 snap (M4, section 30), 8 route (M5), 16 body (M6), 32 puppet
-(the M7 probe). Lua turns each bit on only together with bit 1.
+CFG r[19] is a bit set (0..511): 1 follow (section 28), 2 owner (M3), 4 snap (M4, section 30), 8 route (M5), 16 body (M6), 32 puppet
+(the M7 probe), 64 brain (M7, with perceive), 128 place_lift (enemy gaps, design 7.14), 256 perceive (M7 step 1; 128 before
+the wp/enemy-gaps merge). Lua turns each bit on only together with bit 1.
 
 | Op | Name | Dir | Wire | Body (bytes) | Fields |
 |---|---|---|---|---|---|

@@ -203,6 +203,7 @@ bool ParseRound1ActionsKey(Slice key, Slice value, LabConfig& result, bool& ok) 
     if (Equals(key, "partner_native_overlay")) ok = ParsePartnerNativeOverlay(value.data, value.size, result.partner_native_overlay);
     else if (Equals(key, "partner_act_log")) ok = ParseBool(value, result.partner_act_log);
     else if (Equals(key, "partner_native_stance_fast")) ok = ParseBool(value, result.partner_native_stance_fast);
+    else if (Equals(key, "partner_native_slot_rearm")) ok = ParseBool(value, result.partner_native_slot_rearm);
     // r1101 animtruth: follows the gun profile unless named (ResolveWeaponDefaults); an invalid value counts as named, off.
     else if (Equals(key, "partner_native_aim_truth")) {
         ok = ParseBool(value, result.partner_native_aim_truth);
@@ -468,6 +469,12 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.soldier_snap_given = true;
         if (!ok) result.soldier_snap = false;
     }
+    else if (Equals(key, "place_lift")) {
+        // Enemy gaps (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.place_lift);
+        result.place_lift_given = true;
+        if (!ok) result.place_lift = false;
+    }
     else if (Equals(key, "soldier_route")) {
         // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
         ok = ParseBool(value, result.soldier_route);
@@ -479,6 +486,17 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.soldier_body);
         result.soldier_body_given = true;
         if (!ok) result.soldier_body = false;
+    }
+    else if (Equals(key, "soldier_perceive")) {
+        // Enemy sync M7 (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.soldier_perceive);
+        result.soldier_perceive_given = true;
+        if (!ok) result.soldier_perceive = false;
+    }
+    else if (Equals(key, "soldier_brain")) {
+        ok = ParseBool(value, result.soldier_brain);
+        result.soldier_brain_given = true;
+        if (!ok) result.soldier_brain = false;
     }
     else if (Equals(key, "soldier_puppet")) {
         // Enemy sync plan (lab and play); a named value records _given, an invalid one is named and off.
@@ -1974,6 +1992,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     if (!c.soldier_snap_given) c.soldier_snap = gun;
     if (!c.soldier_route_given) c.soldier_route = gun;
     if (!c.soldier_body_given) c.soldier_body = gun;
+    // Enemy gaps (place_sink, docs/world-sync-design.md 7.14): place_lift stays off unless named, the gun profile
+    // included. The gaps runs 7c174346 / 0b4a1509 / 3e2611fc named it, and the first default run with it on (e583ee62)
+    // latched the warp off on both copies after 5 set-transform anomalies each (cause unknown; docs/STATUS.md 2026-11-04).
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both

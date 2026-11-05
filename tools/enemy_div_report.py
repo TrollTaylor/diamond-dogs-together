@@ -142,7 +142,9 @@ def analyse(host, guest):
         'overflow': 0,
         # Guard copies under the ground (runs 51f8e90f / 6e22bed0): the place error compares x, z only.
         'guard_fell': sum(1 for l in guest if 'event=place_div' in l and 'why=fall' in l),
-        'guard_sank': sum(1 for l in guest if 'event=place_sink' in l),
+        # place_sink (enemy gaps): both roles check their placed copies; a copy level with its owner is place_drop.
+        'guard_sank': sum(1 for l in host + guest if 'event=place_sink' in l),
+        'drive_sank': sum(1 for l in host + guest if 'event=drive_sink' in l),
         'body_fell': sum(1 for l in host + guest if 'event=body_fall' in l),
     }
     for l in host + guest:
@@ -150,6 +152,9 @@ def analyse(host, guest):
         if m and 'world=stats' in l:
             never['overflow'] = max(never['overflow'], int(m.group(1)))
     r['never'] = never
+    r['place_drop'] = sum(1 for l in host + guest if 'event=place_drop' in l)
+    # No landing (dy_m) histogram: its pattern never matched the logged lines (it printed 0 for e583ee62 and the gaps runs),
+    # and this tool has no test to pin a fixed one; count dy_m by hand until it has (docs/STATUS.md 2026-11-04 landing).
     # The host's scan cost (event=place_scan, follow only).
     scans = [fields(l) for l in host if 'event=place_scan' in l]
     us = [float(s.get('avg_us', 0)) for s in scans]
