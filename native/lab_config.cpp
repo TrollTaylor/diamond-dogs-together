@@ -508,11 +508,13 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         if (!ok) result.soldier_perceive = false;
     }
     else if (Equals(key, "soldier_act")) {
-        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off. Round 6: "calm" is
-        // on with the phase lever (mirror only in calm / caution; the ACT_V1 p reply's pl=1), no CFG bit.
-        result.soldier_act_calm = Equals(value, "calm");
-        ok = result.soldier_act_calm || ParseBool(value, result.soldier_act);
-        if (result.soldier_act_calm) result.soldier_act = true;
+        // Enemy sync M7 FM1 (lab and play); a named value records _given, an invalid one is named and off. Round 6, the
+        // user's decision D-FM1 (a): on (1, calm) mirrors only in calm / caution (the ACT_V1 p reply's pl=1, no CFG bit);
+        // all (research) keeps every phase (design 7.16).
+        const bool every = Equals(value, "all");
+        ok = every || Equals(value, "calm") || ParseBool(value, result.soldier_act);
+        if (ok && (every || Equals(value, "calm"))) result.soldier_act = true;
+        result.soldier_act_calm = ok && result.soldier_act && !every;
         result.soldier_act_given = true;
         if (!ok) result.soldier_act = false;
     }

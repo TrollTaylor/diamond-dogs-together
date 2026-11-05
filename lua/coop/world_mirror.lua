@@ -15,7 +15,8 @@
 -- round robin; every puppet is checked every update (near, phase), and one m per update returns the guest's shots.
 -- Round 6 (design 7.19, protocol section 36): nothing runs until the partner's ACT_CAPS (0x5C) says its far mirror is on
 -- (a 0.15.0 partner never sends one; why=peer); riders are skipped (why=vehicle); apart only for a still owner copy;
--- soldier_act=calm (native's p reply pl=1) mirrors only in calm / caution (why=phase_limit).
+-- soldier_act (1 / calm; the user's decision D-FM1 (a): native's p reply pl=1) mirrors only in calm / caution
+-- (why=phase_limit, before the R check); soldier_act=all (research, pl=0) keeps every phase.
 do
     local W = e.MgsCoopWorld
     local P = type(W) == "table" and W.place
@@ -154,8 +155,8 @@ do
                     local x, _, z = pos(en.id)
                     local d = x and flat(x, z, px, pz)
                     local R, c = M.rOf(en)
-                    if not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
-                    elseif M.lim and (c and c.localPhase or 0) >= 2 then M.set(h, en, false, "phase_limit", d, R)
+                    if M.lim and (c and c.localPhase or 0) >= 2 then M.set(h, en, false, "phase_limit", d, R)
+                    elseif not d or d < R * 1000 then M.set(h, en, false, "near", d, R)
                     elseif c and c.ownAt and c.ownAt >= p.at then M.set(h, en, false, "phase", d, R)
                     elseif not dueAt or (p.mAt or 0) < dueAt then due, dueAt = h, p.mAt or 0 end
                 end
