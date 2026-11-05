@@ -4,9 +4,9 @@
 -- world_ride_pose.lua) and one final reliable RIDE_BODY (op 42, kind 1, rider 65534) at the dismount. The other copy
 -- renders the track 100 ms behind and places its 6656 every frame (place, anchored under body 1 once native shows it
 -- seated), so the partner rides in the saddle on this screen; the final pose leaves the horse where it was left, then
--- nothing moves it and the first E mounts it. Within 2.5 m of a horse the partner rides (where E claims its rear seat, M3,
--- or the stock mount prompt shows), an ACTION-only pad mask (MgsCoopHorseHold, probe P5) stops a second native driver;
--- farther away E acts normally (pickups, revives, doors; M1 held 4 m). A census generation change, a stale track, both players
+-- nothing moves it and the first E mounts it. Within 4 m of a horse the partner rides (2.5 m with M3's world_horse_pillion,
+-- where E claims its rear seat or the stock mount prompt shows), an ACTION-only pad mask (MgsCoopHorseHold, probe P5)
+-- stops a second native driver. A census generation change, a stale track, both players
 -- riding (two drivers; no new track until this copy's player is off) or a context change ends it; Travel / Bring partner here and the guest's checkpoint wait while anyone rides it. Both PCs must run
 -- the key (a copy without it drops 6656 from RIDE_FAST and refuses RIDE_BODY not_mirror, as before).
 do
@@ -17,9 +17,16 @@ local S = {sent = 0, seq = 0, n = {}, refused = {}}
 W.horseShare = S
 local FAST, BODY = W.OP.RIDE_FAST or 44, W.OP.RIDE_BODY or 42
 local HORSE, FINAL, MASK = 6656, 65534, "MgsCoopHorseHold"
-local SEND_MS, CLOSED_MS, STATS_MS, HOLD_MM, FREE_MM, LEAP_MM = 50, 700, 2000, 2500, 2800, 300
+local SEND_MS, CLOSED_MS, STATS_MS, HOLD_MM, FREE_MM, LEAP_MM = 50, 700, 2000, 4000, 4500, 300
+local PILLION_HOLD_MM, PILLION_FREE_MM = 2500, 2800
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
-S.HOLD_MM, S.FREE_MM, S.SEND_MS = HOLD_MM, FREE_MM, SEND_MS
+S.HOLD_MM, S.FREE_MM, S.SEND_MS, S.PILLION_HOLD_MM, S.PILLION_FREE_MM = HOLD_MM, FREE_MM, SEND_MS, PILLION_HOLD_MM, PILLION_FREE_MM
+-- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (unproven for the default).
+local function holdRange()
+ local P = W.horsePillion
+ if type(P) == "table" and type(P.keyOn) == "function" and P.keyOn() == true then return PILLION_HOLD_MM, PILLION_FREE_MM end
+ return HOLD_MM, FREE_MM
+end
 local function log(s) if type(W.log) == "function" then W.log("event=horse_share;" .. s) end end
 local function now() return W.now and W.now() or 0 end
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
@@ -177,14 +184,15 @@ function S.apply(t)
   S.last = {r.x, r.y, r.z}
  end
  if t - (s.at or t) >= STATS_MS then statsLine(t, "tick") end
- -- The ride hold (P5): within 2.5 m of the ridden horse the local E cannot mount it a second time.
+ -- The ride hold (P5): within 4 m (2.5 m with the pillion key) of the ridden horse the local E cannot mount it again.
  local px, pz = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
  local L = S.last
  if L and type(px) == "number" and type(pz) == "number" then
   local d = sqrt((px * 1000 - L[1]) ^ 2 + (pz * 1000 - L[3]) ^ 2)
-  if not S.hold and d < HOLD_MM then
+  local hold, free = holdRange()
+  if not S.hold and d < hold then
    if setHold(true) and type(W.log) == "function" then W.log(fmt("event=horse_hold;step=action_masked;dist_cm=%d", round(d / 10))) end
-  elseif S.hold and d > FREE_MM then release("far") end
+  elseif S.hold and d > free then release("far") end
  end
 end
 local fastBase, bodyBase = W.handlers[FAST], W.handlers[BODY]
