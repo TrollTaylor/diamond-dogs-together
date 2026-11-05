@@ -1,22 +1,23 @@
-# Horse plan M2, a downed partner on the shared D-Horse (lab keys world_horse_share + world_horse_cargo; docs/mounts.md
-# "Downed partner on the horse"). Both role orders, then a link drop:
+# Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo; world_horse_share is never named: the
+# gun profile turns it on, the shipped path; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
+# drop is part 3 (horse-cargo-drop.txt) after the M1 regression part 2 (horse-shared-regress.txt):
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
 #     put-down, then the body across the horse's back on both screens (HORSE_SEAT seat 2); the host's first E mounts;
 #     walk / trot / gallop; the dismount keeps them on; the carry key (R) held 0.5 s beside the horse lays them on the
 #     ground beside it on both screens (held on, the coop pickup shoulders them as usual); the 3 s E revive.
 # (b) the same with the roles swapped (the guest carries the host; the host grants its own load).
-# (c) loaded again (host carries guest), then the guest's world link off: both copies lay the body down (stream_lost).
+# (c) in horse-cargo-drop.txt: loaded again (host carries guest), then the guest's world link off (stream_lost).
 # A first E at the horse mounts at the start of the session and after each load.
 # Lines: world_lua=event=horse_cargo; step=loading / step=loaded; seat=2 / step=cargo; seat=2 / step=grant /
 # step=unloaded; seat=2; why=taken_down / why=stream_lost; coop_carry=cargo_hold; on=1 (native).
 # NEVER: step=putdown_place while loaded, downed_control=refused, crash_probe=av, step=error, a blackout frame.
-# Frames h2-* (a), h2b-* (b), h2c-* (c), on both screens.
+# Frames h2-* (a), h2b-* (b), h2c-* (c), on both screens: load, walk, trot, gallop, stopped, dismount, take-down, revive.
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2
-#     -ScenarioPath tools/worker/scenarios/horse-cargo.txt -Mode lab -WanSim bad -PartnerProfile native
+#     -ScenarioPath tools/worker/scenarios/horse-cargo.txt,tools/worker/scenarios/horse-shared-regress.txt,
+#     tools/worker/scenarios/horse-cargo-drop.txt -Mode lab -WanSim bad -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
-labsetting world_horse_share=1
 labsetting world_horse_cargo=1
 boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
 logmark both
@@ -105,15 +106,19 @@ waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 host capture h2-mounted
 guest capture h2-mounted-victim
 host hold w 1500 nowait
-guest burst h2-ride-walk-victim 3 300
+host burst h2-ride-walk 2 250
+guest burst h2-ride-walk-victim 2 250
 host hold w+a 1500 nowait
-host burst h2-ride-trot 2 300
-guest burst h2-ride-trot-victim 3 300
+host burst h2-ride-trot 2 250
+guest burst h2-ride-trot-victim 2 250
 host hold w+shift+a 1500 nowait
-host burst h2-ride-gallop 2 300
-guest burst h2-ride-gallop-victim 3 300
+host burst h2-ride-gallop 2 250
+guest burst h2-ride-gallop-victim 3 250
 host hold w+shift+a 1500 nowait
-guest burst h2-ride-gallop2-victim 3 300
+host burst h2-ride-gallop2 2 250
+guest burst h2-ride-gallop2-victim 3 250
+host hold w+shift 1500 nowait
+guest burst h2-ride-gallop3-victim 3 250
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -222,13 +227,17 @@ waitlog host 'world_lua=event=horse_share; step=placed;' 10
 guest capture h2b-mounted
 host capture h2b-mounted-victim
 guest hold w 1500 nowait
-host burst h2b-ride-walk-victim 3 300
+guest burst h2b-ride-walk 2 250
+host burst h2b-ride-walk-victim 2 250
 guest hold w+a 1500 nowait
-guest burst h2b-ride-trot 2 300
-host burst h2b-ride-trot-victim 3 300
+guest burst h2b-ride-trot 2 250
+host burst h2b-ride-trot-victim 2 250
 guest hold w+shift+a 1500 nowait
-guest burst h2b-ride-gallop 2 300
-host burst h2b-ride-gallop-victim 3 300
+guest burst h2b-ride-gallop 2 250
+host burst h2b-ride-gallop-victim 3 250
+guest hold w+shift+a 1500 nowait
+guest burst h2b-ride-gallop2 2 250
+host burst h2b-ride-gallop2-victim 3 250
 guest release
 wait 2500
 both capture h2b-ride-stopped
@@ -271,46 +280,3 @@ wait 4500
 host run downed_status
 host require down=0
 both capture h2b-revived
-# --- (c) loaded again, then the guest's world link off: both copies lay the body beside the horse.
-host run goto_horse
-wait 1000
-placebehind guest host 3 2
-wait 2000
-stance host stand
-stance guest stand
-placebehind host guest 6 -0.7
-wait 3000
-guest debug godmode 0
-host hold rmb+lmb 1500
-host release
-wait 600
-host hold rmb+lmb 1500
-host release
-wait 600
-host hold rmb+lmb 1500
-host release
-wait 1200
-guest run downed_status
-guest require down=1.*cause=1.*lock=1
-guest debug godmode 1
-host debug goto_carry
-wait 1500
-host hold r 900
-host release
-wait 3500
-host run goto_horse
-wait 1200
-host hold e 900
-host release
-wait 3000
-host run cargo_status
-host require cargo;state=carrier
-guest run cargo_status
-guest require cargo;state=cargo
-both capture h2c-loaded
-guest worldtrigger world=0
-wait 6000
-waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=carrier;' 10
-host run cargo_status
-host expect cargo;state=off
-both capture h2c-dropped

@@ -1,0 +1,49 @@
+# Horse plan M2, the link drop (part 3 of the lab session: horse-cargo.txt, horse-shared-regress.txt, this; worldtrigger
+# is lab only). The host carries the downed guest onto the shared horse again, then the guest's world link goes off:
+# both copies lay the body beside the horse (why=stream_lost on the host; the guest's copy lays body 0 down when its
+# world goes off). Frames h2c-loaded and h2c-dropped on both screens.
+logmark both
+both debug godmode 1
+# --- (c) loaded again, then the guest's world link off: both copies lay the body beside the horse.
+host run goto_horse
+wait 1000
+placebehind guest host 3 2
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 3000
+guest debug godmode 0
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 600
+host hold rmb+lmb 1500
+host release
+wait 1200
+guest run downed_status
+guest require down=1.*cause=1.*lock=1
+guest debug godmode 1
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run goto_horse
+wait 1200
+host hold e 900
+host release
+wait 3000
+host run cargo_status
+host require cargo;state=carrier
+guest run cargo_status
+guest require cargo;state=cargo
+both capture h2c-loaded
+guest worldtrigger world=0
+wait 6000
+waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=stream_lost; side=carrier;' 10
+host run cargo_status
+host expect cargo;state=off
+both capture h2c-dropped

@@ -1,0 +1,76 @@
+# Horse plan M1 regression (M2 round 2; the round 1 skeptic's gaps). No part of the session names world_horse_share, so
+# the shared horse runs on the native gun profile's default (the shipped path). The guest's first E mounts the unridden
+# horse, the guest rides it more than 50 m (guest position before and after), gets off, and the host's screen shows the
+# horse where the guest left it (frames after placebehind and after the host's goto_horse, which lands beside the
+# guest's dismount spot on the host's own copy); then the host's first E mounts it. Part 2 of the lab session (after
+# horse-cargo.txt) and of the play session (after horse-cargo-play.txt); it never boots and only expects (a miss here
+# never stops the next part).
+# Lines: guest localMounted=1 / 0; host world_lua=event=horse_share; step=placed / step=final; placed=1,
+# partner_mount=show; mount=horse; world_lua=horse_place=stats. Frames m1r-* (the host's screen unless -guest).
+logmark both
+both debug godmode 1
+host run horse_status
+host expect horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run horse_status
+guest expect horse;selected=horse;available=1;actor0=6656;localMounted=0
+guest run goto_horse
+wait 1500
+placebehind host guest 4 2
+wait 1500
+guest run position
+host capture m1r-before
+guest press e 150
+wait 2500
+guest run horse_status
+guest expect localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host capture m1r-guest-mounted
+guest hold w 1500
+guest hold w 1500
+guest hold w+a 1500 nowait
+host run goto_horse
+host burst m1r-guest-trot 2 250
+guest hold w+shift+a 1500
+guest hold w+shift 1500
+guest hold w+shift 1500 nowait
+host run goto_horse
+host burst m1r-guest-gallop 3 250
+guest hold w+shift 1500
+guest release
+wait 3000
+guest run position
+host run goto_horse
+wait 800
+host capture m1r-guest-stopped
+waitlog host 'world_lua=horse_place=stats; placed=' 10
+guest press e 150
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
+guest run position
+guest capture m1r-left-guest
+placebehind host guest 5 2
+wait 1500
+host capture m1r-left-host
+host run goto_horse
+wait 1500
+host run position
+host capture m1r-horse-host-1
+host mouse 750 0
+wait 600
+host capture m1r-horse-host-2
+host mouse 750 0
+wait 600
+host capture m1r-horse-host-3
+host press e 150
+wait 2500
+host run horse_status
+host expect localMounted=1
+host capture m1r-host-mounts
+host press e 150
+wait 3000
+host run horse_status
+host expect localMounted=0
+both capture m1r-end

@@ -34,6 +34,12 @@ local REACH_MM, TAKE_MM, CALL_MM, DRIFT_MM, BACK_MM, RISE_MM, SIDE_MM = 2500, 26
 -- across: c667a209 frames).
 local RIDE_BACK_MM, RIDE_RISE_MM, GROUND_LO_MM, GROUND_HI_MM, GROUND_MM, NEAR_MM, STATS_MS = 540, 500, 1000, 2000, 1450, 3000, 2000
 local VICTIM_RISE_MM, VICTIM_PLACED_MM, TRACK_PIN_MS = 900, 1300, 200
+-- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low at a gallop on the carrier's screen, body 0 slipping off at a
+-- gallop on the victim's): a warped body is drawn after the frame's own move of the rider / the placed horse, so it
+-- leads by the last per-tick move (at most 0.6 m; a bigger jump is no motion; placements more than 200 ms apart none).
+-- victim_gone lays body 0 beside the horse only while it is within 5 m of it (a respawned body stays where it is).
+local LEAD_MAX_MM, LEAD_MS, GONE_MM = 600, 200, 5000
+C.LEAD_MAX_MM = LEAD_MAX_MM
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
 C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_MM = RIDE_BACK_MM, RIDE_RISE_MM, GROUND_MM,
  VICTIM_RISE_MM, VICTIM_PLACED_MM
@@ -42,10 +48,10 @@ local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n
 local function num(n) return type(n) == "number" and n == n and n > -1e12 and n < 1e12 end
 local function round(v) return floor(v + 0.5) end
 local function log(s) if type(W.log) == "function" then pcall(W.log, "event=horse_cargo;" .. s) end end
-local function capped(kind, s)
+local function capped(kind, s, cap)
  local c = (C.n[kind] or 0) + 1
  C.n[kind] = c
- if c <= 20 then log(s) end
+ if c <= (cap or 20) then log(s) end
 end
 local function receipt(text)
  if type(W.receipt) ~= "function" then return nil end
@@ -137,6 +143,31 @@ end
 local function reset()
  C.state, C.heldSince, C.heldDone, C.claimAt, C.loadAt, C.gen, C.hgen, C.h, C.keepAt, C.keepPose = "off", nil, nil, nil, nil, nil, nil, nil, nil, nil
  C.takeSince, C.lostAt, C.park, C.putAt, C.placeAt, C.dyFix, C.statsAt, C.trackPinAt = nil, nil, nil, nil, nil, nil, nil, nil
+ C.lastMine, C.lastPlaced, C.want, C.lag = nil, nil, nil, nil
+end
+-- The last move (dx, dz in mm) from the point L = {x, z} to (x, z), or none past LEAD_MAX_MM.
+local function lead(L, x, z)
+ if not L or not x then return 0, 0 end
+ local dx, dz = x - L[1], z - L[2]
+ if dx * dx + dz * dz > LEAD_MAX_MM * LEAD_MAX_MM then return 0, 0 end
+ return dx, dz
+end
+-- Body 0 (this copy's player) against its last target before the next warp: the worst horizontal lag and drop of the
+-- stats window, for the victim_pin line.
+local function noteLag()
+ local t, x, y, z = C.want, mine()
+ if not (t and x) then return end
+ local L = C.lag or {lag = 0, drop = 0, n = 0}
+ C.lag = L
+ local d = sqrt((x - t[1]) ^ 2 + (z - t[3]) ^ 2)
+ if d > L.lag then L.lag = d end
+ if t[2] - y > L.drop then L.drop = t[2] - y end
+ L.n = L.n + 1
+end
+local function warp0(x, y, z, a, src)
+ noteLag()
+ C.want = {x, y, z, src}
+ return warp(0, x, y, z, a)
 end
 -- End this copy's part. why: a CAUSE name (or a local refusal); place: lay the body down (at p, else beside the horse);
 -- remote: the partner ended it (nothing is sent back).
@@ -218,8 +249,11 @@ local function bodyPoint(h, rides)
  local x, y, z, a = cargoPoint(h)
  local px, py, pz = mine()
  if rides and px then
-  return px - RIDE_BACK_MM * sin(a), py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a), a, "rider"
+  local lx, lz = lead(C.lastMine, px, pz)
+  C.lastMine = {px, pz}
+  return px - RIDE_BACK_MM * sin(a) + lx, py + RIDE_RISE_MM, pz - RIDE_BACK_MM * cos(a) + lz, a, "rider"
  end
+ C.lastMine = nil
  if px and sqrt((h.x - px) ^ 2 + (h.z - pz) ^ 2) <= NEAR_MM then
   if y > py + GROUND_HI_MM or y < py + GROUND_LO_MM then
    C.dyFix = py + GROUND_MM - h.y
@@ -268,7 +302,7 @@ local function carrierTick(now)
   C.statsAt = now + STATS_MS
   local _, py = mine()
   capped("pin", fmt("step=pin;how=%s;mounted=%d;hy_cm=%d;py_cm=%d;by_cm=%d", how, rides and 1 or 0, round(h.y / 10),
-   py and round(py / 10) or -1, round(by / 10)))
+   py and round(py / 10) or -1, round(by / 10)), 60)
  end
  if now >= C.keepAt then C.keepAt = now + KEEP_MS; send(KEEP, 0, C.gen, h.x, h.y, h.z, h.yaw) end
  if rides then C.takeSince = nil; return end
@@ -288,7 +322,12 @@ local function cargoTick(now)
  cargo(false, false, true)
  if now - C.keepAt > LOST_MS then return stop(now, "stream_lost", true) end
  local me = rec(W.role)
- if not me or me.generation ~= C.gen then return stop(now, "victim_gone", false) end
+ if not me or me.generation ~= C.gen then
+  local x, _, z = mine()
+  local cx, cz
+  if C.h then cx, _, cz = cargoPoint(C.h) end
+  return stop(now, "victim_gone", (x and cx and sqrt((cx - x) ^ 2 + (cz - z) ^ 2) <= GONE_MM) and true or false)
+ end
  if me.down ~= true then return stop(now, "awake", true) end
  local p = C.physical
  if p and p.localCarried == true and now - C.putAt < LOAD_MS then return end
@@ -313,11 +352,14 @@ local function cargoTick(now)
  C.h = h
  local wx, wy, wz, wa = cargoPoint(h)
  wy = h.y + VICTIM_RISE_MM
- if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp(0, wx, wy, wz, wa + pi / 2) end
+ if now - (C.trackPinAt or -1e9) >= TRACK_PIN_MS then warp0(wx, wy, wz, wa + pi / 2, "census") end
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local got = type(me.pos) == "table" and int(me.pos[2], -1000000000, 1000000000) and round(me.pos[2] / 10) or -1
-  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d", round(wy / 10), got))
+  local L, t = C.lag or {lag = 0, drop = 0, n = 0}, C.want
+  capped("victim_pin", fmt("step=victim_pin;want_cm=%d;got_cm=%d;lag_cm=%d;drop_cm=%d;n=%d;src=%s", round((t and t[2] or wy) / 10), got,
+   round(L.lag / 10), round(L.drop / 10), L.n, t and t[4] or "none"), 60)
+  C.lag = nil
  end
 end
 -- world_horse_share calls this right after it placed this copy's horse from the rider's stream (the same frame): the
@@ -326,9 +368,14 @@ function C.placed(x, y, z, yaw)
  if C.state ~= "cargo" or not num(x) or not num(y) or not num(z) or not num(yaw) then return end
  local p = C.physical
  if p and p.localCarried == true then return end
+ local now = W.now and W.now() or 0
+ local L = C.lastPlaced
+ local lx, lz = 0, 0
+ if L and now >= L[3] and now - L[3] <= LEAD_MS then lx, lz = lead(L, x, z) end
+ C.lastPlaced = {x, z, now}
  local a = yaw / 1000
- warp(0, x - BACK_MM * sin(a), y + VICTIM_PLACED_MM, z - BACK_MM * cos(a), a + pi / 2)
- C.trackPinAt = W.now and W.now() or 0
+ warp0(x - BACK_MM * sin(a) + lx, y + VICTIM_PLACED_MM, z - BACK_MM * cos(a) + lz, a + pi / 2, "placed")
+ C.trackPinAt = now
 end
 local function onClaim(now, gen, pose)
  if not W.host then return end
