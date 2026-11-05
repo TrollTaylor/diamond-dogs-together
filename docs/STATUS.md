@@ -1,4 +1,4 @@
-## November 5, 2026: enemy round 9 track B - the patrol trucks' crews: with `lrrp_follow` named no truck drives off empty, but the crews still run on their own clock; it stays off unless named (`wp/enemy-lrrp`, not pushed)
+## November 5, 2026: enemy round 9 track B - the patrol trucks' crews: with `lrrp_follow` named the trucks follow within 0.6 m p90, but the crews still run on their own clock and an empty truck still moved once; it stays off unless named (`wp/enemy-lrrp`)
 
 Design 7.25, protocol section 42 (no new op). Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown.
 Three hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the same three parts (join,
@@ -16,18 +16,35 @@ Three hidden play sessions over `-WanSim bad`, the gun profile, research build, 
   `vehicle_state_status lrrp 0|1` for a key-off window in the same session. 99cf1044 / aed13563 / 43f25a8c red,
   4f22843d / a0d3f1dd green. Full build and CTest 355/355 at e57de763; every contract `--check` as round 8 (known base
   failures only).
+- **Land fixes** (the review, red ee9f0367 / green e5cbe4c6; lrrp_follow only, so off unless named; not run): an empty
+  guest copy whose crew is out is never moved 5 m+ to a manned host truck, at rest too (801cd90b's 100.5 m jump below);
+  once the host's rider count rises at a stop, no `UnsetRelativeVehicle` until its truck drives (801cd90b sent it during
+  the host's boarding). Full build, CTest and the contract checks at the land head.
 - **Gate rows** (Afghanistan) [O]:
   - PASS truck error while followed: p50 0.16-0.17 / p90 0.57-0.61 m (1039 / 708 samples), |dy| p90 0.05 m.
-  - PASS no truck jump within 400 m of the guest (0 in both; 25605 waited 13-22 times and jumped at 400-590 m).
-  - PASS (session 2) 0 trucks moving with the host's crew and the guest's copy empty (session 1: 25606 drove off empty
-    for 123 s: `SetRelativeVehicle{rideFromBeginning=true}` seated nobody in 40 tries, so a0d3f1dd dropped it).
+  - PASS only by construction: no truck jump within 400 m of the guest (the code jumps only at 400 m+). 25605 waited
+    (18 `defer` lines before its first jump in 68491f7f) and jumped 366.9 m at near_m 400.0; in 801cd90b its first jump
+    (~368 m at ~356721333, the guest ~397-400 m away by the host's puppet) was dropped by the guest's `log_cap`, its
+    logged jumps are at 510 / 645 m. These jumps land right at the boundary, where a truck may still be in sight [U].
+  - FAIL (review) an empty truck moved: in 801cd90b 54 `crew_wait` lines held 25606 while the host's drove manned, but
+    when the host's truck paused (v=0) the guest's EMPTY copy (rl=0, rh=2) was taken again and jumped 100.5 m to
+    (-1689.36, 969.78), pinned 9 s, then released (`crew_out`) while its crew walked ~110 m away on foot (land fix above).
+    Session 1: 25606 drove off empty for 123.2 s: `SetRelativeVehicle{rideFromBeginning=true}` seated nobody in 50
+    tries (25 per guard), so a0d3f1dd dropped it.
   - PASS 0 latches / faults / game overs / drive_sank in both.
   - PASS (weak) frame time: p95 on / off / on 22.2-24.4 / 22.7-25.6 ms, at most +1.7 ms over the off window (4 samples
     of 10 s per window); the module costs 0.05-0.15 ms per tick.
   - FAIL riders within 8 m while seated: 25605 p90 426-427 m (its approach waited near the guest: the guest's own copy).
-  - FAIL crews within 5 m 20-40 s after the host's get-out: 9.3-42.3 m (session 2); the guest's crews got out 51-70 s
-    after the host's, and 25606's did not board again in the ~110 s left (that truck and crew stayed at their stop on
-    the guest's PC while the host's drove on).
+  - FAIL crews within 5 m 20-40 s after the host's get-out: 9.3-42.3 m (session 2; the host's get-out time comes from
+    5 s `step=host` lines). 25606's guest crew got out 6.4 s after the mod sent `UnsetRelativeVehicle` during the host's
+    boarding (k=25, rh=1, rl=2; land fix above) and did not board again; its truck did not stay at the stop (the jump
+    above). Whether the get-outs follow the unseats or the crews' own clock is not established [U]: in 68491f7f too each
+    came 1-9 s after an unseat round.
+  - Log volume (review) [O]: with the key named, lrrp lines are 81-83% of the guest's world log (41-47 lines/s against
+    the 20/s budget); `world=log_cap` dropped 224 / 340 guest lines across all modules (the host and the no-key run 0),
+    so the guest-side report counts in the named runs are cut. Next: follow lines at 1 Hz.
+  - Not attributed: CP 3196907442 rose and fell in a loop in both named runs (host ChangePhase 52 / 40) and not in the
+    no-key run; round 8 saw the same loop in other no-key runs [U].
   - Report FAILs in both named runs: guest place error p90 13.3-15.0 m and corrections 13/23-16/33 (25605's two guards
     still in the guest's truck, `vehicle_local`); M3 host p90 4.96 / 7.54 m.
   - The no-key run `d7b3a81c` (key off at the defaults, the same parts; all passed; first frames in gameplay): no
@@ -36,7 +53,7 @@ Three hidden play sessions over `-WanSim bad`, the gun profile, research build, 
     crew stay beyond 60 m of the guest, so the row does not see them), corrections 16/43 (26 `vehicle_local`), M3 host
     p90 6.97 m. Frame p95 over the whole session 25.6 / 25.0 ms (host / guest) against 25.0-25.6 ms in the named runs.
 - **What blocks it**: the guest's crews follow their own LRRP clock; no tried command moves it (the board seats nobody,
-  UnsetRelativeVehicle shows no effect apart from the crews' own get-out [I], StartTravel "" ends the plan). **Next**: set the guest copy's LRRP
+  whether UnsetRelativeVehicle causes the get-outs is unknown [U], StartTravel "" ends the plan). **Next**: set the guest copy's LRRP
   step (the travel plan cursor) to the host's, or hand the unseated crew to M1..M6 as host-owned and seat them with the
   vehicle's own get-in; a camera-hidden jump within 400 m; then Africa (`enemy-lrrp-africa.txt`, seed `africa-jeep`).
 - **Not done**: Africa (30020) not run (the seed exists; the sessions went to the fix); the frame-time row has 4 samples

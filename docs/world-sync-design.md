@@ -941,13 +941,13 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
 - **Session 1** `68491f7f` (`lrrp_follow=1`, 4f22843d; join, `enemy-lrrp-crew.txt`, `enemy-lrrp-alert3.txt`; all parts
   passed; first frames of both copies in gameplay, no modal) [O]:
   - Truck error while followed p50 0.16 / p90 0.57 / max 5.33 m (1039 samples; 25605 p90 0.66, 25606 p90 0.53), |dy|
-    p90 0.05 m. Jumps within 400 m of the guest: 0. 25605 waited 13 times (`defer`, near_m 150-400) and jumped 366.9 m
-    at near_m 400.0, again 99 m (590 m away) after the lever window.
-  - The board did not work: 40 `SetRelativeVehicle` to 25606's two guards, `rl` stayed 0; the guest's 25606 drove off
-    empty for 123.2 s while the host's carried its crew (the row the gate needs at 0).
-  - `UnsetRelativeVehicle` alone moved nobody that the logs can tell apart from the crews' own clock [I]: the parked
-    trucks' guest crews got out ~20 s after the pairing (3 rounds of unseats), 25606's 64 s after the host's (5 s after the
-    host's crew had boarded again).
+    p90 0.05 m. Jumps within 400 m of the guest: 0, by construction (the code jumps only at 400 m+). 25605 waited (18
+    `defer` lines before its first jump, near_m 150-400) and jumped 366.9 m at near_m 400.0, again 99 m (590 m away)
+    after the lever window.
+  - The board did not work: 50 `SetRelativeVehicle` (k=1..50, 25 per guard) to 25606's two guards, `rl` stayed 0; the
+    guest's 25606 drove off empty for 123.2 s while the host's carried its crew (the row the gate needs at 0).
+  - `UnsetRelativeVehicle`: cause unknown [U]: the parked trucks' guest crews got out 1.1 / 3.6 s after their 4th / 3rd
+    unseat round, 25606's 64 s after the host's and within 9 s of its last unseat burst.
   - 25605 near the players: its guest copy was its own (deferred) on the approach, so its riders were p90 426 m apart and
     its crew got out 53-73 s after the host's; the guest's place error p90 15.03 m comes from these two guards (29
     `place_div` over 8 m each, 16-48 m), 11 corrections refused `vehicle_local` (they still sat in the guest's truck).
@@ -957,11 +957,13 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   - Frames k-5 / k-6 (both binoculars west at the stop): rock and terrain, no truck in view on either screen.
 - **Session 2** `801cd90b` (`lrrp_follow=1`, a0d3f1dd; the same parts; all passed; first frames in gameplay) [O]:
   - Truck error while followed p50 0.17 / p90 0.61 / max 4.62 m (708); 25606's seated crew p90 0.53 m; jumps within
-    400 m of the guest: 0; 0 latches / faults / game overs / drive_sank.
-  - 0 trucks moving with the host's crew aboard and the guest's copy empty (round 8 and session 1: 25606 for 123-191 s):
-    398 `crew_wait` lines for 25606. But its guest crew got out 66 s after the host's (5 s after the host's crew had boarded
-    again) and did not board in the rest of the run (~110 s): on the guest's PC that truck and its crew stayed at the
-    stop (-1643, 880) while the host's drove on.
+    400 m of the guest: 0 logged (25605's first jump, ~368 m at ~356721333 with the guest ~397-400 m away, was dropped by
+    the guest's `log_cap`; its logged jumps 510 / 645 m); 0 latches / faults / game overs / drive_sank.
+  - Empty truck (the review): 54 `crew_wait` lines (398 follow lines in mode=wait) held 25606 while the host's drove
+    manned, but at 356989579, the host's truck paused (v=0), the guest's EMPTY copy (rl=0, rh=2) was taken again and
+    jumped 100.5 m to (-1689.36, 969.78), pinned 9 s, released (`crew_out` at 356998672); its crew walked NE on foot (to
+    -1564, 958). Its guest crew had got out at 356953086, 6.4 s after the mod sent `UnsetRelativeVehicle` during the
+    host's boarding (k=25, rh=1, rl=2 at 356946676), and did not board again (~110 s). Both fixed at the land (below).
   - Crews 20-40 s after the host's get-out (step=crew on both copies, interpolated): 25605's 2305481811 p90 25.3 m and
     3970963356 p90 42.3 m (the guest's copies still in the guest's own, deferred truck: they got out 51-70 s after the
     host's); 25606's two 9.3 / 10.9 m (the guest's copies still seated in the pinned truck, the host's on foot).
@@ -977,13 +979,21 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   `vehicle_local`), M3 host p90 6.97 m; frame p95 over the session 25.6 / 25.0 ms (host / guest), the named runs
   25.0-25.6 ms. Frames al-3: both copies in play (the host crouched south with guard markers, the guest in the outpost).
 - **Gate** (Afghanistan; Africa 30020 not run: seed `africa-jeep` exists and `enemy-lrrp-africa.txt` is ready) [O]: PASS
-  truck error while moving, no jump within 400 m, 0 driving empty on one screen (session 2), 0 latches / faults / game
+  truck error while moving, no jump within 400 m (by construction), 0 driving empty on one screen (session 2; but one empty truck moved, below), 0 latches / faults / game
   overs, frame time (weak); FAIL riders within 8 m while seated (25605, deferred near the guest), crews within 5 m 20 s
   after the get-out (9-42 m), the guest's crew boarding when the host's does (it boards on its own clock or not at all).
-  `lrrp_follow` stays off unless named.
+  `lrrp_follow` stays off unless named. Corrected at the land (the review): the no-jump row passes by construction (the
+  jumps sit at the 400 m boundary), and session 2 had one empty truck moved (the 100.5 m jump at a host pause), so that
+  row FAILs too.
+- **Land fixes** (red ee9f0367, green e5cbe4c6; off unless named, not run): `crewless` (no place, ForceStop lifted) also
+  holds at rest when the host's manned truck is 5 m+ off this copy's empty one; once the host's rider count rises at a
+  stop (`tr.hn`, `tr.boarding`), no unseat until the host's truck drives. Not fixed (debug only): `LF.paused` survives a
+  mission start; the scratch gate tool printed only 40 lines per command list and skipped jumps of empty trucks.
+- **Log volume** [O]: named, lrrp lines are 81-83% of the guest's world log (4947 / 6074, 5202 / 6236; 41-47 lines/s
+  against the 20/s budget in `native/world_link.cpp`); `world=log_cap` dropped 224 / 340 guest lines (all modules).
 - **What blocks it** [O unless marked]: the guest's crews run their own LRRP clock and no command tried moves it:
-  `SetRelativeVehicle{rideFromBeginning=true}` seats nobody mid-mission (40 tries), `UnsetRelativeVehicle` shows no effect
-  apart from the crews' own get-out, `StartTravel ""` (round 8) gets them out but ends the plan. Near the guest the truck
+  `SetRelativeVehicle{rideFromBeginning=true}` seats nobody mid-mission (50 tries), whether `UnsetRelativeVehicle` causes
+  the get-outs is unknown [U], `StartTravel ""` (round 8) gets them out but ends the plan. Near the guest the truck
   waits (no visible jump), so the truck the players see is still the guest's own, ~72 s late, as in 0.15.2.
 - **Next**: (1) find the soldier's LRRP step in the exe (the travel plan cursor of SetLrrp / StartTravel) and set the
   guest copy's to the host's at the pairing and at each get-out / boarding, instead of commanding seats; or (2) put the

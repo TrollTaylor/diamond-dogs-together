@@ -2515,9 +2515,11 @@ No new op; LRRP_FAST 0x5D is unchanged (section 38). The code is now its own wor
 spliced after `world_vehicle_state.lua`.
 
 - Guest, at rest: a rider this copy has and the host's truck no longer has gets `UnsetRelativeVehicle` 2 s after the
-  host's count dropped, again at most every 5 s per guard. `StartTravel{travelPlan=""}` is never sent.
-- Guest, moving: while the host's truck moves (flags 1) with riders and this copy's known crew is out, ForceStop is lifted
-  and the truck is not placed (`step=crew_wait; id; d_m; near_m; rh; rl`, every 2 s); taken again once manned here.
+  host's count dropped, again at most every 5 s per guard; none once the host's count rose at that stop, until the host's
+  truck moves. `StartTravel{travelPlan=""}` is never sent.
+- Guest, crewless: while the host's truck has riders and this copy's known crew is out, and the host's truck moves (flags
+  1) or is 5 m+ off, ForceStop is lifted and the truck is not placed (`step=crew_wait; id; d_m; near_m; rh; rl`, every
+  2 s); taken again once manned here.
 - Guest, jumps: within 400 m of this player (either end) a move over 30 m waits (`step=defer`, same fields), 5..30 m
   slides 1 m a frame (`step=catch; id; d_m; near_m`, once per catch-up); `step=jump` adds `near_m`.
 - Both roles: `step=crew; id; ent; x; z; in; rl` 1 Hz for 60 s after a rider-count change (on the guest also the host's
