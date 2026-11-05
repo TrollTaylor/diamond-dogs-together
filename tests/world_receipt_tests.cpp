@@ -480,6 +480,15 @@ void Warp() {
             const std::string x = act(b);
             Check(!world::ParseAct(x.data(), x.size(), op, aslot, ago), "act: a malformed receipt is refused");
         }
+        std::int32_t pmm[3]{};
+        const std::string p = act("p 421159 -268759 2084588");
+        Check(Kind(p) == world::Receipt::act && world::ParseActPlayer(p.data(), p.size(), pmm) && pmm[0] == 421159 && pmm[1] == -268759 &&
+                  pmm[2] == 2084588 && !world::ParseAct(p.data(), p.size(), op, aslot, ago), "act: p <x y z mm>, the local player");
+        const char* pbads[] = {"p 1 2", "p 1 2 3 4", "p 1 2 100000001", "q 1 2 3", "p  1 2 3"};
+        for (const char* b : pbads) {
+            const std::string x = act(b);
+            Check(!world::ParseActPlayer(x.data(), x.size(), pmm), "act: a malformed p is refused");
+        }
     }
 }
 } // namespace

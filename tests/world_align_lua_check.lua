@@ -64,6 +64,13 @@ local function fixture(host, level, mb)
     W.inGame = function() return c.inGame ~= false end
     -- Spawn sync receipts: WORLD_WARP_V1 answers from c.warp (FIFO, the last one repeats), REMOTE_V1 rows.
     W.receipt = function(source)
+        -- FM1 (world_mirror.lua): ACT_V1 receipts go to c.acts only (the other checks read c.receipts in order).
+        if source:find("'MGS_COOP_WORLD_ACT_V1'", 1, true) then
+            c.acts = c.acts or {}
+            c.acts[#c.acts + 1] = source
+            if source:find("-- p ", 1, true) then return {p = 1} end
+            return c.actReply or {f = 1, sh = c.shots or 0}
+        end
         c.receipts[#c.receipts + 1] = source
         if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) or source:find("'MGS_COOP_WORLD_WARP_HOST_V1'", 1, true) then
             local r = #c.warp > 1 and table.remove(c.warp, 1) or c.warp[1]
@@ -75,11 +82,6 @@ local function fixture(host, level, mb)
             c.drives = c.drives or {}
             c.drives[#c.drives + 1] = source
             return c.driveReply or {e = 120, s = 1, r = 0, h = 1}
-        end
-        if source:find("'MGS_COOP_WORLD_ACT_V1'", 1, true) then
-            c.acts = c.acts or {}
-            c.acts[#c.acts + 1] = source
-            return c.actReply or {f = 1, sh = c.shots or 0}
         end
         return nil
     end

@@ -333,6 +333,41 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
 - **The proof** (play, `-WanSim bad`, gun profile, research build, afgh-ledge, the defaults incl. `place_lift`): `41f2b07f` (join, a quiet part with a sleep and a kill, then the 4.5-minute ALERT): 0 latches, census `leaf=typed` on both copies, but 0 relays; place error p50 0.63 / p90 1.61 m over 88 samples (before the ALERT 0.53 / 0.95, the quiet part 0.50 / 0.90); the sleep and the kill applied 0.2 / 0.1 m from the guard, the ALERT's outcomes 0.0-1.8 m; 260 of 263 landings within 0.1 m; one `place_sink` (2929558510, landed 0.49 m over, then 5.05 m under its owner) and one `drive_sink`. `31a799e3` (the A/B stimulus on the fix build): 17 relays on the host (all M3 grants, streaks up to 4), 15 `backoff` refusals, 32 host placements refused `unrealized` (the guest's ACKs decode WHY 23), 0 anomalies, 0 latches; most relayed guards were moved again after their backoff (go 1043: 6 moves), but go 1264 (7 relays) was not moved again after its last relay; 190 of 191 landings within 0.1 m; guest place error p50 0.65 / p90 17.2 m (copies of host-owned guards 46-75 m off for about 25 s: far refusals, then the copy back near the guest between corrections) and M3 host p50 1.88 / p90 18.5 m (relayed host copies stay put until they realize).
 - **A1, the slot drift** (`partner_native_slot_rearm`, off unless named): the fb1101 friend session's 19.8 s mismatch had a complete plan (`map=0,1,2`); after a prone/dive body 1 dropped back to slot 0 while the follower had spent its two writes of that (slot, switch) episode. `partner_slots::EpisodeStep` adds one write 750 ms after body 1 left a slot it had reached, at most 3 per episode and 2 s apart (`partner_slot=drift`). `partner_weapon=mismatch` names `remote_slot`, `body_slot` and `why=plan|slot|equip` (plan: no body slot or stand-in for that remote slot). In the runs above the late joiner's secondary (875) had no body weapon, the plan gave slot 0's 36 as its stand-in (`map=0,1,0`, `partner_weapon=standin`, the host's HUD "gun stand-in"), and every `why=slot` mismatch cleared within about 0.4 s (the switch lag; the join-time `why=plan` mismatch of 873, body equip 2047, lasted about 1-3 s); the drift case did not come up.
 
+#### 7.15 Enemy sync M7 FM1: the far mirror (lab key `soldier_act`, CFG r[19] bit 512; research key `act_census`)
+
+- **The engine's own act sync** [O static, Ghidra decompile, mgsvtpp 1.0.15.4]: each guard's body runs one 0x1e0-byte
+  request record R (`*(M+0x10) + idx*0x1e0`) that his brain writes. The request manager M (the +0x20 sub-object of the
+  object 0x14136e8d0 builds: vtable 0x1423e8a48, `M+0x50` = the soldier impl S, `M+0x58` = the action codec, vtable
+  0x1423e9638) runs 0x1413735c0 every frame. In FOB (`S+0x2a4` bit 2) 0x1413738b0 has the owner pack the request
+  (0x1413704a0, 0x70 bytes) and order (0x141370900, 0x18) and the other peer unpack them (0x14136f810 / 0x1413701f0, then
+  `R+0x19e |= 0x80`, `R+0x1d2 |= 1`). The codec is one symmetric serializer 0x141386640 with a direction word. The unpack
+  reads the network-position entry `*(*(S+0xe0)+8) + idx*0x18` only when idx < `[*(S+0xe0)+0x10]` and dereferences it
+  with no null check (U1), warps the copy beyond 15 m of it (0x14136ece0, 225.0 at 0x142329c00), and runs a moving copy
+  toward the packed position (gait + 1 at 2..5 m, gait 3 and that destination beyond 5 m). SetPuppet (bit 27 of dword +8
+  of `*(*(S+0x110)+8) + idx*0x28`) gates only the brain tick (0x1414dc8b0). Offline a new order is marked done at once
+  (0x141373c20), so a mirror re-posts it every update.
+- **The far rule**: a guard is a mirror puppet on the guest only while the guest's player is beyond R of him. R per phase
+  is 1.5 x the farthest first notice or engagement distance measured at the defaults (floors 80 m calm / caution, 120 m
+  ALERT), capped at the realize radius minus 10 m. He is taken beyond R + 15 m and released within R, so nobody is made
+  unseen who could be seen without the key. Any guest shot releases every puppet for 15 s.
+- **The path** (native/soldier_act.cpp, lua/coop/world_mirror.lua, SOLDIER_ACT 0x58 in protocol section 32):
+  - the host registers its own NORMAL guards within 250 m of the guest and beyond R - 10 m (`ACT_V1 t`); its hook packs
+    them with the engine's pack each frame, stages a changed record (a destination 5 cm or a facing 1 degree off is
+    jitter) at most every 100 ms and every 1 s, and `ACT_V1 s` sends the staged parts (at most 24 per 100 ms);
+  - the guest's `ACT_V1 m` takes the newest complete request and order of the slot into the hook's mailbox; the hook
+    unpacks a new request into the puppet's R with his network-position entry pre-filled with the host copy's position
+    (a table that does not cover him is lent one for the call), swaps players 0 / 1 in facing ids and order target ids,
+    and re-posts the order every update;
+  - the puppets' own bullets and noise are dropped (`partner_fire_filter`, the `soldier_authority` mirror mask): the host
+    copy's shots are the real ones; the guest's own shots are counted to release the puppets;
+  - DRIVE_V1 mode 2 (the mirror drive) never steps a puppet under 5 m and moves him the whole way beyond; a far puppet
+    is outside the 60 m stream, so only the engine's 15 m rule and the catch-up keep him in place there.
+- **Probe P1** (`act_census`): every 0.5 s `soldier_act_census` per realized guard within 250 m (the U1 table, S's mode,
+  peer and owner bytes, R's flags, the packed request and order, gait / posture / kinds, the aim point, the weapon
+  bytes), `soldier_act_payload` (U3), `soldier_engage_bins` (Defend hits on the local player per shooter with its
+  distance), `soldier_act_bands` every 10 s (realized copies per 25 m band); `act_probe` (U2) puppets one guard and
+  posts another's request to him on one copy.
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.

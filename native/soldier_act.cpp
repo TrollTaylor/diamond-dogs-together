@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "mgscoop/soldier_authority.hpp"
+#include "mgscoop/partner_net.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/world_wire.hpp"
 
@@ -221,7 +222,10 @@ struct Probe {
 Probe g_probe{};
 std::atomic<std::uint32_t> g_probeRuns{0};
 
-std::uint64_t NowMs() noexcept { return GetTickCount64(); }
+// The runtime thread stamps every registration and mailbox with partner_net::NowMs (ACT_V1, world_link::ActLatest); the
+// hook compares with the same clock (run 0a271c10: GetTickCount64 here left every registration stale: 25 requests staged
+// in five minutes, 0 applied).
+std::uint64_t NowMs() noexcept { return partner_net::NowMs(); }
 
 void Emit(const char* line) noexcept {
     if (g_log) g_log(line);

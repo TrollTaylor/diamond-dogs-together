@@ -197,6 +197,23 @@ bool ParseAct(const char* source, std::size_t size, char& op, std::uint16_t& slo
     return true;
 }
 
+bool ParseActPlayer(const char* source, std::size_t size, std::int32_t (&pos_mm)[3]) noexcept {
+    if (!source || !Prefixed(source, size, act_prefix) || size > max_receipt) return false;
+    const char* p = source + sizeof(act_prefix) - 1;
+    const char* end = source + size;
+    if (p >= end || *p++ != 'p') return false;
+    std::int64_t v[3]{};
+    for (unsigned i = 0; i < 3; ++i) {
+        if (p >= end || *p != ' ') return false;
+        ++p;
+        if (!Token(p, end, v[i])) return false;
+        if (v[i] < -100000000 || v[i] > 100000000) return false;
+    }
+    if (p != end) return false;
+    for (unsigned i = 0; i < 3; ++i) pos_mm[i] = static_cast<std::int32_t>(v[i]);
+    return true;
+}
+
 bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept {
     if (!source || !Prefixed(source, size, warp_prefix) || size > max_receipt) return false;
     const char* p = source + sizeof(warp_prefix) - 1;

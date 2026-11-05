@@ -3135,8 +3135,17 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
     char op = 0;
     std::uint16_t slot = 0;
     std::uint32_t go = 0;
-    if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
+    std::int32_t player_mm[3]{};
+    if (mgscoop::world::ParseActPlayer(text, size, player_mm)) {
+        // The local player for the census distances (act_census) and the mirror's frame lines; nothing else.
+        if (!sa::Installed()) return refuse("hook");
+        const float pos[3] = {player_mm[0] * 0.001f, player_mm[1] * 0.001f, player_mm[2] * 0.001f};
+        sa::SetLocalPlayer(pos, mgscoop::partner_net::NowMs());
+        StringCchCopyA(debug_reply, ARRAYSIZE(debug_reply), "return {p=1}");
+        return debug_reply;
+    }
+    if (!mgscoop::world::ParseAct(text, size, op, slot, go)) return refuse("args");
     if (!labc.soldier_act || !(labc.mode == mgscoop::LabMode::lab || labc.mode == mgscoop::LabMode::play)) return refuse("disabled");
     if (!sa::MirrorOn()) return refuse("hook");
     unsigned short mission = 0;

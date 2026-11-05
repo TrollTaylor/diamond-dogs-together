@@ -24,7 +24,7 @@ do
         M.ENTER, M.HOST_MARGIN, M.RANGE, M.SHOT_MS, M.STALE_MS, M.SCAN = 15, 10, 250, 15000, 1500, 12
         M.MISSIONS = {[30010] = true, [30020] = true, [30050] = true}
         function M.reset()
-            M.pp, M.i, M.shots, M.shotAt, M.statAt = {}, 0, nil, nil, nil
+            M.pp, M.i, M.shots, M.shotAt, M.statAt, M.pAt, M.why = {}, 0, nil, nil, nil, nil, {}
             M.n = {on = 0, off = 0, refused = 0, tx = 0}
             M.last = {}
         end
@@ -110,7 +110,10 @@ do
                         M.shotCheck(r, now)
                         if type(r) == "table" and r.f == 1 and not (M.shotAt and now - M.shotAt < M.SHOT_MS) then
                             M.set(h, en, true, "far", d, R)
-                        elseif type(r) == "table" and r.refused then M.n.refused = M.n.refused + 1 end
+                        elseif type(r) == "table" and r.refused then
+                            M.n.refused = M.n.refused + 1
+                            M.why[r.refused] = (M.why[r.refused] or 0) + 1
+                        end
                     end
                 end
             end
@@ -141,13 +144,24 @@ do
             M.statAt = now
             local k, n = M.last or {}, 0
             for _ in pairs(M.pp) do n = n + 1 end
-            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;reg=%d;tx=%s;rx=%s;ap=%s;or=%s;fd=%s;fn=%s;sh=%s",
-                W.host and "host" or "guest", n, M.n.on, M.n.off, M.n.refused, M.n.tx, tostring(k.tx), tostring(k.rx),
-                tostring(k.ap), tostring(k["or"]), tostring(k.fd), tostring(k.fn), tostring(k.sh))
+            local why = {}
+            for w, c in pairs(M.why) do why[#why + 1] = w .. ":" .. c end
+            L("event=mirror_stats;role=%s;puppets=%d;on=%d;off=%d;refused=%d;why=%s;reg=%d;tx=%s;rx=%s;ap=%s;or=%s;fd=%s;fn=%s;sh=%s",
+                W.host and "host" or "guest", n, M.n.on, M.n.off, M.n.refused, table.concat(why, ","), M.n.tx, tostring(k.tx),
+                tostring(k.rx), tostring(k.ap), tostring(k["or"]), tostring(k.fd), tostring(k.fn), tostring(k.sh))
         end
         local tick = P.tick
         P.tick = function(now)
             tick(now)
+            -- The local player for the native census distances (act_census / soldier_act; refused without the hook).
+            if W.followOn == true and W.paired and (not M.pAt or now - M.pAt >= 250) then
+                M.pAt = now
+                local x, y, z = W.get(vars, "playerPosX"), W.get(vars, "playerPosY"), W.get(vars, "playerPosZ")
+                if type(x) == "number" and type(y) == "number" and type(z) == "number" then
+                    W.receipt(fmt("return 'MGS_COOP_WORLD_ACT_V1' -- p %d %d %d", math.floor(x * 1000 + 0.5),
+                        math.floor(y * 1000 + 0.5), math.floor(z * 1000 + 0.5)))
+                end
+            end
             local on = W.actOn and W.followOn == true and W.w1 and W.paired and W.eff >= 2 and W.rosterMatch == true and
                 M.MISSIONS[W.mission]
             if not on then
