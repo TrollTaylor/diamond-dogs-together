@@ -21,7 +21,8 @@ local SEND_MS, CLOSED_MS, STATS_MS, HOLD_MM, FREE_MM, LEAP_MM = 50, 700, 2000, 4
 local PILLION_HOLD_MM, PILLION_FREE_MM = 2500, 2800
 local fmt, floor, sqrt = string.format, math.floor, math.sqrt
 S.HOLD_MM, S.FREE_MM, S.SEND_MS, S.PILLION_HOLD_MM, S.PILLION_FREE_MM = HOLD_MM, FREE_MM, SEND_MS, PILLION_HOLD_MM, PILLION_FREE_MM
--- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (unproven for the default).
+-- The ride hold's radius: M1's, or M3's smaller one while world_horse_pillion is on (the default with the gun profile
+-- since M3c: lab 51f6a2cc / play 4f52fa2a, the key not named).
 local function holdRange()
  local P = W.horsePillion
  if type(P) == "table" and type(P.keyOn) == "function" and P.keyOn() == true then return PILLION_HOLD_MM, PILLION_FREE_MM end

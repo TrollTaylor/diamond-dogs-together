@@ -7,9 +7,10 @@
 -- masks the pad (movement, sprint, stance, ACTION, CQC, roll; the camera stays free), squats, and puts body 0 every frame
 -- on the rear seat of its own placed horse (world_horse_share calls P.placed right after each placement; since M3c
 -- BODY0's hold0 + C0 + write watch + pin, held again at its last target in a tick without a placement). The driver's copy leases MGS_COOP_HORSE_DRIVE_V1 seat1 every tick: the partner driver draws body
--- 1 at the rear seat of this copy's ridden horse, seated by the DM overlay. E again (pressed after a release) hops off on
--- the horse's left; the driver getting off, the ride's end on the passenger's copy, a census generation change, no KEEP
--- for 3.5 s (1 Hz both ways), a downed passenger, unpairing or a context change lay the passenger beside the horse.
+-- 1 at the rear seat of this copy's ridden horse, seated by the DM overlay. E again (pressed after a release) hops off;
+-- the driver getting off, the ride's end on the passenger's copy, a census generation change, no KEEP for 3.5 s (1 Hz both
+-- ways), a downed passenger, unpairing or a context change lay the passenger down where the horse's root was 2-4 m back
+-- along the path ridden since the seating (beside the horse's right only without such a point).
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.handlers) == "table" and type(W.OP) == "table" and type(W.horseShare) == "table" then
@@ -119,38 +120,58 @@ local function warp(x, y, z, a)
  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
  return pcall(GameObject.SendCommand, {type = "TppPlayer2", index = 0}, {id = "Warp", pos = {x / 1000, y / 1000, z / 1000}, rotY = a})
 end
--- The rear seat of a horse pose h (mm, yaw mrad) for body 0, and the lay-off point beside it on its left.
+-- The rear seat of a horse pose h (mm, yaw mrad) for body 0.
 local function seatPoint(h)
  local a = h.yaw / 1000
  return h.x - V.back * sin(a), h.y + V.rise, h.z - V.back * cos(a), a
 end
 P.seatPoint = seatPoint
-local function besideLeft(h)
- local a = h.yaw / 1000
- local y = h.y + (P.dy or -900) + LAND_MM
- return h.x - SIDE_MM * cos(a), y, h.z + SIDE_MM * sin(a), a
+-- The lay-off point. The skeptic's frames (runs 51f6a2cc / 4f52fa2a): the side point (-x at yaw 0) is the horse's RIGHT,
+-- and in 51f6a2cc (a) it was inside the rock wall the horse rode along. So: the newest root of the path ridden since the
+-- seating (P.trail, a point per TRAIL_MM) 2-4 m from the root now, ground the horse stood on; the side point only without
+-- one (a horse that has not moved 2 m, or a jump of the placed horse).
+local TRAIL_MM, TRAIL_N, BACK_MM, BACK_MAX_MM = 250, 24, 2000, 4000
+local function layOff(h)
+ local a, T, foot = h.yaw / 1000, P.trail or {}, (P.dy or -900) + LAND_MM
+ for i = #T, 1, -1 do
+  local p = T[i]
+  local d2 = (p[1] - h.x) ^ 2 + (p[3] - h.z) ^ 2
+  if d2 >= BACK_MM * BACK_MM then
+   if d2 <= BACK_MAX_MM * BACK_MAX_MM then return p[1], p[2] + foot, p[3], a, "trail" end
+   break
+  end
+ end
+ return h.x - SIDE_MM * cos(a), h.y + foot, h.z + SIDE_MM * sin(a), a, "side"
 end
-P.besideLeft = besideLeft
+P.layOff = layOff
+local function trail(x, y, z)
+ local T = P.trail
+ if not T then return end
+ local l = T[#T]
+ if l and (x - l[1]) ^ 2 + (z - l[3]) ^ 2 < TRAIL_MM * TRAIL_MM then return end
+ T[#T + 1] = {x, y, z}
+ if #T > TRAIL_N then table.remove(T, 1) end
+end
 local function receiptRead() return receipt(fmt("read %d %d", W.mission, W.epoch)) end
 local function n(v) return type(v) == "number" and v == v and floor(v) or -1 end
 local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
- P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick = nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail = nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
  local s = P.state
  if s == "seated" then
-  local h, x, y, z, a = P.h, nil, nil, nil, nil
+  local h, x, y, z, a, at = P.h, nil, nil, nil, nil, "none"
   if V.mode == 6 then receipt(fmt("free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1)) end
-  if h then x, y, z, a = besideLeft(h); warp(x, y, z, a) end
+  if h then x, y, z, a, at = layOff(h); warp(x, y, z, a) end
   setMask(false)
   stance("STAND")
   if not remote then send(UNSEATED, CODE[why] or 0, x, y, z, a and a * 1000) end
-  log(fmt("step=unseated;seat=1;why=%s;side=passenger;placed=%d;x=%d;z=%d%s", why, x and 1 or 0, x and round(x / 10) or 0,
-   z and round(z / 10) or 0, remote and ";from=partner" or ""))
+  log(fmt("step=unseated;seat=1;why=%s;side=passenger;placed=%d;x=%d;z=%d;at=%s%s", why, x and 1 or 0, x and round(x / 10) or 0,
+   z and round(z / 10) or 0, at, remote and ";from=partner" or ""))
  elseif s == "driver" then
   if not remote then send(UNSEATED, CODE[why] or 0) end
   log(fmt("step=unseated;seat=1;why=%s;side=driver;leases=%d%s", why, P.seatN or 0, remote and ";from=partner" or ""))
@@ -165,8 +186,8 @@ local function bind() P.mission, P.epoch, P.role = W.mission, W.epoch, W.role en
 local function seated(now, how)
  bind()
  local L = S.last
- P.state, P.keepAt, P.rxAt, P.armed = "seated", now + KEEP_MS, now, false
- if L then P.h = {x = L[1], y = L[2], z = L[3], yaw = P.yaw or 0} end
+ P.state, P.keepAt, P.rxAt, P.armed, P.trail = "seated", now + KEEP_MS, now, false, {}
+ if L then P.h = {x = L[1], y = L[2], z = L[3], yaw = P.yaw or 0}; trail(L[1], L[2], L[3]) end
  setMask(true)
  stance("SQUAT")
  log(fmt("step=seated;seat=1;how=%s;token=%d;mode=%d", how, P.token, V.mode))
@@ -182,7 +203,9 @@ local function offTick(now)
  local L, x, y, z = S.last, mine()
  if not (L and x) then return end
  local d = sqrt((x - L[1]) ^ 2 + (z - L[3]) ^ 2)
- if d > CLAIM_MM then
+ -- The skeptic (runs 93b59ae4 / 5687aa1c: E masked and nothing claimed at 2.59 / 2.76 m): while the ride hold masks E (on
+ -- within 2.5 m, released past 2.8 m) E claims the seat, so a masked E is never lost.
+ if d > (S.hold == true and (S.PILLION_FREE_MM or CLAIM_MM) or CLAIM_MM) then
   P.prevE = nil
   -- Past the shrunken ride hold E reaches the game as usual (a pickup, a revive). M3c: read from the raw pad verb with
   -- its ACTION mask bit (the downed poll is not polled while nobody is downed: no e_free line in seven runs).
@@ -247,6 +270,7 @@ function P.placed(x, y, z, yaw)
  if P.state ~= "seated" or not (num(x) and num(y) and num(z) and num(yaw)) then return end
  P.placedTick = true
  P.h = {x = x, y = y, z = z, yaw = yaw}
+ trail(x, y, z)
  local sx, sy, sz, a = seatPoint(P.h)
  pin(sx, sy, sz, a)
 end
