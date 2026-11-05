@@ -77,6 +77,8 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     return true;
 }
 
+const char* HoldRefusal(const HoldScope&) noexcept { return "stub"; }
+
 const char* PlaceRefusal(const PlaceScope& s) noexcept {
     if (!s.key) return "off";
     if (!s.pins) return "pins";

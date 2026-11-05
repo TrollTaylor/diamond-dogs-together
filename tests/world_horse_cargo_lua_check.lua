@@ -5,7 +5,7 @@ local function check(v, why) checks = checks + 1; if not v then error(checks .. 
 local HORSE, OP = 6656, 80
 local function fixture(o)
  o = o or {}
- local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, hostage = false, mounted = false, role = 0,
+ local f = {now = 1000, tx = {}, logs = {}, cargo = {}, warps = {}, places = {}, holds = {}, hostage = false, mounted = false, role = 0,
   physical = {ready = true, carrying = false, carried = false, localCarried = false, peerCarrying = false},
   horse = {ready = true, id = HORSE, realized = true, occupied = false, pending = 0, x = 101000, y = 3000, z = 300000, yaw = 0, gen = 5},
   share = o.share ~= false, key = o.key ~= false}
@@ -24,6 +24,15 @@ local function fixture(o)
   if verb and verb:find("^read ") then
    if not f.horse then return {ready = false, reason = "unrealized"} end
    local r = {}; for k, v in pairs(f.horse) do r[k] = v end; return r
+  end
+  -- hold0 (round 2): this copy's body 0 moved natively; recorded as a body-0 warp (via hold0) unless refused.
+  if verb and verb:find("^hold0 ") then
+   local x, y, z, yaw = verb:match("^hold0 %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
+   f.holds[#f.holds + 1] = verb
+   if f.holdOff or not x then return {ready = false, reason = f.holdOff or "request"} end
+   f.warps[#f.warps + 1] = {index = 0, x = tonumber(x) / 1000, y = tonumber(y) / 1000, z = tonumber(z) / 1000, rotY = tonumber(yaw) / 1000,
+    via = "hold0"}
+   return {ready = true, held = true}
   end
   if verb then
    local x, y, z, yaw = verb:match("^place %d+ %d+ (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+) 0$")
@@ -264,9 +273,12 @@ f.tick(50)
 check(#f.places == 1 and f.places[1].x == 150000 and f.places[1].z == 310000, "its own horse put on the carrier's pose (unridden)")
 w = f.lastWarp(0)
 check(w and math.abs(w.x - 150.0) < 1e-6 and math.abs(w.y - (2.5 + f.C.VICTIM_RISE_MM / 1000)) < 1e-6 and
- math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-6,
+ math.abs(w.z - (310.0 - f.C.BACK_MM / 1000)) < 1e-6 and math.abs(w.rotY - math.pi / 2) < 1e-3,
  "body 0 warped to its own horse's cargo point, a quarter turn (across the back)")
 check(f.C.busy(), "the victim's copy is busy too")
+-- Round 2 (runs a49c4d76 / 20aef564 / d2a5cafa: body 0 on the ground under the moving horse with a per-tick Lua Warp):
+-- body 0 on the horse moves through the native hold0 (the partner driver's xform mover, no C0 / A0 reset), mm / mrad.
+check(w.via == "hold0" and f.holds[#f.holds]:find("^hold0 30010 7 150000 3400 309560 1571$"), "body 0 held natively (hold0, mm / mrad)")
 check(f.C.downedPosture() == true, "loaded: the victim's downed controls take the held posture (world_downed's posture field)")
 check(f.logged("step=victim_pin;want_cm="), "the victim's copy logs the wanted height against its body's")
 -- M1 moves the horse while the carrier rides (a live track): no re-place, body 0 follows the placed horse.
@@ -317,6 +329,12 @@ check(f.logged("step=victim_pin;want_cm=") and f.logged(";lag_cm=") and f.logged
 f.W.horseShare = {}
 for i = 1, 25 do f.rx(6, 0, 33, 150000, 2500, 310000, 0); f.tick(50) end
 check(#f.places == 2, "unridden and drifted over 0.5 m from the KEEP pose: re-placed (at most 1 Hz)")
+-- A refused hold0 (an old native, the cargo key off while cargo_test runs it): the Lua Warp as before, one line a reason.
+f.holdOff = "off"
+f.tick(50); f.tick(50)
+w = f.lastWarp(0)
+check(w.via == nil and f.count and f.logged("step=hold0_refused;reason=off"), "hold0 refused: body 0 by Lua Warp")
+f.holdOff = nil
 -- The take-down from the carrier: body 0 at the exact point.
 f.rx(5, 4, 33, 151000, 2400, 309000, 1571)
 check(f.C.state == "off" and f.called("000") and f.logged("step=unloaded;seat=2;why=taken_down;side=cargo;placed=1") and
@@ -343,6 +361,15 @@ f = loaded(); f.horse.x = 105000; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 11, "the unridden horse 4 m from where it stood: call_away")
 f = loaded(); f.mounted = true; f.tick(50); f.horse.x = 140000; f.tick(50)
 check(f.C.state == "carrier", "ridden away: still on")
+-- Round 2 (run 883dc6ab: the horse still slowing from a gallop right after the dismount moved 3 m, call_away): for 2 s
+-- after a dismount the stand point follows the horse; after that a 4 m move is a call away.
+f.mounted = false; f.tick(50)
+f.horse.x = 143500; f.tick(50)
+check(f.C.state == "carrier", "the horse slides 3.5 m right after the dismount: still on")
+for i = 1, 45 do f.tick(50) end
+check(f.C.state == "carrier", "settled: still on")
+f.horse.x = 147500; f.tick(50)
+check(f.C.state == "off" and f.sent(5)[6] == 11, "settled, then 4 m away: call_away")
 f = loaded(); f.D.records[2].down = false; f.tick(50)
 check(f.C.state == "off" and f.sent(5)[6] == 1, "the victim up: awake")
 f = loaded(); f.D.records[2].generation = 23; f.tick(50)

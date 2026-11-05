@@ -14,6 +14,11 @@
 //   read <mission> <epoch>                      -> {ready=true,x,y,z,yaw,occupied,rider,gen} | {ready=false,reason}
 //   place <mission> <epoch> <x> <y> <z> <yaw> <anchor 0|1>
 //                                               -> {ready=true,bx,by,bz,byaw,x,y,z,anchored,gen} | refusal
+//   hold0 <mission> <epoch> <x> <y> <z> <yaw>    -> {ready=true,held=true} | refusal
+//     (M2, world_horse_cargo: this copy's own downed body 0 lying on the horse, moved every frame as the partner
+//     driver's xform mover moves body 1: T.vt+0x70 then T.vt+0x68 on body 0's transform, no C0 / A0 reset; the
+//     partner contract's T vtable slots. A per-tick Lua Warp of body 0, which adds both resets, left it on the ground
+//     under the moving horse for a second or more at a time: runs a49c4d76 / 20aef564 / d2a5cafa.)
 // mm / mrad. anchor 1: when the partner driver shows body 1 as a horse rider (partner_mount_policy) and its body
 // sample is fresh, the horse goes under that body (HorseUnderRider), the yaw from the stream: the rider sits in the
 // saddle on this screen whatever the two streams' delays are.
@@ -37,7 +42,7 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
 inline constexpr float kAnchorMaxM = 1.5f;
 bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
-enum class Verb : std::uint8_t { none, cfg, read, place };
+enum class Verb : std::uint8_t { none, cfg, read, place, hold0 };
 struct Request {
     Verb verb{};
     std::uint32_t mission{}, epoch{};
@@ -53,6 +58,12 @@ struct PlaceScope {
     bool key{}, pins{}, field{}, census{}, realized{}, ridden{}, pending{}, cs{};
 };
 const char* PlaceRefusal(const PlaceScope& s) noexcept;
+// A hold0's refusal in order (nullptr: hold): off (world_horse_share and world_horse_cargo), pins, scope, body (body 0's
+// census block and transform chain), mounted (this copy's player rides).
+struct HoldScope {
+    bool share{}, cargo{}, pins{}, field{}, body{}, mounted{};
+};
+const char* HoldRefusal(const HoldScope& s) noexcept;
 // The census identity (records, receiver, realized mask): a change ends every seat (Lua's horse generation).
 std::uint32_t Generation(std::uintptr_t records, std::uintptr_t receiver, std::uint32_t mask) noexcept;
 

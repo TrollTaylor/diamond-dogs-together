@@ -61,6 +61,32 @@ void TestParse() {
     Check(!Parse("place 30010 1 0 0 0 31417 0", r) && !Parse("place 30010 1 0 0 0 0 2", r), "yaw and anchor bounds");
     Check(!Parse("place 30010 1 1000000001 0 0 0 0", r), "coordinate bound");
     Check(!Parse("cfg 1", r) && !Parse("read 30010 7 ", r) && !Parse("readx 30010 7", r) && !Parse("", r), "exact grammar");
+    // M2 round 2 (runs a49c4d76 / 20aef564 / d2a5cafa: body 0 under the moving horse on the victim's screen with a
+    // per-tick Lua Warp): hold0 moves this copy's own downed body 0 as the partner driver's xform mover moves body 1
+    // (T.vt+0x70 then T.vt+0x68, no C0 / A0 reset), mm / mrad.
+    Check(Parse("hold0 30010 7 -656010 1200 877730 -3141", r) && r.verb == hd::Verb::hold0 && r.mission == 30010 && r.epoch == 7 &&
+              r.x == -656010 && r.y == 1200 && r.z == 877730 && r.yaw == -3141 && r.anchor == 0,
+          "hold0");
+    Check(!Parse("hold0 30010 7 0 0 0 0 1", r) && !Parse("hold0 30010 7 0 0 0", r) && !Parse("hold0 30050 7 0 0 0 0", r) &&
+              !Parse("hold0 30010 7 0 0 0 31417", r),
+          "hold0: six numbers, free roam, yaw bound");
+}
+
+void TestHoldRefusal() {
+    hd::HoldScope s{};
+    Check(std::strcmp(hd::HoldRefusal(s), "off") == 0, "hold0: the keys first");
+    s.share = true;
+    Check(std::strcmp(hd::HoldRefusal(s), "off") == 0, "hold0: world_horse_share alone is not enough (world_horse_cargo)");
+    s.cargo = true;
+    Check(std::strcmp(hd::HoldRefusal(s), "pins") == 0, "hold0: then the contracts");
+    s.pins = true;
+    Check(std::strcmp(hd::HoldRefusal(s), "scope") == 0, "hold0: then the scope");
+    s.field = true;
+    Check(std::strcmp(hd::HoldRefusal(s), "body") == 0, "hold0: then body 0's transform chain");
+    s.body = true;
+    Check(hd::HoldRefusal(s) == nullptr, "hold0: all good");
+    s.mounted = true;
+    Check(std::strcmp(hd::HoldRefusal(s), "mounted") == 0, "hold0: never while this copy's player rides");
 }
 
 void TestRefusal() {
@@ -236,6 +262,7 @@ int main() {
     TestUnderRider();
     TestParse();
     TestRefusal();
+    TestHoldRefusal();
     TestShared();
     TestVisibility();
     TestRideKindShows();
