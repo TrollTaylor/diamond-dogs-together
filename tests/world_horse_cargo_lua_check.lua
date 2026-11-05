@@ -159,13 +159,12 @@ check(f.C.state == "carrier", "mounted: the take-down hold does nothing")
 f.mounted = false
 f.tick(50)
 f.env.vars.playerPosX, f.env.vars.playerPosZ, f.env.vars.playerPosY = 101.6, 301.2, 1.9
-f.hold("R", 700)
-check(f.C.state == "carrier", "R under 1 s: still on")
-f.hold("R", 1050)
-check(f.C.state == "carrier" and f.logged("step=take_armed;key=r") and f.count(5) == 0,
- "R held 1 s: armed; the body stays on while R is down (a stock pickup of a body on the ground: run 7359e4d2)")
+f.hold("R", 300)
+check(f.C.state == "carrier", "R under 0.5 s: still on")
 f.tick(50)
-check(f.C.state == "off" and f.cargo[#f.cargo] == "000", "R up: taken down, the hold cleared (CARGO_V2 0 0 0)")
+f.hold("R", 550)
+check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=take_down;key=r"),
+ "R held 0.5 s: laid down at once (an R held on picks them up from the ground), the hold cleared (CARGO_V2 0 0 0)")
 local u = f.sent(5)
 check(u and u[6] == 4 and u[7] == 22, "UNLOADED cause taken_down (4) with the victim's generation")
 w = f.lastWarp(1)
@@ -178,15 +177,8 @@ check(not f.C.busy(), "not busy after the take-down")
 -- An E hold also takes them down (where E does not mount).
 f = fixture(); load(f); f.hold("E", 1100); f.tick(50)
 check(f.C.state == "off" and f.logged("step=take_down;key=e"), "an E hold 1 s takes them down too")
-f = fixture(); load(f); f.hold("R", 4100)
-check(f.C.state == "release" and f.C.busy() and f.count(5) == 1, "R held 4 s: taken down; body 1 held on the point while R stays down")
-f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now
-check(f.C.state == "release" and f.cargo[#f.cargo] == "100", "still held while R is down (no stock pickup)")
-f.holdR(false); f.tick(50)
-check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=released;seat=2"), "R up: the hold cleared")
-f = fixture(); load(f); f.hold("R", 4100)
-for i = 1, 70 do f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now end
-check(f.C.state == "off", "a key held on and on: the hold goes after 3 s anyway")
+f = fixture(); load(f); f.hold("R", 2000)
+check(f.C.state == "off" and f.count(5) == 1 and f.cargo[#f.cargo] == "000", "R held on after the lay-down: one UNLOADED, nothing more here")
 -- On foot by the horse: an unridden census far over the carrier's ground is kept 1.45 m over that ground.
 f = fixture(); load(f); f.horse.y = 4000; f.tick(50)
 w = f.lastWarp(1)
@@ -308,8 +300,9 @@ check(f.C.state == "off" and f.logged("why=stream_lost;side=carrier;placed=1") a
 -- The carry key beside the loaded horse picks them up (the coop pickup): off at once, nothing placed, UNLOADED without a point.
 f = loaded(); local nw2 = #f.warps; f.role = 1; f.tick(50)
 local up = f.sent(5)
-check(f.C.state == "off" and up and up[6] == 4 and up[8] == 0 and up[10] == 0 and #f.warps == nw2 and
- f.logged("step=take_down;key=r;how=pickup"), "picked up off the horse: taken_down, no point, nothing placed")
+check(f.C.state == "off" and up and up[6] == 4 and (up[8] ~= 0 or up[10] ~= 0) and #f.warps == nw2 and
+ f.logged("step=take_down;key=r;how=pickup") and f.logged("why=taken_down;side=carrier;placed=0"),
+ "picked up off the horse: taken_down, body 1 left to the carry, the ground point sent for body 0")
 -- The victim's copy without KEEP for 3.5 s lays itself down beside its horse.
 f = fixture({host = false}); f.D.records[2].down = true; f.D.records[2].generation = 33
 f.rx(4, 0, 33, 101000, 2000, 300000, 0)
