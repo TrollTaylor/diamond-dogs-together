@@ -56,6 +56,7 @@ struct World {
     const char* stance_block = nullptr;  // a driver gate (gun, reload, carry)
     bool remote_downed = false;
     bool traverse_hold = false;          // partner_traverse hold (the driver's previous tick)
+    bool body_owned = false;             // M2h: an outside hold owns body 1 (the horse cargo's hold1)
     const char* last_wait = nullptr;     // the guard of the last stance_wait event
     unsigned waits = 0;
     std::uint32_t in_age = 5;
@@ -141,6 +142,7 @@ struct World {
         in.stance_block = stance_block;
         in.remote_downed = remote_downed;
         in.traverse_hold = traverse_hold;
+        in.body_owned = body_owned;
         out = pr::Step(st, in, params);
         if (out.events & pr::Event::stance_wait) { last_wait = out.report.fix_wait; ++waits; }
         events |= out.events;
@@ -1447,6 +1449,34 @@ void TestTraverseHold() {
     }
 }
 
+// M2h (lab a53a243a: 32 partner_recon=place lines, reasons teleport / retry, beside horse_drive=held body=1 on the
+// carrier's copy, and the native input window armed with the victim's pad): while an outside hold owns body 1 (the horse
+// cargo's hold1) the reconciliation places, verifies, nudges, pins, snaps, turns and stance-fixes nothing, keeps the
+// window armed with a neutral pad, and corrects body 1 again once the hold ends.
+void TestBodyOwned() {
+    World w;
+    w.params = pr::NativeParams(pr::Params{});
+    w.Place();
+    w.body_owned = true;
+    w.follow = false;
+    w.body_v[0] = 4000.0;    // body 1 rides with the horse (the hold moves it)
+    w.Run(500);
+    w.remote[0] += 10000.0;  // the held victim's stream jumps (source_jump)
+    w.remote_stance = 3;
+    bool armed_neutral = true;
+    w.Run(3000, [&](World& x) { if (!(x.out.arm && x.out.neutral)) armed_neutral = false; });
+    Check(w.places == 0 && w.nudges == 0 && w.pins == 0 && w.snaps == 0 && w.runaways == 0 && w.faces == 0 && w.yaws == 0 &&
+              w.fixes == 0,
+          "M2h: an owned body 1 is never placed, nudged, pinned, snapped, turned or stance-fixed");
+    Check(armed_neutral && !(w.events & pr::Event::place) && w.out.mode == pr::Mode::track,
+          "M2h: owned: the window stays armed with a neutral pad (mode track), no place event");
+    w.body_owned = false;
+    w.body_v[0] = 0.0;
+    w.ResetCounters();
+    w.Run(3000);
+    Check(w.places >= 1, "M2h: after the hold the reconciliation places body 1 again (far error)");
+}
+
 int main() {
     TestHelpers();
     TestPlacement();
@@ -1475,11 +1505,13 @@ int main() {
     TestSenderClockAndParity();
     TestFacingGovernor();
     TestTraverseHold();
+    TestBodyOwned();
     std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
                 "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, native stance level (500 ms, pad/body/settle/state/gate/downed guards), aligned run and turn, "
                 "lateral nudges, one moving snap, diverging, teleport/far, stance suspend/prone/mismatch, frozen acts, loss/relink, "
                 "idle yaw and snap, rearm/manual, recon pin/off, stop check, native actions (split runaway, lag, along cap, "
                 "stop grace), facing governor (idle turn, hysteresis, stick abort, contest/latch, settle, aim, placement yaw, windowed "
-                "teleport, off), traverse hold (vertical, runaway, teleport, traverse placement)\n", checks);
+                "teleport, off), traverse hold (vertical, runaway, teleport, traverse placement), M2h owned body (no correction, "
+                "neutral window, resumes)\n", checks);
     return 0;
 }

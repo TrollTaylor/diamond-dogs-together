@@ -310,6 +310,22 @@ do
     check(c.env.vars.playerDisableActionFlag == 0, 'a downed local player does not change Fulton')
 end
 
+-- M2h (lab a53a243a: after the horse take-down the carrier's E near the downed teammate gave no revive and no line said
+-- why): the raw E held near a downed teammate while the revive does not take it logs why, at most once a second.
+do
+    local c = fixture(); c.logs = {}
+    c.W.log = function(s) c.logs[#c.logs + 1] = s end
+    local function seen(p) for _, l in ipairs(c.logs) do if l:find(p, 1, true) then return true end end return false end
+    c.n.held = true; c.n.carry = 3; c.useHeld = true
+    check(not c.step(), 'M2h: loaded on the horse the E stays native (no revive hold)')
+    check(seen('event=downed;step=revive_wait;carry=3;other=down;age_ms=0;gen=1;d_mm=3000'),
+        'M2h: a refused revive E near a downed teammate logs the carry role, the record age, its generation and distance')
+    local n = #c.logs; c.step(100)
+    check(#c.logs == n, 'M2h: revive_wait at most once a second')
+    c.n.held = false; c.step(1000); n = #c.logs; c.step(100)
+    check(#c.logs == n, 'M2h: no raw E, no revive_wait')
+end
+
 -- Execute the real staged world-sync OnUpdate wrapper while inactive; D.tick is not entered there.
 do
     local env = setmetatable({e = {}}, {__index = _G})

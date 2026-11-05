@@ -2188,6 +2188,15 @@ void TestCensusAndProbes() {
     pd::Driver hs{};
     pd::Configure(hs, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_share=0\n"));
     Check(!hs.settings.horse_seat_holds, "step S: a named world_horse_share=0 turns the seat holds off");
+    // M2h: the reconciliation leaves body 1 to the horse cargo's hold only with world_horse_cargo (and share): off at the
+    // defaults (the key is off unless named), on when named.
+    Check(!hg.settings.horse_cargo, "M2h: the cargo hand-off off at the defaults (world_horse_cargo off unless named)");
+    pd::Driver hc{};
+    pd::Configure(hc, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=1\n"));
+    Check(hc.settings.horse_cargo, "M2h: a named world_horse_cargo=1 hands body 1 to the cargo hold");
+    pd::Driver hcs{};
+    pd::Configure(hcs, parsed("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_cargo=1\nworld_horse_share=0\n"));
+    Check(!hcs.settings.horse_cargo, "M2h: world_horse_cargo without world_horse_share: no hand-off");
 }
 // Part L: the SET_PARTS gate, COPY withholding and stall recovery.
 void TestLookFix() {

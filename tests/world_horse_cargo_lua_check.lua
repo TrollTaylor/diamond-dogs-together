@@ -139,6 +139,15 @@ f.hold("E", 500)
 check(f.C.state == "loading" and f.logged("event=horse_cargo;step=loading;seat=2;gen=22"), "host carrier: 450 ms E hold loads at once")
 f = fixture(); f.role = 0; f.hold("E", 600)
 check(f.C.state == "off" and not f.called("010"), "not carrying: another E use, nothing")
+check(not f.logged("step=near"), "M2h: not carrying: no step=near")
+-- M2h (play 72e6269a: the carrier held E 900 ms at the horse, no step=loading and no refusal line): carrying within reach
+-- of the horse logs the raw E read and the mount state at most once a second.
+f = fixture(); f.role = 1; f.tick(50)
+check(f.logged("event=horse_cargo;step=near;d_cm=100;e=0;mounted=0"), "M2h: carrying within reach logs step=near (raw E up)")
+local nearN = #f.logs; f.holdE(true); f.tick(50)
+check(#f.logs == nearN, "M2h: step=near at most once a second")
+f.now = f.now + 950; f.holdE(true); f.tick(50)
+check(f.logged("event=horse_cargo;step=near;d_cm=100;e=1;mounted=0"), "M2h: step=near shows the raw E held")
 f = fixture(); f.role = 1; f.D.records[2].down = false; f.hold("E", 600)
 check(f.C.state == "off" and f.logged("step=refuse;why=awake"), "a partner who is not down is never loaded")
 f = fixture(); f.role = 1; f.horse.x = 103000; f.hold("E", 600)
@@ -163,6 +172,9 @@ local l = f.sent(4)
 check(l and l[3] == 2 and l[4] == 1 and l[6] == 0 and l[7] == 22 and l[8] == 101000 and l[9] == 3000 and l[10] == 300000 and l[11] == 0,
  "LOADED: seat 2, the host, the victim's generation, this copy's horse pose")
 check(f.logged("event=horse_cargo;step=loaded;seat=2;gen=22;role=carrier"), "step=loaded seat=2")
+-- M2h (a53a243a host-h2-loaded: body 1 sat up on the rump at the load): the load line carries the horse's yaw and the
+-- hold's yaw (mrad).
+check(f.logged("role=carrier;hx=10100;hz=30000;hyaw=0;byaw=1571"), "M2h: step=loaded carries hyaw and the hold's byaw")
 check(not f.C.downedPosture(), "the carrier's own downed posture is never the cargo's")
 local w = f.lastWarp(1)
 check(w and math.abs(w.x - 101.0) < 1e-6 and math.abs(w.y - (3.0 + f.C.RISE_MM / 1000)) < 1e-6 and
@@ -186,6 +198,7 @@ w = f.lastWarp(1)
 check(math.abs(w.x - (102.1 - f.C.RIDE_BACK_MM / 1000)) < 1e-3 and math.abs(w.z - 300.0) < 1e-3 and
  math.abs(w.y - (2.5 + f.C.RIDE_RISE_MM / 1000)) < 1e-3, "riding: body 1 behind and over the rider's own position (no census lag)")
 check(f.logged("step=pin;how=rider;mounted=1"), "the pin stats line names the rider anchor")
+check(f.logged(";hyaw=1571;byaw=3142;t_ms=") or f.logged(";hyaw=1571;byaw=3142"), "M2h: the pin stats line carries hyaw and byaw")
 check(math.abs(w.rotY - (1.571 + math.pi / 2)) < 2e-3, "riding: body 1 a quarter turn from the horse's yaw")
 -- Round 2 (runs 83ac3950 / 547b431e: body 1 trailing low behind the rider at a gallop): while riding, body 1 leads by the
 -- rider's last per-tick move (it is drawn after this tick's own move), never by a jump over 0.6 m.
