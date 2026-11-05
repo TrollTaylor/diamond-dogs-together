@@ -1707,7 +1707,8 @@ void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) no
                                                  (labc.soldier_puppet ? 32u : 0u) |
                                                  (labc.soldier_brain && labc.soldier_perceive ? 64u : 0u) |
                                                  (labc.place_lift ? 128u : 0u) | (labc.soldier_perceive ? 256u : 0u) |
-                                                 (labc.soldier_act ? 512u : 0u));
+                                                 (labc.soldier_act ? 512u : 0u) | (labc.body_dead ? 1024u : 0u) |
+                                                 (labc.place_reach ? 2048u : 0u));
     mgscoop::world_link::Configure(world);
     mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
     world_on = true;
