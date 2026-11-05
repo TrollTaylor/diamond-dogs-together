@@ -677,8 +677,10 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   only for a FOB remote copy (S+0x2a4 bit 2 and the slot's owner byte != S+0x2a8); offline (census `mode=0x782`) it sets
   R+0x19e bit 1 only, and the path step 0x141372b70 drives the body along the path the soldier's follower already holds:
   his own brain's last one. The unpack's 15 m warp 0x14136ece0 then snaps him toward the host copy again and again.
-  Session 1 (`fcfb3acc`) confirmed it: puppets in a walk had their path end p50 1.86 / p90 65.45 m from R+0x80, own
-  guards p50 0.00 m [O].
+  Session 1 (`fcfb3acc`) shows it in the calm window only [O]: puppets in a walk had their path end p50 55.69 m from
+  R+0x80 (121 samples, 74 % over 10 m; guard 18's frozen at one point 55.7 m away in all 72), the guest's own guards
+  80 % within 1 m. Over the whole run the two look alike (puppets p50 1.86 / p90 65.45 m, own guards p50 0.00 / p90
+  80.92 m), so the pooled figures do not support it.
 - **The planner** (session 1's `soldier_act_planner` line, decompiled read-only): `*(S+0x30)` has vtable 0x23a1610; the
   follower pair is {the planner, idx}. vt[0] 0x140fa2430 (planner, idx, move) is the soldier route planner's request: it
   takes the move's type hash (+0x70, low 48 bits), refuses (0xffff) when the guard's slot *(planner+0x48)+idx*0x10
@@ -696,7 +698,10 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   - a slot of another type with a live handle (his brain's walk) is cancelled first with vt[0x10] and that handle
     (`plan_cancel`); another type with no handle is left alone (`plan_busy`); a refused plan counts `plan_none`; when he
     is released, our handle still in his slot is cancelled (`plan_release`), so his brain's next walk is not refused.
-    Only the planner class the contract pins is called.
+    The plan call and the cancels run only for the planner class the contract pins (`PlannerKnown`: vtable 0x23a1610).
+    The follower getter vt[0x20] (also before that check) and the follower's vt[0x90] / vt[0xa0] (census, the 300 ms
+    check, the planner line) are called through the object's own vtable with only an in-image check, as the engine
+    calls them (0x14136f0f2 / 0x141372bae); their code (0xfa1cc0, 0xfa1ed0) is pinned only as vtable slot targets.
   - the gait catch-up of the unpack's own mode 0 rule for a walk (mode 1 copies the gait as sent): the owner copy ahead
     toward R+0x80 by 2..5 m flat: gait + 1 (cap 3); beyond 5 m: 3; never lowered (`gait_up`).
   - a warped puppet faces the request's facing (face mode 1: wire +0x50 int16 * pi/32767) or keeps his own yaw (the lent
@@ -714,10 +719,11 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   samples; `plan` > 0 with the path end within 1 m of R+0x80 for >= 90 % of plans; matched host / guest frames of one
   mirrored guard walking at one spot; no guest-only ChangePhase in calm that a puppet started; 0 faults / latches / game
   overs; frame p95 within + 0.5 ms of mirror off.
-- **Not reached**: the `act_plan` session `afeddbdc` was void: the host's game sat under the modal "You have signed out"
-  for the whole run (every host frame), its request manager update stopped before the guest paired, so no SOLDIER_ACT
-  part was sent and no guard was a puppet [O]. Reference without the plan at this head (`fcfb3acc`): place error p50
-  4.75 / p90 13.30 m, calm warps 3 takes / 3 held, frame p95 + 0.19 ms (STATUS).
+- **Not reached**: the `act_plan` session `afeddbdc` was void: after about 80 s the host's game sat under the modal "You
+  have signed out" (every captured host frame), its request manager update stopped before the guest paired, so no
+  SOLDIER_ACT part was sent and no guard was a puppet [O]. Reference without the plan (`fcfb3acc`, build 946864a, before
+  the slot reads of 49770205): place error p50 4.75 / p90 13.30 m, calm warps 3 takes / 3 held, frame p95 + 0.45 ms with
+  calm-only puppet frames (+ 0.19 ms over the whole run), no matched frame pair (STATUS).
 - **Next**: one rerun of the `act_plan` session; if the plans land (path end within 1 m) but the error stays, the
   re-apply cadence (1 s) restarts each plan from where he stands: plan only on a changed request or a destination moved
   over 1 m.

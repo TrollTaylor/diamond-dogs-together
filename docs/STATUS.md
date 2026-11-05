@@ -16,30 +16,47 @@ inferred, [U] unknown. Two hidden play sessions over `-WanSim bad`, the gun prof
   puppet keeps the request's facing; a walker is taken only within 10 m of the owner copy. Census, `soldier_act_warp15`,
   `soldier_act_plan` and frame counters; 14 new contract sites, 7 planner vtable slots.
 - **Session 1 `fcfb3acc`** (census, `act_plan` off; passed):
-  - [O] the planner `*(S+0x30)` has vtable 0x23a1610 on both copies; the follower pair is {that planner, idx}.
-  - [O] finding 1 confirmed: puppets in a walk had their follower's path end p50 1.86 / p90 65.45 m from R+0x80 (487 of
-    1000 samples within 1 m); the guards' own brains p50 0.00 m.
-  - reference numbers at this head without the plan (calm until the guest's `ChangePhase` 45 s after the teleports, the
-    report of the guest's own guard 246 again): walkers' place error while the host copy moves p50 4.75 / p90 13.30 m; per
-    guard 15: 4.72 / 4.77 m, 17: 4.20 / 4.24 m, 18: 8.88 / 14.36 m; speed ratio (mean) 0.64 / 0.71 / 1.69; 15 m warps in
-    calm: 3 takes (15, 17, 18), 3 held (18); frame p95 19.17 ms mirror off, 19.36 ms with puppets; 0 faults, latches,
-    game overs (enemy_div_report: all its rows PASS).
+  - [O] the planner `*(S+0x30)` has vtable 0x23a1610 on both copies and the follower pair's object the same vtable with
+    key = idx; that the object is the planner itself (`obj_is_planner=1`) is seen only in `afeddbdc` (both copies).
+  - [O] finding 1, in the calm window only: puppets in a walk had their follower's path end p50 55.69 m from R+0x80
+    (121 samples, 74 % over 10 m); guard 18's path end stayed at 441.36,2177.28 in all 72 calm samples, 55.7 m from
+    R+0x80; the guest's own guards in calm 80 % within 1 m. The whole-run figures do not show it (puppets p50 1.86 /
+    p90 65.45 m; the guest's own guards p50 0.00 / p90 80.92 m, 42 % over 10 m after calm; after calm both alike).
+  - reference numbers without the plan (build 946864a, before 49770205: with `act_plan` off it differs only by the
+    census slot reads and the contract, 26 -> 31 sites, 6 -> 13 slots; no `soldier_act`-only run at the shipped contract),
+    calm until a `ChangePhase` the guest started about 47 s after its teleports (guest 341860557, the host 151 ms later,
+    `phase=1 src=req rid=2`; the lines carry `att=none`, so the guard that started it, the guest's own 246 by its census
+    kind, is [I]): walkers' place error while the host copy moves p50 4.75 / p90 13.30 m; per guard 15: 4.72 / 4.77 m,
+    17: 4.20 / 4.24 m, 18: 8.88 / 14.36 m; speed ratio (mean) 0.64 / 0.71 / 1.69; 15 m warps in calm: 3 takes (15, 17,
+    18), 3 held (18); frame p95 19.17 ms mirror off (measured after calm, 341940-341954 s), 19.36 ms with puppets over
+    the whole run, 19.62 ms with calm-only puppet frames (+0.45 ms, inside the 0.5 ms row); 0 faults, latches, game overs
+    (enemy_div_report: all its rows PASS).
 - **Decompile** (read-only, the vtable from session 1): vt[0] 0x140fa2430 is the soldier route planner's request (a
   per-guard record and slot, a path query); no FOB state read; it refuses a request whose type differs from the slot's.
   vt[0xd0] is a float setter. Judged safe offline [O code]; F1 kept, with the cancel-first step added.
-- **Session 2 `afeddbdc`** (`act_plan=1`): **void**. [O] every host frame (w17-0-a .. c-1-b) shows the game's modal "You
-  have signed out ... online features" over a paused game, the host's character still at its first spot; its request
-  manager update stopped at t 343370490, before the guest paired (hook calls frozen at 1264, the host's aim readouts of
-  the three guards identical every round, `staged=0`, `tx=0`). So no SOLDIER_ACT part, 0 takes, 0 plans. [U] why the
-  modal came (not seen in session 1; the mod runs offline).
+- **Session 2 `afeddbdc`** (`act_plan=1`): **void**. The host ran for about 80 s (census 343342037-343370490, its first
+  teleport read back within 0.003 m), then [O] every captured host frame (w17-0-a .. c-1-b, all 98) shows the game's
+  modal "You have signed out ... online features" over a paused game, the host's character at its first spot (the second
+  teleport timed out); its request manager update stopped at t 343370490, before the guest paired at 343418251 (hook
+  calls frozen at 1264, the host's aim readouts of the three guards identical every round, `staged=0`, `tx=0`). So no
+  SOLDIER_ACT part, 0 takes, 0 plans. [U] why the modal came (not seen in session 1; the mod runs offline).
   - [O] usable: the guest's own guards' census shows the planner slot holding one of seven brain type hashes in 61 % of
-    samples (0xdf31ba77279e in 36 %), free in 39 %; so without the cancel-first step most plans would be refused [I].
-  - [O] the calm window ended 45 s after the teleports on the guest's `ChangePhase` again, this time after the guest's
-    own guard 15 (not a puppet) took a place correction `world_place=warp; kind=3` 6 s after the teleports and ran kind
-    3 from 0.4 s later, then kind 13 (as 246 in round 7).
-- **Failing gate rows**: every row of the plan's gate is unmeasured (no puppet in session 2): walkers' place error,
-  15 m warps, speed ratio, `plan` with the path end within 1 m, the frame pair, ChangePhase by a puppet, frame p95.
-  0 faults / latches / game overs (PASS, both sessions).
+    samples (0xdf31ba77279e in 36 %), free in 39 %, every held slot with a live handle; so without the cancel-first step
+    most plans would be refused [I].
+  - not evidence: the guest made 18 place corrections of its own guards (15, 17, 231, 246) toward the frozen copies of
+    the paused host; a guest `ChangePhase` came 45.5 s after its teleports (15's correction at +6.5 s; 15, 231 and 246
+    entered kind 3 at the same census tick; `att=none`, so who started it is not observed). An artifact of the void
+    session, not a sign of track A's issue.
+- **Failing gate rows**: session 2 (`act_plan=1`): every row unmeasured (no puppet): walkers' place error, 15 m warps,
+  speed ratio, `plan` with the path end within 1 m, the frame pair, ChangePhase by a puppet, frame p95. The reference
+  `fcfb3acc` (`act_plan` off) fails: place error (pooled and per guard), speed ratio (15, 17), 15 m warps (3 takes,
+  3 held), the matched frame pair (w18-0-a: guard 18 about 170 m out on both, too small to match; census 7.48 m apart);
+  frame p95 PASS (+0.45 ms calm-only). 0 faults / latches / game overs (PASS, both sessions).
+- **Corrections after the review**: commit 49770205's "only the pinned planner class is called" holds for the plan
+  call and the cancels only (they run after `PlannerKnown`, vtable 0x23a1610); the follower getter vt[0x20] (also
+  before that check) and the follower's vt[0x90] / vt[0xa0] (census, the 300 ms check, the planner line) are called
+  through the object's own vtable with only an in-image check, as the engine calls them; their code (0xfa1cc0,
+  0xfa1ed0) is pinned only as vtable slot targets. Off by default, SEH-guarded.
 - **Frames looked at**: `fcfb3acc` w18-0-a (both); `afeddbdc` w15-0-a (both), c-1-b (host).
 - **Next**: one rerun of session 2 (the same command; watch the host's first frame for the modal); then, if the gate
   passes, `soldier_act` (calm / caution) and `act_plan` on by default per D-FM1 (a) and the no-key run.
