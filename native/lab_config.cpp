@@ -2057,10 +2057,12 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // driven copy 2.2-3.3 m under its target); the guest's copy of 1799112697, 5.64 m under its target at 0.86 m planar,
     // was put on it and landed. A named 0 opts out.
     if (!c.drive_vert_given) c.drive_vert = gun;
-    // Enemy gaps 2 (docs/world-sync-design.md 7.17): place_reach and body_dead stay off unless named. place_reach's runs
-    // 9023e5c6, 8281b868, 3c9d1250 (named) and b77e2104 (on by default for that run) show it in both copies' logs (the
-    // host's place error for the guest's guards p90 2.78 / 2.63 / 1.95 / 2.63 m, 798b51dd without it 6.97 m; 0 latches),
-    // but no frame shows the watched guard on the host's screen (terrain hid him at 95 m); body_dead's runs carried no corpse.
+    // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): place_reach follows the gun profile in lab and play since
+    // runs 617311eb / 025fbb28 (named): the host's binoculars 108-109 m from guest-owned 1740692850 show his body at the
+    // crosshair beside the guest's character while the guest's crosshair is on him (copies 0.1-1.4 m apart); the host's
+    // place error for the guest's guards p90 2.5 / 1.99 m (798b51dd without it 6.97 m); 0 latches, drive_sink, and game
+    // overs in 025fbb28. A named 0 opts out. body_dead stays off unless named (no corpse was carried in its runs).
+    if (!c.place_reach_given) c.place_reach = gun;
     // The remote driver's steer pose (docs/vehicle-ws3.md "Driver pose"): follows the gun profile in lab and play since the
     // r1101 Prove phase (hidden play runs ba1a041a and bfd46ce5, both copies watching: the seated partner's hands
     // level when straight, a turning pose for a and the other one for d, the get-off straight); a named 0 opts out. Both
