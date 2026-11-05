@@ -228,10 +228,9 @@ do
                 elseif not st or st < 2 or st > 5 then S.bd[h] = nil end
             end
         end
-        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too)
-        -- more than 1 m off goes there through the same FIFO and native placement (kind 3; P.check lets a dead one go).
-        -- Enemy latch: P.check first. Refused here (a dead guard reads NPC_STATE_DISABLE on both copies: disabled_local),
-        -- this body stays where it lies and so is not "carried" either (run e583ee62: 384 / 383 body_tx echoed).
+        -- The other copy's body placement (flag 8, world_place_guest.lua P.sample): this copy's body (lying here too) more
+        -- than 1 m off goes there through the FIFO (kind 3). P.check first: refused (a dead guard is NPC_STATE_DISABLE:
+        -- disabled_local, unless body_dead), it stays put and is not "carried" (e583ee62: 384 / 383 body_tx echoed).
         function P.body(c, en)
             if not W.bodyOn then return end
             local st = P.state(en)
