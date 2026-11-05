@@ -1,3 +1,65 @@
+## November 5, 2026: enemy sync M7 FM1 round 6 - the far mirror's calm half: the calm gate not reached; `soldier_act` stays off unless named (`wp/enemy-latch`, not merged, not pushed)
+
+Track B of the enemy6 round (the far mirror, calm / caution only: the user's decision D-FM1 (a) of 2026-11-05).
+Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play sessions over `-WanSim bad`,
+the gun profile, research build, afgh-ledge, scenario `enemy-mirror6-calm.txt`: `fbf3522a` (`soldier_act=1`, both
+players walked the slope south of the outpost), `f11fe8a1` (`soldier_act=1`; the worker built the tree with the D-FM1 (a) parsing, committed after as 3a104515; the guest at B, the host at A, both
+measured standing points) and `0d801772` (no key named: soldier_act was on by default, calm / caution, for that run).
+Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults. `soldier_act` was turned on by default for `0d801772` and turned
+  off again because that run failed the calm gate (below). With `soldier_act=1` named on both PCs the far copies of the
+  host's guards 95-300 m from the guest walk at the host copy's speed now (ratio p50 0.99 / 0.95 / 1.0, was 0.19 / 0.78),
+  but many still walk elsewhere: the place error while the host copy moves was p50 3.07 / 6.39 / 1.68 m and p90 9.86 /
+  13.74 / 9.08 m (gate 1.0 / 2.5 m) [O].
+- **Calm gate rows** (`0d801772` first, then `f11fe8a1` / `fbf3522a`):
+  - FAIL: walkers' place error while the host copy moves p50 1.68 / 6.39 / 3.07 m, p90 9.08 / 13.74 / 9.86 m [O];
+  - FAIL: matched host / guest frames of one mirrored guard walking: none [O, frames looked at, below];
+  - PASS: speed ratio p50 1.0 / 0.95 / 0.99 (gate 0.8) [O];
+  - PASS: requests applied 690 / 690, 505 / 505, 752 / 752 of the requests that should apply (`due`: a first, a
+    changed, a moving owner's 1 s or a still one's 5 s re-apply on a realized puppet); of all received 690 / 1187 [O];
+  - PASS: 0 unpack faults; no puppet within R (80 m) at all (closest 80.4 / 99.5 / 80.8 m) [O];
+  - PASS: every guest shot released the puppets in one update (9 / 7 / 9 releases, spans 1 / 0 / 0 ms) [O];
+  - PASS `0d801772`: guards within 60 m of the guest p90 0.9 m (4 samples); `f11fe8a1` n/a (0 samples); FAIL `fbf3522a`
+    3.4 m (16 samples, one released lagging puppet) [O];
+  - PASS: 0 latches, faults, game overs, roster mismatches, overflow, guards under the ground (divergence report) [O];
+  - PASS: frame p95 median 19.22 ms with puppets vs 19.34 ms mirror off (`0d801772`; 19.21 / 19.00, 19.37 / 19.09) [O].
+- **Causes found** [O, logs; Ghidra decompiles read-only]:
+  - the 5 s re-apply: fixed (a moving owner copy's request every 1 s; `reapply` 422 / 218 / 449 a run);
+  - a stale order target: the order unpack 0x1413701f0 writes a target only for packed modes 1..4, so the puppet kept
+    his own brain's order target and walked to it (guard 15, `fbf3522a`); fixed (`order_clear` 1 in `0d801772`);
+  - his own leg: with his request byte-identical to the host copy's, a puppet keeps walking the leg his own brain had
+    before the take (guard 15 in `f11fe8a1`: away from the host copy's destination, 15.8 m apart before the engine's 15 m
+    warp). Takes on the host copy's leg replayed at p50 0.0 m, the others at 3.5 m. `LegMatch` now takes a walker only on
+    the host copy's leg (`leg_wait` 240 in `0d801772`), which brought p50 to 1.68 m;
+  - still open: a puppet taken on the right leg trails the host copy by 3-4 s on its path (guard 246 `0d801772`: 12 m
+    behind at a run, guard 17 standing 4 s before following): the request unpack runs its catch-up (gait + 1 at 2..5 m,
+    gait 3 beyond) only for dest mode 0, and 99 % of the walkers' requests are dest mode 1; guard 19 climbs the tower
+    (not replayed; apart takes him, 7.0 m). [U] what keeps a puppet's old leg (not in the 0x70 request).
+- **Frames I looked at** (crops of every walker pair): `fbf3522a` w17-1: the guest's screen shows a dark walking
+  figure near the centre, the host's (12 m away by then) a small figure by a fence: not a convincing match. `f11fe8a1`
+  and `0d801772`: from A the host sees guards 17 and 15 as marked outlines behind a wall and a fence; from B the
+  guest's view of 17 is a bush in five of six pairs, and its pictures of 15 show a dark figure by a fence in front of a
+  hillside (`f11fe8a1` w15-1..4, moving between the two frames 0.45 s apart) while the host's 15 stands before a
+  building: different places, as the place error says. No pair shows one guard walking at one spot on both screens.
+- **Version gate** [O in game, unit-tested]: both copies sent and logged ACT_CAPS (`event=mirror_caps` / `mirror_peer;
+  caps=1|3; rev=6`) in all three sessions; an old partner (no ACT_CAPS) gets no registration, no SOLDIER_ACT part and no
+  puppet (world_align_lua_check, world_wire_tests). The phase limit [O]: `soldier_act_mirror=on; ...; phase=calm` and
+  caps 3 in `f11fe8a1` / `0d801772`; no ALERT was raised in these runs, so `why=phase_limit` is unit-tested only [I].
+- **Not shown**: `payload_ids` stayed 0 (no aim in calm); riders: no rider came within the far rule's range [U].
+- **Built** (red first each time): 1 s moving re-apply, apart for a still owner copy, riders skipped, payload_ids /
+  due / reapply / expired in the frame line, the phase lever, ACT_CAPS 0x5C (f632f6e5 red, 4512789a green); the stale
+  order target (fcdcee5c red, 10b2acc0 green); D-FM1 (a) parsing (f14aedc4 red, 3a104515 green); the leg check
+  (34b746b5 red, ffb2f2f2 green); the default flip for `0d801772` and its revert (c272bdf0 / feac1636, 3c190bd8 /
+  b53f8178). Design 7.19, protocol section 36 (wire op 0x5C, no world note, no CFG bit).
+- **Next**: a catch-up for dest mode 1 walkers (the owner position is in every order part: drive a puppet that trails
+  its owner copy by more than 2 m along his path, or send the walk as dest mode 0 toward the owner position), the body's
+  own leg [U] (RE of the locomotion consumer of R+0x80 / +0xb0 bit 9), the tower climb, and a host / guest spot pair with
+  a clear view of guard 15's fence walk (A sees it; from B a bush hides 17, not 15).
+- **Checks**: full `tools/build.ps1 -Jobs 4` 355/355 at 4512789a and 10b2acc0 (and at the head, below); contract
+  `--check`: the known failures only, plus generate_targeting_contract.py (its build/targeting-scripts-20260910 input is
+  not in this worktree's build folder; no targeting file changed).
+
 ## November 5, 2026: enemy gaps 2 - the stream's reach and the realize hold (`place_reach`) and dead body placements (`body_dead`): built, both off unless named (`wp/enemy-m7`, not merged, not pushed)
 
 The enemy5 gaps step: the M1-M6 gaps players still see (reinforcements far off, dead bodies apart, the M3 host gates,
