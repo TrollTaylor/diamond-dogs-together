@@ -1,15 +1,16 @@
 # Enemy sync M7 FM1, the far mirror (docs/world-sync-design.md 7.15), gate part 1 of 2: the quiet scene. Run with
 # -LabSetting soldier_act=1 (and the shipped defaults otherwise); act_census=1 is named here for the census lines.
-#   1. the host alone 50 m south of afgh_field_cp; the guest pairs, then walks south to the end of the walkable slope
-#      (z ~2018-2026, x ~416-425: known ground, reached by this walk in runs 125d916b, 0a271c10, 963ab276). That is the
-#      quiet watch point: 100-200 m from the outpost guards, beyond R(calm) + 15 = 95 m of every guard there (the south
-#      patrol comes within ~57 m and stays a brain). No debug teleport there (963ab276 dropped the guest under the map);
-#   2. the host walks ~25 m north into the outpost's south edge; 60 s of quiet patrol watched through the guest's
-#      binoculars, the guest's camera on the host's character (aim_partner: enemy_aim_nearest stops at 60 m), frames on
-#      both copies every 10 s (the host's camera on its nearest guard);
-#   3. CAUTION (cp_phase nearest caution), 25 s.
-# Expected (guest): event=mirror;on=1;why=far for the outpost guards beyond R + 15 m; soldier_act_frame lines with
-# rx / applied growing; 0 event=mirror;on=1 within R. Host: tx growing; soldier_act_census lines on both copies.
+#   1. the host alone 50 m south of afgh_field_cp (it stays there: a rock blocks the walk north, run 94a7bf2a); the
+#      guest pairs, then walks south to the end of the walkable slope (z ~2018-2026: known ground, reached by this walk
+#      in runs 125d916b, 0a271c10, 963ab276, 94a7bf2a). That is the quiet watch point: 95-215 m from the outpost
+#      guards, beyond R(calm) + 15 = 95 m (run 94a7bf2a: 15 puppets in calm). No debug teleport there (963ab276
+#      dropped the guest under the map);
+#   2. 60 s of quiet patrol: both copies' cameras on the same guard (aim_ent <hash>: guards that walked as puppets in
+#      94a7bf2a), both through binoculars, frames on both copies every ~8 s (the same moment: both capture);
+#   3. mirror off 16 s (research command; every puppet released, why=paused), then on (puppets again);
+#   4. the guest fires one shot (every puppet released, why=shot, for 15 s), frames during and after;
+#   5. CAUTION (cp_phase nearest caution), 20 s.
+# Expected (guest): event=mirror;on=1;why=far beyond R + 15 m; why=paused, why=shot; 0 puppets within R. Census on both.
 # Run with enemy-act-2-alert.txt in ONE hidden session (the regression enemy-prove-1-join + enemy-latch-alert is a
 # second session: the three parts do not fit the 600 s session limit):
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner FM1-retry
@@ -65,78 +66,138 @@ guest hold s 1500
 guest hold s 1500
 wait 1500
 guest run position
-# The walk stops near z 2018-2025 (~105 m from the outpost; runs 125d916b, 0a271c10, 3 of FM1). A debug teleport 40 m
-# further south from 10 m above the walked height left the guest under the terrain (y -79.2, FM1 session 3): no
-# teleport here until a ground point there is known.
 host run position
 host run act_status
 guest run act_status
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host hold w 1500
-host run position
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-0
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-10
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-20
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-30
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-40
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-50
-wait 7000
+wait 6500
+guest run act_status
+guest run mirror off
+wait 2500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture off-0
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture off-8
+wait 6500
+guest run mirror on
+wait 4000
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture on-0
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture on-8
+wait 6500
+guest run act_status
+guest hold rmb 900 nowait
+wait 600
+guest hold rmb+lmb 300
+guest release
+wait 400
+both capture shot-0
+guest run act_status
+wait 4000
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture shot-5
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 900
+both capture shot-18
+wait 6500
 host run cp_phase nearest caution
 host expect ^submitted_phase;cp=[^;]+;phase=caution;
-wait 5000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 4000
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture c-0
-wait 7000
-host run enemy_aim_nearest 1.1
-guest run aim_partner 1.1
+wait 6500
+host run aim_ent 3268415846 1.1
+guest run aim_ent 3268415846 1.1
 wait 600
+host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
-both capture c-10
-wait 7000
+both capture c-8
+wait 6500
 host run act_status
 guest run act_status
 host run world_status
