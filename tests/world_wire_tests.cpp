@@ -2205,6 +2205,49 @@ void ActCapsOp() {
     g_guest.LocalMissionEnd(105);
     Check(Tx(g_guest, op::act_caps, {1, 6}, 106) == world::TxStatus::not_paired, "unpaired: not sent");
 }
+// Enemy round 8 track B (docs/world-sync-protocol.md section 38): LRRP_FAST 0x5D, host to guest, a datagram with its own
+// newest-value slot, level 3, play too: sender tick, an LRRP truck's id (25600..26111), xyz mm, yaw mrad, speed mm/s, NPC
+// riders 0..8, flags (1 moving): 9 fields, 26 bytes. A partner without 0x5D skips it by its length (unknown_op), and a
+// guest without lrrp_follow ignores it in Lua: its own AI keeps its truck, as before.
+void LrrpFastOp() {
+    const auto* s = world::FindOp(op::lrrp_fast);
+    Check(op::lrrp_fast == 0x5D && s && std::strcmp(s->name, "LRRP_FAST") == 0, "LRRP_FAST 0x5D exists");
+    Check(s && s->queue == 1 && s->wire == world::Wire::datagram && s->level == 3 && !s->lab_only && !s->request &&
+              s->dir == world::Dir::host_to_guest && s->lua == 9 && s->native == 0 && s->rx == 0 && s->body == 26,
+          "LRRP_FAST: a datagram, level 3, play too, host to guest, 9 fields, 26 bytes");
+    if (!s) return;
+    Setup(3, 3, true);
+    Pair(30010, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    world::Datagram d1{}, d2{}, fast{};
+    Check(Tx(g_host, op::lrrp_fast, {1000, 25602, 413300, 30100, 2138200, -1571, 11000, 2, 1}, 101, &d1) == world::TxStatus::ok &&
+              d1.size > 0, "the host streams a truck pose (a datagram)");
+    world::Datagram gd{};
+    Check(Tx(g_guest, op::lrrp_fast, {1000, 25602, 0, 0, 0, 0, 0, 0, 0}, 101, &gd) != world::TxStatus::ok && gd.size == 0, "the guest never sends one");
+    Check(Tx(g_host, op::lrrp_fast, {1001, 25599, 0, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::lrrp_fast, {1001, 26112, 0, 0, 0, 0, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::lrrp_fast, {1001, 25602, 0, 0, 0, 31417, 0, 0, 0}, 101) == world::TxStatus::bad_args &&
+              Tx(g_host, op::lrrp_fast, {1001, 25602, 0, 0, 0, 0, 0, 9, 0}, 101) == world::TxStatus::bad_args,
+          "vehicle ids only, a normalized heading, at most 8 riders");
+    Check(Tx(g_host, op::lrrp_fast, {1100, 25603, 1, 2, 3, 0, 0, 0, 0}, 102, &d2) == world::TxStatus::ok &&
+              Tx(g_host, op::ride_fast, {1100, 3, 25610, 1, 2, 3, 0}, 102, &fast) == world::TxStatus::ok, "a truck and a ride pose");
+    g_guest.OnDatagram(d1.bytes, d1.size, 103);
+    g_guest.OnDatagram(fast.bytes, fast.size, 103);
+    auto rx = Drain(g_guest, 3, 104);
+    const auto* got = Find(rx, op::lrrp_fast);
+    Check(got && got->count == 9 && got->v[1] == 25602 && got->v[2] == 413300 && got->v[5] == -1571 && got->v[6] == 11000 &&
+              got->v[7] == 2 && got->v[8] == 1 && Find(rx, op::ride_fast) != nullptr,
+          "the guest gets the newest truck pose in its own slot, beside RIDE_FAST");
+    g_guest.OnDatagram(d2.bytes, d2.size, 105);
+    g_guest.OnDatagram(d1.bytes, d1.size, 105);
+    rx = Drain(g_guest, 3, 106);
+    Check(Count(rx, op::lrrp_fast) == 1 && Find(rx, op::lrrp_fast)->v[1] == 25603, "an older sender tick never replaces a newer one");
+    Setup(2, 2, true);
+    Pair(30010, 200);
+    world::Datagram low{};
+    Check(Tx(g_host, op::lrrp_fast, {1, 25602, 0, 0, 0, 0, 0, 0, 0}, 201, &low) == world::TxStatus::disabled, "level 3 only");
+}
 // Horse plan M2 (docs/mounts.md "Downed partner on the horse", world-sync-protocol.md section 32): HORSE_SEAT 0x50, both
 // directions, world queue, reliable, level 3, play too, never a request; seq, seat 0..2, the sender's role, action 1..6,
 // cause 0..15, the victim's downed generation, xyz mm, yaw mrad: 10 fields, 26 bytes.
@@ -2479,6 +2522,7 @@ int main() {
     SeatOp();
     HorseSeatOp();
     ActCapsOp();
+    LrrpFastOp();
     TravelOp();
     RulesOp();
     FultonOp();

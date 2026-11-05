@@ -2338,6 +2338,16 @@ int main() {
                   Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
                   Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
                   "enemy gaps 3: drive_vert parses, off unless named");
+            // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow (native only, no CFG bit; Lua asks the receipt
+            // MGS_COOP_LRRP_CFG_V1) parses in lab and play and is off unless named, the gun profile too.
+            Check(!def.lrrp_follow && !gunDefault.lrrp_follow && !gunDefault.lrrp_follow_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=0\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\nlrrp_follow=1\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=guest\nmode=play\nlrrp_follow=1\n").lrrp_follow &&
+                  Lab("enabled=1\nrole=guest\nlrrp_follow=0\n").lrrp_follow_given &&
+                  Lab("enabled=1\nrole=host\nlrrp_follow=2\n").invalid_values == 1 &&
+                  !Lab("enabled=1\nrole=host\nlrrp_follow=2\n").lrrp_follow,
+                  "enemy round 8 B: lrrp_follow parses, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

@@ -783,6 +783,11 @@ struct LabConfig {
     // defaults: 6348f361, 41f2b07f, 31a799e3). Lab and play; off unless named (lab_config.cpp: no run at the shipped defaults).
     bool drive_vert = false;
     bool drive_vert_given = false;
+    // Enemy round 8 track B (docs/world-sync-design.md 7.21, no CFG bit; Lua asks the receipt MGS_COOP_LRRP_CFG_V1): the host
+    // streams its LRRP trucks (LRRP_FAST 0x5D) and the guest's copy follows them, its own AI stopped (ForceStop) while the
+    // host's truck moves or carries riders. Lab and play; off unless named.
+    bool lrrp_follow = false;
+    bool lrrp_follow_given = false;
     // M7 seated shots, S1 (docs/native-puppet.md "Seat shot (S1)"; partner_seat_shot.hpp): the local seated passenger's
     // bullets start where their line leaves the ridden vehicle's box (the RequestBullet hook; local only, no wire
     // change). Follows the gun profile in lab and play (design 8.37, 8.43); a named 0 opts out; a copy with it off still
