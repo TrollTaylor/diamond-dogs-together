@@ -612,25 +612,23 @@ do
     -- "within 5 m 20 s after they get out", far crews too: the patrol scan reads only 55 / 60 m around the players).
     check(g:has('event=lrrp;step=crew;id=25602;ent=1194;') and g:has('event=lrrp;step=crew;id=25602;ent=1195;') and
         g:has(';in=0;rl=0') and g:count('event=lrrp;step=crew;id=25602;ent=1194;') <= 45, 'crew: positions of the crew out of the truck, 1 Hz')
-    g.W.byId = {[1194] = 501, [1195] = 502}
-    g.W.ent = {[501] = {id = 1194}, [502] = {id = 1195, st = 2}}
-    g.W.place = {state = function(en) return en.st or 0 end}
+    -- Round 9 B session 1 (68491f7f): SetRelativeVehicle rideFromBeginning seated nobody mid-mission (40 tries) and the
+    -- guest's 25606 drove off empty for 123 s. Now: while the host's truck drives manned and this copy's crew is out, the
+    -- truck is released to this copy's own AI (its crew boards it on its own clock); taken again once manned here.
     for _ = 1, 20 do s2(100000, 0, 2, 0) end
-    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: the host\'s boarded 2 s ago: not yet')
-    for _ = 1, 15 do s2(100000, 0, 2, 0) end
-    local b1 = cmdsOf(g, 1194, 'SetRelativeVehicle')[1]
-    check(b1 and b1.t.targetId == 25602 and b1.t.rideFromBeginning == true and #cmdsOf(g, 1195, 'SetRelativeVehicle') == 0 and
-        g:has('event=lrrp;step=board;id=25602;ent=501;k=1'), 'crew: 3 s after the host\'s boarded: SetRelativeVehicle into this truck; never the guard asleep here')
-    for _ = 1, 60 do s2(100000, 0, 2, 0) end
-    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == 2, 'crew: still out: boarded again only 5 s later')
-    g.pool[25602].riders = {1194}
-    local nb = #cmdsOf(g, 1194, 'SetRelativeVehicle')
-    for _ = 1, 60 do s2(100000, 0, 1, 0) end
-    check(#cmdsOf(g, 1194, 'SetRelativeVehicle') == nb and #cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1, 'crew: seated as the host\'s: nothing more')
+    check(forces(g, 25602, false) == 0, 'crew: the host crew boarded at rest: still pinned here')
+    local fx = #placedOf(g, 25602)
+    for i = 1, 10 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(forces(g, 25602, false) == 1 and #placedOf(g, 25602) == fx and g:has('event=lrrp;step=crew_wait;id=25602') and
+        #cmdsOf(g, 1194, 'SetRelativeVehicle') == 0, 'crew: the host truck drives manned, ours is out: released, never driven off empty, no board command')
+    g.pool[25602].riders = {1194, 1195}
+    for i = 11, 20 do s2(100000 + i * 1000, 10000, 2, 1) end
+    check(forces(g, 25602, true) == 2 and #placedOf(g, 25602) > fx and #cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 1,
+        'crew: manned here again: taken and placed again')
     check(g:has('event=lrrp;step=cost;role=guest;'), 'a cost line every 10 s')
     -- The lab lever (both roles): vehicle_state_status lrrp 0 pauses lrrp_follow on this copy, 1 resumes it.
     local okL, msgL = g.S.lever({'vehicle_state_status', 'lrrp', '0'})
-    check(okL == true and msgL == 'lrrp_follow;on=0' and next(g.S.lf.tr) == nil and not g.S.lf.on() and forces(g, 25602, false) == 1,
+    check(okL == true and msgL == 'lrrp_follow;on=0' and next(g.S.lf.tr) == nil and not g.S.lf.on() and forces(g, 25602, false) == 2,
         'lever: lrrp 0 pauses it here and releases every truck')
     s2(100000, 0, 1, 0)
     check(next(g.S.lf.tr) == nil, 'lever: paused, a datagram is ignored')
