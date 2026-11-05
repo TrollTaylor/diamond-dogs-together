@@ -1,3 +1,67 @@
+## November 5, 2026: enemy round 10 track B - the patrol trucks' crews now run on the host's travel clock: with `lrrp_follow` named, the guest's crews get in and out within about 1 s of the host's and stand within 2 m of them 20-40 s later; one gate row still fails (a truck near the guest at the pairing waits as its own copy for ~54 s), so `lrrp_follow` stays off unless named and the flip is a user decision (`wp/enemy-lrrp`, not pushed)
+
+Design 7.28, protocol section 45 (new op LRRP_STEP 0x5E). Markers: [O] seen in a log line or a frame, [I] inferred, [U]
+unknown. Hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the parts join,
+`enemy-lrrp-crew10.txt` (round 9's crew part without its 40 s lever window) and `enemy-lrrp-alert3.txt`: two jobs refused
+before the game by the worker's own audited CTest (`ddt_core_tests_1` CloseDuringSetup, a launcher timing test; track A's
+job failed the same way once), counted as one session; `ffd0248d` (`lrrp_follow=1`, code head a8c615a4); `a30a0b07` (no key
+named, the same code head; later commits are docs and one comment line). Archives under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing new at the defaults (`lrrp_follow` off unless named). Named (`ffd0248d`), the guest's
+  patrol-truck crews follow the host's: they get out and back in at the host's stops within about 1 s of the host's crew,
+  and the truck stays within 0.6 m (p90) of the host's.
+- **RE** (read-only Ghidra) [O]: the soldier's travel cursor is settable with the stock command: `StartTravel` reads a
+  `step` number besides `travelPlan` and `keepInAlert` and sets T.vt[0x88](plan, step) (T = the soldier's travel / route
+  component, *(S+0x48)), then applies the step's CP and route group (0x14136de40); `RestoreFromSVars` sets the same cursor
+  from `svars.solTravelName` / `solTravelStepIndex`, which `StoreToSVars` writes from T.vt[0x78] / T.vt[0x80]. Design 7.28.
+- **Built** (red first): both copies read the crews' plan and step from svars after `StoreToSVars` once a second; the
+  host sends LRRP_STEP on a change (5 s refresh); the guest sets a differing step with `StartTravel{travelPlan, step,
+  keepInAlert}` while its truck follows the host's (or waits crewless), at most 3 tries per host step, and no longer
+  unseats a crew whose steps arrive; `step=follow` lines 1 Hz. 5e2b0f3a / 20ac2166, 3dce7916 / f71305ca, 4cfc2002 /
+  2f365581, d21096be, a8c615a4. Full build and CTest (see below), every contract `--check` as round 9 (known base failures
+  only); no new native read, patch or hook (stock Lua calls only).
+- **Gate rows** (`ffd0248d`, Afghanistan) [O]:
+  - PASS moving truck place error p50 0.15 / p90 0.55 / max 4.93 m (314 samples; 25605 p90 0.66, 25606 p90 0.48 m).
+  - PASS the clock: 24 `StartTravel` sent, each read back on the host's step 1 s later (e.g. 25606's crew 0 -> 1 -> 2 -> 3);
+    the guest on the host's step after a host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes).
+  - PASS get-outs and boardings: host 25605 riders 2 -> 1 -> 0 at 369222147 / 369228596, guest 369221276 / 369228631;
+    host 25606 2 -> 0 -> 1 -> 2 at 369225044 / 369282187 / 369287735, guest 369225275 / 369282283 / 369287596 (0.03-1.1 s
+    apart); 0 trucks moving with the crews differing, 0 `crew_wait` (no truck waiting or driving empty on one screen).
+  - PASS crews 20-40 s after the host's get-out (per guard, 17-18 samples each): p90 0.40, 1.75, 0.14, 0.00 m (round 9:
+    9.3-42.3 m).
+  - FAIL crews within 8 m while seated: 25605's two riders p90 498-499 m in the first 54 s after the pairing (46 of 46
+    samples over 8 m): the guest's copy of 25605 was 363 m from the guest's player and 410 m from the host's truck, so the
+    400 m no-jump rule kept it the guest's own (27 `defer` lines) until it jumped at near_m 400.0 (369062049). After that
+    window every rider p90 0.42-1.00 m, max 5.3 m, 0 samples over 8 m (both trucks); 25606's riders p90 0.52 m overall.
+  - PASS (by construction, as round 9) no jump within 400 m of the guest's player; the one at near_m 400.0 sits on the
+    boundary. 0 `log_cap` on either copy (was 224 / 340 guest drops), so every jump is logged.
+  - PASS 0 latches / faults / game overs / drive_sank. One host `place_sink` (guard 2929558510, an outpost guard in the
+    ALERT part, not a crew member; `enemy_div_report` counts it).
+  - Not a gate row: 7 of the 24 `StartTravel` set a guard one step back (the guest's own copy had advanced first, e.g.
+    25605's passenger 5 -> 4 a second before the host reached 5; its driver 6 -> 0 three times while the host's driver's
+    step stayed 0, then held `why=tries`); the get-outs still lined up.
+  - Frames: no matched pair of a crew member (the host's binoculars on rock in k-5..k-7); the guest's k-6 shows a
+    soldier on foot beside a truck at the stop, k-7 a Soviet soldier at 41 m.
+  - Cost / log: `step=cost` avg <= 0.07 (host) / 0.15 (guest) ms per tick with `StoreToSVars` once a second (max 2 ms,
+    os.clock's step); the guest's world log 7.1 lines/s (lrrp 5.5/s, was 41-47/s) against the 20/s budget; partner_tick
+    median 45 / 44 Hz.
+- **No key named** `a30a0b07` (code head a8c615a4, build 0.15.2+fdcd239; all parts passed; first frames of both copies
+  in gameplay, no modal) [O]: no `event=lrrp` line on either copy (off at the defaults; no LRRP_STEP sent), VEHICLE_STATE
+  on (`lrrp=6`), 0 latches / faults / game overs / sank, guest place error p50 0.67 / p90 2.21 m; the report's FAIL rows
+  as round 9's no-key run: corrections 19/47 (28 `vehicle_local`), M3 host p90 7.17 m. partner_tick median 44 / 43 Hz,
+  frame p95 30.3 / 29.4 ms (host / guest) against 25.0 / 25.6 ms in the named run.
+- **Checks**: the worker's audited CTest (340 tests) passed at this source in `ffd0248d`'s job; my full CTest at
+  f71305ca 354/355 (only the composed check, stale after a Lua edit during the compile); the final full CTest: see the
+  last line of this entry.
+- **User decision (D-B10)**: turn `lrrp_follow` on with the gun profile in Afghanistan free roam (30010) although the
+  "riders within 8 m while seated" row fails for a truck within 400 m of the guest at the pairing (it stays the guest's own
+  copy, as in 0.15.2, until the guest is 400 m from it; ~54 s here)? Every other row passed. The flip is ready
+  (scratchpad enemy10/B-trucks/tools/flip_red.py + flip_green.py: gun default on, receipt 2 = 30010 only; then a named run
+  is not needed, but one run with no key named).
+- **Next**: hold a guest copy one step ahead for up to 20 s instead of setting it back; skip guards whose host step never
+  changes (the driver); a pairing jump hidden from the guest's camera, if the no-jump row may allow it; Africa
+  (`enemy-lrrp-africa.txt`, seed `africa-jeep`) not run.
+
 ## November 5, 2026: enemy round 9 track C - the far mirror's walkers plan their own path: the plans land and the one mirrored calm walker's place error fell from 9 to 1.3 m (p50), but 3 of 4 calm walkers are never taken, released walkers freeze, and the calm gate is not reached; `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.26, protocol section 43. Markers: [O] seen in a log line or a frame, [I] inferred, [U] unknown. Three hidden play
