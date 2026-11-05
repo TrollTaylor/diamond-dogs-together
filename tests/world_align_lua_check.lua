@@ -1651,6 +1651,19 @@ if arg[7] and arg[8] then
     check(logged(rq, 'event=place;seq=80;ent=3000000001;kind=correct;result=applied') and
         logged(rq, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rq, ';src=place;') and logged(rq, ';rq=1;'),
         'place_reach: the held correction is queued again at the backoff end and lands')
+    -- A drive step refused while that correction waits keeps its retry (it used to clear it: P.hold set r.c = nil).
+    local rr = guestFix(180)
+    rr.W.snapOn, rr.W.reachOn = true, true
+    rr.positions[1] = {0, 1.8, 20.0}
+    rr.warp = {{refused = 'backoff', b = 600}, {r = 0, h = 1, leaf = 'typed'}}
+    rr.driveReply = {refused = 'relayed', b = 3000}
+    sample(rr, 81, ENT1, 3000, 20000)
+    ticks(rr, 3)
+    local relayedDrive = rr.drives and #rr.drives or 0
+    ticks(rr, 110)
+    check(relayedDrive >= 1 and logged(rr, 'event=place;seq=81;ent=3000000001;kind=correct;result=applied') and
+        logged(rr, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rr, ';rq=1;'),
+        'place_reach: a relayed drive step keeps the held correction queued for the backoff end')
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)
