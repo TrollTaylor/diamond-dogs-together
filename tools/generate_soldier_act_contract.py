@@ -186,6 +186,24 @@ SITES = [
         (0x1381664, 'add', 'rcx, -0x20'),
         (0x1381668, 'mov', 'dword ptr [rsp + 0x20], 0'),
     ], 'codec vt[1] action B pack: direction 0'),
+    # Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): soldier_act::QuietOne calls the warp itself.
+    expect(0x136ED8C, 0x50, [
+        (0x136ED9E, 'mov', 'dword ptr [rdx + rcx*8], eax'),
+        (0x136EDB6, 'mov', 'dword ptr [rdx + rcx*8 + 0xc], eax'),
+        (0x136EDBA, 'mov', 'edx, dword ptr [r9 + 0x44]'),
+        (0x136EDC6, 'mov', 'r9, qword ptr [r9 + 0x28]'),
+        (0x136EDD2, 'movzx', 'ecx, word ptr [r9 + rax*2]'),
+    ], 'network-position warp: writes the slot position and yaw, then finds idx in the realized list *(S+0x18)+0x28 (count +0x44)'),
+    expect(0x136EDF5, 0x5C, [
+        (0x136EDF5, 'mov', 'rcx, qword ptr [r10 + 0x70]'),
+        (0x136EE21, 'call', 'qword ptr [rax + 0x100]'),
+        (0x136EE4B, 'call', 'qword ptr [rax + 0x388]'),
+    ], 'network-position warp: the controller (S vt[0x100](S, idx), then the component vt[0x388])'),
+    expect(0x136F002, 0x36, [
+        (0x136F005, 'call', 'qword ptr [rax + 0x70]'),
+        (0x136F008, 'movss', 'xmm1, dword ptr [rbx + 0x160]'),
+        (0x136F035, 'call', 'qword ptr [rax + 0x68]'),
+    ], 'network-position warp: rotation vt+0x70, position vt+0x68 (y + controller +0x160); no message, no brain'),
 ]
 
 # (vtable rva, slot offset, expected target rva, description). Data qwords are absolute (no relocations).
@@ -225,6 +243,7 @@ lines = [
     'inline constexpr std::uintptr_t unpack_request_rva=0x136f810;  // (M-0x20, R, in70, idx)',
     'inline constexpr std::uintptr_t unpack_order_rva=0x13701f0;    // (M-0x20, R+0x1b0, in18)',
     'inline constexpr std::uintptr_t post_rva=0x1368980;            // (M, idx, req 0xc0)',
+    'inline constexpr std::uintptr_t quiet_warp_rva=0x136ece0;      // (M-0x20, idx, entry): the network-position warp (quiet_place)',
     'inline constexpr std::uintptr_t manager_vtable_rva=0x23e8a48;  // M = P+0x20 (P, the constructed object: vtable 0x23e8a18)',
     'inline constexpr std::uintptr_t codec_vtable_rva=0x23e9638;',
     '// M: records +0x10 (stride 0x1e0), S +0x50, codec +0x58; the FOB functions take M-0x20.',

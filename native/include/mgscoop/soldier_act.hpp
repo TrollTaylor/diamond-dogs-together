@@ -92,6 +92,16 @@ bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept;
 // The network-position entry 0x136f810 reads (0x18 bytes): xyz, yaw, flags +0x14 bit 0 (valid).
 void PrefillEntry(unsigned char (&entry)[0x18], const float (&pos)[3], float yaw) noexcept;
+// Enemy round 8 track A (quiet_place, docs/world-sync-design.md 7.22): the quiet warp 0x136ece0 (the request unpack's
+// network-position warp) moves a copy only when his slot position is more than 15 m (225.0 squared) from the target. For
+// a nearer correction the slot position is biased kQuietBiasM along x first (the function overwrites it with the target
+// before anything reads it). True when `biased` is to be written; false when the warp moves him as it is.
+inline constexpr float kQuietWarpSq = 225.0f, kQuietBiasM = 20.0f;
+bool QuietBias(const float (&slot)[3], const float (&target)[3], float (&biased)[3]) noexcept;
+// "world_place=quiet; go=; seq=; moved=; bias=; err_m=; dy_m=\r\n" (err_m: x/z, dy_m: y of the slot read back after the
+// call minus the target). False when it does not fit.
+bool FormatQuietLine(std::uint32_t go, std::uint16_t seq, unsigned moved, unsigned bias, float err_m, float dy_m, char* out,
+                     std::size_t capacity) noexcept;
 
 #ifdef _WIN32
 using LogFn = void (*)(const char* line) noexcept;
@@ -149,6 +159,12 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
 bool FormatActReply(bool fresh, const Counters& k, char* out, std::size_t capacity, const std::int32_t* owner_mm = nullptr) noexcept;
 // The owner copy's position (mm) in guard idx's mailbox (the order part, flag bit 0); false when none.
 bool MailOwner(unsigned idx, std::int32_t (&mm)[3]) noexcept;
+// Enemy round 8 (quiet_place): 1 when guard idx is realized on this copy (the slot table's realized bit), 0 when not, -1
+// when the manager is not known yet (the hook has not run) or unreadable. Runtime thread; read only.
+int QuietRealized(unsigned idx) noexcept;
+// Stages a quiet move of guard idx (go: his GameObjectId, for the line) to pos / yaw: the hook runs 0x136ece0 in its next
+// update (before the engine's own) and logs world_place=quiet. False when the hook is not installed or idx is out of range.
+bool StageQuiet(unsigned idx, std::uint32_t go, std::uint16_t seq, const float (&pos)[3], float yaw) noexcept;
 #endif
 
 } // namespace mgscoop::soldier_act

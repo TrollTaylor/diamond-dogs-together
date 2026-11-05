@@ -48,8 +48,16 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
 -- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
 -- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
--- but in the airborne pose on both screens; C0 alone is untried (the lab lever horse_probe cargo_pose picks it).
-local RESET = 4
+-- but in the airborne pose on both screens. hold0 + C0 alone (2; C0.vt+0x90 sets bit 0x20 of the 0x580 record's +0x2C0,
+-- which C0.vt+0xD0 0x14128E010 clears while it answers "no fall") kept the lying pose, but a later write of the frame
+-- dropped the body under the horse (run cfd2b604, drop 136-288 cm): default 14 adds the native write watch (4) and pin (8)
+-- on body 0's transform (horse_body_watch). The lever picks 0..15 (4 the Lua Warp); free0 ends the pin before a lay-down.
+local RESET = 14
+-- The carrier's copy holds body 1 (the downed partner) by hold1 with the same C0 + watch + pin (run cfd2b604: the Lua Warp
+-- of body 1 drew it low behind the rider at a trot / gallop on the carrier's screen); a refusal keeps the Lua Warp.
+local RESET1 = 14
+C.RESET1 = RESET1
+local WARP_WHY = {off = true, request = true, pins = true, receipt = true}
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
@@ -58,7 +66,7 @@ C.RIDE_BACK_MM, C.RIDE_RISE_MM, C.GROUND_MM, C.VICTIM_RISE_MM, C.VICTIM_PLACED_M
 local floor, sin, cos, sqrt, fmt, pi = math.floor, math.sin, math.cos, math.sqrt, string.format, math.pi
 local function int(n, lo, hi) return type(n) == "number" and n == floor(n) and n >= lo and n <= hi end
 function C.setVictimPose(placed, rise, back, down, reset)
- if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 4)) then
+ if not (int(placed, 0, 3000) and int(rise, 0, 3000) and int(back, -1000, 1500) and int(down, 0, 20000) and int(reset, 0, 15)) then
   return false
  end
  V.placed, V.rise, V.back, V.down, V.reset = placed, rise, back, down, reset
@@ -127,9 +135,19 @@ local function warp(index, x, y, z, yaw)
  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
  return pcall(GameObject.SendCommand, {type = "TppPlayer2", index = index}, {id = "Warp", pos = {x / 1000, y / 1000, z / 1000}, rotY = yaw})
 end
-local function pin(index, h)
+-- Body 1 on the carrier's copy: hold1 (C0 + watch + pin, RESET1), else the Lua Warp (one line a reason).
+local function hold1(x, y, z, a)
+ local r = receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- hold1 %d %d %d %d %d %d %d", W.mission, W.epoch, round(x), round(y), round(z),
+  round(a * 1000), RESET1))
+ if r and r.ready == true then return true end
+ local why = r and tostring(r.reason) or "receipt"
+ if C.hold1Why ~= why then C.hold1Why = why; capped("hold1_refused", "step=hold1_refused;reason=" .. why) end
+ if not WARP_WHY[why] then return false end
+ return warp(1, x, y, z, a)
+end
+local function pin(h)
  local x, y, z, a = cargoPoint(h)
- return warp(index, x, y, z, a)
+ return hold1(x, y, z, a)
 end
 local function npcCargo()
  if type(GameObject) ~= "table" or type(GameObject.SendCommand) ~= "function" then return false end
@@ -200,6 +218,9 @@ local function warp0(x, y, z, a, src)
  if r and r.ready == true then C.via = "hold0"; return true end
  local why = r and tostring(r.reason) or "receipt"
  if C.holdWhy ~= why then C.holdWhy = why; capped("hold0_refused", "step=hold0_refused;reason=" .. why) end
+ -- Run 144d99bb (b): a transient refusal (body, at the mount) Warped body 0 once and Warp's A0 reset left it prone; the pin
+ -- holds the last target 300 ms, so only a native without hold0 (off, request, pins, no receipt) falls back to the Warp.
+ if not WARP_WHY[why] then return false end
  C.via = "warp"
  return warp(0, x, y, z, a)
 end
@@ -212,6 +233,9 @@ local function stop(now, why, place, remote, p)
   if place and not p and h then
    local _, y = mine()
    p = beside(h, -1, s == "carrier" and not mounted() and y or h.y)
+  end
+  if s == "cargo" or s == "carrier" then
+   receipt(fmt("return 'MGS_COOP_HORSE_DRIVE_V1' -- free0 %d %d", W.mission == 30020 and 30020 or 30010, int(W.epoch, 1, 65535) and W.epoch or 1))
   end
   if place and p then warp(s == "carrier" and 1 or 0, p[1], p[2], p[3], p[4] + (s == "cargo" and pi / 2 or 0)) end
   if not remote then send(UNLOADED, CODE[why] or 0, C.gen, p and p[1], p and p[2], p and p[3], p and p[4] * 1000) end
@@ -277,7 +301,7 @@ local function loadTick(now)
   C.takeArmed = not held("R", now) and not held("E", now)
   send(LOADED, 0, C.gen, h.x, h.y, h.z, h.yaw)
   log(fmt("step=loaded;seat=2;gen=%d;role=carrier;hx=%d;hz=%d", C.gen, round(h.x / 10), round(h.z / 10)))
-  pin(1, h)
+  pin(h)
  elseif now - C.loadAt > LOAD_MS then stop(now, "load_timeout", false) end
 end
 -- Where body 1 goes on this copy (mm, rad) and how it was found.
@@ -336,7 +360,7 @@ local function carrierTick(now)
  elseif sqrt((h.x - C.park.x) ^ 2 + (h.z - C.park.z) ^ 2) > CALL_MM then C.h = h; return stop(now, "call_away", true) end
  C.h = h
  local bx, by, bz, ba, how = bodyPoint(h, rides)
- warp(1, bx, by, bz, ba)
+ hold1(bx, by, bz, ba)
  if now >= (C.statsAt or 0) then
   C.statsAt = now + STATS_MS
   local _, py = mine()

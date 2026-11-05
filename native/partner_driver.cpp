@@ -7898,8 +7898,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 pose = partner::PoseFromMetres(seat[0], seat[1], seat[2], yaw);
                 pose_valid = true;
                 pillion = true;
+                std::memcpy(m.pillion_seat, seat, sizeof(m.pillion_seat));
             }
         }
+        m.pillion_seat_ok = pillion;
         if (pillion != m.pillion || !m.pillion_logged) {
             m.pillion_logged = true;
             if (pillion || m.pillion)
@@ -8390,6 +8392,25 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
     } else {
         m.body_ok = false;
+    }
+    // M3c: body 1 behind this copy's rider against this tick's rear seat (both after the same frame); 1 s windows.
+    if (m.pillion_seat_ok && m.body_ok) {
+        horse_drive::SeatErr e{m.pillion_xz_max, m.pillion_dy_max, m.pillion_err_n};
+        const float body[3] = {m.body_pos[0], m.body_pos[1], m.body_pos[2]};
+        horse_drive::NoteSeatErr(e, m.pillion_seat, body);
+        m.pillion_xz_max = e.xz_max;
+        m.pillion_dy_max = e.dy_max;
+        m.pillion_err_n = e.n;
+    }
+    if ((m.pillion_seat_ok || m.pillion_err_n) && now - m.pillion_stats_ms >= 1000) {
+        if (m.pillion_err_n && m.pillion_stats_lines < 600) {
+            ++m.pillion_stats_lines;
+            EmitFormat(h, "partner_pillion=stats; xz_cm=%d; dy_cm=%d; n=%u\r\n", static_cast<int>(std::lround(m.pillion_xz_max * 100.f)),
+                       static_cast<int>(std::lround(m.pillion_dy_max * 100.f)), m.pillion_err_n);
+        }
+        m.pillion_stats_ms = now;
+        m.pillion_xz_max = m.pillion_dy_max = 0.f;
+        m.pillion_err_n = 0;
     }
     // lost -> live on the net source this tick (hybrid and apply=input relink).
     const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
