@@ -2509,10 +2509,11 @@ No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the
     plan_cancel; plan_busy; plan_none; plan_release`.
 - `soldier_act=installed` prints the contract's site and slot counts (31 and 13 on this track; 34 and 13 merged with track A's quiet-warp sites).
 
-## 41. Enemy round 9 track A: the quiet move only for a guard at rest, the guest's network pose while range-hidden (lab key `quiet_place`, native only; design 7.24)
+## 41. Enemy round 9 track A: the quiet move only for a guard at rest, the partner's network pose while range-hidden (lab keys `quiet_place` and `range_flat`, native only; design 7.24)
 
 No new op, world note, receipt token or CFG bit. `quiet_place` stays off unless named (design 7.24: its named run asked
-for 18 quiet moves, took 2; both were 6-20 m off at the 5 s read-back); the range pose below is on at the defaults.
+18 times for 6 guards and moved 2; both were 6-20 m from the original target at the 5 s read-back, one following his
+running host copy, one a scripted goto beside him); the range pose below is off unless `range_flat` is named (land step).
 
 - Native `GuestWarpReceipt` with `quiet_place`: a correction named quiet (section 39) is staged for the quiet warp only
   when `soldier_act::QuietCheck` answers `ok` on the hook's newest rest view of the guard (at most 1.5 s old): realized,
@@ -2526,10 +2527,13 @@ for 18 quiet moves, took 2; both were 6-20 m off at the 5 s read-back); the rang
   (x/z `dxz_m` and y `dy_m` from the target, the body's GetPosition).
 - Native snapshot `remote_range_valid / remote_range_src / remote_range_pos` (`soldier_warp::RemoteRangeSource`): the
   body driver's command while it has one (as before); while this PC hides the partner's body for range
-  (`partner_range=hide`, beyond 200 m) the partner's network pose sample when at most 1 s old; else unknown. The host's
-  M3 placement range (`HostWarpReceipt`), the soft-follow range (`DriveReceipt`) and `WORLD_PEER_V1` (the owner rule)
-  read it. One `partner_range_pose=<none|cmd|net>; hidden; age_ms` line when the source changes; `world_place=host_warp`
-  adds `g_src`. This part is on at the defaults (no key; it changes only the hidden-body case).
+  (`partner_range=hide`, beyond 200 m, and from every 30010/30020 mission start until `partner_range=near`) the
+  partner's network pose sample when at most 1 s old and `range_flat` is named; else unknown. The host's M3 placement
+  range (`HostWarpReceipt`), the soft-follow range (`DriveReceipt`) and `WORLD_PEER_V1` (the owner rule) read it, on
+  both roles; both receipts measure the range from the pose the nearer test used (`soldier_warp::RangePlayer`). One
+  `partner_range_pose=<none|cmd|net>; hidden; age_ms` line when the source changes; `world_place=host_warp` adds
+  `g_src`. Off at the defaults since the land step (at 554b2fa9 it was on: `DriveReceipt` then measured from the
+  command pose, and the `dee3baf6` host placement FAIL, 30 `g_src=net unrealized`, came from it).
 - Contract `native/soldier_act_contract.hpp` (34 sites, 13 slots): `slots_list = 0x28, slots_list_count = 0x44` (pinned by
   the site 0x136ed8c).
 - `tools/enemy_div_report.py` `quiet`: `why` (the `quiet=` counts), `readback_5s`, `walk_on_within_2m_5s`, `moves_read`,
