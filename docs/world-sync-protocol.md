@@ -2508,3 +2508,29 @@ No new op, world note, CFG bit or receipt field; Lua unchanged. Native only, the
   - `soldier_act_frame` adds `plan; plan_skip; warp15; plan_ok; plan_far; plan_nopath; near_wait; gait_up; plan_fault;
     plan_cancel; plan_busy; plan_none; plan_release`.
 - `soldier_act=installed` prints the contract's site and slot counts (31 and 13 on this track; 34 and 13 merged with track A's quiet-warp sites).
+
+## 41. Enemy round 9 track A: the quiet move only for a guard at rest, the guest's network pose while range-hidden (lab key `quiet_place`, native only; design 7.24)
+
+No new op, world note, receipt token or CFG bit. `quiet_place` stays off unless named (design 7.24: its named run asked
+for 18 quiet moves, took 2; both were 6-20 m off at the 5 s read-back); the range pose below is on at the defaults.
+
+- Native `GuestWarpReceipt` with `quiet_place`: a correction named quiet (section 39) is staged for the quiet warp only
+  when `soldier_act::QuietCheck` answers `ok` on the hook's newest rest view of the guard (at most 1.5 s old): realized,
+  in the realized list the warp reads (`*(S+0x18)+0x28`, u16 entries, count u32 `+0x44`), his slot speed on the ground
+  plane over about 0.5 s at most 0.5 m/s, and no path of his follower (planner vt[0x20], follower vt[0x90] / vt[0xa0])
+  ending more than 2 m (x/z) from both where he stands and the target. Any other answer sends the set-transform message
+  as before. `world_place=warp` adds `quiet=<ok|unknown|stale|unrealized|unlisted|moving|path>` when a quiet move was
+  asked. The hook (`soldier_act_quiet=on; rest=on`) refreshes the rest views every 250 ms before the engine's update,
+  and `QuietOne` checks the list again before the warp (not listed: no warp, `world_place=quiet ... moved=0`).
+- Lua `event=readback; src=quiet` (`lua/coop/world_readback.lua`): a third read-back at 5 s (`at=5000`), as at 0.5 s and 2 s
+  (x/z `dxz_m` and y `dy_m` from the target, the body's GetPosition).
+- Native snapshot `remote_range_valid / remote_range_src / remote_range_pos` (`soldier_warp::RemoteRangeSource`): the
+  body driver's command while it has one (as before); while this PC hides the partner's body for range
+  (`partner_range=hide`, beyond 200 m) the partner's network pose sample when at most 1 s old; else unknown. The host's
+  M3 placement range (`HostWarpReceipt`), the soft-follow range (`DriveReceipt`) and `WORLD_PEER_V1` (the owner rule)
+  read it. One `partner_range_pose=<none|cmd|net>; hidden; age_ms` line when the source changes; `world_place=host_warp`
+  adds `g_src`. This part is on at the defaults (no key; it changes only the hidden-body case).
+- Contract `native/soldier_act_contract.hpp` (34 sites, 13 slots): `slots_list = 0x28, slots_list_count = 0x44` (pinned by
+  the site 0x136ed8c).
+- `tools/enemy_div_report.py` `quiet`: `why` (the `quiet=` counts), `readback_5s`, `walk_on_within_2m_5s`, `moves_read`,
+  `moves_both_within_1m`.

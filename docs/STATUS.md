@@ -1,3 +1,52 @@
+## November 5, 2026: enemy round 9 track A - the quiet move only for a guard at rest: its gate failed (2 moves), `quiet_place` stays off unless named; the guest's network pose while the host hides their body is on (`wp/enemy-m7`, not pushed)
+
+Design 7.24, protocol section 41. Markers: [O] seen in a log line, a frame or code (Ghidra, read-only), [I] inferred,
+[U] unknown. Hidden play sessions over `-WanSim bad`, the gun profile, research build, afgh-ledge, the four parts
+enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry, enemy-latch-alert: `0f020398` (`quiet_place=1,
+act_census=1`, code head 554b2fa9) and `dee3baf6`, `d3c4e4f6` (no key named, the same code head). `406324b6` was void (the worker lost
+the input desktop after the host reached gameplay; no step ran, the guest never started). Archives under
+`%USERPROFILE%\mgs-coop-run-archive\enemy-follow\<run>`.
+
+- **What players get**: nothing they can see. `quiet_place` stays off. One change is on at the defaults: while the host
+  hides the guest's body because they are more than 200 m apart, the host's range rules and the owner rule now use the
+  guest's network position instead of treating it as unknown (log level; seen live in `0f020398`: 56 host placements
+  applied with it that would have been refused [I, from the code], near the guest after their down while their body was still hidden).
+- **Built** (red d40ce288, green 554b2fa9): the quiet move only for a guard at rest in his own brain and in the realized
+  list the warp reads (the hook's rest view every 250 ms: listed, slot speed over about 0.5 s <= 0.5 m/s, no follower
+  path ending more than 2 m from him and the target); any other guard gets the set-transform message as in 0.15.2
+  (`quiet=<why>` on the warp line); the list is checked again before the warp; a 5 s quiet read-back; the range pose
+  (`soldier_warp::RemoteRangeSource`, `partner_range_pose=`, `host_warp g_src=`); report rows. Tests: soldier_act_tests
+  153, soldier_warp_tests 504, world_align_lua_check (the 5 s read-back), enemy_div_report_check 9.
+- **Round 8 re-counted** [O 1befcef4]: 114 of its 115 quiet moves were in the ALERT part; per move both read-backs
+  within 1 m 17 of 90.
+- **`0f020398`** (named) [O]: GATE FAIL, n = 2. The guest asked for 18 quiet moves: `moving` 14, `path` 2, `ok` 2, all
+  in the ALERT part (the calm parts asked once, `moving`). Guard 1904171355: 0.03 / 7.74 / 20.39 m at 0.5 / 2 / 5 s;
+  guard 2961503 (put to sleep in the quiet part): 0.10 / 0.02 / 6.14 m (why he moved [U]). Rows: both 0.5 s and 2 s
+  within 1 m 1 / 2 (gate 90 %), 5 s within 2 m 0 / 2 (gate 90 %); kind 3 after a quiet move 0 / 2 (the message
+  corrections: 13 of 16); 0 place_sink (1befcef4: 22), 0 drive_sink, 0 guard_fell, 0 latches / faults / game overs; one
+  guest `req_phase` (phase 3, inside the scripted ALERT). Guest place error p50 0.59 / p90 1.49 m; host M3 p50 1.74 /
+  p90 10.74 m (before the guest's fall 5.74 m: the guest fell through the world in the ALERT part, down 27 s, host error
+  while down p90 27.2 m, 2 applied / 57 refused, `range_flat` off). Frames looked at (both copies): q-0 / q1, c-b (the
+  sleeping guard by the barriers beside the guest's character), al-1 (ALERT radio subtitles on both).
+- **No-key runs** (`dee3baf6`, `d3c4e4f6`; quiet_place off, the range pose on) [O]: in both, part 3 (enemy-integ-carry)
+  stopped in the harness before the carry ("[host] viewer landing has no new position sample"; the named run passed
+  that part at the same code head, cause [U]), parts 1, 2 and 4 passed, first frames in gameplay on both copies.
+  `d3c4e4f6`: 0 place_sink / drive_sink / guard_fell, 0 latches / faults / game overs, guest place error p50 0.82 /
+  p90 3.91 m, host M3 p50 1.03 / p90 4.39 m, 4 guest `req_phase` (phase 3, one outpost, inside the scripted ALERT).
+  `dee3baf6`: host place_sink 1 (3268415846 4.89 m under after a placement that read the driver's command, not the new
+  pose; round 8's host guard_fell was this guard too), guest p50 0.76 / p90 4.29 m (a goto took the guest 700 m off to
+  the reinforcement guards' copies in their truck), host M3 p50 1.15 / p90 7.82 m, 17 guest `req_phase` in the ALERT
+  part (15 outposts to phase 1 in one ms after that goto).
+- **Failing rows**: `0f020398` quiet gate (read-backs 1 / 2, 5 s 0 / 2; n = 2), corrections applied 18 / 35 (12
+  `vehicle_local`, 4 `range`, 1 `far`), M3 host placements applied 190 / 255, host M3 p90 10.74 m. No-key: the carry row
+  not reached in either run; `dee3baf6` place_sink 1, guest p90 4.29 m, corrections 49 / 66, host placements 60 / 90,
+  host M3 p90 7.82 m; `d3c4e4f6` guest p90 3.91 m (row 2 m), corrections 61 / 87, host placements 89 / 99.
+- **Checks**: full `tools/build.ps1 -Jobs 4` at 554b2fa9: 291 / 291 built, CTest 354 / 355 (worker_session_tests_1: a
+  file Move "Access to the path is denied", passed on two reruns); every `generate_*_contract.py --check` as round 8
+  except soldier_act (34 sites, 13 slots: the realized-list constants).
+- **Next**: design 7.24: stop or re-route a walking guard after the quiet move (planner cancel of his live handle, or the
+  offline mode 0 stand), measured at the seed's calm correction; for bug 2, `range_flat=1` named with this pose fix.
+
 ## November 5, 2026: enemy round 8 track C - the far mirror's walkers plan their own path: built, the gate not reached (the act_plan session was void); `act_plan` and `soldier_act` stay off unless named (`wp/enemy-fm1plan`, not pushed)
 
 Design 7.23, protocol section 40. Markers: [O] seen in a log line, a frame or code (Ghidra / capstone, read-only), [I]

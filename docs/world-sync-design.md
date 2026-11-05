@@ -918,6 +918,86 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   re-apply cadence (1 s) restarts each plan from where he stands: plan only on a changed request or a destination moved
   over 1 m.
 
+#### 7.24 Enemy round 9 track A: the quiet move only for a guard at rest, the guest's network pose while range-hidden (lab key `quiet_place`, native only)
+
+Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read only); [I] inferred; [U] unknown.
+
+- **Why round 8's quiet move failed** [O 1befcef4, re-counted with the round's gate script]: 114 of its 115 quiet
+  moves came in the ALERT part (enemy-latch-alert), 1 in calm (enemy-integ-carry). Per move, the 0.5 s and 2 s
+  read-backs were both within 1 m for 17 of 90 (19 %). Guard 1904171355 (43 moves) ran with his host copy at 2-4 m/s;
+  after each warp his own brain kept its path and he walked on (22 `place_sink`). In 5 of the 8 off-target moves the
+  body did not move: 0x14136ece0 writes the slot first, then moves the body only for an idx it finds in the u16 list
+  `*(S+0x18)+0x28` (count u32 `+0x44`), and returns 1 either way [O decompile].
+- **Built** (`quiet_place`, native only, no CFG bit; still off unless named):
+  - the request manager hook keeps a rest view of every realized guard, refreshed every 250 ms before the engine's
+    update: in the realized list or not, his slot speed on the ground plane over about 0.5 s, and his follower's path
+    (planner vt[0x20], follower vt[0x90] has / vt[0xa0] last point; track C's pins, read only);
+  - `QuietCheck` (the guest's warp receipt) takes the quiet move only when that view is at most 1.5 s old, the guard is
+    listed, his speed is at most 0.5 m/s and no path of his ends more than 2 m (x/z) from both him and the target; any
+    other guard gets the set-transform message as in 0.15.2 (`world_place=warp ... quiet=<why>`). This is the task's
+    "send the move only when the guard is at rest in his own brain"; stopping a walker (planner cancel, a new route
+    node) was not built: its effect on a brain-driven guard is [U];
+  - `QuietOne` checks the list again just before the warp (not listed: no warp, `moved=0`);
+  - a third quiet read-back at 5 s (`at=5000`; the walk-on row); report rows `quiet.why`, `moves_both_within_1m`,
+    `walk_on_within_2m_5s`. Contract: `slots_list` / `slots_list_count` (pinned by the existing site 0x136ed8c).
+- **Bug 2's guest pose** (on at the defaults, no key): `soldier_warp::RemoteRangeSource`. While the host hides the
+  guest's body for range (`partner_range=hide`, beyond 200 m) the body driver has no command, and the receipts and PEER
+  read the guest's pose as unknown (8b581a26: position 0, 142 of 142 refused). Now the guest's network pose sample (at
+  most 1 s old) stands in for the host's M3 placement range, the soft-follow range and PEER (the owner rule), on both
+  roles; `partner_range_pose=` when the source changes, `host_warp ... g_src=`.
+- **Gate** (named, `quiet_place=1`): per quiet move, the body read-backs (GetPosition, x/z and y) within 1 m at 0.5 s
+  and 2 s for >= 90 %, the 5 s read-back within 2 m (x/z) for >= 90 %, 0 kind 3 / 13 caused by a quiet move, no
+  guest-only ChangePhase in calm, 0 place_sink / drive_sink / guard_fell, 0 latches / faults / game overs.
+- **Session 1, `0f020398`** (`quiet_place=1, act_census=1`; enemy-prove-1-join, enemy-latch-quiet, enemy-integ-carry,
+  enemy-latch-alert, gun profile, research build, afgh-ledge, `-WanSim bad`; all four parts passed) [O]. The first try
+  (`406324b6`) was void: the worker lost the input desktop (`input_desktop_unavailable`, error 5) after the host reached
+  gameplay, every step was refused and the guest never started.
+  - GATE FAIL (n = 2): the guest asked for 18 quiet moves; 14 guards were `moving`, 2 had a `path` ahead, 2 were `ok`,
+    all in the ALERT part (the calm parts asked once: `moving`). 1904171355: 0.5 s 0.03 m, 2 s 7.74 m, 5 s 20.39 m;
+    2961503 (the guard put to sleep in the quiet part): 0.10 / 0.02 / 6.14 m (why he moved [U]). Both 0.5 s and 2 s
+    within 1 m: 1 of 2; the 5 s row 0 of 2.
+  - PASS: kind 3 entered within 0.5 s after a quiet move 0 of 2 (the 16 message corrections with the census: 13);
+    0 `place_sink` (1befcef4: 22), 0 `drive_sink`, 0 `guard_fell`, 0 latches / faults / game overs; one guest
+    `req_phase` (phase 3, in the ALERT the host's own script set). Guest place error p50 0.59 / p90 1.49 m.
+  - Reported: host M3 p50 1.74 / p90 10.74 m; before the guest's fall p90 5.74 m. The guest fell through the world in
+    the ALERT part again and was down 27 s: host error while down p50 16.2 / p90 27.2 m, 2 applied / 57 refused.
+  - The pose fix ran [O]: the host hid the guest at 201.7 m; 114 host placements read `g_src=net`: 58 refused while the
+    guest was down under the world (the 3D range; `range_flat` is off) and 56 applied `near=guest` after the down
+    ended, the guest back at the guards' height while the host still hid their body (until `partner_range=near` at
+    119 m). Without the fix all 114 would have read the guest's pose as unknown [I from the code; 8b581a26].
+  - Frames looked at: q-0 / q1 (both in gameplay, no modal), c-b (both: the sleeping guard by the barriers beside the
+    guest's character), al-1 (both in the ALERT: the radio subtitles).
+- **Decision**: quiet_place stays off unless named (its gate failed). The rest rule ends the walk-off seen in round 8
+  (0 place_sink) only by refusing almost every quiet move: corrections are needed because guards walk, and a walking
+  guard now gets the message, its kind 3 and the radio risk of bug 1 as in 0.15.2.
+- **Session 2, `dee3baf6`** (no key named, code head 554b2fa9, the same four parts) [O]: parts 1, 2 and 4 passed; part 3
+  (enemy-integ-carry) stopped in the harness before the carry ("[host] viewer landing has no new position sample": the
+  host's state tick did not advance within 250 ms after the scenario put the host behind the guest), so it has no carry
+  row. First frames q-0 on both copies in gameplay (not void). No quiet move (key off). Host `place_sink` 1: the host's
+  copy of 3268415846 4.89 m under after a landed placement that read the driver's command (`g_src=cmd`; round 8's
+  `guard_fell` was this guard too) [O; cause U]. 0 `drive_sink`, 0 `guard_fell`, 0 latches / faults / game overs.
+  Guest place error p50 0.76 / p90 4.29 m (the guest's goto took them 700 m off to the reinforcement guards' copies in
+  their truck, track B's open row); 17 guest `req_phase`, all in the ALERT part (2 phase 3; 15 outposts phase 1 in one
+  ms after that goto). Host M3 p50 1.15 / p90 7.82 m, host placements applied 60 / 90 (30 unrealized). The pose fix: 31
+  host placements read `g_src=net` (18 backoff, 12 relayed, 1 applied).
+- **Session 3, `d3c4e4f6`** (no key named, the same code head; the rerun for the carry row) [O]: part 3 stopped the same
+  way before the carry (the host's viewer landing had no new position sample); parts 1, 2 and 4 passed; q-0 on both
+  copies in gameplay. 0 `place_sink` / `drive_sink` / `guard_fell`, 0 latches / faults / game overs. Guest place error
+  p50 0.82 / p90 3.91 m (21 corrections refused `far`: the far reinforcement guards again); host M3 p50 1.03 / p90
+  4.39 m (its 5 m row passes), placements applied 89 / 99 (10 unrealized); 4 guest `req_phase`, all phase 3 of the one
+  outpost inside the scripted ALERT. No host placement read `g_src=net` (no placement while the guest was hidden).
+  The carry row is not reached in either no-key run; the named run `0f020398` at the same code head passed that part,
+  so the stop is not shown to come from the defaults [U cause; the harness reads the host's state tick 250 ms apart].
+- **Next for bug 1**: the quiet move must stop or re-route a walking guard: read the brain's own walk (the planner slot
+  of idx: hash, handle, done; track C's session 1), then try, one at a time in a census run, (a) planner vt[0x10]
+  cancel of his live handle right after the quiet warp and log whether his brain plans again from the new spot within
+  1 s (follower path end, slot speed), (b) the request start 0x14136f090 mode 0 stand command offline. Measure at the
+  seed's calm correction (enemy8-quiet-calm: the 246 case) and with more calm corrections (no calm correction was asked
+  in the 4-part set). Log the speed in `quiet=moving`.
+- **Next for bug 2**: the fall through the world still refuses the host's placements while the guest is under the
+  world (3D range); `range_flat=1` named together with this pose fix is the next run (enemy8-down-alert reproduces the
+  fall; it happened in 0f020398's ALERT part too).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
