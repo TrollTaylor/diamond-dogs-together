@@ -195,6 +195,17 @@ struct Mail {
     unsigned char req[0x70], order[world::kActOrder];
 };
 Mail g_mail[kMaxSoldiers]{};
+// The hook's last applied request per guard (hook thread only); a release bumps the guard's generation (any thread), so a
+// guard mirrored again takes his first request whatever it is.
+struct Applied {
+    bool valid;
+    std::uint32_t gen;
+    std::uint64_t at;
+    unsigned char req[0x70];
+};
+Applied g_applied[kMaxSoldiers]{};
+std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
+std::atomic<std::uint32_t> g_cSame{0};
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
 std::uint64_t g_sendWindowAt = 0;
@@ -699,7 +710,19 @@ void MirrorRx(const View& v, std::uint64_t now) noexcept {
         // the catch-up runs it toward the packed position), or this copy's own one before the first order part.
         float own[3]{};
         if (newReq && Pos(v, i, own)) {
-            if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own)) g_cApplied.fetch_add(1, std::memory_order_relaxed);
+            Applied& a = g_applied[i];
+            const std::uint32_t gen = g_mirGen[i].load(std::memory_order_relaxed);
+            if (!a.valid || a.gen != gen || RequestChanged(w, a.req) || now - a.at >= kActReapplyMs) {
+                if (UnpackRequestSafe(v, i, w, haveOwner ? owner : own)) {
+                    g_cApplied.fetch_add(1, std::memory_order_relaxed);
+                    std::memcpy(a.req, w, sizeof(w));
+                    a.valid = true;
+                    a.gen = gen;
+                    a.at = now;
+                }
+            } else {
+                g_cSame.fetch_add(1, std::memory_order_relaxed);
+            }
             AcquireSRWLockExclusive(&g_actLock);
             g_mail[i].applied_seq = seq;
             ReleaseSRWLockExclusive(&g_actLock);
@@ -734,10 +757,10 @@ void FrameCensus(std::uint64_t now) noexcept {
     soldier_authority::MirrorDrops(fire, noise);
     const int n = std::snprintf(line, sizeof(line),
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
-        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u\r\n",
+        "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u\r\n",
         static_cast<unsigned long long>(now), g_frameN, p95 / 1000.0, soldier_authority::MirroredCount(), g_cTx.load(), g_cStaged.load(),
         g_cRx.load(), g_cApplied.load(), g_cOrders.load(), g_cTable.load(), g_cFault.load(), g_cRemap.load(), fire, noise,
-        soldier_authority::LocalShots());
+        soldier_authority::LocalShots(), g_cSame.load());
     if (n > 0) Emit(line);
     g_frameN = 0;
 }
@@ -891,6 +914,7 @@ bool SetMirror(unsigned idx, std::uint16_t slot, bool on, std::uint64_t now_ms) 
     if (idx >= kMaxSoldiers) return false;
     if (!on || !g_actOn.load()) {
         g_mirAt[idx].store(0, std::memory_order_relaxed);
+        g_mirGen[idx].fetch_add(1, std::memory_order_relaxed);
         soldier_authority::SetMirrored(static_cast<std::uint16_t>(idx), false);
         AcquireSRWLockExclusive(&g_actLock);
         g_mail[idx] = Mail{};
@@ -929,7 +953,7 @@ void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) Relea
 bool Paused() noexcept { return g_paused.load(); }
 
 void ReleaseAll() noexcept {
-    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); }
+    for (unsigned i = 0; i < kMaxSoldiers; ++i) { g_mirAt[i].store(0); g_txAt[i].store(0); g_mirGen[i].fetch_add(1); }
     soldier_authority::ClearMirrored();
     AcquireSRWLockExclusive(&g_actLock);
     for (auto& m : g_mail) m = Mail{};

@@ -43,6 +43,9 @@ bool Hex(const unsigned char* bytes, std::size_t size, char* out, std::size_t ca
 // takes them (0x136f810 with its network-position entry pre-filled with its own position, then R+0x19e |= 0x80; the
 // order 0x13701f0 every update, R+0x1d2 |= 1) and runs them with its own legs, aim and fire motions.
 inline constexpr std::uint64_t kActMinMs = 100, kActResendMs = 1000, kActFreshMs = 1500;
+// The puppet side re-applies an unchanged request only every kActReapplyMs (the 1 s resend keeps the stream fresh; the
+// FOB peer applies only new requests, and a re-posted request restarts its motion).
+inline constexpr std::uint64_t kActReapplyMs = 5000;
 inline constexpr unsigned kActPartsPer100Ms = 24;
 // Players 0 and 1 swap between the copies (GameObjectId type 0); any other id is unchanged.
 std::uint16_t RemapPlayer(std::uint16_t id) noexcept;
