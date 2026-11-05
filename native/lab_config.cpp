@@ -2069,11 +2069,10 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // not it (enemy latch: arm A 6348f361 latched with it off; the out=0 handled=0 answer is the engine's relay to an
     // unrealized guard, now "relayed" with a per-guard backoff). A named 0 is the off switch.
     if (!c.place_lift_given) c.place_lift = gun;
-    // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place follows the gun profile in lab and play since its
-    // hidden runs (named run bcd95b14: the seed's guard 246, 56 m off the guest's screen, moved by the quiet warp and read
-    // back 0.08 / 0.15 m x/z and 0.00 m y at 0.5 / 2 s, then in action kind 1 for 118 s (no kind 3 or 13), no guest-only
-    // phase change in calm, 0 latches or faults); a named 0 is the off switch.
-    if (!c.quiet_place_given) c.quiet_place = gun;
+    // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
+    // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
+    // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
+    // place_sink lines), and 8 of 115 quiet moves (4 guards) left the body 2-92 m off while the slot read the target.
     // Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19): soldier_act stays off unless named. Its no-key run with
     // the gun profile on it (0d801772) did not pass the calm gate: the walkers' place error while the host copy moves was
     // p50 1.68 / p90 9.08 m (gate 1.0 / 2.5 m) and no frame pair shows one guard walking at one spot on both screens.
