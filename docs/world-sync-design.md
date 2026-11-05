@@ -1167,6 +1167,31 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
 - **Built** (red first): 5e2b0f3a / 20ac2166 (Lua), 3dce7916 / f71305ca (LRRP_STEP), d21096be (host lines 4 Hz moving),
   4cfc2002 / 2f365581 (3 tries per host step); scenario `enemy-lrrp-crew10.txt` (round 9's crew part without the 40 s
   lever window, which let each copy's own AI run off the host's step).
+- **Sessions**: two jobs refused before the game by the worker's audited CTest (`ddt_core_tests_1` CloseDuringSetup, a
+  launcher timing check; not this change), counted as one session; `ffd0248d` (`lrrp_follow=1`, a8c615a4; join,
+  `enemy-lrrp-crew10.txt`, `enemy-lrrp-alert3.txt`; all parts passed; first frames of both copies in gameplay); the run
+  with no key named at the same code head (below). [O]:
+  - The clock: 24 `StartTravel{travelPlan, step, keepInAlert}`, each read back on the host's step at the next 1 s read
+    (25606's crew 0 -> 1 -> 2 -> 3 ...; plans `travelArea1_01` / `travelArea1_02`); the guest on the host's step after a
+    host change p50 1.5 / p90 3.6 / max 12.7 s (21 changes). The svars rows matched (0 `tstep_miss`).
+  - Get-outs and boardings within 0.03-1.1 s of the host's (25605 2 -> 1 -> 0; 25606 2 -> 0 -> 1 -> 2), 0 trucks moving
+    with the crews differing, 0 `crew_wait`; crews 20-40 s after the host's get-out p90 0.00-1.75 m (round 9: 9-42 m).
+  - Truck error while moving p50 0.15 / p90 0.55 m (314). Riders within 8 m while seated: FAIL for 25605 in the first 54 s
+    after the pairing (p90 499 m, 46 of 46 samples): its guest copy was 363 m from the guest's player and 410 m from the
+    host's truck, so the 400 m rule deferred it (27 `defer` lines) until the jump at near_m 400.0; after that every rider
+    p90 0.42-1.00 / max 5.3 m, 0 over 8 m.
+  - 7 of the 24 sets were one step back (the guest's copy had advanced a second before the host's: 25605's passenger
+    5 -> 4, 25606's crew 4 -> 3; 25605's driver 6 -> 0 three times while the host's driver stayed on step 0, then held
+    `why=tries`); the get-outs still lined up.
+  - 0 `log_cap` on either copy (guest world log 7.1 lines/s, lrrp 5.5/s); `step=cost` avg <= 0.15 ms per tick with the
+    1 s `StoreToSVars`; 0 latches / faults / game overs / drive_sank; one host `place_sink` of an outpost guard (not a crew).
+  - Frames: no matched crew pair (the host's binoculars on rock in k-5..k-7); the guest's k-6 shows a soldier on foot
+    beside a truck at the stop.
+- **Gate** (Afghanistan): every row passes but "crews within 8 m while seated", which fails for a truck within 400 m of the
+  guest at the pairing (that copy stays the guest's own, as 0.15.2, until the guest is 400 m from it). `lrrp_follow` stays
+  off unless named; turning it on in 30010 with that limit is the user's decision (docs/STATUS.md, D-B10).
+- **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
+  never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.
 
 ### 8. Soldier transforms (W6)
 
