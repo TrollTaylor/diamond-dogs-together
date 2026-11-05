@@ -755,6 +755,11 @@ do
     for _ = 1, 40 do s2(111000, 0, 0, 0) end
     check(#cmdsOf(g, 1194, 'UnsetRelativeVehicle') == 0 and #cmdsOf(g, 1195, 'UnsetRelativeVehicle') == 0 and #cmdsOf(g, 1194, 'StartTravel') == 2,
         'guest: steps arriving: no UnsetRelativeVehicle; the stop step is set instead')
+    -- A StartTravel with no effect (the read-back stays off the host's step): at most 3 tries per host step, then held.
+    g.H[94]({str32('sol_b'), str32('travel_a'), 6, 25602})
+    for _ = 1, 200 do g.H[94]({str32('sol_b'), str32('travel_a'), 6, 25602}); s2(111000, 0, 0, 0) end
+    check(#cmdsOf(g, 1195, 'StartTravel') == 3 and g:has('event=lrrp;step=tstep_hold;id=25602;ent=' .. str32('sol_b') .. ';why=tries'),
+        'guest: no effect: 3 tries per host step, then held (' .. #cmdsOf(g, 1195, 'StartTravel') .. ')')
     -- A truck that waits near this player (its copy its own, 30 m+ off): the crew keeps its own step.
     g = Fixture('guest', {lrrp = true})
     sv(g)
