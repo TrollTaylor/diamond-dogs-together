@@ -506,6 +506,21 @@ int main() {
                        v4 = sw::DriveVertDue(3.3f, 6200, since);
             Check(!v0 && !v1 && v2 && !v3 && !v4 && since == 6200,
                   "drive_vert: due once more than 1.5 m apart in y for 1 s; a smaller gap starts over");
+            // Enemy round 7 track A (design 7.20): no thrash. Round 6's copies popped up and dropped again 1.4-1.7 s after a
+            // snap (2929558510 -2.47 then +1.80 m; 2942862796 2.61 / 4.06 / 5.80 m in 3 s): at most 2 snaps of one copy in
+            // 10 s from the first; a third due in that window is not taken (the caller logs world_drive=vert_stop once).
+            std::uint64_t win = 0;
+            unsigned n = 0;
+            const bool a0 = sw::DriveVertAllow(10000, win, n);
+            sw::DriveVertCount(10000, win, n);
+            const bool a1 = sw::DriveVertAllow(11500, win, n);
+            sw::DriveVertCount(11500, win, n);
+            const bool a2 = sw::DriveVertAllow(13000, win, n), a3 = sw::DriveVertAllow(19999, win, n);
+            const bool a4 = sw::DriveVertAllow(20000, win, n);
+            Check(a0 && a1 && !a2 && !a3 && a4 && n == 0 && win == 0,
+                  "drive_vert: at most 2 snaps of a copy in 10 s from the first; the window then starts over");
+            sw::DriveVertCount(20100, win, n);
+            Check(win == 20100 && n == 1, "drive_vert: the next snap opens a new window");
             char reply[64]{};
             const bool b1 = sw::FormatRefusal(reply, sizeof(reply), "backoff", 2500) &&
                             std::strcmp(reply, "return {refused=\"backoff\",b=2500}") == 0;

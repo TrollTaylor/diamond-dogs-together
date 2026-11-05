@@ -129,7 +129,7 @@ local function fixture(host, level, mb)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8], arg[9], arg[10], arg[11], arg[12]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -1665,6 +1665,111 @@ if arg[7] and arg[8] then
     check(relayedDrive >= 1 and logged(rr, 'event=place;seq=81;ent=3000000001;kind=correct;result=applied') and
         logged(rr, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rr, ';rq=1;'),
         'place_reach: a relayed drive step keeps the held correction queued for the backoff end')
+    -- Enemy round 7 track A (design 7.20; lua/coop/world_readback.lua) ------------------------------------------------
+    do
+    local t
+    -- drive_sink counts the time under the target apart from snaps: round 6's 1 s drive_vert snap reset the 2 s window,
+    -- so a copy more than 1.5 m under for at least 3 of about 4 s (025fbb28, 2942862796) logged none.
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 30)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = 40}
+    ticks(t, 15)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 36)
+    check(logCount(t, 'event=drive_sink;ent=3000000001;') == 1, 'drive_sink: a snap that does not hold still counts (1 s + 1.2 s under)')
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 30)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = 40}
+    ticks(t, 66)
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 36)
+    check(not logged(t, 'event=drive_sink;'), 'drive_sink: level for 2 s starts the count over')
+    -- Sparse readings (round 7 skeptic): a copy read once a second more than 1.5 m under logs drive_sink 2 s after the
+    -- first low reading, as 0.15.1 did (a 500 ms cap on each gap made it 4 s).
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 3, 1000)
+    check(logCount(t, 'event=drive_sink;ent=3000000001;') == 1, 'drive_sink: readings 1 s apart count in full (2 s, as 0.15.1)')
+    -- A y read-back 0.5 s and 2 s after a drive_vert snap (reply s=3; v: his y minus the target's before the snap, cm).
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 10, s = 3, r = 0, h = 1, v = -300}
+    ticks(t, 1)
+    t.driveReply = {e = 10, s = 0, r = 0, h = 1, v = 0}
+    t.positions[1] = {0, 4.75, 20.0}
+    ticks(t, 20)
+    check(logged(t, 'event=readback;ent=3000000001;src=vert;at=500;') and logged(t, ';dy_m=-0.05;held=1;far_m=20'),
+        'readback: 0.5 s after a vert snap, held on the target (dy within 1 m)')
+    ticks(t, 50)
+    check(logCount(t, 'event=readback;ent=3000000001;src=vert;') == 2 and logged(t, 'event=readback;ent=3000000001;src=vert;at=2000;'),
+        'readback: and again 2 s after it, once each')
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 10, s = 3, r = 0, h = 1, v = -300}
+    ticks(t, 1)
+    t.driveReply = {e = 10, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 70)
+    check(logged(t, 'event=readback;ent=3000000001;src=vert;at=500;') and logged(t, ';dy_m=-3.00;held=0;far_m=20') and
+        logged(t, 'event=readback;ent=3000000001;src=vert;at=2000;') and not logged(t, 'event=readback_fix;'),
+        'readback: a snap that did not hold is logged held=0 with its dy; within 60 m nothing more')
+    -- A held guard's landed drive step (it ends a place_reach hold) is read back too.
+    t = guestFix(180)
+    t.W.snapOn, t.W.reachOn = true, true
+    t.positions[1] = {0, 1.8, 30.0}
+    t.driveReply = {refused = 'backoff', b = 300}
+    ticks(t, 2)
+    t.driveReply = {e = 40, s = 1, r = 0, h = 1, v = -20}
+    ticks(t, 40)
+    check(logged(t, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and
+        logged(t, 'event=readback;ent=3000000001;src=drive;at=500;') and logged(t, ';dy_m=-0.20;held=1;'),
+        'readback: the landed drive step that ends a hold')
+    -- Far copies (place_reach; run 35d4074f: the host's copy of 1179373153 ~150 m off landed, was force-realized and
+    -- dropped 3.7-5.4 m): a copy beyond 60 m more than 1.5 m under its target at a read-back is put back once, his
+    -- force-realize ends and he is not held again for 10 s; falling again after that is only logged.
+    t = guestFix(180)
+    t.W.reachOn = true
+    t.positions[1] = {0, 1.0, 100.0}
+    t.warp = {{r = 0, h = 1, leaf = 'typed'}}
+    sample(t, 90, ENT1, 3000, 100000)
+    ticks(t, 6)
+    check(logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 1, 'far: the correction lands')
+    t.positions[1] = {3.0, -2.5, 100.0}
+    ticks(t, 20)
+    check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and logged(t, ';dy_m=-3.50;held=0;far_m=100') and
+        logged(t, 'event=readback_fix;ent=3000000001;src=place;far_m=100;dy_m=-3.50;put=1'),
+        'far: a copy 100 m off that fell 3.5 m is put back once')
+    ticks(t, 10)
+    check(logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 2, 'far: the put-back lands')
+    ticks(t, 70)
+    check(logged(t, 'event=readback;ent=3000000001;src=put;at=500;') and
+        logged(t, 'event=readback_fix;ent=3000000001;src=put;far_m=100;dy_m=-3.50;put=0;why=once') and
+        logCount(t, 'event=place;seq=90;ent=3000000001;kind=correct;result=applied') == 2, 'far: falling again is not put back again')
+    t.warp = {{refused = 'relayed'}}
+    sample(t, 91, ENT1, 9000, 100000)
+    ticks(t, 6)
+    check(logged(t, 'event=place;seq=91;ent=3000000001;kind=correct;result=refused') and sent(t, 1, 'SetForceRealize') == 0 and
+        logged(t, 'event=readback_nohold;ent=3000000001;'), 'far: no new force-realize hold for him within 10 s')
+    -- The same fall within 60 m is not put back (only far copies), nor without place_reach.
+    t = guestFix(180)
+    t.positions[1] = {0, 1.0, 100.0}
+    t.warp = {{r = 0, h = 1, leaf = 'typed'}}
+    sample(t, 92, ENT1, 3000, 100000)
+    ticks(t, 6)
+    t.positions[1] = {3.0, -2.5, 100.0}
+    ticks(t, 80)
+    check(logged(t, 'event=readback;ent=3000000001;src=place;at=500;') and not logged(t, 'event=readback_fix;'),
+        'far without place_reach: read back and logged only')
+    end
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)

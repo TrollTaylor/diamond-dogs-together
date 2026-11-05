@@ -132,3 +132,7 @@ constexpr char world_horse_pillion_source[] = R"MGS_WORLD(
 constexpr char world_mirror_source[] = R"MGS_WORLD(
 @MGS_WORLD_MIRROR_SOURCE@
 )MGS_WORLD";
+// Enemy round 7 track A, the y read-backs and the far put-back (docs/world-sync-design.md 7.20; after the mirror)
+constexpr char world_readback_source[] = R"MGS_WORLD(
+@MGS_WORLD_READBACK_SOURCE@
+)MGS_WORLD";
