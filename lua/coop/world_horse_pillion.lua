@@ -27,7 +27,7 @@ local CLAIM_MM, CLAIM_MS, KEEP_MS, LOST_MS, LOCK_MS, SIDE_MM, STATS_MS, LAND_MM,
 local MASK, MASK_BUTTONS, FREE_E_MM, DRIVE_MS = "MgsCoopPillion", 0xFFFFFFA7, 30000, 2000
 -- Body 0 on the passenger's copy: back mm behind the placed census root along its heading, rise mm over it (the rider
 -- sits 0.10 m forward and 0.49 m up of the root, probe P2; the rear seat is 0.45 m behind the rider), squatting; mode 2
--- hold0 with the A0 reset (round 2: it kept body 0 with the horse, lag 6-8 cm, crouched), 0 hold0 without a reset, 4 the
+-- hold0 with the A0 reset (round 2: lag mostly 6-9 cm, peaks 74-80 cm, crouched), 0 hold0 without a reset, 4 the
 -- Lua Warp, 5 both. Body 1 on the driver's copy: dback mm behind and dup mm over the driver's own root (native RearSeat).
 -- Run ba6b4bb5: at 0.6 m body 0 stood on the ground under its target (dy 1-1.8 m), and body 1 at the driver's root height
 -- on the ground beside the horse. Runs bdd49a57 / a295d660: 1.2 m / 0.7 m (clear of the horse) changed neither the

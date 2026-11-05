@@ -2,7 +2,9 @@
 
 **Players get:** nothing new at the defaults. The M3 gate did not pass in this round's four proof attempts, so
 `world_horse_pillion` stays off unless named (lab and play), and the M1 ride hold keeps its 4 m without it. Details:
-`docs/mounts.md` section 12.
+`docs/mounts.md` section 12. No live run used this head with every key at its default (share on through the gun profile,
+cargo and pillion off): the last M1 play regression (`7f3155c8`) had cargo on, and every M3 run named the pillion key. The
+default path, the 4 m hold restored by 98e6a595 included, is covered by the Lua checks and CTest only.
 
 - **Built** (`lua/coop/world_horse_pillion.lua`, a new world chunk; HORSE_SEAT seat 1, no new op): beside the horse your
   partner rides, E claims the rear seat (read before the pad masks by the new `MGS_COOP_HORSE_DRIVE_V1 pad` verb, since
@@ -15,14 +17,19 @@
 - **Proven** (both logs, both role orders, lab and play `-WanSim bad`; runs `ba6b4bb5`, `b48f897b`, `306525db`,
   `c4428efa`, `bdd49a57`, `a295d660`, `718b6411`): the claim, the grant (and the host's own press), seated / driver, the
   lease and the overlay seat, the hop-off on both copies, both off when the driver gets off, the first E at an unridden
-  horse mounting before and after (attempts 3 and 4 ran every scripted step). Frames: the DRIVER's screen shows two riders
-  on the horse at walk, trot and gallop, the passenger seated right behind.
+  horse mounting before and after (attempts 3 and 4 ran every scripted step; the scripted guest claim and the passenger's
+  driver_off waitlogs matched earlier lines, and the lines they wait for are in the logs). Frames: the DRIVER's screen
+  shows two riders on the horse at walk, trot and gallop, the passenger seated right behind (`ba6b4bb5`, `306525db`,
+  `c4428efa`); in `bdd49a57` the passenger floats about 0.7 m over the rider.
 - **What blocks the gate:** (1) the passenger's own screen: their body is never seated; it stays with the horse in xz
-  (4-13 cm) but 1-2.3 m low, on the ground beside it or crouched / airborne over its rear, at every height tried and with
-  the Lua Warp too; (2) the passenger's copy's horse falls unconscious during the ride in every run; (3) when the host
-  drives with the guest behind, the host's horse stands still for about 16 s under the ride keys and then rides the gait
-  sequence after release (not the collision, not the overlay seat; cause unknown). No pickup or revive 3 m from the
-  ridden horse was shown, so the shrunken ride hold is pillion-key only.
+  (seat_pin lag mostly 4-8 cm, but windows of 36-67 cm in 5 of 7 runs) but 1-2.3 m low, on the ground beside it or
+  crouched / airborne over its rear, at every height tried and with the Lua Warp too; (2) the passenger's copy's horse
+  falls unconscious during the ride in every run; (3) when the host drives with the guest behind, the host's horse
+  stands still for about 16 s under the ride keys and then rides the gait sequence after release (not the collision, not
+  the overlay seat; cause unknown). No pickup or revive 3 m from the ridden horse was shown, so the shrunken ride hold
+  is pillion-key only. An unmasked E about 3 m from the ridden horse was never tested either: in all 7 runs the scripted
+  "stray E" landed 1.07-1.88 m from it with the ride hold's ACTION mask on and claimed the rear seat (no `two_drivers`
+  line, but no proof of the 2.5 m hold; 98e6a595's message overstates this).
 - **Next:** carry the passenger's body by the engine (the D-Horse cargo slot is the native rear-seat anchor; writing it
   needs the user, the plan reads it only) or write it after the player's physics update (a new pinned hook); log the
   host's census rider index and pad words through the stall.
@@ -42,15 +49,20 @@ and its regression checks passed: details below and `docs/mounts.md` sections 10
   follows a horse still slowing from a gallop (`883dc6ab` laid them down `call_away`); the link drop lays the body down on
   both copies (`why=stream_lost` / `why=context`); victim_gone lays body 0 down only within 5 m of the horse. Runs
   `d2a5cafa` (lab), `c2927350` and `7f3155c8` (play `-WanSim bad`) passed every scripted step in both carrier orders;
-  `7f3155c8` ran with `world_horse_cargo` not named (on through the gun profile for that session only).
+  `7f3155c8` ran with `world_horse_cargo` not named (on through the gun profile for that session only). Some waitlogs
+  matched earlier lines (`7f3155c8` (m1): the guest's final_sent and the host's placed; `d2a5cafa` (b): the host's
+  placed); the lines they wait for are in the logs.
 - **What blocks the gate:** the downed player's own screen. With the per-tick Lua Warp their body lies across the
   horse's back at the load and the stop and part of each ride, but spends a second or more at a time on the ground under
   or beside the moving horse (`a49c4d76`, `20aef564`, `d2a5cafa`; no height or offset tried with the new lab lever
   changes that). A native mover, `MGS_COOP_HORSE_DRIVE_V1 hold0` (body 0's `T.vt+0x70` / `+0x68` as the partner driver's
-  xform mover, pinned T slots; Warp's C0 / A0 resets on request), keeps the body with the horse (victim_pin lag 6-8 cm
-  against 50-99 cm) but plays the airborne pose with no reset (`a242d867`, `c2927350`) or the A0 reset (`8cfe8e97`,
-  `7f3155c8`), and that pose then also shows on the carrier's screen. The carrier's own screen is right with the Lua
-  Warp (the body across the back at every gait and after the dismount). The default is back on the Lua Warp; the
+  xform mover, pinned T slots; Warp's C0 / A0 resets on request), keeps the body closer to the horse (victim_pin lag
+  windows mostly 6-9 cm, median 8, but 74-80 cm windows in every hold0 run; the Lua Warp's median 59-109 cm, windows up
+  to 102-137 cm) but plays the airborne pose with no reset (`a242d867`, `c2927350`) or the A0 reset (`8cfe8e97`,
+  `7f3155c8`; there the victim's copy also showed the horse lying on its side mid-gallop), and that pose then also shows
+  on the carrier's screen. The carrier's own screen is not reliably right with the Lua Warp either: `a49c4d76` shows
+  the body across the back at every gait and after the dismount, but `d2a5cafa`'s carrier frames show it on the ground
+  beside or under the ridden horse at the mount and the walk, in both orders. The default is back on the Lua Warp; the
   lab lever `horse_probe cargo_pose ... <reset>` picks hold0. `8cfe8e97` also refused the guest carrier's E
   `horse_lost` once (not reproduced in play).
 - **Next:** one session that tries hold0 with the C0 reset alone (2) and both (3) against the Lua Warp (4) at a gallop,
