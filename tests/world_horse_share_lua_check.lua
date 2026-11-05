@@ -139,13 +139,24 @@ for i = 0, 3 do f.fast(1000 + i * 50, 10000, 2000, 30000, 0); f.tick(50) end
 f.gen = 6
 f.fast(1300, 10000, 2000, 30000, 0); f.tick(50)
 check(not f.S.track and f.logged("step=end;why=generation"), "a horse generation change ends every seat")
--- Two drivers: this copy's player rides too; nothing is placed.
+-- Two drivers (a same-moment E race): this copy's player rides too. Nothing is placed and the partner's ride ends
+-- (why=two_drivers); no new track opens while this copy's player rides, and the partner's final pose is ignored.
 f = fixture()
 for i = 0, 3 do f.fast(1000 + i * 50, 10000, 2000, 30000, 0); f.tick(50) end
 local before = #f.places
 f.rides = true
 f.fast(1300, 10000, 2000, 30000, 0); f.tick(50)
 check(#f.places == before and f.logged("event=horse_share;step=two_drivers"), "two drivers: no placement, logged")
+check(not f.S.track and f.logged("step=end;why=two_drivers"), "two drivers: the partner's ride ends (why=two_drivers)")
+for i = 1, 30 do f.fast(1300 + i * 50, 10000, 2000, 30000, 0); f.tick(50) end
+check(not f.S.track and #f.places == before and f.count("step=two_drivers") == 1,
+    "two drivers: no new track while this copy's player rides, logged once")
+f.final(10000, 2000, 30000, 0)
+check(#f.places == before and f.logged("step=final_ignored;why=local_rides"), "two drivers: the partner's final pose is ignored")
+-- This copy's player gets off while the partner still rides: the partner's stream opens a new track and places again.
+f.rides = false
+for i = 1, 6 do f.fast(3000 + i * 50, 10000, 2000, 30000, 0); f.tick(50) end
+check(f.S.track ~= nil and #f.places > before, "two drivers over: the partner's ride places again")
 -- A refused placement is counted and named once.
 f = fixture()
 f.placeOk = false
