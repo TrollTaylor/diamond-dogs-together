@@ -719,7 +719,7 @@ do
     check(#sa == 2 and sa[2][4] == 4 and h:has('event=lrrp;step=tstep;role=host;id=25602;') and h:has(';st=4'), 'host: a step change is sent within 1.2 s')
     for _ = 1, 100 do h:poll(50) end
     check(#stepsOf(h, 'sol_b') == 2 and #stepsOf(h, 'sol_a') == 3, 'host: unchanged steps again every 5 s (' .. #stepsOf(h, 'sol_b') .. ')')
-    check(h:count('event=lrrp;step=host;id=25602') <= 10, 'host: step=host lines at most once a second (' .. h:count('event=lrrp;step=host;id=25602') .. ')')
+    check(h:count('event=lrrp;step=host;id=25602') <= 16, 'host: step=host lines 4 Hz moving, once a second at rest (' .. h:count('event=lrrp;step=host;id=25602') .. ')')
     -- Guest: its crew member a step behind gets the host's step; one on it gets nothing.
     local g = Fixture('guest', {lrrp = true})
     sv(g)

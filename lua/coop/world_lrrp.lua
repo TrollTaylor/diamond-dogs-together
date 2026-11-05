@@ -133,7 +133,7 @@ function LF.hostTick(t)
   local moving = bh.v >= LF.MOVING
   if W.tx(LF.OP, W.tick32(t), best, bh.x, bh.y, bh.z, bh.yaw, bh.v, math.min(n, 8), moving and 1 or 0) ~= true then return end
   bh.sent, bh.n = t, (bh.n or 0) + 1
-  if t - bh.logAt >= ((moving or n > 0) and 1000 or 5000) then
+  if t - bh.logAt >= (moving and 250 or n > 0 and 1000 or 5000) then
     bh.logAt = t
     L("event=lrrp;step=host;id=%d;x=%.2f;y=%.2f;z=%.2f;yaw=%d;v=%d;riders=%d;n=%d", best, bh.x / 1000, bh.y / 1000, bh.z / 1000, bh.yaw, bh.v, n, bh.n)
     if n > 0 then L("event=lrrp;step=riders;id=%d;n=%d%s", best, n, list) end
