@@ -26,8 +26,8 @@ named, at d4d4cb65, where both were on by default). Archives under
   still 5.4 m under the guest's sample; a 10.5 m `fall` correction followed 70 s later. [I] a copy realized far from the
   host's player drops through a floor that PC has not loaded (a `place_sink` like it came at the defaults in `41f2b07f`,
   without the hold); [U] whether the force-realize causes it. Next: read a far copy's y back 2 s after a placement and
-  place him again at the owner's y (or no force-realize beyond ~120 m), keep a held placement's retry when a drive step
-  is refused (`r.c = c or r.c`), then one named run and the no-key run.
+  place him again at the owner's y (or no force-realize beyond ~120 m), then one named run and the no-key run. A held
+  placement's retry is now kept when a drive step is refused meanwhile (`r.c = c or r.c`; unit-tested, in no run yet).
 - **The realize hold** [O]: `3c9d1250`'s 14 host drive holds had all "timed out" only because a landed drive step never
   released one (every relay `streak=1`: each guard moved between relays), and a backoff refusal never got one. Now a
   relayed or backoff placement or drive step holds the guard, the receipts name the ms left of his backoff (`b`), a held
@@ -53,7 +53,7 @@ named, at d4d4cb65, where both were on by default). Archives under
   place_reach on [I: drive_vert's path is the same within 60 m].
 - **Built** (red first each time): the hold's backoff retry, `b`, `drive_vert` (32f1cdc0 red, d470f1ec green), drive_vert
   on by default and the report's game-over patterns (61470582 / cdfc3651), place_reach on (3255e43f / 61965742) and back
-  off (6eb410a7 / green); scenario `enemy-reach-watch.txt`; scratch `aimpos.py` (where each copy's aim target stood).
+  off (6eb410a7 / 2496c1c4), the kept retry (d85c80e0 / a06dd62a); scenario `enemy-reach-watch.txt`; scratch `aimpos.py` (where each copy's aim target stood).
   No wire change, no CFG bit.
 - **Checks**: full `tools/build.ps1 -Jobs 4` 355/355 at each green; every `generate_*_contract.py --check` identical to
   the merge head (known failures only).

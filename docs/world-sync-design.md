@@ -541,9 +541,9 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   drive_vert on): `35d4074f` ran drive_vert unnamed with place_reach on [I: drive_vert's path is the same].
 - **What blocks place_reach and what to try next**: (1) the far-copy drop: after a landed placement of a copy 100-160 m
   from this PC's player, read its y back at 2 s (as `P.sinkTick`) and, when it dropped more than 1.5 m under the owner,
-  place it again at the owner's y (or skip the force-realize beyond ~120 m); (2) a drive refusal clears a held
-  placement's pending retry (`P.hold` sets `r.c = c`, nil for a drive step): keep the placement (`r.c = c or r.c`);
-  (3) then one run with place_reach named, then the no-key run. Also not done: `body_dead`'s stimulus; the riders'
+  place it again at the owner's y (or skip the force-realize beyond ~120 m); (2) a drive refusal cleared a held
+  placement's pending retry (`P.hold` set `r.c = c`, nil for a drive step): fixed (`r.c = c or r.c`, unit-tested, not
+  yet in a run); (3) then one run with place_reach named, then the no-key run. Also not done: `body_dead`'s stimulus; the riders'
   in-vehicle part (7.17); the guest is discovered at 10 m crouched in calm (restrict notice does not stop it, 7.14).
 
 ### 8. Soldier transforms (W6)
