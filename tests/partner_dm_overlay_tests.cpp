@@ -579,6 +579,18 @@ void TestHorseMap() {
     g.in.q18[1] = 1;
     g.Run(200);
     Check(!pdo::Active(g.s), "released");
+    // Run 3d1439e6: while body 1 is shown as the shared-horse rider the remote's act sample can be missing; the seat
+    // plays on In::horse alone, and a valid foot act (the dismount) still ends it.
+    Game n;
+    n.in.mode = PartnerNativeOverlay::off;
+    n.in.horse = true;
+    n.in.remote_valid = false;
+    n.Run(600);
+    Check(pdo::Active(n.s) && n.s.index == ride, "no act sample on a shown rider: seated");
+    n.in.remote_valid = true;
+    n.in.remote_act = 1;
+    n.Run(400);
+    Check(n.Saw("stop:map_exit"), "a valid foot act stops the seat");
     // Blocked (a range hide, a carry): never starts.
     Game b;
     b.in.mode = PartnerNativeOverlay::off;

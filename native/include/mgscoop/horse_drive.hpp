@@ -33,6 +33,9 @@ inline constexpr float kSeatForward = 0.10f, kSeatUp = 0.49f;
 void Matrix(float x, float y, float z, float yaw, float (&m)[16]) noexcept;
 // The census root under a rider body at `body` facing `yaw`: body minus the seat offset turned by yaw.
 void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcept;
+// An anchored target is used only within kAnchorMaxM of the stream's (a stale or unrealized body never drags the horse).
+inline constexpr float kAnchorMaxM = 1.5f;
+bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept;
 
 enum class Verb : std::uint8_t { none, cfg, read, place };
 struct Request {

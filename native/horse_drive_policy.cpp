@@ -23,6 +23,12 @@ void HorseUnderRider(const float (&body)[3], float yaw, float (&out)[3]) noexcep
     out[2] = body[2] - kSeatForward * std::cos(yaw);
 }
 
+bool AnchorUsable(const float (&stream)[3], const float (&anchored)[3]) noexcept {
+    (void)stream;
+    (void)anchored;
+    return false;  // red
+}
+
 bool Parse(const char* text, std::size_t size, Request& out) noexcept {
     out = Request{};
     if (!text || !size || size > 120) return false;

@@ -196,7 +196,7 @@ void Observe(Visibility& s, const In& in) noexcept {
     const bool heli=in.anim_valid && in.remote_act>=kHeliActFirst && in.remote_act<=kHeliActLast;
     // partner_native_mount=hide: the remote's horse / D-Walker acts hide like the heli acts.
     // world_horse_share: a remote riding the shared D-Horse this copy placed is drawn, not hidden (horse plan M1).
-    const bool horse=HorseRider(in.horse_shown,in.anim_valid,in.remote_act,s.horse);
+    const bool horse=HorseRider(in.horse_shown,in.anim_valid,in.remote_act,s.horse,in.ride_live && in.kind==Kind::horse);
     const bool mount=!horse && partner_mount_policy::Hide(in.mount_hide,in.anim_valid,in.remote_act);
     // Seat mode: a live vehicle ride in a usable seat is drawn seated, not hidden.
     const bool seat_ok=in.seat_mode && !heli && !mount && in.ride_live && in.kind==Kind::vehicle && SeatUsable(in.seat,in.vehicle);

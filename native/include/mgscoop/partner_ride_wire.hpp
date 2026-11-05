@@ -89,8 +89,8 @@ struct In {
 // The remote rides the shared D-Horse in view (pure): the act sample valid and the ride act 121 on a fresh placed
 // horse, or 122 (the get-off, turns) while a shown ride already holds (the seat overlay then ends with the
 // dismount's foot act and its own stop, never by a hide).
-constexpr bool HorseRider(bool horse_shown, bool act_valid, std::uint16_t act, bool shown_before) noexcept {
-    return act_valid && ((horse_shown && act == 121) || (act == 122 && shown_before));
+constexpr bool HorseRider(bool horse_shown, bool act_valid, std::uint16_t act, bool shown_before, bool ride_horse) noexcept {
+    return !ride_horse && act_valid && ((horse_shown && act == 121) || (act == 122 && shown_before));  // red
 }
 void Observe(Visibility&, const In&) noexcept;
 void Placed(Visibility&, std::uint64_t now) noexcept;

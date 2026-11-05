@@ -113,13 +113,39 @@ rw::In Sample(std::uint16_t act, std::int64_t sender_ms) {
     return in;
 }
 
+// Run 3d1439e6 (lab, attempt 2): the rider showed for one tick, then the remote's act sample went invalid (act 0, body 1
+// unrealized by the mount hide) and nothing showed it again for the whole ride: the frames show the horse placed
+// under the ride with an empty saddle. The ride wire's ON_HORSE (kind horse, a live reliable state) now shows the
+// rider on a fresh placed horse without any act sample, and a missing sample keeps a shown ride.
+void TestRideKindShows() {
+    Check(rw::HorseRider(true, false, 0, false, true), "ride kind horse on a fresh placed horse: shown without an act sample");
+    Check(!rw::HorseRider(false, false, 0, false, true), "ride kind horse but no fresh placement: not shown (today's hide)");
+    Check(rw::HorseRider(true, false, 0, true, false), "a missing act sample keeps a shown ride");
+    Check(!rw::HorseRider(false, false, 0, true, false), "a stale placement ends it");
+    Check(!rw::HorseRider(true, true, 1, true, false), "a valid foot act and the ride wire on foot: off the horse");
+    rw::Visibility v{};
+    rw::In in = Sample(1, 1000);
+    in.anim_valid = false;
+    in.remote_act = 0;
+    in.horse_shown = true;
+    in.ride_have = in.ride_live = true;
+    in.kind = rw::Kind::horse;
+    rw::Observe(v, in);
+    Check(!v.hidden && v.horse, "Observe: ON_HORSE with no act sample on the placed horse is shown");
+    // The anchor never drags the horse far from the stream (run 3d1439e6: gap 1.1-1.6 m toward a stale, unrealized body).
+    const float stream[3] = {10.f, 2.f, 30.f};
+    const float near[3] = {10.5f, 2.2f, 30.5f};
+    const float far[3] = {12.f, 2.f, 30.f};
+    Check(hd::AnchorUsable(stream, near) && !hd::AnchorUsable(stream, far), "an anchor within 1.5 m of the stream only");
+}
+
 void TestVisibility() {
-    Check(rw::HorseRider(true, true, 121, false) && !rw::HorseRider(false, true, 121, false) && !rw::HorseRider(true, false, 121, false),
+    Check(rw::HorseRider(true, true, 121, false, false) && !rw::HorseRider(false, true, 121, false, false) && !rw::HorseRider(true, false, 121, false, false),
           "act 121 with a fresh placed horse and a valid act");
-    Check(!rw::HorseRider(true, true, 122, false) && rw::HorseRider(true, true, 122, true), "122 (get on / off, turns) only inside a shown ride");
-    Check(rw::HorseRider(false, true, 122, true) && !rw::HorseRider(false, true, 121, true),
+    Check(!rw::HorseRider(true, true, 122, false, false) && rw::HorseRider(true, true, 122, true, false), "122 (get on / off, turns) only inside a shown ride");
+    Check(rw::HorseRider(false, true, 122, true, false) && !rw::HorseRider(false, true, 121, true, false),
           "the get-off (122) of a shown ride stays shown after the final pose; a stale 121 does not");
-    Check(!rw::HorseRider(true, true, 123, true) && !rw::HorseRider(true, true, 1, true), "a D-Walker or foot act is no horse rider");
+    Check(!rw::HorseRider(true, true, 123, true, false) && !rw::HorseRider(true, true, 1, true, false), "a D-Walker or foot act is no horse rider");
     // Key off or no placed horse: today's mount hide.
     {
         rw::Visibility v{};
@@ -179,6 +205,7 @@ int main() {
     TestRefusal();
     TestShared();
     TestVisibility();
+    TestRideKindShows();
     TestLabKey();
     std::printf("%u horse drive checks passed: call-enter matrix, saddle anchor, receipt grammar, refusals, shared state, "
                 "shared-horse rider visibility, lab key\n",
