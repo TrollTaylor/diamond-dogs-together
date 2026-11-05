@@ -128,8 +128,9 @@ guest release
 wait 2000
 host run status
 host expect ^status;.*god=0;.*life=
-# The sleeping guard beside the horse. M4b: the lever's eye at the rear seat's camera (up, back along the line: three that
-# each fit play run 28015a91's 1.4 m short reticle); the first line's d checks the enemy follow left the guard near.
+# The sleeping guard beside the horse. M4b: the lever's eye at the rear seat's camera (1.2 m up, 1.0 m back along the
+# line); attempt 1 (lab 11645acc) put the line about 0.8 m short with the target 0.3 m up, and play 22926dbf hit at 0.3,
+# so 0.3 / 0.7 / 1.1 m up now (along the lying body); the first line's d checks the enemy follow left the guard near.
 logmark both
 guest run enemy_aim_nearest 0.3 1.2 1.0
 guest expect ^aim_nearest;ent=\d+;d=[2-9]\.
@@ -147,7 +148,7 @@ host capture h4-guard-shot-host
 wait 600
 guest release
 wait 1200
-guest run enemy_aim_nearest 0.3 1.35 1.2
+guest run enemy_aim_nearest 0.7 1.2 1.0
 wait 800
 guest hold rmb 1500 nowait
 wait 1100
@@ -155,7 +156,7 @@ guest press lmb 120
 wait 250
 guest release
 wait 1200
-guest run enemy_aim_nearest 0.3 1.05 0.8
+guest run enemy_aim_nearest 1.1 1.2 1.0
 wait 800
 guest hold rmb 1500 nowait
 wait 1100

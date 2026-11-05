@@ -1,7 +1,8 @@
 # Horse plan M4b, part 3 of the lab session (after horse-pillion-shot-b.txt): from the boot spot, the host drives and
 # the guest sits behind; an A/B of the seated-shot shift on the cross-neck line (the lab lever seatshot off, then on: the
 # passenger's copy's horse life in seat_pin, the driver's life in status, the frames); then the host's E with the guest
-# behind gets both off (driver_off with the host driving).
+# behind gets both off (driver_off with the host driving). Attempt 2: each A/B shot 1.5 s into the aim (attempt 1's
+# second shot at 0.8 s never fired).
 logmark both
 both debug godmode 1
 host debug teleport 421.16 269.2 2084.42 180
@@ -35,7 +36,9 @@ guest expect ^cam_turn;
 guest debug seatshot off
 wait 800
 guest hold rmb 1500 nowait
-wait 800
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
 guest capture h4c-ab-off-aim
 guest press lmb 120
 wait 300
@@ -50,7 +53,9 @@ logmark both
 guest debug seatshot on
 wait 800
 guest hold rmb 1500 nowait
-wait 800
+wait 1200
+guest hold rmb 1500 nowait
+wait 300
 guest capture h4c-ab-on-aim
 guest press lmb 120
 wait 300
