@@ -47,6 +47,9 @@ Archive under `%USERPROFILE%\mgs-coop-run-archive\enemy-follow\139a14400a00447bb
 - **Checks**: `lab_config_tests` 2148 pass, `world_vehicle_state_lua_check` 169 pass; full build and CTest 355/355 at
   e1bf27af; every contract `--check` as round 10 (known base failures only; horse_drive and vehicle_controller pass with
   `--executable`).
+- **Open at the defaults in 30010** [I] (round 10 B's key-only defects; none seen in `139a1440`): the guest's unseat skip
+  holds while any step arrives, even when its `StartTravel` is held; no phase / notice gate on `StartTravel`; the 1 Hz
+  `StoreToSVars` rewrites the soldiers' svars between checkpoints (no checkpoint restore or continue was run with it) [U].
 - **Next** (as 7.28): send the step for crews the host has not seen seated, or stop unseating them; hold a copy one step
   ahead instead of setting it back; leave a driver whose host step never changes alone; a phase gate on `StartTravel`;
   Africa (`enemy-lrrp-africa.txt`, seed `africa-jeep`) before it is turned on there.

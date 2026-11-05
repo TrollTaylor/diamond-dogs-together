@@ -1257,6 +1257,18 @@ Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read onl
   off unless named; turning it on in 30010 with that limit is the user's decision (docs/STATUS.md, D-B10).
 - **Next**: hold a copy that is one step ahead for up to 20 s instead of setting it back; leave a guard whose host step
   never changes (the driver) alone; a pairing jump hidden from the guest's camera if the no-jump row allows it; Africa.
+- **Flip (D-B10, 2026-11-05)**: `lrrp_follow` follows the gun profile when not named, Afghanistan free roam only: the
+  receipt `MGS_COOP_LRRP_CFG_V1` answers 2 for that default (1 named, 0 off) and `LF.on()` runs a 2 only while `W.mission`
+  is 30010, so Africa (never run) and Mother Base stay off unless named; a named 0 is the off switch (red 1db52182 /
+  green e1bf27af). The user accepted the limits above (the pairing deferral, only the trucks the host saw manned on the
+  host's step, the other crews unseated on the guest, re-boarding untested, reinforcements that may not reach the guest).
+  No-key run `139a1440` at e1bf27af [O]: `step=on` on both roles; moving truck p50 0.14 / p90 0.53 / max 2.12 m (317);
+  crews 20-40 s after the host's get-out p90 1.79-4.83 m; get-outs and boardings in the same order on both copies (25605
+  2 -> 1 -> 0, 25606 2 -> 0 -> 1 -> 2; the guest's re-boarding 4.4 / 6.2 s after the host's, its 25605 get-outs 0.9 /
+  5.0 s before); 0 latches / faults / game overs (one host `drive_sink` of an outpost guard in ALERT); guest place error
+  p90 1.95 m; the pairing deferral 60.2 s (riders 400-450 m off, then p90 <= 0.86 m); 8 guards of 4 unmanned trucks
+  unseated (24 lines). The key-only defects listed under Gate are now open at the defaults in 30010 [I] (none was seen
+  in the run; no checkpoint restore or continue was run with the 1 Hz `StoreToSVars`) [U]. docs/STATUS.md.
 
 #### 7.29 Enemy round 10 track C: every calm walker taken, the released walk, the plan checked again (lab key `act_plan`, native only; with `soldier_act`)
 
