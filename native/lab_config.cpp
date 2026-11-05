@@ -1900,9 +1900,11 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // M1 host-owned companion (docs/vehicles-companions-design.md 6.1): off unless named, in
     // lab and play, until a hidden-run FRAME on both copies and a play rehearsal pass.
     if (!c.companion_host_owned_given) c.companion_host_owned = false;
-    // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): off unless named, in lab and play, until a
-    // hidden-run FRAME on both copies and a play rehearsal pass; a named 1 runs in play too.
-    if (!c.world_horse_share_given) c.world_horse_share = false;
+    // Horse plan M1 shared D-Horse (docs/mounts.md "Shared D-Horse"): follows the gun profile in lab and play since the
+    // M1 round (hidden runs 3b2f0955 lab / 9d98fa2c play, both copies, both role orders: the partner seated in the saddle on the other
+    // screen at walk / trot / gallop, the horse left where it was dismounted, the first E mounting; lab and the play
+    // rehearsal -WanSim bad); a named 0 is the off switch.
+    if (!c.world_horse_share_given) c.world_horse_share = gun;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;

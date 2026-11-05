@@ -198,7 +198,10 @@ void TestLabKey() {
     const auto gun = lab("enabled=1\nrole=host\npartner_native_profile=gun\n");
     const auto gunOff = lab("enabled=1\nrole=host\npartner_native_profile=gun\nworld_horse_share=0\n");
     const auto play = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
-                          "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n");
+                          "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\npartner_native_profile=gun\nworld=3\n");
+    const auto playOff = lab("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=play\nnet=1\nnet_bind=any\npartner=1\n"
+                             "partner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\nworld=3\n");
+    Check(!playOff.world_horse_share, "without the gun profile: off");
     Check(gun.world_horse_share && !gun.world_horse_share_given, "the gun profile turns world_horse_share on in lab");
     Check(play.mode == mgscoop::LabMode::play && play.world_horse_share && play.play_refused == 0, "on in play with the gun profile");
     Check(!gunOff.world_horse_share && gunOff.world_horse_share_given, "a named 0 is the off switch");
