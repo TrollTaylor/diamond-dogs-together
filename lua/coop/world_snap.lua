@@ -138,7 +138,6 @@ do
                         if type(r) == "table" and r.refused then
                             if r.refused == "stale" then S.n.stale, dv.back = S.n.stale + 1, now + 500
                             else S.n.refused, dv.back = S.n.refused + 1, now + 2000 end
-                            if r.refused == "relayed" then P.hold(h, en.id) end  -- enemy gaps 2 (place_reach)
                         elseif type(r) == "table" then
                             dv.ok, dv.err = now, r.e
                             -- Enemy gaps (place_sink): a driven copy 1.5 m under its owner for 2 s (r.v: its y minus the
@@ -155,6 +154,7 @@ do
                             elseif r.s == 1 then S.n.steps = S.n.steps + 1
                             else S.n.rest = S.n.rest + 1 end
                         end
+                        P.hdr(h, en.id, r, dv)  -- place_reach: the realize hold (world_place.lua)
                     end
                 end
             end

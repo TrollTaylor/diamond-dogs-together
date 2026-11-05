@@ -2302,17 +2302,30 @@ int main() {
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nsoldier_act=0\n").soldier_act &&
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
-            // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
-            // lab and play, both off unless named: place_reach is proven in the logs of runs 9023e5c6 / 8281b868 / 3c9d1250 /
-            // b77e2104 but no frame shows the watched guard on the host's screen (terrain), so it stays off (design 7.17).
+            // Enemy gaps 2 / 3 (docs/world-sync-design.md 7.17, 7.18): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048)
+            // parse in lab and play, both off unless named. place_reach's frames matched (runs 617311eb / 025fbb28), but the
+            // no-key run after its flip (35d4074f) failed the drive_sink row (a held far copy 5.1 m under its owner), so it
+            // stays off unless named (design 7.18).
             Check(!def.body_dead && !gunDefault.body_dead && !gunDefault.body_dead_given && !def.place_reach &&
                   !gunDefault.place_reach && !gunDefault.place_reach_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_reach=0\n").place_reach &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=1\n").body_dead &&
                   Lab("enabled=1\nrole=guest\nplace_reach=1\n").place_reach &&
                   Lab("enabled=1\nrole=guest\nplace_reach=0\n").place_reach_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
                   Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
-                  "enemy gaps 2: body_dead and place_reach parse, both off unless named");
+                  "enemy gaps 2 / 3: body_dead and place_reach parse, both off unless named");
+            // Enemy gaps 3 (docs/world-sync-design.md 7.18): drive_vert (native only, no CFG bit) parses in lab and play and is
+            // off unless named. Every vert snap seen (runs 617311eb, 025fbb28, 35d4074f) was of a copy 63-121 m from its
+            // receiver, inside place_reach's 60-160 m band only, so the 60 m band live at the defaults was never exercised;
+            // a second snap 1.4-1.7 s later (gap back over 1.5 m) shows at most 4 of 8 moves held, and no frame shows it.
+            Check(!def.drive_vert && !gunDefault.drive_vert && !gunDefault.drive_vert_given &&
+                  !Lab("enabled=1\nrole=host\npartner_native_profile=gun\ndrive_vert=0\n").drive_vert &&
+                  Lab("enabled=1\nrole=host\npartner_native_profile=gun\ndrive_vert=1\n").drive_vert &&
+                  Lab("enabled=1\nrole=host\ndrive_vert=1\n").drive_vert &&
+                  Lab("enabled=1\nrole=guest\ndrive_vert=0\n").drive_vert_given &&
+                  Lab("enabled=1\nrole=host\ndrive_vert=2\n").invalid_values == 1,
+                  "enemy gaps 3: drive_vert parses, off unless named");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a

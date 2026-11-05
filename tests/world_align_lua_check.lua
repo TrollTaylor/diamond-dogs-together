@@ -1618,6 +1618,52 @@ if arg[7] and arg[8] then
     rw.driveReply = {refused = 'relayed'}
     ticks(rw, 2)
     check(sent(rw, 1, 'SetForceRealize') == 0, 'place_reach off: a relayed drive step holds nobody')
+    check(logged(rv, ';src=drive;') and logged(rv, ';landed=0;timeout=1'),
+        'place_reach: the release line names the source of the hold and counts the landed / timed-out holds')
+    -- Enemy gaps 3 (design 7.18; run 3c9d1250: 14 host drive holds, every relay streak 1, all "timed out": a landed drive
+    -- step never released a hold, and a backoff refusal never got one): a backoff drive step holds him too, his next step
+    -- waits for the backoff's end (the native b), and a landed step releases him (why=landed, st=1).
+    local rb = guestFix(180)
+    rb.W.snapOn, rb.W.reachOn = true, true
+    rb.positions[1] = {0, 1.8, 100.0}
+    rb.driveReply = {refused = 'backoff', b = 1200}
+    ticks(rb, 2)
+    local nb = #rb.drives
+    check(sent(rb, 1, 'SetForceRealize') == 1 and logged(rb, 'event=realize_hold;ent=3000000001;on=1;ok=1;n=1;why=backoff;b=1200'),
+        'place_reach: a backoff drive step holds the guard')
+    ticks(rb, 30)
+    local nb2 = #rb.drives
+    rb.driveReply = {e = 40, s = 1, r = 0, h = 1}
+    ticks(rb, 10)
+    check(nb == 1 and nb2 == nb and #rb.drives > nb2 and sent(rb, 1, 'SetForceRealize', false) == 1 and
+        logged(rb, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rb, ';src=drive;st=1;') and
+        logged(rb, ';landed=1;timeout=0'), 'place_reach: the held drive step waits for the backoff end, lands and releases him')
+    -- A correction refused in the backoff holds him too and is queued again when the backoff ends; it lands, releasing him.
+    local rq = guestFix(180)
+    rq.W.reachOn = true
+    rq.positions[1] = {0, 1.8, 20.0}
+    rq.warp = {{refused = 'backoff', b = 600}, {r = 0, h = 1, leaf = 'typed'}}
+    sample(rq, 80, ENT1, 3000, 20000)
+    ticks(rq, 3)
+    check(logged(rq, 'event=place;seq=80;ent=3000000001;kind=correct;result=refused;why=unrealized;native=backoff') and
+        logged(rq, 'event=realize_hold;ent=3000000001;on=1;ok=1;n=1;why=backoff;b=600'), 'place_reach: a backoff correction holds the guard')
+    ticks(rq, 30)
+    check(logged(rq, 'event=place;seq=80;ent=3000000001;kind=correct;result=applied') and
+        logged(rq, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rq, ';src=place;') and logged(rq, ';rq=1;'),
+        'place_reach: the held correction is queued again at the backoff end and lands')
+    -- A drive step refused while that correction waits keeps its retry (it used to clear it: P.hold set r.c = nil).
+    local rr = guestFix(180)
+    rr.W.snapOn, rr.W.reachOn = true, true
+    rr.positions[1] = {0, 1.8, 20.0}
+    rr.warp = {{refused = 'backoff', b = 600}, {r = 0, h = 1, leaf = 'typed'}}
+    rr.driveReply = {refused = 'relayed', b = 3000}
+    sample(rr, 81, ENT1, 3000, 20000)
+    ticks(rr, 3)
+    local relayedDrive = rr.drives and #rr.drives or 0
+    ticks(rr, 110)
+    check(relayedDrive >= 1 and logged(rr, 'event=place;seq=81;ent=3000000001;kind=correct;result=applied') and
+        logged(rr, 'event=realize_hold;ent=3000000001;on=0;why=landed;') and logged(rr, ';rq=1;'),
+        'place_reach: a relayed drive step keeps the held correction queued for the backoff end')
     end
     -- A hold-up applied here raises the hands too (SetForceHoldup), once.
     local hu = guestFix(180)

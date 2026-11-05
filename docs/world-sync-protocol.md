@@ -2361,3 +2361,18 @@ No new op or world note. CFG r[19] (each PC's own reply) gains bit 1024 `body_de
   timeout | stop` (`SetForceRealize` with `forceRealize=false`; 8 s; never Mother Base staff).
 - `body_dead`: a body placement (ENEMY_DEBUG kind 3 / ENEMY_PLACE, flag 8) of a dead guard is no longer refused
   `disabled_local`; `place_body` lines are unchanged (`why=none` when queued).
+
+## 35. Enemy gaps 3 (lab keys `place_reach`, CFG r[19] bit 2048; `drive_vert`, native only; design 7.18)
+
+No new op, world note or CFG bit. Receipt and log changes only.
+
+- The refusal replies of `WORLD_WARP_V1` (the guest's M1 corrections), `WORLD_WARP_HOST_V1` (the host's M3 placements)
+  and `DRIVE_V1` (section 30): a `relayed` or `backoff` refusal names the ms left of that guard's native relay backoff,
+  `{refused="backoff",b=<ms>}` (`b` absent when 0). An older Lua ignores `b`.
+- `DRIVE_V1` reply `s=3` (`drive_vert`): the copy stood at rest in x / z more than 1.5 m above or below the target for
+  1 s and was put on the target's spot (`r`, `h` as for a step). Native logs `world_drive=vert; go; slot; gap_cm; e_cm; r;
+  h; n` (the first 64) and `world_drive=stats; ...; vert`. Lua counts `s=3` with the resting steps.
+- The realize hold (`place_reach`, section 34): `event=realize_hold; ent; on=1; ok; n; why=relayed|backoff; b` (b -1
+  when the reply had none) and `event=realize_hold; ent; on=0; why=landed|timeout|stop; ms; src=place|drive; st; rs;
+  rf; rq; landed; timeout` (st / rs: his landed / resting drive steps while held, rf: refusals, rq: placements queued
+  again at the backoff end; landed / timeout: this copy's totals since the mission start).
