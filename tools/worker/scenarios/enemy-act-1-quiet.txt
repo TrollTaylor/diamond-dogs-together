@@ -5,8 +5,9 @@
 #      in runs 125d916b, 0a271c10, 963ab276, 94a7bf2a). That is the quiet watch point: 95-215 m from the outpost
 #      guards, beyond R(calm) + 15 = 95 m (run 94a7bf2a: 15 puppets in calm). No debug teleport there (963ab276
 #      dropped the guest under the map);
-#   2. 60 s of quiet patrol: both copies' cameras on the same guard (aim_ent <hash>: guards that walked as puppets in
-#      94a7bf2a), both through binoculars, frames on both copies every ~8 s (the same moment: both capture);
+#   2. 60 s of quiet patrol: both copies' cameras on the same guard (aim_ent <hash>: guards 13, 16 and 219, mirror
+#      puppets in calm in 94a7bf2a / adecad01, north-east of the host where the rock at its spot does not block the
+#      view), both through binoculars, frames on both copies every ~8 s (the same moment: both capture);
 #   3. mirror off 16 s (research command; every puppet released, why=paused), then on (puppets again);
 #   4. the guest fires one shot (every puppet released, why=shot, for 15 s), frames during and after;
 #   5. CAUTION (cp_phase nearest caution), 20 s.
@@ -69,24 +70,24 @@ guest run position
 host run position
 host run act_status
 guest run act_status
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-0
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 1799112697 1.1
+guest run aim_ent 1799112697 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-10
 wait 6500
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -101,16 +102,16 @@ guest hold f 1500 nowait
 wait 900
 both capture q-30
 wait 6500
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 1799112697 1.1
+guest run aim_ent 1799112697 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture q-40
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -120,16 +121,16 @@ wait 6500
 guest run act_status
 guest run mirror off
 wait 2500
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture off-0
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -138,16 +139,16 @@ both capture off-8
 wait 6500
 guest run mirror on
 wait 4000
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture on-0
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -163,16 +164,16 @@ wait 400
 both capture shot-0
 guest run act_status
 wait 4000
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture shot-5
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -182,16 +183,16 @@ wait 6500
 host run cp_phase nearest caution
 host expect ^submitted_phase;cp=[^;]+;phase=caution;
 wait 4000
-host run aim_ent 667680985 1.1
-guest run aim_ent 667680985 1.1
+host run aim_ent 2961503 1.1
+guest run aim_ent 2961503 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 900
 both capture c-0
 wait 6500
-host run aim_ent 3268415846 1.1
-guest run aim_ent 3268415846 1.1
+host run aim_ent 753908875 1.1
+guest run aim_ent 753908875 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
