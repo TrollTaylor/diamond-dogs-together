@@ -1,10 +1,7 @@
--- Horse probes (lab only: CFG mode 1, as world_probe.lua; horse plan section 4), F9 commands on the player module.
--- Nothing runs unless a command starts it; one timed probe at a time.
--- rec <ms> (P1): the D-Horse census pose (RIDE_POSE_V1 kind 1) every frame. play <mode> <ms> (P1): replay it onto the
--- unridden horse with SetCallHorse: sg4 sg10 sg20 start==goal, yaw20 goal 2 cm ahead, chase1 chase2 from where it
--- stands to 3 m ahead; play_stats err_cm, leap (>30 cm up). hold 0|1 (P5): ACTION-only mask MgsCoopHorseHold, raw E
--- edges. hostage (P2): IsCarriedHostage / GetCarriedHostage. watch <ms> (P2): horse root, player and nearest guard in
--- the horse frame every 250 ms. pin <dy_cm> <ms> (P4): body 1 warped every frame (CARGO_V2 hold). stop, status.
+-- Horse probes (lab only, CFG mode 1; horse plan section 4), F9 commands of the player module; one probe at a time.
+-- rec <ms> / play <mode> <ms> (P1: census pose every frame, replayed by SetCallHorse sg4 sg10 sg20 yaw20 chase1 chase2;
+-- play_stats err_cm, leap). hold 0|1 (P5: ACTION mask, raw E). hostage, watch <ms> (P2). pin <dy_cm> <ms> (P4: body 1
+-- warped every frame). cargo_pose <placed> <census> <back> <down> (M2 body 0). stop, status.
 do
  local D, W = e.MgsCoopDebug, e.MgsCoopWorld
  local P = type(D) == "table" and D.player
@@ -299,6 +296,10 @@ do
    local b = {q[1] / 1000, q[2] / 1000 + dy / 100, q[3] / 1000}
    return start({kind = "pin", ms = ms, n = 0, base = b},
     fmt("horse_probe=pin;step=start;dy_cm=%d;at=%d,%d,%d", dy, round(b[1] * 100), round(b[2] * 100), round(b[3] * 100)))
+  elseif sub == "cargo_pose" and #a == 6 then
+   local C, p, q, b, d = W.horseCargo, whole(a[3], 0, 3000), whole(a[4], 0, 3000), whole(a[5], -1000, 1500), whole(a[6], 0, 20000)
+   if type(C) ~= "table" or not (p and q and b and d) or not C.setVictimPose(p, q, b, d) then return false, "horse_probe;refused=args" end
+   return true, fmt("horse_probe=cargo_pose;placed_mm=%d;census_mm=%d;back_mm=%d;down_mmps=%d", p, q, b, d)
   end
   return false, "horse_probe;refused=args"
  end

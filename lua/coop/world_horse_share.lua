@@ -111,7 +111,9 @@ function S.send(t)
  local h = (rides or S.sendId) and read() or nil
  if rides and h and h.occupied == true then
   if S.sendGen and h.gen ~= S.sendGen then log("step=end;why=generation;side=rider") end
-  if not S.sendId or S.sendGen ~= h.gen then S.sendId, S.sendGen, S.next = HORSE, h.gen, 0; log(fmt("step=ride;gen=%d", h.gen or 0)) end
+  if not S.sendId or S.sendGen ~= h.gen then S.sendId, S.sendGen, S.next, S.path = HORSE, h.gen, 0, 0; log(fmt("step=ride;gen=%d", h.gen or 0)) end
+  local q = S.lastPose
+  if q then S.path = (S.path or 0) + sqrt((h.x - q.x) ^ 2 + (h.z - q.z) ^ 2) end
   S.lastPose = h
   if t >= (S.next or 0) then
    S.next = t + SEND_MS
@@ -122,7 +124,8 @@ function S.send(t)
   if p then
    S.seq = S.seq % 65535 + 1
    local ok = W.tx(BODY, S.seq, 1, HORSE, p.x, p.y, p.z, p.yaw, 0, FINAL)
-   log(fmt("step=final_sent;ok=%d;sent=%d;x=%d;z=%d", ok and 1 or 0, S.sent, round(p.x / 10), round(p.z / 10)))
+   log(fmt("step=final_sent;ok=%d;sent=%d;path_cm=%d;x=%d;z=%d", ok and 1 or 0, S.sent, round((S.path or 0) / 10), round(p.x / 10),
+    round(p.z / 10)))
   end
   S.sendId, S.lastPose, S.sendGen = nil, nil, nil
  end

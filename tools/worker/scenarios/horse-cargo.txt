@@ -1,6 +1,6 @@
 # Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo; world_horse_share is never named: the
 # gun profile turns it on, the shipped path; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
-# drop is part 3 (horse-cargo-drop.txt) after the M1 regression part 2 (horse-shared-regress.txt):
+# drop and the lab body-0 pose levers are part 2 (horse-cargo-drop.txt); the M1 regression is section (m1):
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
 #     put-down, then the body across the horse's back on both screens (HORSE_SEAT seat 2); the host's first E mounts;
 #     walk / trot / gallop; the dismount keeps them on; the carry key (R) held 0.5 s beside the horse lays them on the
@@ -13,8 +13,8 @@
 # NEVER: step=putdown_place while loaded, downed_control=refused, crash_probe=av, step=error, a blackout frame.
 # Frames h2-* (a), h2b-* (b), h2c-* (c), on both screens: load, walk, trot, gallop, stopped, dismount, take-down, revive.
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2
-#     -ScenarioPath tools/worker/scenarios/horse-cargo.txt,tools/worker/scenarios/horse-shared-regress.txt,
-#     tools/worker/scenarios/horse-cargo-drop.txt -Mode lab -WanSim bad -PartnerProfile native
+#     -ScenarioPath tools/worker/scenarios/horse-cargo.txt,tools/worker/scenarios/horse-cargo-drop.txt -Mode lab -WanSim bad
+#     -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
@@ -34,6 +34,61 @@ host run cargo_status
 host require cargo;state=off;key=1
 guest run cargo_status
 guest require cargo;state=off;key=1
+# --- (m1) M1 regression (round 2; the round 1 skeptic's gaps; expects only, so a miss never stops the cargo parts):
+# world_horse_share is never named in this session (the gun profile's default). The guest's first E mounts the unridden
+# horse and rides a left loop at a gallop (more than 50 m: the guest's step=final_sent path_cm), gets off, and the host's
+# screen shows the horse where the guest left it (placebehind and goto_horse frames; the host's goto_horse lands beside
+# the guest's dismount spot on the host's own copy); the host's first E then mounts it (part (a) below).
+guest run goto_horse
+wait 1500
+placebehind host guest 4 2
+wait 1500
+guest run position
+host capture m1r-before
+guest press e 150
+wait 2500
+guest run horse_status
+guest expect localMounted=1
+waitlog host 'world_lua=event=horse_share; step=placed;' 10
+waitlog host 'partner_mount=show; mount=horse;' 10
+host capture m1r-guest-mounted
+guest hold w 1500
+guest hold w+a 1500 nowait
+host run goto_horse
+host burst m1r-guest-trot 2 250
+guest hold w+shift+a 1500
+guest hold w+shift+a 1500 nowait
+host run goto_horse
+host burst m1r-guest-gallop 3 250
+guest hold w+shift+a 1500
+guest hold w+shift+a 1500
+guest release
+wait 3000
+host run goto_horse
+wait 800
+host capture m1r-guest-stopped
+waitlog host 'world_lua=horse_place=stats; placed=' 10
+guest press e 150
+wait 3000
+guest run horse_status
+guest expect localMounted=0
+waitlog guest 'world_lua=event=horse_share; step=final_sent; ok=1;' 8
+waitlog host 'world_lua=event=horse_share; step=final; placed=1;' 8
+guest run position
+guest capture m1r-left-guest
+placebehind host guest 5 2
+wait 1500
+host capture m1r-left-host
+host run goto_horse
+wait 1500
+host run position
+host capture m1r-horse-host-1
+host mouse 750 0
+wait 600
+host capture m1r-horse-host-2
+host mouse 750 0
+wait 600
+host capture m1r-horse-host-3
 # The host's first E mounts; a short ride and the dismount leave the one horse at the same spot on both copies (M1).
 host run goto_horse
 wait 1500
@@ -139,9 +194,9 @@ wait 1000
 both capture h2-stays
 guest run downed_status
 guest require down=1
-# Taken down: the carry key (R) held 0.5 s beside the horse lays them on the ground beside it at the carrier's side, at
+# Taken down: the carry key (R) held 0.3 s beside the horse lays them on the ground beside it at the carrier's side, at
 # the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
-host hold r 700
+host hold r 400
 host release
 wait 2500
 waitlog host 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
@@ -251,7 +306,7 @@ guest run cargo_status
 guest require cargo;state=carrier
 wait 1000
 both capture h2b-stays
-guest hold r 700
+guest hold r 400
 guest release
 wait 2500
 waitlog guest 'world_lua=event=horse_cargo; step=unloaded; seat=2; why=taken_down; side=carrier; placed=1;' 5
