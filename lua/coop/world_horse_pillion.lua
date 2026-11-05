@@ -10,7 +10,7 @@
 -- 1 at the rear seat of this copy's ridden horse, seated by the DM overlay. E again (pressed after a release) hops off;
 -- the driver getting off, the ride's end on the passenger's copy, a census generation change, no KEEP for 3.5 s (1 Hz both
 -- ways), a downed passenger, unpairing or a context change lay the passenger down where the horse's root was 2-4 m back
--- along the path ridden since the seating (beside the horse's right only without such a point).
+-- along the path ridden since the seating (else where they stood at the claim, else beside the horse's right).
 do
 local W = e.MgsCoopWorld
 if type(W) == "table" and type(W.handlers) == "table" and type(W.OP) == "table" and type(W.horseShare) == "table" then
@@ -128,9 +128,11 @@ end
 P.seatPoint = seatPoint
 -- The lay-off point. The skeptic's frames (runs 51f6a2cc / 4f52fa2a): the side point (-x at yaw 0) is the horse's RIGHT,
 -- and in 51f6a2cc (a) it was inside the rock wall the horse rode along. So: the newest root of the path ridden since the
--- seating (P.trail, a point per TRAIL_MM) 2-4 m from the root now, ground the horse stood on; the side point only without
--- one (a horse that has not moved 2 m, or a jump of the placed horse).
-local TRAIL_MM, TRAIL_N, BACK_MM, BACK_MAX_MM = 250, 24, 2000, 4000
+-- seating (P.trail, a point per TRAIL_MM) 2-4 m from the root now, ground the horse stood on. Without one (a horse that has
+-- not moved 2 m; play runs 16f3f282 / 023f9167: the side point put the passenger inside the rock on the driver's dismount
+-- right after a seating) the spot the passenger stood on at the claim (P.foot) within FOOT_MM of the root; the side point
+-- only past that (a jump of the placed horse).
+local TRAIL_MM, TRAIL_N, BACK_MM, BACK_MAX_MM, FOOT_MM = 250, 24, 2000, 4000, 5000
 local function layOff(h)
  local a, T, foot = h.yaw / 1000, P.trail or {}, (P.dy or -900) + LAND_MM
  for i = #T, 1, -1 do
@@ -141,6 +143,8 @@ local function layOff(h)
    break
   end
  end
+ local f = P.foot
+ if f and (f[1] - h.x) ^ 2 + (f[3] - h.z) ^ 2 <= FOOT_MM * FOOT_MM then return f[1], f[2] + LAND_MM, f[3], a, "foot" end
  return h.x - SIDE_MM * cos(a), h.y + foot, h.z + SIDE_MM * sin(a), a, "side"
 end
 P.layOff = layOff
@@ -158,7 +162,7 @@ local function reset()
  P.state, P.claimAt, P.keepAt, P.rxAt, P.armed, P.prevE, P.h, P.dy, P.want, P.lag, P.statsAt, P.seatN = "off", nil, nil, nil, nil, nil, nil,
   nil, nil, nil, nil, nil
  P.mission, P.epoch, P.role, P.gen, P.leaseWhy, P.eSince, P.drivePath, P.driveAt, P.remoteSeat = nil, nil, nil, nil, nil, nil, nil, nil, nil
- P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail = nil, nil, nil, nil, nil, nil, nil
+ P.keyAt, P.keyPath, P.keyFirst, P.moved, P.wantA, P.placedTick, P.trail, P.foot = nil, nil, nil, nil, nil, nil, nil, nil
 end
 -- End this copy's part: why a CAUSE name; remote: the partner ended it (nothing sent back).
 local function stop(why, remote)
@@ -225,7 +229,7 @@ local function offTick(now)
  if e ~= nil then P.prevE = e end
  if not edge then return end
  P.token = P.token % 65535 + 1
- P.dy = y - L[2]
+ P.dy, P.foot = y - L[2], {x, y, z}
  if W.host then
   -- The guest drives: the host's own press commits (GRANT, cause passenger) and holds the press lock.
   P.lockUntil = now + LOCK_MS
