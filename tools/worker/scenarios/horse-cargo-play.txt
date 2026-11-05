@@ -51,6 +51,7 @@ wait 3000
 host run horse_status
 host require localMounted=0
 waitlog guest 'world_lua=event=horse_share; step=final; placed=1;' 8
+logmark both
 # --- (a) the host downs and carries the guest, loads them on the horse.
 host run goto_horse
 wait 1000
@@ -100,6 +101,7 @@ wait 1500
 both capture h2-loaded
 guest burst h2-loaded-victim 3 400
 # The host's first E mounts the loaded horse.
+logmark both
 host press e 150
 wait 2500
 host run horse_status
@@ -120,7 +122,14 @@ host hold w+shift+a 1500 nowait
 host burst h2-ride-gallop2 2 250
 guest burst h2-ride-gallop2-victim 3 250
 host hold w+shift 1500 nowait
+host burst h2-ride-gallop3 2 250
 guest burst h2-ride-gallop3-victim 3 250
+host hold w+shift+a 2500 nowait
+host burst h2-ride-gallop4 2 400
+guest burst h2-ride-gallop4-victim 3 400
+host hold w+shift+a 2500 nowait
+host burst h2-ride-gallop5 2 400
+guest burst h2-ride-gallop5-victim 3 400
 host release
 wait 2500
 both capture h2-ride-stopped
@@ -143,6 +152,7 @@ guest run downed_status
 guest require down=1
 # Taken down: the carry key (R) held 0.3 s beside the horse lays them on the ground beside it at the carrier's side, at
 # the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
+logmark both
 host hold r 400
 host release
 wait 2500
@@ -173,6 +183,7 @@ wait 4500
 guest run downed_status
 guest require down=0
 both capture h2-revived
+logmark both
 # --- (b) roles swapped: the guest's rifle downs the host, the guest carries them to the horse (the host grants).
 guest run goto_horse
 wait 1000
@@ -221,6 +232,7 @@ host require cargo;state=cargo
 wait 1500
 both capture h2b-loaded
 host burst h2b-loaded-victim 3 400
+logmark both
 guest press e 150
 wait 2500
 guest run horse_status
@@ -240,6 +252,15 @@ host burst h2b-ride-gallop-victim 3 250
 guest hold w+shift+a 1500 nowait
 guest burst h2b-ride-gallop2 2 250
 host burst h2b-ride-gallop2-victim 3 250
+guest hold w+shift 1500 nowait
+guest burst h2b-ride-gallop3 2 250
+host burst h2b-ride-gallop3-victim 3 250
+guest hold w+shift+a 2500 nowait
+guest burst h2b-ride-gallop4 2 400
+host burst h2b-ride-gallop4-victim 3 400
+guest hold w+shift+a 2500 nowait
+guest burst h2b-ride-gallop5 2 400
+host burst h2b-ride-gallop5-victim 3 400
 guest release
 wait 2500
 both capture h2b-ride-stopped
@@ -253,6 +274,7 @@ guest run cargo_status
 guest require cargo;state=carrier
 wait 1000
 both capture h2b-stays
+logmark both
 guest hold r 400
 guest release
 wait 2500
@@ -282,6 +304,7 @@ wait 4500
 host run downed_status
 host require down=0
 both capture h2b-revived
+logmark both
 # --- (m1) M1 regression (round 2; the round 1 skeptic's gaps; expects only, so a miss never stops the cargo parts):
 # world_horse_share is never named in this session (the gun profile's default). The guest's first E mounts the unridden
 # horse and rides a left loop at a gallop (more than 50 m: the guest's step=final_sent path_cm), gets off, and the host's

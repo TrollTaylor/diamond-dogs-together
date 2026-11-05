@@ -48,8 +48,9 @@ C.LEAD_MAX_MM = LEAD_MAX_MM
 local DOWN_MMPS, FACE_MM, SETTLE_MS = 1000, 1200, 2000
 -- Body 0's mover: 4 the Lua Warp (the lying pose, with spells on the ground under the moving horse), 0..3 hold0 with
 -- Warp's resets (bit 0 A0, bit 1 C0): none (a242d867 / c2927350) and A0 (8cfe8e97 / 7f3155c8) kept it with the horse
--- but in the airborne pose on both screens; C0 alone is untried (the lab lever horse_probe cargo_pose picks it).
-local RESET = 4
+-- but in the airborne pose on both screens. Default 2, hold0 + C0 alone: C0.vt+0x90 sets bit 0x20 of the 0x580 record's
+-- +0x2C0, which C0.vt+0xD0 (0x14128E010) clears while it answers "no fall" for that frame (static; the lever picks 0..4).
+local RESET = 2
 C.DOWN_MMPS, C.RESET = DOWN_MMPS, RESET
 local V = {placed = VICTIM_PLACED_MM, rise = VICTIM_RISE_MM, back = BACK_MM, down = DOWN_MMPS, reset = RESET}
 C.BACK_MM, C.RISE_MM, C.SIDE_MM, C.HOLD_MS, C.TAKE_MS = BACK_MM, RISE_MM, SIDE_MM, HOLD_MS, TAKE_MS
