@@ -13,7 +13,7 @@
 # Frames h2-* (a), h2b-* (b), h2c-* (c), on both screens.
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2
 #     -ScenarioPath tools/worker/scenarios/horse-cargo.txt -Mode lab -WanSim bad -PartnerProfile native
-#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 1200 -Wait
+#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
 labsetting world_horse_share=1

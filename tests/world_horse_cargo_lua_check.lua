@@ -157,8 +157,13 @@ f.tick(50)
 f.env.vars.playerPosX, f.env.vars.playerPosZ, f.env.vars.playerPosY = 101.6, 301.2, 1.9
 f.hold("R", 700)
 check(f.C.state == "carrier", "R under 1 s: still on")
-f.hold("R", 1100)
-check(f.C.state == "off" and f.called("000"), "R held 1 s: taken down, the hold cleared (CARGO_V2 0 0 0)")
+f.hold("R", 1050)
+check(f.C.state == "release" and f.C.busy(), "R held 1 s: taken down; body 1 held on the point while R stays down")
+local nc = #f.cargo
+f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now
+check(f.C.state == "release" and f.cargo[#f.cargo] == "100" and #f.cargo > nc, "still held while R is down (no stock pickup of the body)")
+f.holdR(false); f.tick(50)
+check(f.C.state == "off" and f.cargo[#f.cargo] == "000" and f.logged("step=released;seat=2"), "R up: the hold cleared (CARGO_V2 0 0 0)")
 local u = f.sent(5)
 check(u and u[6] == 4 and u[7] == 22, "UNLOADED cause taken_down (4) with the victim's generation")
 w = f.lastWarp(1)
@@ -169,8 +174,11 @@ check(math.abs(u[10] - (300000 + f.C.SIDE_MM)) < 2 and math.abs(u[8] - (102000 -
 check(f.logged("step=unloaded;seat=2;why=taken_down;side=carrier"), "step=unloaded why=taken_down")
 check(not f.C.busy(), "not busy after the take-down")
 -- An E hold also takes them down (where E does not mount).
-f = fixture(); load(f); f.hold("E", 1100)
+f = fixture(); load(f); f.hold("E", 1100); f.tick(50)
 check(f.C.state == "off" and f.logged("step=take_down;key=e"), "an E hold 1 s takes them down too")
+f = fixture(); load(f); f.hold("R", 1050)
+for i = 1, 70 do f.holdR(true); f.tick(50); f.D.rawCarryHeldAt = f.now end
+check(f.C.state == "off", "a key held on and on: the hold goes after 3 s anyway")
 -- Out of reach: nothing.
 f = fixture(); load(f); f.env.vars.playerPosX = 110; f.hold("R", 1200)
 check(f.C.state == "carrier", "the R hold out of reach: still on")

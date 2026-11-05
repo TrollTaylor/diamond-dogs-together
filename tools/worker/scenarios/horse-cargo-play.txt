@@ -3,7 +3,7 @@
 # teleport; no link-drop part). The same lines, frames and NEVER lines as horse-cargo.txt parts (a) and (b).
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo C:/mgs-coop-wt2/horse -Owner horse-M2-play
 #     -ScenarioPath tools/worker/scenarios/horse-cargo-play.txt -Mode play -WanSim bad -PartnerProfile native
-#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 1200 -Wait
+#     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
 labsetting world_horse_share=1
