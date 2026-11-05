@@ -207,10 +207,20 @@ f.W.horseCargo = {placed = function(x, y, z, yaw) heard[#heard + 1] = {x, y, z, 
 for i = 0, 8 do f.fast(5000 + i * 50, 10000 + i * 200, 2000, 30000, 100); f.tick(50) end
 check(#heard >= 1 and heard[#heard][4] == 100 and heard[#heard][1] == f.places[#f.places].x,
     "M2: world_horse_cargo hears each placement with the pose written")
--- M3: the ride hold shrinks to where E would claim the rear seat or the stock mount prompt shows (2.5 m, released past
--- 2.8 m): 3 m from the partner-ridden horse E acts normally (pickups, revives, doors).
-check(f.S.HOLD_MM == 2500 and f.S.FREE_MM == 2800, "M3: the ride hold within 2.5 m, released past 2.8 m")
+-- M3: with world_horse_pillion the ride hold shrinks to where E would claim the rear seat or the stock mount prompt shows
+-- (2.5 m, released past 2.8 m): 3 m from the partner-ridden horse E reaches the game. Without it the M1 hold stays (4 m /
+-- 4.5 m): the shrink is unproven until a pickup or revive at 3 m is seen (M3 round 1: e_free never logged).
+check(f.S.HOLD_MM == 4000 and f.S.FREE_MM == 4500 and f.S.PILLION_HOLD_MM == 2500 and f.S.PILLION_FREE_MM == 2800,
+    "M3: 4 m / 4.5 m, and 2.5 m / 2.8 m with the pillion key")
 f = fixture()
+for i = 0, 6 do f.fast(5000 + i * 50, 10000, 2000, 30000, 100); f.tick(50) end
+p = f.places[#f.places]
+f.env.vars.playerPosX, f.env.vars.playerPosZ = (p.x + 3000) / 1000, p.z / 1000
+f.fast(5400, p.x, 2000, p.z, 100)
+f.tick(50)
+check(f.S.hold, "M3: without the pillion key 3 m is still held (M1)")
+f = fixture()
+f.W.horsePillion = {keyOn = function() return true end}
 for i = 0, 6 do f.fast(5000 + i * 50, 10000, 2000, 30000, 100); f.tick(50) end
 p = f.places[#f.places]
 f.env.vars.playerPosX, f.env.vars.playerPosZ = (p.x + 3000) / 1000, p.z / 1000
