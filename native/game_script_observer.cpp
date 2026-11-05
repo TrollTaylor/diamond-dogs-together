@@ -3171,7 +3171,7 @@ const char* ActReceipt(const char* text, std::size_t size) noexcept {
     else if (op == 'q') {
         if (host) return refuse("role");
         if (sa::Paused()) return refuse("paused");
-        fresh = sa::QueryFresh(slot);
+        fresh = sa::QueryFresh(slot, go & 0x1ffu);
     }
     else if (op == 'm') {
         if (host) return refuse("role");

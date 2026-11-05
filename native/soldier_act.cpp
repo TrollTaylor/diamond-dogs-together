@@ -157,8 +157,14 @@ bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept {
 }
 
 bool LegMatch(const unsigned char (&host_request)[0x70], const float (&own_dest)[3], bool own_valid) noexcept {
-    (void)host_request; (void)own_dest; (void)own_valid;
-    return true;
+    if (host_request[0x63] != 1) return true;  // not a move: the leg does not matter
+    if (!own_valid) return false;
+    std::uint64_t v = 0;
+    std::memcpy(&v, host_request + 0x40, sizeof(v));
+    float d[3]{};
+    DecodePacked(v, d);
+    const float dx = d[0] - own_dest[0], dz = d[2] - own_dest[2];
+    return dx * dx + dz * dz <= kActLegM * kActLegM;  // NaN: no match
 }
 
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
@@ -256,6 +262,12 @@ std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cSame{0}, g_cUnrealized{0};
 // Round 6: request applies the rule asked for (first, changed, moving 1 s, still 5 s) and the moving owner's 1 s re-applies.
 std::atomic<std::uint32_t> g_cDue{0}, g_cReapply{0}, g_cOrderClear{0};
+// Round 6 (runs fbf3522a / f11fe8a1): each realized non-puppet guard's own destination (his packed request's +0x40) on the
+// puppet side, every kCensusPeriodMs, for the take's leg check (LegMatch). The hook writes, the runtime thread reads.
+std::atomic<float> g_ownDest[kMaxSoldiers][3]{};
+std::atomic<std::uint64_t> g_ownAt[kMaxSoldiers]{};
+std::uint64_t g_ownScanAt = 0;
+std::atomic<std::uint32_t> g_cLegWait{0};
 std::atomic<std::uint32_t> g_cExpired{0};  // fire-drop mask bits that lapsed (no ACT_V1 m within kActFreshMs)
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
@@ -748,6 +760,21 @@ bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) 
         return false;
     }
 }
+void OwnDests(const View& v, std::uint64_t now) noexcept {
+    if (g_ownScanAt && now - g_ownScanAt < kCensusPeriodMs) return;
+    g_ownScanAt = now;
+    for (unsigned i = 0; i < v.count && i < kMaxSoldiers; ++i) {
+        if (!Bit(v.realized, i) || g_mirAt[i].load(std::memory_order_relaxed)) continue;  // a puppet holds the host's request
+        unsigned char w[0x70]{}, o[0x18]{};
+        if (!PackSafe(v, i, w, o)) continue;
+        std::uint64_t p = 0;
+        std::memcpy(&p, w + 0x40, sizeof(p));
+        float d[3]{};
+        DecodePacked(p, d);
+        for (int k = 0; k < 3; ++k) g_ownDest[i][k].store(d[k], std::memory_order_relaxed);
+        g_ownAt[i].store(now, std::memory_order_release);
+    }
+}
 void MirrorRx(const View& v, std::uint64_t now) noexcept {
     // The fire-drop mask lapses with the apply's own lease (kActFreshMs without ACT_V1 m), whatever Lua forgot to release.
     g_cExpired.fetch_add(soldier_authority::ExpireMirrored(now, kActFreshMs), std::memory_order_relaxed);
@@ -846,7 +873,7 @@ void StepSafe(std::uintptr_t m) noexcept {
         if (g_actOn.load(std::memory_order_relaxed)) {
             FrameCensus(now);
             if (g_actHost.load(std::memory_order_relaxed)) MirrorTx(v, now);
-            else MirrorRx(v, now);
+            else { OwnDests(v, now); MirrorRx(v, now); }
         }
         if (g_census.load(std::memory_order_relaxed)) Census(v, now);
     } __except (EXCEPTION_EXECUTE_HANDLER) { g_faults.fetch_add(1, std::memory_order_relaxed); }
@@ -1024,11 +1051,23 @@ std::atomic<bool> g_paused{false};
 void SetPaused(bool paused) noexcept { g_paused.store(paused); if (paused) ReleaseAll(); }
 bool Paused() noexcept { return g_paused.load(); }
 
-bool QueryFresh(std::uint16_t slot) noexcept {
+bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept {
     std::uint64_t now = 0;
     world::Act act{};
     if (!g_actOn.load() || !world_link::ActLatest(slot, now, act) || !act.req_valid) return false;
-    return now >= act.req_rx_ms && now - act.req_rx_ms <= kActFreshMs;
+    if (!(now >= act.req_rx_ms && now - act.req_rx_ms <= kActFreshMs)) return false;
+    // Round 6: a walker is taken only on the host copy's leg (his own pre-take leg is what his legs keep walking).
+    float own[3]{};
+    bool valid = false;
+    if (idx < kMaxSoldiers) {
+        const std::uint64_t at = g_ownAt[idx].load(std::memory_order_acquire);
+        valid = at && now >= at && now - at <= kActFreshMs;
+        for (int k = 0; k < 3; ++k) own[k] = g_ownDest[idx][k].load(std::memory_order_relaxed);
+    }
+    unsigned char req[0x70];
+    std::memcpy(req, act.req, sizeof(req));
+    if (!LegMatch(req, own, valid)) { g_cLegWait.fetch_add(1, std::memory_order_relaxed); return false; }
+    return true;
 }
 
 void ReleaseAll() noexcept {
@@ -1048,7 +1087,7 @@ Counters ReadCounters() noexcept {
     k.local_shots = soldier_authority::LocalShots();
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
     k.due = g_cDue.load(); k.reapply_moving = g_cReapply.load(); k.same = g_cSame.load(); k.unrealized = g_cUnrealized.load();
-    k.expired = g_cExpired.load(); k.order_clear = g_cOrderClear.load();
+    k.expired = g_cExpired.load(); k.order_clear = g_cOrderClear.load(); k.leg_wait = g_cLegWait.load();
     return k;
 }
 
@@ -1057,10 +1096,10 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
     const int n = std::snprintf(out, capacity,
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
-        "expired=%u; order_clear=%u\r\n",
+        "expired=%u; order_clear=%u; leg_wait=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
-        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear);
+        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear, k.leg_wait);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 

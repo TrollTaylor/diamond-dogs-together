@@ -126,7 +126,8 @@ void ReleaseAll() noexcept;
 // Candidate side: whether the slot's newest SOLDIER_ACT request is fresh (kActFreshMs); arms nothing (no mailbox, no
 // hook apply, no fire drop). Lua sends m only once the guard is a puppet (run 3bc7280b: m on candidates armed the fire
 // drop of 9 guards whose own brain still ran).
-bool QueryFresh(std::uint16_t slot) noexcept;
+// Round 6: and, for a host copy's move, this copy's own destination on his leg (LegMatch; frame line leg_wait).
+bool QueryFresh(std::uint16_t slot, unsigned idx) noexcept;
 // Research command "mirror off|on": while paused, ACT_V1 m is refused "paused" (Lua releases every puppet).
 void SetPaused(bool paused) noexcept;
 bool Paused() noexcept;
@@ -135,7 +136,7 @@ struct Counters {
         mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
     // Round 6: due = request applies the rule asked for (first, changed, moving 1 s, still 5 s) on realized puppets;
     // reapply_moving = those that were a moving owner's 1 s re-apply; same / unrealized / expired as the frame line's.
-    std::uint32_t due, reapply_moving, same, unrealized, expired, order_clear;  // order_clear: stale order targets cleared
+    std::uint32_t due, reapply_moving, same, unrealized, expired, order_clear, leg_wait;  // order_clear: stale order targets cleared; leg_wait: walkers not taken (LegMatch)
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

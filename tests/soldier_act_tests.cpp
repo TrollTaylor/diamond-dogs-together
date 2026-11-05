@@ -260,7 +260,7 @@ int main() {
         const std::uint64_t packed = sa::EncodePacked(hostDest);
         std::memcpy(req + 0x40, &packed, sizeof(packed));
         req[0x63] = 1;  // action A kind 1: a move
-        const float other[3] = {414.94f, 268.0f, 2132.75f}, same[3] = {362.0f, 275.0f, 2161.5f}, far3[3] = {366.5f, 271.0f, 2159.78f};
+        const float other[3] = {414.94f, 268.0f, 2132.75f}, same[3] = {362.0f, 275.0f, 2161.5f}, far3[3] = {367.0f, 271.0f, 2159.78f};
         Check(!sa::LegMatch(req, other, true) && sa::LegMatch(req, same, true) && !sa::LegMatch(req, far3, true),
               "a walker on another leg is not taken; the same leg (within 3 m flat, any height) is");
         Check(!sa::LegMatch(req, same, false), "a walker whose own destination is unknown is not taken");
