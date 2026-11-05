@@ -671,7 +671,28 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   the owner copy is at rest in y (the two snaps chased an owner going down and up); the host's M3 placements while the
   guest is downed (`near=host` range refusals), then place_reach's gate again and a no-key run after any flip.
 
-### 8. Soldier transforms (W6)
+#### 7.21 Enemy round 8 track B: reinforcement trucks in the same place on both screens (lab key `lrrp_follow`, native only)
+
+- **Cause** (archived run `1870d1bf`, no key) [O]: the guest's mission starts 71.6 s after the host's (`vehicle_state;
+  step=on` 337953769 / 338025355). Each copy's own AI drives its LRRP trucks (`veh_trc_0000..0005` = 25600..25605 in
+  30010) along its own travel plan from its own start [I: TppEnemy `lrrpTravelPlan` / `lrrpVehicle`], so the guest's
+  truck runs ~72 s behind: at the join the riders 3970963356 / 2305481811 were 432.9 m apart (`apply d_m`); the guest's
+  truck was still driving in at ~11 m/s from (764, 1940) while the host's copies stood at the outpost (413, 2138). Nothing
+  shared the truck: VEHICLE_STATE skips LRRP trucks on both sides (`S.busy` `lrrp`) and a correction skips a rider
+  (`vehicle_local`), so the riders were `far`, then `vehicle_local` every ~1 s until they got out.
+- **lrrp_follow** (native-only lab key, off unless named; no CFG bit: Lua asks the receipt `MGS_COOP_LRRP_CFG_V1`):
+  the host owns every LRRP truck (the trucks start on its clock). It streams each live one no player rides (not the
+  local player's vehicle, not the partner's RIDE_FAST ride) as LRRP_FAST (0x5D, protocol section 38): 10 Hz while it
+  moves (> 0.5 m/s over 250 ms), 1 Hz at rest, one datagram per 50 ms. The guest's copy, while the host's truck moves
+  or carries riders, gets `ForceStop{enabled=true}` (the E10 stop of its own AI driver) and a SetPosition every frame
+  on the newest sample advanced by its velocity (the sample's age on the receiver's min-offset clock + 100 ms, at most
+  400 ms ahead); its riders ride along. When the host's truck is at rest and empty, the guest releases ForceStop (its own
+  crew may get out there; M1..M6 corrections take them again once they are off, as for any guard) and puts the truck on
+  the host's spot only when it is more than 3 m off, at most once per 30 s. A track 3 s stale, the local player's ride,
+  unpaired, start and stop release it. In `world_vehicle_state.lua` (`S.lf`); an error there turns only lrrp_follow
+  off. Logs `event=lrrp; step=host|follow|stop|release|settle|jump|stale|refused|error`.
+- **Old partners**: a partner without 0x5D skips it by its length (`unknown_op`); a guest without the key ignores it and
+  its own AI keeps its truck, as in 0.15.1 (unit tests).
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
 - **Correction** happens only when all of these hold:

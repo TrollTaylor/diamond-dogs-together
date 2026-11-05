@@ -2433,3 +2433,21 @@ No new op, world note, CFG bit or receipt field. Log lines only, and two behavio
   (held / under / above per copy and source), `readback_under_guards`, `readback_above_guards`, `readback_2s` (armed /
   got / cut by a newer arm / open), `readback_fix`, `vert_snaps`, `vert_stop`
   (`tests/enemy_div_report_check.py`, run by hand: `python -I tests/enemy_div_report_check.py`).
+
+## 38. Enemy round 8 track B: LRRP trucks follow the host (lab key `lrrp_follow`, native only; design 7.21)
+
+| Op | Name | Dir | Wire | Body (bytes) | Fields |
+|---|---|---|---|---|---|
+| 0x5D | LRRP_FAST | host to guest | U (its own newest-value slot), level 3, play too | 26 | sender tick (u32 ms), truck id (u16, 25600..26111), x / y / z (i32 mm), yaw (i32 mrad, +-31416), speed (u16 mm/s), NPC riders (u8, 0..8), flags (u8: 1 moving) |
+
+- Sent only on a host with `lrrp_follow` (receipt `MGS_COOP_LRRP_CFG_V1` -> `return 1`; `return 0` off; nil off the
+  runtime thread, asked again in 5 s); never for a truck the host's player rides or one with a live RIDE_FAST track.
+  10 Hz moving, 1 Hz at rest, at most one per 50 ms (the receiver's slot keeps the newest sender tick, so trucks take
+  turns).
+- The guest applies it only with `lrrp_follow`, only for an id that is an authored LRRP truck on its copy (else
+  `event=lrrp; step=refused; reason=not_lrrp` once per id), never while its own player rides it. Older sender ticks are
+  dropped. A partner without 0x5D skips it by its length (`unknown_op`).
+- Lines: `event=lrrp; step=host; id; x; y; z; yaw; v; riders; r; n` (4 Hz while moving or manned, else every 5 s;
+  `r` = `hash@x,z|...` of the riders); `step=follow; id; mode=follow|rest; x; y; z` (read back after the placement);
+  `tx; tz; d_m` (the copy before it); `v; rh; rl` (host / local riders); `r; jumps; n` (4 Hz following, 2 s at rest);
+  `step=stop|release; why`, `step=settle; d_m`, `step=jump; d_m; mode; jumps` (a placement over 5 m), `step=stale`.
