@@ -1690,6 +1690,14 @@ if arg[7] and arg[8] then
     t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
     ticks(t, 36)
     check(not logged(t, 'event=drive_sink;'), 'drive_sink: level for 2 s starts the count over')
+    -- Sparse readings (round 7 skeptic): a copy read once a second more than 1.5 m under logs drive_sink 2 s after the
+    -- first low reading, as 0.15.1 did (a 500 ms cap on each gap made it 4 s).
+    t = guestFix(180)
+    t.W.snapOn = true
+    t.positions[1] = {0, 1.8, 20.0}
+    t.driveReply = {e = 50, s = 0, r = 0, h = 1, v = -300}
+    ticks(t, 3, 1000)
+    check(logCount(t, 'event=drive_sink;ent=3000000001;') == 1, 'drive_sink: readings 1 s apart count in full (2 s, as 0.15.1)')
     -- A y read-back 0.5 s and 2 s after a drive_vert snap (reply s=3; v: his y minus the target's before the snap, cm).
     t = guestFix(180)
     t.W.snapOn = true

@@ -30,6 +30,11 @@ host = [
     'world_lua=event=readback; ent=2929558510; src=vert; at=2000; ms=2010; dy_m=-3.20; held=0; far_m=48; t_ms=2',
     'world_lua=event=readback; ent=1179373153; src=place; at=500; ms=530; dy_m=-3.70; held=0; far_m=150; t_ms=3',
     'world_lua=event=readback_fix; ent=1179373153; src=place; far_m=150; dy_m=-3.70; put=1; t_ms=4',
+    # Run ddcdec94: 2961503 was driven on after his placement (place_div why=driven); 1.55 m over the old spot is the
+    # ground he ran to, not a fall. A newer placement 1.6 s later re-armed his read-back, so the first got no 2 s line.
+    'world_lua=event=readback; ent=2961503; src=place; at=500; ms=520; dy_m=1.55; held=0; far_m=70; t_ms=5',
+    'world_lua=event=readback; ent=2961503; src=place; at=500; ms=510; dy_m=0.20; held=1; far_m=70; t_ms=6',
+    'world_lua=event=readback; ent=2961503; src=place; at=2000; ms=2005; dy_m=0.30; held=1; far_m=70; t_ms=7',
     'world_drive=vert; go=1041; slot=7; gap_cm=330; e_cm=104; r=0; h=1; n=1',
     'world_drive=vert_stop; go=1041; slot=7; n=2; left_ms=8000',
 ]
@@ -46,9 +51,14 @@ host += [
 r = rep.analyse(host, guest)
 check(r['never']['guard_fell'] == 1, 'guard_fell counts the host copies too')
 rb = r['readback']
-check(rb['host']['vert'] == {'held': 1, 'fell': 1} and rb['host']['place'] == {'held': 0, 'fell': 1} and
-      rb['guest']['vert'] == {'held': 1, 'fell': 0}, 'read-backs per side and source, held / fell')
-check(r['readback_fell_guards'] == {'host': ['1179373153', '2929558510'], 'guest': []}, 'the guards that fell, per side')
+check(rb['host']['vert'] == {'held': 1, 'under': 1, 'above': 0} and
+      rb['host']['place'] == {'held': 2, 'under': 1, 'above': 1} and
+      rb['guest']['vert'] == {'held': 1, 'under': 0, 'above': 0}, 'read-backs per side and source, held / under / above')
+check(r['readback_under_guards'] == {'host': ['1179373153', '2929558510'], 'guest': []} and
+      r['readback_above_guards'] == {'host': ['2961503'], 'guest': []}, 'the guards under / above where they were put')
+check(r['readback_2s']['host'] == {'armed': 4, 'got': 2, 'cut': 1, 'open': 1} and
+      r['readback_2s']['guest'] == {'armed': 1, 'got': 0, 'cut': 0, 'open': 1},
+      'the 2 s read-backs: got, cut by a newer arm of the same copy, still open at the log end')
 check(r['readback_fix'] == {'host': 1, 'guest': 0} and r['vert_snaps'] == {'host': 1, 'guest': 0} and
       r['vert_stop'] == {'host': 1, 'guest': 0}, 'put-backs, vert snaps and vert stops per side')
 check(r['guest_downed_at'] == 1000 and r['m3_host_err_samples_before_down'] == 10 and
