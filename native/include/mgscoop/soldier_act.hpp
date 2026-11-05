@@ -128,7 +128,7 @@ struct Counters {
         mirrored, fire_dropped, noise_dropped, local_shots, frame_p95_us, frames;
     // Round 6: due = request applies the rule asked for (first, changed, moving 1 s, still 5 s) on realized puppets;
     // reapply_moving = those that were a moving owner's 1 s re-apply; same / unrealized / expired as the frame line's.
-    std::uint32_t due, reapply_moving, same, unrealized, expired;
+    std::uint32_t due, reapply_moving, same, unrealized, expired, order_clear;  // order_clear: stale order targets cleared
 };
 Counters ReadCounters() noexcept;
 // The 1 Hz "soldier_act_frame; t=..; ..." line (CRLF-terminated): the frame interval p95, the counters, payload_ids (the

@@ -1,18 +1,18 @@
 # Enemy sync M7 FM1 round 6 (docs/world-sync-design.md 7.19), the calm gate: matched host / guest frames of a mirrored
 # guard WALKING, and the walkers' replay numbers with the 1 s re-apply. Run with -LabSetting soldier_act=1 (the same as
 # soldier_act=calm in calm / caution; the worker's -LabSetting takes 0/1 only); act_census=1 is named here.
-#   1. the host alone 50 m south of afgh_field_cp (known ground); the guest pairs, then walks south to the end of the
-#      walkable slope (z ~2025, known ground: runs 94a7bf2a, adecad01, 80cc0176 ended at 424.5-424.6, 2025.1-2025.8);
-#   2. the host then takes the same walk from the same known start but two steps shorter (~5 m north of the guest's end):
-#      both cameras look at the outpost from almost one spot (the host's old spot sits at a rock that hides -30..-1 deg),
-#      and every outpost guard stays nearer the host (M3 gives the guest a guard only 15 m nearer it), so they stay the
-#      host's and the guest's copies of them are mirror puppets (95-125 m out, beyond R(calm) + 15 = 95 m);
-#   3. both cameras on the patrol walkers 246 (1926520947) and 17 (2929558510) (host copies walking ~1 m/s at x 366..456,
-#      z 2111..2168 in 80cc0176 / adecad01), binoculars, two frames ~0.5 s apart in one 1.5 s hold (both copies at once);
+#   1. the host alone 50 m south of afgh_field_cp (known ground); the guest pairs;
+#   2. both teleport to the two measured standing points of run fbf3522a south of the outpost (known ground, each a
+#      position readback there): the guest to the host's walk end B (414.897, 274.034, 2017.557; a clear view of the
+#      compound in fbf3522a's host frames w17-3 / w17-4), the host to the guest's walk end A (424.627, 271.559, 2025.110;
+#      four runs ended there), 12 m apart. A is 7.5 m nearer the outpost, so every outpost guard stays the host's (M3
+#      gives the guest a guard only 15 m nearer it) and the guest's copies 95-200 m out are mirror puppets;
+#   3. both cameras on the patrol walkers 17 (2929558510), 15 (1740692850) and 18 (667680985), binoculars, two frames
+#      ~0.5 s apart in one 1.5 s hold (both copies at once), six rounds;
 #   4. mirror off 16 s (the frame p95 baseline), on; the guest fires one shot (every puppet released, why=shot);
-#   5. CAUTION 20 s (puppets stay: R(caution) is the 80 m floor).
+#   5. CAUTION 20 s.
 # Expected (guest): event=mirror_peer;caps=1 (the host's ACT_CAPS), event=mirror;on=1;why=far, soldier_act_frame lines
-# with due / applied / reapply / payload_ids; why=paused, why=shot; 0 puppets within R.
+# with due / applied / reapply / payload_ids / order_clear; why=paused, why=shot; 0 puppets within R.
 #   pwsh -NoProfile -File tools/worker/Submit-WorkerJob.ps1 -Repo <built worktree> -Owner <track>
 #     -ScenarioPath tools/worker/scenarios/enemy-mirror6-calm.txt -Mode play -WanSim bad -PartnerProfile native
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -LabSetting soldier_act=1 -TimeoutSec 600 -Wait
@@ -37,75 +37,15 @@ waitlog host 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roste
 waitlog guest 'world_lua=event=paired; epoch=[0-9]+; eff=3; match=1; remote_roster=[1-9]' 90
 guest debug godmode 1
 guest debug infinite_ammo 1
-guest run teleport 423.00 269.5 2081.00 0
+guest run teleport 414.897 274.034 2017.557 0
 wait 3000
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-guest hold s 1500
-wait 1500
-guest run position
-logmark both
-host run teleport 423.00 269.5 2081.00 0
-wait 3000
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-host hold s 1500
-wait 1500
+host run teleport 424.627 271.559 2025.110 0
+wait 4000
 host run position
 guest run position
 host run act_status
 guest run act_status
 logmark both
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
-wait 600
-host hold f 1500 nowait
-guest hold f 1500 nowait
-wait 700
-both capture w246-0-a
-wait 450
-both capture w246-0-b
-wait 3500
 host run aim_ent 2929558510 1.1
 guest run aim_ent 2929558510 1.1
 wait 600
@@ -116,15 +56,25 @@ both capture w17-0-a
 wait 450
 both capture w17-0-b
 wait 3500
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 700
-both capture w246-1-a
+both capture w15-0-a
 wait 450
-both capture w246-1-b
+both capture w15-0-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-0-a
+wait 450
+both capture w18-0-b
 wait 3500
 host run aim_ent 2929558510 1.1
 guest run aim_ent 2929558510 1.1
@@ -136,15 +86,25 @@ both capture w17-1-a
 wait 450
 both capture w17-1-b
 wait 3500
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 700
-both capture w246-2-a
+both capture w15-1-a
 wait 450
-both capture w246-2-b
+both capture w15-1-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-1-a
+wait 450
+both capture w18-1-b
 wait 3500
 host run aim_ent 2929558510 1.1
 guest run aim_ent 2929558510 1.1
@@ -156,15 +116,25 @@ both capture w17-2-a
 wait 450
 both capture w17-2-b
 wait 3500
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 700
-both capture w246-3-a
+both capture w15-2-a
 wait 450
-both capture w246-3-b
+both capture w15-2-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-2-a
+wait 450
+both capture w18-2-b
 wait 3500
 host run aim_ent 2929558510 1.1
 guest run aim_ent 2929558510 1.1
@@ -176,15 +146,25 @@ both capture w17-3-a
 wait 450
 both capture w17-3-b
 wait 3500
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
 wait 700
-both capture w246-4-a
+both capture w15-3-a
 wait 450
-both capture w246-4-b
+both capture w15-3-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-3-a
+wait 450
+both capture w18-3-b
 wait 3500
 host run aim_ent 2929558510 1.1
 guest run aim_ent 2929558510 1.1
@@ -196,12 +176,62 @@ both capture w17-4-a
 wait 450
 both capture w17-4-b
 wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-4-a
+wait 450
+both capture w15-4-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-4-a
+wait 450
+both capture w18-4-b
+wait 3500
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w17-5-a
+wait 450
+both capture w17-5-b
+wait 3500
+host run aim_ent 1740692850 1.1
+guest run aim_ent 1740692850 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w15-5-a
+wait 450
+both capture w15-5-b
+wait 3500
+host run aim_ent 667680985 1.1
+guest run aim_ent 667680985 1.1
+wait 600
+host hold f 1500 nowait
+guest hold f 1500 nowait
+wait 700
+both capture w18-5-a
+wait 450
+both capture w18-5-b
+wait 3500
 guest run act_status
 logmark both
 guest run mirror off
 wait 2500
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -222,8 +252,8 @@ both capture off-1-b
 wait 3500
 guest run mirror on
 wait 4000
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -242,8 +272,8 @@ wait 400
 both capture shot-0
 guest run act_status
 wait 4000
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait
@@ -256,8 +286,8 @@ logmark both
 host run cp_phase nearest caution
 host expect ^submitted_phase;cp=[^;]+;phase=caution;
 wait 4000
-host run aim_ent 1926520947 1.1
-guest run aim_ent 1926520947 1.1
+host run aim_ent 2929558510 1.1
+guest run aim_ent 2929558510 1.1
 wait 600
 host hold f 1500 nowait
 guest hold f 1500 nowait

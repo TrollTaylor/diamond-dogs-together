@@ -143,13 +143,17 @@ bool OrderChanged(const unsigned char (&a)[0x18], const unsigned char (&b)[0x18]
 }
 
 bool OrderHasTarget(const unsigned char (&packed)[0x18]) noexcept {
-    (void)packed;
-    return true;
+    return packed[0xe] >= 1 && packed[0xe] <= 4;
 }
 
 bool ClearOrderTarget(unsigned char (&record)[0x20]) noexcept {
-    (void)record;
-    return false;
+    bool had = (record[0xc] & 7u) != 0;
+    for (int b = 0; b < 0xc; ++b) {
+        had = had || record[b] != 0;
+        record[b] = 0;
+    }
+    record[0xc] = static_cast<unsigned char>(record[0xc] & 0xf8u);
+    return had;
 }
 
 bool DueSend(bool changed, std::uint64_t last_ms, std::uint64_t now_ms) noexcept {
@@ -246,7 +250,7 @@ Applied g_applied[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_mirGen[kMaxSoldiers]{};
 std::atomic<std::uint32_t> g_cSame{0}, g_cUnrealized{0};
 // Round 6: request applies the rule asked for (first, changed, moving 1 s, still 5 s) and the moving owner's 1 s re-applies.
-std::atomic<std::uint32_t> g_cDue{0}, g_cReapply{0};
+std::atomic<std::uint32_t> g_cDue{0}, g_cReapply{0}, g_cOrderClear{0};
 std::atomic<std::uint32_t> g_cExpired{0};  // fire-drop mask bits that lapsed (no ACT_V1 m within kActFreshMs)
 std::atomic<std::uint32_t> g_cTx{0}, g_cStaged{0}, g_cRx{0}, g_cApplied{0}, g_cOrders{0}, g_cTable{0}, g_cFault{0}, g_cStale{0},
     g_cRemap{0}, g_cPayloadIds{0}, g_frameP95{0}, g_frames{0};
@@ -714,6 +718,16 @@ bool UnpackOrderSafe(const View& v, unsigned i, const unsigned char (&o)[0x18]) 
     const std::uintptr_t r = Record(v, i);
     __try {
         reinterpret_cast<UnpackOrder>(g_base + c::unpack_order_rva)(reinterpret_cast<void*>(v.fob), reinterpret_cast<void*>(r + c::r_order), o);
+        // Round 6 (run fbf3522a): an order without a target leaves the puppet's own stale target (the unpack writes one
+        // only for modes 1..4) and his legs walk to it: clear it, as the owner's record of that order is.
+        if (!OrderHasTarget(o)) {
+            unsigned char rec[0x20];
+            std::memcpy(rec, reinterpret_cast<const void*>(r + c::r_order), sizeof(rec));
+            if (ClearOrderTarget(rec)) {
+                std::memcpy(reinterpret_cast<void*>(r + c::r_order), rec, 0xd);
+                g_cOrderClear.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         // Target by id (mode 2: u16 id + u16 part at R+0x1b0): the players swap between the copies.
         std::uint8_t mode = 0;
         Rd(r + c::r_order_mode, mode);
@@ -1029,7 +1043,7 @@ Counters ReadCounters() noexcept {
     k.local_shots = soldier_authority::LocalShots();
     k.frame_p95_us = g_frameP95.load(); k.frames = g_frames.load();
     k.due = g_cDue.load(); k.reapply_moving = g_cReapply.load(); k.same = g_cSame.load(); k.unrealized = g_cUnrealized.load();
-    k.expired = g_cExpired.load();
+    k.expired = g_cExpired.load(); k.order_clear = g_cOrderClear.load();
     return k;
 }
 
@@ -1038,10 +1052,10 @@ bool FormatFrameLine(std::uint64_t now, const Counters& k, char* out, std::size_
     const int n = std::snprintf(out, capacity,
         "soldier_act_frame; t=%llu; frames=%u; p95_ms=%.2f; mirrored=%u; tx=%u; staged=%u; rx=%u; applied=%u; orders=%u; refuse_table=%u; "
         "fault=%u; remap=%u; puppet_fire=%u; puppet_noise=%u; shots=%u; same=%u; unrealized=%u; payload_ids=%u; due=%u; reapply=%u; "
-        "expired=%u\r\n",
+        "expired=%u; order_clear=%u\r\n",
         static_cast<unsigned long long>(now), k.frames, k.frame_p95_us / 1000.0, k.mirrored, k.tx_parts, k.staged, k.rx, k.applied,
         k.orders, k.refuse_table, k.refuse_fault, k.remap_player, k.fire_dropped, k.noise_dropped, k.local_shots, k.same,
-        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired);
+        k.unrealized, k.payload_ids, k.due, k.reapply_moving, k.expired, k.order_clear);
     return n > 0 && static_cast<std::size_t>(n) < capacity;
 }
 
