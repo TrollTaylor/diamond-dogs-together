@@ -357,6 +357,12 @@ f.holdOff = "off"
 f.tick(50); f.tick(50)
 w = f.lastWarp(0)
 check(w.via == nil and f.count and f.logged("step=hold0_refused;reason=off"), "hold0 refused: body 0 by Lua Warp")
+-- Run 144d99bb (b): one transient refusal (body, at the mount) Lua-Warped body 0 once; Warp's A0 reset turned it prone for
+-- the rest of the ride. A transient refusal leaves body 0 to the pin (it holds 300 ms); only off / request / pins Warp.
+f.holdOff = "body"
+local nwb = #f.warps
+f.tick(50)
+check(#f.warps == nwb and f.logged("step=hold0_refused;reason=body"), "hold0 refused body (transient): no Lua Warp")
 f.holdOff = nil
 f.C.setVictimPose(f.C.VICTIM_PLACED_MM, f.C.VICTIM_RISE_MM, f.C.BACK_MM, f.C.DOWN_MMPS, f.C.RESET)
 -- The take-down from the carrier: body 0 at the exact point.
