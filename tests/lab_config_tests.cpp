@@ -2303,15 +2303,18 @@ int main() {
                   Lab("enabled=1\nrole=host\nsoldier_act=2\n").invalid_values == 1,
                   "FM1: soldier_act parses, off unless named");
             // Enemy gaps 2 (docs/world-sync-design.md 7.17): body_dead (CFG r[19] bit 1024) and place_reach (bit 2048) parse in
-            // lab and play, off unless named until their run.
+            // lab and play; body_dead off unless named, place_reach follows the gun profile since runs 9023e5c6 / 8281b868 / 3c9d1250.
             Check(!def.body_dead && !gunDefault.body_dead && !gunDefault.body_dead_given && !def.place_reach &&
-                  !gunDefault.place_reach && !gunDefault.place_reach_given &&
+                  gunDefault.place_reach && !gunDefault.place_reach_given &&
                   Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=1\n").body_dead &&
                   Lab("enabled=1\nrole=guest\nplace_reach=1\n").place_reach &&
                   Lab("enabled=1\nrole=guest\nplace_reach=0\n").place_reach_given &&
                   !Lab("enabled=1\nrole=host\npartner_native_profile=gun\nbody_dead=0\n").body_dead &&
                   Lab("enabled=1\nrole=host\nbody_dead=2\nplace_reach=x\n").invalid_values == 2,
-                  "enemy gaps 2: body_dead and place_reach parse, off unless named");
+                  "enemy gaps 2: body_dead and place_reach parse; body_dead off unless named, place_reach follows the gun profile");
+            Check(!Lab("enabled=1\nrole=host\npartner_native_profile=gun\nplace_reach=0\n").place_reach &&
+                  !Lab("enabled=1\nrole=guest\n").place_reach,
+                  "enemy gaps 2: place_reach follows the gun profile (runs 9023e5c6, 8281b868, 3c9d1250); a named 0 opts out");
             // r1101 animtruth: follows the native gun profile in lab and play since the r1101 Prove phase (hidden play run
             // 3c5609bb, both copies, both directions: a lethal rifle's RMB / RMB+LMB at Mother Base and RMB on the ladder left
             // the puppet's gun down on the viewer's screen, the allowed pistol's aim still showed); off without the profile; a
