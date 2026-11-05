@@ -671,6 +671,65 @@ The plan's own section 9 recommendation is to run M7's probes behind a switch fo
   the owner copy is at rest in y (the two snaps chased an owner going down and up); the host's M3 placements while the
   guest is downed (`near=host` range refusals), then place_reach's gate again and a no-key run after any flip.
 
+#### 7.22 Enemy round 8 track A: the quiet place correction, the host's copies while the guest is down (lab keys `quiet_place`, `range_flat`, native only)
+
+Markers: [O] seen in a log line, a frame or the code (Ghidra decompile, read only); [I] inferred; [U] unknown.
+
+- **Bug 1, a false radio report** (enemy7 track C's plan (4), runs fbf3522a / f11fe8a1 / 0d801772 [O 3/3, cause I]): at
+  the afgh-ledge seed guards 15 and 246 hold swapped routes on the two copies; about 5 s after align the guest's copy of
+  246, 56 m off and off the guest's screen, gets the default-on place correction, the set-transform message
+  0x287158b07327 through SendCommand. Within 0.2 s he is in action kind 3, then 15 -> 12 -> 13: the guest's screen shows
+  the radio report of a possible intruder, and about 20 s later the outpost goes to CAUTION on the guest, which the host
+  then applies.
+  - **How often** [O, census runs of rounds 5-7: 963ab276, 3bc7280b, 94a7bf2a, 46c0da9e, adecad01, 80cc0176, fbf3522a,
+    f11fe8a1, 0d801772]: 282 of 539 applied place warps (the guest's corrections and the host's M3 placements, both the
+    set-transform message) were followed by action kind 3 within 0.5 s (not in kind 3 just before); kind 13 within 30 s:
+    1 (0d801772's 246; in fbf3522a his kind 13 came 52 s after). So kind 3 is the guard's normal answer to the message
+    and the report is rare; only these census runs log the kinds, so the rate at the shipped defaults is inferred [I].
+  - **The quiet path** [O code]: `0x14136ece0(M-0x20, idx, entry)`, the request unpack's network-position warp (its only
+    engine callers are the three in the FOB unpack). It reads S = (M-0x20)+0x70's slot table only: if the slot position
+    `*(*(S+0x18)+0x20)+idx*0x10` is more than 15 m (225.0 squared, 0x142329c00) from the entry it writes the slot
+    position and yaw, looks idx up in the realized list `*(S+0x18)+0x28` (count +0x44) and, when found, moves the body
+    through the character controller (S vt[0x100](S, idx), the component's vt[0x388], then rotation vt+0x70 and
+    position vt+0x68 with y + controller +0x160). It tests no puppet bit, no S+0x2a4 mode, no FOB state, sends no
+    message and touches no brain, so a non-puppet guard offline goes through the same lines as the puppets the far
+    mirror already moved with it (round 6: take-time warps of guards 15 / 17 followed by no kind 3) [O code, I effect].
+  - **Built**: `quiet_place` (native only, no CFG bit): the guest's Lua names a correction off its player's screen
+    (` 1` on WORLD_WARP_V1); the native stages it for the request manager hook (installed for a guest with the key),
+    which calls 0x136ece0 in its next update with the target and the grant's yaw; a slot within 15 m is biased 20 m
+    along x first (the function overwrites it). `world_place=quiet` prints the slot read back; Lua reads the copy back
+    0.5 s and 2 s after (`event=readback; src=quiet`, x/z and y). Not realized here or no hook: the message as before.
+    Three contract sites pin the function's body (soldier_act, 20 sites).
+- **Bug 2, the host's copies drift while the guest is down** (round 7 [O ddcdec94, 90d9b4d1]): the cause is not the
+  down itself. In both runs the guest's `enemy goto <guard> 8` put them on the outpost's cliff edge and they fell
+  (ddcdec94: y 269.9 -> 92.1 m at x/z 436.1, 2181.7; 90d9b4d1: y 270.7 -> -79.7 m) and the fall downed them (damage
+  10000, attacker 0). The M3 owner rule is x/z (`P.ownerOf`, the PEER pose's x and z), so the guest stayed the owner of
+  the ledge guards 5-30 m away horizontally; the host's range rule (`NearerSquared`) is 3D, so the guest 178 m below
+  was not the nearer player, the host (70 m) was, and every placement beyond 60 m of the host was refused `range`
+  (ddcdec94: 0 of 110 applied while down, host place error p90 27 m from the bins; 90d9b4d1: 63 of 135, p90 21.7 m).
+  - **Built**: `range_flat` (native only): the host's M3 placement range and its soft-follow range from the nearer
+    player on the ground plane (x/z), as the owner rule; `world_place=host_warp` prints `flat`, the guest pose age and
+    the guest's height over the target (`dgy_m`).
+- **Gates** (design): quiet_place: in calm at the seed the 246 correction is `leaf=quiet`, moved, read back within 1 m
+  (x/z and y) at 0.5 s and 2 s, no kind 3 / 13 of him after it, no guest-only phase change (`event=req_phase`) in calm,
+  0 latches / faults / game overs. range_flat: with the guest down in an ALERT, the host M3 place error p90 while down
+  <= 5 m and those placements applied, 0 latches / faults / game overs.
+- **Session 1, `bcd95b14`** (`quiet_place=1, range_flat=1, act_census=1`; enemy8-quiet-calm + enemy8-down-alert, gun
+  profile, research build, afgh-ledge, `-WanSim bad`) [O]:
+  - quiet_place gate PASS: the guest's 246 correction 8.7 s after align was `leaf=quiet`, `world_place=quiet moved=1
+    bias=0`, `event=place err_m=0.01 dy_m=0.00`; read back at 0.5 s 0.08 m x/z, 0.00 m y and at 2 s 0.15 m x/z, 0.00 m
+    y. The census shows him in action kind 1 from 0.1 s after the move until 117.7 s (then kind 8 in the ALERT part): no
+    kind 3, no 13. 0 guest `req_phase` in calm (one in the ALERT part, phase 3, beside the host's own ALERT). 0 latches,
+    faults, game overs. Frames q246-a..d (both copies, looked at): no radio subtitle and no caution on the guest's screen;
+    guard 246 cannot be picked out on either (the host's view is half behind a tree) [U].
+  - Two more quiet moves in the ALERT part (`bias=1`, under 15 m): moved, read back 0.00 m at 0.5 s; at 2 s 5.3 / 8.9 m
+    x/z off the target with y held (they ran on: ALERT).
+  - range_flat gate NOT REACHED: the guest stood on ddcdec94's goto point (433.3, 271.4, 2181.7, 1.5 m up on the
+    ledge) and was not downed. With the key every host placement was `near=guest flat=1` (103; 94 applied, 9
+    `unrealized`); host M3 p90 7.46 m over the run (its own 5 m row fails, as at the 0.15.1 defaults: 1870d1bf 6.89 m).
+  - quiet_place then follows the gun profile (64ab8909 red / cde0cbb4 green); the down part drops the guest from the
+    air on ddcdec94's fall line (436.105, 240.0, 2181.736).
+
 ### 8. Soldier transforms (W6)
 
 - **Ownership.** The guest owns a soldier if it is at least 30 m nearer to the guest than to the host. Re-evaluated at 1 Hz. It affects only snapshot sending, correction and outcome attribution (4.3), never perception.
