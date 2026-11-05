@@ -2,7 +2,7 @@
 # worldtrigger are lab only). The host carries the downed guest onto the shared horse again and rides a left loop at a
 # trot and a right turn at the gallop (frames h2p-* on both screens; the lever legs of the BODY0 round 1 / 2 runs are
 # done: 911ce293 bisected 4 / 6 / 14 / 14 lower / 15); the host
-# gets off, then the guest's world link goes off: both copies lay the body beside the horse (why=stream_lost on the
+# gets off with the cargo_relie lever at 0 (h2c-stays: the old squat), the lever back to 1 (h2c-relie: lying), then the guest's world link goes off: both copies lay the body beside the horse (why=stream_lost on the
 # host; the guest's copy lays body 0 down when its world goes off). Frames h2c-loaded and h2c-dropped on both screens.
 logmark both
 both debug godmode 1
@@ -57,6 +57,11 @@ host capture h2p-gallop-carrier
 host release
 wait 2500
 guest capture h2p-stopped
+# M2f red / green on one body: with the lever's 0 the victim's copy only logs body 0's stance through the dismount (the
+# BODY0 runs: it squatted on the horse), then 1 asks a squatting body back to CRAWL (step=relie).
+logmark both
+guest run cargo_relie 0
+guest expect cargo_relie;v=0
 host press e 150
 wait 3000
 host run horse_status
@@ -65,6 +70,15 @@ host run cargo_status
 host expect cargo;state=carrier
 wait 1000
 both capture h2c-stays
+guest run cargo_status
+guest expect stance=SQUAT
+logmark both
+guest run cargo_relie 1
+guest expect cargo_relie;v=1
+wait 2500
+both capture h2c-relie
+guest run cargo_status
+guest expect stance=CRAWL
 logmark both
 guest worldtrigger world=0
 wait 6000

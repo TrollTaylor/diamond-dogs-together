@@ -1,10 +1,10 @@
-# Horse plan M2, a downed partner on the shared D-Horse (lab key world_horse_cargo, off unless named; world_horse_share
-# is never named: the gun profile turns it on; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
+# Horse plan M2, a downed partner on the shared D-Horse (lab keys world_horse_cargo and world_horse_share are never
+# named: the gun profile turns both on since M2f; docs/mounts.md "Downed partner on the horse"). Both role orders; the link
 # drop and the lab body-0 levers are part 2 (horse-cargo-drop.txt); the M1 regression (m1) runs in horse-cargo-play.txt
 # (in the lab it passed in run d2a5cafa and is left out here so part 2 runs at the boot spot):
 # (a) the host's rifle downs the guest (wounded), the host carries them (R hold), holds E beside the horse: the stock
 #     put-down, then the body across the horse's back on both screens (HORSE_SEAT seat 2); the host's first E mounts;
-#     walk / trot / gallop; the dismount keeps them on; the carry key (R) held 0.3 s beside the horse lays them on the
+#     walk / trot / gallop; the dismount keeps them on, lying (M2f: stance CRAWL on the victim's copy); the carry key (R) held 0.3 s beside the horse lays them on the
 #     ground beside it on both screens (held on, the coop pickup shoulders them as usual); the 3 s E revive.
 # (b) the same with the roles swapped (the guest carries the host; the host grants its own load).
 # (c) in horse-cargo-drop.txt: loaded again (host carries guest), then the guest's world link off (stream_lost).
@@ -19,7 +19,6 @@
 #     -NativeStage gun -BuildProfile research -SaveSeed afgh-ledge -TimeoutSec 600 -Wait
 labsetting nametag=1
 labsetting coop_hud=compact
-labsetting world_horse_cargo=1
 boot 30010 805.0 342.1 1636.5 -60 time=12:00 weather=sunny
 logmark both
 both debug godmode 1
@@ -105,6 +104,7 @@ host press e 150
 wait 2500
 host run horse_status
 host require localMounted=1
+# M2f: lab (a) rode 34-38 m in 911ce293 / 144d99bb / 47101768 (left turns into the rocks): the gallops go straight.
 waitlog guest 'world_lua=event=horse_share; step=placed;' 10
 host capture h2-mounted
 guest capture h2-mounted-victim
@@ -114,21 +114,21 @@ guest burst h2-ride-walk-victim 2 250
 host hold w+a 1500 nowait
 host burst h2-ride-trot 2 250
 guest burst h2-ride-trot-victim 2 250
-host hold w+shift+a 1500 nowait
+host hold w+shift 1500 nowait
 host burst h2-ride-gallop 2 250
 guest burst h2-ride-gallop-victim 3 250
-host hold w+shift+a 1500 nowait
+host hold w+shift 1500 nowait
 host burst h2-ride-gallop2 2 250
 guest burst h2-ride-gallop2-victim 3 250
 host hold w+shift 1500 nowait
 host burst h2-ride-gallop3 2 250
 guest burst h2-ride-gallop3-victim 3 250
-host hold w+shift+a 1500
-host hold w+shift+a 1500 nowait
+host hold w+shift+d 1500
+host hold w+shift 1500 nowait
 host burst h2-ride-gallop4 2 400
 guest burst h2-ride-gallop4-victim 3 400
-host hold w+shift+a 1500
-host hold w+shift+a 1500 nowait
+host hold w+shift 1500
+host hold w+shift 1500 nowait
 host burst h2-ride-gallop5 2 400
 guest burst h2-ride-gallop5-victim 3 400
 host hold w+shift 1500
@@ -153,7 +153,8 @@ host run cargo_status
 host require cargo;state=carrier
 guest run cargo_status
 guest require cargo;state=cargo
-# The dismount keeps them on.
+# The dismount keeps them on (lying, M2f).
+logmark both
 host press e 150
 wait 3000
 host run horse_status
@@ -164,6 +165,13 @@ wait 1000
 both capture h2-stays
 guest run downed_status
 guest require down=1
+# M2f: the victim's own copy keeps body 0 lying (CRAWL) after the dismount (BODY0 runs: it squatted; step=stance / relie).
+guest run cargo_status
+guest expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2-stays2
+guest run cargo_status
+guest expect stance=CRAWL
 # Taken down: the carry key (R) held 0.3 s beside the horse lays them on the ground beside it at the carrier's side, at
 # the same spot on both copies (held on, the coop pickup would then shoulder them from the ground). The victim stays down.
 # Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
@@ -298,6 +306,8 @@ wait 2500
 both capture h2b-ride-stopped
 host run downed_status
 host require down=1
+# The dismount keeps them on (lying, M2f).
+logmark both
 guest press e 150
 wait 3000
 guest run horse_status
@@ -306,6 +316,12 @@ guest run cargo_status
 guest require cargo;state=carrier
 wait 1000
 both capture h2b-stays
+host run cargo_status
+host expect cargo;state=cargo;.*stance=CRAWL
+wait 2500
+both capture h2b-stays2
+host run cargo_status
+host expect stance=CRAWL
 # Run cfd2b604 (b): after a long gallop the carrier got off beyond reach of the body; walk back to it first.
 guest debug goto_carry
 wait 1500
