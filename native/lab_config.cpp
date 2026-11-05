@@ -536,6 +536,18 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         result.drive_vert_given = true;
         if (!ok) result.drive_vert = false;
     }
+    else if (Equals(key, "quiet_place")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.quiet_place);
+        result.quiet_place_given = true;
+        if (!ok) result.quiet_place = false;
+    }
+    else if (Equals(key, "range_flat")) {
+        // Enemy round 8 track A (lab and play); a named value records _given, an invalid one is named and off.
+        ok = ParseBool(value, result.range_flat);
+        result.range_flat_given = true;
+        if (!ok) result.range_flat = false;
+    }
     else if (Equals(key, "act_census")) {
         // Enemy sync M7 FM1 probe (lab and play, research); an invalid value is named and off.
         ok = ParseBool(value, result.act_census);

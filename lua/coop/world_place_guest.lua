@@ -216,7 +216,7 @@ do
             end
             if fix then
                 div.n, div.fixes, div.at = 0, div.fixes + 1, c.at
-                c.used = true
+                c.used, c.view = true, view
                 if first then table.insert(P.q, 1, c) else P.q[#P.q + 1] = c end
             end
         end
@@ -312,8 +312,9 @@ do
                 if type(y) == "number" and type(c.y) == "number" and (c.kind ~= 2 or c.y ~= 0) then c.dy = y - c.y end
                 return P.done(c)
             end
-            local r = W.receipt(fmt(c.host and "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- %d %d" or "return 'MGS_COOP_WORLD_WARP_V1' -- %d %d",
-                c.seq, id))
+            -- Enemy round 8 (quiet_place, design 7.22): " 1" off this player's screen; the native picks the quiet move.
+            local r = W.receipt(fmt(c.host and "return 'MGS_COOP_WORLD_WARP_HOST_V1' -- %d %d" or "return 'MGS_COOP_WORLD_WARP_V1' -- %d %d%s",
+                c.seq, id, c.view == "off" and " 1" or ""))
             if type(r) ~= "table" then return P.done(c, "native_off") end
             if r.refused ~= nil then
                 c.native, c.back = tostring(r.refused), r.b

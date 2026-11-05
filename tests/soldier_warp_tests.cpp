@@ -610,10 +610,10 @@ int main() {
         Check(g_near && std::fabs(flat - (4.7f * 4.7f + 5.9f * 5.9f)) < 0.05f, "flat: the guest on the ground plane, 7.5 m");
         Check(std::fabs(sw::NearerSquaredFlat(guard, host_p, guest_p, true, false, g_near) - (22.5f * 22.5f + 92.3f * 92.3f)) < 1.0f &&
                   !g_near, "flat: a stale guest pose leaves the host's leg");
-        sw::Request r{};
-        for (unsigned i = 0; i < 3; ++i) { r.pos[i] = guard[i]; r.player[i] = guest_p[i]; }
-        sw::FlattenRange(r);
-        Check(r.player[1] == r.pos[1] && r.player[0] == guest_p[0] && r.player[2] == guest_p[2],
+        sw::Request fr{};
+        for (unsigned i = 0; i < 3; ++i) { fr.pos[i] = guard[i]; fr.player[i] = guest_p[i]; }
+        sw::FlattenRange(fr);
+        Check(fr.player[1] == fr.pos[1] && fr.player[0] == guest_p[0] && fr.player[2] == guest_p[2],
               "FlattenRange: Warp's range is then measured on the ground plane");
     }
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);

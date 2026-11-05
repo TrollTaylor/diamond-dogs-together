@@ -397,6 +397,14 @@ float NearerSquared(const float (&pos)[3], const float (&host)[3], const float (
     return host_valid ? to_host : INFINITY;
 }
 
+float NearerSquaredFlat(const float (&pos)[3], const float (&host)[3], const float (&self)[3], bool host_valid, bool self_valid,
+                        bool& self_nearer) noexcept {
+    const float p[3] = {pos[0], 0.0f, pos[2]}, h[3] = {host[0], 0.0f, host[2]}, s[3] = {self[0], 0.0f, self[2]};
+    return NearerSquared(p, h, s, host_valid, self_valid, self_nearer);
+}
+
+void FlattenRange(Request& request) noexcept { request.player[1] = request.pos[1]; }
+
 bool GuestMayWarp(bool lab, bool play, bool) noexcept { return lab || play; }
 
 const char* Gate::Record(const Result& result) noexcept {
