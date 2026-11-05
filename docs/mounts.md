@@ -604,19 +604,26 @@ the shared D-Horse of section 10. It reaches the carry only through the existing
     tries each, beside `horse_drive=held; body=1`) [O host log], so hold1 and the recon both move body 1. Then the 3 s
     revive did not start (no `event=downed; step=grant`; the victim at hp 330 / 6600 after the bleed-out) [O], so (b) and
     (c) started with the guest still down and failed. Before the load the guest's put-down was moved six times by the
-    body-safety placement (`step=putdown_place`, slide 4.3-4.4 m, drop 2.3 m) [O]. Play `72e6269a` (a): the carrier held
+    body-safety placement (`step=putdown_place`, slide 4.23-4.43 m, drop 2.3 m) [O]. Play `72e6269a` (a): the carrier held
     the body at the horse (`carrybodies` required and passed) but the 900 ms E there gave no `step=loading` and no
     refusal line [O host log]; cause [U] (offTick returns silently when the carry role or the raw E read is not as
     expected); (b) then stopped on a stance check.
   - **Gate not passed** (three attempts used). Proven this round [O both logs + frames]: order (a) end to end in the lab
-    (`39fff762`): the load, the first E, a 199 m ride with the victim lying on both screens, the dismount with the stance
-    request on from the start and no fall / land, the take-down at one spot and the revive; the carrier's screen across
-    the rump at the load, walk, trot and gallop (`f7e09c55`, `39fff762`; at the load also in play), but once on the
-    ground at a trot in `a53a243a`. Never seen live: the guest-carrier order (b) with this code, the link drop with it,
+    (`39fff762`): the load, the first E, a 199 m ride with the victim lying on their back on their own screen (the horse
+    in view only at the load; the HUD read `Teammate 4 m` there and `5 m` at gallop4, so that the horse stays under them
+    is [I] from `got_cm` = `want_cm`), the dismount with the stance request on from the start and no fall / land, the
+    take-down at one spot and the revive; the carrier's screen across the rump at the load, walk, trot and gallop
+    (`f7e09c55`, `39fff762`; at the load also in play, floating high in `624148f9`). Not in `a53a243a` [O frames, the
+    review's correction]: the carrier's screen shows body 1 sitting up on the rump, leaning back with the knees up, at
+    the load (`host-h2-loaded`) and the walk (`host-h2-ride-walk`), and on the ground behind the trotting horse
+    (`host-h2-ride-trot`). Two drivers move body 1 on the carrier's copy during the hold: `partner_recon=place ...
+    via=warp` ran beside `horse_drive=held; body=1` in `39fff762` too (21 lines, err up to 5.1 m; 32 lines, up to
+    5.4 m, in `a53a243a`) [O the review's count of the full logs, which the slim archive does not keep]; no frame of
+    `39fff762` caught it. Never seen live: the guest-carrier order (b) with this code, the link drop with it,
     a play run past the load (`bb7dde83`, `624148f9`: the first E; `72e6269a`: the load), the `held_alone` path (no
     `body` refusal came in attempts 2 / 3), a horse falling (none seen). world_horse_cargo stays off unless named.
   - **Next:** keep the partner recon off body 1 while hold1 holds it (it warps body 1 to the streamed pose: the trot frame
-    of `a53a243a`); find why the revive did not start after the 60 m ride (`a53a243a`: no grant, hp 330); run (b) where
+    of `a53a243a`, and 21 warps unseen in `39fff762`), and find why body 1 sat up on the rump in `a53a243a`; find why the revive did not start after the 60 m ride (`a53a243a`: no grant, hp 330); run (b) where
     the stock pickup works (open ground; `39fff762`'s rock wall stopped it), then (c) and the play pair, both orders.
 
 ## 12. Ride behind your partner (horse plan M3, lab key `world_horse_pillion`, on with the gun profile since M3c)
@@ -842,7 +849,8 @@ Markers [O]/[I]/[U].
     under the pillion key only with the shot key), `free0` at the aim's or the seat's end. Lines `partner_pillion=aim;
     on=0|1`, `step=aim_hold; on=1; n; ok` / `on=0; n; ticks`, `step=aim_hold_refused`. No new hook, site, slot or wire.
     [O both logs, lab and play, both orders] every remote aim gave `aim; on=1`, `aim_hold; ok=1`, `horse_drive=held;
-    body=1`, the watch pinning every trap (4 writers) and `partner_pillion=stats` xz 0 / dy 0 while held (exceptions: the
+    body=1`, the watch pinning nearly every trap (4 writers; some reports fewer, e.g. 100 of 108, 160 of 167, 184 of
+    186) and `partner_pillion=stats` xz 0 / dy 0 while held (exceptions: the
     walk shot up to 195 cm, one partner_recon teleport warp of 0.94 m). [O frames looked at] the driver's screen shows
     body 1 on the horse's rump behind the seated driver with the rifle raised, aimed ahead or down at the guard: lab
     `host-h4-pillion-aim-host`, `host-h4-guard-aim-host`, `guest-h4b-pillion-aim-guest`; play `host-h4-pillion-aim-host`,
@@ -855,12 +863,16 @@ Markers [O]/[I]/[U].
     camera eye `*(*(*(gun+8)+0x138)+0xB8)+0xE0` in GunAimPointSolve `0x141096F90` (Ghidra comment) [O static]. Attempt 1
     (target 0.3 m up): play (a) the guest's first shot at the sleeping guard 6.1 m away put him Dying (guest `event=req;
     state=4`, host `commit; state=4; actor=guest; rid=2`; frame `guest-h4-guard-shot`: the guard sitting up, hit) and the
-    host's apply of it failed (readback 2, as in design 8.30); play (b) the host's second shot killed that dying guard
+    host's apply of it failed (`apply; state=4; src=commit; result=fail; readback=2` and a ledger hold `apply_failed`,
+    as in design 8.30 / 8.31), so the guard stayed asleep on the driver's screen while dying on the passenger's: the hit
+    landed on the shooter's copy only; play (b) the host's second shot killed that dying guard
     (host `commit; state=5; actor=host`, guest `apply; result=ok`) - the guard warped 5.6 m ahead was missed. Lab: no hit
     in either order: (a) the reticle at the lying guard's head (frame `guest-h4-guard-aim`) and the line's aim point
     about 0.8 m short (664-682 cm against 6.8 m), (b) 0.7-0.9 m short (the reticle on the road).
   - **Cross-neck.** Every straight-ahead shot started past the box (exit 152-153 cm); the driver's life 7801 / 6600
-    and the passenger's copy's horse 12000 in every window (lab, play (a): 30 seat_pin windows) [O]. A/B in lab (c):
+    and the passenger's copy's horse 12000 in every window (lab, play (a): 30 seat_pin windows) [O]; in play
+    `2b9552f6` (b) the passenger's (host's) copy's horse read 10163 / 11965 of 12000 in 6 of 34 seat_pin windows while
+    awake guards fired (cause [U]). A/B in lab (c):
     with `seatshot off` the unshifted straight-ahead line (`result=census; apply=0`) left the horse at 12000 and the
     driver at 7801 [O] (which body the line crossed is [U]); in attempt 1 the `on` shot 0.8 s into the aim did not fire [O no line] (attempt 2: below).
   - **Harm seen in play (b)** (`22926dbf`): after the passenger's kill awake guards shot both players
@@ -869,24 +881,29 @@ Markers [O]/[I]/[U].
   - **Attempt 2** (`5043fb4d`, scenarios only: the guard 0.3 / 0.7 / 1.1 m up from the 1.2 / 1.0 m eye; the A/B shots
     1.5 s into the aim). Play `2b9552f6`: (a) passed every expect: the guest's first shot put the sleeping guard 4.3 m
     away Dying, the second killed him (guest `req; state=4` then `state=5`; host `commit; state=4` and `state=5; actor=guest`,
-    the host's state 5 apply ok); frames `guest-h4-guard-shot` (the guard hit, the reticle red) and `host-h4-guard-aim-host`
+    the host's state 4 apply failed again, `result=fail; readback=2`, its state 5 apply ok: the Dying state showed on
+    the shooter's copy only); frames `guest-h4-guard-shot` (the guard hit, the reticle red) and `host-h4-guard-aim-host`
     (body 1 leaning over the driver, the rifle aimed down at him) [O]. (b) failed: awake guards (`downed_damage` attackers
     1041 / 1044 / 1243 / 1270) took the guest driver to lethal hits three times (`downed_damage=intercept; cause=lethal`,
     life 330, `event=downed; step=abandoned`), so after the host's hop-off the guest's E was read (`driver_e; e=1; masked=1`)
-    but did not get a downed rider off (`localMounted=1`) [O]; the host's three shots at the guard 4.2-5.4 m ahead hit
+    but did not get a downed rider off (`localMounted=1`, `downed_control=refused; reason=controls_timeout_prone` three
+    times, downed generations 4 to 9) [O]: a defect, a rider downed on the horse stays on it (README known limits); the host's three shots at the guard 4.2-5.4 m ahead hit
     nothing. Lab `375df6ee`: (a) the guest's copy of the warped guard ended 36.4 m away (the sleep's apply moved it 39.7 m;
     the d check failed), so the ladder shot at a far guard; (b) the host's shots at its own guard 4.3-5.1 m ahead (aim
     points 3.9-4.5 m out) hit nothing; (c) passed: the A/B's two straight-ahead shots (`seatshot off`: `census; apply=0`;
     on: `shift`, exit 152 cm) both left the driver at 7801 and the passenger's copy's horse at 12000 [O]; the driver's E
     after a hop-off 1.80-1.85 s and the ride's end 16-17 ms later in (a), (b), and driver_off in (c) [O].
   - **Gate: not reached in two attempts** (lab: no hit from the seat in either order in four parts; the (b) order's hit
-    only on (a)'s dying guard in play `22926dbf`; play `2b9552f6` (b) the driver downed by awake guards).
-    `world_horse_shot` stays off unless named; README unchanged (it already says there is no aiming or shooting from the
-    seat at the defaults).
+    only on (a)'s dying guard in play `22926dbf`; play `2b9552f6` (b) the driver downed by awake guards; in both plays
+    the first hit's Dying state on the shooter's copy only, which the scenario's waitlog on the host's `commit` did not
+    catch). `world_horse_shot` stays off unless named; README: no aiming or shooting from the seat at the defaults
+    (unchanged), and the stuck downed rider as a known limit. All four sessions ended with the harness's
+    `forced_job_termination=true` (one process exit 1223); no crash_probe line.
 - **Next:** the gate's lab half: a hit from the rear seat in lab in both orders (a camera-eye read instead of the eye
   model, or a target that stands still and level), the squat (why the native drive shows a standing aim), keep the
-  guards quiet after a kill in play (b), then the flip with a run not named; the seat holds to the pillion default with
-  a run not naming the shot key.
+  guards quiet after a kill in play (b), the Dying state of a seat hit on the driver's copy (and a scenario check on
+  the host's apply, not only its commit), a downed rider getting off the horse, then the flip with a run not named; the
+  seat holds to the pillion default with a run not naming the shot key.
 ## Risks
 
 - **RIDE_BODY moved the viewer's own buddy** (section 2) when both players deployed the same mount type. Observed
