@@ -1128,7 +1128,11 @@ foreach($name in @('Wait-ViewerLanding','Reset-ScenarioPose')) {
     $fixtureSleeps=[Collections.Generic.List[int]]::new()
     function Start-Sleep([int]$Milliseconds){$fixtureSleeps.Add($Milliseconds)}
     function Read-FreshRole([string]$Role){
-        $fixtureLandingState.tick+=250;$fixtureLandingState.sample++
+        $fixtureLandingState.sample++
+        # stalled-once: one 250 ms interval without a new state sample (a teleport's frame stall); stalled-twice: two.
+        $stalled=($fixtureLandingState.case -ceq 'stalled-once' -and $fixtureLandingState.sample -eq 2) -or
+            ($fixtureLandingState.case -ceq 'stalled-twice' -and $fixtureLandingState.sample -in 2,3)
+        if(!$stalled){$fixtureLandingState.tick+=250}
         $y=if($fixtureLandingState.case -ceq 'falling'){350.0-$fixtureLandingState.sample}else{348.0}
         $state=@{tick_ms=$fixtureLandingState.tick;mission=30010;generation=3;realized=$true;body_valid=$true;pose_valid=$true;
             player_pos=@(10.0,$y,20.0);local_yaw_valid=$true;player_yaw=-60.0}
@@ -1147,6 +1151,14 @@ foreach($name in @('Wait-ViewerLanding','Reset-ScenarioPose')) {
     Assert-True ($settled.player_pos[0] -eq 11.44 -and $fixtureSleeps.Count -eq 3) 'viewer accepts1.44m natural horizontal landing slide'
     $fixtureLandingState.sample=0;$fixtureSleeps.Clear()
     Assert-Throws {Wait-ViewerLanding 'host' 10.0 20.0 -MaximumHorizontalError 0.75} 'same landing slide cannot satisfy strict benchmark arrival'
+    # Horse round 4 131f88c6 / 016ec854, enemy round 8-9 integ-carry: the landing after a placebehind teleport stopped on
+    # one 250 ms interval without a new state sample. One such interval is tolerated; three fresh stable samples still count.
+    $fixtureLandingState.case='stalled-once';$fixtureLandingState.sample=0;$fixtureSleeps.Clear()
+    $settled=Wait-ViewerLanding 'guest' 10.0 20.0
+    Assert-True ($settled.player_pos[1] -eq 348.0 -and $fixtureSleeps.Count -eq 4) 'landing tolerates one interval without a new sample'
+    $fixtureLandingState.case='stalled-twice';$fixtureLandingState.sample=0;$fixtureSleeps.Clear()
+    $twice=try{$null=Wait-ViewerLanding 'guest' 10.0 20.0;''}catch{$_.Exception.Message}
+    Assert-True ($twice -clike '*viewer landing has no new position sample*') 'two intervals in a row without a new sample still stop the landing'
     foreach($case in @('falling','wrong-place','vanishing','transition','nonfinite')){
         $fixtureLandingState.case=$case;$fixtureLandingState.sample=0;$fixtureSleeps.Clear()
         Assert-Throws {Wait-ViewerLanding 'guest' 10.0 20.0} ('landing refuses '+$case)
@@ -1178,6 +1190,39 @@ foreach($name in @('Wait-ViewerLanding','Reset-ScenarioPose')) {
     $fixtureBadArrival=$false;$fixtureGeneration=4;$beforeCount=$fixtureTeleports.Count
     Assert-Throws {Reset-ScenarioPose 'host'} 'benchmark refuses mission generation change'
     Assert-True ($fixtureTeleports.Count -eq $beforeCount) 'generation refusal happens before teleport submission'
+}
+# Capture-Step retries a capture the native inbox refused once (a refused capture never became a frame request); a
+# second refusal, a missing receipt or a refused frame still stop the step. Wait-Frame through its actual body.
+& {
+    $captureStep=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Capture-Step'},$true))
+    $waitFrame=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Wait-Frame'},$true))
+    Assert-True ($captureStep.Count -eq 1 -and $waitFrame.Count -eq 1) 'actual capture boundaries'
+    . ([scriptblock]::Create($captureStep[0].Extent.Text));. ([scriptblock]::Create($waitFrame[0].Extent.Text))
+    $run=Join-Path ([IO.Path]::GetTempPath()) ('mgs-capture-retry-'+[Guid]::NewGuid().ToString('N'))
+    $null=New-Item -ItemType Directory -Path $run;$runId='0123456789abcdef0123456789abcdef'
+    $lastFrameAt=@{host=[uint64]0;guest=[uint64]0};$frames=[Collections.Generic.List[object]]::new()
+    $fixtureCapture=[pscustomobject]@{sequence=[uint64]40;refuse=1;sent=0;sleeps=0}
+    function Start-Sleep([int]$Milliseconds){$fixtureCapture.sleeps++}
+    function Write-Warning([string]$Message){}
+    function Get-CaptureSnapshot([string]$Role){return [ordered]@{stale=$false;tick_ms=[uint64]1000}}
+    function Send-Step([string]$Role,[hashtable]$Arguments){
+        $fixtureCapture.sequence++;$fixtureCapture.sent++
+        if($fixtureCapture.sent -gt $fixtureCapture.refuse){[IO.File]::WriteAllBytes((Join-Path $run "$Role-frame-$($fixtureCapture.sequence).bmp"),[byte[]](1,2))}
+        return @{sequence=$fixtureCapture.sequence;expires_tick_ms=[uint64]3000}
+    }
+    function Read-NativeReceipt([string]$Role,[uint64]$Sequence,[string[]]$Events){
+        if($fixtureCapture.sent -le $fixtureCapture.refuse){return @{event='command_refused';reason='expiry_beyond_2000ms';tick_ms=[uint64]1000}}
+        return @{event='frame_written';reason='dx11_backbuffer_bmp';tick_ms=[uint64]1016}
+    }
+    try{
+        $row=Capture-Step 'host' 'retry-shot'
+        Assert-True ($fixtureCapture.sent -eq 2 -and $row.sequence -eq 42 -and $row.frame_written) 'a capture refused by the native inbox is retried once'
+        $rows=@(Get-Content -LiteralPath (Join-Path $run 'captures.jsonl')|ForEach-Object{$_|ConvertFrom-Json})
+        Assert-True ($rows.Count -eq 2 -and !$rows[0].frame_written -and $rows[0].frame_result -ceq 'expiry_beyond_2000ms' -and $rows[1].frame_written) 'captures.jsonl keeps the refused attempt and its reason'
+        $fixtureCapture.refuse=$fixtureCapture.sent+2
+        $second=try{$null=Capture-Step 'host' 'retry-twice';''}catch{$_.Exception.Message}
+        Assert-True ($second -clike '*was not written: expiry_beyond_2000ms*' -and $fixtureCapture.sent -eq 4) 'a second refusal still stops the capture step'
+    }finally{Remove-Item -LiteralPath $run -Recurse -Force -ErrorAction SilentlyContinue}
 }
 $aimDefinitions=@{}
 foreach($name in @('Send-AimTurnCommand','Read-AimTurnState','Wait-AimTurnReady','Invoke-AimTurn')){

@@ -60,7 +60,19 @@ int main(){
     Check(engine.TakeCapture(3000).sequence==0,"expiredcapturerefused");
     w::Scenario admission;command.sequence=1;command.expires=1000;Check(!admission.Accept(command,1000),"expiredcommand");
     command.expires=3001;Check(!admission.Accept(command,1000),"maxfuturettl");command.expires=3000;command.duration=2001;Check(!admission.Accept(command,1000),"maxhold");
-    command.duration=2000;Check(admission.Accept(command,1000),"inclusiveholdboundary");command.sequence=4097;Check(!admission.Accept(command,1000),"runcommandbudget");
+    command.duration=2000;Check(admission.Accept(command,1000),"inclusiveholdboundary");
+    // Each refusal names its check in the receipt (it was one generic "sequence_expiry_or_busy").
+    {w::Scenario reasons;auto r=Parse("press w 120 0");r.expires=1000;
+     Check(!reasons.Accept(r,1000)&&reasons.refusal()&&!std::strcmp(reasons.refusal(),"expired"),"refusalexpired");
+     r.expires=3001;Check(!reasons.Accept(r,1000)&&!std::strcmp(reasons.refusal(),"expiry_beyond_2000ms"),"refusalbeyond2000ms");
+     r.expires=1100;Check(!reasons.Accept(r,1000)&&!std::strcmp(reasons.refusal(),"hold_outlives_expiry"),"refusalholdoutlivesexpiry");
+     r.expires=3000;Check(reasons.Accept(r,1000)&&!reasons.refusal(),"acceptclearsrefusal");
+     Check(!reasons.Accept(r,1001)&&!std::strcmp(reasons.refusal(),"sequence"),"refusalsequence");
+     auto shot=Parse("capture 0 0 0");shot.sequence=2;Check(reasons.Accept(shot,1000),"reasonscaptureaccepted");
+     shot.sequence=3;Check(!reasons.Accept(shot,1000)&&!std::strcmp(reasons.refusal(),"capture_pending"),"refusalcapturepending");
+     Check(reasons.TakeCapture(1010).sequence==2&&!reasons.Accept(shot,1100)&&!std::strcmp(reasons.refusal(),"capture_cadence"),"refusalcapturecadence");
+     auto move=Parse("mouse 5 0 0");move.sequence=4;move.dx=1600;
+     Check(!reasons.Accept(move,1100)&&!std::strcmp(reasons.refusal(),"mouse_range"),"refusalmouserange");}command.sequence=4097;Check(!admission.Accept(command,1000),"runcommandbudget");
     admission.Clear();admission.Keyboard(keys);Check(keys[0x11]==0&&admission.Mouse(true).buttons[0]==0,"clearrevokesheldstate");
     // M2 (call menu "3:Get it"): the digit 3 is a keyboard key (scan 0x04), held together with CALL (q); the mouse
     // buttons keep their own device after it.
