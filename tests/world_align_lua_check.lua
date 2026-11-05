@@ -1058,6 +1058,11 @@ if arg[7] and arg[8] then
     ticks(fgB, 20)
     check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=500;') and logged(fgB, ';dxz_m=3.00'),
         'quiet_place: the quiet move is read back (x/z and y)')
+    -- Enemy round 9 track A (design 7.24): a third read-back 5 s after a quiet move (the walk-on row; run 1befcef4: guard
+    -- 1904171355 walked 9.4-14.1 m on after his quiet moves).
+    ticks(fgB, 160)
+    check(logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=2000;') and logged(fgB, 'event=readback;ent=' .. ENT1 .. ';src=quiet;at=5000;'),
+        'quiet_place: the quiet move is read back at 2 s and 5 s too')
     fgA.warp = {{r = 0, h = 1, leaf = 'engine'}}
     ticks(fgA, 4)
     check(receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1") and not receipt(fgA, "'MGS_COOP_WORLD_WARP_V1' -- 5 1 1"),

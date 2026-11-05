@@ -45,8 +45,15 @@ struct GateIn {
     bool realized;       // body 1 realized with its parts loaded
     const char* block;   // carry / overlay / downed, or nullptr
     bool other_gesture;  // a gesture (pickup, sign, knock) is running or waiting on body 1
+    // Horse plan M4 (lab key world_horse_shot): body 1 sits behind this copy's player on the shared D-Horse (the seat1
+    // lease with the overlay seat): a seated passenger seat whatever the vehicle seat flow says.
+    bool pillion;
 };
 const char* Gate(const GateIn& in) noexcept;
+// The block word in order (nullptr: none): carry, overlay (not when the overlay is the pillion seat), downed.
+inline const char* Block(bool carry, bool overlay, bool downed, bool pillion) noexcept {
+    return carry ? "carry" : overlay && !pillion ? "overlay" : downed ? "downed" : nullptr;
+}
 // GateIn::passenger from the remote's live ride: a passenger seat 1..3 of a vehicle ride, never the driver's seat 0,
 // the wire's unknown seat (255) or a seat past a light vehicle's four.
 inline bool PassengerSeat(bool vehicle_ride_live, std::uint8_t seat) noexcept { return vehicle_ride_live && seat >= 1 && seat <= 3; }

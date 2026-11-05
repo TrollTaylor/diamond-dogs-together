@@ -802,7 +802,9 @@ struct LabConfig {
     // from the nearer player is measured on the ground plane (x/z), as the owner rule (a code fact, never seen refusing a
     // placement: the ddcdec94 / 8b581a26 near=host refusals all came while the host hid the fallen guest's body beyond
     // 200 m, which leaves the guest's pose unknown). Lab and play; both off unless named (lab_config.cpp: quiet_place's
-    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26).
+    // no-key run 1befcef4 failed the place_sink row; range_flat's gate failed in 8b581a26). Round 9 (design 7.24): with
+    // range_flat named, both roles' nearer-player rules (host placement, soft follow, PEER) also take the partner's network
+    // pose while this PC hides the partner's body for range (soldier_warp::RemoteRangeSource); off at the defaults.
     bool quiet_place = false;
     bool quiet_place_given = false;
     bool range_flat = false;
@@ -1025,7 +1027,7 @@ struct LabConfig {
     // world_horse_cargo=0|1 (horse plan M2, docs/mounts.md "Downed partner on the horse"; with world_horse_share): carry a
     // downed partner to the shared D-Horse and hold E: they lie across its back on both screens (HORSE_SEAT seat 2,
     // lua/coop/world_horse_cargo.lua over the existing MGS_COOP_CARGO_V2 calls). Both PCs must run it. Off unless named
-    // in lab and play until a hidden-run FRAME on both copies and a play rehearsal pass; a named 0 is the off switch.
+    // in lab and play until its gate passes (docs/mounts.md section 11); a named 0 is the off switch.
     bool world_horse_cargo = false;
     bool world_horse_cargo_given = false;
     // world_horse_pillion=0|1 (horse plan M3, docs/mounts.md "Ride behind your partner"; with world_horse_share): E beside
@@ -1034,6 +1036,12 @@ struct LabConfig {
     // gun profile in lab and play since the M3c round (runs 51f6a2cc lab / 4f52fa2a play); a named 0 is the off switch.
     bool world_horse_pillion = false;
     bool world_horse_pillion_given = false;
+    // world_horse_shot=0|1 (horse plan M4, docs/mounts.md "Shoot from the back of the horse"; with world_horse_pillion): the
+    // passenger behind the partner aims and fires: its own bullets start past the horse and the driver (partner_seat_shot
+    // horse class, MGS_COOP_HORSE_DRIVE_V1 pbox), and the driver's copy raises body 1's gun in the rear seat (partner_seat_gun
+    // with the pillion seat). Off unless named in lab and play (the M4 gate was not reached); a named 1 runs in play.
+    bool world_horse_shot = false;
+    bool world_horse_shot_given = false;
     // world_relief=0|1 (docs/vehicles-companions-design.md 6.3, M3 route A): the host's sortie
     // (relief) vehicle on both copies. The follow seeds carry the host's relief carry vars and
     // paint presets and the guest applies them (its own are kept for its saves); VEHICLE_SPAWN

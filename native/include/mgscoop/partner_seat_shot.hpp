@@ -33,11 +33,14 @@
 
 namespace mgscoop::partner_seat_shot {
 
-enum class Class : std::uint8_t { none = 0, light = 1, truck = 2 };
+// Horse plan M4 (lab key world_horse_shot): horse = the rear seat of the shared D-Horse (the pos / yaw are the placed
+// census root of the passenger's copy's horse, MGS_COOP_HORSE_DRIVE_V1 pbox; never a vehicle category).
+enum class Class : std::uint8_t { none = 0, light = 1, truck = 2, horse = 3 };
 inline const char* ClassName(Class c) noexcept {
     switch (c) {
     case Class::light: return "light";
     case Class::truck: return "truck";
+    case Class::horse: return "horse";
     default: return "none";
     }
 }
@@ -57,8 +60,13 @@ struct BoxSpec {
 };
 inline constexpr BoxSpec kLightBox{-0.2f, 1.0f, 2.2f, 1.0f, 1.25f};   // 4.4 x 2.0 x 2.5 m (jeep ~4.2 x 1.9 m [I])
 inline constexpr BoxSpec kTruckBox{-0.5f, 1.6f, 4.2f, 1.45f, 1.9f};   // 8.4 x 2.9 x 3.8 m
+// The D-Horse with its driver, about the census root (probe P2: the rider root 0.10 m ahead and 0.49 m over it; M2: the
+// root about 0.5 m over the ground; M3: the passenger held 0.35 m behind and 0.8 m over it): from 1.3 m behind (the tail)
+// to 1.7 m ahead (the head), 0.6 m to each side, 0.6 m under the root (the legs) to 2.2 m over it (the driver's head and
+// the passenger's raised gun). Tuned by the M4 frames [I]; the target clamp keeps every hit at or before the aim point.
+inline constexpr BoxSpec kHorseBox{0.2f, 0.8f, 1.5f, 0.6f, 1.4f};      // 3.0 x 1.2 x 2.8 m
 inline const BoxSpec* SpecFor(Class c) noexcept {
-    return c == Class::light ? &kLightBox : c == Class::truck ? &kTruckBox : nullptr;
+    return c == Class::light ? &kLightBox : c == Class::truck ? &kTruckBox : c == Class::horse ? &kHorseBox : nullptr;
 }
 
 inline constexpr float kExitPadM = 0.05f;     // the start lands this far past the box

@@ -9,6 +9,8 @@ namespace {
 std::uint64_t g_placed_ms = 0, g_body_ms = 0, g_seat_ms = 0;
 float g_seat_back = 0.f, g_seat_up = 0.f;
 bool g_seat_pose = true;
+std::uint64_t g_box_ms = 0;
+float g_box[3]{}, g_box_yaw = 0.f;
 float g_body[3]{};
 bool g_body_ok = false;
 }
@@ -73,6 +75,11 @@ bool Parse(const char* text, std::size_t size, Request& out) noexcept {
         r.verb = Verb::seat1;
         if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(0, 1500, seat[0]) || !number(-500, 1500, seat[1]) ||
             !number(0, 1, v[6]))
+            return false;
+    } else if (word("pbox")) {
+        r.verb = Verb::pbox;
+        if (!number(30010, 30020, v[0]) || !number(1, 65535, v[1]) || !number(-1000000000, 1000000000, v[2]) ||
+            !number(-1000000000, 1000000000, v[3]) || !number(-1000000000, 1000000000, v[4]) || !number(-31416, 31416, v[5]))
             return false;
     } else if (word("place")) {
         r.verb = Verb::place;
@@ -165,6 +172,42 @@ bool SeatLease(std::uint64_t now_ms, float& back, float& up, bool& pose) noexcep
     return true;
 }
 
+bool HoldSeat(SeatHold& h, bool lease, float& back, float& up, bool& pose) noexcept {
+    if (lease) {
+        h.live = true;
+        h.miss = 0;
+        h.back = back;
+        h.up = up;
+        h.pose = pose;
+        return true;
+    }
+    // The review of M4: the grace only with world_horse_shot named (h.grace); at the defaults a lapse ends the seat.
+    if (h.grace && h.live && h.miss < kSeatGraceTicks) {
+        ++h.miss;
+        back = h.back;
+        up = h.up;
+        pose = h.pose;
+        return true;
+    }
+    h.live = false;
+    h.miss = 0;
+    return false;
+}
+
+void NoteShotBox(std::int32_t x_mm, std::int32_t y_mm, std::int32_t z_mm, std::int32_t yaw_mrad, std::uint64_t now_ms) noexcept {
+    g_box[0] = static_cast<float>(x_mm) / 1000.f;
+    g_box[1] = static_cast<float>(y_mm) / 1000.f;
+    g_box[2] = static_cast<float>(z_mm) / 1000.f;
+    g_box_yaw = static_cast<float>(yaw_mrad) / 1000.f;
+    g_box_ms = now_ms ? now_ms : 1;
+}
+bool ShotBox(std::uint64_t now_ms, float (&pos)[3], float& yaw) noexcept {
+    if (!g_box_ms || now_ms < g_box_ms || now_ms - g_box_ms > kBoxMs) return false;
+    std::memcpy(pos, g_box, sizeof(g_box));
+    yaw = g_box_yaw;
+    return true;
+}
+
 void NotePlaced(std::uint64_t now_ms) noexcept { g_placed_ms = now_ms ? now_ms : 1; }
 bool PlacedFresh(std::uint64_t now_ms) noexcept {
     return g_placed_ms && now_ms >= g_placed_ms && now_ms - g_placed_ms <= kFreshMs;
@@ -190,7 +233,7 @@ void NoteSeatErr(SeatErr& e, const float (&seat)[3], const float (&body)[3]) noe
     ++e.n;
 }
 void Reset() noexcept {
-    g_placed_ms = g_body_ms = g_seat_ms = 0;
+    g_placed_ms = g_body_ms = g_seat_ms = g_box_ms = 0;
     g_body_ok = false;
 }
 

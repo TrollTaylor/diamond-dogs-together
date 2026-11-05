@@ -23,6 +23,9 @@ inline constexpr std::size_t m_records=0x10, m_soldier=0x50, m_codec=0x58, fob_t
 // 0x28; dword +8 bit 27 puppet); +0x2a4 mode (bit 2 online, bit 1 publish); +0x2a8 this peer's byte.
 inline constexpr std::size_t s_slots=0x18, slots_exists=0x0, slots_realized=0x8, slots_active=0x10, slots_owner=0x18,
                              slots_pos=0x20, slots_pos_stride=0x10, slots_count=0x40;
+// Round 9 (quiet_place): the realized list 0x136ece0 looks idx up in before it moves the body: u16 entries *(+0x28),
+// count u32 +0x44 (pinned by the site at 0x136ed8c: mov edx,[r9+0x44] / mov r9,[r9+0x28] / movzx ecx,word [r9+rax*2]).
+inline constexpr std::size_t slots_list=0x28, slots_list_count=0x44;
 inline constexpr std::size_t s_records=0x98, rec_data=0x8, rec_count=0x10, rec_stride=0x70, rec_aim=0x8, rec_stance=0x34;
 inline constexpr std::size_t s_weapons=0xa0, wep_ammo=0x8, wep_ammo_stride=0x8, wep_mag=0x10, wep_off=0x48;
 inline constexpr std::size_t s_netpos=0xe0, net_data=0x8, net_count=0x10, net_stride=0x18, net_flags=0x14;

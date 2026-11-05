@@ -330,6 +330,11 @@ bool ParseVehicleKey(Slice key, Slice value, LabConfig& result, bool& ok) noexce
         ok = ParseBool(value, result.world_horse_pillion);
         if (ok) result.world_horse_pillion_given = true;
     }
+    // Horse plan M4, shoot from the back of the horse (lab and play, off unless named: ResolveWeaponDefaults).
+    else if (Equals(key, "world_horse_shot")) {
+        ok = ParseBool(value, result.world_horse_shot);
+        if (ok) result.world_horse_shot_given = true;
+    }
     else if (Equals(key, "companion_host_owned")) {
         ok = ParseBool(value, result.companion_host_owned);
         if (ok) result.companion_host_owned_given = true;
@@ -1994,12 +1999,17 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // rehearsal -WanSim bad); a named 0 is the off switch.
     if (!c.world_horse_share_given) c.world_horse_share = gun;
     // Horse plan M2, a downed partner on the shared D-Horse (docs/mounts.md "Downed partner on the horse"): off unless
-    // named in lab and play (BODY0 round: the downed player lies on the horse on both screens through the ride, but on
-    // their own screen crouches on it after the dismount; the gate did not pass); a named 1 runs in play too.
+    // named in lab and play (M2f round: the squat after the carrier's dismount is asked back to CRAWL and the victim's horse
+    // no longer jumps to a stale KEEP pose, but the lab proof session never completed its two role orders); a named 1 runs
+    // in play too.
     if (!c.world_horse_cargo_given) c.world_horse_cargo = false;
     // Horse plan M3, ride behind your partner (docs/mounts.md "Ride behind your partner"): follows the gun profile in lab and
     // play since the M3c round (with its 2.5 / 2.8 m ride hold, lua/coop/world_horse_share.lua); a named 0 is the off switch.
     if (!c.world_horse_pillion_given) c.world_horse_pillion = gun;
+    // Horse plan M4, shoot from the back of the horse (docs/mounts.md "Shoot from the back of the horse"): off unless named
+    // in lab and play (the M4 gate was not reached: no rear-seat shot put a guard down, and the driver's screen shows no
+    // raised gun); a named 1 runs in play too.
+    if (!c.world_horse_shot_given) c.world_horse_shot = false;
     // M7 seat gun (docs/vehicles-companions-design.md 6.7): off unless named, in lab and play, until a hidden-run FRAME
     // on both copies and a play rehearsal pass; a named 1 runs in play too.
     if (!c.partner_seat_gun_given) c.partner_seat_gun = false;
@@ -2086,7 +2096,9 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // Enemy round 8 track B (docs/world-sync-design.md 7.21): lrrp_follow stays off unless named, the gun profile too. Its
     // truck rows passed (c784a5a7 / 0da27fc6), but the unseated near crew stayed 26-71 m off the host's copies for 80-100 s,
     // the unseat ends the guest's crew's LRRP plan (a re-boarding crew's truck drives empty on the guest's screen) and
-    // Africa was not run.
+    // Africa was not run. Round 9 B (7.25: 68491f7f / 801cd90b named, d7b3a81c not named): followed trucks within 0.6 m
+    // p90, but SetRelativeVehicle seated nobody, the crews' get-outs did not line up (9-42 m p90 20-40 s after the host's),
+    // a deferred truck's riders stayed ~427 m off, and its lines filled 81-83% of the guest's world log (log_cap drops).
     // Enemy round 8 track A (docs/world-sync-design.md 7.22): quiet_place stays off unless named. Its named run bcd95b14
     // passed (guard 246 moved quietly, read back within 0.2 m, no kind 3 / 13, no guest-only phase change in calm), but
     // its no-key run 1befcef4 failed the place_sink row: guard 1904171355 walked 13-14 m back off each quiet move (22
