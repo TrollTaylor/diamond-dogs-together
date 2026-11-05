@@ -25,8 +25,15 @@ end
 D.hitEnabled=on
 -- The local player's own cardboard box (PlayerStatus CBOX). A boxed body cannot
 -- take the native prone request; native accepts the box as the downed posture
--- (two-PC test 2026-10-23 item 4). A refused query reads as not boxed.
+-- (two-PC test 2026-10-23 item 4). A refused query reads as not boxed. Horse plan
+-- M2: a body held as cargo on the shared horse (world_horse_cargo.lua) is never
+-- prone either and reports the same held posture.
 local function boxed()
+  local HC=W.horseCargo
+  if type(HC) == "table" and type(HC.downedPosture) == "function" then
+    local held,yes=pcall(HC.downedPosture)
+    if held and yes == true then return true end
+  end
   local query,status=W.get(PlayerInfo,"OrCheckStatus"),W.get(PlayerStatus,"CBOX")
   if type(query) ~= "function" or not valid(status, 0, 2147483647) then return false end
   local ok,v=pcall(query,{status})

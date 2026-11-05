@@ -65,6 +65,9 @@ function C.on()
   int(W.epoch, 1, 65535) and int(W.role, 1, 2) and type(W.downed) == "table" and C.keyOn()
 end
 function C.busy() return C.state == "loading" or C.state == "carrier" or C.state == "cargo" end
+-- While this copy's downed body is held on the horse it is never prone: world_downed reports the held posture to the
+-- native downed controls (as the cardboard box; runs 83ac3950 / 547b431e timed out controls_timeout_prone without it).
+function C.downedPosture() return C.state == "cargo" end
 local function mounted()
  if type(PlayerInfo) ~= "table" or type(PlayerInfo.OrCheckStatus) ~= "function" or type(PlayerStatus) ~= "table" then return false end
  local ok, yes = pcall(PlayerInfo.OrCheckStatus, {PlayerStatus.ON_HORSE})
