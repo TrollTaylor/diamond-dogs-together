@@ -2565,3 +2565,15 @@ No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. N
   300 ms check did not find the path end far or missing, the 15 m warp would not move him and the catch-up gait is unchanged.
 - The catch-up (`gait_up`) starts beyond 1 m (was 2 m): the owner copy ahead by 1..5 m gait + 1 (cap 3), beyond 5 m 3.
 - `soldier_act_frame` adds `plan_hold` (held re-applies) after `plan_release`.
+
+## 44. Enemy round 10 track A: a vert snap only while the owner copy is at rest in y (lab key `drive_vert`, native only; design 7.27)
+
+No new op, world note, CFG bit, receipt field or contract site; Lua unchanged. Native `DRIVE_V1` only.
+
+- With `drive_vert`, a due vert snap (`s=3`: the copy at rest in x/z more than 1.5 m above or below the rendered target
+  for 1 s) is taken only once the rendered target's y has stayed within 0.2 m (max - min) for 1 s
+  (`sw::OwnerYAtRest`); a wider span, more than 600 ms between drive calls of that copy (a stale refusal backs it off
+  500 ms) or a non-finite y starts that window over.
+- A due snap that waits logs `world_drive=vert_wait; go; slot; gap_cm; rest_ms; span_cm` once per due spell (at most 32
+  lines per process); `world_drive=vert` adds `rest_ms` (the owner's rest window when it was taken); `world_drive=stats`
+  adds `vert_wait`.
