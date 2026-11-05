@@ -167,7 +167,10 @@ end
 -- one command per guard per 5 s.
 local function crew(id, tr, t, b, moving, n, gids)
   for _, v in ipairs(gids) do tr.crew[v] = true end
-  tr.outAt = (not moving and b.n < n) and (tr.outAt or t) or nil
+  -- The host's count rose at the stop (its crew boards again): no unseat until its truck drives (801cd90b).
+  tr.boarding = not moving and (tr.boarding or (tr.hn ~= nil and b.n > tr.hn)) or nil
+  tr.hn = b.n
+  tr.outAt = (not moving and b.n < n and not tr.boarding) and (tr.outAt or t) or nil
   if tr.outAt and t - tr.outAt >= LF.UNSEAT_MS then
     local extra = n - b.n
     for _, v in ipairs(gids) do
@@ -204,8 +207,9 @@ function LF.frame(t)
       -- How near this player is to either end (mm); a jump there would be seen.
       local near = x and mx and math.min(hdist(x, z, mx, mz), hdist(tx, tz, mx, mz)) or 1e12
       local wait = d > LF.CATCH_MM and near < LF.NEAR_MM
-      -- The host's truck drives manned and this copy's known crew is out: never drive it off empty; its own AI keeps it.
-      local crewless = moving and b.n > 0 and tr.rl == 0 and next(tr.crew) ~= nil
+      -- The host's truck is manned and this copy's known crew is out: never drive it off empty, nor move it 5 m+ to a
+      -- paused host truck (801cd90b: a 100.5 m jump away from its crew); its own AI keeps it.
+      local crewless = (moving or d > LF.JUMP_MM) and b.n > 0 and tr.rl == 0 and next(tr.crew) ~= nil
       if wait or crewless then
         force(id, tr, false, crewless and "crew_out" or "near")
         if t - (tr.deferAt or -1e9) >= 2000 then
