@@ -86,6 +86,8 @@ host burst h3b-gallop2-host 3 250
 guest hold w+shift+a 1500 nowait
 guest burst h3b-gallop2-guest 3 250
 guest release
+host burst h3b-gallopfree-host 3 300
+guest burst h3b-gallopfree-guest 3 300
 wait 3000
 host capture h3b-stopped-host
 guest capture h3b-stopped-guest
@@ -187,6 +189,8 @@ guest burst h3-gallop2-guest 3 250
 host hold w+shift+a 1500 nowait
 host burst h3-gallop2-host 3 250
 host release
+guest burst h3-gallopfree-guest 3 300
+host burst h3-gallopfree-host 3 300
 wait 3000
 guest capture h3-stopped-guest
 host capture h3-stopped-host
